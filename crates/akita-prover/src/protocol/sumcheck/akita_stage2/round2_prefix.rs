@@ -176,7 +176,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
         let num_first = e_first.len();
         let first_bits = num_first.trailing_zeros() as usize;
         let block_size = num_first.min(current_y_half);
-        let m_compact = &self.m_compact;
+        let relation_matrix_col_evals_compact = &self.relation_matrix_col_evals_compact;
         let quad_fold_lut = match self.b {
             4 => Self::build_round2_w_lookup_b4(r0, r1),
             8 => Self::build_round2_w_lookup_b8(r0, r1),
@@ -197,7 +197,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                 .map(|(x, column_out)| {
                     let column_start = x * y_len;
                     let column = &w_compact[column_start..column_start + y_len];
-                    let m = m_compact[x];
+                    let m = relation_matrix_col_evals_compact[x];
                     let j_base = x * current_y_half;
                     let mut virt = [E::zero(); 2];
                     let mut rel = [E::zero(); 3];
@@ -269,7 +269,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                 for (x, column_out) in out.chunks_mut(next_y_len).enumerate() {
                     let column_start = x * y_len;
                     let column = &w_compact[column_start..column_start + y_len];
-                    let m = m_compact[x];
+                    let m = relation_matrix_col_evals_compact[x];
                     let j_base = x * current_y_half;
                     let mut blk = 0usize;
 
@@ -329,7 +329,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                 .map(|(x, column_out)| {
                     let column_start = x * y_len;
                     let column = &w_compact[column_start..column_start + y_len];
-                    let m = m_compact[x];
+                    let m = relation_matrix_col_evals_compact[x];
                     let j_base = x * current_y_half;
                     let mut virt = [E::zero(); 3];
                     let mut rel = [E::zero(); 3];
@@ -404,7 +404,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                 for (x, column_out) in out.chunks_mut(next_y_len).enumerate() {
                     let column_start = x * y_len;
                     let column = &w_compact[column_start..column_start + y_len];
-                    let m = m_compact[x];
+                    let m = relation_matrix_col_evals_compact[x];
                     let j_base = x * current_y_half;
                     let mut blk = 0usize;
 

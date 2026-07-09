@@ -464,7 +464,7 @@ not to `S(alpha)` and not to alpha-evaluated A/B/D matrices.
 The alpha powers live in the structured weight:
 
 ```text
-omega_S(lambda, y) = omega_bar_S(lambda) * alpha^y
+setup_weight_S(lambda, y) = setup_index_weight_S(lambda) * alpha^y
 ```
 
 This is important: preprocessing can commit to `S`, but it cannot commit to
@@ -589,24 +589,24 @@ library boundary should return an `AkitaError`.
 The delegated setup value is:
 
 ```text
-sigma_S = <S_{<= N_setup}, omega_S>
+sigma_S = <S_{<= N_setup}, setup_index_weight_S>
 ```
 
 where:
 
 ```text
-omega_bar_S(lambda)
+setup_index_weight_bar_S(lambda)
   = sum of D/B/A role weights that pull back to raw setup slot lambda
 ```
 
 and:
 
 ```text
-omega_S(lambda, y) = omega_bar_S(lambda) * alpha^y
+setup_index_weight_S(lambda, y) = setup_index_weight_bar_S(lambda) * alpha^y
 ```
 
 Overlapping A/B/D prefix coordinates are handled by addition in
-`omega_bar_S`.
+`setup_index_weight_S`.
 
 The product-sumcheck terminal point is:
 
@@ -617,8 +617,8 @@ rho = (rho_lambda, rho_y)
 and the verifier-side weight evaluator should use:
 
 ```text
-omega_tilde_S(rho_lambda, rho_y)
-  = omega_bar_tilde_S(rho_lambda)
+setup_weight_tilde_S(rho_lambda, rho_y)
+  = setup_index_weight_tilde_S(rho_lambda)
     * MLE(1, alpha, ..., alpha^(D_setup - 1))(rho_y)
 ```
 
@@ -663,7 +663,7 @@ m_tau1(r_x) = m_local(r_x) + sigma_S.
 After Stage 2 fixes `r_x`, a new setup product sumcheck proves:
 
 ```text
-sigma_S = <S_{<=N_setup}, omega_S(tau_1, alpha, r_x)>.
+sigma_S = <S_{<=N_setup}, setup_index_weight_S(tau_1, alpha, r_x)>.
 ```
 
 This adds a Stage 3, but it is conceptually clean: Stage 2 continues to reduce
@@ -674,10 +674,10 @@ The more compact no-new-stage optimization, and the optimized target for this
 protocol, shifts the relation-matrix work back before the setup product
 sumcheck and uses Stage 2 for the setup product. The level then runs two
 stages, the same as the baseline scheme, instead of three. The setup product
-sumcheck depends on the relation point `r_x` through the A/J adjoint `eta_Z`,
-so it cannot start until `r_x` is fixed; the only reason it lands in a third
-stage above is that the baseline fuses the relation into Stage 2, fixing `r_x`
-only at the very end.
+sumcheck depends on the relation point `r_x` through the `G_fold` weighted
+A-column vector `eta_Z`, so it cannot start until `r_x` is fixed; the only
+reason it lands in a third stage above is that the baseline fuses the relation
+into Stage 2, fixing `r_x` only at the very end.
 
 Shifted schedule:
 
@@ -776,10 +776,10 @@ If a level has no subsequent recursive fold, setup offloading should be
 disabled at that level in the first implementation. A terminal closure rule can
 be added later only if benchmarks justify it.
 
-### A/J Weight
+### A and G_fold Weight
 
-Do not materialize `A J`. Akita already represents the paper's `A J z_hat`
-term by moving `J` to the weight side.
+Do not materialize `A * G_fold`. Akita keeps `A` as the digit-domain setup
+prefix. It applies `G_fold` on the weight side when it builds the setup weights.
 
 At the root, the compact A column is:
 
@@ -798,21 +798,32 @@ The useful adjoint vector is:
 
 ```text
 eta_Z(b_z, d_c)
-  = - sum_p sum_{d_f} g_f[d_f]
+  = - sum_p sum_{d_f} G_fold[d_f]
       eq(r_x, offset_z + x_Z(p, d_f, d_c, b_z))
 ```
 
-The A contribution to the coefficient-weight tensor is:
+The A contribution to the setup-weight tensor is:
 
 ```text
-omega_A(iota_A(a, j_A_root(b_z, d_c)), y)
+setup_index_weight_A(iota_A(a, j_A_root(b_z, d_c)), y)
   = alpha^y * eq(tau_1, A_a) * eta_Z(b_z, d_c)
 ```
 
+Equivalently, the A setup rows represent:
+
+```text
+A * z, where z[b_z, d_c]
+  = sum_{d_f} G_fold[d_f] * z_hat[b_z, d_c, d_f].
+```
+
+This is `A * G_fold * z_hat`. It is not
+`A * G_commit * G_fold * z_hat`.
+
 The root setup-offload evaluator should evaluate the row-aware root A slice
 directly. Because root A is digit-fast while the folded z side is block-fast,
-the exact evaluator needs a carry-DP style contraction. This is the right
-long-term choice because root one-hot requires digit-fast A.
+the evaluator must account for the carry that appears when `offset_z` is added
+to the block index. This is the right long-term choice because root one-hot
+requires digit-fast A.
 
 If setup offloading is enabled at a recursive folded level, recursive A may use
 the block-fast view so the large `b_z` axis factors as an equality inner
@@ -829,7 +840,7 @@ The later setup-offload implementation must bind:
 - the batching/incidence shape;
 - `sigma_S`;
 - `r_x`, `tau_1`, and `alpha`;
-- the role-column view choices used to define `omega_S`.
+- the role-column view choices used to define `setup_index_weight_S`.
 
 ## Downstream Parallel Work Slices
 
@@ -850,26 +861,28 @@ carried-claim batching, or new proof objects for setup offloading.
 This lane rewrites the direct setup contribution as:
 
 ```text
-<S_{<=N_setup}, omega_S>
+<S_{<=N_setup}, setup_index_weight_S>
 ```
 
-using a materialized `omega_S`. Its purpose is to pin the exact role pullbacks
-and give every later branch a correctness oracle. It should test D, B, and A/J
-weights, including the root digit-fast A slice and recursive block-fast role
-views.
+using a materialized `setup_index_weight_S`. Its purpose is to pin the exact role pullbacks
+and give every later branch a correctness oracle. It should test D, B, and
+`A * G_fold * z_hat` weights, including the root digit-fast A slice and
+recursive block-fast role views.
 
 ### Succinct Weight Evaluator
 
-This lane replaces materialized `omega_S` on the verifier side. It should
+This lane replaces materialized `setup_index_weight_S` on the verifier side. It should
 evaluate:
 
 ```text
-omega_tilde_S(rho_lambda, rho_y)
+setup_index_weight_tilde_S(rho_lambda)
 ```
 
-without scanning `S`. The hard part is the root A/J slice: root A remains
-digit-fast for one-hot, while the folded z side is block-fast, so the evaluator
-needs the row-aware carry-DP contraction.
+without scanning `S` and without building a dense setup-index equality table.
+The hard part is the root A slice with the `G_fold`
+weight: root A remains digit-fast for one-hot, while the folded z side is
+block-fast. The evaluator must account for the carry that appears when
+`offset_z` is added to the block index.
 
 ### Prefix Commitment Artifacts
 
@@ -903,7 +916,7 @@ size-one incidence case.
 
 This lane wires the delegated setup claim. It should start as a post-Stage-2
 Stage 3 against a materialized setup-opening oracle, then integrate the
-succinct `omega_S` evaluator, selected prefix commitments, gating policy, and
+succinct `setup_index_weight_S` evaluator, selected prefix commitments, gating policy, and
 recursive carried-opening batching.
 
 The no-new-stage relation-shift placement is the optimized target (see Product
@@ -953,9 +966,10 @@ Minimum tests for the implementation branch:
 
 For the later offloading branches:
 
-- materialized `<S_{<= N_setup}, omega_S>` equals direct setup contribution;
-- `omega_S` has alpha on the weight side;
-- root A/J evaluator matches materialized `eta_Z` and the row-aware A slice;
+- materialized `<S_{<= N_setup}, setup_index_weight_S>` equals direct setup contribution;
+- `setup_index_weight_S` has alpha on the weight side;
+- root A evaluator with `G_fold` weights matches materialized `eta_Z` and the
+  row-aware A slice;
 - recursive block-fast D/B and optional recursive block-fast A evaluators match
   materialized weights;
 - selected-slot preprocessing can generate only the known CI/root prefix and
@@ -1038,7 +1052,7 @@ variance is visible in the logs.
 - No full-`S_full` runtime opening when a shorter committed prefix covers the
   active proof.
 - No legacy `max_stride` compatibility layer.
-- No materialization of `A J`.
+- No materialization of `A * G_fold`.
 - No change to the physical `w_hat || t_hat || z_hat || r_hat` witness segment
   order beyond selecting role-column views that match the current folding step.
 

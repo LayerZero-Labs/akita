@@ -517,7 +517,7 @@ pub(crate) fn accum_pointwise_signed<E: FieldCore + HasUnreducedOps, const N: us
 }
 
 #[inline(always)]
-pub(crate) fn stage1_b4_s_digit_from_compact_s(s: i16) -> usize {
+pub(crate) fn stage1_b4_s_digit_from_m_compact_s(s: i16) -> usize {
     match s {
         0 => 0,
         2 => 1,
@@ -526,7 +526,7 @@ pub(crate) fn stage1_b4_s_digit_from_compact_s(s: i16) -> usize {
 }
 
 #[inline(always)]
-pub(crate) fn stage1_b8_s_digit_from_compact_s(s: i16) -> usize {
+pub(crate) fn stage1_b8_s_digit_from_m_compact_s(s: i16) -> usize {
     match s {
         0 => 0,
         2 => 1,

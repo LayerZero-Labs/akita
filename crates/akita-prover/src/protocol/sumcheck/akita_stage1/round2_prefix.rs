@@ -24,22 +24,22 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage1Prover<E> {
         let d0 = row
             .get(base)
             .copied()
-            .map(stage1_b4_s_digit_from_compact_s)
+            .map(stage1_b4_s_digit_from_m_compact_s)
             .unwrap_or(0);
         let d1 = row
             .get(base + 1)
             .copied()
-            .map(stage1_b4_s_digit_from_compact_s)
+            .map(stage1_b4_s_digit_from_m_compact_s)
             .unwrap_or(0);
         let d2 = row
             .get(base + 2)
             .copied()
-            .map(stage1_b4_s_digit_from_compact_s)
+            .map(stage1_b4_s_digit_from_m_compact_s)
             .unwrap_or(0);
         let d3 = row
             .get(base + 3)
             .copied()
-            .map(stage1_b4_s_digit_from_compact_s)
+            .map(stage1_b4_s_digit_from_m_compact_s)
             .unwrap_or(0);
         d0 | (d1 << 1) | (d2 << 2) | (d3 << 3)
     }
@@ -69,22 +69,22 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage1Prover<E> {
         let d0 = row
             .get(base)
             .copied()
-            .map(stage1_b8_s_digit_from_compact_s)
+            .map(stage1_b8_s_digit_from_m_compact_s)
             .unwrap_or(0);
         let d1 = row
             .get(base + 1)
             .copied()
-            .map(stage1_b8_s_digit_from_compact_s)
+            .map(stage1_b8_s_digit_from_m_compact_s)
             .unwrap_or(0);
         let d2 = row
             .get(base + 2)
             .copied()
-            .map(stage1_b8_s_digit_from_compact_s)
+            .map(stage1_b8_s_digit_from_m_compact_s)
             .unwrap_or(0);
         let d3 = row
             .get(base + 3)
             .copied()
-            .map(stage1_b8_s_digit_from_compact_s)
+            .map(stage1_b8_s_digit_from_m_compact_s)
             .unwrap_or(0);
         d0 | (d1 << 2) | (d2 << 4) | (d3 << 6)
     }

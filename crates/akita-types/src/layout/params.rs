@@ -28,7 +28,7 @@ pub use precommitted::{LevelParamsLike, PrecommittedLevelParams};
 /// directly. Keeping the D-block in the relation would be vestigial; this enum
 /// lets the prover, verifier, and planner agree to drop it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum MRowLayout {
+pub enum RelationMatrixRowLayout {
     /// Full layout including the D-block (`v = D * e_hat` rows). Used at every
     /// intermediate fold level and at the root when stage-1 runs.
     WithDBlock,
@@ -102,7 +102,7 @@ pub struct LevelParams {
     /// truth for the per-level witness column layout. `ChunkedWitnessCfg::default()`
     /// (single chunk) is byte-identical to the historical layout.
     pub witness_chunk: crate::witness::ChunkedWitnessCfg,
-    /// Precommitted group-local params for a grouped root. Empty for scalar
+    /// Precommitted group-local params for a multi-group root. Empty for scalar
     /// levels; when non-empty, the top-level fields describe the final/new
     /// group and `d_key` describes the shared D matrix over all group `w_hat`
     /// segments.
@@ -249,13 +249,13 @@ impl LevelParams {
         }
     }
 
-    /// True when this level carries grouped-root metadata.
+    /// True when this level carries multi-group-root metadata.
     #[inline]
     pub fn has_precommitted_groups(&self) -> bool {
         !self.precommitted_groups.is_empty()
     }
 
-    /// Reject grouped-root params at scalar-only call sites.
+    /// Reject multi-group-root params at scalar-only call sites.
     pub fn require_scalar_level(&self, context: &str) -> Result<(), AkitaError> {
         if self.has_precommitted_groups() {
             return Err(AkitaError::InvalidSetup(format!(
@@ -265,12 +265,12 @@ impl LevelParams {
         Ok(())
     }
 
-    /// Reject grouped-root params combined with multi-chunk witness layout.
-    pub fn reject_grouped_multi_chunk(&self, context: &str) -> Result<(), AkitaError> {
+    /// Reject multi-group-root params combined with multi-chunk witness layout.
+    pub fn reject_multi_group_multi_chunk(&self, context: &str) -> Result<(), AkitaError> {
         if self.has_precommitted_groups() && self.witness_chunk.num_chunks > 1 {
             return Err(AkitaError::InvalidSetup(format!(
                 "{context}: {}",
-                crate::GROUPED_ROOT_MULTI_CHUNK_UNSUPPORTED
+                crate::MULTI_GROUP_ROOT_MULTI_CHUNK_UNSUPPORTED
             )));
         }
         Ok(())
@@ -712,26 +712,26 @@ impl LevelParams {
             })
     }
 
-    // ---- Canonical M-row layout offsets (single source of truth) ----
+    // ---- Canonical relation-matrix row layout offsets (single source of truth) ----
     //
     // Row layout: consistency (1) | A (n_a) | B (n_b · nc) | D (n_d_active).
     // Public-output rows bind through the fused trace term, not the M-matrix.
-    // Every row-offset site (prover quotient/`generate_y`, setup-contribution
+    // Every row-offset site (prover quotient/`generate_relation_rhs`, setup-contribution
     // `prepare`, the relation claim, the verifier ring-switch row eval) must
     // derive its block starts from these helpers rather than recompute inline.
 
-    /// Active D-block rows for an M-row layout (dropped at a terminal fold).
+    /// Active D-block rows for an relation-matrix row layout (dropped at a terminal fold).
     #[inline]
-    pub fn n_d_active_for(&self, layout: MRowLayout) -> usize {
+    pub fn n_d_active_for(&self, layout: RelationMatrixRowLayout) -> usize {
         match layout {
-            MRowLayout::WithDBlock => self.d_key.row_len(),
-            MRowLayout::WithoutDBlock => 0,
+            RelationMatrixRowLayout::WithDBlock => self.d_key.row_len(),
+            RelationMatrixRowLayout::WithoutDBlock => 0,
         }
     }
 
     #[inline]
-    fn m_row_overflow() -> AkitaError {
-        AkitaError::InvalidSetup("M-row count overflow".to_string())
+    fn relation_matrix_row_overflow() -> AkitaError {
+        AkitaError::InvalidSetup("relation-matrix row count overflow".to_string())
     }
 
     /// Absolute start row of the A block (immediately after the consistency row).
@@ -745,7 +745,7 @@ impl LevelParams {
     pub fn b_start(&self) -> Result<usize, AkitaError> {
         self.a_start()
             .checked_add(self.a_key.row_len())
-            .ok_or_else(Self::m_row_overflow)
+            .ok_or_else(Self::relation_matrix_row_overflow)
     }
 
     /// Absolute start row of the D block.
@@ -755,10 +755,10 @@ impl LevelParams {
             .b_key
             .row_len()
             .checked_mul(num_commitments)
-            .ok_or_else(Self::m_row_overflow)?;
+            .ok_or_else(Self::relation_matrix_row_overflow)?;
         self.b_start()?
             .checked_add(b_rows)
-            .ok_or_else(Self::m_row_overflow)
+            .ok_or_else(Self::relation_matrix_row_overflow)
     }
 
     fn root_group_count(&self) -> usize {
@@ -818,14 +818,14 @@ impl LevelParams {
             .ok_or(AkitaError::InvalidProof)
     }
 
-    fn grouped_m_row_count_for(
+    fn multi_group_relation_matrix_row_count_for(
         &self,
         num_commitments: usize,
-        layout: MRowLayout,
+        layout: RelationMatrixRowLayout,
     ) -> Result<usize, AkitaError> {
         if num_commitments != self.root_group_count() {
             return Err(AkitaError::InvalidSetup(
-                "grouped root M rows require the real root group count".to_string(),
+                "multi-group root relation rows require the real root group count".to_string(),
             ));
         }
 
@@ -833,18 +833,18 @@ impl LevelParams {
             .a_start()
             .checked_add(self.a_key.row_len())
             .and_then(|n| n.checked_add(self.b_key.row_len()))
-            .ok_or_else(Self::m_row_overflow)?;
+            .ok_or_else(Self::relation_matrix_row_overflow)?;
         for group in &self.precommitted_groups {
             rows = rows
                 .checked_add(group.a_key.row_len())
                 .and_then(|n| n.checked_add(group.b_key.row_len()))
-                .ok_or_else(Self::m_row_overflow)?;
+                .ok_or_else(Self::relation_matrix_row_overflow)?;
         }
         rows.checked_add(self.n_d_active_for(layout))
-            .ok_or_else(Self::m_row_overflow)
+            .ok_or_else(Self::relation_matrix_row_overflow)
     }
 
-    /// Absolute start row of one group's A block in the grouped root layout
+    /// Absolute start row of one group's A block in the multi-group root layout
     /// (`consistency | A_final | B_final | A_pre* | B_pre* | D`).
     fn group_a_start(
         &self,
@@ -862,12 +862,12 @@ impl LevelParams {
         let mut start = self
             .b_start()?
             .checked_add(self.b_key.row_len())
-            .ok_or_else(Self::m_row_overflow)?;
+            .ok_or_else(Self::relation_matrix_row_overflow)?;
         for prior in &self.precommitted_groups[..group_index] {
             start = start
                 .checked_add(prior.a_key.row_len())
                 .and_then(|n| n.checked_add(prior.b_key.row_len()))
-                .ok_or_else(Self::m_row_overflow)?;
+                .ok_or_else(Self::relation_matrix_row_overflow)?;
         }
         Ok(start)
     }
@@ -911,14 +911,18 @@ impl LevelParams {
         &self,
         opening_batch: &OpeningClaimsLayout,
         group_index: usize,
-        layout: MRowLayout,
+        layout: RelationMatrixRowLayout,
     ) -> Result<std::ops::Range<usize>, AkitaError> {
         let final_group_index = self.validate_root_opening_batch(opening_batch)?;
         let a_start = self.group_a_start(opening_batch, group_index)?;
         let n_a = self.group_a_rows(group_index, final_group_index)?;
         let n_b = self.group_b_rows(group_index, final_group_index)?;
-        let start = a_start.checked_add(n_a).ok_or_else(Self::m_row_overflow)?;
-        let end = start.checked_add(n_b).ok_or_else(Self::m_row_overflow)?;
+        let start = a_start
+            .checked_add(n_a)
+            .ok_or_else(Self::relation_matrix_row_overflow)?;
+        let end = start
+            .checked_add(n_b)
+            .ok_or_else(Self::relation_matrix_row_overflow)?;
         let _ = layout;
         Ok(start..end)
     }
@@ -928,12 +932,14 @@ impl LevelParams {
         &self,
         opening_batch: &OpeningClaimsLayout,
         group_index: usize,
-        layout: MRowLayout,
+        layout: RelationMatrixRowLayout,
     ) -> Result<std::ops::Range<usize>, AkitaError> {
         let final_group_index = self.validate_root_opening_batch(opening_batch)?;
         let start = self.group_a_start(opening_batch, group_index)?;
         let rows = self.group_a_rows(group_index, final_group_index)?;
-        let end = start.checked_add(rows).ok_or_else(Self::m_row_overflow)?;
+        let end = start
+            .checked_add(rows)
+            .ok_or_else(Self::relation_matrix_row_overflow)?;
         let _ = layout;
         Ok(start..end)
     }
@@ -967,11 +973,11 @@ impl LevelParams {
             .ok_or_else(|| AkitaError::InvalidSetup("root witness segment overflow".to_string()))
     }
 
-    /// Root next-witness length in field elements for scalar or grouped roots.
+    /// Root next-witness length in field elements for scalar or multi-group roots.
     pub fn root_next_w_len<F: CanonicalField>(
         &self,
         opening_batch: &OpeningClaimsLayout,
-        layout: MRowLayout,
+        layout: RelationMatrixRowLayout,
     ) -> Result<usize, AkitaError> {
         opening_batch.check()?;
         let modulus = crate::schedule::detect_field_modulus::<F>();
@@ -1021,7 +1027,7 @@ impl LevelParams {
                 .ok_or_else(|| AkitaError::InvalidSetup("root witness overflow".to_string()))?;
         }
 
-        let r_rows = self.m_row_count_for(opening_batch.num_groups(), layout)?;
+        let r_rows = self.relation_matrix_row_count_for(opening_batch.num_groups(), layout)?;
         let r_count = r_rows
             .checked_mul(crate::sis::compute_num_digits_full_field(
                 field_bits,
@@ -1037,7 +1043,7 @@ impl LevelParams {
         })
     }
 
-    /// Row count for an explicit M-row layout.
+    /// Row count for an explicit relation-matrix row layout.
     ///
     /// Scalar layout: `consistency (1) | A (n_a) | B (n_b · num_commitments)
     /// | optional D (n_d)`.
@@ -1047,20 +1053,20 @@ impl LevelParams {
     /// not M rows.
     ///
     /// At the terminal fold the cleartext witness is shipped on the wire and
-    /// the D-block is dropped from the M-matrix; see [`MRowLayout`].
+    /// the D-block is dropped from the M-matrix; see [`RelationMatrixRowLayout`].
     #[inline]
-    pub fn m_row_count_for(
+    pub fn relation_matrix_row_count_for(
         &self,
         num_commitments: usize,
-        layout: MRowLayout,
+        layout: RelationMatrixRowLayout,
     ) -> Result<usize, AkitaError> {
         if self.has_precommitted_groups() {
-            return self.grouped_m_row_count_for(num_commitments, layout);
+            return self.multi_group_relation_matrix_row_count_for(num_commitments, layout);
         }
-        self.require_scalar_level("m_row_count_for")?;
+        self.require_scalar_level("relation_matrix_row_count_for")?;
         self.d_start(num_commitments)?
             .checked_add(self.n_d_active_for(layout))
-            .ok_or_else(Self::m_row_overflow)
+            .ok_or_else(Self::relation_matrix_row_overflow)
     }
 
     /// Fill in the layout-derived fields from explicit decomposition parameters.
@@ -1325,25 +1331,29 @@ mod tests {
     }
 
     #[test]
-    fn m_row_count_values() {
+    fn relation_matrix_row_count_values() {
         let lp = sample_params_only()
             .with_layout(&sample_layout_lp(), 128)
             .unwrap();
 
         assert_eq!(
-            lp.m_row_count_for(1, MRowLayout::WithDBlock).unwrap(),
+            lp.relation_matrix_row_count_for(1, RelationMatrixRowLayout::WithDBlock)
+                .unwrap(),
             1 + 3 + 4 + 2
         );
         assert_eq!(
-            lp.m_row_count_for(2, MRowLayout::WithDBlock).unwrap(),
+            lp.relation_matrix_row_count_for(2, RelationMatrixRowLayout::WithDBlock)
+                .unwrap(),
             1 + 3 + 4 * 2 + 2
         );
         assert_eq!(
-            lp.m_row_count_for(4, MRowLayout::WithDBlock).unwrap(),
+            lp.relation_matrix_row_count_for(4, RelationMatrixRowLayout::WithDBlock)
+                .unwrap(),
             1 + 3 + 4 * 4 + 2
         );
         assert_eq!(
-            lp.m_row_count_for(2, MRowLayout::WithoutDBlock).unwrap(),
+            lp.relation_matrix_row_count_for(2, RelationMatrixRowLayout::WithoutDBlock)
+                .unwrap(),
             1 + 4 * 2 + 2
         );
     }
@@ -1358,10 +1368,13 @@ mod tests {
         let n_d = lp.d_key.row_len();
 
         for nc in [1usize, 2, 4] {
-            for layout in [MRowLayout::WithDBlock, MRowLayout::WithoutDBlock] {
+            for layout in [
+                RelationMatrixRowLayout::WithDBlock,
+                RelationMatrixRowLayout::WithoutDBlock,
+            ] {
                 let n_d_active = match layout {
-                    MRowLayout::WithDBlock => n_d,
-                    MRowLayout::WithoutDBlock => 0,
+                    RelationMatrixRowLayout::WithDBlock => n_d,
+                    RelationMatrixRowLayout::WithoutDBlock => 0,
                 };
                 let a_start = 1;
                 let b_start = a_start + n_a;
@@ -1371,13 +1384,13 @@ mod tests {
                 assert_eq!(lp.b_start().unwrap(), b_start);
                 assert_eq!(lp.d_start(nc).unwrap(), d_start);
                 assert_eq!(
-                    lp.m_row_count_for(nc, layout).unwrap(),
+                    lp.relation_matrix_row_count_for(nc, layout).unwrap(),
                     d_start + n_d_active
                 );
             }
         }
     }
 
-    #[path = "params_grouped_tests.rs"]
-    mod grouped_tests;
+    #[path = "params_precommitted_group_tests.rs"]
+    mod precommitted_group_tests;
 }

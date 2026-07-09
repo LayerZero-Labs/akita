@@ -26,7 +26,7 @@ Eliminate the `y_ring` / `y_rings` payload from `AkitaLevelProof`, `AkitaBatched
 
 `y_ring` plays two roles per level (recursive case, `num_claims = 1`):
 
-1. **Relation RHS.** It is the public right-hand side of the "public-output" rows of `M`, and it enters `V_alpha` only through its evaluation `y_ring(alpha)` (`crates/akita-types/src/proof/relation.rs:75-81`, the public-output loop in `relation_claim_from_rows_extension`; RHS layout built by `generate_y` at `crates/akita-prover/src/protocol/ring_relation/relation_quotient.rs:595-630`).
+1. **Relation RHS.** It is the public right-hand side of the "public-output" rows of `M`, and it enters `V_alpha` only through its evaluation `y_ring(alpha)` (`crates/akita-types/src/proof/relation.rs:75-81`, the public-output loop in `relation_claim_from_rows_extension`; RHS layout built by `generate_relation_rhs` at `crates/akita-prover/src/protocol/ring_relation/relation_quotient.rs:595-630`).
 2. **Trace bridge.** The verifier reads the cleartext `y_ring` off the wire and checks `Tr_H(y_ring · sigma_{-1}(packed_inner_point)) = (d/k) · opening`, where `opening` is the incoming extension-field claim (`crates/akita-verifier/src/protocol/levels/recursive.rs:313-357`, via `recover_ring_subfield_inner_product` / `check_trace_inner_product` in `crates/akita-types/src/field_reduction.rs:535-579,600-621`; paper `sections/akita/3_basic_akita.tex:382-390,488-498`).
 
 The fold relation already proves `y_ring = sum_j b_j · e_folded_j` through the public-output row.
@@ -306,7 +306,7 @@ target.
 ### Acceptance Criteria
 
 - [ ] `AkitaLevelProof`, `AkitaBatchedFoldRoot`, and `TerminalLevelProof` no longer carry a `y_ring` / `y_rings` field; all constructors, shapes (`level_proof_shape`, `TerminalLevelProofShape`), serialization, and `can_decode_vec` shape guards are updated.
-- [ ] `relation_claim_from_rows_extension` (and `relation_claim_from_rows`) no longer take `y_rings`; the public-output rows are removed from the `M` RHS layout in `generate_y` and the verifier `RingRelationInstance` construction.
+- [ ] `relation_claim_from_rows_extension` (and `relation_claim_from_rows`) no longer take `y_rings`; the public-output rows are removed from the `M` RHS layout in `generate_relation_rhs` and the verifier `RingRelationInstance` construction.
 - [ ] The verifier enforces `TraceOpen(sum_j b_j · e_folded_j) = opening` in non-EOR paths, and the scaled EOR final-claim variant above in EOR paths, via a fused stage-2 term batched as `trace_coeff = γ²`; it no longer calls `recover_ring_subfield_inner_product` / the standalone `internal_claims[0] == opening` check on on-wire `y_ring` (`recursive.rs:319-357`).
 - [ ] `level_proof_bytes` drops the `y_bytes` term; `crates/akita-types/src/proof_size.rs` tests and the planner DP scoring are updated; shipped schedule tables regenerated with `regen_diff` reflecting the new (smaller) sizing.
 - [ ] Non-ZK and ZK e2e suites are green: `cargo nextest run --profile ci-non-zk` and `--profile ci-all-features`.
@@ -349,7 +349,7 @@ It is structurally a sibling of the relation term: over Boolean corners it repla
 **Commit `y_ring` and add two constraints (the original framing).**
 Append `y_ring`'s balanced digits to `e_hat` so it is bound by `v = D · e_hat` and recursed inside `w`, make the public-output row homogeneous (`sum_j b_j · e_folded_j - y_ring = 0`), and add the trace constraint as a fused term over the committed `y_ring`.
 This matches the "commit the ring element + two extra constraints" intuition and isolates `y_ring` cleanly.
-Rejected as primary because it pays `δ = log_b q` extra committed digit planes per level (range-checked in stage 1 and recursed), partially eating the saving, and it has no `v`/D-block at the terminal level (`MRowLayout::WithoutDBlock`) so the terminal would need a special case.
+Rejected as primary because it pays `δ = log_b q` extra committed digit planes per level (range-checked in stage 1 and recursed), partially eating the saving, and it has no `v`/D-block at the terminal level (`RelationMatrixRowLayout::WithoutDBlock`) so the terminal would need a special case.
 The no-commit variant binds the same opening through `e_hat`, which is already committed and range-checked, with zero extra committed data.
 
 **Keep `y_ring` but Frobenius-compress it.**
@@ -389,7 +389,7 @@ Full rationale and cross-scheme survey:
 | Eval/opening claim (scalar) | `v`, `\bar{v}`, `v'` | `opening`, `openings`, `input_claim` | `.v` (commitment vector) |
 | Opening commitment | `\mathbf{v} = D\hat{\mathbf{e}}` | `.v`, `RingRelationInstance::v`, `ABSORB_PROVER_V` | scalar `opening` |
 | Packed inner trace weight | `\check{r}_{\mathrm{in}}` | `packed_inner_point` | commitment `.v` |
-| Relation RHS vector | `y` in `Mz = y + \cdots` | `RingRelationInstance::y`, `generate_y` | `y_ring` / `Y`, stage-2 `y` axis |
+| Relation RHS vector | `y` in `Mz = y + \cdots` | `RingRelationInstance::y`, `generate_relation_rhs` | `y_ring` / `Y`, stage-2 `y` axis |
 | Removed folded ring output | `Y`, `y_{\mathrm{ring}}` | *(dropped on wire)* | commitment `.v`, scalar `opening` |
 | Sum-check Boolean ring index | `y \in \{0,1\}^{\mathrm{ring\_bits}}` | `ring_bits`, `alpha_evals_y` | eval claim `opening` |
 | Sum-check Boolean column index | `x \in \{0,1\}^{\mathrm{col\_bits}}` | `col_bits`, `x_challenges` | |

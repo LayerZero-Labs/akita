@@ -78,7 +78,7 @@ Schedule types in `crates/akita-types/src/schedule.rs` are renamed and unified:
 |------|------|
 | `PolynomialGroupLayout` | per-group opening/schedule dimensions (shared with opening layout) |
 | `PrecommittedGroupParams` | frozen standalone precommit metadata (`m_vars`, `r_vars`, basis, row counts) |
-| `AkitaScheduleLookupKey` | grouped-root schedule lookup key |
+| `AkitaScheduleLookupKey` | multi-group-root schedule lookup key |
 
 Wire as `pub mod opening_claims` from `lib.rs`; re-export the public types at the
 crate root alongside existing `proof` items during migration.
@@ -412,13 +412,13 @@ impl AkitaScheduleLookupKey {
     ///
     /// # Errors
     ///
-    /// Returns an error if `layout` has more than one group (grouped roots use
+    /// Returns an error if `layout` has more than one group (multi-group roots use
     /// an explicitly constructed key with `precommitteds` populated).
     pub fn from_layout(layout: &OpeningClaimsLayout) -> Result<Self, AkitaError> {
         if layout.num_groups() != 1 {
             return Err(AkitaError::InvalidSetup(
                 "scalar schedule lookup cannot collapse a multi-group layout; \
-                 build an explicit grouped key per specs/multi-group-batching.md"
+                 build an explicit multi-group key per specs/multi-group-batching.md"
                     .to_string(),
             ));
         }
@@ -451,7 +451,7 @@ impl PrecommittedGroupParams {
 ```
 
 This replaces the current runtime rule that allowed precommitted groups up to
-`final_group.num_vars`. Generated grouped keys already follow the `/2` convention;
+`final_group.num_vars`. Generated multi-group keys already follow the `/2` convention;
 runtime validation and tests must match.
 
 **Scalar openings** remain the empty-precommitted case:
@@ -493,7 +493,7 @@ pub struct GeneratedGroupBatchScheduleTableEntry {
 |-------------|-----|
 | `Copy + Eq` | Rows are plain data in `static` tables |
 | `const fn new(num_vars, num_polynomials)` on `PolynomialGroupLayout` | Emitted by offline table generation |
-| `Copy` on `PrecommittedGroupParams` | Precommitted rows in grouped batch tables |
+| `Copy` on `PrecommittedGroupParams` | Precommitted rows in multi-group batch tables |
 
 **Deleted:**
 
@@ -637,7 +637,7 @@ There is **no** `group_point_vars` on `OpeningClaimsLayout`.
 
 ### Non-Goals
 
-- Multi-group folded root proving (still rejected; `GROUPED_ROOT_*` unchanged).
+- Multi-group folded root proving (still rejected; `MULTI_GROUP_ROOT_*` unchanged).
 - Multipoint batches (removed; unchanged).
 - Changing proof wire format or transcript labels.
 - Separate batch-level `num_claims()` alias for `num_total_polynomials()`.

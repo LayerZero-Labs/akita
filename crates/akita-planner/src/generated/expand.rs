@@ -280,13 +280,13 @@ impl GeneratedFoldStep {
         Ok(params)
     }
 
-    /// Expand a compact root step for a grouped-root schedule.
+    /// Expand a compact root step for a multi-group-root schedule.
     ///
     /// The main group's A/B layouts are claim-scaled by `main_num_polys`, while
     /// the shared D matrix has one segment for the main group plus the frozen
     /// precommitted group segments. This intentionally differs from scalar
     /// batched roots, whose D width is scaled by the total polynomial count.
-    pub fn expand_to_grouped_root_level_params(
+    pub fn expand_to_multi_group_root_level_params(
         &self,
         policy: &PlannerPolicy,
         ring_challenge_config: impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
@@ -298,13 +298,13 @@ impl GeneratedFoldStep {
         let ring_d = self.ring_d as usize;
         if ring_d == 0 || ring_d != policy.ring_dimension {
             return Err(AkitaError::InvalidSetup(format!(
-                "generated grouped root ring dimension {ring_d} does not match policy D={}",
+                "generated multi-group root ring dimension {ring_d} does not match policy D={}",
                 policy.ring_dimension
             )));
         }
         if precommitted_groups.is_empty() {
             return Err(AkitaError::InvalidSetup(
-                "generated grouped root requires precommitted groups".to_string(),
+                "generated multi-group root requires precommitted groups".to_string(),
             ));
         }
 
@@ -314,15 +314,19 @@ impl GeneratedFoldStep {
         let m_vars = self.m_vars as usize;
         let r_vars = self.r_vars as usize;
         let num_blocks = 1usize.checked_shl(r_vars as u32).ok_or_else(|| {
-            AkitaError::InvalidSetup("generated grouped root 2^r_vars overflows usize".to_string())
+            AkitaError::InvalidSetup(
+                "generated multi-group root 2^r_vars overflows usize".to_string(),
+            )
         })?;
         let block_len = 1usize.checked_shl(m_vars as u32).ok_or_else(|| {
-            AkitaError::InvalidSetup("generated grouped root 2^m_vars overflows usize".to_string())
+            AkitaError::InvalidSetup(
+                "generated multi-group root 2^m_vars overflows usize".to_string(),
+            )
         })?;
 
         let no_layout = |role: &str| {
             AkitaError::InvalidSetup(format!(
-                "no audited {role}-role layout for generated grouped root \
+                "no audited {role}-role layout for generated multi-group root \
                  (family={sis_family:?}, d={ring_d}, log_basis={log_basis})"
             ))
         };
@@ -378,7 +382,9 @@ impl GeneratedFoldStep {
             .ok_or_else(|| no_layout("D"))?;
         let d_matrix_width = main_d_width
             .checked_add(precommitted_d_width)
-            .ok_or_else(|| AkitaError::InvalidSetup("generated grouped D width overflow".into()))?;
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup("generated multi-group D width overflow".into())
+            })?;
         let d_bucket =
             rounded_up_collision_inf_norm(min_security_bits, sis_family, ring_d, log_basis)
                 .ok_or_else(|| no_layout("D"))?;

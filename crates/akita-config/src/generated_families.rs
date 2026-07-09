@@ -28,7 +28,7 @@ use crate::{policy_of, tensor_verifier, CommitmentConfig};
 /// Default batched opening sizes emitted for every Akita shipped family.
 pub const DEFAULT_NUM_POLYS: &[usize] = &[1, 4];
 
-/// Maximum number of precommitted groups emitted for grouped-root generated tables.
+/// Maximum number of precommitted groups emitted for multi-group-root generated tables.
 pub const DEFAULT_GROUP_BATCH_MAX_PRECOMMITTED_GROUPS: usize = 2;
 
 /// One generated schedule-table family.
@@ -55,9 +55,9 @@ pub struct GeneratedFamily {
     /// Pure DP regeneration that ignores any shipped table
     /// (`find_schedule(key, &policy_of::<Cfg>(), …)`).
     pub regen: fn(PolynomialGroupLayout) -> Result<Schedule, AkitaError>,
-    /// Pure grouped DP regeneration that ignores any shipped table.
+    /// Pure multi-group DP regeneration that ignores any shipped table.
     pub regen_group_batch: fn(AkitaScheduleLookupKey) -> Result<Schedule, AkitaError>,
-    /// Whether this family ships grouped-root rows in its generated table.
+    /// Whether this family ships multi-group-root rows in its generated table.
     pub emit_group_batch: bool,
     /// Grouped-root keys enumerated for this generated family.
     pub group_batch_keys: fn(&GeneratedFamily) -> Result<Vec<AkitaScheduleLookupKey>, AkitaError>,
@@ -72,7 +72,7 @@ pub struct GeneratedFamily {
 
 /// Build the ordered key cross-product emitted for `family`.
 ///
-/// Scalar keys emitted for `family`. The emitter combines these with grouped
+/// Scalar keys emitted for `family`. The emitter combines these with multi-group
 /// keys and sorts the unified catalog by the generated schedule lookup order.
 ///
 /// # Errors
@@ -106,7 +106,7 @@ fn regen<Cfg: CommitmentConfig>(key: PolynomialGroupLayout) -> Result<Schedule, 
     )
 }
 
-/// Pure grouped DP regeneration for `Cfg` — never consults the shipped table.
+/// Pure multi-group DP regeneration for `Cfg` — never consults the shipped table.
 fn regen_group_batch<Cfg: CommitmentConfig>(
     key: AkitaScheduleLookupKey,
 ) -> Result<Schedule, AkitaError> {

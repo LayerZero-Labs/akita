@@ -113,7 +113,7 @@ fn proof_optimized_max_setup_matrix_size_uncached<Cfg: CommitmentConfig>(
 }
 
 /// Walk every shipped schedule-catalog row within setup capacity and keep the
-/// largest packed setup length. Scalar rows (`precommitteds: []`) and grouped
+/// largest packed setup length. Scalar rows (`precommitteds: []`) and multi-group
 /// rows share this path.
 fn inflate_setup_envelope_from_schedule_catalog<Cfg: CommitmentConfig>(
     max_num_vars: usize,
@@ -142,7 +142,7 @@ fn inflate_setup_envelope_from_schedule_catalog<Cfg: CommitmentConfig>(
     }
     for num_vars in 1..=max_num_vars {
         for &num_polys in &setup_envelope_poly_counts(max_num_batched_polys) {
-            let layout = worst_case_grouped_opening_batch_for_shape(num_vars, num_polys)?;
+            let layout = worst_case_multi_group_opening_batch_for_shape(num_vars, num_polys)?;
             let Some(entry_envelope) = setup_matrix_envelope_for_shape::<Cfg>(&layout)? else {
                 continue;
             };
@@ -162,7 +162,7 @@ fn inflate_setup_envelope_without_catalog<Cfg: CommitmentConfig>(
     let poly_counts = setup_envelope_poly_counts(max_num_batched_polys);
     for num_vars in 1..=max_num_vars {
         for &num_polys in &poly_counts {
-            let layout = worst_case_grouped_opening_batch_for_shape(num_vars, num_polys)?;
+            let layout = worst_case_multi_group_opening_batch_for_shape(num_vars, num_polys)?;
             let Some(entry_envelope) = setup_matrix_envelope_for_shape::<Cfg>(&layout)? else {
                 continue;
             };
@@ -212,7 +212,7 @@ pub(crate) fn setup_envelope_poly_counts(max_num_batched_polys: usize) -> Vec<us
 }
 
 /// Worst-case opening batch for a `(num_vars, num_polynomials)` shape.
-pub fn worst_case_grouped_opening_batch_for_shape(
+pub fn worst_case_multi_group_opening_batch_for_shape(
     num_vars: usize,
     num_polynomials: usize,
 ) -> Result<OpeningClaimsLayout, AkitaError> {

@@ -105,16 +105,16 @@ where
         P: RuntimeRootCommitPoly<F>,
         B: RuntimeRootCommitBackend<F, P, Self::ExtField>;
 
-    /// Commit the final polynomial bundle for a grouped root commitment.
+    /// Commit the final polynomial bundle for a multi-group root commitment.
     ///
     /// `precommitteds` contains schedule keys for prior commitment groups in
     /// transcript order. The implementation derives the final group shape from
-    /// `polys`, freezes precommitted layouts, and resolves the grouped root
+    /// `polys`, freezes precommitted layouts, and resolves the multi-group root
     /// commitment layout internally.
     ///
     /// # Errors
     ///
-    /// Returns an error if input validation, grouped layout selection, or
+    /// Returns an error if input validation, multi-group layout selection, or
     /// commitment execution fails.
     fn commit_final_group<P, B>(
         setup: &Self::ProverSetup,

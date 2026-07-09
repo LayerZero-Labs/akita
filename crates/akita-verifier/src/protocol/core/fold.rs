@@ -221,17 +221,17 @@ where
 
 pub(in crate::protocol::core) struct PreparedFoldReplay<'a, F: FieldCore, E: FieldCore> {
     pub(in crate::protocol::core) lp: &'a LevelParams,
-    pub(in crate::protocol::core) m_row_layout: MRowLayout,
+    pub(in crate::protocol::core) relation_matrix_row_layout: RelationMatrixRowLayout,
     pub(in crate::protocol::core) fold_grind_nonce: u32,
     pub(in crate::protocol::core) v: RingVec<F>,
     /// Normalized opening geometry (one group for scalar/suffix folds, `G`
-    /// groups for grouped roots).
+    /// groups for multi-group roots).
     pub(in crate::protocol::core) opening_shape: OpeningClaimsLayout,
     /// Sent commitment rows concatenated in M-row (final-first
     /// `root_group_order`) order — the single group's rows for scalar/suffix
-    /// folds, `concat_g u_g` for grouped roots. Matches the prover's
+    /// folds, `concat_g u_g` for multi-group roots. Matches the prover's
     /// `RingRelationProver` commitment-row concatenation and
-    /// `relation_y_layout_for` block order.
+    /// `relation_rhs_layout_for` block order.
     pub(in crate::protocol::core) commitment_rows: RingVec<F>,
     pub(in crate::protocol::core) row_coefficients: Vec<E>,
     /// Per-group ring opening points in `OpeningClaims` order.
@@ -332,8 +332,6 @@ fn verify_stage2<F, E, T>(
     lp: &LevelParams,
     num_segments: usize,
     setup_claim: Option<E>,
-    ring_opening_point: &RingOpeningPoint<F>,
-    ring_multiplier_point: &RingMultiplierOpeningPoint<F>,
     trace: Option<TraceWireAtRoleA<'_, F, E>>,
 ) -> Result<Vec<E>, AkitaError>
 where
@@ -360,8 +358,6 @@ where
             relation_claim,
             witness_oracle,
             setup_claim,
-            ring_opening_point,
-            ring_multiplier_point,
             trace.map(|wire| wire.into_claim::<D>()).transpose()?,
         )
     })
@@ -389,7 +385,7 @@ enum TraceWireAtRoleA<'a, F: FieldCore, E: FieldCore> {
         trace_claim_scales: Option<Vec<E>>,
         opening_batch: OpeningClaimsLayout,
     },
-    GroupedRoot {
+    MultiGroupRoot {
         lp: &'a LevelParams,
         layout: akita_types::TraceWeightLayout,
         prepared_points: Vec<PreparedOpeningPoint<F, E>>,
@@ -452,7 +448,7 @@ where
                 trace_eval_target,
                 trace_claim_scales.as_deref(),
             ),
-            Self::GroupedRoot {
+            Self::MultiGroupRoot {
                 lp,
                 layout,
                 prepared_points,
@@ -462,7 +458,7 @@ where
                 trace_claim_scales,
                 opening_batch,
                 live_x_cols,
-            } => build_trace_claim_grouped_root::<F, E, D>(
+            } => build_trace_claim_multi_group_root::<F, E, D>(
                 layout,
                 lp,
                 &opening_batch,
@@ -487,8 +483,6 @@ fn verify_stage2_kernel<F, E, T, const D: usize>(
     relation_claim: E,
     witness_oracle: Stage2WitnessOracle<'_, F, E>,
     setup_claim: Option<E>,
-    ring_opening_point: &RingOpeningPoint<F>,
-    ring_multiplier_point: &RingMultiplierOpeningPoint<F>,
     trace: Option<TraceClaim<F, E, D>>,
 ) -> Result<Vec<E>, AkitaError>
 where
@@ -502,11 +496,9 @@ where
         witness_oracle,
         stage1.stage1_point,
         rs.alpha_evals_y.clone(),
-        rs.prepared_row_eval.clone(),
+        rs.relation_matrix_evaluator.clone(),
         setup_claim,
         &setup.expanded,
-        ring_opening_point,
-        ring_multiplier_point,
         relation_claim,
         rs.alpha,
         rs.col_bits,
@@ -560,8 +552,9 @@ where
             role_d_a,
             |D| {
                 let verifier = SetupSumcheckVerifier::new::<F, D>(
-                    &rs.prepared_row_eval,
+                    &rs.relation_matrix_evaluator,
                     setup_x_challenges,
+                    &rs.tau1,
                     rs.alpha,
                 )?;
                 let rho_w = verifier.verify_batched_stage3::<F, T>(
@@ -626,13 +619,13 @@ where
     {
         return Err(AkitaError::InvalidProof);
     }
-    let group_challenges = derive_grouped_stage1_challenges::<F, T>(
+    let group_challenges = derive_multi_group_stage1_challenges::<F, T>(
         transcript,
         prepared.v.coeffs(),
         role_dims.d_a(),
         &opening_shape,
         prepared.lp,
-        prepared.m_row_layout,
+        prepared.relation_matrix_row_layout,
         prepared.fold_grind_nonce,
     )?;
     let (gamma, row_coefficient_rings) = dispatch_for_field!(
@@ -645,17 +638,26 @@ where
             )
         }
     )?;
-    let y_layout = relation_y_layout_for(prepared.lp, &opening_shape, prepared.m_row_layout)?;
-    let relation_y = assemble_relation_y::<F>(role_dims, &y_layout, &prepared.v, commitment_rows)?;
+    let relation_rhs_layout = relation_rhs_layout_for(
+        prepared.lp,
+        &opening_shape,
+        prepared.relation_matrix_row_layout,
+    )?;
+    let relation_rhs = assemble_relation_rhs::<F>(
+        role_dims,
+        &relation_rhs_layout,
+        &prepared.v,
+        commitment_rows,
+    )?;
     let relation_instance = RingRelationInstance::new(
-        prepared.m_row_layout,
+        prepared.relation_matrix_row_layout,
         group_challenges,
         prepared.group_ring_opening_points,
         prepared.group_ring_multiplier_points,
         opening_shape.clone(),
         gamma,
         row_coefficient_rings,
-        relation_y,
+        relation_rhs,
         prepared.v,
         role_dims,
     )?;
@@ -700,7 +702,7 @@ where
         )?;
     let relation_claim = relation_claim_from_layout_extension::<F, E>(
         relation_instance.role_dims(),
-        &y_layout,
+        &relation_rhs_layout,
         &rs.tau1,
         rs.alpha,
         relation_instance.v(),
@@ -767,10 +769,10 @@ where
         }
         let live_x_cols = prepared.w_len / d_a;
         let col_bits = u32::try_from(rs.col_bits).map_err(|_| {
-            AkitaError::InvalidSetup("grouped trace column bits overflow".to_string())
+            AkitaError::InvalidSetup("multi-group trace column bits overflow".to_string())
         })?;
         let max_live_x_cols = 1usize.checked_shl(col_bits).ok_or_else(|| {
-            AkitaError::InvalidSetup("grouped trace column bound overflow".to_string())
+            AkitaError::InvalidSetup("multi-group trace column bound overflow".to_string())
         })?;
         if live_x_cols > max_live_x_cols {
             return Err(AkitaError::InvalidSize {
@@ -783,7 +785,7 @@ where
             .as_ref()
             .ok_or(AkitaError::InvalidProof)?
             .clone();
-        Some(TraceWireAtRoleA::GroupedRoot {
+        Some(TraceWireAtRoleA::MultiGroupRoot {
             lp: prepared.lp,
             layout,
             prepared_points,
@@ -842,8 +844,6 @@ where
         prepared.lp,
         num_groups,
         setup_claim,
-        relation_instance.group_opening_point(0)?,
-        relation_instance.group_ring_multiplier_point(0)?,
         trace_wire,
     )?;
     let stage2_next_w_eval = if prepared.stage3.is_some() {

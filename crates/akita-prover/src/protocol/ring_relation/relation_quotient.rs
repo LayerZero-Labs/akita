@@ -6,7 +6,7 @@ use crate::compute::{
 };
 use crate::protocol::ring_switch::PreparedRingSwitchGroup;
 use crate::validation::validate_i8_setup_log_basis;
-use akita_types::{LevelParams, MRowLayout};
+use akita_types::{LevelParams, RelationMatrixRowLayout};
 
 /// Add only the high-half quotient contribution of `challenge * ring`.
 ///
@@ -110,7 +110,7 @@ where
     Ok(out)
 }
 
-/// Relation quotient `r` returned by [`compute_grouped_relation_quotient`].
+/// Relation quotient `r` returned by [`compute_multi_group_relation_quotient`].
 pub(crate) type RelationQuotientOutput<F, const D: usize> = Vec<CyclotomicRing<F, D>>;
 
 fn quotient_from_cyclic_and_reduced<F: FieldCore + HalvingField, const D: usize>(
@@ -217,8 +217,8 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
-#[tracing::instrument(skip_all, name = "compute_grouped_relation_quotient")]
-pub(crate) fn compute_grouped_relation_quotient<F, B, const D: usize>(
+#[tracing::instrument(skip_all, name = "compute_multi_group_relation_quotient")]
+pub(crate) fn compute_multi_group_relation_quotient<F, B, const D: usize>(
     ring_switch_ctx: &OperationCtx<'_, F, B>,
     lp: &LevelParams,
     opening_batch: &akita_types::OpeningClaimsLayout,
@@ -227,13 +227,13 @@ pub(crate) fn compute_grouped_relation_quotient<F, B, const D: usize>(
     group_challenges: &[Challenges],
     e_hat_concat: &[[i8; D]],
     y: &[CyclotomicRing<F, D>],
-    m_row_layout: MRowLayout,
+    relation_matrix_row_layout: RelationMatrixRowLayout,
 ) -> Result<RelationQuotientOutput<F, D>, AkitaError>
 where
     F: FieldCore + CanonicalField + FromPrimitiveInt + HalvingField,
     B: RingSwitchProveBackend<F, D>,
 {
-    lp.reject_grouped_multi_chunk("grouped relation quotient")?;
+    lp.reject_multi_group_multi_chunk("multi-group relation quotient")?;
     lp.validate_root_opening_batch(opening_batch)?;
     if groups.len() != opening_batch.num_groups()
         || group_ring_multiplier_points.len() != opening_batch.num_groups()
@@ -243,8 +243,9 @@ where
     }
     let backend = ring_switch_ctx.backend();
     let prepared = ring_switch_ctx.prepared();
-    let n_d_active = lp.n_d_active_for(m_row_layout);
-    let num_rows = lp.m_row_count_for(opening_batch.num_groups(), m_row_layout)?;
+    let n_d_active = lp.n_d_active_for(relation_matrix_row_layout);
+    let num_rows =
+        lp.relation_matrix_row_count_for(opening_batch.num_groups(), relation_matrix_row_layout)?;
     if y.len() != num_rows {
         return Err(AkitaError::InvalidProof);
     }
@@ -272,7 +273,7 @@ where
         let n_b = group.params.b_rows_len();
         let blocks_per_claim = group.params.num_blocks();
         let inner_width = group.params.a_col_len();
-        validate_i8_setup_log_basis(log_basis, "for grouped relation quotient")?;
+        validate_i8_setup_log_basis(log_basis, "for multi-group relation quotient")?;
         if group_layout.num_polynomials() == 0 {
             return Err(AkitaError::InvalidProof);
         }
@@ -371,7 +372,8 @@ where
         quotient -= consistency_z_quotient;
         result[0] += quotient;
 
-        let a_range = lp.root_a_row_range(opening_batch, group_index, m_row_layout)?;
+        let a_range =
+            lp.root_a_row_range(opening_batch, group_index, relation_matrix_row_layout)?;
         if a_range.len() != n_a {
             return Err(AkitaError::InvalidProof);
         }
@@ -389,7 +391,8 @@ where
             result[row_idx] = CyclotomicRing::from_slice(&quotient);
         }
 
-        let b_range = lp.root_commitment_row_range(opening_batch, group_index, m_row_layout)?;
+        let b_range =
+            lp.root_commitment_row_range(opening_batch, group_index, relation_matrix_row_layout)?;
         if b_range.len() != n_b {
             return Err(AkitaError::InvalidProof);
         }

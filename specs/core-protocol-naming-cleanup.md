@@ -41,17 +41,17 @@ Proposed names are recommendations; the exact spelling is the main thing to sett
 
 1. `QuadraticEquation` (was `crates/akita-prover/src/protocol/quadratic_equation.rs`) is split, not just renamed, into `RingRelationInstance` (public statement) and `RingRelationWitness` (prover secret).
    The prover module is now `ring_relation.rs` with a zero-sized [`RingRelationProver`](crates/akita-prover/src/protocol/ring_relation.rs) builder (`::new`, `::new_recursive_multipoint`) replacing the old free constructors and crate-root `new_ring_relation_*` re-exports.
-   Today it bundles three things for the per-fold-level negacyclic-ring relation `M * z = y + (X^D + 1) * r`: the RHS targets (`y` at `:254`, `v = D * w_hat` at `:247`), the structure that defines the virtual `M` (`challenges`, `opening_points` / `ring_multiplier_points`, `gamma` / `row_coefficient_rings`, the claim-incidence maps, `num_public_rows`, `m_row_layout`), and the prover's witness (`z_pre`, `w_hat`, `w_folded`, `hint`, and the `zk`-gated `d_blinding_digits`).
+   Today it bundles three things for the per-fold-level negacyclic-ring relation `M * z = y + (X^D + 1) * r`: the RHS targets (`y` at `:254`, `v = D * w_hat` at `:247`), the structure that defines the virtual `M` (`challenges`, `opening_points` / `ring_multiplier_points`, `gamma` / `row_coefficient_rings`, the claim-incidence maps, `num_public_rows`, `relation_matrix_row_layout`), and the prover's witness (`z_pre`, `w_hat`, `w_folded`, `hint`, and the `zk`-gated `d_blinding_digits`).
    `M` and `z` are never materialized, and the commitment `u` is consumed during construction rather than stored.
    The old struct used `Option` witness fields only so the prover could `.take()` them out during `ring_switch_build_w`; that accessor cluster is gone. The verifier never held the bundle (zero references in `akita-verifier` before the split).
    That latent split is the design fix:
-   - `RingRelationInstance` holds the public statement (challenges, opening points, incidence maps, `gamma` / `row_coefficient_rings`, `num_public_rows`, `m_row_layout`, and targets `y`, `v`) with no `Option` witness fields.
+   - `RingRelationInstance` holds the public statement (challenges, opening points, incidence maps, `gamma` / `row_coefficient_rings`, `num_public_rows`, `relation_matrix_row_layout`, and targets `y`, `v`) with no `Option` witness fields.
    - `RingRelationWitness` holds the prover secret (`z_pre`, `w_hat`, `w_folded`, `hint`, and the `zk`-gated `d_blinding_digits`), passed by value into the prover.
      `d_blinding_digits` is the D-side blinding for `v = D · ŵ` and is `#[cfg(feature = "zk")]` on the witness, carried under the same gate rather than folded into a generic "zk blinding".
    The `Ring` prefix is deliberate: it marks the negacyclic-ring relation, distinct from the stage-1 norm/range check.
    "Quadratic" was paper-section jargon (the module doc said "Quadratic equation builder ... §4.2") describing the proof-system relation degree, not the struct's content.
    Crate homes: `RingRelationInstance` lives in `akita-types` so both prover and verifier can build it.
-   It needs `LevelParams`, `MRowLayout`, `CyclotomicRing`, the opening points (`RingOpeningPoint`, `RingMultiplierOpeningPoint` in `proof/batch.rs`), and the incidence types, all defined in `akita-types`, plus `Challenges`, which is defined in `akita-challenges` (already a dependency of `akita-types`, see `akita-types/Cargo.toml`), so no new crate edge is added.
+   It needs `LevelParams`, `RelationMatrixRowLayout`, `CyclotomicRing`, the opening points (`RingOpeningPoint`, `RingMultiplierOpeningPoint` in `proof/batch.rs`), and the incidence types, all defined in `akita-types`, plus `Challenges`, which is defined in `akita-challenges` (already a dependency of `akita-types`, see `akita-types/Cargo.toml`), so no new crate edge is added.
    `RingRelationWitness` stays in `akita-prover` and cannot move: its `z_folded_rings` field has type `DecomposeFoldWitness`, which is defined in `akita-prover`, so the witness type is structurally prover-only and pulling it into `akita-types` would force a prover-only type down into the shared layer.
 
 2. `compute_r_split_eq` (was `crates/akita-prover/src/protocol/quadratic_equation/r_split.rs`) -> `compute_relation_quotient`.
@@ -63,7 +63,7 @@ Proposed names are recommendations; the exact spelling is the main thing to sett
    It is the random point output by the stage-1 norm sumcheck, not the divisibility quotient `r`.
    This removes the collision with quotient `r` and with the verifier helper `compute_r_contribution` (`crates/akita-verifier/src/protocol/slice_mle/structured_slice.rs:334`).
 
-4. `MRowLayout::Intermediate` / `MRowLayout::Terminal` (`crates/akita-types/src/layout/params.rs:26`) -> `MRowLayout::WithDBlock` / `MRowLayout::WithoutDBlock`.
+4. `RelationMatrixRowLayout::Intermediate` / `RelationMatrixRowLayout::Terminal` (`crates/akita-types/src/layout/params.rs:26`) -> `RelationMatrixRowLayout::WithDBlock` / `RelationMatrixRowLayout::WithoutDBlock`.
    The variant selects whether the `D`-block rows `v = D * w_hat` appear in the relation, not the position in the fold chain.
    The current names collide with `AkitaProofStep::Intermediate` / `Terminal` (`crates/akita-types/src/proof/levels.rs:806`), which genuinely do mean position.
 
@@ -90,9 +90,9 @@ Include them only if review agrees; otherwise they move to a follow-up.
   Also fix the stale doc comment that references a non-existent `e-hat` identifier (`coeffs.rs:229-237`).
 - `repeated_b_commitment_rows` / `repeated_b_planes_per_claim` (`crates/akita-prover/src/protocol/ring_relation/repeated_b.rs`) -> `multi_group_b_rows` / `b_planes_per_claim`.
   "Repeated" means per-commitment-group repetition for multipoint batching.
-- `MRowLayout` D/B/A row vocabulary.
+- `RelationMatrixRowLayout` D/B/A row vocabulary.
   The `D`/`B`/`A` row labels are named after the Ajtai keys `d_key`/`b_key`/`a_key`, and `D` rows collide visually with the ring degree `const D`.
-  At minimum document the key mapping at `generate_y` (`crates/akita-prover/src/protocol/ring_relation/relation_quotient.rs`) and `LevelParams::m_row_count_for`; optionally rename `D` rows to `v_rows`.
+  At minimum document the key mapping at `generate_relation_rhs` (`crates/akita-prover/src/protocol/ring_relation/relation_quotient.rs`) and `LevelParams::relation_matrix_row_count_for`; optionally rename `D` rows to `v_rows`.
 - `alpha` in ring-switch output structs (`crates/akita-verifier/src/protocol/ring_switch.rs`) -> `ring_eval_challenge`, since it evaluates cyclotomic rows at `alpha` and is neither a batching coefficient nor a fold challenge.
 
 ### Explicitly Keep (Non-Goals do not cover these well enough to leave implicit)
@@ -156,7 +156,7 @@ Include them only if review agrees; otherwise they move to a follow-up.
 - `cargo test --features zk` and `cargo test --no-default-features` pass.
 - Serialized proof bytes for existing proof fixtures are unchanged (see Testing Strategy).
 - `logging-transcript` prover/verifier event-stream equality tests pass unchanged.
-- A repository search shows the old identifiers are fully gone (no `QuadraticEquation`, `compute_r_split_eq`, `r_split`, `quadratic_equation` module, `new_ring_relation_*`, `prove_*_from_quadratic`, `MRowLayout::Intermediate`, `MRowLayout::Terminal`, `z_pre`, `DirectWitnessProof` remaining, except in this spec and in historical specs).
+- A repository search shows the old identifiers are fully gone (no `QuadraticEquation`, `compute_r_split_eq`, `r_split`, `quadratic_equation` module, `new_ring_relation_*`, `prove_*_from_quadratic`, `RelationMatrixRowLayout::Intermediate`, `RelationMatrixRowLayout::Terminal`, `z_pre`, `DirectWitnessProof` remaining, except in this spec and in historical specs).
 - `RingRelationProver` is the sole prover entry point for building `(RingRelationInstance, RingRelationWitness)`; flow helpers are named `prove_*_from_ring_relation`.
 
 ### Testing Strategy
@@ -191,7 +191,7 @@ No benchmark or proof-size movement should occur, and the byte-identity check ab
 The renames are mechanical and touch identifiers, call sites, module paths, and doc comments only.
 Recommended order so each step compiles:
 
-1. Rename leaf types and enum variants (`MRowLayout` variants, `DirectWitnessProof`, root/schedule `Direct` variants) and fix call sites.
+1. Rename leaf types and enum variants (`RelationMatrixRowLayout` variants, `DirectWitnessProof`, root/schedule `Direct` variants) and fix call sites.
 2. Rename `z_pre` field and its uses.
 3. Rename `r_stage1` and its uses.
 4. Rename `compute_r_split_eq` and move `r_split.rs` to `relation_quotient.rs`, updating the re-export.
@@ -212,12 +212,12 @@ The verifier already builds and consumes the statement; today it does so from lo
 **`RingRelationInstance` shape and ownership.**
 The instance owns the fields it needs; it does not hold a `&LevelParams` borrow.
 Owning a handful of scalars plus the vectors it already materializes keeps the instance a self-contained value that both prover and verifier can pass by reference into the row-evaluation paths without threading a `LevelParams` lifetime through every evaluator.
-The `LevelParams`-derived quantity it consumes (`MRowLayout`) is a small `Copy` scalar, so copying it in is cheaper than carrying a borrow.
+The `LevelParams`-derived quantity it consumes (`RelationMatrixRowLayout`) is a small `Copy` scalar, so copying it in is cheaper than carrying a borrow.
 
 The instance folds the per-claim incidence into two named axes rather than carrying five loose vectors.
 The loose vectors today encode two distinct things that the names hide.
 One axis is the **evaluation** incidence (which claim is opened at which point): `claim_to_point`, `num_polys_per_point`, `num_public_rows`, and `claim_poly_indices`, which are exactly the accessors of `ClaimIncidenceSummary` (`crates/akita-types/src/proof/incidence.rs:94`) and are copied out of the summary in `RingRelationProver::new`.
-The other axis is the **commitment** routing (which committed-polynomial bundle holds a claim's witness columns): `claim_to_point_poly` plus the commitment-view of `claim_poly_indices`, consumed in `compute_m_evals_x` to build the `t`-segment (`evals.rs:140-144`) entirely separately from the point side.
+The other axis is the **commitment** routing (which committed-polynomial bundle holds a claim's witness columns): `claim_to_point_poly` plus the commitment-view of `claim_poly_indices`, consumed in `compute_relation_matrix_col_evals` to build the `t`-segment (`evals.rs:140-144`) entirely separately from the point side.
 These axes coincide in the root (one commitment per point) but diverge in recursive multipoint (one shared commitment opened at many points: evaluation routing is per-claim while commitment routing sends every claim to bundle 0), which is why a single summary cannot represent both.
 So the instance holds the evaluation axis as a `ClaimIncidenceSummary` (already constructed and threaded by both sides: verifier `levels.rs:283`, `recursive.rs:886`, `batched.rs`) and the commitment axis as a new `CommitmentRouting` type (see the consolidation note for its shape).
 
@@ -225,7 +225,7 @@ So the instance holds the evaluation axis as a `ClaimIncidenceSummary` (already 
 // in akita-types
 pub struct RingRelationInstance<F: FieldCore, const D: usize> {
     // shape (copied out of LevelParams, no borrow)
-    m_row_layout: MRowLayout,
+    relation_matrix_row_layout: RelationMatrixRowLayout,
     // structure that defines the virtual M
     challenges: Challenges,                                  // from akita-challenges
     opening_points: Vec<RingOpeningPoint<F>>,
@@ -279,20 +279,20 @@ pub struct CommitmentRouting {
 ```
 
 This is the right shape because it names the second axis that the loose `claim_to_point_poly` left implicit, and because the verifier already carries this exact pairing as `PreparedRingSwitchRowEval.claim_to_point_poly: Vec<(usize, usize)>` (`crates/akita-verifier/src/protocol/ring_switch.rs:133`); `CommitmentRouting` is the named, owned form of that tuple list, shared by both sides.
-`compute_m_evals_x` builds its `t`-vector index from exactly these three (`evals.rs:118-144`), so the type captures a real computation, not a passive bag.
+`compute_relation_matrix_col_evals` builds its `t`-vector index from exactly these three (`evals.rs:118-144`), so the type captures a real computation, not a passive bag.
 
 Why a sibling type and not an extension of `ClaimIncidenceSummary`: the summary's model is one-commitment-per-point, enforced by its `validate()` (`incidence.rs:110-166`), and it is a verifier-reachable no-panic type. Folding a decoupled commitment axis into it would either weaken those invariants or require a second validation mode on the same type. Keeping `CommitmentRouting` separate preserves the summary's invariants and states the commitment axis as its own checked object.
 
 `CommitmentRouting` carries no new transcript bytes: the absorbed incidence shape stays exactly `append_claim_incidence_shape_to_transcript` (`incidence.rs:430`), which binds only `num_vars` / `num_points` / `num_claims` / `num_polys_per_point` / `claim_to_point` / `claim_poly_indices`. `CommitmentRouting` is in-memory routing only, so adding it changes no Fiat-Shamir output.
-`CommitmentRouting` must validate at construction (lengths equal `num_claims`, `claim_to_group[i] < num_polys_per_group.len()`, `claim_poly_in_group[i] < num_polys_per_group[claim_to_group[i]]`) to keep the verifier no-panic boundary; this mirrors the bounds `compute_m_evals_x` checks today at `evals.rs:96-111`.
+`CommitmentRouting` must validate at construction (lengths equal `num_claims`, `claim_to_group[i] < num_polys_per_group.len()`, `claim_poly_in_group[i] < num_polys_per_group[claim_to_group[i]]`) to keep the verifier no-panic boundary; this mirrors the bounds `compute_relation_matrix_col_evals` checks today at `evals.rs:96-111`.
 
 **Verifier adoption (the payoff).**
 The verifier today assembles the fold statement from loose pieces: `LevelParams`, the proof's `y_rings` / `v` / commitment rows, `ClaimIncidenceSummary`, and transcript-derived challenges, threaded by hand through `verify_root_level_inner` (`crates/akita-verifier/src/protocol/levels.rs:271`) and `verify_one_level_inner` (`crates/akita-verifier/src/protocol/levels/recursive.rs:120`).
 There is no single statement object today, so the same incidence/opening/challenge plumbing is spelled out separately from the prover's.
-Under this spec the verifier builds one `RingRelationInstance` from those same pieces and threads `&RingRelationInstance` into `prepare_ring_switch_row_eval` (`crates/akita-verifier/src/protocol/ring_switch.rs`) and `relation_claim_from_rows_extension` (`crates/akita-types/src/proof/relation.rs`).
+Under this spec the verifier builds one `RingRelationInstance` from those same pieces and threads `&RingRelationInstance` into `prepare_relation_matrix_evaluator` (`crates/akita-verifier/src/protocol/ring_switch.rs`) and `relation_claim_from_rows_extension` (`crates/akita-types/src/proof/relation.rs`).
 Every field is already in the verifier's hands at this point, so this is a regrouping, not new computation. Concretely:
 
-- `m_row_layout`: from the level's `LevelParams` (copied out).
+- `relation_matrix_row_layout`: from the level's `LevelParams` (copied out).
 - `challenges`: the witness fold challenges already sampled from the transcript.
 - `opening_points` / `ring_multiplier_points`: the verifier's reconstructed opening points (`RingMultiplierOpeningPoint::from_base` is already used in `proof/batch.rs`).
 - `incidence`: the `ClaimIncidenceSummary` the verifier already threads through `verify_root_level_inner` (`levels.rs:283`) and `verify_one_level_inner` (`recursive.rs:886`); this supplies `num_public_rows` and the three summary maps.
@@ -304,9 +304,9 @@ The verifier gains a single named statement it constructs once per level and reu
 This availability is verified against the current code, not assumed: the verifier already constructs `ClaimIncidenceSummary` and already samples the row coefficients from the same shared helper, so building the instance reorders no sampling and absorbs nothing new.
 
 **Concrete deduplication in scope: the witness-column segment layout.**
-The witness-column segment layout is currently duplicated: the verifier has an explicit `RingSwitchSegmentLayout` (`crates/akita-verifier/src/protocol/ring_switch.rs:140`, built by `segment_layout()` at `:605`), while the prover open-codes the same offsets inline in `compute_m_evals_x` (`crates/akita-prover/src/protocol/ring_switch/evals.rs`).
-This spec moves that layout onto the instance as `RingRelationInstance::segment_layout(&self) -> Result<RingRelationSegmentLayout, AkitaError>`, computed from `m_row_layout`, `num_public_rows`, `num_polys_per_point`, and the opening-point counts it already owns.
-The verifier's `RingSwitchSegmentLayout` is replaced by this method's return type, and the prover's inline offset arithmetic in `compute_m_evals_x` calls the same method, so the column layout has exactly one definition.
+The witness-column segment layout is currently duplicated: the verifier has an explicit `RingSwitchSegmentLayout` (`crates/akita-verifier/src/protocol/ring_switch.rs:140`, built by `segment_layout()` at `:605`), while the prover open-codes the same offsets inline in `compute_relation_matrix_col_evals` (`crates/akita-prover/src/protocol/ring_switch/evals.rs`).
+This spec moves that layout onto the instance as `RingRelationInstance::segment_layout(&self) -> Result<RingRelationSegmentLayout, AkitaError>`, computed from `relation_matrix_row_layout`, `num_public_rows`, `num_polys_per_point`, and the opening-point counts it already owns.
+The verifier's `RingSwitchSegmentLayout` is replaced by this method's return type, and the prover's inline offset arithmetic in `compute_relation_matrix_col_evals` calls the same method, so the column layout has exactly one definition.
 This is the deduplication that earns `RingRelationInstance` its place in `akita-types`: without it, the shared type would be a passive bag of fields rather than the single source of the layout both sides must agree on.
 
 **Deferred (enabled but not in this PR).**
@@ -323,7 +323,7 @@ Enabling true multipoint is a follow-up that requires three things: relaxing `ch
 Until that analysis exists the contract stays single-point.
 
 **Why `akita-types`, not a dependency flip.**
-`RingRelationInstance` goes in `akita-types`, the existing lowest common dependency of both prover and verifier, next to `relation_claim_from_rows_extension` and `LevelParams::m_row_count_for` which already live there.
+`RingRelationInstance` goes in `akita-types`, the existing lowest common dependency of both prover and verifier, next to `relation_claim_from_rows_extension` and `LevelParams::relation_matrix_row_count_for` which already live there.
 Every field type it needs is reachable from `akita-types` without a new crate edge (`Challenges` via the existing `akita-challenges` dependency; everything else native to `akita-types`).
 This spec does not change the crate dependency direction; see Non-Goals.
 
@@ -340,8 +340,8 @@ Per-symbol (Tier 1):
 | `compute_r_split_eq` (+ `r_split` module/path) | ~22 | 12 |
 | `z_pre` (incl. derived `z_pre_centered`, `z_pre_centered_inf_norm`) | 146 | 15 |
 | `r_stage1` | 155 | 22 |
-| `MRowLayout::Intermediate` | 47 | 20 |
-| `MRowLayout::Terminal` | 38 | 18 |
+| `RelationMatrixRowLayout::Intermediate` | 47 | 20 |
+| `RelationMatrixRowLayout::Terminal` | 38 | 18 |
 | `DirectWitnessProof` | 77 | 27 |
 | `AkitaBatchedRootProof::Direct` | 17 | 9 |
 | `AkitaPlannedStep::Direct` (+ `AkitaPlannedDirectStep`, `direct_step()`) | ~12 | few |
@@ -376,7 +376,7 @@ Tier 2 adds a small increment on top: `build_w_coeffs` (about 8 occurrences acro
 The spec documents themselves are out of this count: `specs/terminal-direct-ring-relation.md` references some old names and would be updated if this lands first.
 
 Part 2 (the split and verifier adoption) is not captured by these literal counts.
-Its surface is the two prover constructors, the `ring_switch_build_w` signature and its callers, the deletion of the `Option` / `take_*` / `*_centered` accessor cluster, the new `RingRelationInstance` and `CommitmentRouting` types in `akita-types` (the instance holding a `ClaimIncidenceSummary` for the evaluation axis and a `CommitmentRouting` for the commitment axis), the `segment_layout` method that replaces the verifier's `RingSwitchSegmentLayout` and the prover's inline `compute_m_evals_x` offsets, and the verifier statement-assembly sites in `crates/akita-verifier/src/protocol/levels.rs` and `levels/recursive.rs`.
+Its surface is the two prover constructors, the `ring_switch_build_w` signature and its callers, the deletion of the `Option` / `take_*` / `*_centered` accessor cluster, the new `RingRelationInstance` and `CommitmentRouting` types in `akita-types` (the instance holding a `ClaimIncidenceSummary` for the evaluation axis and a `CommitmentRouting` for the commitment axis), the `segment_layout` method that replaces the verifier's `RingSwitchSegmentLayout` and the prover's inline `compute_relation_matrix_col_evals` offsets, and the verifier statement-assembly sites in `crates/akita-verifier/src/protocol/levels.rs` and `levels/recursive.rs`.
 This is a real refactor with net line movement, unlike part 1, and is the part where reviewer attention belongs.
 
 ### Alternatives Considered
@@ -390,14 +390,14 @@ Rejected: in the lattice setting `_hat` is the established paper convention for 
 
 **Fold these renames into the terminal-direct-ring-relation PR (#141).**
 Rejected: that is a spec-only docs PR for an unrelated feature, and a cross-cutting rename sweep would destroy its reviewability.
-The `MRowLayout` and `Direct` renames are most valuable to land before that feature's implementation, since it adds another `Terminal`/`Direct` meaning.
+The `RelationMatrixRowLayout` and `Direct` renames are most valuable to land before that feature's implementation, since it adds another `Terminal`/`Direct` meaning.
 
 **Introduce deprecated aliases for a transition period.**
 Rejected by the repo's no-backward-compatibility rule; all call sites are updated in one pass.
 
 **Put the shared instance in `akita-verifier` and have `akita-prover` depend on it.**
 Considered because the prover is the more comprehensive crate, so a prover-depends-on-verifier edge is plausible.
-Rejected for this PR: the shared statement belongs in the lowest common dependency, and `akita-types` already plays that role (it holds `relation_claim_from_rows_extension`, `LevelParams`, `MRowLayout`, and the incidence types).
+Rejected for this PR: the shared statement belongs in the lowest common dependency, and `akita-types` already plays that role (it holds `relation_claim_from_rows_extension`, `LevelParams`, `RelationMatrixRowLayout`, and the incidence types).
 Flipping the dependency direction would not remove the duplication that motivates the split unless the shared code lived in the verifier, and it would pull verifier replay into the prover build for no gain over placing the type in `akita-types`.
 The broader question of whether to restructure the crate graph is a separate investigation, not part of this PR.
 
@@ -409,7 +409,7 @@ The spec keeps verifier adoption in scope because it is the change that makes th
 ## Documentation
 
 - Add a short "Naming" or glossary note (either in this spec's wake or in a prover module doc) that pins: `_hat` = digit decomposition, the two distinct `split_eq` meanings, `M` as a virtual row-combined relation table versus the Ajtai keys `A`/`B`/`D`, and the distinction between the matrix-relation layer and the norm sumcheck (`AkitaStage1Prover`).
-- Update `specs/terminal-direct-ring-relation.md` references that mention `MRowLayout::Terminal`, `DirectWitnessProof`, or `compute_r_split_eq` if this rename lands first.
+- Update `specs/terminal-direct-ring-relation.md` references that mention `RelationMatrixRowLayout::Terminal`, `DirectWitnessProof`, or `compute_r_split_eq` if this rename lands first.
 - No external or README changes are required.
 
 ## Execution
@@ -434,7 +434,7 @@ Important risks to resolve first:
 - `crates/akita-prover/src/protocol/ring_relation.rs`, `RingRelationProver` and the ring-relation builder module.
 - `crates/akita-prover/src/protocol/ring_relation/relation_quotient.rs`, `compute_relation_quotient` and the gadget-factorization doc.
 - `crates/akita-algebra/src/split_eq.rs`, the genuine `GruenSplitEq` construction that collides by name.
-- `crates/akita-types/src/layout/params.rs`, `MRowLayout` and its doc.
+- `crates/akita-types/src/layout/params.rs`, `RelationMatrixRowLayout` and its doc.
 - `crates/akita-types/src/proof/levels.rs`, `AkitaProofStep`, `AkitaBatchedRootProof`, and `TerminalLevelProof`.
 - `crates/akita-types/src/proof/direct_witness.rs`, `DirectWitnessProof`.
 - `crates/akita-prover/src/lib.rs`, `DecomposeFoldWitness` and `z_pre`.

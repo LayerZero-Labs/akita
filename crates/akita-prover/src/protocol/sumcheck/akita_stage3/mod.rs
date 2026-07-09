@@ -2,8 +2,8 @@
 //!
 //! The table is laid out as `left * right_len + right`. The right factor is
 //! bound first, then the left factor. This matches setup products of the form
-//! `S(lambda, y) * omega(lambda) * alpha(y)` without materializing the full
-//! `omega(lambda) * alpha(y)` table.
+//! `S(i, y) * setup_index_weight(i) * alpha(y)` without materializing the full
+//! `setup_index_weight(i) * alpha(y)` table.
 
 mod product_table;
 mod utils;
@@ -19,8 +19,9 @@ use akita_transcript::{labels::ABSORB_SETUP_PREFIX_SLOT, Transcript};
 use akita_types::{
     ensure_setup_envelope, gadget_row_scalars, select_setup_prefix_slot,
     stage3_offload_natural_field_len, AkitaExpandedSetup, FpExtEncoding, LevelParams,
-    RingRelationInstance, SetupContributionPlan, SetupContributionPlanInputs,
-    SetupPrefixProverRegistry, SETUP_OFFLOAD_D_SETUP, SETUP_SUMCHECK_DEGREE,
+    RingRelationInstance, SetupContributionGroupInputs, SetupContributionPlan,
+    SetupContributionPlanInputs, SetupPrefixProverRegistry, SETUP_OFFLOAD_D_SETUP,
+    SETUP_SUMCHECK_DEGREE,
 };
 use product_table::FactoredProductTerm;
 use std::sync::Arc;
@@ -254,7 +255,7 @@ where
     E: FpExtEncoding<F> + FromPrimitiveInt + LiftBase<F> + AkitaSerialize,
     T: Transcript<F>,
 {
-    let (required, mut bar_omega, alpha_pows) =
+    let (required, mut setup_index_weight, alpha_pows) =
         prepare_setup_sumcheck_terms::<F, E>(ring_d, lp, relation, tau1, alpha, x_challenges)?;
 
     ensure_setup_envelope(expanded, required, ring_d)?;
@@ -300,27 +301,27 @@ where
         ));
     }
 
-    let lambda_len = required
+    let setup_idx_len = required
         .checked_next_power_of_two()
-        .ok_or_else(|| AkitaError::InvalidSetup("setup product lambda length overflow".into()))?;
-    bar_omega.resize(lambda_len, E::zero());
+        .ok_or_else(|| AkitaError::InvalidSetup("setup product index length overflow".into()))?;
+    setup_index_weight.resize(setup_idx_len, E::zero());
 
-    let table_len = lambda_len
+    let table_len = setup_idx_len
         .checked_mul(ring_d)
         .ok_or_else(|| AkitaError::InvalidSetup("setup product table length overflow".into()))?;
     let mut setup_table = vec![E::zero(); table_len];
     cfg_chunks_mut!(&mut setup_table, ring_d)
         .enumerate()
-        .for_each(|(lambda, row)| {
-            if lambda < required {
-                let src = &setup_field[lambda * ring_d..(lambda + 1) * ring_d];
+        .for_each(|(setup_idx, row)| {
+            if setup_idx < required {
+                let src = &setup_field[setup_idx * ring_d..(setup_idx + 1) * ring_d];
                 for (slot, &coeff) in row.iter_mut().zip(src) {
                     *slot = E::lift_base(coeff);
                 }
             }
         });
 
-    FactoredProductTerm::new_dense(setup_table, bar_omega, alpha_pows.to_vec())
+    FactoredProductTerm::new_dense(setup_table, setup_index_weight, alpha_pows.to_vec())
 }
 
 fn build_witness_carry_term<E>(
@@ -376,7 +377,7 @@ where
     Ok(term)
 }
 
-/// Derive the factored product-sumcheck terms `(required, bar_omega, alpha_pows)`
+/// Derive the factored product-sumcheck terms `(required, setup_index_weight, alpha_pows)`
 /// from the level parameters and ring relation via the ring-switch row
 /// evaluation.
 fn prepare_setup_sumcheck_terms<F, E>(
@@ -399,11 +400,27 @@ where
         lp.log_basis,
     );
     let layout = relation.segment_layout(lp, None)?;
-    let plan =
-        SetupContributionPlan::prepare(&inputs, x_challenges, None, None, &fold_gadget, &layout)?;
-    let required = plan.required();
-    let bar_omega = plan.materialize_bar_omega();
-    Ok((required, bar_omega, alpha_pows.to_vec()))
+    let single_group =
+        SetupContributionGroupInputs::single_group_layout(&inputs, &layout, lp.log_basis)?;
+    let groups = std::slice::from_ref(&single_group.group);
+    let static_plan = SetupContributionPlan::prepare_static(
+        &inputs,
+        groups,
+        single_group.d_row_start,
+        single_group.d_rows,
+        single_group.d_physical_cols,
+    )?;
+    let plan = SetupContributionPlan::finish_plan::<F>(
+        &static_plan,
+        x_challenges,
+        None,
+        None,
+        Some(&fold_gadget),
+        groups,
+    )?;
+    let required = plan.required()?;
+    let setup_index_weight = plan.materialize_setup_index_weights()?;
+    Ok((required, setup_index_weight, alpha_pows.to_vec()))
 }
 
 /// Build the setup-contribution artifact from prover-owned relation data.
@@ -419,12 +436,12 @@ where
     let opening_batch = relation.opening_batch();
     let num_polynomials = opening_batch.num_total_polynomials();
     let depth_fold = lp.num_digits_fold(num_polynomials, lp.field_bits_for_cache())?;
-    let m_row_layout = relation.m_row_layout();
-    let rows = lp.m_row_count_for(1, m_row_layout)?;
+    let relation_matrix_row_layout = relation.relation_matrix_row_layout();
+    let rows = lp.relation_matrix_row_count_for(1, relation_matrix_row_layout)?;
     SetupContributionPlanInputs::from_level_params(
         lp,
         &[num_polynomials],
-        m_row_layout,
+        relation_matrix_row_layout,
         depth_fold,
     )?
     .with_eq_tau1_from_tau(tau1, rows)

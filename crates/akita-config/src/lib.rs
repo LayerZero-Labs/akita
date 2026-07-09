@@ -99,7 +99,7 @@ mod transcript_binding;
 pub use conservative_commitment::ConservativeCommitmentConfig;
 pub use proof_optimized::{
     matrix_envelope_for_schedule, setup_level_params_from_runtime_schedule,
-    worst_case_grouped_opening_batch_for_shape,
+    worst_case_multi_group_opening_batch_for_shape,
 };
 pub use schedule_selection::effective_batched_schedule;
 pub use transcript_binding::bind_transcript_instance_descriptor;
@@ -296,11 +296,11 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
         None
     }
 
-    /// Whether grouped `commit_final_group` may run under this config adapter.
+    /// Whether multi-group `commit_final_group` may run under this config adapter.
     ///
-    /// Conservative precommit adapters return `false`; grouped final commits
+    /// Conservative precommit adapters return `false`; multi-group final commits
     /// require the regular preset config.
-    fn supports_grouped_final_commit() -> bool {
+    fn supports_multi_group_final_commit() -> bool {
         true
     }
 
@@ -330,9 +330,9 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
         )
     }
 
-    /// Root commit layout read from a grouped runtime schedule.
-    fn grouped_root_commit_params(schedule: &Schedule) -> Result<LevelParams, AkitaError> {
-        akita_types::grouped_root_commit_params(schedule)
+    /// Root commit layout read from a multi-group runtime schedule.
+    fn multi_group_root_commit_params(schedule: &Schedule) -> Result<LevelParams, AkitaError> {
+        akita_types::multi_group_root_commit_params(schedule)
     }
 
     /// Schedule consumed by the prove/verify root path.
@@ -661,13 +661,13 @@ mod opening_schedule_key_tests {
     use super::*;
 
     #[test]
-    fn opening_schedule_key_freezes_grouped_precommitteds() {
+    fn opening_schedule_key_freezes_multi_group_precommitteds() {
         let layout = OpeningClaimsLayout::from_groups(vec![
             PolynomialGroupLayout::new(2, 1),
             PolynomialGroupLayout::new(4, 2),
         ])
-        .expect("grouped layout");
-        let key = opening_schedule_key::<fp128::D64OneHot>(&layout).expect("grouped key");
+        .expect("multi-group layout");
+        let key = opening_schedule_key::<fp128::D64OneHot>(&layout).expect("multi-group key");
         assert_eq!(key.final_group, PolynomialGroupLayout::new(4, 2));
         assert_eq!(key.num_commitment_groups(), 2);
         assert_eq!(key.precommitteds.len(), 1);

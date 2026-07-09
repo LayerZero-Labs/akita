@@ -80,7 +80,7 @@ mod tests {
     #[derive(Clone)]
     struct GroupedExtensionCfg;
 
-    fn grouped_extension_params() -> Result<LevelParams, AkitaError> {
+    fn multi_group_extension_params() -> Result<LevelParams, AkitaError> {
         Ok(LevelParams::params_only(
             SisModulusFamily::Q32,
             GroupedExtensionCfg::D,
@@ -126,7 +126,7 @@ mod tests {
         }
 
         fn runtime_schedule(_key: AkitaScheduleLookupKey) -> Result<Schedule, AkitaError> {
-            let params = grouped_extension_params()?;
+            let params = multi_group_extension_params()?;
             Ok(Schedule {
                 steps: vec![
                     Step::Fold(FoldStep {
@@ -155,17 +155,17 @@ mod tests {
         fn get_params_for_batched_commitment(
             _layout: &OpeningClaimsLayout,
         ) -> Result<LevelParams, AkitaError> {
-            grouped_extension_params()
+            multi_group_extension_params()
         }
     }
 
     #[test]
-    fn grouped_extension_openings_fallback_to_root_direct() {
+    fn multi_group_extension_openings_fallback_to_root_direct() {
         let opening_batch = OpeningClaimsLayout::from_groups(vec![
             PolynomialGroupLayout::new(2, 1),
             PolynomialGroupLayout::new(4, 1),
         ])
-        .expect("grouped opening batch");
+        .expect("multi-group opening batch");
         let point = vec![
             BaseExt::from_base_slice(&[
                 Base::from_u64(0),
@@ -181,7 +181,7 @@ mod tests {
 
         assert!(
             matches!(schedule.steps.first(), Some(Step::Direct(_))),
-            "grouped extension openings must not select the grouped folded trace path"
+            "multi-group extension openings must not select the multi-group folded trace path"
         );
     }
 }

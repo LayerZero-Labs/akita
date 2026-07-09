@@ -46,7 +46,7 @@ fn prepare_root<F, E, T, P, C, O, TS, R>(
     transcript: &mut T,
     claims: ProverOpeningData<'_, E, P, F>,
     root_params: &LevelParams,
-    m_row_layout: MRowLayout,
+    relation_matrix_row_layout: RelationMatrixRowLayout,
     terminal_tail_t_vectors: Option<usize>,
     basis: BasisMode,
 ) -> Result<PreparedFold<F, E>, AkitaError>
@@ -114,7 +114,7 @@ where
         alpha_bits,
         basis,
         BlockOrder::RowMajor,
-        m_row_layout,
+        relation_matrix_row_layout,
         terminal_tail_t_vectors,
     )
 }
@@ -206,7 +206,7 @@ where
         transcript,
         claims,
         root_params,
-        MRowLayout::WithDBlock,
+        RelationMatrixRowLayout::WithDBlock,
         None,
         basis,
     )?;
@@ -310,7 +310,7 @@ where
 
     let terminal_tail_t_vectors = terminal_golomb_grind_tail_t_vectors(
         root_params,
-        MRowLayout::WithoutDBlock,
+        RelationMatrixRowLayout::WithoutDBlock,
         Some(terminal_direct_witness_shape),
     )?;
     let prepared_fold = prepare_root::<F, E, T, P, C, O, TS, R>(
@@ -318,7 +318,7 @@ where
         transcript,
         claims,
         root_params,
-        MRowLayout::WithoutDBlock,
+        RelationMatrixRowLayout::WithoutDBlock,
         terminal_tail_t_vectors,
         basis,
     )?;

@@ -141,7 +141,7 @@ ratchet start point for this PR, not accepted long-term targets.
 | 1921 | `crates/akita-field/src/fields/fp128.rs` | 128-bit prime field core, arithmetic trait impls, named prime configs, FFT config impls, and tests. |
 | 1857 | `crates/akita-config/src/proof_optimized.rs` | Schedule/layout helpers, matrix-envelope helpers, and per-field config modules. |
 | 1814 | `crates/akita-pcs/tests/algebra.rs` | Algebra integration-test fixtures and scenario groups. |
-| 1771 | `crates/akita-prover/src/protocol/quadratic_equation.rs` | Decompose-fold validation, witness aggregation, V-row construction, high-half/cyclic products, `r_split_eq`, `generate_y`, and tests. |
+| 1771 | `crates/akita-prover/src/protocol/quadratic_equation.rs` | Decompose-fold validation, witness aggregation, V-row construction, high-half/cyclic products, `r_split_eq`, `generate_relation_rhs`, and tests. |
 | 1576 | `crates/akita-prover/src/protocol/ring_switch.rs` | Ring-switch transcript/finalization, commitment construction, eval builders, coefficient construction, and tests. |
 | 1506 | `crates/akita-types/src/field_reduction.rs` | Field-reduction encodings, trace/embed helpers, ring-subfield validation/checks, and tests. |
 | 1503 | `crates/akita-algebra/src/ring/cyclotomic.rs` | Cyclotomic ring core operations, balanced decomposition, wide ring helpers, serialization, and tests. |
@@ -373,7 +373,7 @@ Implementation order:
    builders, coefficient construction, and tests.
 2. Split `quadratic_equation.rs` into decompose-fold validation, witness
    aggregation/V-row construction, high-half and cyclic products,
-   `compute_r_split_eq`, `generate_y`, and tests.
+   `compute_r_split_eq`, `generate_relation_rhs`, and tests.
 3. Split verifier `levels.rs` by replay phase: ZK hiding, root level,
    recursive level, terminal level, dispatch, and shared validation helpers.
    Preserve the verifier no-panic boundary by keeping validation near API

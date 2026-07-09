@@ -34,7 +34,7 @@ pub fn resolve_schedule(
     )
 }
 
-/// Resolve a grouped-root schedule without falling back to a scalar table key.
+/// Resolve a multi-group-root schedule without falling back to a scalar table key.
 pub fn resolve_group_batch_schedule(
     key: &AkitaScheduleLookupKey,
     policy: &PlannerPolicy,
@@ -275,9 +275,9 @@ mod tests {
         let key = AkitaScheduleLookupKey::single(final_group);
         let policy = flat_policy();
 
-        let via_grouped =
+        let via_multi_group =
             resolve_group_batch_schedule(&key, &policy, ring_challenge_config, fold_shape, None)
-                .expect("single-group grouped resolve should delegate to scalar path");
+                .expect("single-group resolve should delegate to scalar path");
         let via_scalar = resolve_schedule(
             final_group,
             &policy,
@@ -287,8 +287,8 @@ mod tests {
         )
         .expect("scalar resolve");
 
-        assert_eq!(via_grouped.total_bytes, via_scalar.total_bytes);
-        assert_eq!(via_grouped.steps.len(), via_scalar.steps.len());
+        assert_eq!(via_multi_group.total_bytes, via_scalar.total_bytes);
+        assert_eq!(via_multi_group.steps.len(), via_scalar.steps.len());
     }
 
     #[test]
@@ -479,7 +479,7 @@ mod tests {
         assert_eq!(validated, materialized.total_bytes);
     }
 
-    fn grouped_sample_key() -> AkitaScheduleLookupKey {
+    fn multi_group_sample_key() -> AkitaScheduleLookupKey {
         let pre_key = PolynomialGroupLayout::new(10, 1);
         let policy = flat_policy();
         let pre = PrecommittedGroupParams::from_params(
@@ -512,11 +512,11 @@ mod tests {
     }
 
     #[test]
-    fn validate_generated_grouped_entry_accepts_materialized_dp_schedule() {
-        let key = grouped_sample_key();
+    fn validate_generated_multi_group_entry_accepts_materialized_dp_schedule() {
+        let key = multi_group_sample_key();
         let policy = flat_policy();
         let schedule = find_group_batch_schedule(&key, &policy, ring_challenge_config, fold_shape)
-            .expect("grouped schedule");
+            .expect("multi-group schedule");
         let entry =
             generated_group_entry_from_steps(&key, generated_steps_from_schedule(&schedule));
 
@@ -527,6 +527,6 @@ mod tests {
             &ring_challenge_config,
             &fold_shape,
         )
-        .expect("grouped generated entry should validate");
+        .expect("multi-group generated entry should validate");
     }
 }

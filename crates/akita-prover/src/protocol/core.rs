@@ -37,7 +37,7 @@ use akita_types::{
     check_extension_opening_reduction_output, derive_tensor_extension_opening_claim_from_partials,
     embed_ring_subfield_scalar, embed_ring_subfield_vector, ensure_trace_stage2_supported,
     prepare_opening_point, recover_ring_subfield_inner_product,
-    relation_claim_from_layout_extension, relation_y_layout_for, reorder_stage1_coords,
+    relation_claim_from_layout_extension, relation_rhs_layout_for, reorder_stage1_coords,
     ring_subfield_packed_extension_opening_point, root_current_w_len,
     root_tensor_projection_enabled, sample_public_row_coefficients, schedule_is_root_direct,
     schedule_num_fold_levels, schedule_root_fold_step, stage2_trace_coeff,
@@ -47,10 +47,10 @@ use akita_types::{
     trace_weight_layout_from_segment, AkitaBatchedProof, AkitaBatchedRootProof,
     AkitaCommitmentHint, AkitaExpandedSetup, AkitaIntermediateStage2Proof, AkitaLevelProof,
     AkitaStage1Proof, AkitaStage2Proof, BasisMode, BlockOrder, CleartextWitnessProof, Commitment,
-    ExecutionSchedule, ExtensionOpeningReductionProof, LevelParams, MRowLayout, OpeningClaims,
-    OpeningClaimsLayout, PreparedOpeningPoint, RingMultiplierOpeningPoint, RingVec, RingView,
-    Schedule, SetupContributionMode, SetupPrefixProverRegistry, SetupSumcheckProof, Step,
-    TerminalLevelProof, TraceTable,
+    ExecutionSchedule, ExtensionOpeningReductionProof, LevelParams, OpeningClaims,
+    OpeningClaimsLayout, PreparedOpeningPoint, RelationMatrixRowLayout, RingMultiplierOpeningPoint,
+    RingVec, RingView, Schedule, SetupContributionMode, SetupPrefixProverRegistry,
+    SetupSumcheckProof, Step, TerminalLevelProof, TraceTable,
 };
 use std::sync::Arc;
 

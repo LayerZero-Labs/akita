@@ -195,7 +195,7 @@ cargo test -p akita-pcs --features zk --test zk zk_dense_d128_hides_folded_v_and
 ```
 
 Regression coverage should also include representative transparent direct and
-folded proof cases in `crates/akita-pcs/tests/akita_e2e.rs`, grouped batched
+folded proof cases in `crates/akita-pcs/tests/akita_e2e.rs`, multi-group batched
 cases in `crates/akita-pcs/tests/batched_aggregated_e2e.rs`, multipoint cases in
 `crates/akita-pcs/tests/multipoint_batched_e2e.rs`, and scheme API tests in
 `crates/akita-scheme/src/tests.rs`.

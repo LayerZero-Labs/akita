@@ -1,25 +1,28 @@
-//! Shared grouped/singleton M-table column evaluation.
+//! Shared singleton and multi-group relation matrix column evaluation.
 //!
-//! [`compute_grouped_m_evals_x`] materializes the tau1-weighted M-row column
-//! vector `m_evals_x` that the fused stage-2 sumcheck treats as the row
+//! [`compute_relation_matrix_col_evals`] materializes the tau1-weighted relation-matrix column
+//! vector `relation_matrix_col_evals` that the fused stage-2 sumcheck treats as the row
 //! polynomial. The prover still materializes this table for stage-2 proving.
 //! The verifier replays the same group-major geometry with its structured
-//! `RingSwitchDeferredRowEval` path instead of rebuilding the dense vector.
+//! `RelationMatrixEvaluator` path instead of rebuilding the dense vector.
 
 use crate::layout::CommitmentRingDims;
 use crate::proof::ring_relation::RingRelationInstance;
 use crate::{
-    gadget_row_scalars, r_decomp_levels, AkitaExpandedSetup, FpExtEncoding, LevelParams, MRowLayout,
+    gadget_row_scalars, r_decomp_levels, AkitaExpandedSetup, FpExtEncoding, LevelParams,
+    RelationMatrixRowLayout,
 };
 use akita_algebra::eq_poly::EqPolynomial;
-use akita_algebra::ring::{eval_flat_ring_at_pows, scalar_powers};
+use akita_algebra::ring::{eval_flat_ring_at_pows_fast, scalar_powers};
 use akita_challenges::Challenges;
 use akita_field::parallel::*;
-use akita_field::{AkitaError, CanonicalField, FieldCore, FromPrimitiveInt, LiftBase, MulBase};
+use akita_field::{
+    AkitaError, CanonicalField, FieldCore, FromPrimitiveInt, LiftBase, MulBase, MulBaseUnreduced,
+};
 
-/// Unified M-table column evaluation for singleton and grouped root relations.
+/// Unified relation matrix column evaluation for singleton and multi-group root relations.
 ///
-/// Singleton roots use the scalar/chunked witness layout. Grouped roots use the
+/// Singleton roots use the scalar/chunked witness layout. Multi-group roots use the
 /// group-major layout and still reject multi-chunk witness emission.
 ///
 /// # Errors
@@ -27,8 +30,8 @@ use akita_field::{AkitaError, CanonicalField, FieldCore, FromPrimitiveInt, LiftB
 /// Returns an error if the batch shape, opening-point layout, challenge count,
 /// chunking configuration, or expanded matrix dimensions are inconsistent.
 #[allow(clippy::too_many_arguments)]
-#[tracing::instrument(skip_all, name = "compute_grouped_m_evals_x")]
-pub fn compute_grouped_m_evals_x<F, E>(
+#[tracing::instrument(skip_all, name = "compute_relation_matrix_col_evals")]
+pub fn compute_relation_matrix_col_evals<F, E>(
     setup: &AkitaExpandedSetup<F>,
     instance: &RingRelationInstance<F>,
     alpha: E,
@@ -37,15 +40,15 @@ pub fn compute_grouped_m_evals_x<F, E>(
     lp: &LevelParams,
     tau1: &[E],
     gamma: &[E],
-    m_row_layout: MRowLayout,
+    relation_matrix_row_layout: RelationMatrixRowLayout,
 ) -> Result<Vec<E>, AkitaError>
 where
     F: FieldCore + CanonicalField,
-    E: FpExtEncoding<F> + FromPrimitiveInt + LiftBase<F> + MulBase<F>,
+    E: FpExtEncoding<F> + FromPrimitiveInt + LiftBase<F> + MulBase<F> + MulBaseUnreduced<F>,
 {
     let opening_batch = instance.opening_batch();
     lp.witness_chunk.validate()?;
-    lp.reject_grouped_multi_chunk("compute_grouped_m_evals_x")?;
+    lp.reject_multi_group_multi_chunk("compute_relation_matrix_col_evals")?;
     lp.validate_root_opening_batch(opening_batch)?;
     if gamma.len() != opening_batch.num_total_polynomials() {
         return Err(AkitaError::InvalidProof);
@@ -62,7 +65,8 @@ where
     let alpha_pows_a = alpha_pows;
     let alpha_pows_b = scalar_powers(alpha, d_b);
     let alpha_pows_d = scalar_powers(alpha, d_d);
-    let rows = lp.m_row_count_for(opening_batch.num_groups(), m_row_layout)?;
+    let rows =
+        lp.relation_matrix_row_count_for(opening_batch.num_groups(), relation_matrix_row_layout)?;
     let eq_tau1 = EqPolynomial::evals(tau1)?;
     if eq_tau1.len() < rows {
         return Err(AkitaError::InvalidSize {
@@ -70,7 +74,7 @@ where
             actual: eq_tau1.len(),
         });
     }
-    let n_d_active = lp.n_d_active_for(m_row_layout);
+    let n_d_active = lp.n_d_active_for(relation_matrix_row_layout);
     let levels = r_decomp_levels::<F>(lp.log_basis);
     let order = opening_batch.root_group_order()?;
     let num_chunks = lp.witness_chunk.num_chunks;
@@ -89,43 +93,47 @@ where
             .block_len()
             .checked_mul(group_lp.num_digits_commit())
             .and_then(|n| n.checked_mul(depth_fold))
-            .ok_or_else(|| AkitaError::InvalidSetup("grouped z width overflow".to_string()))?;
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup("relation matrix z width overflow".to_string())
+            })?;
         let group_z_cols = if use_chunked_singleton_layout {
             group_z_len.checked_mul(num_chunks).ok_or_else(|| {
-                AkitaError::InvalidSetup("chunked grouped z width overflow".to_string())
+                AkitaError::InvalidSetup("chunked relation matrix z width overflow".to_string())
             })?
         } else {
             group_z_len
         };
-        z_total = z_total
-            .checked_add(group_z_cols)
-            .ok_or_else(|| AkitaError::InvalidSetup("grouped z width overflow".to_string()))?;
+        z_total = z_total.checked_add(group_z_cols).ok_or_else(|| {
+            AkitaError::InvalidSetup("relation matrix z width overflow".to_string())
+        })?;
         let e_len = k_g
             .checked_mul(group_lp.num_blocks())
             .and_then(|n| n.checked_mul(group_lp.num_digits_open()))
-            .ok_or_else(|| AkitaError::InvalidSetup("grouped e width overflow".to_string()))?;
+            .ok_or_else(|| AkitaError::InvalidSetup("multi-group e width overflow".to_string()))?;
         e_total = e_total
             .checked_add(e_len)
-            .ok_or_else(|| AkitaError::InvalidSetup("grouped e width overflow".to_string()))?;
+            .ok_or_else(|| AkitaError::InvalidSetup("multi-group e width overflow".to_string()))?;
         t_total = t_total
             .checked_add(
                 k_g.checked_mul(group_lp.num_blocks())
                     .and_then(|n| n.checked_mul(group_lp.a_rows_len()))
                     .and_then(|n| n.checked_mul(group_lp.num_digits_open()))
                     .ok_or_else(|| {
-                        AkitaError::InvalidSetup("grouped t width overflow".to_string())
+                        AkitaError::InvalidSetup("relation matrix t width overflow".to_string())
                     })?,
             )
-            .ok_or_else(|| AkitaError::InvalidSetup("grouped t width overflow".to_string()))?;
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup("relation matrix t width overflow".to_string())
+            })?;
     }
     let r_tail_len = rows
         .checked_mul(levels)
-        .ok_or_else(|| AkitaError::InvalidSetup("grouped r width overflow".to_string()))?;
+        .ok_or_else(|| AkitaError::InvalidSetup("relation matrix r width overflow".to_string()))?;
     let total_cols = z_total
         .checked_add(e_total)
         .and_then(|n| n.checked_add(t_total))
         .and_then(|n| n.checked_add(r_tail_len))
-        .ok_or_else(|| AkitaError::InvalidSetup("grouped M width overflow".to_string()))?;
+        .ok_or_else(|| AkitaError::InvalidSetup("relation matrix width overflow".to_string()))?;
     let x_len = total_cols.next_power_of_two();
     let mut out = Vec::with_capacity(x_len);
 
@@ -163,14 +171,14 @@ where
             || opening_point.b.len() != group_lp.num_blocks()
         {
             return Err(AkitaError::InvalidInput(
-                "grouped M eval opening-point layout mismatch".to_string(),
+                "relation matrix col eval opening-point layout mismatch".to_string(),
             ));
         }
         if ring_multiplier_point.a_len() < group_lp.block_len()
             || ring_multiplier_point.b_len() != group_lp.num_blocks()
         {
             return Err(AkitaError::InvalidInput(
-                "grouped M eval multiplier layout mismatch".to_string(),
+                "relation matrix col eval multiplier layout mismatch".to_string(),
             ));
         }
         let total_blocks = k_g
@@ -203,28 +211,30 @@ where
             .checked_mul(depth_open)
             .and_then(|len| len.checked_mul(num_blocks_g))
             .ok_or_else(|| {
-                AkitaError::InvalidSetup("grouped B vector width overflow".to_string())
+                AkitaError::InvalidSetup("multi-group B vector width overflow".to_string())
             })?;
         let b_width = k_g
             .checked_mul(t_cols_per_vector)
-            .ok_or_else(|| AkitaError::InvalidSetup("grouped B width overflow".to_string()))?;
-        let a_view = setup.shared_matrix.ring_view_dyn(n_a, inner_width, d_a)?;
+            .ok_or_else(|| AkitaError::InvalidSetup("setup B width overflow".to_string()))?;
+        let setup_a_view = setup.shared_matrix.ring_view_dyn(n_a, inner_width, d_a)?;
         let b_view = setup.shared_matrix.ring_view_dyn(n_b, b_width, d_b)?;
-        let a_rows: Vec<&[F]> = (0..n_a)
-            .map(|r| a_view.row_flat(r))
+        let setup_a_rows: Vec<&[F]> = (0..n_a)
+            .map(|r| setup_a_view.row_flat(r))
             .collect::<Result<_, _>>()?;
         let b_rows: Vec<&[F]> = (0..n_b)
             .map(|r| b_view.row_flat(r))
             .collect::<Result<_, _>>()?;
-        let a_range = lp.root_a_row_range(opening_batch, group_index, m_row_layout)?;
-        let b_range = lp.root_commitment_row_range(opening_batch, group_index, m_row_layout)?;
-        let a_weights = &eq_tau1[a_range];
+        let a_range =
+            lp.root_a_row_range(opening_batch, group_index, relation_matrix_row_layout)?;
+        let b_range =
+            lp.root_commitment_row_range(opening_batch, group_index, relation_matrix_row_layout)?;
+        let a_row_weights = &eq_tau1[a_range];
         let b_weights = &eq_tau1[b_range];
         let g_open: Vec<E> = gadget_row_scalars::<F>(depth_open, log_basis)
             .into_iter()
             .map(E::lift_base)
             .collect();
-        let g_commit: Vec<E> = gadget_row_scalars::<F>(depth_commit, log_basis)
+        let commit_gadget: Vec<E> = gadget_row_scalars::<F>(depth_commit, log_basis)
             .into_iter()
             .map(E::lift_base)
             .collect();
@@ -242,7 +252,7 @@ where
                 for (di, eq_i) in eq_tau1[d_start..(d_start + n_d_active)].iter().enumerate() {
                     if !eq_i.is_zero() {
                         acc += *eq_i
-                            * eval_flat_ring_at_pows(
+                            * eval_flat_ring_at_pows_fast(
                                 &d_rows[di][d_phys_col * d_d..(d_phys_col + 1) * d_d],
                                 &alpha_pows_d,
                             );
@@ -271,11 +281,12 @@ where
                 let phys_claim_offset =
                     block_idx * t_compound_per_block + a_idx * depth_open + digit_idx;
                 let local_col = t_vector_idx * t_cols_per_vector + phys_claim_offset;
-                let mut acc = a_weights[a_idx] * challenge_sums_by_t_block[blk] * g_open[digit_idx];
+                let mut acc =
+                    a_row_weights[a_idx] * challenge_sums_by_t_block[blk] * g_open[digit_idx];
                 for (row_idx, eq_i) in b_weights.iter().enumerate() {
                     if !eq_i.is_zero() {
                         acc += *eq_i
-                            * eval_flat_ring_at_pows(
+                            * eval_flat_ring_at_pows_fast(
                                 &b_rows[row_idx][local_col * d_b..(local_col + 1) * d_b],
                                 &alpha_pows_b,
                             );
@@ -285,17 +296,28 @@ where
             })
             .collect::<Vec<_>>();
 
+        // For z_hat[blk, dc, df], the column value is:
+        //
+        // -G_fold[df] * (
+        //     tau_consistency * a_alpha[blk] * G_commit[dc]
+        //     + sum_r tau_A[r] * A_alpha[r, blk, dc]
+        //   ).
+        //
+        // The first term is the opening row. The second term is the A-row setup
+        // contribution. A is already digit-domain, so the A-row setup term does
+        // not multiply by G_commit.
         let z_base = cfg_into_iter!(0..inner_width)
             .map(|k| {
                 let block_idx = k / depth_commit;
                 let digit_idx = k % depth_commit;
-                let a_eval = ring_multiplier_point.eval_a_at_dyn::<E>(block_idx, alpha_pows_a)?;
-                let mut acc = consistency_weight * a_eval * g_commit[digit_idx];
-                for (a_idx, eq_i) in a_weights.iter().enumerate() {
+                let opening_a_eval =
+                    ring_multiplier_point.eval_a_at_dyn::<E>(block_idx, alpha_pows_a)?;
+                let mut acc = consistency_weight * opening_a_eval * commit_gadget[digit_idx];
+                for (a_idx, eq_i) in a_row_weights.iter().enumerate() {
                     if !eq_i.is_zero() {
                         acc += *eq_i
-                            * eval_flat_ring_at_pows(
-                                &a_rows[a_idx][k * d_a..(k + 1) * d_a],
+                            * eval_flat_ring_at_pows_fast(
+                                &setup_a_rows[a_idx][k * d_a..(k + 1) * d_a],
                                 alpha_pows_a,
                             );
                     }
@@ -322,15 +344,17 @@ where
         let num_blocks = group_lp.num_blocks();
         if num_blocks == 0 {
             return Err(AkitaError::InvalidSetup(
-                "chunked grouped M evals require a non-zero block count".to_string(),
+                "chunked relation-matrix col evals require a non-zero block count".to_string(),
             ));
         }
         let blocks_per_chunk = num_blocks.checked_div(num_chunks).ok_or_else(|| {
-            AkitaError::InvalidSetup("chunked grouped M eval chunk count is zero".to_string())
+            AkitaError::InvalidSetup(
+                "chunked relation-matrix col eval chunk count is zero".to_string(),
+            )
         })?;
         if blocks_per_chunk == 0 {
             return Err(AkitaError::InvalidSetup(
-                "chunked grouped M eval block window is empty".to_string(),
+                "chunked relation-matrix col eval block window is empty".to_string(),
             ));
         }
         // Singleton chunked layout `[z|e_i|t_i]…[r]`: `z` is replicated per

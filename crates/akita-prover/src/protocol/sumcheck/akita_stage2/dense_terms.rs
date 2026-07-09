@@ -18,7 +18,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
         let current_y_width = self.current_y_width();
         let current_y_mask = (1usize << current_y_width).wrapping_sub(1);
         let alpha_compact = &self.alpha_compact;
-        let m_compact = &self.m_compact;
+        let relation_matrix_col_evals_compact = &self.relation_matrix_col_evals_compact;
         debug_assert_eq!(w_compact.len() / 2, num_first * num_second);
 
         if self.can_skip_norm_linear_coeff() {
@@ -50,15 +50,15 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                             (
                                 alpha_compact[(2 * j) & current_y_mask],
                                 alpha_compact[(2 * j + 1) & current_y_mask],
-                                m_compact[(2 * j) >> current_y_width],
-                                m_compact[(2 * j + 1) >> current_y_width],
+                                relation_matrix_col_evals_compact[(2 * j) >> current_y_width],
+                                relation_matrix_col_evals_compact[(2 * j + 1) >> current_y_width],
                             )
                         } else {
                             (
                                 alpha_compact[(2 * j) >> current_x_width],
                                 alpha_compact[(2 * j + 1) >> current_x_width],
-                                m_compact[(2 * j) & current_x_mask],
-                                m_compact[(2 * j + 1) & current_x_mask],
+                                relation_matrix_col_evals_compact[(2 * j) & current_x_mask],
+                                relation_matrix_col_evals_compact[(2 * j + 1) & current_x_mask],
                             )
                         };
                         let p0 = a0 * m0;
@@ -127,15 +127,15 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                             (
                                 alpha_compact[(2 * j) & current_y_mask],
                                 alpha_compact[(2 * j + 1) & current_y_mask],
-                                m_compact[(2 * j) >> current_y_width],
-                                m_compact[(2 * j + 1) >> current_y_width],
+                                relation_matrix_col_evals_compact[(2 * j) >> current_y_width],
+                                relation_matrix_col_evals_compact[(2 * j + 1) >> current_y_width],
                             )
                         } else {
                             (
                                 alpha_compact[(2 * j) >> current_x_width],
                                 alpha_compact[(2 * j + 1) >> current_x_width],
-                                m_compact[(2 * j) & current_x_mask],
-                                m_compact[(2 * j + 1) & current_x_mask],
+                                relation_matrix_col_evals_compact[(2 * j) & current_x_mask],
+                                relation_matrix_col_evals_compact[(2 * j + 1) & current_x_mask],
                             )
                         };
                         let p0 = a0 * m0;
@@ -191,7 +191,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
         let current_y_width = self.current_y_width();
         let current_y_mask = (1usize << current_y_width).wrapping_sub(1);
         let alpha_compact = &self.alpha_compact;
-        let m_compact = &self.m_compact;
+        let relation_matrix_col_evals_compact = &self.relation_matrix_col_evals_compact;
         debug_assert_eq!(w_full.len() / 2, num_first * num_second);
 
         if self.can_skip_norm_linear_coeff() {
@@ -215,15 +215,15 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                             (
                                 alpha_compact[(2 * j) & current_y_mask],
                                 alpha_compact[(2 * j + 1) & current_y_mask],
-                                m_compact[(2 * j) >> current_y_width],
-                                m_compact[(2 * j + 1) >> current_y_width],
+                                relation_matrix_col_evals_compact[(2 * j) >> current_y_width],
+                                relation_matrix_col_evals_compact[(2 * j + 1) >> current_y_width],
                             )
                         } else {
                             (
                                 alpha_compact[(2 * j) >> current_x_width],
                                 alpha_compact[(2 * j + 1) >> current_x_width],
-                                m_compact[(2 * j) & current_x_mask],
-                                m_compact[(2 * j + 1) & current_x_mask],
+                                relation_matrix_col_evals_compact[(2 * j) & current_x_mask],
+                                relation_matrix_col_evals_compact[(2 * j + 1) & current_x_mask],
                             )
                         };
                         let p0 = a0 * m0;
@@ -279,15 +279,15 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                             (
                                 alpha_compact[(2 * j) & current_y_mask],
                                 alpha_compact[(2 * j + 1) & current_y_mask],
-                                m_compact[(2 * j) >> current_y_width],
-                                m_compact[(2 * j + 1) >> current_y_width],
+                                relation_matrix_col_evals_compact[(2 * j) >> current_y_width],
+                                relation_matrix_col_evals_compact[(2 * j + 1) >> current_y_width],
                             )
                         } else {
                             (
                                 alpha_compact[(2 * j) >> current_x_width],
                                 alpha_compact[(2 * j + 1) >> current_x_width],
-                                m_compact[(2 * j) & current_x_mask],
-                                m_compact[(2 * j + 1) & current_x_mask],
+                                relation_matrix_col_evals_compact[(2 * j) & current_x_mask],
+                                relation_matrix_col_evals_compact[(2 * j + 1) & current_x_mask],
                             )
                         };
                         let p0 = a0 * m0;

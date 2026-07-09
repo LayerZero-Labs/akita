@@ -136,5 +136,9 @@ harness = false
 name = "fft_smooth"
 harness = false
 
+[[bench]]
+name = "setup_index_weight"
+harness = false
+
 [lints]
 workspace = true

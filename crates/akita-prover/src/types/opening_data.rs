@@ -3,8 +3,9 @@ use crate::compute::RootPolyMeta;
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
 use akita_transcript::Transcript;
 use akita_types::{
-    AkitaCommitmentHint, Commitment, LevelParams, MRowLayout, OpeningClaims, OpeningClaimsLayout,
-    PointVariableSelection, PolynomialGroupClaims, PolynomialGroupLayout, RingVec,
+    AkitaCommitmentHint, Commitment, LevelParams, OpeningClaims, OpeningClaimsLayout,
+    PointVariableSelection, PolynomialGroupClaims, PolynomialGroupLayout, RelationMatrixRowLayout,
+    RingVec,
 };
 
 /// Prover opening input: public claims plus prover-only hints and polynomials.
@@ -225,7 +226,7 @@ impl<'a, PointF: Clone, P, CommitF: FieldCore> ProverOpeningData<'a, PointF, P, 
                 let range = params.root_commitment_row_range(
                     &opening_batch,
                     group_index,
-                    MRowLayout::WithDBlock,
+                    RelationMatrixRowLayout::WithDBlock,
                 )?;
                 Ok((range.start, range.len(), group_index))
             })
@@ -329,7 +330,7 @@ mod tests {
         Commitment::new(RingVec::from_coeffs(vec![F::zero()]))
     }
 
-    fn grouped_data<'a>(
+    fn multi_group_data<'a>(
         pre_refs: &'a [&'a MockPoly],
         final_refs: &'a [&'a MockPoly],
     ) -> ProverOpeningData<'a, F, MockPoly, F> {
@@ -366,7 +367,7 @@ mod tests {
         let final_b = MockPoly { num_vars: 4 };
         let pre_refs = [&pre_poly];
         let final_refs = [&final_a, &final_b];
-        let data = grouped_data(&pre_refs, &final_refs);
+        let data = multi_group_data(&pre_refs, &final_refs);
 
         let layout = data.opening_layout::<F>().expect("precise layout");
 
@@ -386,7 +387,7 @@ mod tests {
         let final_b = MockPoly { num_vars: 4 };
         let pre_refs = [&pre_poly];
         let final_refs = [&final_a, &final_b];
-        let data = grouped_data(&pre_refs, &final_refs);
+        let data = multi_group_data(&pre_refs, &final_refs);
 
         let err = data
             .opening_layout::<F>()
@@ -408,7 +409,7 @@ mod tests {
         let final_b = MockPoly { num_vars: 4 };
         let pre_refs = [&pre_poly];
         let final_refs = [&final_a, &final_b];
-        let data = grouped_data(&pre_refs, &final_refs);
+        let data = multi_group_data(&pre_refs, &final_refs);
 
         let mut precise = AkitaTranscript::<F>::new(b"test/precise-group-shape");
         data.append_to_transcript(1, &mut precise)

@@ -1,10 +1,8 @@
 #[cfg(test)]
 use crate::protocol::ring_switch::PreparedChallengeEvals;
-use crate::protocol::ring_switch::RingSwitchDeferredRowEval;
+use crate::protocol::ring_switch::RelationMatrixEvaluator;
 use akita_algebra::eq_poly::EqPolynomial;
-use akita_algebra::offset_eq::{
-    eq_eval_at_index, eval_offset_eq_interval, summarize_pow2_block_carries,
-};
+use akita_algebra::offset_eq::{eval_offset_eq_interval, summarize_pow2_block_carries};
 use akita_field::parallel::*;
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
 
@@ -21,17 +19,6 @@ pub(super) const CARRY0: usize = 0;
 
 /// Inner-sum slot for the one-carry bucket (`carry = 1`).
 pub(super) const CARRY1: usize = 1;
-
-/// Build `table[k] = eq_high(offset_high + k)` for `k ∈ [0, hi_len]`.
-pub(crate) fn high_eq_window<E: FieldCore>(
-    high_challenges: &[E],
-    offset_high: usize,
-    hi_len: usize,
-) -> Vec<E> {
-    (0..=hi_len)
-        .map(|k| eq_eval_at_index(high_challenges, offset_high + k))
-        .collect()
-}
 
 /// Peeled-block MLE evaluator for one structured slice of `M`. See
 /// `book/src/how/verifying/matrix_evaluation.md` for the full derivation.
@@ -204,7 +191,7 @@ where
 /// Pow2 Z-segment slice evaluator.
 pub(crate) struct ZStructuredPow2SlicesEvaluator<'a, F: FieldCore, E> {
     /// Commit-side gadget. Length = `depth_commit`.
-    pub g1_commit: &'a [F],
+    pub commit_gadget: &'a [F],
     /// Fold-side gadget. Length = `depth_fold`.
     pub fold_gadget: &'a [F],
     /// Carry summary of the opening point's in-block weights
@@ -223,7 +210,7 @@ where
 {
     #[inline]
     fn num_outer_indices(&self) -> usize {
-        self.fold_gadget.len() * self.g1_commit.len()
+        self.fold_gadget.len() * self.commit_gadget.len()
     }
 
     #[inline]
@@ -239,7 +226,7 @@ where
 
         let [a_carry0, a_carry1] = self.a_block_summary;
         let scale = (-self.consistency_weight)
-            .mul_base(self.g1_commit[dc])
+            .mul_base(self.commit_gadget[dc])
             .mul_base(self.fold_gadget[df]);
         [scale * a_carry0, scale * a_carry1]
     }
@@ -249,14 +236,14 @@ where
 /// and binds it over its live global interval with [`eval_offset_eq_interval`].
 pub(crate) struct ZDenseSlicesEvaluator<'a, F: FieldCore, E> {
     /// Commit-side gadget. Length = `depth_commit`.
-    pub g1_commit: &'a [F],
+    pub commit_gadget: &'a [F],
     /// Fold-side gadget. Length = `depth_fold`.
     pub fold_gadget: &'a [F],
     /// `tau1` equality weight for the consistency-challenge row of `M`.
     pub consistency_weight: E,
     /// Alpha-evaluated ring-multiplier `a` values for the opening point.
     /// Length = `block_len`.
-    pub a_evals: &'a [E],
+    pub opening_a_evals: &'a [E],
     /// Full multilinear evaluation point.
     pub full_vec_randomness: &'a [E],
     /// Start-of-slice offset of `z` inside `M`.
@@ -272,7 +259,7 @@ where
 {
     /// Evaluate the dense materialized Z segment.
     pub(crate) fn evaluate(&self) -> Result<E, AkitaError> {
-        let z_len = self.fold_gadget.len() * self.g1_commit.len() * self.block_len;
+        let z_len = self.fold_gadget.len() * self.commit_gadget.len() * self.block_len;
         let z_segment_struct: Vec<E> = cfg_into_iter!(0..z_len)
             .map(|x| {
                 let compound_dig = x / self.block_len;
@@ -280,8 +267,8 @@ where
                 let dc_idx = compound_dig / self.fold_gadget.len();
                 let df = compound_dig % self.fold_gadget.len();
                 -self.consistency_weight
-                    * self.a_evals[blk]
-                        .mul_base(self.g1_commit[dc_idx])
+                    * self.opening_a_evals[blk]
+                        .mul_base(self.commit_gadget[dc_idx])
                         .mul_base(self.fold_gadget[df])
             })
             .collect();
@@ -301,7 +288,7 @@ where
 /// `offset_hi + 1` via two sparse interval bindings. Otherwise it materialises
 /// the `r`-tail vector and evaluates it as a single contiguous interval.
 pub(crate) fn compute_r_contribution<F, E>(
-    prepared: &RingSwitchDeferredRowEval<E>,
+    prepared: &RelationMatrixEvaluator<E>,
     full_vec_randomness: &[E],
     offset_r: usize,
     denom: E,
@@ -324,8 +311,9 @@ where
         let [a0, a1] = summarize_pow2_block_carries(&eq_low, offset_lo, &r_gadget_ext)?;
         let offset_hi = offset_r >> m0;
         let high = &full_vec_randomness[m0..];
-        let b0 = eval_offset_eq_interval(high, offset_hi, E::one(), &prepared.eq_tau1[..rows])?;
-        let b1 = eval_offset_eq_interval(high, offset_hi + 1, E::one(), &prepared.eq_tau1[..rows])?;
+        let eq_tau1_rows = &prepared.setup_contribution_inputs.eq_tau1[..rows];
+        let b0 = eval_offset_eq_interval(high, offset_hi, E::one(), eq_tau1_rows)?;
+        let b1 = eval_offset_eq_interval(high, offset_hi + 1, E::one(), eq_tau1_rows)?;
         Ok(-denom * (a0 * b0 + a1 * b1))
     } else {
         let _span = tracing::info_span!("r_dense").entered();
@@ -333,7 +321,8 @@ where
             .map(|idx| {
                 let row_idx = idx / levels;
                 let level_idx = idx % levels;
-                -(prepared.eq_tau1[row_idx] * denom).mul_base(r_gadget[level_idx])
+                -(prepared.setup_contribution_inputs.eq_tau1[row_idx] * denom)
+                    .mul_base(r_gadget[level_idx])
             })
             .collect();
         eval_offset_eq_interval(full_vec_randomness, offset_r, E::one(), &r_tail)
@@ -351,18 +340,21 @@ mod tests {
     use akita_challenges::SparseChallengeConfig;
     use akita_field::Prime128OffsetA7F7;
     use akita_types::{
-        gadget_row_scalars, r_decomp_levels, LevelParams, MRowLayout, OpeningClaimsLayout,
-        RingMultiplierOpeningPoint, RingOpeningPoint, RingRelationInstance,
-        SetupContributionPlanInputs, SisModulusFamily, WitnessLayout,
+        gadget_row_scalars, r_decomp_levels, LevelParams, OpeningClaimsLayout,
+        RelationMatrixRowLayout, RingMultiplierOpeningPoint, RingOpeningPoint,
+        RingRelationInstance, SetupContributionPlan, SetupContributionPlanInputs, SisModulusFamily,
+        WitnessLayout,
     };
 
-    use crate::protocol::ring_switch::RingSwitchDeferredRowGroupEval;
+    use crate::protocol::ring_switch::{
+        build_setup_contribution_groups, RelationMatrixGroupEvaluator,
+    };
 
     type F = Prime128OffsetA7F7;
     const D: usize = 32;
 
     struct StructuredFixture {
-        prepared: RingSwitchDeferredRowEval<F>,
+        prepared: RelationMatrixEvaluator<F>,
         opening_point: RingOpeningPoint<F>,
         full_vec_randomness: Vec<F>,
         offset_e: usize,
@@ -370,7 +362,7 @@ mod tests {
         offset_z: usize,
         offset_r: usize,
         g1_open: Vec<F>,
-        g1_commit: Vec<F>,
+        commit_gadget: Vec<F>,
         fold_gadget: Vec<F>,
         r_gadget: Vec<F>,
     }
@@ -395,7 +387,7 @@ mod tests {
 
     fn ring_relation_segment_layout_for_opening_shape(
         lp: &LevelParams,
-        m_row_layout: MRowLayout,
+        relation_matrix_row_layout: RelationMatrixRowLayout,
         num_polys: usize,
     ) -> Result<WitnessLayout, AkitaError> {
         let opening_batch = OpeningClaimsLayout::new(32, num_polys)?;
@@ -413,22 +405,23 @@ mod tests {
         let v = vec![CyclotomicRing::<F, D>::zero(); lp.d_key.row_len()];
         let commitment_rows = vec![CyclotomicRing::<F, D>::zero(); lp.b_key.row_len()];
         let row_coefficient_rings = vec![CyclotomicRing::<F, D>::zero(); num_claims];
-        let y_layout = akita_types::relation_y_layout_for(lp, &opening_batch, m_row_layout)?;
-        let y = akita_types::assemble_relation_y::<F>(
+        let relation_rhs_layout =
+            akita_types::relation_rhs_layout_for(lp, &opening_batch, relation_matrix_row_layout)?;
+        let relation_rhs = akita_types::assemble_relation_rhs::<F>(
             lp.role_dims(),
-            &y_layout,
+            &relation_rhs_layout,
             &akita_types::RingVec::from_ring_elems(&v),
             &akita_types::RingVec::from_ring_elems(&commitment_rows),
         )?;
         let instance = RingRelationInstance::<F>::new(
-            m_row_layout,
+            relation_matrix_row_layout,
             vec![challenges],
             vec![opening_point],
             vec![ring_multiplier_point],
             opening_batch,
             vec![F::zero(); num_claims],
             akita_types::RingVec::from_ring_elems(&row_coefficient_rings),
-            y,
+            relation_rhs,
             akita_types::RingVec::from_ring_elems(&v),
             lp.role_dims(),
         )?;
@@ -455,9 +448,12 @@ mod tests {
 
         let levels = r_decomp_levels::<F>(log_basis);
         let lp = fixture_lp();
-        let chunk_layout =
-            ring_relation_segment_layout_for_opening_shape(&lp, MRowLayout::WithDBlock, num_claims)
-                .expect("witness segment layout");
+        let chunk_layout = ring_relation_segment_layout_for_opening_shape(
+            &lp,
+            RelationMatrixRowLayout::WithDBlock,
+            num_claims,
+        )
+        .expect("witness segment layout");
         let chunk0 = chunk_layout.chunks[0];
         let offset_e = chunk0.offset_e;
         let offset_t = chunk0.offset_t;
@@ -470,66 +466,71 @@ mod tests {
             a: (0..block_len).map(|idx| f(1_000 + idx as u128)).collect(),
             b: (0..num_blocks).map(|idx| f(2_000 + idx as u128)).collect(),
         };
-        let eq_tau1: Vec<F> = (0..rows.next_power_of_two())
-            .map(|idx| f(4_000 + idx as u128))
-            .collect();
         let setup_contribution_inputs = SetupContributionPlanInputs {
-            eq_tau1: (0..rows.next_power_of_two())
-                .map(|idx| f(4_000 + idx as u128))
-                .collect(),
+            relation_matrix_row_layout: RelationMatrixRowLayout::WithDBlock,
+            rows,
+            n_a,
+            n_b,
+            n_d,
+            num_groups: 1,
+            num_polys_per_group: vec![num_claims],
             num_t_vectors: num_claims,
-            num_blocks,
             num_claims,
+            num_blocks,
+            block_len,
             depth_open,
             depth_commit,
             depth_fold,
-            block_len,
             inner_width,
-            n_a,
-            n_d,
-            m_row_layout: MRowLayout::WithDBlock,
-            n_b,
-            num_segments: 1,
-            rows,
-            num_polys_per_segment: vec![num_claims],
+            eq_tau1: (0..rows.next_power_of_two())
+                .map(|idx| f(4_000 + idx as u128))
+                .collect(),
         };
-        let prepared = RingSwitchDeferredRowEval {
-            eq_tau1,
+        let groups = vec![RelationMatrixGroupEvaluator {
+            c_alphas: PreparedChallengeEvals::Flat(
+                (0..total_blocks)
+                    .map(|idx| f(3_000 + idx as u128))
+                    .collect(),
+            ),
+            opening_a_evals: opening_point.a.clone(),
+            chunk_range: 0..chunk_layout.chunks.len(),
+            e_col_offset: 0,
+            num_claims,
+            num_blocks,
+            block_len,
+            depth_open,
+            depth_commit,
+            depth_fold,
+            log_basis,
+            n_a,
+            n_b,
+            t_cols_per_vector: n_a * depth_open * num_blocks,
+            a_row_start: 1,
+            b_row_start: 1 + n_a,
+        }];
+        let setup_contribution_groups =
+            build_setup_contribution_groups(&chunk_layout, &groups).unwrap();
+        let setup_contribution_static = SetupContributionPlan::prepare_static(
+            &setup_contribution_inputs,
+            &setup_contribution_groups,
+            rows - n_d,
+            n_d,
+            total_blocks * depth_open,
+        )
+        .unwrap();
+        let prepared = RelationMatrixEvaluator {
             role_dims: lp.role_dims(),
-            groups: vec![RingSwitchDeferredRowGroupEval {
-                c_alphas: PreparedChallengeEvals::Flat(
-                    (0..total_blocks)
-                        .map(|idx| f(3_000 + idx as u128))
-                        .collect(),
-                ),
-                a_evals: opening_point.a.clone(),
-                chunk_range: 0..chunk_layout.chunks.len(),
-                e_setup_offset: 0,
-                num_claims,
-                num_blocks,
-                block_len,
-                depth_open,
-                depth_commit,
-                depth_fold,
-                log_basis,
-                n_a,
-                n_b,
-                inner_width,
-                t_cols_per_vector: n_a * depth_open * num_blocks,
-                a_row_start: 1,
-                b_row_start: 1 + n_a,
-            }],
-            e_setup_cols: total_blocks * depth_open,
-            n_d_active: n_d,
-            d_start: rows - n_d,
+            groups,
             depth_fold,
             log_basis,
             chunk_layout,
+            setup_contribution_groups,
             setup_contribution_inputs,
+            setup_contribution_static,
         };
         let full_vec_randomness = (0..bits).map(|idx| f(6_000 + idx as u128)).collect();
         let g1_open = gadget_row_scalars::<F>(depth_open, log_basis);
-        let g1_commit = gadget_row_scalars::<F>(depth_commit, log_basis);
+        let commit_gadget = gadget_row_scalars::<F>(depth_commit, log_basis);
         let fold_gadget = gadget_row_scalars::<F>(depth_fold, log_basis);
         let r_gadget = gadget_row_scalars::<F>(levels, log_basis);
 
@@ -542,7 +543,7 @@ mod tests {
             offset_z,
             offset_r,
             g1_open,
-            g1_commit,
+            commit_gadget,
             fold_gadget,
             r_gadget,
         }
@@ -587,7 +588,7 @@ mod tests {
         let got = EStructuredSlicesEvaluator {
             gadget_vector: &fx.g1_open,
             challenge_block_summaries: &challenge_block_summaries,
-            challenge_weight: p.eq_tau1[0],
+            challenge_weight: p.setup_contribution_inputs.eq_tau1[0],
             high_eq_table: &eq_hi_e,
         }
         .evaluate();
@@ -596,7 +597,7 @@ mod tests {
         for x in 0..e_len {
             let dig = x / total_blocks;
             let blk = x % total_blocks;
-            let entry = p.eq_tau1[0] * c_alphas[blk] * fx.g1_open[dig];
+            let entry = p.setup_contribution_inputs.eq_tau1[0] * c_alphas[blk] * fx.g1_open[dig];
             expected += entry * eq[fx.offset_e + x];
         }
         assert_eq!(got, expected);
@@ -636,7 +637,7 @@ mod tests {
         let got = TStructuredSlicesEvaluator {
             gadget_vector: &fx.g1_open,
             challenge_block_summaries: &challenge_block_summaries,
-            a_row_weights: &p.eq_tau1[a_start..(a_start + g.n_a)],
+            a_row_weights: &p.setup_contribution_inputs.eq_tau1[a_start..(a_start + g.n_a)],
             high_eq_table: &eq_hi_t,
         }
         .evaluate();
@@ -647,7 +648,9 @@ mod tests {
             let blk = x % total_blocks;
             let a_idx = compound_dig / g.depth_open;
             let digit_idx = compound_dig % g.depth_open;
-            let entry = p.eq_tau1[a_start + a_idx] * c_alphas[blk] * fx.g1_open[digit_idx];
+            let entry = p.setup_contribution_inputs.eq_tau1[a_start + a_idx]
+                * c_alphas[blk]
+                * fx.g1_open[digit_idx];
             expected += entry * eq[fx.offset_t + x];
         }
         assert_eq!(got, expected);
@@ -673,15 +676,15 @@ mod tests {
         .unwrap();
         let z_high = &fx.full_vec_randomness[z_offset_low_bits..];
         let z_offset_high = fx.offset_z >> z_offset_low_bits;
-        let z_outer = fx.fold_gadget.len() * fx.g1_commit.len();
+        let z_outer = fx.fold_gadget.len() * fx.commit_gadget.len();
         let eq_hi_z: Vec<F> = (0..=z_outer)
             .map(|k| eq_eval_at_index(z_high, z_offset_high + k))
             .collect();
         let got = ZStructuredPow2SlicesEvaluator {
-            g1_commit: &fx.g1_commit,
+            commit_gadget: &fx.commit_gadget,
             fold_gadget: &fx.fold_gadget,
             a_block_summary,
-            consistency_weight: p.eq_tau1[0],
+            consistency_weight: p.setup_contribution_inputs.eq_tau1[0],
             high_eq_table: &eq_hi_z,
         }
         .evaluate();
@@ -694,8 +697,10 @@ mod tests {
             let dc = compound_dig / g.depth_fold;
             let df = compound_dig % g.depth_fold;
             let blk = global_blk % g.block_len;
-            let entry =
-                -(p.eq_tau1[0] * fx.opening_point.a[blk] * fx.g1_commit[dc] * fx.fold_gadget[df]);
+            let entry = -(p.setup_contribution_inputs.eq_tau1[0]
+                * fx.opening_point.a[blk]
+                * fx.commit_gadget[dc]
+                * fx.fold_gadget[df]);
             expected += entry * eq[fx.offset_z + x];
         }
         assert_eq!(got, expected);
@@ -713,12 +718,12 @@ mod tests {
 
         let z_len = g.depth_fold * g.depth_commit * g.block_len;
         let eq = eq_evals(fx.offset_z + z_len, &fx.full_vec_randomness);
-        let a_evals = fx.opening_point.a[..g.block_len].to_vec();
+        let opening_a_evals = fx.opening_point.a[..g.block_len].to_vec();
         let got = ZDenseSlicesEvaluator {
-            g1_commit: &fx.g1_commit,
+            commit_gadget: &fx.commit_gadget,
             fold_gadget: &fx.fold_gadget,
-            consistency_weight: p.eq_tau1[0],
-            a_evals: &a_evals,
+            consistency_weight: p.setup_contribution_inputs.eq_tau1[0],
+            opening_a_evals: &opening_a_evals,
             full_vec_randomness: &fx.full_vec_randomness,
             offset_z: fx.offset_z,
             block_len: g.block_len,
@@ -734,8 +739,10 @@ mod tests {
             let dc = compound_dig / g.depth_fold;
             let df = compound_dig % g.depth_fold;
             let blk = global_blk % g.block_len;
-            let entry =
-                -(p.eq_tau1[0] * fx.opening_point.a[blk] * fx.g1_commit[dc] * fx.fold_gadget[df]);
+            let entry = -(p.setup_contribution_inputs.eq_tau1[0]
+                * fx.opening_point.a[blk]
+                * fx.commit_gadget[dc]
+                * fx.fold_gadget[df]);
             expected += entry * eq[fx.offset_z + x];
         }
         assert_eq!(got, expected);
@@ -763,7 +770,8 @@ mod tests {
         for idx in 0..r_len {
             let row_idx = idx / fx.r_gadget.len();
             let level_idx = idx % fx.r_gadget.len();
-            let entry = -(p.eq_tau1[row_idx] * denom * fx.r_gadget[level_idx]);
+            let entry =
+                -(p.setup_contribution_inputs.eq_tau1[row_idx] * denom * fx.r_gadget[level_idx]);
             expected += entry * eq[fx.offset_r + idx];
         }
         assert_eq!(got, expected);

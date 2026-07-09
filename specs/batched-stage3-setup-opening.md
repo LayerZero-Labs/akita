@@ -62,10 +62,10 @@ The recursive setup contribution for the same fold is
 
 ```text
 setup_claim(r_x) =
-  sum_{lambda, y} S(lambda, y) * omega_{r_x}(lambda) * alpha(y),
+  sum_{lambda, y} S(lambda, y) * setup_index_weight_{r_x}(lambda) * alpha(y),
 ```
 
-where `omega_{r_x}` is derived from the stage-2 `x` challenges and the
+where `setup_index_weight_{r_x}` is derived from the stage-2 `x` challenges and the
 ring-switch/setup-contribution plan.
 
 The batched stage-3 sumcheck samples a fresh point over a common cube:
@@ -96,7 +96,7 @@ The sumcheck proves the multilinear polynomial
 F(z) =
   eta * Lift_w(eq(r2, z_w) * W(z_w))
   +
-  Lift_setup(S(z_setup) * omega_{r_x}(lambda(z_setup)) * alpha(y(z_setup))).
+  Lift_setup(S(z_setup) * setup_index_weight_{r_x}(lambda(z_setup)) * alpha(y(z_setup))).
 ```
 
 `Lift_n_to_N` embeds an `n`-variable polynomial into the `N = batched_vars` cube
@@ -124,7 +124,7 @@ final_claim =
   +
   lift_setup_scale
       * S(rho_setup)
-      * omega_{r_x}(rho_lambda)
+      * setup_index_weight_{r_x}(rho_lambda)
       * alpha(rho_y),
 ```
 
@@ -148,7 +148,7 @@ The setup prefix/product is opened at `rho_setup`.
 - **Sum preservation under padding.** If one native domain is shorter than the
   common cube, its lifted term is scaled by `2^{-(batched_vars - native_vars)}`.
 - **Setup contribution still depends on stage-2 x.** Stage 3 is constructed
-  after stage 2 has produced `r_x`, because `omega_{r_x}` depends on those
+  after stage 2 has produced `r_x`, because `setup_index_weight_{r_x}` depends on those
   challenges.
 - **Recursive suffix state changes only in recursive setup mode.** In
   `SetupContributionMode::Direct`, the next suffix state remains the stage-2
@@ -200,7 +200,7 @@ The setup prefix/product is opened at `rho_setup`.
   - witness domain shorter than setup domain;
   - setup domain shorter than witness domain.
 - Add prover/verifier tests for the batched stage-3 final relation using small
-  deterministic tables where `W`, `S`, `omega`, and `alpha` are materialized.
+  deterministic tables where `W`, `S`, `setup_index_weight`, and `alpha` are materialized.
 - Extend recursive setup e2e tests so the next suffix level verifies against
   `rho_w`.
 - Add transcript tamper tests:
@@ -312,7 +312,7 @@ witness point to be a prefix/projection of the same batched point.
 
 ### Alternatives Considered
 
-- **Run setup stage 3 before stage 2.** Rejected because `omega_{r_x}` depends on
+- **Run setup stage 3 before stage 2.** Rejected because `setup_index_weight_{r_x}` depends on
   stage-2 `x` challenges.
 - **Only share the `y` coordinate.** This is simpler but does not make the next
   witness and setup prefix derive from one common point. It still leaves

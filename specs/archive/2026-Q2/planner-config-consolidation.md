@@ -188,7 +188,7 @@ If `gen_schedule_tables` produces a non-cosmetic diff, or if `schedule.total_byt
 
 `akita-types` continues to be the wire-data crate. After the refactor it owns:
 
-- Layout primitives: [`LevelParams`](crates/akita-types/src/layout/params.rs), `AjtaiKeyParams`, `MRowLayout`, `RingOpeningPoint<F>`, `BasisMode`, `BlockOrder`.
+- Layout primitives: [`LevelParams`](crates/akita-types/src/layout/params.rs), `AjtaiKeyParams`, `RelationMatrixRowLayout`, `RingOpeningPoint<F>`, `BasisMode`, `BlockOrder`.
 - Runtime schedule types: `Schedule`, `Step`, `FoldStep`, `DirectStep`, `AkitaSchedulePlan` and the `AkitaPlanned*` sub-structs, `AkitaScheduleInputs`, `CommitmentGroupScheduleKey`.
 - Generated schedule table types: `GeneratedScheduleTable`, `GeneratedScheduleTableEntry`, `GeneratedCommitmentGroupScheduleKey`, `GeneratedStep`, `GeneratedFoldStep`, `GeneratedDirectStep`.
 - **Generated schedule table data** (`crates/akita-types/src/generated/fp*.rs`) stays in `akita-types`. The data is small, pure, and does not bring search code with it. The `gen_schedule_tables` binary in `akita-planner` writes its output back into `crates/akita-types/src/generated/`. We pick this over moving the data files because (a) presets get to keep their `Cfg::schedule_table()` returning a static table without crossing crates, and (b) `akita-types` is already the canonical home for verifier-reachable static data.

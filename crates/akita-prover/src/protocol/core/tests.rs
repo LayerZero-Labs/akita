@@ -57,9 +57,9 @@ fn schedule_key_from_layout_includes_entire_batch() {
         PolynomialGroupLayout::new(2, 1),
         PolynomialGroupLayout::new(4, 2),
     ])
-    .expect("grouped shape");
+    .expect("multi-group shape");
     assert_eq!(batch.num_groups(), 2);
-    let key = opening_schedule_key::<D64OneHot>(&batch).expect("grouped schedule key");
+    let key = opening_schedule_key::<D64OneHot>(&batch).expect("multi-group schedule key");
     assert_eq!(key.final_group, PolynomialGroupLayout::new(4, 2));
     assert_eq!(key.num_commitment_groups(), 2);
     assert_eq!(key.precommitteds.len(), 1);

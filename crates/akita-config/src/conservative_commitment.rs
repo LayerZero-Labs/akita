@@ -1,7 +1,7 @@
 //! Conservative one-hot commitment config adapter.
 //!
 //! This adapter is for staggered workflows that need ordinary commit calls to
-//! use a B rank conservative for a later grouped root whose final basis is not
+//! use a B rank conservative for a later multi-group root whose final basis is not
 //! known at precommit time.
 
 use crate::matrix_envelope::accumulate_matrix_envelope_for_level;
@@ -68,7 +68,7 @@ impl<Cfg: CommitmentConfig> CommitmentConfig for ConservativeCommitmentConfig<Cf
         Cfg::schedule_catalog()
     }
 
-    fn supports_grouped_final_commit() -> bool {
+    fn supports_multi_group_final_commit() -> bool {
         false
     }
 

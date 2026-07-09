@@ -3,7 +3,7 @@ use akita_algebra::offset_eq::summarize_pow2_block_carries;
 use akita_challenges::TensorChallenges as TensorChallengeSet;
 use akita_field::{AkitaError, FieldCore, FromPrimitiveInt, MulBase};
 
-/// Challenge evaluations used by deferred ring-switch row replay.
+/// Challenge evaluations used by relation-matrix challenge replay.
 #[derive(Clone)]
 pub(crate) enum PreparedChallengeEvals<F: FieldCore> {
     Flat(Vec<F>),

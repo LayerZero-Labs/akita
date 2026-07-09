@@ -185,7 +185,7 @@ pub trait ScheduleKeyPrecommitSource {
 /// `precommitteds` and the final group in `final_group`.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct AkitaScheduleLookupKey {
-    /// Final group shape for the grouped root commitment.
+    /// Final group shape for the multi-group root commitment.
     pub final_group: PolynomialGroupLayout,
     /// Previously committed groups in caller-supplied transcript order.
     pub precommitteds: Vec<PrecommittedGroupParams>,
@@ -227,7 +227,7 @@ impl AkitaScheduleLookupKey {
         Ok(key)
     }
 
-    /// Build a grouped opening layout from this schedule lookup key.
+    /// Build a multi-group opening layout from this schedule lookup key.
     pub fn opening_layout(&self) -> Result<OpeningClaimsLayout, AkitaError> {
         let mut groups: Vec<PolynomialGroupLayout> = self
             .precommitteds
@@ -250,7 +250,9 @@ impl AkitaScheduleLookupKey {
             total = total
                 .checked_add(layout.group.num_polynomials())
                 .ok_or_else(|| {
-                    AkitaError::InvalidSetup("grouped root polynomial count overflow".to_string())
+                    AkitaError::InvalidSetup(
+                        "multi-group root polynomial count overflow".to_string(),
+                    )
                 })?;
         }
         Ok(total)
@@ -268,7 +270,7 @@ impl AkitaScheduleLookupKey {
             layout.group.validate()?;
             if layout.group.num_vars() > self.final_group.num_vars() / 2 {
                 return Err(AkitaError::InvalidInput(
-                    "grouped root requires precommitted groups to have at most half the final num_vars"
+                    "multi-group root requires precommitted groups to have at most half the final num_vars"
                         .to_string(),
                 ));
             }
@@ -294,14 +296,14 @@ pub fn detect_field_modulus<F: CanonicalField>() -> u128 {
 }
 
 /// Total ring elements in a recursive witness polynomial for an explicit
-/// M-row layout. The terminal layout drops the D-block from the M-matrix,
+/// relation-matrix row layout. The terminal layout drops the D-block from the M-matrix,
 /// which shrinks the per-row `r` quotients by `n_d * r_decomp_levels` ring
 /// elements relative to the intermediate layout.
 pub fn w_ring_element_count_with_counts_for_layout<F: CanonicalField>(
     lp: &LevelParams,
     num_polynomials: usize,
     num_z_segments: usize,
-    layout: crate::layout::MRowLayout,
+    layout: crate::layout::RelationMatrixRowLayout,
 ) -> Result<usize, AkitaError> {
     let modulus = detect_field_modulus::<F>();
     let field_bits = 128 - (modulus.saturating_sub(1)).leading_zeros();
@@ -322,7 +324,7 @@ pub fn w_ring_element_count_with_counts_for_layout_bits(
     lp: &LevelParams,
     num_polynomials: usize,
     num_z_segments: usize,
-    layout: crate::layout::MRowLayout,
+    layout: crate::layout::RelationMatrixRowLayout,
 ) -> Result<usize, AkitaError> {
     lp.require_scalar_level("w_ring_element_count_with_counts_for_layout_bits")?;
     let e_hat_count = num_polynomials
@@ -339,7 +341,7 @@ pub fn w_ring_element_count_with_counts_for_layout_bits(
         .checked_mul(lp.inner_width())
         .and_then(|n| n.checked_mul(num_digits_fold))
         .ok_or_else(|| AkitaError::InvalidSetup("witness Z width overflow".to_string()))?;
-    let r_rows = lp.m_row_count_for(1, layout)?;
+    let r_rows = lp.relation_matrix_row_count_for(1, layout)?;
     let r_count = r_rows
         .checked_mul(crate::sis::compute_num_digits_full_field(
             field_bits,
@@ -379,14 +381,13 @@ pub fn w_ring_element_count_with_counts_for_layout_bits(
 /// # Errors
 ///
 /// Returns [`AkitaError::InvalidSetup`] when `num_chunks == 0`, `num_chunks > 1`
-/// is not a power of two, `lp.num_blocks` is not divisible by `num_chunks`, the
-/// level is tiered (multi-chunk + tiered is unsupported), or any width product
-/// overflows. Never panics — verifier-reachable through the runtime DP fallback.
+/// is not a power of two, `lp.num_blocks` is not divisible by `num_chunks`, or
+/// any width product overflows. Never panics — verifier-reachable through the runtime DP fallback.
 pub fn w_ring_element_count_for_chunks(
     field_bits: u32,
     lp: &LevelParams,
     num_polynomials: usize,
-    layout: crate::layout::MRowLayout,
+    layout: crate::layout::RelationMatrixRowLayout,
     num_chunks: usize,
 ) -> Result<usize, AkitaError> {
     if num_chunks == 0 {
@@ -444,7 +445,7 @@ pub fn w_ring_element_count_for_chunks(
     // single-chunk layout); only the replicated ẑ grows. Pricing it with
     // `num_chunks` here would over-count the tail and break the prover's
     // `emitted == next_w_len` and the verifier's single-machine `r_len`.
-    let r_rows = lp.m_row_count_for(1, layout)?;
+    let r_rows = lp.relation_matrix_row_count_for(1, layout)?;
     let r_count = r_rows
         .checked_mul(crate::sis::compute_num_digits_full_field(
             field_bits,
@@ -550,9 +551,9 @@ impl Schedule {
 
     /// Reject any fold level that combines precommitted groups with multi-chunk
     /// witness layout.
-    pub fn reject_grouped_multi_chunk(&self, context: &str) -> Result<(), AkitaError> {
+    pub fn reject_multi_group_multi_chunk(&self, context: &str) -> Result<(), AkitaError> {
         for fold in self.fold_steps() {
-            fold.params.reject_grouped_multi_chunk(context)?;
+            fold.params.reject_multi_group_multi_chunk(context)?;
         }
         Ok(())
     }
@@ -656,7 +657,7 @@ pub fn root_current_w_len(lp: &LevelParams) -> usize {
 /// Build the root-direct schedule for roots that do not admit a fold step.
 ///
 /// `current_w_len` is the flattened witness length in field elements (for a
-/// singleton group, `2^num_vars`; for grouped batches, the per-group hypercube
+/// singleton group, `2^num_vars`; for multi-group batches, the per-group hypercube
 /// sizes summed over polynomials). `commit_params` carries the root commit
 /// layout that `Cfg::get_params_for_batched_commitment` returns for this
 /// schedule shape.
@@ -707,17 +708,17 @@ pub fn schedule_root_fold_step(schedule: &Schedule) -> Option<&FoldStep> {
     }
 }
 
-/// Root commit layout read from the first step of a grouped runtime schedule.
-pub fn grouped_root_commit_params(schedule: &Schedule) -> Result<LevelParams, AkitaError> {
+/// Root commit layout read from the first step of a multi-group runtime schedule.
+pub fn multi_group_root_commit_params(schedule: &Schedule) -> Result<LevelParams, AkitaError> {
     match schedule.steps.first() {
         Some(Step::Fold(root_step)) => Ok(root_step.params.clone()),
         Some(Step::Direct(direct)) => direct.params.clone().ok_or_else(|| {
             AkitaError::InvalidSetup(
-                "grouped root-direct schedule is missing commit params".to_string(),
+                "multi-group root-direct schedule is missing commit params".to_string(),
             )
         }),
         None => Err(AkitaError::InvalidSetup(
-            "grouped schedule has no steps".to_string(),
+            "multi-group schedule has no steps".to_string(),
         )),
     }
 }
@@ -787,8 +788,9 @@ mod tests {
         direct_witness_bytes, extension_opening_reduction_proof_bytes, level_proof_bytes,
         stage1_tree_stage_shapes, sumcheck_rounds, AkitaBatchedRootProof,
         AkitaIntermediateStage2Proof, AkitaLevelProof, AkitaStage1Proof, AkitaStage1StageProof,
-        AkitaStage2Proof, CleartextWitnessProof, ExtensionOpeningReductionProof, MRowLayout,
-        RingVec, SisModulusFamily, TerminalLevelProof, EXTENSION_OPENING_REDUCTION_DEGREE,
+        AkitaStage2Proof, CleartextWitnessProof, ExtensionOpeningReductionProof,
+        RelationMatrixRowLayout, RingVec, SisModulusFamily, TerminalLevelProof,
+        EXTENSION_OPENING_REDUCTION_DEGREE,
     };
     use akita_algebra::CyclotomicRing;
     use akita_challenges::SparseChallengeConfig;
@@ -811,7 +813,10 @@ mod tests {
         let field_bits = 128u32;
         let num_poly = 3usize;
 
-        for layout in [MRowLayout::WithDBlock, MRowLayout::WithoutDBlock] {
+        for layout in [
+            RelationMatrixRowLayout::WithDBlock,
+            RelationMatrixRowLayout::WithoutDBlock,
+        ] {
             let single = w_ring_element_count_with_counts_for_layout_bits(
                 field_bits, &lp, num_poly, 1, layout,
             )
@@ -848,17 +853,17 @@ mod tests {
                 .unwrap();
         // Non-power-of-two chunk count.
         assert!(matches!(
-            w_ring_element_count_for_chunks(128, &lp, 1, MRowLayout::WithDBlock, 6),
+            w_ring_element_count_for_chunks(128, &lp, 1, RelationMatrixRowLayout::WithDBlock, 6),
             Err(AkitaError::InvalidSetup(_))
         ));
         // num_chunks does not divide num_blocks (8 % 16 != 0).
         assert!(matches!(
-            w_ring_element_count_for_chunks(128, &lp, 1, MRowLayout::WithDBlock, 16),
+            w_ring_element_count_for_chunks(128, &lp, 1, RelationMatrixRowLayout::WithDBlock, 16),
             Err(AkitaError::InvalidSetup(_))
         ));
         // Zero chunks.
         assert!(matches!(
-            w_ring_element_count_for_chunks(128, &lp, 1, MRowLayout::WithDBlock, 0),
+            w_ring_element_count_for_chunks(128, &lp, 1, RelationMatrixRowLayout::WithDBlock, 0),
             Err(AkitaError::InvalidSetup(_))
         ));
     }
@@ -914,13 +919,13 @@ mod tests {
     }
 
     #[test]
-    fn root_direct_schedule_uses_grouped_witness_len() {
+    fn root_direct_schedule_uses_multi_group_witness_len() {
         let layout = OpeningClaimsLayout::from_groups(vec![
             PolynomialGroupLayout::new(2, 1),
             PolynomialGroupLayout::new(3, 2),
             PolynomialGroupLayout::new(4, 1),
         ])
-        .expect("grouped layout");
+        .expect("multi-group layout");
         let witness_len = layout.root_direct_witness_len().expect("witness len");
         assert_eq!(witness_len, 4 + 16 + 16);
 
@@ -1049,7 +1054,7 @@ mod tests {
                     Some(&next_lp),
                     next_w_len,
                     1,
-                    MRowLayout::WithDBlock,
+                    RelationMatrixRowLayout::WithDBlock,
                 ),
                 exact_level_proof_bytes::<F>(&lp, &next_lp, next_w_len).unwrap(),
                 "planned level bytes should match the serialized two-stage body at log_basis={log_basis}"
@@ -1102,7 +1107,7 @@ mod tests {
                     None,
                     next_w_len,
                     num_claims,
-                    MRowLayout::WithoutDBlock,
+                    RelationMatrixRowLayout::WithoutDBlock,
                 ),
                 serialized_without_witness,
                 "planned terminal-level bytes should match the serialized terminal body \
@@ -1164,7 +1169,7 @@ mod tests {
                     Some(&next_lp),
                     next_w_len,
                     1,
-                    MRowLayout::WithDBlock,
+                    RelationMatrixRowLayout::WithDBlock,
                 ),
                 root_proof.serialized_size(Compress::No),
                 "planned batched root bytes should match the serialized two-stage body at log_basis={log_basis}"
@@ -1243,7 +1248,7 @@ mod tests {
 
     #[test]
     fn group_batch_key_rejects_precommitted_num_vars_above_main() {
-        let grouped = AkitaScheduleLookupKey {
+        let multi_group_key = AkitaScheduleLookupKey {
             final_group: PolynomialGroupLayout::new(20, 3),
             precommitteds: vec![PrecommittedGroupParams {
                 group: PolynomialGroupLayout::new(24, 1),
@@ -1255,7 +1260,7 @@ mod tests {
             }],
         };
 
-        let err = grouped
+        let err = multi_group_key
             .validate()
             .expect_err("precommitted groups above the main num_vars must be rejected");
         assert!(matches!(err, AkitaError::InvalidInput(_)));
@@ -1263,7 +1268,7 @@ mod tests {
 
     #[test]
     fn group_batch_key_rejects_precommitted_num_vars_above_half_main() {
-        let grouped = AkitaScheduleLookupKey {
+        let multi_group_key = AkitaScheduleLookupKey {
             final_group: PolynomialGroupLayout::new(20, 3),
             precommitteds: vec![PrecommittedGroupParams {
                 group: PolynomialGroupLayout::new(12, 1),
@@ -1275,14 +1280,14 @@ mod tests {
             }],
         };
 
-        grouped
+        multi_group_key
             .validate()
             .expect_err("precommitted groups above half the main key must be rejected");
     }
 
     #[test]
     fn group_batch_key_allows_mixed_polynomial_counts() {
-        let grouped = AkitaScheduleLookupKey {
+        let multi_group_key = AkitaScheduleLookupKey {
             final_group: PolynomialGroupLayout::new(20, 3),
             precommitteds: vec![PrecommittedGroupParams {
                 group: PolynomialGroupLayout::new(10, 1),
@@ -1294,10 +1299,10 @@ mod tests {
             }],
         };
 
-        grouped
+        multi_group_key
             .validate()
             .expect("unequal K_g is allowed for a supported precommitted dimension");
-        assert_eq!(grouped.num_commitment_groups(), 2);
+        assert_eq!(multi_group_key.num_commitment_groups(), 2);
     }
 
     #[test]

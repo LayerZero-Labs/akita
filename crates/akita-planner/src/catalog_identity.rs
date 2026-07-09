@@ -707,7 +707,7 @@ mod tests {
         };
         let err =
             validate_catalog_identity(&catalog, &policy, sample_ring_challenge_config, flat_fold)
-                .expect_err("duplicate grouped keys should error");
+                .expect_err("duplicate multi-group keys should error");
         assert!(
             matches!(err, AkitaError::InvalidSetup(ref msg) if msg.contains("duplicate key")),
             "unexpected error: {err}"
@@ -728,7 +728,7 @@ mod tests {
         };
         let err =
             validate_catalog_identity(&catalog, &policy, sample_ring_challenge_config, flat_fold)
-                .expect_err("unsorted grouped keys should error");
+                .expect_err("unsorted multi-group keys should error");
         assert!(
             matches!(err, AkitaError::InvalidSetup(ref msg) if msg.contains("not sorted for binary lookup")),
             "unexpected error: {err}"

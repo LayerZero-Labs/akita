@@ -281,8 +281,8 @@ AkitaLevelProof::Terminal {
 
 `LevelProofShape` / `TerminalLevelProofShape` do not carry a variable nonce length
 because the cardinality is fixed at one `u32` per fold level. `level_proof_bytes`
-adds exactly four bytes for every fold level (`MRowLayout::WithDBlock` and
-`MRowLayout::WithoutDBlock`).
+adds exactly four bytes for every fold level (`RelationMatrixRowLayout::WithDBlock` and
+`RelationMatrixRowLayout::WithoutDBlock`).
 
 The nonce is one per `sample_folding_challenges` call. Under the single-point
 opening batch contract (#186), a batched root uses one shared opening point and
