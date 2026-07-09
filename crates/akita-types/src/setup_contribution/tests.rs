@@ -12,6 +12,22 @@ use akita_field::Prime128OffsetA7F7;
 type F = Prime128OffsetA7F7;
 const TEST_D: usize = 64;
 
+type SingleGroupPlanParts = (
+    SetupContributionPlan<F>,
+    SetupContributionStatic<F>,
+    Vec<SetupContributionGroupInputs>,
+);
+
+type StructuredWeightFixture = (
+    SetupContributionPlanInputs<F>,
+    Vec<SetupContributionGroupInputs>,
+    SetupContributionStatic<F>,
+    SetupContributionPlan<F>,
+    Vec<F>,
+    Vec<F>,
+    Vec<F>,
+);
+
 fn test_scalar(value: u128) -> F {
     F::from_canonical_u128(value)
 }
@@ -51,14 +67,7 @@ fn prepare_single_group_plan_parts(
     z_block_low_eq: Option<&[F]>,
     fold_gadget: &[F],
     chunk_layout: &crate::WitnessLayout,
-) -> Result<
-    (
-        SetupContributionPlan<F>,
-        SetupContributionStatic<F>,
-        Vec<SetupContributionGroupInputs>,
-    ),
-    AkitaError,
-> {
+) -> Result<SingleGroupPlanParts, AkitaError> {
     let single_group = SetupContributionGroupInputs::single_group_layout(inputs, chunk_layout, 0)?;
     let groups = vec![single_group.group];
     let static_plan = SetupContributionPlan::prepare_static(
@@ -82,15 +91,7 @@ fn prepare_single_group_plan_parts(
 fn structured_weight_fixture(
     num_blocks: usize,
     blocks_per_chunk: usize,
-) -> (
-    SetupContributionPlanInputs<F>,
-    Vec<SetupContributionGroupInputs>,
-    SetupContributionStatic<F>,
-    SetupContributionPlan<F>,
-    Vec<F>,
-    Vec<F>,
-    Vec<F>,
-) {
+) -> StructuredWeightFixture {
     let num_claims = 2;
     let depth_open = 2;
     let depth_commit = 2;
