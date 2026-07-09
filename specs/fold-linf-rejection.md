@@ -188,7 +188,7 @@ New tests:
   `l1_factor^2 · l2_sq_factor` for descriptor binding, while the first
   digit-sizing cutover enables only flat shapes.
 - `akita-types::sis`: tail-bound monotonicity, overflow/no-panic,
-  `min(β_inf, t*)` sizing table; `fold_witness_linf_ln_term` reference checks for the
+  `min(β_inf, t*)` sizing table; `fold_witness_linf_grind_union_ln` reference checks for the
   largest supported `num_fold_coeffs` and for a nontrivial `p_num/p_den` case.
 - `akita-prover`: reroll-loop termination (statistical, sampled re-fold count);
   capped-loop error path; `LoggingTranscript` equality.
@@ -490,8 +490,8 @@ worst-case path is generalized in place):
   `fold_witness_linf_tail_bound_sq(num_fold_blocks, challenge_l2_sq_max, witness_linf_sq, ln_term) -> Result<u128, AkitaError>`
   returning `t*²` (squared domain, exact `u128`, saturating/no-panic). The only
   irrational input is `ln 4·num_fold_coeffs + num_fold_blocks·ln(1/p)`; pass it
-  as a conservative integer `ln_term` via `fold_witness_linf_ln_term(num_fold_coeffs,
-  num_fold_blocks, p_num, p_den)` (table-bounded for `num_fold_coeffs <= 2^32`,
+  as a conservative integer `ln_term` via `fold_witness_linf_grind_union_ln(num_fold_coeffs,
+  p_num, p_den)` (table-bounded for `num_fold_coeffs <= 2^32`,
   `ln 4·num_fold_coeffs <= 24`). Document that the real sqrt is taken only at
   the digit-sizing boundary.
 - `src/sis/decomposition_digits.rs`: `num_digits_fold` gains the tail-bound inputs

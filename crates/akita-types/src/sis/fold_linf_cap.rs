@@ -100,45 +100,6 @@ pub(crate) fn fold_witness_linf_grind_union_ln(
     Ok(ceil_natural_log(numerator.div_ceil(miss)))
 }
 
-/// Conservative integer for `ln(2·num_fold_coeffs / (1 - p_grind))` with
-/// `p_grind = grind_target_accept_num / grind_target_accept_den`.
-///
-/// # Errors
-///
-/// Returns [`AkitaError::InvalidSetup`] on zero denominators, zero numerators,
-/// or `p_grind >= 1`.
-pub fn fold_witness_linf_ln_term(
-    num_fold_coeffs: u128,
-    grind_target_accept_num: u128,
-    grind_target_accept_den: u128,
-) -> Result<u128, AkitaError> {
-    if num_fold_coeffs == 0 {
-        return Err(AkitaError::InvalidSetup(
-            "fold_witness_linf_ln_term: num_fold_coeffs must be positive".to_string(),
-        ));
-    }
-    if grind_target_accept_den == 0 {
-        return Err(AkitaError::InvalidSetup(
-            "fold_witness_linf_ln_term: probability denominators must be positive".to_string(),
-        ));
-    }
-    if grind_target_accept_num == 0 {
-        return Err(AkitaError::InvalidSetup(
-            "fold_witness_linf_ln_term: probability numerators must be positive".to_string(),
-        ));
-    }
-    if grind_target_accept_num >= grind_target_accept_den {
-        return Err(AkitaError::InvalidSetup(
-            "fold_witness_linf_ln_term: grind target accept probability must be < 1".to_string(),
-        ));
-    }
-    fold_witness_linf_grind_union_ln(
-        num_fold_coeffs,
-        grind_target_accept_num,
-        grind_target_accept_den,
-    )
-}
-
 /// Squared `‖z‖_inf` tail bound `t*²` from the sub-Gaussian argument in
 /// `specs/fold-linf-rejection.md`:
 ///
@@ -560,32 +521,24 @@ mod tests {
     }
 
     #[test]
-    fn fold_witness_linf_ln_term_rejects_zero_grind_target() {
-        assert!(fold_witness_linf_ln_term(16, 0, 4).is_err());
-    }
-
-    #[test]
-    fn fold_witness_linf_ln_term_grind_half_matches_ln_4n() {
-        let term_16 = fold_witness_linf_ln_term(1 << 16, 1, 2).unwrap();
+    fn fold_witness_linf_grind_union_ln_half_matches_ln_4n() {
+        let term_16 = fold_witness_linf_grind_union_ln(1 << 16, 1, 2).unwrap();
         assert!((13..=15).contains(&term_16));
-        let term_max = fold_witness_linf_ln_term(1u128 << 32, 1, 2).unwrap();
+        let term_max = fold_witness_linf_grind_union_ln(1u128 << 32, 1, 2).unwrap();
         assert!((24..=26).contains(&term_max));
     }
 
     #[test]
-    fn fold_witness_linf_ln_term_grind_eighth_matches_direct_union_ln_at_2_16() {
-        let n = 1u128 << 16;
-        let eighth = fold_witness_linf_ln_term(n, 1, 8).unwrap();
-        let grind_only = fold_witness_linf_grind_union_ln(n, 1, 8).unwrap();
-        assert_eq!(eighth, grind_only);
+    fn fold_witness_linf_grind_union_ln_eighth_at_2_16() {
+        let grind_only = fold_witness_linf_grind_union_ln(1u128 << 16, 1, 8).unwrap();
         assert_eq!(grind_only, 13, "ceil_ln(2·2^16·8/7)");
     }
 
     #[test]
-    fn fold_witness_linf_ln_term_grind_eighth_is_tighter_than_half() {
+    fn fold_witness_linf_grind_union_ln_eighth_is_tighter_than_half() {
         let n = 100u128;
-        let half = fold_witness_linf_ln_term(n, 1, 2).unwrap();
-        let eighth = fold_witness_linf_ln_term(n, 1, 8).unwrap();
+        let half = fold_witness_linf_grind_union_ln(n, 1, 2).unwrap();
+        let eighth = fold_witness_linf_grind_union_ln(n, 1, 8).unwrap();
         assert!(eighth < half, "eighth={eighth} half={half}");
         let t_half = fold_witness_linf_tail_bound_sq(1, 71, 1, half).unwrap();
         let t_eighth = fold_witness_linf_tail_bound_sq(1, 71, 1, eighth).unwrap();
@@ -613,7 +566,7 @@ mod tests {
         .unwrap();
         let pessimistic_linf_envelope = 16u128 * challenge.l1_norm * witness.infinity_norm();
         assert!(tight_beta < pessimistic_linf_envelope);
-        let ln_term = fold_witness_linf_ln_term(1u128 << 16, 1, 8).unwrap();
+        let ln_term = fold_witness_linf_grind_union_ln(1u128 << 16, 1, 8).unwrap();
         let t_sq = fold_witness_linf_tail_bound_sq(16, 71, 1, ln_term).unwrap();
         let t = isqrt_ceil(t_sq);
         assert!(

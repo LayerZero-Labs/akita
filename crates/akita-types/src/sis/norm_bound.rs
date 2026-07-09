@@ -16,8 +16,8 @@ use crate::layout::digit_math::isqrt_ceil;
 use crate::{DecompositionParams, FoldLinfProtocolBinding};
 
 pub use super::fold_linf_cap::{
-    fold_witness_linf_cap_policy, fold_witness_linf_ln_term,
-    fold_witness_linf_tail_bound_for_config_sq, fold_witness_linf_tail_bound_sq,
+    fold_witness_linf_cap_policy, fold_witness_linf_tail_bound_for_config_sq,
+    fold_witness_linf_tail_bound_sq,
     fold_witness_linf_tensor_tail_bound_sq, FoldWitnessLinfCapConfig, FoldWitnessLinfCapPolicy,
     FOLD_LINF_GRIND_TARGET_ACCEPT_PROB_DEN, FOLD_LINF_GRIND_TARGET_ACCEPT_PROB_NUM,
     FOLD_LINF_SNAP_MIN_TSTAR_RETAIN_DEN, FOLD_LINF_SNAP_MIN_TSTAR_RETAIN_NUM,
