@@ -216,10 +216,10 @@ where
         let b_width = k_g
             .checked_mul(t_cols_per_vector)
             .ok_or_else(|| AkitaError::InvalidSetup("setup B width overflow".to_string()))?;
-        let a_view = setup.shared_matrix.ring_view_dyn(n_a, inner_width, d_a)?;
+        let setup_a_view = setup.shared_matrix.ring_view_dyn(n_a, inner_width, d_a)?;
         let b_view = setup.shared_matrix.ring_view_dyn(n_b, b_width, d_b)?;
-        let a_rows: Vec<&[F]> = (0..n_a)
-            .map(|r| a_view.row_flat(r))
+        let setup_a_rows: Vec<&[F]> = (0..n_a)
+            .map(|r| setup_a_view.row_flat(r))
             .collect::<Result<_, _>>()?;
         let b_rows: Vec<&[F]> = (0..n_b)
             .map(|r| b_view.row_flat(r))
@@ -228,13 +228,13 @@ where
             lp.root_a_row_range(opening_batch, group_index, relation_matrix_row_layout)?;
         let b_range =
             lp.root_commitment_row_range(opening_batch, group_index, relation_matrix_row_layout)?;
-        let a_weights = &eq_tau1[a_range];
+        let a_row_weights = &eq_tau1[a_range];
         let b_weights = &eq_tau1[b_range];
         let g_open: Vec<E> = gadget_row_scalars::<F>(depth_open, log_basis)
             .into_iter()
             .map(E::lift_base)
             .collect();
-        let g_commit: Vec<E> = gadget_row_scalars::<F>(depth_commit, log_basis)
+        let commit_gadget: Vec<E> = gadget_row_scalars::<F>(depth_commit, log_basis)
             .into_iter()
             .map(E::lift_base)
             .collect();
@@ -281,7 +281,8 @@ where
                 let phys_claim_offset =
                     block_idx * t_compound_per_block + a_idx * depth_open + digit_idx;
                 let local_col = t_vector_idx * t_cols_per_vector + phys_claim_offset;
-                let mut acc = a_weights[a_idx] * challenge_sums_by_t_block[blk] * g_open[digit_idx];
+                let mut acc =
+                    a_row_weights[a_idx] * challenge_sums_by_t_block[blk] * g_open[digit_idx];
                 for (row_idx, eq_i) in b_weights.iter().enumerate() {
                     if !eq_i.is_zero() {
                         acc += *eq_i
@@ -295,17 +296,28 @@ where
             })
             .collect::<Vec<_>>();
 
+        // For z_hat[blk, dc, df], the column value is:
+        //
+        // -G_fold[df] * (
+        //     tau_consistency * a_alpha[blk] * G_commit[dc]
+        //     + sum_r tau_A[r] * A_alpha[r, blk, dc]
+        //   ).
+        //
+        // The first term is the opening row. The second term is the A-row setup
+        // contribution. A is already digit-domain, so the A-row setup term does
+        // not multiply by G_commit.
         let z_base = cfg_into_iter!(0..inner_width)
             .map(|k| {
                 let block_idx = k / depth_commit;
                 let digit_idx = k % depth_commit;
-                let a_eval = ring_multiplier_point.eval_a_at_dyn::<E>(block_idx, alpha_pows_a)?;
-                let mut acc = consistency_weight * a_eval * g_commit[digit_idx];
-                for (a_idx, eq_i) in a_weights.iter().enumerate() {
+                let opening_a_eval =
+                    ring_multiplier_point.eval_a_at_dyn::<E>(block_idx, alpha_pows_a)?;
+                let mut acc = consistency_weight * opening_a_eval * commit_gadget[digit_idx];
+                for (a_idx, eq_i) in a_row_weights.iter().enumerate() {
                     if !eq_i.is_zero() {
                         acc += *eq_i
                             * eval_flat_ring_at_pows_fast(
-                                &a_rows[a_idx][k * d_a..(k + 1) * d_a],
+                                &setup_a_rows[a_idx][k * d_a..(k + 1) * d_a],
                                 alpha_pows_a,
                             );
                     }

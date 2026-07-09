@@ -546,7 +546,7 @@ acc = -consistency_weight * eval_offset_eq_interval(r_col, z_start, 1, seg)
 This costs $O(\text{DF} \cdot \text{DC} \cdot \text{block\_len})$ to build the
 segment plus sparse/pruned interval binding over the live global range (for
 single-chunk layouts `z_start = 0` this matches ordinary MLE binding; with
-nonzero chunk offsets the pruned fold avoids the old carry-DP overhead). That is
+nonzero chunk offsets the pruned fold avoids the old carry handling cost). That is
 acceptable because the non-power-of-two case only arises at recursive levels,
 where the witness (and hence `z_hat`) has already shrunk; the dominant root
 level always lands in Case 1.
@@ -583,7 +583,8 @@ Three row blocks of $M$ are sub-views of the **same** backing SIS matrix:
 - **`D · e_hat`** — $n_d$ rows of `D`, over the `e_hat` columns.
 - **`B · t_hat`** — $n_b$ rows of `B`, over the `t_hat` columns, one set per
   commitment group $g$.
-- **`A · z_hat`** — $n_A$ rows of `A`, over the `z_hat` columns.
+- **`A · G_fold · z_hat`** — $n_A$ rows of `A`, over the folded commit-digit
+  vector `z`.
 
 `D`, `B`, and `A` are not separate matrices: they are co-located blocks of one
 shared matrix, all anchored at its top-left corner. They differ only in how many
@@ -616,6 +617,17 @@ entry at (row $r$, column $c$) it does three things:
    \;+\; \sum_g b_w[g][r] \cdot T_{\text{col}}^{(g)}[c]
    \;+\; a_w[r] \cdot Z_{\text{col}}[c].
    $$
+   For an `A` column $c = (\text{blk}, \text{dc})$,
+   $Z_{\text{col}}[c]$ is the equality weight for
+   $z[\text{blk}, \text{dc}]$, where
+   $$
+   z[\text{blk}, \text{dc}]
+   \;=\;
+   \sum_{\text{df}} g_{\text{fold}}[\text{df}]
+     \cdot \hat z[\text{blk}, \text{dc}, \text{df}].
+   $$
+   Thus the setup row block is $A \cdot G_{\text{fold}} \cdot \hat z$.
+   It is not $A \cdot G_{\text{commit}} \cdot G_{\text{fold}} \cdot \hat z$.
 3. Accumulate $r_{\text{eval}}(r, c) \cdot \bar{\omega}(r, c)$ into a running sum.
 
 The entire setup contribution is then a single dot product over the shared
@@ -632,17 +644,18 @@ acc = 0
 for r in 0..r_max:                 # r_max = max(n_d, n_b, n_A)
   for c in 0..n_cols:              # columns of the shared matrix, scanned once
     r_eval = eval_ring_at_pows(matrix[r][c], alpha)     # the ONE O(D) alpha-eval
-    bar_omega = d_w[r] * W_col[c]                         # D · e_hat   (0 if r >= n_d)
-              + sum_g b_w[g][r] * T_col[g][c]             # B · t_hat   (0 if r >= n_b)
-              + a_w[r] * Z_col[c]                          # A · z_hat   (0 if r >= n_A)
+    bar_omega = d_w[r] * W_col[c]                         # D · e_hat
+              + sum_g b_w[g][r] * T_col[g][c]             # B · t_hat
+              + a_w[r] * Z_col[c]                          # A · G_fold · z_hat
     acc += r_eval * bar_omega
 ```
 
 Each column pattern is zero outside its own segment, and each row weight is zero
 past its row count, so a given entry simply contributes to whichever of the
 three products actually cover it — but its $\alpha$-evaluation happens exactly
-once. This is the "free" `D·e_hat` + `B·t_hat` + `A·z_hat` fusion: the dominant
-cost (the $\alpha$-evaluations) is shared across all three.
+once. This is the "free" `D·e_hat` + `B·t_hat` +
+`A·G_fold·z_hat` fusion: the dominant cost (the $\alpha$-evaluations) is shared
+across all three.
 
 ### The three column patterns
 
@@ -671,8 +684,15 @@ and per-group sparsity: a group-local polynomial slot is decoded from $c$, then
 mapped to its global flat claim (or skipped if that slot is not opened in group
 $g$). It reuses the `t_hat` high table.
 
-**`Z_col[c]` (for `A · z_hat`).** This follows the two `z_hat` cases. When
-`block_len` is a power of two it uses the peeled-block form with a small
+**`Z_col[c]` (for `A · G_fold · z_hat`).** For an `A` column
+$c = (\text{blk}, \text{dc})$, this is the equality weight of
+$z[\text{blk}, \text{dc}]$. Since
+$z[\text{blk}, \text{dc}]
+= \sum_{\text{df}} g_{\text{fold}}[\text{df}]
+\cdot \hat z[\text{blk}, \text{dc}, \text{df}]$, `Z_col` contains
+`g_fold` and does not contain `g_commit`.
+
+When `block_len` is a power of two it uses the peeled-block form with a small
 precomputed table that has already folded in the fold-digit (`df`) sum:
 
 ```text
@@ -715,7 +735,7 @@ and $n_{\text{cols}}$ is the width of the shared scan (the max of the three
 blocks' column widths). The decisive point is the bottom row: the $O(D)$
 $\alpha$-evaluations — the verifier's true bottleneck — are performed exactly
 once per shared-matrix entry and amortized across `D·e_hat`, `B·t_hat`, and
-`A·z_hat`, rather than once per product.
+`A·G_fold·z_hat`, rather than once per product.
 
 ## A future optimization: partial peeling for non-power-of-two `block_len`
 
@@ -731,7 +751,7 @@ it is not (some recursive levels — `block_len = ceil(num_ring / num_blocks)` n
 not be a power of two), the dense fallback (Case 2) materializes the structured
 `z` segment and runs a single [`eval_offset_eq_interval`](../../../../crates/akita-algebra/src/offset_eq.rs)
 over it, at cost `O(DF · DC · block_len)` to materialize plus pruned binding
-over the live interval (cheaper than the old carry-DP when `z_start ≠ 0`). The
+over the live interval (cheaper than the old carry handling when `z_start ≠ 0`). The
 question is whether a *partial* peel — peeling the largest power of two that
 divides `block_len` — can beat that, and by how much.
 

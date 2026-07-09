@@ -20,8 +20,10 @@ cached.
 
 ## Ajtai commitment mechanics
 
-The two-tier template: inner commitment `t = A·G⁻¹(f)`, outer commitment via `B`,
-and the opening commitment via `D`. How binding reduces to Module-SIS.
+The two-tier template decomposes each witness block into commit digits `s_hat`.
+It computes the inner commitment `t = A * s_hat`, then uses `B` for the outer
+commitment and `D` for the opening relation. The binding argument reduces to
+Module-SIS.
 
 **Sources to fold in**
 

@@ -215,7 +215,7 @@ impl SetupContributionFixture {
                     .map(|idx| test_scalar(41 + idx as u128))
                     .collect(),
             ),
-            a_evals: (0..shape.block_len)
+            opening_a_evals: (0..shape.block_len)
                 .map(|idx| test_scalar(501 + idx as u128))
                 .collect(),
             chunk_range: 0..chunk_layout.chunks.len(),

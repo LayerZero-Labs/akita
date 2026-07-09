@@ -75,8 +75,8 @@ consistency row, the `A`/`B`/`D` commitment rows, the `r`-tail rows), and the
 verifier still precomputes one `row_weight[i] = eq(i, r_row)` per row, up front.
 Each machine writes into these *same* rows — the consistency row carries the
 `e`/`z` contributions of every machine, and the $n_A$ `A`-rows carry the `t` and
-`A·z` contributions of every machine — so each row weight is applied **once**,
-after summing across machines.
+`A·G_fold·z_hat` contributions of every machine — so each row weight is applied
+**once**, after summing across machines.
 
 What changed is the **column axis**: the columns now enumerate the $\mathcal M$
 machine witnesses. Splitting the column sum by machine,
@@ -509,8 +509,12 @@ matrix, now each repeated per machine:
   $D \cdot \hat e$, only re-laid-out by machine.
 - **`B · t_hat`** — $B_j$ on `t_hat^(j)`, for $j \in [\mathcal M]$ (per commitment
   group). **Partitioned**: collectively the single-machine $B \cdot \hat t$.
-- **`A · z_hat`** — the *same* $A$ on each `z_hat^(j)`, for $j \in [\mathcal M]$.
-  **Replicated**: one shared matrix $A$ acting on $\mathcal M$ distinct full-size
+- **`A · G_fold · z_hat`** — the same digit-domain matrix $A$ on each folded
+  commit-digit vector $z^{(j)}$, for $j \in [\mathcal M]$, where
+  $z^{(j)}[\text{blk}, \text{dc}]
+  = \sum_{\text{df}} g_{\text{fold}}[\text{df}]
+  \cdot \hat z^{(j)}[\text{blk}, \text{dc}, \text{df}]$.
+  **Replicated**: one shared matrix $A$ acts on $\mathcal M$ distinct full-size
   folds.
 
 ### Why the $\alpha$-evaluations do not multiply
@@ -523,9 +527,9 @@ single-machine, and $\alpha$-evaluates each entry
 - For `D · e_hat` and `B · t_hat`, the partition only *re-routes* which `e`/`t`
   column each scanned matrix column maps to. The set of matrix columns scanned —
   the full $D$, the full $B$ — is unchanged.
-- For `A · z_hat`, all $\mathcal M$ folds $z^{(j)}$ are read by the **same** $A$
-  columns, so the one $\alpha$-evaluation of $A(r,c)$ is reused across all
-  $\mathcal M$ copies.
+- For `A · G_fold · z_hat`, all $\mathcal M$ folded commit-digit vectors
+  $z^{(j)}$ are read by the **same** $A$ columns, so the one
+  $\alpha$-evaluation of $A(r,c)$ is reused across all $\mathcal M$ copies.
 
 Hence the $\alpha$-evaluation count stays
 $O(r_{\max} \cdot n_{\text{cols}} \cdot D)$ with the **same**
@@ -536,8 +540,8 @@ the column weight *before* the scan.
 
 ### The fused per-entry computation
 
-Same single scan as single-machine, with the `A·z` column weight **combined over
-the $\mathcal M$ folds** in advance:
+Same single scan as single-machine, with the `A·G_fold·z_hat` column weight
+**combined over the $\mathcal M$ folds** in advance:
 
 $$
 Z^{\text{comb}}_{\text{col}}[c] \;:=\; \sum_{j=0}^{\mathcal M-1} Z^{(j)}_{\text{col}}[c],
@@ -545,7 +549,23 @@ $$
 
 where $Z^{(j)}_{\text{col}}[c]$ is the `z`-equality weight of matrix column $c$
 within machine $j$'s `z_hat^(j)` segment (at offset $z^{(j)}_{\text{start}}$). The
-`D·e` and `B·t` patterns ($W_{\text{col}}$, $T_{\text{col}}$) are rebuilt for the
+matrix column is $c = (\text{blk}, \text{dc})$, and
+
+$$
+Z^{(j)}_{\text{col}}[\text{blk}, \text{dc}]
+\;=\;
+-\sum_{\text{df}} g_{\text{fold}}[\text{df}]
+\cdot
+\mathrm{eq}\!\left(z^{(j)}_{\text{start}}
+  + \text{blk}
+  + \text{block\_len}\cdot(\text{df}+\text{DF}\cdot\text{dc}),
+  r_{\text{col}}\right).
+$$
+
+There is no `g_commit` factor in this setup weight. The `g_commit` factor appears
+in the separate opening row over the `z_hat` segment.
+
+The `D·e` and `B·t` patterns ($W_{\text{col}}$, $T_{\text{col}}$) are rebuilt for the
 distributed `e`/`t` layout but keep their **single-machine size** — because those
 segments are partitioned, not replicated, every matrix column still maps to
 exactly one witness column.
@@ -562,7 +582,7 @@ for r in 0..r_max:                 # r_max = max(n_d, n_b, n_A)        (UNCHANGE
     r_eval    = eval_ring_at_pows(matrix[r][c], alpha)   # the ONE O(D) alpha-eval — UNCHANGED count
     bar_omega = d_w[r] * W_col[c]                          # D·e   (partitioned, single-size)
               + sum_g b_w[g][r] * T_col[g][c]              # B·t   (partitioned, single-size)
-              + a_w[r] * Z_comb[c]                          # A·z   (combined over M folds)
+              + a_w[r] * Z_comb[c]                          # A·G_fold·z_hat
     acc += r_eval * bar_omega
 ```
 
@@ -580,11 +600,14 @@ precomputed weight vector changed (`Z_comb` instead of `Z_col`).
 - **`T_col[g][c]` (`B · t_hat`).** The same with the extra `a_row` axis and
   per-group sparsity, against the distributed `t_hat` layout; reuses
   `eq_high_t`.
-- **`Z_comb[c]` (`A · z_hat`).** For each `A` column $c$ (a `(dc, df, blk)` cell),
-  sum over machines the `z`-equality weight at each $z^{(j)}_{\text{start}}$,
-  reusing the per-machine in-block summaries / peeled caches built in the
-  `z`-tensor section. Build cost $O(\mathcal M \cdot A_{\text{cols}})$; in the
-  non-power-of-two `block_len` case it is built densely per machine, as there.
+- **`Z_comb[c]` (`A · G_fold · z_hat`).** For each `A` column
+  $c = (\text{blk}, \text{dc})$, sum over machines:
+  $Z^{\text{comb}}_{\text{col}}[c]
+  = \sum_j Z^{(j)}_{\text{col}}[c]$.
+  Each $Z^{(j)}_{\text{col}}[c]$ is the `G_fold` weighted equality sum over the
+  `df` axis of machine $j$'s `z_hat` segment. Build cost is
+  $O(\mathcal M \cdot A_{\text{cols}})$; in the non-power-of-two `block_len`
+  case it is built densely per machine, as there.
 
 ### Two coordinate systems (plus the machine axis)
 
@@ -611,7 +634,7 @@ $\alpha$-evaluated entries against a precomputed weight vector.
 The bottom row is the whole point: the $O(D)$ $\alpha$-evaluations — the
 verifier's true bottleneck — are performed exactly once per shared-matrix entry
 and amortized across `D·e_hat`, `B·t_hat`, **and all $\mathcal M$ copies of
-`A·z_hat`**. The only $\mathcal M$-dependent additions are the
+`A·G_fold·z_hat`**. The only $\mathcal M$-dependent additions are the
 $O(\mathcal M \cdot A_{\text{cols}})$ combined-weight build and the
 $\mathcal M\times$ scaling of the cheap high tables — both far below the
 $\alpha$-evaluation floor.
@@ -628,7 +651,7 @@ ambient size):
 | `t_hat` consistency | $O(C\,B + n_A C\,\text{do})$ | $O(\mathcal M\,C\,B_{\mathsf{loc}} + \mathcal M\,n_A C\,\text{do}) = O(C\,B + \mathcal M\,n_A C\,\text{do})$ | heavy term $= C\,B$ unchanged; light $\times \mathcal M$ |
 | `z_hat` tensor (replicated) | $O(\text{block\_len} + \text{DF}\,\text{DC})$ | $O(\mathcal M\,\text{block\_len} + \mathcal M\,\text{DF}\,\text{DC})$ | cheap term $\times \mathcal M$ (no tiling) |
 | `D·e_hat`, `B·t_hat` setup scan | $\alpha$-evals over full $\hat e$, $\hat t$ | identical | none |
-| **`A·z_hat` setup scan (dominant)** | $O(r_{\max}\,n_{\text{cols}}\,D)$ $\alpha$-evals | **$O(r_{\max}\,n_{\text{cols}}\,D)$ $\alpha$-evals** | **none** |
+| **`A·G_fold·z_hat` setup scan (dominant)** | $O(r_{\max}\,n_{\text{cols}}\,D)$ $\alpha$-evals | **$O(r_{\max}\,n_{\text{cols}}\,D)$ $\alpha$-evals** | **none** |
 | combined column-weight build | — | $O(\mathcal M \cdot A_{\text{cols}})$ field ops | additive, cheap |
 | `r_tail` rows | one quotient | one summed quotient | none |
 

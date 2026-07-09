@@ -171,9 +171,9 @@ setup-contribution planner consume the same definitions):
 α-evaluation scan (`eval_ring_at_pows` inside `packed_slice_inner_sum`) runs
 exactly **once per shared-matrix entry**, with the same
 `r_max = max(n_d, n_b, n_a)` and the same `n_cols` regardless of chunk count.
-The chunk-replicated `A·z_hat` enters only through the additively combined,
-α-free `Z_comb` weight vector. The implementation must **not** re-scan or
-re-α-evaluate the setup matrix per chunk.
+The chunk-replicated `A·G_fold·z_hat` setup term enters only through the
+additively combined, α-free `Z_comb` weight vector. The implementation must
+**not** re-scan or re-α-evaluate the setup matrix per chunk.
 - **Chunk-partitioned cost is flat in chunk count.** The `e_hat`/`t_hat` block
 summaries cost `O(W · C · B_w) = O(C · B)` in total (the `W` chunk windows
 *tile* the same `B` blocks), and the shared `eq_low` table is built once at
@@ -269,8 +269,8 @@ reusing the existing `StructuredFixture`/`fixture()` shape
      `[ z0|e0|t0 ]…[ z(W-1)|e(W-1)|t(W-1) ][ r ]` (z-first within each
      chunk, `r` only in last chunk as `Some`), using the per-cell formulas from
      the theory chapter (`e_hat`: `c_alpha[claim][blk_g]·g_open`; `t_hat`: with
-     the `a_row` axis; `z_hat`: `g_commit·g_fold·a[blk]`, **the same in every
-     chunk** — replicated; `c_alpha` read at the *global* block
+     the `a_row` axis; opening-row `z_hat`: `g_commit·g_fold·a[blk]`,
+     **the same in every chunk** — replicated; `c_alpha` read at the *global* block
      `blk_g = chunk·B_w + block_local` for `e_hat`/`t_hat`).
    - Form `eq(·, r_col)` densely over that layout, inner-product against the row
      weights, and compare to the chunked structured evaluation. The loop over
@@ -279,8 +279,9 @@ reusing the existing `StructuredFixture`/`fixture()` shape
    structure as (1) with a fixture whose `block_len` is **not** a power of two
    (e.g. `block_len = 510`). Drives the §4 Case 2 / §5 dense `Z_comb` paths
    (`ZDenseSlicesEvaluator` summed over chunks, dense `z_eq_slice` summed over
-   chunks). Loop `W ∈ {1, 2, 4, 8}`. The materialized `z_hat` is **replicated**
-   (same `g_commit·g_fold·a[blk]` in every chunk, only the offset shifts).
+   chunks). Loop `W ∈ {1, 2, 4, 8}`. The materialized opening-row `z_hat`
+   contribution is **replicated**. It uses the same `g_commit·g_fold·a[blk]`
+   in every chunk, and only the offset shifts.
 3. **`single_chunk_matches_legacy_row_eval` (regression).** Evaluate under
    `num_chunks = 1` and assert equality with the current single-segment result on
    the existing fixture (both `block_len` pow2 and non-pow2).
@@ -634,11 +635,18 @@ then map the global block to its chunk:
 - `**T_col` / `t_eq_slice_per_group` (`B·t_hat`, partitioned).** Same chunk split
 in `get_eq_indices_for_b`, with the extra `a_row` axis and per-group sparsity;
 footprint unchanged.
-- `**Z_comb` / `z_eq_slice` (`A·z_hat`, replicated).** For each `A` column `c`,
-sum the per-chunk `z_hat`-equality weight over all chunks:
+- `**Z_comb` / `z_eq_slice` (`A·G_fold·z_hat`, replicated).** For each `A`
+column `c = (blk, dc)`, sum the per-chunk `G_fold` weighted `z_hat` equality
+weight over all chunks:
   ```text
-  Z_comb[c] = Σ_chunk z_weight(c, chunk.offset_z)
+  Z_comb[blk, dc]
+    = -Σ_chunk Σ_df G_fold[df]
+       · eq_x(chunk.offset_z
+              + blk
+              + block_len · (df + depth_fold · dc))
   ```
+  There is no `G_commit` factor in this setup weight. `G_commit` appears in the
+  separate opening-row contribution for the `z_hat` segment.
   Following the **same two `block_len` cases as §`z_hat` per chunk**, `prepare`
   dispatches once on `block_len.is_power_of_two()` and loops the chunk axis
   inside:
@@ -1290,4 +1298,3 @@ Follow-ups after the first full landing:
 evaluators), `crates/akita-types/src/setup_contribution.rs`
 (`SetupContributionPlan`), `crates/akita-types/src/proof/ring_relation.rs`
 (`RingRelationSegmentLayout`).
-

@@ -120,7 +120,7 @@ pub(crate) struct SetupContributionGroupStatic<E> {
     pub(super) n_b: usize,
     pub(super) required: usize,
     pub(super) segments: Vec<GroupSetupSegment<E>>,
-    pub(super) a_weights: Vec<E>,
+    pub(super) a_row_weights: Vec<E>,
     pub(super) b_weights: Vec<E>,
 }
 
@@ -135,7 +135,7 @@ pub(crate) struct SetupContributionGroupPlan<E> {
     pub(crate) e_eq_slice: Vec<E>,
     pub(crate) t_eq_slice: Vec<E>,
     pub(crate) z_eq_slice: Vec<E>,
-    pub(crate) a_weights: Vec<E>,
+    pub(crate) a_row_weights: Vec<E>,
     pub(crate) b_weights: Vec<E>,
     pub(crate) d_weights: Vec<E>,
 }

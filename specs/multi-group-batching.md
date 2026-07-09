@@ -304,8 +304,10 @@ For each group `g`, the root proves:
 ```text
 1. B_g * t_hat_g = u_g
 2. output_g
-3. c_g^T * w_hat_g = a_g^T * z_hat_g
-4. c_g^T * t_hat_g = A_g * z_hat_g
+3. c_g^T * G_open,g * w_hat_g
+     = a_g^T * G_commit,g * G_fold,g * z_hat_g
+4. c_g^T * G_open,g * t_hat_g
+     = A_g * G_fold,g * z_hat_g
 ```
 
 The root also proves one global D relation:

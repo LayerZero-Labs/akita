@@ -24,7 +24,7 @@ pub(crate) struct GroupSetupSegment<E> {
     pub(super) has_a: bool,
     pub(super) a_row: usize,
     pub(super) a_start_abs: usize,
-    pub(super) a_weight: E,
+    pub(super) a_row_weight: E,
 }
 
 macro_rules! dispatch_segment_roles {
@@ -151,7 +151,7 @@ impl<E: FieldCore> GroupSetupSegment<E> {
             weight += self.b_weight_at(setup_idx, t_eq);
         }
         if self.has_a {
-            weight += self.a_weight_at(setup_idx, z_eq);
+            weight += self.a_row_weight_at(setup_idx, z_eq);
         }
         weight
     }
@@ -172,7 +172,7 @@ impl<E: FieldCore> GroupSetupSegment<E> {
             weight += self.b_weight_at(setup_idx, t_eq);
         }
         if HAS_A {
-            weight += self.a_weight_at(setup_idx, z_eq);
+            weight += self.a_row_weight_at(setup_idx, z_eq);
         }
         weight
     }
@@ -188,8 +188,8 @@ impl<E: FieldCore> GroupSetupSegment<E> {
     }
 
     #[inline(always)]
-    pub(super) fn a_weight_at(&self, setup_idx: usize, z_eq: &[E]) -> E {
-        self.a_weight * z_eq[setup_idx - self.a_start_abs]
+    pub(super) fn a_row_weight_at(&self, setup_idx: usize, z_eq: &[E]) -> E {
+        self.a_row_weight * z_eq[setup_idx - self.a_start_abs]
     }
 }
 
@@ -329,7 +329,7 @@ pub(super) fn base_ring_segment_inner_sum_typed<
     a_projection: &RoleProjection<E>,
     d_weights: &ProjectedRoleWeights<E>,
     b_weights: &ProjectedRoleWeights<E>,
-    a_weights: &ProjectedRoleWeights<E>,
+    a_row_weights: &ProjectedRoleWeights<E>,
 ) -> E
 where
     F: FieldCore,
@@ -359,7 +359,7 @@ where
                     a_projection,
                     d_weights,
                     b_weights,
-                    a_weights,
+                    a_row_weights,
                 );
                 if !weight.is_zero() {
                     acc += eval_ring_at_pows_fast(&setup_flat[base_idx], base_pows) * weight;
@@ -403,10 +403,10 @@ where
                 base_idx,
                 segment.a_row,
                 segment.a_start_abs,
-                segment.a_weight,
+                segment.a_row_weight,
                 z_eq,
                 a_projection,
-                a_weights,
+                a_row_weights,
             );
         }
         if !weight.is_zero() {
@@ -485,7 +485,7 @@ fn base_ring_segment_weight_at<
     a_projection: &RoleProjection<E>,
     d_weights: &ProjectedRoleWeights<E>,
     b_weights: &ProjectedRoleWeights<E>,
-    a_weights: &ProjectedRoleWeights<E>,
+    a_row_weights: &ProjectedRoleWeights<E>,
 ) -> E
 where
     E: FieldCore,
@@ -518,10 +518,10 @@ where
             base_idx,
             segment.a_row,
             segment.a_start_abs,
-            segment.a_weight,
+            segment.a_row_weight,
             z_eq,
             a_projection,
-            a_weights,
+            a_row_weights,
         );
     }
     weight

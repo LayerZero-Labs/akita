@@ -130,6 +130,92 @@ fn dense_z_eq_slice_uses_relative_high_carry() {
 }
 
 #[test]
+fn setup_a_z_weights_do_not_include_commit_gadget() {
+    let block_len = 8;
+    let depth_commit = 3;
+    let depth_fold = 2;
+    let num_points = 1;
+    let log_basis = 4;
+    let z_range = block_len * depth_commit;
+    let offset_z = 0;
+    let full_vec_randomness = (0..8)
+        .map(|idx| test_scalar(701 + idx as u128))
+        .collect::<Vec<_>>();
+    let fold_gadget = gadget_row_scalars::<F>(depth_fold, log_basis);
+    let commit_gadget = gadget_row_scalars::<F>(depth_commit, log_basis);
+    let inputs = SetupContributionPlanInputs {
+        relation_matrix_row_layout: RelationMatrixRowLayout::WithoutDBlock,
+        rows: 2,
+        n_a: 1,
+        n_b: 0,
+        n_d: 0,
+        num_groups: num_points,
+        num_polys_per_group: vec![0],
+        num_t_vectors: 0,
+        num_claims: 1,
+        num_blocks: 4,
+        block_len,
+        depth_open: 16,
+        depth_commit,
+        depth_fold,
+        inner_width: z_range,
+        eq_tau1: vec![test_scalar(11), test_scalar(12)],
+    };
+    let chunk_layout = crate::WitnessLayout {
+        blocks_per_chunk: 4,
+        chunks: vec![crate::WitnessChunkLayout {
+            offset_z,
+            offset_e: z_range,
+            offset_t: z_range,
+            offset_r: Some(0),
+            global_block_base: 0,
+        }],
+        chunk_lengths: vec![crate::WitnessChunkLengths {
+            z_len: z_range,
+            e_len: 0,
+            t_len: 0,
+            r_len: Some(0),
+        }],
+    };
+
+    let plan = prepare_single_group_plan(
+        &inputs,
+        &full_vec_randomness,
+        None,
+        None,
+        &fold_gadget,
+        &chunk_layout,
+    )
+    .unwrap();
+
+    let expected = (0..z_range)
+        .map(|k| {
+            let blk = k / depth_commit;
+            let dc = k % depth_commit;
+            let mut acc = F::zero();
+            for pt in 0..num_points {
+                for (df, &fold) in fold_gadget.iter().enumerate().take(depth_fold) {
+                    let x = blk + block_len * (pt + num_points * (df + depth_fold * dc));
+                    acc += eq_eval_at_index(&full_vec_randomness, offset_z + x) * fold;
+                }
+            }
+            -acc
+        })
+        .collect::<Vec<_>>();
+    let wrong_with_commit_gadget = expected
+        .iter()
+        .enumerate()
+        .map(|(k, &weight)| weight * commit_gadget[k % depth_commit])
+        .collect::<Vec<_>>();
+
+    assert_eq!(plan.groups[0].z_eq_slice, expected);
+    assert_ne!(
+        plan.groups[0].z_eq_slice, wrong_with_commit_gadget,
+        "A setup weights are for A * G_fold * z_hat, not A * G_commit * G_fold * z_hat"
+    );
+}
+
+#[test]
 fn single_group_plan_supports_multi_chunk_weights() {
     let num_blocks = 4;
     let blocks_per_chunk = 2;
@@ -279,7 +365,7 @@ fn packed_direct_matches_row_fallback_with_d_offset() {
                 test_scalar(13),
             ],
             z_eq_slice: vec![test_scalar(17), test_scalar(19), test_scalar(23)],
-            a_weights: vec![test_scalar(29), test_scalar(31)],
+            a_row_weights: vec![test_scalar(29), test_scalar(31)],
             b_weights: vec![test_scalar(37), test_scalar(41)],
             d_weights: vec![test_scalar(43), test_scalar(47)],
         }],
@@ -332,7 +418,7 @@ fn multi_group_packed_direct_matches_row_fallback() {
                     test_scalar(13),
                 ],
                 z_eq_slice: vec![test_scalar(17), test_scalar(19), test_scalar(23)],
-                a_weights: vec![test_scalar(29), test_scalar(31)],
+                a_row_weights: vec![test_scalar(29), test_scalar(31)],
                 b_weights: vec![test_scalar(37), test_scalar(41)],
                 d_weights: vec![test_scalar(43), test_scalar(47)],
             },
@@ -352,7 +438,7 @@ fn multi_group_packed_direct_matches_row_fallback() {
                     test_scalar(73),
                 ],
                 z_eq_slice: vec![test_scalar(79), test_scalar(83), test_scalar(89)],
-                a_weights: vec![test_scalar(97), test_scalar(101)],
+                a_row_weights: vec![test_scalar(97), test_scalar(101)],
                 b_weights: vec![test_scalar(103), test_scalar(107)],
                 d_weights: vec![test_scalar(109), test_scalar(113)],
             },
@@ -417,7 +503,7 @@ fn packed_direct_matches_row_fallback_with_nested_role_dims() {
                 test_scalar(13),
             ],
             z_eq_slice: vec![test_scalar(17), test_scalar(19), test_scalar(23)],
-            a_weights: vec![test_scalar(29), test_scalar(31)],
+            a_row_weights: vec![test_scalar(29), test_scalar(31)],
             b_weights: vec![test_scalar(37), test_scalar(41)],
             d_weights: vec![test_scalar(43), test_scalar(47)],
         }],
@@ -475,7 +561,7 @@ fn packed_direct_rejects_non_decomposable_role_alpha_pows() {
                 test_scalar(13),
             ],
             z_eq_slice: vec![test_scalar(17), test_scalar(19), test_scalar(23)],
-            a_weights: vec![test_scalar(29), test_scalar(31)],
+            a_row_weights: vec![test_scalar(29), test_scalar(31)],
             b_weights: vec![test_scalar(37), test_scalar(41)],
             d_weights: vec![test_scalar(43), test_scalar(47)],
         }],
@@ -535,7 +621,7 @@ fn packed_direct_accepts_d_footprint_at_nested_d_d() {
                 test_scalar(13),
             ],
             z_eq_slice: vec![test_scalar(17), test_scalar(19), test_scalar(23)],
-            a_weights: vec![test_scalar(29), test_scalar(31)],
+            a_row_weights: vec![test_scalar(29), test_scalar(31)],
             b_weights: vec![test_scalar(37), test_scalar(41)],
             d_weights: vec![test_scalar(43), test_scalar(47)],
         }],
@@ -594,7 +680,7 @@ fn multi_group_packed_direct_matches_row_fallback_with_mismatched_t_cols() {
                     test_scalar(13),
                 ],
                 z_eq_slice: vec![test_scalar(17), test_scalar(19), test_scalar(23)],
-                a_weights: vec![test_scalar(29), test_scalar(31)],
+                a_row_weights: vec![test_scalar(29), test_scalar(31)],
                 b_weights: vec![test_scalar(37), test_scalar(41)],
                 d_weights: vec![test_scalar(43), test_scalar(47)],
             },
@@ -616,7 +702,7 @@ fn multi_group_packed_direct_matches_row_fallback_with_mismatched_t_cols() {
                     test_scalar(83),
                 ],
                 z_eq_slice: vec![test_scalar(89), test_scalar(97), test_scalar(101)],
-                a_weights: vec![test_scalar(103), test_scalar(107)],
+                a_row_weights: vec![test_scalar(103), test_scalar(107)],
                 b_weights: vec![test_scalar(109), test_scalar(113)],
                 d_weights: vec![test_scalar(127), test_scalar(131)],
             },

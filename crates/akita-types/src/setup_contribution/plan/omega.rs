@@ -1,14 +1,19 @@
 use super::*;
 
 impl<E: FieldCore> SetupContributionPlan<E> {
-    /// Dense setup-weight vector `bar_omega[i]`.
+    /// Dense setup weight vector `bar_omega[i]`.
     ///
-    /// For each packed setup position `i`, `bar_omega[i]` is the
-    /// scalar coefficient multiplying the expanded setup row/ring at that
-    /// position in the setup contribution. Each commitment group scatters its
-    /// D/B/A segment weights into the shared footprint; overlapping positions,
-    /// such as the shared D rows, accumulate additively. For a single group this
-    /// equals the historical flat setup-contribution weight vector.
+    /// For one commitment group, a packed setup position `i` receives
+    ///
+    /// ```text
+    /// 1_D(i) * tau_D[row_D(i)] * E_col[col_D(i)]
+    /// + 1_B(i) * tau_B[row_B(i)] * T_col[col_B(i)]
+    /// + 1_A(i) * tau_A[row_A(i)] * Z_col[col_A(i)].
+    /// ```
+    ///
+    /// Here `Z_col[blk, dc]` is the column weight for
+    /// `A * G_fold * z_hat`. If several groups write to the same packed setup
+    /// position, their scalar weights are added.
     pub fn materialize_bar_omega(&self) -> Result<Vec<E>, AkitaError> {
         let required = self.required()?;
         let mut bar_omega = vec![E::zero(); required];

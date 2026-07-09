@@ -674,10 +674,10 @@ The more compact no-new-stage optimization, and the optimized target for this
 protocol, shifts the relation-matrix work back before the setup product
 sumcheck and uses Stage 2 for the setup product. The level then runs two
 stages, the same as the baseline scheme, instead of three. The setup product
-sumcheck depends on the relation point `r_x` through the A/J adjoint `eta_Z`,
-so it cannot start until `r_x` is fixed; the only reason it lands in a third
-stage above is that the baseline fuses the relation into Stage 2, fixing `r_x`
-only at the very end.
+sumcheck depends on the relation point `r_x` through the `G_fold` weighted
+A-column vector `eta_Z`, so it cannot start until `r_x` is fixed; the only
+reason it lands in a third stage above is that the baseline fuses the relation
+into Stage 2, fixing `r_x` only at the very end.
 
 Shifted schedule:
 
@@ -776,10 +776,10 @@ If a level has no subsequent recursive fold, setup offloading should be
 disabled at that level in the first implementation. A terminal closure rule can
 be added later only if benchmarks justify it.
 
-### A/J Weight
+### A and G_fold Weight
 
-Do not materialize `A J`. Akita already represents the paper's `A J z_hat`
-term by moving `J` to the weight side.
+Do not materialize `A * G_fold`. Akita keeps `A` as the digit-domain setup
+prefix. It applies `G_fold` on the weight side when it builds the setup weights.
 
 At the root, the compact A column is:
 
@@ -798,21 +798,32 @@ The useful adjoint vector is:
 
 ```text
 eta_Z(b_z, d_c)
-  = - sum_p sum_{d_f} g_f[d_f]
+  = - sum_p sum_{d_f} G_fold[d_f]
       eq(r_x, offset_z + x_Z(p, d_f, d_c, b_z))
 ```
 
-The A contribution to the coefficient-weight tensor is:
+The A contribution to the setup-weight tensor is:
 
 ```text
 omega_A(iota_A(a, j_A_root(b_z, d_c)), y)
   = alpha^y * eq(tau_1, A_a) * eta_Z(b_z, d_c)
 ```
 
+Equivalently, the A setup rows represent:
+
+```text
+A * z, where z[b_z, d_c]
+  = sum_{d_f} G_fold[d_f] * z_hat[b_z, d_c, d_f].
+```
+
+This is `A * G_fold * z_hat`. It is not
+`A * G_commit * G_fold * z_hat`.
+
 The root setup-offload evaluator should evaluate the row-aware root A slice
 directly. Because root A is digit-fast while the folded z side is block-fast,
-the exact evaluator needs a carry-DP style contraction. This is the right
-long-term choice because root one-hot requires digit-fast A.
+the evaluator must account for the carry that appears when `offset_z` is added
+to the block index. This is the right long-term choice because root one-hot
+requires digit-fast A.
 
 If setup offloading is enabled at a recursive folded level, recursive A may use
 the block-fast view so the large `b_z` axis factors as an equality inner
@@ -854,9 +865,9 @@ This lane rewrites the direct setup contribution as:
 ```
 
 using a materialized `omega_S`. Its purpose is to pin the exact role pullbacks
-and give every later branch a correctness oracle. It should test D, B, and A/J
-weights, including the root digit-fast A slice and recursive block-fast role
-views.
+and give every later branch a correctness oracle. It should test D, B, and
+`A * G_fold * z_hat` weights, including the root digit-fast A slice and
+recursive block-fast role views.
 
 ### Succinct Weight Evaluator
 
@@ -867,9 +878,10 @@ evaluate:
 omega_tilde_S(rho_lambda, rho_y)
 ```
 
-without scanning `S`. The hard part is the root A/J slice: root A remains
-digit-fast for one-hot, while the folded z side is block-fast, so the evaluator
-needs the row-aware carry-DP contraction.
+without scanning `S`. The hard part is the root A slice with the `G_fold`
+weight: root A remains digit-fast for one-hot, while the folded z side is
+block-fast. The evaluator must account for the carry that appears when
+`offset_z` is added to the block index.
 
 ### Prefix Commitment Artifacts
 
@@ -955,7 +967,8 @@ For the later offloading branches:
 
 - materialized `<S_{<= N_setup}, omega_S>` equals direct setup contribution;
 - `omega_S` has alpha on the weight side;
-- root A/J evaluator matches materialized `eta_Z` and the row-aware A slice;
+- root A evaluator with `G_fold` weights matches materialized `eta_Z` and the
+  row-aware A slice;
 - recursive block-fast D/B and optional recursive block-fast A evaluators match
   materialized weights;
 - selected-slot preprocessing can generate only the known CI/root prefix and
@@ -1038,7 +1051,7 @@ variance is visible in the logs.
 - No full-`S_full` runtime opening when a shorter committed prefix covers the
   active proof.
 - No legacy `max_stride` compatibility layer.
-- No materialization of `A J`.
+- No materialization of `A * G_fold`.
 - No change to the physical `w_hat || t_hat || z_hat || r_hat` witness segment
   order beyond selecting role-column views that match the current folding step.
 

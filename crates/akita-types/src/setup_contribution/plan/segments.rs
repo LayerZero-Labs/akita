@@ -14,7 +14,7 @@ impl<E: FieldCore> SetupContributionGroupPlan<E> {
             self.z_cols,
             self.n_a,
             self.n_b,
-            &self.a_weights,
+            &self.a_row_weights,
             &self.b_weights,
             &self.d_weights,
             d_rows,
@@ -31,7 +31,7 @@ impl<E: FieldCore> SetupContributionGroupPlan<E> {
         d_physical_cols: usize,
     ) -> Result<(usize, &[GroupSetupSegment<E>]), AkitaError> {
         debug_assert_eq!(self.d_weights.len(), d_rows);
-        debug_assert_eq!(self.a_weights.len(), self.n_a);
+        debug_assert_eq!(self.a_row_weights.len(), self.n_a);
         debug_assert_eq!(self.b_weights.len(), self.n_b);
         debug_assert_eq!(self.t_eq_slice.len(), self.t_cols);
         debug_assert_eq!(self.z_eq_slice.len(), self.z_cols);
@@ -80,7 +80,7 @@ pub(super) fn build_packed_segments<E: FieldCore>(
     z_cols: usize,
     n_a: usize,
     n_b: usize,
-    a_weights: &[E],
+    a_row_weights: &[E],
     b_weights: &[E],
     d_weights: &[E],
     d_rows: usize,
@@ -92,10 +92,10 @@ pub(super) fn build_packed_segments<E: FieldCore>(
             actual: d_weights.len(),
         });
     }
-    if a_weights.len() != n_a {
+    if a_row_weights.len() != n_a {
         return Err(AkitaError::InvalidSize {
             expected: n_a,
-            actual: a_weights.len(),
+            actual: a_row_weights.len(),
         });
     }
     if b_weights.len() != n_b {
@@ -169,7 +169,11 @@ pub(super) fn build_packed_segments<E: FieldCore>(
             let has_a = z_cols != 0 && lo < a_required;
             let a_row = if has_a { lo / z_cols } else { 0 };
             let a_start_abs = if has_a { a_row * z_cols } else { 0 };
-            let a_weight = if has_a { a_weights[a_row] } else { E::zero() };
+            let a_row_weight = if has_a {
+                a_row_weights[a_row]
+            } else {
+                E::zero()
+            };
 
             if !has_d && !has_b && !has_a {
                 return None;
@@ -189,7 +193,7 @@ pub(super) fn build_packed_segments<E: FieldCore>(
                 has_a,
                 a_row,
                 a_start_abs,
-                a_weight,
+                a_row_weight,
             })
         })
         .collect();

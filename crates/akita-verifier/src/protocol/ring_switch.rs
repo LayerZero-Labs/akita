@@ -124,7 +124,7 @@ pub struct RelationMatrixEvaluator<F: FieldCore> {
 #[derive(Clone)]
 pub(crate) struct RelationMatrixGroupEvaluator<F: FieldCore> {
     pub(crate) c_alphas: PreparedChallengeEvals<F>,
-    pub(crate) a_evals: Vec<F>,
+    pub(crate) opening_a_evals: Vec<F>,
     pub(crate) chunk_range: Range<usize>,
     pub(crate) e_col_offset: usize,
     pub(crate) num_claims: usize,
@@ -484,7 +484,7 @@ where
         }
         let c_alphas =
             prepare_challenge_evals::<F, E, D>(challenges, &alpha_pows_a, k_g, num_blocks)?;
-        let a_evals = (0..block_len)
+        let opening_a_evals = (0..block_len)
             .map(|idx| ring_multiplier_point.eval_a_at_dyn::<E>(idx, &alpha_pows_a))
             .collect::<Result<Vec<_>, _>>()?;
 
@@ -512,7 +512,7 @@ where
 
         groups.push(RelationMatrixGroupEvaluator {
             c_alphas,
-            a_evals,
+            opening_a_evals,
             chunk_range: order_pos..order_pos + 1,
             e_col_offset: group_e_offsets[group_index],
             num_claims: k_g,
@@ -677,7 +677,7 @@ where
 
     let c_alphas =
         prepare_challenge_evals::<F, E, D>(challenges, &alpha_pows, num_claims, lp.num_blocks)?;
-    let a_evals = (0..block_len)
+    let opening_a_evals = (0..block_len)
         .map(|idx| ring_multiplier_point.eval_a_at::<D, E>(idx, &alpha_pows))
         .collect::<Result<Vec<_>, _>>()?;
     let n_b = lp.b_key.row_len();
@@ -695,7 +695,7 @@ where
         .ok_or_else(|| AkitaError::InvalidSetup("e width overflow".to_string()))?;
     let group = RelationMatrixGroupEvaluator {
         c_alphas,
-        a_evals,
+        opening_a_evals,
         chunk_range: 0..chunk_layout.chunks.len(),
         e_col_offset: 0,
         num_claims,
@@ -1036,7 +1036,7 @@ impl<E: FieldCore> RelationMatrixEvaluator<E> {
                         let a_block_summary = summarize_pow2_block_carries(
                             z_block_low_eq,
                             z_offset_low,
-                            &group.a_evals,
+                            &group.opening_a_evals,
                         )?;
                         let z_offset_high = chunk.offset_z >> z_offset_low_bits;
                         let z_hi_len = fold_gadget.len() * g_commit.len();
@@ -1046,7 +1046,7 @@ impl<E: FieldCore> RelationMatrixEvaluator<E> {
                             z_hi_len,
                         );
                         z_structured_contribution += ZStructuredPow2SlicesEvaluator {
-                            g1_commit: &g_commit,
+                            commit_gadget: &g_commit,
                             fold_gadget,
                             a_block_summary,
                             consistency_weight: self.setup_contribution_inputs.eq_tau1[0],
@@ -1057,10 +1057,10 @@ impl<E: FieldCore> RelationMatrixEvaluator<E> {
                 } else {
                     for chunk in chunks {
                         z_structured_contribution += ZDenseSlicesEvaluator {
-                            g1_commit: &g_commit,
+                            commit_gadget: &g_commit,
                             fold_gadget,
                             consistency_weight: self.setup_contribution_inputs.eq_tau1[0],
-                            a_evals: &group.a_evals,
+                            opening_a_evals: &group.opening_a_evals,
                             full_vec_randomness: x_challenges,
                             offset_z: chunk.offset_z,
                             block_len: group.block_len,

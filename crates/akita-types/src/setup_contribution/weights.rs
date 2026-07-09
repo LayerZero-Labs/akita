@@ -157,12 +157,22 @@ pub(crate) fn setup_t_col_weights<E: FieldCore>(
         .collect())
 }
 
-/// Canonical `A·ẑ` column eq-weights for chunk-replicated `ẑ`, shared by the
-/// single-group and multi-group setup builders. `num_fold_groups` is the number of
-/// point-blocks folded into a single `ẑ` slice: the single-group path folds all
-/// commitment groups (`num_fold_groups = num_groups`), the multi-group builder is
-/// per-group (`num_fold_groups = 1`). Handles both the power-of-two `block_len`
-/// fast path and the dense fallback.
+/// Column weights for the A-row setup term `A * G_fold * z_hat`.
+///
+/// For the A column `k = blk * depth_commit + dc`, this function adds
+///
+/// ```text
+/// z_weights[k] -=
+///   sum_chunk sum_pt sum_df
+///     G_fold[df] *
+///     eq_x(chunk.offset_z + blk
+///          + block_len * (pt + num_fold_groups * (df + depth_fold * dc))).
+/// ```
+///
+/// The commit gadget `G_commit` is not present here. The matrix `A` is already
+/// indexed by commit digits `(blk, dc)`, so this setup term is exactly
+/// `A * G_fold * z_hat`. The opening row is the separate term that uses
+/// `G_commit * G_fold`.
 #[allow(clippy::too_many_arguments)]
 #[inline(always)]
 pub(crate) fn setup_z_col_weights<F, E>(

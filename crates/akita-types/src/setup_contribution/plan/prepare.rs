@@ -26,7 +26,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                     .block_len
                     .checked_mul(group.depth_commit)
                     .ok_or_else(|| AkitaError::InvalidSetup("setup Z range overflow".into()))?;
-                let a_weights = checked_slice(
+                let a_row_weights = checked_slice(
                     &inputs.eq_tau1,
                     group.a_row_start,
                     group.n_a,
@@ -54,7 +54,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                     z_cols,
                     group.n_a,
                     group.n_b,
-                    &a_weights,
+                    &a_row_weights,
                     &b_weights,
                     &d_weights,
                     d_rows,
@@ -68,7 +68,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                     n_b: group.n_b,
                     required,
                     segments,
-                    a_weights,
+                    a_row_weights,
                     b_weights,
                 })
             })
@@ -166,7 +166,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                         &mut z_eq_slice,
                     )?;
                 }
-                let a_weights = static_group.a_weights.clone();
+                let a_row_weights = static_group.a_row_weights.clone();
                 let b_weights = static_group.b_weights.clone();
                 let d_weights = static_plan.d_weights.clone();
                 Ok(SetupContributionGroupPlan {
@@ -180,7 +180,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                     e_eq_slice,
                     t_eq_slice,
                     z_eq_slice,
-                    a_weights,
+                    a_row_weights,
                     b_weights,
                     d_weights,
                 })

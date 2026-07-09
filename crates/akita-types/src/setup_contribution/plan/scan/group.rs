@@ -84,7 +84,7 @@ impl<E: FieldCore> SetupContributionGroupPlan<E> {
         )?;
         let d_weights = ProjectedRoleWeights::new(&self.d_weights, d_projection);
         let b_weights = ProjectedRoleWeights::new(&self.b_weights, b_projection);
-        let a_weights = ProjectedRoleWeights::new(&self.a_weights, a_projection);
+        let a_row_weights = ProjectedRoleWeights::new(&self.a_row_weights, a_projection);
 
         dispatch_role_projections!(
             d_projection,
@@ -119,7 +119,7 @@ impl<E: FieldCore> SetupContributionGroupPlan<E> {
                                 a_projection,
                                 &d_weights,
                                 &b_weights,
-                                &a_weights,
+                                &a_row_weights,
                             )
                         })
                     })
@@ -251,8 +251,8 @@ impl<E: FieldCore> SetupContributionGroupPlan<E> {
                 let has_a = self.z_cols != 0 && a_idx < a_required;
                 let a_row = if has_a { a_idx / self.z_cols } else { 0 };
                 let a_start_abs = if has_a { a_row * self.z_cols } else { 0 };
-                let a_weight = if has_a {
-                    self.a_weights[a_row]
+                let a_row_weight = if has_a {
+                    self.a_row_weights[a_row]
                 } else {
                     E::zero()
                 };
@@ -275,7 +275,7 @@ impl<E: FieldCore> SetupContributionGroupPlan<E> {
                     has_a,
                     a_row,
                     a_start_abs,
-                    a_weight,
+                    a_row_weight,
                 })
             })
             .collect();
