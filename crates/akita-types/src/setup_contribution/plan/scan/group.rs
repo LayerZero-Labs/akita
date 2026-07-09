@@ -16,7 +16,15 @@ impl<E: FieldCore> SetupContributionGroupPlan<E> {
         F: FieldCore,
         E: ExtField<F> + MulBaseUnreduced<F>,
     {
-        self.packed_segments(d_rows, d_physical_cols)?;
+        if a_scales.scales.len() == 1 && b_scales.scales.len() == 1 && d_scales.scales.len() == 1 {
+            return self.evaluate_identity_ratio_divisible_direct(
+                setup_view,
+                base_pows,
+                d_rows,
+                d_physical_cols,
+            );
+        }
+
         let d_required = d_rows
             .checked_mul(d_physical_cols)
             .ok_or_else(|| AkitaError::InvalidSetup("setup D footprint overflow".into()))?;
@@ -84,6 +92,52 @@ impl<E: FieldCore> SetupContributionGroupPlan<E> {
         ))
     }
 
+    fn evaluate_identity_ratio_divisible_direct<F, const BASE_D: usize>(
+        &self,
+        setup_view: &RingMatrixView<'_, F, BASE_D>,
+        base_pows: &[E],
+        d_rows: usize,
+        d_physical_cols: usize,
+    ) -> Result<E, AkitaError>
+    where
+        F: FieldCore,
+        E: ExtField<F> + MulBaseUnreduced<F>,
+    {
+        let (required, segments) = self.packed_segments(d_rows, d_physical_cols)?;
+        let setup_flat = setup_view.as_slice();
+        if required > setup_flat.len() {
+            return Err(AkitaError::InvalidSetup(
+                "shared matrix is too small for selected verifier layout".into(),
+            ));
+        }
+
+        let segment_sums: Vec<E> = cfg_into_iter!(0..segments.len())
+            .map(|idx| {
+                let segment = &segments[idx];
+                dispatch_segment_roles!(segment, E::zero(), |HAS_D, HAS_B, HAS_A| {
+                    divisible_identity_group_slice_inner_sum_typed::<
+                        F,
+                        E,
+                        BASE_D,
+                        HAS_D,
+                        HAS_B,
+                        HAS_A,
+                    >(
+                        segment.lo..segment.hi,
+                        setup_flat,
+                        base_pows,
+                        segment,
+                        &self.e_eq_slice,
+                        &self.t_eq_slice,
+                        &self.z_eq_slice,
+                    )
+                })
+            })
+            .collect();
+
+        Ok(segment_sums.into_iter().sum())
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn divisible_base_weight_at(
         &self,
@@ -138,125 +192,5 @@ impl<E: FieldCore> SetupContributionGroupPlan<E> {
         }
 
         weight
-    }
-
-    pub(super) fn evaluate_uniform_packed_direct_typed<F, const D: usize>(
-        &self,
-        setup_view: &RingMatrixView<'_, F, D>,
-        alpha_pows: &[E],
-        d_rows: usize,
-        d_physical_cols: usize,
-    ) -> Result<E, AkitaError>
-    where
-        F: FieldCore,
-        E: ExtField<F> + MulBaseUnreduced<F>,
-    {
-        let (required, segments) = self.packed_segments(d_rows, d_physical_cols)?;
-        let setup_flat = setup_view.as_slice();
-        if required > setup_flat.len() {
-            return Err(AkitaError::InvalidSetup(
-                "shared matrix is too small for selected verifier layout".into(),
-            ));
-        }
-
-        let segment_sums: Vec<E> = cfg_into_iter!(0..segments.len())
-            .map(|idx| {
-                let segment = &segments[idx];
-                dispatch_segment_roles!(segment, E::zero(), |HAS_D, HAS_B, HAS_A| {
-                    packed_uniform_group_slice_inner_sum_typed::<F, E, D, HAS_D, HAS_B, HAS_A>(
-                        segment.lo..segment.hi,
-                        setup_flat,
-                        alpha_pows,
-                        segment,
-                        &self.e_eq_slice,
-                        &self.t_eq_slice,
-                        &self.z_eq_slice,
-                    )
-                })
-            })
-            .collect();
-
-        Ok(segment_sums.into_iter().sum())
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    pub(super) fn evaluate_packed_direct_typed<
-        F,
-        const D_A: usize,
-        const D_B: usize,
-        const D_D: usize,
-    >(
-        &self,
-        setup: &AkitaExpandedSetup<F>,
-        alpha_pows_a: &[E],
-        alpha_pows_b: &[E],
-        alpha_pows_d: &[E],
-        d_rows: usize,
-        d_physical_cols: usize,
-    ) -> Result<E, AkitaError>
-    where
-        F: FieldCore,
-        E: ExtField<F> + MulBaseUnreduced<F>,
-    {
-        let d_view = if d_rows != 0 && !self.e_eq_slice.is_empty() {
-            Some(
-                setup
-                    .shared_matrix
-                    .ring_view::<D_D>(d_rows, d_physical_cols)?,
-            )
-        } else {
-            None
-        };
-        let b_view = setup
-            .shared_matrix
-            .ring_view::<D_B>(self.n_b, self.t_cols)?;
-        let a_view = setup
-            .shared_matrix
-            .ring_view::<D_A>(self.n_a, self.z_cols)?;
-        let d_flat = d_view.as_ref().map(|view| view.as_slice());
-        let b_flat = b_view.as_slice();
-        let a_flat = a_view.as_slice();
-        let d_len = d_flat.map_or(0, |slice| slice.len());
-
-        let (_, segments) = self.packed_segments(d_rows, d_physical_cols)?;
-        validate_typed_packed_scan_access(
-            d_rows,
-            d_physical_cols,
-            d_flat.is_some(),
-            d_len,
-            self.n_b,
-            self.t_cols,
-            b_flat.len(),
-            self.n_a,
-            self.z_cols,
-            a_flat.len(),
-            segments,
-        )?;
-
-        let segment_sums: Vec<E> = cfg_into_iter!(0..segments.len())
-            .map(|idx| {
-                let segment = &segments[idx];
-                dispatch_segment_roles!(segment, E::zero(), |HAS_D, HAS_B, HAS_A| {
-                    packed_group_slice_inner_sum_typed::<F, E, D_A, D_B, D_D, HAS_D, HAS_B, HAS_A>(
-                        segment.lo..segment.hi,
-                        d_flat,
-                        d_physical_cols,
-                        b_flat,
-                        self.t_cols,
-                        a_flat,
-                        self.z_cols,
-                        alpha_pows_a,
-                        alpha_pows_b,
-                        alpha_pows_d,
-                        segment,
-                        &self.e_eq_slice,
-                        &self.t_eq_slice,
-                        &self.z_eq_slice,
-                    )
-                })
-            })
-            .collect();
-
-        Ok(segment_sums.into_iter().sum())
     }
 }

@@ -12,9 +12,11 @@
 //! - `scan`: direct verifier evaluation of the setup matrix against those same
 //!   segment weights.
 //!
-//! The important invariant is that `omega` and `scan` both walk the cached
-//! [`GroupSetupSegment`] partition. Uniform, divisible, and mixed-ring scans are
-//! performance specializations of that same product, not separate definitions.
+//! The important invariant is that `omega` and `scan` both use the same cached
+//! [`GroupSetupSegment`] partition. Direct setup evaluation always projects
+//! role dimensions onto one base ring dimension; the ratio-1 case keeps a
+//! segment-based hot loop, but it is an optimization inside that single
+//! base-dimension scan rather than a separate product definition.
 
 mod kernels;
 mod omega;
@@ -43,8 +45,7 @@ use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, MulBase, MulB
 #[cfg(test)]
 use kernels::evaluate_weighted_setup_row;
 use kernels::{
-    alpha_chunk_scales, dispatch_segment_roles, group_bar_omega_segment_eval,
-    packed_group_slice_inner_sum_typed, packed_uniform_group_slice_inner_sum_typed,
-    scaled_row_weights, validate_typed_packed_scan_access, AlphaChunkScales, GroupSetupSegment,
+    alpha_chunk_scales, dispatch_segment_roles, divisible_identity_group_slice_inner_sum_typed,
+    group_bar_omega_segment_eval, scaled_row_weights, AlphaChunkScales, GroupSetupSegment,
 };
 use segments::{build_packed_segments, validate_group_chunk_layout};

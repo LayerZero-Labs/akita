@@ -3,7 +3,9 @@ use akita_algebra::ring::eval_flat_ring_at_pows_fast;
 use akita_algebra::ring::eval_ring_at_pows_fast;
 use akita_algebra::CyclotomicRing;
 use akita_field::parallel::*;
-use akita_field::{AkitaError, ExtField, FieldCore, MulBaseUnreduced};
+#[cfg(test)]
+use akita_field::AkitaError;
+use akita_field::{ExtField, FieldCore, MulBaseUnreduced};
 
 #[derive(Clone)]
 pub(crate) struct GroupSetupSegment<E> {
@@ -125,57 +127,6 @@ impl<E: FieldCore> GroupSetupSegment<E> {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-pub(super) fn validate_typed_packed_scan_access<E>(
-    d_rows: usize,
-    d_physical_cols: usize,
-    has_d_view: bool,
-    d_len: usize,
-    n_b: usize,
-    t_cols: usize,
-    b_len: usize,
-    n_a: usize,
-    z_cols: usize,
-    a_len: usize,
-    segments: &[GroupSetupSegment<E>],
-) -> Result<(), AkitaError>
-where
-    E: FieldCore,
-{
-    for segment in segments {
-        if segment.has_d && !has_d_view {
-            return Err(AkitaError::InvalidSetup(
-                "setup packed D scan missing D view".into(),
-            ));
-        }
-    }
-    let d_required = d_rows
-        .checked_mul(d_physical_cols)
-        .ok_or_else(|| AkitaError::InvalidSetup("setup D footprint overflow".into()))?;
-    if d_required > d_len {
-        return Err(AkitaError::InvalidSetup(
-            "shared D matrix is too small for selected verifier layout".into(),
-        ));
-    }
-    let b_required = n_b
-        .checked_mul(t_cols)
-        .ok_or_else(|| AkitaError::InvalidSetup("setup B footprint overflow".into()))?;
-    if b_required > b_len {
-        return Err(AkitaError::InvalidSetup(
-            "shared B matrix is too small for selected verifier layout".into(),
-        ));
-    }
-    let a_required = n_a
-        .checked_mul(z_cols)
-        .ok_or_else(|| AkitaError::InvalidSetup("setup A footprint overflow".into()))?;
-    if a_required > a_len {
-        return Err(AkitaError::InvalidSetup(
-            "shared A matrix is too small for selected verifier layout".into(),
-        ));
-    }
-    Ok(())
-}
-
 pub(super) struct AlphaChunkScales<E> {
     pub(super) scales: Vec<E>,
     pub(super) shift: usize,
@@ -255,7 +206,7 @@ where
 
 #[inline(always)]
 #[allow(clippy::too_many_arguments)]
-pub(super) fn packed_uniform_group_slice_inner_sum_typed<
+pub(super) fn divisible_identity_group_slice_inner_sum_typed<
     F,
     E,
     const D: usize,
@@ -283,76 +234,6 @@ where
                 segment.typed_weight_at::<HAS_D, HAS_B, HAS_A>(setup_idx, e_eq, t_eq, z_eq);
             if !weight.is_zero() {
                 acc += eval_ring_at_pows_fast(&setup_flat[setup_idx], alpha_pows) * weight;
-            }
-            acc
-        },
-        |lhs, rhs| lhs + rhs
-    )
-}
-
-#[inline(always)]
-#[allow(clippy::too_many_arguments)]
-pub(super) fn packed_group_slice_inner_sum_typed<
-    F,
-    E,
-    const D_A: usize,
-    const D_B: usize,
-    const D_D: usize,
-    const HAS_D: bool,
-    const HAS_B: bool,
-    const HAS_A: bool,
->(
-    range: std::ops::Range<usize>,
-    d_flat: Option<&[CyclotomicRing<F, D_D>]>,
-    d_physical_cols: usize,
-    b_flat: &[CyclotomicRing<F, D_B>],
-    t_cols: usize,
-    a_flat: &[CyclotomicRing<F, D_A>],
-    z_cols: usize,
-    alpha_pows_a: &[E],
-    alpha_pows_b: &[E],
-    alpha_pows_d: &[E],
-    segment: &GroupSetupSegment<E>,
-    e_eq: &[E],
-    t_eq: &[E],
-    z_eq: &[E],
-) -> E
-where
-    F: FieldCore,
-    E: ExtField<F> + MulBaseUnreduced<F>,
-{
-    cfg_fold_reduce!(
-        range,
-        E::zero,
-        |mut acc, setup_idx| {
-            if HAS_D {
-                let eq_w = segment.d_weight_at(setup_idx, e_eq);
-                if !eq_w.is_zero() {
-                    if let Some(d_flat) = d_flat {
-                        let d_row = setup_idx / d_physical_cols;
-                        let d_col = setup_idx % d_physical_cols;
-                        let setup_idx = d_row * d_physical_cols + d_col;
-                        acc += eval_ring_at_pows_fast(&d_flat[setup_idx], alpha_pows_d) * eq_w;
-                    }
-                }
-            }
-            if HAS_B {
-                let eq_w = segment.b_weight_at(setup_idx, t_eq);
-                if !eq_w.is_zero() {
-                    let b_row = setup_idx / t_cols;
-                    let b_col = setup_idx % t_cols;
-                    let role_idx = b_row * t_cols + b_col;
-                    acc += eval_ring_at_pows_fast(&b_flat[role_idx], alpha_pows_b) * eq_w;
-                }
-            }
-            if HAS_A {
-                let eq_w = segment.a_weight_at(setup_idx, z_eq);
-                if !eq_w.is_zero() {
-                    let a_row = setup_idx / z_cols;
-                    let a_col = setup_idx % z_cols;
-                    let role_idx = a_row * z_cols + a_col;
-                    acc += eval_ring_at_pows_fast(&a_flat[role_idx], alpha_pows_a) * eq_w;
-                }
             }
             acc
         },

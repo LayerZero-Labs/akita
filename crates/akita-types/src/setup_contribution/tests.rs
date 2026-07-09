@@ -455,6 +455,63 @@ fn packed_direct_matches_row_fallback_with_nested_role_dims() {
 }
 
 #[test]
+fn packed_direct_rejects_non_decomposable_role_alpha_pows() {
+    let plan = finalize_test_plan(SetupContributionPlan {
+        d_rows: 2,
+        d_physical_cols: 5,
+        groups: vec![SetupContributionGroupPlan {
+            e_col_offset: 2,
+            t_cols: 4,
+            z_cols: 3,
+            n_a: 2,
+            n_b: 2,
+            required: 0,
+            segments: Vec::new(),
+            e_eq_slice: vec![test_scalar(2), test_scalar(3)],
+            t_eq_slice: vec![
+                test_scalar(5),
+                test_scalar(7),
+                test_scalar(11),
+                test_scalar(13),
+            ],
+            z_eq_slice: vec![test_scalar(17), test_scalar(19), test_scalar(23)],
+            a_weights: vec![test_scalar(29), test_scalar(31)],
+            b_weights: vec![test_scalar(37), test_scalar(41)],
+            d_weights: vec![test_scalar(43), test_scalar(47)],
+        }],
+    });
+    const D_A: usize = 64;
+    const D_B: usize = 32;
+    const D_D: usize = 32;
+    let setup_len = 10;
+    let setup = AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
+        AkitaSetupSeed {
+            max_num_vars: 0,
+            max_num_batched_polys: 0,
+            gen_ring_dim: D_A,
+            max_setup_len: setup_len,
+            public_matrix_seed: [0u8; 32],
+        },
+        FlatMatrix::from_flat_data(
+            (0..setup_len * D_A)
+                .map(|idx| test_scalar(211 + idx as u128))
+                .collect(),
+            D_A,
+        ),
+    );
+    let alpha = test_scalar(3);
+    let alpha_pows_a = scalar_powers(alpha, D_A);
+    let mut alpha_pows_b = scalar_powers(alpha, D_B);
+    let alpha_pows_d = scalar_powers(alpha, D_D);
+    alpha_pows_b[1] += test_scalar(1);
+
+    assert!(matches!(
+        plan.evaluate_direct::<F>(&setup, &alpha_pows_a, &alpha_pows_b, &alpha_pows_d),
+        Err(AkitaError::InvalidSetup(_))
+    ));
+}
+
+#[test]
 fn packed_direct_accepts_d_footprint_at_nested_d_d() {
     // D-role columns are counted at d_d; comparing `required` against
     // total_ring_elements_at_dyn(d_a) falsely rejects valid setups when

@@ -22,17 +22,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                 "setup contribution role alpha powers must be non-empty".into(),
             ));
         }
-        if d_a == d_b && d_b == d_d && alpha_pows_a == alpha_pows_b && alpha_pows_a == alpha_pows_d
-        {
-            return self.evaluate_uniform_direct(setup, alpha_pows_a, d_a);
-        }
-        if let Some(value) =
-            self.evaluate_divisible_direct(setup, alpha_pows_a, alpha_pows_b, alpha_pows_d)?
-        {
-            return Ok(value);
-        }
-
-        self.evaluate_packed_direct(setup, alpha_pows_a, alpha_pows_b, alpha_pows_d)
+        self.evaluate_divisible_direct(setup, alpha_pows_a, alpha_pows_b, alpha_pows_d)
     }
 
     fn evaluate_divisible_direct<F>(
@@ -41,38 +31,25 @@ impl<E: FieldCore> SetupContributionPlan<E> {
         alpha_pows_a: &[E],
         alpha_pows_b: &[E],
         alpha_pows_d: &[E],
-    ) -> Result<Option<E>, AkitaError>
+    ) -> Result<E, AkitaError>
     where
         F: FieldCore + CanonicalField,
         E: ExtField<F> + MulBaseUnreduced<F>,
     {
-        let base_d = alpha_pows_a
-            .len()
-            .min(alpha_pows_b.len())
-            .min(alpha_pows_d.len());
-        if base_d == 0
-            || !alpha_pows_a.len().is_multiple_of(base_d)
-            || !alpha_pows_b.len().is_multiple_of(base_d)
-            || !alpha_pows_d.len().is_multiple_of(base_d)
-        {
-            return Ok(None);
-        }
-        let base_pows = if alpha_pows_a.len() == base_d {
-            alpha_pows_a
-        } else if alpha_pows_b.len() == base_d {
-            alpha_pows_b
-        } else {
-            alpha_pows_d
-        };
-        let Some(a_scales) = alpha_chunk_scales(alpha_pows_a, base_pows) else {
-            return Ok(None);
-        };
-        let Some(b_scales) = alpha_chunk_scales(alpha_pows_b, base_pows) else {
-            return Ok(None);
-        };
-        let Some(d_scales) = alpha_chunk_scales(alpha_pows_d, base_pows) else {
-            return Ok(None);
-        };
+        let d_a = alpha_pows_a.len();
+        let d_b = alpha_pows_b.len();
+        let d_d = alpha_pows_d.len();
+        let base_d = role_alpha_base_len(d_a, d_b, d_d)?;
+        let base_pows = alpha_pows_a.get(..base_d).ok_or(AkitaError::InvalidProof)?;
+        let a_scales = alpha_chunk_scales(alpha_pows_a, base_pows).ok_or_else(|| {
+            AkitaError::InvalidSetup("A alpha powers do not decompose over base dimension".into())
+        })?;
+        let b_scales = alpha_chunk_scales(alpha_pows_b, base_pows).ok_or_else(|| {
+            AkitaError::InvalidSetup("B alpha powers do not decompose over base dimension".into())
+        })?;
+        let d_scales = alpha_chunk_scales(alpha_pows_d, base_pows).ok_or_else(|| {
+            AkitaError::InvalidSetup("D alpha powers do not decompose over base dimension".into())
+        })?;
 
         dispatch_for_field!(
             ProtocolDispatchSlot::Role(RingRole::Opening),
@@ -84,7 +61,6 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                 )
             }
         )
-        .map(Some)
     }
 
     fn evaluate_divisible_direct_typed<F, const BASE_D: usize>(
@@ -163,133 +139,23 @@ impl<E: FieldCore> SetupContributionPlan<E> {
         }
         Ok(required)
     }
+}
 
-    fn evaluate_uniform_direct<F>(
-        &self,
-        setup: &AkitaExpandedSetup<F>,
-        alpha_pows: &[E],
-        ring_d: usize,
-    ) -> Result<E, AkitaError>
-    where
-        F: FieldCore + CanonicalField,
-        E: ExtField<F> + MulBaseUnreduced<F>,
-    {
-        dispatch_for_field!(
-            ProtocolDispatchSlot::Role(RingRole::Inner),
-            F,
-            ring_d,
-            |D| self.evaluate_uniform_direct_typed::<F, D>(setup, alpha_pows)
-        )
+fn role_alpha_base_len(d_a: usize, d_b: usize, d_d: usize) -> Result<usize, AkitaError> {
+    let base_d = gcd(gcd(d_a, d_b), d_d);
+    if base_d == 0 || !base_d.is_power_of_two() {
+        return Err(AkitaError::InvalidSetup(
+            "setup contribution role dimensions must have a power-of-two base".into(),
+        ));
     }
+    Ok(base_d)
+}
 
-    fn evaluate_uniform_direct_typed<F, const D: usize>(
-        &self,
-        setup: &AkitaExpandedSetup<F>,
-        alpha_pows: &[E],
-    ) -> Result<E, AkitaError>
-    where
-        F: FieldCore,
-        E: ExtField<F> + MulBaseUnreduced<F>,
-    {
-        if alpha_pows.len() != D {
-            return Err(AkitaError::InvalidSize {
-                expected: D,
-                actual: alpha_pows.len(),
-            });
-        }
-        let required = self.required()?;
-        let setup_len = setup.shared_matrix().total_ring_elements_at::<D>()?;
-        if required > setup_len {
-            return Err(AkitaError::InvalidSetup(
-                "shared matrix is too small for selected verifier layout".into(),
-            ));
-        }
-        let setup_view = setup.shared_matrix().ring_view::<D>(1, setup_len)?;
-        let mut acc = E::zero();
-        for group in &self.groups {
-            acc += group.evaluate_uniform_packed_direct_typed(
-                &setup_view,
-                alpha_pows,
-                self.d_rows,
-                self.d_physical_cols,
-            )?;
-        }
-        Ok(acc)
+fn gcd(mut lhs: usize, mut rhs: usize) -> usize {
+    while rhs != 0 {
+        let rem = lhs % rhs;
+        lhs = rhs;
+        rhs = rem;
     }
-
-    fn evaluate_packed_direct<F>(
-        &self,
-        setup: &AkitaExpandedSetup<F>,
-        alpha_pows_a: &[E],
-        alpha_pows_b: &[E],
-        alpha_pows_d: &[E],
-    ) -> Result<E, AkitaError>
-    where
-        F: FieldCore + CanonicalField,
-        E: ExtField<F> + MulBaseUnreduced<F>,
-    {
-        let d_a = alpha_pows_a.len();
-        let d_b = alpha_pows_b.len();
-        let d_d = alpha_pows_d.len();
-        dispatch_for_field!(ProtocolDispatchSlot::Role(RingRole::Inner), F, d_a, |D_A| {
-            dispatch_for_field!(ProtocolDispatchSlot::Role(RingRole::Outer), F, d_b, |D_B| {
-                dispatch_for_field!(
-                    ProtocolDispatchSlot::Role(RingRole::Opening),
-                    F,
-                    d_d,
-                    |D_D| {
-                        self.evaluate_packed_direct_typed::<F, D_A, D_B, D_D>(
-                            setup,
-                            alpha_pows_a,
-                            alpha_pows_b,
-                            alpha_pows_d,
-                        )
-                    }
-                )
-            })
-        })
-    }
-
-    fn evaluate_packed_direct_typed<F, const D_A: usize, const D_B: usize, const D_D: usize>(
-        &self,
-        setup: &AkitaExpandedSetup<F>,
-        alpha_pows_a: &[E],
-        alpha_pows_b: &[E],
-        alpha_pows_d: &[E],
-    ) -> Result<E, AkitaError>
-    where
-        F: FieldCore,
-        E: ExtField<F> + MulBaseUnreduced<F>,
-    {
-        if alpha_pows_a.len() != D_A {
-            return Err(AkitaError::InvalidSize {
-                expected: D_A,
-                actual: alpha_pows_a.len(),
-            });
-        }
-        if alpha_pows_b.len() != D_B {
-            return Err(AkitaError::InvalidSize {
-                expected: D_B,
-                actual: alpha_pows_b.len(),
-            });
-        }
-        if alpha_pows_d.len() != D_D {
-            return Err(AkitaError::InvalidSize {
-                expected: D_D,
-                actual: alpha_pows_d.len(),
-            });
-        }
-        let mut acc = E::zero();
-        for group in &self.groups {
-            acc += group.evaluate_packed_direct_typed::<F, D_A, D_B, D_D>(
-                setup,
-                alpha_pows_a,
-                alpha_pows_b,
-                alpha_pows_d,
-                self.d_rows,
-                self.d_physical_cols,
-            )?;
-        }
-        Ok(acc)
-    }
+    lhs
 }
