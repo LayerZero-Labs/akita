@@ -133,6 +133,7 @@ pub use setup_contribution::{
     ensure_setup_envelope, setup_active_ring_elems_at, setup_active_ring_elems_for_fold,
     setup_required_for_inputs, stage3_offload_natural_field_len, SetupContributionGroupInputs,
     SetupContributionPlan, SetupContributionPlanInputs, SetupContributionStatic,
+    SetupIndexWeightEvaluator,
 };
 pub use sis::{AjtaiKeyParams, SisModulusFamily, SisTableKey, DEFAULT_SIS_SECURITY_BITS};
 pub use tail_golomb_rice_low_bits::{

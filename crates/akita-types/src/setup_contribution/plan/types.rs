@@ -111,6 +111,20 @@ pub struct SetupContributionStatic<E> {
     pub(super) d_weights: Vec<E>,
 }
 
+impl<E> SetupContributionStatic<E> {
+    /// Number of shared D rows in the packed setup contribution.
+    #[must_use]
+    pub fn d_rows(&self) -> usize {
+        self.d_rows
+    }
+
+    /// Physical D-row width, including inactive columns between groups.
+    #[must_use]
+    pub fn d_physical_cols(&self) -> usize {
+        self.d_physical_cols
+    }
+}
+
 #[derive(Clone)]
 pub(crate) struct SetupContributionGroupStatic<E> {
     pub(super) e_col_offset: usize,

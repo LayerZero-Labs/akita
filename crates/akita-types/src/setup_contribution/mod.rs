@@ -13,6 +13,7 @@ use akita_field::AkitaError;
 mod geometry;
 mod inputs;
 mod plan;
+mod setup_index_weight_evaluator;
 mod weights;
 
 #[cfg(test)]
@@ -27,6 +28,7 @@ pub use plan::{
     SetupContributionGroupInputs, SetupContributionPlan, SetupContributionStatic,
     SingleGroupSetupContributionLayout,
 };
+pub use setup_index_weight_evaluator::SetupIndexWeightEvaluator;
 
 pub(crate) fn push_role_boundaries(
     endpoints: &mut Vec<usize>,

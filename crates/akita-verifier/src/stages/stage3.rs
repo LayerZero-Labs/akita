@@ -14,7 +14,8 @@ use akita_transcript::{sample_ext_challenge, Transcript};
 use akita_types::{
     dispatch_for_field, ensure_setup_envelope, gadget_row_scalars, select_setup_prefix_slot,
     stage3_offload_natural_field_len, AkitaExpandedSetup, AkitaVerifierSetup, LevelParams,
-    SetupContributionPlan, SetupSumcheckProof, SETUP_OFFLOAD_D_SETUP, SETUP_SUMCHECK_DEGREE,
+    SetupContributionPlan, SetupIndexWeightEvaluator, SetupSumcheckProof, SETUP_OFFLOAD_D_SETUP,
+    SETUP_SUMCHECK_DEGREE,
 };
 
 /// Verifier counterpart to `AkitaStage3Prover`: replays the setup product
@@ -26,6 +27,7 @@ use akita_types::{
 /// with the proof and transcript.
 pub(crate) struct SetupSumcheckVerifier<E: FieldCore> {
     plan: SetupContributionPlan<E>,
+    setup_index_weight_evaluator: Option<SetupIndexWeightEvaluator<E>>,
     alpha_pows: Vec<E>,
     ring_bits: usize,
     rounds: usize,
@@ -42,6 +44,7 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
     pub(crate) fn new<F, const D: usize>(
         relation_matrix_evaluator: &RelationMatrixEvaluator<E>,
         x_challenges: &[E],
+        tau1: &[E],
         alpha: E,
     ) -> Result<Self, AkitaError>
     where
@@ -61,6 +64,24 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
             Some(&fold_gadget),
             &relation_matrix_evaluator.setup_contribution_groups,
         )?;
+        let role_dims = relation_matrix_evaluator.role_dims;
+        let setup_index_weight_evaluator =
+            if role_dims.d_a() == D && role_dims.d_b() == D && role_dims.d_d() == D {
+                let evaluator = SetupIndexWeightEvaluator::new::<F>(
+                    &relation_matrix_evaluator.setup_contribution_inputs,
+                    &relation_matrix_evaluator.setup_contribution_static,
+                    &relation_matrix_evaluator.setup_contribution_groups,
+                    tau1,
+                    x_challenges,
+                    &fold_gadget,
+                    D,
+                    role_dims,
+                    alpha,
+                )?;
+                evaluator.prefers_succinct_path().then_some(evaluator)
+            } else {
+                None
+            };
         let setup_idx_len = plan
             .required()?
             .checked_next_power_of_two()
@@ -75,6 +96,7 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
 
         Ok(Self {
             plan,
+            setup_index_weight_evaluator,
             alpha_pows,
             ring_bits,
             rounds,
@@ -226,7 +248,13 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
             &eq_setup_idx,
             &eq_y,
         )?;
-        let setup_index_weight = self.plan.evaluate_setup_index_weight_mle(rho_setup_idx)?;
+        let setup_index_weight = match &self.setup_index_weight_evaluator {
+            Some(evaluator) => match evaluator.evaluate(rho_setup_idx)? {
+                Some(value) => value,
+                None => self.plan.evaluate_setup_index_weight_mle(rho_setup_idx)?,
+            },
+            None => self.plan.evaluate_setup_index_weight_mle(rho_setup_idx)?,
+        };
         let alpha_val = eval_dense_table_with_eq(&self.alpha_pows, &eq_y)?;
         let witness_scale = lift_scale::<E>(batched_rounds - witness_rounds)?;
         let setup_scale = lift_scale::<E>(batched_rounds - self.rounds)?;

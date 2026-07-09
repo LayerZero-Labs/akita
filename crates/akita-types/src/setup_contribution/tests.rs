@@ -2,8 +2,9 @@ use super::plan::SetupContributionGroupPlan;
 use super::*;
 use crate::{
     gadget_row_scalars, AkitaExpandedSetup, AkitaSetupSeed, FlatMatrix, LevelParams,
-    RelationMatrixRowLayout,
+    RelationMatrixRowLayout, SetupContributionStatic, SetupIndexWeightEvaluator,
 };
+use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::offset_eq::eq_eval_at_index;
 use akita_algebra::ring::{eval_ring_at_pows, scalar_powers};
 use akita_field::Prime128OffsetA7F7;
@@ -32,23 +33,289 @@ fn prepare_single_group_plan(
     fold_gadget: &[F],
     chunk_layout: &crate::WitnessLayout,
 ) -> Result<SetupContributionPlan<F>, AkitaError> {
+    prepare_single_group_plan_parts(
+        inputs,
+        full_vec_randomness,
+        eq_low,
+        z_block_low_eq,
+        fold_gadget,
+        chunk_layout,
+    )
+    .map(|(plan, _, _)| plan)
+}
+
+fn prepare_single_group_plan_parts(
+    inputs: &SetupContributionPlanInputs<F>,
+    full_vec_randomness: &[F],
+    eq_low: Option<&[F]>,
+    z_block_low_eq: Option<&[F]>,
+    fold_gadget: &[F],
+    chunk_layout: &crate::WitnessLayout,
+) -> Result<
+    (
+        SetupContributionPlan<F>,
+        SetupContributionStatic<F>,
+        Vec<SetupContributionGroupInputs>,
+    ),
+    AkitaError,
+> {
     let single_group = SetupContributionGroupInputs::single_group_layout(inputs, chunk_layout, 0)?;
-    let groups = std::slice::from_ref(&single_group.group);
+    let groups = vec![single_group.group];
     let static_plan = SetupContributionPlan::prepare_static(
         inputs,
-        groups,
+        &groups,
         single_group.d_row_start,
         single_group.d_rows,
         single_group.d_physical_cols,
     )?;
-    SetupContributionPlan::finish_plan::<F>(
+    let plan = SetupContributionPlan::finish_plan::<F>(
         &static_plan,
         full_vec_randomness,
         eq_low,
         z_block_low_eq,
         Some(fold_gadget),
-        groups,
+        &groups,
+    )?;
+    Ok((plan, static_plan, groups))
+}
+
+fn structured_weight_fixture(
+    num_blocks: usize,
+    blocks_per_chunk: usize,
+) -> (
+    SetupContributionPlanInputs<F>,
+    Vec<SetupContributionGroupInputs>,
+    SetupContributionStatic<F>,
+    SetupContributionPlan<F>,
+    Vec<F>,
+    Vec<F>,
+    Vec<F>,
+) {
+    let num_claims = 2;
+    let depth_open = 2;
+    let depth_commit = 2;
+    let depth_fold = 2;
+    let block_len = 8;
+    let n_a = 2;
+    let n_b = 2;
+    let n_d = 2;
+    let log_basis = 4;
+    let z_range = block_len * depth_commit;
+    let e_len_per_chunk = num_claims * depth_open * blocks_per_chunk;
+    let t_len_per_chunk = n_a * num_claims * depth_open * blocks_per_chunk;
+    let chunk_stride = z_range + e_len_per_chunk + t_len_per_chunk + 3;
+    let chunks = (0..(num_blocks / blocks_per_chunk))
+        .map(|idx| {
+            let base = idx * chunk_stride + idx;
+            let offset_e = base + z_range + 1;
+            let offset_t = offset_e + e_len_per_chunk + 1;
+            crate::WitnessChunkLayout {
+                offset_z: base,
+                offset_e,
+                offset_t,
+                offset_r: None,
+                global_block_base: idx * blocks_per_chunk,
+            }
+        })
+        .collect::<Vec<_>>();
+    let rows = 1 + n_a + n_b + n_d;
+    let tau1 = (0..3)
+        .map(|idx| test_scalar(31 + idx as u128))
+        .collect::<Vec<_>>();
+    let inputs = SetupContributionPlanInputs {
+        relation_matrix_row_layout: RelationMatrixRowLayout::WithDBlock,
+        rows,
+        n_a,
+        n_b,
+        n_d,
+        num_groups: 1,
+        num_polys_per_group: vec![num_claims],
+        num_t_vectors: num_claims,
+        num_claims,
+        num_blocks,
+        block_len,
+        depth_open,
+        depth_commit,
+        depth_fold,
+        inner_width: z_range,
+        eq_tau1: EqPolynomial::evals(&tau1).unwrap(),
+    };
+    let full_vec_randomness = (0..18)
+        .map(|idx| test_scalar(101 + idx as u128))
+        .collect::<Vec<_>>();
+    let fold_gadget = gadget_row_scalars::<F>(depth_fold, log_basis);
+    let groups = vec![SetupContributionGroupInputs {
+        e_col_offset: 0,
+        num_claims,
+        num_blocks,
+        block_len,
+        depth_open,
+        depth_commit,
+        depth_fold,
+        log_basis,
+        n_a,
+        n_b,
+        t_cols_per_vector: n_a * depth_open * num_blocks,
+        a_row_start: 1,
+        b_row_start: 1 + n_a,
+        blocks_per_chunk,
+        chunks,
+    }];
+    let static_plan = SetupContributionPlan::prepare_static(
+        &inputs,
+        &groups,
+        rows - n_d,
+        n_d,
+        num_claims * num_blocks * depth_open,
     )
+    .unwrap();
+    let plan = SetupContributionPlan::finish_plan::<F>(
+        &static_plan,
+        &full_vec_randomness,
+        None,
+        None,
+        Some(&fold_gadget),
+        &groups,
+    )
+    .unwrap();
+    (
+        inputs,
+        groups,
+        static_plan,
+        plan,
+        tau1,
+        full_vec_randomness,
+        fold_gadget,
+    )
+}
+
+fn rho_for_required(required: usize) -> Vec<F> {
+    let bits = required.next_power_of_two().trailing_zeros() as usize;
+    (0..bits)
+        .map(|idx| test_scalar(901 + idx as u128))
+        .collect()
+}
+
+fn projection_scales(alpha: F, base_d: usize, role_d: usize) -> Vec<F> {
+    scalar_powers(alpha, role_d)
+        .chunks(base_d)
+        .map(|chunk| chunk[0])
+        .collect()
+}
+
+#[allow(clippy::too_many_arguments)]
+fn projected_setup_weight_reference(
+    plan: &SetupContributionPlan<F>,
+    rho: &[F],
+    required: usize,
+    a_ratio: usize,
+    b_ratio: usize,
+    d_ratio: usize,
+    a_scales: &[F],
+    b_scales: &[F],
+    d_scales: &[F],
+) -> F {
+    let mut acc = F::zero();
+    for base_idx in 0..required {
+        let mut weight = F::zero();
+        for group in &plan.groups {
+            let d_idx = base_idx / d_ratio;
+            if d_idx < plan.d_rows * plan.d_physical_cols {
+                let d_col = d_idx % plan.d_physical_cols;
+                let d_row = d_idx / plan.d_physical_cols;
+                if d_col >= group.e_col_offset
+                    && d_col < group.e_col_offset + group.e_eq_slice.len()
+                {
+                    weight += d_scales[base_idx % d_ratio]
+                        * group.d_weights[d_row]
+                        * group.e_eq_slice[d_col - group.e_col_offset];
+                }
+            }
+
+            let b_idx = base_idx / b_ratio;
+            if b_idx < group.n_b * group.t_cols {
+                let b_col = b_idx % group.t_cols;
+                let b_row = b_idx / group.t_cols;
+                weight +=
+                    b_scales[base_idx % b_ratio] * group.b_weights[b_row] * group.t_eq_slice[b_col];
+            }
+
+            let a_idx = base_idx / a_ratio;
+            if a_idx < group.n_a * group.z_cols {
+                let a_col = a_idx % group.z_cols;
+                let a_row = a_idx / group.z_cols;
+                weight += a_scales[base_idx % a_ratio]
+                    * group.a_row_weights[a_row]
+                    * group.z_eq_slice[a_col];
+            }
+        }
+        acc += eq_eval_at_index(rho, base_idx) * weight;
+    }
+    acc
+}
+
+#[test]
+fn setup_index_weight_evaluator_matches_packed_mle_multi_chunk() {
+    let (inputs, groups, static_plan, plan, tau1, full_vec_randomness, fold_gadget) =
+        structured_weight_fixture(8, 2);
+    let alpha = test_scalar(3);
+    let evaluator = SetupIndexWeightEvaluator::new::<F>(
+        &inputs,
+        &static_plan,
+        &groups,
+        &tau1,
+        &full_vec_randomness,
+        &fold_gadget,
+        TEST_D,
+        crate::CommitmentRingDims::uniform(TEST_D),
+        alpha,
+    )
+    .unwrap();
+    assert_eq!(evaluator.required(), plan.required().unwrap());
+
+    let rho = rho_for_required(evaluator.required());
+    let got = evaluator.evaluate(&rho).unwrap().expect("supported layout");
+    let expected = plan.evaluate_setup_index_weight_mle(&rho).unwrap();
+    assert_eq!(got, expected);
+}
+
+#[test]
+fn setup_index_weight_evaluator_applies_mixed_role_projection_lanes() {
+    let (inputs, groups, static_plan, plan, tau1, full_vec_randomness, fold_gadget) =
+        structured_weight_fixture(8, 2);
+    let alpha = test_scalar(3);
+    let role_dims = crate::CommitmentRingDims {
+        inner: 64,
+        outer: 32,
+        opening: 32,
+    };
+    let setup_ring_dim = 32;
+    let evaluator = SetupIndexWeightEvaluator::new::<F>(
+        &inputs,
+        &static_plan,
+        &groups,
+        &tau1,
+        &full_vec_randomness,
+        &fold_gadget,
+        setup_ring_dim,
+        role_dims,
+        alpha,
+    )
+    .unwrap();
+    let rho = rho_for_required(evaluator.required());
+    let got = evaluator.evaluate(&rho).unwrap().expect("supported layout");
+    let expected = projected_setup_weight_reference(
+        &plan,
+        &rho,
+        evaluator.required(),
+        role_dims.d_a() / setup_ring_dim,
+        role_dims.d_b() / setup_ring_dim,
+        role_dims.d_d() / setup_ring_dim,
+        &projection_scales(alpha, setup_ring_dim, role_dims.d_a()),
+        &projection_scales(alpha, setup_ring_dim, role_dims.d_b()),
+        &projection_scales(alpha, setup_ring_dim, role_dims.d_d()),
+    );
+    assert_eq!(got, expected);
 }
 
 #[test]

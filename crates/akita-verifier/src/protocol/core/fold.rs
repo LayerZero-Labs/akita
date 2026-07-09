@@ -554,6 +554,7 @@ where
                 let verifier = SetupSumcheckVerifier::new::<F, D>(
                     &rs.relation_matrix_evaluator,
                     setup_x_challenges,
+                    &rs.tau1,
                     rs.alpha,
                 )?;
                 let rho_w = verifier.verify_batched_stage3::<F, T>(
