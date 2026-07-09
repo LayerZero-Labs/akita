@@ -331,12 +331,12 @@ fn single_group_plan_supports_multi_chunk_weights() {
         .unwrap();
     assert_eq!(got, expected);
 
-    let bar_omega = plan.materialize_bar_omega().unwrap();
+    let setup_index_weight = plan.materialize_setup_index_weights().unwrap();
     let setup_view = setup
         .shared_matrix()
-        .ring_view::<TEST_D>(1, bar_omega.len())
+        .ring_view::<TEST_D>(1, setup_index_weight.len())
         .unwrap();
-    let tie: F = bar_omega
+    let tie: F = setup_index_weight
         .iter()
         .zip(setup_view.as_slice())
         .map(|(w, ring)| eval_ring_at_pows(ring, &alpha_pows) * *w)
@@ -469,12 +469,12 @@ fn multi_group_packed_direct_matches_row_fallback() {
         .unwrap();
     assert_eq!(got, expected);
 
-    let bar_omega = plan.materialize_bar_omega().unwrap();
+    let setup_index_weight = plan.materialize_setup_index_weights().unwrap();
     let setup_view = setup
         .shared_matrix()
-        .ring_view::<TEST_D>(1, bar_omega.len())
+        .ring_view::<TEST_D>(1, setup_index_weight.len())
         .unwrap();
-    let tie: F = bar_omega
+    let tie: F = setup_index_weight
         .iter()
         .zip(setup_view.as_slice())
         .map(|(w, ring)| eval_ring_at_pows(ring, &alpha_pows) * *w)

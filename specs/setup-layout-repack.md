@@ -464,7 +464,7 @@ not to `S(alpha)` and not to alpha-evaluated A/B/D matrices.
 The alpha powers live in the structured weight:
 
 ```text
-omega_S(lambda, y) = omega_bar_S(lambda) * alpha^y
+setup_weight_S(lambda, y) = setup_index_weight_S(lambda) * alpha^y
 ```
 
 This is important: preprocessing can commit to `S`, but it cannot commit to
@@ -589,24 +589,24 @@ library boundary should return an `AkitaError`.
 The delegated setup value is:
 
 ```text
-sigma_S = <S_{<= N_setup}, omega_S>
+sigma_S = <S_{<= N_setup}, setup_index_weight_S>
 ```
 
 where:
 
 ```text
-omega_bar_S(lambda)
+setup_index_weight_bar_S(lambda)
   = sum of D/B/A role weights that pull back to raw setup slot lambda
 ```
 
 and:
 
 ```text
-omega_S(lambda, y) = omega_bar_S(lambda) * alpha^y
+setup_index_weight_S(lambda, y) = setup_index_weight_bar_S(lambda) * alpha^y
 ```
 
 Overlapping A/B/D prefix coordinates are handled by addition in
-`omega_bar_S`.
+`setup_index_weight_S`.
 
 The product-sumcheck terminal point is:
 
@@ -617,8 +617,8 @@ rho = (rho_lambda, rho_y)
 and the verifier-side weight evaluator should use:
 
 ```text
-omega_tilde_S(rho_lambda, rho_y)
-  = omega_bar_tilde_S(rho_lambda)
+setup_weight_tilde_S(rho_lambda, rho_y)
+  = setup_index_weight_tilde_S(rho_lambda)
     * MLE(1, alpha, ..., alpha^(D_setup - 1))(rho_y)
 ```
 
@@ -663,7 +663,7 @@ m_tau1(r_x) = m_local(r_x) + sigma_S.
 After Stage 2 fixes `r_x`, a new setup product sumcheck proves:
 
 ```text
-sigma_S = <S_{<=N_setup}, omega_S(tau_1, alpha, r_x)>.
+sigma_S = <S_{<=N_setup}, setup_index_weight_S(tau_1, alpha, r_x)>.
 ```
 
 This adds a Stage 3, but it is conceptually clean: Stage 2 continues to reduce
@@ -805,7 +805,7 @@ eta_Z(b_z, d_c)
 The A contribution to the setup-weight tensor is:
 
 ```text
-omega_A(iota_A(a, j_A_root(b_z, d_c)), y)
+setup_index_weight_A(iota_A(a, j_A_root(b_z, d_c)), y)
   = alpha^y * eq(tau_1, A_a) * eta_Z(b_z, d_c)
 ```
 
@@ -840,7 +840,7 @@ The later setup-offload implementation must bind:
 - the batching/incidence shape;
 - `sigma_S`;
 - `r_x`, `tau_1`, and `alpha`;
-- the role-column view choices used to define `omega_S`.
+- the role-column view choices used to define `setup_index_weight_S`.
 
 ## Downstream Parallel Work Slices
 
@@ -861,24 +861,25 @@ carried-claim batching, or new proof objects for setup offloading.
 This lane rewrites the direct setup contribution as:
 
 ```text
-<S_{<=N_setup}, omega_S>
+<S_{<=N_setup}, setup_index_weight_S>
 ```
 
-using a materialized `omega_S`. Its purpose is to pin the exact role pullbacks
+using a materialized `setup_index_weight_S`. Its purpose is to pin the exact role pullbacks
 and give every later branch a correctness oracle. It should test D, B, and
 `A * G_fold * z_hat` weights, including the root digit-fast A slice and
 recursive block-fast role views.
 
 ### Succinct Weight Evaluator
 
-This lane replaces materialized `omega_S` on the verifier side. It should
+This lane replaces materialized `setup_index_weight_S` on the verifier side. It should
 evaluate:
 
 ```text
-omega_tilde_S(rho_lambda, rho_y)
+setup_index_weight_tilde_S(rho_lambda)
 ```
 
-without scanning `S`. The hard part is the root A slice with the `G_fold`
+without scanning `S` and without building a dense setup-index equality table.
+The hard part is the root A slice with the `G_fold`
 weight: root A remains digit-fast for one-hot, while the folded z side is
 block-fast. The evaluator must account for the carry that appears when
 `offset_z` is added to the block index.
@@ -915,7 +916,7 @@ size-one incidence case.
 
 This lane wires the delegated setup claim. It should start as a post-Stage-2
 Stage 3 against a materialized setup-opening oracle, then integrate the
-succinct `omega_S` evaluator, selected prefix commitments, gating policy, and
+succinct `setup_index_weight_S` evaluator, selected prefix commitments, gating policy, and
 recursive carried-opening batching.
 
 The no-new-stage relation-shift placement is the optimized target (see Product
@@ -965,8 +966,8 @@ Minimum tests for the implementation branch:
 
 For the later offloading branches:
 
-- materialized `<S_{<= N_setup}, omega_S>` equals direct setup contribution;
-- `omega_S` has alpha on the weight side;
+- materialized `<S_{<= N_setup}, setup_index_weight_S>` equals direct setup contribution;
+- `setup_index_weight_S` has alpha on the weight side;
 - root A evaluator with `G_fold` weights matches materialized `eta_Z` and the
   row-aware A slice;
 - recursive block-fast D/B and optional recursive block-fast A evaluators match

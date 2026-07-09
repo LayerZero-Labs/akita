@@ -333,7 +333,7 @@ challenge vector's global block axis to the verifier's low-bit peeled window.
 
 Factoring the layout into `akita-types` is also the right crate boundary. The
 layout is not verifier-local: both the direct verifier setup scan and the
-setup-product/bar-omega path need the same physical column mapping. Keeping one
+setup-product/bar-setup_index_weight path need the same physical column mapping. Keeping one
 definition avoids the most dangerous failure mode: the structured witness
 contribution and the setup contribution silently evaluating different column
 layouts.
@@ -609,9 +609,10 @@ For `W = 1` both cases reduce to today's single evaluator call at `offset_z`.
 #### Setup contribution per chunk (dominant; α-evaluations once)
 
 `SetupContributionPlan::prepare` receives the `WitnessLayout`. The three
-precomputed column-weight vectors are built against the chunks; the hot loop
-`packed_slice_inner_sum` (and its eq-weighted twin `bar_omega_segment_eval`) is
-**unchanged** — this is what keeps the α-evaluation count layout-independent.
+precomputed column-weight vectors are built against the chunks; the hot loops
+for direct setup scans and setup-index weight MLE evaluation share the same
+packed segment partition. This is what keeps the α-evaluation count
+layout-independent.
 
 - `**W_col` / `e_eq_slice` (`D·e_hat`, partitioned).** `get_eq_indices_for_d`
 gains a chunk split: decode the SIS column to `(dig, blk_g, claim)` as today,

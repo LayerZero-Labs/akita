@@ -305,14 +305,14 @@ impl SetupContributionFixture {
             &self.relation_matrix_evaluator.setup_contribution_groups,
         )
         .unwrap();
-        let bar_omega = plan.materialize_bar_omega().unwrap();
+        let setup_index_weight = plan.materialize_setup_index_weights().unwrap();
         let setup_len = self
             .setup
             .shared_matrix()
             .total_ring_elements_at::<TEST_RING_DIM>()
             .unwrap();
         assert!(
-            setup_len >= bar_omega.len(),
+            setup_len >= setup_index_weight.len(),
             "fixture setup must cover materialized setup weights"
         );
         let setup_view = self
@@ -323,7 +323,7 @@ impl SetupContributionFixture {
         setup_view
             .as_slice()
             .iter()
-            .zip(bar_omega)
+            .zip(setup_index_weight)
             .map(|(ring, weight)| eval_ring_at_pows(ring, &self.alpha_pows) * weight)
             .sum()
     }
@@ -337,10 +337,9 @@ impl SetupContributionFixture {
         );
     }
 
-    /// `evaluate_bar_omega_with_eq` (the const-generic `bar_omega_segment_eval`
-    /// kernel) must equal the eq-weighted materialized `bar_omega` (the generic
-    /// `weight_at` path). Cross-checks the two `bar_omega` implementations agree.
-    pub fn assert_eq_eval_matches_materialized(&self) {
+    /// Direct MLE evaluation of the setup-index weight must equal an
+    /// eq-weighted materialized `setup_index_weight`.
+    pub fn assert_setup_index_weight_mle_matches_materialized(&self) {
         let plan = SetupContributionPlan::finish_plan::<TestField>(
             &self.relation_matrix_evaluator.setup_contribution_static,
             &self.full_vec_randomness,
@@ -350,24 +349,28 @@ impl SetupContributionFixture {
             &self.relation_matrix_evaluator.setup_contribution_groups,
         )
         .unwrap();
-        let bar_omega = plan.materialize_bar_omega().unwrap();
+        let setup_index_weight = plan.materialize_setup_index_weights().unwrap();
         let setup_idx_len = plan
             .required()
             .unwrap()
             .checked_next_power_of_two()
             .unwrap();
-        let eq_setup_idx: Vec<TestField> = (0..setup_idx_len)
+        let setup_idx_bits = setup_idx_len.trailing_zeros() as usize;
+        let rho_setup_idx: Vec<TestField> = (0..setup_idx_bits)
             .map(|idx| test_scalar(7 + idx as u128 * 13))
             .collect();
-        let expected: TestField = bar_omega
+        let eq_setup_idx = EqPolynomial::evals(&rho_setup_idx).unwrap();
+        let expected: TestField = setup_index_weight
             .iter()
             .enumerate()
             .map(|(setup_idx, weight)| eq_setup_idx[setup_idx] * *weight)
             .sum();
-        let got = plan.evaluate_bar_omega_with_eq(&eq_setup_idx).unwrap();
+        let got = plan
+            .evaluate_setup_index_weight_mle(&rho_setup_idx)
+            .unwrap();
         assert_eq!(
             got, expected,
-            "evaluate_bar_omega_with_eq must equal the eq-weighted materialized bar_omega"
+            "setup-index weight MLE must equal the eq-weighted materialized setup-index weight"
         );
     }
 }

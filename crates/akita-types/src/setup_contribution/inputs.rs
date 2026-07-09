@@ -3,7 +3,7 @@ use akita_field::{AkitaError, FieldCore};
 
 use crate::layout::{LevelParams, RelationMatrixRowLayout};
 
-/// Minimal setup-contribution data needed to derive `bar_omega`.
+/// Minimal setup-contribution data needed to derive setup-index weights.
 #[derive(Clone)]
 pub struct SetupContributionPlanInputs<E: FieldCore> {
     pub relation_matrix_row_layout: RelationMatrixRowLayout,

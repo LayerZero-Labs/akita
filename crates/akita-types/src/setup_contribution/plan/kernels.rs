@@ -371,39 +371,6 @@ impl<E: FieldCore> ProjectedRoleWeights<E> {
 
 #[inline(always)]
 #[allow(clippy::too_many_arguments)]
-pub(super) fn group_bar_omega_segment_eval<
-    E,
-    const HAS_D: bool,
-    const HAS_B: bool,
-    const HAS_A: bool,
->(
-    range: std::ops::Range<usize>,
-    eq_setup_idx: &[E],
-    segment: &GroupSetupSegment<E>,
-    e_eq: &[E],
-    t_eq: &[E],
-    z_eq: &[E],
-) -> E
-where
-    E: FieldCore,
-{
-    cfg_fold_reduce!(
-        range,
-        E::zero,
-        |mut acc, setup_idx| {
-            let weight =
-                segment.typed_weight_at::<HAS_D, HAS_B, HAS_A>(setup_idx, e_eq, t_eq, z_eq);
-            if !weight.is_zero() {
-                acc += eq_setup_idx[setup_idx] * weight;
-            }
-            acc
-        },
-        |lhs, rhs| lhs + rhs
-    )
-}
-
-#[inline(always)]
-#[allow(clippy::too_many_arguments)]
 pub(super) fn base_ring_segment_inner_sum_typed<
     F,
     E,

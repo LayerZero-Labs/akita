@@ -13,11 +13,11 @@ fn setup_contribution_matches_materialized_on_recursive_multi_group_fixture() {
 }
 
 #[test]
-fn eq_eval_matches_materialized_bar_omega() {
+fn setup_index_weight_mle_matches_materialized() {
     SetupContributionFixture::from_shape(&SetupContributionShape::root_single_point())
-        .assert_eq_eval_matches_materialized();
+        .assert_setup_index_weight_mle_matches_materialized();
     SetupContributionFixture::from_shape(&SetupContributionShape::recursive_multi_group())
-        .assert_eq_eval_matches_materialized();
+        .assert_setup_index_weight_mle_matches_materialized();
 }
 
 #[test]

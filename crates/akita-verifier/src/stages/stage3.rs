@@ -213,9 +213,10 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
         let rho_setup = &challenges[..self.rounds];
         let (rho_y, rho_setup_idx) = rho_setup.split_at(self.ring_bits);
 
-        // This final relation is non-materialized, not sublinear: until setup
-        // prefix openings are carried into the next fold, the verifier still
-        // builds dense equality tables and scans the selected setup prefix.
+        // The setup prefix itself is still evaluated by scanning the selected
+        // prefix. The setup-index weight is structured, so evaluate its MLE
+        // directly at `rho_setup_idx` instead of building a dense equality
+        // table for that factor.
         let eq_setup_idx = setup_idx_eq_table(self.plan.required()?, rho_setup_idx)?;
         let eq_y = ring_eq_table::<E, D>(rho_y)?;
         let setup_val = setup_mle_at_eq_tables::<F, E, D>(
@@ -225,13 +226,13 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
             &eq_setup_idx,
             &eq_y,
         )?;
-        let omega = self.plan.evaluate_bar_omega_with_eq(&eq_setup_idx)?;
+        let setup_index_weight = self.plan.evaluate_setup_index_weight_mle(rho_setup_idx)?;
         let alpha_val = eval_dense_table_with_eq(&self.alpha_pows, &eq_y)?;
         let witness_scale = lift_scale::<E>(batched_rounds - witness_rounds)?;
         let setup_scale = lift_scale::<E>(batched_rounds - self.rounds)?;
         let eq_w = EqPolynomial::mle(stage2_challenges, &rho_w)?;
         let expected = eta * witness_scale * eq_w * proof.next_w_eval
-            + setup_scale * setup_val * omega * alpha_val;
+            + setup_scale * setup_val * setup_index_weight * alpha_val;
         if final_claim != expected {
             return Err(AkitaError::InvalidInput(
                 "batched stage-3 final relation mismatch".to_string(),

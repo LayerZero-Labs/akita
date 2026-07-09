@@ -580,10 +580,10 @@ acc = 0
 for r in 0..r_max:                 # r_max = max(n_d, n_b, n_A)        (UNCHANGED)
   for c in 0..n_cols:              # SIS columns scanned once          (UNCHANGED)
     r_eval    = eval_ring_at_pows(matrix[r][c], alpha)   # the ONE O(D) alpha-eval — UNCHANGED count
-    bar_omega = d_w[r] * W_col[c]                          # D·e   (partitioned, single-size)
-              + sum_g b_w[g][r] * T_col[g][c]              # B·t   (partitioned, single-size)
-              + a_w[r] * Z_comb[c]                          # A·G_fold·z_hat
-    acc += r_eval * bar_omega
+    setup_index_weight = d_w[r] * W_col[c]                  # D·e   (partitioned, single-size)
+                       + sum_g b_w[g][r] * T_col[g][c]      # B·t   (partitioned, single-size)
+                       + a_w[r] * Z_comb[c]                 # A·G_fold·z_hat
+    acc += r_eval * setup_index_weight
 ```
 
 The hot per-row loop is **byte-for-byte the single-machine loop** — only the

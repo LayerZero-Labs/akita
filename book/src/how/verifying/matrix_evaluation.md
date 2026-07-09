@@ -628,13 +628,16 @@ entry at (row $r$, column $c$) it does three things:
    $$
    Thus the setup row block is $A \cdot G_{\text{fold}} \cdot \hat z$.
    It is not $A \cdot G_{\text{commit}} \cdot G_{\text{fold}} \cdot \hat z$.
-3. Accumulate $r_{\text{eval}}(r, c) \cdot \bar{\omega}(r, c)$ into a running sum.
+3. Accumulate
+   $r_{\text{eval}}(r, c) \cdot \text{setup\_index\_weight}(r, c)$
+   into a running sum.
 
 The entire setup contribution is then a single dot product over the shared
 matrix:
 
 $$
-\text{setup} \;=\; \sum_{r, c} r_{\text{eval}}(r, c) \cdot \bar{\omega}(r, c).
+\text{setup} \;=\; \sum_{r, c}
+  r_{\text{eval}}(r, c) \cdot \text{setup\_index\_weight}(r, c).
 $$
 
 In pseudocode:
@@ -644,10 +647,10 @@ acc = 0
 for r in 0..r_max:                 # r_max = max(n_d, n_b, n_A)
   for c in 0..n_cols:              # columns of the shared matrix, scanned once
     r_eval = eval_ring_at_pows(matrix[r][c], alpha)     # the ONE O(D) alpha-eval
-    bar_omega = d_w[r] * W_col[c]                         # D · e_hat
-              + sum_g b_w[g][r] * T_col[g][c]             # B · t_hat
-              + a_w[r] * Z_col[c]                          # A · G_fold · z_hat
-    acc += r_eval * bar_omega
+    setup_index_weight = d_w[r] * W_col[c]                 # D · e_hat
+                       + sum_g b_w[g][r] * T_col[g][c]     # B · t_hat
+                       + a_w[r] * Z_col[c]                 # A · G_fold · z_hat
+    acc += r_eval * setup_index_weight
 ```
 
 Each column pattern is zero outside its own segment, and each row weight is zero

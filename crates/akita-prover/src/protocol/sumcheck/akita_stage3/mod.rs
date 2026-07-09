@@ -2,8 +2,8 @@
 //!
 //! The table is laid out as `left * right_len + right`. The right factor is
 //! bound first, then the left factor. This matches setup products of the form
-//! `S(i, y) * omega(i) * alpha(y)` without materializing the full
-//! `omega(i) * alpha(y)` table.
+//! `S(i, y) * setup_index_weight(i) * alpha(y)` without materializing the full
+//! `setup_index_weight(i) * alpha(y)` table.
 
 mod product_table;
 mod utils;
@@ -255,7 +255,7 @@ where
     E: FpExtEncoding<F> + FromPrimitiveInt + LiftBase<F> + AkitaSerialize,
     T: Transcript<F>,
 {
-    let (required, mut bar_omega, alpha_pows) =
+    let (required, mut setup_index_weight, alpha_pows) =
         prepare_setup_sumcheck_terms::<F, E>(ring_d, lp, relation, tau1, alpha, x_challenges)?;
 
     ensure_setup_envelope(expanded, required, ring_d)?;
@@ -304,7 +304,7 @@ where
     let setup_idx_len = required
         .checked_next_power_of_two()
         .ok_or_else(|| AkitaError::InvalidSetup("setup product index length overflow".into()))?;
-    bar_omega.resize(setup_idx_len, E::zero());
+    setup_index_weight.resize(setup_idx_len, E::zero());
 
     let table_len = setup_idx_len
         .checked_mul(ring_d)
@@ -321,7 +321,7 @@ where
             }
         });
 
-    FactoredProductTerm::new_dense(setup_table, bar_omega, alpha_pows.to_vec())
+    FactoredProductTerm::new_dense(setup_table, setup_index_weight, alpha_pows.to_vec())
 }
 
 fn build_witness_carry_term<E>(
@@ -377,7 +377,7 @@ where
     Ok(term)
 }
 
-/// Derive the factored product-sumcheck terms `(required, bar_omega, alpha_pows)`
+/// Derive the factored product-sumcheck terms `(required, setup_index_weight, alpha_pows)`
 /// from the level parameters and ring relation via the ring-switch row
 /// evaluation.
 fn prepare_setup_sumcheck_terms<F, E>(
@@ -419,8 +419,8 @@ where
         groups,
     )?;
     let required = plan.required()?;
-    let bar_omega = plan.materialize_bar_omega()?;
-    Ok((required, bar_omega, alpha_pows.to_vec()))
+    let setup_index_weight = plan.materialize_setup_index_weights()?;
+    Ok((required, setup_index_weight, alpha_pows.to_vec()))
 }
 
 /// Build the setup-contribution artifact from prover-owned relation data.

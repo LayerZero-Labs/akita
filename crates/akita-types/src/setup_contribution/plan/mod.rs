@@ -7,22 +7,22 @@
 //! - `prepare`: static and challenge-dependent plan construction.
 //! - `segments`: the single packed D/B/A segment partition used by every
 //!   evaluator.
-//! - `omega`: the dense setup-weight vector used by the recursive stage-3
-//!   setup-product sumcheck.
+//! - `setup_index_weight`: the setup-index weight polynomial used by the
+//!   recursive stage-3 setup-product sumcheck.
 //! - `scan`: direct verifier evaluation of the setup matrix against those same
 //!   segment weights.
 //!
-//! The important invariant is that `omega` and `scan` both use the same cached
-//! [`GroupSetupSegment`] partition. Direct setup evaluation always projects
+//! The important invariant is that `setup_index_weight` and `scan` both use the
+//! same cached [`GroupSetupSegment`] partition. Direct setup evaluation always projects
 //! role dimensions onto one base ring dimension; the ratio-1 case keeps a
 //! segment-based hot loop, but it is an optimization inside that single
 //! base-dimension scan rather than a separate product definition.
 
 mod kernels;
-mod omega;
 mod prepare;
 mod scan;
 mod segments;
+mod setup_index_weight;
 #[cfg(test)]
 mod test_oracle;
 mod types;
@@ -46,8 +46,7 @@ use kernels::evaluate_weighted_setup_row;
 use kernels::{
     base_ring_segment_inner_sum_typed, dispatch_projected_ratio_a, dispatch_projected_ratio_b,
     dispatch_projected_ratios, dispatch_role_projections, dispatch_segment_roles,
-    group_bar_omega_segment_eval, identity_base_ring_segment_inner_sum_typed,
-    projected_base_ring_segment_inner_sum_typed, role_projection, GroupSetupSegment,
-    ProjectedRoleWeights, RoleProjection,
+    identity_base_ring_segment_inner_sum_typed, projected_base_ring_segment_inner_sum_typed,
+    role_projection, GroupSetupSegment, ProjectedRoleWeights, RoleProjection,
 };
 use segments::{build_packed_segments, validate_group_chunk_layout};

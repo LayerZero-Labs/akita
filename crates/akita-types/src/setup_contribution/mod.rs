@@ -2,11 +2,11 @@
 //!
 //! This module owns challenge-free geometry (`geometry.rs`), pure layout/weight
 //! derivation for the stage-3 setup product, and evaluation planning. The
-//! prover consumes the materialized `bar_omega` vector: one scalar weight per
-//! packed setup position. The recursive stage-3 verifier evaluates that same
-//! weight vector against an equality table without materializing it, while the
-//! direct verifier scans the packed setup directly with the same segment
-//! partition.
+//! prover consumes the materialized setup-index weight vector: one scalar weight
+//! per packed setup position. The recursive stage-3 verifier evaluates the
+//! multilinear extension of that weight vector directly at the setup-index
+//! challenge point, while the direct verifier scans the packed setup with the
+//! same segment partition.
 
 use akita_field::AkitaError;
 

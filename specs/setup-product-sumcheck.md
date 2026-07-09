@@ -10,7 +10,7 @@
 ## Summary
 
 In `SetupContributionMode::Direct`, each fold level's verifier proves the setup
-contribution `<S_{<=N}, omega_S>` by scanning the expanded setup matrix inline.
+contribution `<S_{<=N}, setup_index_weight_S>` by scanning the expanded setup matrix inline.
 That scan dominates the per-level verifier cost and, inside the Jolt zkVM, is
 the single largest non-deserialization cost. This spec covers the
 `SetupContributionMode::Recursive` path, where each **non-terminal** fold level
@@ -87,7 +87,7 @@ Key abstractions and surfaces:
   the `Recursive` path is not yet exercised under the `zk` feature.
 - **Carried-opening batching / setup-prefix commitment delegation.** This spec
   keeps the stage-3 sumcheck closed against local verifier scans of the setup
-  prefix and `omega_S`; it does not carry the `(rho_setup_idx, rho_y, s_rho)`
+  prefix and `setup_index_weight_S`; it does not carry the `(rho_setup_idx, rho_y, s_rho)`
   setup-prefix opening into the next recursive fold or batch it with the
   folded-witness opening (STACK.md slices 02B/02C/04).
 - **Planner/table changes.** No schedule-table regeneration; mode selection is
@@ -131,7 +131,7 @@ D=32), trace-only:
 
 - **nv=25:** `akita_verify` Recursive 171.6 M vs Direct 157.9 M total cycles
   (Recursive ≈ +8.3%). The setup MLE/inner-product core matches within ~0.7%
-  per fold; Recursive's extra cost is the `omega` reduction (~8.9 M, mostly
+  per fold; Recursive's extra cost is the `setup_index_weight` reduction (~8.9 M, mostly
   fold 0).
 - **nv=32:** `akita_verify` Recursive 2.972 G vs Direct 2.746 G total cycles
   (Recursive ≈ +8.3%); fold 0 dominates (~2.26 G MLE step).
@@ -155,7 +155,7 @@ AKITA_NUM_VARS=32 AKITA_RECURSION_BLOB=target/blob.bin \
 - **Prover** (`akita-prover`): `core::{suffix,root_fold}` thread
   `setup_contribution_mode`. For `Recursive` on a non-terminal level they call
   `SetupSumcheckProver::prove`, which prepares the setup terms (required length,
-  `bar_omega`, `alpha` powers) and runs the sumcheck, emitting a
+  `setup_index_weight`, `alpha` powers) and runs the sumcheck, emitting a
   `SetupSumcheckProof` into the root fold proof's `stage3_sumcheck_proof`. For
   `Direct` the field is `None`.
 - **Verifier** (`akita-verifier`): `protocol::core::{suffix,root_fold}` select the
@@ -163,10 +163,11 @@ AKITA_NUM_VARS=32 AKITA_RECURSION_BLOB=target/blob.bin \
   construct `SetupSumcheckVerifier::new(...)` from the ring-switch row
   evaluation, and call `verify(...)`. The verifier replays the
   `ExtensionOpeningReductionSumcheck`, then closes the final claim against
-  `setup_val * omega * alpha_val`. `setup_val` is computed by scanning the
-  selected setup prefix against the ring/setup-index equality tables, while
-  `omega` is computed by scanning the cached segment partition against the
-  setup-index equality table (`SetupContributionPlan::evaluate_bar_omega_with_eq`).
+  `setup_val * setup_index_weight * alpha_val`. `setup_val` is computed by
+  scanning the selected setup prefix against the ring/setup-index equality
+  tables, while `setup_index_weight` is evaluated directly at the setup-index
+  challenge point from the cached segment partition
+  (`SetupContributionPlan::evaluate_setup_index_weight_mle`).
 - **Types** (`akita-types`): `SETUP_SUMCHECK_DEGREE` and the
   `SetupContributionMode` enum.
 - **Recursion harness** (`profile/akita-recursion`): the `--setup-mode` CLI flag
