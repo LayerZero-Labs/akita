@@ -494,7 +494,7 @@ impl FoldWitnessLinfCapConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sis::norm_bound::{fold_witness_beta, FoldChallengeNorms, FoldWitnessNorms};
+    use crate::sis::norm_bound::{FoldChallengeNorms, FoldWitnessNorms};
 
     #[test]
     fn fold_witness_linf_tail_bound_sq_monotone_and_clamped_inputs() {
@@ -595,14 +595,23 @@ mod tests {
 
     #[test]
     fn threshold_t_star_below_pessimistic_linf_envelope_at_production_shell() {
-        use crate::sis::norm_bound::isqrt_ceil;
+        use crate::layout::digit_math::isqrt_ceil;
 
         let challenge = FoldChallengeNorms {
             infinity_norm: 2,
             l1_norm: 51,
         };
         let witness = FoldWitnessNorms::new(3, 64, 64, true);
-        let tight_beta = fold_witness_beta(4, 1, challenge, witness).unwrap();
+        let (_, tight_beta) = crate::sis::fold_witness_linf_digit_plan(
+            4,
+            1,
+            128,
+            3,
+            challenge,
+            witness,
+            &FoldWitnessLinfCapConfig::worst_case_beta_only(),
+        )
+        .unwrap();
         let pessimistic_linf_envelope = 16u128 * challenge.l1_norm * witness.infinity_norm();
         assert!(tight_beta < pessimistic_linf_envelope);
         let ln_term = fold_witness_linf_ln_term(1u128 << 16, 1, 8).unwrap();

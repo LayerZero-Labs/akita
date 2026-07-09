@@ -10,10 +10,18 @@ use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::{CanonicalField, FieldCore};
 
 use crate::sis::{
-    committed_fold_a_role_rank, fold_level_witness_scoring_cost, num_digits_for_bound,
-    FoldChallengeNorms, FoldWitnessNorms, SisModulusFamily,
+    committed_fold_a_role_rank, fold_witness_linf_cap_policy, num_digits_for_bound, num_digits_fold,
+    FoldChallengeNorms, FoldWitnessLinfCapConfig, FoldWitnessNorms, SisModulusFamily,
 };
 use crate::DecompositionParams;
+
+/// Smallest integer `s` with `s^2 >= v`.
+#[inline]
+#[must_use]
+pub fn isqrt_ceil(v: u128) -> u128 {
+    let s = v.isqrt();
+    s + u128::from(s.saturating_mul(s) < v)
+}
 
 /// Return the row gadget scalars `1, b, b^2, ...` for `b = 2^log_basis`.
 pub fn gadget_row_scalars<F: FieldCore + CanonicalField>(levels: usize, log_basis: u32) -> Vec<F> {
@@ -161,6 +169,69 @@ pub fn optimal_m_r_split(
     }
 }
 
+/// Next-level witness scoring cost for one fold geometry, matching
+/// [`optimal_m_r_split`]:
+///
+/// ```text
+///   (1 + n_a) · δ_open · 2^r  +  δ_commit · δ_fold · m_eff
+/// ```
+#[allow(clippy::too_many_arguments)]
+pub fn fold_level_witness_scoring_cost(
+    n_a: usize,
+    r_vars: usize,
+    num_claims: usize,
+    inner_width: usize,
+    decomposition: DecompositionParams,
+    fold_challenge_config: &SparseChallengeConfig,
+    fold_shape: TensorChallengeShape,
+    ring_dimension: usize,
+    fold_challenge: FoldChallengeNorms,
+    fold_witness: FoldWitnessNorms,
+) -> Option<u64> {
+    let field_bits = decomposition.field_bits();
+    let log_basis = decomposition.log_basis;
+    let log_commit_bound = decomposition.log_commit_bound;
+    let open_bound = log_commit_bound.max(field_bits);
+    let delta_open = num_digits_for_bound(open_bound, field_bits, log_basis) as u64;
+    let delta_commit = num_digits_for_bound(log_commit_bound, field_bits, log_basis) as u64;
+    let block_len = inner_width.checked_div(delta_commit as usize)?;
+    if block_len == 0 {
+        return None;
+    }
+    let num_blocks = 1u64.checked_shl(r_vars as u32)?;
+    let m_eff = block_len as u64;
+    let cap_policy =
+        fold_witness_linf_cap_policy(fold_challenge_config, fold_shape, ring_dimension);
+    let binding = crate::FoldLinfProtocolBinding::CURRENT;
+    let (grind_target_accept_num, grind_target_accept_den) = binding.grind_target_accept_prob();
+    let cap_config = FoldWitnessLinfCapConfig::for_fold_level_scoring(
+        cap_policy,
+        fold_challenge_config,
+        fold_shape,
+        ring_dimension,
+        inner_width,
+        grind_target_accept_num,
+        grind_target_accept_den,
+    )
+    .ok()?;
+    let delta_fold = num_digits_fold(
+        r_vars,
+        num_claims,
+        field_bits,
+        log_basis,
+        fold_challenge,
+        fold_witness,
+        cap_config,
+    )
+    .ok()? as u64;
+    let per_block_cost = delta_open.saturating_add((n_a as u64).saturating_mul(delta_open));
+    let opening_cost = per_block_cost.saturating_mul(num_blocks);
+    let folding_cost = delta_commit
+        .saturating_mul(delta_fold)
+        .saturating_mul(m_eff);
+    Some(opening_cost.saturating_add(folding_cost))
+}
+
 #[cfg(test)]
 mod tests {
     use crate::sis::{num_digits_fold, FoldWitnessLinfCapConfig, FoldWitnessNorms};
@@ -168,7 +239,6 @@ mod tests {
 
     #[test]
     fn optimal_m_r_split_uses_num_claims_in_fold_digit_scoring() {
-        use crate::sis::fold_witness_beta;
         use akita_challenges::{D64_PRODUCTION_PM1_COUNT, D64_PRODUCTION_PM2_COUNT};
         let fold_challenge_config = SparseChallengeConfig {
             count_pm1: D64_PRODUCTION_PM1_COUNT,
@@ -195,14 +265,6 @@ mod tests {
                 .1,
         )
         .unwrap();
-        let singleton_beta =
-            fold_witness_beta(5, 1, fold_challenge, fold_witness).expect("singleton beta");
-        let batched_beta =
-            fold_witness_beta(5, 4, fold_challenge, fold_witness).expect("batched beta");
-        assert!(
-            batched_beta > singleton_beta,
-            "folded-witness bound must grow with batched num_claims"
-        );
         let singleton_fold_digits =
             num_digits_fold(5, 1, 128, 3, fold_challenge, fold_witness, cap_config)
                 .expect("singleton fold digits");

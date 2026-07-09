@@ -416,31 +416,6 @@ impl LevelParams {
         Ok(self)
     }
 
-    /// Canonical fold-l∞ digit plan for this level at `num_claims`.
-    ///
-    /// Returns `(delta_fold, inf_norm_bound)`.
-    ///
-    /// # Errors
-    ///
-    /// Propagates [`crate::sis::fold_witness_linf_digit_plan`] setup errors.
-    pub fn fold_witness_linf_digit_plan_for_claims(
-        &self,
-        num_claims: usize,
-    ) -> Result<(usize, u128), AkitaError> {
-        crate::sis::fold_witness_linf_digit_plan(
-            self.r_vars,
-            num_claims,
-            self.field_bits_for_cache(),
-            self.log_basis,
-            crate::sis::fold_challenge_norms(
-                &self.fold_challenge_config,
-                self.fold_challenge_shape,
-            ),
-            self.fold_witness_norms(),
-            &self.fold_linf_cap_config,
-        )
-    }
-
     /// Honest-prover per-coefficient `‖z‖_inf` target for fold digit sizing, grind,
     /// and terminal Golomb-Rice (`min(β_inf, t*)` or `β_inf` alone).
     ///
@@ -448,8 +423,15 @@ impl LevelParams {
     ///
     /// Propagates [`crate::sis::fold_witness_linf_digit_plan`] setup errors.
     pub fn fold_witness_linf_cap_for_claims(&self, num_claims: usize) -> Result<u128, AkitaError> {
-        let (_delta_fold, inf_norm_bound) =
-            self.fold_witness_linf_digit_plan_for_claims(num_claims)?;
+        let (_delta_fold, inf_norm_bound) = crate::sis::fold_witness_linf_digit_plan(
+            self.r_vars,
+            num_claims,
+            self.field_bits_for_cache(),
+            self.log_basis,
+            crate::sis::fold_challenge_norms(&self.fold_challenge_config, self.fold_challenge_shape),
+            self.fold_witness_norms(),
+            &self.fold_linf_cap_config,
+        )?;
         Ok(inf_norm_bound)
     }
 

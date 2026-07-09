@@ -201,14 +201,14 @@ pub fn num_digits_open(decomposition: DecompositionParams) -> usize {
 ///
 /// Computes the folded-witness L∞ bound
 /// `β = num_claims · 2^r_vars · min(||c||_inf·||s||_1, ||c||_1·||s||_inf)`
-/// (via [`crate::sis::fold_witness_beta`]) from the per-level fold challenge and witness
+/// (via [`super::norm_bound::fold_witness_linf_digit_plan`]) from the per-level fold challenge and witness
 /// norms. Under tail-bound-with-grind, `δ_fold` comes from
 /// [`super::norm_bound::fold_witness_linf_digit_plan`] (pre-snap `min(β_inf, t*)`,
 /// optional snap-down, positive-reach grind cap); deterministic policies use `β_inf` alone.
 ///
 /// # Errors
 ///
-/// Returns `AkitaError::InvalidSetup` when [`crate::sis::fold_witness_beta`] rejects the
+/// Returns `AkitaError::InvalidSetup` when folded-witness bound sizing rejects the
 /// inputs (`r_vars >= 127` or `β` overflow), or when `β == 0` (a zero
 /// challenge/witness norm or `num_claims == 0` — no well-formed level folds a
 /// zero witness).

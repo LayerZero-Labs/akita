@@ -13,6 +13,7 @@ use super::decomposition_digits::{
     balanced_digit_abs_max, fold_witness_representable_linf_bounds, num_digits_fold,
     num_digits_for_bound,
 };
+use crate::layout::digit_math::isqrt_ceil;
 use crate::{DecompositionParams, FoldLinfProtocolBinding};
 
 pub use super::fold_linf_cap::{
@@ -99,51 +100,6 @@ pub fn rounded_up_role_a_inf_norm(
     ceil_supported_linf_bound(min_security_bits, sis_family, ring_dimension, collision_linf)
 }
 
-/// Worst-case `||lhs · rhs||_inf` of a negacyclic ring product, from the
-/// per-operand L1/L∞ bounds:
-///
-/// ```text
-/// ||lhs · rhs||_inf  <=  min( ||lhs||_inf · ||rhs||_1 ,  ||lhs||_1 · ||rhs||_inf ).
-/// ```
-///
-/// Saturating arithmetic keeps this panic-free on the verifier-reachable path.
-#[inline]
-#[must_use]
-pub fn ring_product_infinity_norm_bound(
-    lhs_infinity_norm: u128,
-    lhs_l1_norm: u128,
-    rhs_infinity_norm: u128,
-    rhs_l1_norm: u128,
-) -> u128 {
-    lhs_infinity_norm
-        .saturating_mul(rhs_l1_norm)
-        .min(lhs_l1_norm.saturating_mul(rhs_infinity_norm))
-}
-
-/// Smallest integer `s` with `s^2 >= v`.
-#[inline]
-#[must_use]
-pub fn isqrt_ceil(v: u128) -> u128 {
-    if v == 0 {
-        return 0;
-    }
-    let mut lo = 1u128;
-    let mut hi = v;
-    while lo < hi {
-        let mid = lo + (hi - lo).div_ceil(2);
-        if mid.saturating_mul(mid) <= v {
-            lo = mid;
-        } else {
-            hi = mid - 1;
-        }
-    }
-    if lo.saturating_mul(lo) < v {
-        lo.saturating_add(1)
-    } else {
-        lo
-    }
-}
-
 /// Effective fold-round challenge `(||c||_inf, ||c||_1)` for `beta_inf` sizing.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct FoldChallengeNorms {
@@ -228,7 +184,26 @@ fn fold_witness_pre_snap_linf_cap(
     num_claims: usize,
     cap_config: &FoldWitnessLinfCapConfig,
 ) -> Result<(u128, Option<u128>), AkitaError> {
-    let beta = fold_witness_beta(r_vars, num_claims, challenge, witness)?;
+    if r_vars >= 127 {
+        return Err(AkitaError::InvalidSetup(format!(
+            "fold_witness_pre_snap_linf_cap: r_vars = {r_vars} >= 127"
+        )));
+    }
+    // Worst-case negacyclic ring-product L∞ of `c · s`:
+    //   ||c · s||_inf <= min(||c||_inf·||s||_1, ||c||_1·||s||_inf).
+    // β_inf = num_claims · 2^r_vars · that min side.
+    let beta = challenge
+        .infinity_norm
+        .saturating_mul(witness.l1_norm)
+        .min(challenge.l1_norm.saturating_mul(witness.infinity_norm))
+        .checked_mul(num_claims as u128)
+        .and_then(|t| t.checked_mul(1u128 << r_vars))
+        .ok_or_else(|| {
+            AkitaError::InvalidSetup(
+                "fold_witness_pre_snap_linf_cap: folded-witness bound β overflows u128"
+                    .to_string(),
+            )
+        })?;
     if beta == 0 {
         return Err(AkitaError::InvalidSetup(
             "fold_witness_pre_snap_linf_cap: folded-witness bound β = 0".to_string(),
@@ -299,7 +274,7 @@ pub fn snap_num_digits_fold_down(
 ///
 /// # Errors
 ///
-/// Propagates [`fold_witness_beta`] / tail-bound setup errors.
+/// Propagates folded-witness bound / tail-bound setup errors.
 pub fn fold_witness_linf_digit_plan(
     r_vars: usize,
     num_claims: usize,
@@ -390,113 +365,34 @@ pub fn committed_fold_a_role_rank(
     Some((bucket, rank))
 }
 
-/// Next-level witness scoring cost for one fold geometry, matching
-/// [`crate::layout::digit_math::optimal_m_r_split`]:
-///
-/// ```text
-///   (1 + n_a) · δ_open · 2^r  +  δ_commit · δ_fold · m_eff
-/// ```
-#[allow(clippy::too_many_arguments)]
-pub fn fold_level_witness_scoring_cost(
-    n_a: usize,
-    r_vars: usize,
-    num_claims: usize,
-    inner_width: usize,
-    decomposition: DecompositionParams,
-    fold_challenge_config: &SparseChallengeConfig,
-    fold_shape: TensorChallengeShape,
-    ring_dimension: usize,
-    fold_challenge: FoldChallengeNorms,
-    fold_witness: FoldWitnessNorms,
-) -> Option<u64> {
-    let field_bits = decomposition.field_bits();
-    let log_basis = decomposition.log_basis;
-    let log_commit_bound = decomposition.log_commit_bound;
-    let open_bound = log_commit_bound.max(field_bits);
-    let delta_open = num_digits_for_bound(open_bound, field_bits, log_basis) as u64;
-    let delta_commit = num_digits_for_bound(log_commit_bound, field_bits, log_basis) as u64;
-    let block_len = inner_width.checked_div(delta_commit as usize)?;
-    if block_len == 0 {
-        return None;
-    }
-    let num_blocks = 1u64.checked_shl(r_vars as u32)?;
-    let m_eff = block_len as u64;
-    let cap_policy =
-        fold_witness_linf_cap_policy(fold_challenge_config, fold_shape, ring_dimension);
-    let binding = crate::FoldLinfProtocolBinding::CURRENT;
-    let (grind_target_accept_num, grind_target_accept_den) = binding.grind_target_accept_prob();
-    let cap_config = FoldWitnessLinfCapConfig::for_fold_level_scoring(
-        cap_policy,
-        fold_challenge_config,
-        fold_shape,
-        ring_dimension,
-        inner_width,
-        grind_target_accept_num,
-        grind_target_accept_den,
-    )
-    .ok()?;
-    let delta_fold = num_digits_fold(
-        r_vars,
-        num_claims,
-        field_bits,
-        log_basis,
-        fold_challenge,
-        fold_witness,
-        cap_config,
-    )
-    .ok()? as u64;
-    let per_block_cost = delta_open.saturating_add((n_a as u64).saturating_mul(delta_open));
-    let opening_cost = per_block_cost.saturating_mul(num_blocks);
-    let folding_cost = delta_commit
-        .saturating_mul(delta_fold)
-        .saturating_mul(m_eff);
-    Some(opening_cost.saturating_add(folding_cost))
-}
-
-/// Deterministic coefficient-`L∞` envelope on the folded witness sum
-/// `z = Σ c_i·s_i` (written `β_inf` in specs):
-///
-/// ```text
-/// β_inf = ||z||_inf bound
-///       = num_claims · 2^r_vars · min(||c||_inf·||s||_1, ||c||_1·||s||_inf).
-/// ```
-///
-/// # Errors
-///
-/// Returns `AkitaError::InvalidSetup` when `r_vars >= 127` (a `2^r_vars` fold
-/// arity no well-formed level reaches) or when the product overflows `u128`.
-#[inline]
-pub fn fold_witness_beta(
-    r_vars: usize,
-    num_claims: usize,
-    challenge: FoldChallengeNorms,
-    witness: FoldWitnessNorms,
-) -> Result<u128, AkitaError> {
-    if r_vars >= 127 {
-        return Err(AkitaError::InvalidSetup(format!(
-            "fold_witness_beta: r_vars = {r_vars} >= 127"
-        )));
-    }
-    ring_product_infinity_norm_bound(
-        challenge.infinity_norm,
-        challenge.l1_norm,
-        witness.infinity_norm,
-        witness.l1_norm,
-    )
-    .checked_mul(num_claims as u128)
-    .and_then(|t| t.checked_mul(1u128 << r_vars))
-    .ok_or_else(|| AkitaError::InvalidSetup("fold_witness_beta: β overflows u128".to_string()))
-}
-
 #[cfg(test)]
 mod tests {
     use super::super::ajtai_key::DEFAULT_SIS_SECURITY_BITS;
     use super::*;
 
     #[test]
-    fn ring_product_picks_min_side() {
-        assert_eq!(ring_product_infinity_norm_bound(2, 8, 4, 10), 20);
-        assert_eq!(ring_product_infinity_norm_bound(8, 2, 5, 1), 8);
+    fn fold_witness_pre_snap_linf_cap_beta_picks_min_ring_product_side() {
+        let beta = |c_inf, c_l1, s_inf, s_l1| {
+            fold_witness_linf_digit_plan(
+                0,
+                1,
+                128,
+                3,
+                FoldChallengeNorms {
+                    infinity_norm: c_inf,
+                    l1_norm: c_l1,
+                },
+                FoldWitnessNorms {
+                    infinity_norm: s_inf,
+                    l1_norm: s_l1,
+                },
+                &FoldWitnessLinfCapConfig::worst_case_beta_only(),
+            )
+            .map(|(_, beta)| beta)
+            .unwrap()
+        };
+        assert_eq!(beta(2, 8, 4, 10), 20);
+        assert_eq!(beta(8, 2, 5, 1), 8);
     }
 
     #[test]
