@@ -136,9 +136,5 @@ harness = false
 name = "fft_smooth"
 harness = false
 
-[[bench]]
-name = "setup_contribution_scan"
-harness = false
-
 [lints]
 workspace = true

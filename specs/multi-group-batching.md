@@ -1180,16 +1180,15 @@ At current verify time:
 
 | Shape                                           | Rejection point                         | Error                                    |
 | ----------------------------------------------- | --------------------------------------- | ---------------------------------------- |
-| Tiered preset + multi-group schedule key            | `runtime_schedule` / multi-group DP     | `AkitaError::InvalidSetup`               |
+| Tiered preset + multi-group schedule key        | `runtime_schedule` / multi-group DP     | `AkitaError::InvalidSetup`               |
 | Tiered preset + `G > 1` proof                   | Prove / verify entry                    | `AkitaError::InvalidSetup`               |
-| Dense config + multi-group schedule key             | `runtime_schedule` / multi-group DP     | `AkitaError::InvalidSetup`               |
+| Dense config + multi-group schedule key         | `runtime_schedule` / multi-group DP     | `AkitaError::InvalidSetup`               |
 | Dense polynomial at conservative precommit      | `ConservativeCommitmentConfig` commit params / one-hot validators | `AkitaError::InvalidSetup` / `InvalidInput` |
 | Dense polynomial + `G > 1` proof                | Prove entry                             | `AkitaError::InvalidInput`               |
-| Precommitted `num_vars > final_group.num_vars / 2` | multi-group key validation               | `AkitaError::InvalidInput`               |
+| Precommitted `num_vars > final_group.num_vars / 2` | multi-group key validation            | `AkitaError::InvalidInput`               |
 | Recursive setup contribution + `G > 1`          | Prove / verify entry                    | `AkitaError::InvalidSetup`               |
-| Multi-chunk witness layout + `G > 1` setup contribution | setup-contribution plan construction | `AkitaError::InvalidSetup`               |
+| `G > 1` + `witness_chunk.num_chunks > 1`        | schedule selection / prove / verify / relation replay | `AkitaError::InvalidSetup` / `InvalidProof` |
 | Scalar table lookup collapsing `[1,3]` to `[4]` | scalar key construction / multi-group lookup | table miss or `AkitaError::InvalidSetup` |
-| Generic multi-group proof before Phase 2        | Prove / verify entry                    | `AkitaError::InvalidInput` / `InvalidProof` |
 | `log_basis != min_basis(Cfg)` at precommit      | conservative layout validation / multi-group root params | `AkitaError::InvalidSetup`               |
 
 
@@ -1206,11 +1205,11 @@ At current verify time:
 - Keep `OpeningClaimsLayout::new` as the scalar same-bundle constructor.
 - Add `OpeningClaimsLayout::from_group_sizes` for shape-only multi-group batches.
 - Bind group partition and point-variable selections in the instance descriptor.
-- Add explicit rejects for unsupported proof paths while the multi-group proof is not
-implemented:
+- Add explicit rejects for unsupported multi-group proof paths:
   - tiered + `G > 1`;
   - recursive setup contribution + `G > 1`;
   - dense polynomial multi-group root batching;
+  - `G > 1` combined with `witness_chunk.num_chunks > 1`;
   - scalar table lookup that would collapse a multi-group key into `[sum_g K_g]`.
 - Update docs that say multi-commitment same-point folded recursion is "not yet"
 to point here.
@@ -1318,18 +1317,20 @@ kernels land if B-row time is a bottleneck.
 
 ### Prove / Verify Tests
 
-- Current prove rejects generic one-hot `G > 1` with the multi-group-root unsupported error.
-- Current verify rejects generic `G > 1` with `AkitaError::InvalidProof`.
+- Current prove/verify accept one-hot `G > 1` with direct setup contribution when the
+  folded multi-group root can hand off to a singleton recursive suffix.
 - Current prove/verify reject tiered `G > 1` with `AkitaError::InvalidSetup`.
 - Current prove/verify reject recursive setup contribution `G > 1` with
   `AkitaError::InvalidSetup`.
-- Phase 2: root-direct two-group one-hot same-point round trip.
-- Phase 2: folded non-tiered two-group one-hot same-point round trip.
-- Phase 2: folded non-tiered unequal group sizes, for example `[1, 3]`.
-- Phase 2: suffix remains singleton after a multi-group root.
-- Phase 2: serialize/deserialize multi-group proofs round trip with the current descriptor schema.
-- Phase 2: opening-batch digest mismatch rejects.
-- Phase 2: reordered precommitted group vector rejects.
+- Current prove/verify reject `G > 1` combined with `witness_chunk.num_chunks > 1`
+  through the canonical multi-group multi-chunk error.
+- Implemented: root-direct two-group one-hot same-point round trip.
+- Implemented: folded non-tiered two-group one-hot same-point round trip.
+- Implemented: folded non-tiered unequal group sizes, for example `[1, 3]`.
+- Implemented: suffix remains singleton after a multi-group root.
+- Implemented: serialize/deserialize multi-group proofs round trip with the current descriptor schema.
+- Implemented: opening-batch digest mismatch rejects.
+- Implemented: reordered precommitted group vector rejects.
 - Phase 2: duplicate or missing precommitted group layout derivation rejects.
 - Phase 2: unknown descriptor version rejects for multi-group proofs.
 - Phase 2: scalar `[4]` descriptor bytes do not verify as multi-group `[1, 3]`.
