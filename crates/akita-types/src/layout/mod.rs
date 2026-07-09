@@ -32,12 +32,7 @@ pub use proof_size::{
     padded_boolean_opening_vars, planned_next_w_len, planned_w_ring_element_count,
     proof_ring_vec_bytes, sumcheck_rounds,
 };
-pub use relation_rows::{
-    outer_consistency_row_start, quotient_witness_coeff_count_for_scalar_level,
-    quotient_witness_coeff_count_for_scalar_level_bits, ConsistencyLayer, RelationQuotientLayout,
-    RelationQuotientSlice, RelationRowFamily, RelationRowFamilyLayout, RelationRowLayout,
-    FOLD_CONSISTENCY_ROW, FOLD_EVALUATION_ROW,
-};
+pub use relation_rows::RelationTau1Geometry;
 pub use ring_dims::{
     validate_role_dims, validate_schedule_ring_dims, CommitmentRingDims, RingRole, MAX_FOLD_LEVELS,
     MIN_A_ROLE_FOLD_CHALLENGE_RING_D, SUPPORTED_CHALLENGE_RING_DIMS, SUPPORTED_RING_DIMS,

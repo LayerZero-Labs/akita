@@ -711,14 +711,13 @@ where
     let stage1_replay = verify_stage1::<F, E, T>(prepared.stage1, &rs, transcript)?;
     // EvaluationTrace is the last τ₁ row: weight openings by eq(τ₁, last), not γ².
     // Terminal folds no longer squeeze an extra CHALLENGE_SUMCHECK_BATCH for trace_gamma.
-    let row_layout = RelationRowLayout::for_level::<F>(
+    let tau1_geometry = RelationTau1Geometry::for_level(
         prepared.lp,
-        relation_instance.role_dims(),
         relation_instance.relation_matrix_row_layout(),
         relation_instance.opening_batch(),
     )?;
     let eq_tau1 = EqPolynomial::evals(&rs.tau1)?;
-    let evaluation_trace_row = row_layout.evaluation_trace_row()?;
+    let evaluation_trace_row = tau1_geometry.evaluation_trace_row();
     let evaluation_trace_weight = eq_tau1
         .get(evaluation_trace_row)
         .copied()

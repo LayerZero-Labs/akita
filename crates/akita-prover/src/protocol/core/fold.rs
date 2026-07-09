@@ -584,14 +584,13 @@ where
         sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_SUMCHECK_BATCH)
     };
     // EvaluationTrace is the last τ₁ row: weight openings by eq(τ₁, last), not γ².
-    let row_layout = RelationRowLayout::for_level::<F>(
+    let tau1_geometry = RelationTau1Geometry::for_level(
         lp,
-        prepared_fold.instance.role_dims(),
         prepared_fold.instance.relation_matrix_row_layout(),
         prepared_fold.instance.opening_batch(),
     )?;
     let eq_tau1 = EqPolynomial::evals(&rs.tau1)?;
-    let evaluation_trace_row = row_layout.evaluation_trace_row()?;
+    let evaluation_trace_row = tau1_geometry.evaluation_trace_row();
     let evaluation_trace_weight = eq_tau1
         .get(evaluation_trace_row)
         .copied()

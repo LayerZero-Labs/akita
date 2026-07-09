@@ -23,7 +23,6 @@ pub mod ntt_cache;
 pub mod opening_claims;
 pub mod proof;
 pub mod proof_size;
-pub mod relation_weight;
 pub mod schedule;
 pub mod setup_contribution;
 pub mod sis;
@@ -65,16 +64,14 @@ pub use instance_descriptor::{
 pub use layout::{
     basis_weights, block_rings_at_opening, direct_witness_bytes,
     extension_opening_reduction_level_bytes, extension_opening_reduction_proof_bytes, field_bytes,
-    gadget_row_scalars, lagrange_weights, monomial_weights, outer_consistency_row_start,
-    packed_digits_bytes, padded_boolean_opening_vars, planned_next_w_len,
-    planned_w_ring_element_count, proof_ring_vec_bytes, reduce_inner_opening_to_ring_element,
-    ring_opening_point_from_field, sumcheck_rounds, validate_role_dims,
-    validate_schedule_ring_dims, BasisMode, BlockOrder, CommitmentRingDims, ConsistencyLayer,
-    FlatMatrix, LevelParams, LevelParamsLike, PrecommittedLevelParams, RelationMatrixRowLayout,
-    RelationQuotientLayout, RelationQuotientSlice, RelationRowFamily, RelationRowFamilyLayout,
-    RelationRowLayout, RingMatrixView, RingOpeningPoint, RingRole, FOLD_CONSISTENCY_ROW,
-    FOLD_EVALUATION_ROW, MAX_FOLD_LEVELS, MIN_A_ROLE_FOLD_CHALLENGE_RING_D,
-    SUPPORTED_CHALLENGE_RING_DIMS, SUPPORTED_RING_DIMS,
+    gadget_row_scalars, lagrange_weights, monomial_weights, packed_digits_bytes,
+    padded_boolean_opening_vars, planned_next_w_len, planned_w_ring_element_count,
+    proof_ring_vec_bytes, reduce_inner_opening_to_ring_element, ring_opening_point_from_field,
+    sumcheck_rounds, validate_role_dims, validate_schedule_ring_dims, BasisMode, BlockOrder,
+    CommitmentRingDims, FlatMatrix, LevelParams, LevelParamsLike, PrecommittedLevelParams,
+    RelationMatrixRowLayout, RelationTau1Geometry, RingMatrixView, RingOpeningPoint, RingRole,
+    MAX_FOLD_LEVELS, MIN_A_ROLE_FOLD_CHALLENGE_RING_D, SUPPORTED_CHALLENGE_RING_DIMS,
+    SUPPORTED_RING_DIMS,
 };
 pub use ntt_cache::NttCacheKey;
 pub use proof::{
@@ -124,7 +121,6 @@ pub use proof::{
     SETUP_OFFLOAD_D_SETUP, SETUP_SUMCHECK_DEGREE,
 };
 pub use proof_size::{level_proof_bytes, FOLD_GRIND_NONCE_BYTES};
-pub use relation_weight::{RelationWeightPolynomial, RelationWeightPolynomialError};
 pub use schedule::{
     detect_field_modulus, multi_group_root_commit_params, r_decomp_levels, root_current_w_len,
     root_direct_schedule, schedule_is_root_direct, schedule_num_fold_levels,
