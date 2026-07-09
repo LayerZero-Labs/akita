@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_field::{AkitaError, FieldCore};
 
@@ -21,7 +23,9 @@ pub struct SetupContributionPlanInputs<E: FieldCore> {
     pub depth_commit: usize,
     pub depth_fold: usize,
     pub inner_width: usize,
-    pub eq_tau1: Vec<E>,
+    /// Expanded τ₁ eq table, shared by reference so plan inputs can be built
+    /// (and cloned) without copying the full `2^|τ₁|` expansion.
+    pub eq_tau1: Arc<[E]>,
 }
 
 impl<E: FieldCore> SetupContributionPlanInputs<E> {
@@ -89,7 +93,7 @@ impl<E: FieldCore> SetupContributionPlanInputs<E> {
             depth_commit,
             depth_fold,
             inner_width,
-            eq_tau1: Vec::new(),
+            eq_tau1: Vec::new().into(),
         })
     }
 
@@ -103,7 +107,7 @@ impl<E: FieldCore> SetupContributionPlanInputs<E> {
         tau1: &[E],
         min_rows: usize,
     ) -> Result<Self, AkitaError> {
-        self.eq_tau1 = EqPolynomial::evals(tau1)?;
+        self.eq_tau1 = EqPolynomial::evals(tau1)?.into();
         if self.eq_tau1.len() < min_rows {
             return Err(AkitaError::InvalidSize {
                 expected: min_rows,

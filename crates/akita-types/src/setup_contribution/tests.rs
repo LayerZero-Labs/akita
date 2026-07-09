@@ -139,7 +139,7 @@ fn structured_weight_fixture(
         depth_commit,
         depth_fold,
         inner_width: z_range,
-        eq_tau1: EqPolynomial::evals(&tau1).unwrap(),
+        eq_tau1: EqPolynomial::evals(&tau1).unwrap().into(),
     };
     let full_vec_randomness = (0..18)
         .map(|idx| test_scalar(101 + idx as u128))
@@ -347,7 +347,7 @@ fn dense_z_eq_slice_uses_relative_high_carry() {
         depth_commit,
         depth_fold,
         inner_width: z_range,
-        eq_tau1: vec![test_scalar(11), test_scalar(12)],
+        eq_tau1: vec![test_scalar(11), test_scalar(12)].into(),
     };
 
     let chunk_layout = crate::WitnessLayout {
@@ -427,7 +427,7 @@ fn setup_a_z_weights_do_not_include_commit_gadget() {
         depth_commit,
         depth_fold,
         inner_width: z_range,
-        eq_tau1: vec![test_scalar(11), test_scalar(12)],
+        eq_tau1: vec![test_scalar(11), test_scalar(12)].into(),
     };
     let chunk_layout = crate::WitnessLayout {
         blocks_per_chunk: 4,

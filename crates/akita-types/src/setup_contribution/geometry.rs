@@ -287,7 +287,7 @@ mod tests {
             depth_commit,
             depth_fold,
             inner_width: z_range,
-            eq_tau1: vec![test_scalar(11), test_scalar(12)],
+            eq_tau1: vec![test_scalar(11), test_scalar(12)].into(),
         };
         let required = setup_required_for_inputs(&inputs).expect("required");
         let chunk_layout = single_chunk_layout(4, offset_z, z_range, 0, 64, 0);
@@ -319,7 +319,7 @@ mod tests {
             depth_commit,
             depth_fold,
             inner_width: z_range,
-            eq_tau1: vec![test_scalar(11), test_scalar(12)],
+            eq_tau1: vec![test_scalar(11), test_scalar(12)].into(),
         };
         let required = setup_required_for_inputs(&inputs).expect("required");
         assert!(required > 0);
@@ -334,7 +334,7 @@ mod tests {
             &chunk_layout,
         )
         .expect("plan a");
-        inputs_a.eq_tau1 = vec![test_scalar(1); 8];
+        inputs_a.eq_tau1 = vec![test_scalar(1); 8].into();
         let plan_b = prepare_single_group_plan(
             &inputs_a,
             &[test_scalar(77), test_scalar(88)],
@@ -364,7 +364,7 @@ mod tests {
             depth_commit: 2,
             depth_fold: 3,
             inner_width: 32,
-            eq_tau1: vec![],
+            eq_tau1: vec![].into(),
         };
         let required = setup_required_for_inputs(&inputs).expect("required");
         let seed = crate::AkitaSetupSeed {
@@ -399,7 +399,7 @@ mod tests {
             depth_commit: 2,
             depth_fold: 3,
             inner_width: 32,
-            eq_tau1: vec![],
+            eq_tau1: vec![].into(),
         };
         let err = setup_required_for_inputs(&inputs).expect_err("non-pow2 blocks");
         assert!(matches!(err, AkitaError::InvalidSetup(_)));

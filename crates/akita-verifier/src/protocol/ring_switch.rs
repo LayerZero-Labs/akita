@@ -403,7 +403,7 @@ where
         return Err(AkitaError::InvalidProof);
     }
 
-    let eq_tau1 = EqPolynomial::evals(tau1)?;
+    let eq_tau1: std::sync::Arc<[E]> = EqPolynomial::evals(tau1)?.into();
     if eq_tau1.len() < rows {
         return Err(AkitaError::InvalidSize {
             expected: rows,

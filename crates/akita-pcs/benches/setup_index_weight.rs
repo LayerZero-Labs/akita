@@ -88,7 +88,7 @@ fn make_case(num_blocks: usize, blocks_per_chunk: usize) -> SetupIndexWeightBenc
         depth_commit,
         depth_fold,
         inner_width: z_range,
-        eq_tau1: EqPolynomial::evals(&tau1).unwrap(),
+        eq_tau1: EqPolynomial::evals(&tau1).unwrap().into(),
     };
     let groups = vec![SetupContributionGroupInputs {
         e_col_offset: 0,
