@@ -4,7 +4,7 @@ use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::AkitaError;
 use akita_types::sis::{
     committed_fold_a_role_rank, compute_num_digits_full_field, decomposed_s_block_ring_count,
-    decomposed_t_ring_count, decomposed_w_ring_count, min_secure_rank, num_digits_fold,
+    decomposed_t_ring_count, decomposed_w_ring_count, fold_witness_digit_plan, min_secure_rank,
     num_digits_open, num_digits_s_commit, rounded_up_collision_inf_norm, AjtaiKeyParams,
     FoldChallengeNorms, FoldWitnessLinfCapConfig, FoldWitnessNorms, SisTableKey,
 };
@@ -152,14 +152,14 @@ pub(crate) fn group_root_params_from_layout(
         },
         onehot_chunk_size > 0,
     );
-    let num_digits_fold_one = num_digits_fold(
+    let (num_digits_fold_one, _) = fold_witness_digit_plan(
         layout.r_vars,
         layout.group.num_polynomials(),
         policy.decomposition.field_bits(),
         layout.log_basis,
         challenge,
         witness,
-        fold_linf_cap_config,
+        &fold_linf_cap_config,
     )?;
 
     Ok(PrecommittedLevelParams {

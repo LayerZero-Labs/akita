@@ -21,8 +21,9 @@
 //!    - [`num_digits_s_commit`]: committed witness `s` (`log_commit_bound` at
 //!      the root, `log_basis` at recursive levels).
 //!    - [`num_digits_open`]: opening witnesses `t̂` / `ŵ` (`log_open_bound`).
-//!    - [`num_digits_fold`]: folded witness `z` — the digit count for the
-//!      norm-derived bound `β`, which is not a [`DecompositionParams`] field.
+//!    - [`super::norm_bound::fold_witness_digit_plan`]: folded witness `z` — the
+//!      digit count for the norm-derived bound `β`, which is not a
+//!      [`DecompositionParams`] field.
 //!
 //! 3. **Committed-matrix widths** — name the `checked_mul` products that turn a
 //!    digit depth plus block geometry into a matrix's ring-column count:
@@ -31,10 +32,6 @@
 //!    math; they sit here so each width formula lives beside the depth it
 //!    multiplies.
 
-use akita_field::AkitaError;
-
-use super::fold_linf_cap::FoldWitnessLinfCapConfig;
-use super::norm_bound::{fold_witness_linf_digit_plan, FoldChallengeNorms, FoldWitnessNorms};
 use crate::DecompositionParams;
 
 /// Signed coefficient interval represented by `num_digits_fold` balanced
@@ -102,7 +99,8 @@ pub fn balanced_digit_abs_max(log_basis: u32, num_digits: usize) -> u128 {
 /// `2^(k-1) - 1`, since the balanced digit range `[-b/2, b/2 - 1]` reaches
 /// further on the negative side. This is *not* `2^log_bound - 1`: the leading
 /// bit is the sign, so callers that mean "magnitude up to `2^m`" must pass
-/// `log_bound = m + 1` (this is exactly what [`num_digits_fold`] does).
+/// `log_bound = m + 1` (this is exactly what
+/// [`super::norm_bound::fold_witness_digit_plan`] does).
 ///
 /// The count is `ceil(log_bound / log_basis)`, plus one more digit when the
 /// balanced-digit positive reach `balanced_digit_max` still falls short of
@@ -197,47 +195,6 @@ pub fn num_digits_open(decomposition: DecompositionParams) -> usize {
     num_digits_for_bound(bound, field_bits, decomposition.log_basis)
 }
 
-/// `δ_fold`: digits per coefficient of the folded witness `z = Σ c_i·s_i`.
-///
-/// Computes the folded-witness L∞ bound
-/// `β = num_claims · 2^r_vars · min(||c||_inf·||s||_1, ||c||_1·||s||_inf)`
-/// (via [`super::norm_bound::fold_witness_linf_digit_plan`]) from the per-level fold challenge and witness
-/// norms. Under tail-bound-with-grind, `δ_fold` comes from
-/// [`super::norm_bound::fold_witness_linf_digit_plan`] (pre-snap `min(β_inf, t*)`,
-/// optional snap-down, positive-reach grind cap); deterministic policies use `β_inf` alone.
-///
-/// # Errors
-///
-/// Returns `AkitaError::InvalidSetup` when folded-witness bound sizing rejects the
-/// inputs (`r_vars >= 127` or `β` overflow), or when `β == 0` (a zero
-/// challenge/witness norm or `num_claims == 0` — no well-formed level folds a
-/// zero witness).
-pub fn num_digits_fold(
-    r_vars: usize,
-    num_claims: usize,
-    field_bits: u32,
-    log_basis: u32,
-    challenge: FoldChallengeNorms,
-    witness: FoldWitnessNorms,
-    cap_config: FoldWitnessLinfCapConfig,
-) -> Result<usize, AkitaError> {
-    let (delta_fold, inf_norm_bound) = fold_witness_linf_digit_plan(
-        r_vars,
-        num_claims,
-        field_bits,
-        log_basis,
-        challenge,
-        witness,
-        &cap_config,
-    )?;
-    if inf_norm_bound == 0 {
-        return Err(AkitaError::InvalidSetup(
-            "num_digits_fold: fold witness L∞ cap is zero".to_string(),
-        ));
-    }
-    Ok(delta_fold)
-}
-
 /// A-matrix committed width (ring columns): `block_len · δ_commit`.
 #[inline]
 pub fn decomposed_s_block_ring_count(block_len: usize, num_digits_commit: usize) -> Option<usize> {
@@ -272,6 +229,9 @@ pub fn decomposed_w_ring_count(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sis::{
+        fold_witness_digit_plan, FoldChallengeNorms, FoldWitnessLinfCapConfig, FoldWitnessNorms,
+    };
 
     #[test]
     fn balanced_digit_max_cases() {
@@ -355,7 +315,7 @@ mod tests {
     }
 
     #[test]
-    fn num_digits_fold_derives_beta() {
+    fn fold_witness_digit_plan_derives_beta() {
         // Dense witness (||s||_inf = b/2, ||s||_1 = D·b/2) picks the
         // ||c||_1·||s||_inf side; one-hot (||s||_1 = 1) picks ||c||_inf and
         // needs strictly fewer digits.
@@ -367,71 +327,58 @@ mod tests {
         let dense = FoldWitnessNorms::new(3, 64, 1, false);
         // one-hot single-chunk: ||s||_inf = 1, ||s||_1 = 1.
         let onehot = FoldWitnessNorms::new(3, 64, 64, true);
-        let dense_digits = num_digits_fold(
+        let (dense_digits, _) = fold_witness_digit_plan(
             8,
             1,
             128,
             3,
             challenge,
             dense,
-            FoldWitnessLinfCapConfig::worst_case_beta_only(),
+            &FoldWitnessLinfCapConfig::worst_case_beta_only(),
         )
         .unwrap();
-        let onehot_digits = num_digits_fold(
+        let (onehot_digits, _) = fold_witness_digit_plan(
             8,
             1,
             128,
             3,
             challenge,
             onehot,
-            FoldWitnessLinfCapConfig::worst_case_beta_only(),
+            &FoldWitnessLinfCapConfig::worst_case_beta_only(),
         )
         .unwrap();
         assert!(dense_digits > 0 && onehot_digits > 0);
         assert!(onehot_digits < dense_digits);
         // More claims never reduce the digit count.
-        assert!(
-            num_digits_fold(
-                8,
-                4,
-                128,
-                3,
-                challenge,
-                dense,
-                FoldWitnessLinfCapConfig::worst_case_beta_only()
-            )
-            .unwrap()
-                >= dense_digits
-        );
+        let (batched_digits, _) = fold_witness_digit_plan(
+            8,
+            4,
+            128,
+            3,
+            challenge,
+            dense,
+            &FoldWitnessLinfCapConfig::worst_case_beta_only(),
+        )
+        .unwrap();
+        assert!(batched_digits >= dense_digits);
     }
 
     #[test]
-    fn num_digits_fold_rejects_degenerate() {
+    fn fold_witness_digit_plan_rejects_high_arity() {
         let challenge = FoldChallengeNorms {
             infinity_norm: 8,
             l1_norm: 54,
         };
         let witness = FoldWitnessNorms::new(3, 64, 1, false);
         // r_vars >= 127 is rejected.
-        assert!(num_digits_fold(
+        assert!(fold_witness_digit_plan(
             127,
             1,
             128,
             3,
             challenge,
             witness,
-            FoldWitnessLinfCapConfig::worst_case_beta_only()
-        )
-        .is_err());
-        // num_claims == 0 ⇒ β = 0 is rejected.
-        assert!(num_digits_fold(
-            8,
-            0,
-            128,
-            3,
-            challenge,
-            witness,
-            FoldWitnessLinfCapConfig::worst_case_beta_only()
+            &FoldWitnessLinfCapConfig::worst_case_beta_only()
         )
         .is_err());
     }

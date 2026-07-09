@@ -1,4 +1,4 @@
-//! Fold-linf tail-bound and grind-union sizing for `num_digits_fold`.
+//! Fold-linf tail-bound and grind-union sizing for `fold_witness_digit_plan`.
 //!
 //! [`FoldWitnessLinfCapConfig`] selects whether digit depth uses worst-case
 //! `β_inf` alone or `min(β_inf, t*)` under a proved tail certificate.
@@ -22,7 +22,7 @@ pub const FOLD_LINF_GRIND_TARGET_ACCEPT_PROB_DEN: u32 = 8;
 pub const FOLD_LINF_SNAP_MIN_TSTAR_RETAIN_NUM: u32 = 1;
 pub const FOLD_LINF_SNAP_MIN_TSTAR_RETAIN_DEN: u32 = 2;
 
-/// Whether [`crate::sis::num_digits_fold`] sizes `K` from the sub-Gaussian tail
+/// Whether [`crate::sis::fold_witness_digit_plan`] sizes `K` from the sub-Gaussian tail
 /// `t*` (`min(β_inf, t*)`) or from the worst-case envelope `β_inf` alone.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum FoldWitnessLinfCapPolicy {
@@ -354,8 +354,7 @@ pub fn fold_witness_linf_tail_bound_for_config_sq(
     }
 }
 
-/// Level-static configuration for [`super::norm_bound::fold_witness_linf_digit_plan`] inside
-/// [`crate::sis::num_digits_fold`].
+/// Level-static configuration for [`super::norm_bound::fold_witness_digit_plan`].
 ///
 /// When the policy is [`WorstCaseBetaOnly`](FoldWitnessLinfCapPolicy::WorstCaseBetaOnly),
 /// tail-bound fields are ignored and sizing uses `β_inf` alone.
@@ -602,7 +601,7 @@ mod tests {
             l1_norm: 51,
         };
         let witness = FoldWitnessNorms::new(3, 64, 64, true);
-        let (_, tight_beta) = crate::sis::fold_witness_linf_digit_plan(
+        let (_, tight_beta) = crate::sis::fold_witness_digit_plan(
             4,
             1,
             128,

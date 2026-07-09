@@ -34,12 +34,12 @@ pub use ajtai_key::{
 pub use decomposition_digits::{
     balanced_digit_abs_max, compute_num_digits_full_field, decomposed_s_block_ring_count,
     decomposed_t_ring_count, decomposed_w_ring_count, fold_witness_representable_linf_bounds,
-    num_digits_fold, num_digits_for_bound, num_digits_open, num_digits_s_commit,
+    num_digits_for_bound, num_digits_open, num_digits_s_commit,
 };
 pub use fold_witness_grind::{FoldWitnessGrindContract, FOLD_GRIND_PROBE_ORDER_ABSORB};
 pub use norm_bound::{
     committed_fold_a_role_rank, fold_challenge_norms,
-    fold_witness_linf_cap_policy, fold_witness_linf_digit_plan,
+    fold_witness_linf_cap_policy, fold_witness_digit_plan,
     fold_witness_linf_tail_bound_for_config_sq, fold_witness_linf_tail_bound_sq,
     fold_witness_linf_tensor_tail_bound_sq, rounded_up_collision_inf_norm,
     rounded_up_role_a_inf_norm, snap_min_tstar_retain_floor,

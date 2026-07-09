@@ -10,8 +10,7 @@ use akita_field::AkitaError;
 
 use super::ajtai_key::{ceil_supported_linf_bound, min_secure_rank, SisModulusFamily, SisTableKey};
 use super::decomposition_digits::{
-    balanced_digit_abs_max, fold_witness_representable_linf_bounds, num_digits_fold,
-    num_digits_for_bound,
+    balanced_digit_abs_max, fold_witness_representable_linf_bounds, num_digits_for_bound,
 };
 use crate::layout::digit_math::isqrt_ceil;
 use crate::{DecompositionParams, FoldLinfProtocolBinding};
@@ -57,7 +56,7 @@ pub fn weak_binding_inf_norm(
 /// bounds the extracted kernel by challenge mass; stage-1 digit membership
 /// accepts every balanced `δ_fold`-digit string, whose absolute coefficient
 /// envelope is [`balanced_digit_abs_max`] at the `δ_fold` depth
-/// induced by [`fold_witness_linf_digit_plan`]. MSIS accounting prices the
+/// induced by [`fold_witness_digit_plan`]. MSIS accounting prices the
 /// weak-binding collision `2 · c_bar · z_bar · nu`, where the challenge slack
 /// is `c_bar = 2 · challenge_l1_mass` and the digit envelope is
 /// `z_bar = 2 · balanced_digit_abs_max`, then rounds up to the audited
@@ -80,14 +79,14 @@ pub fn rounded_up_role_a_inf_norm(
     decomposition: DecompositionParams,
     cap_config: &FoldWitnessLinfCapConfig,
 ) -> Option<u128> {
-    let fold_decomposed_digits = num_digits_fold(
+    let (fold_decomposed_digits, _) = fold_witness_digit_plan(
         r_vars,
         num_claims,
         decomposition.field_bits(),
         decomposition.log_basis,
         challenge,
         witness,
-        *cap_config,
+        cap_config,
     )
     .ok()?;
     let recomposed_inf_norm_bound =
@@ -269,13 +268,13 @@ pub fn snap_num_digits_fold_down(
 /// Canonical fold-l∞ digit sizing: pre-snap tail cap, optional digit snap-down,
 /// and the grind cap aligned with the snapped `δ_fold`.
 ///
-/// Returns `(delta_fold, inf_norm_bound)`, where `inf_norm_bound` is the
-/// honest-prover per-coefficient `‖z‖_inf` target after any snap-down.
+/// Returns `(decomposed_fold_digits, inf_norm_bound)`, where `inf_norm_bound` is
+/// the honest-prover per-coefficient `‖z‖_inf` target after any snap-down.
 ///
 /// # Errors
 ///
 /// Propagates folded-witness bound / tail-bound setup errors.
-pub fn fold_witness_linf_digit_plan(
+pub fn fold_witness_digit_plan(
     r_vars: usize,
     num_claims: usize,
     field_bits: u32,
@@ -291,7 +290,7 @@ pub fn fold_witness_linf_digit_plan(
         fold_witness_pre_snap_linf_cap(challenge, witness, r_vars, num_claims, cap_config)?;
     let log_cap = (128 - pre_snap_cap.leading_zeros()).saturating_add(1);
     let delta_base = num_digits_for_bound(log_cap, field_bits, log_basis);
-    let (delta_fold, inf_norm_bound) = match (cap_config.policy, t_star) {
+    let (decomposed_fold_digits, inf_norm_bound) = match (cap_config.policy, t_star) {
         (
             FoldWitnessLinfCapPolicy::TailBoundWithGrind
             | FoldWitnessLinfCapPolicy::TensorTailBoundWithGrind,
@@ -306,7 +305,7 @@ pub fn fold_witness_linf_digit_plan(
         ),
         _ => (delta_base, pre_snap_cap),
     };
-    Ok((delta_fold, inf_norm_bound))
+    Ok((decomposed_fold_digits, inf_norm_bound))
 }
 
 /// A-role committed-fold collision bucket and audited secure rank at one geometry.
@@ -373,7 +372,7 @@ mod tests {
     #[test]
     fn fold_witness_pre_snap_linf_cap_beta_picks_min_ring_product_side() {
         let beta = |c_inf, c_l1, s_inf, s_l1| {
-            fold_witness_linf_digit_plan(
+            fold_witness_digit_plan(
                 0,
                 1,
                 128,
@@ -431,14 +430,14 @@ mod tests {
             log_open_bound: None,
         };
         let cap_config = FoldWitnessLinfCapConfig::worst_case_beta_only();
-        let delta_fold = num_digits_fold(
+        let (delta_fold, _) = fold_witness_digit_plan(
             2,
             1,
             decomposition.field_bits(),
             decomposition.log_basis,
             challenge,
             witness,
-            cap_config,
+            &cap_config,
         )
         .unwrap();
         let z_bound = balanced_digit_abs_max(decomposition.log_basis, delta_fold);
@@ -493,7 +492,7 @@ mod tests {
         let cap_config =
             FoldWitnessLinfCapConfig::for_fold_level(&fold_challenge_config, fold_shape, 64, 2)
                 .unwrap();
-        let (_honest_delta, honest_cap) = fold_witness_linf_digit_plan(
+        let (delta_fold, honest_cap) = fold_witness_digit_plan(
             4,
             1,
             decomposition.field_bits(),
@@ -501,16 +500,6 @@ mod tests {
             challenge,
             witness,
             &cap_config,
-        )
-        .unwrap();
-        let delta_fold = num_digits_fold(
-            4,
-            1,
-            decomposition.field_bits(),
-            decomposition.log_basis,
-            challenge,
-            witness,
-            cap_config,
         )
         .unwrap();
         let z_bound = balanced_digit_abs_max(decomposition.log_basis, delta_fold);
@@ -595,7 +584,7 @@ mod tests {
         let cap_config =
             FoldWitnessLinfCapConfig::for_fold_level(&fold_challenge_config, fold_shape, 64, 2)
                 .unwrap();
-        let (delta_fold, inf_norm_bound) = fold_witness_linf_digit_plan(
+        let (delta_fold, inf_norm_bound) = fold_witness_digit_plan(
             5,
             1,
             decomposition.field_bits(),
@@ -634,14 +623,14 @@ mod tests {
             log_open_bound: None,
         };
         let cap_config = FoldWitnessLinfCapConfig::worst_case_beta_only();
-        let delta_fold = num_digits_fold(
+        let (delta_fold, _) = fold_witness_digit_plan(
             2,
             1,
             decomposition.field_bits(),
             decomposition.log_basis,
             challenge,
             witness,
-            cap_config,
+            &cap_config,
         )
         .unwrap();
         let z_bound = balanced_digit_abs_max(decomposition.log_basis, delta_fold);

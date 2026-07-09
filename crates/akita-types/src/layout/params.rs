@@ -85,14 +85,14 @@ pub struct LevelParams {
     /// commits a one-hot witness (`||s||_inf = 1`, `nonzeros = ceil(D/K)`);
     /// this is only ever set on a root level whose `log_commit_bound == 1`.
     pub onehot_chunk_size: usize,
-    /// Level-static fold-linf cap inputs for [`crate::sis::num_digits_fold`].
+    /// Level-static fold-linf cap inputs for [`crate::sis::fold_witness_digit_plan`].
     pub fold_linf_cap_config: FoldWitnessLinfCapConfig,
-    /// Cached [`crate::sis::num_digits_fold`] at `num_claims = 1` for the preset
+    /// Cached [`Self::num_digits_fold`] at `num_claims = 1` for the preset
     /// field width used by the planner and setup envelope scan.
     pub num_digits_fold_one: usize,
     /// Field bit width used to populate [`Self::num_digits_fold_one`]; `0` means 128.
     pub field_bits_hint: u32,
-    /// Optional cached [`crate::sis::num_digits_fold`] for a batched root `num_claims > 1`.
+    /// Optional cached [`Self::num_digits_fold`] for a batched root `num_claims > 1`.
     pub cached_num_digits_fold_claims: usize,
     pub cached_num_digits_fold_value: usize,
     /// Multi-chunk witness layout for this level (default: single-chunk).
@@ -353,8 +353,7 @@ impl LevelParams {
         )
     }
 
-    /// Level-static config for [`crate::sis::fold_witness_linf_digit_plan`] inside
-    /// [`crate::sis::num_digits_fold`].
+    /// Level-static config for [`crate::sis::fold_witness_digit_plan`].
     #[inline]
     pub fn fold_witness_linf_cap_config(&self) -> crate::sis::FoldWitnessLinfCapConfig {
         self.fold_linf_cap_config
@@ -389,26 +388,28 @@ impl LevelParams {
             self.fold_challenge_shape,
         );
         let witness = self.fold_witness_norms();
-        self.num_digits_fold_one = crate::sis::num_digits_fold(
+        let (num_digits_fold_one, _) = crate::sis::fold_witness_digit_plan(
             self.r_vars,
             1,
             field_bits,
             self.log_basis,
             challenge,
             witness,
-            self.fold_linf_cap_config,
+            &self.fold_linf_cap_config,
         )?;
+        self.num_digits_fold_one = num_digits_fold_one;
         if root_num_claims > 1 {
             self.cached_num_digits_fold_claims = root_num_claims;
-            self.cached_num_digits_fold_value = crate::sis::num_digits_fold(
+            let (cached_value, _) = crate::sis::fold_witness_digit_plan(
                 self.r_vars,
                 root_num_claims,
                 field_bits,
                 self.log_basis,
                 challenge,
                 witness,
-                self.fold_linf_cap_config,
+                &self.fold_linf_cap_config,
             )?;
+            self.cached_num_digits_fold_value = cached_value;
         } else {
             self.cached_num_digits_fold_claims = 0;
             self.cached_num_digits_fold_value = self.num_digits_fold_one;
@@ -421,9 +422,9 @@ impl LevelParams {
     ///
     /// # Errors
     ///
-    /// Propagates [`crate::sis::fold_witness_linf_digit_plan`] setup errors.
+    /// Propagates [`crate::sis::fold_witness_digit_plan`] setup errors.
     pub fn fold_witness_linf_cap_for_claims(&self, num_claims: usize) -> Result<u128, AkitaError> {
-        let (_delta_fold, inf_norm_bound) = crate::sis::fold_witness_linf_digit_plan(
+        let (_delta_fold, inf_norm_bound) = crate::sis::fold_witness_digit_plan(
             self.r_vars,
             num_claims,
             self.field_bits_for_cache(),
@@ -494,15 +495,15 @@ impl LevelParams {
 
     /// Gadget decomposition depth for the folded witness (δ_fold / τ).
     ///
-    /// Delegates to [`crate::sis::num_digits_fold`], which derives
+    /// Delegates to [`crate::sis::fold_witness_digit_plan`], which derives
     /// `β = num_claims · 2^r_vars · min(||c||_inf·||s||_1, ||c||_1·||s||_inf)`
     /// from this level's fold challenge and witness norms, then applies
     /// `min(β_inf, t*)` under tail-bound-with-grind policies.
     ///
     /// # Errors
     ///
-    /// Propagates [`crate::sis::num_digits_fold`]'s rejection of a degenerate
-    /// fold bound (`r_vars >= 127`, `β` overflow, or `β == 0`).
+    /// Propagates [`crate::sis::fold_witness_digit_plan`]'s rejection of a
+    /// degenerate fold bound (`r_vars >= 127` or `β` overflow).
     #[inline]
     pub fn num_digits_fold(&self, num_claims: usize, field_bits: u32) -> Result<usize, AkitaError> {
         if num_claims == 1 {
@@ -517,15 +518,16 @@ impl LevelParams {
             &self.fold_challenge_config,
             self.fold_challenge_shape,
         );
-        crate::sis::num_digits_fold(
+        let (decomposed_fold_digits, _) = crate::sis::fold_witness_digit_plan(
             self.r_vars,
             num_claims,
             field_bits,
             self.log_basis,
             challenge,
             self.fold_witness_norms(),
-            self.fold_linf_cap_config,
-        )
+            &self.fold_linf_cap_config,
+        )?;
+        Ok(decomposed_fold_digits)
     }
 
     /// Gadget depth for a root group using group-local geometry and root policy.
@@ -542,15 +544,16 @@ impl LevelParams {
             &self.fold_challenge_config,
             self.fold_challenge_shape,
         );
-        crate::sis::num_digits_fold(
+        let (decomposed_fold_digits, _) = crate::sis::fold_witness_digit_plan(
             params.r_vars(),
             num_claims,
             field_bits,
             params.log_basis(),
             challenge,
             self.fold_witness_norms_for_params(params),
-            self.fold_linf_cap_config,
-        )
+            &self.fold_linf_cap_config,
+        )?;
+        Ok(decomposed_fold_digits)
     }
 
     /// Set the one-hot chunk size `K`, returning the updated params.

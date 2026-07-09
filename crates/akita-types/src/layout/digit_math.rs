@@ -10,8 +10,9 @@ use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::{CanonicalField, FieldCore};
 
 use crate::sis::{
-    committed_fold_a_role_rank, fold_witness_linf_cap_policy, num_digits_for_bound, num_digits_fold,
-    FoldChallengeNorms, FoldWitnessLinfCapConfig, FoldWitnessNorms, SisModulusFamily,
+    committed_fold_a_role_rank, fold_witness_digit_plan, fold_witness_linf_cap_policy,
+    num_digits_for_bound, FoldChallengeNorms, FoldWitnessLinfCapConfig, FoldWitnessNorms,
+    SisModulusFamily,
 };
 use crate::DecompositionParams;
 
@@ -214,27 +215,27 @@ pub fn fold_level_witness_scoring_cost(
         grind_target_accept_den,
     )
     .ok()?;
-    let delta_fold = num_digits_fold(
+    let (decomposed_fold_digits, _) = fold_witness_digit_plan(
         r_vars,
         num_claims,
         field_bits,
         log_basis,
         fold_challenge,
         fold_witness,
-        cap_config,
+        &cap_config,
     )
-    .ok()? as u64;
+    .ok()?;
     let per_block_cost = delta_open.saturating_add((n_a as u64).saturating_mul(delta_open));
     let opening_cost = per_block_cost.saturating_mul(num_blocks);
     let folding_cost = delta_commit
-        .saturating_mul(delta_fold)
+        .saturating_mul(decomposed_fold_digits as u64)
         .saturating_mul(m_eff);
     Some(opening_cost.saturating_add(folding_cost))
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::sis::{num_digits_fold, FoldWitnessLinfCapConfig, FoldWitnessNorms};
+    use crate::sis::{fold_witness_digit_plan, FoldWitnessLinfCapConfig, FoldWitnessNorms};
     use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 
     #[test]
@@ -265,11 +266,11 @@ mod tests {
                 .1,
         )
         .unwrap();
-        let singleton_fold_digits =
-            num_digits_fold(5, 1, 128, 3, fold_challenge, fold_witness, cap_config)
+        let (singleton_fold_digits, _) =
+            fold_witness_digit_plan(5, 1, 128, 3, fold_challenge, fold_witness, &cap_config)
                 .expect("singleton fold digits");
-        let batched_fold_digits =
-            num_digits_fold(5, 4, 128, 3, fold_challenge, fold_witness, cap_config)
+        let (batched_fold_digits, _) =
+            fold_witness_digit_plan(5, 4, 128, 3, fold_challenge, fold_witness, &cap_config)
                 .expect("batched fold digits");
         assert!(
             batched_fold_digits >= singleton_fold_digits,
