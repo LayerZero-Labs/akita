@@ -140,6 +140,104 @@ macro_rules! dispatch_role_projections {
 
 pub(super) use dispatch_role_projections;
 
+macro_rules! dispatch_projected_ratio_a {
+    ($a_ratio:expr, |$a_ratio_const:ident| $body:block) => {{
+        match $a_ratio {
+            1 => {
+                const $a_ratio_const: usize = 1;
+                Some($body)
+            }
+            2 => {
+                const $a_ratio_const: usize = 2;
+                Some($body)
+            }
+            4 => {
+                const $a_ratio_const: usize = 4;
+                Some($body)
+            }
+            8 => {
+                const $a_ratio_const: usize = 8;
+                Some($body)
+            }
+            16 => {
+                const $a_ratio_const: usize = 16;
+                Some($body)
+            }
+            _ => None,
+        }
+    }};
+}
+
+macro_rules! dispatch_projected_ratio_b {
+    ($b_ratio:expr, $a_ratio:expr, |$b_ratio_const:ident, $a_ratio_const:ident| $body:block) => {{
+        match $b_ratio {
+            1 => {
+                const $b_ratio_const: usize = 1;
+                dispatch_projected_ratio_a!($a_ratio, |$a_ratio_const| $body)
+            }
+            2 => {
+                const $b_ratio_const: usize = 2;
+                dispatch_projected_ratio_a!($a_ratio, |$a_ratio_const| $body)
+            }
+            4 => {
+                const $b_ratio_const: usize = 4;
+                dispatch_projected_ratio_a!($a_ratio, |$a_ratio_const| $body)
+            }
+            8 => {
+                const $b_ratio_const: usize = 8;
+                dispatch_projected_ratio_a!($a_ratio, |$a_ratio_const| $body)
+            }
+            16 => {
+                const $b_ratio_const: usize = 16;
+                dispatch_projected_ratio_a!($a_ratio, |$a_ratio_const| $body)
+            }
+            _ => None,
+        }
+    }};
+}
+
+macro_rules! dispatch_projected_ratios {
+    ($d_ratio:expr, $b_ratio:expr, $a_ratio:expr, |$d_ratio_const:ident, $b_ratio_const:ident, $a_ratio_const:ident| $body:block) => {{
+        match $d_ratio {
+            1 => {
+                const $d_ratio_const: usize = 1;
+                dispatch_projected_ratio_b!($b_ratio, $a_ratio, |$b_ratio_const, $a_ratio_const| {
+                    $body
+                })
+            }
+            2 => {
+                const $d_ratio_const: usize = 2;
+                dispatch_projected_ratio_b!($b_ratio, $a_ratio, |$b_ratio_const, $a_ratio_const| {
+                    $body
+                })
+            }
+            4 => {
+                const $d_ratio_const: usize = 4;
+                dispatch_projected_ratio_b!($b_ratio, $a_ratio, |$b_ratio_const, $a_ratio_const| {
+                    $body
+                })
+            }
+            8 => {
+                const $d_ratio_const: usize = 8;
+                dispatch_projected_ratio_b!($b_ratio, $a_ratio, |$b_ratio_const, $a_ratio_const| {
+                    $body
+                })
+            }
+            16 => {
+                const $d_ratio_const: usize = 16;
+                dispatch_projected_ratio_b!($b_ratio, $a_ratio, |$b_ratio_const, $a_ratio_const| {
+                    $body
+                })
+            }
+            _ => None,
+        }
+    }};
+}
+
+pub(super) use dispatch_projected_ratio_a;
+pub(super) use dispatch_projected_ratio_b;
+pub(super) use dispatch_projected_ratios;
+
 impl<E: FieldCore> GroupSetupSegment<E> {
     #[inline(always)]
     pub(super) fn weight_at(&self, setup_idx: usize, e_eq: &[E], t_eq: &[E], z_eq: &[E]) -> E {
@@ -459,6 +557,257 @@ where
         let weight = segment.typed_weight_at::<HAS_D, HAS_B, HAS_A>(setup_idx, e_eq, t_eq, z_eq);
         if !weight.is_zero() {
             acc += eval_ring_at_pows_fast(&setup_flat[setup_idx], alpha_pows) * weight;
+        }
+    }
+    acc
+}
+
+#[inline(always)]
+#[allow(clippy::too_many_arguments)]
+pub(super) fn projected_base_ring_segment_inner_sum_typed<
+    F,
+    E,
+    const D: usize,
+    const HAS_D: bool,
+    const HAS_B: bool,
+    const HAS_A: bool,
+    const D_RATIO: usize,
+    const B_RATIO: usize,
+    const A_RATIO: usize,
+>(
+    range: std::ops::Range<usize>,
+    setup_flat: &[CyclotomicRing<F, D>],
+    base_pows: &[E],
+    segment: &GroupSetupSegment<E>,
+    e_eq: &[E],
+    t_eq: &[E],
+    z_eq: &[E],
+    d_scales: &[E],
+    b_scales: &[E],
+    a_scales: &[E],
+) -> E
+where
+    F: FieldCore,
+    E: ExtField<F> + MulBaseUnreduced<F>,
+{
+    debug_assert_eq!(d_scales.len(), D_RATIO);
+    debug_assert_eq!(b_scales.len(), B_RATIO);
+    debug_assert_eq!(a_scales.len(), A_RATIO);
+    let period = D_RATIO.max(B_RATIO).max(A_RATIO);
+    debug_assert_ne!(period, 0);
+    let mut prefix_end = range.start;
+    while prefix_end < range.end && !prefix_end.is_multiple_of(period) {
+        prefix_end += 1;
+    }
+    let mut aligned_end = range.end - (range.end % period);
+    if aligned_end < prefix_end {
+        aligned_end = prefix_end;
+    }
+    let block_range = (prefix_end / period)..(aligned_end / period);
+
+    let mut edge_acc = E::zero();
+    for setup_idx in range.start..prefix_end {
+        edge_acc += projected_base_ring_segment_index_sum::<
+            F,
+            E,
+            D,
+            HAS_D,
+            HAS_B,
+            HAS_A,
+            D_RATIO,
+            B_RATIO,
+            A_RATIO,
+        >(
+            setup_idx, setup_flat, base_pows, segment, e_eq, t_eq, z_eq, d_scales, b_scales,
+            a_scales,
+        );
+    }
+    for setup_idx in aligned_end..range.end {
+        edge_acc += projected_base_ring_segment_index_sum::<
+            F,
+            E,
+            D,
+            HAS_D,
+            HAS_B,
+            HAS_A,
+            D_RATIO,
+            B_RATIO,
+            A_RATIO,
+        >(
+            setup_idx, setup_flat, base_pows, segment, e_eq, t_eq, z_eq, d_scales, b_scales,
+            a_scales,
+        );
+    }
+    if range.len() >= PARALLEL_BASE_RING_SEGMENT_MIN_LEN {
+        return edge_acc
+            + cfg_fold_reduce!(
+                block_range,
+                E::zero,
+                |mut acc, block| {
+                    acc += projected_base_ring_segment_block_sum::<
+                        F,
+                        E,
+                        D,
+                        HAS_D,
+                        HAS_B,
+                        HAS_A,
+                        D_RATIO,
+                        B_RATIO,
+                        A_RATIO,
+                    >(
+                        block * period,
+                        period,
+                        setup_flat,
+                        base_pows,
+                        segment,
+                        e_eq,
+                        t_eq,
+                        z_eq,
+                        d_scales,
+                        b_scales,
+                        a_scales,
+                    );
+                    acc
+                },
+                |lhs, rhs| lhs + rhs
+            );
+    }
+
+    let mut acc = edge_acc;
+    for block in block_range {
+        acc += projected_base_ring_segment_block_sum::<
+            F,
+            E,
+            D,
+            HAS_D,
+            HAS_B,
+            HAS_A,
+            D_RATIO,
+            B_RATIO,
+            A_RATIO,
+        >(
+            block * period,
+            period,
+            setup_flat,
+            base_pows,
+            segment,
+            e_eq,
+            t_eq,
+            z_eq,
+            d_scales,
+            b_scales,
+            a_scales,
+        );
+    }
+    acc
+}
+
+#[inline(always)]
+#[allow(clippy::too_many_arguments)]
+fn projected_base_ring_segment_index_sum<
+    F,
+    E,
+    const D: usize,
+    const HAS_D: bool,
+    const HAS_B: bool,
+    const HAS_A: bool,
+    const D_RATIO: usize,
+    const B_RATIO: usize,
+    const A_RATIO: usize,
+>(
+    setup_idx: usize,
+    setup_flat: &[CyclotomicRing<F, D>],
+    base_pows: &[E],
+    segment: &GroupSetupSegment<E>,
+    e_eq: &[E],
+    t_eq: &[E],
+    z_eq: &[E],
+    d_scales: &[E],
+    b_scales: &[E],
+    a_scales: &[E],
+) -> E
+where
+    F: FieldCore,
+    E: ExtField<F> + MulBaseUnreduced<F>,
+{
+    let mut weight = E::zero();
+    if HAS_D {
+        let role_idx = setup_idx / D_RATIO;
+        weight +=
+            segment.d_weight * d_scales[setup_idx % D_RATIO] * e_eq[role_idx - segment.d_start_abs];
+    }
+    if HAS_B {
+        let role_idx = setup_idx / B_RATIO;
+        weight +=
+            segment.b_weight * b_scales[setup_idx % B_RATIO] * t_eq[role_idx - segment.b_start_abs];
+    }
+    if HAS_A {
+        let role_idx = setup_idx / A_RATIO;
+        weight += segment.a_row_weight
+            * a_scales[setup_idx % A_RATIO]
+            * z_eq[role_idx - segment.a_start_abs];
+    }
+    if weight.is_zero() {
+        E::zero()
+    } else {
+        eval_ring_at_pows_fast(&setup_flat[setup_idx], base_pows) * weight
+    }
+}
+
+#[inline(always)]
+#[allow(clippy::too_many_arguments)]
+fn projected_base_ring_segment_block_sum<
+    F,
+    E,
+    const D: usize,
+    const HAS_D: bool,
+    const HAS_B: bool,
+    const HAS_A: bool,
+    const D_RATIO: usize,
+    const B_RATIO: usize,
+    const A_RATIO: usize,
+>(
+    block_start: usize,
+    period: usize,
+    setup_flat: &[CyclotomicRing<F, D>],
+    base_pows: &[E],
+    segment: &GroupSetupSegment<E>,
+    e_eq: &[E],
+    t_eq: &[E],
+    z_eq: &[E],
+    d_scales: &[E],
+    b_scales: &[E],
+    a_scales: &[E],
+) -> E
+where
+    F: FieldCore,
+    E: ExtField<F> + MulBaseUnreduced<F>,
+{
+    let d_role_base = block_start / D_RATIO;
+    let b_role_base = block_start / B_RATIO;
+    let a_role_base = block_start / A_RATIO;
+    let mut acc = E::zero();
+    for lane in 0..period {
+        let setup_idx = block_start + lane;
+        let mut weight = E::zero();
+        if HAS_D {
+            let role_idx = d_role_base + lane / D_RATIO;
+            weight +=
+                segment.d_weight * d_scales[lane % D_RATIO] * e_eq[role_idx - segment.d_start_abs];
+        }
+        if HAS_B {
+            let role_idx = b_role_base + lane / B_RATIO;
+            weight +=
+                segment.b_weight * b_scales[lane % B_RATIO] * t_eq[role_idx - segment.b_start_abs];
+        }
+        if HAS_A {
+            let role_idx = a_role_base + lane / A_RATIO;
+            weight += segment.a_row_weight
+                * a_scales[lane % A_RATIO]
+                * z_eq[role_idx - segment.a_start_abs];
+        }
+        if !weight.is_zero() {
+            acc += eval_ring_at_pows_fast(&setup_flat[setup_idx], base_pows) * weight;
         }
     }
     acc
