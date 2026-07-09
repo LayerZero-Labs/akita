@@ -497,6 +497,9 @@ fn root_transform_ring_dim<Cfg>(
 where
     Cfg: CommitmentConfig,
 {
+    if Cfg::EXT_DEGREE == 1 {
+        return Ok(None);
+    }
     let schedule = Cfg::get_params_for_prove(opening_batch)?;
     let Some(root_fold) = schedule_root_fold_step(&schedule) else {
         return Ok(None);
