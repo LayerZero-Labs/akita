@@ -299,6 +299,35 @@ impl RelationRowLayout {
             })
     }
 
+    /// Build the layout for a scalar or multi-group root level.
+    pub fn for_level<F: FieldCore + CanonicalField>(
+        lp: &LevelParams,
+        role_dims: CommitmentRingDims,
+        m_row_layout: RelationMatrixRowLayout,
+        opening_batch: &OpeningClaimsLayout,
+    ) -> Result<Self, AkitaError> {
+        if lp.has_precommitted_groups() {
+            Self::for_multi_group_root::<F>(lp, role_dims, m_row_layout, opening_batch)
+        } else {
+            Self::for_scalar_level::<F>(
+                lp,
+                role_dims,
+                m_row_layout,
+                opening_batch,
+                opening_batch.num_groups(),
+            )
+        }
+    }
+
+    /// τ₁ Boolean-table width (next power of two of [`Self::total_row_count`]).
+    pub fn tau1_num_vars(&self) -> Result<usize, AkitaError> {
+        let rows = self.total_row_count();
+        let padded = rows.checked_next_power_of_two().ok_or_else(|| {
+            AkitaError::InvalidSetup("relation-row tau1 width overflow".to_string())
+        })?;
+        Ok(padded.trailing_zeros() as usize)
+    }
+
     /// Build the uniform scalar-level layout used by current uncompressed schedules.
     ///
     /// Logical order:

@@ -26,17 +26,18 @@
 //! `               = sum_{x,y} w(x, y) * a(y) * m_tau1(x)`.
 //!
 //! There is no public-output `y_ring` row: the §3.1 fold-opening trace check is
-//! internalized as the fused `gamma^2` term below rather than carried as an `M`
-//! row, so `y_alpha` runs `consistency | A | B(u) | D(v)`.
+//! internalized as the `EvaluationTrace` relation row (last τ₁ index), weighted
+//! by `eq(tau1, EvaluationTrace)`, rather than a separate `gamma^2` Stage-2
+//! summand. `y_alpha` runs `FoldEvaluation | A | B(u) | D(v)` for quotient rows;
+//! the opening target enters `relation_weight_claim` through EvaluationTrace.
 //!
-//! The fused trace term binds the committed fold witness to the public opening
-//! through a fixed, public multilinear `TraceWeight(x, y)` (nonzero only on the
-//! `e_hat` digit segment). Its input contribution is `gamma^2 * trace_target`,
-//! where `trace_target` is the incoming opening claim (or the EOR final claim on
-//! extension-opening-reduction paths). It reuses the stage-2 batching challenge
-//! `gamma` (relation = `gamma^0`, range = `gamma^1`, trace = `gamma^2`), which
-//! is sampled after the next-level witness is bound, so it adds no new
-//! Fiat-Shamir challenge.
+//! The fused EvaluationTrace term binds the committed fold witness to the public
+//! opening through a fixed, public multilinear `TraceWeight(x, y)` (nonzero only
+//! on the `e_hat` digit segment). Its input contribution is
+//! `eq(tau1, EvaluationTrace) * trace_target`, where `trace_target` is the
+//! incoming opening claim (or the EOR final claim on extension-opening-reduction
+//! paths). It reuses the existing τ₁ row-batching challenge, so it adds no new
+//! Fiat-Shamir challenge and no terminal `trace_gamma` squeeze.
 //!
 //! Stage 1 supplies the carried virtual claim
 //!
@@ -46,20 +47,20 @@
 //! for the same multilinear witness table. With `gamma = batching_coeff`, the
 //! exact identity established by this sumcheck is
 //!
-//! `gamma * s_claim + relation_claim + gamma^2 * trace_target =`
+//! `gamma * s_claim + relation_claim + eq(tau1, EvaluationTrace) * trace_target =`
 //! `sum_{x,y} [ gamma * eq(stage1_point, (x, y)) * w(x, y) * (w(x, y) + 1)`
 //! `           + w(x, y) * a(y) * m_tau1(x)`
-//! `           + gamma^2 * w(x, y) * TraceWeight(x, y) ]`.
+//! `           + eq(tau1, EvaluationTrace) * w(x, y) * TraceWeight(x, y) ]`.
 //!
 //! After all rounds, at `r_stage2 = (r_x, r_y)`, the verifier checks
 //!
 //! `gamma * eq(stage1_point, r_stage2) * w(r_stage2) * (w(r_stage2) + 1)`
 //! `  + w(r_stage2) * a(r_y) * m_tau1(r_x)`
-//! `  + gamma^2 * w(r_stage2) * TraceWeight(r_stage2)`,
+//! `  + eq(tau1, EvaluationTrace) * w(r_stage2) * TraceWeight(r_stage2)`,
 //!
 //! exactly the oracle returned by `expected_output_claim()`. The prover fuses
-//! the virtual, relation, and trace terms around the same local `w0` / `dw`
-//! scan so the witness-side work is shared between all three.
+//! the virtual, relation, and EvaluationTrace terms around the same local `w0` /
+//! `dw` scan so the witness-side work is shared.
 
 use super::fold_full_prefix_pair;
 use super::two_round_prefix::{

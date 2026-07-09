@@ -15,7 +15,7 @@ use akita_transcript::labels::{
 use akita_transcript::{sample_ext_challenge, Transcript};
 use akita_types::{
     gadget_row_scalars, r_decomp_levels, validate_role_dispatch, AkitaExpandedSetup,
-    CommitmentRingDims, FpExtEncoding, LevelParams, RelationMatrixRowLayout,
+    CommitmentRingDims, FpExtEncoding, LevelParams, RelationMatrixRowLayout, RelationRowLayout,
     RingMultiplierOpeningPoint, RingRelationInstance, RingRole, RingVec,
     SetupContributionGroupInputs, SetupContributionPlan, SetupContributionPlanInputs,
     SetupContributionStatic, TerminalWitnessTranscriptParts, WitnessChunkLayout, WitnessLayout,
@@ -278,11 +278,19 @@ where
     let ring_bits = validate_ring_dispatch::<D>()?;
     let m_rows =
         lp.relation_matrix_row_count_for(opening_batch.num_groups(), relation_matrix_row_layout)?;
+    let row_layout = RelationRowLayout::for_level::<F>(
+        lp,
+        lp.role_dims(),
+        relation_matrix_row_layout,
+        opening_batch,
+    )?;
+    if row_layout.quotient_row_count() != m_rows {
+        return Err(AkitaError::InvalidSetup(
+            "RelationRowLayout quotient rows must match relation_matrix_row_count_for".to_string(),
+        ));
+    }
     let num_sc_vars = col_bits + ring_bits;
-    let num_i = m_rows
-        .checked_next_power_of_two()
-        .ok_or_else(|| AkitaError::InvalidSetup("ring-switch row count overflow".to_string()))?
-        .trailing_zeros() as usize;
+    let num_i = row_layout.tau1_num_vars()?;
 
     let tau0 = match relation_matrix_row_layout {
         RelationMatrixRowLayout::WithDBlock => Some(

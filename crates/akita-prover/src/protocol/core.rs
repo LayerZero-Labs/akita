@@ -14,6 +14,7 @@ use crate::{
     ProverOpeningData, ProverTranscriptGrind, RecursiveCommitmentHintCache, RingRelationInstance,
     RingRelationWitness,
 };
+use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::CyclotomicRing;
 use akita_config::{bind_transcript_instance_descriptor, CommitmentConfig};
 use akita_field::parallel::*;
@@ -40,17 +41,17 @@ use akita_types::{
     relation_claim_from_layout_extension, relation_rhs_layout_for, reorder_stage1_coords,
     ring_subfield_packed_extension_opening_point, root_current_w_len,
     root_tensor_projection_enabled, sample_public_row_coefficients, schedule_is_root_direct,
-    schedule_num_fold_levels, schedule_root_fold_step, stage2_trace_coeff,
-    tensor_equality_factor_eval_at_point, tensor_equality_factor_evals, tensor_opening_split,
-    tensor_reduction_claim_from_rows, tensor_row_partials_from_columns,
-    trace_public_weights_recursive, trace_public_weights_root_terms,
-    trace_weight_layout_from_segment, AkitaBatchedProof, AkitaBatchedRootProof,
-    AkitaCommitmentHint, AkitaExpandedSetup, AkitaIntermediateStage2Proof, AkitaLevelProof,
-    AkitaStage1Proof, AkitaStage2Proof, BasisMode, BlockOrder, CleartextWitnessProof, Commitment,
-    ExecutionSchedule, ExtensionOpeningReductionProof, LevelParams, OpeningClaims,
-    OpeningClaimsLayout, PreparedOpeningPoint, RelationMatrixRowLayout, RingMultiplierOpeningPoint,
-    RingVec, RingView, Schedule, SetupContributionMode, SetupPrefixProverRegistry,
-    SetupSumcheckProof, Step, TerminalLevelProof, TraceTable,
+    schedule_num_fold_levels, schedule_root_fold_step, tensor_equality_factor_eval_at_point,
+    tensor_equality_factor_evals, tensor_opening_split, tensor_reduction_claim_from_rows,
+    tensor_row_partials_from_columns, trace_public_weights_recursive,
+    trace_public_weights_root_terms, trace_weight_layout_from_segment, AkitaBatchedProof,
+    AkitaBatchedRootProof, AkitaCommitmentHint, AkitaExpandedSetup, AkitaIntermediateStage2Proof,
+    AkitaLevelProof, AkitaStage1Proof, AkitaStage2Proof, BasisMode, BlockOrder,
+    CleartextWitnessProof, Commitment, ExecutionSchedule, ExtensionOpeningReductionProof,
+    LevelParams, OpeningClaims, OpeningClaimsLayout, PreparedOpeningPoint, RelationMatrixRowLayout,
+    RelationRowLayout, RingMultiplierOpeningPoint, RingVec, RingView, Schedule,
+    SetupContributionMode, SetupPrefixProverRegistry, SetupSumcheckProof, Step, TerminalLevelProof,
+    TraceTable,
 };
 use std::sync::Arc;
 

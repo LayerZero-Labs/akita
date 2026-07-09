@@ -709,17 +709,23 @@ where
         commitment_rows,
     )?;
     let stage1_replay = verify_stage1::<F, E, T>(prepared.stage1, &rs, transcript)?;
-    let is_terminal_stage2 = matches!(prepared.stage2, AkitaStage2Proof::Terminal(_));
-    let trace_gamma = if is_terminal_stage2 {
-        sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_SUMCHECK_BATCH)
-    } else {
-        stage1_replay.batching_coeff
-    };
-    let trace_coeff = stage2_trace_coeff(
-        stage1_replay.batching_coeff,
-        trace_gamma,
-        is_terminal_stage2,
-    );
+    // EvaluationTrace is the last τ₁ row: weight openings by eq(τ₁, last), not γ².
+    // Terminal folds no longer squeeze an extra CHALLENGE_SUMCHECK_BATCH for trace_gamma.
+    let row_layout = RelationRowLayout::for_level::<F>(
+        prepared.lp,
+        relation_instance.role_dims(),
+        relation_instance.relation_matrix_row_layout(),
+        relation_instance.opening_batch(),
+    )?;
+    let eq_tau1 = EqPolynomial::evals(&rs.tau1)?;
+    let evaluation_trace_row = row_layout.evaluation_trace_row()?;
+    let evaluation_trace_weight = eq_tau1
+        .get(evaluation_trace_row)
+        .copied()
+        .ok_or_else(|| AkitaError::InvalidSize {
+            expected: evaluation_trace_row + 1,
+            actual: eq_tau1.len(),
+        })?;
     ensure_trace_stage2_supported(<E as ExtField<F>>::EXT_DEGREE)?;
     let trace_wire = if prepared.trace_prepared_points.is_none() {
         None
@@ -740,8 +746,8 @@ where
         Some(TraceWireAtRoleA::Recursive {
             lp: prepared.lp,
             layout,
-            trace_coeff,
-            trace_opening_claim: trace_coeff * prepared.trace_eval_target,
+            trace_coeff: evaluation_trace_weight,
+            trace_opening_claim: evaluation_trace_weight * prepared.trace_eval_target,
             prepared_point: prepared_point.clone(),
             trace_basis: prepared.trace_basis,
             trace_eval_scale: prepared.trace_eval_scale,
@@ -790,7 +796,7 @@ where
             layout,
             prepared_points,
             row_coefficients: prepared.row_coefficients.clone(),
-            trace_coeff,
+            trace_coeff: evaluation_trace_weight,
             trace_eval_target: prepared.trace_eval_target,
             trace_claim_scales: prepared.trace_claim_scales.clone(),
             opening_batch: relation_instance.opening_batch().clone(),
@@ -826,7 +832,7 @@ where
                 .clone(),
             trace_basis: prepared.trace_basis,
             row_coefficients: prepared.row_coefficients.clone(),
-            trace_coeff,
+            trace_coeff: evaluation_trace_weight,
             trace_eval_target: prepared.trace_eval_target,
             trace_claim_scales: prepared.trace_claim_scales.clone(),
             opening_batch: relation_instance.opening_batch().clone(),

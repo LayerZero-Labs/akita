@@ -64,11 +64,20 @@ where
             opening_batch.num_groups(),
             relation_matrix_row_layout,
         )?;
+        let row_layout = RelationRowLayout::for_level::<F>(
+            lp,
+            dims,
+            relation_matrix_row_layout,
+            opening_batch,
+        )?;
+        if row_layout.quotient_row_count() != m_rows {
+            return Err(AkitaError::InvalidSetup(
+                "RelationRowLayout quotient rows must match relation_matrix_row_count_for"
+                    .to_string(),
+            ));
+        }
         let num_sc_vars = col_bits + ring_bits;
-        let num_i = m_rows
-            .checked_next_power_of_two()
-            .ok_or_else(|| AkitaError::InvalidSetup("ring-switch row count overflow".to_string()))?
-            .trailing_zeros() as usize;
+        let num_i = row_layout.tau1_num_vars()?;
 
         let tau0: Vec<E> = match relation_matrix_row_layout {
             RelationMatrixRowLayout::WithDBlock => (0..num_sc_vars)
