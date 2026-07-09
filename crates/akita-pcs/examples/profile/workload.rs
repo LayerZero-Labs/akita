@@ -14,9 +14,7 @@ use akita_prover::compute::{
     OpeningFoldKernel, OpeningFoldPlan, RecursiveProveBackend, RootPolyShape, RootProvePoly,
     RuntimeRootCommitBackend, RuntimeRootCommitPoly, RuntimeRootProvePoly,
 };
-use akita_prover::{
-    AkitaProverSetup, DensePoly, FoldGrindObserverGuard, OneHotIndex, OneHotPoly, ProverOpeningData,
-};
+use akita_prover::{AkitaProverSetup, DensePoly, OneHotIndex, OneHotPoly, ProverOpeningData};
 use akita_prover::{ComputeBackendSetup, CpuBackend};
 use akita_serialization::{AkitaSerialize, Valid};
 use akita_transcript::AkitaTranscript;
@@ -432,7 +430,6 @@ fn run_prove<
         "profile setup-contribution mode"
     );
     eprintln!("[{label}] setup_contribution_mode: {setup_contribution_mode:?}");
-    let _grind_observer = FoldGrindObserverGuard::install();
     let proof = AkitaCommitmentScheme::<Cfg>::batched_prove(
         setup,
         prover_claims(pt, &poly_refs[..], &commitments[0], hint),
@@ -442,10 +439,9 @@ fn run_prove<
         setup_contribution_mode,
     )
     .unwrap();
-    let grind_observations = FoldGrindObserverGuard::take();
     report_timing(label, "prove", t0.elapsed().as_secs_f64());
     assert_observed_proof_size::<FF, Cfg::ExtField>(label, &proof);
-    print_batched_proof_summary::<FF, Cfg::ExtField, D>(label, &proof, &grind_observations);
+    print_batched_proof_summary::<FF, Cfg::ExtField, D>(label, &proof);
     tracing::info!(
         label,
         ext_degree = Cfg::EXT_DEGREE,
@@ -819,7 +815,6 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
         "profile setup-contribution mode"
     );
     eprintln!("[{label}] setup_contribution_mode: {setup_contribution_mode:?}");
-    let _grind_observer = FoldGrindObserverGuard::install();
     let proof = AkitaCommitmentScheme::<Cfg>::batched_prove::<_, _, _>(
         &setup,
         prover_claims(
@@ -834,10 +829,9 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
         setup_contribution_mode,
     )
     .unwrap();
-    let grind_observations = FoldGrindObserverGuard::take();
     report_timing(label, "prove", t0.elapsed().as_secs_f64());
     assert_observed_proof_size::<FF, Cfg::ExtField>(label, &proof);
-    print_batched_proof_summary::<FF, Cfg::ExtField, D>(label, &proof, &grind_observations);
+    print_batched_proof_summary::<FF, Cfg::ExtField, D>(label, &proof);
     let opening_batch = OpeningClaimsLayout::new(nv, num_polys).expect("same-point opening batch");
     let schedule = Cfg::get_params_for_prove(&opening_batch).expect("batched schedule");
     if let Some(plan) = plan {

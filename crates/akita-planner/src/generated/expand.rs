@@ -23,7 +23,7 @@ use crate::PlannerPolicy;
 use akita_types::sis::{
     committed_fold_a_role_rank, decomposed_s_block_ring_count, decomposed_t_ring_count,
     decomposed_w_ring_count, min_secure_rank, num_digits_open, num_digits_s_commit,
-    rounded_up_collision_linf_t, rounded_up_collision_linf_w, SisTableKey,
+    rounded_up_collision_inf_norm, SisTableKey,
 };
 use akita_types::{
     AjtaiKeyParams, CommitmentRingDims, DecompositionParams, LevelParams, PrecommittedLevelParams,
@@ -171,7 +171,7 @@ impl GeneratedFoldStep {
         )?;
 
         let b_bucket =
-            rounded_up_collision_linf_t(min_security_bits, sis_family, ring_d, log_basis)
+            rounded_up_collision_inf_norm(min_security_bits, sis_family, ring_d, log_basis)
                 .ok_or_else(|| no_layout("B"))?;
         let outer_width = decomposed_t_ring_count(
             self.n_a as usize,
@@ -182,7 +182,7 @@ impl GeneratedFoldStep {
         .ok_or_else(|| no_layout("B"))?;
 
         let d_bucket =
-            rounded_up_collision_linf_w(min_security_bits, sis_family, ring_d, log_basis)
+            rounded_up_collision_inf_norm(min_security_bits, sis_family, ring_d, log_basis)
                 .ok_or_else(|| no_layout("D"))?;
         let d_matrix_width = decomposed_w_ring_count(num_digits_open_val, num_blocks, num_claims)
             .ok_or_else(|| no_layout("D"))?;
@@ -368,7 +368,7 @@ impl GeneratedFoldStep {
         )?;
 
         let b_bucket =
-            rounded_up_collision_linf_t(min_security_bits, sis_family, ring_d, log_basis)
+            rounded_up_collision_inf_norm(min_security_bits, sis_family, ring_d, log_basis)
                 .ok_or_else(|| no_layout("B"))?;
         let outer_width = decomposed_t_ring_count(
             self.n_a as usize,
@@ -386,7 +386,7 @@ impl GeneratedFoldStep {
                 AkitaError::InvalidSetup("generated multi-group D width overflow".into())
             })?;
         let d_bucket =
-            rounded_up_collision_linf_w(min_security_bits, sis_family, ring_d, log_basis)
+            rounded_up_collision_inf_norm(min_security_bits, sis_family, ring_d, log_basis)
                 .ok_or_else(|| no_layout("D"))?;
 
         let onehot_chunk_size = if policy.decomposition.log_commit_bound == 1 {

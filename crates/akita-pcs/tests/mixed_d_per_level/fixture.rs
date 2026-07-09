@@ -12,7 +12,7 @@ use akita_planner::PlannerPolicy;
 use akita_types::sis::{
     committed_fold_a_role_rank, decomposed_s_block_ring_count, decomposed_t_ring_count,
     decomposed_w_ring_count, min_secure_rank, num_digits_open, num_digits_s_commit,
-    rounded_up_collision_linf_t, rounded_up_collision_linf_w, SisTableKey,
+    rounded_up_collision_inf_norm, SisTableKey,
 };
 use akita_types::{
     direct_witness_bytes, level_proof_bytes, segment_typed_witness_shape,
@@ -135,12 +135,12 @@ fn expand_envelope_witness_at_ring_d(
     )
     .ok_or_else(|| no_layout("A"))?;
     let b_bucket =
-        rounded_up_collision_linf_t(min_security_bits, sis_family, target_ring_d, log_basis)
+        rounded_up_collision_inf_norm(min_security_bits, sis_family, target_ring_d, log_basis)
             .ok_or_else(|| no_layout("B"))?;
     let outer_width = decomposed_t_ring_count(n_a, num_digits_open_val, num_blocks, num_claims)
         .ok_or_else(|| no_layout("B"))?;
     let d_bucket =
-        rounded_up_collision_linf_w(min_security_bits, sis_family, target_ring_d, log_basis)
+        rounded_up_collision_inf_norm(min_security_bits, sis_family, target_ring_d, log_basis)
             .ok_or_else(|| no_layout("D"))?;
     let d_matrix_width = decomposed_w_ring_count(num_digits_open_val, num_blocks, num_claims)
         .ok_or_else(|| no_layout("D"))?;

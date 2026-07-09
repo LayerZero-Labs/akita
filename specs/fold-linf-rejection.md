@@ -159,8 +159,8 @@ The feature introduces or modifies:
   still passes. Tail-bound-with-grind can shrink `δ_fold`, so A-role rank is
   indirectly affected via the verifier digit envelope (not raw `β_inf`).
 - [x] Prover reroll loop terminates with mean probe count `<= 8` over production
-  tail-bound-with-grind modes; `FoldGrindObserver` records true probe counts in
-  the profile harness (not inferred from nonce + 1).
+  tail-bound-with-grind modes (validated during development via probe-count
+  instrumentation).
 - [x] Headerless serialization is pinned: one `u32` nonce is serialized in every
   fold level proof, `LevelProofShape` / `TerminalLevelProofShape` have no variable
   nonce length, and serialized proof bytes match `level_proof_bytes` after adding
@@ -337,10 +337,8 @@ Properties:
 - **Conditional on accept:** the published nonce is uniform over the accepting
   subset (not independent of the witness unless acceptance is witness-independent).
 
-**Profile bench note.** CI profile runs install [`FoldGrindObserverGuard`](../../crates/akita-prover/src/protocol/fold_grind_observer.rs)
-during prove and emit per-level `grind_probe_count` (true prover work) alongside
-wire `grind_nonce` (verifier replay index). `grind_attempts_sum` aggregates
-probe counts, not `nonce + 1`.
+**Profile bench note.** CI profile runs emit the per-level wire `grind_nonce`
+(verifier replay index) in the proof-size breakdown.
 
 ### Tail bound (statement)
 

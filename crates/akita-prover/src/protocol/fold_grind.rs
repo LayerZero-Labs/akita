@@ -12,15 +12,11 @@ use akita_field::{AkitaError, CanonicalField, FieldCore, FromPrimitiveInt};
 use akita_transcript::{AkitaTranscript, FoldChallengeSeedPreview, Transcript, TranscriptSponge};
 use akita_types::{
     golomb_rice_rows_admit_terminal_wire,
-    sis::{
-        fold_witness_beta, fold_witness_verifier_linf_bound, FoldWitnessGrindContract,
-        FoldWitnessLinfCapPolicy,
-    },
+    sis::{FoldWitnessGrindContract, FoldWitnessLinfCapPolicy},
     FoldLinfProtocolBinding, LevelParams, LevelParamsLike, FOLD_GRIND_PROBE_ORDER_SEQUENTIAL_MIN,
     FOLD_GRIND_PROBE_ORDER_TRANSCRIPT_SHUFFLE,
 };
 
-use super::fold_grind_observer::{self, FoldGrindLevelMeta, FoldGrindObservation};
 use super::ring_relation::{
     aggregate_decompose_fold_witnesses, build_point_decompose_fold_witness,
     window_sparse_challenges,
@@ -250,7 +246,6 @@ fn sample_fold_decompose_witness_at_dim<F, P, B, T, const D: usize>(
     witness_linf_cap: u128,
     digit_negative_abs_bound: u128,
     digit_positive_bound: u128,
-    level_meta: FoldGrindLevelMeta,
     probe_nonces: &[u32],
 ) -> Result<(DecomposeFoldWitness<F>, Vec<Vec<Vec<i32>>>, Challenges, u32), AkitaError>
 where
@@ -265,9 +260,7 @@ where
     let ring_d = root_lp.role_dims().d_a();
     let point_indices = (0..polys.len()).collect::<Vec<_>>();
     let labels = witness_fold_challenge_labels();
-    let mut grind_probe_count = 0u32;
     for &nonce in probe_nonces {
-        grind_probe_count = grind_probe_count.saturating_add(1);
         let challenges = PreviewFoldDraw::new(transcript).draw_folding_challenges(
             ring_d,
             params.num_blocks(),
@@ -301,13 +294,6 @@ where
             .into_iter()
             .map(|chunk| chunk.into_iter().map(|row| row.to_vec()).collect())
             .collect();
-        fold_grind_observer::record_fold_grind_acceptance(FoldGrindObservation {
-            level_index: fold_grind_observer::next_fold_grind_level_index(),
-            grind_nonce: nonce,
-            grind_probe_count,
-            observed_linf: witness.centered_inf_norm,
-            level_meta,
-        });
         let challenges = LiveFoldDraw::<F, T>::new(transcript).draw_folding_challenges(
             ring_d,
             params.num_blocks(),
@@ -381,11 +367,10 @@ where
     };
     let contract = FoldWitnessGrindContract {
         policy,
-        witness_linf_cap: num_claims_digit_plan.grind_cap,
+        witness_linf_cap: num_claims_digit_plan.1,
         max_nonce_exclusive,
     };
-    // Tail Golomb grinding sizes caps from `tail_t_vectors`; keep observer metrics on the
-    // same claim count so snap hints do not mix β/t*/δ from one count with cap from another.
+    // Tail Golomb grinding sizes caps from `tail_t_vectors`.
     let sizing_claims = tail_t_vectors.unwrap_or(num_claims);
     let digit_plan = if sizing_claims == num_claims {
         num_claims_digit_plan
@@ -400,23 +385,9 @@ where
             &root_lp.fold_linf_cap_config,
         )?
     };
-    let witness_linf_cap = digit_plan.grind_cap;
-    let delta_fold = digit_plan.delta_fold;
+    let (delta_fold, witness_linf_cap) = digit_plan;
     let (digit_negative_abs_bound, digit_positive_bound) =
         akita_types::sis::fold_witness_representable_linf_bounds(params.log_basis(), delta_fold);
-    let verifier_linf_bound = fold_witness_verifier_linf_bound(params.log_basis(), delta_fold);
-    let beta_inf = fold_witness_beta(params.r_vars(), sizing_claims, challenge, witness_norms)?;
-    let level_meta = FoldGrindLevelMeta {
-        beta_inf,
-        t_star: digit_plan.t_star,
-        honest_cap: witness_linf_cap,
-        delta_fold,
-        verifier_linf_bound,
-        policy: contract.policy,
-        log_basis: params.log_basis(),
-        r_vars: u32::try_from(params.r_vars()).unwrap_or(u32::MAX),
-        num_claims: u32::try_from(sizing_claims).unwrap_or(u32::MAX),
-    };
     let probe_nonces =
         grind_probe_nonces(&contract, &binding, transcript, root_lp, params, num_claims)?;
 
@@ -438,7 +409,6 @@ where
                 witness_linf_cap,
                 digit_negative_abs_bound,
                 digit_positive_bound,
-                level_meta,
                 &probe_nonces,
             )
         }

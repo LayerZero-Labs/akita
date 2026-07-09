@@ -1,5 +1,5 @@
 use akita_field::{CanonicalField, FieldCore};
-use akita_prover::{FoldGrindObservation, PreparedCrtNttProfile};
+use akita_prover::PreparedCrtNttProfile;
 use akita_serialization::{AkitaSerialize, Compress};
 use akita_types::{
     golomb_rice::{golomb_rice_low_bits_sweep_payload_bytes, rice_low_bits_for_cap},
@@ -439,93 +439,10 @@ fn fold_grind_nonce_wire_bytes() -> usize {
     0u32.serialized_size(Compress::No)
 }
 
-fn take_fold_grind_observation<'a>(
-    grind_observations: &'a [FoldGrindObservation],
-    obs_idx: &mut usize,
-    grind_nonce: u32,
-) -> &'a FoldGrindObservation {
-    let obs = grind_observations.get(*obs_idx).unwrap_or_else(|| {
-        panic!(
-            "missing fold grind observation for level obs_idx={obs_idx} grind_nonce={grind_nonce}"
-        )
-    });
-    assert_eq!(
-        obs.grind_nonce, grind_nonce,
-        "fold grind observation nonce mismatch at obs_idx={obs_idx}"
-    );
-    *obs_idx += 1;
-    obs
-}
-
-fn collect_fold_grind_nonces<FF, E>(proof: &AkitaBatchedProof<FF, E>) -> Vec<u32>
-where
-    FF: FieldCore,
-    E: FieldCore,
-{
-    if proof.is_root_direct() {
-        return Vec::new();
-    }
-
-    let mut nonces = Vec::with_capacity(1 + proof.steps.len());
-    if let Ok(root_nonce) = proof.root.fold_grind_nonce() {
-        nonces.push(root_nonce);
-    }
-    for step in &proof.steps {
-        nonces.push(step.fold_grind_nonce());
-    }
-    nonces
-}
-
-fn emit_fold_grind_summary(label: &str, grind_observations: &[FoldGrindObservation]) {
-    if grind_observations.is_empty() {
-        tracing::info!(label, grind_levels = 0u32, "fold grind summary");
-        eprintln!("[{label}] fold grind: no tail-bound fold levels");
-        return;
-    }
-
-    let max_nonce = grind_observations
-        .iter()
-        .map(|obs| obs.grind_nonce)
-        .max()
-        .expect("non-empty observation list");
-    let attempts_sum: u64 = grind_observations
-        .iter()
-        .map(|obs| u64::from(obs.grind_probe_count))
-        .sum();
-    let nonces_csv = grind_observations
-        .iter()
-        .map(|obs| obs.grind_nonce.to_string())
-        .collect::<Vec<_>>()
-        .join(",");
-    let probe_counts_csv = grind_observations
-        .iter()
-        .map(|obs| obs.grind_probe_count.to_string())
-        .collect::<Vec<_>>()
-        .join(",");
-
-    tracing::info!(
-        label,
-        grind_levels = grind_observations.len(),
-        grind_nonce_max = max_nonce,
-        grind_attempts_sum = attempts_sum,
-        grind_nonces = nonces_csv.as_str(),
-        grind_probe_counts = probe_counts_csv.as_str(),
-        "fold grind summary"
-    );
-    eprintln!(
-        "[{label}] fold grind: levels={}, attempts_sum={}, max_nonce={}, nonces=[{nonces_csv}], probe_counts=[{probe_counts_csv}]",
-        grind_observations.len(),
-        attempts_sum,
-        max_nonce,
-    );
-}
-
 fn print_akita_level_breakdown<FF, E, const D: usize>(
     label: &str,
     level_idx: usize,
     level: &AkitaLevelProof<FF, E>,
-    grind_observations: &[FoldGrindObservation],
-    obs_idx: &mut usize,
 ) -> usize
 where
     FF: FieldCore + CanonicalField + AkitaSerialize,
@@ -572,8 +489,6 @@ where
         .serialized_size(Compress::No);
     let fold_grind_nonce_size = fold_grind_nonce_wire_bytes();
     let grind_nonce = level.fold_grind_nonce();
-    let grind_observation = take_fold_grind_observation(grind_observations, obs_idx, grind_nonce);
-    let grind_attempts = grind_observation.grind_probe_count;
 
     tracing::info!(
         label,
@@ -585,7 +500,6 @@ where
         v_bytes = v_size,
         fold_grind_nonce_bytes = fold_grind_nonce_size,
         grind_nonce,
-        grind_attempts,
         stage1_sumcheck_bytes = stage1_sumcheck_size,
         stage1_interstage_claims_bytes = stage1_interstage_claims_size,
         stage1_s_claim_bytes = stage1_s_claim_size,
@@ -685,8 +599,6 @@ fn print_terminal_level_breakdown<FF, E, P, const D: usize>(
     level_idx: usize,
     level: &P,
     root_variant: &'static str,
-    grind_observations: &[FoldGrindObservation],
-    obs_idx: &mut usize,
 ) -> usize
 where
     FF: FieldCore + CanonicalField + AkitaSerialize,
@@ -699,8 +611,6 @@ where
     let final_witness_size = level.final_witness().serialized_size(Compress::No);
     let fold_grind_nonce_size = fold_grind_nonce_wire_bytes();
     let grind_nonce = level.fold_grind_nonce_value();
-    let grind_observation = take_fold_grind_observation(grind_observations, obs_idx, grind_nonce);
-    let grind_attempts = grind_observation.grind_probe_count;
     let full = level.serialized_size(Compress::No);
     // `total_bytes` excludes `final_witness` to mirror the planner's
     // `terminal_level_proof_bytes`. `final_witness` is reported separately as
@@ -722,7 +632,6 @@ where
         extension_opening_sumcheck_bytes = extension_opening_sumcheck_size,
         fold_grind_nonce_bytes = fold_grind_nonce_size,
         grind_nonce,
-        grind_attempts,
         stage2_sumcheck_bytes = stage2_sumcheck_size,
         final_witness_bytes = final_witness_size,
         root_variant = root_variant,
@@ -756,22 +665,13 @@ where
 fn print_batched_root_breakdown<FF, E, const D: usize>(
     label: &str,
     root: &AkitaBatchedRootProof<FF, E>,
-    grind_observations: &[FoldGrindObservation],
-    obs_idx: &mut usize,
 ) -> usize
 where
     FF: FieldCore + CanonicalField + AkitaSerialize,
     E: FieldCore + AkitaSerialize,
 {
     if let Some(terminal) = root.as_terminal_root() {
-        return print_terminal_level_breakdown::<FF, E, _, D>(
-            label,
-            0,
-            terminal,
-            "terminal",
-            grind_observations,
-            obs_idx,
-        );
+        return print_terminal_level_breakdown::<FF, E, _, D>(label, 0, terminal, "terminal");
     }
     let Some(fold) = root.as_fold() else {
         let total = root.serialized_size(Compress::No);
@@ -823,8 +723,6 @@ where
         .serialized_size(Compress::No);
     let fold_grind_nonce_size = fold_grind_nonce_wire_bytes();
     let grind_nonce = fold.fold_grind_nonce;
-    let grind_observation = take_fold_grind_observation(grind_observations, obs_idx, grind_nonce);
-    let grind_attempts = grind_observation.grind_probe_count;
 
     tracing::info!(
         label,
@@ -836,7 +734,6 @@ where
         v_bytes = v_size,
         fold_grind_nonce_bytes = fold_grind_nonce_size,
         grind_nonce,
-        grind_attempts,
         stage1_sumcheck_bytes = stage1_sumcheck_size,
         stage1_interstage_claims_bytes = stage1_interstage_claims_size,
         stage1_s_claim_bytes = stage1_s_claim_size,
@@ -887,7 +784,6 @@ where
 pub(crate) fn print_batched_proof_summary<FF, E, const D: usize>(
     label: &str,
     proof: &AkitaBatchedProof<FF, E>,
-    grind_observations: &[FoldGrindObservation],
 ) where
     FF: FieldCore + CanonicalField + AkitaSerialize,
     E: FieldCore + AkitaSerialize,
@@ -950,49 +846,18 @@ pub(crate) fn print_batched_proof_summary<FF, E, const D: usize>(
         proof.size(),
         "[{label}] proof accounting must exactly match serialized proof size"
     );
-    let mut obs_idx = 0usize;
-    print_batched_root_breakdown::<FF, E, D>(label, &proof.root, grind_observations, &mut obs_idx);
+    print_batched_root_breakdown::<FF, E, D>(label, &proof.root);
     for (i, step) in proof.steps.iter().enumerate() {
         let level_idx = i + 1;
         match step {
             AkitaLevelProof::Intermediate { .. } => {
-                print_akita_level_breakdown::<FF, E, D>(
-                    label,
-                    level_idx,
-                    step,
-                    grind_observations,
-                    &mut obs_idx,
-                );
+                print_akita_level_breakdown::<FF, E, D>(label, level_idx, step);
             }
             AkitaLevelProof::Terminal { .. } => {
-                print_terminal_level_breakdown::<FF, E, _, D>(
-                    label,
-                    level_idx,
-                    step,
-                    "fold",
-                    grind_observations,
-                    &mut obs_idx,
-                );
+                print_terminal_level_breakdown::<FF, E, _, D>(label, level_idx, step, "fold");
             }
         }
     }
-    if !proof.is_root_direct() {
-        assert_eq!(
-            obs_idx,
-            grind_observations.len(),
-            "[{label}] fold grind observation count must match folded proof levels"
-        );
-        let proof_nonces = collect_fold_grind_nonces(proof);
-        assert_eq!(
-            proof_nonces,
-            grind_observations
-                .iter()
-                .map(|obs| obs.grind_nonce)
-                .collect::<Vec<_>>(),
-            "[{label}] fold grind observation nonces must match proof wire nonces"
-        );
-    }
-    emit_fold_grind_summary(label, grind_observations);
 }
 
 pub(crate) fn print_layout(layout: &LevelParams, num_claims: usize, field_bits: u32) {
