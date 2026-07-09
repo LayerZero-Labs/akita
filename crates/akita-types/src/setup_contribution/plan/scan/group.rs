@@ -1,5 +1,4 @@
 use super::super::*;
-use akita_algebra::CyclotomicRing;
 
 enum BaseRingSegments<'a, E> {
     /// Identity projection: borrow the cached logical segment partition.
@@ -79,26 +78,6 @@ impl<E: FieldCore> SetupContributionGroupPlan<E> {
             return Ok(sum);
         }
 
-        if let Some(result) = dispatch_projected_ratios!(
-            d_projection.ratio(),
-            b_projection.ratio(),
-            a_projection.ratio(),
-            |D_RATIO, B_RATIO, A_RATIO| {
-                self.evaluate_projected_base_ring_direct::<F, BASE_D, D_RATIO, B_RATIO, A_RATIO>(
-                    setup_flat,
-                    base_pows,
-                    a_projection,
-                    b_projection,
-                    d_projection,
-                    d_rows,
-                    d_physical_cols,
-                    required,
-                )
-            }
-        ) {
-            return result;
-        }
-
         let segments = self.base_ring_segments(
             a_projection,
             b_projection,
@@ -111,84 +90,6 @@ impl<E: FieldCore> SetupContributionGroupPlan<E> {
         let b_weights = ProjectedRoleWeights::new(&self.b_weights, b_projection);
         let a_row_weights = ProjectedRoleWeights::new(&self.a_row_weights, a_projection);
 
-        dispatch_role_projections!(
-            d_projection,
-            b_projection,
-            a_projection,
-            |D_IDENTITY, B_IDENTITY, A_IDENTITY| {
-                let segment_slice = segments.as_slice();
-                let sum = cfg_fold_reduce!(
-                    0..segment_slice.len(),
-                    E::zero,
-                    |mut acc, idx| {
-                        let segment = &segment_slice[idx];
-                        acc +=
-                            dispatch_segment_roles!(segment, E::zero(), |HAS_D, HAS_B, HAS_A| {
-                                base_ring_segment_inner_sum_typed::<
-                                    F,
-                                    E,
-                                    BASE_D,
-                                    HAS_D,
-                                    HAS_B,
-                                    HAS_A,
-                                    D_IDENTITY,
-                                    B_IDENTITY,
-                                    A_IDENTITY,
-                                >(
-                                    segment.lo..segment.hi,
-                                    setup_flat,
-                                    base_pows,
-                                    segment,
-                                    &self.e_eq_slice,
-                                    &self.t_eq_slice,
-                                    &self.z_eq_slice,
-                                    d_projection,
-                                    b_projection,
-                                    a_projection,
-                                    &d_weights,
-                                    &b_weights,
-                                    &a_row_weights,
-                                )
-                            });
-                        acc
-                    },
-                    |lhs, rhs| lhs + rhs
-                );
-                Ok(sum)
-            }
-        )
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn evaluate_projected_base_ring_direct<
-        F,
-        const BASE_D: usize,
-        const D_RATIO: usize,
-        const B_RATIO: usize,
-        const A_RATIO: usize,
-    >(
-        &self,
-        setup_flat: &[CyclotomicRing<F, BASE_D>],
-        base_pows: &[E],
-        a_projection: &RoleProjection<E>,
-        b_projection: &RoleProjection<E>,
-        d_projection: &RoleProjection<E>,
-        d_rows: usize,
-        d_physical_cols: usize,
-        required: usize,
-    ) -> Result<E, AkitaError>
-    where
-        F: FieldCore,
-        E: ExtField<F> + MulBaseUnreduced<F>,
-    {
-        let segments = self.base_ring_segments(
-            a_projection,
-            b_projection,
-            d_projection,
-            d_rows,
-            d_physical_cols,
-            required,
-        )?;
         let segment_slice = segments.as_slice();
         let sum = cfg_fold_reduce!(
             0..segment_slice.len(),
@@ -196,17 +97,7 @@ impl<E: FieldCore> SetupContributionGroupPlan<E> {
             |mut acc, idx| {
                 let segment = &segment_slice[idx];
                 acc += dispatch_segment_roles!(segment, E::zero(), |HAS_D, HAS_B, HAS_A| {
-                    projected_base_ring_segment_inner_sum_typed::<
-                        F,
-                        E,
-                        BASE_D,
-                        HAS_D,
-                        HAS_B,
-                        HAS_A,
-                        D_RATIO,
-                        B_RATIO,
-                        A_RATIO,
-                    >(
+                    base_ring_segment_inner_sum_typed::<F, E, BASE_D, HAS_D, HAS_B, HAS_A>(
                         segment.lo..segment.hi,
                         setup_flat,
                         base_pows,
@@ -214,9 +105,12 @@ impl<E: FieldCore> SetupContributionGroupPlan<E> {
                         &self.e_eq_slice,
                         &self.t_eq_slice,
                         &self.z_eq_slice,
-                        &d_projection.scales,
-                        &b_projection.scales,
-                        &a_projection.scales,
+                        d_projection,
+                        b_projection,
+                        a_projection,
+                        &d_weights,
+                        &b_weights,
+                        &a_row_weights,
                     )
                 });
                 acc

@@ -7,8 +7,6 @@ use akita_field::parallel::*;
 use akita_field::AkitaError;
 use akita_field::{ExtField, FieldCore, MulBaseUnreduced};
 
-const PARALLEL_BASE_RING_SEGMENT_MIN_LEN: usize = 8192;
-
 #[derive(Clone)]
 pub(crate) struct GroupSetupSegment<E> {
     pub(super) lo: usize,
@@ -78,165 +76,6 @@ macro_rules! dispatch_segment_roles {
 }
 
 pub(super) use dispatch_segment_roles;
-
-macro_rules! dispatch_role_projections {
-    ($d_projection:expr, $b_projection:expr, $a_projection:expr, |$d_identity:ident, $b_identity:ident, $a_identity:ident| $body:block) => {{
-        match (
-            $d_projection.is_identity(),
-            $b_projection.is_identity(),
-            $a_projection.is_identity(),
-        ) {
-            (true, true, true) => {
-                const $d_identity: bool = true;
-                const $b_identity: bool = true;
-                const $a_identity: bool = true;
-                $body
-            }
-            (true, true, false) => {
-                const $d_identity: bool = true;
-                const $b_identity: bool = true;
-                const $a_identity: bool = false;
-                $body
-            }
-            (true, false, true) => {
-                const $d_identity: bool = true;
-                const $b_identity: bool = false;
-                const $a_identity: bool = true;
-                $body
-            }
-            (false, true, true) => {
-                const $d_identity: bool = false;
-                const $b_identity: bool = true;
-                const $a_identity: bool = true;
-                $body
-            }
-            (true, false, false) => {
-                const $d_identity: bool = true;
-                const $b_identity: bool = false;
-                const $a_identity: bool = false;
-                $body
-            }
-            (false, true, false) => {
-                const $d_identity: bool = false;
-                const $b_identity: bool = true;
-                const $a_identity: bool = false;
-                $body
-            }
-            (false, false, true) => {
-                const $d_identity: bool = false;
-                const $b_identity: bool = false;
-                const $a_identity: bool = true;
-                $body
-            }
-            (false, false, false) => {
-                const $d_identity: bool = false;
-                const $b_identity: bool = false;
-                const $a_identity: bool = false;
-                $body
-            }
-        }
-    }};
-}
-
-pub(super) use dispatch_role_projections;
-
-macro_rules! dispatch_projected_ratio_a {
-    ($a_ratio:expr, |$a_ratio_const:ident| $body:block) => {{
-        match $a_ratio {
-            1 => {
-                const $a_ratio_const: usize = 1;
-                Some($body)
-            }
-            2 => {
-                const $a_ratio_const: usize = 2;
-                Some($body)
-            }
-            4 => {
-                const $a_ratio_const: usize = 4;
-                Some($body)
-            }
-            8 => {
-                const $a_ratio_const: usize = 8;
-                Some($body)
-            }
-            16 => {
-                const $a_ratio_const: usize = 16;
-                Some($body)
-            }
-            _ => None,
-        }
-    }};
-}
-
-macro_rules! dispatch_projected_ratio_b {
-    ($b_ratio:expr, $a_ratio:expr, |$b_ratio_const:ident, $a_ratio_const:ident| $body:block) => {{
-        match $b_ratio {
-            1 => {
-                const $b_ratio_const: usize = 1;
-                dispatch_projected_ratio_a!($a_ratio, |$a_ratio_const| $body)
-            }
-            2 => {
-                const $b_ratio_const: usize = 2;
-                dispatch_projected_ratio_a!($a_ratio, |$a_ratio_const| $body)
-            }
-            4 => {
-                const $b_ratio_const: usize = 4;
-                dispatch_projected_ratio_a!($a_ratio, |$a_ratio_const| $body)
-            }
-            8 => {
-                const $b_ratio_const: usize = 8;
-                dispatch_projected_ratio_a!($a_ratio, |$a_ratio_const| $body)
-            }
-            16 => {
-                const $b_ratio_const: usize = 16;
-                dispatch_projected_ratio_a!($a_ratio, |$a_ratio_const| $body)
-            }
-            _ => None,
-        }
-    }};
-}
-
-macro_rules! dispatch_projected_ratios {
-    ($d_ratio:expr, $b_ratio:expr, $a_ratio:expr, |$d_ratio_const:ident, $b_ratio_const:ident, $a_ratio_const:ident| $body:block) => {{
-        match $d_ratio {
-            1 => {
-                const $d_ratio_const: usize = 1;
-                dispatch_projected_ratio_b!($b_ratio, $a_ratio, |$b_ratio_const, $a_ratio_const| {
-                    $body
-                })
-            }
-            2 => {
-                const $d_ratio_const: usize = 2;
-                dispatch_projected_ratio_b!($b_ratio, $a_ratio, |$b_ratio_const, $a_ratio_const| {
-                    $body
-                })
-            }
-            4 => {
-                const $d_ratio_const: usize = 4;
-                dispatch_projected_ratio_b!($b_ratio, $a_ratio, |$b_ratio_const, $a_ratio_const| {
-                    $body
-                })
-            }
-            8 => {
-                const $d_ratio_const: usize = 8;
-                dispatch_projected_ratio_b!($b_ratio, $a_ratio, |$b_ratio_const, $a_ratio_const| {
-                    $body
-                })
-            }
-            16 => {
-                const $d_ratio_const: usize = 16;
-                dispatch_projected_ratio_b!($b_ratio, $a_ratio, |$b_ratio_const, $a_ratio_const| {
-                    $body
-                })
-            }
-            _ => None,
-        }
-    }};
-}
-
-pub(super) use dispatch_projected_ratio_a;
-pub(super) use dispatch_projected_ratio_b;
-pub(super) use dispatch_projected_ratios;
 
 impl<E: FieldCore> GroupSetupSegment<E> {
     #[inline(always)]
@@ -390,9 +229,6 @@ pub(super) fn base_ring_segment_inner_sum_typed<
     const HAS_D: bool,
     const HAS_B: bool,
     const HAS_A: bool,
-    const D_IDENTITY: bool,
-    const B_IDENTITY: bool,
-    const A_IDENTITY: bool,
 >(
     range: std::ops::Range<usize>,
     setup_flat: &[CyclotomicRing<F, D>],
@@ -412,85 +248,30 @@ where
     F: FieldCore,
     E: ExtField<F> + MulBaseUnreduced<F>,
 {
-    if range.len() >= PARALLEL_BASE_RING_SEGMENT_MIN_LEN {
-        return cfg_fold_reduce!(
-            range,
-            E::zero,
-            |mut acc, base_idx| {
-                let weight = base_ring_segment_weight_at::<
-                    E,
-                    HAS_D,
-                    HAS_B,
-                    HAS_A,
-                    D_IDENTITY,
-                    B_IDENTITY,
-                    A_IDENTITY,
-                >(
-                    base_idx,
-                    segment,
-                    e_eq,
-                    t_eq,
-                    z_eq,
-                    d_projection,
-                    b_projection,
-                    a_projection,
-                    d_weights,
-                    b_weights,
-                    a_row_weights,
-                );
-                if !weight.is_zero() {
-                    acc += eval_ring_at_pows_fast(&setup_flat[base_idx], base_pows) * weight;
-                }
-                acc
-            },
-            |lhs, rhs| lhs + rhs
-        );
-    }
-
-    // Keep the small-segment path inline. Routing each index through a shared
-    // helper costs the ordinary verifier scan, while the wide path above keeps
-    // the parallel shape needed by distributed profiles.
-    let mut acc = E::zero();
-    for base_idx in range {
-        let mut weight = E::zero();
-        if HAS_D {
-            weight += projected_role_weight_at::<E, D_IDENTITY>(
+    cfg_fold_reduce!(
+        range,
+        E::zero,
+        |mut acc, base_idx| {
+            let weight = base_ring_segment_weight_at::<E, HAS_D, HAS_B, HAS_A>(
                 base_idx,
-                segment.d_row,
-                segment.d_start_abs,
-                segment.d_weight,
+                segment,
                 e_eq,
-                d_projection,
-                d_weights,
-            );
-        }
-        if HAS_B {
-            weight += projected_role_weight_at::<E, B_IDENTITY>(
-                base_idx,
-                segment.b_row,
-                segment.b_start_abs,
-                segment.b_weight,
                 t_eq,
-                b_projection,
-                b_weights,
-            );
-        }
-        if HAS_A {
-            weight += projected_role_weight_at::<E, A_IDENTITY>(
-                base_idx,
-                segment.a_row,
-                segment.a_start_abs,
-                segment.a_row_weight,
                 z_eq,
+                d_projection,
+                b_projection,
                 a_projection,
+                d_weights,
+                b_weights,
                 a_row_weights,
             );
-        }
-        if !weight.is_zero() {
-            acc += eval_ring_at_pows_fast(&setup_flat[base_idx], base_pows) * weight;
-        }
-    }
-    acc
+            if !weight.is_zero() {
+                acc += eval_ring_at_pows_fast(&setup_flat[base_idx], base_pows) * weight;
+            }
+            acc
+        },
+        |lhs, rhs| lhs + rhs
+    )
 }
 
 #[inline(always)]
@@ -515,294 +296,24 @@ where
     F: FieldCore,
     E: ExtField<F> + MulBaseUnreduced<F>,
 {
-    if range.len() >= PARALLEL_BASE_RING_SEGMENT_MIN_LEN {
-        return cfg_fold_reduce!(
-            range,
-            E::zero,
-            |mut acc, setup_idx| {
-                let weight =
-                    segment.typed_weight_at::<HAS_D, HAS_B, HAS_A>(setup_idx, e_eq, t_eq, z_eq);
-                if !weight.is_zero() {
-                    acc += eval_ring_at_pows_fast(&setup_flat[setup_idx], alpha_pows) * weight;
-                }
-                acc
-            },
-            |lhs, rhs| lhs + rhs
-        );
-    }
-
-    let mut acc = E::zero();
-    for setup_idx in range {
-        let weight = segment.typed_weight_at::<HAS_D, HAS_B, HAS_A>(setup_idx, e_eq, t_eq, z_eq);
-        if !weight.is_zero() {
-            acc += eval_ring_at_pows_fast(&setup_flat[setup_idx], alpha_pows) * weight;
-        }
-    }
-    acc
+    cfg_fold_reduce!(
+        range,
+        E::zero,
+        |mut acc, setup_idx| {
+            let weight =
+                segment.typed_weight_at::<HAS_D, HAS_B, HAS_A>(setup_idx, e_eq, t_eq, z_eq);
+            if !weight.is_zero() {
+                acc += eval_ring_at_pows_fast(&setup_flat[setup_idx], alpha_pows) * weight;
+            }
+            acc
+        },
+        |lhs, rhs| lhs + rhs
+    )
 }
 
 #[inline(always)]
 #[allow(clippy::too_many_arguments)]
-pub(super) fn projected_base_ring_segment_inner_sum_typed<
-    F,
-    E,
-    const D: usize,
-    const HAS_D: bool,
-    const HAS_B: bool,
-    const HAS_A: bool,
-    const D_RATIO: usize,
-    const B_RATIO: usize,
-    const A_RATIO: usize,
->(
-    range: std::ops::Range<usize>,
-    setup_flat: &[CyclotomicRing<F, D>],
-    base_pows: &[E],
-    segment: &GroupSetupSegment<E>,
-    e_eq: &[E],
-    t_eq: &[E],
-    z_eq: &[E],
-    d_scales: &[E],
-    b_scales: &[E],
-    a_scales: &[E],
-) -> E
-where
-    F: FieldCore,
-    E: ExtField<F> + MulBaseUnreduced<F>,
-{
-    debug_assert_eq!(d_scales.len(), D_RATIO);
-    debug_assert_eq!(b_scales.len(), B_RATIO);
-    debug_assert_eq!(a_scales.len(), A_RATIO);
-    let period = D_RATIO.max(B_RATIO).max(A_RATIO);
-    debug_assert_ne!(period, 0);
-    let mut prefix_end = range.start;
-    while prefix_end < range.end && !prefix_end.is_multiple_of(period) {
-        prefix_end += 1;
-    }
-    let mut aligned_end = range.end - (range.end % period);
-    if aligned_end < prefix_end {
-        aligned_end = prefix_end;
-    }
-    let block_range = (prefix_end / period)..(aligned_end / period);
-
-    let mut edge_acc = E::zero();
-    for setup_idx in range.start..prefix_end {
-        edge_acc += projected_base_ring_segment_index_sum::<
-            F,
-            E,
-            D,
-            HAS_D,
-            HAS_B,
-            HAS_A,
-            D_RATIO,
-            B_RATIO,
-            A_RATIO,
-        >(
-            setup_idx, setup_flat, base_pows, segment, e_eq, t_eq, z_eq, d_scales, b_scales,
-            a_scales,
-        );
-    }
-    for setup_idx in aligned_end..range.end {
-        edge_acc += projected_base_ring_segment_index_sum::<
-            F,
-            E,
-            D,
-            HAS_D,
-            HAS_B,
-            HAS_A,
-            D_RATIO,
-            B_RATIO,
-            A_RATIO,
-        >(
-            setup_idx, setup_flat, base_pows, segment, e_eq, t_eq, z_eq, d_scales, b_scales,
-            a_scales,
-        );
-    }
-    if range.len() >= PARALLEL_BASE_RING_SEGMENT_MIN_LEN {
-        return edge_acc
-            + cfg_fold_reduce!(
-                block_range,
-                E::zero,
-                |mut acc, block| {
-                    acc += projected_base_ring_segment_block_sum::<
-                        F,
-                        E,
-                        D,
-                        HAS_D,
-                        HAS_B,
-                        HAS_A,
-                        D_RATIO,
-                        B_RATIO,
-                        A_RATIO,
-                    >(
-                        block * period,
-                        period,
-                        setup_flat,
-                        base_pows,
-                        segment,
-                        e_eq,
-                        t_eq,
-                        z_eq,
-                        d_scales,
-                        b_scales,
-                        a_scales,
-                    );
-                    acc
-                },
-                |lhs, rhs| lhs + rhs
-            );
-    }
-
-    let mut acc = edge_acc;
-    for block in block_range {
-        acc += projected_base_ring_segment_block_sum::<
-            F,
-            E,
-            D,
-            HAS_D,
-            HAS_B,
-            HAS_A,
-            D_RATIO,
-            B_RATIO,
-            A_RATIO,
-        >(
-            block * period,
-            period,
-            setup_flat,
-            base_pows,
-            segment,
-            e_eq,
-            t_eq,
-            z_eq,
-            d_scales,
-            b_scales,
-            a_scales,
-        );
-    }
-    acc
-}
-
-#[inline(always)]
-#[allow(clippy::too_many_arguments)]
-fn projected_base_ring_segment_index_sum<
-    F,
-    E,
-    const D: usize,
-    const HAS_D: bool,
-    const HAS_B: bool,
-    const HAS_A: bool,
-    const D_RATIO: usize,
-    const B_RATIO: usize,
-    const A_RATIO: usize,
->(
-    setup_idx: usize,
-    setup_flat: &[CyclotomicRing<F, D>],
-    base_pows: &[E],
-    segment: &GroupSetupSegment<E>,
-    e_eq: &[E],
-    t_eq: &[E],
-    z_eq: &[E],
-    d_scales: &[E],
-    b_scales: &[E],
-    a_scales: &[E],
-) -> E
-where
-    F: FieldCore,
-    E: ExtField<F> + MulBaseUnreduced<F>,
-{
-    let mut weight = E::zero();
-    if HAS_D {
-        let role_idx = setup_idx / D_RATIO;
-        weight +=
-            segment.d_weight * d_scales[setup_idx % D_RATIO] * e_eq[role_idx - segment.d_start_abs];
-    }
-    if HAS_B {
-        let role_idx = setup_idx / B_RATIO;
-        weight +=
-            segment.b_weight * b_scales[setup_idx % B_RATIO] * t_eq[role_idx - segment.b_start_abs];
-    }
-    if HAS_A {
-        let role_idx = setup_idx / A_RATIO;
-        weight += segment.a_row_weight
-            * a_scales[setup_idx % A_RATIO]
-            * z_eq[role_idx - segment.a_start_abs];
-    }
-    if weight.is_zero() {
-        E::zero()
-    } else {
-        eval_ring_at_pows_fast(&setup_flat[setup_idx], base_pows) * weight
-    }
-}
-
-#[inline(always)]
-#[allow(clippy::too_many_arguments)]
-fn projected_base_ring_segment_block_sum<
-    F,
-    E,
-    const D: usize,
-    const HAS_D: bool,
-    const HAS_B: bool,
-    const HAS_A: bool,
-    const D_RATIO: usize,
-    const B_RATIO: usize,
-    const A_RATIO: usize,
->(
-    block_start: usize,
-    period: usize,
-    setup_flat: &[CyclotomicRing<F, D>],
-    base_pows: &[E],
-    segment: &GroupSetupSegment<E>,
-    e_eq: &[E],
-    t_eq: &[E],
-    z_eq: &[E],
-    d_scales: &[E],
-    b_scales: &[E],
-    a_scales: &[E],
-) -> E
-where
-    F: FieldCore,
-    E: ExtField<F> + MulBaseUnreduced<F>,
-{
-    let d_role_base = block_start / D_RATIO;
-    let b_role_base = block_start / B_RATIO;
-    let a_role_base = block_start / A_RATIO;
-    let mut acc = E::zero();
-    for lane in 0..period {
-        let setup_idx = block_start + lane;
-        let mut weight = E::zero();
-        if HAS_D {
-            let role_idx = d_role_base + lane / D_RATIO;
-            weight +=
-                segment.d_weight * d_scales[lane % D_RATIO] * e_eq[role_idx - segment.d_start_abs];
-        }
-        if HAS_B {
-            let role_idx = b_role_base + lane / B_RATIO;
-            weight +=
-                segment.b_weight * b_scales[lane % B_RATIO] * t_eq[role_idx - segment.b_start_abs];
-        }
-        if HAS_A {
-            let role_idx = a_role_base + lane / A_RATIO;
-            weight += segment.a_row_weight
-                * a_scales[lane % A_RATIO]
-                * z_eq[role_idx - segment.a_start_abs];
-        }
-        if !weight.is_zero() {
-            acc += eval_ring_at_pows_fast(&setup_flat[setup_idx], base_pows) * weight;
-        }
-    }
-    acc
-}
-
-#[inline(always)]
-#[allow(clippy::too_many_arguments)]
-fn base_ring_segment_weight_at<
-    E,
-    const HAS_D: bool,
-    const HAS_B: bool,
-    const HAS_A: bool,
-    const D_IDENTITY: bool,
-    const B_IDENTITY: bool,
-    const A_IDENTITY: bool,
->(
+fn base_ring_segment_weight_at<E, const HAS_D: bool, const HAS_B: bool, const HAS_A: bool>(
     base_idx: usize,
     segment: &GroupSetupSegment<E>,
     e_eq: &[E],
@@ -820,7 +331,7 @@ where
 {
     let mut weight = E::zero();
     if HAS_D {
-        weight += projected_role_weight_at::<E, D_IDENTITY>(
+        weight += projected_role_weight_at(
             base_idx,
             segment.d_row,
             segment.d_start_abs,
@@ -831,7 +342,7 @@ where
         );
     }
     if HAS_B {
-        weight += projected_role_weight_at::<E, B_IDENTITY>(
+        weight += projected_role_weight_at(
             base_idx,
             segment.b_row,
             segment.b_start_abs,
@@ -842,7 +353,7 @@ where
         );
     }
     if HAS_A {
-        weight += projected_role_weight_at::<E, A_IDENTITY>(
+        weight += projected_role_weight_at(
             base_idx,
             segment.a_row,
             segment.a_start_abs,
@@ -856,7 +367,7 @@ where
 }
 
 #[inline(always)]
-fn projected_role_weight_at<E: FieldCore, const IDENTITY: bool>(
+fn projected_role_weight_at<E: FieldCore>(
     base_idx: usize,
     row: usize,
     start_abs: usize,
@@ -865,12 +376,13 @@ fn projected_role_weight_at<E: FieldCore, const IDENTITY: bool>(
     projection: &RoleProjection<E>,
     weights: &ProjectedRoleWeights<E>,
 ) -> E {
-    let role_idx = if IDENTITY {
+    let identity = projection.is_identity();
+    let role_idx = if identity {
         base_idx
     } else {
         base_idx >> projection.shift
     };
-    let weight = if IDENTITY {
+    let weight = if identity {
         row_weight
     } else {
         weights.get(row, base_idx, projection)
