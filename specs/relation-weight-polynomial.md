@@ -402,7 +402,7 @@ the relation term remains.
 Treat the relation matrix as having this logical row-family order:
 
 ```text
-EvaluationTrace | FoldEvaluation | FoldConsistency | OuterConsistency | OpeningConsistency
+FoldEvaluation | FoldConsistency | OuterConsistency | OpeningConsistency | EvaluationTrace
 ```
 
 The current uncompressed implementation has no compression-chain families, so
@@ -412,14 +412,31 @@ extra Stage-2 term. It is field-level, contributes only to the `e_hat` columns,
 has right-hand side equal to the scalar opening claim, and consumes no quotient
 witness.
 
-The canonical logical row order starts with `EvaluationTrace`. The quotient
-witness order is separate because `EvaluationTrace` has no quotient block. For
-uniform schedules, the quotient-bearing families keep the existing row-major
-byte order:
+`EvaluationTrace` is last because it is a field inner product, not a
+ring-switch / quotient-bearing row. Putting it last keeps ring-family
+`eq_tau1` indices identical to today's physical layout (`FoldEvaluation` at
+row 0, A at `a_start`, B at `b_start`, D at `d_start`) and makes quotient
+witness offsets `row_start * digit_depth` with no stagger.
+
+The quotient witness order is exactly the quotient-bearing prefix:
 
 ```text
 FoldEvaluation | FoldConsistency | OuterConsistency | OpeningConsistency
 ```
+
+For multi-group roots the same rule applies with per-group FoldConsistency /
+OuterConsistency interleaved in `root_group_order()`, then shared
+OpeningConsistency (when present), then one shared EvaluationTrace:
+
+```text
+FoldEvaluation
+| for g in root_group_order(): FoldConsistency_g | OuterConsistency_g
+| OpeningConsistency?
+| EvaluationTrace
+```
+
+Per-group FoldConsistency / OuterConsistency starts match
+`root_a_row_range` / `root_commitment_row_range` exactly (no +1 shift).
 
 The implementation must not expose the old "ring rows plus separate trace"
 shape. Any bridge from old physical row indices belongs inside the relation
@@ -467,15 +484,16 @@ Canonical API names:
 
 Use semantic row-family names in new APIs:
 
-- `EvaluationTrace`: the field-level row
-  `omega_Tr^T e_hat = v`. This replaces "trace side term" language.
 - `FoldEvaluation`: the row linking `z_hat` and `e_hat`; this is the current
-  single "consistency" row.
+  single "consistency" row (τ₁ index 0).
 - `FoldConsistency`: the A-role rows linking `z_hat` and `t_hat`.
 - `OuterConsistency`: the B-role rows linking `t_hat` to the outer commitment
   path.
 - `OpeningConsistency`: the D-role rows linking `e_hat` to the opening
   commitment path.
+- `EvaluationTrace`: the field-level opening row
+  `omega_Tr^T e_hat = v` (last τ₁ row). This replaces "trace side term"
+  language.
 
 Avoid using bare `A`, `B`, and `D` as relation-family names outside local
 matrix-role variables. They are useful role-matrix labels, but they do not say
@@ -491,11 +509,11 @@ new A/B/D-shaped holes through it.
 The current uncompressed families are:
 
 ```text
-EvaluationTrace | FoldEvaluation | FoldConsistency | OuterConsistency | OpeningConsistency
+FoldEvaluation | FoldConsistency | OuterConsistency | OpeningConsistency | EvaluationTrace
 ```
 
 When commitment compression lands, the extra rows are additional outer/opening
-consistency layers:
+consistency layers (still before `EvaluationTrace`):
 
 ```text
 OuterConsistency(layer)
@@ -854,7 +872,6 @@ quotient = Some(...)
 
 For the current uncompressed implementation, the logical row families are:
 
-- `EvaluationTrace`: evaluation/opening row, field-level, no quotient;
 - `FoldEvaluation`: current consistency row linking `z_hat` and `e_hat`, ring
   dimension `d_a`;
 - `FoldConsistency`: A-role rows linking `z_hat` and `t_hat`, ring dimension
@@ -862,7 +879,8 @@ For the current uncompressed implementation, the logical row families are:
 - `OuterConsistency { layer: Base }`: B-role rows linking `t_hat` to the outer
   commitment path, ring dimension `d_b`;
 - `OpeningConsistency { layer: Base }`: D-role rows linking `e_hat` to the
-  opening path, ring dimension `d_d` when present.
+  opening path, ring dimension `d_d` when present;
+- `EvaluationTrace`: evaluation/opening row, field-level, no quotient, last.
 
 When `d_a = d_b = d_d`, the emitted witness must be byte-identical to the
 current `r` tail. Tests must assert this.
@@ -1268,7 +1286,8 @@ implicit arithmetic assumption.
   flat witness segments, row-family embeddings, range policies, and fold/batch
   windows before mixed schedules are enabled.
 - `EvaluationTrace` is a real row family in `RelationRowLayout`, weighted by
-  `eq(tau1, EvaluationTrace)`.
+  `eq(tau1, EvaluationTrace)`, and is always the last τ₁ row (field IP; no
+  quotient block; no staggered quotient offsets).
 - Stage 2 has no trace-side claim, trace-side coefficient, or trace-side
   transcript scalar.
 - `WitnessLayout` exposes quotient-tail structure through the

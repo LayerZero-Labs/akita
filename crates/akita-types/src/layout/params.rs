@@ -761,7 +761,9 @@ impl LevelParams {
             .ok_or_else(Self::relation_matrix_row_overflow)
     }
 
-    fn root_group_count(&self) -> usize {
+    /// Number of commitment groups at a multi-group root (`precommitted + final`).
+    #[inline]
+    pub fn root_group_count(&self) -> usize {
         self.precommitted_groups.len() + 1
     }
 
