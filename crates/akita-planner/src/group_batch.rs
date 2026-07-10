@@ -3,9 +3,9 @@
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::AkitaError;
 use akita_types::sis::{
-    a_role_rank, compute_num_digits_full_field, decomposed_s_block_ring_count,
-    decomposed_t_ring_count, decomposed_w_ring_count, fold_witness_digit_plan, min_secure_rank,
-    num_digits_open, num_digits_s_commit, rounded_up_collision_inf_norm, AjtaiKeyParams,
+    compute_num_digits_full_field, decomposed_s_block_ring_count, decomposed_t_ring_count,
+    decomposed_w_ring_count, fold_witness_digit_plan, min_secure_rank, num_digits_open,
+    num_digits_s_commit, rounded_up_collision_inf_norm, rounded_up_role_a_inf_norm, AjtaiKeyParams,
     FoldChallengeNorms, FoldWitnessLinfCapConfig, FoldWitnessNorms, SisTableKey,
 };
 use akita_types::{
@@ -61,7 +61,7 @@ pub(crate) fn group_root_params_from_layout(
 
     let width_s = decomposed_s_block_ring_count(block_len, num_digits_commit)
         .ok_or_else(|| AkitaError::InvalidSetup("multi-group A width overflow".to_string()))?;
-    let (norm_s, min_n_a) = a_role_rank(
+    let norm_s = rounded_up_role_a_inf_norm(
         policy.min_sis_security_bits,
         family,
         d,
@@ -76,6 +76,16 @@ pub(crate) fn group_root_params_from_layout(
         width_s as u64,
     )
     .ok_or_else(|| AkitaError::InvalidSetup("no multi-group A-role norm".to_string()))?;
+    let min_n_a = min_secure_rank(
+        SisTableKey {
+            min_security_bits: policy.min_sis_security_bits,
+            family,
+            ring_dimension: d as u32,
+            coeff_linf_bound: norm_s,
+        },
+        width_s as u64,
+    )
+    .ok_or_else(|| AkitaError::InvalidSetup("no multi-group A-role rank".to_string()))?;
     if layout.n_a < min_n_a {
         return Err(AkitaError::InvalidSetup(
             "precommitted group A rank is below multi-group root requirement".to_string(),
@@ -396,7 +406,7 @@ fn multi_group_root_main_level_params_candidate(
     let Some(width_s) = decomposed_s_block_ring_count(block_len, num_digits_commit) else {
         return Ok(None);
     };
-    let Some((norm_s, n_a)) = a_role_rank(
+    let Some(norm_s) = rounded_up_role_a_inf_norm(
         policy.min_sis_security_bits,
         family,
         d,
@@ -408,6 +418,17 @@ fn multi_group_root_main_level_params_candidate(
         policy.ring_subfield_norm_bound,
         r_vars,
         main_num_polys,
+        width_s as u64,
+    ) else {
+        return Ok(None);
+    };
+    let Some(n_a) = min_secure_rank(
+        SisTableKey {
+            min_security_bits: policy.min_sis_security_bits,
+            family,
+            ring_dimension: d as u32,
+            coeff_linf_bound: norm_s,
+        },
         width_s as u64,
     ) else {
         return Ok(None);

@@ -54,7 +54,7 @@ pub fn fold_witness_representable_linf_bounds(
 /// `[-b/2, b/2 - 1]`; the max positive value is the geometric series
 /// `(b/2 - 1) · (b^n - 1) / (b - 1)`. When `b^n` overflows `u128` the result is
 /// a conservative lower bound (safe: it can only add a digit, never drop one).
-fn balanced_digit_max(log_basis: u32, num_digits: usize) -> u128 {
+pub(crate) fn balanced_digit_max(log_basis: u32, num_digits: usize) -> u128 {
     let base: u128 = 1u128 << log_basis;
     let max_digit = base / 2 - 1;
     let base_minus_1 = base - 1;

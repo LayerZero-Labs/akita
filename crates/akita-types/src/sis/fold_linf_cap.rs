@@ -222,7 +222,8 @@ fn checked_grind_miss(
         || grind_target_accept_num >= grind_target_accept_den
     {
         return Err(AkitaError::InvalidSetup(
-            "rademacher_proxy_variance_tensor_challenges: invalid grind target probability".to_string(),
+            "rademacher_proxy_variance_tensor_challenges: invalid grind target probability"
+                .to_string(),
         ));
     }
     Ok(grind_target_accept_den - grind_target_accept_num)
@@ -275,22 +276,18 @@ pub fn rademacher_proxy_variance(
     cap_config: &FoldWitnessLinfCapConfig,
 ) -> Result<u128, AkitaError> {
     let num_blocks = 1usize.checked_shl(r_vars as u32).ok_or_else(|| {
-        AkitaError::InvalidSetup(
-            "rademacher_proxy_variance: r_vars too large".to_string(),
-        )
+        AkitaError::InvalidSetup("rademacher_proxy_variance: r_vars too large".to_string())
     })?;
     let num_fold_blocks = (num_claims as u128)
         .checked_mul(num_blocks as u128)
         .ok_or_else(|| {
             AkitaError::InvalidSetup(
-                "rademacher_proxy_variance: num_fold_blocks overflows u128"
-                    .to_string(),
+                "rademacher_proxy_variance: num_fold_blocks overflows u128".to_string(),
             )
         })?;
     match cap_config.policy {
         FoldWitnessLinfCapPolicy::WorstCaseBetaOnly => Err(AkitaError::InvalidSetup(
-            "rademacher_proxy_variance: deterministic policy has no tail bound"
-                .to_string(),
+            "rademacher_proxy_variance: deterministic policy has no tail bound".to_string(),
         )),
         FoldWitnessLinfCapPolicy::TailBoundWithGrind => rademacher_proxy_variance_flat_challenges(
             num_fold_blocks,

@@ -10,9 +10,12 @@
 //! ```ignore
 //! let width_s = decomposition_digits::decomposed_s_block_ring_count(
 //!     block_len, decomposition_digits::num_digits_s_commit(decomp, is_root))?;
-//! let (norm_s, n_a) = norm_bound::a_role_rank(
-//!     family, d, decomp, &stage1, shape, is_root, k, nu, r_vars, num_claims, width_s as u64)?;
-//! let a_key   = AjtaiKeyParams::try_new(family, n_a, width_s, norm_s, d)?;
+//! let norm_s = norm_bound::rounded_up_role_a_inf_norm(
+//!     bits, family, d, decomp, &stage1, shape, is_root, k, nu, r_vars, num_claims, width_s as u64)?;
+//! let n_a = ajtai_key::min_secure_rank(
+//!     SisTableKey { min_security_bits: bits, family, ring_dimension: d as u32, coeff_linf_bound: norm_s },
+//!     width_s as u64)?;
+//! let a_key   = AjtaiKeyParams::try_new(bits, family, n_a, width_s, norm_s, d)?;
 //! ```
 //!
 //! Layout/search orchestration (`optimal_m_r_split`, the `*_layout_from_params`
@@ -38,12 +41,11 @@ pub use decomposition_digits::{
 };
 pub use fold_witness_grind::{FoldWitnessGrindContract, FOLD_GRIND_PROBE_ORDER_ABSORB};
 pub use norm_bound::{
-    a_role_rank, fold_challenge_norms, fold_witness_digit_plan,
-    fold_witness_linf_cap_policy, rademacher_proxy_variance,
+    fold_witness_digit_plan, fold_witness_linf_cap_policy, rademacher_proxy_variance,
     rademacher_proxy_variance_flat_challenges, rademacher_proxy_variance_tensor_challenges,
     rounded_up_collision_inf_norm, rounded_up_role_a_inf_norm, weak_binding_inf_norm,
-    FoldChallengeNorms, FoldWitnessLinfCapConfig, FoldWitnessLinfCapPolicy,
-    FoldWitnessNorms, FOLD_LINF_GRIND_TARGET_ACCEPT_PROB_DEN,
-    FOLD_LINF_GRIND_TARGET_ACCEPT_PROB_NUM, FOLD_LINF_SNAP_MIN_TSTAR_RETAIN_DEN,
-    FOLD_LINF_SNAP_MIN_TSTAR_RETAIN_NUM, MAX_FOLD_GRIND_ATTEMPTS,
+    FoldChallengeNorms, FoldWitnessLinfCapConfig, FoldWitnessLinfCapPolicy, FoldWitnessNorms,
+    FOLD_LINF_GRIND_TARGET_ACCEPT_PROB_DEN, FOLD_LINF_GRIND_TARGET_ACCEPT_PROB_NUM,
+    FOLD_LINF_SNAP_MIN_TSTAR_RETAIN_DEN, FOLD_LINF_SNAP_MIN_TSTAR_RETAIN_NUM,
+    MAX_FOLD_GRIND_ATTEMPTS,
 };

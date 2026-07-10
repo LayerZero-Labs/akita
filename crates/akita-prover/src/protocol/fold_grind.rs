@@ -345,7 +345,7 @@ where
     // A-role fold dimension; per-role split attaches here (mixed-row spec).
     let ring_d = root_lp.role_dims().d_a();
     let binding = FoldLinfProtocolBinding::CURRENT;
-    let challenge = akita_types::sis::fold_challenge_norms(
+    let challenge = akita_types::sis::FoldChallengeNorms::new(
         &root_lp.fold_challenge_config,
         root_lp.fold_challenge_shape,
     );

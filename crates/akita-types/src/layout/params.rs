@@ -383,7 +383,7 @@ impl LevelParams {
             self.ring_dimension,
             self.inner_width(),
         )?;
-        let challenge = crate::sis::fold_challenge_norms(
+        let challenge = crate::sis::FoldChallengeNorms::new(
             &self.fold_challenge_config,
             self.fold_challenge_shape,
         );
@@ -429,7 +429,7 @@ impl LevelParams {
             num_claims,
             self.field_bits_for_cache(),
             self.log_basis,
-            crate::sis::fold_challenge_norms(
+            crate::sis::FoldChallengeNorms::new(
                 &self.fold_challenge_config,
                 self.fold_challenge_shape,
             ),
@@ -488,12 +488,7 @@ impl LevelParams {
         }
         let witness_linf = self.fold_witness_norms().infinity_norm();
         let witness_linf_sq = witness_linf.saturating_mul(witness_linf);
-        crate::sis::rademacher_proxy_variance(
-            self.r_vars,
-            num_claims,
-            witness_linf_sq,
-            &cap_config,
-        )
+        crate::sis::rademacher_proxy_variance(self.r_vars, num_claims, witness_linf_sq, &cap_config)
     }
 
     /// Gadget decomposition depth for the folded witness (δ_fold / τ).
@@ -517,7 +512,7 @@ impl LevelParams {
         {
             return Ok(self.cached_num_digits_fold_value);
         }
-        let challenge = crate::sis::fold_challenge_norms(
+        let challenge = crate::sis::FoldChallengeNorms::new(
             &self.fold_challenge_config,
             self.fold_challenge_shape,
         );
@@ -543,7 +538,7 @@ impl LevelParams {
         if num_claims == 1 {
             return Ok(params.num_digits_fold_one());
         }
-        let challenge = crate::sis::fold_challenge_norms(
+        let challenge = crate::sis::FoldChallengeNorms::new(
             &self.fold_challenge_config,
             self.fold_challenge_shape,
         );

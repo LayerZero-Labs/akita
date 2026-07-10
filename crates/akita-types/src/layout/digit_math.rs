@@ -10,9 +10,9 @@ use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::{CanonicalField, FieldCore};
 
 use crate::sis::{
-    a_role_rank, fold_witness_digit_plan, fold_witness_linf_cap_policy,
-    num_digits_for_bound, FoldChallengeNorms, FoldWitnessLinfCapConfig, FoldWitnessNorms,
-    SisModulusFamily,
+    fold_witness_digit_plan, fold_witness_linf_cap_policy, min_secure_rank, num_digits_for_bound,
+    rounded_up_role_a_inf_norm, FoldChallengeNorms, FoldWitnessLinfCapConfig, FoldWitnessNorms,
+    SisModulusFamily, SisTableKey,
 };
 use crate::DecompositionParams;
 
@@ -123,7 +123,7 @@ pub fn optimal_m_r_split(
         let Some(inner_width) = (block_len as usize).checked_mul(delta_commit as usize) else {
             continue;
         };
-        let Some((_a_collision, n_a)) = a_role_rank(
+        let Some(a_collision) = rounded_up_role_a_inf_norm(
             min_security_bits,
             sis_family,
             d as usize,
@@ -135,6 +135,17 @@ pub fn optimal_m_r_split(
             ring_subfield_norm_bound,
             r,
             num_claims,
+            inner_width as u64,
+        ) else {
+            continue;
+        };
+        let Some(n_a) = min_secure_rank(
+            SisTableKey {
+                min_security_bits,
+                family: sis_family,
+                ring_dimension: d,
+                coeff_linf_bound: a_collision,
+            },
             inner_width as u64,
         ) else {
             continue;
@@ -246,7 +257,7 @@ mod tests {
             count_pm2: D64_PRODUCTION_PM2_COUNT,
         };
         let fold_challenge =
-            crate::sis::fold_challenge_norms(&fold_challenge_config, TensorChallengeShape::Flat);
+            crate::sis::FoldChallengeNorms::new(&fold_challenge_config, TensorChallengeShape::Flat);
         let fold_witness = FoldWitnessNorms::new(3, 64, 64, true);
         let cap_config = FoldWitnessLinfCapConfig::for_fold_level_scoring(
             crate::sis::fold_witness_linf_cap_policy(

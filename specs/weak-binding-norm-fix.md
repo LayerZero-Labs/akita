@@ -78,13 +78,14 @@ This is implemented in
 (with fold-linf cap policy in
 [`fold_linf_cap.rs`](../crates/akita-types/src/sis/fold_linf_cap.rs)):
 `rounded_up_role_a_inf_norm` prices the
-`8·ω·balanced_digit_abs_max·ν` coefficient-`L∞` envelope, and
-`a_role_rank` builds the level's audited A-role rank from the same
-geometry. Both thread `num_claims`, and `ring_subfield_norm_bound` from each call
-site (the planner DP in `schedule_params.rs`, the runtime expansion, and the
-verifier-reachable layout derivation in `layout/sis_derivation.rs`). The A-role
-price and `δ_fold` now share `fold_witness_linf_digit_plan` /
-`num_digits_fold`, so the binding rank and the digit count cannot drift.
+`8·ω·balanced_digit_abs_max·ν` coefficient-`L∞` envelope into the audited
+A-role collision bucket; each call site then derives the level's secure A-role
+rank from that bucket via `min_secure_rank`. Both thread `num_claims` and
+`ring_subfield_norm_bound` from each call site (the planner DP in
+`schedule_params.rs`, the runtime expansion, and the verifier-reachable layout
+derivation in `layout/sis_derivation.rs`). The A-role price and `δ_fold` now
+share `fold_witness_digit_plan`, so the binding rank and the digit count cannot
+drift.
 
 ### Public-paper basis
 

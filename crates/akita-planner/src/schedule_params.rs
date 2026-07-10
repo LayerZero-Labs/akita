@@ -13,9 +13,9 @@ use akita_challenges::TensorChallengeShape;
 use akita_field::AkitaError;
 use akita_types::layout::digit_math::optimal_m_r_split;
 use akita_types::sis::{
-    a_role_rank, decomposed_s_block_ring_count, decomposed_t_ring_count,
-    decomposed_w_ring_count, min_secure_rank, num_digits_open, num_digits_s_commit,
-    rounded_up_collision_inf_norm, AjtaiKeyParams, FoldWitnessLinfCapConfig, FoldWitnessNorms,
+    decomposed_s_block_ring_count, decomposed_t_ring_count, decomposed_w_ring_count,
+    min_secure_rank, num_digits_open, num_digits_s_commit, rounded_up_collision_inf_norm,
+    rounded_up_role_a_inf_norm, AjtaiKeyParams, FoldWitnessLinfCapConfig, FoldWitnessNorms,
     SisTableKey,
 };
 use akita_types::{
@@ -128,7 +128,7 @@ fn derive_candidate_level_params(
         let Some(width_s) = decomposed_s_block_ring_count(block_len, delta_commit) else {
             continue;
         };
-        let Some((norm_s, n_a)) = a_role_rank(
+        let Some(norm_s) = rounded_up_role_a_inf_norm(
             policy.min_sis_security_bits,
             family,
             d,
@@ -140,6 +140,17 @@ fn derive_candidate_level_params(
             policy.ring_subfield_norm_bound,
             r,
             1,
+            width_s as u64,
+        ) else {
+            continue;
+        };
+        let Some(n_a) = min_secure_rank(
+            SisTableKey {
+                min_security_bits: policy.min_sis_security_bits,
+                family,
+                ring_dimension: d as u32,
+                coeff_linf_bound: norm_s,
+            },
             width_s as u64,
         ) else {
             continue;
@@ -638,8 +649,10 @@ fn compute_root_direct_level_params(
     let (m_vars, r_vars) = if num_vars > alpha {
         // The `(m, r)` split is scored against the flat L1 mass (the root fold
         // shape disambiguates the committed table, not the split search).
-        let fold_challenge =
-            akita_types::sis::fold_challenge_norms(&ring_challenge_cfg, TensorChallengeShape::Flat);
+        let fold_challenge = akita_types::sis::FoldChallengeNorms::new(
+            &ring_challenge_cfg,
+            TensorChallengeShape::Flat,
+        );
         // One-hot root commits a sparse witness (`||s||_inf = 1`,
         // `nonzeros = ceil(D/K)`); dense roots use the balanced-digit norms.
         let is_onehot = decomp.log_commit_bound == 1;
@@ -678,7 +691,7 @@ fn compute_root_direct_level_params(
     let Some(width_s) = decomposed_s_block_ring_count(block_len, depth_commit) else {
         return Ok(None);
     };
-    let Some((norm_s, n_a)) = a_role_rank(
+    let Some(norm_s) = rounded_up_role_a_inf_norm(
         policy.min_sis_security_bits,
         sis_family,
         d,
@@ -690,6 +703,17 @@ fn compute_root_direct_level_params(
         policy.ring_subfield_norm_bound,
         r_vars,
         num_claims,
+        width_s as u64,
+    ) else {
+        return Ok(None);
+    };
+    let Some(n_a) = min_secure_rank(
+        SisTableKey {
+            min_security_bits: policy.min_sis_security_bits,
+            family: sis_family,
+            ring_dimension: d as u32,
+            coeff_linf_bound: norm_s,
+        },
         width_s as u64,
     ) else {
         return Ok(None);
@@ -907,7 +931,7 @@ fn find_schedule_inner(
             let Some(width_s) = decomposed_s_block_ring_count(block_len, num_digits_commit) else {
                 continue;
             };
-            let Some((norm_s, n_a)) = a_role_rank(
+            let Some(norm_s) = rounded_up_role_a_inf_norm(
                 policy.min_sis_security_bits,
                 family,
                 d,
@@ -919,6 +943,17 @@ fn find_schedule_inner(
                 policy.ring_subfield_norm_bound,
                 r_vars,
                 key.num_polynomials(),
+                width_s as u64,
+            ) else {
+                continue;
+            };
+            let Some(n_a) = min_secure_rank(
+                SisTableKey {
+                    min_security_bits: policy.min_sis_security_bits,
+                    family,
+                    ring_dimension: d as u32,
+                    coeff_linf_bound: norm_s,
+                },
                 width_s as u64,
             ) else {
                 continue;
