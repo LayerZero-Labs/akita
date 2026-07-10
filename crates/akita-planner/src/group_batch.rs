@@ -422,25 +422,10 @@ fn multi_group_root_main_level_params_candidate(
     ) else {
         return Ok(None);
     };
-    let Some(n_a) = min_secure_rank(
-        SisTableKey {
-            min_security_bits: policy.min_sis_security_bits,
-            family,
-            ring_dimension: d as u32,
-            coeff_linf_bound: norm_s,
-        },
-        width_s as u64,
-    ) else {
+    let Ok(a_key) = AjtaiKeyParams::try_new_with_min_rank(sis_key(policy, norm_s), width_s) else {
         return Ok(None);
     };
-    let a_key = AjtaiKeyParams::try_new(
-        policy.min_sis_security_bits,
-        family,
-        n_a,
-        width_s,
-        norm_s,
-        d,
-    )?;
+    let n_a = a_key.row_len();
 
     let Some(norm_t) =
         rounded_up_collision_inf_norm(policy.min_sis_security_bits, family, d, log_basis)
@@ -451,17 +436,9 @@ fn multi_group_root_main_level_params_candidate(
     else {
         return Ok(None);
     };
-    let Some(n_b) = min_secure_rank(sis_key(policy, norm_t), width_t as u64) else {
+    let Ok(b_key) = AjtaiKeyParams::try_new_with_min_rank(sis_key(policy, norm_t), width_t) else {
         return Ok(None);
     };
-    let b_key = AjtaiKeyParams::try_new(
-        policy.min_sis_security_bits,
-        family,
-        n_b,
-        width_t,
-        norm_t,
-        d,
-    )?;
 
     let Some(main_d_width) = decomposed_w_ring_count(num_digits_open, num_blocks, main_num_polys)
     else {
@@ -475,17 +452,9 @@ fn multi_group_root_main_level_params_candidate(
     else {
         return Ok(None);
     };
-    let Some(n_d) = min_secure_rank(sis_key(policy, norm_w), d_width as u64) else {
+    let Ok(d_key) = AjtaiKeyParams::try_new_with_min_rank(sis_key(policy, norm_w), d_width) else {
         return Ok(None);
     };
-    let d_key = AjtaiKeyParams::try_new(
-        policy.min_sis_security_bits,
-        family,
-        n_d,
-        d_width,
-        norm_w,
-        d,
-    )?;
 
     let onehot_chunk_size = if decomp.log_commit_bound == 1 {
         policy.onehot_chunk_size

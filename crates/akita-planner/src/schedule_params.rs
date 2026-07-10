@@ -14,7 +14,7 @@ use akita_field::AkitaError;
 use akita_types::layout::digit_math::optimal_m_r_split;
 use akita_types::sis::{
     decomposed_s_block_ring_count, decomposed_t_ring_count, decomposed_w_ring_count,
-    min_secure_rank, num_digits_open, num_digits_s_commit, rounded_up_collision_inf_norm,
+    num_digits_open, num_digits_s_commit, rounded_up_collision_inf_norm,
     rounded_up_role_a_inf_norm, AjtaiKeyParams, FoldWitnessLinfCapConfig, FoldWitnessNorms,
     SisTableKey,
 };
@@ -144,25 +144,11 @@ fn derive_candidate_level_params(
         ) else {
             continue;
         };
-        let Some(n_a) = min_secure_rank(
-            SisTableKey {
-                min_security_bits: policy.min_sis_security_bits,
-                family,
-                ring_dimension: d as u32,
-                coeff_linf_bound: norm_s,
-            },
-            width_s as u64,
-        ) else {
+        let Ok(a_key) = AjtaiKeyParams::try_new_with_min_rank(sis_key(policy, norm_s), width_s)
+        else {
             continue;
         };
-        let a_key = AjtaiKeyParams::try_new(
-            policy.min_sis_security_bits,
-            family,
-            n_a,
-            width_s,
-            norm_s,
-            d,
-        )?;
+        let n_a = a_key.row_len();
         let Some(norm_t) =
             rounded_up_collision_inf_norm(policy.min_sis_security_bits, family, d, log_basis)
         else {
@@ -171,17 +157,10 @@ fn derive_candidate_level_params(
         let Some(width_t) = decomposed_t_ring_count(n_a, delta_open, num_blocks, 1) else {
             continue;
         };
-        let Some(n_b) = min_secure_rank(sis_key(policy, norm_t), width_t as u64) else {
+        let Ok(b_key) = AjtaiKeyParams::try_new_with_min_rank(sis_key(policy, norm_t), width_t)
+        else {
             continue;
         };
-        let b_key = AjtaiKeyParams::try_new(
-            policy.min_sis_security_bits,
-            family,
-            n_b,
-            width_t,
-            norm_t,
-            d,
-        )?;
         let Some(norm_w) =
             rounded_up_collision_inf_norm(policy.min_sis_security_bits, family, d, log_basis)
         else {
@@ -190,17 +169,10 @@ fn derive_candidate_level_params(
         let Some(width_w) = decomposed_w_ring_count(delta_open, num_blocks, 1) else {
             continue;
         };
-        let Some(n_d) = min_secure_rank(sis_key(policy, norm_w), width_w as u64) else {
+        let Ok(d_key) = AjtaiKeyParams::try_new_with_min_rank(sis_key(policy, norm_w), width_w)
+        else {
             continue;
         };
-        let d_key = AjtaiKeyParams::try_new(
-            policy.min_sis_security_bits,
-            family,
-            n_d,
-            width_w,
-            norm_w,
-            d,
-        )?;
 
         let Ok(mut candidate_params) = LevelParams {
             ring_dimension: policy.ring_dimension,
@@ -707,25 +679,10 @@ fn compute_root_direct_level_params(
     ) else {
         return Ok(None);
     };
-    let Some(n_a) = min_secure_rank(
-        SisTableKey {
-            min_security_bits: policy.min_sis_security_bits,
-            family: sis_family,
-            ring_dimension: d as u32,
-            coeff_linf_bound: norm_s,
-        },
-        width_s as u64,
-    ) else {
+    let Ok(a_key) = AjtaiKeyParams::try_new_with_min_rank(sis_key(policy, norm_s), width_s) else {
         return Ok(None);
     };
-    let a_key = AjtaiKeyParams::try_new(
-        policy.min_sis_security_bits,
-        sis_family,
-        n_a,
-        width_s,
-        norm_s,
-        d,
-    )?;
+    let n_a = a_key.row_len();
     let Some(norm_t) =
         rounded_up_collision_inf_norm(policy.min_sis_security_bits, sis_family, d, log_basis)
     else {
@@ -734,17 +691,9 @@ fn compute_root_direct_level_params(
     let Some(width_t) = decomposed_t_ring_count(n_a, depth_open, num_blocks, num_claims) else {
         return Ok(None);
     };
-    let Some(n_b) = min_secure_rank(sis_key(policy, norm_t), width_t as u64) else {
+    let Ok(b_key) = AjtaiKeyParams::try_new_with_min_rank(sis_key(policy, norm_t), width_t) else {
         return Ok(None);
     };
-    let b_key = AjtaiKeyParams::try_new(
-        policy.min_sis_security_bits,
-        sis_family,
-        n_b,
-        width_t,
-        norm_t,
-        d,
-    )?;
     let Some(norm_w) =
         rounded_up_collision_inf_norm(policy.min_sis_security_bits, sis_family, d, log_basis)
     else {
@@ -753,17 +702,9 @@ fn compute_root_direct_level_params(
     let Some(width_w) = decomposed_w_ring_count(depth_open, num_blocks, num_claims) else {
         return Ok(None);
     };
-    let Some(n_d) = min_secure_rank(sis_key(policy, norm_w), width_w as u64) else {
+    let Ok(d_key) = AjtaiKeyParams::try_new_with_min_rank(sis_key(policy, norm_w), width_w) else {
         return Ok(None);
     };
-    let d_key = AjtaiKeyParams::try_new(
-        policy.min_sis_security_bits,
-        sis_family,
-        n_d,
-        width_w,
-        norm_w,
-        d,
-    )?;
 
     // A one-hot root (`log_commit_bound == 1`) commits a sparse witness; record
     // its chunk size so `num_digits_fold` and the binding norm size the folded
@@ -947,25 +888,11 @@ fn find_schedule_inner(
             ) else {
                 continue;
             };
-            let Some(n_a) = min_secure_rank(
-                SisTableKey {
-                    min_security_bits: policy.min_sis_security_bits,
-                    family,
-                    ring_dimension: d as u32,
-                    coeff_linf_bound: norm_s,
-                },
-                width_s as u64,
-            ) else {
+            let Ok(a_key) = AjtaiKeyParams::try_new_with_min_rank(sis_key(policy, norm_s), width_s)
+            else {
                 continue;
             };
-            let a_key = AjtaiKeyParams::try_new(
-                policy.min_sis_security_bits,
-                family,
-                n_a,
-                width_s,
-                norm_s,
-                d,
-            )?;
+            let n_a = a_key.row_len();
             let Some(norm_t) = rounded_up_collision_inf_norm(
                 policy.min_sis_security_bits,
                 family,
@@ -979,17 +906,10 @@ fn find_schedule_inner(
             else {
                 continue;
             };
-            let Some(n_b) = min_secure_rank(sis_key(policy, norm_t), width_t as u64) else {
+            let Ok(b_key) = AjtaiKeyParams::try_new_with_min_rank(sis_key(policy, norm_t), width_t)
+            else {
                 continue;
             };
-            let b_key = AjtaiKeyParams::try_new(
-                policy.min_sis_security_bits,
-                family,
-                n_b,
-                width_t,
-                norm_t,
-                d,
-            )?;
             let Some(norm_w) = rounded_up_collision_inf_norm(
                 policy.min_sis_security_bits,
                 family,
@@ -1003,17 +923,10 @@ fn find_schedule_inner(
             else {
                 continue;
             };
-            let Some(n_d) = min_secure_rank(sis_key(policy, norm_w), width_w as u64) else {
+            let Ok(d_key) = AjtaiKeyParams::try_new_with_min_rank(sis_key(policy, norm_w), width_w)
+            else {
                 continue;
             };
-            let d_key = AjtaiKeyParams::try_new(
-                policy.min_sis_security_bits,
-                family,
-                n_d,
-                width_w,
-                norm_w,
-                d,
-            )?;
 
             let onehot_chunk_size = if policy.decomposition.log_commit_bound == 1 {
                 policy.onehot_chunk_size
