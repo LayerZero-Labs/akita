@@ -711,12 +711,12 @@ where
     let stage1_replay = verify_stage1::<F, E, T>(prepared.stage1, &rs, transcript)?;
     // EvaluationTrace is the last relation row: weight openings by eq(row_index, last), not γ².
     // Terminal folds no longer squeeze an extra CHALLENGE_SUMCHECK_BATCH for trace_gamma.
-    let row_layout = RelationRowLayout::for_level(
-        prepared.lp,
+    let opening_batch = relation_instance.opening_batch();
+    let evaluation_trace_row = prepared.lp.relation_matrix_row_count_for(
+        opening_batch.num_groups(),
         relation_instance.relation_matrix_row_layout(),
-        relation_instance.opening_batch(),
     )?;
-    let evaluation_trace_weight = evaluation_trace_row_weight(row_layout, &rs.tau1)?;
+    let evaluation_trace_weight = evaluation_trace_row_weight(evaluation_trace_row, &rs.tau1)?;
     ensure_trace_stage2_supported(<E as ExtField<F>>::EXT_DEGREE)?;
     let trace_wire = if prepared.trace_prepared_points.is_none() {
         None

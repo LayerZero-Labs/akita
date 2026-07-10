@@ -12,7 +12,6 @@ pub mod flat_matrix;
 pub mod opening_point;
 pub mod params;
 pub mod proof_size;
-pub mod relation_rows;
 pub mod ring_dims;
 
 pub use digit_math::gadget_row_scalars;
@@ -32,7 +31,6 @@ pub use proof_size::{
     padded_boolean_opening_vars, planned_next_w_len, planned_w_ring_element_count,
     proof_ring_vec_bytes, sumcheck_rounds,
 };
-pub use relation_rows::RelationRowLayout;
 pub use ring_dims::{
     validate_role_dims, validate_schedule_ring_dims, CommitmentRingDims, RingRole, MAX_FOLD_LEVELS,
     MIN_A_ROLE_FOLD_CHALLENGE_RING_D, SUPPORTED_CHALLENGE_RING_DIMS, SUPPORTED_RING_DIMS,

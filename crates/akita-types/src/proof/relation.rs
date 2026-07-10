@@ -2,7 +2,7 @@
 
 use crate::dispatch_for_field;
 use crate::layout::CommitmentRingDims;
-use crate::layout::{LevelParams, RelationMatrixRowLayout, RelationRowLayout};
+use crate::layout::{LevelParams, RelationMatrixRowLayout};
 use crate::opening_claims::OpeningClaimsLayout;
 use crate::proof::RingVec;
 use akita_algebra::eq_poly::EqPolynomial;
@@ -467,16 +467,15 @@ where
 /// `relation_claim + weight * trace_eval_target` (and reuse `weight` for
 /// Stage-2 `TraceClaim::trace_coeff`).
 pub fn evaluation_trace_row_weight<E: FieldCore>(
-    row_layout: RelationRowLayout,
+    evaluation_trace_row: usize,
     tau1: &[E],
 ) -> Result<E, AkitaError> {
     let eq_tau1 = EqPolynomial::evals(tau1)?;
-    let row = row_layout.evaluation_trace_row();
     eq_tau1
-        .get(row)
+        .get(evaluation_trace_row)
         .copied()
         .ok_or_else(|| AkitaError::InvalidSize {
-            expected: row + 1,
+            expected: evaluation_trace_row + 1,
             actual: eq_tau1.len(),
         })
 }
@@ -627,12 +626,11 @@ mod tests {
 
     #[test]
     fn evaluation_trace_row_weight_uses_last_row() {
-        let row_layout = RelationRowLayout { quotient_rows: 3 };
         // total_row_count = 4 → 2 row-index vars; eq table length 4.
         let tau1 = [F::from_u64(2), F::from_u64(3)];
         let eq = EqPolynomial::evals(&tau1).unwrap();
         assert_eq!(eq.len(), 4);
-        let weight = evaluation_trace_row_weight(row_layout, &tau1).unwrap();
+        let weight = evaluation_trace_row_weight(3, &tau1).unwrap();
         assert_eq!(weight, eq[3]);
         assert_ne!(weight, eq[0]);
     }
@@ -668,7 +666,6 @@ mod tests {
         const N_A: usize = 1;
         let layout = RelationRhsLayout::uniform(1, N_A, 1, 0, 1);
         let quotient_rows = relation_rhs_row_count(&layout);
-        let row_layout = RelationRowLayout { quotient_rows };
         let trace_target = E::from_u64(19);
         let base = relation_claim_from_layout_extension::<F, E>(
             dims,
@@ -679,7 +676,7 @@ mod tests {
             &RingVec::from_ring_elems(&u),
         )
         .unwrap();
-        let weight = evaluation_trace_row_weight(row_layout, &lifted_tau1).unwrap();
+        let weight = evaluation_trace_row_weight(quotient_rows, &lifted_tau1).unwrap();
         let fused = base + weight * trace_target;
         assert_eq!(fused, base + weight * trace_target);
         assert_eq!(

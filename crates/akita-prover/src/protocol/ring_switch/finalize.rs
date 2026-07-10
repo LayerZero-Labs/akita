@@ -60,10 +60,9 @@ where
             })?
             .trailing_zeros() as usize;
         let ring_bits = D.trailing_zeros() as usize;
-        let row_layout =
-            RelationRowLayout::for_level(lp, relation_matrix_row_layout, opening_batch)?;
         let num_sc_vars = col_bits + ring_bits;
-        let num_i = row_layout.row_index_num_vars()?;
+        let num_i =
+            lp.relation_row_index_num_vars_for_layout(relation_matrix_row_layout, opening_batch)?;
 
         let tau0: Vec<E> = match relation_matrix_row_layout {
             RelationMatrixRowLayout::WithDBlock => (0..num_sc_vars)

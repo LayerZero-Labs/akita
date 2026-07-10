@@ -1071,6 +1071,47 @@ impl LevelParams {
             .ok_or_else(Self::relation_matrix_row_overflow)
     }
 
+    /// Logical index of the shared EvaluationTrace row (last row).
+    ///
+    /// Quotient-bearing rows keep today's physical relation-matrix indices, so
+    /// the appended EvaluationTrace row sits exactly at the quotient row count.
+    fn evaluation_trace_row_for_layout(
+        &self,
+        layout: RelationMatrixRowLayout,
+        opening_batch: &OpeningClaimsLayout,
+    ) -> Result<usize, AkitaError> {
+        opening_batch.check()?;
+        if self.has_precommitted_groups() {
+            self.reject_multi_group_multi_chunk("LevelParams::evaluation_trace_row_for_layout")?;
+            if opening_batch.num_groups() != self.root_group_count() {
+                return Err(AkitaError::InvalidSetup(
+                    "multi-group relation rows require opening_batch.num_groups() == root_group_count()"
+                        .to_string(),
+                ));
+            }
+        } else {
+            self.require_scalar_level("LevelParams::evaluation_trace_row_for_layout")?;
+        }
+        self.relation_matrix_row_count_for(opening_batch.num_groups(), layout)
+    }
+
+    /// Boolean variables needed to index the padded row space
+    /// (`next_power_of_two(evaluation_trace_row + 1).trailing_zeros()`).
+    pub fn relation_row_index_num_vars_for_layout(
+        &self,
+        layout: RelationMatrixRowLayout,
+        opening_batch: &OpeningClaimsLayout,
+    ) -> Result<usize, AkitaError> {
+        let total_rows = self
+            .evaluation_trace_row_for_layout(layout, opening_batch)?
+            .checked_add(1)
+            .ok_or_else(|| AkitaError::InvalidSetup("relation-row count overflow".to_string()))?;
+        let padded = total_rows.checked_next_power_of_two().ok_or_else(|| {
+            AkitaError::InvalidSetup("relation-row index width overflow".to_string())
+        })?;
+        Ok(padded.trailing_zeros() as usize)
+    }
+
     /// Fill in the layout-derived fields from explicit decomposition parameters.
     ///
     /// Takes a params-only `LevelParams` (with zeroed layout fields) and
@@ -1262,6 +1303,7 @@ fn append_tensor_challenge_shape_descriptor_bytes(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::schedule::PrecommittedGroupParams;
     use crate::PolynomialGroupLayout;
 
     fn sample_params_only() -> LevelParams {
@@ -1357,6 +1399,71 @@ mod tests {
             lp.relation_matrix_row_count_for(2, RelationMatrixRowLayout::WithoutDBlock)
                 .unwrap(),
             1 + 4 * 2 + 2
+        );
+    }
+
+    #[test]
+    fn evaluation_trace_row_is_last_after_quotient_rows() {
+        let lp = sample_params_only()
+            .with_layout(&sample_layout_lp(), 128)
+            .unwrap();
+        let batch = OpeningClaimsLayout::new(4, 1).expect("batch");
+        let quotient = lp
+            .relation_matrix_row_count_for(1, RelationMatrixRowLayout::WithDBlock)
+            .unwrap();
+
+        assert_eq!(
+            lp.evaluation_trace_row_for_layout(RelationMatrixRowLayout::WithDBlock, &batch)
+                .expect("row"),
+            quotient
+        );
+        assert_eq!(
+            lp.relation_row_index_num_vars_for_layout(RelationMatrixRowLayout::WithDBlock, &batch)
+                .unwrap(),
+            (quotient + 1).next_power_of_two().trailing_zeros() as usize
+        );
+    }
+
+    #[test]
+    fn multi_group_evaluation_trace_row_matches_legacy_quotient_count() {
+        let lp = sample_params_only()
+            .with_layout(&sample_layout_lp(), 128)
+            .unwrap();
+        let precommit_lp = sample_params_only()
+            .with_layout(&sample_layout_lp(), 128)
+            .unwrap();
+        let precommit = PrecommittedLevelParams {
+            layout: PrecommittedGroupParams::from_params(
+                PolynomialGroupLayout::new(4, 1),
+                &precommit_lp,
+            ),
+            a_key: precommit_lp.a_key.clone(),
+            b_key: AjtaiKeyParams::new_unchecked(
+                precommit_lp.b_key.min_security_bits(),
+                precommit_lp.b_key.sis_family(),
+                5,
+                precommit_lp.b_key.col_len(),
+                precommit_lp.b_key.coeff_linf_bound(),
+                precommit_lp.ring_dimension,
+            ),
+            num_blocks: precommit_lp.num_blocks,
+            block_len: precommit_lp.block_len,
+            num_digits_commit: precommit_lp.num_digits_commit,
+            num_digits_open: precommit_lp.num_digits_open,
+            num_digits_fold_one: precommit_lp.num_digits_fold_one,
+        };
+        let mut grouped = lp;
+        grouped.precommitted_groups = vec![precommit];
+        let batch = OpeningClaimsLayout::from_group_sizes(4, &[1, 1]).expect("batch");
+        let quotient = grouped
+            .relation_matrix_row_count_for(2, RelationMatrixRowLayout::WithDBlock)
+            .unwrap();
+
+        assert_eq!(
+            grouped
+                .evaluation_trace_row_for_layout(RelationMatrixRowLayout::WithDBlock, &batch)
+                .expect("row"),
+            quotient
         );
     }
 

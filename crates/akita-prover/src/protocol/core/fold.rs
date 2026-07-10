@@ -584,12 +584,12 @@ where
         sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_SUMCHECK_BATCH)
     };
     // EvaluationTrace is the last relation row: weight openings by eq(row_index, last), not γ².
-    let row_layout = RelationRowLayout::for_level(
-        lp,
+    let opening_batch = prepared_fold.instance.opening_batch();
+    let evaluation_trace_row = lp.relation_matrix_row_count_for(
+        opening_batch.num_groups(),
         prepared_fold.instance.relation_matrix_row_layout(),
-        prepared_fold.instance.opening_batch(),
     )?;
-    let evaluation_trace_weight = evaluation_trace_row_weight(row_layout, &rs.tau1)?;
+    let evaluation_trace_weight = evaluation_trace_row_weight(evaluation_trace_row, &rs.tau1)?;
     let trace_opening_claim = evaluation_trace_weight * prepared_fold.trace_eval_target;
     ensure_trace_stage2_supported(E::EXT_DEGREE)?;
     let trace_compact = if let Some(row_coefficients) = prepared_fold.row_coefficients.as_ref() {

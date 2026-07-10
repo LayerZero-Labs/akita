@@ -38,7 +38,7 @@ use akita_types::{
     AkitaStage1Proof, AkitaStage2Proof, AkitaVerifierSetup, BasisMode, BlockOrder,
     CleartextWitnessProof, ExecutionSchedule, ExtensionOpeningReductionProof,
     FoldLinfProtocolBinding, FpExtEncoding, LevelParams, OpeningClaims, OpeningClaimsLayout,
-    PreparedOpeningPoint, RelationMatrixRowLayout, RelationOnlyStage2Inputs, RelationRowLayout,
+    PreparedOpeningPoint, RelationMatrixRowLayout, RelationOnlyStage2Inputs,
     RingMultiplierOpeningPoint, RingOpeningPoint, RingRelationInstance, RingVec, Schedule,
     SetupContributionMode, SetupSumcheckProof, TerminalWitnessSegmentLayout,
     TerminalWitnessTranscriptParts, TraceClaim,
