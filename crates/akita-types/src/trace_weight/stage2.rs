@@ -31,6 +31,13 @@ pub enum TracePublicWeights<F: FieldCore, E: FieldCore, const D: usize> {
     },
 }
 
+/// One closed-form trace batch evaluated with its own column geometry.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TraceTermBatch<F: FieldCore, E: FieldCore, const D: usize> {
+    pub layout: TraceWeightLayout,
+    pub terms: Vec<TraceTerm<F, E, D>>,
+}
+
 /// Verifier-side trace claim inputs for the stage-2 sumcheck final check.
 ///
 /// The verifier reconstructs the fused trace term in its short closed form
@@ -49,12 +56,14 @@ pub struct TraceClaim<F: FieldCore, E: FieldCore, const D: usize> {
     /// sampled after the next-level witness is bound to the transcript.
     pub trace_coeff: E,
     pub trace_opening_claim: E,
-    /// Dense multi-group-root trace-weight table (`col ⊗ ring`, `output_scale = 1`).
-    /// When present the stage-2 verifier evaluates its multilinear extension at
-    /// the witness point instead of the closed-form [`Self::trace_terms`]. This
-    /// is the multi-group-root counterpart of the succinct per-claim terms: multi-group
-    /// roots decompose each group with per-group `num_blocks`/`num_digits_open`
-    /// and a group-major e-hat offset, which the closed form cannot express.
+    /// Optional closed-form batches with independent layouts. Multi-group roots
+    /// use one batch per group because each group has its own `num_blocks`,
+    /// digit depth, and e-hat offset inside the shared witness.
+    pub trace_term_batches: Vec<TraceTermBatch<F, E, D>>,
+    /// Dense trace-weight fallback (`col ⊗ ring`, `output_scale = 1`).
+    /// Kept for compatibility with callers that truly need a materialized trace
+    /// table; verifier hot paths should prefer `trace_terms` or
+    /// `trace_term_batches`.
     pub dense_evals: Option<Vec<E>>,
 }
 
@@ -467,16 +476,16 @@ where
             row_coefficients,
             claim_scales,
         )?,
+        trace_term_batches: Vec::new(),
         dense_evals: None,
     })
 }
 
-/// Build the multi-group-root verifier trace claim from a dense trace-weight table.
+/// Build the multi-group-root verifier trace claim from per-group closed-form terms.
 ///
-/// The table is [`build_multi_group_root_stage2_trace_table`] with `output_scale =
-/// 1`; the stage-2 `trace_coeff` factor stays separate so `expected_output_claim`
-/// applies it once. `trace_terms` are left empty because the closed form cannot
-/// express per-group block geometry; the dense table is evaluated directly.
+/// Each group has its own e-hat offset, block count, digit depth, and basis, so
+/// the verifier evaluates one small closed-form batch per group instead of
+/// materializing the full root witness table.
 #[allow(clippy::too_many_arguments)]
 pub fn build_trace_claim_multi_group_root<F, E, const D: usize>(
     layout: TraceWeightLayout,
@@ -485,6 +494,7 @@ pub fn build_trace_claim_multi_group_root<F, E, const D: usize>(
     prepared_points: &[PreparedOpeningPoint<F, E>],
     row_coefficients: &[E],
     claim_scales: Option<&[E]>,
+    basis: BasisMode,
     trace_coeff: E,
     trace_eval_target: E,
     live_x_cols: usize,
@@ -493,22 +503,152 @@ where
     F: FieldCore + CanonicalField + FromPrimitiveInt,
     E: FpExtEncoding<F> + ExtField<F> + FromPrimitiveInt,
 {
-    let table = build_multi_group_root_stage2_trace_table::<F, E>(
-        lp.role_dims().d_a(),
-        lp,
-        opening_batch,
-        prepared_points,
-        row_coefficients,
-        claim_scales,
-        E::one(),
-        live_x_cols,
-    )?;
+    if E::EXT_DEGREE != 1 {
+        return Err(AkitaError::InvalidSetup(
+            "multi-group root trace table currently requires degree-one openings".to_string(),
+        ));
+    }
+    if prepared_points.len() != opening_batch.num_groups()
+        || row_coefficients.len() != opening_batch.num_total_polynomials()
+    {
+        return Err(AkitaError::InvalidProof);
+    }
+    if let Some(scales) = claim_scales {
+        if scales.len() != opening_batch.num_total_polynomials() {
+            return Err(AkitaError::InvalidProof);
+        }
+    }
+
+    let ring_bits = lp.role_dims().d_a().trailing_zeros() as usize;
+    let order = opening_batch.root_group_order()?;
+    let mut e_offsets = vec![0usize; opening_batch.num_groups()];
+    let mut base = 0usize;
+    for &group_index in &order {
+        let group_lp = lp.root_group_params(opening_batch, group_index)?;
+        let group_layout = opening_batch.group_layout(group_index)?;
+        let depth_fold = lp.num_digits_fold_for_params(
+            group_lp,
+            group_layout.num_polynomials(),
+            lp.field_bits_for_cache(),
+        )?;
+        let overflow =
+            || AkitaError::InvalidSetup("multi-group trace segment width overflow".to_string());
+        let z_g = group_lp
+            .block_len()
+            .checked_mul(group_lp.num_digits_commit())
+            .and_then(|n| n.checked_mul(depth_fold))
+            .ok_or_else(overflow)?;
+        let e_g = group_layout
+            .num_polynomials()
+            .checked_mul(group_lp.num_blocks())
+            .and_then(|n| n.checked_mul(group_lp.num_digits_open()))
+            .ok_or_else(overflow)?;
+        let t_g = group_layout
+            .num_polynomials()
+            .checked_mul(group_lp.num_blocks())
+            .and_then(|n| n.checked_mul(group_lp.a_rows_len()))
+            .and_then(|n| n.checked_mul(group_lp.num_digits_open()))
+            .ok_or_else(overflow)?;
+        e_offsets[group_index] = base.checked_add(z_g).ok_or_else(overflow)?;
+        base = base
+            .checked_add(z_g)
+            .and_then(|n| n.checked_add(e_g))
+            .and_then(|n| n.checked_add(t_g))
+            .ok_or_else(overflow)?;
+    }
+
+    let mut batches = Vec::with_capacity(opening_batch.num_groups());
+    let mut claim_offset = 0usize;
+    for group_index in 0..opening_batch.num_groups() {
+        let group_lp = lp.root_group_params(opening_batch, group_index)?;
+        let group_layout = opening_batch.group_layout(group_index)?;
+        let prepared = &prepared_points[group_index];
+        let num_group_blocks = group_lp.num_blocks();
+        let group_block_cols = group_layout
+            .num_polynomials()
+            .checked_mul(num_group_blocks)
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup("multi-group trace block width overflow".to_string())
+            })?;
+        let segment_end = e_offsets[group_index]
+            .checked_add(
+                group_block_cols
+                    .checked_mul(group_lp.num_digits_open())
+                    .ok_or_else(|| {
+                        AkitaError::InvalidSetup(
+                            "multi-group trace digit segment overflow".to_string(),
+                        )
+                    })?,
+            )
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup("multi-group trace digit segment overflow".to_string())
+            })?;
+        if segment_end > live_x_cols {
+            return Err(AkitaError::InvalidSetup(
+                "multi-group trace digit segment exceeds live witness columns".to_string(),
+            ));
+        }
+
+        let target_len = ring_bits
+            .checked_add(group_lp.m_vars())
+            .and_then(|n| n.checked_add(group_lp.r_vars()))
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup("group opening point length overflow".to_string())
+            })?;
+        if prepared.padded_point.len() != target_len {
+            return Err(AkitaError::InvalidSize {
+                expected: target_len,
+                actual: prepared.padded_point.len(),
+            });
+        }
+        let b_start = ring_bits.checked_add(group_lp.m_vars()).ok_or_else(|| {
+            AkitaError::InvalidSetup("group block opening offset overflow".to_string())
+        })?;
+        let b_open = prepared.padded_point[b_start..b_start + group_lp.r_vars()].to_vec();
+
+        let group_layout_for_eval = TraceWeightLayout {
+            ring_bits: layout.ring_bits,
+            col_bits: layout.col_bits,
+            opening_digit_offset: e_offsets[group_index],
+            num_blocks: group_block_cols,
+            num_digits_open: group_lp.num_digits_open(),
+            r_vars: group_block_cols.next_power_of_two().trailing_zeros() as usize,
+            log_basis: group_lp.log_basis(),
+            chunk: TraceChunkLayout::single(),
+        };
+        group_layout_for_eval.validate_opening_digit_segment()?;
+
+        let mut terms = Vec::with_capacity(group_layout.num_polynomials());
+        for local_claim in 0..group_layout.num_polynomials() {
+            let claim_idx = claim_offset + local_claim;
+            let scale = claim_scales
+                .and_then(|scales| scales.get(claim_idx).copied())
+                .unwrap_or_else(E::one);
+            let block_offset = local_claim.checked_mul(num_group_blocks).ok_or_else(|| {
+                AkitaError::InvalidSetup("multi-group trace claim offset overflow".to_string())
+            })?;
+            terms.push(TraceTerm {
+                block_offset,
+                b_open: b_open.clone(),
+                basis,
+                packed_inner_point: prepared.packed_inner_owned::<D>()?,
+                coefficient: row_coefficients[claim_idx] * scale,
+            });
+        }
+        batches.push(TraceTermBatch {
+            layout: group_layout_for_eval,
+            terms,
+        });
+        claim_offset += group_layout.num_polynomials();
+    }
+
     Ok(TraceClaim {
         layout,
         trace_coeff,
         trace_opening_claim: trace_coeff * trace_eval_target,
         trace_terms: Vec::new(),
-        dense_evals: Some(table.into_ring_dense()?),
+        trace_term_batches: batches,
+        dense_evals: None,
     })
 }
 
