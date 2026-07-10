@@ -754,24 +754,9 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
         + HasOptimizedFold
         + AkitaSerialize,
 {
-    let total_field = (layout.num_blocks * layout.block_len)
-        .checked_mul(D)
-        .expect("total field size overflow");
-    let onehot_k = onehot_k_for_num_vars(nv);
-    let total_chunks = total_field / onehot_k;
-    assert_eq!(
-        total_chunks * onehot_k,
-        total_field,
-        "onehot K must divide total field size"
-    );
-
     let polys: Vec<OneHotPoly<FF, u8>> = (0..num_polys)
         .map(|poly_idx| {
-            let mut rng = StdRng::seed_from_u64(0xbeef_cafe ^ ((poly_idx as u64 + 1) << 32));
-            let indices: Vec<Option<u8>> = (0..total_chunks)
-                .map(|_| Some(rng.gen_range(0..onehot_k) as u8))
-                .collect();
-            OneHotPoly::<FF, u8>::new(onehot_k, D, indices).unwrap()
+            make_profile_onehot_poly::<FF, D>(layout, 0xbeef_cafe ^ ((poly_idx as u64 + 1) << 32))
         })
         .collect();
     let mut point_rng = StdRng::seed_from_u64(0xfeed_face);

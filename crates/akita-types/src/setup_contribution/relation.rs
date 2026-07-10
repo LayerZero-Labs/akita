@@ -20,10 +20,6 @@ pub struct SetupContributionArtifact<E: FieldCore> {
     pub groups: Vec<SetupContributionGroupInputs>,
     /// Challenge-free packed segment cache.
     pub static_plan: SetupContributionStatic<E>,
-    /// Batch-wide fold depth used by recursive setup-sumcheck planning.
-    pub depth_fold: usize,
-    /// Batch-wide log basis used by the shared r-tail.
-    pub log_basis: u32,
 }
 
 /// Build the canonical setup-contribution artifact for one ring-relation level.
@@ -84,12 +80,6 @@ where
         )?
     };
 
-    let setup_gadget_depth = groups
-        .iter()
-        .map(|group| group.depth_fold)
-        .max()
-        .unwrap_or(depth_fold);
-
     let static_plan = SetupContributionPlan::prepare_static(
         &inputs,
         &groups,
@@ -103,8 +93,6 @@ where
         inputs,
         groups,
         static_plan,
-        depth_fold: setup_gadget_depth,
-        log_basis: lp.log_basis,
     })
 }
 
@@ -171,22 +159,7 @@ fn prepare_multi_group_setup_artifact_inputs<E: FieldCore>(
         ));
     }
 
-    let mut group_e_offsets = vec![0usize; opening_batch.num_groups()];
     let mut d_physical_cols = 0usize;
-    for &group_index in &order {
-        let group_lp = lp.root_group_params(opening_batch, group_index)?;
-        let group_layout = opening_batch.group_layout(group_index)?;
-        group_e_offsets[group_index] = d_physical_cols;
-        let e_len = group_layout
-            .num_polynomials()
-            .checked_mul(group_lp.num_blocks())
-            .and_then(|n| n.checked_mul(group_lp.num_digits_open()))
-            .ok_or_else(|| AkitaError::InvalidSetup("multi-group e width overflow".to_string()))?;
-        d_physical_cols = d_physical_cols
-            .checked_add(e_len)
-            .ok_or_else(|| AkitaError::InvalidSetup("multi-group e width overflow".to_string()))?;
-    }
-
     let mut groups = Vec::with_capacity(order.len());
     for (order_pos, &group_index) in order.iter().enumerate() {
         let group_lp = lp.root_group_params(opening_batch, group_index)?;
@@ -224,6 +197,14 @@ fn prepare_multi_group_setup_artifact_inputs<E: FieldCore>(
                 "multi-group row ranges do not match group matrix heights".to_string(),
             ));
         }
+        let e_col_offset = d_physical_cols;
+        let e_len = k_g
+            .checked_mul(num_blocks)
+            .and_then(|n| n.checked_mul(depth_open))
+            .ok_or_else(|| AkitaError::InvalidSetup("multi-group e width overflow".to_string()))?;
+        d_physical_cols = d_physical_cols
+            .checked_add(e_len)
+            .ok_or_else(|| AkitaError::InvalidSetup("multi-group e width overflow".to_string()))?;
 
         let chunks = chunk_layout
             .chunks
@@ -231,7 +212,7 @@ fn prepare_multi_group_setup_artifact_inputs<E: FieldCore>(
             .ok_or(AkitaError::InvalidProof)?
             .to_vec();
         groups.push(SetupContributionGroupInputs {
-            e_col_offset: group_e_offsets[group_index],
+            e_col_offset,
             num_claims: k_g,
             num_blocks,
             block_len,

@@ -618,6 +618,7 @@ where
         };
         group_layout_for_eval.validate_opening_digit_segment()?;
 
+        let packed_inner_point = prepared.packed_inner_owned::<D>()?;
         let mut terms = Vec::with_capacity(group_layout.num_polynomials());
         for local_claim in 0..group_layout.num_polynomials() {
             let claim_idx = claim_offset + local_claim;
@@ -631,7 +632,7 @@ where
                 block_offset,
                 b_open: b_open.clone(),
                 basis,
-                packed_inner_point: prepared.packed_inner_owned::<D>()?,
+                packed_inner_point,
                 coefficient: row_coefficients[claim_idx] * scale,
             });
         }
@@ -792,6 +793,14 @@ where
                 let prepared = &prepared_points[group_index];
                 let inner = prepared.packed_inner_owned::<D>()?;
                 let inner_coeffs = inner.coefficients();
+                let group_block_cols = group_layout
+                    .num_polynomials()
+                    .checked_mul(group_lp.num_blocks())
+                    .ok_or_else(|| {
+                        AkitaError::InvalidSetup(
+                            "multi-group trace block width overflow".to_string(),
+                        )
+                    })?;
                 let gadget = crate::gadget_row_scalars::<F>(
                     group_lp.num_digits_open(),
                     group_lp.log_basis(),
@@ -811,14 +820,6 @@ where
                             .ok_or(AkitaError::InvalidProof)?;
                         let block_weight = E::lift_base(block_weight);
                         for (plane, gadget_scalar) in gadget.iter().enumerate() {
-                            let group_block_cols = group_layout
-                                .num_polynomials()
-                                .checked_mul(group_lp.num_blocks())
-                                .ok_or_else(|| {
-                                    AkitaError::InvalidSetup(
-                                        "multi-group trace block width overflow".to_string(),
-                                    )
-                                })?;
                             let plane_offset =
                                 plane.checked_mul(group_block_cols).ok_or_else(|| {
                                     AkitaError::InvalidSetup(

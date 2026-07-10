@@ -607,8 +607,6 @@ where
         .map(|idx| ring_multiplier_point.eval_a_at::<D, E>(idx, &alpha_pows))
         .collect::<Result<Vec<_>, _>>()?;
     let chunk_count = setup_artifact.chunk_layout.chunks.len();
-    let depth_fold = setup_artifact.depth_fold;
-    #[cfg(test)]
     let setup_group = setup_artifact
         .groups
         .first()
@@ -624,7 +622,7 @@ where
         block_len,
         depth_open,
         depth_commit,
-        depth_fold,
+        depth_fold: setup_group.depth_fold,
         log_basis,
         n_a,
         #[cfg(test)]
