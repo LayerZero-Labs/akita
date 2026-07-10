@@ -109,8 +109,6 @@ impl<E: FieldCore> RingSwitchVerifyCoreOutput<E> {
 pub struct RelationMatrixEvaluator<F: FieldCore> {
     pub(crate) role_dims: CommitmentRingDims,
     pub(crate) groups: Vec<RelationMatrixGroupEvaluator<F>>,
-    #[cfg(test)]
-    pub(crate) depth_fold: usize,
     /// Batch-wide basis used by the shared r-tail.
     pub(crate) log_basis: u32,
     /// Resolved witness column layout (one chunk for the single-chunk case,
@@ -505,8 +503,6 @@ where
     Ok(RelationMatrixEvaluator {
         role_dims: relation.role_dims(),
         groups,
-        #[cfg(test)]
-        depth_fold: setup_artifact.depth_fold,
         log_basis: lp.log_basis,
         chunk_layout: setup_artifact.chunk_layout,
         setup_contribution_groups: setup_artifact.groups,
@@ -645,8 +641,6 @@ where
     Ok(RelationMatrixEvaluator {
         role_dims: lp.role_dims,
         groups,
-        #[cfg(test)]
-        depth_fold: setup_artifact.depth_fold,
         log_basis,
         chunk_layout: setup_artifact.chunk_layout,
         setup_contribution_groups: setup_artifact.groups,
