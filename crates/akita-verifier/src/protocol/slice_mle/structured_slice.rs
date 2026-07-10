@@ -429,6 +429,7 @@ mod tests {
             setup_contribution_groups,
             setup_contribution_inputs,
             setup_contribution_static,
+            flat_context: None,
         };
         let full_vec_randomness = (0..bits).map(|idx| f(6_000 + idx as u128)).collect();
         let g1_open = gadget_row_scalars::<F>(depth_open, log_basis);

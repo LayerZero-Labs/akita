@@ -20,8 +20,8 @@ use akita_field::{
 };
 
 #[allow(clippy::too_many_arguments)]
-fn write_role_weight<E: FieldCore>(
-    out: &mut [E],
+fn write_role_weight<E: FieldCore, S>(
+    sink: &mut S,
     opening_layout: OpeningBlockLayout,
     opening_ring_dim: usize,
     witness_ring_dim: usize,
@@ -30,7 +30,10 @@ fn write_role_weight<E: FieldCore>(
     role_ring_dim: usize,
     alpha_pows: &[E],
     column_weight: E,
-) -> Result<(), AkitaError> {
+) -> Result<(), AkitaError>
+where
+    S: FnMut(usize, E) -> Result<(), AkitaError>,
+{
     if alpha_pows.len() != role_ring_dim
         || witness_ring_dim == 0
         || opening_ring_dim == 0
@@ -48,7 +51,7 @@ fn write_role_weight<E: FieldCore>(
         .ok_or_else(|| AkitaError::InvalidSetup("relation weight address overflow".into()))?;
     for (coefficient, &alpha_power) in alpha_pows.iter().enumerate() {
         write_coefficient_weight(
-            out,
+            sink,
             opening_layout,
             opening_ring_dim,
             physical_base + coefficient,
@@ -58,20 +61,22 @@ fn write_role_weight<E: FieldCore>(
     Ok(())
 }
 
-fn write_coefficient_weight<E: FieldCore>(
-    out: &mut [E],
+fn write_coefficient_weight<E: FieldCore, S>(
+    sink: &mut S,
     opening_layout: OpeningBlockLayout,
     opening_ring_dim: usize,
     physical: usize,
     weight: E,
-) -> Result<(), AkitaError> {
+) -> Result<(), AkitaError>
+where
+    S: FnMut(usize, E) -> Result<(), AkitaError>,
+{
     let opening_col = opening_layout.opening_index_for_physical(physical / opening_ring_dim)?;
     let opening_index = opening_col
         .checked_mul(opening_ring_dim)
         .and_then(|base| base.checked_add(physical % opening_ring_dim))
         .ok_or_else(|| AkitaError::InvalidSetup("relation weight address overflow".into()))?;
-    *out.get_mut(opening_index).ok_or(AkitaError::InvalidProof)? = weight;
-    Ok(())
+    sink(opening_index, weight)
 }
 
 /// Unified relation matrix column evaluation for singleton and multi-group root relations.
@@ -98,6 +103,83 @@ pub fn compute_relation_weight_evals<F, E>(
     opening_layout: OpeningBlockLayout,
     opening_ring_dim: usize,
 ) -> Result<Vec<E>, AkitaError>
+where
+    F: FieldCore + CanonicalField,
+    E: FpExtEncoding<F> + FromPrimitiveInt + LiftBase<F> + MulBase<F> + MulBaseUnreduced<F>,
+{
+    Ok(compute_relation_weight_evals_inner(
+        setup,
+        instance,
+        alpha,
+        alpha_pows,
+        role_dims,
+        lp,
+        tau1,
+        gamma,
+        relation_matrix_row_layout,
+        opening_layout,
+        opening_ring_dim,
+        None,
+    )?
+    .0)
+}
+
+/// Evaluate the relation-weight MLE directly on the flattened opening domain.
+///
+/// This visits the same canonical nonzero weights as
+/// [`compute_relation_weight_evals`] without allocating or scanning the padded
+/// virtual table.
+#[allow(clippy::too_many_arguments)]
+pub fn eval_relation_weight_at_point<F, E>(
+    setup: &AkitaExpandedSetup<F>,
+    instance: &RingRelationInstance<F>,
+    alpha: E,
+    alpha_pows: &[E],
+    role_dims: CommitmentRingDims,
+    lp: &LevelParams,
+    tau1: &[E],
+    gamma: &[E],
+    relation_matrix_row_layout: RelationMatrixRowLayout,
+    opening_layout: OpeningBlockLayout,
+    opening_ring_dim: usize,
+    point: &[E],
+) -> Result<E, AkitaError>
+where
+    F: FieldCore + CanonicalField,
+    E: FpExtEncoding<F> + FromPrimitiveInt + LiftBase<F> + MulBase<F> + MulBaseUnreduced<F>,
+{
+    Ok(compute_relation_weight_evals_inner(
+        setup,
+        instance,
+        alpha,
+        alpha_pows,
+        role_dims,
+        lp,
+        tau1,
+        gamma,
+        relation_matrix_row_layout,
+        opening_layout,
+        opening_ring_dim,
+        Some(point),
+    )?
+    .1)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn compute_relation_weight_evals_inner<F, E>(
+    setup: &AkitaExpandedSetup<F>,
+    instance: &RingRelationInstance<F>,
+    alpha: E,
+    alpha_pows: &[E],
+    role_dims: CommitmentRingDims,
+    lp: &LevelParams,
+    tau1: &[E],
+    gamma: &[E],
+    relation_matrix_row_layout: RelationMatrixRowLayout,
+    opening_layout: OpeningBlockLayout,
+    opening_ring_dim: usize,
+    point: Option<&[E]>,
+) -> Result<(Vec<E>, E), AkitaError>
 where
     F: FieldCore + CanonicalField,
     E: FpExtEncoding<F> + FromPrimitiveInt + LiftBase<F> + MulBase<F> + MulBaseUnreduced<F>,
@@ -187,7 +269,29 @@ where
         .ok_or_else(|| {
             AkitaError::InvalidSetup("virtual relation weight length overflow".into())
         })?;
-    let mut out = vec![E::zero(); virtual_field_len];
+    if let Some(point) = point {
+        let expected_bits = virtual_field_len.trailing_zeros() as usize;
+        if !virtual_field_len.is_power_of_two() || point.len() != expected_bits {
+            return Err(AkitaError::InvalidSize {
+                expected: expected_bits,
+                actual: point.len(),
+            });
+        }
+    }
+    let mut out = if point.is_some() {
+        Vec::new()
+    } else {
+        vec![E::zero(); virtual_field_len]
+    };
+    let mut evaluation = E::zero();
+    let mut sink = |index: usize, weight: E| -> Result<(), AkitaError> {
+        if let Some(point) = point {
+            evaluation += akita_algebra::offset_eq::eq_eval_at_index(point, index) * weight;
+        } else {
+            *out.get_mut(index).ok_or(AkitaError::InvalidProof)? = weight;
+        }
+        Ok(())
+    };
 
     let d_view = setup
         .shared_matrix
@@ -340,7 +444,7 @@ where
                         let physical_base = witness_col * d_a + role_subcol * d_d;
                         for coefficient in 0..d_d {
                             write_coefficient_weight(
-                                &mut out,
+                                &mut sink,
                                 opening_layout,
                                 opening_ring_dim,
                                 physical_base + coefficient,
@@ -382,7 +486,7 @@ where
                             let physical_base = witness_col * d_a + role_subcol * d_b;
                             for coefficient in 0..d_b {
                                 write_coefficient_weight(
-                                    &mut out,
+                                    &mut sink,
                                     opening_layout,
                                     opening_ring_dim,
                                     physical_base + coefficient,
@@ -434,7 +538,7 @@ where
                         let witness_col =
                             witness_layout.z_index(unit, position, commit_digit, fold_digit)?;
                         write_role_weight(
-                            &mut out,
+                            &mut sink,
                             opening_layout,
                             opening_ring_dim,
                             d_a,
@@ -478,7 +582,7 @@ where
         for (digit, gadget) in r_gadget.iter().enumerate() {
             let witness_col = witness_layout.r_index(row, digit)?;
             write_role_weight(
-                &mut out,
+                &mut sink,
                 opening_layout,
                 opening_ring_dim,
                 d_a,
@@ -490,5 +594,5 @@ where
             )?;
         }
     }
-    Ok(out)
+    Ok((out, evaluation))
 }

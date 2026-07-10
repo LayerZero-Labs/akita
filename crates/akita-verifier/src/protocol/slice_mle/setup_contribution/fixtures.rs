@@ -250,6 +250,7 @@ impl SetupContributionFixture {
             setup_contribution_groups,
             setup_contribution_inputs,
             setup_contribution_static,
+            flat_context: None,
         };
 
         let full_vec_randomness: Vec<TestField> = (0..bits)

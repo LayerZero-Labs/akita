@@ -462,12 +462,8 @@ where
     })
 }
 
-/// Build the multi-group-root verifier trace claim from a dense trace-weight table.
-///
-/// The table is [`build_multi_group_root_stage2_trace_table`] with `output_scale =
-/// 1`; the stage-2 `trace_coeff` factor stays separate so `expected_output_claim`
-/// applies it once. `trace_terms` are left empty because the closed form cannot
-/// express per-group block geometry; the dense table is evaluated directly.
+/// Build the multi-group-root verifier trace claim from one short closed-form
+/// batch per group.
 #[allow(clippy::too_many_arguments)]
 pub fn build_trace_claim_multi_group_root<F, E, const D: usize>(
     layout: TraceWeightLayout,
@@ -476,6 +472,7 @@ pub fn build_trace_claim_multi_group_root<F, E, const D: usize>(
     prepared_points: &[PreparedOpeningPoint<F, E>],
     row_coefficients: &[E],
     claim_scales: Option<&[E]>,
+    basis: BasisMode,
     trace_coeff: E,
     trace_eval_target: E,
     live_x_cols: usize,
@@ -484,25 +481,77 @@ where
     F: FieldCore + CanonicalField + FromPrimitiveInt,
     E: FpExtEncoding<F> + ExtField<F> + FromPrimitiveInt,
 {
-    let table = build_multi_group_root_stage2_trace_table::<F, E>(
-        lp.role_dims().d_a(),
-        &layout.witness_layout,
-        layout.opening_layout,
-        lp,
-        opening_batch,
-        prepared_points,
-        row_coefficients,
-        claim_scales,
-        E::one(),
-        live_x_cols,
-    )?;
+    if prepared_points.len() != opening_batch.num_groups()
+        || row_coefficients.len() != opening_batch.num_total_polynomials()
+        || live_x_cols != layout.opening_layout.opening_len()
+    {
+        return Err(AkitaError::InvalidProof);
+    }
+    if let Some(scales) = claim_scales {
+        if scales.len() != row_coefficients.len() {
+            return Err(AkitaError::InvalidProof);
+        }
+    }
+    let alpha_bits = lp.role_dims().d_a().trailing_zeros() as usize;
+    let mut batches = Vec::with_capacity(opening_batch.num_groups());
+    let mut claim_offset = 0usize;
+    for (group_index, prepared) in prepared_points.iter().enumerate() {
+        let group_lp = lp.root_group_params(opening_batch, group_index)?;
+        let group_claims = opening_batch.group_layout(group_index)?.num_polynomials();
+        let group_id = crate::SemanticGroupId(group_index);
+        let group = layout.witness_layout.group(group_id)?;
+        let num_blocks = group_claims
+            .checked_mul(group_lp.num_blocks())
+            .ok_or(AkitaError::InvalidProof)?;
+        if group.num_claims != group_claims || group.num_blocks != group_lp.num_blocks() {
+            return Err(AkitaError::InvalidSetup(
+                "trace group geometry disagrees with witness layout".to_string(),
+            ));
+        }
+        let group_opening_layout =
+            OpeningBlockLayout::new(group_lp.num_blocks(), group_lp.block_len())?;
+        let b_open =
+            root_trace_block_opening(&prepared.padded_point, group_opening_layout, alpha_bits)?;
+        let group_layout = TraceWeightLayout {
+            ring_bits: layout.ring_bits,
+            col_bits: layout.col_bits,
+            num_blocks,
+            num_digits_open: group_lp.num_digits_open(),
+            r_vars: num_blocks.next_power_of_two().trailing_zeros() as usize,
+            log_basis: group_lp.log_basis(),
+            witness_layout: layout.witness_layout.clone(),
+            opening_layout: layout.opening_layout,
+            group_id,
+        };
+        group_layout.validate_opening_digit_segment()?;
+        let packed_inner_point = prepared.packed_inner_owned::<D>()?;
+        let mut terms = Vec::with_capacity(group_claims);
+        for local_claim in 0..group_claims {
+            let claim_idx = claim_offset + local_claim;
+            let scale = claim_scales
+                .and_then(|scales| scales.get(claim_idx).copied())
+                .unwrap_or_else(E::one);
+            terms.push(TraceTerm {
+                block_offset: local_claim * group_lp.num_blocks(),
+                b_open: b_open.clone(),
+                basis,
+                packed_inner_point,
+                coefficient: row_coefficients[claim_idx] * scale,
+            });
+        }
+        batches.push(TraceTermBatch {
+            layout: group_layout,
+            terms,
+        });
+        claim_offset += group_claims;
+    }
     Ok(TraceClaim {
         layout,
         trace_coeff,
         trace_opening_claim: trace_coeff * trace_eval_target,
         trace_terms: Vec::new(),
-        dense_evals: Some(table.into_ring_dense()?),
-        trace_term_batches: Vec::new(),
+        dense_evals: None,
+        trace_term_batches: batches,
     })
 }
 

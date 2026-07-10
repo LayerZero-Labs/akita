@@ -14,7 +14,7 @@ use akita_transcript::labels::{
 };
 use akita_transcript::{sample_ext_challenge, Transcript};
 use akita_types::{
-    compute_relation_weight_evals, gadget_row_scalars, r_decomp_levels, validate_role_dispatch,
+    eval_relation_weight_at_point, gadget_row_scalars, r_decomp_levels, validate_role_dispatch,
     AkitaExpandedSetup, CommitmentRingDims, FpExtEncoding, LevelParams, OpeningBatchWitnessLayout,
     OpeningBlockLayout, RelationMatrixRowLayout, RingMultiplierOpeningPoint, RingRelationInstance,
     RingRole, RingVec, SemanticGroupId, SetupContributionGroupInputs, SetupContributionPlan,
@@ -36,8 +36,6 @@ mod tests;
 pub(crate) struct RingSwitchVerifyOutput<E: FieldCore> {
     /// Prepared data for prepared relation-matrix MLE evaluation.
     pub relation_matrix_evaluator: RelationMatrixEvaluator<E>,
-    /// Materialized relation weights on the virtual field-coefficient domain.
-    pub relation_weight_evals: Vec<E>,
     /// Number of upper variable bits.
     pub col_bits: usize,
     /// Number of lower variable bits.
@@ -54,7 +52,6 @@ pub(crate) struct RingSwitchVerifyOutput<E: FieldCore> {
 
 struct RingSwitchVerifyCoreOutput<E: FieldCore> {
     relation_matrix_evaluator: RelationMatrixEvaluator<E>,
-    relation_weight_evals: Vec<E>,
     col_bits: usize,
     ring_bits: usize,
     tau0: Option<Vec<E>>,
@@ -68,7 +65,6 @@ impl<E: FieldCore> RingSwitchVerifyCoreOutput<E> {
         let tau0 = self.tau0.ok_or(AkitaError::InvalidProof)?;
         Ok(RingSwitchVerifyOutput {
             relation_matrix_evaluator: self.relation_matrix_evaluator,
-            relation_weight_evals: self.relation_weight_evals,
             col_bits: self.col_bits,
             ring_bits: self.ring_bits,
             tau0,
@@ -84,7 +80,6 @@ impl<E: FieldCore> RingSwitchVerifyCoreOutput<E> {
         }
         Ok(RingSwitchVerifyOutput {
             relation_matrix_evaluator: self.relation_matrix_evaluator,
-            relation_weight_evals: self.relation_weight_evals,
             col_bits: self.col_bits,
             ring_bits: self.ring_bits,
             tau0: Vec::new(),
@@ -114,6 +109,16 @@ pub struct RelationMatrixEvaluator<F: FieldCore> {
     pub(crate) setup_contribution_groups: Vec<SetupContributionGroupInputs>,
     pub(crate) setup_contribution_inputs: SetupContributionPlanInputs<F>,
     pub(crate) setup_contribution_static: SetupContributionStatic<F>,
+    pub(crate) flat_context: Option<FlatRelationContext<F>>,
+}
+
+#[derive(Clone)]
+pub(crate) struct FlatRelationContext<F: FieldCore> {
+    level_params: LevelParams,
+    row_coefficients: Vec<F>,
+    tau1: Vec<F>,
+    relation_matrix_row_layout: RelationMatrixRowLayout,
+    opening_ring_dim: usize,
 }
 
 #[derive(Clone)]
@@ -310,23 +315,8 @@ where
     }
     let relation_matrix_evaluator =
         prepare_relation_matrix_evaluator::<F, E, D>(replay, alpha, &tau1, Some(num_ring_elems))?;
-    let relation_weight_evals = compute_relation_weight_evals::<F, E>(
-        replay.setup,
-        relation,
-        alpha,
-        &scalar_powers(alpha, D),
-        relation.role_dims(),
-        lp,
-        &tau1,
-        gamma,
-        relation_matrix_row_layout,
-        replay.opening_layout,
-        opening_ring_dim,
-    )?;
-
     Ok(RingSwitchVerifyCoreOutput {
         relation_matrix_evaluator,
-        relation_weight_evals,
         col_bits,
         ring_bits,
         tau0,
@@ -392,6 +382,7 @@ where
         relation.relation_matrix_row_layout(),
         layout,
         replay.opening_layout,
+        replay.opening_ring_dim,
         depth_fold,
         rows,
     )
@@ -587,6 +578,13 @@ where
         setup_contribution_groups,
         setup_contribution_inputs,
         setup_contribution_static,
+        flat_context: Some(FlatRelationContext {
+            level_params: lp.clone(),
+            row_coefficients: replay.row_coefficients.to_vec(),
+            tau1: tau1.to_vec(),
+            relation_matrix_row_layout: relation.relation_matrix_row_layout(),
+            opening_ring_dim: replay.opening_ring_dim,
+        }),
     })
 }
 
@@ -651,6 +649,7 @@ fn prepare_relation_matrix_evaluator_inner<F, E, const D: usize>(
     relation_matrix_row_layout: RelationMatrixRowLayout,
     layout: OpeningBatchWitnessLayout,
     opening_layout: OpeningBlockLayout,
+    opening_ring_dim: usize,
     depth_fold: usize,
     rows: usize,
 ) -> Result<RelationMatrixEvaluator<E>, AkitaError>
@@ -747,6 +746,13 @@ where
         setup_contribution_groups,
         setup_contribution_inputs,
         setup_contribution_static,
+        flat_context: Some(FlatRelationContext {
+            level_params: lp.clone(),
+            row_coefficients: gamma.to_vec(),
+            tau1: tau1.to_vec(),
+            relation_matrix_row_layout,
+            opening_ring_dim,
+        }),
     })
 }
 
@@ -827,6 +833,49 @@ where
 }
 
 impl<E: FieldCore> RelationMatrixEvaluator<E> {
+    /// Evaluate the canonical relation weights directly in the flattened
+    /// opening domain, without materializing its padded virtual table.
+    pub fn eval_flat_at_point<F, const D: usize>(
+        &self,
+        point: &[E],
+        setup: &AkitaExpandedSetup<F>,
+        instance: &RingRelationInstance<F>,
+        alpha: E,
+    ) -> Result<E, AkitaError>
+    where
+        F: FieldCore + CanonicalField,
+        E: FpExtEncoding<F> + FromPrimitiveInt + MulBase<F> + MulBaseUnreduced<F>,
+    {
+        let context = self.flat_context.as_ref().ok_or(AkitaError::InvalidProof)?;
+        if context.opening_ring_dim == D {
+            let coefficient_bits = D.trailing_zeros() as usize;
+            if point.len() < coefficient_bits {
+                return Err(AkitaError::InvalidProof);
+            }
+            let (coefficient_point, column_point) = point.split_at(coefficient_bits);
+            let alpha_evals = scalar_powers(alpha, D);
+            let coefficient_eval =
+                akita_sumcheck::multilinear_eval(&alpha_evals, coefficient_point)?;
+            return Ok(
+                coefficient_eval * self.eval_at_point::<F, D>(column_point, setup, alpha, None)?
+            );
+        }
+        eval_relation_weight_at_point::<F, E>(
+            setup,
+            instance,
+            alpha,
+            &scalar_powers(alpha, D),
+            self.role_dims,
+            &context.level_params,
+            &context.tau1,
+            &context.row_coefficients,
+            context.relation_matrix_row_layout,
+            self.opening_layout,
+            context.opening_ring_dim,
+            point,
+        )
+    }
+
     fn group_units(
         &self,
         group: &RelationMatrixGroupEvaluator<E>,

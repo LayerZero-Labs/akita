@@ -1,7 +1,7 @@
 //! Shared per-fold verifier replay (EOR, stage-1/2/3, ring switch).
 
 use super::*;
-use akita_types::dispatch_for_field;
+use akita_types::{build_multi_group_root_stage2_trace_table, dispatch_for_field};
 
 pub(in crate::protocol::core) struct FoldEorReplay<F: FieldCore, E: FieldCore> {
     pub(in crate::protocol::core) prepared_points: Vec<PreparedOpeningPoint<F, E>>,
@@ -314,6 +314,8 @@ where
 #[allow(clippy::too_many_arguments)]
 fn verify_stage2<F, E, T>(
     transcript: &mut T,
+    setup: &AkitaVerifierSetup<F>,
+    relation_instance: &RingRelationInstance<F>,
     stage2: &AkitaStage2Proof<F, E>,
     physical_w_len: usize,
     stage1: Stage1Replay<E>,
@@ -342,6 +344,8 @@ where
     dispatch_for_field!(ProtocolDispatchSlot::Role(RingRole::Inner), F, d_a, |D| {
         verify_stage2_kernel::<F, E, T, D>(
             transcript,
+            setup,
+            relation_instance,
             stage2,
             stage1,
             rs,
@@ -392,6 +396,7 @@ enum TraceWireAtRoleA<'a, F: FieldCore, E: FieldCore> {
         trace_claim_scales: Option<Vec<E>>,
         opening_batch: OpeningClaimsLayout,
         live_x_cols: usize,
+        trace_basis: BasisMode,
     },
 }
 
@@ -418,19 +423,26 @@ where
             } => {
                 let trace_terms =
                     trace_terms_recursive(&prepared_point, lp, trace_basis, trace_eval_scale)?;
-                let public =
-                    trace_public_weights_recursive::<F, E, D>(&prepared_point, trace_eval_scale)?;
-                let live_x_cols = layout.opening_layout.opening_len();
-                let dense_evals =
-                    build_trace_table_scaled(&layout, &public, live_x_cols, E::one())?
-                        .materialize_dense(live_x_cols, D);
+                let dense_evals = if destination_ring_dim == D {
+                    None
+                } else {
+                    let public = trace_public_weights_recursive::<F, E, D>(
+                        &prepared_point,
+                        trace_eval_scale,
+                    )?;
+                    let live_x_cols = layout.opening_layout.opening_len();
+                    Some(
+                        build_trace_table_scaled(&layout, &public, live_x_cols, E::one())?
+                            .materialize_dense(live_x_cols, D),
+                    )
+                };
                 Ok(TraceClaim {
                     layout,
                     trace_coeff,
                     trace_opening_claim,
                     trace_terms,
                     trace_term_batches: Vec::new(),
-                    dense_evals: Some(dense_evals),
+                    dense_evals,
                 })
             }
             Self::Root {
@@ -457,18 +469,20 @@ where
                     trace_eval_target,
                     trace_claim_scales.as_deref(),
                 )?;
-                let public = trace_public_weights_root_terms::<F, E, D>(
-                    lp.num_blocks,
-                    &opening_batch,
-                    &prepared_point,
-                    &row_coefficients,
-                    trace_claim_scales.as_deref(),
-                )?;
-                let live_x_cols = claim.layout.opening_layout.opening_len();
-                claim.dense_evals = Some(
-                    build_trace_table_scaled(&claim.layout, &public, live_x_cols, E::one())?
-                        .materialize_dense(live_x_cols, D),
-                );
+                if destination_ring_dim != D {
+                    let public = trace_public_weights_root_terms::<F, E, D>(
+                        lp.num_blocks,
+                        &opening_batch,
+                        &prepared_point,
+                        &row_coefficients,
+                        trace_claim_scales.as_deref(),
+                    )?;
+                    let live_x_cols = claim.layout.opening_layout.opening_len();
+                    claim.dense_evals = Some(
+                        build_trace_table_scaled(&claim.layout, &public, live_x_cols, E::one())?
+                            .materialize_dense(live_x_cols, D),
+                    );
+                }
                 Ok(claim)
             }
             Self::MultiGroupRoot {
@@ -481,26 +495,78 @@ where
                 trace_claim_scales,
                 opening_batch,
                 live_x_cols,
-            } => build_trace_claim_multi_group_root::<F, E, D>(
-                layout,
-                lp,
-                &opening_batch,
-                &prepared_points,
-                &row_coefficients,
-                trace_claim_scales.as_deref(),
-                trace_coeff,
-                trace_eval_target,
-                live_x_cols,
-            ),
+                trace_basis,
+            } => {
+                let mut claim = build_trace_claim_multi_group_root::<F, E, D>(
+                    layout,
+                    lp,
+                    &opening_batch,
+                    &prepared_points,
+                    &row_coefficients,
+                    trace_claim_scales.as_deref(),
+                    trace_basis,
+                    trace_coeff,
+                    trace_eval_target,
+                    live_x_cols,
+                )?;
+                if destination_ring_dim != D {
+                    claim.dense_evals = Some(
+                        build_multi_group_root_stage2_trace_table::<F, E>(
+                            D,
+                            &claim.layout.witness_layout,
+                            claim.layout.opening_layout,
+                            lp,
+                            &opening_batch,
+                            &prepared_points,
+                            &row_coefficients,
+                            trace_claim_scales.as_deref(),
+                            E::one(),
+                            live_x_cols,
+                        )?
+                        .into_ring_dense()?,
+                    );
+                }
+                Ok(claim)
+            }
         }?;
-        remap_trace_claim_dense(
-            &mut claim,
-            destination_layout,
-            destination_ring_dim,
-            physical_field_len,
-        )?;
+        if destination_ring_dim == D {
+            remap_trace_claim_structured(&mut claim, destination_layout, physical_field_len)?;
+        } else {
+            remap_trace_claim_dense(
+                &mut claim,
+                destination_layout,
+                destination_ring_dim,
+                physical_field_len,
+            )?;
+        }
         Ok(claim)
     }
+}
+
+fn remap_trace_claim_structured<F, E, const D: usize>(
+    claim: &mut TraceClaim<F, E, D>,
+    destination_layout: OpeningBlockLayout,
+    physical_field_len: usize,
+) -> Result<(), AkitaError>
+where
+    F: FieldCore,
+    E: FieldCore,
+{
+    let destination_capacity = destination_layout
+        .physical_len()
+        .checked_mul(D)
+        .ok_or(AkitaError::InvalidProof)?;
+    if physical_field_len > destination_capacity || claim.dense_evals.is_some() {
+        return Err(AkitaError::InvalidProof);
+    }
+    let col_bits = destination_layout.opening_len().trailing_zeros() as usize;
+    claim.layout.opening_layout = destination_layout;
+    claim.layout.col_bits = col_bits;
+    for batch in &mut claim.trace_term_batches {
+        batch.layout.opening_layout = destination_layout;
+        batch.layout.col_bits = col_bits;
+    }
+    Ok(())
 }
 
 fn remap_trace_claim_dense<F, E, const D: usize>(
@@ -551,6 +617,8 @@ where
 #[allow(clippy::too_many_arguments)]
 fn verify_stage2_kernel<F, E, T, const D: usize>(
     transcript: &mut T,
+    setup: &AkitaVerifierSetup<F>,
+    relation_instance: &RingRelationInstance<F>,
     stage2: &AkitaStage2Proof<F, E>,
     stage1: Stage1Replay<E>,
     rs: &RingSwitchVerifyOutput<E>,
@@ -568,7 +636,10 @@ where
         stage1.s_claim,
         witness_oracle,
         stage1.stage1_point,
-        rs.relation_weight_evals.clone(),
+        rs.relation_matrix_evaluator.clone(),
+        &setup.expanded,
+        &relation_instance,
+        rs.alpha,
         relation_claim,
         rs.col_bits,
         rs.ring_bits,
@@ -864,6 +935,7 @@ where
             trace_claim_scales: prepared.trace_claim_scales.clone(),
             opening_batch: relation_instance.opening_batch().clone(),
             live_x_cols,
+            trace_basis: prepared.trace_basis,
         })
     } else {
         let num_trace_blocks = relation_instance
@@ -903,6 +975,8 @@ where
     };
     let sumcheck_challenges = verify_stage2::<F, E, T>(
         transcript,
+        setup,
+        &relation_instance,
         prepared.stage2,
         prepared.w_len,
         stage1_replay,
