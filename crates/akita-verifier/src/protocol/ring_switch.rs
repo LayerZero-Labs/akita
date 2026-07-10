@@ -420,13 +420,7 @@ where
         return Err(AkitaError::InvalidProof);
     }
 
-    let eq_tau1: std::sync::Arc<[E]> = EqPolynomial::evals(tau1)?.into();
-    if eq_tau1.len() < rows {
-        return Err(AkitaError::InvalidSize {
-            expected: rows,
-            actual: eq_tau1.len(),
-        });
-    }
+    let eq_tau1: std::sync::Arc<[E]> = EqPolynomial::evals_prefix(tau1, rows)?.into();
 
     let order = opening_batch.root_group_order()?;
     if layout.ownership_units.len() != order.len() {

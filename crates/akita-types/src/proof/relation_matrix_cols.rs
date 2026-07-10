@@ -11,7 +11,7 @@ use crate::{
     gadget_row_scalars, r_decomp_levels, AkitaExpandedSetup, FpExtEncoding, LevelParams,
     OpeningBlockLayout, RelationMatrixRowLayout,
 };
-use akita_algebra::eq_poly::EqPolynomial;
+use akita_algebra::eq_poly::SplitEqEvals;
 use akita_algebra::ring::{eval_flat_ring_at_pows_fast, scalar_powers};
 use akita_challenges::Challenges;
 use akita_field::parallel::*;
@@ -123,7 +123,7 @@ where
     let alpha_pows_d = scalar_powers(alpha, d_d);
     let rows =
         lp.relation_matrix_row_count_for(opening_batch.num_groups(), relation_matrix_row_layout)?;
-    let eq_tau1 = EqPolynomial::evals(tau1)?;
+    let eq_tau1 = SplitEqEvals::new(tau1)?;
     if eq_tau1.len() < rows {
         return Err(AkitaError::InvalidSize {
             expected: rows,
@@ -198,7 +198,7 @@ where
     let d_start = rows
         .checked_sub(n_d_active)
         .ok_or(AkitaError::InvalidProof)?;
-    let consistency_weight = eq_tau1[0];
+    let consistency_weight = eq_tau1.eval_at(0)?;
 
     let mut gamma_offset = 0usize;
     let mut gamma_offsets = vec![0usize; opening_batch.num_groups()];
@@ -288,8 +288,9 @@ where
             lp.root_a_row_range(opening_batch, group_index, relation_matrix_row_layout)?;
         let b_range =
             lp.root_commitment_row_range(opening_batch, group_index, relation_matrix_row_layout)?;
-        let a_row_weights = &eq_tau1[a_range];
-        let b_weights = &eq_tau1[b_range];
+        if a_range.end > eq_tau1.len() || b_range.end > eq_tau1.len() {
+            return Err(AkitaError::InvalidProof);
+        }
         let g_open: Vec<E> = gadget_row_scalars::<F>(depth_open, log_basis)
             .into_iter()
             .map(E::lift_base)
@@ -326,13 +327,12 @@ where
                         let consistency_acc =
                             consistency_weight * c_alphas[challenge_index] * opening_gadget;
                         let mut setup_acc = E::zero();
-                        for (di, eq_i) in
-                            eq_tau1[d_start..(d_start + n_d_active)].iter().enumerate()
-                        {
+                        for (di, d_row) in d_rows.iter().take(n_d_active).enumerate() {
+                            let eq_i = eq_tau1.eval_at(d_start + di)?;
                             if !eq_i.is_zero() {
-                                setup_acc += *eq_i
+                                setup_acc += eq_i
                                     * eval_flat_ring_at_pows_fast(
-                                        &d_rows[di][d_phys_col * d_d..(d_phys_col + 1) * d_d],
+                                        &d_row[d_phys_col * d_d..(d_phys_col + 1) * d_d],
                                         &alpha_pows_d,
                                     );
                             }
@@ -350,7 +350,8 @@ where
                         }
                     }
                 }
-                for (a_idx, &a_row_weight) in a_row_weights.iter().enumerate() {
+                for a_idx in 0..n_a {
+                    let a_row_weight = eq_tau1.eval_at(a_range.start + a_idx)?;
                     for (digit, &opening_gadget) in g_open.iter().enumerate() {
                         let semantic_col = witness_layout.t_setup_col_index(
                             group_id,
@@ -368,12 +369,12 @@ where
                                 .ok_or(AkitaError::InvalidProof)?;
                             let a_acc = a_row_weight * c_alphas[challenge_index] * opening_gadget;
                             let mut b_acc = E::zero();
-                            for (row_idx, eq_i) in b_weights.iter().enumerate() {
+                            for (row_idx, b_row) in b_rows.iter().take(n_b).enumerate() {
+                                let eq_i = eq_tau1.eval_at(b_range.start + row_idx)?;
                                 if !eq_i.is_zero() {
-                                    b_acc += *eq_i
+                                    b_acc += eq_i
                                         * eval_flat_ring_at_pows_fast(
-                                            &b_rows[row_idx]
-                                                [local_col * d_b..(local_col + 1) * d_b],
+                                            &b_row[local_col * d_b..(local_col + 1) * d_b],
                                             &alpha_pows_b,
                                         );
                                 }
@@ -412,11 +413,12 @@ where
                 let opening_a_eval =
                     ring_multiplier_point.eval_a_at_dyn::<E>(block_idx, alpha_pows_a)?;
                 let mut acc = consistency_weight * opening_a_eval * commit_gadget[digit_idx];
-                for (a_idx, eq_i) in a_row_weights.iter().enumerate() {
+                for (a_idx, a_row) in setup_a_rows.iter().take(n_a).enumerate() {
+                    let eq_i = eq_tau1.eval_at(a_range.start + a_idx)?;
                     if !eq_i.is_zero() {
-                        acc += *eq_i
+                        acc += eq_i
                             * eval_flat_ring_at_pows_fast(
-                                &setup_a_rows[a_idx][k * d_a..(k + 1) * d_a],
+                                &a_row[k * d_a..(k + 1) * d_a],
                                 alpha_pows_a,
                             );
                     }
@@ -451,7 +453,8 @@ where
         .into_iter()
         .map(E::lift_base)
         .collect();
-    for (row, eq_weight) in eq_tau1.iter().take(rows).enumerate() {
+    for row in 0..rows {
+        let eq_weight = eq_tau1.eval_at(row)?;
         let is_b_row = (0..opening_batch.num_groups()).try_fold(false, |found, group| {
             Ok::<_, AkitaError>(
                 found
@@ -483,7 +486,7 @@ where
                 0,
                 row_dim,
                 row_alpha_pows,
-                -(*eq_weight * row_denom * *gadget),
+                -(eq_weight * row_denom * *gadget),
             )?;
         }
     }

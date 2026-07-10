@@ -1,8 +1,10 @@
 use super::utils::{
-    accumulate_left_round, accumulate_left_round_compact, accumulate_right_round,
-    accumulate_right_round_compact, accumulate_second_right_round_compact, fold_compact_left_round,
-    fold_compact_right_round, fold_compact_right_two_rounds, fold_factor_in_place, fold_left_round,
-    fold_right_round, product_claim, product_claim_from_m_compact,
+    accumulate_left_round, accumulate_left_round_compact, accumulate_left_round_compact_eq,
+    accumulate_left_round_eq, accumulate_right_round, accumulate_right_round_compact,
+    accumulate_second_right_round_compact, fold_compact_left_round, fold_compact_left_round_eq,
+    fold_compact_right_round, fold_compact_right_two_rounds, fold_dense_left_round,
+    fold_factor_in_place, fold_left_round, fold_right_round, product_claim, product_claim_eq,
+    product_claim_from_m_compact, product_claim_from_m_compact_eq,
 };
 use akita_algebra::uni_poly::UniPoly;
 use akita_field::{AkitaError, FieldCore, FromPrimitiveInt};
@@ -11,11 +13,25 @@ use std::sync::Arc;
 /// One factored product term `sum_{l,r} table[l,r] * left[l] * right[r]`.
 pub(super) struct FactoredProductTerm<E: FieldCore> {
     table: ProductTable<E>,
-    left_factor: Vec<E>,
+    left_factor: LeftFactor<E>,
     right_factor: Vec<E>,
     input_claim: E,
     right_rounds: usize,
     total_rounds: usize,
+}
+
+enum LeftFactor<E: FieldCore> {
+    Dense(Vec<E>),
+    Equality { point: Arc<[E]>, scale: E },
+}
+
+impl<E: FieldCore> LeftFactor<E> {
+    fn len(&self) -> usize {
+        match self {
+            Self::Dense(factor) => factor.len(),
+            Self::Equality { point, .. } => 1usize << point.len(),
+        }
+    }
 }
 
 enum ProductTable<E: FieldCore> {
@@ -37,7 +53,11 @@ impl<E: FieldCore + FromPrimitiveInt> FactoredProductTerm<E> {
         left_factor: Vec<E>,
         right_factor: Vec<E>,
     ) -> Result<Self, AkitaError> {
-        Self::new(ProductTable::Dense(table), left_factor, right_factor)
+        Self::new(
+            ProductTable::Dense(table),
+            LeftFactor::Dense(left_factor),
+            right_factor,
+        )
     }
 
     /// Construct the witness-carry term from compact digit storage.
@@ -58,17 +78,39 @@ impl<E: FieldCore + FromPrimitiveInt> FactoredProductTerm<E> {
                 padded_len,
                 pending_right_challenge: None,
             },
-            left_factor,
+            LeftFactor::Dense(left_factor),
+            right_factor,
+        )
+    }
+
+    /// Construct a compact witness term whose left factor is an equality
+    /// polynomial kept in factored form until it is consumed by the rounds.
+    pub(super) fn new_compact_equality(
+        digits: Arc<[i8]>,
+        padded_len: usize,
+        point: Arc<[E]>,
+        right_factor: Vec<E>,
+    ) -> Result<Self, AkitaError> {
+        Self::new(
+            ProductTable::CompactWitness {
+                digits,
+                padded_len,
+                pending_right_challenge: None,
+            },
+            LeftFactor::Equality {
+                point,
+                scale: E::one(),
+            },
             right_factor,
         )
     }
 
     fn new(
         table: ProductTable<E>,
-        left_factor: Vec<E>,
+        left_factor: LeftFactor<E>,
         right_factor: Vec<E>,
     ) -> Result<Self, AkitaError> {
-        if left_factor.is_empty()
+        if left_factor.len() == 0
             || right_factor.is_empty()
             || !left_factor.len().is_power_of_two()
             || !right_factor.len().is_power_of_two()
@@ -145,16 +187,37 @@ impl<E: FieldCore + FromPrimitiveInt> ProductTable<E> {
         }
     }
 
-    fn product_claim(&self, left_factor: &[E], right_factor: &[E]) -> E {
-        match self {
-            Self::Dense(table) => product_claim(table, left_factor, right_factor),
-            Self::CompactWitness {
-                digits, padded_len, ..
-            } => product_claim_from_m_compact(digits, *padded_len, left_factor, right_factor),
+    fn product_claim(&self, left_factor: &LeftFactor<E>, right_factor: &[E]) -> E {
+        match left_factor {
+            LeftFactor::Dense(left_factor) => match self {
+                Self::Dense(table) => product_claim(table, left_factor, right_factor),
+                Self::CompactWitness {
+                    digits, padded_len, ..
+                } => product_claim_from_m_compact(digits, *padded_len, left_factor, right_factor),
+            },
+            LeftFactor::Equality { point, scale } => match self {
+                Self::Dense(table) => product_claim_eq(table, point, *scale, right_factor),
+                Self::CompactWitness {
+                    digits, padded_len, ..
+                } => product_claim_from_m_compact_eq(
+                    digits,
+                    *padded_len,
+                    point,
+                    *scale,
+                    right_factor,
+                ),
+            },
         }
     }
 
-    fn accumulate_right_round(&self, left_factor: &[E], right_factor: &[E]) -> (E, E, E) {
+    fn accumulate_right_round(&self, left_factor: &LeftFactor<E>, right_factor: &[E]) -> (E, E, E) {
+        let LeftFactor::Dense(left_factor) = left_factor else {
+            debug_assert!(
+                false,
+                "equality left factor requires a zero-width right factor"
+            );
+            return (E::zero(), E::zero(), E::zero());
+        };
         match self {
             Self::Dense(table) => accumulate_right_round(table, left_factor, right_factor),
             Self::CompactWitness {
@@ -176,17 +239,36 @@ impl<E: FieldCore + FromPrimitiveInt> ProductTable<E> {
         }
     }
 
-    fn accumulate_left_round(&self, left_factor: &[E], right_weight: E) -> (E, E, E) {
-        match self {
-            Self::Dense(table) => accumulate_left_round(table, left_factor, right_weight),
-            Self::CompactWitness {
-                digits,
-                padded_len,
-                pending_right_challenge,
-            } => {
-                debug_assert!(pending_right_challenge.is_none());
-                accumulate_left_round_compact(digits, *padded_len, left_factor, right_weight)
-            }
+    fn accumulate_left_round(&self, left_factor: &LeftFactor<E>, right_weight: E) -> (E, E, E) {
+        match left_factor {
+            LeftFactor::Dense(left_factor) => match self {
+                Self::Dense(table) => accumulate_left_round(table, left_factor, right_weight),
+                Self::CompactWitness {
+                    digits,
+                    padded_len,
+                    pending_right_challenge,
+                } => {
+                    debug_assert!(pending_right_challenge.is_none());
+                    accumulate_left_round_compact(digits, *padded_len, left_factor, right_weight)
+                }
+            },
+            LeftFactor::Equality { point, scale } => match self {
+                Self::Dense(table) => accumulate_left_round_eq(table, point, *scale, right_weight),
+                Self::CompactWitness {
+                    digits,
+                    padded_len,
+                    pending_right_challenge,
+                } => {
+                    debug_assert!(pending_right_challenge.is_none());
+                    accumulate_left_round_compact_eq(
+                        digits,
+                        *padded_len,
+                        point,
+                        *scale,
+                        right_weight,
+                    )
+                }
+            },
         }
     }
 
@@ -218,17 +300,38 @@ impl<E: FieldCore + FromPrimitiveInt> ProductTable<E> {
         }
     }
 
-    fn fold_left_round(&mut self, left_factor: &mut Vec<E>, r: E) {
-        match self {
-            Self::Dense(table) => fold_left_round(table, left_factor, r),
-            Self::CompactWitness {
-                digits,
-                padded_len,
-                pending_right_challenge,
-            } => {
-                debug_assert!(pending_right_challenge.is_none());
-                let folded = fold_compact_left_round(digits, *padded_len, left_factor, r);
-                *self = Self::Dense(folded);
+    fn fold_left_round(&mut self, left_factor: &mut LeftFactor<E>, r: E) {
+        match left_factor {
+            LeftFactor::Dense(left_factor) => match self {
+                Self::Dense(table) => fold_left_round(table, left_factor, r),
+                Self::CompactWitness {
+                    digits,
+                    padded_len,
+                    pending_right_challenge,
+                } => {
+                    debug_assert!(pending_right_challenge.is_none());
+                    let folded = fold_compact_left_round(digits, *padded_len, left_factor, r);
+                    *self = Self::Dense(folded);
+                }
+            },
+            LeftFactor::Equality { point, scale } => {
+                match self {
+                    Self::Dense(table) => fold_dense_left_round(table, r),
+                    Self::CompactWitness {
+                        digits,
+                        padded_len,
+                        pending_right_challenge,
+                    } => {
+                        debug_assert!(pending_right_challenge.is_none());
+                        let folded = fold_compact_left_round_eq(digits, *padded_len, r);
+                        *self = Self::Dense(folded);
+                    }
+                }
+                if let Some((&head, tail)) = point.split_first() {
+                    let folded_head = (E::one() - r) * (E::one() - head) + r * head;
+                    *scale *= folded_head;
+                    *point = Arc::from(tail.to_vec());
+                }
             }
         }
     }

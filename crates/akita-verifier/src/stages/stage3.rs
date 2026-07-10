@@ -2,7 +2,7 @@
 //! prover-side `AkitaStage3Prover`.
 
 use crate::protocol::ring_switch::RelationMatrixEvaluator;
-use akita_algebra::eq_poly::EqPolynomial;
+use akita_algebra::eq_poly::{EqPolynomial, SplitEqEvals};
 use akita_algebra::ring::{eval_ring_at_pows_fast, scalar_powers};
 use akita_field::parallel::*;
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt};
@@ -227,13 +227,12 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
         // directly at `rho_setup_idx` instead of building a dense equality
         // table for that factor.
         let required = self.plan.required();
-        let eq_setup_idx = setup_idx_eq_table(required, rho_setup_idx)?;
         let eq_y = ring_eq_table::<E, D>(rho_y)?;
         let setup_val = setup_mle_at_eq_tables::<F, E, D>(
             &setup.expanded,
             required,
             setup_eval_len,
-            &eq_setup_idx,
+            rho_setup_idx,
             &eq_y,
         )?;
         let setup_index_weight = if let Some(evaluator) = &self.setup_index_weight_evaluator {
@@ -262,19 +261,6 @@ fn lift_scale<E: FieldCore + FromPrimitiveInt>(extra_rounds: usize) -> Result<E,
         .inverse()
         .ok_or_else(|| AkitaError::InvalidSetup("two is not invertible in Akita fields".into()))?;
     Ok((0..extra_rounds).fold(E::one(), |acc, _| acc * inv_two))
-}
-
-fn setup_idx_eq_table<E: FieldCore>(
-    required: usize,
-    rho_setup_idx: &[E],
-) -> Result<Vec<E>, AkitaError> {
-    let setup_idx_len = required
-        .checked_next_power_of_two()
-        .ok_or_else(|| AkitaError::InvalidSetup("setup product index length overflow".into()))?;
-    if rho_setup_idx.len() != setup_idx_len.trailing_zeros() as usize {
-        return Err(AkitaError::InvalidProof);
-    }
-    EqPolynomial::evals(rho_setup_idx)
 }
 
 fn ring_eq_table<E: FieldCore, const D: usize>(rho_y: &[E]) -> Result<Vec<E>, AkitaError> {
@@ -313,7 +299,7 @@ fn setup_mle_at_eq_tables<F, E, const D: usize>(
     setup: &AkitaExpandedSetup<F>,
     required: usize,
     setup_eval_len: usize,
-    eq_setup_idx: &[E],
+    rho_setup_idx: &[E],
     eq_y: &[E],
 ) -> Result<E, AkitaError>
 where
@@ -328,6 +314,7 @@ where
     let setup_idx_len = required
         .checked_next_power_of_two()
         .ok_or_else(|| AkitaError::InvalidSetup("setup MLE index length overflow".into()))?;
+    let eq_setup_idx = SplitEqEvals::new(rho_setup_idx)?;
     if eq_setup_idx.len() != setup_idx_len {
         return Err(AkitaError::InvalidSize {
             expected: setup_idx_len,
@@ -343,14 +330,13 @@ where
     let setup_view = setup.shared_matrix().ring_view::<D>(1, setup_eval_len)?;
     let setup_entries = setup_view.as_slice();
 
-    Ok(cfg_fold_reduce!(
-        0..required,
-        E::zero,
-        |mut acc, setup_idx| {
-            let ring_eval = eval_ring_at_pows_fast(&setup_entries[setup_idx], eq_y);
-            acc += eq_setup_idx[setup_idx] * ring_eval;
-            acc
-        },
-        |lhs, rhs| lhs + rhs
-    ))
+    let mut acc = E::zero();
+    for setup_idx in 0..required {
+        let entry = setup_entries
+            .get(setup_idx)
+            .ok_or(AkitaError::InvalidProof)?;
+        let ring_eval = eval_ring_at_pows_fast(entry, eq_y);
+        acc += eq_setup_idx.eval_at(setup_idx)? * ring_eval;
+    }
+    Ok(acc)
 }

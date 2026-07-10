@@ -1,3 +1,4 @@
+use akita_algebra::offset_eq::eq_eval_at_index;
 use akita_field::parallel::*;
 use akita_field::{FieldCore, FromPrimitiveInt};
 
@@ -39,6 +40,58 @@ pub(super) fn product_claim_from_m_compact<E: FieldCore + FromPrimitiveInt>(
                 if digit != 0 {
                     acc += E::from_i64(i64::from(digit)) * left_weight * right_weight;
                 }
+            }
+            acc
+        },
+        |lhs, rhs| lhs + rhs
+    )
+}
+
+pub(super) fn product_claim_from_m_compact_eq<E: FieldCore + FromPrimitiveInt>(
+    digits: &[i8],
+    padded_len: usize,
+    point: &[E],
+    scale: E,
+    right_factor: &[E],
+) -> E {
+    let right_len = right_factor.len();
+    let left_len = padded_len / right_len;
+    cfg_fold_reduce!(
+        0..left_len,
+        E::zero,
+        |mut acc, left_idx| {
+            let left_weight = scale * eq_eval_at_index(point, left_idx);
+            let row_base = left_idx * right_len;
+            for (right_idx, &right_weight) in right_factor.iter().enumerate() {
+                let Some(&digit) = digits.get(row_base + right_idx) else {
+                    continue;
+                };
+                if digit != 0 {
+                    acc += E::from_i64(i64::from(digit)) * left_weight * right_weight;
+                }
+            }
+            acc
+        },
+        |lhs, rhs| lhs + rhs
+    )
+}
+
+pub(super) fn product_claim_eq<E: FieldCore>(
+    table: &[E],
+    point: &[E],
+    scale: E,
+    right_factor: &[E],
+) -> E {
+    let right_len = right_factor.len();
+    let left_len = table.len() / right_len;
+    cfg_fold_reduce!(
+        0..left_len,
+        E::zero,
+        |mut acc, left_idx| {
+            let left_weight = scale * eq_eval_at_index(point, left_idx);
+            let row = &table[left_idx * right_len..(left_idx + 1) * right_len];
+            for (&value, &right_weight) in row.iter().zip(right_factor.iter()) {
+                acc += value * left_weight * right_weight;
             }
             acc
         },
@@ -210,6 +263,59 @@ pub(super) fn accumulate_left_round_compact<E: FieldCore + FromPrimitiveInt>(
     )
 }
 
+pub(super) fn accumulate_left_round_compact_eq<E: FieldCore + FromPrimitiveInt>(
+    digits: &[i8],
+    padded_len: usize,
+    point: &[E],
+    scale: E,
+    right_weight: E,
+) -> (E, E, E) {
+    let half = padded_len / 2;
+    cfg_fold_reduce!(
+        0..half,
+        || (E::zero(), E::zero(), E::zero()),
+        |(mut constant, mut linear, mut quadratic), pair_idx| {
+            let s0 = compact_value_at::<E>(digits, 2 * pair_idx);
+            let s1 = compact_value_at::<E>(digits, 2 * pair_idx + 1);
+            let f0 = scale * eq_eval_at_index(point, 2 * pair_idx) * right_weight;
+            let f1 = scale * eq_eval_at_index(point, 2 * pair_idx + 1) * right_weight;
+            let ds = s1 - s0;
+            let df = f1 - f0;
+            constant += s0 * f0;
+            linear += s0 * df + ds * f0;
+            quadratic += ds * df;
+            (constant, linear, quadratic)
+        },
+        |lhs, rhs| (lhs.0 + rhs.0, lhs.1 + rhs.1, lhs.2 + rhs.2)
+    )
+}
+
+pub(super) fn accumulate_left_round_eq<E: FieldCore>(
+    table: &[E],
+    point: &[E],
+    scale: E,
+    right_weight: E,
+) -> (E, E, E) {
+    let half = table.len() / 2;
+    cfg_fold_reduce!(
+        0..half,
+        || (E::zero(), E::zero(), E::zero()),
+        |(mut constant, mut linear, mut quadratic), pair_idx| {
+            let s0 = table[2 * pair_idx];
+            let s1 = table[2 * pair_idx + 1];
+            let f0 = scale * eq_eval_at_index(point, 2 * pair_idx) * right_weight;
+            let f1 = scale * eq_eval_at_index(point, 2 * pair_idx + 1) * right_weight;
+            let ds = s1 - s0;
+            let df = f1 - f0;
+            constant += s0 * f0;
+            linear += s0 * df + ds * f0;
+            quadratic += ds * df;
+            (constant, linear, quadratic)
+        },
+        |lhs, rhs| (lhs.0 + rhs.0, lhs.1 + rhs.1, lhs.2 + rhs.2)
+    )
+}
+
 pub(super) fn fold_pair<E: FieldCore>(left: E, right: E, r: E) -> E {
     left + r * (right - left)
 }
@@ -332,4 +438,29 @@ pub(super) fn fold_compact_left_round<E: FieldCore + FromPrimitiveInt>(
         .collect::<Vec<_>>();
     fold_factor_in_place(left_factor, r);
     folded_table
+}
+
+pub(super) fn fold_compact_left_round_eq<E: FieldCore + FromPrimitiveInt>(
+    digits: &[i8],
+    padded_len: usize,
+    r: E,
+) -> Vec<E> {
+    let half = padded_len / 2;
+    cfg_into_iter!(0..half)
+        .map(|idx| {
+            fold_pair(
+                compact_value_at::<E>(digits, 2 * idx),
+                compact_value_at::<E>(digits, 2 * idx + 1),
+                r,
+            )
+        })
+        .collect::<Vec<_>>()
+}
+
+pub(super) fn fold_dense_left_round<E: FieldCore>(table: &mut Vec<E>, r: E) {
+    let half = table.len() / 2;
+    let folded = cfg_into_iter!(0..half)
+        .map(|idx| fold_pair(table[2 * idx], table[2 * idx + 1], r))
+        .collect::<Vec<_>>();
+    *table = folded;
 }

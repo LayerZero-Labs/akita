@@ -42,13 +42,7 @@ where
     let depth_fold = lp.num_digits_fold(num_polys, lp.field_bits_for_cache())?;
     let rows =
         lp.relation_matrix_row_count_for(opening_batch.num_groups(), relation_matrix_row_layout)?;
-    let eq_tau1: Arc<[E]> = EqPolynomial::evals(tau1)?.into();
-    if eq_tau1.len() < rows {
-        return Err(AkitaError::InvalidSize {
-            expected: rows,
-            actual: eq_tau1.len(),
-        });
-    }
+    let eq_tau1: Arc<[E]> = EqPolynomial::evals_prefix(tau1, rows)?.into();
 
     let (inputs, groups, d_physical_cols, d_row_start, d_rows) = if lp.has_precommitted_groups() {
         lp.reject_multi_group_multi_chunk("prepare_setup_contribution_artifact")?;

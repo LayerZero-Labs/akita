@@ -107,7 +107,7 @@ impl<E: FieldCore> SetupContributionPlanInputs<E> {
         tau1: &[E],
         min_rows: usize,
     ) -> Result<Self, AkitaError> {
-        self.eq_tau1 = EqPolynomial::evals(tau1)?.into();
+        self.eq_tau1 = EqPolynomial::evals_prefix(tau1, min_rows)?.into();
         if self.eq_tau1.len() < min_rows {
             return Err(AkitaError::InvalidSize {
                 expected: min_rows,

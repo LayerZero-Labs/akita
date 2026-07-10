@@ -2,7 +2,7 @@
 
 use std::marker::PhantomData;
 
-use akita_algebra::eq_poly::EqPolynomial;
+use akita_algebra::eq_poly::{EqPolynomial, SplitEqEvals};
 use akita_algebra::CyclotomicRing;
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, Invertible};
 
@@ -528,13 +528,14 @@ where
         return Err(AkitaError::InvalidProof);
     }
     let live_x_cols = dense_evals.len() / ring_len;
-    let eq_x = EqPolynomial::evals(x_challenges)?;
+    let eq_x = SplitEqEvals::new(x_challenges)?;
     let eq_y = EqPolynomial::evals(y_challenges)?;
     if live_x_cols > eq_x.len() {
         return Err(AkitaError::InvalidProof);
     }
     let mut acc = E::zero();
-    for (col, &x_weight) in eq_x.iter().take(live_x_cols).enumerate() {
+    for col in 0..live_x_cols {
+        let x_weight = eq_x.eval_at(col)?;
         let base = col * ring_len;
         let mut ring_acc = E::zero();
         for (coord, &y_weight) in eq_y.iter().enumerate() {

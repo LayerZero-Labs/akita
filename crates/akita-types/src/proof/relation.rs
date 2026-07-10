@@ -309,7 +309,12 @@ pub fn relation_claim_from_rows<F: FieldCore + CanonicalField, const D: usize>(
     v: &[CyclotomicRing<F, D>],
     u: &[CyclotomicRing<F, D>],
 ) -> Result<F, AkitaError> {
-    let eq_tau1 = EqPolynomial::evals(tau1)?;
+    let row_count = 1usize
+        .checked_add(n_a)
+        .and_then(|count| count.checked_add(u.len()))
+        .and_then(|count| count.checked_add(v.len()))
+        .ok_or_else(|| AkitaError::InvalidSetup("relation row count overflow".into()))?;
+    let eq_tau1 = EqPolynomial::evals_prefix(tau1, row_count)?;
     let mut acc = F::zero();
     let mut row_idx = 1usize + n_a;
 
@@ -346,7 +351,12 @@ where
     F: FieldCore + CanonicalField,
     E: FieldCore + MulBaseUnreduced<F>,
 {
-    let eq_tau1 = EqPolynomial::evals(tau1)?;
+    let row_count = 1usize
+        .checked_add(n_a)
+        .and_then(|count| count.checked_add(u.len()))
+        .and_then(|count| count.checked_add(v.len()))
+        .ok_or_else(|| AkitaError::InvalidSetup("relation row count overflow".into()))?;
+    let eq_tau1 = EqPolynomial::evals_prefix(tau1, row_count)?;
     let alpha_pows = scalar_powers(alpha, D);
     let mut acc = E::zero();
     let mut row_idx = 1usize + n_a;
@@ -413,7 +423,18 @@ where
             actual: v.coeff_len() / dims.d_d(),
         });
     }
-    let eq_tau1 = EqPolynomial::evals(tau1)?;
+    let row_count = 1usize
+        .checked_add(layout.n_d)
+        .and_then(|count| {
+            layout.groups.iter().try_fold(count, |count, group| {
+                count
+                    .checked_add(group.n_a)
+                    .and_then(|count| count.checked_add(group.commit_rows))
+                    .and_then(|count| count.checked_add(group.b_inner_rows))
+            })
+        })
+        .ok_or_else(|| AkitaError::InvalidSetup("relation row count overflow".into()))?;
+    let eq_tau1 = EqPolynomial::evals_prefix(tau1, row_count)?;
     let mut acc = E::zero();
     let mut row_idx = 1usize;
     dispatch_for_field!(

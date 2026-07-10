@@ -1,6 +1,6 @@
 //! Verifier for the Akita stage-2 fused sumcheck.
 
-use akita_algebra::eq_poly::EqPolynomial;
+use akita_algebra::eq_poly::{EqPolynomial, SplitEqEvals};
 use akita_field::{
     AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, HalvingField,
     MulBaseUnreduced,
@@ -30,14 +30,15 @@ where
 
     let (y_challenges, x_challenges) = challenges.split_at(ring_bits);
     let eq_y = EqPolynomial::evals(y_challenges)?;
-    let eq_x = EqPolynomial::evals(x_challenges)?;
+    let eq_x = SplitEqEvals::new(x_challenges)?;
     let live_x_cols = witness_len / y_len;
     if live_x_cols > eq_x.len() {
         return Err(AkitaError::InvalidProof);
     }
 
     let mut acc = E::zero();
-    for (x, &x_weight) in eq_x.iter().take(live_x_cols).enumerate() {
+    for x in 0..live_x_cols {
+        let x_weight = eq_x.eval_at(x)?;
         let base = x * y_len;
         let mut y_eval = E::zero();
         for (y, &y_weight) in eq_y.iter().enumerate() {

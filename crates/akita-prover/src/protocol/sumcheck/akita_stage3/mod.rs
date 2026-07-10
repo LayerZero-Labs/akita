@@ -397,7 +397,6 @@ where
         .checked_mul(y_len)
         .ok_or_else(|| AkitaError::InvalidSetup("witness carry table length overflow".into()))?;
     let right_factor = EqPolynomial::evals(&stage2_challenges[..ring_bits])?;
-    let left_factor = EqPolynomial::evals(&stage2_challenges[ring_bits..])?;
     let mut opening_table = vec![0i8; table_len];
     let live_physical_cols = logical_w.len() / opening_ring_dim;
     for physical_index in 0..live_physical_cols {
@@ -407,12 +406,22 @@ where
         opening_table[dst_start..dst_start + opening_ring_dim]
             .copy_from_slice(&logical_w[src_start..src_start + opening_ring_dim]);
     }
-    let term = FactoredProductTerm::new_compact(
-        Arc::from(opening_table),
-        table_len,
-        left_factor,
-        right_factor,
-    )?;
+    let term = if ring_bits == 0 {
+        FactoredProductTerm::new_compact_equality(
+            Arc::from(opening_table),
+            table_len,
+            Arc::from(stage2_challenges[ring_bits..].to_vec()),
+            right_factor,
+        )?
+    } else {
+        let left_factor = EqPolynomial::evals(&stage2_challenges[ring_bits..])?;
+        FactoredProductTerm::new_compact(
+            Arc::from(opening_table),
+            table_len,
+            left_factor,
+            right_factor,
+        )?
+    };
     if term.input_claim() != stage2_next_w_eval {
         return Err(AkitaError::InvalidProof);
     }

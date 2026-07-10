@@ -101,6 +101,22 @@ impl<E: FieldCore> EqPolynomial<E> {
         Self::evals_with_scaling(r, None)
     }
 
+    /// Compute the first `len` entries of the little-endian equality table.
+    ///
+    /// The split representation keeps this bounded by the requested prefix
+    /// instead of allocating the full `2^|r|` table. This is useful when a
+    /// protocol has a padded row domain but only materializes its live rows.
+    pub fn evals_prefix(r: &[E], len: usize) -> Result<Vec<E>, AkitaError> {
+        let split = SplitEqEvals::new(r)?;
+        if len > split.len() {
+            return Err(AkitaError::InvalidSize {
+                expected: split.len(),
+                actual: len,
+            });
+        }
+        (0..len).map(|index| split.eval_at(index)).collect()
+    }
+
     /// Compute the full evaluation table with optional scaling:
     /// `scaling_factor · eq(r, x)` for all `x ∈ {0,1}^n`.
     ///
@@ -260,6 +276,34 @@ impl<E: FieldCore> SplitEqEvals<E> {
     pub fn out_len(&self) -> usize {
         self.e_out.len()
     }
+
+    /// Total number of Boolean-hypercube entries represented by the split
+    /// tables.
+    #[inline]
+    pub fn len(&self) -> usize {
+        self.e_in.len() * self.e_out.len()
+    }
+
+    /// Whether either split factor is empty.
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.e_in.is_empty() || self.e_out.is_empty()
+    }
+
+    /// Evaluate the split equality table at one little-endian index.
+    ///
+    /// This keeps callers that need a sparse or strided subset of the table
+    /// from materializing the full `2^n` vector.
+    pub fn eval_at(&self, index: usize) -> Result<E, AkitaError> {
+        if index >= self.len() {
+            return Err(AkitaError::InvalidInput(format!(
+                "split equality index {index} is outside table length {}",
+                self.len()
+            )));
+        }
+        let in_len = self.in_len();
+        Ok(self.e_out[index / in_len] * self.e_in[index % in_len])
+    }
 }
 
 #[cfg(test)]
@@ -327,6 +371,24 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn split_eq_evals_supports_sparse_lookup() {
+        let mut rng = StdRng::seed_from_u64(0x5EED);
+        let point: Vec<F> = (0..17).map(|_| F::random(&mut rng)).collect();
+        let split = SplitEqEvals::new(&point).unwrap();
+        assert_eq!(split.len(), 1 << point.len());
+        for index in [0, 1, 127, 1 << 16, (1 << 17) - 1] {
+            let bits: Vec<F> = (0..point.len())
+                .map(|bit| F::from_u64(((index >> bit) & 1) as u64))
+                .collect();
+            assert_eq!(
+                split.eval_at(index).unwrap(),
+                EqPolynomial::mle(&point, &bits).unwrap()
+            );
+        }
+        assert!(split.eval_at(split.len()).is_err());
     }
 
     #[test]
