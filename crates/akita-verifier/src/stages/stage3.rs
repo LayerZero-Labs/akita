@@ -12,7 +12,7 @@ use akita_transcript::labels::{
 };
 use akita_transcript::{sample_ext_challenge, Transcript};
 use akita_types::{
-    dispatch_for_field, ensure_setup_envelope, gadget_row_scalars, select_setup_prefix_slot,
+    dispatch_for_field, ensure_setup_envelope, select_setup_prefix_slot, shared_setup_fold_gadget,
     stage3_offload_natural_field_len, AkitaExpandedSetup, AkitaVerifierSetup, LevelParams,
     SetupContributionPlan, SetupIndexWeightEvaluator, SetupSumcheckProof, SETUP_OFFLOAD_D_SETUP,
     SETUP_SUMCHECK_DEGREE,
@@ -52,20 +52,18 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
         E: ExtField<F>,
     {
         let alpha_pows = scalar_powers(alpha, D);
-        let fold_gadget = gadget_row_scalars::<F>(
-            relation_matrix_evaluator.depth_fold,
-            relation_matrix_evaluator.log_basis,
-        );
+        let fold_gadget =
+            shared_setup_fold_gadget::<F>(&relation_matrix_evaluator.setup_contribution_groups);
         let plan = SetupContributionPlan::finish_plan::<F>(
             &relation_matrix_evaluator.setup_contribution_static,
             x_challenges,
             None,
             None,
-            Some(&fold_gadget),
+            fold_gadget.as_deref(),
             &relation_matrix_evaluator.setup_contribution_groups,
         )?;
         let role_dims = relation_matrix_evaluator.role_dims;
-        let setup_index_weight_evaluator =
+        let setup_index_weight_evaluator = if let Some(fold_gadget) = fold_gadget.as_deref() {
             if role_dims.d_a() == D && role_dims.d_b() == D && role_dims.d_d() == D {
                 let evaluator = SetupIndexWeightEvaluator::new::<F>(
                     &relation_matrix_evaluator.setup_contribution_inputs,
@@ -73,7 +71,7 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
                     &relation_matrix_evaluator.setup_contribution_groups,
                     tau1,
                     x_challenges,
-                    &fold_gadget,
+                    fold_gadget,
                     D,
                     role_dims,
                     alpha,
@@ -81,7 +79,10 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
                 evaluator.prefers_succinct_path().then_some(evaluator)
             } else {
                 None
-            };
+            }
+        } else {
+            None
+        };
         let setup_idx_len = plan
             .required()?
             .checked_next_power_of_two()

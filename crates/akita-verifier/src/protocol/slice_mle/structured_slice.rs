@@ -521,7 +521,6 @@ mod tests {
         let prepared = RelationMatrixEvaluator {
             role_dims: lp.role_dims(),
             groups,
-            depth_fold,
             log_basis,
             chunk_layout,
             setup_contribution_groups,

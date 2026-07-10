@@ -116,8 +116,7 @@ pub use proof::{
     SetupProductSumcheckShape, SetupSumcheckProof, TailSegmentLayout, TerminalLevelProof,
     TerminalLevelProofShape, TerminalWitnessSegmentLayout, TerminalWitnessTranscriptParts,
     MAX_SETUP_MATRIX_FIELD_ELEMENTS, MULTI_GROUP_ROOT_DENSE_UNSUPPORTED,
-    MULTI_GROUP_ROOT_MULTI_CHUNK_UNSUPPORTED, MULTI_GROUP_ROOT_RECURSIVE_SETUP_UNSUPPORTED,
-    SETUP_OFFLOAD_D_SETUP, SETUP_SUMCHECK_DEGREE,
+    MULTI_GROUP_ROOT_MULTI_CHUNK_UNSUPPORTED, SETUP_OFFLOAD_D_SETUP, SETUP_SUMCHECK_DEGREE,
 };
 pub use proof_size::{level_proof_bytes, FOLD_GRIND_NONCE_BYTES};
 pub use schedule::{
@@ -130,8 +129,9 @@ pub use schedule::{
     ScheduleKeyPrecommitSource, Step,
 };
 pub use setup_contribution::{
-    ensure_setup_envelope, setup_active_ring_elems_at, setup_active_ring_elems_for_fold,
-    setup_required_for_inputs, stage3_offload_natural_field_len, SetupContributionGroupInputs,
+    ensure_setup_envelope, prepare_setup_contribution_artifact, setup_active_ring_elems_at,
+    setup_active_ring_elems_for_fold, setup_required_for_inputs, shared_setup_fold_gadget,
+    stage3_offload_natural_field_len, SetupContributionArtifact, SetupContributionGroupInputs,
     SetupContributionPlan, SetupContributionPlanInputs, SetupContributionStatic,
     SetupIndexWeightEvaluator,
 };

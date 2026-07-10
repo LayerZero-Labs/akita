@@ -979,6 +979,16 @@ pub(crate) static FP128_D64_ONEHOT_SCHEDULES: &[GeneratedScheduleTableEntry] = &
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 6, m_vars: 9, r_vars: 2, n_a: 4, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(32, 2), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(16, 1), m_vars: 5, r_vars: 5, log_basis: 2, n_a: 4, conservative_n_b: 2 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(16, 1), m_vars: 5, r_vars: 5, log_basis: 2, n_a: 4, conservative_n_b: 2 }], steps: &[
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 16, r_vars: 10, n_a: 6, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 14, r_vars: 7, n_a: 5, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 4, m_vars: 12, r_vars: 5, n_a: 5, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 6, m_vars: 11, r_vars: 3, n_a: 5, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 6, m_vars: 10, r_vars: 3, n_a: 4, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 6, m_vars: 9, r_vars: 3, n_a: 4, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 6, m_vars: 9, r_vars: 2, n_a: 4, n_b: 1, n_d: 1 }),
+        GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
+    ] },
     GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(32, 4), precommitteds: &[], steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 17, r_vars: 9, n_a: 6, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, m_vars: 14, r_vars: 7, n_a: 5, n_b: 1, n_d: 1 }),
@@ -2247,6 +2257,6 @@ pub(crate) static CATALOG_IDENTITY: GeneratedScheduleCatalogIdentity = Generated
     root_fold_shape: TensorChallengeShape::Flat,
     ring_dimensions: CATALOG_RING_DIMENSIONS,
     ring_challenge_config_digest: 12477507731232336810,
-    key_count: 248,
-    key_digest: 674467980355251814,
+    key_count: 249,
+    key_digest: 7376669881008510790,
 };

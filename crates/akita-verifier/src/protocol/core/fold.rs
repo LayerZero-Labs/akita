@@ -395,6 +395,7 @@ enum TraceWireAtRoleA<'a, F: FieldCore, E: FieldCore> {
         trace_claim_scales: Option<Vec<E>>,
         opening_batch: OpeningClaimsLayout,
         live_x_cols: usize,
+        trace_basis: BasisMode,
     },
 }
 
@@ -423,6 +424,7 @@ where
                     trace_basis,
                     trace_eval_scale,
                 )?,
+                trace_term_batches: Vec::new(),
                 dense_evals: None,
             }),
             Self::Root {
@@ -458,6 +460,7 @@ where
                 trace_claim_scales,
                 opening_batch,
                 live_x_cols,
+                trace_basis,
             } => build_trace_claim_multi_group_root::<F, E, D>(
                 layout,
                 lp,
@@ -465,6 +468,7 @@ where
                 &prepared_points,
                 &row_coefficients,
                 trace_claim_scales.as_deref(),
+                trace_basis,
                 trace_coeff,
                 trace_eval_target,
                 live_x_cols,
@@ -792,6 +796,7 @@ where
             trace_claim_scales: prepared.trace_claim_scales.clone(),
             opening_batch: relation_instance.opening_batch().clone(),
             live_x_cols,
+            trace_basis: prepared.trace_basis,
         })
     } else {
         let segment_layout = relation_instance.segment_layout(prepared.lp, None)?;

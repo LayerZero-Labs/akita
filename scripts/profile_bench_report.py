@@ -89,6 +89,9 @@ CASE_METADATA: dict[str, CaseMetadata] = {
     # one-hot tensor preset).
     "dense_fp128_d128": CaseMetadata("fp128", "dense", "dense", "D128"),
     "onehot_fp128_d64": CaseMetadata("fp128", "onehot", ONEHOT_WORKLOAD_LABEL, "D64"),
+    "onehot_fp128_d64_multi_group_recursive": CaseMetadata(
+        "fp128", "onehot", "multi-group one-hot", "D64 recursive multi-group"
+    ),
     "onehot_fp128_d64_multi_chunk_w8r2": CaseMetadata(
         "fp128", "onehot", ONEHOT_WORKLOAD_LABEL, "D64 multi-chunk W8R2"
     ),

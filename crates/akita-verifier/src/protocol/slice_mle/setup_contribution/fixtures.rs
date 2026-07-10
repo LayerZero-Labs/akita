@@ -246,7 +246,6 @@ impl SetupContributionFixture {
         let relation_matrix_evaluator = RelationMatrixEvaluator {
             role_dims: CommitmentRingDims::uniform(TEST_RING_DIM),
             groups,
-            depth_fold: shape.depth_fold,
             log_basis: shape.log_basis,
             chunk_layout,
             setup_contribution_groups,
