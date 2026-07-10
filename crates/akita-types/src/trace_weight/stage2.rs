@@ -359,17 +359,18 @@ where
 
 /// Slice the block-axis opening `b_open` out of a root opening point.
 ///
-/// After padding `opening_point` to `m_vars + r_vars + alpha_bits`
-/// coordinates, the outer coordinates are `padded[alpha_bits..]` and the block
-/// coordinates follow the virtual-position coordinates.
+/// After padding `opening_point` to the virtual opening layout plus
+/// `alpha_bits` coordinates, the outer coordinates are `padded[alpha_bits..]`
+/// and the block coordinates follow the virtual-position coordinates.
 pub fn root_trace_block_opening<X: FieldCore>(
     opening_point: &[X],
-    lp: &LevelParams,
+    opening_layout: OpeningBlockLayout,
     alpha_bits: usize,
 ) -> Result<Vec<X>, AkitaError> {
-    let target = lp
-        .m_vars
-        .checked_add(lp.r_vars)
+    let position_bits = opening_layout.position_stride().trailing_zeros() as usize;
+    let block_bits = opening_layout.num_blocks().trailing_zeros() as usize;
+    let target = position_bits
+        .checked_add(block_bits)
         .and_then(|n| n.checked_add(alpha_bits))
         .ok_or_else(|| AkitaError::InvalidSetup("opening point length overflow".to_string()))?;
     if opening_point.len() > target {
@@ -380,8 +381,8 @@ pub fn root_trace_block_opening<X: FieldCore>(
     }
     let mut padded = opening_point.to_vec();
     padded.resize(target, X::zero());
-    let start = alpha_bits + lp.m_vars;
-    Ok(padded[start..start + lp.r_vars].to_vec())
+    let start = alpha_bits + position_bits;
+    Ok(padded[start..start + block_bits].to_vec())
 }
 
 /// Build the verifier's short closed-form trace terms for a root opening_batch.

@@ -10,6 +10,7 @@ use akita_field::{AkitaError, CanonicalField};
 use crate::descriptor_bytes::{push_u128, push_u32, push_usize};
 use crate::layout::ring_dims::CommitmentRingDims;
 use crate::opening_claims::OpeningClaimsLayout;
+use crate::OpeningBlockLayout;
 
 pub use crate::sis::{AjtaiKeyParams, FoldWitnessLinfCapConfig, SisModulusFamily};
 
@@ -693,20 +694,24 @@ impl LevelParams {
 
     /// Logical opening-point variable count for recursive fold levels.
     ///
-    /// Matches [`crate::prepare_opening_point`]: outer
-    /// block/position coordinates plus the inner `log2(d_a)` bits.
+    /// Matches [`crate::prepare_opening_point`]: virtual block/position
+    /// coordinates from [`OpeningBlockLayout`] plus the inner `log2(d_a)`
+    /// bits.
     ///
     /// # Errors
     ///
     /// Returns an error if the summed dimension overflows `usize`.
     pub fn recursive_opening_num_vars(&self) -> Result<usize, AkitaError> {
         let alpha_bits = self.d_a().trailing_zeros() as usize;
-        self.m_vars
-            .checked_add(self.r_vars)
-            .and_then(|n| n.checked_add(alpha_bits))
+        let opening_layout = OpeningBlockLayout::new(self.num_blocks, self.block_len)?;
+        let outer_bits = (opening_layout.position_stride().trailing_zeros() as usize)
+            .checked_add(opening_layout.num_blocks().trailing_zeros() as usize)
             .ok_or_else(|| {
-                AkitaError::InvalidSetup("recursive opening num_vars overflow".to_string())
-            })
+                AkitaError::InvalidSetup("recursive opening outer variable overflow".to_string())
+            })?;
+        outer_bits.checked_add(alpha_bits).ok_or_else(|| {
+            AkitaError::InvalidSetup("recursive opening num_vars overflow".to_string())
+        })
     }
 
     // ---- Canonical relation-matrix row layout offsets (single source of truth) ----

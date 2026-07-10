@@ -863,17 +863,18 @@ mod tests {
             1,
             SparseChallengeConfig::pm1_only(1),
         )
+        .with_decomp(0, 0, 1, 1, 32)
+        .unwrap()
     }
 
     #[test]
     fn recursive_extension_opening_preparation_uses_ring_subfield_boundary() {
-        let lp = packed_inner_lp();
         let point = [E::lift_base(F::from_u64(3)), E::lift_base(F::from_u64(5))];
 
         let prepared = prepare_opening_point::<F, E, 32>(
             &point,
             BasisMode::Lagrange,
-            OpeningBlockLayout::new(lp.num_blocks, lp.block_len).unwrap(),
+            OpeningBlockLayout::new(1, 1).unwrap(),
             5,
         )
         .expect("packed-inner recursive extension point should prepare");

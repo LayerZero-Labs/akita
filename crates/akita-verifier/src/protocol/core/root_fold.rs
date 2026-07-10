@@ -151,6 +151,7 @@ where
 {
     let role_dims = root_lp.role_dims();
     let d_a = role_dims.d_a();
+    let root_opening_layout = OpeningBlockLayout::new(root_lp.num_blocks, root_lp.block_len)?;
     let v_storage = match proof {
         AkitaBatchedRootProof::Fold(fold) => fold.v.clone(),
         AkitaBatchedRootProof::Terminal(_) => RingVec::from_coeffs(Vec::new()),
@@ -158,13 +159,12 @@ where
     };
 
     if extension_opening_reduction.is_none() {
-        let opening_layout = OpeningBlockLayout::new(root_lp.num_blocks, root_lp.block_len)?;
         let prepared_point =
             dispatch_for_field!(ProtocolDispatchSlot::Role(RingRole::Inner), F, d_a, |D| {
                 prepare_opening_point::<F, E, D>(
                     shared_opening_point,
                     basis,
-                    opening_layout,
+                    root_opening_layout,
                     d_a.trailing_zeros() as usize,
                 )
             })?;
@@ -199,9 +199,17 @@ where
             dispatch_for_field!(ProtocolDispatchSlot::Role(RingRole::Inner), F, d_a, |D| {
                 ring_subfield_packed_extension_opening_point::<F, E, D>(rho.len(), rho)
             })?;
-        root_trace_block_opening::<E>(&protocol_point, root_lp, d_a.trailing_zeros() as usize)?
+        root_trace_block_opening::<E>(
+            &protocol_point,
+            root_opening_layout,
+            d_a.trailing_zeros() as usize,
+        )?
     } else {
-        root_trace_block_opening::<E>(shared_opening_point, root_lp, d_a.trailing_zeros() as usize)?
+        root_trace_block_opening::<E>(
+            shared_opening_point,
+            root_opening_layout,
+            d_a.trailing_zeros() as usize,
+        )?
     };
     let ordinary_trace_eval_target =
         opening_batch.batched_eval_target(&row_coefficients, openings)?;
@@ -408,8 +416,11 @@ where
     };
     // Routes `verify_fold` to the multi-group-root trace path; inert for the dense
     // trace-weight table that multi-group roots evaluate.
-    let trace_block_opening =
-        root_trace_block_opening::<E>(shared_opening_point, root_lp, alpha_bits)?;
+    let trace_block_opening = root_trace_block_opening::<E>(
+        shared_opening_point,
+        OpeningBlockLayout::new(root_lp.num_blocks, root_lp.block_len)?,
+        alpha_bits,
+    )?;
 
     let group_ring_opening_points = prepared_points
         .iter()

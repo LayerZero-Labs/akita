@@ -730,13 +730,17 @@ where
     } else if prepared.lp.has_precommitted_groups() {
         // Grouped root: dense trace-weight table (per-group `num_blocks`,
         // `num_digits_open`, and group-major e-hat offset). The layout is inert
-        // for the dense path; size it against the scalar block count so
-        // `trace_weight_layout_from_segment` accepts it.
+        // for dense evaluation, but remains the canonical checked description
+        // of one opening-digit segment. Use its first relation group rather
+        // than the aggregate batch width: groups may have unequal claim counts.
         let segment_layout = relation_instance.segment_layout(prepared.lp, None)?;
-        let num_trace_blocks = relation_instance
-            .opening_batch()
-            .num_total_polynomials()
-            .checked_mul(prepared.lp.num_blocks)
+        let group_id = *segment_layout.relation_group_order.first().ok_or_else(|| {
+            AkitaError::InvalidSetup("multi-group trace layout has no relation group".to_string())
+        })?;
+        let group = segment_layout.group(group_id)?;
+        let num_trace_blocks = group
+            .num_claims
+            .checked_mul(group.num_blocks)
             .ok_or_else(|| AkitaError::InvalidSetup("trace block count overflow".to_string()))?;
         let layout = trace_weight_layout_from_segment(
             prepared.lp,
@@ -746,21 +750,14 @@ where
             rs.ring_bits,
             num_trace_blocks,
         )?;
-        if d_a == 0 || !prepared.w_len.is_multiple_of(d_a) {
+        // Stage 2 is evaluated over the virtual opening domain. The physical
+        // witness has no entries for the per-block structural zeros, so its
+        // width is not the dense table width once `block_len` is non-power of
+        // two. `next_opening_layout` is the canonical source of that virtual
+        // width; the ring-switch replay must agree on its column-bit count.
+        let live_x_cols = prepared.next_opening_layout.opening_len();
+        if rs.col_bits != live_x_cols.trailing_zeros() as usize {
             return Err(AkitaError::InvalidProof);
-        }
-        let live_x_cols = prepared.w_len / d_a;
-        let col_bits = u32::try_from(rs.col_bits).map_err(|_| {
-            AkitaError::InvalidSetup("multi-group trace column bits overflow".to_string())
-        })?;
-        let max_live_x_cols = 1usize.checked_shl(col_bits).ok_or_else(|| {
-            AkitaError::InvalidSetup("multi-group trace column bound overflow".to_string())
-        })?;
-        if live_x_cols > max_live_x_cols {
-            return Err(AkitaError::InvalidSize {
-                expected: max_live_x_cols,
-                actual: live_x_cols,
-            });
         }
         let prepared_points = prepared
             .trace_prepared_points
