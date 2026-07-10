@@ -3,29 +3,30 @@
 #![allow(unreachable_pub)]
 
 use akita_algebra::eq_poly::EqPolynomial;
-use akita_algebra::ring::scalar_powers;
+use akita_algebra::ring::{eval_ring_at_pows, scalar_powers};
 use akita_algebra::CyclotomicRing;
 use akita_field::{CanonicalField, Prime128OffsetA7F7};
 use akita_types::{
     gadget_row_scalars, AkitaExpandedSetup, AkitaSetupSeed, CommitmentRingDims, FlatMatrix,
-    MRowLayout, SetupContributionPlanInputs, WitnessChunkLayout, WitnessChunkLengths,
-    WitnessLayout,
+    RelationMatrixRowLayout, SetupContributionPlan, SetupContributionPlanInputs,
+    WitnessChunkLayout, WitnessChunkLengths, WitnessLayout,
 };
 
-use super::{SetupEvaluation, SetupEvaluator, SetupEvaluatorMode};
+use super::evaluate_setup_contribution_direct;
 use crate::protocol::ring_switch::{
-    PreparedChallengeEvals, RingSwitchDeferredRowEval, RingSwitchDeferredRowGroupEval,
+    build_setup_contribution_groups, PreparedChallengeEvals, RelationMatrixEvaluator,
+    RelationMatrixGroupEvaluator,
 };
 
 pub(crate) type TestField = Prime128OffsetA7F7;
-pub(crate) const TEST_RING_DIM: usize = 32;
+pub(crate) const TEST_RING_DIM: usize = 64;
 
 pub(crate) fn test_scalar(value: u128) -> TestField {
     TestField::from_canonical_u128_reduced(value)
 }
 
 pub(crate) struct SetupContributionFixture {
-    pub prepared: RingSwitchDeferredRowEval<TestField>,
+    pub relation_matrix_evaluator: RelationMatrixEvaluator<TestField>,
     pub setup: AkitaExpandedSetup<TestField>,
     pub full_vec_randomness: Vec<TestField>,
     pub eq_low: Vec<TestField>,
@@ -45,8 +46,8 @@ pub(crate) struct SetupContributionShape {
     pub n_a: usize,
     pub n_d: usize,
     pub n_b: usize,
-    pub num_polys_per_segment: Vec<usize>,
-    pub m_row_layout: MRowLayout,
+    pub num_polys_per_group: Vec<usize>,
+    pub relation_matrix_row_layout: RelationMatrixRowLayout,
 }
 
 impl SetupContributionShape {
@@ -62,12 +63,12 @@ impl SetupContributionShape {
             n_a: 2,
             n_d: 1,
             n_b: 2,
-            num_polys_per_segment: vec![1],
-            m_row_layout: MRowLayout::WithDBlock,
+            num_polys_per_group: vec![1],
+            relation_matrix_row_layout: RelationMatrixRowLayout::WithDBlock,
         }
     }
 
-    pub fn recursive_multigroup() -> Self {
+    pub fn recursive_multi_group() -> Self {
         Self {
             num_blocks: 8,
             num_claims: 3,
@@ -79,14 +80,14 @@ impl SetupContributionShape {
             n_a: 2,
             n_d: 2,
             n_b: 2,
-            num_polys_per_segment: vec![3],
-            m_row_layout: MRowLayout::WithDBlock,
+            num_polys_per_group: vec![3],
+            relation_matrix_row_layout: RelationMatrixRowLayout::WithDBlock,
         }
     }
 
     pub fn terminal_relation_only() -> Self {
         let mut shape = Self::root_single_point();
-        shape.m_row_layout = MRowLayout::WithoutDBlock;
+        shape.relation_matrix_row_layout = RelationMatrixRowLayout::WithoutDBlock;
         shape
     }
 
@@ -101,7 +102,7 @@ impl SetupContributionShape {
     pub fn batched_root() -> Self {
         let mut shape = Self::root_single_point();
         shape.num_claims = 4;
-        shape.num_polys_per_segment = vec![4];
+        shape.num_polys_per_group = vec![4];
         shape
     }
 
@@ -123,18 +124,18 @@ impl SetupContributionShape {
 
 impl SetupContributionFixture {
     pub fn from_shape(shape: &SetupContributionShape) -> Self {
-        let num_points = shape.num_polys_per_segment.len();
-        let num_t_vectors = shape.num_polys_per_segment.iter().sum();
+        let num_points = shape.num_polys_per_group.len();
+        let num_t_vectors = shape.num_polys_per_group.iter().sum();
         let total_blocks = shape.num_blocks * shape.num_claims;
         let inner_width = shape.block_len * shape.depth_commit;
 
-        // Canonical M-row layout: consistency | A | B | D.
+        // Canonical relation-matrix row layout: consistency | A | B | D.
         let rows = 1 + shape.n_a + shape.n_b * num_points + shape.n_d;
 
         let stride_t = shape.n_a * shape.depth_open;
         let cols_per_poly_t = stride_t * shape.num_blocks;
         let n_cols_e = shape.num_claims * shape.num_blocks * shape.depth_open;
-        let n_cols_t = shape.num_polys_per_segment.iter().copied().max().unwrap() * cols_per_poly_t;
+        let n_cols_t = shape.num_polys_per_group.iter().copied().max().unwrap() * cols_per_poly_t;
 
         let e_len = shape.depth_open * total_blocks;
         let t_len = shape.depth_open * shape.n_a * shape.num_blocks * num_t_vectors;
@@ -160,7 +161,7 @@ impl SetupContributionFixture {
         let setup = AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
             AkitaSetupSeed {
                 max_num_vars: 32,
-                max_num_batched_polys: shape.num_polys_per_segment.iter().sum(),
+                max_num_batched_polys: shape.num_polys_per_group.iter().sum(),
                 gen_ring_dim: TEST_RING_DIM,
                 max_setup_len,
                 public_matrix_seed: [7u8; 32],
@@ -168,26 +169,25 @@ impl SetupContributionFixture {
             FlatMatrix::from_ring_slice::<TEST_RING_DIM>(&matrix_entries),
         );
 
-        let eq_tau1: Vec<TestField> = (0..rows.next_power_of_two())
-            .map(|idx| test_scalar(11 + idx as u128))
-            .collect();
         let setup_contribution_inputs = SetupContributionPlanInputs {
-            eq_tau1: eq_tau1.clone(),
+            relation_matrix_row_layout: shape.relation_matrix_row_layout,
+            rows,
+            n_a: shape.n_a,
+            n_b: shape.n_b,
+            n_d: shape.n_d,
+            num_groups: 1,
+            num_polys_per_group: shape.num_polys_per_group.clone(),
             num_t_vectors,
-            num_blocks: shape.num_blocks,
             num_claims: shape.num_claims,
+            num_blocks: shape.num_blocks,
+            block_len: shape.block_len,
             depth_open: shape.depth_open,
             depth_commit: shape.depth_commit,
             depth_fold: shape.depth_fold,
-            block_len: shape.block_len,
             inner_width,
-            n_a: shape.n_a,
-            n_d: shape.n_d,
-            m_row_layout: shape.m_row_layout,
-            n_b: shape.n_b,
-            num_segments: 1,
-            rows,
-            num_polys_per_segment: shape.num_polys_per_segment.clone(),
+            eq_tau1: (0..rows.next_power_of_two())
+                .map(|idx| test_scalar(11 + idx as u128))
+                .collect(),
         };
         let chunk_layout = WitnessLayout {
             blocks_per_chunk: shape.num_blocks,
@@ -195,7 +195,6 @@ impl SetupContributionFixture {
                 offset_z,
                 offset_e,
                 offset_t,
-                offset_u: None,
                 offset_r: Some(offset_r),
                 global_block_base: 0,
             }],
@@ -203,49 +202,55 @@ impl SetupContributionFixture {
                 z_len,
                 e_len,
                 t_len,
-                u_len: None,
                 r_len: Some(0),
             }],
         };
-        let n_d_active = match shape.m_row_layout {
-            MRowLayout::WithDBlock => shape.n_d,
-            MRowLayout::WithoutDBlock => 0,
+        let n_d_active = match shape.relation_matrix_row_layout {
+            RelationMatrixRowLayout::WithDBlock => shape.n_d,
+            RelationMatrixRowLayout::WithoutDBlock => 0,
         };
-        let prepared = RingSwitchDeferredRowEval {
-            eq_tau1,
-            role_dims: CommitmentRingDims::uniform(TEST_RING_DIM),
-            groups: vec![RingSwitchDeferredRowGroupEval {
-                c_alphas: PreparedChallengeEvals::Flat(
-                    (0..total_blocks)
-                        .map(|idx| test_scalar(41 + idx as u128))
-                        .collect(),
-                ),
-                a_evals: (0..shape.block_len)
-                    .map(|idx| test_scalar(501 + idx as u128))
+        let groups = vec![RelationMatrixGroupEvaluator {
+            c_alphas: PreparedChallengeEvals::Flat(
+                (0..total_blocks)
+                    .map(|idx| test_scalar(41 + idx as u128))
                     .collect(),
-                chunk_range: 0..chunk_layout.chunks.len(),
-                e_setup_offset: 0,
-                num_claims: shape.num_claims,
-                num_blocks: shape.num_blocks,
-                block_len: shape.block_len,
-                depth_open: shape.depth_open,
-                depth_commit: shape.depth_commit,
-                depth_fold: shape.depth_fold,
-                log_basis: shape.log_basis,
-                n_a: shape.n_a,
-                n_b: shape.n_b,
-                inner_width,
-                t_cols_per_vector: shape.n_a * shape.depth_open * shape.num_blocks,
-                a_row_start: 1,
-                b_row_start: 1 + shape.n_a,
-            }],
-            e_setup_cols: n_cols_e,
-            n_d_active,
-            d_start: rows - n_d_active,
+            ),
+            opening_a_evals: (0..shape.block_len)
+                .map(|idx| test_scalar(501 + idx as u128))
+                .collect(),
+            chunk_range: 0..chunk_layout.chunks.len(),
+            e_col_offset: 0,
+            num_claims: shape.num_claims,
+            num_blocks: shape.num_blocks,
+            block_len: shape.block_len,
+            depth_open: shape.depth_open,
+            depth_commit: shape.depth_commit,
             depth_fold: shape.depth_fold,
             log_basis: shape.log_basis,
+            n_a: shape.n_a,
+            n_b: shape.n_b,
+            t_cols_per_vector: shape.n_a * shape.depth_open * shape.num_blocks,
+            a_row_start: 1,
+            b_row_start: 1 + shape.n_a,
+        }];
+        let setup_contribution_groups =
+            build_setup_contribution_groups(&chunk_layout, &groups).unwrap();
+        let setup_contribution_static = SetupContributionPlan::prepare_static(
+            &setup_contribution_inputs,
+            &setup_contribution_groups,
+            rows - n_d_active,
+            n_d_active,
+            n_cols_e,
+        )
+        .unwrap();
+        let relation_matrix_evaluator = RelationMatrixEvaluator {
+            role_dims: CommitmentRingDims::uniform(TEST_RING_DIM),
+            groups,
+            log_basis: shape.log_basis,
             chunk_layout,
+            setup_contribution_groups,
             setup_contribution_inputs,
+            setup_contribution_static,
         };
 
         let full_vec_randomness: Vec<TestField> = (0..bits)
@@ -264,7 +269,7 @@ impl SetupContributionFixture {
         };
 
         Self {
-            prepared,
+            relation_matrix_evaluator,
             setup,
             full_vec_randomness,
             eq_low,
@@ -275,87 +280,96 @@ impl SetupContributionFixture {
     }
 
     pub fn compute_contribution(&self) -> TestField {
-        let setup_contribution = self.prepared.create_setup_contribution_inputs();
-        let evaluator = SetupEvaluator::new(
-            &setup_contribution,
+        evaluate_setup_contribution_direct::<TestField, TestField, TEST_RING_DIM>(
+            &self.relation_matrix_evaluator,
             &self.full_vec_randomness,
             Some(&self.eq_low),
             Some(&self.z_block_low_eq),
             &self.alpha_pows,
-            &self.fold_gadget,
-            &self.prepared.chunk_layout,
-        );
-        match evaluator
-            .evaluate::<TEST_RING_DIM>(SetupEvaluatorMode::Direct { setup: &self.setup })
-            .unwrap()
-        {
-            SetupEvaluation::Direct(value) => value,
-            SetupEvaluation::Recursive(_) => {
-                panic!("setup evaluator returned recursive output for direct mode")
-            }
-        }
-    }
-
-    pub fn recursive_contribution(&self) -> TestField {
-        let setup_contribution = self.prepared.create_setup_contribution_inputs();
-        let evaluator = SetupEvaluator::new(
-            &setup_contribution,
-            &self.full_vec_randomness,
-            None,
-            None,
+            &self.alpha_pows,
             &self.alpha_pows,
             &self.fold_gadget,
-            &self.prepared.chunk_layout,
-        );
-        match evaluator
-            .evaluate::<TEST_RING_DIM>(SetupEvaluatorMode::Recursive { setup: &self.setup })
-            .unwrap()
-        {
-            SetupEvaluation::Recursive(value) => value,
-            SetupEvaluation::Direct(_) => {
-                panic!("setup evaluator returned direct output for recursive mode")
-            }
-        }
+            &self.setup,
+        )
+        .unwrap()
     }
 
-    pub fn assert_direct_matches_recursive(&self) {
-        let got = self.compute_contribution();
-        let recursive = self.recursive_contribution();
-        assert_eq!(
-            got, recursive,
-            "packed setup contribution must equal recursive setup contribution"
-        );
-    }
-
-    /// `evaluate_bar_omega_with_eq` (the const-generic `bar_omega_segment_eval`
-    /// kernel) must equal the eq-weighted materialized `bar_omega` (the generic
-    /// `weight_at` path). Cross-checks the two `bar_omega` implementations agree.
-    pub fn assert_eq_eval_matches_materialized(&self) {
-        let setup_contribution = self.prepared.create_setup_contribution_inputs();
-        let evaluator = SetupEvaluator::new(
-            &setup_contribution,
+    pub fn materialized_contribution(&self) -> TestField {
+        let plan = SetupContributionPlan::finish_plan::<TestField>(
+            &self.relation_matrix_evaluator.setup_contribution_static,
             &self.full_vec_randomness,
             Some(&self.eq_low),
             Some(&self.z_block_low_eq),
-            &self.alpha_pows,
-            &self.fold_gadget,
-            &self.prepared.chunk_layout,
+            Some(&self.fold_gadget),
+            &self.relation_matrix_evaluator.setup_contribution_groups,
+        )
+        .unwrap();
+        let setup_index_weight = plan.materialize_setup_index_weights().unwrap();
+        let setup_len = self
+            .setup
+            .shared_matrix()
+            .total_ring_elements_at::<TEST_RING_DIM>()
+            .unwrap();
+        assert!(
+            setup_len >= setup_index_weight.len(),
+            "fixture setup must cover materialized setup weights"
         );
-        let plan = evaluator.prepare().unwrap();
-        let bar_omega = plan.materialize_bar_omega();
-        let lambda_len = plan.required().checked_next_power_of_two().unwrap();
-        let eq_lambda: Vec<TestField> = (0..lambda_len)
-            .map(|idx| test_scalar(7 + idx as u128 * 13))
-            .collect();
-        let expected: TestField = bar_omega
+        let setup_view = self
+            .setup
+            .shared_matrix()
+            .ring_view::<TEST_RING_DIM>(1, setup_len)
+            .unwrap();
+        setup_view
+            .as_slice()
             .iter()
-            .enumerate()
-            .map(|(lambda, weight)| eq_lambda[lambda] * *weight)
-            .sum();
-        let got = plan.evaluate_bar_omega_with_eq(&eq_lambda).unwrap();
+            .zip(setup_index_weight)
+            .map(|(ring, weight)| eval_ring_at_pows(ring, &self.alpha_pows) * weight)
+            .sum()
+    }
+
+    pub fn assert_direct_matches_materialized(&self) {
+        let got = self.compute_contribution();
+        let expected = self.materialized_contribution();
         assert_eq!(
             got, expected,
-            "evaluate_bar_omega_with_eq must equal the eq-weighted materialized bar_omega"
+            "packed setup contribution must equal materialized setup contribution"
+        );
+    }
+
+    /// Direct MLE evaluation of the setup-index weight must equal an
+    /// eq-weighted materialized `setup_index_weight`.
+    pub fn assert_setup_index_weight_mle_matches_materialized(&self) {
+        let plan = SetupContributionPlan::finish_plan::<TestField>(
+            &self.relation_matrix_evaluator.setup_contribution_static,
+            &self.full_vec_randomness,
+            Some(&self.eq_low),
+            Some(&self.z_block_low_eq),
+            Some(&self.fold_gadget),
+            &self.relation_matrix_evaluator.setup_contribution_groups,
+        )
+        .unwrap();
+        let setup_index_weight = plan.materialize_setup_index_weights().unwrap();
+        let setup_idx_len = plan
+            .required()
+            .unwrap()
+            .checked_next_power_of_two()
+            .unwrap();
+        let setup_idx_bits = setup_idx_len.trailing_zeros() as usize;
+        let rho_setup_idx: Vec<TestField> = (0..setup_idx_bits)
+            .map(|idx| test_scalar(7 + idx as u128 * 13))
+            .collect();
+        let eq_setup_idx = EqPolynomial::evals(&rho_setup_idx).unwrap();
+        let expected: TestField = setup_index_weight
+            .iter()
+            .enumerate()
+            .map(|(setup_idx, weight)| eq_setup_idx[setup_idx] * *weight)
+            .sum();
+        let got = plan
+            .evaluate_setup_index_weight_mle(&rho_setup_idx)
+            .unwrap();
+        assert_eq!(
+            got, expected,
+            "setup-index weight MLE must equal the eq-weighted materialized setup-index weight"
         );
     }
 }

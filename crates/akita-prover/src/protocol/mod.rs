@@ -3,7 +3,6 @@
 pub mod core;
 pub mod extension_opening_reduction;
 pub mod fold_grind;
-pub mod fold_grind_observer;
 pub mod jl;
 pub mod prg;
 pub mod ring_relation;
@@ -18,7 +17,6 @@ pub use core::{
     SuffixProverState,
 };
 pub use fold_grind::ProverTranscriptGrind;
-pub use fold_grind_observer::{FoldGrindObservation, FoldGrindObserverGuard};
 pub use ring_relation::RingRelationProver;
 pub use ring_relation_witness::RingRelationWitness;
 pub use ring_switch::{commit_w, RingSwitchOutput};

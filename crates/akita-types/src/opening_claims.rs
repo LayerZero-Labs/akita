@@ -1,6 +1,5 @@
 //! Public opening claims and layout-only opening geometry.
 
-use crate::config::SetupContributionMode;
 use crate::descriptor_bytes::{push_usize, push_usize_vec};
 use crate::instance_descriptor::DescriptorDigest;
 use crate::proof::scheme::OpeningPoints;
@@ -12,40 +11,24 @@ use blake2::digest::consts::U32;
 use blake2::{Blake2b, Digest};
 use std::collections::BTreeSet;
 
-/// Recursive setup contribution cannot open multi-group root batches yet.
-pub const GROUPED_ROOT_RECURSIVE_SETUP_UNSUPPORTED: &str =
-    "recursive setup contribution with multiple commitment groups is not supported; see specs/multi-group-batching.md";
-
 /// Dense polynomials cannot open multi-group root batches yet.
-pub const GROUPED_ROOT_DENSE_UNSUPPORTED: &str =
+pub const MULTI_GROUP_ROOT_DENSE_UNSUPPORTED: &str =
     "dense polynomial multi-group root batching is not supported; see specs/multi-group-batching.md";
 
 /// Multi-chunk witness layout cannot combine with precommitted commitment groups.
-pub const GROUPED_ROOT_MULTI_CHUNK_UNSUPPORTED: &str =
+pub const MULTI_GROUP_ROOT_MULTI_CHUNK_UNSUPPORTED: &str =
     "multi-chunk witness layout with precommitted groups is not supported; see specs/multi-group-batching.md";
 
-/// Legacy grouped-root unsupported message kept for stale-proof diagnostics.
-#[deprecated(note = "multi-group root-direct opening is supported for one-hot Direct setup")]
-pub const GROUPED_ROOT_UNSUPPORTED: &str =
-    "multi-group root batching is not supported yet; see specs/multi-group-batching.md";
-
-/// Return the grouped-root rejection message, if the layout should be rejected.
-///
-/// `includes_dense_polynomial` is `Some(true)` when the prover knows the batch
-/// includes a dense polynomial; verifier callers pass `None` and skip the check.
-pub fn should_reject_grouped_root(
+/// Return the multi-group-root rejection message, if the layout should be rejected.
+pub fn should_reject_multi_group_root(
     layout: &OpeningClaimsLayout,
-    setup_contribution_mode: SetupContributionMode,
-    includes_dense_polynomial: Option<bool>,
+    includes_dense_polynomial: bool,
 ) -> Option<&'static str> {
     if layout.num_groups() <= 1 {
         return None;
     }
-    if setup_contribution_mode == SetupContributionMode::Recursive {
-        return Some(GROUPED_ROOT_RECURSIVE_SETUP_UNSUPPORTED);
-    }
-    if includes_dense_polynomial == Some(true) {
-        return Some(GROUPED_ROOT_DENSE_UNSUPPORTED);
+    if includes_dense_polynomial {
+        return Some(MULTI_GROUP_ROOT_DENSE_UNSUPPORTED);
     }
     None
 }
@@ -253,7 +236,7 @@ impl OpeningClaimsLayout {
         self.groups.get(g).ok_or(AkitaError::InvalidProof)
     }
 
-    /// Commitment-group index used as the final/new group for grouped root schedules.
+    /// Commitment-group index used as the final/new group for multi-group root schedules.
     pub fn root_final_group_index(&self) -> Result<usize, AkitaError> {
         self.check()?;
         self.groups
@@ -262,7 +245,7 @@ impl OpeningClaimsLayout {
             .ok_or(AkitaError::InvalidProof)
     }
 
-    /// Group processing order for grouped root schedules: final/new group first.
+    /// Group processing order for multi-group root schedules: final/new group first.
     pub fn root_group_order(&self) -> Result<Vec<usize>, AkitaError> {
         let final_group_index = self.root_final_group_index()?;
         let mut order = Vec::with_capacity(self.num_groups());
@@ -282,7 +265,7 @@ impl OpeningClaimsLayout {
         Ok(&self.groups[..final_index])
     }
 
-    /// Final/new group layout for grouped root schedule lookup.
+    /// Final/new group layout for multi-group root schedule lookup.
     pub fn root_final_group_layout(&self) -> Result<PolynomialGroupLayout, AkitaError> {
         Ok(*self.group_layout(self.root_final_group_index()?)?)
     }
@@ -308,7 +291,7 @@ impl OpeningClaimsLayout {
         Ok(start..end)
     }
 
-    /// Raw grouped root-direct witness length in field elements.
+    /// Raw multi-group root-direct witness length in field elements.
     pub fn root_direct_witness_len(&self) -> Result<usize, AkitaError> {
         self.check()?;
         self.groups.iter().try_fold(0usize, |acc, group| {
@@ -723,7 +706,7 @@ mod tests {
             PolynomialGroupLayout::new(3, 2),
             PolynomialGroupLayout::new(4, 1),
         ])
-        .expect("grouped layout");
+        .expect("multi-group layout");
 
         assert_eq!(layout.root_final_group_index().expect("final index"), 2);
         assert_eq!(
@@ -784,25 +767,17 @@ mod tests {
     }
 
     #[test]
-    fn should_reject_grouped_root_returns_canonical_messages() {
+    fn should_reject_multi_group_root_returns_canonical_messages() {
         let layout = OpeningClaimsLayout::from_group_sizes(4, &[1, 1]).expect("layout");
+        assert_eq!(should_reject_multi_group_root(&layout, false), None);
         assert_eq!(
-            should_reject_grouped_root(&layout, SetupContributionMode::Direct, None),
-            None
+            should_reject_multi_group_root(&layout, true),
+            Some(MULTI_GROUP_ROOT_DENSE_UNSUPPORTED)
         );
         assert_eq!(
-            should_reject_grouped_root(&layout, SetupContributionMode::Recursive, None),
-            Some(GROUPED_ROOT_RECURSIVE_SETUP_UNSUPPORTED)
-        );
-        assert_eq!(
-            should_reject_grouped_root(&layout, SetupContributionMode::Direct, Some(true)),
-            Some(GROUPED_ROOT_DENSE_UNSUPPORTED)
-        );
-        assert_eq!(
-            should_reject_grouped_root(
+            should_reject_multi_group_root(
                 &OpeningClaimsLayout::new(4, 1).expect("single group"),
-                SetupContributionMode::Direct,
-                None,
+                true,
             ),
             None
         );

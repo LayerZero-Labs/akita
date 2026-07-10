@@ -11,7 +11,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
         s_claim: E,
         b: usize,
         alpha_evals_y: Vec<E>,
-        m_evals_x: Vec<E>,
+        relation_matrix_col_evals: Vec<E>,
         live_x_cols: usize,
         col_bits: usize,
         ring_bits: usize,
@@ -64,10 +64,10 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                 actual: alpha_evals_y.len(),
             });
         }
-        if m_evals_x.len() != x_len {
+        if relation_matrix_col_evals.len() != x_len {
             return Err(AkitaError::InvalidSize {
                 expected: x_len,
-                actual: m_evals_x.len(),
+                actual: relation_matrix_col_evals.len(),
             });
         }
         if let Some(trace) = &trace_table {
@@ -85,7 +85,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
             input_claim,
             split_eq: GruenSplitEq::with_initial_scalar(stage1_point, batching_coeff)?,
             alpha_compact: alpha_evals_y,
-            m_compact: m_evals_x,
+            relation_matrix_col_evals_compact: relation_matrix_col_evals,
             trace_table,
             live_x_cols,
             col_bits,
@@ -252,10 +252,10 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                 WTable::Compact(w_compact) => w_compact,
                 WTable::Full(_) => panic!("two-round prefix can only build from compact witness"),
             };
-            let proof = build_stage2_bivariate_skip_proof_from_compact(
+            let proof = build_stage2_bivariate_skip_proof_from_m_compact(
                 w_compact,
                 &self.alpha_compact,
-                &self.m_compact,
+                &self.relation_matrix_col_evals_compact,
                 self.trace_table.as_ref(),
                 &stage1_point,
                 self.b,

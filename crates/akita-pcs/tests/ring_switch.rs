@@ -94,7 +94,7 @@ mod tests {
     use akita_prover::backend::DenseView;
     use akita_prover::compute::{OpeningFoldKernel, OpeningFoldPlan, RootOpeningSource};
     use akita_prover::protocol::ring_switch::{
-        build_w_evals_compact, compute_grouped_m_evals_x, ring_switch_build_w,
+        build_w_evals_compact, compute_relation_matrix_col_evals, ring_switch_build_w,
     };
     use akita_prover::{
         ComputeBackendSetup, CpuBackend, DensePoly, ProverOpeningData, RingRelationProver,
@@ -105,10 +105,10 @@ mod tests {
     use akita_types::witness::ChunkedWitnessCfg;
     use akita_types::{
         r_decomp_levels, ring_opening_point_from_field, AkitaCommitmentHint, BasisMode, BlockOrder,
-        Commitment, MRowLayout, OpeningClaims, PointVariableSelection, PolynomialGroupClaims,
-        RingMultiplierOpeningPoint, RingVec,
+        Commitment, OpeningClaims, PointVariableSelection, PolynomialGroupClaims,
+        RelationMatrixRowLayout, RingMultiplierOpeningPoint, RingVec,
     };
-    use akita_verifier::{prepare_ring_switch_row_eval, RingSwitchReplay};
+    use akita_verifier::{prepare_relation_matrix_evaluator, RingSwitchReplay};
     use rand::rngs::StdRng;
     use rand::{Rng, SeedableRng};
     use std::array::from_fn;
@@ -225,7 +225,7 @@ mod tests {
     fn direct_relation_claim<F: FieldCore + FromPrimitiveInt>(
         w_compact: &[i8],
         alpha_evals_y: &[F],
-        m_evals_x: &[F],
+        relation_matrix_col_evals: &[F],
         live_x_cols: usize,
     ) -> F {
         (0..live_x_cols).fold(F::zero(), |acc_x, x| {
@@ -236,7 +236,7 @@ mod tests {
                 .fold(F::zero(), |acc_y, (y, &alpha)| {
                     acc_y + F::from_i64(w_compact[column_start + y] as i64) * alpha
                 });
-            acc_x + y_eval * m_evals_x[x]
+            acc_x + y_eval * relation_matrix_col_evals[x]
         })
     }
 
@@ -279,10 +279,9 @@ mod tests {
         const D: usize = Cfg::D;
         const NV: usize = 12;
 
-        let lp = Cfg::get_params_for_batched_commitment(
-            &akita_types::OpeningClaimsLayout::new(NV, 1).expect("singleton opening batch"),
-        )
-        .expect("lp");
+        let opening_batch =
+            akita_types::OpeningClaimsLayout::new(NV, 1).expect("singleton opening batch");
+        let lp = Cfg::get_params_for_batched_commitment(&opening_batch).expect("lp");
 
         let mut rng = StdRng::seed_from_u64(0x5151_5eed);
         let evals: Vec<F> = (0..(1usize << NV))
@@ -360,7 +359,7 @@ mod tests {
                 lp.clone(),
                 &mut transcript,
                 RingVec::from_single(&CyclotomicRing::<F, D>::one()),
-                MRowLayout::WithDBlock,
+                RelationMatrixRowLayout::WithDBlock,
                 None,
             )
             .expect("ring relation");
@@ -375,9 +374,14 @@ mod tests {
         let alpha = F::from_u64(29);
         let alpha_evals_y = scalar_powers(alpha, D);
         let rows = lp
-            .m_row_count_for(1, MRowLayout::WithDBlock)
+            .relation_matrix_row_count_for(1, RelationMatrixRowLayout::WithDBlock)
             .expect("valid row count");
-        let num_i = rows.next_power_of_two().trailing_zeros() as usize;
+        let num_i = lp
+            .relation_row_index_num_vars_for_layout(
+                RelationMatrixRowLayout::WithDBlock,
+                &opening_batch,
+            )
+            .expect("tau1 vars");
 
         for row in 0..rows {
             let tau1: Vec<F> = (0..num_i)
@@ -389,7 +393,7 @@ mod tests {
                     }
                 })
                 .collect();
-            let m_evals_x = compute_grouped_m_evals_x::<F, F>(
+            let relation_matrix_col_evals = compute_relation_matrix_col_evals::<F, F>(
                 &setup.expanded,
                 &instance,
                 alpha,
@@ -398,10 +402,15 @@ mod tests {
                 &lp,
                 &tau1,
                 &[F::one()],
-                MRowLayout::WithDBlock,
+                RelationMatrixRowLayout::WithDBlock,
             )
             .expect("m evals");
-            let got = direct_relation_claim(&w_compact, &alpha_evals_y, &m_evals_x, live_x_cols);
+            let got = direct_relation_claim(
+                &w_compact,
+                &alpha_evals_y,
+                &relation_matrix_col_evals,
+                live_x_cols,
+            );
             let expected = relation_claim_from_rows::<F, D>(
                 &tau1,
                 alpha,
@@ -424,10 +433,9 @@ mod tests {
         const D: usize = Cfg::D;
         const NV: usize = 12;
 
-        let lp = Cfg::get_params_for_batched_commitment(
-            &akita_types::OpeningClaimsLayout::new(NV, 1).expect("singleton opening batch"),
-        )
-        .expect("lp");
+        let opening_batch =
+            akita_types::OpeningClaimsLayout::new(NV, 1).expect("singleton opening batch");
+        let lp = Cfg::get_params_for_batched_commitment(&opening_batch).expect("lp");
 
         let mut rng = StdRng::seed_from_u64(0x5eed_cafe);
         let evals: Vec<F> = (0..(1usize << NV))
@@ -500,7 +508,7 @@ mod tests {
                 lp.clone(),
                 &mut transcript,
                 RingVec::from_single(&CyclotomicRing::<F, D>::one()),
-                MRowLayout::WithDBlock,
+                RelationMatrixRowLayout::WithDBlock,
                 None,
             )
             .expect("ring relation");
@@ -514,8 +522,15 @@ mod tests {
 
         let alpha = F::from_u64(17);
         let alpha_evals_y = scalar_powers(alpha, D);
-        let rows = lp.m_row_count_for(1, MRowLayout::WithDBlock).unwrap();
-        let num_i = rows.next_power_of_two().trailing_zeros() as usize;
+        let rows = lp
+            .relation_matrix_row_count_for(1, RelationMatrixRowLayout::WithDBlock)
+            .unwrap();
+        let num_i = lp
+            .relation_row_index_num_vars_for_layout(
+                RelationMatrixRowLayout::WithDBlock,
+                &opening_batch,
+            )
+            .expect("tau1 vars");
 
         for row in 0..rows {
             let tau1: Vec<F> = (0..num_i)
@@ -527,7 +542,7 @@ mod tests {
                     }
                 })
                 .collect();
-            let m_evals_x = compute_grouped_m_evals_x::<F, F>(
+            let relation_matrix_col_evals = compute_relation_matrix_col_evals::<F, F>(
                 &setup.expanded,
                 &instance,
                 alpha,
@@ -536,10 +551,15 @@ mod tests {
                 &lp,
                 &tau1,
                 &[F::one()],
-                MRowLayout::WithDBlock,
+                RelationMatrixRowLayout::WithDBlock,
             )
             .expect("m evals");
-            let got = direct_relation_claim(&w_compact, &alpha_evals_y, &m_evals_x, live_x_cols);
+            let got = direct_relation_claim(
+                &w_compact,
+                &alpha_evals_y,
+                &relation_matrix_col_evals,
+                live_x_cols,
+            );
             let expected = relation_claim_from_rows::<F, D>(
                 &tau1,
                 alpha,
@@ -590,7 +610,7 @@ mod tests {
     }
 
     #[test]
-    fn prepared_row_eval_matches_materialized() {
+    fn relation_matrix_evaluator_matches_materialized() {
         use akita_sumcheck::multilinear_eval;
 
         type F = fp128::Field;
@@ -598,10 +618,10 @@ mod tests {
         const D: usize = Cfg::D;
         const NV: usize = 12;
 
-        let level_params = Cfg::get_params_for_batched_commitment(
-            &akita_types::OpeningClaimsLayout::new(NV, 1).expect("singleton opening batch"),
-        )
-        .expect("commitment layout");
+        let opening_batch =
+            akita_types::OpeningClaimsLayout::new(NV, 1).expect("singleton opening batch");
+        let level_params =
+            Cfg::get_params_for_batched_commitment(&opening_batch).expect("commitment layout");
 
         let mut rng = StdRng::seed_from_u64(0xdead_beef);
         let evals: Vec<F> = (0..(1usize << NV))
@@ -674,7 +694,7 @@ mod tests {
                 level_params.clone(),
                 &mut transcript,
                 RingVec::from_single(&CyclotomicRing::<F, D>::one()),
-                MRowLayout::WithDBlock,
+                RelationMatrixRowLayout::WithDBlock,
                 None,
             )
             .expect("ring relation");
@@ -685,14 +705,19 @@ mod tests {
         let alpha = F::from_u64(42);
         let alpha_evals_y = scalar_powers(alpha, D);
         let rows = level_params
-            .m_row_count_for(1, MRowLayout::WithDBlock)
+            .relation_matrix_row_count_for(1, RelationMatrixRowLayout::WithDBlock)
             .unwrap();
-        let num_i = rows.next_power_of_two().trailing_zeros() as usize;
+        let num_i = level_params
+            .relation_row_index_num_vars_for_layout(
+                RelationMatrixRowLayout::WithDBlock,
+                &opening_batch,
+            )
+            .expect("tau1 vars");
         let tau1: Vec<F> = (0..num_i)
             .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
             .collect();
 
-        let m_evals_x = compute_grouped_m_evals_x::<F, F>(
+        let relation_matrix_col_evals = compute_relation_matrix_col_evals::<F, F>(
             &setup.expanded,
             &instance,
             alpha,
@@ -701,15 +726,16 @@ mod tests {
             &level_params,
             &tau1,
             &[F::one()],
-            MRowLayout::WithDBlock,
+            RelationMatrixRowLayout::WithDBlock,
         )
         .expect("m evals (materialized)");
 
-        let x_challenges: Vec<F> = (0..m_evals_x.len().trailing_zeros() as usize)
+        let x_challenges: Vec<F> = (0..relation_matrix_col_evals.len().trailing_zeros() as usize)
             .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
             .collect();
 
-        let expected = multilinear_eval(&m_evals_x, &x_challenges).expect("multilinear_eval");
+        let expected =
+            multilinear_eval(&relation_matrix_col_evals, &x_challenges).expect("multilinear_eval");
 
         let gamma = [F::one()];
         let replay = RingSwitchReplay {
@@ -717,28 +743,21 @@ mod tests {
             row_coefficients: &gamma,
             lp: &level_params,
         };
-        let prepared = prepare_ring_switch_row_eval::<F, F, D>(&replay, alpha, &tau1, None)
-            .expect("prepare_ring_switch_row_eval");
+        let prepared = prepare_relation_matrix_evaluator::<F, F, D>(&replay, alpha, &tau1, None)
+            .expect("prepare_relation_matrix_evaluator");
 
         let got = prepared
-            .eval_at_point::<F, D>(
-                &x_challenges,
-                &setup.expanded,
-                &ring_opening_point,
-                &ring_multiplier_point,
-                alpha,
-                None,
-            )
+            .eval_at_point::<F, D>(&x_challenges, &setup.expanded, alpha, None)
             .expect("eval_at_point");
 
         assert_eq!(
             got, expected,
-            "RingSwitchDeferredRowEval::eval_at_point must match materialized multilinear_eval"
+            "RelationMatrixEvaluator::eval_at_point must match materialized multilinear_eval"
         );
 
         // ----- Chunked layout ground truth (W ∈ powers of two | num_blocks) --
         // The chunked relation's column-MLE has the *same per-cell values* as
-        // the single-chunk `m_evals_x`, only repositioned into the
+        // the single-chunk `relation_matrix_col_evals`, only repositioned into the
         // `[z|e_j|t_j]…[r]` layout (z replicated, e/t partitioned by global
         // block). Rearranging the trusted single-chunk vector therefore yields
         // an independent reference for the verifier's chunked `eval_at_point`.
@@ -757,12 +776,12 @@ mod tests {
         let t_len = depth_open * n_a * num_t_vectors * num_blocks;
         let r_tail_len = rows * r_decomp_levels::<F>(level_params.log_basis);
 
-        // Single-chunk segments (z ‖ e ‖ t ‖ r; no tiered u in this fixture).
-        let z_seg = m_evals_x[0..z_len].to_vec();
-        let e_seg = m_evals_x[z_len..z_len + e_len].to_vec();
-        let t_seg = m_evals_x[z_len + e_len..z_len + e_len + t_len].to_vec();
+        // Single-chunk segments (z ‖ e ‖ t ‖ r).
+        let z_seg = relation_matrix_col_evals[0..z_len].to_vec();
+        let e_seg = relation_matrix_col_evals[z_len..z_len + e_len].to_vec();
+        let t_seg = relation_matrix_col_evals[z_len + e_len..z_len + e_len + t_len].to_vec();
         let r_off1 = z_len + e_len + t_len;
-        let r_seg = m_evals_x[r_off1..r_off1 + r_tail_len].to_vec();
+        let r_seg = relation_matrix_col_evals[r_off1..r_off1 + r_tail_len].to_vec();
 
         let chunk_counts: Vec<usize> = (0..)
             .map(|k| 1usize << k)
@@ -825,17 +844,11 @@ mod tests {
                 row_coefficients: &gamma,
                 lp: &lp_w,
             };
-            let prepared_w = prepare_ring_switch_row_eval::<F, F, D>(&replay_w, alpha, &tau1, None)
-                .expect("prepare chunked row eval");
+            let prepared_w =
+                prepare_relation_matrix_evaluator::<F, F, D>(&replay_w, alpha, &tau1, None)
+                    .expect("prepare chunked row eval");
             let got_w = prepared_w
-                .eval_at_point::<F, D>(
-                    &x_challenges_w,
-                    &setup.expanded,
-                    &ring_opening_point,
-                    &ring_multiplier_point,
-                    alpha,
-                    None,
-                )
+                .eval_at_point::<F, D>(&x_challenges_w, &setup.expanded, alpha, None)
                 .expect("chunked eval_at_point");
             assert_eq!(
                 got_w, expected_w,
@@ -845,7 +858,7 @@ mod tests {
             // Prover-side cross-check: the chunked grouped M evaluator must emit
             // exactly the rearranged column layout, and its multilinear eval must
             // match the verifier's chunked row eval.
-            let prover_chunked = compute_grouped_m_evals_x::<F, F>(
+            let prover_chunked = compute_relation_matrix_col_evals::<F, F>(
                 &setup.expanded,
                 &instance,
                 alpha,
@@ -854,7 +867,7 @@ mod tests {
                 &lp_w,
                 &tau1,
                 &[F::one()],
-                MRowLayout::WithDBlock,
+                RelationMatrixRowLayout::WithDBlock,
             )
             .expect("chunked m evals (prover)");
             assert_eq!(
@@ -958,7 +971,7 @@ mod tests {
                 level_params.clone(),
                 &mut transcript,
                 RingVec::from_single(&CyclotomicRing::<F, D>::one()),
-                MRowLayout::WithoutDBlock,
+                RelationMatrixRowLayout::WithoutDBlock,
                 None,
             )
             .expect("ring relation");

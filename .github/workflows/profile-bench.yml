@@ -35,9 +35,8 @@ env:
   # prime caches and lazily-initialized statics; cache misses on the
   # first run otherwise distort the median across only 3 samples.
   AKITA_BENCH_WARMUPS: "1"
-  # The profile example installs FoldGrindObserverGuard during prove and emits
-  # per-fold grind_nonce (wire) plus grind_probe_count / grind_attempts (true
-  # prover probes). scripts/profile_bench_report.py surfaces Grind Σ / Grind max.
+  # The profile example emits the per-fold wire grind_nonce in its proof-size
+  # breakdown; scripts/profile_bench_report.py surfaces it per level.
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -88,7 +87,10 @@ jobs:
               onehot_fp128_d64:32:1
               onehot_fp128_d64:32:1:recursive
               onehot_fp128_d64:30:4
-          - name: 4-distributed
+          - name: 4-multi-group-recursive
+            cases: |
+              onehot_fp128_d64_multi_group_recursive:32:4:recursive
+          - name: 5-distributed
             cases: |
               onehot_fp128_d64_multi_chunk_w2r2:32:1
               onehot_fp128_d64_multi_chunk_w4r2:32:1

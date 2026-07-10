@@ -1,4 +1,5 @@
 use super::*;
+use akita_field::MulBaseUnreduced;
 use akita_types::dispatch_for_field;
 
 /// Complete the ring switch after the caller has bound the next witness.
@@ -24,11 +25,11 @@ pub fn ring_switch_finalize<F, E, T>(
     w: &RecursiveWitnessFlat,
     lp: &LevelParams,
     gamma: Option<&[E]>,
-    m_row_layout: MRowLayout,
+    relation_matrix_row_layout: RelationMatrixRowLayout,
 ) -> Result<RingSwitchOutput<E>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling,
-    E: FpExtEncoding<F> + FromPrimitiveInt,
+    E: FpExtEncoding<F> + FromPrimitiveInt + MulBaseUnreduced<F>,
     T: Transcript<F>,
 {
     let dims = instance.role_dims();
@@ -59,18 +60,15 @@ where
             })?
             .trailing_zeros() as usize;
         let ring_bits = D.trailing_zeros() as usize;
-        let m_rows = lp.m_row_count_for(opening_batch.num_groups(), m_row_layout)?;
         let num_sc_vars = col_bits + ring_bits;
-        let num_i = m_rows
-            .checked_next_power_of_two()
-            .ok_or_else(|| AkitaError::InvalidSetup("ring-switch row count overflow".to_string()))?
-            .trailing_zeros() as usize;
+        let num_i =
+            lp.relation_row_index_num_vars_for_layout(relation_matrix_row_layout, opening_batch)?;
 
-        let tau0: Vec<E> = match m_row_layout {
-            MRowLayout::WithDBlock => (0..num_sc_vars)
+        let tau0: Vec<E> = match relation_matrix_row_layout {
+            RelationMatrixRowLayout::WithDBlock => (0..num_sc_vars)
                 .map(|_| sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_TAU0))
                 .collect(),
-            MRowLayout::WithoutDBlock => Vec::new(),
+            RelationMatrixRowLayout::WithoutDBlock => Vec::new(),
         };
         let tau1: Vec<E> = (0..num_i)
             .map(|_| sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_TAU1))
@@ -85,9 +83,9 @@ where
         }
 
         #[cfg(feature = "parallel")]
-        let (m_evals_x_result, w_result) = rayon::join(
+        let (relation_matrix_col_evals_result, w_result) = rayon::join(
             || {
-                compute_grouped_m_evals_x::<F, E>(
+                compute_relation_matrix_col_evals::<F, E>(
                     setup,
                     instance,
                     alpha,
@@ -96,14 +94,14 @@ where
                     lp,
                     &tau1,
                     gamma,
-                    m_row_layout,
+                    relation_matrix_row_layout,
                 )
             },
             || build_w_evals_compact(w.as_i8_digits(), D, 1),
         );
         #[cfg(not(feature = "parallel"))]
-        let (m_evals_x_result, w_result) = {
-            let m_evals_x = compute_grouped_m_evals_x::<F, E>(
+        let (relation_matrix_col_evals_result, w_result) = {
+            let relation_matrix_col_evals = compute_relation_matrix_col_evals::<F, E>(
                 setup,
                 instance,
                 alpha,
@@ -112,19 +110,19 @@ where
                 lp,
                 &tau1,
                 gamma,
-                m_row_layout,
+                relation_matrix_row_layout,
             )?;
             let w_compact = build_w_evals_compact(w.as_i8_digits(), D, 1);
-            (Ok(m_evals_x), w_compact)
+            (Ok(relation_matrix_col_evals), w_compact)
         };
 
-        let m_evals_x = m_evals_x_result?;
+        let relation_matrix_col_evals = relation_matrix_col_evals_result?;
         let (w_evals_compact, _, _) = w_result?;
 
         Ok(RingSwitchOutput {
             w_evals_compact,
             live_x_cols,
-            m_evals_x,
+            relation_matrix_col_evals,
             alpha_evals_y,
             col_bits,
             ring_bits,

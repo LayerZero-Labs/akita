@@ -252,7 +252,7 @@ impl Challenges {
 
     /// Evaluate every logical challenge at the precomputed `alpha`-powers,
     /// in claim-major flat order. This is the boundary used by the prover's
-    /// dense `compute_grouped_m_evals_x` path.
+    /// dense `compute_relation_matrix_col_evals` path.
     ///
     /// For the sparse variant this is the canonical per-block evaluation
     /// loop; for the tensor variant it uses the factored aggregate

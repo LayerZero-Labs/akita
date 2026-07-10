@@ -354,7 +354,7 @@ pub fn fold_witness_linf_tail_bound_for_config_sq(
     }
 }
 
-/// Level-static configuration for [`super::norm_bound::fold_witness_honest_prover_linf_cap`] inside
+/// Level-static configuration for [`super::norm_bound::fold_witness_linf_digit_plan`] inside
 /// [`crate::sis::num_digits_fold`].
 ///
 /// When the policy is [`WorstCaseBetaOnly`](FoldWitnessLinfCapPolicy::WorstCaseBetaOnly),

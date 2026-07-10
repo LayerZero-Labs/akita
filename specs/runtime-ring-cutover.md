@@ -271,7 +271,7 @@ Orchestration obtains `CommitmentRingDims` from `LevelParams::role_dims` /
 `LevelParams::ring_dimension`.** Witness-borrow paths that still call
 `uniform_dim()` are deferred follow-on work (see Deferred below).
 
-`RingRelationInstance` and relation helpers (`generate_y`,
+`RingRelationInstance` and relation helpers (`generate_relation_rhs`,
 `relation_claim_from_rows_extension`) must treat `v`, commitment rows, and
 `row_coefficient_rings` under their respective role dimensions, not a single
 stored `ring_dim`.

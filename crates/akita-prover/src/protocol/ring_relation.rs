@@ -19,8 +19,8 @@ use akita_field::{CanonicalField, FieldCore, FromPrimitiveInt, HalvingField};
 use akita_transcript::labels::{ABSORB_PROVER_V, ABSORB_TERMINAL_E_HAT};
 use akita_transcript::Transcript;
 use akita_types::dispatch_for_field;
-use akita_types::{assemble_relation_y, relation_y_layout_for, RingVec, RingView};
-use akita_types::{gadget_row_scalars, AkitaCommitmentHint, DigitBlocks, MRowLayout};
+use akita_types::{assemble_relation_rhs, relation_rhs_layout_for, RingVec, RingView};
+use akita_types::{gadget_row_scalars, AkitaCommitmentHint, DigitBlocks, RelationMatrixRowLayout};
 use akita_types::{LevelParams, LevelParamsLike, RingRelationInstance};
 use akita_types::{RingMultiplierOpeningPoint, RingOpeningPoint};
 
@@ -29,7 +29,7 @@ use super::ring_relation_witness::{RingRelationGroupWitness, RingRelationWitness
 
 mod relation_quotient;
 
-pub(crate) use relation_quotient::compute_grouped_relation_quotient;
+pub(crate) use relation_quotient::compute_multi_group_relation_quotient;
 
 fn absorb_terminal_e_folded_fields<F, T>(
     transcript: &mut T,
@@ -107,7 +107,7 @@ where
 fn concat_digit_blocks(blocks: &[DigitBlocks]) -> Result<DigitBlocks, AkitaError> {
     let Some(first) = blocks.first() else {
         return Err(AkitaError::InvalidInput(
-            "grouped digit concatenation requires at least one group".to_string(),
+            "multi-group digit concatenation requires at least one group".to_string(),
         ));
     };
     let stride = first.digit_stride();
@@ -116,7 +116,7 @@ fn concat_digit_blocks(blocks: &[DigitBlocks]) -> Result<DigitBlocks, AkitaError
     for block in blocks {
         if block.digit_stride() != stride {
             return Err(AkitaError::InvalidInput(
-                "grouped digit blocks have mixed ring dimensions".to_string(),
+                "multi-group digit blocks have mixed ring dimensions".to_string(),
             ));
         }
         digits.extend_from_slice(block.digits());
@@ -288,7 +288,7 @@ where
     }
 }
 
-/// Convert scalar or grouped opening-point carriers into the grouped internal form.
+/// Convert scalar or multi-group opening-point carriers into the multi-group internal form.
 pub trait IntoRingOpeningPointVec<F: FieldCore> {
     fn into_vec(self) -> Vec<RingOpeningPoint<F>>;
 }
@@ -305,7 +305,7 @@ impl<F: FieldCore> IntoRingOpeningPointVec<F> for Vec<RingOpeningPoint<F>> {
     }
 }
 
-/// Convert scalar or grouped multiplier-point carriers into the grouped internal form.
+/// Convert scalar or multi-group multiplier-point carriers into the multi-group internal form.
 pub trait IntoRingMultiplierOpeningPointVec<F: FieldCore> {
     fn into_vec(self) -> Vec<RingMultiplierOpeningPoint<F>>;
 }
@@ -351,7 +351,7 @@ fn compute_v_rows_for_layout<F, T, RB, const D: usize>(
     d_row_len: usize,
     log_basis: u32,
     e_hat: &DigitBlocks,
-    m_row_layout: MRowLayout,
+    relation_matrix_row_layout: RelationMatrixRowLayout,
 ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>
 where
     F: FieldCore + CanonicalField,
@@ -360,8 +360,8 @@ where
 {
     let backend = ring_switch_ctx.backend();
     let prepared = ring_switch_ctx.prepared();
-    match m_row_layout {
-        MRowLayout::WithDBlock => {
+    match relation_matrix_row_layout {
+        RelationMatrixRowLayout::WithDBlock => {
             let _span = tracing::info_span!(
                 "compute_relation_v",
                 e_hat_planes = e_hat.typed_planes::<D>()?.len()
@@ -377,7 +377,7 @@ where
             )?;
             Ok(v)
         }
-        MRowLayout::WithoutDBlock => Ok(Vec::new()),
+        RelationMatrixRowLayout::WithoutDBlock => Ok(Vec::new()),
     }
 }
 
@@ -386,7 +386,7 @@ where
 /// verifier layout resolution.
 pub(crate) fn validate_chunked_witness_cfg(lp: &LevelParams) -> Result<(), AkitaError> {
     lp.witness_chunk.validate()?;
-    lp.reject_grouped_multi_chunk("chunked witness")?;
+    lp.reject_multi_group_multi_chunk("chunked witness")?;
     let w = lp.witness_chunk.num_chunks;
     if w > 1 {
         if !lp.num_blocks.is_multiple_of(w) {
@@ -480,7 +480,7 @@ impl RingRelationProver {
         lp: LevelParams,
         transcript: &mut T,
         row_coefficient_rings: RingVec<F>,
-        m_row_layout: MRowLayout,
+        relation_matrix_row_layout: RelationMatrixRowLayout,
         terminal_tail_t_vectors: Option<usize>,
     ) -> Result<(RingRelationInstance<F>, RingRelationWitness<F>), AkitaError>
     where
@@ -605,7 +605,7 @@ impl RingRelationProver {
         for group_index in 0..num_groups {
             let k_g = opening_batch.group_layout(group_index)?.num_polynomials();
             let end = offset.checked_add(k_g).ok_or_else(|| {
-                AkitaError::InvalidSetup("grouped e-folded offset overflow".to_string())
+                AkitaError::InvalidSetup("multi-group e-folded offset overflow".to_string())
             })?;
             let group_lp = lp.root_group_params(&opening_batch, group_index)?;
             let (e_hat_g, e_folded_g) = dispatch_for_field!(
@@ -663,7 +663,7 @@ impl RingRelationProver {
                     d_row_len,
                     log_basis,
                     &e_hat,
-                    m_row_layout,
+                    relation_matrix_row_layout,
                 )?;
                 Ok::<_, AkitaError>(RingVec::from_ring_elems(&v_typed))
             }
@@ -678,7 +678,10 @@ impl RingRelationProver {
                 .flat_map(|block| block.coeffs().iter().copied())
                 .collect(),
         );
-        if matches!(m_row_layout, MRowLayout::WithoutDBlock) {
+        if matches!(
+            relation_matrix_row_layout,
+            RelationMatrixRowLayout::WithoutDBlock
+        ) {
             absorb_terminal_e_folded_fields::<F, T>(transcript, &e_folded)?;
         }
         // Distributed-prover chunked layout: the grind emits one folded response
@@ -704,7 +707,8 @@ impl RingRelationProver {
             if let Some(existing) = accepted_nonce {
                 if existing != nonce {
                     return Err(AkitaError::InvalidInput(
-                        "grouped fold grind selected different nonces across groups".to_string(),
+                        "multi-group fold grind selected different nonces across groups"
+                            .to_string(),
                     ));
                 }
             } else {
@@ -715,21 +719,23 @@ impl RingRelationProver {
         }
         let fold_grind_nonce = accepted_nonce.ok_or(AkitaError::InvalidProof)?;
 
-        // `y` spans roles (consistency | [A | B | B_inner]* | D).
+        // Relation rhs spans roles (consistency | [A | B | B_inner]* | D).
         // Terminal levels drop the D-block from M entirely, so `n_d` is zero
         // and `v` stays empty.
-        let y_layout = relation_y_layout_for(&lp, &opening_batch, m_row_layout)?;
-        let y = assemble_relation_y::<F>(dims, &y_layout, &v, &commitment_rows)?;
+        let relation_rhs_layout =
+            relation_rhs_layout_for(&lp, &opening_batch, relation_matrix_row_layout)?;
+        let relation_rhs =
+            assemble_relation_rhs::<F>(dims, &relation_rhs_layout, &v, &commitment_rows)?;
 
         let instance = RingRelationInstance::new(
-            m_row_layout,
+            relation_matrix_row_layout,
             group_challenges,
             group_opening_points,
             group_ring_multiplier_points,
             opening_batch.clone(),
             gamma,
             row_coefficient_rings,
-            y,
+            relation_rhs,
             v,
             dims,
         )?;

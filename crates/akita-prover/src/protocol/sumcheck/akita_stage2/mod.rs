@@ -11,32 +11,34 @@
 //!
 //! `m_tau1(x) = sum_i eq(tau1, i) * M_alpha(i, x)`.
 //!
-//! The Boolean table stored in `m_evals_x` is exactly `x -> m_tau1(x)`.
+//! The Boolean table stored in `relation_matrix_col_evals` is exactly `x -> m_tau1(x)`.
 //!
 //! If
 //!
 //! `y_alpha = [0,`
-//! `           v_0(alpha), ..., v_{N_D-1}(alpha),`
 //! `           u_0(alpha), ..., u_{N_B-1}(alpha),`
-//! `           0, ..., 0],`
+//! `           v_0(alpha), ..., v_{N_D-1}(alpha)]`
+//! `           for physical quotient rows only;`
 //!
-//! then the linear relation claim is
+//! then the linear relation claim over physical quotient rows is
 //!
 //! `relation_claim = sum_i eq(tau1, i) * y_alpha[i]`
 //! `               = sum_{x,y} w(x, y) * a(y) * m_tau1(x)`.
 //!
-//! There is no public-output `y_ring` row: the §3.1 fold-opening trace check is
-//! internalized as the fused `gamma^2` term below rather than carried as an `M`
-//! row, so `y_alpha` runs `consistency | A | B(u) | D(v)`.
+//! There is no public-output `y_ring` row: the fold-opening trace check is
+//! internalized as the `EvaluationTrace` relation row (last padded logical row),
+//! weighted by `eq(tau1, EvaluationTrace_row_index)`. Physical M rows are
+//! `consistency | A | B(u) | D(v)`; EvaluationTrace is absent from physical M.
+//! `y_alpha` runs `FoldEvaluation | A | B(u) | D(v)` for quotient rows; the
+//! opening target enters the Stage-2 claim through EvaluationTrace.
 //!
-//! The fused trace term binds the committed fold witness to the public opening
-//! through a fixed, public multilinear `TraceWeight(x, y)` (nonzero only on the
-//! `e_hat` digit segment). Its input contribution is `gamma^2 * trace_target`,
-//! where `trace_target` is the incoming opening claim (or the EOR final claim on
-//! extension-opening-reduction paths). It reuses the stage-2 batching challenge
-//! `gamma` (relation = `gamma^0`, range = `gamma^1`, trace = `gamma^2`), which
-//! is sampled after the next-level witness is bound, so it adds no new
-//! Fiat-Shamir challenge.
+//! The fused EvaluationTrace term binds the committed fold witness to the public
+//! opening through a fixed, public multilinear `TraceWeight(x, y)` (nonzero only
+//! on the `e_hat` digit segment). Its input contribution is
+//! `eq(tau1, EvaluationTrace_row_index) * trace_target`, where `trace_target` is
+//! the incoming opening claim (or the EOR final claim on extension-opening-reduction
+//! paths). It reuses the existing row-index challenge (`tau1`) and adds no extra
+//! Fiat-Shamir challenge at terminal folds (`batching_coeff = 0` there).
 //!
 //! Stage 1 supplies the carried virtual claim
 //!
@@ -46,24 +48,24 @@
 //! for the same multilinear witness table. With `gamma = batching_coeff`, the
 //! exact identity established by this sumcheck is
 //!
-//! `gamma * s_claim + relation_claim + gamma^2 * trace_target =`
+//! `gamma * s_claim + relation_claim + eq(tau1, EvaluationTrace_row_index) * trace_target =`
 //! `sum_{x,y} [ gamma * eq(stage1_point, (x, y)) * w(x, y) * (w(x, y) + 1)`
 //! `           + w(x, y) * a(y) * m_tau1(x)`
-//! `           + gamma^2 * w(x, y) * TraceWeight(x, y) ]`.
+//! `           + eq(tau1, EvaluationTrace_row_index) * w(x, y) * TraceWeight(x, y) ]`.
 //!
 //! After all rounds, at `r_stage2 = (r_x, r_y)`, the verifier checks
 //!
 //! `gamma * eq(stage1_point, r_stage2) * w(r_stage2) * (w(r_stage2) + 1)`
 //! `  + w(r_stage2) * a(r_y) * m_tau1(r_x)`
-//! `  + gamma^2 * w(r_stage2) * TraceWeight(r_stage2)`,
+//! `  + eq(tau1, EvaluationTrace_row_index) * w(r_stage2) * TraceWeight(r_stage2)`,
 //!
 //! exactly the oracle returned by `expected_output_claim()`. The prover fuses
-//! the virtual, relation, and trace terms around the same local `w0` / `dw`
-//! scan so the witness-side work is shared between all three.
+//! the virtual, relation, and EvaluationTrace terms around the same local `w0` /
+//! `dw` scan so the witness-side work is shared.
 
 use super::fold_full_prefix_pair;
 use super::two_round_prefix::{
-    build_stage2_bivariate_skip_proof_from_compact, can_use_stage2_two_round_prefix,
+    build_stage2_bivariate_skip_proof_from_m_compact, can_use_stage2_two_round_prefix,
     Stage2BivariateSkipState,
 };
 use super::two_round_prefix::{stage2_b4_w_digit, stage2_b8_w_digit};
@@ -213,7 +215,7 @@ pub struct AkitaStage2Prover<E: FieldCore> {
     split_eq: GruenSplitEq<E>,
 
     alpha_compact: Vec<E>,
-    m_compact: Vec<E>,
+    relation_matrix_col_evals_compact: Vec<E>,
     trace_table: Option<TraceTable<E>>,
     live_x_cols: usize,
     col_bits: usize,

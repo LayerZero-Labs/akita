@@ -8,7 +8,7 @@
 //! schedule-table representation it consumes.
 
 use crate::layout::{field_bytes, proof_ring_vec_bytes, sumcheck_rounds};
-use crate::{stage1_tree_stage_shapes, LevelParams, MRowLayout};
+use crate::{stage1_tree_stage_shapes, LevelParams, RelationMatrixRowLayout};
 
 /// Fixed wire size of `fold_grind_nonce` on every fold level proof.
 pub const FOLD_GRIND_NONCE_BYTES: usize = 4;
@@ -33,7 +33,7 @@ fn stage1_proof_bytes(rounds: usize, b: usize, elem_bytes: usize) -> usize {
 }
 
 /// Header-stripped byte size of one folded proof level, parametrized by
-/// [`MRowLayout`].
+/// [`RelationMatrixRowLayout`].
 ///
 /// Ring-valued objects (`y`, `v`, next-witness commitment) serialize over
 /// the base SIS field. Sumcheck objects and scalar evaluations serialize
@@ -66,15 +66,15 @@ pub fn level_proof_bytes(
     next_lp: Option<&LevelParams>,
     next_w_len: usize,
     _num_claims: usize,
-    layout: MRowLayout,
+    layout: RelationMatrixRowLayout,
 ) -> usize {
     let base_elem_bytes = field_bytes(base_field_bits);
     let challenge_elem_bytes = field_bytes(challenge_field_bits);
     let rounds = sumcheck_rounds(lp.ring_dimension, next_w_len);
     let sumcheck = sumcheck_bytes(rounds, 3, challenge_elem_bytes);
     match layout {
-        MRowLayout::WithoutDBlock => FOLD_GRIND_NONCE_BYTES + sumcheck,
-        MRowLayout::WithDBlock => {
+        RelationMatrixRowLayout::WithoutDBlock => FOLD_GRIND_NONCE_BYTES + sumcheck,
+        RelationMatrixRowLayout::WithDBlock => {
             let next_lp = next_lp
                 .expect("level_proof_bytes(WithDBlock) requires next_lp; caller must pass Some");
             let v_bytes =
@@ -317,7 +317,7 @@ mod tests {
                     Some(&next_lp),
                     next_w_len,
                     1,
-                    MRowLayout::WithDBlock,
+                    RelationMatrixRowLayout::WithDBlock,
                 ),
                 exact_level_proof_bytes::<F>(&lp, &next_lp, next_w_len, None).unwrap(),
                 "planned level bytes should match the serialized two-stage body at log_basis={log_basis}"
@@ -392,7 +392,7 @@ mod tests {
                     Some(&next_lp),
                     next_w_len,
                     1,
-                    MRowLayout::WithDBlock,
+                    RelationMatrixRowLayout::WithDBlock,
                 ),
                 direct_bytes,
                 "direct planner bytes must exclude the stage-3 payload at log_basis={log_basis}"
@@ -446,7 +446,7 @@ mod tests {
                     None,
                     next_w_len,
                     num_claims,
-                    MRowLayout::WithoutDBlock,
+                    RelationMatrixRowLayout::WithoutDBlock,
                 ),
                 serialized_without_witness,
                 "planned terminal-level bytes should match the serialized terminal body \

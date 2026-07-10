@@ -120,7 +120,7 @@ where
         let terminal_scheduled = schedule.get_execution_schedule(terminal_level)?;
         terminal_golomb_grind_tail_t_vectors(
             &terminal_scheduled.params,
-            MRowLayout::WithoutDBlock,
+            RelationMatrixRowLayout::WithoutDBlock,
             Some(terminal_direct_witness_shape),
         )?
     };
@@ -130,10 +130,10 @@ where
         let level_params = &scheduled.params;
         let role_dims = level_params.role_dims();
         let is_terminal_level = scheduled.is_terminal;
-        let m_row_layout = if is_terminal_level {
-            MRowLayout::WithoutDBlock
+        let relation_matrix_row_layout = if is_terminal_level {
+            RelationMatrixRowLayout::WithoutDBlock
         } else {
-            MRowLayout::WithDBlock
+            RelationMatrixRowLayout::WithDBlock
         };
         let tail_t_vectors = if is_terminal_level {
             terminal_tail_t_vectors
@@ -149,7 +149,7 @@ where
                 current_state,
                 level,
                 level_params,
-                m_row_layout,
+                relation_matrix_row_layout,
                 tail_t_vectors,
             )
             .map_err(|err| {
@@ -221,7 +221,7 @@ pub(in crate::protocol::core) fn prepare_suffix<F, E, T, C, O, TS, R>(
     current_state: SuffixProverState<F, E>,
     _level: usize,
     level_params: &LevelParams,
-    m_row_layout: MRowLayout,
+    relation_matrix_row_layout: RelationMatrixRowLayout,
     terminal_tail_t_vectors: Option<usize>,
 ) -> Result<PreparedFold<F, E>, AkitaError>
 where
@@ -311,7 +311,7 @@ where
         alpha,
         BasisMode::Lagrange,
         BlockOrder::ColumnMajor,
-        m_row_layout,
+        relation_matrix_row_layout,
         terminal_tail_t_vectors,
     )
 }

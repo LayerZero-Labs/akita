@@ -13,13 +13,12 @@
 
 use akita_field::AkitaError;
 
-/// Per-chunk witness segment ring-column counts (emission order `z ‖ e ‖ t ‖ u ‖ r`).
+/// Per-chunk witness segment ring-column counts (emission order `z ‖ e ‖ t ‖ r`).
 ///
 /// `z_len` is **replicated** (the same in every chunk); `e_len`/`t_len` are
 /// **partitioned** (each chunk covers `blocks_per_chunk = num_blocks /
-/// num_chunks` blocks). `u_len`/`r_len` are `Some` only in the last chunk
-/// (`u_len` only when tiered); `None` elsewhere, so a call site cannot treat an
-/// absent segment as length `0`.
+/// num_chunks` blocks). `r_len` is `Some` only in the last chunk and `None`
+/// elsewhere, so a call site cannot treat an absent segment as length `0`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct WitnessChunkLengths {
     /// Replicated folded-response width: `num_digits_fold · num_digits_commit · block_len`.
@@ -28,8 +27,6 @@ pub struct WitnessChunkLengths {
     pub e_len: usize,
     /// Partitioned inner-Ajtai width: `num_digits_open · n_a · num_t_vectors · blocks_per_chunk`.
     pub t_len: usize,
-    /// Tiered `û_concat` width; `Some` only in the last chunk when `tier_split > 1`.
-    pub u_len: Option<usize>,
     /// Shared quotient-tail width (`num_rows · r_decomp_levels`); `Some` only in
     /// the last chunk.
     pub r_len: Option<usize>,
@@ -37,8 +34,8 @@ pub struct WitnessChunkLengths {
 
 /// Per-chunk witness segment column offsets.
 ///
-/// `offset_u`/`offset_r` mirror [`WitnessChunkLengths::u_len`]/[`WitnessChunkLengths::r_len`]:
-/// `None` when the segment is absent from this chunk.
+/// `offset_r` mirrors [`WitnessChunkLengths::r_len`]: `None` when the segment is
+/// absent from this chunk.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct WitnessChunkLayout {
     /// Column offset of the replicated folded response `zᵢ`.
@@ -47,8 +44,6 @@ pub struct WitnessChunkLayout {
     pub offset_e: usize,
     /// Column offset of the partitioned inner-Ajtai digits `t̂ᵢ`.
     pub offset_t: usize,
-    /// Column offset of the tiered `û_concat` segment; `None` when absent.
-    pub offset_u: Option<usize>,
     /// Column offset of the shared quotient tail; `Some` only in the last chunk.
     pub offset_r: Option<usize>,
     /// First global block index owned by this chunk (`chunk_idx · blocks_per_chunk`).
@@ -60,7 +55,7 @@ pub struct WitnessChunkLayout {
 ///
 /// `num_chunks = 1` is the single-chunk (historical) case: one chunk spanning
 /// all `num_blocks` with `global_block_base = 0`, byte-identical to the legacy
-/// `z ‖ e ‖ t ‖ u ‖ r` layout. `num_chunks = W` lays out `W` contiguous
+/// `z ‖ e ‖ t ‖ r` layout. `num_chunks = W` lays out `W` contiguous
 /// `[zᵢ | eᵢ | t̂ᵢ]` strides followed by a single shared `r̂` tail.
 ///
 /// `chunks` and `chunk_lengths` are parallel vectors of length `num_chunks`.
@@ -81,8 +76,7 @@ impl WitnessLayout {
         self.chunks.len()
     }
 
-    /// The last chunk's offsets/lengths, which alone carry the shared `r̂` (and
-    /// tiered `û`) segments.
+    /// The last chunk's offsets/lengths, which alone carry the shared `r̂` segment.
     ///
     /// # Errors
     ///

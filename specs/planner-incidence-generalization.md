@@ -228,7 +228,7 @@ Current superseded schedule-key status:
 For the production same-point multi-commitment rollout, do not continue this
 older aggregate-incidence plan directly. Follow
 [`multi-group-batching.md`](multi-group-batching.md), which keeps scalar
-same-bundle schedules separate from grouped root keys and requires explicit
+same-bundle schedules separate from multi-group root keys and requires explicit
 rejects until the grouped descriptor and schedule shape land.
 
 ## Root Witness Size Formula
@@ -367,7 +367,7 @@ must not size only the all-up shape. It must take the maximum over:
 ```
 
 This is the purpose of `proof_optimized_max_setup_matrix_size`: a smaller
-runtime `num_vars` or differently grouped batch may select a schedule with larger
+runtime `num_vars` or differently multi-group batch may select a schedule with larger
 row or stride requirements than the setup's maximum-arity case.
 
 ## Protocol Changes Needed

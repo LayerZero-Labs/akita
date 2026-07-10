@@ -158,7 +158,9 @@ where
     populate_recursive_setup_prefixes::<F, Cfg>(&mut setup, max_num_vars, max_num_batched_polys)?;
 
     #[cfg(feature = "disk-persistence")]
-    save_prover_setup::<F, Cfg>(&setup, max_num_vars, max_num_batched_polys)?;
+    if let Err(err) = save_prover_setup::<F, Cfg>(&setup, max_num_vars, max_num_batched_polys) {
+        tracing::warn!("Failed to persist recursive setup cache: {err}");
+    }
 
     Ok(setup)
 }

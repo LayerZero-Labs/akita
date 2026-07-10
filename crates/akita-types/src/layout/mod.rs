@@ -22,7 +22,7 @@ pub use opening_point::{
     RingOpeningPoint,
 };
 pub use params::{
-    AjtaiKeyParams, LevelParams, LevelParamsLike, MRowLayout, PrecommittedLevelParams,
+    AjtaiKeyParams, LevelParams, LevelParamsLike, PrecommittedLevelParams, RelationMatrixRowLayout,
     SisModulusFamily,
 };
 pub use proof_size::{

@@ -140,7 +140,7 @@ Key abstractions / surfaces introduced or modified:
   the hidden `u_i` are never absorbed (they live only in `w`, like `ê`/`t̂`).
   Covered by the `logging-transcript` event-stream checks.
 - **Single source of row offsets.** Every row-offset site
-  (`m_row_count_for`, `compute_relation_quotient`/`generate_y`,
+  (`relation_matrix_row_count_for`, `compute_relation_quotient`/`generate_relation_rhs`,
   `SetupContributionPlan::prepare`, `relation_claim_from_rows_extension`, the
   ring-switch row eval) computes block starts from the canonical helpers
   (`effective_commit_rows`, `f_start`, `b_inner_start`, `a_start`), never inline.
@@ -633,9 +633,9 @@ consistency block, mirroring how `A` is already an inner tier under `B`.
 
 The current offsets are open-coded at three sites with the same
 `consistency | public | D | B | A` arithmetic:
-`LevelParams::m_row_count_for`
+`LevelParams::relation_matrix_row_count_for`
 ([`params.rs:329`](crates/akita-types/src/layout/params.rs)),
-`compute_relation_quotient` / `generate_y`
+`compute_relation_quotient` / `generate_relation_rhs`
 (`d_start = 1 + num_public; b_start = d_start + n_d_active; a_start = b_start +
 commitment_row_count` in
 [`relation_quotient.rs:376`](crates/akita-prover/src/protocol/ring_relation/relation_quotient.rs)),
@@ -663,12 +663,12 @@ fn d_start(num_public) -> usize        { 1 + num_public }
 fn f_start(num_public, n_d_active)     { d_start(num_public) + n_d_active }        // COMMIT block
 fn b_inner_start(num_public, n_d, nc)  { f_start(..) + effective_commit_rows()·nc }
 fn a_start(num_public, n_d, nc)        { b_inner_start(..) + b_inner_rows_per_group()·nc }
-fn m_row_count_for(nc, num_public, layout) { a_start(..) + a_key.row_len() }
+fn relation_matrix_row_count_for(nc, num_public, layout) { a_start(..) + a_key.row_len() }
 ```
 
 For `tier_split == 1` / `f_key == None`: `effective_commit_rows == n_b`,
 `b_inner_rows_per_group == 0`, so `f_start == d_start + n_d` (today's `b_start`),
-`b_inner_start == a_start`, and `m_row_count_for` is unchanged. **Requirement:**
+`b_inner_start == a_start`, and `relation_matrix_row_count_for` is unchanged. **Requirement:**
 all four row-offset sites above (and `relation_claim_from_rows_extension`) must
 call these helpers rather than recompute the layout inline; an invariant test
 asserts the helper offsets equal the open-coded values for every shipped
@@ -693,7 +693,7 @@ keep `b_key.row_len()`. Concretely:
   [`proof_size.rs`](crates/akita-types/src/proof_size.rs) /
   [`layout/proof_size.rs`](crates/akita-types/src/layout/proof_size.rs) and
   `level_proof_bytes`; the `ABSORB_COMMITMENT` length check; the `COMMIT` block
-  RHS length in `generate_y` / `relation_claim_from_rows_extension`.
+  RHS length in `generate_relation_rhs` / `relation_claim_from_rows_extension`.
 - **Keep `b_key.row_len()`** (= `n_b'`, the first-tier matrix rows): the small-`B`
   matvec in `repeated_b`/`compute.rs`; the `B_inner` block row count (via
   `b_inner_rows_per_group`); the `B'` setup-envelope footprint; the ZK
@@ -732,11 +732,11 @@ Threading (each must add the `u_len` term; all are no-ops when `f_key == None`):
 - **`w_ring_element_count_with_counts_for_layout_bits`**
   ([`schedule.rs:252`](crates/akita-types/src/schedule.rs)): add a `u_count`
   term to the sum `e_hat + t_hat + (+u_count) + z_pre + r`. The existing `r`
-  term already grows automatically because `m_row_count_for` now counts the `F`
+  term already grows automatically because `relation_matrix_row_count_for` now counts the `F`
   and `B_inner` rows.
 - **Planner proof-size pricing**: `level_proof_bytes`,
   `w_ring_element_count_*`, and `schedule_from_entry` already call
-  `w_ring_element_count_*` and `m_row_count_for`, so they inherit the larger `w`
+  `w_ring_element_count_*` and `relation_matrix_row_count_for`, so they inherit the larger `w`
   once the helpers above include `u_count` and the `F`/`B_inner` rows — but the
   planner DP candidate witness lengths (`derive_candidate_level_params`,
   `find_schedule`'s `next_w_len`) must pass through the same updated function so
@@ -813,7 +813,7 @@ and `ring_switch/coeffs.rs`:
   small `B` width, looped `f` times), concatenate to `u_concat`, decompose to
   `û_concat`, and compute `u_final = F·û_concat`. `RingCommitment.u` now holds
   `u_final` (length `n_F`).
-- `compute_relation_quotient` / `generate_y`
+- `compute_relation_quotient` / `generate_relation_rhs`
   ([`relation_quotient.rs`](crates/akita-prover/src/protocol/ring_relation/relation_quotient.rs)):
   insert the `F` block (RHS `u_final`) and turn the `B` block into a
   zero-RHS consistency block over the `f` slices, computing the corresponding
@@ -945,7 +945,7 @@ no-ops for existing presets):
 2. **`LevelParams` fields + canonical helpers + descriptor:** add
    `f_key`/`tier_split` (defaults `None`/`1`); add `effective_commit_rows`,
    `b_inner_rows_per_group`, and the `d_start`/`f_start`/`b_inner_start`/
-   `a_start` helpers; rewrite `m_row_count_for` on top of them; serialize
+   `a_start` helpers; rewrite `relation_matrix_row_count_for` on top of them; serialize
    `tier_split`/`f_key` in `append_descriptor_bytes`; thread through
    `with_decomp`/`with_layout`/`params_only`. Add the helper-vs-open-coded
    invariant test. Confirm flag-off levels omit tiered descriptor fields.

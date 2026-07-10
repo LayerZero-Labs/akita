@@ -15,14 +15,14 @@ use akita_types::layout::digit_math::optimal_m_r_split;
 use akita_types::sis::{
     committed_fold_a_role_rank, decomposed_s_block_ring_count, decomposed_t_ring_count,
     decomposed_w_ring_count, min_secure_rank, num_digits_open, num_digits_s_commit,
-    rounded_up_collision_linf_t, rounded_up_collision_linf_w, AjtaiKeyParams,
-    FoldWitnessLinfCapConfig, FoldWitnessNorms, SisTableKey,
+    rounded_up_collision_inf_norm, AjtaiKeyParams, FoldWitnessLinfCapConfig, FoldWitnessNorms,
+    SisTableKey,
 };
 use akita_types::{
     direct_witness_bytes, extension_opening_reduction_level_bytes, level_proof_bytes,
     segment_typed_witness_shape, w_ring_element_count_for_chunks, AkitaScheduleInputs,
     ChunkedWitnessCfg, CleartextWitnessShape, CommitmentRingDims, DecompositionParams, DirectStep,
-    FoldStep, LevelParams, MRowLayout, PolynomialGroupLayout, Schedule, Step,
+    FoldStep, LevelParams, PolynomialGroupLayout, RelationMatrixRowLayout, Schedule, Step,
 };
 
 use crate::PlannerPolicy;
@@ -153,7 +153,7 @@ fn derive_candidate_level_params(
             d,
         )?;
         let Some(norm_t) =
-            rounded_up_collision_linf_t(policy.min_sis_security_bits, family, d, log_basis)
+            rounded_up_collision_inf_norm(policy.min_sis_security_bits, family, d, log_basis)
         else {
             continue;
         };
@@ -172,7 +172,7 @@ fn derive_candidate_level_params(
             d,
         )?;
         let Some(norm_w) =
-            rounded_up_collision_linf_w(policy.min_sis_security_bits, family, d, log_basis)
+            rounded_up_collision_inf_norm(policy.min_sis_security_bits, family, d, log_basis)
         else {
             continue;
         };
@@ -225,7 +225,7 @@ fn derive_candidate_level_params(
             policy.decomposition.field_bits(),
             &candidate_params,
             1,
-            MRowLayout::WithDBlock,
+            RelationMatrixRowLayout::WithDBlock,
             num_chunks,
         )?
         .checked_mul(policy.ring_dimension)
@@ -234,7 +234,7 @@ fn derive_candidate_level_params(
             policy.decomposition.field_bits(),
             &candidate_params,
             1,
-            MRowLayout::WithoutDBlock,
+            RelationMatrixRowLayout::WithoutDBlock,
             num_chunks,
         )?
         .checked_mul(policy.ring_dimension)
@@ -289,7 +289,7 @@ pub(crate) struct DirectSuffix {
 /// step:
 ///
 /// - `best_direct` — best schedule whose first step is a `Step::Direct`
-///   (parent scores under `MRowLayout::WithoutDBlock`). `None` when infeasible.
+///   (parent scores under `RelationMatrixRowLayout::WithoutDBlock`). `None` when infeasible.
 /// - `best_fold_per_lb` — best `Step::Fold`-first schedule per first-fold
 ///   `log_basis`.
 #[derive(Clone)]
@@ -519,7 +519,7 @@ pub(crate) fn derive_optimal_suffix_schedule(
                     None,
                     next_witness_len_terminal,
                     1,
-                    MRowLayout::WithoutDBlock,
+                    RelationMatrixRowLayout::WithoutDBlock,
                 ) + eor_bytes;
                 let total = level_proof_size + suffix_cost;
                 let steps = vec![
@@ -543,7 +543,7 @@ pub(crate) fn derive_optimal_suffix_schedule(
                 Some(&suffix_fold.first_fold_params),
                 next_witness_len,
                 1,
-                MRowLayout::WithDBlock,
+                RelationMatrixRowLayout::WithDBlock,
             ) + eor_bytes;
             let total = level_proof_size + suffix_fold.total_bytes;
             let mut steps = Vec::with_capacity(1 + suffix_fold.steps.len());
@@ -703,7 +703,7 @@ fn compute_root_direct_level_params(
         d,
     )?;
     let Some(norm_t) =
-        rounded_up_collision_linf_t(policy.min_sis_security_bits, sis_family, d, log_basis)
+        rounded_up_collision_inf_norm(policy.min_sis_security_bits, sis_family, d, log_basis)
     else {
         return Ok(None);
     };
@@ -722,7 +722,7 @@ fn compute_root_direct_level_params(
         d,
     )?;
     let Some(norm_w) =
-        rounded_up_collision_linf_w(policy.min_sis_security_bits, sis_family, d, log_basis)
+        rounded_up_collision_inf_norm(policy.min_sis_security_bits, sis_family, d, log_basis)
     else {
         return Ok(None);
     };
@@ -931,7 +931,7 @@ fn find_schedule_inner(
                 norm_s,
                 d,
             )?;
-            let Some(norm_t) = rounded_up_collision_linf_t(
+            let Some(norm_t) = rounded_up_collision_inf_norm(
                 policy.min_sis_security_bits,
                 family,
                 d,
@@ -955,7 +955,7 @@ fn find_schedule_inner(
                 norm_t,
                 d,
             )?;
-            let Some(norm_w) = rounded_up_collision_linf_w(
+            let Some(norm_w) = rounded_up_collision_inf_norm(
                 policy.min_sis_security_bits,
                 family,
                 d,
@@ -1026,8 +1026,9 @@ fn find_schedule_inner(
                     AkitaError::InvalidSetup("root next witness length overflow".into())
                 })
             };
-            let next_w_len = next_withness_len_impl(MRowLayout::WithDBlock)?;
-            let next_w_len_terminal = next_withness_len_impl(MRowLayout::WithoutDBlock)?;
+            let next_w_len = next_withness_len_impl(RelationMatrixRowLayout::WithDBlock)?;
+            let next_w_len_terminal =
+                next_withness_len_impl(RelationMatrixRowLayout::WithoutDBlock)?;
             let initial_witness_len_bits = witness_len
                 .checked_mul(field_bits as usize)
                 .ok_or_else(|| {
@@ -1081,7 +1082,7 @@ fn find_schedule_inner(
                         None,
                         next_w_len_terminal,
                         1,
-                        MRowLayout::WithoutDBlock,
+                        RelationMatrixRowLayout::WithoutDBlock,
                     ) + eor_bytes;
                     let total = root_proof_size + suffix_cost;
                     if total < best_cost {
@@ -1107,7 +1108,7 @@ fn find_schedule_inner(
                     Some(&suffix_fold.first_fold_params),
                     next_w_len,
                     1,
-                    MRowLayout::WithDBlock,
+                    RelationMatrixRowLayout::WithDBlock,
                 ) + eor_bytes;
                 let total = root_proof_size + suffix_fold.total_bytes;
                 if total < best_cost {

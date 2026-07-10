@@ -342,7 +342,7 @@ Use current `main` paths, not the stale older plan.
 `akita-verifier`:
 
 - Verification path from the aggregate commitment scheme, including current functions around `batched_verify`, `verify_batched_recursive_suffix`, `verify_root_level`, `verify_one_level`, and root-direct verification helpers.
-- Verifier path from the former root ring-switch module, including `ring_switch_verifier`. The ring-switch verifier replay engine (`ring_switch_verifier`, `RingSwitchDeferredRowEval`, and the direct row-eval helpers) has moved into `crates/akita-verifier`; prover-side witness construction/finalization remains prover-owned.
+- Verifier path from the former root ring-switch module, including `ring_switch_verifier`. The ring-switch verifier replay engine (`ring_switch_verifier`, `RelationMatrixEvaluator`, and the direct row-eval helpers) has moved into `crates/akita-verifier`; prover-side witness construction/finalization remains prover-owned.
 - Verifier challenge derivation and stage helpers that used to sit beside the
   quadratic equation builder now live in `akita-verifier`; the remaining
   quadratic equation builder is prover-owned.
@@ -615,14 +615,14 @@ into `akita-types`. Root still provides the config callback for direct terminal
 params, but successor-step interpretation and runtime schedule consistency
 checks now live beside the shared schedule data model.
 The batched-commit-kernel cut moves the repeated grouped commitment loop into
-`akita-prover`. Root still validates grouped batch shape and chooses the root
+`akita-prover`. Root still validates multi-group batch shape and chooses the root
 layout from config/schedule policy, while `akita-prover` owns the actual
 per-group commitment execution for that layout.
-The commit-policy cut moves singleton and grouped batched commit validation
+The commit-policy cut moves singleton and multi-group batched commit validation
 plus root commit schedule interpretation into prover-owned singleton and
 batched commitment drivers. Root now
 passes only commitment config callbacks (`get_params_for_commitment` for
-singleton commits and `get_params_for_batched_commitment` for grouped batched
+singleton commits and `get_params_for_batched_commitment` for multi-group batched
 commits) for normal commit entrypoints. Prove/verify entrypoints still receive
 `get_params_for_prove` for schedule selection, while root-direct verifier
 recomputation intentionally remains on the lower-level `commit_with_params`
@@ -632,7 +632,7 @@ flattening into `akita-prover`: opening points, commitments, multipoint batch
 shape, flattened polynomial refs, and flattened hints are prepared there. Root
 uses the prepared shape only for schedule/layout policy and root opening-point
 preparation.
-The commit-input cut moves config-free singleton and grouped batched commit
+The commit-input cut moves config-free singleton and multi-group batched commit
 validation into `akita-prover`: root now receives the validated polynomial
 dimension, group sizes, and total claim count, then uses only those summaries
 to choose the config-backed commitment layout.
@@ -832,7 +832,7 @@ The intended sequence is:
     in-repo call sites import `akita_verifier` directly rather than relying on
     root protocol re-exports.
     Second cut: move ring-switch verifier replay (`ring_switch_verifier`,
-    `RingSwitchDeferredRowEval`, and row-eval helpers) into `akita-verifier`, after moving
+    `RelationMatrixEvaluator`, and row-eval helpers) into `akita-verifier`, after moving
     shared scalar-power, sparse-challenge-eval, gadget-scalar, and
     claim-routing validation helpers into foundational crates.
     Third cut: move stage-2 verifier construction and expected-output logic
@@ -933,13 +933,13 @@ The intended sequence is:
     Ninth-N cut: move the recursive suffix fold loop into `akita-prover`;
     keep root responsible for schedule selection callbacks and dynamic
     ring-dimension dispatch callbacks.
-    Ninth-O cut: move the grouped batched-commit execution loop into
+    Ninth-O cut: move the multi-group batched-commit execution loop into
     `akita-prover`; keep root responsible for shape validation and
     schedule-selected root layout policy.
     Ninth-P cut: move config-free batched prover-claim validation and
     flattening into `akita-prover`; keep root responsible for using the
     prepared shape in schedule/layout policy.
-    Ninth-Q cut: move config-free singleton and grouped batched commit
+    Ninth-Q cut: move config-free singleton and multi-group batched commit
     validation into `akita-prover`; keep root responsible for config-backed
     layout selection.
     Tenth cut: move `DensePoly` into `akita-prover`, then update root

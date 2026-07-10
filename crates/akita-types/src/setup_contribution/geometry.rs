@@ -1,4 +1,4 @@
-//! Challenge-free setup product geometry shared by prover and verifier.
+//! Challenge-free setup product geometry: footprint sizing and envelope guards.
 //!
 //! [`setup_required_for_inputs`] derives the packed-scan footprint (`required`)
 //! without fold challenges so NTT sizing, prefix offload, and envelope checks
@@ -6,10 +6,11 @@
 
 use akita_field::{AkitaError, FieldCore};
 
-use crate::layout::MRowLayout;
+use crate::layout::RelationMatrixRowLayout;
 use crate::proof::AkitaExpandedSetup;
 use crate::schedule::Schedule;
-use crate::setup_contribution::SetupContributionPlanInputs;
+
+use super::SetupContributionPlanInputs;
 
 /// Required setup ring rows for one level (challenge-free).
 ///
@@ -34,15 +35,18 @@ pub fn setup_required_for_inputs<E: FieldCore>(
             "setup evaluator layout has zero width".into(),
         ));
     }
-    if inputs.num_polys_per_segment.len() != inputs.num_segments {
+    if inputs.num_polys_per_group.len() != inputs.num_groups {
         return Err(AkitaError::InvalidSize {
-            expected: inputs.num_segments,
-            actual: inputs.num_polys_per_segment.len(),
+            expected: inputs.num_groups,
+            actual: inputs.num_polys_per_group.len(),
         });
     }
 
     let z_range = inputs.inner_width;
-    let expected_z_range = checked_mul(inputs.block_len, inputs.depth_commit, "Z width")?;
+    let expected_z_range = inputs
+        .block_len
+        .checked_mul(inputs.depth_commit)
+        .ok_or_else(|| AkitaError::InvalidSetup("Z width overflow".into()))?;
     if z_range != expected_z_range {
         return Err(AkitaError::InvalidSize {
             expected: expected_z_range,
@@ -50,46 +54,66 @@ pub fn setup_required_for_inputs<E: FieldCore>(
         });
     }
 
-    let n_d_active = match inputs.m_row_layout {
-        MRowLayout::WithDBlock => inputs.n_d,
-        MRowLayout::WithoutDBlock => 0,
+    let n_d_active = match inputs.relation_matrix_row_layout {
+        RelationMatrixRowLayout::WithDBlock => inputs.n_d,
+        RelationMatrixRowLayout::WithoutDBlock => 0,
     };
     // Canonical row layout: consistency (1) | A | B | D.
-    let b_rows_total = checked_mul(inputs.n_b, inputs.num_segments, "B row count")?;
-    let a_end = checked_add(
-        checked_add(1, inputs.n_a, "B row start")?
-            .checked_add(b_rows_total)
-            .ok_or_else(|| AkitaError::InvalidSetup("D row start overflow".into()))?,
-        n_d_active,
-        "D row end",
-    )?;
+    let b_rows_total = inputs
+        .n_b
+        .checked_mul(inputs.num_groups)
+        .ok_or_else(|| AkitaError::InvalidSetup("B row count overflow".into()))?;
+    let b_row_start = 1usize
+        .checked_add(inputs.n_a)
+        .ok_or_else(|| AkitaError::InvalidSetup("B row start overflow".into()))?;
+    let d_row_start = b_row_start
+        .checked_add(b_rows_total)
+        .ok_or_else(|| AkitaError::InvalidSetup("D row start overflow".into()))?;
+    let a_end = d_row_start
+        .checked_add(n_d_active)
+        .ok_or_else(|| AkitaError::InvalidSetup("D row end overflow".into()))?;
     if a_end > inputs.rows {
         return Err(AkitaError::InvalidSetup(
-            "M-row weights are inconsistent with setup evaluator layout".into(),
+            "relation-matrix row weights are inconsistent with setup evaluator layout".into(),
         ));
     }
 
-    let b_per_claim_e = checked_mul(inputs.num_blocks, inputs.depth_open, "e-hat claim width")?;
-    let n_cols_e = checked_mul(inputs.num_claims, b_per_claim_e, "e-hat column width")?;
+    let b_per_claim_e = inputs
+        .num_blocks
+        .checked_mul(inputs.depth_open)
+        .ok_or_else(|| AkitaError::InvalidSetup("e-hat claim width overflow".into()))?;
+    let n_cols_e = inputs
+        .num_claims
+        .checked_mul(b_per_claim_e)
+        .ok_or_else(|| AkitaError::InvalidSetup("e-hat column width overflow".into()))?;
     let max_group_poly_count = inputs
-        .num_polys_per_segment
+        .num_polys_per_group
         .iter()
         .copied()
         .max()
         .unwrap_or(0);
-    let n_cols_t = checked_mul(
-        max_group_poly_count,
-        checked_mul(
-            checked_mul(inputs.n_a, inputs.depth_open, "T stride")?,
-            inputs.num_blocks,
-            "T polynomial width",
-        )?,
-        "T column width",
-    )?;
+    let t_stride = inputs
+        .n_a
+        .checked_mul(inputs.depth_open)
+        .ok_or_else(|| AkitaError::InvalidSetup("T stride overflow".into()))?;
+    let t_polynomial_width = t_stride
+        .checked_mul(inputs.num_blocks)
+        .ok_or_else(|| AkitaError::InvalidSetup("T polynomial width overflow".into()))?;
+    let n_cols_t = max_group_poly_count
+        .checked_mul(t_polynomial_width)
+        .ok_or_else(|| AkitaError::InvalidSetup("T column width overflow".into()))?;
 
-    let d_required = checked_mul(n_d_active, n_cols_e, "D setup footprint")?;
-    let a_required = checked_mul(inputs.n_a, z_range, "A setup footprint")?;
-    let b_required = checked_mul(inputs.n_b, n_cols_t, "B setup footprint")?;
+    let d_required = n_d_active
+        .checked_mul(n_cols_e)
+        .ok_or_else(|| AkitaError::InvalidSetup("D setup footprint overflow".into()))?;
+    let a_required = inputs
+        .n_a
+        .checked_mul(z_range)
+        .ok_or_else(|| AkitaError::InvalidSetup("A setup footprint overflow".into()))?;
+    let b_required = inputs
+        .n_b
+        .checked_mul(n_cols_t)
+        .ok_or_else(|| AkitaError::InvalidSetup("B setup footprint overflow".into()))?;
     let required = d_required.max(b_required).max(a_required);
     if required == 0 {
         return Err(AkitaError::InvalidSetup(
@@ -168,22 +192,13 @@ pub fn setup_active_ring_elems_at<F: FieldCore, E: FieldCore>(
     setup_active_ring_elems_for_fold(expanded, inputs, exec.params.d_a())
 }
 
-#[inline]
-fn checked_add(lhs: usize, rhs: usize, name: &'static str) -> Result<usize, AkitaError> {
-    lhs.checked_add(rhs)
-        .ok_or_else(|| AkitaError::InvalidSetup(format!("{name} overflow")))
-}
-
-#[inline]
-fn checked_mul(lhs: usize, rhs: usize, name: &'static str) -> Result<usize, AkitaError> {
-    lhs.checked_mul(rhs)
-        .ok_or_else(|| AkitaError::InvalidSetup(format!("{name} overflow")))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{gadget_row_scalars, MRowLayout, SetupContributionPlan};
+    use crate::{
+        gadget_row_scalars, RelationMatrixRowLayout, SetupContributionGroupInputs,
+        SetupContributionPlan,
+    };
     use akita_field::Prime128OffsetA7F7;
 
     type F = Prime128OffsetA7F7;
@@ -206,7 +221,6 @@ mod tests {
                 offset_z,
                 offset_e,
                 offset_t,
-                offset_u: None,
                 offset_r: Some(offset_r),
                 global_block_base: 0,
             }],
@@ -214,10 +228,35 @@ mod tests {
                 z_len,
                 e_len: 0,
                 t_len: 0,
-                u_len: None,
                 r_len: Some(0),
             }],
         }
+    }
+
+    fn prepare_single_group_plan(
+        inputs: &SetupContributionPlanInputs<F>,
+        full_vec_randomness: &[F],
+        fold_gadget: &[F],
+        chunk_layout: &crate::WitnessLayout,
+    ) -> Result<SetupContributionPlan<F>, AkitaError> {
+        let single_group =
+            SetupContributionGroupInputs::single_group_layout(inputs, chunk_layout, 0)?;
+        let groups = std::slice::from_ref(&single_group.group);
+        let static_plan = SetupContributionPlan::prepare_static(
+            inputs,
+            groups,
+            single_group.d_row_start,
+            single_group.d_rows,
+            single_group.d_physical_cols,
+        )?;
+        SetupContributionPlan::finish_plan::<F>(
+            &static_plan,
+            full_vec_randomness,
+            None,
+            None,
+            Some(fold_gadget),
+            groups,
+        )
     }
 
     #[test]
@@ -233,35 +272,29 @@ mod tests {
             .collect::<Vec<_>>();
         let fold_gadget = gadget_row_scalars::<F>(depth_fold, 4);
         let inputs = SetupContributionPlanInputs::<F> {
-            eq_tau1: vec![test_scalar(11), test_scalar(12)],
+            relation_matrix_row_layout: RelationMatrixRowLayout::WithoutDBlock,
+            rows: 2,
+            n_a: 1,
+            n_b: 0,
+            n_d: 0,
+            num_groups: num_points,
+            num_polys_per_group: vec![0],
             num_t_vectors: 0,
-            num_blocks: 4,
             num_claims: 1,
+            num_blocks: 4,
+            block_len,
             depth_open: 16,
             depth_commit,
             depth_fold,
-            block_len,
             inner_width: z_range,
-            n_a: 1,
-            n_d: 0,
-            m_row_layout: MRowLayout::WithoutDBlock,
-            n_b: 0,
-            num_segments: num_points,
-            rows: 2,
-            num_polys_per_segment: vec![0],
+            eq_tau1: vec![test_scalar(11), test_scalar(12)].into(),
         };
         let required = setup_required_for_inputs(&inputs).expect("required");
         let chunk_layout = single_chunk_layout(4, offset_z, z_range, 0, 64, 0);
-        let plan = SetupContributionPlan::prepare::<F>(
-            &inputs,
-            &full_vec_randomness,
-            None,
-            None,
-            &fold_gadget,
-            &chunk_layout,
-        )
-        .expect("plan");
-        assert_eq!(required, plan.required());
+        let plan =
+            prepare_single_group_plan(&inputs, &full_vec_randomness, &fold_gadget, &chunk_layout)
+                .expect("plan");
+        assert_eq!(required, plan.required().unwrap());
     }
 
     #[test]
@@ -271,22 +304,22 @@ mod tests {
         let depth_fold = 2;
         let z_range = block_len * depth_commit;
         let inputs = SetupContributionPlanInputs::<F> {
-            eq_tau1: vec![test_scalar(11), test_scalar(12)],
+            relation_matrix_row_layout: RelationMatrixRowLayout::WithoutDBlock,
+            rows: 2,
+            n_a: 1,
+            n_b: 0,
+            n_d: 0,
+            num_groups: 1,
+            num_polys_per_group: vec![2],
             num_t_vectors: 2,
-            num_blocks: 4,
             num_claims: 1,
+            num_blocks: 4,
+            block_len,
             depth_open: 16,
             depth_commit,
             depth_fold,
-            block_len,
             inner_width: z_range,
-            n_a: 1,
-            n_d: 0,
-            m_row_layout: MRowLayout::WithoutDBlock,
-            n_b: 0,
-            num_segments: 1,
-            rows: 2,
-            num_polys_per_segment: vec![2],
+            eq_tau1: vec![test_scalar(11), test_scalar(12)].into(),
         };
         let required = setup_required_for_inputs(&inputs).expect("required");
         assert!(required > 0);
@@ -294,48 +327,44 @@ mod tests {
         let fold_gadget = gadget_row_scalars::<F>(depth_fold, 4);
         let mut inputs_a = inputs.clone();
         let chunk_layout = single_chunk_layout(4, 0, z_range, 0, 64, 0);
-        let plan_a = SetupContributionPlan::prepare::<F>(
+        let plan_a = prepare_single_group_plan(
             &inputs_a,
             &[test_scalar(99), test_scalar(100)],
-            None,
-            None,
             &fold_gadget,
             &chunk_layout,
         )
         .expect("plan a");
-        inputs_a.eq_tau1 = vec![test_scalar(1); 8];
-        let plan_b = SetupContributionPlan::prepare::<F>(
+        inputs_a.eq_tau1 = vec![test_scalar(1); 8].into();
+        let plan_b = prepare_single_group_plan(
             &inputs_a,
             &[test_scalar(77), test_scalar(88)],
-            None,
-            None,
             &fold_gadget,
             &chunk_layout,
         )
         .expect("plan b");
-        assert_eq!(required, plan_a.required());
-        assert_eq!(plan_a.required(), plan_b.required());
+        assert_eq!(required, plan_a.required().unwrap());
+        assert_eq!(plan_a.required().unwrap(), plan_b.required().unwrap());
     }
 
     #[test]
     fn ensure_setup_envelope_rejects_undersized_matrix() {
         let inputs = SetupContributionPlanInputs::<F> {
-            eq_tau1: vec![],
+            relation_matrix_row_layout: RelationMatrixRowLayout::WithDBlock,
+            rows: 8,
+            n_a: 2,
+            n_b: 2,
+            n_d: 1,
+            num_groups: 1,
+            num_polys_per_group: vec![1],
             num_t_vectors: 1,
-            num_blocks: 4,
             num_claims: 1,
+            num_blocks: 4,
+            block_len: 16,
             depth_open: 8,
             depth_commit: 2,
             depth_fold: 3,
-            block_len: 16,
             inner_width: 32,
-            n_a: 2,
-            n_d: 1,
-            m_row_layout: MRowLayout::WithDBlock,
-            n_b: 2,
-            num_segments: 1,
-            rows: 8,
-            num_polys_per_segment: vec![1],
+            eq_tau1: vec![].into(),
         };
         let required = setup_required_for_inputs(&inputs).expect("required");
         let seed = crate::AkitaSetupSeed {
@@ -355,22 +384,22 @@ mod tests {
     #[test]
     fn setup_required_for_inputs_rejects_non_pow2_num_blocks() {
         let inputs = SetupContributionPlanInputs::<F> {
-            eq_tau1: vec![],
+            relation_matrix_row_layout: RelationMatrixRowLayout::WithDBlock,
+            rows: 8,
+            n_a: 2,
+            n_b: 2,
+            n_d: 1,
+            num_groups: 1,
+            num_polys_per_group: vec![1],
             num_t_vectors: 1,
-            num_blocks: 3,
             num_claims: 1,
+            num_blocks: 3,
+            block_len: 16,
             depth_open: 8,
             depth_commit: 2,
             depth_fold: 3,
-            block_len: 16,
             inner_width: 32,
-            n_a: 2,
-            n_d: 1,
-            m_row_layout: MRowLayout::WithDBlock,
-            n_b: 2,
-            num_segments: 1,
-            rows: 8,
-            num_polys_per_segment: vec![1],
+            eq_tau1: vec![].into(),
         };
         let err = setup_required_for_inputs(&inputs).expect_err("non-pow2 blocks");
         assert!(matches!(err, AkitaError::InvalidSetup(_)));

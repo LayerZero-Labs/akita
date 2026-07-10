@@ -22,7 +22,7 @@ use crate::proof::CleartextWitnessShape;
 use crate::proof::{RingVec, TerminalWitnessTranscriptParts};
 use crate::sis::compute_num_digits_full_field;
 use crate::tail_golomb_rice_low_bits::{cap_rice_low_bits, wire_rice_low_bits_from_rule};
-use crate::{LevelParams, MRowLayout};
+use crate::{LevelParams, RelationMatrixRowLayout};
 
 /// Public segment geometry for a transparent terminal witness.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -410,10 +410,13 @@ where
 /// Propagates layout multiplicity errors.
 pub fn terminal_golomb_grind_tail_t_vectors(
     lp: &LevelParams,
-    m_row_layout: MRowLayout,
+    relation_matrix_row_layout: RelationMatrixRowLayout,
     witness_shape: Option<&CleartextWitnessShape>,
 ) -> Result<Option<usize>, AkitaError> {
-    if !matches!(m_row_layout, MRowLayout::WithoutDBlock) {
+    if !matches!(
+        relation_matrix_row_layout,
+        RelationMatrixRowLayout::WithoutDBlock
+    ) {
         return Ok(None);
     }
     let Some(shape) = witness_shape else {
@@ -597,7 +600,10 @@ pub fn tail_segment_layout(
         .and_then(|n| n.checked_mul(depth_open))
         .ok_or_else(|| AkitaError::InvalidSetup("tail t plane count overflow".to_string()))?;
     let r_plane_rings = lp
-        .m_row_count_for(num_commitment_groups, MRowLayout::WithoutDBlock)?
+        .relation_matrix_row_count_for(
+            num_commitment_groups,
+            RelationMatrixRowLayout::WithoutDBlock,
+        )?
         .checked_mul(compute_num_digits_full_field(field_bits, lp.log_basis))
         .ok_or_else(|| AkitaError::InvalidSetup("tail r plane count overflow".to_string()))?;
     let total_plane_rings = z_plane_rings
@@ -609,7 +615,10 @@ pub fn tail_segment_layout(
         .checked_mul(d)
         .ok_or_else(|| AkitaError::InvalidSetup("tail logical elem overflow".to_string()))?;
     let r_field_elems = lp
-        .m_row_count_for(num_commitment_groups, MRowLayout::WithoutDBlock)?
+        .relation_matrix_row_count_for(
+            num_commitment_groups,
+            RelationMatrixRowLayout::WithoutDBlock,
+        )?
         .checked_mul(d)
         .ok_or_else(|| AkitaError::InvalidSetup("tail r field count overflow".to_string()))?;
     Ok(TailSegmentLayout {

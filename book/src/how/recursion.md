@@ -13,7 +13,7 @@ the Fiat-Shamir soundness lesson from the terminal-fold cutover.
 
 **Sources to fold in**
 
-- `crates/akita-types/src/layout/params.rs:26-33` (`MRowLayout`).
+- `crates/akita-types/src/layout/params.rs:26-33` (`RelationMatrixRowLayout`).
 - `crates/akita-prover/src/protocol/flow/recursive.rs`, `flow/inputs.rs` (`batched_prove`).
 - Paper §3.6 `sec:akita-minor-opts` (terminal fold, tight recursive witness layout), §3.8 ("Witness size reduction and termination").
 - `specs/terminal-fold-cutover.md` (Fiat-Shamir soundness lesson).

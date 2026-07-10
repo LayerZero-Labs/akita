@@ -11,17 +11,9 @@ use akita_config::{effective_batched_schedule, CommitmentConfig};
 use akita_field::unreduced::ReduceTo;
 use akita_field::{AdditiveGroup, CanonicalField};
 use akita_types::{
-    dispatch_for_field, schedule_terminal_direct_witness_shape, should_reject_grouped_root,
-    validate_schedule_ring_dims, GROUPED_ROOT_RECURSIVE_SETUP_UNSUPPORTED,
+    dispatch_for_field, schedule_terminal_direct_witness_shape, should_reject_multi_group_root,
+    validate_schedule_ring_dims,
 };
-
-fn grouped_root_prover_error(message: &'static str) -> AkitaError {
-    if message == GROUPED_ROOT_RECURSIVE_SETUP_UNSUPPORTED {
-        AkitaError::InvalidSetup(message.to_string())
-    } else {
-        AkitaError::InvalidInput(message.to_string())
-    }
-}
 
 /// Build a root-direct batched proof from flattened polynomial references and
 /// their commitment-group hints.
@@ -140,20 +132,17 @@ where
     opening_claims.validate(expanded.seed())?;
     let opening_batch = opening_claims.layout()?;
     let flat_polys = claims.flat_polys();
-    if let Some(message) = should_reject_grouped_root(
+    if let Some(message) = should_reject_multi_group_root(
         &opening_batch,
-        setup_contribution_mode,
-        Some(
-            flat_polys
-                .iter()
-                .any(|poly| poly.onehot_chunk_size().is_none()),
-        ),
+        flat_polys
+            .iter()
+            .any(|poly| poly.onehot_chunk_size().is_none()),
     ) {
-        return Err(grouped_root_prover_error(message));
+        return Err(AkitaError::InvalidInput(message.to_string()));
     }
     let schedule = effective_batched_schedule::<Cfg>(&opening_batch, claims.point())?;
     validate_schedule_ring_dims(&schedule, expanded.seed())?;
-    schedule.reject_grouped_multi_chunk("batched prove")?;
+    schedule.reject_multi_group_multi_chunk("batched prove")?;
     let root_commit_params = match schedule.steps.first() {
         Some(Step::Fold(root)) => &root.params,
         Some(Step::Direct(root)) => root.params.as_ref().ok_or_else(|| {

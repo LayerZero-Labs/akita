@@ -476,7 +476,7 @@ macro_rules! preset_module {
             }
 
             /// Setup is sized for `max_num_batched_polys = 1`, but we then try
-            /// to commit a two-polynomial grouped batch. The commit path
+            /// to commit a two-polynomial multi-group batch. The commit path
             /// explicitly rejects this with `AkitaError::InvalidInput("commit
             /// received N polynomials but setup supports at most M")`, which
             /// our `.expect("batched … commit")` turns into a panic.

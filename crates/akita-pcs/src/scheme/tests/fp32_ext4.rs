@@ -210,7 +210,7 @@ impl CommitmentConfig for Fp32RingSubfieldRootFoldCfg {
             &lp,
             opening_batch.num_total_polynomials(),
             1,
-            akita_types::MRowLayout::WithoutDBlock,
+            akita_types::RelationMatrixRowLayout::WithoutDBlock,
         )?;
         let next_w_len = w_ring * Self::D;
         let witness_shape = akita_types::segment_typed_witness_shape(
@@ -300,7 +300,7 @@ impl CommitmentConfig for Fp32RingSubfieldOuterFallbackCfg {
             opening_batch.num_total_polynomials(),
         )?;
         // Single-fold schedule: the root IS the terminal fold, so its
-        // shipped `w` is built under MRowLayout::WithoutDBlock (no D-block in
+        // shipped `w` is built under RelationMatrixRowLayout::WithoutDBlock (no D-block in
         // the per-row `r` quotients). The schedule's `next_w_len` and the
         // following Direct step's witness shape must match that reduced
         // length.
@@ -308,7 +308,7 @@ impl CommitmentConfig for Fp32RingSubfieldOuterFallbackCfg {
             &lp,
             opening_batch.num_total_polynomials(),
             1,
-            akita_types::MRowLayout::WithoutDBlock,
+            akita_types::RelationMatrixRowLayout::WithoutDBlock,
         )?;
         let next_w_len = w_ring * Self::D;
         let witness_shape = akita_types::segment_typed_witness_shape(

@@ -1,8 +1,7 @@
 //! Verifier for the setup-product sumcheck — the verifier counterpart to the
 //! prover-side `AkitaStage3Prover`.
 
-use crate::protocol::ring_switch::RingSwitchDeferredRowEval;
-use crate::protocol::{SetupEvalPlan, SetupEvaluator};
+use crate::protocol::ring_switch::RelationMatrixEvaluator;
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::ring::{eval_ring_at_pows_fast, scalar_powers};
 use akita_field::parallel::*;
@@ -13,9 +12,10 @@ use akita_transcript::labels::{
 };
 use akita_transcript::{sample_ext_challenge, Transcript};
 use akita_types::{
-    dispatch_for_field, ensure_setup_envelope, gadget_row_scalars, select_setup_prefix_slot,
+    dispatch_for_field, ensure_setup_envelope, select_setup_prefix_slot, shared_setup_fold_gadget,
     stage3_offload_natural_field_len, AkitaExpandedSetup, AkitaVerifierSetup, LevelParams,
-    SetupSumcheckProof, SETUP_OFFLOAD_D_SETUP, SETUP_SUMCHECK_DEGREE,
+    SetupContributionPlan, SetupIndexWeightEvaluator, SetupSumcheckProof, SETUP_OFFLOAD_D_SETUP,
+    SETUP_SUMCHECK_DEGREE,
 };
 
 /// Verifier counterpart to `AkitaStage3Prover`: replays the setup product
@@ -26,7 +26,8 @@ use akita_types::{
 /// evaluation, then call [`verify_batched_stage3`](Self::verify_batched_stage3)
 /// with the proof and transcript.
 pub(crate) struct SetupSumcheckVerifier<E: FieldCore> {
-    plan: SetupEvalPlan<E>,
+    plan: SetupContributionPlan<E>,
+    setup_index_weight_evaluator: Option<SetupIndexWeightEvaluator<E>>,
     alpha_pows: Vec<E>,
     ring_bits: usize,
     rounds: usize,
@@ -37,12 +38,13 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
     /// at `x_challenges`.
     ///
     /// Derives the setup evaluation plan (and thus the per-round shape) from
-    /// the ring-switch row evaluation; must be called before
+    /// the relation-matrix evaluation; must be called before
     /// [`verify_batched_stage3`](Self::verify_batched_stage3).
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new<F, const D: usize>(
-        prepared: &RingSwitchDeferredRowEval<E>,
+        relation_matrix_evaluator: &RelationMatrixEvaluator<E>,
         x_challenges: &[E],
+        tau1: &[E],
         alpha: E,
     ) -> Result<Self, AkitaError>
     where
@@ -50,30 +52,52 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
         E: ExtField<F>,
     {
         let alpha_pows = scalar_powers(alpha, D);
-        let fold_gadget = gadget_row_scalars::<F>(prepared.depth_fold, prepared.log_basis);
-        let layout = prepared.chunk_layout();
-        let setup_contribution_inputs = prepared.create_setup_contribution_inputs();
-        let evaluator = SetupEvaluator::new(
-            &setup_contribution_inputs,
+        let fold_gadget =
+            shared_setup_fold_gadget::<F>(&relation_matrix_evaluator.setup_contribution_groups);
+        let plan = SetupContributionPlan::finish_plan::<F>(
+            &relation_matrix_evaluator.setup_contribution_static,
             x_challenges,
             None,
             None,
-            &alpha_pows,
-            &fold_gadget,
-            layout,
-        );
-        let plan = evaluator.prepare()?;
-        let lambda_len = plan.required().checked_next_power_of_two().ok_or_else(|| {
-            AkitaError::InvalidSetup("setup product lambda length overflow".into())
-        })?;
-        let lambda_bits = lambda_len.trailing_zeros() as usize;
+            fold_gadget.as_deref(),
+            &relation_matrix_evaluator.setup_contribution_groups,
+        )?;
+        let role_dims = relation_matrix_evaluator.role_dims;
+        let setup_index_weight_evaluator = if let Some(fold_gadget) = fold_gadget.as_deref() {
+            if role_dims.d_a() == D && role_dims.d_b() == D && role_dims.d_d() == D {
+                let evaluator = SetupIndexWeightEvaluator::new::<F>(
+                    &relation_matrix_evaluator.setup_contribution_inputs,
+                    &relation_matrix_evaluator.setup_contribution_static,
+                    &relation_matrix_evaluator.setup_contribution_groups,
+                    tau1,
+                    x_challenges,
+                    fold_gadget,
+                    D,
+                    role_dims,
+                    alpha,
+                )?;
+                evaluator.prefers_succinct_path().then_some(evaluator)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        let setup_idx_len = plan
+            .required()?
+            .checked_next_power_of_two()
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup("setup product index length overflow".into())
+            })?;
+        let setup_idx_bits = setup_idx_len.trailing_zeros() as usize;
         let ring_bits = D.trailing_zeros() as usize;
         let rounds = ring_bits
-            .checked_add(lambda_bits)
+            .checked_add(setup_idx_bits)
             .ok_or_else(|| AkitaError::InvalidSetup("setup product round count overflow".into()))?;
 
         Ok(Self {
             plan,
+            setup_index_weight_evaluator,
             alpha_pows,
             ring_bits,
             rounds,
@@ -151,8 +175,9 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
         T: Transcript<F>,
     {
         if ring_d == SETUP_OFFLOAD_D_SETUP {
-            let natural_field_len = stage3_offload_natural_field_len(self.plan.required(), ring_d)?;
-            ensure_setup_envelope(&setup.expanded, self.plan.required(), ring_d)?;
+            let natural_field_len =
+                stage3_offload_natural_field_len(self.plan.required()?, ring_d)?;
+            ensure_setup_envelope(&setup.expanded, self.plan.required()?, ring_d)?;
             let setup_prefix_selection = select_setup_prefix_slot(
                 setup.expanded.seed(),
                 setup_len,
@@ -209,24 +234,34 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
         )?;
         let rho_w = challenges[..witness_rounds].to_vec();
         let rho_setup = &challenges[..self.rounds];
-        let (rho_y, rho_lambda) = rho_setup.split_at(self.ring_bits);
+        let (rho_y, rho_setup_idx) = rho_setup.split_at(self.ring_bits);
 
-        let eq_lambda = lambda_eq_table(self.plan.required(), rho_lambda)?;
+        // The setup prefix itself is still evaluated by scanning the selected
+        // prefix. The setup-index weight is structured, so evaluate its MLE
+        // directly at `rho_setup_idx` instead of building a dense equality
+        // table for that factor.
+        let eq_setup_idx = setup_idx_eq_table(self.plan.required()?, rho_setup_idx)?;
         let eq_y = ring_eq_table::<E, D>(rho_y)?;
         let setup_val = setup_mle_at_eq_tables::<F, E, D>(
             &setup.expanded,
-            self.plan.required(),
+            self.plan.required()?,
             setup_eval_len,
-            &eq_lambda,
+            &eq_setup_idx,
             &eq_y,
         )?;
-        let omega = self.plan.evaluate_bar_omega_with_eq(&eq_lambda)?;
+        let setup_index_weight = match &self.setup_index_weight_evaluator {
+            Some(evaluator) => match evaluator.evaluate(rho_setup_idx)? {
+                Some(value) => value,
+                None => self.plan.evaluate_setup_index_weight_mle(rho_setup_idx)?,
+            },
+            None => self.plan.evaluate_setup_index_weight_mle(rho_setup_idx)?,
+        };
         let alpha_val = eval_dense_table_with_eq(&self.alpha_pows, &eq_y)?;
         let witness_scale = lift_scale::<E>(batched_rounds - witness_rounds)?;
         let setup_scale = lift_scale::<E>(batched_rounds - self.rounds)?;
         let eq_w = EqPolynomial::mle(stage2_challenges, &rho_w)?;
         let expected = eta * witness_scale * eq_w * proof.next_w_eval
-            + setup_scale * setup_val * omega * alpha_val;
+            + setup_scale * setup_val * setup_index_weight * alpha_val;
         if final_claim != expected {
             return Err(AkitaError::InvalidInput(
                 "batched stage-3 final relation mismatch".to_string(),
@@ -243,14 +278,17 @@ fn lift_scale<E: FieldCore + FromPrimitiveInt>(extra_rounds: usize) -> Result<E,
     Ok((0..extra_rounds).fold(E::one(), |acc, _| acc * inv_two))
 }
 
-fn lambda_eq_table<E: FieldCore>(required: usize, rho_lambda: &[E]) -> Result<Vec<E>, AkitaError> {
-    let lambda_len = required
+fn setup_idx_eq_table<E: FieldCore>(
+    required: usize,
+    rho_setup_idx: &[E],
+) -> Result<Vec<E>, AkitaError> {
+    let setup_idx_len = required
         .checked_next_power_of_two()
-        .ok_or_else(|| AkitaError::InvalidSetup("setup product lambda length overflow".into()))?;
-    if rho_lambda.len() != lambda_len.trailing_zeros() as usize {
+        .ok_or_else(|| AkitaError::InvalidSetup("setup product index length overflow".into()))?;
+    if rho_setup_idx.len() != setup_idx_len.trailing_zeros() as usize {
         return Err(AkitaError::InvalidProof);
     }
-    EqPolynomial::evals(rho_lambda)
+    EqPolynomial::evals(rho_setup_idx)
 }
 
 fn ring_eq_table<E: FieldCore, const D: usize>(rho_y: &[E]) -> Result<Vec<E>, AkitaError> {
@@ -289,7 +327,7 @@ fn setup_mle_at_eq_tables<F, E, const D: usize>(
     setup: &AkitaExpandedSetup<F>,
     required: usize,
     setup_eval_len: usize,
-    eq_lambda: &[E],
+    eq_setup_idx: &[E],
     eq_y: &[E],
 ) -> Result<E, AkitaError>
 where
@@ -301,13 +339,13 @@ where
             "setup prefix is too small for selected verifier layout".into(),
         ));
     }
-    let lambda_len = required
+    let setup_idx_len = required
         .checked_next_power_of_two()
-        .ok_or_else(|| AkitaError::InvalidSetup("setup MLE lambda length overflow".into()))?;
-    if eq_lambda.len() != lambda_len {
+        .ok_or_else(|| AkitaError::InvalidSetup("setup MLE index length overflow".into()))?;
+    if eq_setup_idx.len() != setup_idx_len {
         return Err(AkitaError::InvalidSize {
-            expected: lambda_len,
-            actual: eq_lambda.len(),
+            expected: setup_idx_len,
+            actual: eq_setup_idx.len(),
         });
     }
     if eq_y.len() != D {
@@ -322,9 +360,9 @@ where
     Ok(cfg_fold_reduce!(
         0..required,
         E::zero,
-        |mut acc, lambda| {
-            let ring_eval = eval_ring_at_pows_fast(&setup_entries[lambda], eq_y);
-            acc += eq_lambda[lambda] * ring_eval;
+        |mut acc, setup_idx| {
+            let ring_eval = eval_ring_at_pows_fast(&setup_entries[setup_idx], eq_y);
+            acc += eq_setup_idx[setup_idx] * ring_eval;
             acc
         },
         |lhs, rhs| lhs + rhs

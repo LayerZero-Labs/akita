@@ -69,6 +69,27 @@ where
         })
 }
 
+/// Fast (deferred-reduction) counterpart of [`eval_flat_ring_at_pows`].
+///
+/// This is the runtime-dimension form of [`eval_ring_at_pows_fast`].
+///
+/// # Panics
+///
+/// Panics in debug builds if `coeffs.len() != alpha_pows.len()`.
+#[inline]
+pub fn eval_flat_ring_at_pows_fast<F, E>(coeffs: &[F], alpha_pows: &[E]) -> E
+where
+    F: FieldCore,
+    E: MulBaseUnreduced<F>,
+{
+    debug_assert_eq!(alpha_pows.len(), coeffs.len());
+    let accum = coeffs.iter().zip(alpha_pows.iter()).fold(
+        <E as HasUnreducedOps>::ProductAccum::zero(),
+        |acc, (coeff, alpha_pow)| acc + alpha_pow.mul_base_to_product_accum(*coeff),
+    );
+    <E as HasUnreducedOps>::reduce_product_accum(accum)
+}
+
 /// Fast (deferred-reduction) counterpart of [`eval_ring_at_pows`].
 ///
 /// Same signature and result as [`eval_ring_at_pows`], but accumulates all `D`
@@ -139,6 +160,11 @@ mod tests {
                 eval_ring_at_pows(&ring, &pows),
                 eval_ring_at_pows_fast(&ring, &pows),
                 "deferred reduction diverged from per-term at seed {seed}"
+            );
+            assert_eq!(
+                eval_flat_ring_at_pows(ring.coefficients(), &pows),
+                eval_flat_ring_at_pows_fast(ring.coefficients(), &pows),
+                "flat deferred reduction diverged from per-term at seed {seed}"
             );
         }
     }

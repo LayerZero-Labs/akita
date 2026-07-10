@@ -685,7 +685,7 @@ Required future coverage:
 - cached round polynomial behavior;
 - two-round-prefix materialization;
 - stage-1 tree wrapper;
-- stage-2 `live_x_cols`, `m_compact`, `alpha_compact`,
+- stage-2 `live_x_cols`, `relation_matrix_col_evals_compact`, `alpha_compact`,
   `prev_norm_claim`, and `prev_norm_poly` transitions.
 
 #### Ring/NTT Metal Kernels
@@ -861,7 +861,7 @@ Likely contents when expanded:
 - field and MLE backend kernels tied to concrete prover call paths;
 - stage-1/stage-2 sumcheck backend state-machine hooks;
 - deterministic true hybrid CPU/GPU scheduling;
-- Jolt opening adapter and Akita grouped batched-opening interface.
+- Jolt opening adapter and Akita multi-group batched-opening interface.
 
 The next PR should take only the first coherent code slice from this bucket and
 turn it into a new detailed current spec. The rest stays coarse.

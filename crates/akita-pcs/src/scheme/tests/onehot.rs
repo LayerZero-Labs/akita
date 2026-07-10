@@ -39,9 +39,9 @@ fn conservative_config_commit_returns_frozen_layout() {
     assert_eq!(commitment.rows().count(), frozen_layout.conservative_n_b);
 }
 
-fn grouped_root_params(schedule: &akita_types::Schedule) -> &LevelParams {
-    match schedule.steps.first().expect("grouped schedule step") {
-        Step::Direct(direct) => direct.params.as_ref().expect("grouped root params"),
+fn multi_group_root_params(schedule: &akita_types::Schedule) -> &LevelParams {
+    match schedule.steps.first().expect("multi-group schedule step") {
+        Step::Direct(direct) => direct.params.as_ref().expect("multi-group root params"),
         Step::Fold(fold) => &fold.params,
     }
 }
@@ -144,22 +144,22 @@ fn group_batch_schedule_preserves_precommitted_order() {
                 akita_types::PrecommittedGroupParams::from_params(pre_a_key, &pre_a_layout);
             let pre_b_frozen =
                 akita_types::PrecommittedGroupParams::from_params(pre_b_key, &pre_b_layout);
-            let grouped_key = akita_types::AkitaScheduleLookupKey {
+            let multi_group_key = akita_types::AkitaScheduleLookupKey {
                 final_group: akita_types::PolynomialGroupLayout::new(FINAL_NV, MAIN_SIZE),
                 precommitteds: vec![pre_a_frozen, pre_b_frozen],
             };
 
-            let schedule =
-                OneHotCfg::runtime_schedule(grouped_key.clone()).expect("grouped runtime schedule");
-            let root = grouped_root_params(&schedule);
-            let main_params = akita_types::grouped_root_commit_params(&schedule)
-                .expect("main grouped commit params");
+            let schedule = OneHotCfg::runtime_schedule(multi_group_key.clone())
+                .expect("multi-group runtime schedule");
+            let root = multi_group_root_params(&schedule);
+            let main_params = akita_types::multi_group_root_commit_params(&schedule)
+                .expect("main multi-group commit params");
 
-            assert_eq!(grouped_key.num_commitment_groups(), 3);
+            assert_eq!(multi_group_key.num_commitment_groups(), 3);
             assert_eq!(
-                grouped_key
+                multi_group_key
                     .num_polynomials()
-                    .expect("grouped polynomial count"),
+                    .expect("multi-group polynomial count"),
                 PRE_A_SIZE + PRE_B_SIZE + MAIN_SIZE
             );
             assert_eq!(main_params, *root);
@@ -195,14 +195,14 @@ fn group_batch_commits_precommitteds_then_double_size_final_group() {
             akita_types::PrecommittedGroupParams::from_params(pre_a_key, &pre_a_layout);
         let pre_b_frozen =
             akita_types::PrecommittedGroupParams::from_params(pre_b_key, &pre_b_layout);
-        let grouped_key = akita_types::AkitaScheduleLookupKey {
+        let multi_group_key = akita_types::AkitaScheduleLookupKey {
             final_group: akita_types::PolynomialGroupLayout::new(FINAL_NV, GROUP_SIZE),
             precommitteds: vec![pre_a_frozen, pre_b_frozen],
         };
 
-        let grouped_schedule =
-            OneHotCfg::runtime_schedule(grouped_key).expect("grouped runtime schedule");
-        let main_params = grouped_root_params(&grouped_schedule);
+        let multi_group_schedule =
+            OneHotCfg::runtime_schedule(multi_group_key).expect("multi-group runtime schedule");
+        let main_params = multi_group_root_params(&multi_group_schedule);
         let final_polys = [debug_make_onehot_poly(main_params, 0x0bee_fcaf_9a77_7001)];
         let (final_commitment, final_hint) = OneHotScheme::commit_final_group::<_, _>(
             setup,
@@ -210,7 +210,7 @@ fn group_batch_commits_precommitteds_then_double_size_final_group() {
             stack,
             vec![pre_a_key, pre_b_key],
         )
-        .expect("final grouped commitment");
+        .expect("final multi-group commitment");
 
         assert_eq!(
             pre_a_commitment.rows().count(),
@@ -266,17 +266,29 @@ fn commit_group_returns_frozen_conservative_layout() {
     assert_eq!(commitment.rows().count(), frozen_layout.conservative_n_b);
 }
 
-/// Produce and verify a folded grouped-root one-hot same-point proof for the
+/// Produce and verify a folded multi-group-root one-hot same-point proof for the
 /// given precommitted group sizes plus a final group size, exercising unequal
 /// `K_g`. Precommitted groups are committed under the conservative config; the
-/// final group is committed with `commit_final_group`; the grouped root folds
+/// final group is committed with `commit_final_group`; the multi-group root folds
 /// into a singleton recursive suffix.
-fn grouped_root_round_trip_onehot(pre_sizes: &[usize], final_size: usize) {
+fn multi_group_root_round_trip_onehot(
+    pre_sizes: &[usize],
+    final_size: usize,
+    setup_contribution_mode: akita_types::SetupContributionMode,
+) {
     const PRE_NV: usize = 8;
     const FINAL_NV: usize = PRE_NV * 2;
     let total: usize = pre_sizes.iter().sum::<usize>() + final_size;
 
-    let setup = ConservativeCommitter::setup_prover(FINAL_NV, total).expect("setup");
+    let setup = match setup_contribution_mode {
+        akita_types::SetupContributionMode::Direct => {
+            ConservativeCommitter::setup_prover(FINAL_NV, total)
+        }
+        akita_types::SetupContributionMode::Recursive => {
+            ConservativeCommitter::setup_prover_recursion(FINAL_NV, total)
+        }
+    }
+    .expect("setup");
     let prepared = CpuBackend.prepare_setup(&setup).expect("prepared setup");
     let stack =
         akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
@@ -315,13 +327,13 @@ fn grouped_root_round_trip_onehot(pre_sizes: &[usize], final_size: usize) {
         pre_polys_by_group.push(polys);
     }
 
-    let grouped_key = akita_types::AkitaScheduleLookupKey {
+    let multi_group_key = akita_types::AkitaScheduleLookupKey {
         final_group: akita_types::PolynomialGroupLayout::new(FINAL_NV, final_size),
         precommitteds: pre_frozen,
     };
-    let grouped_schedule =
-        OneHotCfg::runtime_schedule(grouped_key).expect("grouped runtime schedule");
-    let main_params = grouped_root_params(&grouped_schedule);
+    let multi_group_schedule =
+        OneHotCfg::runtime_schedule(multi_group_key).expect("multi-group runtime schedule");
+    let main_params = multi_group_root_params(&multi_group_schedule);
     let final_polys: Vec<OneHotPoly<OneHotF, u8>> = (0..final_size)
         .map(|poly_idx| {
             debug_make_onehot_poly(main_params, 0x0bee_fcaf_f100_0000 + poly_idx as u64)
@@ -329,7 +341,7 @@ fn grouped_root_round_trip_onehot(pre_sizes: &[usize], final_size: usize) {
         .collect();
     let (final_commitment, final_hint) =
         RegularCommitter::commit_final_group(&setup, &final_polys, &stack, pre_keys)
-            .expect("final grouped commitment");
+            .expect("final multi-group commitment");
 
     let point = debug_random_point(FINAL_NV);
     let pre_openings: Vec<Vec<OneHotF>> = pre_polys_by_group
@@ -386,37 +398,37 @@ fn grouped_root_round_trip_onehot(pre_sizes: &[usize], final_size: usize) {
         prover_hints,
         prover_polys,
     )
-    .expect("grouped prover data");
+    .expect("multi-group prover data");
 
-    let mut prover_transcript = AkitaTranscript::<OneHotF>::new(b"test/grouped-unequal");
+    let mut prover_transcript = AkitaTranscript::<OneHotF>::new(b"test/multi-group-unequal");
     let proof = RegularCommitter::batched_prove(
         &setup,
         prover_claims,
         &stack,
         &mut prover_transcript,
         BasisMode::Lagrange,
-        akita_types::SetupContributionMode::Direct,
+        setup_contribution_mode,
     )
-    .expect("grouped prove");
+    .expect("multi-group prove");
     assert!(matches!(
         proof.root,
         akita_types::AkitaBatchedRootProof::Fold(_)
     ));
     assert!(
         !proof.steps.is_empty(),
-        "grouped root must hand off to a suffix"
+        "multi-group root must hand off to a suffix"
     );
 
     let shape = proof.shape();
     let mut bytes = Vec::new();
     proof
         .serialize_uncompressed(&mut bytes)
-        .expect("serialize grouped proof");
+        .expect("serialize multi-group proof");
     let decoded = akita_types::AkitaBatchedProof::<OneHotF, OneHotF>::deserialize_uncompressed(
         &bytes[..],
         &shape,
     )
-    .expect("deserialize grouped proof");
+    .expect("deserialize multi-group proof");
     assert_eq!(decoded, proof);
 
     let verifier_setup = RegularCommitter::setup_verifier(&setup);
@@ -440,31 +452,36 @@ fn grouped_root_round_trip_onehot(pre_sizes: &[usize], final_size: usize) {
         .expect("final verifier group"),
     );
     let verify_claims = OpeningClaims::from_groups(point.clone(), verifier_groups)
-        .expect("grouped verifier claims");
-    let mut verifier_transcript = AkitaTranscript::<OneHotF>::new(b"test/grouped-unequal");
+        .expect("multi-group verifier claims");
+    let mut verifier_transcript = AkitaTranscript::<OneHotF>::new(b"test/multi-group-unequal");
     RegularCommitter::batched_verify(
         &decoded,
         &verifier_setup,
         &mut verifier_transcript,
         verify_claims,
         BasisMode::Lagrange,
-        akita_types::SetupContributionMode::Direct,
+        setup_contribution_mode,
     )
-    .expect("grouped verify");
+    .expect("multi-group verify");
 }
 
 #[test]
-fn grouped_root_folded_unequal_one_three_round_trips() {
-    grouped_root_round_trip_onehot(&[1], 3);
+fn multi_group_root_folded_unequal_one_three_round_trips() {
+    multi_group_root_round_trip_onehot(&[1], 3, akita_types::SetupContributionMode::Direct);
 }
 
 #[test]
-fn grouped_root_folded_unequal_two_one_round_trips() {
-    grouped_root_round_trip_onehot(&[2], 1);
+fn multi_group_root_folded_unequal_two_one_round_trips() {
+    multi_group_root_round_trip_onehot(&[2], 1, akita_types::SetupContributionMode::Direct);
 }
 
 #[test]
-fn grouped_root_folded_two_group_onehot_round_trips() {
+fn multi_group_root_folded_recursive_setup_round_trips() {
+    multi_group_root_round_trip_onehot(&[1], 3, akita_types::SetupContributionMode::Recursive);
+}
+
+#[test]
+fn multi_group_root_folded_two_group_onehot_round_trips() {
     const PRE_NV: usize = 8;
     const FINAL_NV: usize = PRE_NV * 2;
     const PRE_SIZE: usize = 1;
@@ -486,27 +503,27 @@ fn grouped_root_folded_two_group_onehot_round_trips() {
     let (pre_commitment, pre_hint) =
         ConservativeCommitter::batched_commit(&setup, &pre_polys, &stack).expect("precommit");
     let pre_frozen = akita_types::PrecommittedGroupParams::from_params(pre_key, &pre_layout);
-    let grouped_key = akita_types::AkitaScheduleLookupKey {
+    let multi_group_key = akita_types::AkitaScheduleLookupKey {
         final_group: akita_types::PolynomialGroupLayout::new(FINAL_NV, FINAL_SIZE),
         precommitteds: vec![pre_frozen],
     };
-    let grouped_opening_layout = OpeningClaimsLayout::from_groups(vec![
+    let multi_group_opening_layout = OpeningClaimsLayout::from_groups(vec![
         akita_types::PolynomialGroupLayout::new(PRE_NV, PRE_SIZE),
         akita_types::PolynomialGroupLayout::new(FINAL_NV, FINAL_SIZE),
     ])
-    .expect("grouped opening layout");
+    .expect("multi-group opening layout");
     assert_eq!(
-        akita_config::opening_schedule_key::<OneHotCfg>(&grouped_opening_layout)
+        akita_config::opening_schedule_key::<OneHotCfg>(&multi_group_opening_layout)
             .expect("opening schedule key"),
-        grouped_key
+        multi_group_key
     );
-    let grouped_schedule =
-        OneHotCfg::runtime_schedule(grouped_key).expect("grouped runtime schedule");
-    let final_layout = grouped_root_params(&grouped_schedule);
+    let multi_group_schedule =
+        OneHotCfg::runtime_schedule(multi_group_key).expect("multi-group runtime schedule");
+    let final_layout = multi_group_root_params(&multi_group_schedule);
     let final_polys = [debug_make_onehot_poly(final_layout, 0x0bee_fcaf_9a77_9001)];
     let (final_commitment, final_hint) =
         RegularCommitter::commit_final_group(&setup, &final_polys, &stack, vec![pre_key])
-            .expect("final grouped commitment");
+            .expect("final multi-group commitment");
 
     let point = debug_random_point(FINAL_NV);
     let pre_opening = opening_from_poly(&pre_polys[0], &point[..PRE_NV], &pre_layout);
@@ -532,9 +549,9 @@ fn grouped_root_folded_two_group_onehot_round_trips() {
         vec![pre_hint, final_hint],
         vec![&pre_refs[..], &final_refs[..]],
     )
-    .expect("grouped prover data");
+    .expect("multi-group prover data");
 
-    let mut prover_transcript = AkitaTranscript::<OneHotF>::new(b"test/grouped-root-direct");
+    let mut prover_transcript = AkitaTranscript::<OneHotF>::new(b"test/multi-group-root-direct");
     let proof = RegularCommitter::batched_prove(
         &setup,
         prover_claims,
@@ -543,27 +560,27 @@ fn grouped_root_folded_two_group_onehot_round_trips() {
         BasisMode::Lagrange,
         akita_types::SetupContributionMode::Direct,
     )
-    .expect("grouped prove");
+    .expect("multi-group prove");
     assert!(matches!(
         proof.root,
         akita_types::AkitaBatchedRootProof::Fold(_)
     ));
-    // The grouped root folds into a singleton recursive suffix.
+    // The multi-group root folds into a singleton recursive suffix.
     assert!(
         !proof.steps.is_empty(),
-        "grouped root must hand off to a suffix"
+        "multi-group root must hand off to a suffix"
     );
 
     let shape = proof.shape();
     let mut bytes = Vec::new();
     proof
         .serialize_uncompressed(&mut bytes)
-        .expect("serialize grouped proof");
+        .expect("serialize multi-group proof");
     let decoded = akita_types::AkitaBatchedProof::<OneHotF, OneHotF>::deserialize_uncompressed(
         &bytes[..],
         &shape,
     )
-    .expect("deserialize grouped proof");
+    .expect("deserialize multi-group proof");
     assert_eq!(decoded, proof);
 
     let verifier_setup = RegularCommitter::setup_verifier(&setup);
@@ -585,9 +602,9 @@ fn grouped_root_folded_two_group_onehot_round_trips() {
                 .expect("final verifier group"),
             ],
         )
-        .expect("grouped verifier claims")
+        .expect("multi-group verifier claims")
     };
-    let mut verifier_transcript = AkitaTranscript::<OneHotF>::new(b"test/grouped-root-direct");
+    let mut verifier_transcript = AkitaTranscript::<OneHotF>::new(b"test/multi-group-root-direct");
     RegularCommitter::batched_verify(
         &decoded,
         &verifier_setup,
@@ -596,10 +613,10 @@ fn grouped_root_folded_two_group_onehot_round_trips() {
         BasisMode::Lagrange,
         akita_types::SetupContributionMode::Direct,
     )
-    .expect("grouped verify");
+    .expect("multi-group verify");
 
     // Negative: swapping the two group commitments must reject.
-    let mut swapped_transcript = AkitaTranscript::<OneHotF>::new(b"test/grouped-root-direct");
+    let mut swapped_transcript = AkitaTranscript::<OneHotF>::new(b"test/multi-group-root-direct");
     let swapped_claims = OpeningClaims::from_groups(
         point.clone(),
         vec![
@@ -632,7 +649,7 @@ fn grouped_root_folded_two_group_onehot_round_trips() {
     );
 
     // Negative: tampering the final group's opening must reject.
-    let mut tampered_transcript = AkitaTranscript::<OneHotF>::new(b"test/grouped-root-direct");
+    let mut tampered_transcript = AkitaTranscript::<OneHotF>::new(b"test/multi-group-root-direct");
     let tampered_claims = OpeningClaims::from_groups(
         point.clone(),
         vec![
@@ -666,7 +683,7 @@ fn grouped_root_folded_two_group_onehot_round_trips() {
 }
 
 #[test]
-fn grouped_root_folded_three_group_onehot_round_trips() {
+fn multi_group_root_folded_three_group_onehot_round_trips() {
     const PRE_NV: usize = 8;
     const FINAL_NV: usize = PRE_NV * 2;
     const PRE_A_SIZE: usize = 1;
@@ -696,13 +713,13 @@ fn grouped_root_folded_three_group_onehot_round_trips() {
         ConservativeCommitter::batched_commit(&setup, &pre_b_polys, &stack).expect("precommit B");
     let pre_a_frozen = akita_types::PrecommittedGroupParams::from_params(pre_a_key, &pre_a_layout);
     let pre_b_frozen = akita_types::PrecommittedGroupParams::from_params(pre_b_key, &pre_b_layout);
-    let grouped_key = akita_types::AkitaScheduleLookupKey {
+    let multi_group_key = akita_types::AkitaScheduleLookupKey {
         final_group: akita_types::PolynomialGroupLayout::new(FINAL_NV, FINAL_SIZE),
         precommitteds: vec![pre_a_frozen, pre_b_frozen],
     };
-    let grouped_schedule =
-        OneHotCfg::runtime_schedule(grouped_key).expect("grouped runtime schedule");
-    let main_params = grouped_root_params(&grouped_schedule);
+    let multi_group_schedule =
+        OneHotCfg::runtime_schedule(multi_group_key).expect("multi-group runtime schedule");
+    let main_params = multi_group_root_params(&multi_group_schedule);
     let final_polys = [debug_make_onehot_poly(main_params, 0x0bee_fcaf_9a77_7001)];
     let (final_commitment, final_hint) = RegularCommitter::commit_final_group(
         &setup,
@@ -710,7 +727,7 @@ fn grouped_root_folded_three_group_onehot_round_trips() {
         &stack,
         vec![pre_a_key, pre_b_key],
     )
-    .expect("final grouped commitment");
+    .expect("final multi-group commitment");
 
     let point = debug_random_point(FINAL_NV);
     let pre_a_opening = opening_from_poly(&pre_a_polys[0], &point[..PRE_NV], &pre_a_layout);
@@ -745,9 +762,9 @@ fn grouped_root_folded_three_group_onehot_round_trips() {
         vec![pre_a_hint, pre_b_hint, final_hint],
         vec![&pre_a_refs[..], &pre_b_refs[..], &final_refs[..]],
     )
-    .expect("grouped prover data");
+    .expect("multi-group prover data");
 
-    let mut prover_transcript = AkitaTranscript::<OneHotF>::new(b"test/grouped-root-direct-3");
+    let mut prover_transcript = AkitaTranscript::<OneHotF>::new(b"test/multi-group-root-direct-3");
     let proof = RegularCommitter::batched_prove(
         &setup,
         prover_claims,
@@ -756,26 +773,26 @@ fn grouped_root_folded_three_group_onehot_round_trips() {
         BasisMode::Lagrange,
         akita_types::SetupContributionMode::Direct,
     )
-    .expect("grouped prove");
+    .expect("multi-group prove");
     assert!(matches!(
         proof.root,
         akita_types::AkitaBatchedRootProof::Fold(_)
     ));
     assert!(
         !proof.steps.is_empty(),
-        "grouped root must hand off to a suffix"
+        "multi-group root must hand off to a suffix"
     );
 
     let shape = proof.shape();
     let mut bytes = Vec::new();
     proof
         .serialize_uncompressed(&mut bytes)
-        .expect("serialize grouped proof");
+        .expect("serialize multi-group proof");
     let decoded = akita_types::AkitaBatchedProof::<OneHotF, OneHotF>::deserialize_uncompressed(
         &bytes[..],
         &shape,
     )
-    .expect("deserialize grouped proof");
+    .expect("deserialize multi-group proof");
     assert_eq!(decoded, proof);
 
     let verifier_setup = RegularCommitter::setup_verifier(&setup);
@@ -802,8 +819,9 @@ fn grouped_root_folded_three_group_onehot_round_trips() {
             .expect("final verifier group"),
         ],
     )
-    .expect("grouped verifier claims");
-    let mut verifier_transcript = AkitaTranscript::<OneHotF>::new(b"test/grouped-root-direct-3");
+    .expect("multi-group verifier claims");
+    let mut verifier_transcript =
+        AkitaTranscript::<OneHotF>::new(b"test/multi-group-root-direct-3");
     RegularCommitter::batched_verify(
         &decoded,
         &verifier_setup,
@@ -812,7 +830,7 @@ fn grouped_root_folded_three_group_onehot_round_trips() {
         BasisMode::Lagrange,
         akita_types::SetupContributionMode::Direct,
     )
-    .expect("grouped verify");
+    .expect("multi-group verify");
 }
 
 #[test]

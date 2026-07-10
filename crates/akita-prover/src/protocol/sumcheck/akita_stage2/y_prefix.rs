@@ -18,8 +18,11 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
         let current_y_half = 1usize << (self.current_y_width() - 1);
         let block_size = num_first.min(current_y_half);
         let alpha_compact = &self.alpha_compact;
-        let m_compact = &self.m_compact;
-        debug_assert_eq!(m_compact.len(), self.current_x_len());
+        let relation_matrix_col_evals_compact = &self.relation_matrix_col_evals_compact;
+        debug_assert_eq!(
+            relation_matrix_col_evals_compact.len(),
+            self.current_x_len()
+        );
 
         if self.can_skip_norm_linear_coeff() {
             let (virt_coeffs, rel_accum) = cfg_fold_reduce!(
@@ -28,7 +31,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                 |(mut virt, mut rel), x| {
                     let column_start = x * alpha_compact.len();
                     let column = &w_compact[column_start..column_start + alpha_compact.len()];
-                    let m = m_compact[x];
+                    let m = relation_matrix_col_evals_compact[x];
                     let j_base = x * current_y_half;
                     let mut blk = 0usize;
 
@@ -106,7 +109,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                 |(mut virt, mut rel), x| {
                     let column_start = x * alpha_compact.len();
                     let column = &w_compact[column_start..column_start + alpha_compact.len()];
-                    let m = m_compact[x];
+                    let m = relation_matrix_col_evals_compact[x];
                     let j_base = x * current_y_half;
                     let mut blk = 0usize;
 
@@ -200,8 +203,11 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
         let current_y_half = 1usize << (self.current_y_width() - 1);
         let block_size = num_first.min(current_y_half);
         let alpha_compact = &self.alpha_compact;
-        let m_compact = &self.m_compact;
-        debug_assert_eq!(m_compact.len(), self.current_x_len());
+        let relation_matrix_col_evals_compact = &self.relation_matrix_col_evals_compact;
+        debug_assert_eq!(
+            relation_matrix_col_evals_compact.len(),
+            self.current_x_len()
+        );
 
         if self.can_skip_norm_linear_coeff() {
             let (virt_coeffs, rel_coeffs) = cfg_fold_reduce!(
@@ -210,7 +216,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                 |(mut virt, mut rel), x| {
                     let column_start = x * alpha_compact.len();
                     let column = &w_full[column_start..column_start + alpha_compact.len()];
-                    let m = m_compact[x];
+                    let m = relation_matrix_col_evals_compact[x];
                     let j_base = x * current_y_half;
                     let mut blk = 0usize;
 
@@ -275,7 +281,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                 |(mut virt, mut rel), x| {
                     let column_start = x * alpha_compact.len();
                     let column = &w_full[column_start..column_start + alpha_compact.len()];
-                    let m = m_compact[x];
+                    let m = relation_matrix_col_evals_compact[x];
                     let j_base = x * current_y_half;
                     let mut blk = 0usize;
 

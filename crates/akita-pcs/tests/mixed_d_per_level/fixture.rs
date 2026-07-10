@@ -12,13 +12,13 @@ use akita_planner::PlannerPolicy;
 use akita_types::sis::{
     committed_fold_a_role_rank, decomposed_s_block_ring_count, decomposed_t_ring_count,
     decomposed_w_ring_count, min_secure_rank, num_digits_open, num_digits_s_commit,
-    rounded_up_collision_linf_t, rounded_up_collision_linf_w, SisTableKey,
+    rounded_up_collision_inf_norm, SisTableKey,
 };
 use akita_types::{
     direct_witness_bytes, level_proof_bytes, segment_typed_witness_shape,
     w_ring_element_count_with_counts_for_layout_bits, AjtaiKeyParams, AkitaScheduleInputs,
     AkitaScheduleLookupKey, CommitmentRingDims, DecompositionParams, DirectStep, FoldStep,
-    LevelParams, MRowLayout, PolynomialGroupLayout, Schedule, Step,
+    LevelParams, PolynomialGroupLayout, RelationMatrixRowLayout, Schedule, Step,
 };
 struct MixedSuffixFoldPlan {
     params: LevelParams,
@@ -135,12 +135,12 @@ fn expand_envelope_witness_at_ring_d(
     )
     .ok_or_else(|| no_layout("A"))?;
     let b_bucket =
-        rounded_up_collision_linf_t(min_security_bits, sis_family, target_ring_d, log_basis)
+        rounded_up_collision_inf_norm(min_security_bits, sis_family, target_ring_d, log_basis)
             .ok_or_else(|| no_layout("B"))?;
     let outer_width = decomposed_t_ring_count(n_a, num_digits_open_val, num_blocks, num_claims)
         .ok_or_else(|| no_layout("B"))?;
     let d_bucket =
-        rounded_up_collision_linf_w(min_security_bits, sis_family, target_ring_d, log_basis)
+        rounded_up_collision_inf_norm(min_security_bits, sis_family, target_ring_d, log_basis)
             .ok_or_else(|| no_layout("D"))?;
     let d_matrix_width = decomposed_w_ring_count(num_digits_open_val, num_blocks, num_claims)
         .ok_or_else(|| no_layout("D"))?;
@@ -406,9 +406,9 @@ where
             };
             let is_terminal_fold = level + 1 == num_fold_levels;
             let layout = if is_terminal_fold {
-                MRowLayout::WithoutDBlock
+                RelationMatrixRowLayout::WithoutDBlock
             } else {
-                MRowLayout::WithDBlock
+                RelationMatrixRowLayout::WithDBlock
             };
             let ring = w_ring_element_count_with_counts_for_layout_bits(
                 field_bits, &params, 1, 1, layout,
@@ -428,9 +428,9 @@ where
 
         for (idx, plan) in suffix_plan.iter().enumerate() {
             let layout = if plan.is_terminal {
-                MRowLayout::WithoutDBlock
+                RelationMatrixRowLayout::WithoutDBlock
             } else {
-                MRowLayout::WithDBlock
+                RelationMatrixRowLayout::WithDBlock
             };
             let next_lp = if plan.is_terminal {
                 None

@@ -19,7 +19,7 @@
 //!
 //! These items are kept public solely so a small number of integration tests
 //! in `akita-pcs` can exercise specific replay primitives in isolation:
-//! [`prepare_ring_switch_row_eval`], [`RingSwitchDeferredRowEval`],
+//! [`prepare_relation_matrix_evaluator`], [`RelationMatrixEvaluator`],
 //! [`RingSwitchReplay`], and [`AkitaStage1Verifier`]. They are not part of the
 //! verifier's intended downstream API.
 
@@ -30,7 +30,7 @@ mod stages;
 pub use akita_types::CommitmentVerifier;
 pub use proof::cleartext_witness_opening_matches;
 pub use protocol::{
-    batched_verify, jl::verify_jl_consistency, prepare_ring_switch_row_eval,
-    RingSwitchDeferredRowEval, RingSwitchReplay,
+    batched_verify, jl::verify_jl_consistency, prepare_relation_matrix_evaluator,
+    RelationMatrixEvaluator, RingSwitchReplay,
 };
 pub use stages::stage1::AkitaStage1Verifier;

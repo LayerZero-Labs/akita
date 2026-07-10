@@ -6,7 +6,7 @@ use crate::validation::validate_i8_setup_log_basis;
 use akita_algebra::CyclotomicRing;
 use akita_serialization::AkitaSerialize;
 use akita_types::{
-    dispatch_for_field, LevelParamsLike, RingRole, GROUPED_ROOT_MULTI_CHUNK_UNSUPPORTED,
+    dispatch_for_field, LevelParamsLike, RingRole, MULTI_GROUP_ROOT_MULTI_CHUNK_UNSUPPORTED,
 };
 
 /// Prover-side ring artifacts retained for segment-typed terminal encoding.
@@ -20,7 +20,6 @@ pub struct RingSwitchTerminalArtifacts<F: FieldCore> {
     pub recomposed_inner_rows: Vec<RingVec<F>>,
     z_folded_centered_flat: Vec<i32>,
     pub r: RingVec<F>,
-    pub u_concat_planes: usize,
     ring_dim: usize,
 }
 
@@ -31,7 +30,6 @@ impl<F: FieldCore> RingSwitchTerminalArtifacts<F> {
         recomposed_inner_rows: Vec<Vec<CyclotomicRing<F, D>>>,
         z_folded_centered: Vec<[i32; D]>,
         r: Vec<CyclotomicRing<F, D>>,
-        u_concat_planes: usize,
     ) -> Self {
         Self {
             e_folded: RingVec::from_ring_elems(&e_folded),
@@ -44,7 +42,6 @@ impl<F: FieldCore> RingSwitchTerminalArtifacts<F> {
                 .flat_map(|row| row.iter().copied())
                 .collect(),
             r: RingVec::from_ring_elems(&r),
-            u_concat_planes,
             ring_dim: D,
         }
     }
@@ -155,7 +152,7 @@ pub(crate) struct PreparedRingSwitchGroup<'a, F: FieldCore, const D: usize> {
 fn concat_digit_blocks(blocks: &[DigitBlocks]) -> Result<DigitBlocks, AkitaError> {
     let Some(first) = blocks.first() else {
         return Err(AkitaError::InvalidInput(
-            "grouped ring-switch requires at least one digit group".to_string(),
+            "multi-group ring-switch requires at least one digit group".to_string(),
         ));
     };
     let stride = first.digit_stride();
@@ -164,7 +161,7 @@ fn concat_digit_blocks(blocks: &[DigitBlocks]) -> Result<DigitBlocks, AkitaError
     for block in blocks {
         if block.digit_stride() != stride {
             return Err(AkitaError::InvalidInput(
-                "grouped ring-switch digit groups have mixed ring dimensions".to_string(),
+                "multi-group ring-switch digit groups have mixed ring dimensions".to_string(),
             ));
         }
         digits.extend_from_slice(block.digits());
@@ -330,14 +327,14 @@ where
                     .any(|group| group.z_folded_centered_per_chunk.len() > 1);
             if is_multi_group && has_multi_chunk_witness {
                 return Err(AkitaError::InvalidSetup(
-                    GROUPED_ROOT_MULTI_CHUNK_UNSUPPORTED.to_string(),
+                    MULTI_GROUP_ROOT_MULTI_CHUNK_UNSUPPORTED.to_string(),
                 ));
             }
             // Only the singleton suffix retains terminal artifacts; multi-group folds
             // are never terminal.
             if is_multi_group && retain_terminal_artifacts {
                 return Err(AkitaError::InvalidInput(
-                    "grouped root ring-switch does not produce terminal artifacts".to_string(),
+                    "multi-group root ring-switch does not produce terminal artifacts".to_string(),
                 ));
             }
             validate_chunked_witness_cfg(lp)?;
@@ -362,7 +359,7 @@ where
                 .enumerate()
                 .map(|(group_index, _)| instance.group_ring_multiplier_point(group_index))
                 .collect::<Result<Vec<_>, AkitaError>>()?;
-            let r = compute_grouped_relation_quotient::<F, B, D>(
+            let r = compute_multi_group_relation_quotient::<F, B, D>(
                 ring_switch_ctx,
                 lp,
                 opening_batch,
@@ -370,8 +367,8 @@ where
                 &ring_multiplier_points,
                 instance.group_challenges(),
                 e_hat_concat.typed_planes::<D>()?,
-                instance.y_trusted::<D>()?,
-                instance.m_row_layout(),
+                instance.rhs_trusted::<D>()?,
+                instance.relation_matrix_row_layout(),
             )?;
 
             // Group-major witness: emit each group's contiguous `[z_g ‖ e_g ‖ t_g]`
@@ -388,7 +385,8 @@ where
             }
             let levels = r_decomp_levels::<F>(lp.log_basis);
             emit_r_decomposition_tail::<F, D>(&mut out, &r, levels, lp.log_basis);
-            let expected = lp.root_next_w_len::<F>(opening_batch, instance.m_row_layout())?;
+            let expected =
+                lp.root_next_w_len::<F>(opening_batch, instance.relation_matrix_row_layout())?;
             if out.len() != expected {
                 return Err(AkitaError::InvalidSize {
                     expected,
@@ -407,7 +405,6 @@ where
                     group.recomposed_inner_rows.clone(),
                     group.z_centered.clone(),
                     r,
-                    0,
                 ))
             } else {
                 None

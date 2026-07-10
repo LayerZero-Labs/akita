@@ -193,7 +193,7 @@ passes them into:
 - `build_w_coeffs`, which emits the private D-blinding planes into the
   recursive witness after the B-blinding segment.
 
-`compute_m_evals_x` and
+`compute_relation_matrix_col_evals` and
 `akita-verifier::protocol::ring_switch::RingSwitchDeferredRowEval::eval_at_point`
 mirror the same layout. The D-blinding segment uses D matrix local columns after
 the ordinary `w_hat` columns:
@@ -255,7 +255,7 @@ Implementation direction reflected by the branch:
 - Compute `v` from `[w_hat || D-blinding]`.
 - Store D-blinding as proof-local `QuadraticEquation` state.
 - Consume D-blinding in ring-switch witness construction.
-- Add D-blinding rows to prover `compute_m_evals_x` and verifier deferred row
+- Add D-blinding rows to prover `compute_relation_matrix_col_evals` and verifier deferred row
   evaluation.
 - Update witness-size formulas in `akita-types`.
 - Update planner formulas in `akita-planner`.

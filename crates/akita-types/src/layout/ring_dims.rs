@@ -67,8 +67,8 @@ impl CommitmentRingDims {
         self.inner
     }
 
-    /// Ring dimension for B-role data: next-witness digit commitments
-    /// (`t_hat`, tiered `u_concat`), COMMIT and B_inner relation rows.
+    /// Ring dimension for B-role data: next-witness digit commitments (`t_hat`),
+    /// COMMIT and B_inner relation rows.
     #[must_use]
     pub const fn d_b(self) -> usize {
         self.outer
@@ -206,6 +206,17 @@ pub fn validate_role_dims_match_keys(lp: &crate::LevelParams) -> Result<(), Akit
 }
 
 pub fn validate_role_dims(dims: CommitmentRingDims) -> Result<(), AkitaError> {
+    for (role, d) in [
+        (RingRole::Inner, dims.inner),
+        (RingRole::Outer, dims.outer),
+        (RingRole::Opening, dims.opening),
+    ] {
+        if d == 0 || !d.is_power_of_two() {
+            return Err(AkitaError::InvalidSetup(format!(
+                "{role:?} ring dimension must be a non-zero power of two, got {d}"
+            )));
+        }
+    }
     if !SUPPORTED_CHALLENGE_RING_DIMS.contains(&dims.inner) {
         return Err(AkitaError::InvalidSetup(format!(
             "A-role ring dimension d_a={} is unsupported for sparse fold challenges (need d_a >= {MIN_A_ROLE_FOLD_CHALLENGE_RING_D})",
@@ -381,6 +392,19 @@ mod tests {
         let sched = mixed_d_schedule(&[(0, 4, 4)]);
         let err = validate_schedule_ring_dims(&sched, &seed(256)).expect_err("d=0");
         assert!(matches!(err, AkitaError::InvalidSetup(_)));
+    }
+
+    #[test]
+    fn rejects_non_power_of_two_role_dims() {
+        let err = validate_role_dims(CommitmentRingDims {
+            inner: 128,
+            outer: 48,
+            opening: 16,
+        })
+        .expect_err("outer role dim is not a power of two");
+        assert!(
+            matches!(err, AkitaError::InvalidSetup(message) if message.contains("power of two"))
+        );
     }
 
     fn fold_step_with_witness_lens(

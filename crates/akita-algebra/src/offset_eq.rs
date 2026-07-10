@@ -104,6 +104,17 @@ pub fn eval_offset_eq_interval<F: FieldCore>(
     Ok(scale * a[0])
 }
 
+/// Build `table[k] = eq(high_challenges, offset_high + k)` for `k ∈ [0, hi_len]`.
+pub fn high_eq_window<F: FieldCore>(
+    high_challenges: &[F],
+    offset_high: usize,
+    hi_len: usize,
+) -> Vec<F> {
+    (0..=hi_len)
+        .map(|k| eq_eval_at_index(high_challenges, offset_high + k))
+        .collect()
+}
+
 /// Evaluate `eq(r, index)` for a single hypercube index in little-endian order.
 pub fn eq_eval_at_index<F: FieldCore>(x_challenges: &[F], index: usize) -> F {
     if x_challenges.len() < usize::BITS as usize && index >= (1usize << x_challenges.len()) {

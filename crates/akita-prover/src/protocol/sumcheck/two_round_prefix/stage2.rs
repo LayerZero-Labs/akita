@@ -209,15 +209,15 @@ pub(crate) fn can_use_stage2_two_round_prefix(ring_bits: usize, b: usize) -> boo
 /// Returns `None` when there are fewer than two y-rounds to batch.
 #[tracing::instrument(
     skip_all,
-    name = "two_round_prefix::build_stage2_bivariate_skip_proof_from_compact"
+    name = "two_round_prefix::build_stage2_bivariate_skip_proof_from_m_compact"
 )]
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn build_stage2_bivariate_skip_proof_from_compact<
+pub(crate) fn build_stage2_bivariate_skip_proof_from_m_compact<
     E: FieldCore + FromPrimitiveInt + HasUnreducedOps,
 >(
     w_compact: &[i8],
     alpha_evals_y: &[E],
-    m_evals_x: &[E],
+    relation_matrix_col_evals: &[E],
     trace_table: Option<&TraceTable<E>>,
     stage1_point: &[E],
     b: usize,
@@ -235,7 +235,7 @@ pub(crate) fn build_stage2_bivariate_skip_proof_from_compact<
     if let Some(TraceTable::RingDense(trace)) = trace_table {
         assert_eq!(trace.len(), live_x_cols * y_len);
     }
-    assert_eq!(m_evals_x.len(), 1usize << col_bits);
+    assert_eq!(relation_matrix_col_evals.len(), 1usize << col_bits);
     assert_eq!(stage1_point.len(), col_bits + ring_bits);
 
     let eq_y_suffix = EqPolynomial::evals(&stage1_point[2..ring_bits])
@@ -292,7 +292,7 @@ pub(crate) fn build_stage2_bivariate_skip_proof_from_compact<
         |(mut norm_pos, mut norm_neg, mut rel_accum, mut trace_pos, mut trace_neg), x_idx| {
             let column = &w_compact[x_idx * y_len..(x_idx + 1) * y_len];
             let eq_x_weight = eq_x[x_idx];
-            let row_val = m_evals_x[x_idx];
+            let row_val = relation_matrix_col_evals[x_idx];
             let mut x_rel_pos = [E::MulU64Accum::zero(); STAGE2_COMPRESSED_POINT_COUNT];
             let mut x_rel_neg = [E::MulU64Accum::zero(); STAGE2_COMPRESSED_POINT_COUNT];
             for (y_quad, &eq_y_weight) in eq_y_suffix.iter().enumerate() {
@@ -465,13 +465,13 @@ impl<E: FieldCore + FromPrimitiveInt> Stage2BivariateSkipState<E> {
         for coeff in &mut norm_coeffs {
             *coeff = self.batching_coeff * round0_eq * *coeff;
         }
-        let relation_y_values: [E; 3] = std::array::from_fn(|y_idx| {
+        let relation_rhs_values: [E; 3] = std::array::from_fn(|y_idx| {
             eval_quadratic_from_coeffs(self.relation_x_row_coeffs[y_idx], r0)
         });
         let relation_coeffs = quadratic_coeffs_from_01_inf(
-            relation_y_values[0],
-            relation_y_values[1],
-            relation_y_values[2],
+            relation_rhs_values[0],
+            relation_rhs_values[1],
+            relation_rhs_values[2],
         );
         (
             UniPoly::from_coeffs(norm_coeffs.to_vec()),

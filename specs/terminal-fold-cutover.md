@@ -39,7 +39,7 @@ with a transmit-and-bind terminal protocol that:
    witness is structurally range-checked by `PackedDigits` packing and
    the next-witness commitment is the witness itself).
 3. Drops the D-block of the per-row `r` quotients from the terminal
-   level under a new `MRowLayout::Terminal` mode, omits `v` from
+   level under a new `RelationMatrixRowLayout::Terminal` mode, omits `v` from
    `TerminalLevelProof`, and runs the relation sumcheck without any
    `v`-rows.
 4. Keeps `AkitaLevelProof` as the intermediate-only proof and adds a
@@ -52,9 +52,9 @@ with a transmit-and-bind terminal protocol that:
 
 Key abstractions touched: `AkitaBatchedProof`, `AkitaBatchedRootProof`,
 `AkitaProofStep`, `AkitaLevelProof`, `TerminalLevelProof`,
-`MRowLayout`, `QuadraticEquation::{new_prover,
+`RelationMatrixRowLayout`, `QuadraticEquation::{new_prover,
 new_recursive_multipoint_prover}`, `ring_switch_build_w`,
-`compute_r_split_eq`, `generate_y`,
+`compute_r_split_eq`, `generate_relation_rhs`,
 `ring_switch_finalize{_after_absorb, _with_gamma{,_after_absorb}}`,
 `prove_terminal_fold_level_from_quadratic`,
 `prove_terminal_root_fold_{from_quadratic, with_params}`,
@@ -79,13 +79,13 @@ the baseline planner.
   `crates/akita-pcs/tests/transcript_trace.rs` audit fixture.
 - **Terminal sumcheck shape.** The terminal relation sumcheck runs in
   relation-only mode (`batching_coeff = 0`, dummy `r_stage1`,
-  `s_claim = 0`) with the D-block omitted from `m_evals_x`, so its
+  `s_claim = 0`) with the D-block omitted from `relation_matrix_col_evals`, so its
   rounds equal `col_bits + ring_bits` of the terminal-layout `w` only.
   Protected by `batched_onehot_roundtrip_matches_public_shape_context`
   and the `single_poly_e2e` round-trip assertion.
 - **Schedule/runtime witness length agreement.** For every fold level,
   `runtime w.len() == planner-recorded next_w_len`. The terminal fold
-  uses `MRowLayout::Terminal` on both sides. Protected by the
+  uses `RelationMatrixRowLayout::Terminal` on both sides. Protected by the
   `scheduled root next-w length did not match runtime witness` runtime
   guard and the
   `adaptive_{bounded,onehot}_plan_matches_runtime_next_w_len` tests in
@@ -110,7 +110,7 @@ the baseline planner.
 - Changing the recursive ring-switch protocol below the terminal fold.
 - Optimizing the search-time cost model beyond the v-rows-drop
   awareness already added; the cost model's terminal estimate now
-  uses `MRowLayout::Terminal` sizing, but its broader structure
+  uses `RelationMatrixRowLayout::Terminal` sizing, but its broader structure
   (tight-zpre, eq-compression, GKR tree, etc.) is unchanged.
 - ZK D-blinding redesign. The terminal layout zeros the D-blinding
   digit segment of `w` (it has nowhere to live without the D-block)
@@ -150,23 +150,23 @@ Existing tests that must continue passing:
 - `crates/akita-pcs/tests/single_poly_e2e.rs`: nv-15 single-poly
   round trip.
 - `crates/akita-pcs/tests/ring_switch.rs`: ring-switch direct tests
-  with explicit `MRowLayout` plumbing.
+  with explicit `RelationMatrixRowLayout` plumbing.
 - `crates/akita-pcs/tests/zk.rs`: ZK D-blinding hiding tests, updated
-  to pass `MRowLayout::Intermediate` to `new_prover` after the
+  to pass `RelationMatrixRowLayout::Intermediate` to `new_prover` after the
   argument-order change.
 - `crates/akita-scheme/src/tests.rs`: 21 unit tests, including
   `batched_onehot_roundtrip_matches_public_shape_context` (proof
-  shape derivation now uses `MRowLayout::Terminal` for the terminal
+  shape derivation now uses `RelationMatrixRowLayout::Terminal` for the terminal
   level's final witness sizing).
 - `crates/akita-config/src/schedule_policy.rs`:
   `adaptive_{bounded,onehot}_plan_matches_runtime_next_w_len` (the
-  test's runtime helper now selects `MRowLayout::Terminal` for the
+  test's runtime helper now selects `RelationMatrixRowLayout::Terminal` for the
   last fold).
 
 New / updated assertions added by this PR:
 
 - `schedule_plan_from_generated_entry` computes the terminal fold's
-  `runtime_next_w_len` under `MRowLayout::Terminal` (passing batched
+  `runtime_next_w_len` under `RelationMatrixRowLayout::Terminal` (passing batched
   `(num_points, num_t_vectors, num_w_vectors, num_z_vectors)` when
   the terminal fold is also the root) and uses the same value for
   the trailing `DirectStep`'s witness shape, so the verifier's
@@ -209,7 +209,7 @@ Per-level wire change (terminal level only):
   held by `next_w_commitment` and is `PackedDigits`-encoded (smaller
   per-element than the SIS commitment).
 - Witness size: the terminal fold's `w` is built with
-  `MRowLayout::Terminal`, dropping `nd` from the per-row `r`
+  `RelationMatrixRowLayout::Terminal`, dropping `nd` from the per-row `r`
   quotients (and dropping the corresponding D-blinding digit segment
   under `zk`). Concretely for the failing test's schedule
   (D64Onehot, nv=15, batched 2): root terminal `w` shrinks from
@@ -219,7 +219,7 @@ Schedule-table regeneration produces no diff: the cost model
 improvement is real but too small to flip any planner choices in the
 generated envelopes; runtime witness sizing now matches the
 intermediate-vs-terminal split because the terminal fold is sized
-under `MRowLayout::Terminal`.
+under `RelationMatrixRowLayout::Terminal`.
 
 The planner's universal search now evaluates *both* the intermediate
 and terminal suffix for every candidate fold (search.rs:
@@ -234,17 +234,17 @@ the terminal-layout savings when the suffix is a single `Direct` step.
 Affected crates and the change at each boundary:
 
 - **akita-types**
-  - `MRowLayout` is a public `Intermediate | Terminal` enum threaded
+  - `RelationMatrixRowLayout` is a public `Intermediate | Terminal` enum threaded
     through every site that has to know whether the D-block is part of
     the `M`-matrix or has been dropped.
-  - `LevelParams::m_row_count_for(MRowLayout)` returns the
+  - `LevelParams::relation_matrix_row_count_for(RelationMatrixRowLayout)` returns the
     layout-conditional D-block row count (`n_d` for Intermediate, 0
     for Terminal).
   - `w_ring_element_count_with_counts_for_layout` and
     `w_ring_element_count_with_vector_counts_for_layout_bits` compute
     the witness-ring count under either layout; the legacy
     layout-free helpers internally call the new helpers with
-    `MRowLayout::Intermediate` so external callers see no behavior
+    `RelationMatrixRowLayout::Intermediate` so external callers see no behavior
     change.
   - `AkitaLevelProof` is now intermediate-only (still carries `v`,
     stage-1 sumcheck, `next_w_commitment`, `next_w_eval`); its
@@ -258,30 +258,30 @@ Affected crates and the change at each boundary:
     step_shapes}, Terminal(TerminalLevelProofShape)}` mirrors it for
     shapes.
   - `schedule_plan_from_generated_entry` and surrounding helpers
-    learn about `MRowLayout::Terminal` and propagate the
+    learn about `RelationMatrixRowLayout::Terminal` and propagate the
     terminal-sized `runtime_next_w_len` to the trailing `DirectStep`.
 
 - **akita-prover / `protocol/quadratic_equation.rs`**
-  - `QuadraticEquation` carries an `m_row_layout: MRowLayout` field.
+  - `QuadraticEquation` carries an `relation_matrix_row_layout: RelationMatrixRowLayout` field.
   - `new_prover` and `new_recursive_multipoint_prover` accept the
     layout as their last argument and gate the D-block contribution
-    in `generate_y` (`y` for terminal is `[consistency | y_rings |
+    in `generate_relation_rhs` (`y` for terminal is `[consistency | y_rings |
     commitment_rows | A-zeros]`, no D-block).
   - Under `zk`, terminal-layout construction zeros the D-blinding
     digits (no D-block means no D-blinding column segment in `w`).
 
 - **akita-prover / `protocol/ring_switch.rs`**
-  - `compute_r_split_eq` accepts `MRowLayout` and uses `n_d_active`
+  - `compute_r_split_eq` accepts `RelationMatrixRowLayout` and uses `n_d_active`
     for `num_rows`, `d_start`, `b_start`, `a_start`, and gates the
     D-block iteration.
-  - `ring_switch_build_w` reads `quad_eq.m_row_layout()` and passes
+  - `ring_switch_build_w` reads `quad_eq.relation_matrix_row_layout()` and passes
     it to `compute_r_split_eq`; under `zk` it overrides the
     D-blinding segment to a zero-length `FlatDigitBlocks` for
     Terminal.
   - `build_w_coeffs` likewise consumes the layout-conditional
     D-blinding segment and packs `w` accordingly.
-  - `ring_switch_finalize_*` variants accept `MRowLayout` and pass
-    it through to `compute_r_split_eq` and `m_evals_x` construction.
+  - `ring_switch_finalize_*` variants accept `RelationMatrixRowLayout` and pass
+    it through to `compute_r_split_eq` and `relation_matrix_col_evals` construction.
 
 - **akita-prover / `protocol/flow.rs`**
   - `prove_terminal_fold_level_from_quadratic`,
@@ -306,13 +306,13 @@ Affected crates and the change at each boundary:
     `w_hat`, samples the sparse seed, absorbs the final-witness
     remainder, re-derives ring-switch `alpha`/`tau1` without terminal
     `tau0`, and runs stage-2 in relation-only mode.
-  - `derive_witness_fold_challenges` accepts `MRowLayout` and skips the
+  - `derive_witness_fold_challenges` accepts `RelationMatrixRowLayout` and skips the
     `ABSORB_PROVER_V` absorb when the layout is Terminal (no `v` is
     transmitted).
 
 - **akita-config / `schedule_policy.rs`**
   - `assert_plan_matches_runtime_w_sizes` (test helper) selects
-    `MRowLayout::Terminal` for the last fold of every plan when
+    `RelationMatrixRowLayout::Terminal` for the last fold of every plan when
     computing the runtime expected `next_w_len`.
 
 - **akita-planner / `search.rs`**
@@ -383,16 +383,16 @@ Done in the following order, all on `quang/akita-fix-tail`:
    slot previously held by `next_w_commitment` in every terminal
    fold path (root + recursive + 1-fold root). Drop the terminal
    stage-1 sumcheck, `next_w_commitment`, and `next_w_eval`.
-3. Introduce `MRowLayout` and thread it through
+3. Introduce `RelationMatrixRowLayout` and thread it through
    `QuadraticEquation::{new_prover, new_recursive_multipoint_prover}`,
    `compute_r_split_eq`, `ring_switch_build_w`, `build_w_coeffs`,
    `ring_switch_finalize_*`, `derive_witness_fold_challenges`,
-   `generate_y`, and the relation-claim builder.
-4. Update the planner: extend `LevelParams::m_row_count_for`,
+   `generate_relation_rhs`, and the relation-claim builder.
+4. Update the planner: extend `LevelParams::relation_matrix_row_count_for`,
    `w_ring_element_count_with_counts_for_layout`, and the schedule-
    plan builders so the terminal fold's `runtime_next_w_len` and the
    trailing `DirectStep`'s witness shape both use
-   `MRowLayout::Terminal`. Add `finalize_terminal_direct_witness_shape`
+   `RelationMatrixRowLayout::Terminal`. Add `finalize_terminal_direct_witness_shape`
    for the dynamic planner and `next_w_len_override` for `to_fold_step`.
    For the root-as-terminal case, preserve the batched vector counts
    (`(num_points, num_t_vectors, num_w_vectors, num_z_vectors)`).
@@ -400,7 +400,7 @@ Done in the following order, all on `quang/akita-fix-tail`:
    intermediate and terminal suffixes per candidate fold and pick the
    cheaper. Add `terminal_next_w_len` to `LevelComputation`.
 6. Update the `akita-config` runtime / planner test helper to
-   compute the expected `next_w_len` under `MRowLayout::Terminal`
+   compute the expected `next_w_len` under `RelationMatrixRowLayout::Terminal`
    for the last fold.
 7. Regenerate the generated schedule tables under both default and
    `zk` features; confirm no diffs (planner choices are stable).
@@ -416,12 +416,12 @@ Risks resolved during implementation:
   dynamic planner's `finalize_terminal_direct_witness_shape`.
 - *Runtime `planner/runtime next_w_len mismatch` panic in
   `akita-config` adaptive tests*. Fixed by updating the test helper
-  to use `MRowLayout::Terminal` for the last fold.
+  to use `RelationMatrixRowLayout::Terminal` for the last fold.
 - *Custom-config tests in `akita-scheme/src/tests.rs` building a
   manual single-fold schedule with intermediate-sized `next_w_len`*.
   Fixed by switching those custom `get_params_for_prove`
   implementations to `w_ring_element_count_with_counts_for_layout` +
-  `MRowLayout::Terminal`.
+  `RelationMatrixRowLayout::Terminal`.
 - *ZK D-blinding column in `w`*. Fixed by zeroing the D-blinding
   segment in `ring_switch_build_w` when the layout is Terminal.
 - *Stale-cache StrReplace failures on `crates/akita-pcs/tests/zk.rs`*.

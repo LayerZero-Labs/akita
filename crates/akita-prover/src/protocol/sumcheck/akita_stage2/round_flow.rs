@@ -223,9 +223,14 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + HasOptimizedFold> Sumch
                         // Fold trace before the fused kernel so relation terms use the same
                         // post-fold table as `compute_round_full_prefix_x_terms`.
                         self.fold_trace_for_round(r, folding_x_round);
-                        let (next_w_full, next_m_compact, virt_terms, rel_coeffs) =
-                            self.fuse_full_prefix_x_and_compute_round(&w_full, r);
-                        self.m_compact = next_m_compact;
+                        let (
+                            next_w_full,
+                            next_relation_matrix_col_evals_compact,
+                            virt_terms,
+                            rel_coeffs,
+                        ) = self.fuse_full_prefix_x_and_compute_round(&w_full, r);
+                        self.relation_matrix_col_evals_compact =
+                            next_relation_matrix_col_evals_compact;
                         self.cached_round_poly = Some(self.combine_terms(virt_terms, rel_coeffs));
                         fused_full_prefix_x = true;
                         WTable::Full(next_w_full)
@@ -249,10 +254,11 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + HasOptimizedFold> Sumch
         if folding_x_round {
             if use_prefix_x_round {
                 if !fused_full_prefix_x {
-                    self.m_compact = Self::fold_m_prefix(&self.m_compact, r);
+                    self.relation_matrix_col_evals_compact =
+                        Self::fold_m_prefix(&self.relation_matrix_col_evals_compact, r);
                 }
             } else {
-                fold_evals_in_place(&mut self.m_compact, r);
+                fold_evals_in_place(&mut self.relation_matrix_col_evals_compact, r);
             }
             self.live_x_cols = self.live_x_cols.div_ceil(2);
         } else {
