@@ -70,7 +70,7 @@ The feature introduces or modifies:
   (`SparseChallengeConfig::challenge_l2_sq_max`), the only new family-level
   quantity. Exact integer for every shipping family.
 - A pure **tail-bound primitive**
-  `fold_witness_linf_tail_bound_sq(num_fold_blocks, challenge_l2_sq_max, witness_linf_sq, ln_term)` in
+  `rademacher_proxy_variance_flat_challenges(num_fold_blocks, challenge_l2_sq_max, witness_linf_sq, ln_term)` in
   `akita-types::sis::norm_bound` (squared domain, no floats on the
   verifier-reachable path).
 - A **digit-sizing path** `num_digits_fold` that takes `K` from
@@ -148,7 +148,7 @@ The feature introduces or modifies:
 - [x] `SparseChallengeConfig::challenge_l2_sq_max()` returns the exact
   worst-case `‖c‖_2²` for `pm1-only`, `signed-sparse`, `BoundedL1Norm`, validated by
   a unit test against hand-computed values.
-- [x] `fold_witness_linf_tail_bound_sq(...)` is integer-only, total, monotone in
+- [x] `rademacher_proxy_variance_flat_challenges(...)` is integer-only, total, monotone in
   each argument; digit sizing uses `min(β_inf, t*)` (raw `t*` may exceed the
   tight `fold_witness_beta`; the applied cap is always the minimum).
 - [x] `num_digits_fold` returns `K_reject <= K_worstcase` for every tail-bound-with-grind
@@ -228,7 +228,7 @@ SparseChallengeConfig.challenge_l2_sq_max                         [akita-challen
         ▼
 LevelParams (witness_linf via fold_witness_norms, num_fold_blocks,
              num_fold_coeffs, p, policy)
-        │  fold_witness_linf_tail_bound_sq → t*
+        │  rademacher_proxy_variance_flat_challenges → t*
         ▼
 num_digits_fold = min(β_inf, t*) → K                     [akita-types::sis]
         │
@@ -349,7 +349,7 @@ challenge call; let `witness_linf = ‖s‖_inf` be the per-block committed-witn
 coefficients covered by the shared nonce.
 
 The prover rerolls the fold challenge until `‖z‖_inf <= t*`, where `t*` is the
-integer square root of `fold_witness_linf_tail_bound_sq(...)`. Digit sizing uses
+integer square root of `rademacher_proxy_variance_flat_challenges(...)`. Digit sizing uses
 `min(β_inf, t*)` so a loose raw `t*` never widens `K` beyond the existing
 worst-case bound.
 
@@ -487,7 +487,7 @@ worst-case path is generalized in place):
 **`akita-types`**
 
 - `src/sis/norm_bound.rs`: add
-  `fold_witness_linf_tail_bound_sq(num_fold_blocks, challenge_l2_sq_max, witness_linf_sq, ln_term) -> Result<u128, AkitaError>`
+  `rademacher_proxy_variance_flat_challenges(num_fold_blocks, challenge_l2_sq_max, witness_linf_sq, ln_term) -> Result<u128, AkitaError>`
   returning `t*²` (squared domain, exact `u128`, saturating/no-panic). The only
   irrational input is `ln 4·num_fold_coeffs + num_fold_blocks·ln(1/p)`; pass it
   as a conservative integer `ln_term` via `fold_witness_linf_grind_union_ln(num_fold_coeffs,
@@ -586,7 +586,7 @@ All slices landed in implementation PR #189:
 
 ```text
 F1   challenge_l2_sq_max + effective_l2_sq_max              [akita-challenges]  landed
-F2   threshold policy + fold_witness_linf_tail_bound_sq + ln term   [akita-types::sis]  landed
+F2   threshold policy + rademacher_proxy_variance_flat_challenges + ln term   [akita-types::sis]  landed
 F3   num_digits_fold sizes K from min(β_inf, t*)            [akita-types::sis]  landed
      for tail-bound-with-grind policies only
 F4   LevelParams tail-bound accessor                        [akita-types]       landed

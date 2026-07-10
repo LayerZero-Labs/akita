@@ -114,7 +114,7 @@ pub(crate) fn fold_witness_linf_grind_union_ln(
 ///
 /// Returns [`AkitaError::InvalidSetup`] when any argument is zero or the product
 /// overflows `u128`.
-pub fn fold_witness_linf_tail_bound_sq(
+pub fn rademacher_proxy_variance_flat_challenges(
     num_fold_blocks: u128,
     challenge_l2_sq_max: u128,
     witness_linf_sq: u128,
@@ -122,7 +122,7 @@ pub fn fold_witness_linf_tail_bound_sq(
 ) -> Result<u128, AkitaError> {
     if num_fold_blocks == 0 || challenge_l2_sq_max == 0 || witness_linf_sq == 0 || ln_term == 0 {
         return Err(AkitaError::InvalidSetup(
-            "fold_witness_linf_tail_bound_sq: arguments must be positive".to_string(),
+            "rademacher_proxy_variance_flat_challenges: arguments must be positive".to_string(),
         ));
     }
     let two = 2u128;
@@ -132,7 +132,7 @@ pub fn fold_witness_linf_tail_bound_sq(
         .and_then(|v| v.checked_mul(ln_term))
         .ok_or_else(|| {
             AkitaError::InvalidSetup(
-                "fold_witness_linf_tail_bound_sq: t*² overflows u128".to_string(),
+                "rademacher_proxy_variance_flat_challenges: t*² overflows u128".to_string(),
             )
         })
 }
@@ -152,7 +152,7 @@ pub fn fold_witness_linf_tail_bound_sq(
 /// Here `N = num_fold_coeffs`, `s2_factor = max ||factor||_2²`, and
 /// `k_factor` is the factor support bound.
 #[allow(clippy::too_many_arguments)]
-pub fn fold_witness_linf_tensor_tail_bound_sq(
+pub fn rademacher_proxy_variance_tensor_challenges(
     num_claims: u128,
     left_len: u128,
     right_len: u128,
@@ -172,7 +172,7 @@ pub fn fold_witness_linf_tensor_tail_bound_sq(
         || num_fold_coeffs == 0
     {
         return Err(AkitaError::InvalidSetup(
-            "fold_witness_linf_tensor_tail_bound_sq: arguments must be positive".to_string(),
+            "rademacher_proxy_variance_tensor_challenges: arguments must be positive".to_string(),
         ));
     }
     let lambda_outer = fold_witness_linf_tensor_outer_ln(
@@ -208,7 +208,7 @@ pub fn fold_witness_linf_tensor_tail_bound_sq(
         .and_then(|v| v.checked_mul(lambda_inner))
         .ok_or_else(|| {
             AkitaError::InvalidSetup(
-                "fold_witness_linf_tensor_tail_bound_sq: t*² overflows u128".to_string(),
+                "rademacher_proxy_variance_tensor_challenges: t*² overflows u128".to_string(),
             )
         })
 }
@@ -222,7 +222,7 @@ fn checked_grind_miss(
         || grind_target_accept_num >= grind_target_accept_den
     {
         return Err(AkitaError::InvalidSetup(
-            "fold_witness_linf_tensor_tail_bound_sq: invalid grind target probability".to_string(),
+            "rademacher_proxy_variance_tensor_challenges: invalid grind target probability".to_string(),
         ));
     }
     Ok(grind_target_accept_den - grind_target_accept_num)
@@ -268,7 +268,7 @@ fn fold_witness_linf_tensor_inner_ln(
     Ok(ceil_natural_log(numerator.div_ceil(miss)))
 }
 
-pub fn fold_witness_linf_tail_bound_for_config_sq(
+pub fn rademacher_proxy_variance(
     r_vars: usize,
     num_claims: usize,
     witness_linf_sq: u128,
@@ -276,23 +276,23 @@ pub fn fold_witness_linf_tail_bound_for_config_sq(
 ) -> Result<u128, AkitaError> {
     let num_blocks = 1usize.checked_shl(r_vars as u32).ok_or_else(|| {
         AkitaError::InvalidSetup(
-            "fold_witness_linf_tail_bound_for_config_sq: r_vars too large".to_string(),
+            "rademacher_proxy_variance: r_vars too large".to_string(),
         )
     })?;
     let num_fold_blocks = (num_claims as u128)
         .checked_mul(num_blocks as u128)
         .ok_or_else(|| {
             AkitaError::InvalidSetup(
-                "fold_witness_linf_tail_bound_for_config_sq: num_fold_blocks overflows u128"
+                "rademacher_proxy_variance: num_fold_blocks overflows u128"
                     .to_string(),
             )
         })?;
     match cap_config.policy {
         FoldWitnessLinfCapPolicy::WorstCaseBetaOnly => Err(AkitaError::InvalidSetup(
-            "fold_witness_linf_tail_bound_for_config_sq: deterministic policy has no tail bound"
+            "rademacher_proxy_variance: deterministic policy has no tail bound"
                 .to_string(),
         )),
-        FoldWitnessLinfCapPolicy::TailBoundWithGrind => fold_witness_linf_tail_bound_sq(
+        FoldWitnessLinfCapPolicy::TailBoundWithGrind => rademacher_proxy_variance_flat_challenges(
             num_fold_blocks,
             cap_config.challenge_l2_sq_max,
             witness_linf_sq,
@@ -300,7 +300,7 @@ pub fn fold_witness_linf_tail_bound_for_config_sq(
         ),
         FoldWitnessLinfCapPolicy::TensorTailBoundWithGrind => {
             let (left_len, right_len) = tensor_split(num_blocks)?;
-            fold_witness_linf_tensor_tail_bound_sq(
+            rademacher_proxy_variance_tensor_challenges(
                 num_claims as u128,
                 left_len as u128,
                 right_len as u128,
@@ -457,11 +457,11 @@ mod tests {
     use crate::sis::norm_bound::{FoldChallengeNorms, FoldWitnessNorms};
 
     #[test]
-    fn fold_witness_linf_tail_bound_sq_monotone_and_clamped_inputs() {
-        let base = fold_witness_linf_tail_bound_sq(16, 71, 1, 24).unwrap();
-        assert!(fold_witness_linf_tail_bound_sq(32, 71, 1, 24).unwrap() >= base);
-        assert!(fold_witness_linf_tail_bound_sq(16, 71, 4, 24).unwrap() >= base);
-        assert!(fold_witness_linf_tail_bound_sq(0, 71, 1, 24).is_err());
+    fn rademacher_proxy_variance_flat_challenges_monotone_and_clamped_inputs() {
+        let base = rademacher_proxy_variance_flat_challenges(16, 71, 1, 24).unwrap();
+        assert!(rademacher_proxy_variance_flat_challenges(32, 71, 1, 24).unwrap() >= base);
+        assert!(rademacher_proxy_variance_flat_challenges(16, 71, 4, 24).unwrap() >= base);
+        assert!(rademacher_proxy_variance_flat_challenges(0, 71, 1, 24).is_err());
     }
 
     #[test]
@@ -505,7 +505,7 @@ mod tests {
 
     #[test]
     fn tensor_tail_bound_matches_hand_formula() {
-        let t_sq = fold_witness_linf_tensor_tail_bound_sq(
+        let t_sq = rademacher_proxy_variance_tensor_challenges(
             1,
             256,
             256,
@@ -540,8 +540,8 @@ mod tests {
         let half = fold_witness_linf_grind_union_ln(n, 1, 2).unwrap();
         let eighth = fold_witness_linf_grind_union_ln(n, 1, 8).unwrap();
         assert!(eighth < half, "eighth={eighth} half={half}");
-        let t_half = fold_witness_linf_tail_bound_sq(1, 71, 1, half).unwrap();
-        let t_eighth = fold_witness_linf_tail_bound_sq(1, 71, 1, eighth).unwrap();
+        let t_half = rademacher_proxy_variance_flat_challenges(1, 71, 1, half).unwrap();
+        let t_eighth = rademacher_proxy_variance_flat_challenges(1, 71, 1, eighth).unwrap();
         assert!(t_eighth < t_half);
     }
 
@@ -567,7 +567,7 @@ mod tests {
         let pessimistic_linf_envelope = 16u128 * challenge.l1_norm * witness.infinity_norm();
         assert!(tight_beta < pessimistic_linf_envelope);
         let ln_term = fold_witness_linf_grind_union_ln(1u128 << 16, 1, 8).unwrap();
-        let t_sq = fold_witness_linf_tail_bound_sq(16, 71, 1, ln_term).unwrap();
+        let t_sq = rademacher_proxy_variance_flat_challenges(16, 71, 1, ln_term).unwrap();
         let t = isqrt_ceil(t_sq);
         assert!(
             t < pessimistic_linf_envelope,

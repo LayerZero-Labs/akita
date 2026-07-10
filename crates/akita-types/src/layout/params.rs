@@ -488,7 +488,7 @@ impl LevelParams {
         }
         let witness_linf = self.fold_witness_norms().infinity_norm();
         let witness_linf_sq = witness_linf.saturating_mul(witness_linf);
-        crate::sis::fold_witness_linf_tail_bound_for_config_sq(
+        crate::sis::rademacher_proxy_variance(
             self.r_vars,
             num_claims,
             witness_linf_sq,

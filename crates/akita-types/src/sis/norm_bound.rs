@@ -16,9 +16,10 @@ use crate::layout::digit_math::isqrt_ceil;
 use crate::{DecompositionParams, FoldLinfProtocolBinding};
 
 pub use super::fold_linf_cap::{
-    fold_witness_linf_cap_policy, fold_witness_linf_tail_bound_for_config_sq,
-    fold_witness_linf_tail_bound_sq,
-    fold_witness_linf_tensor_tail_bound_sq, FoldWitnessLinfCapConfig, FoldWitnessLinfCapPolicy,
+    fold_witness_linf_cap_policy, rademacher_proxy_variance,
+    rademacher_proxy_variance_flat_challenges, rademacher_proxy_variance_tensor_challenges,
+    FoldWitnessLinfCapConfig,
+    FoldWitnessLinfCapPolicy,
     FOLD_LINF_GRIND_TARGET_ACCEPT_PROB_DEN, FOLD_LINF_GRIND_TARGET_ACCEPT_PROB_NUM,
     FOLD_LINF_SNAP_MIN_TSTAR_RETAIN_DEN, FOLD_LINF_SNAP_MIN_TSTAR_RETAIN_NUM,
     MAX_FOLD_GRIND_ATTEMPTS,
@@ -213,10 +214,10 @@ pub fn fold_witness_digit_plan(
             "fold_witness_digit_plan: r_vars = {r_vars} >= 127"
         )));
     }
-    // Pre-snap honest-prover L∞ cap. Worst-case negacyclic ring-product L∞ of
+    // Worst-case negacyclic ring-product L∞ of
     // `c · s` is `min(||c||_inf·||s||_1, ||c||_1·||s||_inf)`, so
     // `β_inf = num_claims · 2^r_vars · that min side`.
-    let beta = challenge
+    let mut inf_norm_bound = challenge
         .infinity_norm
         .saturating_mul(witness.l1_norm)
         .min(challenge.l1_norm.saturating_mul(witness.infinity_norm))
@@ -227,32 +228,29 @@ pub fn fold_witness_digit_plan(
                 "fold_witness_digit_plan: folded-witness bound β overflows u128".to_string(),
             )
         })?;
-    if beta == 0 {
+    if inf_norm_bound == 0 {
         return Err(AkitaError::InvalidSetup(
             "fold_witness_digit_plan: folded-witness bound β = 0".to_string(),
         ));
     }
-    // Tail-bound policies cap at `min(β_inf, t*)` and expose `t*`; the worst-case
-    // policy caps at `β_inf` alone.
-    let (pre_snap_cap, t_star) = match cap_config.policy {
-        FoldWitnessLinfCapPolicy::WorstCaseBetaOnly => (beta, None),
+    let rademacher_inf_norm_bound;
+    (inf_norm_bound, rademacher_inf_norm_bound) = match cap_config.policy {
+        FoldWitnessLinfCapPolicy::WorstCaseBetaOnly => (inf_norm_bound, None),
         FoldWitnessLinfCapPolicy::TailBoundWithGrind
         | FoldWitnessLinfCapPolicy::TensorTailBoundWithGrind => {
             let witness_linf_sq = witness
                 .infinity_norm()
                 .saturating_mul(witness.infinity_norm());
-            let t_sq = fold_witness_linf_tail_bound_for_config_sq(
-                r_vars,
-                num_claims,
-                witness_linf_sq,
-                cap_config,
-            )?;
-            let t_star = isqrt_ceil(t_sq);
-            (beta.min(t_star), Some(t_star))
+            let t_sq = rademacher_proxy_variance(r_vars, num_claims, witness_linf_sq, cap_config)?;
+            let rademacher_inf_norm_bound = isqrt_ceil(t_sq);
+            (
+                inf_norm_bound.min(rademacher_inf_norm_bound),
+                Some(rademacher_inf_norm_bound),
+            )
         }
     };
-    let log_cap = (128 - pre_snap_cap.leading_zeros()).saturating_add(1);
-    let delta_base = num_digits_for_bound(log_cap, field_bits, log_basis);
+    let log_cap = (128 - inf_norm_bound.leading_zeros()).saturating_add(1);
+    let mut fold_decomposed_digits = num_digits_for_bound(log_cap, field_bits, log_basis);
 
     let binding = FoldLinfProtocolBinding::CURRENT;
     let snap_retain_num = u128::from(binding.snap_min_tstar_retain_num);
@@ -260,30 +258,29 @@ pub fn fold_witness_digit_plan(
     // Optional digit snap-down: walk `δ_fold` downward while the symmetric
     // honest-prover digit envelope at `δ-1` still clears
     // `retain_num/retain_den · t*`.
-    let (decomposed_fold_digits, inf_norm_bound) = match (cap_config.policy, t_star) {
-        (
-            FoldWitnessLinfCapPolicy::TailBoundWithGrind
-            | FoldWitnessLinfCapPolicy::TensorTailBoundWithGrind,
-            Some(t_star),
-        ) if snap_retain_den > 0 && delta_base > 1 && t_star > 0 => {
-            let floor = snap_min_tstar_retain_floor(t_star, snap_retain_num, snap_retain_den);
-            let mut delta = delta_base;
-            let mut grind_cap = pre_snap_cap;
-            while delta > 1 {
+    if let (
+        FoldWitnessLinfCapPolicy::TailBoundWithGrind
+        | FoldWitnessLinfCapPolicy::TensorTailBoundWithGrind,
+        Some(rademacher_inf_norm_bound),
+    ) = (cap_config.policy, rademacher_inf_norm_bound)
+    {
+        if snap_retain_den > 0 && fold_decomposed_digits > 1 && rademacher_inf_norm_bound > 0 {
+            let floor =
+                snap_min_tstar_retain_floor(rademacher_inf_norm_bound, snap_retain_num, snap_retain_den);
+            while fold_decomposed_digits > 1 {
                 let (_, positive_lower) =
-                    fold_witness_representable_linf_bounds(log_basis, delta - 1);
+                    fold_witness_representable_linf_bounds(log_basis, fold_decomposed_digits - 1);
                 if positive_lower < floor {
                     break;
                 }
-                delta -= 1;
-                let (_, positive_at) = fold_witness_representable_linf_bounds(log_basis, delta);
-                grind_cap = pre_snap_cap.min(positive_at);
+                fold_decomposed_digits -= 1;
+                let (_, positive_at) =
+                    fold_witness_representable_linf_bounds(log_basis, fold_decomposed_digits);
+                inf_norm_bound = inf_norm_bound.min(positive_at);
             }
-            (delta, grind_cap)
         }
-        _ => (delta_base, pre_snap_cap),
-    };
-    Ok((decomposed_fold_digits, inf_norm_bound))
+    }
+    Ok((fold_decomposed_digits, inf_norm_bound))
 }
 
 /// A-role collision bucket and audited secure rank at one geometry.
@@ -561,7 +558,7 @@ mod tests {
             .infinity_norm()
             .saturating_mul(witness.infinity_norm());
         let t_star = isqrt_ceil(
-            fold_witness_linf_tail_bound_for_config_sq(5, 1, witness_linf_sq, &cap_config).unwrap(),
+            rademacher_proxy_variance(5, 1, witness_linf_sq, &cap_config).unwrap(),
         );
         let (_, beta) = fold_witness_digit_plan(
             5,
