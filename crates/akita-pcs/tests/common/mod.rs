@@ -362,6 +362,11 @@ pub(super) fn assert_terminal_event_order_if_present(
             labels::CHALLENGE_SUMCHECK_ROUND,
             "terminal stage-2 sumcheck must not precede tau1",
         ),
+        (
+            e_hat..stage2_round,
+            labels::CHALLENGE_SUMCHECK_BATCH,
+            "terminal transcript window must not squeeze stage-2 batch challenge",
+        ),
     ] {
         assert_no_logical_label(events, range, label, message);
     }

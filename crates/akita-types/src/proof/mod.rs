@@ -32,7 +32,6 @@ pub use crate::opening_claims::{
     sample_public_row_coefficients, should_reject_multi_group_root, OpeningClaims,
     OpeningClaimsLayout, PointVariableSelection, PolynomialGroupClaims, PolynomialGroupLayout,
     MULTI_GROUP_ROOT_DENSE_UNSUPPORTED, MULTI_GROUP_ROOT_MULTI_CHUNK_UNSUPPORTED,
-    MULTI_GROUP_ROOT_RECURSIVE_SETUP_UNSUPPORTED,
 };
 pub use batch::{
     append_batched_commitments_to_transcript, append_claim_values_to_transcript,
@@ -58,9 +57,10 @@ pub use levels::{
     TerminalLevelProof,
 };
 pub use relation::{
-    assemble_relation_rhs, generate_relation_rhs, relation_claim_from_layout_extension,
-    relation_claim_from_rows, relation_claim_from_rows_extension, relation_rhs_coeff_len,
-    relation_rhs_layout_for, relation_rhs_row_count, RelationGroupRows, RelationRhsLayout,
+    assemble_relation_rhs, evaluation_trace_row_weight, generate_relation_rhs,
+    relation_claim_from_layout_extension, relation_claim_from_rows,
+    relation_claim_from_rows_extension, relation_rhs_coeff_len, relation_rhs_layout_for,
+    relation_rhs_row_count, RelationGroupRows, RelationRhsLayout,
 };
 pub use relation_matrix_cols::compute_relation_matrix_col_evals;
 pub use ring_relation::{

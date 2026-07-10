@@ -48,7 +48,7 @@ fn event_stream_equality_small() {
         .expect("layout");
         let poly = make_onehot_poly(&layout, 0x5151);
         let point = random_point(num_vars, 0x6161);
-        let opening = opening_from_poly(&poly, &point, &layout);
+        let opening = opening_from_poly::<ONEHOT_D, _>(&poly, &point, &layout);
 
         let setup = Scheme::setup_prover(num_vars, 1).unwrap();
         let prepared = CpuBackend.prepare_setup(&setup).unwrap();
@@ -243,7 +243,7 @@ enum TerminalTamper {
 }
 
 impl TerminalTamper {
-    fn apply(self, witness: &mut CleartextWitnessProof<F>, layout: TerminalWitnessSegmentLayout) {
+    fn apply(self, witness: &mut CleartextWitnessProof<F>, _layout: TerminalWitnessSegmentLayout) {
         match witness {
             CleartextWitnessProof::SegmentTyped(segment) => match self {
                 Self::EHatDigit => {
@@ -281,7 +281,7 @@ fn assert_terminal_tamper_rejected_at_num_vars(num_vars: usize, tamper: Terminal
         .expect("layout");
         let poly = make_onehot_poly(&layout, 0x5151);
         let point = random_point(num_vars, 0x6161);
-        let opening = opening_from_poly(&poly, &point, &layout);
+        let opening = opening_from_poly::<ONEHOT_D, _>(&poly, &point, &layout);
 
         let setup = Scheme::setup_prover(num_vars, 1).unwrap();
         let prepared = CpuBackend.prepare_setup(&setup).unwrap();

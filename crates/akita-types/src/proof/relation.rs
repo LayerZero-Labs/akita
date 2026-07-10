@@ -6,6 +6,7 @@ use crate::layout::{LevelParams, RelationMatrixRowLayout};
 use crate::opening_claims::OpeningClaimsLayout;
 use crate::proof::RingVec;
 use akita_algebra::eq_poly::EqPolynomial;
+use akita_algebra::offset_eq::eq_eval_at_index;
 use akita_algebra::ring::{eval_ring_at, eval_ring_at_pows_fast, scalar_powers};
 use akita_algebra::CyclotomicRing;
 use akita_field::{AkitaError, CanonicalField, FieldCore, MulBaseUnreduced};
@@ -461,6 +462,34 @@ where
     Ok(acc)
 }
 
+/// Row-index weight for the trailing EvaluationTrace row: `eq(row_index, last)`.
+///
+/// Fold paths combine this with `relation_claim_from_layout_extension` as
+/// `relation_claim + weight * trace_eval_target` (and reuse `weight` for
+/// Stage-2 `TraceClaim::trace_coeff`).
+pub fn evaluation_trace_row_weight<E: FieldCore>(
+    evaluation_trace_row: usize,
+    tau1: &[E],
+) -> Result<E, AkitaError> {
+    let num_vars = tau1.len();
+    if num_vars >= usize::BITS as usize {
+        return Err(AkitaError::InvalidSize {
+            expected: (usize::BITS as usize).saturating_sub(1),
+            actual: num_vars,
+        });
+    }
+    let domain_size = 1usize
+        .checked_shl(num_vars as u32)
+        .ok_or_else(|| AkitaError::InvalidSetup("tau1 row-index domain overflow".to_string()))?;
+    if evaluation_trace_row >= domain_size {
+        return Err(AkitaError::InvalidSize {
+            expected: domain_size,
+            actual: evaluation_trace_row.saturating_add(1),
+        });
+    }
+    Ok(eq_eval_at_index(tau1, evaluation_trace_row))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -603,5 +632,85 @@ mod tests {
         let expected = 128 + 2 * 32 + 3 * 64 + 64 + 4 * 128;
         assert_eq!(coeff_len, expected);
         assert_eq!(relation_rhs_row_count(&layout), 1 + 2 + 3 + 1 + 4);
+    }
+
+    #[test]
+    fn evaluation_trace_row_weight_uses_last_row() {
+        // total_row_count = 4 → 2 row-index vars; eq table length 4.
+        let tau1 = [F::from_u64(2), F::from_u64(3)];
+        let weight = evaluation_trace_row_weight(3, &tau1).unwrap();
+        assert_eq!(weight, eq_eval_at_index(&tau1, 3));
+        assert_ne!(weight, eq_eval_at_index(&tau1, 0));
+    }
+
+    #[test]
+    fn evaluation_trace_row_weight_rejects_out_of_domain_index() {
+        let tau1 = [F::from_u64(2), F::from_u64(3)];
+        assert!(evaluation_trace_row_weight(4, &tau1).is_err());
+    }
+
+    #[test]
+    fn fused_relation_claim_matches_full_logical_row_evaluation() {
+        const D: usize = 64;
+        let dims = CommitmentRingDims::uniform(D);
+        let tau1 = [
+            F::from_u64(3),
+            F::from_u64(5),
+            F::from_u64(7),
+            F::from_u64(11),
+        ];
+        let alpha = F::from_u64(13);
+        let mut v_coeffs = [F::zero(); D];
+        v_coeffs[..4].copy_from_slice(&[
+            F::from_u64(1),
+            F::from_u64(2),
+            F::from_u64(3),
+            F::from_u64(4),
+        ]);
+        let mut u_coeffs = [F::zero(); D];
+        u_coeffs[..4].copy_from_slice(&[
+            F::from_u64(5),
+            F::from_u64(6),
+            F::from_u64(7),
+            F::from_u64(8),
+        ]);
+        let v = [CyclotomicRing::from_coefficients(v_coeffs)];
+        let u = [CyclotomicRing::from_coefficients(u_coeffs)];
+        let lifted_tau1: Vec<E> = tau1.iter().copied().map(E::lift_base).collect();
+        const N_A: usize = 1;
+        let layout = RelationRhsLayout::uniform(1, N_A, 1, 0, 1);
+        let evaluation_trace_row = relation_rhs_row_count(&layout);
+        let trace_target = E::from_u64(19);
+        let quotient_claim = relation_claim_from_layout_extension::<F, E>(
+            dims,
+            &layout,
+            &lifted_tau1,
+            E::lift_base(alpha),
+            &RingVec::from_ring_elems(&v),
+            &RingVec::from_ring_elems(&u),
+        )
+        .unwrap();
+        let weight = evaluation_trace_row_weight(evaluation_trace_row, &lifted_tau1).unwrap();
+        let fused = quotient_claim + weight * trace_target;
+
+        let alpha_pows = scalar_powers(E::lift_base(alpha), D);
+        let padded_domain = 1usize << lifted_tau1.len();
+        let mut y_alpha = vec![E::zero(); padded_domain];
+        let mut row_idx = 1usize + N_A;
+        for ring in &u {
+            y_alpha[row_idx] = eval_ring_at_pows_fast(ring, &alpha_pows);
+            row_idx += 1;
+        }
+        for ring in &v {
+            y_alpha[row_idx] = eval_ring_at_pows_fast(ring, &alpha_pows);
+            row_idx += 1;
+        }
+        y_alpha[evaluation_trace_row] = trace_target;
+
+        let mut independent = E::zero();
+        for (row, value) in y_alpha.iter().enumerate() {
+            independent += eq_eval_at_index(&lifted_tau1, row) * *value;
+        }
+        assert_eq!(fused, independent);
     }
 }
