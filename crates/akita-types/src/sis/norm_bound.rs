@@ -182,15 +182,6 @@ impl FoldWitnessNorms {
     }
 }
 
-/// Integer retain floor `⌊retain_num/retain_den · t*⌋`, clamped to at least 1.
-#[must_use]
-pub fn snap_min_tstar_retain_floor(t_star: u128, retain_num: u128, retain_den: u128) -> u128 {
-    if t_star == 0 || retain_den == 0 {
-        return 1;
-    }
-    (t_star.saturating_mul(retain_num) / retain_den).max(1)
-}
-
 /// Canonical fold-l∞ digit sizing: pre-snap tail cap, optional digit snap-down,
 /// and the grind cap aligned with the snapped `δ_fold`.
 ///
@@ -241,8 +232,8 @@ pub fn fold_witness_digit_plan(
             let witness_linf_sq = witness
                 .infinity_norm()
                 .saturating_mul(witness.infinity_norm());
-            let t_sq = rademacher_proxy_variance(r_vars, num_claims, witness_linf_sq, cap_config)?;
-            let rademacher_inf_norm_bound = isqrt_ceil(t_sq);
+            let rademacher_inf_norm_bound =
+                isqrt_ceil(rademacher_proxy_variance(r_vars, num_claims, witness_linf_sq, cap_config)?);
             (
                 inf_norm_bound.min(rademacher_inf_norm_bound),
                 Some(rademacher_inf_norm_bound),
@@ -265,8 +256,9 @@ pub fn fold_witness_digit_plan(
     ) = (cap_config.policy, rademacher_inf_norm_bound)
     {
         if snap_retain_den > 0 && fold_decomposed_digits > 1 && rademacher_inf_norm_bound > 0 {
-            let floor =
-                snap_min_tstar_retain_floor(rademacher_inf_norm_bound, snap_retain_num, snap_retain_den);
+            // Integer retain floor `⌊retain_num/retain_den · t*⌋`, clamped to at least 1.
+            let floor = (rademacher_inf_norm_bound.saturating_mul(snap_retain_num) / snap_retain_den)
+                .max(1);
             while fold_decomposed_digits > 1 {
                 let (_, positive_lower) =
                     fold_witness_representable_linf_bounds(log_basis, fold_decomposed_digits - 1);
@@ -274,9 +266,7 @@ pub fn fold_witness_digit_plan(
                     break;
                 }
                 fold_decomposed_digits -= 1;
-                let (_, positive_at) =
-                    fold_witness_representable_linf_bounds(log_basis, fold_decomposed_digits);
-                inf_norm_bound = inf_norm_bound.min(positive_at);
+                inf_norm_bound = inf_norm_bound.min(positive_lower);
             }
         }
     }
@@ -511,12 +501,6 @@ mod tests {
             digit_priced > cap_priced,
             "digit-priced {digit_priced} must exceed honest-cap-priced {cap_priced}",
         );
-    }
-
-    #[test]
-    fn snap_min_tstar_retain_floor_uses_integer_division() {
-        assert_eq!(snap_min_tstar_retain_floor(739, 1, 2), 369);
-        assert_eq!(snap_min_tstar_retain_floor(739, 5_000, 10_000), 369);
     }
 
     #[test]
