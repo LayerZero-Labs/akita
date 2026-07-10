@@ -44,10 +44,19 @@ pub(crate) fn setup_e_col_weights<E: FieldCore>(
     let high_len = num_claims
         .checked_mul(depth_open)
         .ok_or_else(|| AkitaError::InvalidSetup("D high width overflow".into()))?;
-    let eq_high_by_chunk: Vec<Vec<E>> = chunks
-        .iter()
-        .map(|chunk| high_eq_window(high_challenges, chunk.offset_e >> block_bits, high_len))
-        .collect();
+    let eq_high_by_chunk: Vec<Vec<E>> = {
+        let _span = tracing::info_span!(
+            "setup_e_eq_high_by_chunk",
+            num_chunks = chunks.len(),
+            high_len,
+            table_len = high_len + 1,
+            total_len = chunks.len() * (high_len + 1)
+        )
+        .entered();
+        cfg_iter!(chunks)
+            .map(|chunk| high_eq_window(high_challenges, chunk.offset_e >> block_bits, high_len))
+            .collect()
+    };
     let low_mask = blocks_per_chunk - 1;
     let total_blocks = num_claims
         .checked_mul(num_blocks)
@@ -55,24 +64,40 @@ pub(crate) fn setup_e_col_weights<E: FieldCore>(
     let e_cols = total_blocks
         .checked_mul(depth_open)
         .ok_or_else(|| AkitaError::InvalidSetup("D columns overflow".into()))?;
-    Ok(cfg_into_iter!(0..e_cols)
-        .map(|local_col| {
-            let flat_block = local_col / depth_open;
-            let digit = local_col % depth_open;
+    let _scan_span =
+        tracing::info_span!("setup_e_col_scan", e_cols, num_chunks = chunks.len()).entered();
+    // One `divmod` per block (not per element): `chunk_idx`/`block_idx` reduce to
+    // shift/mask since `blocks_per_chunk` is a power of two, and the inner `digit`
+    // loop is a per-block constant `eq_low[low_idx]` times a stride-`num_claims`
+    // walk through `eq_high`.
+    let mut out = vec![E::zero(); e_cols];
+    // `chunks_mut(0)` panics unconditionally; `depth_open == 0` means no columns
+    // (`e_cols == 0`), so the empty `out` is already the correct result. Guards the
+    // verifier no-panic boundary even though callers validate `depth_open > 0`.
+    if depth_open == 0 {
+        return Ok(out);
+    }
+    cfg_chunks_mut!(out, depth_open)
+        .enumerate()
+        .for_each(|(flat_block, dst)| {
             let claim_idx = flat_block / num_blocks;
             let global_block_idx = flat_block % num_blocks;
-            let chunk_idx = global_block_idx / blocks_per_chunk;
-            let block_idx = global_block_idx % blocks_per_chunk;
+            let chunk_idx = global_block_idx >> block_bits;
+            let block_idx = global_block_idx & low_mask;
             let chunk = &chunks[chunk_idx];
             let eq_high = &eq_high_by_chunk[chunk_idx];
             let offset_low = chunk.offset_e & low_mask;
             let shifted = offset_low + block_idx;
             let low_idx = shifted & low_mask;
             let carry = shifted >> block_bits;
-            let high_idx = digit * num_claims + claim_idx + carry;
-            eq_low[low_idx] * eq_high[high_idx]
-        })
-        .collect())
+            let low_factor = eq_low[low_idx];
+            let mut high_idx = claim_idx + carry;
+            for slot in dst.iter_mut() {
+                *slot = low_factor * eq_high[high_idx];
+                high_idx += num_claims;
+            }
+        });
+    Ok(out)
 }
 
 /// Canonical `B·t̂` column eq-weights, shared by the single-group and multi-group setup
@@ -123,10 +148,19 @@ pub(crate) fn setup_t_col_weights<E: FieldCore>(
         .checked_mul(depth_open)
         .and_then(|width| width.checked_mul(n_a))
         .ok_or_else(|| AkitaError::InvalidSetup("B high width overflow".into()))?;
-    let eq_high_by_chunk: Vec<Vec<E>> = chunks
-        .iter()
-        .map(|chunk| high_eq_window(high_challenges, chunk.offset_t >> block_bits, high_len))
-        .collect();
+    let eq_high_by_chunk: Vec<Vec<E>> = {
+        let _span = tracing::info_span!(
+            "setup_t_eq_high_by_chunk",
+            num_chunks = chunks.len(),
+            high_len,
+            table_len = high_len + 1,
+            total_len = chunks.len() * (high_len + 1)
+        )
+        .entered();
+        cfg_iter!(chunks)
+            .map(|chunk| high_eq_window(high_challenges, chunk.offset_t >> block_bits, high_len))
+            .collect()
+    };
     let low_mask = blocks_per_chunk - 1;
     let t_compound_per_block = n_a
         .checked_mul(depth_open)
@@ -134,27 +168,41 @@ pub(crate) fn setup_t_col_weights<E: FieldCore>(
     let t_cols = num_vectors
         .checked_mul(cols_per_vector)
         .ok_or_else(|| AkitaError::InvalidSetup("B width overflow".into()))?;
-    Ok(cfg_into_iter!(0..t_cols)
-        .map(|local_col| {
-            let vector_idx = local_col / cols_per_vector;
+    let _scan_span =
+        tracing::info_span!("setup_t_col_scan", t_cols, num_chunks = chunks.len()).entered();
+
+    if t_compound_per_block == 0 || !cols_per_vector.is_multiple_of(t_compound_per_block) {
+        return Err(AkitaError::InvalidSetup(
+            "setup T weights require cols_per_vector to be a nonzero multiple of n_a * depth_open"
+                .into(),
+        ));
+    }
+    let blocks_per_vector = cols_per_vector / t_compound_per_block;
+    let mut out = vec![E::zero(); t_cols];
+    cfg_chunks_mut!(out, t_compound_per_block)
+        .enumerate()
+        .for_each(|(flat_block, dst)| {
+            let vector_idx = flat_block / blocks_per_vector;
             if vector_idx >= active_vectors {
-                return E::zero();
+                return;
             }
-            let phys_claim_offset = local_col % cols_per_vector;
-            let global_block_idx = phys_claim_offset / t_compound_per_block;
-            let chunk_idx = global_block_idx / blocks_per_chunk;
-            let block_idx = global_block_idx % blocks_per_chunk;
+            let global_block_idx = flat_block % blocks_per_vector;
+            let chunk_idx = global_block_idx >> block_bits;
+            let block_idx = global_block_idx & low_mask;
             let chunk = &chunks[chunk_idx];
             let eq_high = &eq_high_by_chunk[chunk_idx];
             let offset_low = chunk.offset_t & low_mask;
-            let compound = phys_claim_offset % t_compound_per_block;
             let shifted = offset_low + block_idx;
             let low_idx = shifted & low_mask;
             let carry = shifted >> block_bits;
-            let high_idx = compound * high_vector_stride + (vector_base + vector_idx) + carry;
-            eq_low[low_idx] * eq_high[high_idx]
-        })
-        .collect())
+            let low_factor = eq_low[low_idx];
+            let mut high_idx = vector_base + vector_idx + carry;
+            for slot in dst.iter_mut() {
+                *slot = low_factor * eq_high[high_idx];
+                high_idx += high_vector_stride;
+            }
+        });
+    Ok(out)
 }
 
 /// Column weights for the A-row setup term `A * G_fold * z_hat`.
@@ -204,6 +252,12 @@ where
             actual: z_weights.len(),
         });
     }
+    // `depth_commit == 0` yields `z_range == 0` (empty `z_weights`) but would panic
+    // both branches below: `chunks_mut(0)` in the pow2 path and `c % depth_commit`
+    // (div-by-zero) in the dense path. Nothing to accumulate, so return early.
+    if depth_commit == 0 {
+        return Ok(());
+    }
     if block_len.is_power_of_two() {
         let z_bits = block_len.trailing_zeros() as usize;
         if z_bits > full_vec_randomness.len() {
@@ -231,8 +285,7 @@ where
             .and_then(|width| width.checked_mul(num_fold_groups))
             .ok_or_else(|| AkitaError::InvalidSetup("Z high width overflow".into()))?;
         let low_mask = block_len - 1;
-        let chunk_summaries: Vec<(usize, Vec<[E; POSSIBLE_CARRIES]>)> = chunks
-            .iter()
+        let chunk_summaries: Vec<(usize, Vec<[E; POSSIBLE_CARRIES]>)> = cfg_iter!(chunks)
             .map(|chunk| {
                 let eq_high = high_eq_window(high_challenges, chunk.offset_z >> z_bits, high_len);
                 let s_per_dc_per_carry = (0..depth_commit)
@@ -257,21 +310,24 @@ where
                 (chunk.offset_z & low_mask, s_per_dc_per_carry)
             })
             .collect();
-        cfg_iter_mut!(z_weights)
+        // One task per commit block (mirrors the D·ê / B·t̂ scans): the per-chunk
+        // `low_idx`/`carry`/`eq_low[low_idx]` depend only on `block_idx`, so we hoist
+        // them out of the inner `dc` walk instead of recomputing them for every
+        // `(block_idx, dc)` element.
+        cfg_chunks_mut!(z_weights, depth_commit)
             .enumerate()
-            .try_for_each(|(k, dst)| {
-                let block_idx = k / depth_commit;
-                let dc = k % depth_commit;
-                let mut weight = E::zero();
+            .for_each(|(block_idx, dst)| {
                 for (offset_low, s_per_dc_per_carry) in &chunk_summaries {
                     let shifted = *offset_low + block_idx;
                     let low_idx = shifted & low_mask;
                     let carry = shifted >> z_bits;
-                    weight += eq_low[low_idx] * s_per_dc_per_carry[dc][carry];
+                    let low_factor = eq_low[low_idx];
+                    for (slot, s) in dst.iter_mut().zip(s_per_dc_per_carry) {
+                        *slot += low_factor * s[carry];
+                    }
                 }
-                *dst += weight;
-                Ok(())
-            })
+            });
+        Ok(())
     } else {
         let z_depth = depth_fold
             .checked_mul(depth_commit)
@@ -299,8 +355,7 @@ where
             .ok_or_else(|| AkitaError::InvalidSetup("dense Z eq width overflow".into()))?
             - 1;
         let eq_low = EqPolynomial::evals(&full_vec_randomness[..low_bits])?;
-        let chunk_tables: Vec<(usize, Vec<E>)> = chunks
-            .iter()
+        let chunk_tables: Vec<(usize, Vec<E>)> = cfg_iter!(chunks)
             .map(|chunk| {
                 let offset_low = chunk.offset_z & low_mask;
                 let offset_high = chunk.offset_z >> low_bits;
