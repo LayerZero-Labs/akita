@@ -264,27 +264,25 @@ fn expected_z_setup_weights(
     layout: &OpeningBatchWitnessLayout,
     opening_layout: OpeningBlockLayout,
     group_id: SemanticGroupId,
-    depth_commit: usize,
-    depth_fold: usize,
-    block_len: usize,
     fold_gadget: &[F],
     full_vec_randomness: &[F],
 ) -> Vec<F> {
-    let z_cols = block_len * depth_commit;
+    let group = layout.group(group_id).expect("test group must exist");
+    let z_cols = group.block_len * group.depth_commit;
     (0..z_cols)
         .map(|column| {
-            let position = column / depth_commit;
-            let commit_digit = column % depth_commit;
+            let position = column / group.depth_commit;
+            let commit_digit = column % group.depth_commit;
             let mut weight = F::zero();
             for unit in layout
                 .ownership_units
                 .iter()
                 .filter(|unit| unit.group == group_id)
             {
-                for (fold_digit, &fold) in fold_gadget.iter().enumerate().take(depth_fold) {
+                for (fold_digit, &fold) in fold_gadget.iter().enumerate().take(group.depth_fold) {
                     let physical = unit.z_range.start
                         + fold_digit
-                        + depth_fold * (commit_digit + depth_commit * position);
+                        + group.depth_fold * (commit_digit + group.depth_commit * position);
                     let physical_block = physical / opening_layout.block_len();
                     let physical_position = physical % opening_layout.block_len();
                     let virtual_address =
@@ -530,9 +528,6 @@ fn dense_z_eq_slice_uses_relative_high_carry() {
         &layout,
         OpeningBlockLayout::new(1, layout.total_len()).unwrap(),
         SemanticGroupId(0),
-        depth_commit,
-        depth_fold,
-        block_len,
         &fold_gadget,
         &full_vec_randomness,
     );
@@ -604,9 +599,6 @@ fn setup_a_z_weights_do_not_include_commit_gadget() {
         &layout,
         OpeningBlockLayout::new(1, layout.total_len()).unwrap(),
         SemanticGroupId(0),
-        depth_commit,
-        depth_fold,
-        block_len,
         &fold_gadget,
         &full_vec_randomness,
     );
@@ -674,16 +666,8 @@ fn z_setup_weight_oracle_covers_multi_block_virtual_gaps() {
         &mut got,
     )
     .unwrap();
-    let expected = expected_z_setup_weights(
-        &layout,
-        opening_layout,
-        group_id,
-        depth_commit,
-        depth_fold,
-        block_len,
-        &fold_gadget,
-        &point,
-    );
+    let expected =
+        expected_z_setup_weights(&layout, opening_layout, group_id, &fold_gadget, &point);
     assert_eq!(got, expected);
     assert!(layout.ownership_units.iter().any(|unit| {
         (0..block_len).any(|position| {

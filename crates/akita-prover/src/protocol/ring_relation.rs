@@ -641,9 +641,7 @@ impl RingRelationProver {
                 }
             )
             .map_err(|err| {
-                AkitaError::InvalidInput(format!(
-                    "D-role opening decomposition failed: {err:?}"
-                ))
+                AkitaError::InvalidInput(format!("D-role opening decomposition failed: {err:?}"))
             })?;
             group_e_hat.push(e_hat_g);
             group_e_folded.push(e_folded_g);
@@ -712,9 +710,7 @@ impl RingRelationProver {
                     group_polys.len(),
                     terminal_tail_t_vectors,
                 )
-                .map_err(|err| {
-                    AkitaError::InvalidInput(format!("fold grind failed: {err:?}"))
-                })?;
+                .map_err(|err| AkitaError::InvalidInput(format!("fold grind failed: {err:?}")))?;
             if let Some(existing) = accepted_nonce {
                 if existing != nonce {
                     return Err(AkitaError::InvalidInput(
@@ -737,9 +733,7 @@ impl RingRelationProver {
             relation_rhs_layout_for(&lp, &opening_batch, relation_matrix_row_layout)?;
         let relation_rhs =
             assemble_relation_rhs::<F>(dims, &relation_rhs_layout, &v, &commitment_rows)
-                .map_err(|err| {
-                    AkitaError::InvalidInput(format!("relation rhs failed: {err:?}"))
-                })?;
+                .map_err(|err| AkitaError::InvalidInput(format!("relation rhs failed: {err:?}")))?;
 
         let instance = RingRelationInstance::new(
             relation_matrix_row_layout,
@@ -753,9 +747,7 @@ impl RingRelationProver {
             v,
             dims,
         )
-        .map_err(|err| {
-            AkitaError::InvalidInput(format!("relation instance failed: {err:?}"))
-        })?;
+        .map_err(|err| AkitaError::InvalidInput(format!("relation instance failed: {err:?}")))?;
         instance
             .check_v_shape_for_level(&lp)
             .map_err(|err| AkitaError::InvalidInput(format!("v shape failed: {err:?}")))?;

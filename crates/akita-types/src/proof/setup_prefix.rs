@@ -743,14 +743,6 @@ fn active_setup_role_widths(
     Ok((w_a, w_b, w_d))
 }
 
-/// Active packed setup footprint in ring slots: `max(n_a W_A, n_b W_B, n_d W_D)`.
-fn active_setup_ring_slots(
-    level_params: &LevelParams,
-    opening_batch: &OpeningClaimsLayout,
-) -> Result<usize, AkitaError> {
-    Ok(active_setup_projection_geometry(level_params, opening_batch)?.required())
-}
-
 fn active_setup_projection_geometry(
     level_params: &LevelParams,
     opening_batch: &OpeningClaimsLayout,
@@ -956,10 +948,9 @@ mod tests {
             .unwrap()
             .max(lp.b_key.row_len().checked_mul(w_b).unwrap())
             .max(lp.d_key.row_len().checked_mul(w_d).unwrap());
-        assert_eq!(
-            active_setup_ring_slots(&lp, &opening_batch).expect("ring slots"),
-            expected_ring_slots
-        );
+        let geometry =
+            active_setup_projection_geometry(&lp, &opening_batch).expect("projection geometry");
+        assert_eq!(geometry.required(), expected_ring_slots);
         let dims = lp.role_dims();
         let base_d = dims.d_a().min(dims.d_b()).min(dims.d_d());
         assert_eq!(

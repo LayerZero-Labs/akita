@@ -107,7 +107,9 @@ where
                 )
             }
         )
-        .map_err(|err| AkitaError::InvalidInput(format!("root opening preparation failed: {err:?}")))?;
+        .map_err(|err| {
+            AkitaError::InvalidInput(format!("root opening preparation failed: {err:?}"))
+        })?;
         (
             proved.protocol_point,
             Some(proved.row_coefficients),
@@ -372,7 +374,9 @@ where
         relation_matrix_row_layout,
         terminal_tail_t_vectors,
     )
-    .map_err(|err| AkitaError::InvalidInput(format!("ring relation preparation failed: {err:?}")))?;
+    .map_err(|err| {
+        AkitaError::InvalidInput(format!("ring relation preparation failed: {err:?}"))
+    })?;
     let extension_opening_reduction = reduction.map(|reduction| reduction.proof);
     // §6 invariant (#239 HIGH) — suffix `PreparedFold` trace-table layout vs
     // `pad_base_evals`. `row_coefficients` and `trace_claim_scales` MUST be
