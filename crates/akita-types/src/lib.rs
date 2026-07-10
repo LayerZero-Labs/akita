@@ -130,8 +130,9 @@ pub use schedule::{
     ScheduleKeyPrecommitSource, Step,
 };
 pub use setup_contribution::{
-    ensure_setup_envelope, setup_active_ring_elems_at, setup_active_ring_elems_for_fold,
-    setup_required_for_inputs, stage3_offload_natural_field_len, SetupContributionGroupInputs,
+    ensure_setup_envelope, prepare_setup_contribution_artifact, setup_active_ring_elems_at,
+    setup_active_ring_elems_for_fold, setup_required_for_inputs, shared_setup_fold_gadget,
+    stage3_offload_natural_field_len, SetupContributionArtifact, SetupContributionGroupInputs,
     SetupContributionPlan, SetupContributionPlanInputs, SetupContributionStatic,
     SetupIndexWeightEvaluator,
 };

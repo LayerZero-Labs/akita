@@ -12,7 +12,7 @@ use blake2::digest::consts::U32;
 use blake2::{Blake2b, Digest};
 use std::collections::BTreeSet;
 
-/// Recursive setup contribution cannot open multi-group root batches yet.
+/// Historical rejection message for recursive multi-group root batches.
 pub const MULTI_GROUP_ROOT_RECURSIVE_SETUP_UNSUPPORTED: &str =
     "recursive setup contribution with multiple commitment groups is not supported; see specs/multi-group-batching.md";
 
@@ -36,9 +36,7 @@ pub fn should_reject_multi_group_root(
     if layout.num_groups() <= 1 {
         return None;
     }
-    if setup_contribution_mode == SetupContributionMode::Recursive {
-        return Some(MULTI_GROUP_ROOT_RECURSIVE_SETUP_UNSUPPORTED);
-    }
+    let _ = setup_contribution_mode;
     if includes_dense_polynomial == Some(true) {
         return Some(MULTI_GROUP_ROOT_DENSE_UNSUPPORTED);
     }
@@ -787,7 +785,7 @@ mod tests {
         );
         assert_eq!(
             should_reject_multi_group_root(&layout, SetupContributionMode::Recursive, None),
-            Some(MULTI_GROUP_ROOT_RECURSIVE_SETUP_UNSUPPORTED)
+            None
         );
         assert_eq!(
             should_reject_multi_group_root(&layout, SetupContributionMode::Direct, Some(true)),

@@ -271,12 +271,24 @@ fn commit_group_returns_frozen_conservative_layout() {
 /// `K_g`. Precommitted groups are committed under the conservative config; the
 /// final group is committed with `commit_final_group`; the multi-group root folds
 /// into a singleton recursive suffix.
-fn multi_group_root_round_trip_onehot(pre_sizes: &[usize], final_size: usize) {
+fn multi_group_root_round_trip_onehot(
+    pre_sizes: &[usize],
+    final_size: usize,
+    setup_contribution_mode: akita_types::SetupContributionMode,
+) {
     const PRE_NV: usize = 8;
     const FINAL_NV: usize = PRE_NV * 2;
     let total: usize = pre_sizes.iter().sum::<usize>() + final_size;
 
-    let setup = ConservativeCommitter::setup_prover(FINAL_NV, total).expect("setup");
+    let setup = match setup_contribution_mode {
+        akita_types::SetupContributionMode::Direct => {
+            RegularCommitter::setup_prover(FINAL_NV, total)
+        }
+        akita_types::SetupContributionMode::Recursive => {
+            RegularCommitter::setup_prover_recursion(FINAL_NV, total)
+        }
+    }
+    .expect("setup");
     let prepared = CpuBackend.prepare_setup(&setup).expect("prepared setup");
     let stack =
         akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
@@ -395,7 +407,7 @@ fn multi_group_root_round_trip_onehot(pre_sizes: &[usize], final_size: usize) {
         &stack,
         &mut prover_transcript,
         BasisMode::Lagrange,
-        akita_types::SetupContributionMode::Direct,
+        setup_contribution_mode,
     )
     .expect("multi-group prove");
     assert!(matches!(
@@ -448,19 +460,24 @@ fn multi_group_root_round_trip_onehot(pre_sizes: &[usize], final_size: usize) {
         &mut verifier_transcript,
         verify_claims,
         BasisMode::Lagrange,
-        akita_types::SetupContributionMode::Direct,
+        setup_contribution_mode,
     )
     .expect("multi-group verify");
 }
 
 #[test]
 fn multi_group_root_folded_unequal_one_three_round_trips() {
-    multi_group_root_round_trip_onehot(&[1], 3);
+    multi_group_root_round_trip_onehot(&[1], 3, akita_types::SetupContributionMode::Direct);
 }
 
 #[test]
 fn multi_group_root_folded_unequal_two_one_round_trips() {
-    multi_group_root_round_trip_onehot(&[2], 1);
+    multi_group_root_round_trip_onehot(&[2], 1, akita_types::SetupContributionMode::Direct);
+}
+
+#[test]
+fn multi_group_root_folded_recursive_setup_round_trips() {
+    multi_group_root_round_trip_onehot(&[1], 3, akita_types::SetupContributionMode::Recursive);
 }
 
 #[test]

@@ -1,5 +1,8 @@
 use crate::report::print_layout;
-use crate::workload::{onehot_k_for_num_vars, run_batched_onehot, run_dense_for, run_onehot};
+use crate::workload::{
+    onehot_k_for_num_vars, run_batched_onehot, run_dense_for, run_onehot,
+    run_recursive_multi_group_onehot,
+};
 use akita_config::proof_optimized::{fp128, fp32, fp64};
 use akita_config::tensor_verifier;
 use akita_config::test_support::akita_batched_root_layout;
@@ -172,6 +175,10 @@ const PROFILE_CI_MODES: &[ProfileMode] = &[
         run: run_profile_onehot_fp128_d64,
     },
     ProfileMode {
+        name: "onehot_fp128_d64_multi_group_recursive",
+        run: run_profile_onehot_fp128_d64_multi_group_recursive,
+    },
+    ProfileMode {
         name: "onehot_fp128_d64_tensor",
         run: run_profile_onehot_fp128_d64_tensor,
     },
@@ -206,6 +213,10 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
     ProfileMode {
         name: "onehot_fp128_d64",
         run: run_profile_onehot_fp128_d64,
+    },
+    ProfileMode {
+        name: "onehot_fp128_d64_multi_group_recursive",
+        run: run_profile_onehot_fp128_d64_multi_group_recursive,
     },
     ProfileMode {
         name: "dense_fp128_d128",
@@ -278,6 +289,7 @@ const EXCLUDED_FROM_ALL_SWEEP: &[&str] = &[
     "onehot_fp128_d64_multi_chunk_w2r2",
     "onehot_fp128_d64_multi_chunk_w4r2",
     "onehot_fp128_d64_multi_chunk_w8r2",
+    "onehot_fp128_d64_multi_group_recursive",
     // D128+ presets are heavy and/or runtime-DP-backed; keep them out of the
     // default `all` smoke sweep (they are still selectable by explicit
     // `AKITA_MODE=` and drive the profile-bench matrix).
@@ -350,6 +362,29 @@ fn run_profile_onehot_fp128_d64(nv: usize, num_polys: usize) {
     type Cfg = fp128::D64OneHot;
     let title = fp128_onehot_title(64, nv, num_polys);
     run_onehot_mode::<{ Cfg::D }, Cfg>("onehot_fp128_d64", &title, nv, num_polys);
+}
+
+fn run_profile_onehot_fp128_d64_multi_group_recursive(nv: usize, num_polys: usize) {
+    type Cfg = fp128::D64OneHot;
+    assert_eq!(
+        nv, 28,
+        "onehot_fp128_d64_multi_group_recursive fixes the main group at 28 variables"
+    );
+    assert_eq!(
+        num_polys, 4,
+        "onehot_fp128_d64_multi_group_recursive opens two precommitted singleton groups plus two main polynomials"
+    );
+    let prime = fp128_prime_label();
+    tracing::info!(
+        "=== onehot_fp128_d64_multi_group_recursive (fp128, {}, D=64, two precommitted 14-var singleton groups + 28-var main group with 2 polynomials, recursive setup) ===",
+        prime
+    );
+    run_recursive_multi_group_onehot::<F, { Cfg::D }, Cfg>(
+        "onehot_fp128_d64_multi_group_recursive",
+        14,
+        28,
+        2,
+    );
 }
 
 fn run_profile_onehot_fp128_d64_multi_chunk_named<

@@ -87,6 +87,7 @@ jobs:
               onehot_fp128_d64:32:1
               onehot_fp128_d64:32:1:recursive
               onehot_fp128_d64:30:4
+              onehot_fp128_d64_multi_group_recursive:28:4:recursive
           - name: 4-distributed
             cases: |
               onehot_fp128_d64_multi_chunk_w2r2:32:1

@@ -848,14 +848,15 @@ added into one aggregate A quotient.
 
 ## Setup Contribution
 
-The initial multi-group opening should reject:
+Recursive setup contribution uses one setup-product sumcheck over the packed
+setup prefix with the additive per-index group weight:
 
 ```text
-G > 1 && SetupContributionMode::Recursive
+setup_index_weight(i) = Σ_g setup_index_weight_g(i)
 ```
 
-For Direct mode, setup contribution and verifier ring-switch replay must receive
-the true group shape:
+For Direct and Recursive modes, setup contribution and verifier ring-switch
+replay must receive the true group shape:
 
 ```text
 num_segments = G
@@ -1154,7 +1155,8 @@ At current `commit_final_group` time:
 At current prove time:
 
 - `ProverOpeningData` / `OpeningClaimsLayout` must be internally consistent.
-- `G > 1` with `SetupContributionMode::Recursive` rejects with `InvalidSetup`.
+- `G > 1` supports `SetupContributionMode::Recursive` when the folded root can
+  hand off to a singleton recursive suffix.
 - Dense commitment configs (`log_commit_bound != 1`) reject multi-group roots.
 - Tiered multi-group proofs reject with `AkitaError::InvalidSetup`.
 - Dense polynomials in a multi-group batch reject with `InvalidInput` on prove.
@@ -1162,7 +1164,8 @@ At current prove time:
 At current verify time:
 
 - `OpeningClaims` must be internally consistent.
-- `G > 1` with recursive setup contribution rejects with `InvalidSetup`.
+- `G > 1` with recursive setup contribution verifies against the combined
+  setup-index weight vector.
 - Dense commitment configs reject multi-group roots with `InvalidProof`.
 
 - The verifier must reconstruct the `AkitaScheduleLookupKey` from the public
@@ -1188,7 +1191,6 @@ At current verify time:
 | Dense polynomial at conservative precommit      | `ConservativeCommitmentConfig` commit params / one-hot validators | `AkitaError::InvalidSetup` / `InvalidInput` |
 | Dense polynomial + `G > 1` proof                | Prove entry                             | `AkitaError::InvalidInput`               |
 | Precommitted `num_vars > final_group.num_vars / 2` | multi-group key validation            | `AkitaError::InvalidInput`               |
-| Recursive setup contribution + `G > 1`          | Prove / verify entry                    | `AkitaError::InvalidSetup`               |
 | `G > 1` + `witness_chunk.num_chunks > 1`        | schedule selection / prove / verify / relation replay | `AkitaError::InvalidSetup` / `InvalidProof` |
 | Scalar table lookup collapsing `[1,3]` to `[4]` | scalar key construction / multi-group lookup | table miss or `AkitaError::InvalidSetup` |
 | `log_basis != min_basis(Cfg)` at precommit      | conservative layout validation / multi-group root params | `AkitaError::InvalidSetup`               |
@@ -1321,9 +1323,9 @@ kernels land if B-row time is a bottleneck.
 
 - Current prove/verify accept one-hot `G > 1` with direct setup contribution when the
   folded multi-group root can hand off to a singleton recursive suffix.
+- Current prove/verify accept one-hot `G > 1` with recursive setup contribution when the
+  folded multi-group root can hand off to a singleton recursive suffix.
 - Current prove/verify reject tiered `G > 1` with `AkitaError::InvalidSetup`.
-- Current prove/verify reject recursive setup contribution `G > 1` with
-  `AkitaError::InvalidSetup`.
 - Current prove/verify reject `G > 1` combined with `witness_chunk.num_chunks > 1`
   through the canonical multi-group multi-chunk error.
 - Implemented: root-direct two-group one-hot same-point round trip.
