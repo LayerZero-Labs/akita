@@ -279,10 +279,9 @@ mod tests {
         const D: usize = Cfg::D;
         const NV: usize = 12;
 
-        let lp = Cfg::get_params_for_batched_commitment(
-            &akita_types::OpeningClaimsLayout::new(NV, 1).expect("singleton opening batch"),
-        )
-        .expect("lp");
+        let opening_batch =
+            akita_types::OpeningClaimsLayout::new(NV, 1).expect("singleton opening batch");
+        let lp = Cfg::get_params_for_batched_commitment(&opening_batch).expect("lp");
 
         let mut rng = StdRng::seed_from_u64(0x5151_5eed);
         let evals: Vec<F> = (0..(1usize << NV))
@@ -377,7 +376,12 @@ mod tests {
         let rows = lp
             .relation_matrix_row_count_for(1, RelationMatrixRowLayout::WithDBlock)
             .expect("valid row count");
-        let num_i = rows.next_power_of_two().trailing_zeros() as usize;
+        let num_i = lp
+            .relation_row_index_num_vars_for_layout(
+                RelationMatrixRowLayout::WithDBlock,
+                &opening_batch,
+            )
+            .expect("tau1 vars");
 
         for row in 0..rows {
             let tau1: Vec<F> = (0..num_i)
@@ -429,10 +433,9 @@ mod tests {
         const D: usize = Cfg::D;
         const NV: usize = 12;
 
-        let lp = Cfg::get_params_for_batched_commitment(
-            &akita_types::OpeningClaimsLayout::new(NV, 1).expect("singleton opening batch"),
-        )
-        .expect("lp");
+        let opening_batch =
+            akita_types::OpeningClaimsLayout::new(NV, 1).expect("singleton opening batch");
+        let lp = Cfg::get_params_for_batched_commitment(&opening_batch).expect("lp");
 
         let mut rng = StdRng::seed_from_u64(0x5eed_cafe);
         let evals: Vec<F> = (0..(1usize << NV))
@@ -522,7 +525,12 @@ mod tests {
         let rows = lp
             .relation_matrix_row_count_for(1, RelationMatrixRowLayout::WithDBlock)
             .unwrap();
-        let num_i = rows.next_power_of_two().trailing_zeros() as usize;
+        let num_i = lp
+            .relation_row_index_num_vars_for_layout(
+                RelationMatrixRowLayout::WithDBlock,
+                &opening_batch,
+            )
+            .expect("tau1 vars");
 
         for row in 0..rows {
             let tau1: Vec<F> = (0..num_i)
@@ -610,10 +618,10 @@ mod tests {
         const D: usize = Cfg::D;
         const NV: usize = 12;
 
-        let level_params = Cfg::get_params_for_batched_commitment(
-            &akita_types::OpeningClaimsLayout::new(NV, 1).expect("singleton opening batch"),
-        )
-        .expect("commitment layout");
+        let opening_batch =
+            akita_types::OpeningClaimsLayout::new(NV, 1).expect("singleton opening batch");
+        let level_params =
+            Cfg::get_params_for_batched_commitment(&opening_batch).expect("commitment layout");
 
         let mut rng = StdRng::seed_from_u64(0xdead_beef);
         let evals: Vec<F> = (0..(1usize << NV))
@@ -699,7 +707,12 @@ mod tests {
         let rows = level_params
             .relation_matrix_row_count_for(1, RelationMatrixRowLayout::WithDBlock)
             .unwrap();
-        let num_i = rows.next_power_of_two().trailing_zeros() as usize;
+        let num_i = level_params
+            .relation_row_index_num_vars_for_layout(
+                RelationMatrixRowLayout::WithDBlock,
+                &opening_batch,
+            )
+            .expect("tau1 vars");
         let tau1: Vec<F> = (0..num_i)
             .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
             .collect();

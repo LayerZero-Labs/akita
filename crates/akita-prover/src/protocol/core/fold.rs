@@ -583,15 +583,13 @@ where
     } else {
         sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_SUMCHECK_BATCH)
     };
-    let trace_coeff = {
-        let trace_gamma = if is_terminal_fold {
-            sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_SUMCHECK_BATCH)
-        } else {
-            batching_coeff
-        };
-        stage2_trace_coeff(batching_coeff, trace_gamma, is_terminal_fold)
-    };
-    let trace_opening_claim = trace_coeff * prepared_fold.trace_eval_target;
+    // EvaluationTrace is the last padded relation row: weight openings by
+    // `eq(tau1, EvaluationTrace_row_index)`.
+    let opening_batch = prepared_fold.instance.opening_batch();
+    let evaluation_trace_row =
+        lp.evaluation_trace_row_index_for_layout(relation_matrix_row_layout, opening_batch)?;
+    let evaluation_trace_weight = evaluation_trace_row_weight(evaluation_trace_row, &rs.tau1)?;
+    let trace_opening_claim = evaluation_trace_weight * prepared_fold.trace_eval_target;
     ensure_trace_stage2_supported(E::EXT_DEGREE)?;
     let trace_compact = if let Some(row_coefficients) = prepared_fold.row_coefficients.as_ref() {
         if lp.has_precommitted_groups() {
@@ -608,7 +606,7 @@ where
                     .ok_or(AkitaError::InvalidProof)?,
                 row_coefficients,
                 prepared_fold.trace_claim_scales.as_deref(),
-                trace_coeff,
+                evaluation_trace_weight,
                 rs.live_x_cols,
             )?)
         } else {
@@ -639,7 +637,7 @@ where
                     .ok_or(AkitaError::InvalidProof)?,
                 row_coefficients,
                 prepared_fold.trace_claim_scales.as_deref(),
-                trace_coeff,
+                evaluation_trace_weight,
                 rs.live_x_cols,
             )?)
         }
@@ -660,7 +658,7 @@ where
             &layout,
             prepared,
             prepared_fold.trace_scale,
-            trace_coeff,
+            evaluation_trace_weight,
             rs.live_x_cols,
         )?)
     } else {
@@ -962,5 +960,58 @@ where
             }))
         }
         SetupContributionMode::Direct => Ok(None),
+    }
+}
+
+#[cfg(all(test, feature = "logging-transcript"))]
+mod transcript_schedule_tests {
+    use super::*;
+    use akita_field::{Fp32, FpExt2, NegOneNr};
+    use akita_transcript::{
+        is_ext_limb_label, labels, AkitaTranscript, LoggingTranscript, Transcript, TranscriptEvent,
+    };
+
+    type F = Fp32<251>;
+    type E = FpExt2<F, NegOneNr>;
+
+    fn sample_stage2_batching_coeff<T: Transcript<F>>(
+        transcript: &mut T,
+        is_terminal_fold: bool,
+    ) -> E {
+        if is_terminal_fold {
+            E::zero()
+        } else {
+            sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_SUMCHECK_BATCH)
+        }
+    }
+
+    fn squeezes_logical_label(events: &[TranscriptEvent], base: &[u8]) -> bool {
+        events.iter().any(|event| {
+            matches!(event, TranscriptEvent::Squeeze { label, .. }
+                if label.as_slice() == base || is_ext_limb_label(label, base))
+        })
+    }
+
+    #[test]
+    fn terminal_fold_skips_stage2_batch_challenge() {
+        let mut transcript = LoggingTranscript::wrap(AkitaTranscript::<F>::new(b"fold/terminal"));
+        let batching = sample_stage2_batching_coeff(&mut transcript, true);
+        assert!(batching.is_zero());
+        assert!(
+            !squeezes_logical_label(transcript.events(), labels::CHALLENGE_SUMCHECK_BATCH),
+            "terminal fold must not squeeze stage-2 batch challenge for trace weighting"
+        );
+    }
+
+    #[test]
+    fn intermediate_fold_squeezes_stage2_batch_challenge() {
+        let mut transcript =
+            LoggingTranscript::wrap(AkitaTranscript::<F>::new(b"fold/intermediate"));
+        let batching = sample_stage2_batching_coeff(&mut transcript, false);
+        assert!(!batching.is_zero());
+        assert!(
+            squeezes_logical_label(transcript.events(), labels::CHALLENGE_SUMCHECK_BATCH),
+            "intermediate fold must squeeze stage-2 batch challenge before trace weighting"
+        );
     }
 }
