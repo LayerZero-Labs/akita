@@ -3,7 +3,8 @@
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_field::Prime128OffsetA7F7;
 use akita_types::{
-    gadget_row_scalars, CommitmentRingDims, RelationMatrixRowLayout, SetupContributionGroupInputs,
+    gadget_row_scalars, CommitmentRingDims, OpeningBatchWitnessGroup, OpeningBatchWitnessLayout,
+    OpeningBlockLayout, RelationMatrixRowLayout, SemanticGroupId, SetupContributionGroupInputs,
     SetupContributionPlan, SetupContributionPlanInputs, SetupIndexWeightEvaluator,
 };
 use criterion::measurement::WallTime;
@@ -20,6 +21,7 @@ struct SetupIndexWeightBenchCase {
     plan: SetupContributionPlan<F>,
     evaluator: SetupIndexWeightEvaluator<F>,
     rho: Vec<F>,
+    alpha: F,
 }
 
 fn test_scalar(value: u128) -> F {
@@ -50,23 +52,25 @@ fn make_case(num_blocks: usize, blocks_per_chunk: usize) -> SetupIndexWeightBenc
     let n_d = 2;
     let log_basis = 4;
     let z_range = block_len * depth_commit;
-    let e_len_per_chunk = num_claims * depth_open * blocks_per_chunk;
-    let t_len_per_chunk = n_a * num_claims * depth_open * blocks_per_chunk;
-    let chunk_stride = z_range + e_len_per_chunk + t_len_per_chunk + 5;
-    let chunks = (0..(num_blocks / blocks_per_chunk))
-        .map(|idx| {
-            let base = idx * chunk_stride + idx;
-            let offset_e = base + z_range + 1;
-            let offset_t = offset_e + e_len_per_chunk + 2;
-            akita_types::WitnessChunkLayout {
-                offset_z: base,
-                offset_e,
-                offset_t,
-                offset_r: None,
-                global_block_base: idx * blocks_per_chunk,
-            }
-        })
-        .collect::<Vec<_>>();
+    let layout = OpeningBatchWitnessLayout::new(
+        vec![OpeningBatchWitnessGroup {
+            id: SemanticGroupId(0),
+            num_claims,
+            num_blocks,
+            block_len,
+            depth_open,
+            depth_commit,
+            depth_fold,
+            n_a,
+            e_setup_col_offset: 0,
+        }],
+        vec![SemanticGroupId(0)],
+        vec![SemanticGroupId(0)],
+        num_blocks / blocks_per_chunk,
+        n_d,
+        depth_fold,
+    )
+    .unwrap();
 
     let rows = 1 + n_a + n_b + n_d;
     let tau1 = (0..3)
@@ -90,7 +94,9 @@ fn make_case(num_blocks: usize, blocks_per_chunk: usize) -> SetupIndexWeightBenc
         inner_width: z_range,
         eq_tau1: EqPolynomial::evals(&tau1).unwrap().into(),
     };
+    let opening_layout = OpeningBlockLayout::new(1, layout.total_len()).unwrap();
     let groups = vec![SetupContributionGroupInputs {
+        group_id: SemanticGroupId(0),
         e_col_offset: 0,
         num_claims,
         num_blocks,
@@ -104,8 +110,8 @@ fn make_case(num_blocks: usize, blocks_per_chunk: usize) -> SetupIndexWeightBenc
         t_cols_per_vector: n_a * depth_open * num_blocks,
         a_row_start: 1,
         b_row_start: 1 + n_a,
-        blocks_per_chunk,
-        chunks,
+        layout: std::sync::Arc::new(layout),
+        opening_layout,
     }];
     let static_plan = SetupContributionPlan::prepare_static(
         &inputs,
@@ -119,6 +125,7 @@ fn make_case(num_blocks: usize, blocks_per_chunk: usize) -> SetupIndexWeightBenc
         .map(|idx| test_scalar(101 + idx as u128))
         .collect::<Vec<_>>();
     let fold_gadget = gadget_row_scalars::<F>(depth_fold, log_basis);
+    let alpha = test_scalar(3);
     let plan = SetupContributionPlan::finish_plan::<F>(
         &static_plan,
         &full_vec_randomness,
@@ -126,18 +133,17 @@ fn make_case(num_blocks: usize, blocks_per_chunk: usize) -> SetupIndexWeightBenc
         None,
         Some(&fold_gadget),
         &groups,
+        CommitmentRingDims::uniform(D),
     )
     .unwrap();
     let evaluator = SetupIndexWeightEvaluator::new::<F>(
         &inputs,
-        &static_plan,
+        &plan,
         &groups,
         &tau1,
         &full_vec_randomness,
         &fold_gadget,
-        D,
-        CommitmentRingDims::uniform(D),
-        test_scalar(3),
+        alpha,
     )
     .unwrap();
     let rho_bits = evaluator.required().next_power_of_two().trailing_zeros() as usize;
@@ -145,14 +151,15 @@ fn make_case(num_blocks: usize, blocks_per_chunk: usize) -> SetupIndexWeightBenc
         .map(|idx| test_scalar(901 + idx as u128))
         .collect::<Vec<_>>();
 
-    let packed = plan.evaluate_setup_index_weight_mle(&rho).unwrap();
-    let succinct = evaluator.evaluate(&rho).unwrap().expect("supported layout");
+    let packed = plan.evaluate_setup_index_weight_mle(&rho, alpha).unwrap();
+    let succinct = evaluator.evaluate(&rho).unwrap();
     assert_eq!(succinct, packed);
 
     SetupIndexWeightBenchCase {
         plan,
         evaluator,
         rho,
+        alpha,
     }
 }
 
@@ -173,7 +180,10 @@ fn bench_setup_index_weight(c: &mut Criterion) {
                     b.iter(|| {
                         black_box(
                             case.plan
-                                .evaluate_setup_index_weight_mle(black_box(&case.rho))
+                                .evaluate_setup_index_weight_mle(
+                                    black_box(&case.rho),
+                                    black_box(case.alpha),
+                                )
                                 .unwrap(),
                         )
                     })
@@ -183,14 +193,7 @@ fn bench_setup_index_weight(c: &mut Criterion) {
                 BenchmarkId::new(format!("{layout}/succinct_path"), num_blocks),
                 &case,
                 |b, case| {
-                    b.iter(|| {
-                        black_box(
-                            case.evaluator
-                                .evaluate(black_box(&case.rho))
-                                .unwrap()
-                                .unwrap(),
-                        )
-                    })
+                    b.iter(|| black_box(case.evaluator.evaluate(black_box(&case.rho)).unwrap()))
                 },
             );
         }

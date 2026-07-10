@@ -1,12 +1,14 @@
 use super::kernels::GroupSetupSegment;
 use crate::{
-    RelationMatrixRowLayout, SetupContributionPlanInputs, WitnessChunkLayout, WitnessLayout,
+    OpeningBatchWitnessLayout, OpeningBlockLayout, RelationMatrixRowLayout, SemanticGroupId,
+    SetupContributionPlanInputs, SetupProjectionGeometry,
 };
 use akita_field::{AkitaError, FieldCore};
 use std::sync::Arc;
 
 #[derive(Clone)]
 pub struct SetupContributionGroupInputs {
+    pub group_id: SemanticGroupId,
     pub e_col_offset: usize,
     pub num_claims: usize,
     pub num_blocks: usize,
@@ -20,8 +22,8 @@ pub struct SetupContributionGroupInputs {
     pub t_cols_per_vector: usize,
     pub a_row_start: usize,
     pub b_row_start: usize,
-    pub blocks_per_chunk: usize,
-    pub chunks: Vec<WitnessChunkLayout>,
+    pub layout: Arc<OpeningBatchWitnessLayout>,
+    pub opening_layout: OpeningBlockLayout,
 }
 
 pub struct SingleGroupSetupContributionLayout {
@@ -40,7 +42,8 @@ impl SetupContributionGroupInputs {
     /// contributions share the same planning pipeline.
     pub fn single_group_layout<E: FieldCore>(
         inputs: &SetupContributionPlanInputs<E>,
-        chunk_layout: &WitnessLayout,
+        layout: &OpeningBatchWitnessLayout,
+        opening_layout: OpeningBlockLayout,
         fold_log_basis: u32,
     ) -> Result<SingleGroupSetupContributionLayout, AkitaError> {
         if inputs.num_groups != 1 || inputs.num_polys_per_group.len() != 1 {
@@ -74,6 +77,7 @@ impl SetupContributionGroupInputs {
             .ok_or_else(|| AkitaError::InvalidSetup("T polynomial width overflow".into()))?;
         Ok(SingleGroupSetupContributionLayout {
             group: SetupContributionGroupInputs {
+                group_id: SemanticGroupId(0),
                 e_col_offset: 0,
                 num_claims: inputs.num_claims,
                 num_blocks: inputs.num_blocks,
@@ -87,8 +91,8 @@ impl SetupContributionGroupInputs {
                 t_cols_per_vector,
                 a_row_start,
                 b_row_start,
-                blocks_per_chunk: chunk_layout.blocks_per_chunk,
-                chunks: chunk_layout.chunks.clone(),
+                layout: Arc::new(layout.clone()),
+                opening_layout,
             },
             d_row_start,
             d_rows,
@@ -101,6 +105,7 @@ pub struct SetupContributionPlan<E> {
     pub(crate) groups: Vec<SetupContributionGroupPlan<E>>,
     pub(crate) d_rows: usize,
     pub(crate) d_physical_cols: usize,
+    pub(crate) projection_geometry: SetupProjectionGeometry,
 }
 
 /// Tau1-derived setup weights cached at ring-switch prepare time.

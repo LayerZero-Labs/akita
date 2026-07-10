@@ -1,8 +1,8 @@
 #[cfg(test)]
 use crate::protocol::ring_switch::PreparedChallengeEvals;
 use crate::protocol::ring_switch::RelationMatrixEvaluator;
-use akita_algebra::eq_poly::EqPolynomial;
-use akita_algebra::offset_eq::{eval_offset_eq_interval, summarize_pow2_block_carries};
+use akita_algebra::offset_eq::{eq_eval_at_index, MAX_COMPACT_STRIDE_TERMS};
+#[cfg(test)]
 use akita_field::parallel::*;
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
 
@@ -12,16 +12,20 @@ use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
 /// **Note:** This module is only tested and intended for the
 /// `POSSIBLE_CARRIES = 2` case. Anything other than `2` would require the
 /// outer-sum algebra to be reworked; do not change this constant.
+#[cfg(test)]
 pub(super) const POSSIBLE_CARRIES: usize = 2;
 
 /// Inner-sum slot for the no-carry bucket (`carry = 0`).
+#[cfg(test)]
 pub(super) const CARRY0: usize = 0;
 
 /// Inner-sum slot for the one-carry bucket (`carry = 1`).
+#[cfg(test)]
 pub(super) const CARRY1: usize = 1;
 
 /// Peeled-block MLE evaluator for one structured slice of `M`. See
 /// `book/src/how/verifying/matrix_evaluation.md` for the full derivation.
+#[cfg(test)]
 pub(crate) trait StructuredSliceMleEvaluator<F: FieldCore>: Sync {
     /// Number of outer-loop indices.
     fn num_outer_indices(&self) -> usize;
@@ -95,6 +99,7 @@ pub(crate) trait StructuredSliceMleEvaluator<F: FieldCore>: Sync {
 }
 
 /// E-hat segment slice evaluator.
+#[cfg(test)]
 pub(crate) struct EStructuredSlicesEvaluator<'a, F, E> {
     /// Gadget vector for the digit decomposition of `e`. Length =
     /// `num_digits`.
@@ -107,6 +112,7 @@ pub(crate) struct EStructuredSlicesEvaluator<'a, F, E> {
     pub high_eq_table: &'a [E],
 }
 
+#[cfg(test)]
 impl<F, E> StructuredSliceMleEvaluator<E> for EStructuredSlicesEvaluator<'_, F, E>
 where
     F: FieldCore,
@@ -141,6 +147,7 @@ where
 }
 
 /// T-segment slice evaluator.
+#[cfg(test)]
 pub(crate) struct TStructuredSlicesEvaluator<'a, F, E> {
     /// Gadget vector for the digit decomposition of `w`. Length =
     /// `num_digits`.
@@ -154,6 +161,7 @@ pub(crate) struct TStructuredSlicesEvaluator<'a, F, E> {
     pub high_eq_table: &'a [E],
 }
 
+#[cfg(test)]
 impl<F, E> StructuredSliceMleEvaluator<E> for TStructuredSlicesEvaluator<'_, F, E>
 where
     F: FieldCore,
@@ -188,105 +196,10 @@ where
     }
 }
 
-/// Pow2 Z-segment slice evaluator.
-pub(crate) struct ZStructuredPow2SlicesEvaluator<'a, F: FieldCore, E> {
-    /// Commit-side gadget. Length = `depth_commit`.
-    pub commit_gadget: &'a [F],
-    /// Fold-side gadget. Length = `depth_fold`.
-    pub fold_gadget: &'a [F],
-    /// Carry summary of the opening point's in-block weights
-    /// `opening_point.a[..block_len]`.
-    pub a_block_summary: [E; 2],
-    /// `tau1` equality weight for the consistency-challenge row of `M`.
-    pub consistency_weight: E,
-    /// Precomputed high-eq table relative to the slice's high offset.
-    pub high_eq_table: &'a [E],
-}
-
-impl<F, E> StructuredSliceMleEvaluator<E> for ZStructuredPow2SlicesEvaluator<'_, F, E>
-where
-    F: FieldCore,
-    E: ExtField<F>,
-{
-    #[inline]
-    fn num_outer_indices(&self) -> usize {
-        self.fold_gadget.len() * self.commit_gadget.len()
-    }
-
-    #[inline]
-    fn high_eq_table(&self) -> &[E] {
-        self.high_eq_table
-    }
-
-    #[inline]
-    fn compute_inner_sum(&self, outer_index: usize) -> [E; POSSIBLE_CARRIES] {
-        let depth_fold = self.fold_gadget.len();
-        let df = outer_index % depth_fold;
-        let dc = outer_index / depth_fold;
-
-        let [a_carry0, a_carry1] = self.a_block_summary;
-        let scale = (-self.consistency_weight)
-            .mul_base(self.commit_gadget[dc])
-            .mul_base(self.fold_gadget[df]);
-        [scale * a_carry0, scale * a_carry1]
-    }
-}
-
-/// Dense fallback for non-pow2 Z segments. This path materializes the Z slice
-/// and binds it over its live global interval with [`eval_offset_eq_interval`].
-pub(crate) struct ZDenseSlicesEvaluator<'a, F: FieldCore, E> {
-    /// Commit-side gadget. Length = `depth_commit`.
-    pub commit_gadget: &'a [F],
-    /// Fold-side gadget. Length = `depth_fold`.
-    pub fold_gadget: &'a [F],
-    /// `tau1` equality weight for the consistency-challenge row of `M`.
-    pub consistency_weight: E,
-    /// Alpha-evaluated ring-multiplier `a` values for the opening point.
-    /// Length = `block_len`.
-    pub opening_a_evals: &'a [E],
-    /// Full multilinear evaluation point.
-    pub full_vec_randomness: &'a [E],
-    /// Start-of-slice offset of `z` inside `M`.
-    pub offset_z: usize,
-    /// Inner block size of the `z` segment.
-    pub block_len: usize,
-}
-
-impl<F, E> ZDenseSlicesEvaluator<'_, F, E>
-where
-    F: FieldCore,
-    E: ExtField<F>,
-{
-    /// Evaluate the dense materialized Z segment.
-    pub(crate) fn evaluate(&self) -> Result<E, AkitaError> {
-        let z_len = self.fold_gadget.len() * self.commit_gadget.len() * self.block_len;
-        let z_segment_struct: Vec<E> = cfg_into_iter!(0..z_len)
-            .map(|x| {
-                let compound_dig = x / self.block_len;
-                let blk = x % self.block_len;
-                let dc_idx = compound_dig / self.fold_gadget.len();
-                let df = compound_dig % self.fold_gadget.len();
-                -self.consistency_weight
-                    * self.opening_a_evals[blk]
-                        .mul_base(self.commit_gadget[dc_idx])
-                        .mul_base(self.fold_gadget[df])
-            })
-            .collect();
-        eval_offset_eq_interval(
-            self.full_vec_randomness,
-            self.offset_z,
-            E::one(),
-            &z_segment_struct,
-        )
-    }
-}
-
 /// Compute the `r`-tail contribution.
 ///
-/// Power-of-two `levels` peels the pow2 low factor into carry buckets
-/// `[A0, A1]` and evaluates the small high factor at offsets `offset_hi` and
-/// `offset_hi + 1` via two sparse interval bindings. Otherwise it materialises
-/// the `r`-tail vector and evaluates it as a single contiguous interval.
+/// Physical `r` addresses are mapped into the canonical opening domain before
+/// applying their equality weights.
 pub(crate) fn compute_r_contribution<F, E>(
     prepared: &RelationMatrixEvaluator<E>,
     full_vec_randomness: &[E],
@@ -300,33 +213,29 @@ where
 {
     let levels = r_gadget.len();
     let rows = prepared.setup_contribution_inputs.rows;
-    if levels.is_power_of_two() {
-        let _span = tracing::info_span!("r_structured").entered();
-        let r_gadget_ext: Vec<E> = r_gadget.iter().copied().map(E::lift_base).collect();
-        // Peel the pow2 low factor into carry buckets [A0, A1], then evaluate
-        // the small high factor at offsets `offset_hi` and `offset_hi + 1`.
-        let m0 = levels.trailing_zeros() as usize;
-        let eq_low = EqPolynomial::evals(&full_vec_randomness[..m0])?;
-        let offset_lo = offset_r & (levels - 1);
-        let [a0, a1] = summarize_pow2_block_carries(&eq_low, offset_lo, &r_gadget_ext)?;
-        let offset_hi = offset_r >> m0;
-        let high = &full_vec_randomness[m0..];
-        let eq_tau1_rows = &prepared.setup_contribution_inputs.eq_tau1[..rows];
-        let b0 = eval_offset_eq_interval(high, offset_hi, E::one(), eq_tau1_rows)?;
-        let b1 = eval_offset_eq_interval(high, offset_hi + 1, E::one(), eq_tau1_rows)?;
-        Ok(-denom * (a0 * b0 + a1 * b1))
-    } else {
-        let _span = tracing::info_span!("r_dense").entered();
-        let r_tail: Vec<E> = cfg_into_iter!(0..rows * levels)
-            .map(|idx| {
-                let row_idx = idx / levels;
-                let level_idx = idx % levels;
-                -(prepared.setup_contribution_inputs.eq_tau1[row_idx] * denom)
-                    .mul_base(r_gadget[level_idx])
-            })
-            .collect();
-        eval_offset_eq_interval(full_vec_randomness, offset_r, E::one(), &r_tail)
+    let terms = rows.checked_mul(levels).ok_or(AkitaError::InvalidProof)?;
+    if terms > MAX_COMPACT_STRIDE_TERMS {
+        return Err(AkitaError::InvalidSize {
+            expected: MAX_COMPACT_STRIDE_TERMS,
+            actual: terms,
+        });
     }
+    let mut contribution = E::zero();
+    for row_idx in 0..rows {
+        for (level_idx, &gadget) in r_gadget.iter().enumerate() {
+            let physical_index = offset_r
+                .checked_add(row_idx * levels + level_idx)
+                .ok_or(AkitaError::InvalidProof)?;
+            let opening_index = prepared
+                .opening_layout
+                .opening_index_for_physical(physical_index)?;
+            contribution -= eq_eval_at_index(full_vec_randomness, opening_index)
+                * prepared.setup_contribution_inputs.eq_tau1[row_idx]
+                * E::lift_base(gadget)
+                * denom;
+        }
+    }
+    Ok(contribution)
 }
 
 #[cfg(test)]
@@ -340,10 +249,10 @@ mod tests {
     use akita_challenges::SparseChallengeConfig;
     use akita_field::Prime128OffsetA7F7;
     use akita_types::{
-        gadget_row_scalars, r_decomp_levels, LevelParams, OpeningClaimsLayout,
-        RelationMatrixRowLayout, RingMultiplierOpeningPoint, RingOpeningPoint,
-        RingRelationInstance, SetupContributionPlan, SetupContributionPlanInputs, SisModulusFamily,
-        WitnessLayout,
+        gadget_row_scalars, r_decomp_levels, LevelParams, OpeningBatchWitnessLayout,
+        OpeningBlockLayout, OpeningClaimsLayout, RelationMatrixRowLayout,
+        RingMultiplierOpeningPoint, RingOpeningPoint, RingRelationInstance, SemanticGroupId,
+        SetupContributionPlan, SetupContributionPlanInputs, SisModulusFamily,
     };
 
     use crate::protocol::ring_switch::{
@@ -355,15 +264,11 @@ mod tests {
 
     struct StructuredFixture {
         prepared: RelationMatrixEvaluator<F>,
-        opening_point: RingOpeningPoint<F>,
         full_vec_randomness: Vec<F>,
         offset_e: usize,
         offset_t: usize,
-        offset_z: usize,
         offset_r: usize,
         g1_open: Vec<F>,
-        commit_gadget: Vec<F>,
-        fold_gadget: Vec<F>,
         r_gadget: Vec<F>,
     }
 
@@ -389,7 +294,7 @@ mod tests {
         lp: &LevelParams,
         relation_matrix_row_layout: RelationMatrixRowLayout,
         num_polys: usize,
-    ) -> Result<WitnessLayout, AkitaError> {
+    ) -> Result<OpeningBatchWitnessLayout, AkitaError> {
         let opening_batch = OpeningClaimsLayout::new(32, num_polys)?;
         let opening_point = RingOpeningPoint {
             a: vec![F::zero(); lp.block_len],
@@ -448,24 +353,20 @@ mod tests {
 
         let levels = r_decomp_levels::<F>(log_basis);
         let lp = fixture_lp();
-        let chunk_layout = ring_relation_segment_layout_for_opening_shape(
+        let layout = ring_relation_segment_layout_for_opening_shape(
             &lp,
             RelationMatrixRowLayout::WithDBlock,
             num_claims,
         )
         .expect("witness segment layout");
-        let chunk0 = chunk_layout.chunks[0];
-        let offset_e = chunk0.offset_e;
-        let offset_t = chunk0.offset_t;
-        let offset_z = chunk0.offset_z;
-        let offset_r = chunk0.offset_r.expect("single chunk carries r-tail");
+        let unit0 = &layout.ownership_units[0];
+        let offset_e = unit0.e_range.start;
+        let offset_t = unit0.t_range.start;
+        let offset_r = layout.r_range.start;
         let total_len = offset_r + rows * levels;
         let bits = total_len.next_power_of_two().trailing_zeros() as usize;
 
-        let opening_point = RingOpeningPoint {
-            a: (0..block_len).map(|idx| f(1_000 + idx as u128)).collect(),
-            b: (0..num_blocks).map(|idx| f(2_000 + idx as u128)).collect(),
-        };
+        let opening_a_evals = (0..block_len).map(|idx| f(1_000 + idx as u128)).collect();
         let setup_contribution_inputs = SetupContributionPlanInputs {
             relation_matrix_row_layout: RelationMatrixRowLayout::WithDBlock,
             rows,
@@ -492,8 +393,8 @@ mod tests {
                     .map(|idx| f(3_000 + idx as u128))
                     .collect(),
             ),
-            opening_a_evals: opening_point.a.clone(),
-            chunk_range: 0..chunk_layout.chunks.len(),
+            opening_a_evals,
+            group_id: SemanticGroupId(0),
             e_col_offset: 0,
             num_claims,
             num_blocks,
@@ -508,8 +409,9 @@ mod tests {
             a_row_start: 1,
             b_row_start: 1 + n_a,
         }];
+        let opening_layout = OpeningBlockLayout::new(1, layout.total_len()).unwrap();
         let setup_contribution_groups =
-            build_setup_contribution_groups(&chunk_layout, &groups).unwrap();
+            build_setup_contribution_groups(&layout, opening_layout, &groups).unwrap();
         let setup_contribution_static = SetupContributionPlan::prepare_static(
             &setup_contribution_inputs,
             &setup_contribution_groups,
@@ -523,28 +425,23 @@ mod tests {
             groups,
             depth_fold,
             log_basis,
-            chunk_layout,
+            layout,
+            opening_layout,
             setup_contribution_groups,
             setup_contribution_inputs,
             setup_contribution_static,
         };
         let full_vec_randomness = (0..bits).map(|idx| f(6_000 + idx as u128)).collect();
         let g1_open = gadget_row_scalars::<F>(depth_open, log_basis);
-        let commit_gadget = gadget_row_scalars::<F>(depth_commit, log_basis);
-        let fold_gadget = gadget_row_scalars::<F>(depth_fold, log_basis);
         let r_gadget = gadget_row_scalars::<F>(levels, log_basis);
 
         StructuredFixture {
             prepared,
-            opening_point,
             full_vec_randomness,
             offset_e,
             offset_t,
-            offset_z,
             offset_r,
             g1_open,
-            commit_gadget,
-            fold_gadget,
             r_gadget,
         }
     }
@@ -652,98 +549,6 @@ mod tests {
                 * c_alphas[blk]
                 * fx.g1_open[digit_idx];
             expected += entry * eq[fx.offset_t + x];
-        }
-        assert_eq!(got, expected);
-    }
-
-    #[test]
-    fn z_structured_matches_materialized_range_inner_product() {
-        let fx = fixture();
-        let p = &fx.prepared;
-        let g = &p.groups[0];
-        let z_len = g.depth_fold * g.depth_commit * g.block_len;
-        let eq = eq_evals(fx.offset_z + z_len, &fx.full_vec_randomness);
-        let z_offset_low_bits = g.block_len.trailing_zeros() as usize;
-        let z_block_low_eq =
-            EqPolynomial::evals(&fx.full_vec_randomness[..z_offset_low_bits]).unwrap();
-        let z_offset_low = fx.offset_z & (g.block_len - 1);
-
-        let a_block_summary = summarize_pow2_block_carries(
-            &z_block_low_eq,
-            z_offset_low,
-            &fx.opening_point.a[..g.block_len],
-        )
-        .unwrap();
-        let z_high = &fx.full_vec_randomness[z_offset_low_bits..];
-        let z_offset_high = fx.offset_z >> z_offset_low_bits;
-        let z_outer = fx.fold_gadget.len() * fx.commit_gadget.len();
-        let eq_hi_z: Vec<F> = (0..=z_outer)
-            .map(|k| eq_eval_at_index(z_high, z_offset_high + k))
-            .collect();
-        let got = ZStructuredPow2SlicesEvaluator {
-            commit_gadget: &fx.commit_gadget,
-            fold_gadget: &fx.fold_gadget,
-            a_block_summary,
-            consistency_weight: p.setup_contribution_inputs.eq_tau1[0],
-            high_eq_table: &eq_hi_z,
-        }
-        .evaluate();
-
-        let mut expected = F::zero();
-        let z_total_blocks = g.block_len;
-        for x in 0..z_len {
-            let compound_dig = x / z_total_blocks;
-            let global_blk = x % z_total_blocks;
-            let dc = compound_dig / g.depth_fold;
-            let df = compound_dig % g.depth_fold;
-            let blk = global_blk % g.block_len;
-            let entry = -(p.setup_contribution_inputs.eq_tau1[0]
-                * fx.opening_point.a[blk]
-                * fx.commit_gadget[dc]
-                * fx.fold_gadget[df]);
-            expected += entry * eq[fx.offset_z + x];
-        }
-        assert_eq!(got, expected);
-    }
-
-    #[test]
-    fn z_dense_matches_materialized_range_inner_product() {
-        let mut fx = fixture();
-        fx.prepared.groups[0].block_len = 510;
-        fx.prepared.setup_contribution_inputs.inner_width =
-            fx.prepared.groups[0].block_len * fx.prepared.groups[0].depth_commit;
-        let p = &fx.prepared;
-        let g = &p.groups[0];
-        assert!(!g.block_len.is_power_of_two());
-
-        let z_len = g.depth_fold * g.depth_commit * g.block_len;
-        let eq = eq_evals(fx.offset_z + z_len, &fx.full_vec_randomness);
-        let opening_a_evals = fx.opening_point.a[..g.block_len].to_vec();
-        let got = ZDenseSlicesEvaluator {
-            commit_gadget: &fx.commit_gadget,
-            fold_gadget: &fx.fold_gadget,
-            consistency_weight: p.setup_contribution_inputs.eq_tau1[0],
-            opening_a_evals: &opening_a_evals,
-            full_vec_randomness: &fx.full_vec_randomness,
-            offset_z: fx.offset_z,
-            block_len: g.block_len,
-        }
-        .evaluate()
-        .unwrap();
-
-        let mut expected = F::zero();
-        let z_total_blocks = g.block_len;
-        for x in 0..z_len {
-            let compound_dig = x / z_total_blocks;
-            let global_blk = x % z_total_blocks;
-            let dc = compound_dig / g.depth_fold;
-            let df = compound_dig % g.depth_fold;
-            let blk = global_blk % g.block_len;
-            let entry = -(p.setup_contribution_inputs.eq_tau1[0]
-                * fx.opening_point.a[blk]
-                * fx.commit_gadget[dc]
-                * fx.fold_gadget[df]);
-            expected += entry * eq[fx.offset_z + x];
         }
         assert_eq!(got, expected);
     }

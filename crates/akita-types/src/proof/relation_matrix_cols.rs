@@ -10,7 +10,7 @@ use crate::layout::CommitmentRingDims;
 use crate::proof::ring_relation::RingRelationInstance;
 use crate::{
     gadget_row_scalars, r_decomp_levels, AkitaExpandedSetup, FpExtEncoding, LevelParams,
-    RelationMatrixRowLayout,
+    OpeningBlockLayout, RelationMatrixRowLayout,
 };
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::ring::{eval_flat_ring_at_pows_fast, scalar_powers};
@@ -41,6 +41,7 @@ pub fn compute_relation_matrix_col_evals<F, E>(
     tau1: &[E],
     gamma: &[E],
     relation_matrix_row_layout: RelationMatrixRowLayout,
+    opening_layout: OpeningBlockLayout,
 ) -> Result<Vec<E>, AkitaError>
 where
     F: FieldCore + CanonicalField,
@@ -76,66 +77,31 @@ where
     }
     let n_d_active = lp.n_d_active_for(relation_matrix_row_layout);
     let levels = r_decomp_levels::<F>(lp.log_basis);
-    let order = opening_batch.root_group_order()?;
-    let num_chunks = lp.witness_chunk.num_chunks;
-    let use_chunked_singleton_layout = opening_batch.num_groups() == 1;
-    let mut group_e_offsets = vec![0usize; opening_batch.num_groups()];
-    let mut e_total = 0usize;
-    let mut z_total = 0usize;
-    let mut t_total = 0usize;
-    for &group_index in &order {
-        let group_lp = lp.root_group_params(opening_batch, group_index)?;
-        let group_layout = opening_batch.group_layout(group_index)?;
-        group_e_offsets[group_index] = e_total;
-        let k_g = group_layout.num_polynomials();
-        let depth_fold = lp.num_digits_fold_for_params(group_lp, k_g, lp.field_bits_for_cache())?;
-        let group_z_len = group_lp
-            .block_len()
-            .checked_mul(group_lp.num_digits_commit())
-            .and_then(|n| n.checked_mul(depth_fold))
-            .ok_or_else(|| {
-                AkitaError::InvalidSetup("relation matrix z width overflow".to_string())
-            })?;
-        let group_z_cols = if use_chunked_singleton_layout {
-            group_z_len.checked_mul(num_chunks).ok_or_else(|| {
-                AkitaError::InvalidSetup("chunked relation matrix z width overflow".to_string())
-            })?
-        } else {
-            group_z_len
-        };
-        z_total = z_total.checked_add(group_z_cols).ok_or_else(|| {
-            AkitaError::InvalidSetup("relation matrix z width overflow".to_string())
-        })?;
-        let e_len = k_g
-            .checked_mul(group_lp.num_blocks())
-            .and_then(|n| n.checked_mul(group_lp.num_digits_open()))
-            .ok_or_else(|| AkitaError::InvalidSetup("multi-group e width overflow".to_string()))?;
-        e_total = e_total
-            .checked_add(e_len)
-            .ok_or_else(|| AkitaError::InvalidSetup("multi-group e width overflow".to_string()))?;
-        t_total = t_total
-            .checked_add(
-                k_g.checked_mul(group_lp.num_blocks())
-                    .and_then(|n| n.checked_mul(group_lp.a_rows_len()))
-                    .and_then(|n| n.checked_mul(group_lp.num_digits_open()))
-                    .ok_or_else(|| {
-                        AkitaError::InvalidSetup("relation matrix t width overflow".to_string())
-                    })?,
-            )
-            .ok_or_else(|| {
-                AkitaError::InvalidSetup("relation matrix t width overflow".to_string())
-            })?;
+    let witness_layout = instance.segment_layout(lp, None)?;
+    if witness_layout.relation_rows != rows || witness_layout.quotient_depth != levels {
+        return Err(AkitaError::InvalidSetup(
+            "relation matrix dimensions disagree with witness layout".to_string(),
+        ));
     }
-    let r_tail_len = rows
-        .checked_mul(levels)
-        .ok_or_else(|| AkitaError::InvalidSetup("relation matrix r width overflow".to_string()))?;
-    let total_cols = z_total
-        .checked_add(e_total)
-        .and_then(|n| n.checked_add(t_total))
-        .and_then(|n| n.checked_add(r_tail_len))
-        .ok_or_else(|| AkitaError::InvalidSetup("relation matrix width overflow".to_string()))?;
-    let x_len = total_cols.next_power_of_two();
-    let mut out = Vec::with_capacity(x_len);
+    let e_total = witness_layout
+        .groups
+        .iter()
+        .try_fold(0usize, |total, group| {
+            group
+                .num_claims
+                .checked_mul(group.num_blocks)
+                .and_then(|n| n.checked_mul(group.depth_open))
+                .and_then(|width| total.checked_add(width))
+                .ok_or_else(|| AkitaError::InvalidSetup("setup D width overflow".to_string()))
+        })?;
+    let total_cols = witness_layout.total_len();
+    if total_cols > opening_layout.physical_len() {
+        return Err(AkitaError::InvalidSize {
+            expected: opening_layout.physical_len(),
+            actual: total_cols,
+        });
+    }
+    let mut out = vec![E::zero(); opening_layout.opening_len()];
 
     let d_view = setup
         .shared_matrix
@@ -159,22 +125,26 @@ where
             .ok_or(AkitaError::InvalidProof)?;
     }
 
-    let mut group_segments = Vec::with_capacity(opening_batch.num_groups());
-    for (group_index, e_offset) in group_e_offsets.iter().copied().enumerate() {
+    for group_index in 0..opening_batch.num_groups() {
         let group_lp = lp.root_group_params(opening_batch, group_index)?;
         let group_layout = opening_batch.group_layout(group_index)?;
+        let group_id = crate::SemanticGroupId(group_index);
+        let witness_group = witness_layout.group(group_id)?;
+        let units = witness_layout.units_for_group(group_id)?;
         let k_g = group_layout.num_polynomials();
         let opening_point = instance.group_opening_point(group_index)?;
         let ring_multiplier_point = instance.group_ring_multiplier_point(group_index)?;
         let challenges = &instance.group_challenges()[group_index];
-        if opening_point.a.len() < group_lp.block_len()
+        let group_opening_layout =
+            OpeningBlockLayout::new(group_lp.num_blocks(), group_lp.block_len())?;
+        if opening_point.a.len() != group_opening_layout.position_stride()
             || opening_point.b.len() != group_lp.num_blocks()
         {
             return Err(AkitaError::InvalidInput(
                 "relation matrix col eval opening-point layout mismatch".to_string(),
             ));
         }
-        if ring_multiplier_point.a_len() < group_lp.block_len()
+        if ring_multiplier_point.a_len() != group_opening_layout.position_stride()
             || ring_multiplier_point.b_len() != group_lp.num_blocks()
         {
             return Err(AkitaError::InvalidInput(
@@ -196,9 +166,9 @@ where
                 .collect::<Result<Vec<_>, _>>()?,
             Challenges::Tensor { factored: _ } => challenges.evals_at_pows::<F, E>(alpha_pows)?,
         };
-        let depth_open = group_lp.num_digits_open();
-        let depth_commit = group_lp.num_digits_commit();
-        let depth_fold = lp.num_digits_fold_for_params(group_lp, k_g, lp.field_bits_for_cache())?;
+        let depth_open = witness_group.depth_open;
+        let depth_commit = witness_group.depth_commit;
+        let depth_fold = witness_group.depth_fold;
         let log_basis = group_lp.log_basis();
         let n_a = group_lp.a_rows_len();
         let n_b = group_lp.b_rows_len();
@@ -243,58 +213,54 @@ where
             .map(E::lift_base)
             .collect();
 
-        let e_segment = cfg_into_iter!(0..(total_blocks * depth_open))
-            .map(|x| {
-                let dig = x / total_blocks;
-                let blk = x % total_blocks;
-                let d_phys_col = e_offset + blk * depth_open + dig;
-                let mut acc = consistency_weight * c_alphas[blk] * g_open[dig];
-                for (di, eq_i) in eq_tau1[d_start..(d_start + n_d_active)].iter().enumerate() {
-                    if !eq_i.is_zero() {
-                        acc += *eq_i
-                            * eval_flat_ring_at_pows_fast(
-                                &d_rows[di][d_phys_col * d_d..(d_phys_col + 1) * d_d],
-                                &alpha_pows_d,
-                            );
+        for claim in 0..k_g {
+            for global_block in 0..num_blocks_g {
+                let unit = witness_layout.unit_for_block(group_id, global_block)?;
+                let challenge_index = claim * num_blocks_g + global_block;
+                for (digit, &opening_gadget) in g_open.iter().enumerate() {
+                    let d_phys_col =
+                        witness_layout.e_setup_col_index(group_id, claim, global_block, digit)?;
+                    let mut acc = consistency_weight * c_alphas[challenge_index] * opening_gadget;
+                    for (di, eq_i) in eq_tau1[d_start..(d_start + n_d_active)].iter().enumerate() {
+                        if !eq_i.is_zero() {
+                            acc += *eq_i
+                                * eval_flat_ring_at_pows_fast(
+                                    &d_rows[di][d_phys_col * d_d..(d_phys_col + 1) * d_d],
+                                    &alpha_pows_d,
+                                );
+                        }
+                    }
+                    let witness_col = witness_layout.e_index(unit, claim, global_block, digit)?;
+                    let opening_col = opening_layout.opening_index_for_physical(witness_col)?;
+                    *out.get_mut(opening_col).ok_or(AkitaError::InvalidProof)? = acc;
+                }
+                for (a_idx, &a_row_weight) in a_row_weights.iter().enumerate() {
+                    for (digit, &opening_gadget) in g_open.iter().enumerate() {
+                        let local_col = witness_layout.t_setup_col_index(
+                            group_id,
+                            claim,
+                            global_block,
+                            a_idx,
+                            digit,
+                        )?;
+                        let mut acc = a_row_weight * c_alphas[challenge_index] * opening_gadget;
+                        for (row_idx, eq_i) in b_weights.iter().enumerate() {
+                            if !eq_i.is_zero() {
+                                acc += *eq_i
+                                    * eval_flat_ring_at_pows_fast(
+                                        &b_rows[row_idx][local_col * d_b..(local_col + 1) * d_b],
+                                        &alpha_pows_b,
+                                    );
+                            }
+                        }
+                        let witness_col =
+                            witness_layout.t_index(unit, claim, global_block, a_idx, digit)?;
+                        let opening_col = opening_layout.opening_index_for_physical(witness_col)?;
+                        *out.get_mut(opening_col).ok_or(AkitaError::InvalidProof)? = acc;
                     }
                 }
-                acc
-            })
-            .collect::<Vec<_>>();
-
-        let mut challenge_sums_by_t_block = vec![E::zero(); total_blocks];
-        for claim_idx in 0..k_g {
-            for block_idx in 0..num_blocks_g {
-                let idx = claim_idx * num_blocks_g + block_idx;
-                challenge_sums_by_t_block[idx] += c_alphas[idx];
             }
         }
-        let t_compound_per_block = n_a * depth_open;
-        let t_segment = cfg_into_iter!(0..(total_blocks * t_compound_per_block))
-            .map(|x| {
-                let compound_dig = x / total_blocks;
-                let blk = x % total_blocks;
-                let a_idx = compound_dig / depth_open;
-                let digit_idx = compound_dig % depth_open;
-                let t_vector_idx = blk / num_blocks_g;
-                let block_idx = blk % num_blocks_g;
-                let phys_claim_offset =
-                    block_idx * t_compound_per_block + a_idx * depth_open + digit_idx;
-                let local_col = t_vector_idx * t_cols_per_vector + phys_claim_offset;
-                let mut acc =
-                    a_row_weights[a_idx] * challenge_sums_by_t_block[blk] * g_open[digit_idx];
-                for (row_idx, eq_i) in b_weights.iter().enumerate() {
-                    if !eq_i.is_zero() {
-                        acc += *eq_i
-                            * eval_flat_ring_at_pows_fast(
-                                &b_rows[row_idx][local_col * d_b..(local_col + 1) * d_b],
-                                &alpha_pows_b,
-                            );
-                    }
-                }
-                acc
-            })
-            .collect::<Vec<_>>();
 
         // For z_hat[blk, dc, df], the column value is:
         //
@@ -325,76 +291,32 @@ where
                 Ok(acc)
             })
             .collect::<Result<Vec<_>, AkitaError>>()?;
-        let z_segment = cfg_into_iter!(0..(block_len_g * depth_commit * depth_fold))
-            .map(|x| {
-                let compound_dig = x / block_len_g;
-                let global_blk = x % block_len_g;
-                let dc = compound_dig / depth_fold;
-                let df = compound_dig % depth_fold;
-                let phys_k = global_blk * depth_commit + dc;
-                -(z_base[phys_k] * fold_gadget[df])
-            })
-            .collect::<Vec<_>>();
-        group_segments.push((z_segment, e_segment, t_segment));
-    }
-
-    if use_chunked_singleton_layout {
-        let (z_seg, e_seg, t_seg) = group_segments.first().ok_or(AkitaError::InvalidProof)?;
-        let group_lp = lp.root_group_params(opening_batch, 0)?;
-        let num_blocks = group_lp.num_blocks();
-        if num_blocks == 0 {
-            return Err(AkitaError::InvalidSetup(
-                "chunked relation-matrix col evals require a non-zero block count".to_string(),
-            ));
-        }
-        let blocks_per_chunk = num_blocks.checked_div(num_chunks).ok_or_else(|| {
-            AkitaError::InvalidSetup(
-                "chunked relation-matrix col eval chunk count is zero".to_string(),
-            )
-        })?;
-        if blocks_per_chunk == 0 {
-            return Err(AkitaError::InvalidSetup(
-                "chunked relation-matrix col eval block window is empty".to_string(),
-            ));
-        }
-        // Singleton chunked layout `[z|e_i|t_i]…[r]`: `z` is replicated per
-        // window and `e`/`t` are partitioned by global block.
-        for chunk in 0..num_chunks {
-            out.extend_from_slice(z_seg);
-            let block_lo = chunk * blocks_per_chunk;
-            let block_hi = block_lo + blocks_per_chunk;
-            for outer in e_seg.chunks_exact(num_blocks) {
-                let window = outer
-                    .get(block_lo..block_hi)
-                    .ok_or(AkitaError::InvalidProof)?;
-                out.extend_from_slice(window);
+        for unit in units {
+            for position in 0..block_len_g {
+                for commit_digit in 0..depth_commit {
+                    for (fold_digit, &fold) in fold_gadget.iter().enumerate() {
+                        let phys_k = position * depth_commit + commit_digit;
+                        let witness_col =
+                            witness_layout.z_index(unit, position, commit_digit, fold_digit)?;
+                        let opening_col = opening_layout.opening_index_for_physical(witness_col)?;
+                        *out.get_mut(opening_col).ok_or(AkitaError::InvalidProof)? =
+                            -(z_base[phys_k] * fold);
+                    }
+                }
             }
-            for outer in t_seg.chunks_exact(num_blocks) {
-                let window = outer
-                    .get(block_lo..block_hi)
-                    .ok_or(AkitaError::InvalidProof)?;
-                out.extend_from_slice(window);
-            }
-        }
-    } else {
-        // Group-major M-eval columns: each group's `[z_g ‖ e_g ‖ t_g]`
-        // contiguously in `root_group_order()`, matching `ring_switch_build_w`.
-        for &group_index in &order {
-            let (z_seg, e_seg, t_seg) = &group_segments[group_index];
-            out.extend_from_slice(z_seg);
-            out.extend_from_slice(e_seg);
-            out.extend_from_slice(t_seg);
         }
     }
     let r_gadget: Vec<E> = gadget_row_scalars::<F>(levels, lp.log_basis)
         .into_iter()
         .map(E::lift_base)
         .collect();
-    for eq_weight in eq_tau1.iter().take(rows) {
-        for gadget in &r_gadget {
-            out.push(-(*eq_weight * denom * *gadget));
+    for (row, eq_weight) in eq_tau1.iter().take(rows).enumerate() {
+        for (digit, gadget) in r_gadget.iter().enumerate() {
+            let witness_col = witness_layout.r_index(row, digit)?;
+            let opening_col = opening_layout.opening_index_for_physical(witness_col)?;
+            *out.get_mut(opening_col).ok_or(AkitaError::InvalidProof)? =
+                -(*eq_weight * denom * *gadget);
         }
     }
-    out.resize(x_len, E::zero());
     Ok(out)
 }

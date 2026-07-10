@@ -3,7 +3,8 @@
 use crate::{
     basis_weights, dispatch_for_field, embed_ring_subfield_scalar, embed_ring_subfield_vector,
     reduce_inner_opening_to_ring_element, ring_opening_point_from_field, AkitaExpandedSetup,
-    BasisMode, BlockOrder, Commitment, FpExtEncoding, LevelParams, RingOpeningPoint, RingVec,
+    BasisMode, Commitment, FpExtEncoding, LevelParams, OpeningBlockLayout, RingOpeningPoint,
+    RingVec,
 };
 use akita_algebra::{
     ring::{eval_flat_ring_at_pows_fast, eval_ring_at_pows_fast},
@@ -441,17 +442,17 @@ fn flat_rings_are_constant<F: FieldCore>(coeffs: &[F], ring_dim: usize) -> bool 
 
 fn ring_multiplier_opening_point_from_ext<F, E, const D: usize>(
     opening_point: &[E],
-    r_vars: usize,
-    m_vars: usize,
+    layout: OpeningBlockLayout,
     basis: BasisMode,
-    block_order: BlockOrder,
 ) -> Result<RingMultiplierOpeningPoint<F>, AkitaError>
 where
     F: FieldCore + akita_field::FromPrimitiveInt,
     E: FpExtEncoding<F>,
 {
-    let expected_len = r_vars
-        .checked_add(m_vars)
+    let position_bits = layout.position_stride().trailing_zeros() as usize;
+    let block_bits = layout.num_blocks().trailing_zeros() as usize;
+    let expected_len = position_bits
+        .checked_add(block_bits)
         .ok_or_else(|| AkitaError::InvalidSetup("opening point length overflow".to_string()))?;
     if opening_point.len() != expected_len {
         return Err(AkitaError::InvalidPointDimension {
@@ -460,16 +461,8 @@ where
         });
     }
 
-    let (a_weights, b_weights) = match block_order {
-        BlockOrder::ColumnMajor => (
-            basis_weights(&opening_point[r_vars..], basis)?,
-            basis_weights(&opening_point[..r_vars], basis)?,
-        ),
-        BlockOrder::RowMajor => (
-            basis_weights(&opening_point[..m_vars], basis)?,
-            basis_weights(&opening_point[m_vars..], basis)?,
-        ),
-    };
+    let a_weights = basis_weights(&opening_point[..position_bits], basis)?;
+    let b_weights = basis_weights(&opening_point[position_bits..], basis)?;
     let error = AkitaError::InvalidInput(
         "opening point does not encode in the ring-subfield basis".to_string(),
     );
@@ -646,19 +639,19 @@ where
 pub fn prepare_opening_point<F, E, const D: usize>(
     opening_point: &[E],
     basis: BasisMode,
-    m_vars: usize,
-    r_vars: usize,
+    layout: OpeningBlockLayout,
     alpha_bits: usize,
-    block_order: BlockOrder,
 ) -> Result<PreparedOpeningPoint<F, E>, AkitaError>
 where
     F: FieldCore + akita_field::FromPrimitiveInt,
     E: FpExtEncoding<F>,
 {
     let _span = tracing::info_span!("ring_opening_point").entered();
-    let target_num_vars = m_vars
-        .checked_add(r_vars)
-        .and_then(|n| n.checked_add(alpha_bits))
+    let outer_bits = (layout.position_stride().trailing_zeros() as usize)
+        .checked_add(layout.num_blocks().trailing_zeros() as usize)
+        .ok_or_else(|| AkitaError::InvalidSetup("opening point length overflow".to_string()))?;
+    let target_num_vars = outer_bits
+        .checked_add(alpha_bits)
         .ok_or_else(|| AkitaError::InvalidSetup("opening point length overflow".to_string()))?;
     if opening_point.len() > target_num_vars {
         return Err(AkitaError::InvalidPointDimension {
@@ -682,8 +675,7 @@ where
             .collect::<Result<Vec<_>, _>>()?;
         let inner_point = &base_point[..alpha_bits];
         let outer_point = &base_point[alpha_bits..];
-        let ring_opening_point =
-            ring_opening_point_from_field::<F>(outer_point, r_vars, m_vars, basis, block_order)?;
+        let ring_opening_point = ring_opening_point_from_field::<F>(outer_point, layout, basis)?;
         let ring_multiplier_point = RingMultiplierOpeningPoint::from_base(&ring_opening_point);
         let packed_inner_point = reduce_inner_opening_to_ring_element::<F, D>(inner_point, basis)?;
         return Ok(PreparedOpeningPoint::from_parts::<D>(
@@ -718,20 +710,10 @@ where
         ),
     )?;
     let outer_point = &padded_point[alpha_bits..];
-    let ring_multiplier_point = ring_multiplier_opening_point_from_ext::<F, E, D>(
-        outer_point,
-        r_vars,
-        m_vars,
-        basis,
-        block_order,
-    )?;
-    let ring_opening_point = ring_opening_point_from_field::<F>(
-        &vec![F::zero(); outer_point.len()],
-        r_vars,
-        m_vars,
-        basis,
-        block_order,
-    )?;
+    let ring_multiplier_point =
+        ring_multiplier_opening_point_from_ext::<F, E, D>(outer_point, layout, basis)?;
+    let ring_opening_point =
+        ring_opening_point_from_field::<F>(&vec![F::zero(); outer_point.len()], layout, basis)?;
 
     Ok(PreparedOpeningPoint::from_parts::<D>(
         padded_point,
@@ -891,10 +873,8 @@ mod tests {
         let prepared = prepare_opening_point::<F, E, 32>(
             &point,
             BasisMode::Lagrange,
-            lp.m_vars,
-            lp.r_vars,
+            OpeningBlockLayout::new(lp.num_blocks, lp.block_len).unwrap(),
             5,
-            BlockOrder::ColumnMajor,
         )
         .expect("packed-inner recursive extension point should prepare");
 

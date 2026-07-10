@@ -9,7 +9,6 @@ use akita_prover::{DensePoly, OneHotPoly, ProverOpeningData};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_transcript::AkitaTranscript;
 use akita_types::stage1_tree_stage_shapes;
-use akita_types::BlockOrder;
 use akita_types::ExtensionOpeningReductionProof;
 use akita_types::RelationMatrixRowLayout;
 use akita_types::Step;
@@ -17,7 +16,7 @@ use akita_types::{
     lagrange_weights, monomial_weights, reduce_inner_opening_to_ring_element,
     ring_opening_point_from_field,
 };
-use akita_types::{scheduled_next_level_params, LevelParams};
+use akita_types::{scheduled_next_level_params, LevelParams, OpeningBlockLayout};
 use akita_types::{
     AkitaBatchedProofShape, AkitaProofStepShape, LevelProofShape, RingVec, TerminalLevelProofShape,
 };
@@ -375,10 +374,8 @@ where
     let reduced_point = &point[alpha_bits..];
     let ring_opening_point = ring_opening_point_from_field(
         reduced_point,
-        layout.r_vars,
-        layout.m_vars,
+        OpeningBlockLayout::new(layout.num_blocks, layout.block_len).unwrap(),
         BasisMode::Lagrange,
-        BlockOrder::RowMajor,
     )
     .expect("opening point shape should match layout");
 

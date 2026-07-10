@@ -194,7 +194,7 @@ fn assert_invalid_proof<T: core::fmt::Debug>(label: &str, result: Result<T, Akit
 #[cfg(feature = "logging-transcript")]
 #[test]
 fn logging_transcript_event_stream_equality_tail_bound_with_grind() {
-    use akita_transcript::{labels, LoggingTranscript, Transcript};
+    use akita_transcript::{labels, LoggingTranscript};
 
     init_rayon_pool();
     run_on_large_stack(|| {

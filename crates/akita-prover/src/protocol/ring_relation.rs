@@ -21,7 +21,7 @@ use akita_transcript::Transcript;
 use akita_types::dispatch_for_field;
 use akita_types::{assemble_relation_rhs, relation_rhs_layout_for, RingVec, RingView};
 use akita_types::{gadget_row_scalars, AkitaCommitmentHint, DigitBlocks, RelationMatrixRowLayout};
-use akita_types::{LevelParams, LevelParamsLike, RingRelationInstance};
+use akita_types::{LevelParams, LevelParamsLike, OpeningBlockLayout, RingRelationInstance};
 use akita_types::{RingMultiplierOpeningPoint, RingOpeningPoint};
 
 use super::fold_grind::{self, ProverTranscriptGrind};
@@ -542,14 +542,16 @@ impl RingRelationProver {
             let group_lp = lp.root_group_params(&opening_batch, group_index)?;
             let opening_point = &group_opening_points[group_index];
             let ring_multiplier_point = &group_ring_multiplier_points[group_index];
-            if opening_point.a.len() < group_lp.block_len()
+            let group_opening_layout =
+                OpeningBlockLayout::new(group_lp.num_blocks(), group_lp.block_len())?;
+            if opening_point.a.len() != group_opening_layout.position_stride()
                 || opening_point.b.len() != group_lp.num_blocks()
             {
                 return Err(AkitaError::InvalidInput(
                     "batched prover opening-point layout mismatch".to_string(),
                 ));
             }
-            if ring_multiplier_point.a_len() < group_lp.block_len()
+            if ring_multiplier_point.a_len() != group_opening_layout.position_stride()
                 || ring_multiplier_point.b_len() != group_lp.num_blocks()
             {
                 return Err(AkitaError::InvalidInput(
@@ -637,7 +639,12 @@ impl RingRelationProver {
                         ),
                     ))
                 }
-            )?;
+            )
+            .map_err(|err| {
+                AkitaError::InvalidInput(format!(
+                    "D-role opening decomposition failed: {err:?}"
+                ))
+            })?;
             group_e_hat.push(e_hat_g);
             group_e_folded.push(e_folded_g);
             offset = end;
@@ -667,7 +674,8 @@ impl RingRelationProver {
                 )?;
                 Ok::<_, AkitaError>(RingVec::from_ring_elems(&v_typed))
             }
-        )?;
+        )
+        .map_err(|err| AkitaError::InvalidInput(format!("D-role v failed: {err:?}")))?;
         let flattened_hint = flatten_commitment_hints_for_ring_relation::<F>(hints, &group_sizes)?;
         let opening_backend = opening_ctx.backend();
 
@@ -703,7 +711,10 @@ impl RingRelationProver {
                     group_lp,
                     group_polys.len(),
                     terminal_tail_t_vectors,
-                )?;
+                )
+                .map_err(|err| {
+                    AkitaError::InvalidInput(format!("fold grind failed: {err:?}"))
+                })?;
             if let Some(existing) = accepted_nonce {
                 if existing != nonce {
                     return Err(AkitaError::InvalidInput(
@@ -725,7 +736,10 @@ impl RingRelationProver {
         let relation_rhs_layout =
             relation_rhs_layout_for(&lp, &opening_batch, relation_matrix_row_layout)?;
         let relation_rhs =
-            assemble_relation_rhs::<F>(dims, &relation_rhs_layout, &v, &commitment_rows)?;
+            assemble_relation_rhs::<F>(dims, &relation_rhs_layout, &v, &commitment_rows)
+                .map_err(|err| {
+                    AkitaError::InvalidInput(format!("relation rhs failed: {err:?}"))
+                })?;
 
         let instance = RingRelationInstance::new(
             relation_matrix_row_layout,
@@ -738,8 +752,13 @@ impl RingRelationProver {
             relation_rhs,
             v,
             dims,
-        )?;
-        instance.check_v_shape_for_level(&lp)?;
+        )
+        .map_err(|err| {
+            AkitaError::InvalidInput(format!("relation instance failed: {err:?}"))
+        })?;
+        instance
+            .check_v_shape_for_level(&lp)
+            .map_err(|err| AkitaError::InvalidInput(format!("v shape failed: {err:?}")))?;
         let witness = if lp.has_precommitted_groups() {
             let mut groups = Vec::with_capacity(num_groups);
             let mut hint_parts = flattened_hint.into_parts();

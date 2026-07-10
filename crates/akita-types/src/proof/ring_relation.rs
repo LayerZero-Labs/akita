@@ -3,7 +3,7 @@
 use super::OpeningClaimsLayout;
 use crate::layout::{CommitmentRingDims, RingRole};
 use crate::validate_role_dispatch;
-use crate::witness::{WitnessChunkLayout, WitnessChunkLengths, WitnessLayout};
+use crate::witness::{OpeningBatchWitnessGroup, OpeningBatchWitnessLayout, SemanticGroupId};
 use crate::FpExtEncoding;
 use crate::{
     embed_ring_subfield_scalar, r_decomp_levels, LevelParams, RelationMatrixRowLayout,
@@ -485,36 +485,29 @@ impl<F: FieldCore + CanonicalField> RingRelationInstance<F> {
         Ok((gamma, RingVec::from_ring_elems(&row_coefficient_rings)))
     }
 
-    /// Resolve the layout-agnostic [`WitnessLayout`] for this level's witness,
+    /// Resolve the canonical [`OpeningBatchWitnessLayout`] for this level's witness,
     /// validating shape and (when supplied) capacity at the boundary.
     ///
     /// This is the **single source of truth** for witness column offsets shared
     /// by the distributed prover's emission and the verifier's row-MLE
-    /// evaluation. `lp.witness_chunk.num_chunks = 1` yields a single chunk with
-    /// the historical `z ‖ e ‖ t ‖ u ‖ r` offsets; `num_chunks = W` lays out `W`
-    /// contiguous `[zᵢ | eᵢ | t̂ᵢ]` strides (z-first, `zᵢ` replicated, `eᵢ`/`t̂ᵢ`
-    /// partitioned) followed by one shared `r̂` tail sized at the single-machine
-    /// row count. Pass `witness_ring_len = Some(w_len / D)` to enforce the
-    /// no-panic capacity bound at this boundary.
+    /// evaluation. `lp.witness_chunk.num_chunks = 1` yields one ownership unit
+    /// with compact `[z | e | t]` ranges; `num_chunks = W` lays out `W`
+    /// contiguous `[zᵢ | eᵢ | tᵢ]` ownership units (`zᵢ` replicated,
+    /// `eᵢ`/`tᵢ` partitioned) followed by one shared `r` tail sized at the
+    /// single-machine row count. Pass `witness_ring_len = Some(w_len / D)` to
+    /// enforce the no-panic capacity bound at this boundary.
     ///
     /// # Errors
     ///
-    /// Returns [`AkitaError::InvalidSetup`] (never panics) for a malformed chunk
-    /// count (`0`, non-power-of-two, `> num_blocks`, or `∤ num_blocks`), a
-    /// non-power-of-two block window, or any offset/length arithmetic overflow, or a
-    /// layout whose `r̂` tail would exceed the committed witness capacity.
+    /// Returns [`AkitaError::InvalidSetup`] (never panics) for malformed
+    /// ownership geometry, offset or length arithmetic overflow, or a layout
+    /// whose shared `r` tail would exceed the committed witness capacity.
     pub fn segment_layout(
         &self,
         lp: &LevelParams,
         witness_ring_len: Option<usize>,
-    ) -> Result<WitnessLayout, AkitaError> {
+    ) -> Result<OpeningBatchWitnessLayout, AkitaError> {
         let num_chunks = lp.witness_chunk.num_chunks;
-        if num_chunks == 0 {
-            return Err(AkitaError::InvalidSetup(
-                "witness chunk count must be >= 1".to_string(),
-            ));
-        }
-
         let relation_rhs_layout = crate::proof::relation::relation_rhs_layout_for(
             lp,
             &self.opening_batch,
@@ -531,185 +524,52 @@ impl<F: FieldCore + CanonicalField> RingRelationInstance<F> {
         let relation_rhs_rows =
             crate::proof::relation::relation_rhs_row_count(&relation_rhs_layout);
         let r_levels = r_decomp_levels::<F>(lp.log_basis);
-        let r_len_total = relation_rhs_rows
-            .checked_mul(r_levels)
-            .ok_or_else(|| AkitaError::InvalidSetup("r-tail length overflow".to_string()))?;
-
-        if lp.has_precommitted_groups() {
-            lp.reject_multi_group_multi_chunk("segment_layout")?;
-            // Group-major layout: one chunk per group in `root_group_order()`
-            // (final group first), each holding that group's contiguous
-            // `[z_g ‖ e_g ‖ t_g]`, followed by one shared trailing `r` carried by
-            // the last chunk. `multi_group_ring_relation_segment_lengths` returns the
-            // per-group widths already in that order. The per-chunk block-window
-            // fields (`blocks_per_chunk`, `global_block_base`) are inert here:
-            // each group is a single, non-windowed segment stride.
-            let MultiGroupRingRelationSegmentLengths {
-                z_lens,
-                e_lens,
-                t_lens,
-            } = multi_group_ring_relation_segment_lengths::<F>(lp, &self.opening_batch)?;
-            let num_groups = z_lens.len();
-            let mut chunks = Vec::with_capacity(num_groups);
-            let mut chunk_lengths = Vec::with_capacity(num_groups);
-            let mut base = 0usize;
-            for p in 0..num_groups {
-                let z_g = z_lens[p];
-                let e_g = e_lens[p];
-                let t_g = t_lens[p];
-                let offset_e = base.checked_add(z_g).ok_or_else(|| {
-                    AkitaError::InvalidSetup("multi-group e offset overflow".to_string())
-                })?;
-                let offset_t = offset_e.checked_add(e_g).ok_or_else(|| {
-                    AkitaError::InvalidSetup("multi-group t offset overflow".to_string())
-                })?;
-                let after_t = offset_t.checked_add(t_g).ok_or_else(|| {
-                    AkitaError::InvalidSetup("multi-group stride overflow".to_string())
-                })?;
-                let is_last = p + 1 == num_groups;
-                chunks.push(WitnessChunkLayout {
-                    offset_z: base,
-                    offset_e,
-                    offset_t,
-                    offset_r: is_last.then_some(after_t),
-                    global_block_base: 0,
-                });
-                chunk_lengths.push(WitnessChunkLengths {
-                    z_len: z_g,
-                    e_len: e_g,
-                    t_len: t_g,
-                    r_len: is_last.then_some(r_len_total),
-                });
-                base = after_t;
-            }
-            let layout = WitnessLayout {
-                blocks_per_chunk: lp.num_blocks,
-                chunks,
-                chunk_lengths,
-            };
-            if let Some(witness_ring_len) = witness_ring_len {
-                let offset_r = layout.r_offset()?;
-                let needed = offset_r.checked_add(r_len_total).ok_or_else(|| {
-                    AkitaError::InvalidSetup("witness capacity overflow".to_string())
-                })?;
-                if needed > witness_ring_len {
-                    return Err(AkitaError::InvalidSetup(format!(
-                        "resolved witness layout requires {needed} ring columns but only {witness_ring_len} are committed"
-                    )));
-                }
-            }
-            return Ok(layout);
+        lp.reject_multi_group_multi_chunk("segment_layout")?;
+        let transcript_group_order = (0..self.opening_batch.num_groups())
+            .map(SemanticGroupId)
+            .collect::<Vec<_>>();
+        let relation_group_order = self
+            .opening_batch
+            .root_group_order()?
+            .into_iter()
+            .map(SemanticGroupId)
+            .collect::<Vec<_>>();
+        let mut groups = Vec::with_capacity(self.opening_batch.num_groups());
+        for group_index in 0..self.opening_batch.num_groups() {
+            let params = lp.root_group_params(&self.opening_batch, group_index)?;
+            let group_layout = self.opening_batch.group_layout(group_index)?;
+            groups.push(OpeningBatchWitnessGroup {
+                id: SemanticGroupId(group_index),
+                num_claims: group_layout.num_polynomials(),
+                num_blocks: params.num_blocks(),
+                block_len: params.block_len(),
+                depth_open: params.num_digits_open(),
+                depth_commit: params.num_digits_commit(),
+                depth_fold: lp.num_digits_fold_for_params(
+                    params,
+                    group_layout.num_polynomials(),
+                    lp.field_bits_for_cache(),
+                )?,
+                n_a: params.a_rows_len(),
+                e_setup_col_offset: 0,
+            });
         }
-
-        let num_claims = self.opening_batch.num_total_polynomials();
-        let lens = ring_relation_segment_lengths::<F>(
-            lp,
-            RingRelationOpeningCounts {
-                num_claims,
-                num_t_vectors: num_claims,
-            },
-            self.relation_matrix_row_layout,
+        let layout = OpeningBatchWitnessLayout::new(
+            groups,
+            transcript_group_order,
+            relation_group_order,
+            num_chunks,
+            relation_rhs_rows,
+            r_levels,
         )?;
-        let RingRelationSegmentLengths {
-            z_len,
-            e_len,
-            t_len,
-        } = lens;
-        let num_blocks = lp.num_blocks;
-
-        // The single-chunk layout is the `num_chunks = 1` case of the chunked
-        // construction below; only multi-chunk needs the extra well-formedness checks.
-        if num_chunks > 1 {
-            if !num_chunks.is_power_of_two() {
-                return Err(AkitaError::InvalidSetup(
-                    "witness chunk count must be a power of two".to_string(),
-                ));
-            }
-            if num_chunks > num_blocks {
-                return Err(AkitaError::InvalidSetup(
-                    "witness chunk count exceeds num_blocks".to_string(),
-                ));
-            }
-            if !num_blocks.is_multiple_of(num_chunks) {
-                return Err(AkitaError::InvalidSetup(
-                    "witness chunk count must divide num_blocks".to_string(),
-                ));
-            }
-            if !(num_blocks / num_chunks).is_power_of_two() {
-                return Err(AkitaError::InvalidSetup(
-                    "witness chunk block window must be a power of two".to_string(),
-                ));
-            }
-            if !e_len.is_multiple_of(num_chunks) || !t_len.is_multiple_of(num_chunks) {
-                return Err(AkitaError::InvalidSetup(
-                    "partitioned witness segment lengths must divide evenly across chunks"
-                        .to_string(),
-                ));
-            }
-        }
-
-        // `ê`/`t̂` are partitioned across windows; `ẑ` is replicated full-width
-        // in every window. The shared `r̂` tails the last window.
-        let blocks_per_chunk = num_blocks / num_chunks;
-        let e_len_j = e_len / num_chunks;
-        let t_len_j = t_len / num_chunks;
-        let stride = z_len
-            .checked_add(e_len_j)
-            .and_then(|s| s.checked_add(t_len_j))
-            .ok_or_else(|| AkitaError::InvalidSetup("chunk stride overflow".to_string()))?;
-
-        let mut chunks = Vec::with_capacity(num_chunks);
-        let mut chunk_lengths = Vec::with_capacity(num_chunks);
-        for j in 0..num_chunks {
-            let is_last = j == num_chunks - 1;
-            let base = j
-                .checked_mul(stride)
-                .ok_or_else(|| AkitaError::InvalidSetup("chunk base overflow".to_string()))?;
-            let offset_e = base
-                .checked_add(z_len)
-                .ok_or_else(|| AkitaError::InvalidSetup("chunk e offset overflow".to_string()))?;
-            let offset_t = offset_e
-                .checked_add(e_len_j)
-                .ok_or_else(|| AkitaError::InvalidSetup("chunk t offset overflow".to_string()))?;
-            let after_t = offset_t
-                .checked_add(t_len_j)
-                .ok_or_else(|| AkitaError::InvalidSetup("chunk r offset overflow".to_string()))?;
-            let offset_r = if is_last { Some(after_t) } else { None };
-            let global_block_base = j.checked_mul(blocks_per_chunk).ok_or_else(|| {
-                AkitaError::InvalidSetup("global block base overflow".to_string())
-            })?;
-            chunks.push(WitnessChunkLayout {
-                offset_z: base,
-                offset_e,
-                offset_t,
-                offset_r,
-                global_block_base,
-            });
-            chunk_lengths.push(WitnessChunkLengths {
-                z_len,
-                e_len: e_len_j,
-                t_len: t_len_j,
-                r_len: is_last.then_some(r_len_total),
-            });
-        }
-        let layout = WitnessLayout {
-            blocks_per_chunk,
-            chunks,
-            chunk_lengths,
-        };
-
-        if let Some(witness_ring_len) = witness_ring_len {
-            let r_offset = layout.r_offset()?;
-            let needed = r_offset
-                .checked_add(r_len_total)
-                .ok_or_else(|| AkitaError::InvalidSetup("witness capacity overflow".to_string()))?;
-            if needed > witness_ring_len {
+        if let Some(capacity) = witness_ring_len {
+            if layout.total_len() > capacity {
                 return Err(AkitaError::InvalidSetup(format!(
-                    "resolved witness layout requires {needed} ring columns but only {witness_ring_len} are committed"
+                    "resolved witness layout requires {} ring columns but only {capacity} are committed",
+                    layout.total_len(),
                 )));
             }
         }
-
         Ok(layout)
     }
 }
@@ -851,16 +711,16 @@ mod tests {
         let resolved = build_instance(&lp, num_claims, 4)
             .segment_layout(&lp, None)
             .expect("resolved layout");
-        assert_eq!(resolved.num_chunks(), 1);
-        let chunk = resolved.chunks[0];
-        // Legacy single-chunk offsets: z-first, then e, t, (u), r.
-        assert_eq!(chunk.offset_z, 0);
-        assert_eq!(chunk.offset_e, lens.z_len);
-        assert_eq!(chunk.offset_t, lens.z_len + lens.e_len);
-        // Single-tier fixture: u segment absent, r tails z‖e‖t.
-        assert_eq!(chunk.offset_r, Some(lens.z_len + lens.e_len + lens.t_len));
-        assert_eq!(chunk.global_block_base, 0);
-        assert_eq!(resolved.blocks_per_chunk, lp.num_blocks);
+        assert_eq!(resolved.num_machine_chunks(), 1);
+        let unit = &resolved.ownership_units[0];
+        // Single-unit compact offsets: z first, then e, t, and the shared r tail.
+        assert_eq!(unit.z_range.start, 0);
+        assert_eq!(unit.e_range.start, lens.z_len);
+        assert_eq!(unit.t_range.start, lens.z_len + lens.e_len);
+        // The shared r tail follows the unit's compact z, e, and t ranges.
+        assert_eq!(resolved.r_range.start, lens.z_len + lens.e_len + lens.t_len);
+        assert_eq!(unit.global_block_base, 0);
+        assert_eq!(unit.blocks, lp.num_blocks);
     }
 
     #[test]
@@ -886,35 +746,39 @@ mod tests {
             let layout = build_instance(&lp, num_claims, 4)
                 .segment_layout(&lp, None)
                 .expect("layout");
-            assert_eq!(layout.num_chunks(), w);
-            assert_eq!(layout.blocks_per_chunk, lp.num_blocks / w);
+            assert_eq!(layout.num_machine_chunks(), w);
+            let blocks_per_chunk = lp.num_blocks / w;
 
             // Partitioned e/t lengths sum to the single-machine totals; z replicated.
-            let e_sum: usize = layout.chunk_lengths.iter().map(|l| l.e_len).sum();
-            let t_sum: usize = layout.chunk_lengths.iter().map(|l| l.t_len).sum();
+            let e_sum: usize = layout
+                .ownership_units
+                .iter()
+                .map(|unit| unit.e_range.len())
+                .sum();
+            let t_sum: usize = layout
+                .ownership_units
+                .iter()
+                .map(|unit| unit.t_range.len())
+                .sum();
             assert_eq!(e_sum, lens.e_len);
             assert_eq!(t_sum, lens.t_len);
-            for l in &layout.chunk_lengths {
-                assert_eq!(l.z_len, lens.z_len);
+            for unit in &layout.ownership_units {
+                assert_eq!(unit.z_range.len(), lens.z_len);
             }
 
-            // Offsets are contiguous z-first per chunk; only the last chunk has r̂.
+            // Ownership units are contiguous and z-first; the shared r tail follows all units.
             let stride = lens.z_len + lens.e_len / w + lens.t_len / w;
-            for (j, chunk) in layout.chunks.iter().enumerate() {
+            for (j, unit) in layout.ownership_units.iter().enumerate() {
                 let base = j * stride;
-                assert_eq!(chunk.offset_z, base);
-                assert_eq!(chunk.offset_e, base + lens.z_len);
-                assert_eq!(chunk.offset_t, base + lens.z_len + lens.e_len / w);
-                assert_eq!(chunk.global_block_base, j * (lp.num_blocks / w));
-                if j + 1 == w {
-                    assert_eq!(chunk.offset_r, Some(w * stride));
-                } else {
-                    assert_eq!(chunk.offset_r, None);
-                }
+                assert_eq!(unit.z_range.start, base);
+                assert_eq!(unit.e_range.start, base + lens.z_len);
+                assert_eq!(unit.t_range.start, base + lens.z_len + lens.e_len / w);
+                assert_eq!(unit.global_block_base, j * blocks_per_chunk);
             }
+            assert_eq!(layout.r_range.start, w * stride);
             // Block windows tile [0, num_blocks).
             assert_eq!(
-                layout.chunks.last().unwrap().global_block_base + layout.blocks_per_chunk,
+                layout.ownership_units.last().unwrap().global_block_base + blocks_per_chunk,
                 lp.num_blocks
             );
         }
@@ -993,7 +857,7 @@ mod tests {
         .expect("same-axis relation");
 
         let layout = instance.segment_layout(&lp, None).expect("layout");
-        let chunk = layout.chunks[0];
+        let unit = &layout.ownership_units[0];
         let lens = ring_relation_segment_lengths::<F>(
             &lp,
             RingRelationOpeningCounts {
@@ -1003,11 +867,11 @@ mod tests {
             instance.relation_matrix_row_layout(),
         )
         .expect("segment lengths");
-        assert_eq!(layout.num_chunks(), 1);
-        assert_eq!(chunk.offset_z, 0);
-        assert_eq!(chunk.offset_e, lens.z_len);
-        assert_eq!(chunk.offset_t, lens.z_len + lens.e_len);
-        assert_eq!(chunk.offset_r, Some(lens.z_len + lens.e_len + lens.t_len));
+        assert_eq!(layout.num_machine_chunks(), 1);
+        assert_eq!(unit.z_range.start, 0);
+        assert_eq!(unit.e_range.start, lens.z_len);
+        assert_eq!(unit.t_range.start, lens.z_len + lens.e_len);
+        assert_eq!(layout.r_range.start, lens.z_len + lens.e_len + lens.t_len);
         instance
             .check_v_shape_for_level(&lp)
             .expect("v rows match layout");
@@ -1095,37 +959,28 @@ mod tests {
         let segment_lens = multi_group_ring_relation_segment_lengths::<F>(&lp, &opening_batch)
             .expect("segment lens");
         let num_groups = segment_lens.z_lens.len();
-        // Group-major: one chunk per group, each holding a contiguous
-        // `[z_g | e_g | t_g]` stride; only the last chunk carries the single
-        // shared `r` tail.
-        assert_eq!(layout.num_chunks(), num_groups);
+        // Group-major: one ownership unit per group, each holding a contiguous
+        // `[z_g | e_g | t_g]` stride; only the shared `r` tail follows all units.
+        assert_eq!(layout.ownership_units.len(), num_groups);
         let z_total: usize = segment_lens.z_lens.iter().sum();
         let e_total: usize = segment_lens.e_lens.iter().sum();
         let t_total: usize = segment_lens.t_lens.iter().sum();
         let r_len_total = relation_rhs_rows * r_decomp_levels::<F>(lp.log_basis);
 
         let mut base = 0usize;
-        for (p, (chunk, lengths)) in layout
-            .chunks
-            .iter()
-            .zip(layout.chunk_lengths.iter())
-            .enumerate()
-        {
+        for (p, unit) in layout.ownership_units.iter().enumerate() {
             let z_g = segment_lens.z_lens[p];
             let e_g = segment_lens.e_lens[p];
             let t_g = segment_lens.t_lens[p];
-            assert_eq!(lengths.z_len, z_g);
-            assert_eq!(lengths.e_len, e_g);
-            assert_eq!(lengths.t_len, t_g);
-            assert_eq!(chunk.offset_z, base);
-            assert_eq!(chunk.offset_e, base + z_g);
-            assert_eq!(chunk.offset_t, base + z_g + e_g);
+            assert_eq!(unit.z_range.len(), z_g);
+            assert_eq!(unit.e_range.len(), e_g);
+            assert_eq!(unit.t_range.len(), t_g);
+            assert_eq!(unit.z_range.start, base);
+            assert_eq!(unit.e_range.start, base + z_g);
+            assert_eq!(unit.t_range.start, base + z_g + e_g);
             if p + 1 == num_groups {
-                assert_eq!(chunk.offset_r, Some(base + z_g + e_g + t_g));
-                assert_eq!(lengths.r_len, Some(r_len_total));
-            } else {
-                assert_eq!(chunk.offset_r, None);
-                assert_eq!(lengths.r_len, None);
+                assert_eq!(layout.r_range.start, base + z_g + e_g + t_g);
+                assert_eq!(layout.r_range.len(), r_len_total);
             }
             base += z_g + e_g + t_g;
         }

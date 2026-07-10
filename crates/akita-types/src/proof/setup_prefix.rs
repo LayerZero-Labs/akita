@@ -10,7 +10,7 @@ use crate::proof::{
     setup::{AkitaSetupSeed, MAX_SETUP_MATRIX_FIELD_ELEMENTS},
     AkitaCommitmentHint, RingVec,
 };
-use crate::{LevelParams, OpeningClaimsLayout};
+use crate::{LevelParams, OpeningBlockLayout, OpeningClaimsLayout};
 use akita_field::{AkitaError, FieldCore};
 use akita_serialization::{
     AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
@@ -748,6 +748,13 @@ fn active_setup_ring_slots(
     level_params: &LevelParams,
     opening_batch: &OpeningClaimsLayout,
 ) -> Result<usize, AkitaError> {
+    Ok(active_setup_projection_geometry(level_params, opening_batch)?.required())
+}
+
+fn active_setup_projection_geometry(
+    level_params: &LevelParams,
+    opening_batch: &OpeningClaimsLayout,
+) -> Result<crate::SetupProjectionGeometry, AkitaError> {
     let (w_a, w_b, w_d) = active_setup_role_widths(level_params, opening_batch)?;
     let a_slots = level_params
         .a_key
@@ -764,18 +771,20 @@ fn active_setup_ring_slots(
         .row_len()
         .checked_mul(w_d)
         .ok_or_else(|| AkitaError::InvalidSetup("D setup footprint overflow".to_string()))?;
-    Ok(a_slots.max(b_slots).max(d_slots))
+    crate::SetupProjectionGeometry::from_role_footprints(
+        level_params.role_dims(),
+        a_slots,
+        b_slots,
+        d_slots,
+    )
 }
 
-/// Active flat coefficient count `N_active^F = D_setup * N_active^R`.
+/// Active flat coefficient count under the canonical Stage 3 base projection.
 pub fn active_setup_field_len(
     level_params: &LevelParams,
     opening_batch: &OpeningClaimsLayout,
-    d_setup: usize,
 ) -> Result<usize, AkitaError> {
-    active_setup_ring_slots(level_params, opening_batch)?
-        .checked_mul(d_setup)
-        .ok_or_else(|| AkitaError::InvalidSetup("active setup field length overflow".to_string()))
+    Ok(active_setup_projection_geometry(level_params, opening_batch)?.natural_field_len())
 }
 
 /// Smallest power-of-two flat prefix length covering `natural_field_len`.
@@ -813,10 +822,11 @@ pub fn setup_prefix_level_params(
             if inner_width <= level_params.a_key.col_len()
                 && outer_width <= level_params.b_key.col_len()
             {
+                let opening_layout = OpeningBlockLayout::new(num_blocks, block_len)?;
                 prefix_params.num_blocks = num_blocks;
-                prefix_params.m_vars = num_blocks.trailing_zeros() as usize;
+                prefix_params.m_vars = opening_layout.position_stride().trailing_zeros() as usize;
                 prefix_params.block_len = block_len;
-                prefix_params.r_vars = block_len.next_power_of_two().trailing_zeros() as usize;
+                prefix_params.r_vars = opening_layout.num_blocks().trailing_zeros() as usize;
                 return Ok(Some(prefix_params));
             }
         }
@@ -923,7 +933,7 @@ mod tests {
     fn sample_level_params() -> LevelParams {
         LevelParams::params_only(
             SisModulusFamily::Q32,
-            32,
+            64,
             3,
             2,
             3,
@@ -950,9 +960,11 @@ mod tests {
             active_setup_ring_slots(&lp, &opening_batch).expect("ring slots"),
             expected_ring_slots
         );
+        let dims = lp.role_dims();
+        let base_d = dims.d_a().min(dims.d_b()).min(dims.d_d());
         assert_eq!(
-            active_setup_field_len(&lp, &opening_batch, SETUP_OFFLOAD_D_SETUP).expect("field len"),
-            expected_ring_slots * SETUP_OFFLOAD_D_SETUP
+            active_setup_field_len(&lp, &opening_batch).expect("field len"),
+            expected_ring_slots * base_d
         );
     }
 

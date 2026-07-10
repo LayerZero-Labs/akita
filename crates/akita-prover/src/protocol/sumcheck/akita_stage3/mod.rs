@@ -17,10 +17,10 @@ use akita_serialization::AkitaSerialize;
 use akita_sumcheck::{SumcheckInstanceProver, SumcheckInstanceProverExt, SumcheckProof};
 use akita_transcript::{labels::ABSORB_SETUP_PREFIX_SLOT, Transcript};
 use akita_types::{
-    ensure_setup_envelope, gadget_row_scalars, select_setup_prefix_slot,
-    stage3_offload_natural_field_len, AkitaExpandedSetup, FpExtEncoding, LevelParams,
-    RingRelationInstance, SetupContributionGroupInputs, SetupContributionPlan,
-    SetupContributionPlanInputs, SetupPrefixProverRegistry, SETUP_OFFLOAD_D_SETUP,
+    ensure_setup_envelope, gadget_row_scalars, select_setup_prefix_slot, AkitaExpandedSetup,
+    FpExtEncoding, LevelParams, OpeningBlockLayout, RingRelationInstance,
+    SetupContributionGroupInputs, SetupContributionPlan, SetupContributionPlanInputs,
+    SetupPrefixProverRegistry, SetupProjectionGeometry, SETUP_OFFLOAD_D_SETUP,
     SETUP_SUMCHECK_DEGREE,
 };
 use product_table::FactoredProductTerm;
@@ -88,9 +88,7 @@ impl<E: FieldCore + FromPrimitiveInt> AkitaStage3Prover<E> {
         E: FpExtEncoding<F> + LiftBase<F> + AkitaSerialize,
         T: Transcript<F>,
     {
-        let ring_d = relation.role_dims().d_a();
         let setup_term = build_setup_product_term::<F, E, T>(
-            ring_d,
             expanded,
             prefix_slots,
             lp,
@@ -103,8 +101,13 @@ impl<E: FieldCore + FromPrimitiveInt> AkitaStage3Prover<E> {
         )?;
         let setup_product_claim = setup_term.input_claim();
         let witness_digits = Arc::<[i8]>::from(logical_w);
+        let opening_layout = OpeningBlockLayout::new(
+            next_fold_level_params.num_blocks,
+            next_fold_level_params.block_len,
+        )?;
         let witness_term = build_witness_carry_term::<E>(
             Arc::clone(&witness_digits),
+            opening_layout,
             live_x_cols,
             col_bits,
             ring_bits,
@@ -239,7 +242,6 @@ fn half<E: FieldCore + FromPrimitiveInt>(value: E) -> E {
 
 #[allow(clippy::too_many_arguments)]
 fn build_setup_product_term<F, E, T>(
-    ring_d: usize,
     expanded: &AkitaExpandedSetup<F>,
     prefix_slots: &SetupPrefixProverRegistry<F>,
     lp: &LevelParams,
@@ -255,11 +257,19 @@ where
     E: FpExtEncoding<F> + FromPrimitiveInt + LiftBase<F> + AkitaSerialize,
     T: Transcript<F>,
 {
-    let (required, mut setup_index_weight, alpha_pows) =
-        prepare_setup_sumcheck_terms::<F, E>(ring_d, lp, relation, tau1, alpha, x_challenges)?;
+    let (geometry, mut setup_index_weight, alpha_pows) = prepare_setup_sumcheck_terms::<F, E>(
+        lp,
+        next_fold_level_params,
+        relation,
+        tau1,
+        alpha,
+        x_challenges,
+    )?;
 
+    let required = geometry.required();
+    let ring_d = geometry.base_ring_dim();
     ensure_setup_envelope(expanded, required, ring_d)?;
-    let natural_field_len = stage3_offload_natural_field_len(required, ring_d)?;
+    let natural_field_len = geometry.natural_field_len();
     let setup_len = expanded
         .shared_matrix()
         .total_ring_elements_at_dyn(ring_d)?;
@@ -326,6 +336,7 @@ where
 
 fn build_witness_carry_term<E>(
     logical_w: Arc<[i8]>,
+    opening_layout: OpeningBlockLayout,
     live_x_cols: usize,
     col_bits: usize,
     ring_bits: usize,
@@ -350,19 +361,23 @@ where
     let x_len = 1usize
         .checked_shl(u32::try_from(col_bits).map_err(|_| AkitaError::InvalidProof)?)
         .ok_or(AkitaError::InvalidProof)?;
-    if live_x_cols > x_len {
+    if live_x_cols != x_len || opening_layout.opening_len() != x_len {
         return Err(AkitaError::InvalidSize {
             expected: x_len,
             actual: live_x_cols,
         });
     }
-    let live_len = live_x_cols
-        .checked_mul(y_len)
-        .ok_or_else(|| AkitaError::InvalidSetup("witness carry live length overflow".into()))?;
-    if logical_w.len() != live_len {
+    if !logical_w.len().is_multiple_of(y_len) {
         return Err(AkitaError::InvalidSize {
-            expected: live_len,
+            expected: y_len,
             actual: logical_w.len(),
+        });
+    }
+    let physical_x_cols = logical_w.len() / y_len;
+    if physical_x_cols > opening_layout.physical_len() {
+        return Err(AkitaError::InvalidSize {
+            expected: opening_layout.physical_len(),
+            actual: physical_x_cols,
         });
     }
     let table_len = x_len
@@ -370,7 +385,18 @@ where
         .ok_or_else(|| AkitaError::InvalidSetup("witness carry table length overflow".into()))?;
     let right_factor = EqPolynomial::evals(&stage2_challenges[..ring_bits])?;
     let left_factor = EqPolynomial::evals(&stage2_challenges[ring_bits..])?;
-    let term = FactoredProductTerm::new_compact(logical_w, table_len, left_factor, right_factor)?;
+    let mut opening_table = vec![0i8; table_len];
+    for physical_index in 0..physical_x_cols {
+        let opening_index = opening_layout.opening_index_for_physical(physical_index)?;
+        let src = &logical_w[physical_index * y_len..(physical_index + 1) * y_len];
+        opening_table[opening_index * y_len..(opening_index + 1) * y_len].copy_from_slice(src);
+    }
+    let term = FactoredProductTerm::new_compact(
+        Arc::from(opening_table),
+        table_len,
+        left_factor,
+        right_factor,
+    )?;
     if term.input_claim() != stage2_next_w_eval {
         return Err(AkitaError::InvalidProof);
     }
@@ -381,18 +407,17 @@ where
 /// from the level parameters and ring relation via the ring-switch row
 /// evaluation.
 fn prepare_setup_sumcheck_terms<F, E>(
-    ring_d: usize,
     lp: &LevelParams,
+    next_fold_level_params: &LevelParams,
     relation: &RingRelationInstance<F>,
     tau1: &[E],
     alpha: E,
     x_challenges: &[E],
-) -> Result<(usize, Vec<E>, Vec<E>), AkitaError>
+) -> Result<(SetupProjectionGeometry, Vec<E>, Vec<E>), AkitaError>
 where
     F: FieldCore + CanonicalField,
     E: FpExtEncoding<F> + FromPrimitiveInt + LiftBase<F>,
 {
-    let alpha_pows = scalar_powers(alpha, ring_d);
     let inputs = create_setup_contribution_inputs::<F, E>(relation, lp, tau1)?;
     let num_t_vectors = relation.opening_batch().num_total_polynomials();
     let fold_gadget = gadget_row_scalars::<F>(
@@ -400,8 +425,16 @@ where
         lp.log_basis,
     );
     let layout = relation.segment_layout(lp, None)?;
-    let single_group =
-        SetupContributionGroupInputs::single_group_layout(&inputs, &layout, lp.log_basis)?;
+    let opening_layout = OpeningBlockLayout::new(
+        next_fold_level_params.num_blocks,
+        next_fold_level_params.block_len,
+    )?;
+    let single_group = SetupContributionGroupInputs::single_group_layout(
+        &inputs,
+        &layout,
+        opening_layout,
+        lp.log_basis,
+    )?;
     let groups = std::slice::from_ref(&single_group.group);
     let static_plan = SetupContributionPlan::prepare_static(
         &inputs,
@@ -417,10 +450,12 @@ where
         None,
         Some(&fold_gadget),
         groups,
+        relation.role_dims(),
     )?;
-    let required = plan.required()?;
-    let setup_index_weight = plan.materialize_setup_index_weights()?;
-    Ok((required, setup_index_weight, alpha_pows.to_vec()))
+    let geometry = plan.projection_geometry();
+    let alpha_pows = scalar_powers(alpha, geometry.alpha_power_len());
+    let setup_index_weight = plan.materialize_setup_index_weights(alpha)?;
+    Ok((geometry, setup_index_weight, alpha_pows.to_vec()))
 }
 
 /// Build the setup-contribution artifact from prover-owned relation data.

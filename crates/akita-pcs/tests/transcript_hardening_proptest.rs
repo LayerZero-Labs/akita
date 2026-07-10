@@ -35,7 +35,9 @@ fn logged_dense_round_trip(num_vars: usize, shape_index: usize, basis_mode: Basi
     let opening_point = random_point(num_vars, seed.wrapping_add(0x9e37_0000));
     let openings: Vec<F> = polys
         .iter()
-        .map(|poly| opening_from_poly_with_basis(poly, &opening_point, &layout, basis_mode))
+        .map(|poly| {
+            opening_from_poly_with_basis::<DENSE_D, _>(poly, &opening_point, &layout, basis_mode)
+        })
         .collect();
 
     let setup = Scheme::setup_prover(num_vars, total_claims).unwrap();
@@ -47,12 +49,13 @@ fn logged_dense_round_trip(num_vars: usize, shape_index: usize, basis_mode: Basi
 
     let (commitment, hint) =
         Scheme::batched_commit(&setup, &polys, &stack).expect("batched commit");
+    let poly_refs: Vec<&DensePoly<F>> = polys.iter().collect();
 
     let mut prover_transcript =
         LoggingTranscript::wrap(AkitaTranscript::<F>::new(b"hardening/proptest"));
     let proof = Scheme::batched_prove(
         &setup,
-        prove_input(&opening_point, &polys, &commitment, hint),
+        prove_input(&opening_point, &poly_refs, &commitment, hint),
         &stack,
         &mut prover_transcript,
         basis_mode,

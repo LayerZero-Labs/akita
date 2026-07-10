@@ -1,53 +1,19 @@
 use akita_field::AkitaError;
 
-/// Chunked-witness geometry for the opening-digit trace columns.
-///
-/// `num_chunks = 1` is the single-chunk (historical) layout: the opening digits
-/// form one contiguous `ê` segment at `opening_digit_offset` and
-/// [`TraceWeightLayout::opening_digit_col_index`] uses the legacy formula. For
-/// `num_chunks = W`, `ê` is partitioned into `W` windows of `blocks_per_chunk`
-/// global blocks, each at its chunk's `offset_e` (`chunk·chunk_stride +
-/// opening_digit_offset`); the per-window column order matches the distributed
-/// prover's `[zᵢ|eᵢ|t̂ᵢ]` emission `(digit, claim, block_local)`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct TraceChunkLayout {
-    /// Number of witness chunks (`1` = single-chunk).
-    pub num_chunks: usize,
-    /// Global blocks owned by each chunk (`num_blocks_global / num_chunks`).
-    pub blocks_per_chunk: usize,
-    /// Number of opening claims sharing the block axis.
-    pub num_claims: usize,
-    /// Per-claim global block count.
-    pub num_blocks_global: usize,
-    /// Witness ring columns between consecutive chunks (`0` when `num_chunks == 1`).
-    pub chunk_stride: usize,
-}
+use crate::{OpeningBatchWitnessLayout, OpeningBlockLayout, SemanticGroupId};
 
-impl TraceChunkLayout {
-    /// Single-chunk descriptor; the multi-chunk fields are inert.
-    pub fn single() -> Self {
-        Self {
-            num_chunks: 1,
-            blocks_per_chunk: 1,
-            num_claims: 1,
-            num_blocks_global: 1,
-            chunk_stride: 0,
-        }
-    }
-}
-
-/// Geometry of the opening-digit column segment inside the stage-2 witness.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Geometry of the opening-digit columns used by the stage-2 trace term.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TraceWeightLayout {
     pub ring_bits: usize,
     pub col_bits: usize,
-    pub opening_digit_offset: usize,
     pub num_blocks: usize,
     pub num_digits_open: usize,
     pub r_vars: usize,
     pub log_basis: u32,
-    /// Chunked-witness geometry (default single-chunk).
-    pub chunk: TraceChunkLayout,
+    pub witness_layout: OpeningBatchWitnessLayout,
+    pub opening_layout: OpeningBlockLayout,
+    pub group_id: SemanticGroupId,
 }
 
 impl TraceWeightLayout {
@@ -67,22 +33,23 @@ impl TraceWeightLayout {
             })
     }
 
-    pub fn opening_digit_col_index(&self, block: usize, plane: usize) -> usize {
-        if self.chunk.num_chunks <= 1 {
-            return self.opening_digit_offset + plane * self.num_blocks + block;
+    pub fn opening_digit_col_index(&self, block: usize, digit: usize) -> Result<usize, AkitaError> {
+        let group = self.witness_layout.group(self.group_id)?;
+        if block >= self.num_blocks || digit >= self.num_digits_open {
+            return Err(AkitaError::InvalidInput(
+                "trace opening-digit index out of range".to_string(),
+            ));
         }
-        // Chunked: route the global block to its chunk, then place it inside the
-        // chunk's `ê` window (order: digit, claim, block_local).
-        let c = &self.chunk;
-        let claim = block / c.num_blocks_global;
-        let global_block = block % c.num_blocks_global;
-        let chunk = global_block / c.blocks_per_chunk;
-        let block_local = global_block % c.blocks_per_chunk;
-        let chunk_offset_e = chunk * c.chunk_stride + self.opening_digit_offset;
-        chunk_offset_e
-            + plane * (c.num_claims * c.blocks_per_chunk)
-            + claim * c.blocks_per_chunk
-            + block_local
+        let claim = block / group.num_blocks;
+        let global_block = block % group.num_blocks;
+        let unit = self
+            .witness_layout
+            .unit_for_block(self.group_id, global_block)?;
+        let physical_index = self
+            .witness_layout
+            .e_index(unit, claim, global_block, digit)?;
+        self.opening_layout
+            .opening_index_for_physical(physical_index)
     }
 
     pub fn witness_index(&self, col: usize, ring_coord: usize) -> usize {
@@ -99,32 +66,32 @@ impl TraceWeightLayout {
     }
 
     pub(crate) fn validate_opening_digit_segment(&self) -> Result<(), AkitaError> {
-        if self.chunk.num_chunks <= 1 {
-            let end = self
-                .opening_digit_offset
-                .checked_add(self.opening_digit_col_count())
-                .ok_or_else(|| {
-                    AkitaError::InvalidInput("opening-digit segment overflow".to_string())
-                })?;
-            if end > 1usize << self.col_bits {
-                return Err(AkitaError::InvalidInput(
-                    "opening-digit segment exceeds column hypercube".to_string(),
-                ));
-            }
-            return Ok(());
-        }
-        // Chunked: the largest column lives in the last chunk's last plane.
-        if self.num_blocks == 0 || self.num_digits_open == 0 {
-            return Ok(());
-        }
-        let max_col = self.opening_digit_col_index(self.num_blocks - 1, self.num_digits_open - 1);
-        let end = max_col.checked_add(1).ok_or_else(|| {
-            AkitaError::InvalidInput("opening-digit segment overflow".to_string())
-        })?;
-        if end > 1usize << self.col_bits {
-            return Err(AkitaError::InvalidInput(
-                "opening-digit segment exceeds column hypercube".to_string(),
+        let group = self.witness_layout.group(self.group_id)?;
+        if self.num_blocks == 0
+            || self.num_digits_open != group.depth_open
+            || self.num_blocks
+                != group
+                    .num_claims
+                    .checked_mul(group.num_blocks)
+                    .ok_or_else(|| {
+                        AkitaError::InvalidSetup("trace block count overflow".to_string())
+                    })?
+        {
+            return Err(AkitaError::InvalidSetup(
+                "trace geometry disagrees with witness layout".to_string(),
             ));
+        }
+        let column_bound = 1usize.checked_shl(self.col_bits as u32).ok_or_else(|| {
+            AkitaError::InvalidInput("opening-digit column bound overflow".to_string())
+        })?;
+        for block in 0..self.num_blocks {
+            for digit in 0..self.num_digits_open {
+                if self.opening_digit_col_index(block, digit)? >= column_bound {
+                    return Err(AkitaError::InvalidInput(
+                        "opening-digit segment exceeds column hypercube".to_string(),
+                    ));
+                }
+            }
         }
         Ok(())
     }

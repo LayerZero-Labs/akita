@@ -24,6 +24,7 @@ pub fn ring_switch_finalize<F, E, T>(
     transcript: &mut T,
     w: &RecursiveWitnessFlat,
     lp: &LevelParams,
+    opening_layout: OpeningBlockLayout,
     gamma: Option<&[E]>,
     relation_matrix_row_layout: RelationMatrixRowLayout,
 ) -> Result<RingSwitchOutput<E>, AkitaError>
@@ -52,13 +53,14 @@ where
         let opening_batch = instance.opening_batch();
 
         let num_ring_elems = w.len() / D;
-        let live_x_cols = num_ring_elems;
-        let col_bits = num_ring_elems
-            .checked_next_power_of_two()
-            .ok_or_else(|| {
-                AkitaError::InvalidSetup("ring-switch column count overflow".to_string())
-            })?
-            .trailing_zeros() as usize;
+        if num_ring_elems > opening_layout.physical_len() {
+            return Err(AkitaError::InvalidSize {
+                expected: opening_layout.physical_len(),
+                actual: num_ring_elems,
+            });
+        }
+        let opening_x_cols = opening_layout.opening_len();
+        let col_bits = opening_x_cols.trailing_zeros() as usize;
         let ring_bits = D.trailing_zeros() as usize;
         let m_rows = lp.relation_matrix_row_count_for(
             opening_batch.num_groups(),
@@ -101,9 +103,10 @@ where
                     &tau1,
                     gamma,
                     relation_matrix_row_layout,
+                    opening_layout,
                 )
             },
-            || build_w_evals_compact(w.as_i8_digits(), D, 1),
+            || build_w_evals_compact(w.as_i8_digits(), D, 1, opening_layout),
         );
         #[cfg(not(feature = "parallel"))]
         let (relation_matrix_col_evals_result, w_result) = {
@@ -117,8 +120,9 @@ where
                 &tau1,
                 gamma,
                 relation_matrix_row_layout,
+                opening_layout,
             )?;
-            let w_compact = build_w_evals_compact(w.as_i8_digits(), D, 1);
+            let w_compact = build_w_evals_compact(w.as_i8_digits(), D, 1, opening_layout);
             (Ok(relation_matrix_col_evals), w_compact)
         };
 
@@ -127,7 +131,7 @@ where
 
         Ok(RingSwitchOutput {
             w_evals_compact,
-            live_x_cols,
+            opening_x_cols,
             relation_matrix_col_evals,
             alpha_evals_y,
             col_bits,

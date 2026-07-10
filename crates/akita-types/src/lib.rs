@@ -67,7 +67,7 @@ pub use layout::{
     gadget_row_scalars, lagrange_weights, monomial_weights, packed_digits_bytes,
     padded_boolean_opening_vars, planned_next_w_len, planned_w_ring_element_count,
     proof_ring_vec_bytes, reduce_inner_opening_to_ring_element, ring_opening_point_from_field,
-    sumcheck_rounds, validate_role_dims, validate_schedule_ring_dims, BasisMode, BlockOrder,
+    sumcheck_rounds, validate_role_dims, validate_schedule_ring_dims, BasisMode,
     CommitmentRingDims, FlatMatrix, LevelParams, LevelParamsLike, PrecommittedLevelParams,
     RelationMatrixRowLayout, RingMatrixView, RingOpeningPoint, RingRole, MAX_FOLD_LEVELS,
     MIN_A_ROLE_FOLD_CHALLENGE_RING_D, SUPPORTED_CHALLENGE_RING_DIMS, SUPPORTED_RING_DIMS,
@@ -83,12 +83,12 @@ pub use proof::{
     active_setup_field_len, append_batched_commitments_to_transcript,
     append_claim_values_to_transcript, assemble_relation_rhs, build_segment_typed_witness,
     compute_relation_matrix_col_evals, decode_terminal_z_golomb_payload, derive_public_matrix_flat,
-    e_folded_segment_bytes, emit_witness_planes_block_inner, emit_witness_z_folded_planes_inner,
-    expand_segment_typed_to_i8_digits, folded_root_supports_opening_shape, generate_relation_rhs,
-    i8_digits_to_bytes, padded_scalar_batch_num_vars, padded_setup_prefix_len,
-    prepare_opening_point, relation_claim_from_layout_extension, relation_claim_from_rows,
-    relation_claim_from_rows_extension, relation_rhs_coeff_len, relation_rhs_layout_for,
-    relation_rhs_row_count, ring_relation_segment_lengths,
+    e_folded_segment_bytes, emit_witness_e_planes, emit_witness_r_planes, emit_witness_t_planes,
+    emit_witness_z_planes, expand_segment_typed_to_i8_digits, folded_root_supports_opening_shape,
+    generate_relation_rhs, i8_digits_to_bytes, padded_scalar_batch_num_vars,
+    padded_setup_prefix_len, prepare_opening_point, relation_claim_from_layout_extension,
+    relation_claim_from_rows, relation_claim_from_rows_extension, relation_rhs_coeff_len,
+    relation_rhs_layout_for, relation_rhs_row_count, ring_relation_segment_lengths,
     ring_subfield_packed_extension_opening_point, root_tensor_projection_enabled,
     sample_public_matrix_seed, sample_public_row_coefficients, segment_typed_witness_shape,
     segment_typed_witness_upper_bound_bytes, segment_typed_z_payload_bytes,
@@ -131,9 +131,9 @@ pub use schedule::{
 };
 pub use setup_contribution::{
     ensure_setup_envelope, setup_active_ring_elems_at, setup_active_ring_elems_for_fold,
-    setup_required_for_inputs, stage3_offload_natural_field_len, SetupContributionGroupInputs,
-    SetupContributionPlan, SetupContributionPlanInputs, SetupContributionStatic,
-    SetupIndexWeightEvaluator,
+    setup_required_for_inputs, SetupContributionGroupInputs, SetupContributionPlan,
+    SetupContributionPlanInputs, SetupContributionStatic, SetupIndexWeightEvaluator,
+    SetupProjectionGeometry,
 };
 pub use sis::{AjtaiKeyParams, SisModulusFamily, SisTableKey, DEFAULT_SIS_SECURITY_BITS};
 pub use tail_golomb_rice_low_bits::{
@@ -145,12 +145,13 @@ pub use trace_weight::{
     build_trace_claim_root, build_trace_table_scaled, ensure_trace_stage2_supported,
     eval_dense_trace_table, eval_trace_terms_closed, root_trace_block_opening, stage2_trace_coeff,
     trace_public_weights_recursive, trace_public_weights_root_terms, trace_terms_recursive,
-    trace_terms_root, trace_weight_layout_from_segment, TraceChunkLayout, TraceClaim,
-    TraceFieldBlockOpening, TraceOpeningAtPoint, TracePublicWeights, TraceRingBlockOpening,
-    TraceSparseColumn, TraceTable, TraceTerm, TraceWeightLayout,
+    trace_terms_root, trace_weight_layout_from_segment, TraceClaim, TraceFieldBlockOpening,
+    TraceOpeningAtPoint, TracePublicWeights, TraceRingBlockOpening, TraceSparseColumn, TraceTable,
+    TraceTerm, TraceWeightLayout,
 };
 pub use transcript::AppendToTranscript;
 pub use witness::{
-    ChunkedWitnessCfg, MultiChunkProfileId, WitnessChunkLayout, WitnessChunkLengths, WitnessLayout,
+    ChunkedWitnessCfg, MachineChunkId, MultiChunkProfileId, OpeningBatchWitnessGroup,
+    OpeningBatchWitnessLayout, OpeningBlockLayout, SemanticGroupId, WitnessOwnershipUnit,
     MAX_WITNESS_CHUNKS,
 };

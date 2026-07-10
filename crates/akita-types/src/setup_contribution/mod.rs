@@ -21,7 +21,7 @@ mod tests;
 
 pub use geometry::{
     ensure_setup_envelope, setup_active_ring_elems_at, setup_active_ring_elems_for_fold,
-    setup_required_for_inputs, stage3_offload_natural_field_len,
+    setup_required_for_inputs, SetupProjectionGeometry,
 };
 pub use inputs::SetupContributionPlanInputs;
 pub use plan::{

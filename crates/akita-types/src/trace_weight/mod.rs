@@ -23,7 +23,7 @@ pub use eval::{
     eval_trace_terms_closed, eval_trace_weight_at_point, TraceFieldBlockOpening,
     TraceOpeningAtPoint, TraceRingBlockOpening, TraceTerm,
 };
-pub use layout::{TraceChunkLayout, TraceWeightLayout};
+pub use layout::TraceWeightLayout;
 pub use stage2::{
     build_multi_group_root_stage2_trace_table, build_trace_claim_multi_group_root,
     build_trace_claim_root, build_trace_table_scaled, ensure_trace_stage2_supported,

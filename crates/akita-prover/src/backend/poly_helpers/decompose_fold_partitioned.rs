@@ -218,7 +218,6 @@ pub fn balanced_digit_decompose_fold_partitioned<const D: usize>(
     challenges: &[SparseChallenge],
     active_blocks: usize,
     block_len: usize,
-    num_blocks: usize,
     num_digits: usize,
     inner_width: usize,
 ) -> Vec<[i32; D]> {
@@ -255,15 +254,16 @@ pub fn balanced_digit_decompose_fold_partitioned<const D: usize>(
                     continue;
                 }
 
-                let seq_start = col * num_blocks;
-                if seq_start >= coeffs.len() {
-                    break;
-                }
-                let available_blocks = active_blocks.min(coeffs.len() - seq_start);
-                for (challenge, coeff) in challenges[..available_blocks]
-                    .iter()
-                    .zip(coeffs[seq_start..seq_start + available_blocks].iter())
-                {
+                for (block, challenge) in challenges[..active_blocks].iter().enumerate() {
+                    let Some(index) = block
+                        .checked_mul(block_len)
+                        .and_then(|base| base.checked_add(col))
+                    else {
+                        continue;
+                    };
+                    let Some(coeff) = coeffs.get(index) else {
+                        break;
+                    };
                     sparse_mul_acc::<D>(coeff, challenge, &mut acc[out_pos - pos_start]);
                 }
             }

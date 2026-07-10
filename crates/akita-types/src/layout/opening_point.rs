@@ -7,6 +7,7 @@ use akita_field::FromPrimitiveInt;
 use akita_serialization::DEFAULT_MAX_SEQUENCE_LEN;
 
 use crate::field_reduction::{embed_ring_subfield_scalar, FpExtEncoding};
+use crate::OpeningBlockLayout;
 
 const BLOCK_EMBED_ERROR: &str = "block opening weight does not embed in the ring-subfield basis";
 
@@ -33,18 +34,18 @@ pub enum BasisMode {
 
 /// Ring-native opening point storing field scalars.
 ///
-/// Contains the two vectors used by the §4.2 prover:
-/// - `a`: evaluation vector of length `2^m` (inner-block coordinates).
-/// - `b`: block-select vector of length `2^r` (outer coordinates).
+/// Contains the two exact factors of the virtual block opening:
+/// - `a`: position weights of length `position_stride`.
+/// - `b`: block weights of length `num_blocks`.
 ///
 /// These are raw field scalars, not ring elements — they originate from
 /// basis weight evaluations (Lagrange or monomial) and are always constant
 /// (scalar) ring elements when embedded into the ring.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RingOpeningPoint<F: FieldCore> {
-    /// Evaluation vector of length `2^m` (field scalars).
+    /// Virtual-position weights.
     pub a: Vec<F>,
-    /// Block-select vector of length `2^r` (field scalars).
+    /// Block-select weights.
     pub b: Vec<F>,
 }
 
@@ -119,45 +120,25 @@ fn basis_weight_len(num_vars: usize) -> Result<usize, AkitaError> {
     Ok(len)
 }
 
-/// Block-order convention used when splitting outer opening coordinates into
-/// in-block weights `a` and block weights `b`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum BlockOrder {
-    /// Level-0 polynomial layout: the first `m_vars` coordinates select the
-    /// position within a block, and the remaining `r_vars` select the block.
-    RowMajor,
-
-    /// Recursive witness layout: the first `r_vars` coordinates select the
-    /// block, and the remaining `m_vars` coordinates select the position
-    /// within that block.
-    ColumnMajor,
-}
-
 /// Convert the outer portion of a field opening point into ring-native vectors.
 ///
-/// **Row-major (level 0):** the first `m_vars` coordinates select the
-/// position within each block (`a`), the remaining `r_vars` select the
-/// block (`b`).
-///
-/// **Column-major (recursive levels):** the first `r_vars` coordinates
-/// select the block (`b`), the remaining `m_vars` select the position (`a`).
-/// This corresponds to the column-major block interpretation where the
-/// sequential polynomial index decomposes as
-/// `i = position * 2^r + block`.
+/// The first `log2(position_stride)` coordinates select a virtual position,
+/// and the remaining `log2(num_blocks)` coordinates select a block. Physical
+/// coefficients remain compact while the opening MLE inserts structural zeros
+/// after each live block.
 ///
 /// # Errors
 ///
-/// Returns an error if `m_vars + r_vars` overflows or if `opening_point` has
-/// the wrong length.
+/// Returns an error if the point dimension does not match `layout`.
 pub fn ring_opening_point_from_field<F: FieldCore>(
     opening_point: &[F],
-    r_vars: usize,
-    m_vars: usize,
+    layout: OpeningBlockLayout,
     basis: BasisMode,
-    block_order: BlockOrder,
 ) -> Result<RingOpeningPoint<F>, AkitaError> {
-    let expected_len = r_vars
-        .checked_add(m_vars)
+    let position_bits = layout.position_stride().trailing_zeros() as usize;
+    let block_bits = layout.num_blocks().trailing_zeros() as usize;
+    let expected_len = position_bits
+        .checked_add(block_bits)
         .ok_or_else(|| AkitaError::InvalidSetup("opening point length overflow".to_string()))?;
     if opening_point.len() != expected_len {
         return Err(AkitaError::InvalidPointDimension {
@@ -166,18 +147,8 @@ pub fn ring_opening_point_from_field<F: FieldCore>(
         });
     }
 
-    let (a, b) = match block_order {
-        BlockOrder::ColumnMajor => {
-            let b = basis_weights(&opening_point[..r_vars], basis)?;
-            let a = basis_weights(&opening_point[r_vars..], basis)?;
-            (a, b)
-        }
-        BlockOrder::RowMajor => {
-            let a = basis_weights(&opening_point[..m_vars], basis)?;
-            let b = basis_weights(&opening_point[m_vars..], basis)?;
-            (a, b)
-        }
-    };
+    let a = basis_weights(&opening_point[..position_bits], basis)?;
+    let b = basis_weights(&opening_point[position_bits..], basis)?;
     Ok(RingOpeningPoint { a, b })
 }
 

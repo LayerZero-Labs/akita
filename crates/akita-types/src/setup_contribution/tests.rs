@@ -1,8 +1,11 @@
 use super::plan::SetupContributionGroupPlan;
+use super::weights::setup_z_col_weights;
 use super::*;
 use crate::{
-    gadget_row_scalars, AkitaExpandedSetup, AkitaSetupSeed, FlatMatrix, LevelParams,
-    RelationMatrixRowLayout, SetupContributionStatic, SetupIndexWeightEvaluator,
+    gadget_row_scalars, AkitaExpandedSetup, AkitaSetupSeed, CommitmentRingDims, FlatMatrix,
+    LevelParams, MachineChunkId, OpeningBatchWitnessGroup, OpeningBatchWitnessLayout,
+    OpeningBlockLayout, RelationMatrixRowLayout, SemanticGroupId, SetupContributionStatic,
+    SetupIndexWeightEvaluator, WitnessOwnershipUnit,
 };
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::offset_eq::eq_eval_at_index;
@@ -32,7 +35,36 @@ fn test_scalar(value: u128) -> F {
     F::from_canonical_u128(value)
 }
 
-fn finalize_test_plan(mut plan: SetupContributionPlan<F>) -> SetupContributionPlan<F> {
+fn finalize_test_plan(
+    d_rows: usize,
+    d_physical_cols: usize,
+    groups: Vec<SetupContributionGroupPlan<F>>,
+    role_dims: CommitmentRingDims,
+) -> SetupContributionPlan<F> {
+    let a_footprint = groups
+        .iter()
+        .map(|group| group.n_a * group.z_cols)
+        .max()
+        .unwrap();
+    let b_footprint = groups
+        .iter()
+        .map(|group| group.n_b * group.t_cols)
+        .max()
+        .unwrap();
+    let d_footprint = d_rows * d_physical_cols;
+    let projection_geometry = SetupProjectionGeometry::from_role_footprints(
+        role_dims,
+        a_footprint,
+        b_footprint,
+        d_footprint,
+    )
+    .unwrap();
+    let mut plan = SetupContributionPlan {
+        groups,
+        d_rows,
+        d_physical_cols,
+        projection_geometry,
+    };
     for group in &mut plan.groups {
         group
             .refresh_segments(plan.d_rows, plan.d_physical_cols)
@@ -47,7 +79,7 @@ fn prepare_single_group_plan(
     eq_low: Option<&[F]>,
     z_block_low_eq: Option<&[F]>,
     fold_gadget: &[F],
-    chunk_layout: &crate::WitnessLayout,
+    layout: &OpeningBatchWitnessLayout,
 ) -> Result<SetupContributionPlan<F>, AkitaError> {
     prepare_single_group_plan_parts(
         inputs,
@@ -55,7 +87,7 @@ fn prepare_single_group_plan(
         eq_low,
         z_block_low_eq,
         fold_gadget,
-        chunk_layout,
+        layout,
     )
     .map(|(plan, _, _)| plan)
 }
@@ -66,9 +98,11 @@ fn prepare_single_group_plan_parts(
     eq_low: Option<&[F]>,
     z_block_low_eq: Option<&[F]>,
     fold_gadget: &[F],
-    chunk_layout: &crate::WitnessLayout,
+    layout: &OpeningBatchWitnessLayout,
 ) -> Result<SingleGroupPlanParts, AkitaError> {
-    let single_group = SetupContributionGroupInputs::single_group_layout(inputs, chunk_layout, 0)?;
+    let opening_layout = OpeningBlockLayout::new(1, layout.total_len())?;
+    let single_group =
+        SetupContributionGroupInputs::single_group_layout(inputs, layout, opening_layout, 0)?;
     let groups = vec![single_group.group];
     let static_plan = SetupContributionPlan::prepare_static(
         inputs,
@@ -84,13 +118,15 @@ fn prepare_single_group_plan_parts(
         z_block_low_eq,
         Some(fold_gadget),
         &groups,
+        CommitmentRingDims::uniform(TEST_D),
     )?;
     Ok((plan, static_plan, groups))
 }
 
 fn structured_weight_fixture(
     num_blocks: usize,
-    blocks_per_chunk: usize,
+    ownership_widths: &[usize],
+    role_dims: CommitmentRingDims,
 ) -> StructuredWeightFixture {
     let num_claims = 2;
     let depth_open = 2;
@@ -101,24 +137,55 @@ fn structured_weight_fixture(
     let n_b = 2;
     let n_d = 2;
     let log_basis = 4;
-    let z_range = block_len * depth_commit;
-    let e_len_per_chunk = num_claims * depth_open * blocks_per_chunk;
-    let t_len_per_chunk = n_a * num_claims * depth_open * blocks_per_chunk;
-    let chunk_stride = z_range + e_len_per_chunk + t_len_per_chunk + 3;
-    let chunks = (0..(num_blocks / blocks_per_chunk))
-        .map(|idx| {
-            let base = idx * chunk_stride + idx;
-            let offset_e = base + z_range + 1;
-            let offset_t = offset_e + e_len_per_chunk + 1;
-            crate::WitnessChunkLayout {
-                offset_z: base,
-                offset_e,
-                offset_t,
-                offset_r: None,
-                global_block_base: idx * blocks_per_chunk,
-            }
+    assert_eq!(ownership_widths.iter().sum::<usize>(), num_blocks);
+    let group_descriptor = OpeningBatchWitnessGroup {
+        id: SemanticGroupId(0),
+        num_claims,
+        num_blocks,
+        block_len,
+        depth_open,
+        depth_commit,
+        depth_fold,
+        n_a,
+        e_setup_col_offset: 0,
+    };
+    let z_len = block_len * depth_commit * depth_fold;
+    let mut cursor = 0usize;
+    let mut global_block_base = 0usize;
+    let ownership_units = ownership_widths
+        .iter()
+        .copied()
+        .enumerate()
+        .map(|(chunk, blocks)| {
+            let z_range = cursor..cursor + z_len;
+            let e_len = num_claims * depth_open * blocks;
+            let e_range = z_range.end..z_range.end + e_len;
+            let t_len = n_a * num_claims * depth_open * blocks;
+            let t_range = e_range.end..e_range.end + t_len;
+            cursor = t_range.end;
+            let unit = WitnessOwnershipUnit {
+                group: SemanticGroupId(0),
+                machine_chunk: MachineChunkId(chunk),
+                global_block_base,
+                blocks,
+                z_range,
+                e_range,
+                t_range,
+            };
+            global_block_base += blocks;
+            unit
         })
         .collect::<Vec<_>>();
+    let layout = OpeningBatchWitnessLayout {
+        groups: vec![group_descriptor],
+        machine_chunks: (0..ownership_widths.len()).map(MachineChunkId).collect(),
+        transcript_group_order: vec![SemanticGroupId(0)],
+        relation_group_order: vec![SemanticGroupId(0)],
+        ownership_units,
+        r_range: cursor..cursor + n_d * depth_fold,
+        relation_rows: n_d,
+        quotient_depth: depth_fold,
+    };
     let rows = 1 + n_a + n_b + n_d;
     let tau1 = (0..3)
         .map(|idx| test_scalar(31 + idx as u128))
@@ -138,14 +205,16 @@ fn structured_weight_fixture(
         depth_open,
         depth_commit,
         depth_fold,
-        inner_width: z_range,
+        inner_width: block_len * depth_commit,
         eq_tau1: EqPolynomial::evals(&tau1).unwrap().into(),
     };
     let full_vec_randomness = (0..18)
         .map(|idx| test_scalar(101 + idx as u128))
         .collect::<Vec<_>>();
     let fold_gadget = gadget_row_scalars::<F>(depth_fold, log_basis);
+    let opening_layout = OpeningBlockLayout::new(8, layout.total_len().div_ceil(8)).unwrap();
     let groups = vec![SetupContributionGroupInputs {
+        group_id: SemanticGroupId(0),
         e_col_offset: 0,
         num_claims,
         num_blocks,
@@ -159,8 +228,8 @@ fn structured_weight_fixture(
         t_cols_per_vector: n_a * depth_open * num_blocks,
         a_row_start: 1,
         b_row_start: 1 + n_a,
-        blocks_per_chunk,
-        chunks,
+        layout: std::sync::Arc::new(layout),
+        opening_layout,
     }];
     let static_plan = SetupContributionPlan::prepare_static(
         &inputs,
@@ -177,6 +246,7 @@ fn structured_weight_fixture(
         None,
         Some(&fold_gadget),
         &groups,
+        role_dims,
     )
     .unwrap();
     (
@@ -188,6 +258,43 @@ fn structured_weight_fixture(
         full_vec_randomness,
         fold_gadget,
     )
+}
+
+fn expected_z_setup_weights(
+    layout: &OpeningBatchWitnessLayout,
+    opening_layout: OpeningBlockLayout,
+    group_id: SemanticGroupId,
+    depth_commit: usize,
+    depth_fold: usize,
+    block_len: usize,
+    fold_gadget: &[F],
+    full_vec_randomness: &[F],
+) -> Vec<F> {
+    let z_cols = block_len * depth_commit;
+    (0..z_cols)
+        .map(|column| {
+            let position = column / depth_commit;
+            let commit_digit = column % depth_commit;
+            let mut weight = F::zero();
+            for unit in layout
+                .ownership_units
+                .iter()
+                .filter(|unit| unit.group == group_id)
+            {
+                for (fold_digit, &fold) in fold_gadget.iter().enumerate().take(depth_fold) {
+                    let physical = unit.z_range.start
+                        + fold_digit
+                        + depth_fold * (commit_digit + depth_commit * position);
+                    let physical_block = physical / opening_layout.block_len();
+                    let physical_position = physical % opening_layout.block_len();
+                    let virtual_address =
+                        physical_block * opening_layout.position_stride() + physical_position;
+                    weight -= eq_eval_at_index(full_vec_randomness, virtual_address) * fold;
+                }
+            }
+            weight
+        })
+        .collect()
 }
 
 fn rho_for_required(required: usize) -> Vec<F> {
@@ -256,34 +363,74 @@ fn projected_setup_weight_reference(
 }
 
 #[test]
-fn setup_index_weight_evaluator_matches_packed_mle_multi_chunk() {
-    let (inputs, groups, static_plan, plan, tau1, full_vec_randomness, fold_gadget) =
-        structured_weight_fixture(8, 2);
+fn setup_index_weight_evaluator_matches_packed_mle_single_chunk() {
+    let (inputs, groups, _static_plan, plan, tau1, full_vec_randomness, fold_gadget) =
+        structured_weight_fixture(8, &[8], CommitmentRingDims::uniform(TEST_D));
     let alpha = test_scalar(3);
     let evaluator = SetupIndexWeightEvaluator::new::<F>(
         &inputs,
-        &static_plan,
+        &plan,
         &groups,
         &tau1,
         &full_vec_randomness,
         &fold_gadget,
-        TEST_D,
-        crate::CommitmentRingDims::uniform(TEST_D),
         alpha,
     )
     .unwrap();
-    assert_eq!(evaluator.required(), plan.required().unwrap());
+    assert_eq!(evaluator.required(), plan.required());
 
     let rho = rho_for_required(evaluator.required());
-    let got = evaluator.evaluate(&rho).unwrap().expect("supported layout");
-    let expected = plan.evaluate_setup_index_weight_mle(&rho).unwrap();
+    let got = evaluator.evaluate(&rho).unwrap();
+    let expected = plan.evaluate_setup_index_weight_mle(&rho, alpha).unwrap();
     assert_eq!(got, expected);
 }
 
 #[test]
+fn setup_index_weight_evaluator_matches_packed_mle_multi_chunk() {
+    let (inputs, groups, _static_plan, plan, tau1, full_vec_randomness, fold_gadget) =
+        structured_weight_fixture(8, &[2, 2, 2, 2], CommitmentRingDims::uniform(TEST_D));
+    let alpha = test_scalar(3);
+    let evaluator = SetupIndexWeightEvaluator::new::<F>(
+        &inputs,
+        &plan,
+        &groups,
+        &tau1,
+        &full_vec_randomness,
+        &fold_gadget,
+        alpha,
+    )
+    .unwrap();
+    let rho = rho_for_required(evaluator.required());
+    assert_eq!(
+        evaluator.evaluate(&rho).unwrap(),
+        plan.evaluate_setup_index_weight_mle(&rho, alpha).unwrap()
+    );
+}
+
+#[test]
+fn setup_index_weight_evaluator_supports_non_power_of_two_ownership_widths() {
+    let (inputs, groups, _static_plan, plan, tau1, full_vec_randomness, fold_gadget) =
+        structured_weight_fixture(8, &[3, 5], CommitmentRingDims::uniform(TEST_D));
+    let alpha = test_scalar(3);
+    let evaluator = SetupIndexWeightEvaluator::new::<F>(
+        &inputs,
+        &plan,
+        &groups,
+        &tau1,
+        &full_vec_randomness,
+        &fold_gadget,
+        alpha,
+    )
+    .unwrap();
+    let rho = rho_for_required(evaluator.required());
+    assert_eq!(
+        evaluator.evaluate(&rho).unwrap(),
+        plan.evaluate_setup_index_weight_mle(&rho, alpha).unwrap()
+    );
+}
+
+#[test]
 fn setup_index_weight_evaluator_applies_mixed_role_projection_lanes() {
-    let (inputs, groups, static_plan, plan, tau1, full_vec_randomness, fold_gadget) =
-        structured_weight_fixture(8, 2);
     let alpha = test_scalar(3);
     let role_dims = crate::CommitmentRingDims {
         inner: 64,
@@ -291,32 +438,34 @@ fn setup_index_weight_evaluator_applies_mixed_role_projection_lanes() {
         opening: 32,
     };
     let setup_ring_dim = 32;
-    let evaluator = SetupIndexWeightEvaluator::new::<F>(
-        &inputs,
-        &static_plan,
-        &groups,
-        &tau1,
-        &full_vec_randomness,
-        &fold_gadget,
-        setup_ring_dim,
-        role_dims,
-        alpha,
-    )
-    .unwrap();
-    let rho = rho_for_required(evaluator.required());
-    let got = evaluator.evaluate(&rho).unwrap().expect("supported layout");
-    let expected = projected_setup_weight_reference(
-        &plan,
-        &rho,
-        evaluator.required(),
-        role_dims.d_a() / setup_ring_dim,
-        role_dims.d_b() / setup_ring_dim,
-        role_dims.d_d() / setup_ring_dim,
-        &projection_scales(alpha, setup_ring_dim, role_dims.d_a()),
-        &projection_scales(alpha, setup_ring_dim, role_dims.d_b()),
-        &projection_scales(alpha, setup_ring_dim, role_dims.d_d()),
-    );
-    assert_eq!(got, expected);
+    for ownership_widths in [&[8][..], &[2, 2, 2, 2][..], &[3, 5][..]] {
+        let (inputs, groups, _static_plan, plan, tau1, full_vec_randomness, fold_gadget) =
+            structured_weight_fixture(8, ownership_widths, role_dims);
+        let evaluator = SetupIndexWeightEvaluator::new::<F>(
+            &inputs,
+            &plan,
+            &groups,
+            &tau1,
+            &full_vec_randomness,
+            &fold_gadget,
+            alpha,
+        )
+        .unwrap();
+        let rho = rho_for_required(evaluator.required());
+        let got = evaluator.evaluate(&rho).unwrap();
+        let expected = projected_setup_weight_reference(
+            &plan,
+            &rho,
+            evaluator.required(),
+            role_dims.d_a() / setup_ring_dim,
+            role_dims.d_b() / setup_ring_dim,
+            role_dims.d_d() / setup_ring_dim,
+            &projection_scales(alpha, setup_ring_dim, role_dims.d_a()),
+            &projection_scales(alpha, setup_ring_dim, role_dims.d_b()),
+            &projection_scales(alpha, setup_ring_dim, role_dims.d_d()),
+        );
+        assert_eq!(got, expected, "ownership widths {ownership_widths:?}");
+    }
 }
 
 #[test]
@@ -325,8 +474,6 @@ fn dense_z_eq_slice_uses_relative_high_carry() {
     let depth_commit = 3;
     let depth_fold = 2;
     let num_points = 1;
-    let z_range = block_len * depth_commit;
-    let offset_z = 0;
     let full_vec_randomness = (0..9)
         .map(|idx| test_scalar(101 + idx as u128))
         .collect::<Vec<_>>();
@@ -346,53 +493,49 @@ fn dense_z_eq_slice_uses_relative_high_carry() {
         depth_open: 16,
         depth_commit,
         depth_fold,
-        inner_width: z_range,
+        inner_width: block_len * depth_commit,
         eq_tau1: vec![test_scalar(11), test_scalar(12)].into(),
     };
 
-    let chunk_layout = crate::WitnessLayout {
-        blocks_per_chunk: 4,
-        chunks: vec![crate::WitnessChunkLayout {
-            offset_z,
-            offset_e: 0,
-            offset_t: 64,
-            offset_r: Some(0),
-            global_block_base: 0,
+    let layout = OpeningBatchWitnessLayout::new(
+        vec![OpeningBatchWitnessGroup {
+            id: SemanticGroupId(0),
+            num_claims: inputs.num_claims,
+            num_blocks: inputs.num_blocks,
+            block_len: inputs.block_len,
+            depth_open: inputs.depth_open,
+            depth_commit: inputs.depth_commit,
+            depth_fold: inputs.depth_fold,
+            n_a: inputs.n_a,
+            e_setup_col_offset: 0,
         }],
-        chunk_lengths: vec![crate::WitnessChunkLengths {
-            z_len: z_range,
-            e_len: 0,
-            t_len: 0,
-            r_len: Some(0),
-        }],
-    };
+        vec![SemanticGroupId(0)],
+        vec![SemanticGroupId(0)],
+        1,
+        1,
+        inputs.depth_fold,
+    )
+    .expect("layout");
     let plan = prepare_single_group_plan(
         &inputs,
         &full_vec_randomness,
         None,
         None,
         &fold_gadget,
-        &chunk_layout,
+        &layout,
     )
     .unwrap();
 
-    let expected = (0..z_range)
-        .map(|c| {
-            let dc = c % depth_commit;
-            let blk = c / depth_commit;
-            let mut acc = F::zero();
-            for pt in 0..num_points {
-                for (df, &fg) in fold_gadget.iter().enumerate().take(depth_fold) {
-                    let x = blk
-                        + block_len * pt
-                        + block_len * num_points * df
-                        + block_len * num_points * depth_fold * dc;
-                    acc += eq_eval_at_index(&full_vec_randomness, offset_z + x) * fg;
-                }
-            }
-            -acc
-        })
-        .collect::<Vec<_>>();
+    let expected = expected_z_setup_weights(
+        &layout,
+        OpeningBlockLayout::new(1, layout.total_len()).unwrap(),
+        SemanticGroupId(0),
+        depth_commit,
+        depth_fold,
+        block_len,
+        &fold_gadget,
+        &full_vec_randomness,
+    );
 
     assert_eq!(plan.groups[0].z_eq_slice, expected);
 }
@@ -404,8 +547,6 @@ fn setup_a_z_weights_do_not_include_commit_gadget() {
     let depth_fold = 2;
     let num_points = 1;
     let log_basis = 4;
-    let z_range = block_len * depth_commit;
-    let offset_z = 0;
     let full_vec_randomness = (0..8)
         .map(|idx| test_scalar(701 + idx as u128))
         .collect::<Vec<_>>();
@@ -426,25 +567,28 @@ fn setup_a_z_weights_do_not_include_commit_gadget() {
         depth_open: 16,
         depth_commit,
         depth_fold,
-        inner_width: z_range,
+        inner_width: block_len * depth_commit,
         eq_tau1: vec![test_scalar(11), test_scalar(12)].into(),
     };
-    let chunk_layout = crate::WitnessLayout {
-        blocks_per_chunk: 4,
-        chunks: vec![crate::WitnessChunkLayout {
-            offset_z,
-            offset_e: z_range,
-            offset_t: z_range,
-            offset_r: Some(0),
-            global_block_base: 0,
+    let layout = OpeningBatchWitnessLayout::new(
+        vec![OpeningBatchWitnessGroup {
+            id: SemanticGroupId(0),
+            num_claims: inputs.num_claims,
+            num_blocks: inputs.num_blocks,
+            block_len: inputs.block_len,
+            depth_open: inputs.depth_open,
+            depth_commit: inputs.depth_commit,
+            depth_fold: inputs.depth_fold,
+            n_a: inputs.n_a,
+            e_setup_col_offset: 0,
         }],
-        chunk_lengths: vec![crate::WitnessChunkLengths {
-            z_len: z_range,
-            e_len: 0,
-            t_len: 0,
-            r_len: Some(0),
-        }],
-    };
+        vec![SemanticGroupId(0)],
+        vec![SemanticGroupId(0)],
+        1,
+        1,
+        inputs.depth_fold,
+    )
+    .expect("layout");
 
     let plan = prepare_single_group_plan(
         &inputs,
@@ -452,24 +596,20 @@ fn setup_a_z_weights_do_not_include_commit_gadget() {
         None,
         None,
         &fold_gadget,
-        &chunk_layout,
+        &layout,
     )
     .unwrap();
 
-    let expected = (0..z_range)
-        .map(|k| {
-            let blk = k / depth_commit;
-            let dc = k % depth_commit;
-            let mut acc = F::zero();
-            for pt in 0..num_points {
-                for (df, &fold) in fold_gadget.iter().enumerate().take(depth_fold) {
-                    let x = blk + block_len * (pt + num_points * (df + depth_fold * dc));
-                    acc += eq_eval_at_index(&full_vec_randomness, offset_z + x) * fold;
-                }
-            }
-            -acc
-        })
-        .collect::<Vec<_>>();
+    let expected = expected_z_setup_weights(
+        &layout,
+        OpeningBlockLayout::new(1, layout.total_len()).unwrap(),
+        SemanticGroupId(0),
+        depth_commit,
+        depth_fold,
+        block_len,
+        &fold_gadget,
+        &full_vec_randomness,
+    );
     let wrong_with_commit_gadget = expected
         .iter()
         .enumerate()
@@ -481,6 +621,85 @@ fn setup_a_z_weights_do_not_include_commit_gadget() {
         plan.groups[0].z_eq_slice, wrong_with_commit_gadget,
         "A setup weights are for A * G_fold * z_hat, not A * G_commit * G_fold * z_hat"
     );
+}
+
+#[test]
+fn z_setup_weight_oracle_covers_multi_block_virtual_gaps() {
+    let group_id = SemanticGroupId(0);
+    let block_len = 3;
+    let depth_commit = 2;
+    let depth_fold = 2;
+    let layout = OpeningBatchWitnessLayout::new(
+        vec![OpeningBatchWitnessGroup {
+            id: group_id,
+            num_claims: 1,
+            num_blocks: 2,
+            block_len,
+            depth_open: 2,
+            depth_commit,
+            depth_fold,
+            n_a: 1,
+            e_setup_col_offset: 0,
+        }],
+        vec![group_id],
+        vec![group_id],
+        2,
+        1,
+        1,
+    )
+    .unwrap();
+    let num_blocks = [8usize, 4, 2]
+        .into_iter()
+        .find(|&blocks| {
+            let physical_block_len = layout.total_len().div_ceil(blocks);
+            physical_block_len != 0 && !physical_block_len.is_power_of_two()
+        })
+        .expect("test layout admits a gapped partition");
+    let physical_block_len = layout.total_len().div_ceil(num_blocks);
+    let opening_layout = OpeningBlockLayout::new(num_blocks, physical_block_len).unwrap();
+    let point = (0..opening_layout.opening_len().trailing_zeros() as usize)
+        .map(|index| test_scalar(1201 + index as u128))
+        .collect::<Vec<_>>();
+    let fold_gadget = gadget_row_scalars::<F>(depth_fold, 4);
+    let mut got = vec![F::zero(); block_len * depth_commit];
+    setup_z_col_weights(
+        &layout,
+        opening_layout,
+        group_id,
+        block_len,
+        depth_commit,
+        depth_fold,
+        &point,
+        &fold_gadget,
+        &mut got,
+    )
+    .unwrap();
+    let expected = expected_z_setup_weights(
+        &layout,
+        opening_layout,
+        group_id,
+        depth_commit,
+        depth_fold,
+        block_len,
+        &fold_gadget,
+        &point,
+    );
+    assert_eq!(got, expected);
+    assert!(layout.ownership_units.iter().any(|unit| {
+        (0..block_len).any(|position| {
+            (0..depth_commit).any(|commit_digit| {
+                (0..depth_fold).any(|fold_digit| {
+                    let physical = unit.z_range.start
+                        + fold_digit
+                        + depth_fold * (commit_digit + depth_commit * position);
+                    let virtual_address = (physical / physical_block_len)
+                        * opening_layout.position_stride()
+                        + physical % physical_block_len;
+                    physical != virtual_address
+                })
+            })
+        })
+    }));
 }
 
 #[test]
@@ -496,25 +715,45 @@ fn single_group_plan_supports_multi_chunk_weights() {
     let n_b = 2;
     let n_d = 1;
     let log_basis = 4;
-    let z_range = block_len * depth_commit;
-    let e_len_per_chunk = num_claims * depth_open * blocks_per_chunk;
-    let t_len_per_chunk = n_a * num_claims * depth_open * blocks_per_chunk;
-    let chunk_stride = z_range + e_len_per_chunk + t_len_per_chunk;
-    let chunks = (0..2)
-        .map(|idx| {
-            let base = idx * chunk_stride;
-            let offset_e = base + z_range;
-            let offset_t = offset_e + e_len_per_chunk;
-            crate::WitnessChunkLayout {
-                offset_z: base,
-                offset_e,
-                offset_t,
-                offset_r: (idx == 1).then_some(offset_t + t_len_per_chunk),
-                global_block_base: idx * blocks_per_chunk,
-            }
-        })
-        .collect::<Vec<_>>();
     let rows = 1 + n_a + n_b + n_d;
+    let layout = OpeningBatchWitnessLayout::new(
+        vec![OpeningBatchWitnessGroup {
+            id: SemanticGroupId(0),
+            num_claims,
+            num_blocks,
+            block_len,
+            depth_open,
+            depth_commit,
+            depth_fold,
+            n_a,
+            e_setup_col_offset: 0,
+        }],
+        vec![SemanticGroupId(0)],
+        vec![SemanticGroupId(0)],
+        num_blocks / blocks_per_chunk,
+        n_d,
+        depth_fold,
+    )
+    .expect("layout");
+    let opening_layout = OpeningBlockLayout::new(1, layout.total_len()).unwrap();
+    let groups = [SetupContributionGroupInputs {
+        group_id: SemanticGroupId(0),
+        e_col_offset: 0,
+        num_claims,
+        num_blocks,
+        block_len,
+        depth_open,
+        depth_commit,
+        depth_fold,
+        log_basis,
+        n_a,
+        n_b,
+        t_cols_per_vector: n_a * depth_open * num_blocks,
+        a_row_start: 1,
+        b_row_start: 1 + n_a,
+        layout: std::sync::Arc::new(layout),
+        opening_layout,
+    }];
     let inputs = SetupContributionPlanInputs {
         relation_matrix_row_layout: RelationMatrixRowLayout::WithDBlock,
         rows,
@@ -530,7 +769,7 @@ fn single_group_plan_supports_multi_chunk_weights() {
         depth_open,
         depth_commit,
         depth_fold,
-        inner_width: z_range,
+        inner_width: block_len * depth_commit,
         eq_tau1: (0..rows.next_power_of_two())
             .map(|idx| test_scalar(11 + idx as u128))
             .collect(),
@@ -539,23 +778,6 @@ fn single_group_plan_supports_multi_chunk_weights() {
         .map(|idx| test_scalar(101 + idx as u128))
         .collect::<Vec<_>>();
     let fold_gadget = gadget_row_scalars::<F>(depth_fold, log_basis);
-    let groups = [SetupContributionGroupInputs {
-        e_col_offset: 0,
-        num_claims,
-        num_blocks,
-        block_len,
-        depth_open,
-        depth_commit,
-        depth_fold,
-        log_basis,
-        n_a,
-        n_b,
-        t_cols_per_vector: n_a * depth_open * num_blocks,
-        a_row_start: 1,
-        b_row_start: 1 + n_a,
-        blocks_per_chunk,
-        chunks,
-    }];
     let static_plan = SetupContributionPlan::prepare_static(
         &inputs,
         &groups,
@@ -571,10 +793,11 @@ fn single_group_plan_supports_multi_chunk_weights() {
         None,
         Some(&fold_gadget),
         &groups,
+        CommitmentRingDims::uniform(TEST_D),
     )
     .unwrap();
 
-    let setup_len = plan.required().unwrap();
+    let setup_len = plan.required();
     let setup = AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
         AkitaSetupSeed {
             max_num_vars: 0,
@@ -599,7 +822,9 @@ fn single_group_plan_supports_multi_chunk_weights() {
         .unwrap();
     assert_eq!(got, expected);
 
-    let setup_index_weight = plan.materialize_setup_index_weights().unwrap();
+    let setup_index_weight = plan
+        .materialize_setup_index_weights(test_scalar(3))
+        .unwrap();
     let setup_view = setup
         .shared_matrix()
         .ring_view::<TEST_D>(1, setup_index_weight.len())
@@ -614,10 +839,10 @@ fn single_group_plan_supports_multi_chunk_weights() {
 
 #[test]
 fn packed_direct_matches_row_fallback_with_d_offset() {
-    let plan = finalize_test_plan(SetupContributionPlan {
-        d_rows: 2,
-        d_physical_cols: 5,
-        groups: vec![SetupContributionGroupPlan {
+    let plan = finalize_test_plan(
+        2,
+        5,
+        vec![SetupContributionGroupPlan {
             e_col_offset: 2,
             t_cols: 4,
             z_cols: 3,
@@ -637,7 +862,8 @@ fn packed_direct_matches_row_fallback_with_d_offset() {
             b_weights: vec![test_scalar(37), test_scalar(41)].into(),
             d_weights: vec![test_scalar(43), test_scalar(47)].into(),
         }],
-    });
+        CommitmentRingDims::uniform(TEST_D),
+    );
     let setup_len = 10;
     let setup = AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
         AkitaSetupSeed {
@@ -666,10 +892,10 @@ fn packed_direct_matches_row_fallback_with_d_offset() {
 
 #[test]
 fn multi_group_packed_direct_matches_row_fallback() {
-    let plan = finalize_test_plan(SetupContributionPlan {
-        d_rows: 2,
-        d_physical_cols: 5,
-        groups: vec![
+    let plan = finalize_test_plan(
+        2,
+        5,
+        vec![
             SetupContributionGroupPlan {
                 e_col_offset: 2,
                 t_cols: 4,
@@ -711,7 +937,8 @@ fn multi_group_packed_direct_matches_row_fallback() {
                 d_weights: vec![test_scalar(109), test_scalar(113)].into(),
             },
         ],
-    });
+        CommitmentRingDims::uniform(TEST_D),
+    );
     let setup_len = 10;
     let setup = AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
         AkitaSetupSeed {
@@ -737,7 +964,9 @@ fn multi_group_packed_direct_matches_row_fallback() {
         .unwrap();
     assert_eq!(got, expected);
 
-    let setup_index_weight = plan.materialize_setup_index_weights().unwrap();
+    let setup_index_weight = plan
+        .materialize_setup_index_weights(test_scalar(3))
+        .unwrap();
     let setup_view = setup
         .shared_matrix()
         .ring_view::<TEST_D>(1, setup_index_weight.len())
@@ -752,10 +981,13 @@ fn multi_group_packed_direct_matches_row_fallback() {
 
 #[test]
 fn packed_direct_matches_row_fallback_with_nested_role_dims() {
-    let plan = finalize_test_plan(SetupContributionPlan {
-        d_rows: 2,
-        d_physical_cols: 5,
-        groups: vec![SetupContributionGroupPlan {
+    const D: usize = 64;
+    const D_B: usize = 32;
+    const D_D: usize = 32;
+    let plan = finalize_test_plan(
+        2,
+        5,
+        vec![SetupContributionGroupPlan {
             e_col_offset: 2,
             t_cols: 4,
             z_cols: 3,
@@ -775,10 +1007,12 @@ fn packed_direct_matches_row_fallback_with_nested_role_dims() {
             b_weights: vec![test_scalar(37), test_scalar(41)].into(),
             d_weights: vec![test_scalar(43), test_scalar(47)].into(),
         }],
-    });
-    const D: usize = 64;
-    const D_B: usize = 32;
-    const D_D: usize = 32;
+        CommitmentRingDims {
+            inner: D,
+            outer: D_B,
+            opening: D_D,
+        },
+    );
     let setup_len = 10;
     let setup = AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
         AkitaSetupSeed {
@@ -810,10 +1044,13 @@ fn packed_direct_matches_row_fallback_with_nested_role_dims() {
 
 #[test]
 fn packed_direct_rejects_non_decomposable_role_alpha_pows() {
-    let plan = finalize_test_plan(SetupContributionPlan {
-        d_rows: 2,
-        d_physical_cols: 5,
-        groups: vec![SetupContributionGroupPlan {
+    const D_A: usize = 64;
+    const D_B: usize = 32;
+    const D_D: usize = 32;
+    let plan = finalize_test_plan(
+        2,
+        5,
+        vec![SetupContributionGroupPlan {
             e_col_offset: 2,
             t_cols: 4,
             z_cols: 3,
@@ -833,10 +1070,12 @@ fn packed_direct_rejects_non_decomposable_role_alpha_pows() {
             b_weights: vec![test_scalar(37), test_scalar(41)].into(),
             d_weights: vec![test_scalar(43), test_scalar(47)].into(),
         }],
-    });
-    const D_A: usize = 64;
-    const D_B: usize = 32;
-    const D_D: usize = 32;
+        CommitmentRingDims {
+            inner: D_A,
+            outer: D_B,
+            opening: D_D,
+        },
+    );
     let setup_len = 10;
     let setup = AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
         AkitaSetupSeed {
@@ -870,10 +1109,13 @@ fn packed_direct_accepts_d_footprint_at_nested_d_d() {
     // D-role columns are counted at d_d; comparing `required` against
     // total_ring_elements_at_dyn(d_a) falsely rejects valid setups when
     // d_d < d_a and the D footprint dominates.
-    let plan = finalize_test_plan(SetupContributionPlan {
-        d_rows: 2,
-        d_physical_cols: 11,
-        groups: vec![SetupContributionGroupPlan {
+    const D_A: usize = 64;
+    const D_B: usize = 64;
+    const D_D: usize = 32;
+    let plan = finalize_test_plan(
+        2,
+        11,
+        vec![SetupContributionGroupPlan {
             e_col_offset: 0,
             t_cols: 4,
             z_cols: 3,
@@ -893,10 +1135,12 @@ fn packed_direct_accepts_d_footprint_at_nested_d_d() {
             b_weights: vec![test_scalar(37), test_scalar(41)].into(),
             d_weights: vec![test_scalar(43), test_scalar(47)].into(),
         }],
-    });
-    const D_A: usize = 64;
-    const D_B: usize = 64;
-    const D_D: usize = 32;
+        CommitmentRingDims {
+            inner: D_A,
+            outer: D_B,
+            opening: D_D,
+        },
+    );
     let setup_ring_elements = 20usize;
     let setup = AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
         AkitaSetupSeed {
@@ -928,10 +1172,10 @@ fn packed_direct_accepts_d_footprint_at_nested_d_d() {
 
 #[test]
 fn multi_group_packed_direct_matches_row_fallback_with_mismatched_t_cols() {
-    let plan = finalize_test_plan(SetupContributionPlan {
-        d_rows: 2,
-        d_physical_cols: 5,
-        groups: vec![
+    let plan = finalize_test_plan(
+        2,
+        5,
+        vec![
             SetupContributionGroupPlan {
                 e_col_offset: 2,
                 t_cols: 4,
@@ -975,7 +1219,8 @@ fn multi_group_packed_direct_matches_row_fallback_with_mismatched_t_cols() {
                 d_weights: vec![test_scalar(127), test_scalar(131)].into(),
             },
         ],
-    });
+        CommitmentRingDims::uniform(TEST_D),
+    );
     let setup_len = 12;
     let setup = AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
         AkitaSetupSeed {

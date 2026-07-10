@@ -59,12 +59,9 @@ pub struct LevelParams {
     /// Number of ring elements per block. Equals `2^m_vars` at the root level
     /// but may differ at recursive levels (`ceil(num_ring / num_blocks)`).
     pub block_len: usize,
-    /// Block-select variable count (log₂ `num_blocks`). Stored explicitly
-    /// because `num_blocks.trailing_zeros()` suffices only when `num_blocks`
-    /// is a power of two, which is always true by construction.
+    /// Virtual-position variable count (log₂ `position_stride`).
     pub m_vars: usize,
-    /// Per-block variable count. Stored explicitly because at recursive
-    /// levels `block_len` is not necessarily `2^r_vars`.
+    /// Block-select variable count (log₂ `num_blocks`).
     pub r_vars: usize,
     pub fold_challenge_config: SparseChallengeConfig,
     /// Shape of the stage-1 fold-round challenge vector at this level.

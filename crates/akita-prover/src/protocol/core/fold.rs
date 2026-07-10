@@ -17,29 +17,20 @@ use akita_types::CleartextWitnessShape;
 fn trace_layout_for_instance<F: FieldCore + CanonicalField>(
     lp: &LevelParams,
     instance: &RingRelationInstance<F>,
+    opening_layout: OpeningBlockLayout,
     col_bits: usize,
     ring_bits: usize,
     num_trace_blocks: usize,
-) -> Result<
-    (
-        akita_types::WitnessChunkLayout,
-        akita_types::TraceWeightLayout,
-    ),
-    AkitaError,
-> {
+) -> Result<akita_types::TraceWeightLayout, AkitaError> {
     let witness_layout = instance.segment_layout(lp, None)?;
-    let segment = *witness_layout
-        .chunks
-        .first()
-        .ok_or_else(|| AkitaError::InvalidSetup("empty witness layout".to_string()))?;
-    let layout = trace_weight_layout_from_segment(
+    trace_weight_layout_from_segment(
         lp,
         &witness_layout,
+        opening_layout,
         col_bits,
         ring_bits,
         num_trace_blocks,
-    )?;
-    Ok((segment, layout))
+    )
 }
 
 pub(in crate::protocol::core) struct PreparedFold<F: FieldCore, E: FieldCore> {
@@ -69,7 +60,6 @@ pub(in crate::protocol::core) fn prepare_fold_inner<'a, F, E, T, P, V, C, O, TS,
     level_params: &LevelParams,
     alpha_bits: usize,
     basis: BasisMode,
-    block_order: BlockOrder,
     relation_matrix_row_layout: RelationMatrixRowLayout,
     terminal_tail_t_vectors: Option<usize>,
 ) -> Result<PreparedFold<F, E>, AkitaError>
@@ -116,7 +106,8 @@ where
                     if pad_base_evals { "recursive" } else { "root" },
                 )
             }
-        )?;
+        )
+        .map_err(|err| AkitaError::InvalidInput(format!("root opening preparation failed: {err:?}")))?;
         (
             proved.protocol_point,
             Some(proved.row_coefficients),
@@ -144,7 +135,6 @@ where
                 level_params,
                 alpha_bits,
                 basis,
-                block_order,
                 pad_base_evals,
                 transcript,
                 relation_matrix_row_layout,
@@ -185,7 +175,6 @@ where
                     level_params,
                     alpha_bits,
                     basis,
-                    block_order,
                     pad_base_evals,
                     transcript,
                     relation_matrix_row_layout,
@@ -204,7 +193,6 @@ where
             level_params,
             alpha_bits,
             basis,
-            block_order,
             pad_base_evals,
             transcript,
             relation_matrix_row_layout,
@@ -232,7 +220,6 @@ where
     level_params: &'a LevelParams,
     alpha_bits: usize,
     basis: BasisMode,
-    block_order: BlockOrder,
     pad_base_evals: bool,
     transcript: &'p mut T,
     relation_matrix_row_layout: RelationMatrixRowLayout,
@@ -276,7 +263,6 @@ where
         level_params,
         alpha_bits,
         basis,
-        block_order,
         pad_base_evals,
         transcript,
         relation_matrix_row_layout,
@@ -313,13 +299,13 @@ where
                         })?;
                     let group_protocol_point =
                         &protocol_point[..protocol_point.len().min(target_len)];
+                    let opening_layout =
+                        OpeningBlockLayout::new(group_lp.num_blocks(), group_lp.block_len())?;
                     let prepared_point = prepare_opening_point::<F, E, D>(
                         group_protocol_point,
                         basis,
-                        group_lp.m_vars(),
-                        group_lp.r_vars(),
+                        opening_layout,
                         alpha_bits,
-                        block_order,
                     )?;
                     let group_polys = fold_claims.group_polys(group_index)?;
                     let (group_folded_rings, group_e_folded_by_claim) =
@@ -362,7 +348,10 @@ where
                     RingVec::from_ring_elems(&row_coefficient_rings),
                 ))
             }
-        )?;
+        )
+        .map_err(|err| {
+            AkitaError::InvalidInput(format!("root opening preparation failed: {err:?}"))
+        })?;
     let commitment = fold_claims.fold_commitment(level_params)?;
     let (instance, witness) = RingRelationProver::new(
         opening,
@@ -382,7 +371,8 @@ where
         row_coefficient_rings,
         relation_matrix_row_layout,
         terminal_tail_t_vectors,
-    )?;
+    )
+    .map_err(|err| AkitaError::InvalidInput(format!("ring relation preparation failed: {err:?}")))?;
     let extension_opening_reduction = reduction.map(|reduction| reduction.proof);
     // §6 invariant (#239 HIGH) — suffix `PreparedFold` trace-table layout vs
     // `pad_base_evals`. `row_coefficients` and `trace_claim_scales` MUST be
@@ -548,12 +538,24 @@ where
     } else {
         RelationMatrixRowLayout::WithDBlock
     };
+    let next_opening_layout = if is_terminal_fold {
+        if !logical_w.len().is_multiple_of(ring_d) {
+            return Err(AkitaError::InvalidProof);
+        }
+        OpeningBlockLayout::new(1, logical_w.len() / ring_d)?
+    } else {
+        OpeningBlockLayout::new(
+            scheduled.next_params.num_blocks,
+            scheduled.next_params.block_len,
+        )?
+    };
     let rs = ring_switch_finalize::<F, E, T>(
         &prepared_fold.instance,
         expanded.as_ref(),
         transcript,
         &logical_w,
         lp,
+        next_opening_layout,
         prepared_fold.row_coefficients.as_deref(),
         relation_matrix_row_layout,
     )?;
@@ -595,11 +597,14 @@ where
     ensure_trace_stage2_supported(E::EXT_DEGREE)?;
     let trace_compact = if let Some(row_coefficients) = prepared_fold.row_coefficients.as_ref() {
         if lp.has_precommitted_groups() {
+            let witness_layout = prepared_fold.instance.segment_layout(lp, None)?;
             Some(akita_types::build_multi_group_root_stage2_trace_table::<
                 F,
                 E,
             >(
                 ring_d,
+                &witness_layout,
+                next_opening_layout,
                 lp,
                 prepared_fold.instance.opening_batch(),
                 prepared_fold
@@ -609,7 +614,7 @@ where
                 row_coefficients,
                 prepared_fold.trace_claim_scales.as_deref(),
                 trace_coeff,
-                rs.live_x_cols,
+                rs.opening_x_cols,
             )?)
         } else {
             let num_trace_blocks = prepared_fold
@@ -620,9 +625,10 @@ where
                 .ok_or_else(|| {
                     AkitaError::InvalidSetup("trace block count overflow".to_string())
                 })?;
-            let (_, layout) = trace_layout_for_instance(
+            let layout = trace_layout_for_instance(
                 lp,
                 &prepared_fold.instance,
+                next_opening_layout,
                 rs.col_bits,
                 rs.ring_bits,
                 num_trace_blocks,
@@ -640,7 +646,7 @@ where
                 row_coefficients,
                 prepared_fold.trace_claim_scales.as_deref(),
                 trace_coeff,
-                rs.live_x_cols,
+                rs.opening_x_cols,
             )?)
         }
     } else if let Some(prepared) = prepared_fold
@@ -648,9 +654,10 @@ where
         .as_ref()
         .and_then(|points| points.first())
     {
-        let (_, layout) = trace_layout_for_instance(
+        let layout = trace_layout_for_instance(
             lp,
             &prepared_fold.instance,
+            next_opening_layout,
             rs.col_bits,
             rs.ring_bits,
             lp.num_blocks,
@@ -661,14 +668,14 @@ where
             prepared,
             prepared_fold.trace_scale,
             trace_coeff,
-            rs.live_x_cols,
+            rs.opening_x_cols,
         )?)
     } else {
         None
     };
     let ring_bits = rs.ring_bits;
     let col_bits = rs.col_bits;
-    let live_x_cols = rs.live_x_cols;
+    let live_x_cols = rs.opening_x_cols;
     let tau1 = rs.tau1.clone();
     let alpha = rs.alpha;
     let (stage2_sumcheck_proof, sumcheck_challenges, stage2_prover) = prove_stage2::<F, E, T>(
@@ -856,7 +863,7 @@ where
         &rs.w_evals_compact,
         &tau0_reordered,
         rs.b,
-        rs.live_x_cols,
+        rs.opening_x_cols,
         rs.col_bits,
         rs.ring_bits,
     )?;
@@ -890,7 +897,7 @@ where
         rs.b,
         rs.alpha_evals_y,
         rs.relation_matrix_col_evals,
-        rs.live_x_cols,
+        rs.opening_x_cols,
         rs.col_bits,
         rs.ring_bits,
         relation_claim,

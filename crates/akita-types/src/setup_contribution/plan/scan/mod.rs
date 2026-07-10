@@ -28,26 +28,32 @@ impl<E: FieldCore> SetupContributionPlan<E> {
         F: FieldCore + CanonicalField,
         E: ExtField<F> + MulBaseUnreduced<F>,
     {
-        let d_a = alpha_pows_a.len();
-        let d_b = alpha_pows_b.len();
-        let d_d = alpha_pows_d.len();
-        let base_d = role_alpha_base_len(d_a, d_b, d_d)?;
-        let base_pows = alpha_pows_a.get(..base_d).ok_or(AkitaError::InvalidProof)?;
-        let a_projection = if d_a == base_d {
-            RoleProjection::identity()
-        } else {
-            role_projection(alpha_pows_a, base_pows).ok_or_else(|| {
+        let geometry = self.projection_geometry;
+        geometry.validate_alpha_power_lengths(
+            alpha_pows_a.len(),
+            alpha_pows_b.len(),
+            alpha_pows_d.len(),
+        )?;
+        let base_d = geometry.base_ring_dim();
+        let base_pows = alpha_pows_d.get(..base_d).ok_or(AkitaError::InvalidProof)?;
+        let a_projection = role_projection(alpha_pows_a, base_pows, geometry.a_ratio())
+            .ok_or_else(|| {
                 AkitaError::InvalidSetup(
                     "A alpha powers do not decompose over base dimension".into(),
                 )
-            })?
-        };
-        let b_projection = role_projection(alpha_pows_b, base_pows).ok_or_else(|| {
-            AkitaError::InvalidSetup("B alpha powers do not decompose over base dimension".into())
-        })?;
-        let d_projection = role_projection(alpha_pows_d, base_pows).ok_or_else(|| {
-            AkitaError::InvalidSetup("D alpha powers do not decompose over base dimension".into())
-        })?;
+            })?;
+        let b_projection = role_projection(alpha_pows_b, base_pows, geometry.b_ratio())
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup(
+                    "B alpha powers do not decompose over base dimension".into(),
+                )
+            })?;
+        let d_projection = role_projection(alpha_pows_d, base_pows, geometry.d_ratio())
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup(
+                    "D alpha powers do not decompose over base dimension".into(),
+                )
+            })?;
 
         dispatch_for_field!(
             ProtocolDispatchSlot::Role(RingRole::Opening),
@@ -83,11 +89,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                 actual: base_pows.len(),
             });
         }
-        let required = self.required_base_ring_rows(
-            a_projection.ratio(),
-            b_projection.ratio(),
-            d_projection.ratio(),
-        )?;
+        let required = self.projection_geometry.required();
         let setup_len = setup.shared_matrix().total_ring_elements_at::<BASE_D>()?;
         if required > setup_len {
             return Err(AkitaError::InvalidSetup(
@@ -109,49 +111,4 @@ impl<E: FieldCore> SetupContributionPlan<E> {
         }
         Ok(acc)
     }
-
-    fn required_base_ring_rows(
-        &self,
-        a_ratio: usize,
-        b_ratio: usize,
-        d_ratio: usize,
-    ) -> Result<usize, AkitaError> {
-        let mut required = self
-            .d_rows
-            .checked_mul(self.d_physical_cols)
-            .ok_or_else(|| AkitaError::InvalidSetup("setup D footprint overflow".into()))?
-            .checked_mul(d_ratio)
-            .ok_or_else(|| {
-                AkitaError::InvalidSetup("setup D base-ring footprint overflow".into())
-            })?;
-        for group in &self.groups {
-            let b_required = group
-                .n_b
-                .checked_mul(group.t_cols)
-                .ok_or_else(|| AkitaError::InvalidSetup("setup B footprint overflow".into()))?;
-            let a_required = group
-                .n_a
-                .checked_mul(group.z_cols)
-                .ok_or_else(|| AkitaError::InvalidSetup("setup A footprint overflow".into()))?;
-            let b_base_required = b_required.checked_mul(b_ratio).ok_or_else(|| {
-                AkitaError::InvalidSetup("setup B base-ring footprint overflow".into())
-            })?;
-            let a_base_required = a_required.checked_mul(a_ratio).ok_or_else(|| {
-                AkitaError::InvalidSetup("setup A base-ring footprint overflow".into())
-            })?;
-            required = required.max(b_base_required).max(a_base_required);
-        }
-        Ok(required)
-    }
-}
-
-fn role_alpha_base_len(d_a: usize, d_b: usize, d_d: usize) -> Result<usize, AkitaError> {
-    for (role, dim) in [("A", d_a), ("B", d_b), ("D", d_d)] {
-        if dim == 0 || !dim.is_power_of_two() {
-            return Err(AkitaError::InvalidSetup(format!(
-                "{role} setup contribution ring dimension must be a non-zero power of two"
-            )));
-        }
-    }
-    Ok(d_a.min(d_b).min(d_d))
 }

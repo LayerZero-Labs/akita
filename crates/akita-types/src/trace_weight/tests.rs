@@ -7,7 +7,8 @@ use super::{
 };
 use crate::{
     block_rings_at_opening, lagrange_weights, recover_ring_subfield_inner_product,
-    reduce_inner_opening_to_ring_element, BasisMode,
+    reduce_inner_opening_to_ring_element, BasisMode, OpeningBatchWitnessGroup,
+    OpeningBatchWitnessLayout, OpeningBlockLayout, SemanticGroupId,
 };
 use akita_algebra::CyclotomicRing;
 use akita_field::{Prime128OffsetA7F7, RandomSampling};
@@ -18,30 +19,61 @@ type F = Prime128OffsetA7F7;
 const D: usize = 128;
 const LOG_BASIS: u32 = 3;
 
-fn field_block_weights_layout() -> TraceWeightLayout {
+fn trace_layout(
+    ring_bits: usize,
+    col_bits: usize,
+    num_claims: usize,
+    num_blocks_per_claim: usize,
+    num_digits_open: usize,
+    log_basis: u32,
+    num_chunks: usize,
+) -> TraceWeightLayout {
+    let group_id = SemanticGroupId(0);
+    let witness_layout = OpeningBatchWitnessLayout::new(
+        vec![OpeningBatchWitnessGroup {
+            id: group_id,
+            num_claims,
+            num_blocks: num_blocks_per_claim,
+            block_len: 1,
+            depth_open: num_digits_open,
+            depth_commit: 1,
+            depth_fold: 1,
+            n_a: 1,
+            e_setup_col_offset: 0,
+        }],
+        vec![group_id],
+        vec![group_id],
+        num_chunks,
+        1,
+        1,
+    )
+    .unwrap();
+    let opening_layout = OpeningBlockLayout::new(1, witness_layout.total_len()).unwrap();
+    let required_col_bits = witness_layout
+        .total_len()
+        .next_power_of_two()
+        .trailing_zeros() as usize;
     TraceWeightLayout {
-        ring_bits: 7,
-        col_bits: 2,
-        opening_digit_offset: 0,
-        num_blocks: 2,
-        num_digits_open: 2,
-        r_vars: 1,
-        log_basis: LOG_BASIS,
-        chunk: crate::TraceChunkLayout::single(),
+        ring_bits,
+        col_bits: col_bits.max(required_col_bits),
+        num_blocks: num_claims * num_blocks_per_claim,
+        num_digits_open,
+        r_vars: (num_claims * num_blocks_per_claim)
+            .next_power_of_two()
+            .trailing_zeros() as usize,
+        log_basis,
+        witness_layout,
+        opening_layout,
+        group_id,
     }
 }
 
+fn field_block_weights_layout() -> TraceWeightLayout {
+    trace_layout(7, 2, 1, 2, 2, LOG_BASIS, 1)
+}
+
 fn field_block_weights_layout_with_offset() -> TraceWeightLayout {
-    TraceWeightLayout {
-        ring_bits: 3,
-        col_bits: 3,
-        opening_digit_offset: 4,
-        num_blocks: 2,
-        num_digits_open: 2,
-        r_vars: 1,
-        log_basis: LOG_BASIS,
-        chunk: crate::TraceChunkLayout::single(),
-    }
+    trace_layout(3, 3, 1, 2, 2, LOG_BASIS, 1)
 }
 
 fn random_point(rng: &mut StdRng, len: usize) -> Vec<F> {
@@ -162,16 +194,7 @@ fn closed_form_matches_dense_table_with_opening_digit_offset() {
 
 #[test]
 fn closed_form_matches_dense_table_multiple_field_terms() {
-    let layout = TraceWeightLayout {
-        ring_bits: 7,
-        col_bits: 3,
-        opening_digit_offset: 0,
-        num_blocks: 4,
-        num_digits_open: 2,
-        r_vars: 2,
-        log_basis: LOG_BASIS,
-        chunk: crate::TraceChunkLayout::single(),
-    };
+    let layout = trace_layout(7, 3, 1, 4, 2, LOG_BASIS, 1);
     let mut rng = StdRng::seed_from_u64(0x7ACE_0005);
 
     for _ in 0..16 {
@@ -239,7 +262,7 @@ fn witness_dot_matches_ring_subfield_inner_product_field_block_weights() {
 
         let mut witness = vec![F::zero(); layout.table_len().unwrap()];
         for (block, folded) in folded_blocks.iter().enumerate() {
-            let col = layout.opening_digit_col_index(block, 0);
+            let col = layout.opening_digit_col_index(block, 0).unwrap();
             for ring_coord in 0..(1usize << layout.ring_bits) {
                 let idx = layout.witness_index(col, ring_coord);
                 witness[idx] = folded.coefficients()[ring_coord];
@@ -267,29 +290,11 @@ mod ring_block_weights {
     const LOG_BASIS: u32 = 3;
 
     fn ring_block_weights_layout<const D: usize>() -> TraceWeightLayout {
-        TraceWeightLayout {
-            ring_bits: D.trailing_zeros() as usize,
-            col_bits: 2,
-            opening_digit_offset: 0,
-            num_blocks: 2,
-            num_digits_open: 2,
-            r_vars: 1,
-            log_basis: LOG_BASIS,
-            chunk: crate::TraceChunkLayout::single(),
-        }
+        trace_layout(D.trailing_zeros() as usize, 2, 1, 2, 2, LOG_BASIS, 1)
     }
 
     fn ring_block_weights_multi_term_layout<const D: usize>() -> TraceWeightLayout {
-        TraceWeightLayout {
-            ring_bits: D.trailing_zeros() as usize,
-            col_bits: 3,
-            opening_digit_offset: 0,
-            num_blocks: 4,
-            num_digits_open: 2,
-            r_vars: 2,
-            log_basis: LOG_BASIS,
-            chunk: crate::TraceChunkLayout::single(),
-        }
+        trace_layout(D.trailing_zeros() as usize, 3, 1, 4, 2, LOG_BASIS, 1)
     }
 
     fn trace_inner_open_len<F, E, const D: usize>() -> usize
@@ -441,7 +446,7 @@ mod ring_block_weights {
 
             let mut witness = vec![E::zero(); layout.table_len().unwrap()];
             for (block, folded) in folded_blocks.iter().enumerate() {
-                let col = layout.opening_digit_col_index(block, 0);
+                let col = layout.opening_digit_col_index(block, 0).unwrap();
                 for ring_coord in 0..(1usize << layout.ring_bits) {
                     let idx = layout.witness_index(col, ring_coord);
                     witness[idx] = E::lift_base(folded.coefficients()[ring_coord]);
@@ -515,7 +520,7 @@ mod ring_block_weights {
 
             let mut witness = vec![E4::zero(); layout.table_len().unwrap()];
             for (block, folded) in folded_blocks.iter().enumerate() {
-                let col = layout.opening_digit_col_index(block, 0);
+                let col = layout.opening_digit_col_index(block, 0).unwrap();
                 for ring_coord in 0..(1usize << layout.ring_bits) {
                     let idx = layout.witness_index(col, ring_coord);
                     witness[idx] = E4::lift_base(folded.coefficients()[ring_coord]);
@@ -641,16 +646,7 @@ mod closed_terms {
     }
 
     fn ring_layout<const D: usize>() -> TraceWeightLayout {
-        TraceWeightLayout {
-            ring_bits: D.trailing_zeros() as usize,
-            col_bits: 2,
-            opening_digit_offset: 0,
-            num_blocks: 2,
-            num_digits_open: 2,
-            r_vars: 1,
-            log_basis: LB,
-            chunk: crate::TraceChunkLayout::single(),
-        }
+        trace_layout(D.trailing_zeros() as usize, 2, 1, 2, 2, LB, 1)
     }
 
     #[test]
@@ -670,16 +666,7 @@ mod closed_terms {
 
     #[test]
     fn closed_terms_match_dense_k1_single() {
-        let layout = TraceWeightLayout {
-            ring_bits: 3,
-            col_bits: 3,
-            opening_digit_offset: 4,
-            num_blocks: 2,
-            num_digits_open: 2,
-            r_vars: 1,
-            log_basis: LB,
-            chunk: crate::TraceChunkLayout::single(),
-        };
+        let layout = trace_layout(3, 3, 1, 2, 2, LB, 1);
         const D8: usize = 8;
         let mut rng = StdRng::seed_from_u64(0x5EED_0001);
         for _ in 0..16 {
@@ -720,16 +707,7 @@ mod closed_terms {
     #[test]
     fn closed_terms_match_dense_k1_multi_claim() {
         // Two claims tiled along the block axis (num_blocks = 2 claims * 2^1).
-        let layout = TraceWeightLayout {
-            ring_bits: 3,
-            col_bits: 4,
-            opening_digit_offset: 4,
-            num_blocks: 4,
-            num_digits_open: 2,
-            r_vars: 2,
-            log_basis: LB,
-            chunk: crate::TraceChunkLayout::single(),
-        };
+        let layout = trace_layout(3, 4, 2, 2, 2, LB, 1);
         const D8: usize = 8;
         let mut rng = StdRng::seed_from_u64(0x5EED_1001);
         for _ in 0..16 {
@@ -770,16 +748,7 @@ mod closed_terms {
     #[test]
     fn closed_terms_match_dense_k4_multi_claim() {
         // Two K=4 claims tiled along the block axis.
-        let layout = TraceWeightLayout {
-            ring_bits: 3,
-            col_bits: 4,
-            opening_digit_offset: 4,
-            num_blocks: 4,
-            num_digits_open: 2,
-            r_vars: 2,
-            log_basis: LB,
-            chunk: crate::TraceChunkLayout::single(),
-        };
+        let layout = trace_layout(3, 4, 2, 2, 2, LB, 1);
         const D8: usize = 8;
         let mut rng = StdRng::seed_from_u64(0x5EED_4001);
         for _ in 0..8 {
@@ -824,24 +793,8 @@ mod closed_terms {
         let num_claims = 2usize;
         let num_blocks_global = 4usize;
         let num_digits_open = 2usize;
-        for &(w, chunk_stride) in &[(1usize, 0usize), (2, 32), (4, 32)] {
-            let bpc = num_blocks_global / w;
-            let layout = TraceWeightLayout {
-                ring_bits: 3,
-                col_bits: 8,
-                opening_digit_offset: 2,
-                num_blocks: num_claims * num_blocks_global,
-                num_digits_open,
-                r_vars: (num_claims * num_blocks_global).trailing_zeros() as usize,
-                log_basis: LB,
-                chunk: crate::TraceChunkLayout {
-                    num_chunks: w,
-                    blocks_per_chunk: bpc,
-                    num_claims,
-                    num_blocks_global,
-                    chunk_stride,
-                },
-            };
+        for w in [1usize, 2, 4] {
+            let layout = trace_layout(3, 8, num_claims, num_blocks_global, num_digits_open, LB, w);
             layout.validate_opening_digit_segment().unwrap();
             let mut rng = StdRng::seed_from_u64(0xC0DE_0000 + w as u64);
             for _ in 0..8 {
@@ -892,23 +845,7 @@ mod closed_terms {
         let num_claims = 2usize;
         let num_blocks_global = 4usize;
         let w = 2usize;
-        let bpc = num_blocks_global / w;
-        let layout = TraceWeightLayout {
-            ring_bits: 3,
-            col_bits: 8,
-            opening_digit_offset: 2,
-            num_blocks: num_claims * num_blocks_global,
-            num_digits_open: 2,
-            r_vars: (num_claims * num_blocks_global).trailing_zeros() as usize,
-            log_basis: LB,
-            chunk: crate::TraceChunkLayout {
-                num_chunks: w,
-                blocks_per_chunk: bpc,
-                num_claims,
-                num_blocks_global,
-                chunk_stride: 32,
-            },
-        };
+        let layout = trace_layout(3, 8, num_claims, num_blocks_global, 2, LB, w);
         layout.validate_opening_digit_segment().unwrap();
         let mut rng = StdRng::seed_from_u64(0xC0DE_4444);
         for _ in 0..8 {

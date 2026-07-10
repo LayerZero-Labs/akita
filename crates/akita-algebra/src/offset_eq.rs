@@ -12,12 +12,417 @@
 //!    [`summarize_pow2_block_carries`], which strips the aligned inner `2^m`
 //!    block into the two carry buckets `[A0, A1]`, leaving a small coarse outer
 //!    sum over `q` for the caller to combine with the high `eq` factor.
+//! 3. [`eval_compact_pair_eq`], an exact sparse pair-carry recurrence for two
+//!    affine equality-address streams over a shared, possibly non-power-of-two
+//!    index interval.
 //!
 //! Binary addition `offset + z` produces carries that propagate across bit
 //! positions; the peel captures that carry state (0 or 1) as the two buckets
 //! `[A0, A1]` of [`summarize_pow2_block_carries`].
 
 use crate::{AkitaError, FieldCore};
+use std::collections::BTreeMap;
+
+/// Verifier work cap for one compact-stride equality contraction.
+pub const MAX_COMPACT_STRIDE_TERMS: usize = 1 << 28;
+
+/// Dense or factored outer weights for a compact-stride contraction.
+pub enum CompactOuterWeights<'a, F> {
+    /// Materialized outer weights in compact-index order.
+    Dense(&'a [F]),
+    /// Mixed-radix tensor factors, with the first factor as the fastest axis.
+    Tensor(&'a [&'a [F]]),
+}
+
+impl<F: FieldCore> CompactOuterWeights<'_, F> {
+    fn len(&self) -> Result<usize, AkitaError> {
+        match self {
+            Self::Dense(weights) => Ok(weights.len()),
+            Self::Tensor(factors) => {
+                if factors.is_empty() || factors.iter().any(|factor| factor.is_empty()) {
+                    return Err(AkitaError::InvalidInput(
+                        "compact-stride tensor factors must be non-empty".into(),
+                    ));
+                }
+                factors.iter().try_fold(1usize, |len, factor| {
+                    len.checked_mul(factor.len()).ok_or_else(|| {
+                        AkitaError::InvalidInput(
+                            "compact-stride tensor outer length overflow".into(),
+                        )
+                    })
+                })
+            }
+        }
+    }
+
+    fn value(&self, mut index: usize) -> Result<F, AkitaError> {
+        match self {
+            Self::Dense(weights) => weights
+                .get(index)
+                .copied()
+                .ok_or_else(|| AkitaError::InvalidInput("outer weight index out of range".into())),
+            Self::Tensor(factors) => {
+                let mut value = F::one();
+                for factor in *factors {
+                    let digit = index % factor.len();
+                    index /= factor.len();
+                    value *= factor[digit];
+                }
+                if index != 0 {
+                    return Err(AkitaError::InvalidInput(
+                        "tensor outer weight index out of range".into(),
+                    ));
+                }
+                Ok(value)
+            }
+        }
+    }
+}
+
+/// Evaluate one exact compact-stride equality contraction.
+///
+/// This computes
+///
+/// ```text
+/// sum_{q < Q} outer[q] * sum_{lane < L}
+///     lanes[lane] * eq(r, offset + stride*q + lane).
+/// ```
+///
+/// The equality trie is visited only over live address intervals.
+/// The traversal uses multiplication and addition only, so Boolean challenges
+/// need no special case and no inversions.
+/// Tensor outer weights are read from their factors and are never materialized.
+///
+/// # Errors
+///
+/// Returns an error for malformed geometry, arithmetic overflow, a domain that
+/// cannot be represented by `usize`, or work above [`MAX_COMPACT_STRIDE_TERMS`].
+pub fn eval_compact_stride_eq<F: FieldCore>(
+    challenges: &[F],
+    offset: usize,
+    stride: usize,
+    lanes: &[F],
+    outer: CompactOuterWeights<'_, F>,
+) -> Result<F, AkitaError> {
+    if stride == 0 || lanes.is_empty() || lanes.len() > stride {
+        return Err(AkitaError::InvalidInput(
+            "compact-stride geometry requires 0 < lanes <= stride".into(),
+        ));
+    }
+    if challenges.len() >= usize::BITS as usize {
+        return Err(AkitaError::InvalidSize {
+            expected: usize::BITS as usize - 1,
+            actual: challenges.len(),
+        });
+    }
+    let outer_len = outer.len()?;
+    if outer_len == 0 {
+        return Ok(F::zero());
+    }
+    let terms = outer_len
+        .checked_mul(lanes.len())
+        .ok_or_else(|| AkitaError::InvalidInput("compact-stride term count overflow".into()))?;
+    if terms > MAX_COMPACT_STRIDE_TERMS {
+        return Err(AkitaError::InvalidSize {
+            expected: MAX_COMPACT_STRIDE_TERMS,
+            actual: terms,
+        });
+    }
+    let last_outer = outer_len - 1;
+    let last = stride
+        .checked_mul(last_outer)
+        .and_then(|base| base.checked_add(lanes.len() - 1))
+        .and_then(|local| offset.checked_add(local))
+        .ok_or_else(|| AkitaError::InvalidInput("compact-stride address overflow".into()))?;
+    let domain_len = 1usize << challenges.len();
+    if offset >= domain_len {
+        return Ok(F::zero());
+    }
+    let clipped_last = last.min(domain_len - 1);
+    let mut acc = F::zero();
+    if lanes.len() == stride {
+        visit_eq_interval(
+            challenges,
+            0,
+            domain_len,
+            F::one(),
+            offset,
+            clipped_last + 1,
+            &mut |address, eq_weight| {
+                let local = address - offset;
+                let q = local / stride;
+                let lane = local % stride;
+                let outer_weight = outer.value(q)?;
+                acc += outer_weight * lanes[lane] * eq_weight;
+                Ok(())
+            },
+        )?;
+    } else {
+        for q in 0..outer_len {
+            let start = offset
+                .checked_add(stride.checked_mul(q).ok_or_else(|| {
+                    AkitaError::InvalidInput("compact-stride address overflow".into())
+                })?)
+                .ok_or_else(|| {
+                    AkitaError::InvalidInput("compact-stride address overflow".into())
+                })?;
+            if start >= domain_len {
+                break;
+            }
+            let end = start
+                .checked_add(lanes.len())
+                .ok_or_else(|| AkitaError::InvalidInput("compact-stride address overflow".into()))?
+                .min(domain_len);
+            let outer_weight = outer.value(q)?;
+            visit_eq_interval(
+                challenges,
+                0,
+                domain_len,
+                F::one(),
+                start,
+                end,
+                &mut |address, eq_weight| {
+                    acc += outer_weight * lanes[address - start] * eq_weight;
+                    Ok(())
+                },
+            )?;
+        }
+    }
+    Ok(acc)
+}
+
+/// Evaluate an exact contraction between two affine equality-address streams.
+///
+/// This computes
+///
+/// ```text
+/// sum_{i < len}
+///     eq(left_challenges, left_offset + left_stride*i)
+///   * eq(right_challenges, right_offset + right_stride*i).
+/// ```
+///
+/// The interval is decomposed into aligned power-of-two blocks. Within each
+/// block, a sparse recurrence tracks the pair of carries produced by adding
+/// one shared index bit into the two affine addresses. Non-power-of-two
+/// lengths are therefore exact and do not require a padded domain.
+///
+/// # Errors
+///
+/// Returns an error for zero strides, arithmetic overflow, unsupported
+/// challenge arity, or recurrence work above [`MAX_COMPACT_STRIDE_TERMS`].
+#[allow(clippy::too_many_arguments)]
+pub fn eval_compact_pair_eq<F: FieldCore>(
+    left_challenges: &[F],
+    left_offset: usize,
+    left_stride: usize,
+    right_challenges: &[F],
+    right_offset: usize,
+    right_stride: usize,
+    len: usize,
+) -> Result<F, AkitaError> {
+    if left_stride == 0 || right_stride == 0 {
+        return Err(AkitaError::InvalidInput(
+            "compact-pair strides must be non-zero".into(),
+        ));
+    }
+    if left_challenges.len() >= usize::BITS as usize
+        || right_challenges.len() >= usize::BITS as usize
+    {
+        return Err(AkitaError::InvalidSize {
+            expected: usize::BITS as usize - 1,
+            actual: left_challenges.len().max(right_challenges.len()),
+        });
+    }
+    if len == 0 {
+        return Ok(F::zero());
+    }
+    let last = len - 1;
+    left_stride
+        .checked_mul(last)
+        .and_then(|delta| left_offset.checked_add(delta))
+        .ok_or_else(|| AkitaError::InvalidInput("compact-pair left address overflow".into()))?;
+    right_stride
+        .checked_mul(last)
+        .and_then(|delta| right_offset.checked_add(delta))
+        .ok_or_else(|| AkitaError::InvalidInput("compact-pair right address overflow".into()))?;
+
+    let left_domain = 1usize << left_challenges.len();
+    let right_domain = 1usize << right_challenges.len();
+    if left_offset >= left_domain || right_offset >= right_domain {
+        return Ok(F::zero());
+    }
+    let left_live = (left_domain - 1 - left_offset) / left_stride + 1;
+    let right_live = (right_domain - 1 - right_offset) / right_stride + 1;
+    let live_len = len.min(left_live).min(right_live);
+    if live_len == 0 {
+        return Ok(F::zero());
+    }
+    if live_len > MAX_COMPACT_STRIDE_TERMS {
+        return Err(AkitaError::InvalidSize {
+            expected: MAX_COMPACT_STRIDE_TERMS,
+            actual: live_len,
+        });
+    }
+
+    let highest_bit = usize::BITS as usize - 1 - live_len.leading_zeros() as usize;
+    let mut block_base = 0usize;
+    let mut work = 0usize;
+    let mut acc = F::zero();
+    for block_bits in (0..=highest_bit).rev() {
+        let block_len = 1usize << block_bits;
+        if live_len & block_len == 0 {
+            continue;
+        }
+        acc += eval_compact_pair_pow2_block(
+            left_challenges,
+            left_offset,
+            left_stride,
+            right_challenges,
+            right_offset,
+            right_stride,
+            block_base,
+            block_bits,
+            &mut work,
+        )?;
+        block_base = block_base.checked_add(block_len).ok_or_else(|| {
+            AkitaError::InvalidInput("compact-pair block coverage overflow".into())
+        })?;
+    }
+    Ok(acc)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn eval_compact_pair_pow2_block<F: FieldCore>(
+    left_challenges: &[F],
+    left_offset: usize,
+    left_stride: usize,
+    right_challenges: &[F],
+    right_offset: usize,
+    right_stride: usize,
+    block_base: usize,
+    block_bits: usize,
+    work: &mut usize,
+) -> Result<F, AkitaError> {
+    if block_bits > left_challenges.len() || block_bits > right_challenges.len() {
+        return Err(AkitaError::InvalidInput(
+            "compact-pair block exceeds equality arity".into(),
+        ));
+    }
+    let left_carry = left_stride
+        .checked_mul(block_base)
+        .and_then(|delta| left_offset.checked_add(delta))
+        .ok_or_else(|| AkitaError::InvalidInput("compact-pair left address overflow".into()))?;
+    let right_carry = right_stride
+        .checked_mul(block_base)
+        .and_then(|delta| right_offset.checked_add(delta))
+        .ok_or_else(|| AkitaError::InvalidInput("compact-pair right address overflow".into()))?;
+    let mut states = BTreeMap::from([((left_carry, right_carry), F::one())]);
+    for bit in 0..block_bits {
+        *work = work
+            .checked_add(states.len().checked_mul(2).ok_or_else(|| {
+                AkitaError::InvalidInput("compact-pair recurrence work overflow".into())
+            })?)
+            .ok_or_else(|| {
+                AkitaError::InvalidInput("compact-pair recurrence work overflow".into())
+            })?;
+        if *work > MAX_COMPACT_STRIDE_TERMS {
+            return Err(AkitaError::InvalidSize {
+                expected: MAX_COMPACT_STRIDE_TERMS,
+                actual: *work,
+            });
+        }
+        let mut next = BTreeMap::new();
+        for ((left_carry, right_carry), state_weight) in states {
+            for index_bit in 0..=1usize {
+                let left_sum = if index_bit == 0 {
+                    left_carry
+                } else {
+                    left_carry.checked_add(left_stride).ok_or_else(|| {
+                        AkitaError::InvalidInput("compact-pair left carry overflow".into())
+                    })?
+                };
+                let right_sum = if index_bit == 0 {
+                    right_carry
+                } else {
+                    right_carry.checked_add(right_stride).ok_or_else(|| {
+                        AkitaError::InvalidInput("compact-pair right carry overflow".into())
+                    })?
+                };
+                let left_factor = if left_sum & 1 == 1 {
+                    left_challenges[bit]
+                } else {
+                    F::one() - left_challenges[bit]
+                };
+                let right_factor = if right_sum & 1 == 1 {
+                    right_challenges[bit]
+                } else {
+                    F::one() - right_challenges[bit]
+                };
+                *next
+                    .entry((left_sum >> 1, right_sum >> 1))
+                    .or_insert(F::zero()) += state_weight * left_factor * right_factor;
+            }
+        }
+        states = next;
+    }
+
+    Ok(states
+        .into_iter()
+        .map(|((left_high, right_high), state_weight)| {
+            state_weight
+                * eq_eval_at_index(&left_challenges[block_bits..], left_high)
+                * eq_eval_at_index(&right_challenges[block_bits..], right_high)
+        })
+        .sum())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn visit_eq_interval<F, Visit>(
+    challenges: &[F],
+    node_start: usize,
+    node_len: usize,
+    node_weight: F,
+    live_start: usize,
+    live_end: usize,
+    visit: &mut Visit,
+) -> Result<(), AkitaError>
+where
+    F: FieldCore,
+    Visit: FnMut(usize, F) -> Result<(), AkitaError>,
+{
+    let node_end = node_start
+        .checked_add(node_len)
+        .ok_or_else(|| AkitaError::InvalidInput("equality trie range overflow".into()))?;
+    if node_end <= live_start || node_start >= live_end {
+        return Ok(());
+    }
+    if node_len == 1 {
+        return visit(node_start, node_weight);
+    }
+    let half = node_len / 2;
+    let bit = half.trailing_zeros() as usize;
+    let challenge = *challenges
+        .get(bit)
+        .ok_or_else(|| AkitaError::InvalidInput("equality trie bit out of range".into()))?;
+    visit_eq_interval(
+        challenges,
+        node_start,
+        half,
+        node_weight * (F::one() - challenge),
+        live_start,
+        live_end,
+        visit,
+    )?;
+    visit_eq_interval(
+        challenges,
+        node_start + half,
+        half,
+        node_weight * challenge,
+        live_start,
+        live_end,
+        visit,
+    )
+}
 
 /// Sparse/pruned partial multilinear evaluation of a single materialized
 /// factor over the contiguous global interval `[offset, offset + factor.len())`.
@@ -403,6 +808,188 @@ mod tests {
 
         let got = combine_pow2_carry_terms(&r, offset, peeled_bits, &carry_terms);
         let expected = reference_pow2_peeled_blocks(&r, offset, &blocks);
+        assert_eq!(got, expected);
+    }
+
+    fn reference_compact_stride(
+        challenges: &[F],
+        offset: usize,
+        stride: usize,
+        lanes: &[F],
+        outer: &[F],
+    ) -> F {
+        let mut acc = F::zero();
+        for (q, &outer_weight) in outer.iter().enumerate() {
+            for (lane, &lane_weight) in lanes.iter().enumerate() {
+                let address = offset + stride * q + lane;
+                acc += outer_weight * lane_weight * eq_eval_at_index(challenges, address);
+            }
+        }
+        acc
+    }
+
+    #[test]
+    fn compact_stride_matches_direct_small_sweep() {
+        let mut rng = StdRng::seed_from_u64(0x00C0_11A7);
+        for bits in 1..8usize {
+            let challenges = random_vec(&mut rng, bits);
+            for stride in [1usize, 3, 5, 8] {
+                for outer_len in [1usize, 2, 7] {
+                    let lanes = random_vec(&mut rng, stride);
+                    let outer = random_vec(&mut rng, outer_len);
+                    for offset in [0usize, 1, 7, (1usize << bits).saturating_sub(2)] {
+                        let got = eval_compact_stride_eq(
+                            &challenges,
+                            offset,
+                            stride,
+                            &lanes,
+                            CompactOuterWeights::Dense(&outer),
+                        )
+                        .unwrap();
+                        let expected =
+                            reference_compact_stride(&challenges, offset, stride, &lanes, &outer);
+                        assert_eq!(
+                            got, expected,
+                            "bits={bits} stride={stride} outer_len={outer_len} offset={offset}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn compact_stride_supports_gaps_and_partial_clipping() {
+        let mut rng = StdRng::seed_from_u64(0x00C0_11A8);
+        let challenges = random_vec(&mut rng, 6);
+        let lanes = random_vec(&mut rng, 3);
+        let outer = random_vec(&mut rng, 9);
+        let got = eval_compact_stride_eq(
+            &challenges,
+            41,
+            5,
+            &lanes,
+            CompactOuterWeights::Dense(&outer),
+        )
+        .unwrap();
+        let expected = reference_compact_stride(&challenges, 41, 5, &lanes, &outer);
+        assert_eq!(got, expected);
+    }
+
+    #[test]
+    fn compact_stride_boolean_challenges_need_no_inverses() {
+        let challenges = [F::zero(), F::one(), F::one(), F::zero()];
+        let lanes = [F::from_u64(2), F::from_u64(3), F::from_u64(5)];
+        let outer = [F::from_u64(7), F::from_u64(11)];
+        let got = eval_compact_stride_eq(
+            &challenges,
+            3,
+            lanes.len(),
+            &lanes,
+            CompactOuterWeights::Dense(&outer),
+        )
+        .unwrap();
+        let expected = reference_compact_stride(&challenges, 3, lanes.len(), &lanes, &outer);
+        assert_eq!(got, expected);
+    }
+
+    #[test]
+    fn compact_stride_tensor_matches_dense_outer() {
+        let mut rng = StdRng::seed_from_u64(0x00C0_11A9);
+        let challenges = random_vec(&mut rng, 8);
+        let lanes = random_vec(&mut rng, 5);
+        let factor0 = random_vec(&mut rng, 3);
+        let factor1 = random_vec(&mut rng, 4);
+        let dense = (0..factor0.len() * factor1.len())
+            .map(|index| factor0[index % factor0.len()] * factor1[index / factor0.len()])
+            .collect::<Vec<_>>();
+        let factors = [&factor0[..], &factor1[..]];
+        let tensor = eval_compact_stride_eq(
+            &challenges,
+            9,
+            lanes.len(),
+            &lanes,
+            CompactOuterWeights::Tensor(&factors),
+        )
+        .unwrap();
+        let materialized = eval_compact_stride_eq(
+            &challenges,
+            9,
+            lanes.len(),
+            &lanes,
+            CompactOuterWeights::Dense(&dense),
+        )
+        .unwrap();
+        assert_eq!(tensor, materialized);
+    }
+
+    #[test]
+    fn compact_stride_rejects_overflow_before_clipping() {
+        let lanes = [F::one(), F::one()];
+        let outer = [F::one(), F::one()];
+        let err = eval_compact_stride_eq(
+            &[F::one()],
+            usize::MAX,
+            lanes.len(),
+            &lanes,
+            CompactOuterWeights::Dense(&outer),
+        )
+        .expect_err("overflow must be rejected");
+        assert!(matches!(err, AkitaError::InvalidInput(_)));
+    }
+
+    #[test]
+    fn compact_pair_matches_direct_non_power_of_two_sweep() {
+        let mut rng = StdRng::seed_from_u64(0x00C0_11AA);
+        for left_bits in 2..8usize {
+            for right_bits in 2..8usize {
+                let left = random_vec(&mut rng, left_bits);
+                let right = random_vec(&mut rng, right_bits);
+                for left_stride in [1usize, 2, 3, 5] {
+                    for right_stride in [1usize, 2, 3, 7] {
+                        for len in [1usize, 2, 3, 5, 9] {
+                            let left_offset = left_bits;
+                            let right_offset = right_bits + 1;
+                            let got = eval_compact_pair_eq(
+                                &left,
+                                left_offset,
+                                left_stride,
+                                &right,
+                                right_offset,
+                                right_stride,
+                                len,
+                            )
+                            .unwrap();
+                            let expected = (0..len)
+                                .map(|index| {
+                                    eq_eval_at_index(&left, left_offset + left_stride * index)
+                                        * eq_eval_at_index(
+                                            &right,
+                                            right_offset + right_stride * index,
+                                        )
+                                })
+                                .sum();
+                            assert_eq!(
+                                got, expected,
+                                "left_bits={left_bits} right_bits={right_bits} left_stride={left_stride} right_stride={right_stride} len={len}"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn compact_pair_boolean_challenges_need_no_inverses() {
+        let left = [F::zero(), F::one(), F::one(), F::zero(), F::one()];
+        let right = [F::one(), F::zero(), F::one(), F::one(), F::zero()];
+        let got = eval_compact_pair_eq(&left, 3, 3, &right, 1, 5, 7).unwrap();
+        let expected = (0..7)
+            .map(|index| {
+                eq_eval_at_index(&left, 3 + 3 * index) * eq_eval_at_index(&right, 1 + 5 * index)
+            })
+            .sum();
         assert_eq!(got, expected);
     }
 }

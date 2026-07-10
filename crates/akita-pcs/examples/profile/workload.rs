@@ -21,9 +21,9 @@ use akita_transcript::AkitaTranscript;
 use akita_types::{
     lagrange_weights, reduce_inner_opening_to_ring_element, ring_opening_point_from_field,
     schedule_terminal_direct_witness_shape, AkitaBatchedProof, AkitaCommitmentHint, BasisMode,
-    BlockOrder, CleartextWitnessProof, CleartextWitnessShape, Commitment, FpExtEncoding,
-    LevelParams, OpeningClaims, OpeningClaimsLayout, PointVariableSelection, PolynomialGroupClaims,
-    Schedule, SetupContributionMode, Step,
+    CleartextWitnessProof, CleartextWitnessShape, Commitment, FpExtEncoding, LevelParams,
+    OpeningBlockLayout, OpeningClaims, OpeningClaimsLayout, PointVariableSelection,
+    PolynomialGroupClaims, Schedule, SetupContributionMode, Step,
 };
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
@@ -354,10 +354,9 @@ where
     let reduced_point = &padded_point[alpha_bits..];
     let ring_opening_point = ring_opening_point_from_field(
         reduced_point,
-        layout.r_vars,
-        layout.m_vars,
+        OpeningBlockLayout::new(layout.num_blocks, layout.block_len)
+            .expect("valid opening block layout"),
         basis,
-        BlockOrder::RowMajor,
     )
     .expect("opening point shape should match layout");
 

@@ -32,7 +32,6 @@ fn prepare_fold_replay<'a, F, E, T>(
     transcript: &mut T,
     current_state: &'a SuffixVerifierState<'a, F, E>,
     scheduled: &'a ExecutionSchedule,
-    block_order: BlockOrder,
     setup_contribution_mode: SetupContributionMode,
 ) -> Result<PreparedFoldReplay<'a, F, E>, AkitaError>
 where
@@ -82,7 +81,6 @@ where
         &opening_batch,
         current_state.basis,
         lp,
-        block_order,
         true,
         transcript,
     )?;
@@ -170,6 +168,18 @@ where
         stage2,
         next_w_commitment,
         next_ring_dim: (!scheduled.is_terminal).then_some(scheduled.next_params.role_dims().d_b()),
+        next_opening_layout: if scheduled.is_terminal {
+            let d_a = lp.role_dims().d_a();
+            if !w_len.is_multiple_of(d_a) {
+                return Err(AkitaError::InvalidProof);
+            }
+            OpeningBlockLayout::new(1, w_len / d_a)?
+        } else {
+            OpeningBlockLayout::new(
+                scheduled.next_params.num_blocks,
+                scheduled.next_params.block_len,
+            )?
+        },
         terminal_replay,
         stage3,
         trace_prepared_points: Some(vec![prepared_point.clone()]),
@@ -245,7 +255,6 @@ where
                         transcript,
                         &current_state,
                         &scheduled,
-                        BlockOrder::ColumnMajor,
                         setup_contribution_mode,
                     )?;
                     verify_fold::<F, E, T>(setup, transcript, prepared)?
@@ -308,7 +317,6 @@ where
                     transcript,
                     &current_state,
                     &scheduled,
-                    BlockOrder::ColumnMajor,
                     setup_contribution_mode,
                 )?;
                 verify_fold::<F, E, T>(setup, transcript, prepared)?;

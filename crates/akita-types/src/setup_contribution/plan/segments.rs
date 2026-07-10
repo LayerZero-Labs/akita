@@ -205,26 +205,29 @@ pub(super) fn validate_group_chunk_layout(
     group: &SetupContributionGroupInputs,
     num_groups: usize,
 ) -> Result<(), AkitaError> {
-    if group.chunks.is_empty()
-        || group.blocks_per_chunk == 0
-        || !group.blocks_per_chunk.is_power_of_two()
-    {
+    let units = group.layout.units_for_group(group.group_id)?;
+    if units.iter().any(|unit| unit.blocks == 0) {
         return Err(AkitaError::InvalidSetup(
             "malformed setup witness chunk layout".into(),
         ));
     }
-    if group
-        .chunks
-        .len()
-        .checked_mul(group.blocks_per_chunk)
-        .ok_or_else(|| AkitaError::InvalidSetup("setup chunk block coverage overflow".into()))?
-        != group.num_blocks
-    {
+    let mut next_block = 0usize;
+    for unit in &units {
+        if unit.group != group.group_id || unit.global_block_base != next_block {
+            return Err(AkitaError::InvalidSetup(
+                "setup witness ownership units do not form one contiguous block tiling".into(),
+            ));
+        }
+        next_block = next_block
+            .checked_add(unit.blocks)
+            .ok_or_else(|| AkitaError::InvalidSetup("setup block coverage overflow".into()))?;
+    }
+    if next_block != group.num_blocks {
         return Err(AkitaError::InvalidSetup(
             "setup witness chunk windows do not tile num_blocks".into(),
         ));
     }
-    if group.chunks.len() > 1 && num_groups != 1 {
+    if units.len() > 1 && num_groups != 1 {
         // This is an intentional product-surface limit, not a verifier panic
         // guard: multi-chunk witness layouts are currently only enabled for
         // the singleton recursive suffix. Keep the rejection here so direct

@@ -88,10 +88,11 @@ impl<E: FieldCore> SetupContributionPlan<E> {
     pub fn finish_plan<F>(
         static_plan: &SetupContributionStatic<E>,
         full_vec_randomness: &[E],
-        eq_low: Option<&[E]>,
-        z_block_low_eq: Option<&[E]>,
+        _eq_low: Option<&[E]>,
+        _z_block_low_eq: Option<&[E]>,
         fold_gadget: Option<&[F]>,
         groups: &[SetupContributionGroupInputs],
+        role_dims: CommitmentRingDims,
     ) -> Result<SetupContributionPlan<E>, AkitaError>
     where
         F: FieldCore + CanonicalField,
@@ -112,29 +113,29 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                 let e_eq_slice = {
                     let _span = tracing::info_span!("setup_prepare_e_weights").entered();
                     setup_e_col_weights::<E>(
-                        &group.chunks,
-                        group.blocks_per_chunk,
+                        &group.layout,
+                        group.opening_layout,
+                        group.group_id,
                         group.num_blocks,
                         group.num_claims,
                         group.depth_open,
                         full_vec_randomness,
-                        eq_low,
                     )?
                 };
                 let t_eq_slice = {
                     let _span = tracing::info_span!("setup_prepare_t_weights").entered();
                     setup_t_col_weights::<E>(
-                        &group.chunks,
-                        group.blocks_per_chunk,
+                        &group.layout,
+                        group.opening_layout,
+                        group.group_id,
+                        group.num_blocks,
                         group.depth_open,
                         group.n_a,
                         group.t_cols_per_vector,
                         group.num_claims,
                         group.num_claims,
                         0,
-                        group.num_claims,
                         full_vec_randomness,
-                        eq_low,
                     )?
                 };
                 let fold_gadget_storage;
@@ -159,13 +160,13 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                 {
                     let _span = tracing::info_span!("setup_prepare_z_weights").entered();
                     setup_z_col_weights::<F, E>(
-                        &group.chunks,
+                        &group.layout,
+                        group.opening_layout,
+                        group.group_id,
                         group.block_len,
                         group.depth_commit,
                         group.depth_fold,
-                        1,
                         full_vec_randomness,
-                        z_block_low_eq,
                         fold_gadget,
                         &mut z_eq_slice,
                     )?;
@@ -190,20 +191,51 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                 })
             })
             .collect::<Result<Vec<_>, AkitaError>>()?;
+        let projection_groups = dynamic_groups
+            .iter()
+            .zip(groups)
+            .map(|(planned, group)| {
+                let d_active_cols = group
+                    .num_claims
+                    .checked_mul(group.num_blocks)
+                    .and_then(|cols| cols.checked_mul(group.depth_open))
+                    .ok_or_else(|| {
+                        AkitaError::InvalidSetup("setup D active width overflow".into())
+                    })?;
+                Ok(SetupProjectionGroupGeometry {
+                    a_rows: planned.n_a,
+                    a_cols: planned.z_cols,
+                    b_rows: planned.n_b,
+                    b_cols: planned.t_cols,
+                    d_active_cols,
+                    ownership_units: group.layout.units_for_group(group.group_id)?.len(),
+                    depth_fold: group.depth_fold,
+                })
+            })
+            .collect::<Result<Vec<_>, AkitaError>>()?;
+        let projection_geometry = crate::SetupProjectionGeometry::from_groups(
+            role_dims,
+            static_plan.d_rows,
+            static_plan.d_physical_cols,
+            &projection_groups,
+        )?;
         Ok(SetupContributionPlan {
             groups: dynamic_groups,
             d_rows: static_plan.d_rows,
             d_physical_cols: static_plan.d_physical_cols,
+            projection_geometry,
         })
     }
 
-    /// Packed-scan footprint length: max over groups of each role's `rows * cols`.
-    /// `D` rows/cols are plan-level (shared); `B`/`A` are per-group.
-    pub fn required(&self) -> Result<usize, AkitaError> {
-        self.groups
-            .iter()
-            .map(|group| group.required)
-            .max()
-            .ok_or_else(|| AkitaError::InvalidSetup("setup contribution has no groups".into()))
+    /// Common-base packed-scan footprint.
+    #[must_use]
+    pub const fn required(&self) -> usize {
+        self.projection_geometry.required()
+    }
+
+    /// Canonical common-base Stage 3 projection geometry.
+    #[must_use]
+    pub const fn projection_geometry(&self) -> SetupProjectionGeometry {
+        self.projection_geometry
     }
 }

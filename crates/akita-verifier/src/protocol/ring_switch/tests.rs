@@ -1,31 +1,35 @@
 use super::*;
+use akita_algebra::offset_eq::summarize_pow2_block_carries;
 use akita_challenges::SparseChallengeConfig;
 use akita_field::Fp32;
 use akita_types::{
-    RingMultiplierOpeningPoint, RingOpeningPoint, SisModulusFamily, WitnessChunkLayout,
-    WitnessChunkLengths, WitnessLayout,
+    OpeningBatchWitnessGroup, OpeningBatchWitnessLayout, RingMultiplierOpeningPoint,
+    RingOpeningPoint, SemanticGroupId, SisModulusFamily,
 };
 
 /// Placeholder layout for prepare-path rejection tests. These cases fail before
 /// any layout-dependent evaluation runs, so the offsets are not required to
 /// match the witness column geometry.
-fn reject_test_segment_layout() -> WitnessLayout {
-    WitnessLayout {
-        blocks_per_chunk: 1,
-        chunks: vec![WitnessChunkLayout {
-            offset_z: 0,
-            offset_e: 0,
-            offset_t: 0,
-            offset_r: Some(0),
-            global_block_base: 0,
+fn reject_test_segment_layout() -> OpeningBatchWitnessLayout {
+    OpeningBatchWitnessLayout::new(
+        vec![OpeningBatchWitnessGroup {
+            id: SemanticGroupId(0),
+            num_claims: 1,
+            num_blocks: 1,
+            block_len: 1,
+            depth_open: 1,
+            depth_commit: 1,
+            depth_fold: 1,
+            n_a: 1,
+            e_setup_col_offset: 0,
         }],
-        chunk_lengths: vec![WitnessChunkLengths {
-            z_len: 0,
-            e_len: 0,
-            t_len: 0,
-            r_len: Some(0),
-        }],
-    }
+        vec![SemanticGroupId(0)],
+        vec![SemanticGroupId(0)],
+        1,
+        1,
+        1,
+    )
+    .expect("reject test layout")
 }
 
 type F = Fp32<251>;
@@ -64,6 +68,7 @@ fn ring_switch_prepare_rejects_invalid_log_basis() {
         &[],
         RelationMatrixRowLayout::WithDBlock,
         reject_test_segment_layout(),
+        OpeningBlockLayout::new(1, reject_test_segment_layout().total_len()).unwrap(),
         1,
         0,
     ) {
@@ -95,6 +100,7 @@ fn ring_switch_prepare_rejects_zero_num_blocks() {
         &[],
         RelationMatrixRowLayout::WithDBlock,
         reject_test_segment_layout(),
+        OpeningBlockLayout::new(1, reject_test_segment_layout().total_len()).unwrap(),
         1,
         0,
     ) {

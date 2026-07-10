@@ -113,7 +113,6 @@ where
         root_params,
         alpha_bits,
         basis,
-        BlockOrder::RowMajor,
         relation_matrix_row_layout,
         terminal_tail_t_vectors,
     )
@@ -209,7 +208,8 @@ where
         RelationMatrixRowLayout::WithDBlock,
         None,
         basis,
-    )?;
+    )
+    .map_err(|err| AkitaError::InvalidInput(format!("prepare root failed: {err:?}")))?;
 
     prove_fold::<F, E, T, C, O, TS, R, Cfg>(
         expanded,
@@ -222,7 +222,8 @@ where
         setup_contribution_mode,
         false,
         None,
-    )?
+    )
+    .map_err(|err| AkitaError::InvalidInput(format!("prove root fold failed: {err:?}")))?
     .get_intermediate()
 }
 

@@ -104,9 +104,9 @@ mod tests {
     use akita_types::relation_claim_from_rows;
     use akita_types::witness::ChunkedWitnessCfg;
     use akita_types::{
-        r_decomp_levels, ring_opening_point_from_field, AkitaCommitmentHint, BasisMode, BlockOrder,
-        Commitment, OpeningClaims, PointVariableSelection, PolynomialGroupClaims,
-        RelationMatrixRowLayout, RingMultiplierOpeningPoint, RingVec,
+        ring_opening_point_from_field, AkitaCommitmentHint, BasisMode, Commitment,
+        OpeningBlockLayout, OpeningClaims, PointVariableSelection, PolynomialGroupClaims,
+        RelationMatrixRowLayout, RingMultiplierOpeningPoint, RingVec, SemanticGroupId,
     };
     use akita_verifier::{prepare_relation_matrix_evaluator, RingSwitchReplay};
     use rand::rngs::StdRng;
@@ -310,10 +310,8 @@ mod tests {
         let outer_point = &point[alpha_bits..];
         let ring_opening_point = ring_opening_point_from_field(
             outer_point,
-            lp.r_vars,
-            lp.m_vars,
+            OpeningBlockLayout::new(lp.num_blocks, lp.block_len).unwrap(),
             BasisMode::Lagrange,
-            BlockOrder::RowMajor,
         )
         .expect("ring opening point");
         let ring_multiplier_point =
@@ -368,8 +366,11 @@ mod tests {
         let build_output =
             ring_switch_build_w::<F, CpuBackend>(&instance, witness, &op_ctx, &lp, false)
                 .expect("ring-switch witness");
+        let opening_layout =
+            OpeningBlockLayout::new(1, build_output.w.len() / D).expect("opening layout");
         let (w_compact, _col_bits, ring_bits) =
-            build_w_evals_compact(build_output.w.as_i8_digits(), D, 1).expect("compact witness");
+            build_w_evals_compact(build_output.w.as_i8_digits(), D, 1, opening_layout)
+                .expect("compact witness");
         let live_x_cols = w_compact.len() >> ring_bits;
 
         let alpha = F::from_u64(29);
@@ -399,6 +400,7 @@ mod tests {
                 &tau1,
                 &[F::one()],
                 RelationMatrixRowLayout::WithDBlock,
+                opening_layout,
             )
             .expect("m evals");
             let got = direct_relation_claim(
@@ -462,10 +464,8 @@ mod tests {
         let outer_point = &point[alpha_bits..];
         let ring_opening_point = ring_opening_point_from_field(
             outer_point,
-            lp.r_vars,
-            lp.m_vars,
+            OpeningBlockLayout::new(lp.num_blocks, lp.block_len).unwrap(),
             BasisMode::Lagrange,
-            BlockOrder::RowMajor,
         )
         .expect("ring opening point");
         let ring_multiplier_point = RingMultiplierOpeningPoint::from_base(&ring_opening_point);
@@ -513,8 +513,11 @@ mod tests {
         let build_output =
             ring_switch_build_w::<F, CpuBackend>(&instance, witness, &op_ctx, &lp, false)
                 .expect("ring-switch witness");
+        let opening_layout =
+            OpeningBlockLayout::new(1, build_output.w.len() / D).expect("opening layout");
         let (w_compact, _col_bits, ring_bits) =
-            build_w_evals_compact(build_output.w.as_i8_digits(), D, 1).expect("compact witness");
+            build_w_evals_compact(build_output.w.as_i8_digits(), D, 1, opening_layout)
+                .expect("compact witness");
         let live_x_cols = w_compact.len() >> ring_bits;
 
         let alpha = F::from_u64(17);
@@ -544,6 +547,7 @@ mod tests {
                 &tau1,
                 &[F::one()],
                 RelationMatrixRowLayout::WithDBlock,
+                opening_layout,
             )
             .expect("m evals");
             let got = direct_relation_claim(
@@ -643,10 +647,8 @@ mod tests {
         let outer_point = &point[alpha_bits..];
         let ring_opening_point = ring_opening_point_from_field(
             outer_point,
-            level_params.r_vars,
-            level_params.m_vars,
+            OpeningBlockLayout::new(level_params.num_blocks, level_params.block_len).unwrap(),
             BasisMode::Lagrange,
-            BlockOrder::RowMajor,
         )
         .expect("ring opening point");
         let ring_multiplier_point = RingMultiplierOpeningPoint::from_base(&ring_opening_point);
@@ -703,6 +705,8 @@ mod tests {
         let tau1: Vec<F> = (0..num_i)
             .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
             .collect();
+        let witness_layout = instance.segment_layout(&level_params, None).unwrap();
+        let opening_layout = OpeningBlockLayout::new(1, witness_layout.total_len()).unwrap();
 
         let relation_matrix_col_evals = compute_relation_matrix_col_evals::<F, F>(
             &setup.expanded,
@@ -714,6 +718,7 @@ mod tests {
             &tau1,
             &[F::one()],
             RelationMatrixRowLayout::WithDBlock,
+            opening_layout,
         )
         .expect("m evals (materialized)");
 
@@ -729,6 +734,7 @@ mod tests {
             relation: &instance,
             row_coefficients: &gamma,
             lp: &level_params,
+            opening_layout,
         };
         let prepared = prepare_relation_matrix_evaluator::<F, F, D>(&replay, alpha, &tau1, None)
             .expect("prepare_relation_matrix_evaluator");
@@ -743,32 +749,20 @@ mod tests {
         );
 
         // ----- Chunked layout ground truth (W ∈ powers of two | num_blocks) --
-        // The chunked relation's column-MLE has the *same per-cell values* as
-        // the single-chunk `relation_matrix_col_evals`, only repositioned into the
-        // `[z|e_j|t_j]…[r]` layout (z replicated, e/t partitioned by global
-        // block). Rearranging the trusted single-chunk vector therefore yields
-        // an independent reference for the verifier's chunked `eval_at_point`.
+        // The chunked relation's column-MLE has the same per-cell values as the
+        // single-unit vector, repositioned by the canonical witness descriptor.
+        // Each ownership unit receives its e/t block window and one replicated z
+        // segment; the r tail remains shared.
         let num_blocks = level_params.num_blocks;
-        let block_len = level_params.block_len;
-        let depth_open = level_params.num_digits_open;
-        let depth_commit = level_params.num_digits_commit;
-        let depth_fold = level_params
-            .num_digits_fold(1, <F as akita_field::CanonicalField>::modulus_bits())
-            .unwrap();
-        let n_a = level_params.a_key.row_len();
-        let num_claims = 1usize;
-        let num_t_vectors = 1usize;
-        let z_len = depth_fold * depth_commit * block_len;
-        let e_len = depth_open * num_claims * num_blocks;
-        let t_len = depth_open * n_a * num_t_vectors * num_blocks;
-        let r_tail_len = rows * r_decomp_levels::<F>(level_params.log_basis);
-
-        // Single-chunk segments (z ‖ e ‖ t ‖ r).
-        let z_seg = relation_matrix_col_evals[0..z_len].to_vec();
-        let e_seg = relation_matrix_col_evals[z_len..z_len + e_len].to_vec();
-        let t_seg = relation_matrix_col_evals[z_len + e_len..z_len + e_len + t_len].to_vec();
-        let r_off1 = z_len + e_len + t_len;
-        let r_seg = relation_matrix_col_evals[r_off1..r_off1 + r_tail_len].to_vec();
+        let group_id = SemanticGroupId(0);
+        let single_layout = instance
+            .segment_layout(&level_params, None)
+            .expect("single-unit witness layout");
+        let single_unit = single_layout
+            .units_for_group(group_id)
+            .expect("single-unit group")[0]
+            .clone();
+        let group = single_layout.group(group_id).expect("single group").clone();
 
         let chunk_counts: Vec<usize> = (0..)
             .map(|k| 1usize << k)
@@ -780,56 +774,76 @@ mod tests {
             "fixture must have num_blocks > 1 to exercise chunking (num_blocks={num_blocks})"
         );
         for w in chunk_counts.into_iter().filter(|&w| w > 1) {
-            let bpc = num_blocks / w;
-            let mut chunked: Vec<F> = Vec::new();
-            for j in 0..w {
-                // z_j: replicated full single-chunk fold response.
-                chunked.extend_from_slice(&z_seg);
-                // e_j: window of the block axis, order (digit, claim, block).
-                for dig in 0..depth_open {
-                    for claim in 0..num_claims {
-                        for bl in 0..bpc {
-                            let gb = j * bpc + bl;
-                            let src = (dig * num_claims + claim) * num_blocks + gb;
-                            chunked.push(e_seg[src]);
+            let mut lp_w = level_params.clone();
+            lp_w.witness_chunk = ChunkedWitnessCfg {
+                num_chunks: w,
+                num_activated_levels: 1,
+            };
+            let chunk_layout = instance
+                .segment_layout(&lp_w, None)
+                .expect("chunked witness layout");
+            let mut chunked = vec![F::zero(); chunk_layout.total_len().next_power_of_two()];
+            for unit in chunk_layout
+                .units_for_group(group_id)
+                .expect("chunked group")
+            {
+                for position in 0..group.block_len {
+                    for commit_digit in 0..group.depth_commit {
+                        for fold_digit in 0..group.depth_fold {
+                            let source = single_layout
+                                .z_index(&single_unit, position, commit_digit, fold_digit)
+                                .expect("single z index");
+                            let target = chunk_layout
+                                .z_index(unit, position, commit_digit, fold_digit)
+                                .expect("chunked z index");
+                            chunked[target] = relation_matrix_col_evals[source];
                         }
                     }
                 }
-                // t_j: window of the block axis, order (a_row, digit, t_vector, block).
-                for a_idx in 0..n_a {
-                    for digit in 0..depth_open {
-                        for tvec in 0..num_t_vectors {
-                            for bl in 0..bpc {
-                                let compound = a_idx * depth_open + digit;
-                                let gb = j * bpc + bl;
-                                let src = compound * (num_t_vectors * num_blocks)
-                                    + tvec * num_blocks
-                                    + gb;
-                                chunked.push(t_seg[src]);
+                let block_end = unit.global_block_base + unit.blocks;
+                for claim in 0..group.num_claims {
+                    for block in unit.global_block_base..block_end {
+                        for digit in 0..group.depth_open {
+                            let source = single_layout
+                                .e_index(&single_unit, claim, block, digit)
+                                .expect("single e index");
+                            let target = chunk_layout
+                                .e_index(unit, claim, block, digit)
+                                .expect("chunked e index");
+                            chunked[target] = relation_matrix_col_evals[source];
+                            for a_row in 0..group.n_a {
+                                let source = single_layout
+                                    .t_index(&single_unit, claim, block, a_row, digit)
+                                    .expect("single t index");
+                                let target = chunk_layout
+                                    .t_index(unit, claim, block, a_row, digit)
+                                    .expect("chunked t index");
+                                chunked[target] = relation_matrix_col_evals[source];
                             }
                         }
                     }
                 }
             }
-            // Single shared r̂ tail after the last chunk.
-            chunked.extend_from_slice(&r_seg);
-            let x_len_w = chunked.len().next_power_of_two();
-            chunked.resize(x_len_w, F::zero());
+            for row in 0..rows {
+                for digit in 0..single_layout.quotient_depth {
+                    let source = single_layout.r_index(row, digit).expect("single r index");
+                    let target = chunk_layout.r_index(row, digit).expect("chunked r index");
+                    chunked[target] = relation_matrix_col_evals[source];
+                }
+            }
+            let x_len_w = chunked.len();
+            let opening_layout_w = OpeningBlockLayout::new(1, chunk_layout.total_len()).unwrap();
 
             let x_challenges_w: Vec<F> = (0..x_len_w.trailing_zeros() as usize)
                 .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
                 .collect();
             let expected_w = multilinear_eval(&chunked, &x_challenges_w).expect("multilinear_eval");
 
-            let mut lp_w = level_params.clone();
-            lp_w.witness_chunk = ChunkedWitnessCfg {
-                num_chunks: w,
-                num_activated_levels: 1,
-            };
             let replay_w = RingSwitchReplay {
                 relation: &instance,
                 row_coefficients: &gamma,
                 lp: &lp_w,
+                opening_layout: opening_layout_w,
             };
             let prepared_w =
                 prepare_relation_matrix_evaluator::<F, F, D>(&replay_w, alpha, &tau1, None)
@@ -855,6 +869,7 @@ mod tests {
                 &tau1,
                 &[F::one()],
                 RelationMatrixRowLayout::WithDBlock,
+                opening_layout_w,
             )
             .expect("chunked m evals (prover)");
             assert_eq!(
@@ -874,7 +889,7 @@ mod tests {
     fn segment_typed_expand_matches_logical_w() {
         use akita_types::{
             build_segment_typed_witness, expand_segment_typed_to_i8_digits,
-            ring_opening_point_from_field, BasisMode, BlockOrder,
+            ring_opening_point_from_field, BasisMode,
         };
 
         type F = fp128::Field;
@@ -915,10 +930,8 @@ mod tests {
         let outer_point = &point[alpha_bits..];
         let ring_opening_point = ring_opening_point_from_field(
             outer_point,
-            level_params.r_vars,
-            level_params.m_vars,
+            OpeningBlockLayout::new(level_params.num_blocks, level_params.block_len).unwrap(),
             BasisMode::Lagrange,
-            BlockOrder::RowMajor,
         )
         .expect("ring opening point");
         let ring_multiplier_point = RingMultiplierOpeningPoint::from_base(&ring_opening_point);

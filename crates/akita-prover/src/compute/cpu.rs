@@ -12,9 +12,9 @@ use crate::compute::plans::{
 use crate::kernels::crt_ntt::{build_ntt_slot, NttCacheMap, NttSlotCache};
 use crate::kernels::linear::{
     fused_split_eq_quotients_prover_bounds, mat_vec_mul_ntt_dense_digits_i8_trusted,
-    mat_vec_mul_ntt_i8_dense, mat_vec_mul_ntt_i8_dense_single_row, mat_vec_mul_ntt_i8_strided,
-    mat_vec_mul_ntt_raw_i8_strided, mat_vec_mul_ntt_single_i8, mat_vec_mul_ntt_single_i8_cyclic,
-    selected_crt_i8_capacity_profile, CrtI8CapacityProfile,
+    mat_vec_mul_ntt_digits_i8, mat_vec_mul_ntt_i8, mat_vec_mul_ntt_i8_dense,
+    mat_vec_mul_ntt_i8_dense_single_row, mat_vec_mul_ntt_single_i8,
+    mat_vec_mul_ntt_single_i8_cyclic, selected_crt_i8_capacity_profile, CrtI8CapacityProfile,
 };
 use akita_algebra::CyclotomicRing;
 use akita_field::unreduced::{HasWide, ReduceTo};
@@ -461,15 +461,9 @@ where
             .checked_mul(plan.num_digits_commit)
             .ok_or_else(|| AkitaError::InvalidSetup("recursive A width overflow".to_string()))?;
         if plan.num_digits_commit == 1 {
+            let blocks = plan.coeffs.chunks(plan.block_len).collect::<Vec<_>>();
             prepared.with_shared_ntt::<D, _>(|ntt| {
-                mat_vec_mul_ntt_raw_i8_strided(
-                    ntt,
-                    plan.n_rows,
-                    row_width,
-                    plan.coeffs,
-                    plan.num_blocks,
-                    plan.block_len,
-                )
+                mat_vec_mul_ntt_digits_i8(ntt, plan.n_rows, row_width, &blocks, plan.log_basis)
             })
         } else {
             let ring_elems: Vec<CyclotomicRing<F, D>> = plan
@@ -480,14 +474,13 @@ where
                     CyclotomicRing::from_coefficients(coeffs)
                 })
                 .collect();
+            let blocks = ring_elems.chunks(plan.block_len).collect::<Vec<_>>();
             prepared.with_shared_ntt::<D, _>(|ntt| {
-                mat_vec_mul_ntt_i8_strided(
+                mat_vec_mul_ntt_i8(
                     ntt,
                     plan.n_rows,
                     row_width,
-                    &ring_elems,
-                    plan.num_blocks,
-                    plan.block_len,
+                    &blocks,
                     plan.num_digits_commit,
                     plan.log_basis,
                 )

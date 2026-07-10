@@ -110,8 +110,8 @@ where
             &recursive_opening_batch
         };
         let next_fold = &folds[idx + 1];
-        let natural_len = active_setup_field_len(&fold.params, opening_batch, gen_ring_dim)?
-            .min(available_field_len);
+        let natural_len =
+            active_setup_field_len(&fold.params, opening_batch)?.min(available_field_len);
         let n_prefix = padded_setup_prefix_len(natural_len);
         if n_prefix > available_field_len {
             continue;

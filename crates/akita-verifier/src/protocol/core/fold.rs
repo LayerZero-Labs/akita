@@ -80,7 +80,6 @@ pub(in crate::protocol::core) fn verify_fold_eor<F, E, T>(
     opening_batch: &OpeningClaimsLayout,
     basis: BasisMode,
     lp: &LevelParams,
-    block_order: BlockOrder,
     requires_reduction: bool,
     transcript: &mut T,
 ) -> Result<FoldEorReplay<F, E>, AkitaError>
@@ -90,6 +89,7 @@ where
     T: Transcript<F>,
 {
     let d_a = lp.role_dims().d_a();
+    let opening_layout = OpeningBlockLayout::new(lp.num_blocks, lp.block_len)?;
     dispatch_for_field!(ProtocolDispatchSlot::Role(RingRole::Inner), F, d_a, |D| {
         verify_fold_eor_kernel::<F, E, T, D>(
             extension_opening_reduction,
@@ -98,10 +98,8 @@ where
             row_coefficients,
             opening_batch,
             basis,
-            lp.m_vars,
-            lp.r_vars,
+            opening_layout,
             d_a.trailing_zeros() as usize,
-            block_order,
             requires_reduction,
             transcript,
         )
@@ -116,10 +114,8 @@ fn verify_fold_eor_kernel<F, E, T, const D: usize>(
     row_coefficients: &[E],
     opening_batch: &OpeningClaimsLayout,
     basis: BasisMode,
-    m_vars: usize,
-    r_vars: usize,
+    opening_layout: OpeningBlockLayout,
     alpha_bits: usize,
-    block_order: BlockOrder,
     requires_reduction: bool,
     transcript: &mut T,
 ) -> Result<FoldEorReplay<F, E>, AkitaError>
@@ -193,23 +189,15 @@ where
     let prepared_points = if let Some(rho) = &reduction_check {
         let protocol_point =
             ring_subfield_packed_extension_opening_point::<F, E, D>(rho.len(), rho)?;
-        let prepared = prepare_opening_point::<F, E, D>(
-            &protocol_point,
-            basis,
-            m_vars,
-            r_vars,
-            alpha_bits,
-            block_order,
-        )?;
+        let prepared =
+            prepare_opening_point::<F, E, D>(&protocol_point, basis, opening_layout, alpha_bits)?;
         vec![prepared]
     } else {
         vec![prepare_opening_point::<F, E, D>(
             challenge_point,
             basis,
-            m_vars,
-            r_vars,
+            opening_layout,
             alpha_bits,
-            block_order,
         )?]
     };
     Ok(FoldEorReplay {
@@ -247,6 +235,7 @@ pub(in crate::protocol::core) struct PreparedFoldReplay<'a, F: FieldCore, E: Fie
     /// which may differ from the current level's `D` in mixed-D schedules);
     /// `None` for terminal levels.
     pub(in crate::protocol::core) next_ring_dim: Option<usize>,
+    pub(in crate::protocol::core) next_opening_layout: OpeningBlockLayout,
     pub(in crate::protocol::core) terminal_replay: Option<TerminalWitnessTranscriptParts>,
     pub(in crate::protocol::core) stage3: Option<(&'a SetupSumcheckProof<E>, &'a LevelParams)>,
     /// Per-group prepared opening points in `OpeningClaims` order (one element
@@ -525,7 +514,6 @@ fn verify_stage3<F, E, T>(
     sumcheck_challenges: &[E],
     stage2_next_w_eval: E,
     stage3: Option<(&SetupSumcheckProof<E>, &LevelParams)>,
-    role_d_a: usize,
 ) -> Result<Option<Vec<E>>, AkitaError>
 where
     F: FieldCore + CanonicalField,
@@ -546,32 +534,23 @@ where
             .get(rs.ring_bits..)
             .ok_or(AkitaError::InvalidProof)?;
         let eta = sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_SUMCHECK_BATCH);
-        let rho_w = dispatch_for_field!(
-            ProtocolDispatchSlot::Role(RingRole::Inner),
-            F,
-            role_d_a,
-            |D| {
-                let verifier = SetupSumcheckVerifier::new::<F, D>(
-                    &rs.relation_matrix_evaluator,
-                    setup_x_challenges,
-                    &rs.tau1,
-                    rs.alpha,
-                )?;
-                let rho_w = verifier.verify_batched_stage3::<F, T>(
-                    setup,
-                    next_fold_level_params,
-                    role_d_a,
-                    proof,
-                    stage2_next_w_eval,
-                    sumcheck_challenges,
-                    witness_rounds,
-                    eta,
-                    transcript,
-                )?;
-                transcript.absorb_and_record_serde(ABSORB_STAGE3_NEXT_W_EVAL, &proof.next_w_eval);
-                Ok(rho_w)
-            }
+        let verifier = SetupSumcheckVerifier::new::<F>(
+            &rs.relation_matrix_evaluator,
+            setup_x_challenges,
+            &rs.tau1,
+            rs.alpha,
         )?;
+        let rho_w = verifier.verify_batched_stage3::<F, T>(
+            setup,
+            next_fold_level_params,
+            proof,
+            stage2_next_w_eval,
+            sumcheck_challenges,
+            witness_rounds,
+            eta,
+            transcript,
+        )?;
+        transcript.absorb_and_record_serde(ABSORB_STAGE3_NEXT_W_EVAL, &proof.next_w_eval);
         return Ok(Some(rho_w));
     }
     Ok(None)
@@ -666,6 +645,7 @@ where
         relation: &relation_instance,
         row_coefficients: &prepared.row_coefficients,
         lp: prepared.lp,
+        opening_layout: prepared.next_opening_layout,
     };
     let d_a = role_dims.d_a();
     let rs =
@@ -728,6 +708,7 @@ where
         let layout = trace_weight_layout_from_segment(
             prepared.lp,
             &segment_layout,
+            prepared.next_opening_layout,
             rs.col_bits,
             rs.ring_bits,
             prepared.lp.num_blocks,
@@ -760,6 +741,7 @@ where
         let layout = trace_weight_layout_from_segment(
             prepared.lp,
             &segment_layout,
+            prepared.next_opening_layout,
             rs.col_bits,
             rs.ring_bits,
             num_trace_blocks,
@@ -806,6 +788,7 @@ where
         let layout = trace_weight_layout_from_segment(
             prepared.lp,
             &segment_layout,
+            prepared.next_opening_layout,
             rs.col_bits,
             rs.ring_bits,
             num_trace_blocks,
@@ -858,7 +841,6 @@ where
         &sumcheck_challenges,
         stage2_next_w_eval,
         prepared.stage3,
-        d_a,
     )?;
     Ok(stage3_challenges.unwrap_or(sumcheck_challenges))
 }

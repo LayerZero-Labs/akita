@@ -319,7 +319,7 @@ mod tests {
             .checked_mul(level_params.block_len)
             .expect("witness shape");
         let n_prefix = witness_ring_slots.checked_mul(D).expect("prefix length");
-        let natural_len = active_setup_field_len(&level_params, &opening_batch, D)
+        let natural_len = active_setup_field_len(&level_params, &opening_batch)
             .expect("natural len")
             .min(n_prefix);
         let mut setup = test_setup::<D>(&level_params, n_prefix);

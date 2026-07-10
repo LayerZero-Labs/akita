@@ -27,9 +27,9 @@ use akita_prover::{
 use akita_recursion_glue::AkitaJoltInputs;
 use akita_transcript::AkitaTranscript;
 use akita_types::{
-    reduce_inner_opening_to_ring_element, ring_opening_point_from_field, BasisMode, BlockOrder,
-    PolynomialGroupClaims, LevelParams, OpeningClaimsLayout, PointVariableSelection, SetupContributionMode,
-    OpeningClaims,
+    reduce_inner_opening_to_ring_element, ring_opening_point_from_field, BasisMode, LevelParams,
+    OpeningBlockLayout, OpeningClaims, OpeningClaimsLayout, PointVariableSelection,
+    PolynomialGroupClaims, SetupContributionMode,
 };
 use akita_verifier::batched_verify;
 use clap::{Parser, ValueEnum};
@@ -117,10 +117,9 @@ where
     let reduced_point = &padded_point[alpha_bits..];
     let ring_opening_point = ring_opening_point_from_field(
         reduced_point,
-        layout.r_vars,
-        layout.m_vars,
+        OpeningBlockLayout::new(layout.num_blocks, layout.block_len)
+            .map_err(|err| format!("opening block layout: {err}"))?,
         basis,
-        BlockOrder::RowMajor,
     )
     .map_err(|err| format!("opening point shape should match layout: {err}"))?;
 

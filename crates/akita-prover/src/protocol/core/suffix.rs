@@ -310,7 +310,6 @@ where
         level_params,
         alpha,
         BasisMode::Lagrange,
-        BlockOrder::ColumnMajor,
         relation_matrix_row_layout,
         terminal_tail_t_vectors,
     )

@@ -8,8 +8,8 @@ use akita_algebra::CyclotomicRing;
 use akita_field::{CanonicalField, Prime128OffsetA7F7};
 use akita_types::{
     gadget_row_scalars, AkitaExpandedSetup, AkitaSetupSeed, CommitmentRingDims, FlatMatrix,
-    RelationMatrixRowLayout, SetupContributionPlan, SetupContributionPlanInputs,
-    WitnessChunkLayout, WitnessChunkLengths, WitnessLayout,
+    OpeningBatchWitnessGroup, OpeningBatchWitnessLayout, OpeningBlockLayout,
+    RelationMatrixRowLayout, SemanticGroupId, SetupContributionPlan, SetupContributionPlanInputs,
 };
 
 use super::evaluate_setup_contribution_direct;
@@ -137,14 +137,27 @@ impl SetupContributionFixture {
         let n_cols_e = shape.num_claims * shape.num_blocks * shape.depth_open;
         let n_cols_t = shape.num_polys_per_group.iter().copied().max().unwrap() * cols_per_poly_t;
 
-        let e_len = shape.depth_open * total_blocks;
-        let t_len = shape.depth_open * shape.n_a * shape.num_blocks * num_t_vectors;
-        let z_len = shape.depth_fold * shape.depth_commit * num_points * shape.block_len;
-        let offset_z = 0usize;
-        let offset_e = z_len;
-        let offset_t = z_len + e_len;
-        let total_len = z_len + e_len + t_len;
-        let offset_r: usize = total_len;
+        let layout = OpeningBatchWitnessLayout::new(
+            vec![OpeningBatchWitnessGroup {
+                id: SemanticGroupId(0),
+                num_claims: shape.num_claims,
+                num_blocks: shape.num_blocks,
+                block_len: shape.block_len,
+                depth_open: shape.depth_open,
+                depth_commit: shape.depth_commit,
+                depth_fold: shape.depth_fold,
+                n_a: shape.n_a,
+                e_setup_col_offset: 0,
+            }],
+            vec![SemanticGroupId(0)],
+            vec![SemanticGroupId(0)],
+            1,
+            0,
+            1,
+        )
+        .expect("setup contribution fixture layout");
+        let offset_r = layout.r_range.start;
+        let total_len = offset_r;
         let bits = total_len.next_power_of_two().trailing_zeros() as usize;
 
         let max_setup_len = (shape.n_d * n_cols_e)
@@ -189,22 +202,6 @@ impl SetupContributionFixture {
                 .map(|idx| test_scalar(11 + idx as u128))
                 .collect(),
         };
-        let chunk_layout = WitnessLayout {
-            blocks_per_chunk: shape.num_blocks,
-            chunks: vec![WitnessChunkLayout {
-                offset_z,
-                offset_e,
-                offset_t,
-                offset_r: Some(offset_r),
-                global_block_base: 0,
-            }],
-            chunk_lengths: vec![WitnessChunkLengths {
-                z_len,
-                e_len,
-                t_len,
-                r_len: Some(0),
-            }],
-        };
         let n_d_active = match shape.relation_matrix_row_layout {
             RelationMatrixRowLayout::WithDBlock => shape.n_d,
             RelationMatrixRowLayout::WithoutDBlock => 0,
@@ -218,7 +215,7 @@ impl SetupContributionFixture {
             opening_a_evals: (0..shape.block_len)
                 .map(|idx| test_scalar(501 + idx as u128))
                 .collect(),
-            chunk_range: 0..chunk_layout.chunks.len(),
+            group_id: SemanticGroupId(0),
             e_col_offset: 0,
             num_claims: shape.num_claims,
             num_blocks: shape.num_blocks,
@@ -233,8 +230,9 @@ impl SetupContributionFixture {
             a_row_start: 1,
             b_row_start: 1 + shape.n_a,
         }];
+        let opening_layout = OpeningBlockLayout::new(1, layout.total_len()).unwrap();
         let setup_contribution_groups =
-            build_setup_contribution_groups(&chunk_layout, &groups).unwrap();
+            build_setup_contribution_groups(&layout, opening_layout, &groups).unwrap();
         let setup_contribution_static = SetupContributionPlan::prepare_static(
             &setup_contribution_inputs,
             &setup_contribution_groups,
@@ -248,7 +246,8 @@ impl SetupContributionFixture {
             groups,
             depth_fold: shape.depth_fold,
             log_basis: shape.log_basis,
-            chunk_layout,
+            layout,
+            opening_layout,
             setup_contribution_groups,
             setup_contribution_inputs,
             setup_contribution_static,
@@ -303,9 +302,11 @@ impl SetupContributionFixture {
             Some(&self.z_block_low_eq),
             Some(&self.fold_gadget),
             &self.relation_matrix_evaluator.setup_contribution_groups,
+            self.relation_matrix_evaluator.role_dims,
         )
         .unwrap();
-        let setup_index_weight = plan.materialize_setup_index_weights().unwrap();
+        let alpha = self.alpha_pows[1];
+        let setup_index_weight = plan.materialize_setup_index_weights(alpha).unwrap();
         let setup_len = self
             .setup
             .shared_matrix()
@@ -347,14 +348,12 @@ impl SetupContributionFixture {
             Some(&self.z_block_low_eq),
             Some(&self.fold_gadget),
             &self.relation_matrix_evaluator.setup_contribution_groups,
+            self.relation_matrix_evaluator.role_dims,
         )
         .unwrap();
-        let setup_index_weight = plan.materialize_setup_index_weights().unwrap();
-        let setup_idx_len = plan
-            .required()
-            .unwrap()
-            .checked_next_power_of_two()
-            .unwrap();
+        let alpha = self.alpha_pows[1];
+        let setup_index_weight = plan.materialize_setup_index_weights(alpha).unwrap();
+        let setup_idx_len = plan.required().checked_next_power_of_two().unwrap();
         let setup_idx_bits = setup_idx_len.trailing_zeros() as usize;
         let rho_setup_idx: Vec<TestField> = (0..setup_idx_bits)
             .map(|idx| test_scalar(7 + idx as u128 * 13))
@@ -366,7 +365,7 @@ impl SetupContributionFixture {
             .map(|(setup_idx, weight)| eq_setup_idx[setup_idx] * *weight)
             .sum();
         let got = plan
-            .evaluate_setup_index_weight_mle(&rho_setup_idx)
+            .evaluate_setup_index_weight_mle(&rho_setup_idx, alpha)
             .unwrap();
         assert_eq!(
             got, expected,

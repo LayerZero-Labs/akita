@@ -22,7 +22,10 @@ use crate::proof::CleartextWitnessShape;
 use crate::proof::{RingVec, TerminalWitnessTranscriptParts};
 use crate::sis::compute_num_digits_full_field;
 use crate::tail_golomb_rice_low_bits::{cap_rice_low_bits, wire_rice_low_bits_from_rule};
-use crate::{LevelParams, RelationMatrixRowLayout};
+use crate::{
+    LevelParams, OpeningBatchWitnessGroup, OpeningBatchWitnessLayout, RelationMatrixRowLayout,
+    SemanticGroupId, WitnessOwnershipUnit,
+};
 
 /// Public segment geometry for a transparent terminal witness.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1014,20 +1017,73 @@ where
         r_planes_flat.extend(scratch.iter().copied());
     }
 
-    let mut out = Vec::with_capacity(witness.layout.logical_num_elems);
-    emit_witness_z_folded_planes_inner::<D>(
-        &mut out,
-        &all_z_planes,
-        lp.block_len,
-        depth_commit,
-        num_digits_fold,
-        total_z_elems,
-    );
-    emit_witness_planes_block_inner::<D>(&mut out, &e_planes, w_block_count, depth_open);
-    emit_witness_planes_block_inner::<D>(&mut out, &t_planes, t_block_count, t_planes_per_block);
-    for plane in &r_planes_flat {
-        out.extend_from_slice(plane);
+    if num_commitment_groups != 1 || num_w_vectors != num_t_vectors {
+        return Err(AkitaError::InvalidSetup(
+            "segment-typed witness requires one group with matching E/T claim axes".into(),
+        ));
     }
+    let physical_layout = OpeningBatchWitnessLayout::new(
+        vec![OpeningBatchWitnessGroup {
+            id: SemanticGroupId(0),
+            num_claims: num_w_vectors,
+            num_blocks: lp.num_blocks,
+            block_len: lp.block_len,
+            depth_open,
+            depth_commit,
+            depth_fold: num_digits_fold,
+            n_a: lp.a_key.row_len(),
+            e_setup_col_offset: 0,
+        }],
+        vec![SemanticGroupId(0)],
+        vec![SemanticGroupId(0)],
+        num_z_segments,
+        r_rings.len(),
+        levels,
+    )?;
+    let physical_len = physical_layout
+        .total_len()
+        .checked_mul(D)
+        .ok_or_else(|| AkitaError::InvalidSetup("terminal witness length overflow".into()))?;
+    if physical_len != witness.layout.logical_num_elems {
+        return Err(AkitaError::InvalidProof);
+    }
+    let mut out = vec![0i8; physical_len];
+    let z_planes_per_unit = lp
+        .block_len
+        .checked_mul(depth_commit)
+        .and_then(|n| n.checked_mul(num_digits_fold))
+        .ok_or_else(|| AkitaError::InvalidSetup("terminal Z plane count overflow".into()))?;
+    for (unit_index, unit) in physical_layout.ownership_units.iter().enumerate() {
+        let start = unit_index
+            .checked_mul(z_planes_per_unit)
+            .ok_or_else(|| AkitaError::InvalidSetup("terminal Z offset overflow".into()))?;
+        let end = start
+            .checked_add(z_planes_per_unit)
+            .ok_or_else(|| AkitaError::InvalidSetup("terminal Z end overflow".into()))?;
+        emit_witness_z_planes::<D>(
+            &mut out,
+            &physical_layout,
+            unit,
+            all_z_planes
+                .get(start..end)
+                .ok_or(AkitaError::InvalidProof)?,
+        )?;
+    }
+    emit_witness_e_planes::<D>(
+        &mut out,
+        &physical_layout,
+        SemanticGroupId(0),
+        &e_planes,
+        lp.num_blocks,
+    )?;
+    emit_witness_t_planes::<D>(
+        &mut out,
+        &physical_layout,
+        SemanticGroupId(0),
+        &t_planes,
+        lp.num_blocks,
+    )?;
+    emit_witness_r_planes::<D>(&mut out, &physical_layout, &r_planes_flat)?;
     if out.len() != witness.layout.logical_num_elems {
         return Err(AkitaError::InvalidProof);
     }
@@ -1061,41 +1117,167 @@ where
     Ok(out)
 }
 
-/// Emit digit-major block planes (block index innermost).
-pub fn emit_witness_planes_block_inner<const D: usize>(
-    out: &mut Vec<i8>,
+/// Emit one group's E planes at canonical witness addresses.
+pub fn emit_witness_e_planes<const D: usize>(
+    out: &mut [i8],
+    layout: &OpeningBatchWitnessLayout,
+    group_id: SemanticGroupId,
     flat: &[[i8; D]],
-    total_blocks: usize,
-    planes_per_block: usize,
-) {
-    for compound_dig in 0..planes_per_block {
-        for blk in 0..total_blocks {
-            out.extend_from_slice(&flat[blk * planes_per_block + compound_dig]);
-        }
+    source_num_blocks: usize,
+) -> Result<(), AkitaError> {
+    let group = layout.group(group_id)?;
+    let expected = group
+        .num_claims
+        .checked_mul(source_num_blocks)
+        .and_then(|n| n.checked_mul(group.depth_open))
+        .ok_or_else(|| AkitaError::InvalidSetup("witness E source length overflow".into()))?;
+    if flat.len() != expected {
+        return Err(AkitaError::InvalidSize {
+            expected,
+            actual: flat.len(),
+        });
     }
-}
-
-/// Emit folded `z` digit planes in `(dc, df, point, block)` order.
-pub fn emit_witness_z_folded_planes_inner<const D: usize>(
-    out: &mut Vec<i8>,
-    all_planes: &[[i8; D]],
-    block_len: usize,
-    depth_commit: usize,
-    num_digits_fold: usize,
-    total_elems: usize,
-) {
-    let inner_width = block_len * depth_commit;
-    let num_points = total_elems / inner_width;
-    for dc in 0..depth_commit {
-        for df in 0..num_digits_fold {
-            for pt in 0..num_points {
-                for blk in 0..block_len {
-                    let k = pt * inner_width + blk * depth_commit + dc;
-                    out.extend_from_slice(&all_planes[k * num_digits_fold + df]);
+    for unit in layout.units_for_group(group_id)? {
+        for claim in 0..group.num_claims {
+            for global_block in unit.global_block_base..unit.global_block_base + unit.blocks {
+                for digit in 0..group.depth_open {
+                    let source =
+                        (claim * source_num_blocks + global_block) * group.depth_open + digit;
+                    write_witness_plane(
+                        out,
+                        layout.e_index(unit, claim, global_block, digit)?,
+                        &flat[source],
+                    )?;
                 }
             }
         }
     }
+    Ok(())
+}
+
+/// Emit one group's T planes at canonical witness addresses.
+pub fn emit_witness_t_planes<const D: usize>(
+    out: &mut [i8],
+    layout: &OpeningBatchWitnessLayout,
+    group_id: SemanticGroupId,
+    flat: &[[i8; D]],
+    source_num_blocks: usize,
+) -> Result<(), AkitaError> {
+    let group = layout.group(group_id)?;
+    let expected = group
+        .num_claims
+        .checked_mul(source_num_blocks)
+        .and_then(|n| n.checked_mul(group.n_a))
+        .and_then(|n| n.checked_mul(group.depth_open))
+        .ok_or_else(|| AkitaError::InvalidSetup("witness T source length overflow".into()))?;
+    if flat.len() != expected {
+        return Err(AkitaError::InvalidSize {
+            expected,
+            actual: flat.len(),
+        });
+    }
+    let planes_per_block = group
+        .n_a
+        .checked_mul(group.depth_open)
+        .ok_or_else(|| AkitaError::InvalidSetup("witness T source stride overflow".into()))?;
+    for unit in layout.units_for_group(group_id)? {
+        for claim in 0..group.num_claims {
+            for global_block in unit.global_block_base..unit.global_block_base + unit.blocks {
+                for a_row in 0..group.n_a {
+                    for digit in 0..group.depth_open {
+                        let source = (claim * source_num_blocks + global_block) * planes_per_block
+                            + a_row * group.depth_open
+                            + digit;
+                        write_witness_plane(
+                            out,
+                            layout.t_index(unit, claim, global_block, a_row, digit)?,
+                            &flat[source],
+                        )?;
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Emit one ownership unit's replicated Z planes at canonical addresses.
+pub fn emit_witness_z_planes<const D: usize>(
+    out: &mut [i8],
+    layout: &OpeningBatchWitnessLayout,
+    unit: &WitnessOwnershipUnit,
+    all_planes: &[[i8; D]],
+) -> Result<(), AkitaError> {
+    let group = layout.group(unit.group)?;
+    let expected = group
+        .block_len
+        .checked_mul(group.depth_commit)
+        .and_then(|n| n.checked_mul(group.depth_fold))
+        .ok_or_else(|| AkitaError::InvalidSetup("witness Z source length overflow".into()))?;
+    if all_planes.len() != expected {
+        return Err(AkitaError::InvalidSize {
+            expected,
+            actual: all_planes.len(),
+        });
+    }
+    for position in 0..group.block_len {
+        for commit_digit in 0..group.depth_commit {
+            for fold_digit in 0..group.depth_fold {
+                let source =
+                    (position * group.depth_commit + commit_digit) * group.depth_fold + fold_digit;
+                write_witness_plane(
+                    out,
+                    layout.z_index(unit, position, commit_digit, fold_digit)?,
+                    &all_planes[source],
+                )?;
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Emit the shared R planes at canonical witness addresses.
+pub fn emit_witness_r_planes<const D: usize>(
+    out: &mut [i8],
+    layout: &OpeningBatchWitnessLayout,
+    planes: &[[i8; D]],
+) -> Result<(), AkitaError> {
+    let expected = layout
+        .relation_rows
+        .checked_mul(layout.quotient_depth)
+        .ok_or_else(|| AkitaError::InvalidSetup("witness R source length overflow".into()))?;
+    if planes.len() != expected {
+        return Err(AkitaError::InvalidSize {
+            expected,
+            actual: planes.len(),
+        });
+    }
+    for row in 0..layout.relation_rows {
+        for digit in 0..layout.quotient_depth {
+            write_witness_plane(
+                out,
+                layout.r_index(row, digit)?,
+                &planes[row * layout.quotient_depth + digit],
+            )?;
+        }
+    }
+    Ok(())
+}
+
+fn write_witness_plane<const D: usize>(
+    out: &mut [i8],
+    ring_index: usize,
+    plane: &[i8; D],
+) -> Result<(), AkitaError> {
+    let start = ring_index
+        .checked_mul(D)
+        .ok_or_else(|| AkitaError::InvalidSetup("witness plane offset overflow".into()))?;
+    let end = start
+        .checked_add(D)
+        .ok_or_else(|| AkitaError::InvalidSetup("witness plane end overflow".into()))?;
+    let dst = out.get_mut(start..end).ok_or(AkitaError::InvalidProof)?;
+    dst.copy_from_slice(plane);
+    Ok(())
 }
 
 #[cfg(test)]

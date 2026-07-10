@@ -158,15 +158,14 @@ where
     };
 
     if extension_opening_reduction.is_none() {
+        let opening_layout = OpeningBlockLayout::new(root_lp.num_blocks, root_lp.block_len)?;
         let prepared_point =
             dispatch_for_field!(ProtocolDispatchSlot::Role(RingRole::Inner), F, d_a, |D| {
                 prepare_opening_point::<F, E, D>(
                     shared_opening_point,
                     basis,
-                    root_lp.m_vars,
-                    root_lp.r_vars,
+                    opening_layout,
                     d_a.trailing_zeros() as usize,
-                    BlockOrder::RowMajor,
                 )
             })?;
         for pt in &prepared_point.padded_point {
@@ -183,7 +182,6 @@ where
         opening_batch,
         basis,
         root_lp,
-        BlockOrder::RowMajor,
         false,
         transcript,
     )?;
@@ -278,6 +276,17 @@ where
         next_w_commitment,
         next_ring_dim: matches!(proof, AkitaBatchedRootProof::Fold(_))
             .then_some(next_fold_level_params.role_dims().d_b()),
+        next_opening_layout: if matches!(proof, AkitaBatchedRootProof::Fold(_)) {
+            OpeningBlockLayout::new(
+                next_fold_level_params.num_blocks,
+                next_fold_level_params.block_len,
+            )?
+        } else {
+            if !w_len.is_multiple_of(d_a) {
+                return Err(AkitaError::InvalidProof);
+            }
+            OpeningBlockLayout::new(1, w_len / d_a)?
+        },
         terminal_replay,
         stage3: stage3_sumcheck_proof.map(|proof| (proof, next_fold_level_params)),
         trace_prepared_points: Some(vec![prepared_point.clone()]),
@@ -360,16 +369,10 @@ where
                 AkitaError::InvalidSetup("group opening point length overflow".to_string())
             })?;
         let group_point = &shared_opening_point[..shared_opening_point.len().min(target_len)];
+        let opening_layout = OpeningBlockLayout::new(group_lp.num_blocks(), group_lp.block_len())?;
         let prepared =
             dispatch_for_field!(ProtocolDispatchSlot::Role(RingRole::Inner), F, d_a, |D| {
-                prepare_opening_point::<F, E, D>(
-                    group_point,
-                    basis,
-                    group_lp.m_vars(),
-                    group_lp.r_vars(),
-                    alpha_bits,
-                    BlockOrder::RowMajor,
-                )
+                prepare_opening_point::<F, E, D>(group_point, basis, opening_layout, alpha_bits)
             })?;
         for pt in &prepared.padded_point {
             append_ext_field::<F, E, T>(transcript, ABSORB_EVALUATION_CLAIMS, pt);
@@ -432,6 +435,10 @@ where
         stage2,
         next_w_commitment,
         next_ring_dim: Some(next_fold_level_params.role_dims().d_b()),
+        next_opening_layout: OpeningBlockLayout::new(
+            next_fold_level_params.num_blocks,
+            next_fold_level_params.block_len,
+        )?,
         terminal_replay: None,
         stage3: stage3_sumcheck_proof.map(|proof| (proof, next_fold_level_params)),
         trace_prepared_points: Some(prepared_points),

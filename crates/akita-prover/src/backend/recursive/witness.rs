@@ -20,7 +20,7 @@ use crate::compute::{CommitInnerPlan, CommitmentComputeBackend, RecursiveWitness
 use crate::kernels::linear::decompose_commit_blocks_into;
 use akita_types::{
     tensor_column_partials_from_base_evals, tensor_packed_witness_evals, CleartextWitnessProof,
-    FpExtEncoding,
+    FpExtEncoding, OpeningBlockLayout,
 };
 use std::marker::PhantomData;
 
@@ -92,9 +92,12 @@ impl<'a, F: FieldCore, const D: usize> SuffixWitnessView<'a, F, D> {
         &self,
         block_idx: usize,
         col_idx: usize,
-        num_blocks: usize,
+        block_len: usize,
     ) -> Option<&'a [i8; D]> {
-        self.coeffs.get(block_idx + col_idx * num_blocks)
+        block_idx
+            .checked_mul(block_len)
+            .and_then(|base| base.checked_add(col_idx))
+            .and_then(|index| self.coeffs.get(index))
     }
 
     pub fn num_ring_elems(&self) -> usize {
@@ -227,7 +230,7 @@ where
             .map(|block_idx| {
                 let mut acc = [F::zero(); D];
                 for (col_idx, &scalar) in scalars.iter().take(block_len).enumerate() {
-                    let Some(ring) = self.block_elem(block_idx, col_idx, num_blocks) else {
+                    let Some(ring) = self.block_elem(block_idx, col_idx, block_len) else {
                         break;
                     };
                     for (coeff, &d) in acc.iter_mut().zip(ring.iter()) {
@@ -252,7 +255,7 @@ where
             .map(|block_idx| {
                 let mut acc = CyclotomicRing::<F, D>::zero();
                 for (col_idx, scalar) in scalars.iter().take(block_len).enumerate() {
-                    let Some(digits) = self.block_elem(block_idx, col_idx, num_blocks) else {
+                    let Some(digits) = self.block_elem(block_idx, col_idx, block_len) else {
                         break;
                     };
                     let ring = CyclotomicRing::<F, D>::from_coefficients(
@@ -276,7 +279,7 @@ where
             .map(|block_idx| {
                 let mut acc = [F::zero(); D];
                 for (col_idx, &scalar) in fold_scalars.iter().take(block_len).enumerate() {
-                    let Some(ring) = self.block_elem(block_idx, col_idx, num_blocks) else {
+                    let Some(ring) = self.block_elem(block_idx, col_idx, block_len) else {
                         break;
                     };
                     for (coeff, &d) in acc.iter_mut().zip(ring.iter()) {
@@ -308,7 +311,7 @@ where
             .map(|block_idx| {
                 let mut acc = CyclotomicRing::<F, D>::zero();
                 for (col_idx, scalar) in fold_scalars.iter().take(block_len).enumerate() {
-                    let Some(digits) = self.block_elem(block_idx, col_idx, num_blocks) else {
+                    let Some(digits) = self.block_elem(block_idx, col_idx, block_len) else {
                         break;
                     };
                     let ring = CyclotomicRing::<F, D>::from_coefficients(
@@ -346,7 +349,6 @@ where
             challenges,
             num_blocks,
             block_len,
-            num_blocks,
             num_digits,
             inner_width,
         );
@@ -549,12 +551,30 @@ where
                 eval_outer_scalars,
                 fold_scalars,
                 block_len,
-            } => source.evaluate_and_fold(eval_outer_scalars, fold_scalars, block_len),
+            } => {
+                let layout =
+                    OpeningBlockLayout::new(source.num_blocks_for_block_len(block_len), block_len)?;
+                if eval_outer_scalars.len() != layout.num_blocks()
+                    || fold_scalars.len() != layout.position_stride()
+                {
+                    return Err(AkitaError::InvalidProof);
+                }
+                source.evaluate_and_fold(eval_outer_scalars, fold_scalars, block_len)
+            }
             OpeningFoldPlan::Ring {
                 eval_outer_scalars,
                 fold_scalars,
                 block_len,
-            } => source.evaluate_and_fold_ring(eval_outer_scalars, fold_scalars, block_len),
+            } => {
+                let layout =
+                    OpeningBlockLayout::new(source.num_blocks_for_block_len(block_len), block_len)?;
+                if eval_outer_scalars.len() != layout.num_blocks()
+                    || fold_scalars.len() != layout.position_stride()
+                {
+                    return Err(AkitaError::InvalidProof);
+                }
+                source.evaluate_and_fold_ring(eval_outer_scalars, fold_scalars, block_len)
+            }
         };
         Ok(OpeningFoldOutput { eval, folded })
     }
@@ -734,7 +754,7 @@ mod tests {
     }
 
     #[test]
-    fn logical_rows_use_strided_column_major_indices() {
+    fn logical_rows_are_contiguous_for_non_power_of_two_block_len() {
         let digits: Vec<i8> = (0..20).collect();
         let w = RecursiveWitnessFlat::from_i8_digits(digits);
         let view = w
@@ -745,14 +765,14 @@ mod tests {
 
         let row = |block_idx: usize| -> Vec<[i8; 2]> {
             (0..block_len)
-                .filter_map(|col_idx| view.block_elem(block_idx, col_idx, num_blocks).copied())
+                .filter_map(|col_idx| view.block_elem(block_idx, col_idx, block_len).copied())
                 .collect()
         };
 
-        assert_eq!(row(0), vec![[0, 1], [8, 9], [16, 17]]);
-        assert_eq!(row(1), vec![[2, 3], [10, 11], [18, 19]]);
-        assert_eq!(row(2), vec![[4, 5], [12, 13]]);
-        assert_eq!(row(3), vec![[6, 7], [14, 15]]);
+        assert_eq!(row(0), vec![[0, 1], [2, 3], [4, 5]]);
+        assert_eq!(row(1), vec![[6, 7], [8, 9], [10, 11]]);
+        assert_eq!(row(2), vec![[12, 13], [14, 15], [16, 17]]);
+        assert_eq!(row(3), vec![[18, 19]]);
     }
 
     fn ring<const D: usize>(offset: u64) -> CyclotomicRing<F, D> {

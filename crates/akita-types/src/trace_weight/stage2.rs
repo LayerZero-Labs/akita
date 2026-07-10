@@ -9,12 +9,11 @@ use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitive
 use super::build::{
     build_trace_weight_compact_field_sparse_scaled, build_trace_weight_compact_ring_terms_scaled,
 };
-use super::layout::TraceChunkLayout;
 use super::trace_table::TraceTable;
 use crate::{
     dispatch_for_field, embed_ring_subfield_scalar, BasisMode, FpExtEncoding, LevelParams,
-    OpeningClaimsLayout, PreparedOpeningPoint, TraceFieldBlockOpening, TraceRingBlockOpening,
-    TraceTerm, TraceWeightLayout, WitnessLayout,
+    OpeningBatchWitnessLayout, OpeningBlockLayout, OpeningClaimsLayout, PreparedOpeningPoint,
+    TraceFieldBlockOpening, TraceRingBlockOpening, TraceTerm, TraceWeightLayout,
 };
 
 /// Owned public trace-weight factors used by the fused stage-2 trace term.
@@ -90,7 +89,8 @@ pub fn ensure_trace_stage2_supported(extension_degree: usize) -> Result<(), Akit
 /// root folds can use a wider claim-weighted block row.
 pub fn trace_weight_layout_from_segment(
     lp: &LevelParams,
-    witness_layout: &WitnessLayout,
+    witness_layout: &OpeningBatchWitnessLayout,
+    opening_layout: OpeningBlockLayout,
     col_bits: usize,
     ring_bits: usize,
     num_trace_blocks: usize,
@@ -105,37 +105,30 @@ pub fn trace_weight_layout_from_segment(
             "trace-weight ring bits do not match level ring dimension".to_string(),
         ));
     }
-    let chunk0 = witness_layout.chunks.first().ok_or_else(|| {
-        AkitaError::InvalidSetup("trace-weight witness layout has no chunks".to_string())
+    let group_id = *witness_layout.relation_group_order.first().ok_or_else(|| {
+        AkitaError::InvalidSetup("trace-weight witness layout has no groups".to_string())
     })?;
-    let num_blocks_global = lp.num_blocks;
-    if num_blocks_global == 0 || !num_trace_blocks.is_multiple_of(num_blocks_global) {
+    let group = witness_layout.group(group_id)?;
+    let expected_blocks = group
+        .num_claims
+        .checked_mul(group.num_blocks)
+        .ok_or_else(|| AkitaError::InvalidSetup("trace block count overflow".to_string()))?;
+    if num_trace_blocks != expected_blocks {
         return Err(AkitaError::InvalidSetup(
-            "trace block count is not a multiple of the level block count".to_string(),
+            "trace block count disagrees with witness layout".to_string(),
         ));
     }
-    // Chunk geometry: `chunk[c].offset_e = c·chunk_stride + chunk0.offset_e`.
-    let chunk = TraceChunkLayout {
-        num_chunks: witness_layout.num_chunks(),
-        blocks_per_chunk: witness_layout.blocks_per_chunk,
-        num_claims: num_trace_blocks / num_blocks_global,
-        num_blocks_global,
-        chunk_stride: witness_layout
-            .chunks
-            .get(1)
-            .map(|c| c.offset_z)
-            .unwrap_or(0),
-    };
     let r_vars = num_trace_blocks.next_power_of_two().trailing_zeros() as usize;
     let layout = TraceWeightLayout {
         ring_bits,
         col_bits,
-        opening_digit_offset: chunk0.offset_e,
         num_blocks: num_trace_blocks,
         num_digits_open: lp.num_digits_open,
         r_vars,
         log_basis: lp.log_basis,
-        chunk,
+        witness_layout: witness_layout.clone(),
+        opening_layout,
+        group_id,
     };
     layout.validate_opening_digit_segment()?;
     Ok(layout)
@@ -366,12 +359,9 @@ where
 
 /// Slice the block-axis opening `b_open` out of a root opening point.
 ///
-/// The root uses [`crate::BlockOrder::RowMajor`]: after padding `opening_point`
-/// to `m_vars + r_vars + alpha_bits` coordinates, the outer coordinates are
-/// `padded[alpha_bits..]` and the block coordinates are their tail
-/// `outer[m_vars..m_vars + r_vars]`. This reproduces the `b_open` that
-/// `prepare_opening_point` consumes (and then discards) when it
-/// materializes the ring block multipliers.
+/// After padding `opening_point` to `m_vars + r_vars + alpha_bits`
+/// coordinates, the outer coordinates are `padded[alpha_bits..]` and the block
+/// coordinates follow the virtual-position coordinates.
 pub fn root_trace_block_opening<X: FieldCore>(
     opening_point: &[X],
     lp: &LevelParams,
@@ -495,6 +485,8 @@ where
 {
     let table = build_multi_group_root_stage2_trace_table::<F, E>(
         lp.role_dims().d_a(),
+        &layout.witness_layout,
+        layout.opening_layout,
         lp,
         opening_batch,
         prepared_points,
@@ -567,6 +559,8 @@ where
 #[allow(clippy::too_many_arguments)]
 pub fn build_multi_group_root_stage2_trace_table<F, E>(
     ring_d: usize,
+    witness_layout: &OpeningBatchWitnessLayout,
+    opening_layout: OpeningBlockLayout,
     lp: &LevelParams,
     opening_batch: &OpeningClaimsLayout,
     prepared_points: &[PreparedOpeningPoint<F, E>],
@@ -584,11 +578,14 @@ where
             "multi-group root trace table currently requires degree-one openings".to_string(),
         ));
     }
-    if live_x_cols == 0 {
+    if live_x_cols != opening_layout.opening_len()
+        || witness_layout.total_len() > opening_layout.physical_len()
+    {
         return Err(AkitaError::InvalidProof);
     }
     if prepared_points.len() != opening_batch.num_groups()
         || row_coefficients.len() != opening_batch.num_total_polynomials()
+        || witness_layout.groups.len() != opening_batch.num_groups()
     {
         return Err(AkitaError::InvalidProof);
     }
@@ -603,53 +600,16 @@ where
         ring_d,
         |D| {
             let ring_len = D;
-            let order = opening_batch.root_group_order()?;
-            let mut e_offsets = vec![0usize; opening_batch.num_groups()];
-            let mut base = 0usize;
-            for &group_index in &order {
-                let group_lp = lp.root_group_params(opening_batch, group_index)?;
-                let group_layout = opening_batch.group_layout(group_index)?;
-                let depth_fold = lp.num_digits_fold_for_params(
-                    group_lp,
-                    group_layout.num_polynomials(),
-                    lp.field_bits_for_cache(),
-                )?;
-                let overflow = || {
-                    AkitaError::InvalidSetup("multi-group trace segment width overflow".to_string())
-                };
-                let z_g = group_lp
-                    .block_len()
-                    .checked_mul(group_lp.num_digits_commit())
-                    .and_then(|n| n.checked_mul(depth_fold))
-                    .ok_or_else(overflow)?;
-                let e_g = group_layout
-                    .num_polynomials()
-                    .checked_mul(group_lp.num_blocks())
-                    .and_then(|n| n.checked_mul(group_lp.num_digits_open()))
-                    .ok_or_else(overflow)?;
-                let t_g = group_layout
-                    .num_polynomials()
-                    .checked_mul(group_lp.num_blocks())
-                    .and_then(|n| n.checked_mul(group_lp.a_rows_len()))
-                    .and_then(|n| n.checked_mul(group_lp.num_digits_open()))
-                    .ok_or_else(overflow)?;
-                e_offsets[group_index] = base.checked_add(z_g).ok_or_else(overflow)?;
-                base = base
-                    .checked_add(z_g)
-                    .and_then(|n| n.checked_add(e_g))
-                    .and_then(|n| n.checked_add(t_g))
-                    .ok_or_else(overflow)?;
-            }
-
             let table_len = live_x_cols.checked_mul(ring_len).ok_or_else(|| {
                 AkitaError::InvalidSetup("multi-group trace table length overflow".to_string())
             })?;
             let mut table = vec![E::zero(); table_len];
             let mut claim_offset = 0usize;
-            for group_index in 0..opening_batch.num_groups() {
+            for (group_index, prepared) in prepared_points.iter().enumerate() {
                 let group_lp = lp.root_group_params(opening_batch, group_index)?;
                 let group_layout = opening_batch.group_layout(group_index)?;
-                let prepared = &prepared_points[group_index];
+                let group_id = crate::SemanticGroupId(group_index);
+                let descriptor = witness_layout.group(group_id)?;
                 let inner = prepared.packed_inner_owned::<D>()?;
                 let inner_coeffs = inner.coefficients();
                 let gadget = crate::gadget_row_scalars::<F>(
@@ -671,36 +631,18 @@ where
                             .ok_or(AkitaError::InvalidProof)?;
                         let block_weight = E::lift_base(block_weight);
                         for (plane, gadget_scalar) in gadget.iter().enumerate() {
-                            let group_block_cols = group_layout
-                                .num_polynomials()
-                                .checked_mul(group_lp.num_blocks())
-                                .ok_or_else(|| {
-                                    AkitaError::InvalidSetup(
-                                        "multi-group trace block width overflow".to_string(),
-                                    )
-                                })?;
-                            let plane_offset =
-                                plane.checked_mul(group_block_cols).ok_or_else(|| {
-                                    AkitaError::InvalidSetup(
-                                        "multi-group trace plane offset overflow".to_string(),
-                                    )
-                                })?;
-                            let claim_offset = local_claim
-                                .checked_mul(group_lp.num_blocks())
-                                .ok_or_else(|| {
-                                    AkitaError::InvalidSetup(
-                                        "multi-group trace claim offset overflow".to_string(),
-                                    )
-                                })?;
-                            let col = e_offsets[group_index]
-                                .checked_add(plane_offset)
-                                .and_then(|n| n.checked_add(claim_offset))
-                                .and_then(|n| n.checked_add(block))
-                                .ok_or_else(|| {
-                                    AkitaError::InvalidSetup(
-                                        "multi-group trace column overflow".to_string(),
-                                    )
-                                })?;
+                            if descriptor.num_claims != group_layout.num_polynomials()
+                                || descriptor.num_blocks != group_lp.num_blocks()
+                            {
+                                return Err(AkitaError::InvalidSetup(
+                                    "trace group geometry disagrees with witness layout"
+                                        .to_string(),
+                                ));
+                            }
+                            let unit = witness_layout.unit_for_block(group_id, block)?;
+                            let physical_col =
+                                witness_layout.e_index(unit, local_claim, block, plane)?;
+                            let col = opening_layout.opening_index_for_physical(physical_col)?;
                             if col >= live_x_cols {
                                 continue;
                             }
@@ -732,8 +674,7 @@ where
 }
 
 /// Build the verifier's short closed-form trace term for a recursive singleton
-/// fold. The block-axis opening is sliced from the retained padded point under
-/// the [`crate::BlockOrder::ColumnMajor`] convention.
+/// fold. The block-axis opening follows the virtual-position coordinates.
 pub fn trace_terms_recursive<F, E, const D: usize>(
     prepared: &PreparedOpeningPoint<F, E>,
     lp: &LevelParams,
@@ -753,8 +694,17 @@ where
         .len()
         .checked_sub(outer_len)
         .ok_or(AkitaError::InvalidProof)?;
-    // Column-major: the block coordinates are the head of the outer point.
-    let b_open = prepared.padded_point[alpha_bits..alpha_bits + lp.r_vars].to_vec();
+    let block_start = alpha_bits
+        .checked_add(lp.m_vars)
+        .ok_or_else(|| AkitaError::InvalidSetup("block opening offset overflow".to_string()))?;
+    let block_end = block_start
+        .checked_add(lp.r_vars)
+        .ok_or_else(|| AkitaError::InvalidSetup("block opening end overflow".to_string()))?;
+    let b_open = prepared
+        .padded_point
+        .get(block_start..block_end)
+        .ok_or(AkitaError::InvalidProof)?
+        .to_vec();
     Ok(vec![TraceTerm {
         block_offset: 0,
         b_open,

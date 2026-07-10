@@ -27,6 +27,8 @@ mod tail_segments;
 #[cfg(test)]
 mod tests;
 mod wire;
+#[cfg(test)]
+mod witness_layout_contract;
 
 pub use crate::opening_claims::{
     sample_public_row_coefficients, should_reject_multi_group_root, OpeningClaims,
@@ -93,7 +95,7 @@ pub use stage1::{
 };
 pub use tail_segments::{
     build_segment_typed_witness, decode_terminal_z_golomb_payload, e_folded_segment_bytes,
-    emit_witness_planes_block_inner, emit_witness_z_folded_planes_inner,
+    emit_witness_e_planes, emit_witness_r_planes, emit_witness_t_planes, emit_witness_z_planes,
     expand_segment_typed_to_i8_digits, segment_typed_witness_upper_bound_bytes,
     segment_typed_z_payload_bytes, tail_golomb_rice_z_params, tail_segment_layout,
     tail_segment_multiplicities_from_layout, terminal_golomb_grind_tail_t_vectors,

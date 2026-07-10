@@ -72,7 +72,6 @@ pub use akita_prover::{
 pub use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 pub use akita_transcript::{AkitaTranscript, Transcript};
 pub use akita_types::{
-    BasisMode, BlockOrder, OpeningClaims, OpeningClaimsLayout, PointVariableSelection,
-    PolynomialGroupClaims,
+    BasisMode, OpeningClaims, OpeningClaimsLayout, PointVariableSelection, PolynomialGroupClaims,
 };
 pub use scheme::AkitaCommitmentScheme;

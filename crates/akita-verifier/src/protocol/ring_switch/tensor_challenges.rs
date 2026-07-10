@@ -1,4 +1,6 @@
+#[cfg(test)]
 use akita_algebra::eq_poly::EqPolynomial;
+#[cfg(test)]
 use akita_algebra::offset_eq::summarize_pow2_block_carries;
 use akita_challenges::TensorChallenges as TensorChallengeSet;
 use akita_field::{AkitaError, FieldCore, FromPrimitiveInt, MulBase};
@@ -9,11 +11,14 @@ pub(crate) enum PreparedChallengeEvals<F: FieldCore> {
     Flat(Vec<F>),
     Tensor {
         challenges: TensorChallengeSet,
+        #[cfg_attr(not(test), allow(dead_code))]
         alpha_pows: Vec<F>,
+        exact_evals: Vec<F>,
     },
 }
 
 impl<F: FieldCore> PreparedChallengeEvals<F> {
+    #[cfg(test)]
     pub(crate) fn as_flat(&self) -> Option<&[F]> {
         match self {
             Self::Flat(c_alphas) => Some(c_alphas),
@@ -21,6 +26,62 @@ impl<F: FieldCore> PreparedChallengeEvals<F> {
         }
     }
 
+    pub(crate) fn eval_at<Base>(
+        &self,
+        claim: usize,
+        block: usize,
+        num_blocks: usize,
+    ) -> Result<F, AkitaError>
+    where
+        Base: FieldCore + FromPrimitiveInt,
+        F: MulBase<Base>,
+    {
+        if block >= num_blocks {
+            return Err(AkitaError::InvalidInput(
+                "challenge block index out of range".into(),
+            ));
+        }
+        match self {
+            Self::Flat(c_alphas) => c_alphas
+                .get(
+                    claim
+                        .checked_mul(num_blocks)
+                        .and_then(|base| base.checked_add(block))
+                        .ok_or_else(|| {
+                            AkitaError::InvalidSetup("challenge index overflow".into())
+                        })?,
+                )
+                .copied()
+                .ok_or(AkitaError::InvalidProof),
+            Self::Tensor {
+                challenges,
+                exact_evals,
+                ..
+            } => {
+                if claim >= challenges.num_claims
+                    || challenges.left_len.checked_mul(challenges.right_len) != Some(num_blocks)
+                    || challenges.right_len == 0
+                {
+                    return Err(AkitaError::InvalidSetup(
+                        "tensor challenge shape does not match witness blocks".into(),
+                    ));
+                }
+                exact_evals
+                    .get(
+                        claim
+                            .checked_mul(num_blocks)
+                            .and_then(|base| base.checked_add(block))
+                            .ok_or_else(|| {
+                                AkitaError::InvalidSetup("tensor challenge index overflow".into())
+                            })?,
+                    )
+                    .copied()
+                    .ok_or(AkitaError::InvalidProof)
+            }
+        }
+    }
+
+    #[cfg(test)]
     pub(crate) fn summarize_all_block_carries<Base, const D: usize>(
         &self,
         num_claims: usize,
@@ -54,6 +115,7 @@ impl<F: FieldCore> PreparedChallengeEvals<F> {
             Self::Tensor {
                 challenges,
                 alpha_pows,
+                ..
             } => summarize_tensor_all_block_carries::<Base, F, D>(
                 challenges,
                 num_claims,
@@ -81,6 +143,7 @@ impl<F: FieldCore> PreparedChallengeEvals<F> {
     /// length mismatch, or a chunked (`blocks_per_chunk < num_blocks`) tensor
     /// challenge set (the factored chunk window is a follow-up).
     #[allow(clippy::too_many_arguments)]
+    #[cfg(test)]
     pub(crate) fn summarize_chunk_block_carries<Base, const D: usize>(
         &self,
         num_claims: usize,
@@ -136,6 +199,7 @@ impl<F: FieldCore> PreparedChallengeEvals<F> {
 }
 
 #[allow(clippy::too_many_arguments)]
+#[cfg(test)]
 fn summarize_tensor_all_block_carries<Base, F, const D: usize>(
     challenges: &TensorChallengeSet,
     num_claims: usize,
@@ -290,6 +354,7 @@ mod tests {
         let factored = PreparedChallengeEvals::Tensor {
             challenges: set,
             alpha_pows,
+            exact_evals: flat.as_flat().unwrap().to_vec(),
         };
 
         let x_low_cases = [

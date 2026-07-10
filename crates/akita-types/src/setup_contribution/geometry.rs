@@ -4,13 +4,294 @@
 //! without fold challenges so NTT sizing, prefix offload, and envelope checks
 //! do not depend on `tau1`.
 
+use akita_algebra::offset_eq::MAX_COMPACT_STRIDE_TERMS;
 use akita_field::{AkitaError, FieldCore};
 
-use crate::layout::RelationMatrixRowLayout;
+use crate::layout::{validate_role_dims, CommitmentRingDims, RelationMatrixRowLayout};
 use crate::proof::AkitaExpandedSetup;
 use crate::schedule::Schedule;
+#[cfg(test)]
+use crate::OpeningBlockLayout;
 
 use super::SetupContributionPlanInputs;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct SetupProjectionGroupGeometry {
+    pub(crate) a_rows: usize,
+    pub(crate) a_cols: usize,
+    pub(crate) b_rows: usize,
+    pub(crate) b_cols: usize,
+    pub(crate) d_active_cols: usize,
+    pub(crate) ownership_units: usize,
+    pub(crate) depth_fold: usize,
+}
+
+/// Checked common-base geometry for the Stage 3 setup projection.
+///
+/// Physical A, B, and D matrices retain their native role dimensions. Stage 3
+/// views their flat coefficients as rings over `base_ring_dim = min(d_a,d_b,d_d)`.
+/// The projection ratios expand each native role footprint into that common
+/// base without changing its flat coefficient count.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SetupProjectionGeometry {
+    role_dims: CommitmentRingDims,
+    base_ring_dim: usize,
+    a_ratio: usize,
+    b_ratio: usize,
+    d_ratio: usize,
+    a_projection_width: usize,
+    b_projection_width: usize,
+    d_projection_width: usize,
+    required: usize,
+    setup_index_len: usize,
+    ring_bits: usize,
+    rounds: usize,
+    natural_field_len: usize,
+    evaluation_terms: usize,
+}
+
+impl SetupProjectionGeometry {
+    pub(crate) fn from_groups(
+        role_dims: CommitmentRingDims,
+        d_rows: usize,
+        d_physical_cols: usize,
+        groups: &[SetupProjectionGroupGeometry],
+    ) -> Result<Self, AkitaError> {
+        if groups.is_empty() {
+            return Err(AkitaError::InvalidSetup(
+                "setup projection requires at least one group".into(),
+            ));
+        }
+        let d_footprint = d_rows
+            .checked_mul(d_physical_cols)
+            .ok_or_else(|| AkitaError::InvalidSetup("setup D footprint overflow".into()))?;
+        let mut a_footprint = 0usize;
+        let mut b_footprint = 0usize;
+        for group in groups {
+            a_footprint =
+                a_footprint.max(group.a_rows.checked_mul(group.a_cols).ok_or_else(|| {
+                    AkitaError::InvalidSetup("setup A footprint overflow".into())
+                })?);
+            b_footprint =
+                b_footprint.max(group.b_rows.checked_mul(group.b_cols).ok_or_else(|| {
+                    AkitaError::InvalidSetup("setup B footprint overflow".into())
+                })?);
+        }
+        let mut geometry =
+            Self::from_role_footprints(role_dims, a_footprint, b_footprint, d_footprint)?;
+        let mut evaluation_terms = 0usize;
+        for group in groups {
+            let d_terms = group
+                .d_active_cols
+                .checked_mul(d_rows)
+                .and_then(|terms| terms.checked_mul(geometry.d_ratio))
+                .ok_or_else(|| {
+                    AkitaError::InvalidSetup("setup D evaluation work overflow".into())
+                })?;
+            let b_terms = group
+                .b_cols
+                .checked_mul(group.b_rows)
+                .and_then(|terms| terms.checked_mul(geometry.b_ratio))
+                .ok_or_else(|| {
+                    AkitaError::InvalidSetup("setup B evaluation work overflow".into())
+                })?;
+            let a_terms = group
+                .a_cols
+                .checked_mul(group.a_rows)
+                .and_then(|terms| terms.checked_mul(geometry.a_ratio))
+                .and_then(|terms| terms.checked_mul(group.ownership_units))
+                .and_then(|terms| terms.checked_mul(group.depth_fold))
+                .ok_or_else(|| {
+                    AkitaError::InvalidSetup("setup A evaluation work overflow".into())
+                })?;
+            evaluation_terms = evaluation_terms
+                .checked_add(d_terms)
+                .and_then(|terms| terms.checked_add(b_terms))
+                .and_then(|terms| terms.checked_add(a_terms))
+                .ok_or_else(|| AkitaError::InvalidSetup("setup evaluation work overflow".into()))?;
+        }
+        geometry.evaluation_terms = evaluation_terms;
+        Ok(geometry)
+    }
+
+    pub(crate) fn from_role_footprints(
+        role_dims: CommitmentRingDims,
+        a_footprint: usize,
+        b_footprint: usize,
+        d_footprint: usize,
+    ) -> Result<Self, AkitaError> {
+        validate_role_dims(role_dims)?;
+        let base_ring_dim = role_dims.d_a().min(role_dims.d_b()).min(role_dims.d_d());
+        let ratio = |role: &'static str, dimension: usize| {
+            if !dimension.is_multiple_of(base_ring_dim) {
+                return Err(AkitaError::InvalidSetup(format!(
+                    "{role} ring dimension does not decompose over the Stage 3 base"
+                )));
+            }
+            let ratio = dimension / base_ring_dim;
+            if ratio == 0 || !ratio.is_power_of_two() {
+                return Err(AkitaError::InvalidSetup(format!(
+                    "{role} Stage 3 projection ratio must be a non-zero power of two"
+                )));
+            }
+            Ok(ratio)
+        };
+        let a_ratio = ratio("A", role_dims.d_a())?;
+        let b_ratio = ratio("B", role_dims.d_b())?;
+        let d_ratio = ratio("D", role_dims.d_d())?;
+        let a_projection_width = a_footprint
+            .checked_mul(a_ratio)
+            .ok_or_else(|| AkitaError::InvalidSetup("setup A projection width overflow".into()))?;
+        let b_projection_width = b_footprint
+            .checked_mul(b_ratio)
+            .ok_or_else(|| AkitaError::InvalidSetup("setup B projection width overflow".into()))?;
+        let d_projection_width = d_footprint
+            .checked_mul(d_ratio)
+            .ok_or_else(|| AkitaError::InvalidSetup("setup D projection width overflow".into()))?;
+        let required = a_projection_width
+            .max(b_projection_width)
+            .max(d_projection_width);
+        if required == 0 {
+            return Err(AkitaError::InvalidSetup(
+                "setup projection requires a non-empty footprint".into(),
+            ));
+        }
+        let setup_index_len = required
+            .checked_next_power_of_two()
+            .ok_or_else(|| AkitaError::InvalidSetup("setup index domain overflow".into()))?;
+        let ring_bits = base_ring_dim.trailing_zeros() as usize;
+        let rounds = ring_bits
+            .checked_add(setup_index_len.trailing_zeros() as usize)
+            .ok_or_else(|| AkitaError::InvalidSetup("setup round count overflow".into()))?;
+        let natural_field_len = required.checked_mul(base_ring_dim).ok_or_else(|| {
+            AkitaError::InvalidSetup("setup product natural field length overflow".into())
+        })?;
+        Ok(Self {
+            role_dims,
+            base_ring_dim,
+            a_ratio,
+            b_ratio,
+            d_ratio,
+            a_projection_width,
+            b_projection_width,
+            d_projection_width,
+            required,
+            setup_index_len,
+            ring_bits,
+            rounds,
+            natural_field_len,
+            evaluation_terms: 0,
+        })
+    }
+
+    #[must_use]
+    pub const fn role_dims(self) -> CommitmentRingDims {
+        self.role_dims
+    }
+
+    #[must_use]
+    pub const fn base_ring_dim(self) -> usize {
+        self.base_ring_dim
+    }
+
+    #[must_use]
+    pub const fn a_ratio(self) -> usize {
+        self.a_ratio
+    }
+
+    #[must_use]
+    pub const fn b_ratio(self) -> usize {
+        self.b_ratio
+    }
+
+    #[must_use]
+    pub const fn d_ratio(self) -> usize {
+        self.d_ratio
+    }
+
+    #[must_use]
+    pub const fn a_projection_width(self) -> usize {
+        self.a_projection_width
+    }
+
+    #[must_use]
+    pub const fn b_projection_width(self) -> usize {
+        self.b_projection_width
+    }
+
+    #[must_use]
+    pub const fn d_projection_width(self) -> usize {
+        self.d_projection_width
+    }
+
+    #[must_use]
+    pub const fn required(self) -> usize {
+        self.required
+    }
+
+    #[must_use]
+    pub const fn setup_index_len(self) -> usize {
+        self.setup_index_len
+    }
+
+    #[must_use]
+    pub const fn ring_bits(self) -> usize {
+        self.ring_bits
+    }
+
+    #[must_use]
+    pub const fn rounds(self) -> usize {
+        self.rounds
+    }
+
+    #[must_use]
+    pub const fn alpha_power_len(self) -> usize {
+        self.base_ring_dim
+    }
+
+    #[must_use]
+    pub const fn natural_field_len(self) -> usize {
+        self.natural_field_len
+    }
+
+    #[must_use]
+    pub const fn evaluation_terms(self) -> usize {
+        self.evaluation_terms
+    }
+
+    pub fn ensure_evaluation_budget(self) -> Result<(), AkitaError> {
+        if self.evaluation_terms > MAX_COMPACT_STRIDE_TERMS {
+            return Err(AkitaError::InvalidSize {
+                expected: MAX_COMPACT_STRIDE_TERMS,
+                actual: self.evaluation_terms,
+            });
+        }
+        Ok(())
+    }
+
+    pub(crate) fn validate_alpha_power_lengths(
+        self,
+        a_len: usize,
+        b_len: usize,
+        d_len: usize,
+    ) -> Result<(), AkitaError> {
+        for (role, expected, actual) in [
+            ("A", self.role_dims.d_a(), a_len),
+            ("B", self.role_dims.d_b(), b_len),
+            ("D", self.role_dims.d_d(), d_len),
+        ] {
+            if actual != expected {
+                return Err(AkitaError::InvalidSize { expected, actual });
+            }
+            if actual < self.base_ring_dim {
+                return Err(AkitaError::InvalidSetup(format!(
+                    "{role} alpha powers are shorter than the Stage 3 base"
+                )));
+            }
+        }
+        Ok(())
+    }
+}
 
 /// Required setup ring rows for one level (challenge-free).
 ///
@@ -20,6 +301,7 @@ use super::SetupContributionPlanInputs;
 /// M-row packing used by setup sumcheck.
 pub fn setup_required_for_inputs<E: FieldCore>(
     inputs: &SetupContributionPlanInputs<E>,
+    role_dims: CommitmentRingDims,
 ) -> Result<usize, AkitaError> {
     if inputs.num_blocks == 0 || !inputs.num_blocks.is_power_of_two() {
         return Err(AkitaError::InvalidSetup(
@@ -103,25 +385,24 @@ pub fn setup_required_for_inputs<E: FieldCore>(
         .checked_mul(t_polynomial_width)
         .ok_or_else(|| AkitaError::InvalidSetup("T column width overflow".into()))?;
 
-    let d_required = n_d_active
+    let d_footprint = n_d_active
         .checked_mul(n_cols_e)
         .ok_or_else(|| AkitaError::InvalidSetup("D setup footprint overflow".into()))?;
-    let a_required = inputs
+    let a_footprint = inputs
         .n_a
         .checked_mul(z_range)
         .ok_or_else(|| AkitaError::InvalidSetup("A setup footprint overflow".into()))?;
-    let b_required = inputs
+    let b_footprint = inputs
         .n_b
         .checked_mul(n_cols_t)
         .ok_or_else(|| AkitaError::InvalidSetup("B setup footprint overflow".into()))?;
-    let required = d_required.max(b_required).max(a_required);
-    if required == 0 {
-        return Err(AkitaError::InvalidSetup(
-            "setup evaluator requires a non-empty packed footprint".into(),
-        ));
-    }
-
-    Ok(required)
+    Ok(SetupProjectionGeometry::from_role_footprints(
+        role_dims,
+        a_footprint,
+        b_footprint,
+        d_footprint,
+    )?
+    .required())
 }
 
 /// Fail-closed envelope guard: `required` inner (`d_a`) rows must fit the shared
@@ -146,21 +427,7 @@ pub fn ensure_setup_envelope<F: FieldCore>(
     Ok(())
 }
 
-/// Flat coefficient count for stage-3 prefix offload (`natural_field_len`).
-///
-/// # Errors
-///
-/// Returns [`AkitaError::InvalidSetup`] on overflow.
-pub fn stage3_offload_natural_field_len(
-    required: usize,
-    d_setup: usize,
-) -> Result<usize, AkitaError> {
-    required.checked_mul(d_setup).ok_or_else(|| {
-        AkitaError::InvalidSetup("setup product natural field length overflow".into())
-    })
-}
-
-/// Active inner (`d_a`) setup ring rows for one fold, fail-closed on envelope overflow.
+/// Active base-ring setup rows for one fold, fail-closed on envelope overflow.
 ///
 /// # Errors
 ///
@@ -169,10 +436,14 @@ pub fn stage3_offload_natural_field_len(
 pub fn setup_active_ring_elems_for_fold<F: FieldCore, E: FieldCore>(
     expanded: &AkitaExpandedSetup<F>,
     inputs: &SetupContributionPlanInputs<E>,
-    fold_ring_d: usize,
+    role_dims: CommitmentRingDims,
 ) -> Result<usize, AkitaError> {
-    let required = setup_required_for_inputs(inputs)?;
-    ensure_setup_envelope(expanded, required, fold_ring_d)?;
+    let required = setup_required_for_inputs(inputs, role_dims)?;
+    ensure_setup_envelope(
+        expanded,
+        required,
+        role_dims.d_a().min(role_dims.d_b()).min(role_dims.d_d()),
+    )?;
     Ok(required)
 }
 
@@ -189,14 +460,15 @@ pub fn setup_active_ring_elems_at<F: FieldCore, E: FieldCore>(
     inputs: &SetupContributionPlanInputs<E>,
 ) -> Result<usize, AkitaError> {
     let exec = schedule.get_execution_schedule(level)?;
-    setup_active_ring_elems_for_fold(expanded, inputs, exec.params.d_a())
+    setup_active_ring_elems_for_fold(expanded, inputs, exec.params.role_dims())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::{
-        gadget_row_scalars, RelationMatrixRowLayout, SetupContributionGroupInputs,
+        gadget_row_scalars, OpeningBatchWitnessGroup, OpeningBatchWitnessLayout,
+        RelationMatrixRowLayout, SemanticGroupId, SetupContributionGroupInputs,
         SetupContributionPlan,
     };
     use akita_field::Prime128OffsetA7F7;
@@ -207,40 +479,39 @@ mod tests {
         F::from_canonical_u128(value)
     }
 
-    fn single_chunk_layout(
-        num_blocks: usize,
-        offset_z: usize,
-        z_len: usize,
-        offset_e: usize,
-        offset_t: usize,
-        offset_r: usize,
-    ) -> crate::WitnessLayout {
-        crate::WitnessLayout {
-            blocks_per_chunk: num_blocks,
-            chunks: vec![crate::WitnessChunkLayout {
-                offset_z,
-                offset_e,
-                offset_t,
-                offset_r: Some(offset_r),
-                global_block_base: 0,
+    fn single_chunk_layout_from_inputs(
+        inputs: &SetupContributionPlanInputs<F>,
+    ) -> OpeningBatchWitnessLayout {
+        OpeningBatchWitnessLayout::new(
+            vec![OpeningBatchWitnessGroup {
+                id: SemanticGroupId(0),
+                num_claims: inputs.num_claims,
+                num_blocks: inputs.num_blocks,
+                block_len: inputs.block_len,
+                depth_open: inputs.depth_open,
+                depth_commit: inputs.depth_commit,
+                depth_fold: inputs.depth_fold,
+                n_a: inputs.n_a,
+                e_setup_col_offset: 0,
             }],
-            chunk_lengths: vec![crate::WitnessChunkLengths {
-                z_len,
-                e_len: 0,
-                t_len: 0,
-                r_len: Some(0),
-            }],
-        }
+            vec![SemanticGroupId(0)],
+            vec![SemanticGroupId(0)],
+            1,
+            1,
+            inputs.depth_fold.max(1),
+        )
+        .expect("single chunk test layout")
     }
 
     fn prepare_single_group_plan(
         inputs: &SetupContributionPlanInputs<F>,
         full_vec_randomness: &[F],
         fold_gadget: &[F],
-        chunk_layout: &crate::WitnessLayout,
+        layout: &OpeningBatchWitnessLayout,
     ) -> Result<SetupContributionPlan<F>, AkitaError> {
+        let opening_layout = OpeningBlockLayout::new(1, layout.total_len())?;
         let single_group =
-            SetupContributionGroupInputs::single_group_layout(inputs, chunk_layout, 0)?;
+            SetupContributionGroupInputs::single_group_layout(inputs, layout, opening_layout, 0)?;
         let groups = std::slice::from_ref(&single_group.group);
         let static_plan = SetupContributionPlan::prepare_static(
             inputs,
@@ -256,6 +527,7 @@ mod tests {
             None,
             Some(fold_gadget),
             groups,
+            CommitmentRingDims::uniform(64),
         )
     }
 
@@ -266,7 +538,6 @@ mod tests {
         let depth_fold = 2;
         let num_points = 1;
         let z_range = block_len * depth_commit;
-        let offset_z = 0;
         let full_vec_randomness = (0..9)
             .map(|idx| test_scalar(101 + idx as u128))
             .collect::<Vec<_>>();
@@ -289,12 +560,12 @@ mod tests {
             inner_width: z_range,
             eq_tau1: vec![test_scalar(11), test_scalar(12)].into(),
         };
-        let required = setup_required_for_inputs(&inputs).expect("required");
-        let chunk_layout = single_chunk_layout(4, offset_z, z_range, 0, 64, 0);
-        let plan =
-            prepare_single_group_plan(&inputs, &full_vec_randomness, &fold_gadget, &chunk_layout)
-                .expect("plan");
-        assert_eq!(required, plan.required().unwrap());
+        let required =
+            setup_required_for_inputs(&inputs, CommitmentRingDims::uniform(64)).expect("required");
+        let layout = single_chunk_layout_from_inputs(&inputs);
+        let plan = prepare_single_group_plan(&inputs, &full_vec_randomness, &fold_gadget, &layout)
+            .expect("plan");
+        assert_eq!(required, plan.required());
     }
 
     #[test]
@@ -321,17 +592,18 @@ mod tests {
             inner_width: z_range,
             eq_tau1: vec![test_scalar(11), test_scalar(12)].into(),
         };
-        let required = setup_required_for_inputs(&inputs).expect("required");
+        let required =
+            setup_required_for_inputs(&inputs, CommitmentRingDims::uniform(64)).expect("required");
         assert!(required > 0);
 
         let fold_gadget = gadget_row_scalars::<F>(depth_fold, 4);
         let mut inputs_a = inputs.clone();
-        let chunk_layout = single_chunk_layout(4, 0, z_range, 0, 64, 0);
+        let layout = single_chunk_layout_from_inputs(&inputs_a);
         let plan_a = prepare_single_group_plan(
             &inputs_a,
             &[test_scalar(99), test_scalar(100)],
             &fold_gadget,
-            &chunk_layout,
+            &layout,
         )
         .expect("plan a");
         inputs_a.eq_tau1 = vec![test_scalar(1); 8].into();
@@ -339,11 +611,11 @@ mod tests {
             &inputs_a,
             &[test_scalar(77), test_scalar(88)],
             &fold_gadget,
-            &chunk_layout,
+            &layout,
         )
         .expect("plan b");
-        assert_eq!(required, plan_a.required().unwrap());
-        assert_eq!(plan_a.required().unwrap(), plan_b.required().unwrap());
+        assert_eq!(required, plan_a.required());
+        assert_eq!(plan_a.required(), plan_b.required());
     }
 
     #[test]
@@ -366,7 +638,8 @@ mod tests {
             inner_width: 32,
             eq_tau1: vec![].into(),
         };
-        let required = setup_required_for_inputs(&inputs).expect("required");
+        let required =
+            setup_required_for_inputs(&inputs, CommitmentRingDims::uniform(64)).expect("required");
         let seed = crate::AkitaSetupSeed {
             max_num_vars: 32,
             max_num_batched_polys: 1,
@@ -401,17 +674,89 @@ mod tests {
             inner_width: 32,
             eq_tau1: vec![].into(),
         };
-        let err = setup_required_for_inputs(&inputs).expect_err("non-pow2 blocks");
+        let err = setup_required_for_inputs(&inputs, CommitmentRingDims::uniform(64))
+            .expect_err("non-pow2 blocks");
         assert!(matches!(err, AkitaError::InvalidSetup(_)));
     }
 
     #[test]
-    fn stage3_offload_natural_field_len_uses_d_setup() {
-        let required = 128usize;
-        let d_setup = crate::SETUP_OFFLOAD_D_SETUP;
-        assert_eq!(
-            stage3_offload_natural_field_len(required, d_setup).expect("len"),
-            required * d_setup
-        );
+    fn projection_geometry_uses_nested_common_base() {
+        let geometry = SetupProjectionGeometry::from_role_footprints(
+            CommitmentRingDims {
+                inner: 64,
+                outer: 32,
+                opening: 32,
+            },
+            7,
+            11,
+            13,
+        )
+        .expect("nested geometry");
+        assert_eq!(geometry.base_ring_dim(), 32);
+        assert_eq!(geometry.a_ratio(), 2);
+        assert_eq!(geometry.b_ratio(), 1);
+        assert_eq!(geometry.d_ratio(), 1);
+        assert_eq!(geometry.required(), 14);
+        assert_eq!(geometry.alpha_power_len(), 32);
+        assert_eq!(geometry.natural_field_len(), 14 * 32);
+    }
+
+    #[test]
+    fn projection_geometry_rejects_non_nested_roles() {
+        let err = SetupProjectionGeometry::from_role_footprints(
+            CommitmentRingDims {
+                inner: 64,
+                outer: 16,
+                opening: 32,
+            },
+            1,
+            1,
+            1,
+        )
+        .expect_err("non-nested roles");
+        assert!(matches!(err, AkitaError::InvalidSetup(_)));
+    }
+
+    #[test]
+    fn evaluation_budget_accepts_cap_and_rejects_next_term() {
+        let geometry_at_cap = SetupProjectionGeometry::from_groups(
+            CommitmentRingDims::uniform(64),
+            0,
+            0,
+            &[SetupProjectionGroupGeometry {
+                a_rows: 1,
+                a_cols: MAX_COMPACT_STRIDE_TERMS,
+                b_rows: 0,
+                b_cols: 0,
+                d_active_cols: 0,
+                ownership_units: 1,
+                depth_fold: 1,
+            }],
+        )
+        .expect("geometry at cap");
+        assert_eq!(geometry_at_cap.evaluation_terms(), MAX_COMPACT_STRIDE_TERMS);
+        geometry_at_cap
+            .ensure_evaluation_budget()
+            .expect("cap accepted");
+
+        let geometry_above_cap = SetupProjectionGeometry::from_groups(
+            CommitmentRingDims::uniform(64),
+            0,
+            0,
+            &[SetupProjectionGroupGeometry {
+                a_rows: 1,
+                a_cols: MAX_COMPACT_STRIDE_TERMS + 1,
+                b_rows: 0,
+                b_cols: 0,
+                d_active_cols: 0,
+                ownership_units: 1,
+                depth_fold: 1,
+            }],
+        )
+        .expect("geometry above cap");
+        assert!(matches!(
+            geometry_above_cap.ensure_evaluation_budget(),
+            Err(AkitaError::InvalidSize { .. })
+        ));
     }
 }
