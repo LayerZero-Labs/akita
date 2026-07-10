@@ -278,13 +278,9 @@ where
         .ok_or_else(|| AkitaError::InvalidSetup("ring-switch column count overflow".to_string()))?
         .trailing_zeros() as usize;
     let ring_bits = validate_ring_dispatch::<D>()?;
-    let m_rows =
-        lp.relation_matrix_row_count_for(opening_batch.num_groups(), relation_matrix_row_layout)?;
     let num_sc_vars = col_bits + ring_bits;
-    let num_i = m_rows
-        .checked_next_power_of_two()
-        .ok_or_else(|| AkitaError::InvalidSetup("ring-switch row count overflow".to_string()))?
-        .trailing_zeros() as usize;
+    let num_i =
+        lp.relation_row_index_num_vars_for_layout(relation_matrix_row_layout, opening_batch)?;
 
     let tau0 = match relation_matrix_row_layout {
         RelationMatrixRowLayout::WithDBlock => Some(

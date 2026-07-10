@@ -50,10 +50,9 @@ pub struct TraceTermBatch<F: FieldCore, E: FieldCore, const D: usize> {
 pub struct TraceClaim<F: FieldCore, E: FieldCore, const D: usize> {
     pub layout: TraceWeightLayout,
     pub trace_terms: Vec<TraceTerm<F, E, D>>,
-    /// Batching weight applied to the fused trace term. This is the `γ²` power
-    /// of the stage-2 batching challenge (`CHALLENGE_SUMCHECK_BATCH`); the trace
-    /// term reuses that challenge rather than sampling a dedicated one, so it is
-    /// sampled after the next-level witness is bound to the transcript.
+    /// Batching weight applied to the fused trace term. This is
+    /// `eq(row_index, EvaluationTrace)` for the trailing EvaluationTrace relation
+    /// row (not a separate `γ²` Stage-2 summand).
     pub trace_coeff: E,
     pub trace_opening_claim: E,
     /// Optional closed-form batches with independent layouts. Multi-group roots
@@ -269,16 +268,6 @@ fn collect_root_trace_claim_items<'a, F: FieldCore, E: FieldCore>(
         });
     }
     Ok(items)
-}
-
-/// Fused trace coefficient: `γ²` on terminal folds, otherwise `batching_coeff²`.
-#[inline]
-pub fn stage2_trace_coeff<E: FieldCore>(batching_coeff: E, trace_gamma: E, is_terminal: bool) -> E {
-    if is_terminal {
-        trace_gamma * trace_gamma
-    } else {
-        batching_coeff * batching_coeff
-    }
 }
 
 /// Build public trace weights for a root opening_batch, optionally scaling each
