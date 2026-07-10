@@ -367,8 +367,8 @@ fn run_profile_onehot_fp128_d64(nv: usize, num_polys: usize) {
 fn run_profile_onehot_fp128_d64_multi_group_recursive(nv: usize, num_polys: usize) {
     type Cfg = fp128::D64OneHot;
     assert_eq!(
-        nv, 28,
-        "onehot_fp128_d64_multi_group_recursive fixes the main group at 28 variables"
+        nv, 32,
+        "onehot_fp128_d64_multi_group_recursive fixes the main group at 32 variables"
     );
     assert_eq!(
         num_polys, 4,
@@ -376,13 +376,13 @@ fn run_profile_onehot_fp128_d64_multi_group_recursive(nv: usize, num_polys: usiz
     );
     let prime = fp128_prime_label();
     tracing::info!(
-        "=== onehot_fp128_d64_multi_group_recursive (fp128, {}, D=64, two precommitted 14-var singleton groups + 28-var main group with 2 polynomials, recursive setup) ===",
+        "=== onehot_fp128_d64_multi_group_recursive (fp128, {}, D=64, two precommitted 16-var singleton groups + 32-var main group with 2 polynomials, recursive setup) ===",
         prime
     );
     run_recursive_multi_group_onehot::<F, { Cfg::D }, Cfg>(
         "onehot_fp128_d64_multi_group_recursive",
-        14,
-        28,
+        16,
+        32,
         2,
     );
 }

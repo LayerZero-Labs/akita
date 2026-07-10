@@ -282,10 +282,10 @@ fn multi_group_root_round_trip_onehot(
 
     let setup = match setup_contribution_mode {
         akita_types::SetupContributionMode::Direct => {
-            RegularCommitter::setup_prover(FINAL_NV, total)
+            ConservativeCommitter::setup_prover(FINAL_NV, total)
         }
         akita_types::SetupContributionMode::Recursive => {
-            RegularCommitter::setup_prover_recursion(FINAL_NV, total)
+            ConservativeCommitter::setup_prover_recursion(FINAL_NV, total)
         }
     }
     .expect("setup");
