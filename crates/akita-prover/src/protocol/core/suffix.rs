@@ -174,7 +174,13 @@ where
             } else {
                 None
             },
-        )?;
+        )
+        .map_err(|err| {
+            AkitaError::InvalidInput(format!(
+                "suffix fold level {level} d_a={} failed: {err:?}",
+                role_dims.d_a()
+            ))
+        })?;
         if is_terminal_level {
             break out.get_terminal()?;
         }

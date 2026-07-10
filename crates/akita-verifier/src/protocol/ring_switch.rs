@@ -14,10 +14,10 @@ use akita_transcript::labels::{
 };
 use akita_transcript::{sample_ext_challenge, Transcript};
 use akita_types::{
-    gadget_row_scalars, r_decomp_levels, validate_role_dispatch, AkitaExpandedSetup,
-    CommitmentRingDims, FpExtEncoding, LevelParams, OpeningBatchWitnessLayout, OpeningBlockLayout,
-    RelationMatrixRowLayout, RingMultiplierOpeningPoint, RingRelationInstance, RingRole, RingVec,
-    SemanticGroupId, SetupContributionGroupInputs, SetupContributionPlan,
+    compute_relation_weight_evals, gadget_row_scalars, r_decomp_levels, validate_role_dispatch,
+    AkitaExpandedSetup, CommitmentRingDims, FpExtEncoding, LevelParams, OpeningBatchWitnessLayout,
+    OpeningBlockLayout, RelationMatrixRowLayout, RingMultiplierOpeningPoint, RingRelationInstance,
+    RingRole, RingVec, SemanticGroupId, SetupContributionGroupInputs, SetupContributionPlan,
     SetupContributionPlanInputs, SetupContributionStatic, TerminalWitnessTranscriptParts,
     WitnessOwnershipUnit,
 };
@@ -36,8 +36,8 @@ mod tests;
 pub(crate) struct RingSwitchVerifyOutput<E: FieldCore> {
     /// Prepared data for prepared relation-matrix MLE evaluation.
     pub relation_matrix_evaluator: RelationMatrixEvaluator<E>,
-    /// Evaluation table of alpha powers over the ring-coordinate dimension.
-    pub alpha_evals_y: Vec<E>,
+    /// Materialized relation weights on the virtual field-coefficient domain.
+    pub relation_weight_evals: Vec<E>,
     /// Number of upper variable bits.
     pub col_bits: usize,
     /// Number of lower variable bits.
@@ -54,7 +54,7 @@ pub(crate) struct RingSwitchVerifyOutput<E: FieldCore> {
 
 struct RingSwitchVerifyCoreOutput<E: FieldCore> {
     relation_matrix_evaluator: RelationMatrixEvaluator<E>,
-    alpha_evals_y: Vec<E>,
+    relation_weight_evals: Vec<E>,
     col_bits: usize,
     ring_bits: usize,
     tau0: Option<Vec<E>>,
@@ -68,7 +68,7 @@ impl<E: FieldCore> RingSwitchVerifyCoreOutput<E> {
         let tau0 = self.tau0.ok_or(AkitaError::InvalidProof)?;
         Ok(RingSwitchVerifyOutput {
             relation_matrix_evaluator: self.relation_matrix_evaluator,
-            alpha_evals_y: self.alpha_evals_y,
+            relation_weight_evals: self.relation_weight_evals,
             col_bits: self.col_bits,
             ring_bits: self.ring_bits,
             tau0,
@@ -84,7 +84,7 @@ impl<E: FieldCore> RingSwitchVerifyCoreOutput<E> {
         }
         Ok(RingSwitchVerifyOutput {
             relation_matrix_evaluator: self.relation_matrix_evaluator,
-            alpha_evals_y: self.alpha_evals_y,
+            relation_weight_evals: self.relation_weight_evals,
             col_bits: self.col_bits,
             ring_bits: self.ring_bits,
             tau0: Vec::new(),
@@ -140,10 +140,12 @@ pub(crate) struct RelationMatrixGroupEvaluator<F: FieldCore> {
 
 /// Fixed public relation inputs for verifier ring-switch replay.
 pub struct RingSwitchReplay<'a, F: FieldCore, E> {
+    pub setup: &'a AkitaExpandedSetup<F>,
     pub relation: &'a RingRelationInstance<F>,
     pub row_coefficients: &'a [E],
     pub lp: &'a LevelParams,
     pub opening_layout: OpeningBlockLayout,
+    pub opening_ring_dim: usize,
 }
 
 /// Replay the verifier half of ring switching.
@@ -267,15 +269,29 @@ where
         return Err(AkitaError::InvalidProof);
     }
 
-    if w_len == 0 || !w_len.is_multiple_of(D) {
+    let opening_capacity = replay
+        .opening_layout
+        .physical_len()
+        .checked_mul(replay.opening_ring_dim)
+        .ok_or(AkitaError::InvalidProof)?;
+    if w_len == 0
+        || !w_len.is_multiple_of(D)
+        || replay.opening_ring_dim == 0
+        || !replay.opening_ring_dim.is_power_of_two()
+        || !w_len.is_multiple_of(replay.opening_ring_dim)
+        || w_len > opening_capacity
+    {
         return Err(AkitaError::InvalidProof);
     }
     let num_ring_elems = w_len / D;
-    if num_ring_elems > replay.opening_layout.physical_len() {
-        return Err(AkitaError::InvalidProof);
-    }
-    let col_bits = replay.opening_layout.opening_len().trailing_zeros() as usize;
-    let ring_bits = validate_ring_dispatch::<D>()?;
+    let opening_ring_dim = replay.opening_ring_dim;
+    let virtual_field_len = replay
+        .opening_layout
+        .opening_len()
+        .checked_mul(opening_ring_dim)
+        .ok_or(AkitaError::InvalidProof)?;
+    let col_bits = virtual_field_len.trailing_zeros() as usize;
+    let ring_bits = 0;
     let m_rows =
         lp.relation_matrix_row_count_for(opening_batch.num_groups(), relation_matrix_row_layout)?;
     let num_sc_vars = col_bits + ring_bits;
@@ -295,16 +311,28 @@ where
     let tau1: Vec<E> = (0..num_i)
         .map(|_| sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_TAU1))
         .collect();
-    let alpha_evals_y = scalar_powers(alpha, D);
     if gamma.len() != num_claims {
         return Err(AkitaError::InvalidProof);
     }
     let relation_matrix_evaluator =
         prepare_relation_matrix_evaluator::<F, E, D>(replay, alpha, &tau1, Some(num_ring_elems))?;
+    let relation_weight_evals = compute_relation_weight_evals::<F, E>(
+        replay.setup,
+        relation,
+        alpha,
+        &scalar_powers(alpha, D),
+        relation.role_dims(),
+        lp,
+        &tau1,
+        gamma,
+        relation_matrix_row_layout,
+        replay.opening_layout,
+        opening_ring_dim,
+    )?;
 
     Ok(RingSwitchVerifyCoreOutput {
         relation_matrix_evaluator,
-        alpha_evals_y,
+        relation_weight_evals,
         col_bits,
         ring_bits,
         tau0,

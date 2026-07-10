@@ -269,7 +269,7 @@ fn prove_nested_roles_onehot(nv: usize) -> OnehotProof {
         &stack,
         &mut prover_transcript,
         BasisMode::Lagrange,
-        SetupContributionMode::Direct,
+        SetupContributionMode::Recursive,
     )
     .expect("nested-role recursive prove");
     let shape = proof.shape();

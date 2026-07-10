@@ -284,6 +284,8 @@ where
         next_w_commitment,
         next_ring_dim: matches!(proof, AkitaBatchedRootProof::Fold(_))
             .then_some(next_fold_level_params.role_dims().d_b()),
+        next_witness_ring_dim: matches!(proof, AkitaBatchedRootProof::Fold(_))
+            .then_some(next_fold_level_params.role_dims().d_a()),
         next_opening_layout: if matches!(proof, AkitaBatchedRootProof::Fold(_)) {
             OpeningBlockLayout::new(
                 next_fold_level_params.num_blocks,
@@ -446,6 +448,7 @@ where
         stage2,
         next_w_commitment,
         next_ring_dim: Some(next_fold_level_params.role_dims().d_b()),
+        next_witness_ring_dim: Some(next_fold_level_params.role_dims().d_a()),
         next_opening_layout: OpeningBlockLayout::new(
             next_fold_level_params.num_blocks,
             next_fold_level_params.block_len,

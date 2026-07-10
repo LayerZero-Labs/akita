@@ -1,8 +1,7 @@
 //! Shared singleton and multi-group relation matrix column evaluation.
 //!
-//! [`compute_relation_matrix_col_evals`] materializes the tau1-weighted relation-matrix column
-//! vector `relation_matrix_col_evals` that the fused stage-2 sumcheck treats as the row
-//! polynomial. The prover still materializes this table for stage-2 proving.
+//! [`compute_relation_weight_evals`] materializes the tau1-weighted relation
+//! polynomial on the next witness's virtual field-coefficient domain.
 //! The verifier replays the same group-major geometry with its structured
 //! `RelationMatrixEvaluator` path instead of rebuilding the dense vector.
 
@@ -20,6 +19,61 @@ use akita_field::{
     AkitaError, CanonicalField, FieldCore, FromPrimitiveInt, LiftBase, MulBase, MulBaseUnreduced,
 };
 
+#[allow(clippy::too_many_arguments)]
+fn write_role_weight<E: FieldCore>(
+    out: &mut [E],
+    opening_layout: OpeningBlockLayout,
+    opening_ring_dim: usize,
+    witness_ring_dim: usize,
+    witness_col: usize,
+    role_subcol: usize,
+    role_ring_dim: usize,
+    alpha_pows: &[E],
+    column_weight: E,
+) -> Result<(), AkitaError> {
+    if alpha_pows.len() != role_ring_dim
+        || witness_ring_dim == 0
+        || opening_ring_dim == 0
+        || !witness_ring_dim.is_multiple_of(role_ring_dim)
+    {
+        return Err(AkitaError::InvalidProof);
+    }
+    let role_ratio = witness_ring_dim / role_ring_dim;
+    if role_subcol >= role_ratio {
+        return Err(AkitaError::InvalidProof);
+    }
+    let physical_base = witness_col
+        .checked_mul(witness_ring_dim)
+        .and_then(|base| base.checked_add(role_subcol * role_ring_dim))
+        .ok_or_else(|| AkitaError::InvalidSetup("relation weight address overflow".into()))?;
+    for (coefficient, &alpha_power) in alpha_pows.iter().enumerate() {
+        write_coefficient_weight(
+            out,
+            opening_layout,
+            opening_ring_dim,
+            physical_base + coefficient,
+            column_weight * alpha_power,
+        )?;
+    }
+    Ok(())
+}
+
+fn write_coefficient_weight<E: FieldCore>(
+    out: &mut [E],
+    opening_layout: OpeningBlockLayout,
+    opening_ring_dim: usize,
+    physical: usize,
+    weight: E,
+) -> Result<(), AkitaError> {
+    let opening_col = opening_layout.opening_index_for_physical(physical / opening_ring_dim)?;
+    let opening_index = opening_col
+        .checked_mul(opening_ring_dim)
+        .and_then(|base| base.checked_add(physical % opening_ring_dim))
+        .ok_or_else(|| AkitaError::InvalidSetup("relation weight address overflow".into()))?;
+    *out.get_mut(opening_index).ok_or(AkitaError::InvalidProof)? = weight;
+    Ok(())
+}
+
 /// Unified relation matrix column evaluation for singleton and multi-group root relations.
 ///
 /// Singleton roots use the scalar/chunked witness layout. Multi-group roots use the
@@ -30,8 +84,8 @@ use akita_field::{
 /// Returns an error if the batch shape, opening-point layout, challenge count,
 /// chunking configuration, or expanded matrix dimensions are inconsistent.
 #[allow(clippy::too_many_arguments)]
-#[tracing::instrument(skip_all, name = "compute_relation_matrix_col_evals")]
-pub fn compute_relation_matrix_col_evals<F, E>(
+#[tracing::instrument(skip_all, name = "compute_relation_weight_evals")]
+pub fn compute_relation_weight_evals<F, E>(
     setup: &AkitaExpandedSetup<F>,
     instance: &RingRelationInstance<F>,
     alpha: E,
@@ -42,6 +96,7 @@ pub fn compute_relation_matrix_col_evals<F, E>(
     gamma: &[E],
     relation_matrix_row_layout: RelationMatrixRowLayout,
     opening_layout: OpeningBlockLayout,
+    opening_ring_dim: usize,
 ) -> Result<Vec<E>, AkitaError>
 where
     F: FieldCore + CanonicalField,
@@ -49,7 +104,7 @@ where
 {
     let opening_batch = instance.opening_batch();
     lp.witness_chunk.validate()?;
-    lp.reject_multi_group_multi_chunk("compute_relation_matrix_col_evals")?;
+    lp.reject_multi_group_multi_chunk("compute_relation_weight_evals")?;
     lp.validate_root_opening_batch(opening_batch)?;
     if gamma.len() != opening_batch.num_total_polynomials() {
         return Err(AkitaError::InvalidProof);
@@ -83,6 +138,23 @@ where
             "relation matrix dimensions disagree with witness layout".to_string(),
         ));
     }
+    let d_ratio = d_a
+        .checked_div(d_d)
+        .filter(|ratio| *ratio != 0)
+        .ok_or_else(|| {
+            AkitaError::InvalidSetup("D role does not divide the A-role witness width".into())
+        })?;
+    let b_ratio = d_a
+        .checked_div(d_b)
+        .filter(|ratio| *ratio != 0)
+        .ok_or_else(|| {
+            AkitaError::InvalidSetup("B role does not divide the A-role witness width".into())
+        })?;
+    if !d_ratio.is_power_of_two() || !b_ratio.is_power_of_two() {
+        return Err(AkitaError::InvalidSetup(
+            "relation role projection ratios must be powers of two".into(),
+        ));
+    }
     let e_total = witness_layout
         .groups
         .iter()
@@ -91,17 +163,31 @@ where
                 .num_claims
                 .checked_mul(group.num_blocks)
                 .and_then(|n| n.checked_mul(group.depth_open))
+                .and_then(|width| width.checked_mul(d_ratio))
                 .and_then(|width| total.checked_add(width))
                 .ok_or_else(|| AkitaError::InvalidSetup("setup D width overflow".to_string()))
         })?;
-    let total_cols = witness_layout.total_len();
-    if total_cols > opening_layout.physical_len() {
+    let physical_field_len = witness_layout
+        .total_len()
+        .checked_mul(d_a)
+        .ok_or_else(|| AkitaError::InvalidSetup("relation weight length overflow".into()))?;
+    let expected_field_len = opening_layout
+        .physical_len()
+        .checked_mul(opening_ring_dim)
+        .ok_or_else(|| AkitaError::InvalidSetup("opening field length overflow".into()))?;
+    if physical_field_len > expected_field_len {
         return Err(AkitaError::InvalidSize {
-            expected: opening_layout.physical_len(),
-            actual: total_cols,
+            expected: expected_field_len,
+            actual: physical_field_len,
         });
     }
-    let mut out = vec![E::zero(); opening_layout.opening_len()];
+    let virtual_field_len = opening_layout
+        .opening_len()
+        .checked_mul(opening_ring_dim)
+        .ok_or_else(|| {
+            AkitaError::InvalidSetup("virtual relation weight length overflow".into())
+        })?;
+    let mut out = vec![E::zero(); virtual_field_len];
 
     let d_view = setup
         .shared_matrix
@@ -113,8 +199,6 @@ where
         .checked_sub(n_d_active)
         .ok_or(AkitaError::InvalidProof)?;
     let consistency_weight = eq_tau1[0];
-    let alpha_pow_d = alpha_pows_d[d_d - 1] * alpha;
-    let denom = alpha_pow_d + E::one();
 
     let mut gamma_offset = 0usize;
     let mut gamma_offsets = vec![0usize; opening_batch.num_groups()];
@@ -177,12 +261,18 @@ where
         // below capture scalars instead of the `!Sync` `&dyn LevelParamsLike`.
         let num_blocks_g = group_lp.num_blocks();
         let block_len_g = group_lp.block_len();
-        let t_cols_per_vector = n_a
+        let semantic_t_cols_per_vector = n_a
             .checked_mul(depth_open)
             .and_then(|len| len.checked_mul(num_blocks_g))
             .ok_or_else(|| {
                 AkitaError::InvalidSetup("multi-group B vector width overflow".to_string())
             })?;
+        let t_cols_per_vector =
+            semantic_t_cols_per_vector
+                .checked_mul(b_ratio)
+                .ok_or_else(|| {
+                    AkitaError::InvalidSetup("multi-group B vector width overflow".to_string())
+                })?;
         let b_width = k_g
             .checked_mul(t_cols_per_vector)
             .ok_or_else(|| AkitaError::InvalidSetup("setup B width overflow".to_string()))?;
@@ -218,45 +308,88 @@ where
                 let unit = witness_layout.unit_for_block(group_id, global_block)?;
                 let challenge_index = claim * num_blocks_g + global_block;
                 for (digit, &opening_gadget) in g_open.iter().enumerate() {
-                    let d_phys_col =
-                        witness_layout.e_setup_col_index(group_id, claim, global_block, digit)?;
-                    let mut acc = consistency_weight * c_alphas[challenge_index] * opening_gadget;
-                    for (di, eq_i) in eq_tau1[d_start..(d_start + n_d_active)].iter().enumerate() {
-                        if !eq_i.is_zero() {
-                            acc += *eq_i
-                                * eval_flat_ring_at_pows_fast(
-                                    &d_rows[di][d_phys_col * d_d..(d_phys_col + 1) * d_d],
-                                    &alpha_pows_d,
-                                );
+                    let witness_col = witness_layout.e_index(unit, claim, global_block, digit)?;
+                    for role_subcol in 0..d_ratio {
+                        let logical_block = claim * num_blocks_g + global_block;
+                        let d_phys_col = logical_block
+                            .checked_mul(d_ratio)
+                            .and_then(|base| base.checked_add(role_subcol))
+                            .and_then(|base| base.checked_mul(depth_open))
+                            .and_then(|base| base.checked_add(digit))
+                            .and_then(|local| {
+                                witness_group
+                                    .e_setup_col_offset
+                                    .checked_mul(d_ratio)
+                                    .and_then(|offset| offset.checked_add(local))
+                            })
+                            .ok_or(AkitaError::InvalidProof)?;
+                        let consistency_acc =
+                            consistency_weight * c_alphas[challenge_index] * opening_gadget;
+                        let mut setup_acc = E::zero();
+                        for (di, eq_i) in
+                            eq_tau1[d_start..(d_start + n_d_active)].iter().enumerate()
+                        {
+                            if !eq_i.is_zero() {
+                                setup_acc += *eq_i
+                                    * eval_flat_ring_at_pows_fast(
+                                        &d_rows[di][d_phys_col * d_d..(d_phys_col + 1) * d_d],
+                                        &alpha_pows_d,
+                                    );
+                            }
+                        }
+                        let physical_base = witness_col * d_a + role_subcol * d_d;
+                        for coefficient in 0..d_d {
+                            write_coefficient_weight(
+                                &mut out,
+                                opening_layout,
+                                opening_ring_dim,
+                                physical_base + coefficient,
+                                consistency_acc * alpha_pows_a[role_subcol * d_d + coefficient]
+                                    + setup_acc * alpha_pows_d[coefficient],
+                            )?;
                         }
                     }
-                    let witness_col = witness_layout.e_index(unit, claim, global_block, digit)?;
-                    let opening_col = opening_layout.opening_index_for_physical(witness_col)?;
-                    *out.get_mut(opening_col).ok_or(AkitaError::InvalidProof)? = acc;
                 }
                 for (a_idx, &a_row_weight) in a_row_weights.iter().enumerate() {
                     for (digit, &opening_gadget) in g_open.iter().enumerate() {
-                        let local_col = witness_layout.t_setup_col_index(
+                        let semantic_col = witness_layout.t_setup_col_index(
                             group_id,
                             claim,
                             global_block,
                             a_idx,
                             digit,
                         )?;
-                        let mut acc = a_row_weight * c_alphas[challenge_index] * opening_gadget;
-                        for (row_idx, eq_i) in b_weights.iter().enumerate() {
-                            if !eq_i.is_zero() {
-                                acc += *eq_i
-                                    * eval_flat_ring_at_pows_fast(
-                                        &b_rows[row_idx][local_col * d_b..(local_col + 1) * d_b],
-                                        &alpha_pows_b,
-                                    );
-                            }
-                        }
                         let witness_col =
                             witness_layout.t_index(unit, claim, global_block, a_idx, digit)?;
-                        let opening_col = opening_layout.opening_index_for_physical(witness_col)?;
-                        *out.get_mut(opening_col).ok_or(AkitaError::InvalidProof)? = acc;
+                        for role_subcol in 0..b_ratio {
+                            let local_col = semantic_col
+                                .checked_mul(b_ratio)
+                                .and_then(|base| base.checked_add(role_subcol))
+                                .ok_or(AkitaError::InvalidProof)?;
+                            let a_acc = a_row_weight * c_alphas[challenge_index] * opening_gadget;
+                            let mut b_acc = E::zero();
+                            for (row_idx, eq_i) in b_weights.iter().enumerate() {
+                                if !eq_i.is_zero() {
+                                    b_acc += *eq_i
+                                        * eval_flat_ring_at_pows_fast(
+                                            &b_rows[row_idx]
+                                                [local_col * d_b..(local_col + 1) * d_b],
+                                            &alpha_pows_b,
+                                        );
+                                }
+                            }
+                            let physical_base = witness_col * d_a + role_subcol * d_b;
+                            for coefficient in 0..d_b {
+                                write_coefficient_weight(
+                                    &mut out,
+                                    opening_layout,
+                                    opening_ring_dim,
+                                    physical_base + coefficient,
+                                    a_acc * alpha_pows_a[role_subcol * d_b + coefficient]
+                                        + b_acc * alpha_pows_b[coefficient],
+                                )?;
+                            }
+                        }
                     }
                 }
             }
@@ -298,9 +431,17 @@ where
                         let phys_k = position * depth_commit + commit_digit;
                         let witness_col =
                             witness_layout.z_index(unit, position, commit_digit, fold_digit)?;
-                        let opening_col = opening_layout.opening_index_for_physical(witness_col)?;
-                        *out.get_mut(opening_col).ok_or(AkitaError::InvalidProof)? =
-                            -(z_base[phys_k] * fold);
+                        write_role_weight(
+                            &mut out,
+                            opening_layout,
+                            opening_ring_dim,
+                            d_a,
+                            witness_col,
+                            0,
+                            d_a,
+                            alpha_pows_a,
+                            -(z_base[phys_k] * fold),
+                        )?;
                     }
                 }
             }
@@ -311,11 +452,39 @@ where
         .map(E::lift_base)
         .collect();
     for (row, eq_weight) in eq_tau1.iter().take(rows).enumerate() {
+        let is_b_row = (0..opening_batch.num_groups()).try_fold(false, |found, group| {
+            Ok::<_, AkitaError>(
+                found
+                    || lp
+                        .root_commitment_row_range(
+                            opening_batch,
+                            group,
+                            relation_matrix_row_layout,
+                        )?
+                        .contains(&row),
+            )
+        })?;
+        let (row_dim, row_alpha_pows): (usize, &[E]) = if row >= d_start {
+            (d_d, alpha_pows_d.as_slice())
+        } else if is_b_row {
+            (d_b, alpha_pows_b.as_slice())
+        } else {
+            (d_a, alpha_pows_a)
+        };
+        let row_denom = row_alpha_pows[row_dim - 1] * alpha + E::one();
         for (digit, gadget) in r_gadget.iter().enumerate() {
             let witness_col = witness_layout.r_index(row, digit)?;
-            let opening_col = opening_layout.opening_index_for_physical(witness_col)?;
-            *out.get_mut(opening_col).ok_or(AkitaError::InvalidProof)? =
-                -(*eq_weight * denom * *gadget);
+            write_role_weight(
+                &mut out,
+                opening_layout,
+                opening_ring_dim,
+                d_a,
+                witness_col,
+                0,
+                row_dim,
+                row_alpha_pows,
+                -(*eq_weight * row_denom * *gadget),
+            )?;
         }
     }
     Ok(out)

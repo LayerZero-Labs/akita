@@ -56,7 +56,8 @@ pub(crate) fn validate_fold_grind_nonce(
 pub(crate) fn derive_multi_group_stage1_challenges<F, T>(
     transcript: &mut T,
     v_coeffs: &[F],
-    ring_d: usize,
+    v_ring_d: usize,
+    challenge_ring_d: usize,
     opening_batch: &OpeningClaimsLayout,
     lp: &LevelParams,
     relation_matrix_row_layout: RelationMatrixRowLayout,
@@ -70,7 +71,7 @@ where
         relation_matrix_row_layout,
         RelationMatrixRowLayout::WithDBlock
     ) {
-        append_flat_coefficients(ABSORB_PROVER_V, v_coeffs, ring_d, transcript)?;
+        append_flat_coefficients(ABSORB_PROVER_V, v_coeffs, v_ring_d, transcript)?;
     }
     let labels = witness_fold_challenge_labels();
     let mut group_challenges = Vec::with_capacity(opening_batch.num_groups());
@@ -79,7 +80,7 @@ where
         let k_g = opening_batch.group_layout(group_index)?.num_polynomials();
         group_challenges.push(
             LiveFoldDraw::<F, T>::new(transcript).draw_folding_challenges(
-                ring_d,
+                challenge_ring_d,
                 group_lp.num_blocks(),
                 k_g,
                 &lp.fold_challenge_config,

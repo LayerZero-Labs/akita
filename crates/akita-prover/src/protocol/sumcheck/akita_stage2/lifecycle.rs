@@ -74,6 +74,23 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
             trace.validate_len(witness_len)?;
         }
 
+        let relation_boolean_sum = w_evals_compact
+            .chunks_exact(y_len)
+            .zip(&relation_matrix_col_evals)
+            .fold(E::zero(), |acc, (column, &weight)| {
+                acc + column.iter().zip(&alpha_evals_y).fold(
+                    E::zero(),
+                    |column_acc, (&w, &alpha)| {
+                        column_acc + weight * alpha * E::from_i64(i64::from(w))
+                    },
+                )
+            });
+        if relation_boolean_sum != relation_claim {
+            return Err(AkitaError::InvalidInput(
+                "materialized relation-weight table does not match the relation claim".into(),
+            ));
+        }
+
         let relation_trace_claim = relation_claim + trace_opening_claim;
         let input_claim = batching_coeff * s_claim + relation_trace_claim;
 

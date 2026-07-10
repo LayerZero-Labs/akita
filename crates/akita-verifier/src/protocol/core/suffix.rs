@@ -65,6 +65,9 @@ where
     )?;
     let num_claims = 1usize;
     let num_vars = lp.recursive_opening_num_vars()?;
+    if current_state.opening_point.len() != num_vars {
+        return Err(AkitaError::InvalidProof);
+    }
     let opening_batch = OpeningClaimsLayout::new(num_vars, num_claims)?;
     let openings = vec![current_state.opening];
     let row_coefficients = vec![E::one()];
@@ -168,6 +171,8 @@ where
         stage2,
         next_w_commitment,
         next_ring_dim: (!scheduled.is_terminal).then_some(scheduled.next_params.role_dims().d_b()),
+        next_witness_ring_dim: (!scheduled.is_terminal)
+            .then_some(scheduled.next_params.role_dims().d_a()),
         next_opening_layout: if scheduled.is_terminal {
             let d_a = lp.role_dims().d_a();
             if !w_len.is_multiple_of(d_a) {
@@ -232,6 +237,7 @@ where
         let role_dims = current_lp.role_dims();
         let commit_d = role_dims.d_b();
         let witness_d = role_dims.d_a();
+        let opening_d = role_dims.d_d();
 
         match step {
             AkitaLevelProof::Intermediate { .. } => {
@@ -240,7 +246,7 @@ where
                     return Err(AkitaError::InvalidProof);
                 }
                 if !current_state.commitment.can_decode_vec(commit_d)
-                    || !level_proof.v().can_decode_vec(witness_d)
+                    || !level_proof.v().can_decode_vec(opening_d)
                 {
                     return Err(AkitaError::InvalidProof);
                 }

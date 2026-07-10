@@ -88,6 +88,10 @@ impl<E: FieldCore + FromPrimitiveInt> AkitaStage3Prover<E> {
         E: FpExtEncoding<F> + LiftBase<F> + AkitaSerialize,
         T: Transcript<F>,
     {
+        let setup_coefficient_bits = lp.d_a().trailing_zeros() as usize;
+        let setup_x_challenges = stage2_challenges
+            .get(setup_coefficient_bits..)
+            .ok_or(AkitaError::InvalidProof)?;
         let setup_term = build_setup_product_term::<F, E, T>(
             expanded,
             prefix_slots,
@@ -96,7 +100,7 @@ impl<E: FieldCore + FromPrimitiveInt> AkitaStage3Prover<E> {
             relation,
             tau1,
             alpha,
-            &stage2_challenges[ring_bits..],
+            setup_x_challenges,
             transcript,
         )?;
         let setup_product_claim = setup_term.input_claim();
@@ -108,6 +112,7 @@ impl<E: FieldCore + FromPrimitiveInt> AkitaStage3Prover<E> {
         let witness_term = build_witness_carry_term::<E>(
             Arc::clone(&witness_digits),
             opening_layout,
+            next_fold_level_params.d_a(),
             live_x_cols,
             col_bits,
             ring_bits,
@@ -337,6 +342,7 @@ where
 fn build_witness_carry_term<E>(
     logical_w: Arc<[i8]>,
     opening_layout: OpeningBlockLayout,
+    opening_ring_dim: usize,
     live_x_cols: usize,
     col_bits: usize,
     ring_bits: usize,
@@ -361,23 +367,30 @@ where
     let x_len = 1usize
         .checked_shl(u32::try_from(col_bits).map_err(|_| AkitaError::InvalidProof)?)
         .ok_or(AkitaError::InvalidProof)?;
-    if live_x_cols != x_len || opening_layout.opening_len() != x_len {
+    let physical_capacity = opening_layout
+        .physical_len()
+        .checked_mul(opening_ring_dim)
+        .ok_or(AkitaError::InvalidProof)?;
+    if ring_bits != 0
+        || live_x_cols != x_len
+        || opening_layout.physical_len() == 0
+        || opening_ring_dim == 0
+        || !logical_w.len().is_multiple_of(opening_ring_dim)
+        || logical_w.len() > physical_capacity
+    {
         return Err(AkitaError::InvalidSize {
             expected: x_len,
             actual: live_x_cols,
         });
     }
-    if !logical_w.len().is_multiple_of(y_len) {
+    let expected_x_len = opening_layout
+        .opening_len()
+        .checked_mul(opening_ring_dim)
+        .ok_or(AkitaError::InvalidProof)?;
+    if expected_x_len != x_len {
         return Err(AkitaError::InvalidSize {
-            expected: y_len,
-            actual: logical_w.len(),
-        });
-    }
-    let physical_x_cols = logical_w.len() / y_len;
-    if physical_x_cols > opening_layout.physical_len() {
-        return Err(AkitaError::InvalidSize {
-            expected: opening_layout.physical_len(),
-            actual: physical_x_cols,
+            expected: expected_x_len,
+            actual: x_len,
         });
     }
     let table_len = x_len
@@ -386,10 +399,13 @@ where
     let right_factor = EqPolynomial::evals(&stage2_challenges[..ring_bits])?;
     let left_factor = EqPolynomial::evals(&stage2_challenges[ring_bits..])?;
     let mut opening_table = vec![0i8; table_len];
-    for physical_index in 0..physical_x_cols {
+    let live_physical_cols = logical_w.len() / opening_ring_dim;
+    for physical_index in 0..live_physical_cols {
         let opening_index = opening_layout.opening_index_for_physical(physical_index)?;
-        let src = &logical_w[physical_index * y_len..(physical_index + 1) * y_len];
-        opening_table[opening_index * y_len..(opening_index + 1) * y_len].copy_from_slice(src);
+        let src_start = physical_index * opening_ring_dim;
+        let dst_start = opening_index * opening_ring_dim;
+        opening_table[dst_start..dst_start + opening_ring_dim]
+            .copy_from_slice(&logical_w[src_start..src_start + opening_ring_dim]);
     }
     let term = FactoredProductTerm::new_compact(
         Arc::from(opening_table),

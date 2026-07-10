@@ -8,8 +8,8 @@ use akita_types::dispatch_for_field;
 /// The caller must first absorb either the next-witness commitment or the
 /// terminal cleartext witness bytes into `transcript`.
 ///
-/// Only the current level's `D` is needed for M-alpha expansion and
-/// `alpha_evals_y`.
+/// Only the current level's inner ring dimension is needed to expand the
+/// full relation-weight table.
 ///
 /// # Errors
 ///
@@ -25,6 +25,7 @@ pub fn ring_switch_finalize<F, E, T>(
     w: &RecursiveWitnessFlat,
     lp: &LevelParams,
     opening_layout: OpeningBlockLayout,
+    opening_ring_dim: usize,
     gamma: Option<&[E]>,
     relation_matrix_row_layout: RelationMatrixRowLayout,
 ) -> Result<RingSwitchOutput<E>, AkitaError>
@@ -52,16 +53,38 @@ where
 
         let opening_batch = instance.opening_batch();
 
-        let num_ring_elems = w.len() / D;
-        if num_ring_elems > opening_layout.physical_len() {
+        let opening_capacity = opening_layout
+            .physical_len()
+            .checked_mul(opening_ring_dim)
+            .ok_or_else(|| AkitaError::InvalidSetup("opening capacity overflow".into()))?;
+        if opening_ring_dim == 0
+            || !opening_ring_dim.is_power_of_two()
+            || !w.len().is_multiple_of(opening_ring_dim)
+            || w.len() > opening_capacity
+        {
+            return Err(AkitaError::InvalidInput(format!(
+                "witness length {} does not fit opening capacity {} at ring dimension {}",
+                w.len(),
+                opening_capacity,
+                opening_ring_dim,
+            )));
+        }
+        let semantic_ring_elems = w.len() / D;
+        let witness_layout = instance.segment_layout(lp, None).map_err(|err| {
+            AkitaError::InvalidInput(format!("relation witness layout failed: {err:?}"))
+        })?;
+        if semantic_ring_elems != witness_layout.total_len() {
             return Err(AkitaError::InvalidSize {
-                expected: opening_layout.physical_len(),
-                actual: num_ring_elems,
+                expected: witness_layout.total_len(),
+                actual: semantic_ring_elems,
             });
         }
-        let opening_x_cols = opening_layout.opening_len();
+        let opening_x_cols = opening_layout
+            .opening_len()
+            .checked_mul(opening_ring_dim)
+            .ok_or_else(|| AkitaError::InvalidSetup("stage-2 domain overflow".into()))?;
         let col_bits = opening_x_cols.trailing_zeros() as usize;
-        let ring_bits = D.trailing_zeros() as usize;
+        let ring_bits = 0;
         let m_rows = lp.relation_matrix_row_count_for(
             opening_batch.num_groups(),
             relation_matrix_row_layout,
@@ -82,8 +105,6 @@ where
             .map(|_| sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_TAU1))
             .collect();
         let ring_alpha_evals_y = scalar_powers(alpha, D);
-        let alpha_evals_y = scalar_powers(alpha, D);
-
         if gamma.len() != instance.opening_batch().num_total_polynomials() {
             return Err(AkitaError::InvalidInput(
                 "ring-switch gamma length does not match claim count".to_string(),
@@ -91,9 +112,9 @@ where
         }
 
         #[cfg(feature = "parallel")]
-        let (relation_matrix_col_evals_result, w_result) = rayon::join(
+        let (relation_weight_evals_result, w_result) = rayon::join(
             || {
-                compute_relation_matrix_col_evals::<F, E>(
+                compute_relation_weight_evals::<F, E>(
                     setup,
                     instance,
                     alpha,
@@ -104,13 +125,14 @@ where
                     gamma,
                     relation_matrix_row_layout,
                     opening_layout,
+                    opening_ring_dim,
                 )
             },
-            || build_w_evals_compact(w.as_i8_digits(), D, 1, opening_layout),
+            || build_w_evals_compact(w.as_i8_digits(), opening_ring_dim, 1, opening_layout),
         );
         #[cfg(not(feature = "parallel"))]
-        let (relation_matrix_col_evals_result, w_result) = {
-            let relation_matrix_col_evals = compute_relation_matrix_col_evals::<F, E>(
+        let (relation_weight_evals_result, w_result) = {
+            let relation_weight_evals = compute_relation_weight_evals::<F, E>(
                 setup,
                 instance,
                 alpha,
@@ -121,19 +143,26 @@ where
                 gamma,
                 relation_matrix_row_layout,
                 opening_layout,
-            )?;
-            let w_compact = build_w_evals_compact(w.as_i8_digits(), D, 1, opening_layout);
-            (Ok(relation_matrix_col_evals), w_compact)
+                opening_ring_dim,
+            );
+            let w_compact =
+                build_w_evals_compact(w.as_i8_digits(), opening_ring_dim, 1, opening_layout);
+            (relation_weight_evals, w_compact)
         };
 
-        let relation_matrix_col_evals = relation_matrix_col_evals_result?;
-        let (w_evals_compact, _, _) = w_result?;
+        let relation_weight_evals = relation_weight_evals_result.map_err(|err| {
+            AkitaError::InvalidInput(format!("relation-weight materialization failed: {err:?}"))
+        })?;
+        let (w_evals_compact, _, _) = w_result.map_err(|err| {
+            AkitaError::InvalidInput(format!(
+                "witness virtual-layout materialization failed: {err:?}"
+            ))
+        })?;
 
         Ok(RingSwitchOutput {
             w_evals_compact,
             opening_x_cols,
-            relation_matrix_col_evals,
-            alpha_evals_y,
+            relation_weight_evals,
             col_bits,
             ring_bits,
             tau0,

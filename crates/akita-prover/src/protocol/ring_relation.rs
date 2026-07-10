@@ -29,7 +29,7 @@ use super::ring_relation_witness::{RingRelationGroupWitness, RingRelationWitness
 
 mod relation_quotient;
 
-pub(crate) use relation_quotient::compute_multi_group_relation_quotient;
+pub(crate) use relation_quotient::{compute_multi_group_relation_quotient, RelationQuotientOutput};
 
 fn absorb_terminal_e_folded_fields<F, T>(
     transcript: &mut T,

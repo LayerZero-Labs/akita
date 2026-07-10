@@ -94,7 +94,7 @@ mod tests {
     use akita_prover::backend::DenseView;
     use akita_prover::compute::{OpeningFoldKernel, OpeningFoldPlan, RootOpeningSource};
     use akita_prover::protocol::ring_switch::{
-        build_w_evals_compact, compute_relation_matrix_col_evals, ring_switch_build_w,
+        build_w_evals_compact, compute_relation_weight_evals, ring_switch_build_w,
     };
     use akita_prover::{
         ComputeBackendSetup, CpuBackend, DensePoly, ProverOpeningData, RingRelationProver,
@@ -224,20 +224,14 @@ mod tests {
 
     fn direct_relation_claim<F: FieldCore + FromPrimitiveInt>(
         w_compact: &[i8],
-        alpha_evals_y: &[F],
-        relation_matrix_col_evals: &[F],
-        live_x_cols: usize,
+        relation_weight_evals: &[F],
     ) -> F {
-        (0..live_x_cols).fold(F::zero(), |acc_x, x| {
-            let column_start = x * alpha_evals_y.len();
-            let y_eval = alpha_evals_y
-                .iter()
-                .enumerate()
-                .fold(F::zero(), |acc_y, (y, &alpha)| {
-                    acc_y + F::from_i64(w_compact[column_start + y] as i64) * alpha
-                });
-            acc_x + y_eval * relation_matrix_col_evals[x]
-        })
+        w_compact
+            .iter()
+            .zip(relation_weight_evals)
+            .fold(F::zero(), |acc, (&w, &weight)| {
+                acc + F::from_i64(i64::from(w)) * weight
+            })
     }
 
     fn nonconstant_ring_multiplier_point<F, const D: usize>(
@@ -371,7 +365,6 @@ mod tests {
         let (w_compact, _col_bits, ring_bits) =
             build_w_evals_compact(build_output.w.as_i8_digits(), D, 1, opening_layout)
                 .expect("compact witness");
-        let live_x_cols = w_compact.len() >> ring_bits;
 
         let alpha = F::from_u64(29);
         let alpha_evals_y = scalar_powers(alpha, D);
@@ -390,7 +383,7 @@ mod tests {
                     }
                 })
                 .collect();
-            let relation_matrix_col_evals = compute_relation_matrix_col_evals::<F, F>(
+            let relation_matrix_col_evals = compute_relation_weight_evals::<F, F>(
                 &setup.expanded,
                 &instance,
                 alpha,
@@ -401,14 +394,10 @@ mod tests {
                 &[F::one()],
                 RelationMatrixRowLayout::WithDBlock,
                 opening_layout,
+                D,
             )
             .expect("m evals");
-            let got = direct_relation_claim(
-                &w_compact,
-                &alpha_evals_y,
-                &relation_matrix_col_evals,
-                live_x_cols,
-            );
+            let got = direct_relation_claim(&w_compact, &relation_matrix_col_evals);
             let expected = relation_claim_from_rows::<F, D>(
                 &tau1,
                 alpha,
@@ -518,7 +507,6 @@ mod tests {
         let (w_compact, _col_bits, ring_bits) =
             build_w_evals_compact(build_output.w.as_i8_digits(), D, 1, opening_layout)
                 .expect("compact witness");
-        let live_x_cols = w_compact.len() >> ring_bits;
 
         let alpha = F::from_u64(17);
         let alpha_evals_y = scalar_powers(alpha, D);
@@ -537,7 +525,7 @@ mod tests {
                     }
                 })
                 .collect();
-            let relation_matrix_col_evals = compute_relation_matrix_col_evals::<F, F>(
+            let relation_matrix_col_evals = compute_relation_weight_evals::<F, F>(
                 &setup.expanded,
                 &instance,
                 alpha,
@@ -548,14 +536,10 @@ mod tests {
                 &[F::one()],
                 RelationMatrixRowLayout::WithDBlock,
                 opening_layout,
+                D,
             )
             .expect("m evals");
-            let got = direct_relation_claim(
-                &w_compact,
-                &alpha_evals_y,
-                &relation_matrix_col_evals,
-                live_x_cols,
-            );
+            let got = direct_relation_claim(&w_compact, &relation_matrix_col_evals);
             let expected = relation_claim_from_rows::<F, D>(
                 &tau1,
                 alpha,
@@ -708,7 +692,7 @@ mod tests {
         let witness_layout = instance.segment_layout(&level_params, None).unwrap();
         let opening_layout = OpeningBlockLayout::new(1, witness_layout.total_len()).unwrap();
 
-        let relation_matrix_col_evals = compute_relation_matrix_col_evals::<F, F>(
+        let relation_weight_evals = compute_relation_weight_evals::<F, F>(
             &setup.expanded,
             &instance,
             alpha,
@@ -719,8 +703,13 @@ mod tests {
             &[F::one()],
             RelationMatrixRowLayout::WithDBlock,
             opening_layout,
+            D,
         )
-        .expect("m evals (materialized)");
+        .expect("relation weight evals (materialized)");
+        let relation_matrix_col_evals: Vec<F> = relation_weight_evals
+            .chunks_exact(D)
+            .map(|coefficients| coefficients[0])
+            .collect();
 
         let x_challenges: Vec<F> = (0..relation_matrix_col_evals.len().trailing_zeros() as usize)
             .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
@@ -731,10 +720,12 @@ mod tests {
 
         let gamma = [F::one()];
         let replay = RingSwitchReplay {
+            setup: &setup.expanded,
             relation: &instance,
             row_coefficients: &gamma,
             lp: &level_params,
             opening_layout,
+            opening_ring_dim: D,
         };
         let prepared = prepare_relation_matrix_evaluator::<F, F, D>(&replay, alpha, &tau1, None)
             .expect("prepare_relation_matrix_evaluator");
@@ -840,10 +831,12 @@ mod tests {
             let expected_w = multilinear_eval(&chunked, &x_challenges_w).expect("multilinear_eval");
 
             let replay_w = RingSwitchReplay {
+                setup: &setup.expanded,
                 relation: &instance,
                 row_coefficients: &gamma,
                 lp: &lp_w,
                 opening_layout: opening_layout_w,
+                opening_ring_dim: D,
             };
             let prepared_w =
                 prepare_relation_matrix_evaluator::<F, F, D>(&replay_w, alpha, &tau1, None)
@@ -859,7 +852,7 @@ mod tests {
             // Prover-side cross-check: the chunked grouped M evaluator must emit
             // exactly the rearranged column layout, and its multilinear eval must
             // match the verifier's chunked row eval.
-            let prover_chunked = compute_relation_matrix_col_evals::<F, F>(
+            let prover_chunked_weights = compute_relation_weight_evals::<F, F>(
                 &setup.expanded,
                 &instance,
                 alpha,
@@ -870,8 +863,13 @@ mod tests {
                 &[F::one()],
                 RelationMatrixRowLayout::WithDBlock,
                 opening_layout_w,
+                D,
             )
-            .expect("chunked m evals (prover)");
+            .expect("chunked relation weight evals (prover)");
+            let prover_chunked: Vec<F> = prover_chunked_weights
+                .chunks_exact(D)
+                .map(|coefficients| coefficients[0])
+                .collect();
             assert_eq!(
                 prover_chunked, chunked,
                 "prover chunked grouped M evals must equal the rearranged column layout for W={w}"

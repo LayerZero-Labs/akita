@@ -34,7 +34,7 @@ pub(crate) use coeffs::PreparedRingSwitchGroup;
 pub use coeffs::RingSwitchTerminalArtifacts;
 pub use coeffs::{ring_switch_build_w, RingSwitchBuildOutput};
 pub use commit::{commit_w, NextWitnessCommitment};
-pub use evals::{build_w_evals_compact, compute_relation_matrix_col_evals};
+pub use evals::{build_w_evals_compact, compute_relation_weight_evals};
 pub use finalize::ring_switch_finalize;
 
 /// D-agnostic output of the ring switch protocol, containing everything
@@ -44,10 +44,8 @@ pub struct RingSwitchOutput<E: FieldCore> {
     pub w_evals_compact: Vec<i8>,
     /// Virtual x width, including structural zero columns between compact blocks.
     pub opening_x_cols: usize,
-    /// Evaluation table of M_alpha(x) (tau1-weighted).
-    pub relation_matrix_col_evals: Vec<E>,
-    /// Evaluation table of alpha powers (y dimension).
-    pub alpha_evals_y: Vec<E>,
+    /// Tau1-weighted relation table over the full virtual coefficient domain.
+    pub relation_weight_evals: Vec<E>,
     /// Number of upper variable bits.
     pub col_bits: usize,
     /// Number of lower variable bits.

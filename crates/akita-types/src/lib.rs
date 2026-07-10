@@ -82,7 +82,7 @@ pub use proof::{
 pub use proof::{
     active_setup_field_len, append_batched_commitments_to_transcript,
     append_claim_values_to_transcript, assemble_relation_rhs, build_segment_typed_witness,
-    compute_relation_matrix_col_evals, decode_terminal_z_golomb_payload, derive_public_matrix_flat,
+    compute_relation_weight_evals, decode_terminal_z_golomb_payload, derive_public_matrix_flat,
     e_folded_segment_bytes, emit_witness_e_planes, emit_witness_r_planes, emit_witness_t_planes,
     emit_witness_z_planes, expand_segment_typed_to_i8_digits, folded_root_supports_opening_shape,
     generate_relation_rhs, i8_digits_to_bytes, padded_scalar_batch_num_vars,

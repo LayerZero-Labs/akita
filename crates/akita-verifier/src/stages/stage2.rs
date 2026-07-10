@@ -1,6 +1,5 @@
 //! Verifier for the Akita stage-2 fused sumcheck.
 
-use crate::protocol::ring_switch::RelationMatrixEvaluator;
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_field::{
     AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, HalvingField,
@@ -8,8 +7,8 @@ use akita_field::{
 };
 use akita_sumcheck::{multilinear_eval, SumcheckInstanceVerifier};
 use akita_types::{
-    dispatch_for_field, eval_dense_trace_table, eval_trace_terms_closed, AkitaExpandedSetup,
-    CleartextWitnessProof, FpExtEncoding, TraceClaim,
+    dispatch_for_field, eval_dense_trace_table, eval_trace_terms_closed, CleartextWitnessProof,
+    FpExtEncoding, TraceClaim,
 };
 use std::borrow::Cow;
 use std::marker::PhantomData;
@@ -162,11 +161,7 @@ pub(crate) struct AkitaStage2Verifier<'a, F: FieldCore, E: FieldCore, const D: u
     s_claim: E,
     witness_oracle: Stage2WitnessOracle<'a, F, E>,
     stage1_point: Vec<E>,
-    alpha_evals_y: Vec<E>,
-    relation_matrix_evaluator: RelationMatrixEvaluator<E>,
-    setup_claim: Option<E>,
-    setup: &'a AkitaExpandedSetup<F>,
-    alpha: E,
+    relation_weight_evals: Vec<E>,
     col_bits: usize,
     ring_bits: usize,
     relation_claim: E,
@@ -188,12 +183,8 @@ where
         s_claim: E,
         witness_oracle: Stage2WitnessOracle<'a, F, E>,
         stage1_point: Vec<E>,
-        alpha_evals_y: Vec<E>,
-        relation_matrix_evaluator: RelationMatrixEvaluator<E>,
-        setup_claim: Option<E>,
-        setup: &'a AkitaExpandedSetup<F>,
+        relation_weight_evals: Vec<E>,
         relation_claim: E,
-        alpha: E,
         col_bits: usize,
         ring_bits: usize,
         trace: Option<TraceClaim<F, E, D>>,
@@ -207,18 +198,13 @@ where
                 actual: stage1_point.len(),
             });
         }
-        let expected_alpha_len = 1usize
-            .checked_shl(
-                u32::try_from(ring_bits).map_err(|_| AkitaError::InvalidSize {
-                    expected: usize::BITS as usize,
-                    actual: ring_bits,
-                })?,
-            )
+        let expected_relation_len = 1usize
+            .checked_shl(u32::try_from(num_rounds).map_err(|_| AkitaError::InvalidProof)?)
             .ok_or(AkitaError::InvalidProof)?;
-        if alpha_evals_y.len() != expected_alpha_len {
+        if relation_weight_evals.len() != expected_relation_len {
             return Err(AkitaError::InvalidSize {
-                expected: expected_alpha_len,
-                actual: alpha_evals_y.len(),
+                expected: expected_relation_len,
+                actual: relation_weight_evals.len(),
             });
         }
         Ok(Self {
@@ -226,11 +212,7 @@ where
             s_claim,
             witness_oracle,
             stage1_point,
-            alpha_evals_y,
-            relation_matrix_evaluator,
-            setup_claim,
-            setup,
-            alpha,
+            relation_weight_evals,
             col_bits,
             ring_bits,
             relation_claim,
@@ -253,15 +235,6 @@ where
             ),
             Stage2WitnessOracle::ClaimedEval { eval, .. } => Ok(*eval),
         }
-    }
-
-    fn evaluate_relation_matrix(&self, x_challenges: &[E]) -> Result<E, AkitaError> {
-        self.relation_matrix_evaluator.eval_at_point::<F, D>(
-            x_challenges,
-            self.setup,
-            self.alpha,
-            self.setup_claim,
-        )
     }
 }
 
@@ -294,12 +267,8 @@ where
         };
 
         let (y_challenges, x_challenges) = challenges.split_at(self.ring_bits);
-        let alpha_val = multilinear_eval(&self.alpha_evals_y, y_challenges)?;
-        let row_val = {
-            let _span = tracing::info_span!("stage2_relation_matrix_eval").entered();
-            self.evaluate_relation_matrix(x_challenges)?
-        };
-        let relation_oracle = w_eval * alpha_val * row_val;
+        let relation_weight = multilinear_eval(&self.relation_weight_evals, challenges)?;
+        let relation_oracle = w_eval * relation_weight;
         let trace_oracle = if let Some(trace) = &self.trace {
             // Multi-group roots carry the dense trace-weight table (per-group block
             // geometry the closed form cannot express); scalar/recursive folds

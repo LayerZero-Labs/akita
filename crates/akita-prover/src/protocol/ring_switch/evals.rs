@@ -5,7 +5,7 @@ use akita_types::OpeningBlockLayout;
 ///
 /// Canonical dense-table implementation lives in `akita-types`; the prover
 /// ring-switch finalize path uses it to feed stage-2 proving.
-pub use akita_types::compute_relation_matrix_col_evals;
+pub use akita_types::compute_relation_weight_evals;
 
 /// Produce the compact `Vec<i8>` eval table of `w` for the fused prover.
 ///

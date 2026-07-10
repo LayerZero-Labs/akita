@@ -281,7 +281,8 @@ where
 
 /// Ring-switch kernels at every runtime-supported fold ring dimension.
 pub trait RuntimeRingSwitchProveBackend<F>:
-    RingSwitchProveBackend<F, 32>
+    RingSwitchProveBackend<F, 16>
+    + RingSwitchProveBackend<F, 32>
     + RingSwitchProveBackend<F, 64>
     + RingSwitchProveBackend<F, 128>
     + RingSwitchProveBackend<F, 256>
@@ -293,7 +294,8 @@ where
 impl<F, B> RuntimeRingSwitchProveBackend<F> for B
 where
     F: FieldCore + CanonicalField,
-    B: RingSwitchProveBackend<F, 32>
+    B: RingSwitchProveBackend<F, 16>
+        + RingSwitchProveBackend<F, 32>
         + RingSwitchProveBackend<F, 64>
         + RingSwitchProveBackend<F, 128>
         + RingSwitchProveBackend<F, 256>,

@@ -324,7 +324,10 @@ where
                     e_folded_by_claim.extend(
                         group_e_folded_by_claim
                             .iter()
-                            .map(|rows| RingVec::from_ring_elems(rows)),
+                            // The opening kernel emits A-role rings. The ring
+                            // relation reinterprets the unchanged coefficients
+                            // at its D-role dimension.
+                            .map(|rows| RingVec::from_ring_elems(rows).into_compact()),
                     );
                     folded_rings.extend(group_folded_rings);
                     prepared_points.push(prepared_point);
@@ -510,7 +513,10 @@ where
         stack.ring_switch(),
         lp,
         is_terminal_fold,
-    )?;
+    )
+    .map_err(|err| {
+        AkitaError::InvalidInput(format!("ring-switch witness build failed: {err:?}"))
+    })?;
     let logical_w = build_output.w;
     scheduled.validate_next_w_len(logical_w.len())?;
     let next_commitment = if is_terminal_fold {
@@ -536,7 +542,8 @@ where
         },
         build_output.terminal_artifacts,
         terminal_direct_witness_shape,
-    )?;
+    )
+    .map_err(|err| AkitaError::InvalidInput(format!("next witness binding failed: {err:?}")))?;
     let relation_matrix_row_layout = if is_terminal_fold {
         RelationMatrixRowLayout::WithoutDBlock
     } else {
@@ -560,9 +567,15 @@ where
         &logical_w,
         lp,
         next_opening_layout,
+        if is_terminal_fold {
+            ring_d
+        } else {
+            scheduled.next_params.d_a()
+        },
         prepared_fold.row_coefficients.as_deref(),
         relation_matrix_row_layout,
-    )?;
+    )
+    .map_err(|err| AkitaError::InvalidInput(format!("ring-switch finalize failed: {err:?}")))?;
 
     let relation_rhs_layout = relation_rhs_layout_for(
         lp,
@@ -599,16 +612,20 @@ where
     };
     let trace_opening_claim = trace_coeff * prepared_fold.trace_eval_target;
     ensure_trace_stage2_supported(E::EXT_DEGREE)?;
+    let trace_witness_layout = prepared_fold.instance.segment_layout(lp, None)?;
+    let trace_opening_layout = OpeningBlockLayout::new(1, trace_witness_layout.total_len())?;
+    let trace_x_cols = trace_opening_layout.opening_len();
+    let trace_col_bits = trace_x_cols.trailing_zeros() as usize;
+    let trace_ring_bits = ring_d.trailing_zeros() as usize;
     let trace_compact = if let Some(row_coefficients) = prepared_fold.row_coefficients.as_ref() {
         if lp.has_precommitted_groups() {
-            let witness_layout = prepared_fold.instance.segment_layout(lp, None)?;
             Some(akita_types::build_multi_group_root_stage2_trace_table::<
                 F,
                 E,
             >(
                 ring_d,
-                &witness_layout,
-                next_opening_layout,
+                &trace_witness_layout,
+                trace_opening_layout,
                 lp,
                 prepared_fold.instance.opening_batch(),
                 prepared_fold
@@ -618,7 +635,7 @@ where
                 row_coefficients,
                 prepared_fold.trace_claim_scales.as_deref(),
                 trace_coeff,
-                rs.opening_x_cols,
+                trace_x_cols,
             )?)
         } else {
             let num_trace_blocks = prepared_fold
@@ -632,9 +649,9 @@ where
             let layout = trace_layout_for_instance(
                 lp,
                 &prepared_fold.instance,
-                next_opening_layout,
-                rs.col_bits,
-                rs.ring_bits,
+                trace_opening_layout,
+                trace_col_bits,
+                trace_ring_bits,
                 num_trace_blocks,
             )?;
             Some(build_root_stage2_trace_table::<F, E>(
@@ -650,7 +667,7 @@ where
                 row_coefficients,
                 prepared_fold.trace_claim_scales.as_deref(),
                 trace_coeff,
-                rs.opening_x_cols,
+                trace_x_cols,
             )?)
         }
     } else if let Some(prepared) = prepared_fold
@@ -661,9 +678,9 @@ where
         let layout = trace_layout_for_instance(
             lp,
             &prepared_fold.instance,
-            next_opening_layout,
-            rs.col_bits,
-            rs.ring_bits,
+            trace_opening_layout,
+            trace_col_bits,
+            trace_ring_bits,
             lp.num_blocks,
         )?;
         Some(build_recursive_stage2_trace_table::<F, E>(
@@ -672,11 +689,26 @@ where
             prepared,
             prepared_fold.trace_scale,
             trace_coeff,
-            rs.opening_x_cols,
+            trace_x_cols,
         )?)
     } else {
         None
-    };
+    }
+    .map(|table| {
+        remap_trace_table(
+            table,
+            trace_opening_layout,
+            ring_d,
+            next_opening_layout,
+            if is_terminal_fold {
+                ring_d
+            } else {
+                scheduled.next_params.d_a()
+            },
+            logical_w.len(),
+        )
+    })
+    .transpose()?;
     let ring_bits = rs.ring_bits;
     let col_bits = rs.col_bits;
     let live_x_cols = rs.opening_x_cols;
@@ -691,7 +723,8 @@ where
         relation_claim,
         trace_compact,
         trace_opening_claim,
-    )?;
+    )
+    .map_err(|err| AkitaError::InvalidInput(format!("stage-2 proving failed: {err:?}")))?;
     if is_terminal_fold {
         let final_witness = final_witness.ok_or_else(|| {
             AkitaError::InvalidInput("terminal fold did not bind a final witness".to_string())
@@ -876,6 +909,47 @@ where
     Ok((stage1_proof, stage1_point, s_claim))
 }
 
+fn remap_trace_table<E: FieldCore>(
+    table: TraceTable<E>,
+    source_layout: OpeningBlockLayout,
+    source_ring_dim: usize,
+    destination_layout: OpeningBlockLayout,
+    destination_ring_dim: usize,
+    physical_field_len: usize,
+) -> Result<TraceTable<E>, AkitaError> {
+    let source_capacity = source_layout
+        .physical_len()
+        .checked_mul(source_ring_dim)
+        .ok_or_else(|| AkitaError::InvalidSetup("trace source capacity overflow".into()))?;
+    let destination_capacity = destination_layout
+        .physical_len()
+        .checked_mul(destination_ring_dim)
+        .ok_or_else(|| AkitaError::InvalidSetup("trace destination capacity overflow".into()))?;
+    if physical_field_len > source_capacity
+        || physical_field_len > destination_capacity
+        || source_ring_dim == 0
+        || destination_ring_dim == 0
+    {
+        return Err(AkitaError::InvalidProof);
+    }
+    let source = table.materialize_dense(source_layout.opening_len(), source_ring_dim);
+    let destination_len = destination_layout
+        .opening_len()
+        .checked_mul(destination_ring_dim)
+        .ok_or_else(|| AkitaError::InvalidSetup("trace destination length overflow".into()))?;
+    let mut destination = vec![E::zero(); destination_len];
+    for physical in 0..physical_field_len {
+        let source_col = source_layout.opening_index_for_physical(physical / source_ring_dim)?;
+        let source_index = source_col * source_ring_dim + physical % source_ring_dim;
+        let destination_col =
+            destination_layout.opening_index_for_physical(physical / destination_ring_dim)?;
+        let destination_index =
+            destination_col * destination_ring_dim + physical % destination_ring_dim;
+        destination[destination_index] = source[source_index];
+    }
+    Ok(TraceTable::ring_dense(destination))
+}
+
 #[allow(clippy::too_many_arguments)]
 fn prove_stage2<F, E, T>(
     transcript: &mut T,
@@ -899,8 +973,8 @@ where
         stage1_point,
         s_claim,
         rs.b,
-        rs.alpha_evals_y,
-        rs.relation_matrix_col_evals,
+        vec![E::one()],
+        rs.relation_weight_evals,
         rs.opening_x_cols,
         rs.col_bits,
         rs.ring_bits,
