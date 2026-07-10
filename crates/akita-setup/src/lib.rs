@@ -143,14 +143,22 @@ where
 // ---------------------------------------------------------------------------
 
 #[cfg(feature = "disk-persistence")]
+fn stable_type_hash(type_name: &str) -> u64 {
+    // FNV-1a keeps cache names short while remaining stable across processes.
+    const FNV_OFFSET: u64 = 0xcbf29ce484222325;
+    const FNV_PRIME: u64 = 0x100000001b3;
+    type_name.as_bytes().iter().fold(FNV_OFFSET, |hash, byte| {
+        (hash ^ u64::from(*byte)).wrapping_mul(FNV_PRIME)
+    })
+}
+
+#[cfg(feature = "disk-persistence")]
 fn cache_file_name<Cfg: CommitmentConfig>(
     max_num_vars: usize,
     max_num_batched_polys: usize,
 ) -> String {
-    let family = std::any::type_name::<Cfg>()
-        .chars()
-        .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '_' })
-        .collect::<String>();
+    let type_name = std::any::type_name::<Cfg>();
+    let family_hash = stable_type_hash(type_name);
     let schedule_lookup_key = PolynomialGroupLayout::new(max_num_vars, max_num_batched_polys);
     // Fingerprint the resolved schedule shape so cached setup files get
     // invalidated when the planner's per-level layout (including the
@@ -184,7 +192,7 @@ fn cache_file_name<Cfg: CommitmentConfig>(
         .collect::<String>();
     let modulus = detect_field_modulus::<Cfg::Field>();
     format!(
-        "akita_q{modulus:032x}_{family}_sched_{schedule}_d{}_nv{max_num_vars}_batch{max_num_batched_polys}.setup",
+        "akita_q{modulus:032x}_cfg{family_hash:016x}_sched_{schedule}_d{}_nv{max_num_vars}_batch{max_num_batched_polys}.setup",
         Cfg::D,
     )
 }
@@ -496,6 +504,16 @@ mod tests {
 
                 cleanup_setup_file_shape(MAX_VARS, 1);
             });
+        }
+
+        #[test]
+        fn cache_file_name_stays_below_common_component_limits() {
+            let name = cache_file_name::<Cfg>(16, 4);
+            assert!(
+                name.len() < 200,
+                "setup cache file name should stay comfortably below 255 bytes, got {}: {name}",
+                name.len()
+            );
         }
 
         #[test]

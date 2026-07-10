@@ -2,35 +2,7 @@ use super::*;
 use akita_algebra::offset_eq::summarize_pow2_block_carries;
 use akita_challenges::SparseChallengeConfig;
 use akita_field::Fp32;
-use akita_types::{
-    OpeningBatchWitnessGroup, OpeningBatchWitnessLayout, RingMultiplierOpeningPoint,
-    RingOpeningPoint, SemanticGroupId, SisModulusFamily,
-};
-
-/// Placeholder layout for prepare-path rejection tests. These cases fail before
-/// any layout-dependent evaluation runs, so the offsets are not required to
-/// match the witness column geometry.
-fn reject_test_segment_layout() -> OpeningBatchWitnessLayout {
-    OpeningBatchWitnessLayout::new(
-        vec![OpeningBatchWitnessGroup {
-            id: SemanticGroupId(0),
-            num_claims: 1,
-            num_blocks: 1,
-            block_len: 1,
-            depth_open: 1,
-            depth_commit: 1,
-            depth_fold: 1,
-            n_a: 1,
-            e_setup_col_offset: 0,
-        }],
-        vec![SemanticGroupId(0)],
-        vec![SemanticGroupId(0)],
-        1,
-        1,
-        1,
-    )
-    .expect("reject test layout")
-}
+use akita_types::{RelationMatrixRowLayout, SetupContributionPlanInputs, SisModulusFamily};
 
 type F = Fp32<251>;
 const D: usize = 32;
@@ -39,42 +11,9 @@ fn fold_challenge_config() -> SparseChallengeConfig {
     SparseChallengeConfig::pm1_only(1)
 }
 
-fn reject_test_multiplier_point() -> RingMultiplierOpeningPoint<F> {
-    RingMultiplierOpeningPoint::from_base(&RingOpeningPoint {
-        a: Vec::new(),
-        b: Vec::new(),
-    })
-}
-
 #[test]
 fn ring_switch_prepare_rejects_invalid_log_basis() {
-    let lp = LevelParams::params_only(
-        SisModulusFamily::Q32,
-        D,
-        0,
-        1,
-        1,
-        1,
-        fold_challenge_config(),
-    );
-    let challenges = Challenges::from_sparse(Vec::new(), 0, 0).unwrap();
-    let err = match prepare_relation_matrix_evaluator_inner::<F, F, D>(
-        &challenges,
-        &reject_test_multiplier_point(),
-        F::one(),
-        &lp,
-        &[],
-        0,
-        &[],
-        RelationMatrixRowLayout::WithDBlock,
-        reject_test_segment_layout(),
-        OpeningBlockLayout::new(1, reject_test_segment_layout().total_len()).unwrap(),
-        1,
-        0,
-    ) {
-        Ok(_) => panic!("invalid log_basis should be rejected"),
-        Err(err) => err,
-    };
+    let err = validate_log_basis(0).expect_err("invalid log_basis should be rejected");
     assert!(matches!(err, AkitaError::InvalidSetup(_)));
 }
 
@@ -89,20 +28,11 @@ fn ring_switch_prepare_rejects_zero_num_blocks() {
         1,
         fold_challenge_config(),
     );
-    let challenges = Challenges::from_sparse(Vec::new(), 0, 0).unwrap();
-    let err = match prepare_relation_matrix_evaluator_inner::<F, F, D>(
-        &challenges,
-        &reject_test_multiplier_point(),
-        F::one(),
+    let err = match SetupContributionPlanInputs::<F>::from_level_params(
         &lp,
-        &[],
-        0,
-        &[],
+        &[1],
         RelationMatrixRowLayout::WithDBlock,
-        reject_test_segment_layout(),
-        OpeningBlockLayout::new(1, reject_test_segment_layout().total_len()).unwrap(),
         1,
-        0,
     ) {
         Ok(_) => panic!("zero num_blocks should be rejected"),
         Err(err) => err,

@@ -116,8 +116,7 @@ pub use proof::{
     SetupProductSumcheckShape, SetupSumcheckProof, TailSegmentLayout, TerminalLevelProof,
     TerminalLevelProofShape, TerminalWitnessSegmentLayout, TerminalWitnessTranscriptParts,
     MAX_SETUP_MATRIX_FIELD_ELEMENTS, MULTI_GROUP_ROOT_DENSE_UNSUPPORTED,
-    MULTI_GROUP_ROOT_MULTI_CHUNK_UNSUPPORTED, MULTI_GROUP_ROOT_RECURSIVE_SETUP_UNSUPPORTED,
-    SETUP_OFFLOAD_D_SETUP, SETUP_SUMCHECK_DEGREE,
+    MULTI_GROUP_ROOT_MULTI_CHUNK_UNSUPPORTED, SETUP_OFFLOAD_D_SETUP, SETUP_SUMCHECK_DEGREE,
 };
 pub use proof_size::{level_proof_bytes, FOLD_GRIND_NONCE_BYTES};
 pub use schedule::{
@@ -130,8 +129,9 @@ pub use schedule::{
     ScheduleKeyPrecommitSource, Step,
 };
 pub use setup_contribution::{
-    ensure_setup_envelope, setup_active_ring_elems_at, setup_active_ring_elems_for_fold,
-    setup_required_for_inputs, SetupContributionGroupInputs, SetupContributionPlan,
+    ensure_setup_envelope, prepare_setup_contribution_artifact, setup_active_ring_elems_at,
+    setup_active_ring_elems_for_fold, setup_required_for_inputs, shared_setup_fold_gadget,
+    SetupContributionArtifact, SetupContributionGroupInputs, SetupContributionPlan,
     SetupContributionPlanInputs, SetupContributionStatic, SetupIndexWeightEvaluator,
     SetupProjectionGeometry,
 };
@@ -143,11 +143,11 @@ pub use tail_golomb_rice_low_bits::{
 pub use trace_weight::{
     build_multi_group_root_stage2_trace_table, build_trace_claim_multi_group_root,
     build_trace_claim_root, build_trace_table_scaled, ensure_trace_stage2_supported,
-    eval_dense_trace_table, eval_trace_terms_closed, root_trace_block_opening, stage2_trace_coeff,
+    eval_dense_trace_table, eval_trace_terms_closed, root_trace_block_opening,
     trace_public_weights_recursive, trace_public_weights_root_terms, trace_terms_recursive,
     trace_terms_root, trace_weight_layout_from_segment, TraceClaim, TraceFieldBlockOpening,
     TraceOpeningAtPoint, TracePublicWeights, TraceRingBlockOpening, TraceSparseColumn, TraceTable,
-    TraceTerm, TraceWeightLayout,
+    TraceTerm, TraceTermBatch, TraceWeightLayout,
 };
 pub use transcript::AppendToTranscript;
 pub use witness::{

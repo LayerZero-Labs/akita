@@ -12,7 +12,7 @@ use akita_transcript::labels::{
 };
 use akita_transcript::{sample_ext_challenge, Transcript};
 use akita_types::{
-    dispatch_for_field, ensure_setup_envelope, gadget_row_scalars, select_setup_prefix_slot,
+    dispatch_for_field, ensure_setup_envelope, select_setup_prefix_slot, shared_setup_fold_gadget,
     AkitaExpandedSetup, AkitaVerifierSetup, LevelParams, SetupContributionPlan,
     SetupIndexWeightEvaluator, SetupSumcheckProof, SETUP_OFFLOAD_D_SETUP, SETUP_SUMCHECK_DEGREE,
 };
@@ -26,8 +26,9 @@ use akita_types::{
 /// with the proof and transcript.
 pub(crate) struct SetupSumcheckVerifier<E: FieldCore> {
     plan: SetupContributionPlan<E>,
-    setup_index_weight_evaluator: SetupIndexWeightEvaluator<E>,
+    setup_index_weight_evaluator: Option<SetupIndexWeightEvaluator<E>>,
     alpha_pows: Vec<E>,
+    alpha: E,
     ring_bits: usize,
     rounds: usize,
 }
@@ -51,35 +52,39 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
         E: ExtField<F>,
     {
         let role_dims = relation_matrix_evaluator.role_dims;
-        let fold_gadget = gadget_row_scalars::<F>(
-            relation_matrix_evaluator.depth_fold,
-            relation_matrix_evaluator.log_basis,
-        );
+        let fold_gadget =
+            shared_setup_fold_gadget::<F>(&relation_matrix_evaluator.setup_contribution_groups);
         let plan = SetupContributionPlan::finish_plan::<F>(
             &relation_matrix_evaluator.setup_contribution_static,
             x_challenges,
             None,
             None,
-            Some(&fold_gadget),
+            fold_gadget.as_deref(),
             &relation_matrix_evaluator.setup_contribution_groups,
             role_dims,
         )?;
         let geometry = plan.projection_geometry();
         let alpha_pows = scalar_powers(alpha, geometry.alpha_power_len());
-        let setup_index_weight_evaluator = SetupIndexWeightEvaluator::new::<F>(
-            &relation_matrix_evaluator.setup_contribution_inputs,
-            &plan,
-            &relation_matrix_evaluator.setup_contribution_groups,
-            tau1,
-            x_challenges,
-            &fold_gadget,
-            alpha,
-        )?;
+        let setup_index_weight_evaluator = fold_gadget
+            .as_deref()
+            .map(|fold_gadget| {
+                SetupIndexWeightEvaluator::new::<F>(
+                    &relation_matrix_evaluator.setup_contribution_inputs,
+                    &plan,
+                    &relation_matrix_evaluator.setup_contribution_groups,
+                    tau1,
+                    x_challenges,
+                    fold_gadget,
+                    alpha,
+                )
+            })
+            .transpose()?;
 
         Ok(Self {
             plan,
             setup_index_weight_evaluator,
             alpha_pows,
+            alpha,
             ring_bits: geometry.ring_bits(),
             rounds: geometry.rounds(),
         })
@@ -231,7 +236,12 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
             &eq_setup_idx,
             &eq_y,
         )?;
-        let setup_index_weight = self.setup_index_weight_evaluator.evaluate(rho_setup_idx)?;
+        let setup_index_weight = if let Some(evaluator) = &self.setup_index_weight_evaluator {
+            evaluator.evaluate(rho_setup_idx)?
+        } else {
+            self.plan
+                .evaluate_setup_index_weight_mle(rho_setup_idx, self.alpha)?
+        };
         let alpha_val = eval_dense_table_with_eq(&self.alpha_pows, &eq_y)?;
         let witness_scale = lift_scale::<E>(batched_rounds - witness_rounds)?;
         let setup_scale = lift_scale::<E>(batched_rounds - self.rounds)?;

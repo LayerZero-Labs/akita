@@ -763,6 +763,8 @@ impl LevelParams {
             .ok_or_else(Self::relation_matrix_row_overflow)
     }
 
+    /// Number of commitment groups at a multi-group root (`precommitted + final`).
+    #[inline]
     fn root_group_count(&self) -> usize {
         self.precommitted_groups.len() + 1
     }
@@ -1071,6 +1073,44 @@ impl LevelParams {
             .ok_or_else(Self::relation_matrix_row_overflow)
     }
 
+    /// Logical row index of the shared EvaluationTrace row (last padded row).
+    ///
+    /// Physical quotient rows occupy `0..relation_matrix_row_count`; EvaluationTrace
+    /// sits at `relation_matrix_row_count` and is absent from the physical M matrix.
+    pub fn evaluation_trace_row_index_for_layout(
+        &self,
+        layout: RelationMatrixRowLayout,
+        opening_batch: &OpeningClaimsLayout,
+    ) -> Result<usize, AkitaError> {
+        opening_batch.check()?;
+        if self.has_precommitted_groups() {
+            self.reject_multi_group_multi_chunk(
+                "LevelParams::evaluation_trace_row_index_for_layout",
+            )?;
+            self.validate_root_opening_batch(opening_batch)?;
+        } else {
+            self.require_scalar_level("LevelParams::evaluation_trace_row_index_for_layout")?;
+        }
+        self.relation_matrix_row_count_for(opening_batch.num_groups(), layout)
+    }
+
+    /// Boolean variables needed to index the padded row space
+    /// (`next_power_of_two(evaluation_trace_row + 1).trailing_zeros()`).
+    pub fn relation_row_index_num_vars_for_layout(
+        &self,
+        layout: RelationMatrixRowLayout,
+        opening_batch: &OpeningClaimsLayout,
+    ) -> Result<usize, AkitaError> {
+        let total_rows = self
+            .evaluation_trace_row_index_for_layout(layout, opening_batch)?
+            .checked_add(1)
+            .ok_or_else(|| AkitaError::InvalidSetup("relation-row count overflow".to_string()))?;
+        let padded = total_rows.checked_next_power_of_two().ok_or_else(|| {
+            AkitaError::InvalidSetup("relation-row index width overflow".to_string())
+        })?;
+        Ok(padded.trailing_zeros() as usize)
+    }
+
     /// Fill in the layout-derived fields from explicit decomposition parameters.
     ///
     /// Takes a params-only `LevelParams` (with zeroed layout fields) and
@@ -1280,6 +1320,46 @@ mod tests {
         sample_params_only().with_decomp(4, 2, 2, 2, 0).unwrap()
     }
 
+    fn laid_out_sample_lp() -> LevelParams {
+        sample_params_only()
+            .with_layout(&sample_layout_lp(), 128)
+            .unwrap()
+    }
+
+    fn sample_multi_group_root_params() -> (LevelParams, OpeningClaimsLayout) {
+        use crate::schedule::PrecommittedGroupParams;
+        let lp = sample_params_only()
+            .with_layout(&sample_layout_lp(), 128)
+            .unwrap();
+        let precommit_lp = sample_params_only()
+            .with_layout(&sample_layout_lp(), 128)
+            .unwrap();
+        let precommit = PrecommittedLevelParams {
+            layout: PrecommittedGroupParams::from_params(
+                PolynomialGroupLayout::new(4, 1),
+                &precommit_lp,
+            ),
+            a_key: precommit_lp.a_key.clone(),
+            b_key: AjtaiKeyParams::new_unchecked(
+                precommit_lp.b_key.min_security_bits(),
+                precommit_lp.b_key.sis_family(),
+                5,
+                precommit_lp.b_key.col_len(),
+                precommit_lp.b_key.coeff_linf_bound(),
+                precommit_lp.ring_dimension,
+            ),
+            num_blocks: precommit_lp.num_blocks,
+            block_len: precommit_lp.block_len,
+            num_digits_commit: precommit_lp.num_digits_commit,
+            num_digits_open: precommit_lp.num_digits_open,
+            num_digits_fold_one: precommit_lp.num_digits_fold_one,
+        };
+        let mut grouped = lp;
+        grouped.precommitted_groups = vec![precommit];
+        let batch = OpeningClaimsLayout::from_group_sizes(4, &[1, 1]).expect("layout");
+        (grouped, batch)
+    }
+
     #[test]
     fn with_layout_keeps_self_ranks() {
         let params = sample_params_only();
@@ -1395,4 +1475,6 @@ mod tests {
 
     #[path = "params_precommitted_group_tests.rs"]
     mod precommitted_group_tests;
+    #[path = "params_relation_row_tests.rs"]
+    mod relation_row_tests;
 }

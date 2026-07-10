@@ -17,11 +17,10 @@ use akita_serialization::AkitaSerialize;
 use akita_sumcheck::{SumcheckInstanceProver, SumcheckInstanceProverExt, SumcheckProof};
 use akita_transcript::{labels::ABSORB_SETUP_PREFIX_SLOT, Transcript};
 use akita_types::{
-    ensure_setup_envelope, gadget_row_scalars, select_setup_prefix_slot, AkitaExpandedSetup,
-    FpExtEncoding, LevelParams, OpeningBlockLayout, RingRelationInstance,
-    SetupContributionGroupInputs, SetupContributionPlan, SetupContributionPlanInputs,
-    SetupPrefixProverRegistry, SetupProjectionGeometry, SETUP_OFFLOAD_D_SETUP,
-    SETUP_SUMCHECK_DEGREE,
+    ensure_setup_envelope, prepare_setup_contribution_artifact, select_setup_prefix_slot,
+    shared_setup_fold_gadget, AkitaExpandedSetup, FpExtEncoding, LevelParams, OpeningBlockLayout,
+    RingRelationInstance, SetupContributionPlan, SetupPrefixProverRegistry,
+    SetupProjectionGeometry, SETUP_OFFLOAD_D_SETUP, SETUP_SUMCHECK_DEGREE,
 };
 use product_table::FactoredProductTerm;
 use std::sync::Arc;
@@ -339,6 +338,7 @@ where
     FactoredProductTerm::new_dense(setup_table, setup_index_weight, alpha_pows.to_vec())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn build_witness_carry_term<E>(
     logical_w: Arc<[i8]>,
     opening_layout: OpeningBlockLayout,
@@ -434,66 +434,29 @@ where
     F: FieldCore + CanonicalField,
     E: FpExtEncoding<F> + FromPrimitiveInt + LiftBase<F>,
 {
-    let inputs = create_setup_contribution_inputs::<F, E>(relation, lp, tau1)?;
-    let num_t_vectors = relation.opening_batch().num_total_polynomials();
-    let fold_gadget = gadget_row_scalars::<F>(
-        lp.num_digits_fold(num_t_vectors, lp.field_bits_for_cache())?,
-        lp.log_basis,
-    );
-    let layout = relation.segment_layout(lp, None)?;
     let opening_layout = OpeningBlockLayout::new(
         next_fold_level_params.num_blocks,
         next_fold_level_params.block_len,
     )?;
-    let single_group = SetupContributionGroupInputs::single_group_layout(
-        &inputs,
-        &layout,
-        opening_layout,
-        lp.log_basis,
+    let setup_artifact = prepare_setup_contribution_artifact::<F, E>(
+        relation,
+        lp,
+        tau1,
+        None,
+        Some(opening_layout),
     )?;
-    let groups = std::slice::from_ref(&single_group.group);
-    let static_plan = SetupContributionPlan::prepare_static(
-        &inputs,
-        groups,
-        single_group.d_row_start,
-        single_group.d_rows,
-        single_group.d_physical_cols,
-    )?;
+    let fold_gadget = shared_setup_fold_gadget::<F>(&setup_artifact.groups);
     let plan = SetupContributionPlan::finish_plan::<F>(
-        &static_plan,
+        &setup_artifact.static_plan,
         x_challenges,
         None,
         None,
-        Some(&fold_gadget),
-        groups,
+        fold_gadget.as_deref(),
+        &setup_artifact.groups,
         relation.role_dims(),
     )?;
     let geometry = plan.projection_geometry();
     let alpha_pows = scalar_powers(alpha, geometry.alpha_power_len());
     let setup_index_weight = plan.materialize_setup_index_weights(alpha)?;
     Ok((geometry, setup_index_weight, alpha_pows.to_vec()))
-}
-
-/// Build the setup-contribution artifact from prover-owned relation data.
-fn create_setup_contribution_inputs<F, E>(
-    relation: &RingRelationInstance<F>,
-    lp: &LevelParams,
-    tau1: &[E],
-) -> Result<SetupContributionPlanInputs<E>, AkitaError>
-where
-    F: FieldCore + CanonicalField,
-    E: FieldCore,
-{
-    let opening_batch = relation.opening_batch();
-    let num_polynomials = opening_batch.num_total_polynomials();
-    let depth_fold = lp.num_digits_fold(num_polynomials, lp.field_bits_for_cache())?;
-    let relation_matrix_row_layout = relation.relation_matrix_row_layout();
-    let rows = lp.relation_matrix_row_count_for(1, relation_matrix_row_layout)?;
-    SetupContributionPlanInputs::from_level_params(
-        lp,
-        &[num_polynomials],
-        relation_matrix_row_layout,
-        depth_fold,
-    )?
-    .with_eq_tau1_from_tau(tau1, rows)
 }

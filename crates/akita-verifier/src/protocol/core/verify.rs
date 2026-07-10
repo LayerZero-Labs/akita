@@ -14,12 +14,13 @@ use akita_field::{
 };
 use akita_serialization::AkitaSerialize;
 use akita_transcript::Transcript;
+#[cfg(test)]
+use akita_types::OpeningClaimsLayout;
 use akita_types::{
-    dispatch_for_field, should_reject_multi_group_root, validate_schedule_ring_dims,
-    AkitaBatchedProof, AkitaBatchedRootProof, AkitaLevelProof, AkitaSetupSeed, AkitaVerifierSetup,
-    BasisMode, CleartextWitnessProof, Commitment, FpExtEncoding, LevelParams, LevelParamsLike,
-    OpeningClaims, OpeningClaimsLayout, RingCommitment, RingVec, RingView, Schedule,
-    SetupContributionMode, Step, MULTI_GROUP_ROOT_RECURSIVE_SETUP_UNSUPPORTED,
+    dispatch_for_field, validate_schedule_ring_dims, AkitaBatchedProof, AkitaBatchedRootProof,
+    AkitaLevelProof, AkitaSetupSeed, AkitaVerifierSetup, BasisMode, CleartextWitnessProof,
+    Commitment, FpExtEncoding, LevelParams, LevelParamsLike, OpeningClaims, RingCommitment,
+    RingVec, RingView, Schedule, SetupContributionMode, Step,
 };
 use std::array::from_fn;
 
@@ -70,22 +71,6 @@ where
                 return Err(AkitaError::InvalidProof);
             }
         }
-    }
-    Ok(())
-}
-
-fn reject_unsupported_multi_group_root(
-    opening_batch: &OpeningClaimsLayout,
-    setup_contribution_mode: SetupContributionMode,
-) -> Result<(), AkitaError> {
-    if let Some(message) =
-        should_reject_multi_group_root(opening_batch, setup_contribution_mode, None)
-    {
-        return Err(if message == MULTI_GROUP_ROOT_RECURSIVE_SETUP_UNSUPPORTED {
-            AkitaError::InvalidSetup(message.to_string())
-        } else {
-            AkitaError::InvalidProof
-        });
     }
     Ok(())
 }
@@ -444,7 +429,6 @@ where
         .validate(setup.expanded.seed())
         .map_err(|_| AkitaError::InvalidProof)?;
     let opening_batch = claims.layout().map_err(|_| AkitaError::InvalidProof)?;
-    reject_unsupported_multi_group_root(&opening_batch, setup_contribution_mode)?;
     let schedule = effective_batched_schedule::<Cfg>(&opening_batch, claims.point())
         .map_err(|_| AkitaError::InvalidProof)?;
     validate_schedule_ring_dims(&schedule, setup.expanded.seed())?;
@@ -804,12 +788,5 @@ mod tests {
         let well_formed = vec![F::zero(); 2 * D];
         let ok = RingView::new(&well_formed, D).expect("valid flat commitment");
         assert_eq!(ok.num_rings(), 2);
-    }
-
-    #[test]
-    fn reject_unsupported_multi_group_root_allows_direct_multi_group() {
-        let batch = OpeningClaimsLayout::from_group_sizes(4, &[1, 2]).expect("multi-group batch");
-        reject_unsupported_multi_group_root(&batch, SetupContributionMode::Direct)
-            .expect("direct multi-group verification is schedule-validated");
     }
 }

@@ -270,11 +270,25 @@ where
         let relation_weight = multilinear_eval(&self.relation_weight_evals, challenges)?;
         let relation_oracle = w_eval * relation_weight;
         let trace_oracle = if let Some(trace) = &self.trace {
-            // Multi-group roots carry the dense trace-weight table (per-group block
-            // geometry the closed form cannot express); scalar/recursive folds
-            // use the succinct per-claim closed form.
+            // Scalar/recursive folds use one layout; multi-group roots use one
+            // closed-form batch per group because their e-hat segments have
+            // different geometry.
             let trace_weight = if let Some(dense_evals) = &trace.dense_evals {
                 eval_dense_trace_table::<E>(dense_evals, y_challenges, x_challenges)?
+            } else if !trace.trace_term_batches.is_empty() {
+                trace
+                    .trace_term_batches
+                    .iter()
+                    .try_fold(E::zero(), |acc, batch| {
+                        Ok::<E, AkitaError>(
+                            acc + eval_trace_terms_closed::<F, E, D>(
+                                &batch.layout,
+                                y_challenges,
+                                x_challenges,
+                                &batch.terms,
+                            )?,
+                        )
+                    })?
             } else {
                 eval_trace_terms_closed::<F, E, D>(
                     &trace.layout,

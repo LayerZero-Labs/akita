@@ -205,6 +205,7 @@ fn trace_claim_eval_matches_dense_table_for_k1() {
         }],
         trace_coeff: F::from_u64(13),
         trace_opening_claim: F::from_u64(17),
+        trace_term_batches: Vec::new(),
         dense_evals: None,
     };
 

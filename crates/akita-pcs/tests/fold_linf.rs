@@ -245,10 +245,11 @@ fn logging_transcript_event_stream_equality_tail_bound_with_grind() {
         )
         .expect("verify");
 
+        let prover_public = public_transcript_events(prover_transcript.events());
+        let verifier_public = public_transcript_events(verifier_transcript.events());
         assert_eq!(
-            prover_transcript.events(),
-            verifier_transcript.events(),
-            "prover and verifier transcript events must match across fold grind reroll"
+            prover_public, verifier_public,
+            "prover and verifier public transcript events must match across fold grind reroll"
         );
     });
 }

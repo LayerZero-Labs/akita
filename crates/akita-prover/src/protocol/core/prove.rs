@@ -12,16 +12,8 @@ use akita_field::unreduced::ReduceTo;
 use akita_field::{AdditiveGroup, CanonicalField};
 use akita_types::{
     dispatch_for_field, schedule_terminal_direct_witness_shape, should_reject_multi_group_root,
-    validate_schedule_ring_dims, MULTI_GROUP_ROOT_RECURSIVE_SETUP_UNSUPPORTED,
+    validate_schedule_ring_dims,
 };
-
-fn multi_group_root_prover_error(message: &'static str) -> AkitaError {
-    if message == MULTI_GROUP_ROOT_RECURSIVE_SETUP_UNSUPPORTED {
-        AkitaError::InvalidSetup(message.to_string())
-    } else {
-        AkitaError::InvalidInput(message.to_string())
-    }
-}
 
 /// Build a root-direct batched proof from flattened polynomial references and
 /// their commitment-group hints.
@@ -142,14 +134,11 @@ where
     let flat_polys = claims.flat_polys();
     if let Some(message) = should_reject_multi_group_root(
         &opening_batch,
-        setup_contribution_mode,
-        Some(
-            flat_polys
-                .iter()
-                .any(|poly| poly.onehot_chunk_size().is_none()),
-        ),
+        flat_polys
+            .iter()
+            .any(|poly| poly.onehot_chunk_size().is_none()),
     ) {
-        return Err(multi_group_root_prover_error(message));
+        return Err(AkitaError::InvalidInput(message.to_string()));
     }
     let schedule = effective_batched_schedule::<Cfg>(&opening_batch, claims.point())?;
     validate_schedule_ring_dims(&schedule, expanded.seed())?;

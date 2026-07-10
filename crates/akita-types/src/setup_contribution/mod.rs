@@ -8,11 +8,12 @@
 //! challenge point, while the direct verifier scans the packed setup with the
 //! same segment partition.
 
-use akita_field::AkitaError;
+use akita_field::{AkitaError, CanonicalField, FieldCore};
 
 mod geometry;
 mod inputs;
 mod plan;
+mod relation;
 mod setup_index_weight_evaluator;
 mod weights;
 
@@ -28,7 +29,31 @@ pub use plan::{
     SetupContributionGroupInputs, SetupContributionPlan, SetupContributionStatic,
     SingleGroupSetupContributionLayout,
 };
+pub use relation::{prepare_setup_contribution_artifact, SetupContributionArtifact};
 pub use setup_index_weight_evaluator::SetupIndexWeightEvaluator;
+
+/// Shared fold gadget when every setup-contribution group uses the same basis.
+///
+/// Groups may have different fold depths: each group uses the prefix
+/// `gadget[..group.depth_fold]`. Return `None` only when the basis differs and
+/// callers must derive per-group gadgets.
+pub fn shared_setup_fold_gadget<F: FieldCore + CanonicalField>(
+    groups: &[SetupContributionGroupInputs],
+) -> Option<Vec<F>> {
+    let first = groups.first()?;
+    if !groups
+        .iter()
+        .all(|group| group.log_basis == first.log_basis)
+    {
+        return None;
+    }
+    let max_depth = groups
+        .iter()
+        .map(|group| group.depth_fold)
+        .max()
+        .unwrap_or(first.depth_fold);
+    Some(crate::gadget_row_scalars::<F>(max_depth, first.log_basis))
+}
 
 pub(crate) fn push_role_boundaries(
     endpoints: &mut Vec<usize>,

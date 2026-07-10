@@ -521,6 +521,8 @@ impl<F: FieldCore + CanonicalField> RingRelationInstance<F> {
                 self.rhs.coeff_len()
             )));
         }
+        // `EvaluationTrace` is a logical relation row used by Stage 2. It is
+        // not materialized in the quotient witness's shared `r` tail.
         let relation_rhs_rows =
             crate::proof::relation::relation_rhs_row_count(&relation_rhs_layout);
         let r_levels = r_decomp_levels::<F>(lp.log_basis);
@@ -827,7 +829,7 @@ mod tests {
 
     #[test]
     fn relation_segment_layout_uses_same_axis_contract() {
-        use crate::proof::relation::{relation_rhs_row_count, RelationRhsLayout};
+        use crate::proof::relation::RelationRhsLayout;
 
         let lp = test_level_params();
         let opening_batch = OpeningClaimsLayout::new(2, 3).expect("valid batch");
@@ -840,7 +842,9 @@ mod tests {
             0,
             1,
         );
-        let relation_rhs_rows = relation_rhs_row_count(&relation_rhs_layout);
+        let relation_rhs_rows = lp
+            .relation_matrix_row_count_for(1, RelationMatrixRowLayout::WithDBlock)
+            .expect("row count");
         let v_zeros = vec![CyclotomicRing::zero(); relation_rhs_layout.n_d];
         let y_zeros = vec![CyclotomicRing::zero(); relation_rhs_rows];
         let instance = RingRelationInstance::<F>::from_parts::<D>(
@@ -927,14 +931,12 @@ mod tests {
     #[test]
     fn multi_group_segment_layout_total_matches_root_next_w_len() {
         let (lp, opening_batch) = multi_group_one_three_fixture();
-        let relation_rhs_layout = crate::proof::relation::relation_rhs_layout_for(
-            &lp,
-            &opening_batch,
-            RelationMatrixRowLayout::WithDBlock,
-        )
-        .expect("y layout");
-        let relation_rhs_rows =
-            crate::proof::relation::relation_rhs_row_count(&relation_rhs_layout);
+        let relation_rhs_rows = lp
+            .relation_matrix_row_count_for(
+                opening_batch.num_groups(),
+                RelationMatrixRowLayout::WithDBlock,
+            )
+            .expect("row count");
         let opening_point_pre = opening_point(&lp);
         let opening_point_final = opening_point(&lp);
         let ring_multiplier_pre = RingMultiplierOpeningPoint::from_base(&opening_point_pre);
@@ -1000,14 +1002,12 @@ mod tests {
             num_chunks: 2,
             num_activated_levels: 1,
         };
-        let relation_rhs_layout = crate::proof::relation::relation_rhs_layout_for(
-            &lp,
-            &opening_batch,
-            RelationMatrixRowLayout::WithDBlock,
-        )
-        .expect("y layout");
-        let relation_rhs_rows =
-            crate::proof::relation::relation_rhs_row_count(&relation_rhs_layout);
+        let relation_rhs_rows = lp
+            .relation_matrix_row_count_for(
+                opening_batch.num_groups(),
+                RelationMatrixRowLayout::WithDBlock,
+            )
+            .expect("row count");
         let opening_point_pre = opening_point(&lp);
         let opening_point_final = opening_point(&lp);
         let ring_multiplier_pre = RingMultiplierOpeningPoint::from_base(&opening_point_pre);

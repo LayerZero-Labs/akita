@@ -105,8 +105,6 @@ impl<E: FieldCore> RingSwitchVerifyCoreOutput<E> {
 pub struct RelationMatrixEvaluator<F: FieldCore> {
     pub(crate) role_dims: CommitmentRingDims,
     pub(crate) groups: Vec<RelationMatrixGroupEvaluator<F>>,
-    /// Batch-wide fold depth used by setup-sumcheck planning.
-    pub(crate) depth_fold: usize,
     /// Batch-wide basis used by the shared r-tail.
     pub(crate) log_basis: u32,
     /// Canonical semantic and ownership layout for all witness columns.
@@ -292,13 +290,9 @@ where
         .ok_or(AkitaError::InvalidProof)?;
     let col_bits = virtual_field_len.trailing_zeros() as usize;
     let ring_bits = 0;
-    let m_rows =
-        lp.relation_matrix_row_count_for(opening_batch.num_groups(), relation_matrix_row_layout)?;
     let num_sc_vars = col_bits + ring_bits;
-    let num_i = m_rows
-        .checked_next_power_of_two()
-        .ok_or_else(|| AkitaError::InvalidSetup("ring-switch row count overflow".to_string()))?
-        .trailing_zeros() as usize;
+    let num_i =
+        lp.relation_row_index_num_vars_for_layout(relation_matrix_row_layout, opening_batch)?;
 
     let tau0 = match relation_matrix_row_layout {
         RelationMatrixRowLayout::WithDBlock => Some(
@@ -593,7 +587,6 @@ where
     Ok(RelationMatrixEvaluator {
         role_dims: relation.role_dims(),
         groups,
-        depth_fold,
         log_basis: lp.log_basis,
         layout,
         opening_layout: replay.opening_layout,
@@ -754,7 +747,6 @@ where
     Ok(RelationMatrixEvaluator {
         role_dims: lp.role_dims,
         groups,
-        depth_fold,
         log_basis,
         layout,
         opening_layout,

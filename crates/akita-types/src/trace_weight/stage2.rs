@@ -30,6 +30,13 @@ pub enum TracePublicWeights<F: FieldCore, E: FieldCore, const D: usize> {
     },
 }
 
+/// One closed-form trace batch evaluated with its own column geometry.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TraceTermBatch<F: FieldCore, E: FieldCore, const D: usize> {
+    pub layout: TraceWeightLayout,
+    pub terms: Vec<TraceTerm<F, E, D>>,
+}
+
 /// Verifier-side trace claim inputs for the stage-2 sumcheck final check.
 ///
 /// The verifier reconstructs the fused trace term in its short closed form
@@ -55,6 +62,8 @@ pub struct TraceClaim<F: FieldCore, E: FieldCore, const D: usize> {
     /// roots decompose each group with per-group `num_blocks`/`num_digits_open`
     /// and a group-major e-hat offset, which the closed form cannot express.
     pub dense_evals: Option<Vec<E>>,
+    /// Optional closed-form batches with independent layouts.
+    pub trace_term_batches: Vec<TraceTermBatch<F, E, D>>,
 }
 
 /// Whether the trace-weight dispatcher has an algebraic implementation for this
@@ -255,16 +264,6 @@ fn collect_root_trace_claim_items<'a, F: FieldCore, E: FieldCore>(
     Ok(items)
 }
 
-/// Fused trace coefficient: `γ²` on terminal folds, otherwise `batching_coeff²`.
-#[inline]
-pub fn stage2_trace_coeff<E: FieldCore>(batching_coeff: E, trace_gamma: E, is_terminal: bool) -> E {
-    if is_terminal {
-        trace_gamma * trace_gamma
-    } else {
-        batching_coeff * batching_coeff
-    }
-}
-
 /// Build public trace weights for a root opening_batch, optionally scaling each
 /// claim term by an extra public factor such as the EOR final tensor factor.
 pub fn trace_public_weights_root_terms<F, E, const D: usize>(
@@ -459,6 +458,7 @@ where
             claim_scales,
         )?,
         dense_evals: None,
+        trace_term_batches: Vec::new(),
     })
 }
 
@@ -502,6 +502,7 @@ where
         trace_opening_claim: trace_coeff * trace_eval_target,
         trace_terms: Vec::new(),
         dense_evals: Some(table.into_ring_dense()?),
+        trace_term_batches: Vec::new(),
     })
 }
 
