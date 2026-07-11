@@ -199,8 +199,12 @@ Implemented now:
 Still future / guarded:
 
 - Multi-chunk / distributed multi-group witnesses. Today, multi-chunk witness layout
-  combined with precommitted groups is rejected; the distributed design should
-  decide whether all groups must share the same chunk count.
+  combined with precommitted groups is rejected. The finalized ownership design
+  in [`machine-major-distributed-prover.md`](machine-major-distributed-prover.md)
+  uses one outer machine axis: each machine concatenates every group's local
+  segments in relation order and appends its same-shaped local quotient. Keep the
+  guard until the singleton construction passes and a `groups x machines` dense
+  reference test lands.
 - Dense polynomial multi-group roots, recursive setup contribution, and tiered
   multi-group commitments remain guarded.
 - Folded multi-group roots over extension-field openings remain guarded by a

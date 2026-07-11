@@ -4,11 +4,19 @@
 |---------------|----------------------------------------------------------------|
 | Author(s)     | Omid                                                           |
 | Created       | 2026-06-25                                                     |
-| Status        | proposed                                                       |
+| Status        | superseded                                                     |
 | PR            |                                                                |
 | Supersedes    |                                                                |
-| Superseded-by |                                                                |
+| Superseded-by | `machine-major-distributed-prover.md`                           |
 | Book-chapter  | book/src/how/proving/distributed-prover.md                     |
+
+> **Superseded ownership model.** This planner prices the first flattened
+> multi-chunk relation, including one shared quotient tail and a single
+> per-level chunk count used ambiguously for input and output. The replacement
+> planner contract is in
+> [`machine-major-distributed-prover.md`](machine-major-distributed-prover.md).
+> It prices native machine-local quotients, partial-fold bounds, and an explicit
+> `W -> 1` cutover.
 
 ## Summary
 

@@ -13,3 +13,16 @@ and schedule together.
 - `crates/akita-verifier/src/stages/`.
 - Paper §3.5 (`fig:akita-sumcheck`), §3.5.1 `sec:akita-range-check` (optimized digit range check), §4.3 `sec:claim-reduction` (setup product sumcheck).
 - `specs/packed-sumcheck.md`, `specs/setup-product-sumcheck.md`.
+
+## Distributed round aggregation
+
+Distributed proving does not create one transcript per machine. Every machine
+computes the restriction of the same padded global sum-check polynomial to its
+machine-major witness prefix. In each round the coordinator sums the local
+round-polynomial coefficients, absorbs only that sum, and then samples the next
+challenge. The verifier replays the ordinary single transcript.
+
+The same rule applies to the digit-range and relation chains. Every local folded
+response and local quotient segment participates in the generic range proof;
+relation, trace, and setup weights use the native machine-major layout described
+in [The distributed prover](distributed-prover.md).

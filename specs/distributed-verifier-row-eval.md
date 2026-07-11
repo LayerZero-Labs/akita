@@ -5,12 +5,19 @@
 | ------------- | ---------------------------------- |
 | Author(s)     | Omid; Freya                               |
 | Created       | 2026-06-19                         |
-| Status        | proposed                           |
+| Status        | superseded                         |
 | PR            |                                    |
 | Supersedes    |                                    |
-| Superseded-by |                                    |
+| Superseded-by | `machine-major-distributed-prover.md` |
 | Book-chapter  | how/verifying/matrix_evaluation.md |
 
+
+> **Superseded layout.** The chunk-list evaluator in this document describes
+> the first single-host multi-chunk relation. It does not define recursive
+> machine ownership. The native hierarchical verifier target is specified in
+> [`machine-major-distributed-prover.md`](machine-major-distributed-prover.md):
+> machine-major globally, block-fast locally, with a local quotient segment in
+> every machine witness.
 
 ## Summary
 

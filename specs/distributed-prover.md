@@ -4,11 +4,20 @@
 |---------------|----------------------------------------------------------------|
 | Author(s)     | Omid                                                           |
 | Created       | 2026-06-26                                                    |
-| Status        | proposed                                                      |
+| Status        | superseded                                                    |
 | PR            |                                                                |
 | Supersedes    |                                                                |
-| Superseded-by |                                                                |
+| Superseded-by | `machine-major-distributed-prover.md`                           |
 | Book-chapter  | book/src/how/proving/distributed-prover.md                     |
+
+> **Superseded layout.** This document records the first implemented
+> single-host multi-chunk relation. Its flattened
+> `[z_0|e_0|t_0]...|r` layout is not a valid recursive ownership model for a
+> real distributed prover. The replacement protocol is
+> [`machine-major-distributed-prover.md`](machine-major-distributed-prover.md).
+> The replacement keeps one native locally block-fast witness and one local
+> quotient per machine; it never reinterprets their concatenation through one
+> monolithic `RecursiveWitnessFlat`.
 
 ## Summary
 

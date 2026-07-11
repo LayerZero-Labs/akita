@@ -28,3 +28,16 @@ and where singleton openings sit as the 1×1 special case.
 
 - `crates/akita-types/src/proof/levels.rs:749-853`, `proof/batch.rs`, `proof/opening_batch.rs`.
 - `crates/akita-types/src/sis/decomposition_digits.rs` (`decomp_depths`).
+
+## Distributed-to-single cutover
+
+A distributed prefix and a single-machine suffix meet at an explicit cutover
+fold. Its input remains a batch of machine-major, locally block-fast witnesses;
+the machines perform the large fold and sum-check work without exchanging those
+witnesses. Only after the fold has reduced the state do they aggregate the
+smaller output and emit one ordinary recursive witness for the suffix prover.
+
+The schedule therefore distinguishes the input machine count from the output
+machine count. A cutover level with `input_machines = W` and
+`output_machines = 1` must not flatten its input and pass it to the monolithic
+recursive backend. See [The distributed prover](proving/distributed-prover.md).
