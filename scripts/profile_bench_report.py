@@ -717,6 +717,24 @@ def extract_summary(
             summary["verify_akita_s"] = float(kvs["elapsed_s"])
         elif "verify OK" in line and kvs.get("label") == mode:
             summary["verify_total_s"] = float(kvs["elapsed_s"])
+        elif "verifier work summary" in line and kvs.get("label") == mode:
+            for field in (
+                "relation_groups",
+                "relation_chunks",
+                "direct_setup_evals",
+                "direct_setup_ring_visits",
+                "direct_setup_segments",
+                "stage3_instances",
+                "setup_rings_scanned",
+                "setup_eq_elements",
+                "ring_eq_elements",
+                "setup_weight_succinct_evals",
+                "setup_weight_plan_evals",
+                "setup_weight_factored_groups",
+                "setup_weight_segment_groups",
+                "setup_weight_segments",
+            ):
+                summary[field] = int(kvs[field])
         elif "proof summary" in line and kvs.get("label") == mode:
             summary["proof_size_bytes"] = int(kvs["proof_size_bytes"])
             summary["accounted_bytes"] = int(kvs["accounted_bytes"])

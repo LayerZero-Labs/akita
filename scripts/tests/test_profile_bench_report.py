@@ -96,6 +96,26 @@ class ProfileBenchReportTests(unittest.TestCase):
         self.assertEqual(summary["z_rice_low_bits_cap"], 12)
         self.assertAlmostEqual(summary["z_bits_per_coord_golomb"], 12.5)
 
+    def test_extracts_verifier_work_summary(self) -> None:
+        from scripts.profile_bench_report import extract_summary
+
+        log = (
+            'INFO verifier work summary label=onehot_fp128_d64 '
+            'relation_groups=6 relation_chunks=21 direct_setup_evals=7 '
+            'direct_setup_ring_visits=136296 direct_setup_segments=45 '
+            'stage3_instances=6 setup_rings_scanned=134704 setup_eq_elements=202752 '
+            'ring_eq_elements=384 setup_weight_succinct_evals=0 '
+            'setup_weight_plan_evals=6 setup_weight_factored_groups=0 '
+            'setup_weight_segment_groups=6 setup_weight_segments=40\n'
+        )
+        summary = extract_summary(
+            log, mode="onehot_fp128_d64", num_vars=25, num_polys=1
+        )
+        self.assertEqual(summary["relation_chunks"], 21)
+        self.assertEqual(summary["direct_setup_ring_visits"], 136296)
+        self.assertEqual(summary["setup_rings_scanned"], 134704)
+        self.assertEqual(summary["setup_weight_plan_evals"], 6)
+
     def test_configured_cases_treats_setup_mode_as_case_dimension(self) -> None:
         from scripts.profile_bench_report import configured_cases
 

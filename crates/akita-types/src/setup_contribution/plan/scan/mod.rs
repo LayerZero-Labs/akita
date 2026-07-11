@@ -1,6 +1,7 @@
 mod group;
 
 use super::*;
+use crate::verifier_work::{record_verifier_work, VerifierWorkEvent};
 
 impl<E: FieldCore> SetupContributionPlan<E> {
     pub fn evaluate_direct<F>(
@@ -14,6 +15,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
         F: FieldCore + CanonicalField,
         E: ExtField<F> + MulBaseUnreduced<F>,
     {
+        record_verifier_work(VerifierWorkEvent::DirectSetupEval);
         self.evaluate_role_dims_direct(setup, alpha_pows_a, alpha_pows_b, alpha_pows_d)
     }
 

@@ -1,6 +1,7 @@
 use crate::report::{
-    emit_proof_tail_report, emit_runtime_schedule_summary, observed_stage3_setup_product_bytes,
-    print_batched_proof_summary, report_crt_profile, report_setup_sizes, report_timing,
+    emit_proof_tail_report, emit_runtime_schedule_summary, emit_verifier_work_report,
+    observed_stage3_setup_product_bytes, print_batched_proof_summary, report_crt_profile,
+    report_setup_sizes, report_timing,
 };
 use akita_config::{CommitmentConfig, ConservativeCommitmentConfig};
 use akita_field::unreduced::{HasOptimizedFold, HasUnreducedOps, HasWide, ReduceTo};
@@ -19,11 +20,12 @@ use akita_prover::{ComputeBackendSetup, CpuBackend};
 use akita_serialization::{AkitaSerialize, Valid};
 use akita_transcript::AkitaTranscript;
 use akita_types::{
-    lagrange_weights, reduce_inner_opening_to_ring_element, ring_opening_point_from_field,
-    schedule_terminal_direct_witness_shape, AkitaBatchedProof, AkitaCommitmentHint, BasisMode,
-    BlockOrder, CleartextWitnessProof, CleartextWitnessShape, Commitment, FpExtEncoding,
-    LevelParams, OpeningClaims, OpeningClaimsLayout, PointVariableSelection, PolynomialGroupClaims,
-    PolynomialGroupLayout, PrecommittedGroupParams, Schedule, SetupContributionMode, Step,
+    lagrange_weights, reduce_inner_opening_to_ring_element, reset_verifier_work_counters,
+    ring_opening_point_from_field, schedule_terminal_direct_witness_shape, AkitaBatchedProof,
+    AkitaCommitmentHint, BasisMode, BlockOrder, CleartextWitnessProof, CleartextWitnessShape,
+    Commitment, FpExtEncoding, LevelParams, OpeningClaims, OpeningClaimsLayout,
+    PointVariableSelection, PolynomialGroupClaims, PolynomialGroupLayout, PrecommittedGroupParams,
+    Schedule, SetupContributionMode, Step,
 };
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
@@ -523,6 +525,7 @@ fn run_prove<
         );
     }
 
+    reset_verifier_work_counters();
     let t0 = Instant::now();
     let verifier_setup = AkitaCommitmentScheme::<Cfg>::setup_verifier(setup);
     let mut verifier_transcript = AkitaTranscript::<FF>::new(b"profile");
@@ -534,9 +537,13 @@ fn run_prove<
         BasisMode::Lagrange,
         setup_contribution_mode,
     ) {
-        Ok(()) => report_timing(label, "verify OK", t0.elapsed().as_secs_f64()),
+        Ok(()) => {
+            report_timing(label, "verify OK", t0.elapsed().as_secs_f64());
+            emit_verifier_work_report(label);
+        }
         Err(e) => {
             let elapsed_s = t0.elapsed().as_secs_f64();
+            emit_verifier_work_report(label);
             tracing::error!(label, elapsed_s, error = %e, "verify FAILED");
             eprintln!("[{label}] verify FAILED: {elapsed_s:.6}s ({e})");
             panic!("[{label}] profile verification failed: {e}");
@@ -917,6 +924,7 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
         );
     }
 
+    reset_verifier_work_counters();
     let t0 = Instant::now();
     let verifier_setup = AkitaCommitmentScheme::<Cfg>::setup_verifier(&setup);
     let mut verifier_transcript = AkitaTranscript::<FF>::new(b"profile");
@@ -928,9 +936,13 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
         BasisMode::Lagrange,
         setup_contribution_mode,
     ) {
-        Ok(()) => report_timing(label, "verify OK", t0.elapsed().as_secs_f64()),
+        Ok(()) => {
+            report_timing(label, "verify OK", t0.elapsed().as_secs_f64());
+            emit_verifier_work_report(label);
+        }
         Err(e) => {
             let elapsed_s = t0.elapsed().as_secs_f64();
+            emit_verifier_work_report(label);
             tracing::error!(label, elapsed_s, error = %e, "verify FAILED");
             eprintln!("[{label}] verify FAILED: {elapsed_s:.6}s ({e})");
             panic!("[{label}] batched profile verification failed: {e}");
@@ -1171,6 +1183,7 @@ pub(crate) fn run_recursive_multi_group_onehot<FF, const D: usize, Cfg>(
         .expect("final verifier group"),
     );
 
+    reset_verifier_work_counters();
     let t_verify = Instant::now();
     let verifier_setup = AkitaCommitmentScheme::<Cfg>::setup_verifier(&setup);
     let mut verifier_transcript = AkitaTranscript::<FF>::new(b"profile");
@@ -1182,9 +1195,13 @@ pub(crate) fn run_recursive_multi_group_onehot<FF, const D: usize, Cfg>(
         BasisMode::Lagrange,
         setup_contribution_mode,
     ) {
-        Ok(()) => report_timing(label, "verify OK", t_verify.elapsed().as_secs_f64()),
+        Ok(()) => {
+            report_timing(label, "verify OK", t_verify.elapsed().as_secs_f64());
+            emit_verifier_work_report(label);
+        }
         Err(e) => {
             let elapsed_s = t_verify.elapsed().as_secs_f64();
+            emit_verifier_work_report(label);
             tracing::error!(label, elapsed_s, error = %e, "verify FAILED");
             eprintln!("[{label}] verify FAILED: {elapsed_s:.6}s ({e})");
             panic!("[{label}] multi-group profile verification failed: {e}");

@@ -1,4 +1,5 @@
 use super::super::*;
+use crate::verifier_work::{record_verifier_work, VerifierWorkEvent};
 
 enum BaseRingSegments<'a, E> {
     /// Identity projection: borrow the cached logical segment partition.
@@ -48,6 +49,7 @@ impl<E: FieldCore> SetupContributionGroupPlan<E> {
 
         if a_projection.is_identity() && b_projection.is_identity() && d_projection.is_identity() {
             let (_, segments) = self.packed_segments(d_rows, d_physical_cols)?;
+            record_direct_segments(segments);
             let sum = cfg_fold_reduce!(
                 0..segments.len(),
                 E::zero,
@@ -91,6 +93,7 @@ impl<E: FieldCore> SetupContributionGroupPlan<E> {
         let a_row_weights = ProjectedRoleWeights::new(&self.a_row_weights, a_projection);
 
         let segment_slice = segments.as_slice();
+        record_direct_segments(segment_slice);
         let sum = cfg_fold_reduce!(
             0..segment_slice.len(),
             E::zero,
@@ -306,6 +309,15 @@ impl<E: FieldCore> SetupContributionGroupPlan<E> {
             })?;
         Ok(d_required.max(b_required).max(a_required))
     }
+}
+
+fn record_direct_segments<E>(segments: &[GroupSetupSegment<E>]) {
+    let visits = segments
+        .iter()
+        .map(|segment| segment.hi.saturating_sub(segment.lo) as u64)
+        .sum();
+    record_verifier_work(VerifierWorkEvent::DirectSetupSegments(segments.len() as u64));
+    record_verifier_work(VerifierWorkEvent::DirectSetupRingVisits(visits));
 }
 
 fn push_projected_role_boundaries(

@@ -34,6 +34,7 @@ parallel = [
   "akita-field/parallel",
   "akita-sumcheck/parallel",
 ]
+verifier-work-counters = ["akita-types/verifier-work-counters"]
 
 [lints]
 workspace = true

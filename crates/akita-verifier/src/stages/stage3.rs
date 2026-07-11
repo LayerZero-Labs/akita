@@ -11,6 +11,7 @@ use akita_transcript::labels::{
     ABSORB_SETUP_PREFIX_SLOT, ABSORB_SUMCHECK_CLAIM, CHALLENGE_SUMCHECK_ROUND,
 };
 use akita_transcript::{sample_ext_challenge, Transcript};
+use akita_types::verifier_work::{record_verifier_work, VerifierWorkEvent};
 use akita_types::{
     dispatch_for_field, ensure_setup_envelope, select_setup_prefix_slot, shared_setup_fold_gadget,
     stage3_offload_natural_field_len, AkitaExpandedSetup, AkitaVerifierSetup, LevelParams,
@@ -220,6 +221,7 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
         E: ExtField<F> + FromPrimitiveInt + AkitaSerialize + akita_field::MulBaseUnreduced<F>,
         T: Transcript<F>,
     {
+        record_verifier_work(VerifierWorkEvent::Stage3Instance);
         let batched_rounds = self.rounds.max(witness_rounds);
         transcript.append_serde(
             ABSORB_SUMCHECK_CLAIM,
@@ -251,10 +253,19 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
         )?;
         let setup_index_weight = match &self.setup_index_weight_evaluator {
             Some(evaluator) => match evaluator.evaluate(rho_setup_idx)? {
-                Some(value) => value,
-                None => self.plan.evaluate_setup_index_weight_mle(rho_setup_idx)?,
+                Some(value) => {
+                    record_verifier_work(VerifierWorkEvent::SetupWeightSuccinctEval);
+                    value
+                }
+                None => {
+                    record_verifier_work(VerifierWorkEvent::SetupWeightPlanEval);
+                    self.plan.evaluate_setup_index_weight_mle(rho_setup_idx)?
+                }
             },
-            None => self.plan.evaluate_setup_index_weight_mle(rho_setup_idx)?,
+            None => {
+                record_verifier_work(VerifierWorkEvent::SetupWeightPlanEval);
+                self.plan.evaluate_setup_index_weight_mle(rho_setup_idx)?
+            }
         };
         let alpha_val = eval_dense_table_with_eq(&self.alpha_pows, &eq_y)?;
         let witness_scale = lift_scale::<E>(batched_rounds - witness_rounds)?;
@@ -288,7 +299,9 @@ fn setup_idx_eq_table<E: FieldCore>(
     if rho_setup_idx.len() != setup_idx_len.trailing_zeros() as usize {
         return Err(AkitaError::InvalidProof);
     }
-    EqPolynomial::evals(rho_setup_idx)
+    let table = EqPolynomial::evals(rho_setup_idx)?;
+    record_verifier_work(VerifierWorkEvent::SetupEqElements(table.len() as u64));
+    Ok(table)
 }
 
 fn ring_eq_table<E: FieldCore, const D: usize>(rho_y: &[E]) -> Result<Vec<E>, AkitaError> {
@@ -302,6 +315,7 @@ fn ring_eq_table<E: FieldCore, const D: usize>(rho_y: &[E]) -> Result<Vec<E>, Ak
             actual: eq_y.len(),
         });
     }
+    record_verifier_work(VerifierWorkEvent::RingEqElements(eq_y.len() as u64));
     Ok(eq_y)
 }
 
@@ -356,6 +370,7 @@ where
     }
     let setup_view = setup.shared_matrix().ring_view::<D>(1, setup_eval_len)?;
     let setup_entries = setup_view.as_slice();
+    record_verifier_work(VerifierWorkEvent::SetupRingsScanned(required as u64));
 
     Ok(cfg_fold_reduce!(
         0..required,

@@ -46,6 +46,8 @@ parallel = [
 ]
 schedules-default = ["akita-config/schedules-default"]
 profile-ci = [
+  "akita-types/verifier-work-counters",
+  "akita-verifier/verifier-work-counters",
   "akita-config/schedules-fp32-d128-onehot",
   "akita-config/schedules-fp64-d128-onehot",
   "akita-config/schedules-fp128-d64-onehot",

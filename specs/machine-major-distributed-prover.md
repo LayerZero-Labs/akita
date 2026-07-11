@@ -803,6 +803,35 @@ Deliverable: a checked-in benchmark table for `origin/main` that separates
 intrinsic extra rounds/columns from repeated evaluator work. No layout or proof
 bytes change in S0.
 
+#### S0 baseline captured on 2026-07-11
+
+The instrumentation-only branch runs the same verifier algorithms and shipped
+schedules as `origin/main`. One release sample at `nv=25`, q128/D64 one-hot,
+compares the ordinary schedule with W8R2. Times are diagnostic rather than a CI
+threshold; operation counts are deterministic.
+
+Direct setup contribution:
+
+| Profile | Verify | Relation groups | Chunk bodies | Direct setup evaluations | Setup ring visits | Setup segments |
+|---------|-------:|----------------:|-------------:|-------------------------:|------------------:|---------------:|
+| W1 | 7.961 ms | 6 | 6 | 6 | 49,461 | 37 |
+| W8R2 | 20.188 ms | 7 | 21 | 7 | 136,296 | 45 |
+| ratio | 2.54x | 1.17x | 3.50x | 1.17x | 2.76x | 1.22x |
+
+Recursive setup contribution:
+
+| Profile | Verify | Stage 3 instances | Setup ring scans | Setup-index eq elements | Ring eq elements | Succinct weights | Generic-plan weights | Packed segments |
+|---------|-------:|------------------:|-----------------:|------------------------:|-----------------:|-----------------:|---------------------:|----------------:|
+| W1 | 9.081 ms | 5 | 47,933 | 52,224 | 320 | 0 | 5 | 32 |
+| W8R2 | 20.807 ms | 6 | 134,704 | 202,752 | 384 | 0 | 6 | 40 |
+| ratio | 2.29x | 1.20x | 2.81x | 3.88x | 1.20x | — | 1.20x | 1.25x |
+
+The extra level/round work is visible in group, Stage 3, and ring-coordinate
+counts (1.17--1.20x). It does not explain setup work growing 2.76--3.88x or
+relation chunk bodies growing 3.50x. Both recursive profiles also bypass the
+succinct setup-weight evaluator entirely in this shipped mixed-role schedule.
+These counts establish the first optimization targets for S5.
+
 ### S1: Replace ambiguous schedule geometry
 
 Make input and output ownership explicit before changing witness bytes.

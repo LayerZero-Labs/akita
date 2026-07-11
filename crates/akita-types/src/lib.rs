@@ -29,6 +29,7 @@ pub mod sis;
 pub mod tail_golomb_rice_low_bits;
 pub mod trace_weight;
 pub mod transcript;
+pub mod verifier_work;
 pub mod witness;
 
 pub use config::{DecompositionParams, SetupContributionMode};
@@ -150,6 +151,9 @@ pub use trace_weight::{
     TraceSparseColumn, TraceTable, TraceTerm, TraceWeightLayout,
 };
 pub use transcript::AppendToTranscript;
+pub use verifier_work::{
+    reset_verifier_work_counters, verifier_work_counters, VerifierWorkCounters,
+};
 pub use witness::{
     ChunkedWitnessCfg, MultiChunkProfileId, WitnessChunkLayout, WitnessChunkLengths, WitnessLayout,
     MAX_WITNESS_CHUNKS,

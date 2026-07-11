@@ -5,9 +5,10 @@ use akita_types::{
     golomb_rice::{golomb_rice_low_bits_sweep_payload_bytes, rice_low_bits_for_cap},
     layout::proof_size::field_bytes,
     schedule_terminal_direct_witness_shape, tail_segment_multiplicities_from_layout,
-    z_fold_decoded_from_segment, z_fold_encoding_stats_from_segment, AkitaBatchedProof,
-    AkitaBatchedRootProof, AkitaLevelProof, CleartextWitnessProof, CleartextWitnessShape,
-    LevelParams, Schedule, SetupSumcheckProof, Step, TerminalLevelProof, ZFoldEncodingStats,
+    verifier_work_counters, z_fold_decoded_from_segment, z_fold_encoding_stats_from_segment,
+    AkitaBatchedProof, AkitaBatchedRootProof, AkitaLevelProof, CleartextWitnessProof,
+    CleartextWitnessShape, LevelParams, Schedule, SetupSumcheckProof, Step, TerminalLevelProof,
+    ZFoldEncodingStats,
 };
 
 const TAIL_Z_LENGTH_PREFIX_BYTES: usize = 8;
@@ -15,6 +16,47 @@ const TAIL_Z_LENGTH_PREFIX_BYTES: usize = 8;
 pub(crate) fn report_timing(label: &str, phase: &str, elapsed_s: f64) {
     tracing::info!(label, elapsed_s, "{phase}");
     eprintln!("[{label}] {phase}: {elapsed_s:.6}s");
+}
+
+pub(crate) fn emit_verifier_work_report(label: &str) {
+    let work = verifier_work_counters();
+    tracing::info!(
+        label,
+        relation_groups = work.relation_groups,
+        relation_chunks = work.relation_chunks,
+        direct_setup_evals = work.direct_setup_evals,
+        direct_setup_ring_visits = work.direct_setup_ring_visits,
+        direct_setup_segments = work.direct_setup_segments,
+        stage3_instances = work.stage3_instances,
+        setup_rings_scanned = work.setup_rings_scanned,
+        setup_eq_elements = work.setup_eq_elements,
+        ring_eq_elements = work.ring_eq_elements,
+        setup_weight_succinct_evals = work.setup_weight_succinct_evals,
+        setup_weight_plan_evals = work.setup_weight_plan_evals,
+        setup_weight_factored_groups = work.setup_weight_factored_groups,
+        setup_weight_segment_groups = work.setup_weight_segment_groups,
+        setup_weight_segments = work.setup_weight_segments,
+        "verifier work summary"
+    );
+    eprintln!(
+        "[{label}] verifier work: relation_groups={} relation_chunks={} direct_setup={} \
+         direct_rings={} direct_segments={} stage3={} setup_rings={} setup_eq={} ring_eq={} \
+         weight_succinct={} weight_plan={} factored_groups={} segment_groups={} segments={}",
+        work.relation_groups,
+        work.relation_chunks,
+        work.direct_setup_evals,
+        work.direct_setup_ring_visits,
+        work.direct_setup_segments,
+        work.stage3_instances,
+        work.setup_rings_scanned,
+        work.setup_eq_elements,
+        work.ring_eq_elements,
+        work.setup_weight_succinct_evals,
+        work.setup_weight_plan_evals,
+        work.setup_weight_factored_groups,
+        work.setup_weight_segment_groups,
+        work.setup_weight_segments,
+    );
 }
 
 /// Structured tail witness report for profile bench / CI (`scripts/profile_bench_report.py`).

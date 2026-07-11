@@ -13,6 +13,7 @@ use akita_transcript::labels::{
     CHALLENGE_TAU0, CHALLENGE_TAU1,
 };
 use akita_transcript::{sample_ext_challenge, Transcript};
+use akita_types::verifier_work::{record_verifier_work, VerifierWorkEvent};
 use akita_types::{
     gadget_row_scalars, prepare_setup_contribution_artifact, r_decomp_levels,
     validate_role_dispatch, AkitaExpandedSetup, CommitmentRingDims, FpExtEncoding, LevelParams,
@@ -823,6 +824,8 @@ impl<E: FieldCore> RelationMatrixEvaluator<E> {
             let _span = tracing::info_span!("structured_chunks").entered();
             for group in &self.groups {
                 let chunks = self.group_chunks(group)?;
+                record_verifier_work(VerifierWorkEvent::RelationGroup);
+                record_verifier_work(VerifierWorkEvent::RelationChunks(chunks.len() as u64));
                 let blocks_per_chunk = if chunks.len() == 1 {
                     group.num_blocks
                 } else {

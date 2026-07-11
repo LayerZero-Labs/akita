@@ -1,4 +1,5 @@
 use super::*;
+use crate::verifier_work::{record_verifier_work, VerifierWorkEvent};
 use akita_algebra::offset_eq::eval_offset_eq_interval;
 
 impl<E: FieldCore> SetupContributionPlan<E> {
@@ -75,9 +76,12 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                 self.d_rows,
                 self.d_physical_cols,
             )? {
+                record_verifier_work(VerifierWorkEvent::SetupWeightFactoredGroup);
                 acc += value;
             } else {
                 let (_, segments) = group.packed_segments(self.d_rows, self.d_physical_cols)?;
+                record_verifier_work(VerifierWorkEvent::SetupWeightSegmentGroup);
+                record_verifier_work(VerifierWorkEvent::SetupWeightSegments(segments.len() as u64));
                 let group_sum = cfg_fold_reduce!(
                     0..segments.len(),
                     || Ok::<E, AkitaError>(E::zero()),

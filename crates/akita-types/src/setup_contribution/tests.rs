@@ -273,11 +273,34 @@ fn setup_index_weight_evaluator_matches_packed_mle_multi_chunk() {
     )
     .unwrap();
     assert_eq!(evaluator.required(), plan.required().unwrap());
+    assert!(
+        !evaluator.prefers_succinct_path(),
+        "main deliberately routes multi-chunk setup weights through the generic plan"
+    );
 
     let rho = rho_for_required(evaluator.required());
     let got = evaluator.evaluate(&rho).unwrap().expect("supported layout");
     let expected = plan.evaluate_setup_index_weight_mle(&rho).unwrap();
     assert_eq!(got, expected);
+}
+
+#[test]
+fn setup_index_weight_evaluator_prefers_succinct_single_chunk_only() {
+    let (inputs, groups, static_plan, _, tau1, full_vec_randomness, fold_gadget) =
+        structured_weight_fixture(8, 8);
+    let evaluator = SetupIndexWeightEvaluator::new::<F>(
+        &inputs,
+        &static_plan,
+        &groups,
+        &tau1,
+        &full_vec_randomness,
+        &fold_gadget,
+        TEST_D,
+        crate::CommitmentRingDims::uniform(TEST_D),
+        test_scalar(3),
+    )
+    .unwrap();
+    assert!(evaluator.prefers_succinct_path());
 }
 
 #[test]
