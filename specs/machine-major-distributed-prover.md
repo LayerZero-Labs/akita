@@ -564,50 +564,283 @@ or select PR #294's universal digit-fast layout as a fallback.
 - `W = 1` is byte-identical to the ordinary single-machine layout.
 - ZK with `W > 1` remains explicitly unsupported in the initial PR.
 
-## Implementation sequence inside the PR
+## Implementation sequence and expected diffs
 
-These are review checkpoints in one spec-and-implementation PR, not separate
-protocol variants.
+These are ordered review checkpoints in one spec-and-implementation PR. Each
+checkpoint must compile and pass its focused tests before the next begins. The
+order separates four failure classes: layout, algebra, verifier cost, and
+process orchestration.
 
-### S0: Layout authority
+### Migration rules
 
-Add the hierarchical layout and dense independent index oracle. Freeze the
-machine-major order, local block-fast order, virtual zero suffix, input/output
-machine counts, and descriptor bytes before changing prover behavior.
+The following rules apply throughout the implementation:
 
-### S1: Native local relations and quotients
+1. There is one production layout authority at every commit. A temporary dense
+   oracle may coexist under `#[cfg(test)]`, but two selectable production
+   layouts may not.
+2. No compatibility adapter may flatten `DistributedRecursiveWitness` and call
+   `SuffixWitnessView`. Consumers move to the hierarchical source directly.
+3. `W = 1` remains on the ordinary single-machine types and byte path. Do not
+   emulate it with a one-element distributed batch.
+4. The process runtime is not introduced until the complete single-host
+   hierarchical path proves and verifies. It orchestrates already-correct local
+   providers; it does not define protocol arithmetic.
+5. Generated schedules change only after the planner prices the new runtime
+   shape. Hand-edited generated rows are forbidden.
+6. The old shared-quotient and flat-chunk path may remain temporarily only until
+   the native path reaches end-to-end parity. At that checkpoint it is deleted,
+   not retained behind a flag.
+7. Every performance-sensitive checkpoint records operation counts before wall
+   time. An implementation does not advance while a dominant scan unexpectedly
+   gains a factor of `W`.
 
-Teach the single-host harness to build `W` local witnesses, local partial
-right-hand sides, and local quotient segments. Check every local lifted identity
-and their global sum. Remove the shared quotient tail from distributed layouts.
+### S0: Freeze the `origin/main` baseline
 
-### S2: Recursive consumers
+Before protocol changes, add instrumentation that explains verifier work rather
+than relying only on elapsed time.
 
-Move opening, folding, commitment, relation-column, trace, setup, and terminal
-kernels from a monolithic recursive source to native local witnesses. No caller
-may flatten and reinterpret the batch.
+Expected diffs:
 
-### S3: Distributed sum-check oracle
+- `crates/akita-types/src/setup_contribution/`: add test/profile counters for A,
+  B, and D entries scanned, setup alpha evaluations, equality-table elements,
+  and packed-segment fallbacks. Counters must be compiled out or no-op outside
+  tests/profiling.
+- `crates/akita-verifier/src/protocol/ring_switch.rs` and
+  `crates/akita-verifier/src/stages/stage3.rs`: attribute relation, trace, and
+  setup work without changing evaluator selection.
+- `crates/akita-pcs/examples/profile/`: report counters, verifier allocations,
+  proof rounds, and `W` beside wall time for the existing W1/W2/W4/W8 profiles.
 
-Run the sum-check prover as a sum of local round-polynomial providers. Establish
-round-by-round equality with an independent dense global table before optimizing
-structured evaluators.
+Deliverable: a checked-in benchmark table for `origin/main` that separates
+intrinsic extra rounds/columns from repeated evaluator work. No layout or proof
+bytes change in S0.
 
-Add the process-level collective runtime in the same slice. The existing
-single-host implementation remains only as an oracle and fallback for `W = 1`;
-it is not the shipped distributed path.
+### S1: Replace ambiguous schedule geometry
 
-### S4: Planner and cutover
+Make input and output ownership explicit before changing witness bytes.
 
-Price local quotients and partial-fold bounds, separate input/output ownership,
-regenerate schedules, and implement the hierarchical-input to single-output
-cutover fold.
+Expected diffs:
 
-### S5: Cleanup and documentation
+- `crates/akita-types/src/witness.rs`: add descriptor-bound
+  `DistributedOwnershipGeometry` containing input/output machine counts, local
+  block windows, and cutover validation, but no witness-segment offsets. The
+  existing shared-tail `WitnessLayout` remains the production byte-layout
+  authority only until the atomic S3 cutover.
+- `crates/akita-types/src/layout/params.rs`: replace the per-level ambiguous
+  `witness_chunk` interpretation with descriptor-bound `input_machines` and
+  `output_machines`. Preserve `ChunkedWitnessCfg` only as a planner policy input
+  until S7; it is not a resolved protocol geometry.
+- `crates/akita-types/src/schedule.rs` and proof-shape/descriptor code: bind both
+  counts and all local geometry. Validation checks `input_machines` against the
+  predecessor and `output_machines` against the current fold output.
+- `crates/akita-planner/src/catalog_identity.rs` and generated schedule identity:
+  hash the new geometry in canonical field order.
 
-Delete the superseded flattened chunk layout, stale shared-tail helpers, and any
-universal digit-fast fallback. Fold the final behavior into the Book and update
-the superseded spec headers in the same PR.
+The canonical geometry constructor takes block counts and machine counts and
+returns ownership windows. Callers may not reconstruct those windows manually.
+Its independent test oracle uses the equations in this spec, not production
+indexing methods.
+
+Deliverable: geometry and serialization tests for W1/W2/W4/W8 and invalid
+predecessor/output transitions. No witness ranges, prover behavior, or proof
+bytes change in S1.
+
+### S2: Introduce the hierarchical witness source
+
+Change ownership in the recursive backend without yet changing the relation.
+
+Expected diffs:
+
+- `crates/akita-prover/src/backend/recursive/witness.rs`: keep
+  `RecursiveWitnessFlat` as the owner of one machine-local buffer; add
+  `DistributedRecursiveWitness { machines: Vec<RecursiveWitnessFlat> }` with
+  layout-checked construction. Add a borrowed machine-local block-fast source
+  used by kernels.
+- Commitment/opening compute plans in `crates/akita-prover/src/compute/`: accept
+  a batch of local sources and explicit local geometry. Do not add a method that
+  concatenates digits or forwards to the flat plan.
+- CPU kernels: loop over local sources at the outer boundary and reuse the
+  existing block-fast inner kernels. Return one local contribution per machine;
+  reduction occurs at the protocol layer.
+
+Deliverable: local opening, fold, inner commitment, and outer commitment match a
+dense machine-major oracle. A test records that no local kernel calls
+`block_elem` with another machine's block range.
+
+### S3: Emit native local relations and local quotients
+
+Move ring-switch construction to the final distributed witness shape.
+
+Expected diffs:
+
+- `crates/akita-types/src/witness.rs`: define the target
+  `DistributedWitnessLayout` and `MachineWitnessLayout`. A machine layout owns
+  local `z/e/t/r` ranges, live length, virtual stride, local blocks, and global
+  block base; it never has `Option<r_len>`. The canonical constructor returns
+  all ranges and validates equal local shapes and the exact `WP` domain. During
+  S3 these types are exercised by the native test/oracle path; the existing
+  layout remains the sole production authority until the S4 atomic cutover.
+- `crates/akita-prover/src/protocol/fold_grind.rs`: return accepted local
+  `z_j` witnesses as the primary output. Stop aggregating them into a global
+  fold during distributed output levels. Acceptance requires every scheduled
+  local norm check.
+- `crates/akita-prover/src/protocol/ring_relation.rs`: build `h_j` and the native
+  local `M_j [z_j|e_j|t_j]` contribution for each machine.
+- `crates/akita-prover/src/protocol/ring_relation/relation_quotient.rs`: compute
+  and decompose one complete-row `r_j` per machine, then emit
+  `[z_j|e_j|t_j|rhat_j]` directly into its `RecursiveWitnessFlat`.
+- `crates/akita-types/src/proof/relation_matrix_cols.rs`: materialize native
+  machine-major columns for the prover only; keep the dense implementation as a
+  test oracle, not as the verifier path.
+
+Deliverable: every local lifted identity passes independently, their sum equals
+the public relation, every local quotient digit is range-checked, and a fixture
+guards against assuming additive digit decomposition.
+
+### S4: Cut over recursive prover consumers atomically
+
+Make `prove_fold` consume and produce ownership-aware state end to end. This is
+the point at which the old flat distributed production path is removed.
+
+Expected diffs:
+
+- `crates/akita-prover/src/protocol/core/fold.rs`: replace the single
+  `logical_w` flow with an enum or state type that distinguishes ordinary
+  single-machine and distributed witnesses. Dispatch once at the fold boundary,
+  not inside arithmetic loops.
+- `crates/akita-prover/src/protocol/core/{root_fold,suffix}.rs`: root assembly
+  emits machine-local buffers; suffix levels preserve them while
+  `output_machines > 1`.
+- `crates/akita-prover/src/protocol/ring_switch/{commit,finalize,evals}.rs`:
+  accept hierarchical sources and return local evaluation providers.
+- `crates/akita-prover/src/protocol/sumcheck/`: expose one local
+  round-polynomial provider per machine and a deterministic in-process reducer.
+  Challenges still come from the single canonical transcript.
+- `crates/akita-prover/src/protocol/core/fold.rs`: implement a fixed-schedule
+  W-to-1 cutover for test and shipped schedule geometry. Sum folded responses,
+  assemble partitioned `e/t`, sum quotient coefficients, and decompose the
+  single global quotient only after summation.
+- `crates/akita-types/src/proof/ring_relation.rs`: delete the old shared-tail
+  semantics (`last_chunk`, optional `r_len`, and global `r_offset`) in the same
+  commit that all production callers switch to machine layouts.
+- terminal handling remains single-machine and requires the explicit cutover
+  before the terminal fold.
+
+Deliverable: the single-host hierarchical prover produces a complete proof for
+W2/W4/W8 whose local round polynomials match the dense oracle. W1 proof bytes
+remain identical. The production verifier cutover is S5; no process or channel
+code exists yet.
+
+### S5: Native verifier and sum-check contraction
+
+Land the optimized verifier before process orchestration so performance failures
+cannot be blamed on IPC.
+
+Expected diffs:
+
+- `crates/akita-verifier/src/protocol/ring_switch.rs`: replace chunk-offset
+  iteration with a machine-prefix contraction followed by local block-fast
+  structured evaluation.
+- `crates/akita-types/src/setup_contribution/`: remove multi-chunk exclusion from
+  `prefers_succinct_path`; expose one evaluator that combines machine column
+  weights before scanning A/B/D. Do not materialize per-machine setup vectors.
+- `crates/akita-types/src/trace_weight/`: express machine support as a prefix
+  factor and retain compact trace terms; no dense distributed fallback.
+- `crates/akita-verifier/src/stages/{stage2,stage3}.rs`: use the native relation,
+  trace, and setup evaluators. Stage 3 evaluates the public setup term once.
+- `crates/akita-verifier/src/protocol/core/suffix.rs`: derive hierarchical input
+  and single-machine cutover output from the separate schedule fields.
+
+Deliverable: the production verifier accepts the S4 proofs; every final
+structured evaluation matches the dense oracle; setup scan counters equal W1
+exactly; W1 stays within 5% of `origin/main`; and W2/W4/W8 meet the performance
+gates before S6 begins.
+
+### S6: Price ownership and select the cutover
+
+Only after both sides implement hierarchical input should the planner optimize
+where the ownership transition occurs.
+
+Expected diffs:
+
+- `crates/akita-planner/src/{schedule_params,resolve}.rs`: choose the cutover
+  using local witness work plus communication bytes. Price `W` local quotients
+  only on distributed outputs.
+- `crates/akita-planner/src/generated/{walk,expand}.rs`: propagate the two
+  ownership counts without reconstructing them from policy activation depth.
+
+Deliverable: the planner-selected W2/W4/W8 cutovers preserve the S4/S5 proof
+behavior, match an ordinary single-machine suffix from the cutover commitment
+onward, and have proof/communication bytes equal to runtime counters.
+
+### S7: Add the minimal portable process runtime
+
+The process layer wraps the proven local providers from S5; it contains no
+cryptographic formulas.
+
+Expected diffs:
+
+- new `crates/akita-prover/src/distributed/` modules for typed protocol frames,
+  coordinator state, worker state, and the minimal `send_frame`/`recv_frame`
+  byte-channel traits;
+- one portable child-stdio channel and persistent worker entry point in the
+  integration harness;
+- `CommitCluster`, `OpeningCluster`, `TensorCluster`, and `RingSwitchCluster` in
+  `compute/delegating_cpu.rs` are deleted or renamed so they no longer pretend
+  that CPU delegation is a distributed runtime;
+- profiling records worker compute time, coordinator reduction time, blocked
+  time, bytes by message class, and peak memory per process.
+
+The coordinator owns transcript transitions and reduces already-produced short
+messages. Workers receive assigned shard paths/seeds at startup and retain state
+across levels. The channel boundary is portable; child stdio is only its first
+implementation.
+
+Deliverable: independent processes produce byte-identical proofs to the S5
+in-process reducer, the coordinator never owns the union witness, and premature
+exit/unexpected-phase/wrong-shape tests fail closed.
+
+### S8: Regenerate schedules and remove migration residue
+
+Expected diffs:
+
+- regenerate D64 W2/W4/W8 schedule families and catalog hashes through the
+  planner;
+- remove `ChunkedWitnessCfg` from resolved `LevelParams` and retain it only if it
+  remains useful as a public planner policy;
+- delete flat distributed offsets, shared quotient helpers, obsolete guards,
+  delegation-only cluster markers, and test fixtures that encode the old order;
+- update the Book from implemented code and mark this spec implemented.
+
+Final search gates must find no production references to old shared-tail
+semantics, no distributed concatenation into `SuffixWitnessView`, and no
+multi-chunk verifier fallback. Run the complete acceptance suite only after
+these deletions, so dead compatibility code cannot make it pass accidentally.
+
+### Expected blast radius by checkpoint
+
+| Checkpoint | Proof bytes | Generated schedules | Principal code effect |
+|------------|-------------|---------------------|-----------------------|
+| S0 | unchanged | unchanged | instrumentation only |
+| S1 | unchanged | geometry-only regeneration | descriptor and ownership geometry |
+| S2 | unchanged | unchanged | hierarchical sources and test oracles, not selected in production |
+| S3 | changed for `W > 1` | stale until S6 | local quotients and native machine witnesses |
+| S4 | same as S3 | stale until S6 | all prover consumers and local sum-check providers |
+| S5 | same as S3 | stale until S6 | native structured verifier; no wire change |
+| S6 | final | planner regenerates | explicit cutover and final pricing |
+| S7 | byte-identical to S6 | unchanged | process orchestration only |
+| S8 | final | checked in | cleanup and catalog refresh |
+
+Files expected to be created are limited to the distributed runtime modules,
+their integration worker, and focused test/profile support. The implementation
+must not create parallel `*_distributed` copies of relation, trace, setup, or
+sum-check arithmetic. Existing canonical modules gain ownership-aware inputs.
+
+Public proof structs should change only where the number or ownership of
+committed witness segments is actually serialized. Process frames, worker IDs,
+local partial right-hand sides, and communication counters are runtime state and
+must not enter proof serialization. The verifier remains a single verifier; no
+distributed-verifier API is introduced.
 
 ## Acceptance criteria
 
