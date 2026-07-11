@@ -286,7 +286,7 @@ The generated modules may store only rounded bucket keys.
 The production role helpers should expose coefficient-`L∞` buckets:
 
 ```text
-A: 8 * challenge_l1_mass * fold_witness_verifier_linf_bound * nu
+A: 8 * challenge_l1_mass * balanced_digit_abs_max * nu
 B: 2^log_basis - 1
 D: 2^log_basis - 1
 F: 2^log_basis - 1

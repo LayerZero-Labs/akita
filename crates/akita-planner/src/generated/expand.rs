@@ -21,9 +21,9 @@ use crate::generated::{
 };
 use crate::PlannerPolicy;
 use akita_types::sis::{
-    committed_fold_a_role_rank, decomposed_s_block_ring_count, decomposed_t_ring_count,
-    decomposed_w_ring_count, min_secure_rank, num_digits_open, num_digits_s_commit,
-    rounded_up_collision_inf_norm, SisTableKey,
+    decomposed_s_block_ring_count, decomposed_t_ring_count, decomposed_w_ring_count,
+    min_secure_rank, num_digits_open, num_digits_s_commit, rounded_up_collision_inf_norm,
+    rounded_up_role_a_inf_norm, SisTableKey,
 };
 use akita_types::{
     AjtaiKeyParams, CommitmentRingDims, DecompositionParams, LevelParams, PrecommittedLevelParams,
@@ -143,7 +143,7 @@ impl GeneratedFoldStep {
 
         let inner_width = decomposed_s_block_ring_count(block_len, num_digits_commit)
             .ok_or_else(|| no_layout("A"))?;
-        let (a_bucket, _) = committed_fold_a_role_rank(
+        let a_bucket = rounded_up_role_a_inf_norm(
             min_security_bits,
             sis_family,
             ring_d,
@@ -340,7 +340,7 @@ impl GeneratedFoldStep {
 
         let inner_width = decomposed_s_block_ring_count(block_len, num_digits_commit)
             .ok_or_else(|| no_layout("A"))?;
-        let (a_bucket, _) = committed_fold_a_role_rank(
+        let a_bucket = rounded_up_role_a_inf_norm(
             min_security_bits,
             sis_family,
             ring_d,

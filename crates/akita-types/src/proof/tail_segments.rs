@@ -435,7 +435,7 @@ pub fn terminal_golomb_grind_tail_t_vectors(
 /// [`crate::cap_rice_low_bits`] via [`segment_typed_z_payload_bytes`].
 /// Rice `k` and zigzag width `W` are derived from the per-coefficient fold-response
 /// cap [`crate::LevelParams::fold_witness_linf_cap_for_claims`] (`min(β_inf, t*)` or `β_inf`
-/// alone), matching [`crate::sis::num_digits_fold`] and grind acceptance.
+/// alone), matching [`crate::sis::fold_witness_digit_plan`] and grind acceptance.
 ///
 /// # Errors
 ///
