@@ -3,9 +3,9 @@
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::AkitaError;
 use akita_types::sis::{
-    committed_fold_a_role_rank, compute_num_digits_full_field, decomposed_s_block_ring_count,
-    decomposed_t_ring_count, decomposed_w_ring_count, min_secure_rank, num_digits_fold,
-    num_digits_open, num_digits_s_commit, rounded_up_collision_inf_norm, AjtaiKeyParams,
+    compute_num_digits_full_field, decomposed_s_block_ring_count, decomposed_t_ring_count,
+    decomposed_w_ring_count, fold_witness_digit_plan, min_secure_rank, num_digits_open,
+    num_digits_s_commit, rounded_up_collision_inf_norm, rounded_up_role_a_inf_norm, AjtaiKeyParams,
     FoldChallengeNorms, FoldWitnessLinfCapConfig, FoldWitnessNorms, SisTableKey,
 };
 use akita_types::{
@@ -61,7 +61,7 @@ pub(crate) fn group_root_params_from_layout(
 
     let width_s = decomposed_s_block_ring_count(block_len, num_digits_commit)
         .ok_or_else(|| AkitaError::InvalidSetup("multi-group A width overflow".to_string()))?;
-    let (norm_s, min_n_a) = committed_fold_a_role_rank(
+    let norm_s = rounded_up_role_a_inf_norm(
         policy.min_sis_security_bits,
         family,
         d,
@@ -76,6 +76,16 @@ pub(crate) fn group_root_params_from_layout(
         width_s as u64,
     )
     .ok_or_else(|| AkitaError::InvalidSetup("no multi-group A-role norm".to_string()))?;
+    let min_n_a = min_secure_rank(
+        SisTableKey {
+            min_security_bits: policy.min_sis_security_bits,
+            family,
+            ring_dimension: d as u32,
+            coeff_linf_bound: norm_s,
+        },
+        width_s as u64,
+    )
+    .ok_or_else(|| AkitaError::InvalidSetup("no multi-group A-role rank".to_string()))?;
     if layout.n_a < min_n_a {
         return Err(AkitaError::InvalidSetup(
             "precommitted group A rank is below multi-group root requirement".to_string(),
@@ -152,14 +162,14 @@ pub(crate) fn group_root_params_from_layout(
         },
         onehot_chunk_size > 0,
     );
-    let num_digits_fold_one = num_digits_fold(
+    let (num_digits_fold_one, _) = fold_witness_digit_plan(
         layout.r_vars,
         layout.group.num_polynomials(),
         policy.decomposition.field_bits(),
         layout.log_basis,
         challenge,
         witness,
-        fold_linf_cap_config,
+        &fold_linf_cap_config,
     )?;
 
     Ok(PrecommittedLevelParams {
@@ -396,7 +406,7 @@ fn multi_group_root_main_level_params_candidate(
     let Some(width_s) = decomposed_s_block_ring_count(block_len, num_digits_commit) else {
         return Ok(None);
     };
-    let Some((norm_s, n_a)) = committed_fold_a_role_rank(
+    let Some(norm_s) = rounded_up_role_a_inf_norm(
         policy.min_sis_security_bits,
         family,
         d,
@@ -412,14 +422,10 @@ fn multi_group_root_main_level_params_candidate(
     ) else {
         return Ok(None);
     };
-    let a_key = AjtaiKeyParams::try_new(
-        policy.min_sis_security_bits,
-        family,
-        n_a,
-        width_s,
-        norm_s,
-        d,
-    )?;
+    let Ok(a_key) = AjtaiKeyParams::try_new_with_min_rank(sis_key(policy, norm_s), width_s) else {
+        return Ok(None);
+    };
+    let n_a = a_key.row_len();
 
     let Some(norm_t) =
         rounded_up_collision_inf_norm(policy.min_sis_security_bits, family, d, log_basis)
@@ -430,17 +436,9 @@ fn multi_group_root_main_level_params_candidate(
     else {
         return Ok(None);
     };
-    let Some(n_b) = min_secure_rank(sis_key(policy, norm_t), width_t as u64) else {
+    let Ok(b_key) = AjtaiKeyParams::try_new_with_min_rank(sis_key(policy, norm_t), width_t) else {
         return Ok(None);
     };
-    let b_key = AjtaiKeyParams::try_new(
-        policy.min_sis_security_bits,
-        family,
-        n_b,
-        width_t,
-        norm_t,
-        d,
-    )?;
 
     let Some(main_d_width) = decomposed_w_ring_count(num_digits_open, num_blocks, main_num_polys)
     else {
@@ -454,17 +452,9 @@ fn multi_group_root_main_level_params_candidate(
     else {
         return Ok(None);
     };
-    let Some(n_d) = min_secure_rank(sis_key(policy, norm_w), d_width as u64) else {
+    let Ok(d_key) = AjtaiKeyParams::try_new_with_min_rank(sis_key(policy, norm_w), d_width) else {
         return Ok(None);
     };
-    let d_key = AjtaiKeyParams::try_new(
-        policy.min_sis_security_bits,
-        family,
-        n_d,
-        d_width,
-        norm_w,
-        d,
-    )?;
 
     let onehot_chunk_size = if decomp.log_commit_bound == 1 {
         policy.onehot_chunk_size

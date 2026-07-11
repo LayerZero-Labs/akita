@@ -1321,13 +1321,6 @@ def fmt_count(value: float) -> str:
     return f"{int(round(value)):,}"
 
 
-def fmt_optional_count(summary: dict[str, object], key: str) -> str:
-    value = summary.get(key)
-    if value is None:
-        return "n/a"
-    return fmt_count(float(value))
-
-
 def case_status(summary: dict[str, object]) -> str:
     return "ok" if int(summary.get("exit_code", 0)) == 0 else "fail"
 
@@ -1484,8 +1477,6 @@ def render_matrix_summary(
         "Verify ms",
         "RSS MiB",
         "Proof B",
-        "Grind Σ",
-        "Grind max",
     ]
     if matrix_baseline is not None:
         label = matrix_baseline[0]
@@ -1512,8 +1503,6 @@ def render_matrix_summary(
             fmt_optional_milliseconds(current, "verify_total_s"),
             fmt_optional_mib(current, "max_rss_kib"),
             fmt_optional_bytes(current, "proof_size_bytes"),
-            fmt_optional_count(current, "grind_attempts_sum"),
-            fmt_optional_count(current, "grind_nonce_max"),
         ]
         if matrix_baseline is not None:
             baseline_case = matrix_baseline[1].get(str(current["case_id"]))

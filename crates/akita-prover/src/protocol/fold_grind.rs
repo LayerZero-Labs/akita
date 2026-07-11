@@ -345,12 +345,12 @@ where
     // A-role fold dimension; per-role split attaches here (mixed-row spec).
     let ring_d = root_lp.role_dims().d_a();
     let binding = FoldLinfProtocolBinding::CURRENT;
-    let challenge = akita_types::sis::fold_challenge_norms(
+    let challenge = akita_types::sis::FoldChallengeNorms::new(
         &root_lp.fold_challenge_config,
         root_lp.fold_challenge_shape,
     );
     let witness_norms = root_lp.fold_witness_norms_for_params(params);
-    let num_claims_digit_plan = akita_types::sis::fold_witness_linf_digit_plan(
+    let num_claims_digit_plan = akita_types::sis::fold_witness_digit_plan(
         params.r_vars(),
         num_claims,
         root_lp.field_bits_for_cache(),
@@ -375,7 +375,7 @@ where
     let digit_plan = if sizing_claims == num_claims {
         num_claims_digit_plan
     } else {
-        akita_types::sis::fold_witness_linf_digit_plan(
+        akita_types::sis::fold_witness_digit_plan(
             params.r_vars(),
             sizing_claims,
             root_lp.field_bits_for_cache(),
