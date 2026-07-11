@@ -155,6 +155,6 @@ pub use verifier_work::{
     reset_verifier_work_counters, verifier_work_counters, VerifierWorkCounters,
 };
 pub use witness::{
-    ChunkedWitnessCfg, MultiChunkProfileId, WitnessChunkLayout, WitnessChunkLengths, WitnessLayout,
-    MAX_WITNESS_CHUNKS,
+    ChunkedWitnessCfg, DistributedOwnershipGeometry, MachineBlockWindow, MultiChunkProfileId,
+    WitnessChunkLayout, WitnessChunkLengths, WitnessLayout, MAX_WITNESS_CHUNKS,
 };

@@ -110,6 +110,163 @@ impl WitnessLayout {
 /// chunk count; this cap closes a DoS vector from arbitrarily large layouts.
 pub const MAX_WITNESS_CHUNKS: usize = 64;
 
+/// One machine's contiguous window on a protocol block axis.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct MachineBlockWindow {
+    machine: usize,
+    global_block_base: usize,
+    blocks: usize,
+}
+
+impl MachineBlockWindow {
+    /// Zero-based machine index in canonical order.
+    #[must_use]
+    pub const fn machine(self) -> usize {
+        self.machine
+    }
+
+    /// First global block owned by this machine.
+    #[must_use]
+    pub const fn global_block_base(self) -> usize {
+        self.global_block_base
+    }
+
+    /// Number of contiguous global blocks owned by this machine.
+    #[must_use]
+    pub const fn blocks(self) -> usize {
+        self.blocks
+    }
+
+    /// Exclusive end of the global block window.
+    pub fn global_block_end(self) -> Result<usize, AkitaError> {
+        self.global_block_base
+            .checked_add(self.blocks)
+            .ok_or_else(|| AkitaError::InvalidSetup("machine block window overflow".to_string()))
+    }
+}
+
+/// Descriptor-bound machine ownership entering and leaving one fold level.
+///
+/// Input ownership determines which machines hold the current witness. Output
+/// ownership determines the machine count of the newly committed recursive
+/// witness. Keeping both counts prevents the W-to-1 cutover from being inferred
+/// ambiguously from one level-local chunk count.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct DistributedOwnershipGeometry {
+    input_machines: usize,
+    output_machines: usize,
+}
+
+impl DistributedOwnershipGeometry {
+    /// Construct checked input/output machine ownership.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AkitaError::InvalidSetup`] unless both counts are non-zero
+    /// powers of two at most [`MAX_WITNESS_CHUNKS`].
+    pub fn new(input_machines: usize, output_machines: usize) -> Result<Self, AkitaError> {
+        validate_machine_count(input_machines, "input")?;
+        validate_machine_count(output_machines, "output")?;
+        Ok(Self {
+            input_machines,
+            output_machines,
+        })
+    }
+
+    /// Ordinary single-machine ownership.
+    #[must_use]
+    pub const fn single_machine() -> Self {
+        Self {
+            input_machines: 1,
+            output_machines: 1,
+        }
+    }
+
+    /// Number of machines owning the current fold input.
+    #[must_use]
+    pub const fn input_machines(self) -> usize {
+        self.input_machines
+    }
+
+    /// Number of machines owning the newly committed fold output.
+    #[must_use]
+    pub const fn output_machines(self) -> usize {
+        self.output_machines
+    }
+
+    /// Whether this fold performs an explicit distributed-to-single cutover.
+    #[must_use]
+    pub const fn is_cutover(self) -> bool {
+        self.input_machines > 1 && self.output_machines == 1
+    }
+
+    /// Validate ownership continuity from the preceding fold.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AkitaError::InvalidSetup`] when the predecessor's output
+    /// machine count differs from this fold's input machine count.
+    pub fn validate_predecessor(self, predecessor: Self) -> Result<(), AkitaError> {
+        if predecessor.output_machines != self.input_machines {
+            return Err(AkitaError::InvalidSetup(format!(
+                "distributed ownership discontinuity: predecessor output_machines={} but current input_machines={}",
+                predecessor.output_machines, self.input_machines
+            )));
+        }
+        Ok(())
+    }
+
+    /// Partition an input block axis into canonical contiguous machine windows.
+    pub fn input_block_windows(
+        self,
+        num_blocks: usize,
+    ) -> Result<Vec<MachineBlockWindow>, AkitaError> {
+        block_windows(num_blocks, self.input_machines, "input")
+    }
+
+    /// Partition an output block axis into canonical contiguous machine windows.
+    pub fn output_block_windows(
+        self,
+        num_blocks: usize,
+    ) -> Result<Vec<MachineBlockWindow>, AkitaError> {
+        block_windows(num_blocks, self.output_machines, "output")
+    }
+}
+
+fn validate_machine_count(count: usize, role: &str) -> Result<(), AkitaError> {
+    if count == 0 || !count.is_power_of_two() || count > MAX_WITNESS_CHUNKS {
+        return Err(AkitaError::InvalidSetup(format!(
+            "distributed {role}_machines must be a non-zero power of two at most {MAX_WITNESS_CHUNKS}, got {count}"
+        )));
+    }
+    Ok(())
+}
+
+fn block_windows(
+    num_blocks: usize,
+    machines: usize,
+    role: &str,
+) -> Result<Vec<MachineBlockWindow>, AkitaError> {
+    if num_blocks == 0 || !num_blocks.is_power_of_two() || !num_blocks.is_multiple_of(machines) {
+        return Err(AkitaError::InvalidSetup(format!(
+            "distributed {role} block count must be a non-zero power of two divisible by machines: blocks={num_blocks}, machines={machines}"
+        )));
+    }
+    let blocks = num_blocks / machines;
+    (0..machines)
+        .map(|machine| {
+            let global_block_base = machine.checked_mul(blocks).ok_or_else(|| {
+                AkitaError::InvalidSetup("machine block base overflow".to_string())
+            })?;
+            Ok(MachineBlockWindow {
+                machine,
+                global_block_base,
+                blocks,
+            })
+        })
+        .collect()
+}
+
 /// Indexed multi-chunk preset on the shipped `num_chunks × num_activated_levels`
 /// grid (`num_chunks ∈ {2, 4, 8}`, `num_activated_levels ∈ {1, 2}`).
 ///
@@ -301,6 +458,42 @@ impl ChunkedWitnessCfg {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ownership_geometry_partitions_input_and_output_independently() {
+        let geometry = DistributedOwnershipGeometry::new(8, 2).unwrap();
+        let input = geometry.input_block_windows(32).unwrap();
+        let output = geometry.output_block_windows(8).unwrap();
+        assert_eq!(input.len(), 8);
+        assert_eq!(input[3].global_block_base(), 12);
+        assert_eq!(input[3].blocks(), 4);
+        assert_eq!(input[3].global_block_end().unwrap(), 16);
+        assert_eq!(output.len(), 2);
+        assert_eq!(output[1].global_block_base(), 4);
+        assert_eq!(output[1].blocks(), 4);
+    }
+
+    #[test]
+    fn ownership_geometry_validates_cutover_and_predecessor() {
+        let distributed = DistributedOwnershipGeometry::new(8, 8).unwrap();
+        let cutover = DistributedOwnershipGeometry::new(8, 1).unwrap();
+        let suffix = DistributedOwnershipGeometry::single_machine();
+        assert!(cutover.is_cutover());
+        cutover.validate_predecessor(distributed).unwrap();
+        suffix.validate_predecessor(cutover).unwrap();
+        assert!(distributed.validate_predecessor(cutover).is_err());
+    }
+
+    #[test]
+    fn ownership_geometry_rejects_bad_counts_and_windows() {
+        for (input, output) in [(0, 1), (1, 0), (3, 1), (1, 6), (128, 1)] {
+            assert!(DistributedOwnershipGeometry::new(input, output).is_err());
+        }
+        let geometry = DistributedOwnershipGeometry::new(8, 2).unwrap();
+        assert!(geometry.input_block_windows(4).is_err());
+        assert!(geometry.input_block_windows(24).is_err());
+        assert!(geometry.output_block_windows(0).is_err());
+    }
 
     #[test]
     fn default_is_single_chunk() {

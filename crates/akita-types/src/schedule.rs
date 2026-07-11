@@ -1,7 +1,10 @@
 //! Runtime schedule shapes shared by configs, prover, verifier, and planner.
 
 use crate::descriptor_bytes::{push_u32, push_usize};
-use crate::{CleartextWitnessShape, LevelParams, OpeningClaimsLayout, PolynomialGroupLayout};
+use crate::{
+    CleartextWitnessShape, DistributedOwnershipGeometry, LevelParams, OpeningClaimsLayout,
+    PolynomialGroupLayout,
+};
 use akita_field::{AkitaError, CanonicalField};
 
 /// Public inputs that deterministically select one level's active Akita params.
@@ -24,6 +27,12 @@ pub struct ExecutionSchedule {
     pub current_w_len: usize,
     /// Active level parameters for this fold.
     pub params: LevelParams,
+    /// Machine ownership entering and leaving this fold.
+    ///
+    /// This is currently derived from adjacent descriptor-bound
+    /// `witness_chunk` fields. It makes the W-to-1 transition explicit at
+    /// runtime before the legacy policy field is removed from resolved params.
+    pub ownership: DistributedOwnershipGeometry,
     /// Successor parameters for the next committed level, or a log-basis stub
     /// for the terminal direct witness.
     pub next_params: LevelParams,
@@ -572,10 +581,23 @@ impl Schedule {
         };
         let is_terminal = matches!(self.steps.get(level + 1), Some(Step::Direct(_)));
         let next_level_params = scheduled_next_level_params(self, level + 1)?;
+        let output_machines = step.params.witness_chunk.num_chunks;
+        let input_machines = if level == 0 {
+            output_machines
+        } else {
+            let Some(Step::Fold(predecessor)) = self.steps.get(level - 1) else {
+                return Err(AkitaError::InvalidSetup(format!(
+                    "fold level {level} has no fold predecessor for input ownership"
+                )));
+            };
+            predecessor.params.witness_chunk.num_chunks
+        };
+        let ownership = DistributedOwnershipGeometry::new(input_machines, output_machines)?;
         Ok(ExecutionSchedule {
             level,
             current_w_len: step.current_w_len,
             params: step.params.clone(),
+            ownership,
             next_params: next_level_params,
             next_w_len: step.next_w_len,
             is_terminal,
