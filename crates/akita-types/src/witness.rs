@@ -1,15 +1,14 @@
 //! Witness-layout configuration shared by the planner, prover, and verifier.
 //!
-//! [`ChunkedWitnessCfg`] describes the multi-chunk witness layout used by the
-//! distributed prover: how many chunks the witness is split into and for how
-//! many leading fold levels the chunked layout stays active before the schedule
-//! reverts to single-chunk sizing.
+//! [`ChunkedWitnessCfg`] is the planner/catalog policy describing how many
+//! machines remain active for how many leading outputs. The checked resolved
+//! transition is [`DistributedOwnershipGeometry`]. Until the atomic
+//! `LevelParams` cutover lands, legacy protocol code still reads
+//! `LevelParams::witness_chunk`; new consumers must not add another derived
+//! production authority.
 //!
 //! `num_chunks = 1` is the single-chunk (standard) case and is byte-identical to
-//! the historical layout. The struct is the single source of truth for the chunk
-//! layout — the planner prices schedules with it, the catalog identity embeds it,
-//! and the per-level [`crate::LevelParams::witness_chunk`] carries the resolved
-//! value the verifier consumes.
+//! the historical layout.
 
 use akita_field::AkitaError;
 
@@ -105,10 +104,10 @@ impl WitnessLayout {
     }
 }
 
-/// Upper bound on [`ChunkedWitnessCfg::num_chunks`] enforced at layout validation
-/// and planner policy entry. Replicated `ẑ` scales witness width linearly in the
-/// chunk count; this cap closes a DoS vector from arbitrarily large layouts.
-pub const MAX_WITNESS_CHUNKS: usize = 64;
+/// Upper bound on distributed machine counts enforced at policy, descriptor,
+/// and layout boundaries. Replicated partial-fold state scales witness width
+/// linearly in this count, so the cap also closes a verifier DoS vector.
+pub const MAX_DISTRIBUTED_MACHINES: usize = 64;
 
 /// One machine's contiguous window on a protocol block axis.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -157,13 +156,19 @@ pub struct DistributedOwnershipGeometry {
     output_machines: usize,
 }
 
+impl Default for DistributedOwnershipGeometry {
+    fn default() -> Self {
+        Self::single_machine()
+    }
+}
+
 impl DistributedOwnershipGeometry {
     /// Construct checked input/output machine ownership.
     ///
     /// # Errors
     ///
     /// Returns [`AkitaError::InvalidSetup`] unless both counts are non-zero
-    /// powers of two at most [`MAX_WITNESS_CHUNKS`].
+    /// powers of two at most [`MAX_DISTRIBUTED_MACHINES`].
     pub fn new(input_machines: usize, output_machines: usize) -> Result<Self, AkitaError> {
         validate_machine_count(input_machines, "input")?;
         validate_machine_count(output_machines, "output")?;
@@ -234,9 +239,9 @@ impl DistributedOwnershipGeometry {
 }
 
 fn validate_machine_count(count: usize, role: &str) -> Result<(), AkitaError> {
-    if count == 0 || !count.is_power_of_two() || count > MAX_WITNESS_CHUNKS {
+    if count == 0 || !count.is_power_of_two() || count > MAX_DISTRIBUTED_MACHINES {
         return Err(AkitaError::InvalidSetup(format!(
-            "distributed {role}_machines must be a non-zero power of two at most {MAX_WITNESS_CHUNKS}, got {count}"
+            "distributed {role}_machines must be a non-zero power of two at most {MAX_DISTRIBUTED_MACHINES}, got {count}"
         )));
     }
     Ok(())
@@ -412,7 +417,7 @@ impl ChunkedWitnessCfg {
     /// # Errors
     ///
     /// Returns [`AkitaError::InvalidSetup`] for `num_chunks == 0`,
-    /// `num_chunks > [`MAX_WITNESS_CHUNKS`]`, a non-power-of-two `num_chunks > 1`,
+    /// `num_chunks > [`MAX_DISTRIBUTED_MACHINES`]`, a non-power-of-two `num_chunks > 1`,
     /// or an inconsistent `(num_chunks, num_activated_levels)` pair.
     pub fn validate(self) -> Result<(), AkitaError> {
         if self.num_chunks == 0 {
@@ -420,9 +425,9 @@ impl ChunkedWitnessCfg {
                 "ChunkedWitnessCfg: num_chunks must be >= 1".to_string(),
             ));
         }
-        if self.num_chunks > MAX_WITNESS_CHUNKS {
+        if self.num_chunks > MAX_DISTRIBUTED_MACHINES {
             return Err(AkitaError::InvalidSetup(format!(
-                "ChunkedWitnessCfg: num_chunks={} exceeds cap {MAX_WITNESS_CHUNKS}",
+                "ChunkedWitnessCfg: num_chunks={} exceeds cap {MAX_DISTRIBUTED_MACHINES}",
                 self.num_chunks
             )));
         }
@@ -559,7 +564,7 @@ mod tests {
         .validate()
         .is_err());
         ChunkedWitnessCfg {
-            num_chunks: MAX_WITNESS_CHUNKS,
+            num_chunks: MAX_DISTRIBUTED_MACHINES,
             num_activated_levels: 1,
         }
         .validate()

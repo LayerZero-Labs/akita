@@ -156,5 +156,5 @@ pub use verifier_work::{
 };
 pub use witness::{
     ChunkedWitnessCfg, DistributedOwnershipGeometry, MachineBlockWindow, MultiChunkProfileId,
-    WitnessChunkLayout, WitnessChunkLengths, WitnessLayout, MAX_WITNESS_CHUNKS,
+    WitnessChunkLayout, WitnessChunkLengths, WitnessLayout, MAX_DISTRIBUTED_MACHINES,
 };

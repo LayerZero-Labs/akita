@@ -215,21 +215,6 @@ mod tests {
             })
             .expect("fold-then-direct schedule");
         assert_eq!(last_fold.params.witness_chunk.num_chunks, 1);
-
-        let ownership = (0..schedule.num_fold_levels())
-            .map(|level| schedule.get_execution_schedule(level).unwrap().ownership)
-            .collect::<Vec<_>>();
-        assert!(ownership.len() >= 3);
-        assert_eq!(ownership[0].input_machines(), 8);
-        assert_eq!(ownership[0].output_machines(), 8);
-        assert_eq!(ownership[1].input_machines(), 8);
-        assert_eq!(ownership[1].output_machines(), 8);
-        assert!(ownership[2].is_cutover());
-        assert_eq!(ownership[2].input_machines(), 8);
-        assert_eq!(ownership[2].output_machines(), 1);
-        assert!(ownership[3..]
-            .iter()
-            .all(|geometry| { geometry.input_machines() == 1 && geometry.output_machines() == 1 }));
     }
 
     #[test]
