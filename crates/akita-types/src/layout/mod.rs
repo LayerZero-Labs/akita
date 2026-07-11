@@ -14,7 +14,7 @@ pub mod params;
 pub mod proof_size;
 pub mod ring_dims;
 
-pub use digit_math::gadget_row_scalars;
+pub use digit_math::{gadget_row_scalars, isqrt_ceil};
 pub use flat_matrix::{FlatMatrix, RingMatrixView};
 pub use opening_point::{
     basis_weights, block_rings_at_opening, lagrange_weights, monomial_weights,

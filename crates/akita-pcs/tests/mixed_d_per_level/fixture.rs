@@ -10,9 +10,9 @@ use akita_field::AkitaError;
 use akita_planner::generated::{table_entry, GeneratedFoldStep, GeneratedStep};
 use akita_planner::PlannerPolicy;
 use akita_types::sis::{
-    committed_fold_a_role_rank, decomposed_s_block_ring_count, decomposed_t_ring_count,
-    decomposed_w_ring_count, min_secure_rank, num_digits_open, num_digits_s_commit,
-    rounded_up_collision_inf_norm, SisTableKey,
+    decomposed_s_block_ring_count, decomposed_t_ring_count, decomposed_w_ring_count,
+    min_secure_rank, num_digits_open, num_digits_s_commit, rounded_up_collision_inf_norm,
+    rounded_up_role_a_inf_norm, SisTableKey,
 };
 use akita_types::{
     direct_witness_bytes, level_proof_bytes, segment_typed_witness_shape,
@@ -119,7 +119,7 @@ fn expand_envelope_witness_at_ring_d(
     let num_digits_open_val = num_digits_open(decomp);
     let inner_width = decomposed_s_block_ring_count(block_len, num_digits_commit)
         .ok_or_else(|| no_layout("A"))?;
-    let (a_bucket, n_a) = committed_fold_a_role_rank(
+    let a_bucket = rounded_up_role_a_inf_norm(
         min_security_bits,
         sis_family,
         target_ring_d,
@@ -131,6 +131,16 @@ fn expand_envelope_witness_at_ring_d(
         policy.ring_subfield_norm_bound,
         r_vars,
         num_claims,
+        inner_width as u64,
+    )
+    .ok_or_else(|| no_layout("A"))?;
+    let n_a = min_secure_rank(
+        SisTableKey {
+            min_security_bits,
+            family: sis_family,
+            ring_dimension: target_ring_d as u32,
+            coeff_linf_bound: a_bucket,
+        },
         inner_width as u64,
     )
     .ok_or_else(|| no_layout("A"))?;

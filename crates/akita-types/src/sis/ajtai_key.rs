@@ -217,6 +217,38 @@ impl AjtaiKeyParams {
         })
     }
 
+    /// Create a SIS-secure `AjtaiKeyParams`, sizing `row_len` to the audited
+    /// SIS floor for `col_len` columns under `key`.
+    ///
+    /// Computes the minimum SIS-secure module rank with [`min_secure_rank`] and
+    /// forwards it (along with the fields carried by `key`) to
+    /// [`try_new`](Self::try_new). Callers that would otherwise thread an
+    /// explicit `min_secure_rank` result next to `try_new` should use this
+    /// instead.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AkitaError::InvalidSetup`] when no generated SIS-floor row
+    /// covers `(key, col_len)`, or when [`try_new`](Self::try_new) rejects the
+    /// resulting tuple.
+    pub fn try_new_with_min_rank(key: SisTableKey, col_len: usize) -> Result<Self, AkitaError> {
+        let row_len = min_secure_rank(key, col_len as u64).ok_or_else(|| {
+            AkitaError::InvalidSetup(format!(
+                "AjtaiKeyParams: no audited SIS rank for \
+                 min_security_bits={} family={:?} d={} coeff_linf_bound={} col_len={col_len}",
+                key.min_security_bits, key.family, key.ring_dimension, key.coeff_linf_bound
+            ))
+        })?;
+        Self::try_new(
+            key.min_security_bits,
+            key.family,
+            row_len,
+            col_len,
+            key.coeff_linf_bound,
+            key.ring_dimension as usize,
+        )
+    }
+
     /// Create a new `AjtaiKeyParams` without enforcing SIS security.
     ///
     /// Use this only for intermediate construction steps that carry
