@@ -223,6 +223,160 @@ The implementation must expose a batch-of-local-witness source to commitment
 kernels. It must not concatenate the buffers and call today's monolithic
 `SuffixWitnessView::block_elem`.
 
+### Commitment-compression interaction
+
+Commitment compression introduces global images and payloads but does not
+require a global witness owner. The protocol distinguishes three objects:
+
+1. the raw B/D image, which is the sum of short machine contributions;
+2. one canonical two-layer F/H compression chain for that global image; and
+3. the chain's digit witnesses, whose matrix columns are partitioned across
+   machines after the canonical decomposition is fixed.
+
+For the B/F chain, workers first compute and reduce the short raw image
+
+```text
+u = sum_j u_j.
+```
+
+The workers then execute one distributed canonical chain:
+
+```text
+u = G_b xi_F,1
+u_1 = F_1 xi_F,1 = G_2 xi_F,2
+u_pub = F_2 xi_F,2.
+```
+
+1. Each worker derives only its scheduled coefficient/ring-column shard of
+   `xi_F,1` from the canonical `u`.
+2. It computes the partial image `u_1,j = F_1,j xi_F,1,j`.
+3. The short reduction `u_1 = sum_j u_1,j` fixes the canonical intermediate.
+4. Each worker derives only its scheduled shard of `xi_F,2` from `u_1`.
+5. It computes `u_pub,j = F_2,j xi_F,2,j`, and the final short reduction fixes
+   `u_pub = sum_j u_pub,j`.
+
+Thus matrix multiplication and digit storage are both distributed, while the
+chain remains exactly the single global F1/F2 instance. Decomposition, map
+shapes, setup prefix, shard boundaries, and encoding are descriptor-bound. No
+compression-digit vector crosses the worker boundary. The H chain follows the
+same rule after reducing `v = sum_j v_j`.
+
+The implementation must **not** compress each partial `u_j` or `v_j`
+independently and sum the final payloads. In general,
+
+```text
+decompose(sum_j u_j) != sum_j decompose(u_j).
+```
+
+More importantly, independently compressed partials would change the binding
+instance from `F_2 xi_2` to repeated columns
+`[F_2 | ... | F_2] [xi_{2,0}; ...; xi_{2,W-1}]`. Standalone certification of
+the original F2 map would no longer price that wider witness. Sending one
+standalone payload per machine would preserve independent security but multiply
+wire size by `W`; that is not this protocol.
+
+#### Compression-witness sharding
+
+Each F/H witness segment is partitioned independently in its own native ring
+column axis. Equal F/H ring dimensions are unnecessary, and a role's column
+count need not divide `W`. For a role with `L` native ring columns, machine `j`
+owns the deterministic near-even contiguous interval
+
+```text
+[floor(j L / W), floor((j + 1) L / W)).
+```
+
+The maximum local slot count is `ceil(L/W)`. Missing final slots are structural
+zero, not serialized digits, setup columns, range-check entries, or quotient
+inputs. This padding is at most `W-1` absent columns per role; it is not
+digit-depth padding and does not round a digit count to a power of two.
+
+The machine-local witness order becomes schedule-derived rather than fixed to
+only four hard-coded ranges. Conceptually:
+
+```text
+machine j:
+  z_j | e_j | t_j
+  | xi_F1,j | xi_H1,j | xi_F2,j | xi_H2,j
+  | local quotient families_j
+```
+
+F segments repeat per independent commitment identity in canonical relation
+order. H segments belong to the current opening. The public compressed payload
+is not sharded: it appears once in proof serialization and once in the public
+right-hand side.
+
+`MachineWitnessLayout` must therefore consume the canonical semantic relation-
+witness layout rather than owning a second hard-coded list of compression
+roles. Every semantic segment carries one distribution policy:
+
+```text
+PerMachineFull       z and local quotient contributions; same shape, different values
+BlockPartitioned     e/t segments selected by the machine's block window
+ColumnPartitioned    F/H compression digit segments
+```
+
+The distributed layout applies these policies and returns checked local spans.
+Compression code does not independently assign worker offsets.
+
+#### Local compression relations and quotients
+
+Let `F_{k,j}` denote the column restriction of layer `k` to machine `j`'s digit
+shard. The global chain rows are sums of local contributions:
+
+```text
+sum_j (B_j t_j - G_b,j xi_F1,j)                 = 0
+sum_j (F_1,j xi_F1,j - G_2,j xi_F2,j)           = 0
+sum_j  F_2,j xi_F2,j                            = u_pub.
+```
+
+The H rows are analogous. Exactly one designated RHS owner subtracts `u_pub`
+or `v_pub` in its local lifted row; every other machine uses zero RHS. This is
+only an additive convention for local quotient construction. The public
+payload and transcript contain no owner field because the owner is derived
+canonically from the schedule (initially machine zero).
+
+Every machine's quotient contribution retains the complete row-family shape,
+including F/H families, and uses each family's native ring dimension. Scalar
+families contribute no negacyclic quotient. Summing the lifted local identities
+recovers the one mixed-dimension global relation.
+
+The negative-binary support is the union of the real local F2/H2 input spans.
+Structural zero slots are excluded. Each worker contributes its sparse support
+to the existing fused range sum-check; the coordinator sums round polynomials
+as usual. No separate global binary table is materialized.
+
+#### Input-sliced B/D maps
+
+Compression's B/D input slicing and machine ownership share the same global
+block axis but are independent partitions. Both counts are powers of two and
+divide the block count, so their interval partitions are nested: a machine
+window contains whole role slices or lies within one role slice. A worker
+computes its contribution to every intersecting slice; the short reduction
+produces the canonical slice-major image vector consumed by F1/H1.
+
+The planner does not require `slice_count == W` or choose slices to mimic
+machine ownership. Since both counts are powers of two dividing the same block
+count, one partition automatically refines the other; no additional
+compatibility invariant is needed. They optimize different costs: role slices
+reduce the setup envelope, while machine windows distribute witness work.
+
+#### Hints, groups, and cutover
+
+Each compressed commitment identity remains independent. A frozen root group
+has one payload and one canonical F-chain hint. When distributed proving starts,
+the hint is exposed as canonical semantic segments and each worker loads only
+its scheduled column shards. If the commitment was created with a different
+machine count, repartitioning is input provisioning and is measured separately
+from proof communication; it does not alter the commitment or its descriptor.
+
+Recursive commitments created while `W > 1` retain their F-chain shards on the
+same workers for the next level. At W-to-1 cutover, the coordinator receives or
+recomputes the now-small canonical F/H segments needed by the single-machine
+suffix. Multi-group payloads remain separate public objects and their F digits
+remain separate semantic segments; machine sharding never concatenates
+commitment identities into one compression chain.
+
 ### Distributed sum-check
 
 All machines prove restrictions of one padded global MLE. In every round:
@@ -362,8 +516,9 @@ not hide the protocol's communication pattern.
 For each distributed level:
 
 1. **Opening and partial commitments.** Each worker computes local `e/t`,
-   partial `u_j/v_j`, and its partial claimed value. Short images and scalars are
-   summed.
+   partial raw B/D slice images, and its partial claimed value. Short images and
+   scalars are summed. Workers run the distributed H1/H2 chain on the global D
+   image, retaining only their H digit shards.
 2. **Transcript synchronization.** The coordinator absorbs the sums and
    broadcasts the transcript-derived challenge material.
 3. **Fold grinding.** For each candidate nonce, every worker computes only its
@@ -372,7 +527,9 @@ For each distributed level:
 4. **Local relation and quotient.** Each worker builds `M_j`, `h_j`, and `r_j`
    without communication.
 5. **Next commitment.** Each worker commits its local recursive blocks using
-   native setup columns. Short commitment contributions are summed and absorbed.
+   native setup columns. After reducing the raw B image, workers run the
+   distributed F1/F2 chain, retain only their F digit shards, and absorb the
+   single compressed payload.
 6. **Range tree.** Workers build local subtrees; only local roots cross the
    network.
 7. **Sum-check stages.** Workers submit one small polynomial per round. The
@@ -389,7 +546,8 @@ worker, then sum it with the witness-local round contributions.
 
 Before cutover, communication is limited to:
 
-- `u/v` and next-commitment vectors;
+- raw B/D slice images, F1/H1 intermediate images, and final compressed payload
+  contributions;
 - claimed values and carried claims;
 - one acceptance bit per grind probe;
 - local range-tree roots;
@@ -435,6 +593,33 @@ order.
 
 ## Implementation design
 
+### Ownership across the compression PR
+
+Commitment compression and distributed proving must not introduce competing
+layout or relation abstractions. Their ownership boundary is:
+
+- the compression work owns semantic commitment identities,
+  `CompressionChainPlan`, the schedule-derived semantic relation-row and
+  relation-witness layouts, mixed-ring relation providers, and F/H security;
+- this work owns machine input/output geometry, distribution policies applied
+  to semantic witness segments, local relation contributions, process
+  orchestration, and cutover;
+- setup contribution, trace, range, and sum-check consume the composed semantic
+  plus distributed layout rather than choosing one feature's layout first and
+  patching the other afterward.
+
+The preferred implementation stack lands compression's descriptor, semantic
+layout, mixed-ring quotient, and relation-provider foundations first. This
+branch then rebases and implements machine sharding against those authorities.
+The distributed spec may be reviewed against `main`, but implementation must
+not freeze a `z/e/t/r`-only public type that compression immediately has to
+replace.
+
+The compression spec's current instruction to “extend `WitnessLayout`” must be
+read as extending the canonical semantic relation-witness layout. It must not
+append global compression spans to the old flat multi-chunk layout. The final
+composition is semantic layout first, machine distribution second.
+
 ### Types
 
 Replace the flat/chunk-list ambiguity with explicit ownership types:
@@ -446,9 +631,12 @@ DistributedWitnessLayout
 ```
 
 `MachineWitnessLayout` owns local `z/e/t/r` ranges, local live length, virtual
-opening stride, block count, and block length. `DistributedWitnessLayout` owns
-the ordered machine layouts, common-shape validation, relation order, total live
-length, and total opening domain.
+opening stride, block count, block length, and the scheduled shards of any
+compression suffixes. It derives those spans by applying distribution policies
+to the canonical semantic relation-witness layout; it does not duplicate the
+F/H role list. `DistributedWitnessLayout` owns the ordered machine layouts,
+common-shape validation, relation order, total live length, and total opening
+domain.
 
 Do not add thin aliases over `WitnessLayout`. Remove or rewrite the old type once
 all production callers move.
@@ -625,7 +813,10 @@ Expected diffs:
   `DistributedOwnershipGeometry` containing input/output machine counts, local
   block windows, and cutover validation, but no witness-segment offsets. The
   existing shared-tail `WitnessLayout` remains the production byte-layout
-  authority only until the atomic S3 cutover.
+  authority only until the atomic S4 cutover.
+- consume compression's canonical semantic segment IDs and distribution
+  policies when that prerequisite is present; do not add distributed copies of
+  F/H plan or row-layout types.
 - `crates/akita-types/src/layout/params.rs`: replace the per-level ambiguous
   `witness_chunk` interpretation with descriptor-bound `input_machines` and
   `output_machines`. Preserve `ChunkedWitnessCfg` only as a planner policy input
@@ -680,6 +871,8 @@ Expected diffs:
   all ranges and validates equal local shapes and the exact `WP` domain. During
   S3 these types are exercised by the native test/oracle path; the existing
   layout remains the sole production authority until the S4 atomic cutover.
+- apply `ColumnPartitioned` to every scheduled F/H digit segment and derive the
+  local negative-binary supports from real F2/H2 shards.
 - `crates/akita-prover/src/protocol/fold_grind.rs`: return accepted local
   `z_j` witnesses as the primary output. Stop aggregating them into a global
   fold during distributed output levels. Acceptance requires every scheduled
@@ -713,6 +906,9 @@ Expected diffs:
   `output_machines > 1`.
 - `crates/akita-prover/src/protocol/ring_switch/{commit,finalize,evals}.rs`:
   accept hierarchical sources and return local evaluation providers.
+- reduce raw B/D slice images, deterministically recompute the one canonical
+  F/H chain on workers, and retain only scheduled compression-digit shards;
+  never compress partial machine images independently.
 - `crates/akita-prover/src/protocol/sumcheck/`: expose one local
   round-polynomial provider per machine and a deterministic in-process reducer.
   Challenges still come from the single canonical transcript.
@@ -746,6 +942,8 @@ Expected diffs:
   weights before scanning A/B/D. Do not materialize per-machine setup vectors.
 - `crates/akita-types/src/trace_weight/`: express machine support as a prefix
   factor and retain compact trace terms; no dense distributed fallback.
+- compression relation providers combine machine column shards before the one
+  shared F/H setup-prefix scan; public payload rows occur once.
 - `crates/akita-verifier/src/stages/{stage2,stage3}.rs`: use the native relation,
   trace, and setup evaluators. Stage 3 evaluates the public setup term once.
 - `crates/akita-verifier/src/protocol/core/suffix.rs`: derive hierarchical input
@@ -789,7 +987,8 @@ Expected diffs:
   `compute/delegating_cpu.rs` are deleted or renamed so they no longer pretend
   that CPU delegation is a distributed runtime;
 - profiling records worker compute time, coordinator reduction time, blocked
-  time, bytes by message class, and peak memory per process.
+  time, bytes by message class (including raw B/D image reductions and any
+  compression-shard transfer), and peak memory per process.
 
 The coordinator owns transcript transitions and reduces already-produced short
 messages. Workers receive assigned shard paths/seeds at startup and retain state
