@@ -996,6 +996,27 @@ mod tests {
     }
 
     #[test]
+    fn multi_group_schedule_allows_precommitted_group_larger_than_final_group() {
+        let mut policy = flat_policy();
+        policy.decomposition.log_open_bound = Some(128);
+        policy.basis_range = (4, 4);
+        let pre_key = PolynomialGroupLayout::new(24, 1);
+        let key = AkitaScheduleLookupKey {
+            final_group: PolynomialGroupLayout::new(20, 1),
+            precommitteds: vec![precommitted_from_policy(pre_key, &policy)],
+        };
+
+        let schedule = find_group_batch_schedule(&key, &policy, ring_challenge_config, fold_shape)
+            .expect("multi-group schedule should allow larger precommitted groups");
+        let params = match schedule.steps.first().expect("multi-group step") {
+            Step::Direct(direct) => direct.params.as_ref().expect("multi-group root params"),
+            Step::Fold(fold) => &fold.params,
+        };
+
+        assert_eq!(params.precommitted_groups[0].layout.group, pre_key);
+    }
+
+    #[test]
     fn find_group_batch_schedule_rejects_dense_policy() {
         let mut policy = flat_policy();
         policy.decomposition.log_commit_bound = 8;

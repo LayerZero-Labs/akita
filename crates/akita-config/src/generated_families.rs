@@ -28,9 +28,6 @@ use crate::{policy_of, tensor_verifier, CommitmentConfig};
 /// Default batched opening sizes emitted for every Akita shipped family.
 pub const DEFAULT_NUM_POLYS: &[usize] = &[1, 4];
 
-/// Maximum number of precommitted groups emitted for multi-group-root generated tables.
-pub const DEFAULT_GROUP_BATCH_MAX_PRECOMMITTED_GROUPS: usize = 2;
-
 /// One generated schedule-table family.
 ///
 /// Function-pointer fields (instead of generic `Fn` closures) keep the
@@ -147,45 +144,20 @@ fn group_batch_keys<Cfg: CommitmentConfig>(
         if pre_num_vars < min_precommitted_num_vars {
             continue;
         }
-        let patterns = precommitted_group_patterns(main.num_polynomials());
-        for pattern in patterns {
-            let mut precommitteds = Vec::with_capacity(pattern.len());
-            let mut supported = true;
-            for &num_polys in &pattern {
-                let pre_key = PolynomialGroupLayout::new(pre_num_vars, num_polys);
-                let params = match conservative_commit_params::<Cfg>(&pre_key) {
-                    Ok(params) => params,
-                    Err(_) => {
-                        supported = false;
-                        break;
-                    }
-                };
-                precommitteds.push(PrecommittedGroupParams::from_params(pre_key, &params));
-            }
-            if !supported {
-                continue;
-            }
-            let candidate = AkitaScheduleLookupKey {
-                final_group: main,
-                precommitteds,
-            };
-            if regen_group_batch::<Cfg>(candidate.clone()).is_ok() {
-                keys.push(candidate);
-            }
+        let pre_key = PolynomialGroupLayout::new(pre_num_vars, 1);
+        let Ok(params) = conservative_commit_params::<Cfg>(&pre_key) else {
+            continue;
+        };
+        let candidate = AkitaScheduleLookupKey {
+            final_group: main,
+            precommitteds: vec![PrecommittedGroupParams::from_params(pre_key, &params)],
+        };
+        if regen_group_batch::<Cfg>(candidate.clone()).is_ok() {
+            keys.push(candidate);
         }
     }
     keys.sort_by(akita_planner::runtime_schedule_key_cmp);
     Ok(keys)
-}
-
-fn precommitted_group_patterns(main_num_polynomials: usize) -> Vec<Vec<usize>> {
-    let first_group = 1usize;
-    let second_group = (main_num_polynomials / 2).max(1);
-    let mut patterns = vec![vec![first_group]];
-    if DEFAULT_GROUP_BATCH_MAX_PRECOMMITTED_GROUPS >= 2 {
-        patterns.push(vec![first_group, second_group]);
-    }
-    patterns
 }
 
 macro_rules! family_row {

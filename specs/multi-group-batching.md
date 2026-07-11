@@ -18,8 +18,8 @@ commitment groups in one root proof. The first supported shape is deliberately
 narrow:
 
 - every opened polynomial is a one-hot polynomial;
-- the final group defines the shared padded opening arity, and every
-  precommitted group has `num_vars <= final_group.num_vars / 2`;
+- the shared opening point is padded to the maximum group arity; precommitted
+  group arities are independent of the final group arity;
 - all groups are opened at one shared point;
 - group sizes `K_g` may differ;
 - multi-group structure exists only at the root level;
@@ -89,7 +89,6 @@ commitments, witness shapes, and descriptors must return `AkitaError`.
 
 - Multipoint openings. The batch still has one shared opening point.
 - Dense polynomial support for the initial multi-group root batching rollout.
-- Precommitted groups whose `num_vars` exceed `final_group.num_vars / 2`.
 - Tiered multi-group commitments. Existing tiered paths may keep rejecting
 `G > 1`.
 - Recursive setup-contribution support for `G > 1` in the first rollout, unless
@@ -386,12 +385,12 @@ num_vars        = committed/opened arity for this group
 num_polynomials = K_g
 ```
 
-The final group sets the shared padded opening arity used by the multi-group
-root. Precommitted group entries may have smaller arity; their
-`PointVariableSelection` chooses the coordinates they use from the shared point.
-Precommitted entries with arity greater than `final_group.num_vars / 2` must
-reject. This is the integer-division bound enforced by
-`AkitaScheduleLookupKey::validate`.
+The shared opening point is padded to the maximum arity across all groups.
+Precommitted group entries may have smaller, equal, or larger arity than the
+final group; their `PointVariableSelection` chooses the coordinates they use
+from the shared point. `AkitaScheduleLookupKey::validate` checks per-group
+well-formedness, while setup and schedule capacity decide whether a concrete
+shape is supported by the selected preset.
 
 `AkitaScheduleLookupKey` is the common key shape for scalar and multi-group
 planning:
@@ -685,7 +684,6 @@ precommitted group. The final-group path then:
 - reconstructs precommitted layouts by resolving each key under
   `ConservativeCommitmentConfig<Cfg>::get_params_for_batched_commitment`;
 - builds an `AkitaScheduleLookupKey` from those layouts and the final group key;
-- validates `precommitted.group.num_vars <= final_group.num_vars / 2`;
 - resolves multi-group params through `Cfg::multi_group_root_commit_params`;
 - validates setup footprint and one-hot chunk size for the final group;
 - applies tensor root projection when the multi-group final schedule starts with a
@@ -1128,8 +1126,7 @@ At Phase 1 multi-group schedule lookup time:
   scheduler.
 - `precommitteds` must be well-formed derived group params.
 - The full multi-group key must not be collapsed into a scalar total-polynomial key.
-- Each precommitted group must have
-  `group.num_vars <= final_group.num_vars / 2`.
+- Precommitted group arities are independent of the final group arity.
 - Dense and tiered multi-group roots must return `AkitaError::InvalidSetup`.
 - Multi-group folded roots must hand off to a singleton recursive suffix; multi-group
   terminal root folds remain rejected until the terminal witness layout is
@@ -1143,8 +1140,6 @@ At current `commit_final_group` time:
   `ConservativeCommitmentConfig<Cfg>`;
 - the full `AkitaScheduleLookupKey` must be derivable from those recomputed
   layouts plus the final group;
-- each precommitted group must have
-  `group.num_vars <= final_group.num_vars / 2`;
 - each precommitted group must keep its `PrecommittedGroupParams` `m`, `r`,
   `log_basis`, `n_a`, and B width;
 - each precommitted group must use the frozen conservative B row count in the
@@ -1190,7 +1185,6 @@ At current verify time:
 | Dense config + multi-group schedule key         | `runtime_schedule` / multi-group DP     | `AkitaError::InvalidSetup`               |
 | Dense polynomial at conservative precommit      | `ConservativeCommitmentConfig` commit params / one-hot validators | `AkitaError::InvalidSetup` / `InvalidInput` |
 | Dense polynomial + `G > 1` proof                | Prove entry                             | `AkitaError::InvalidInput`               |
-| Precommitted `num_vars > final_group.num_vars / 2` | multi-group key validation            | `AkitaError::InvalidInput`               |
 | `G > 1` + `witness_chunk.num_chunks > 1`        | schedule selection / prove / verify / relation replay | `AkitaError::InvalidSetup` / `InvalidProof` |
 | Scalar table lookup collapsing `[1,3]` to `[4]` | scalar key construction / multi-group lookup | table miss or `AkitaError::InvalidSetup` |
 | `log_basis != min_basis(Cfg)` at precommit      | conservative layout validation / multi-group root params | `AkitaError::InvalidSetup`               |

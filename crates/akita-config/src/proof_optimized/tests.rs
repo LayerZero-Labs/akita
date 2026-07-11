@@ -305,11 +305,79 @@ fn setup_matrix_envelope_covers_multi_group_batch_schedules() {
 }
 
 fn expected_runtime_root_setup_len(lp: &LevelParams, opening_batch: &OpeningClaimsLayout) -> usize {
-    let max_group_poly_count = opening_batch.num_total_polynomials();
-    let d_width = lp.num_blocks * opening_batch.num_total_polynomials() * lp.num_digits_open;
-    let t_cols_per_vector = lp.a_key.row_len() * lp.num_digits_open * lp.num_blocks;
-    let b_width = max_group_poly_count * t_cols_per_vector;
-    (lp.d_key.row_len() * d_width).max(lp.b_key.row_len() * b_width)
+    if lp.has_precommitted_groups() {
+        return expected_multi_group_runtime_root_setup_len(lp, opening_batch);
+    }
+
+    let (a_len, b_len, d_width) = expected_group_setup_footprint(
+        lp.a_key.row_len(),
+        lp.a_key.col_len(),
+        lp.b_key.row_len(),
+        opening_batch.num_total_polynomials(),
+        lp.num_blocks,
+        lp.num_digits_open,
+    );
+    expected_root_setup_len(lp.d_key.row_len(), d_width, a_len, b_len)
+}
+
+fn expected_group_setup_footprint(
+    a_rows: usize,
+    a_width: usize,
+    b_rows: usize,
+    num_polys: usize,
+    num_blocks: usize,
+    num_digits_open: usize,
+) -> (usize, usize, usize) {
+    let a_len = a_rows * a_width;
+    let d_width = num_polys * num_blocks * num_digits_open;
+    let t_cols_per_vector = a_rows * num_digits_open * num_blocks;
+    let b_len = b_rows * num_polys * t_cols_per_vector;
+    (a_len, b_len, d_width)
+}
+
+fn expected_root_setup_len(
+    d_rows: usize,
+    d_width: usize,
+    max_a_len: usize,
+    max_b_len: usize,
+) -> usize {
+    (d_rows * d_width).max(max_a_len).max(max_b_len)
+}
+
+fn expected_multi_group_runtime_root_setup_len(
+    lp: &LevelParams,
+    opening_batch: &OpeningClaimsLayout,
+) -> usize {
+    let final_group_index = lp
+        .validate_root_opening_batch(opening_batch)
+        .expect("valid grouped root");
+    let final_group = opening_batch
+        .group_layout(final_group_index)
+        .expect("final group");
+    let (mut max_a_len, mut max_b_len, mut d_width) = expected_group_setup_footprint(
+        lp.a_key.row_len(),
+        lp.a_key.col_len(),
+        lp.b_key.row_len(),
+        final_group.num_polynomials(),
+        lp.num_blocks,
+        lp.num_digits_open,
+    );
+
+    for group in &lp.precommitted_groups {
+        let (a_len, b_len, group_d_width) = expected_group_setup_footprint(
+            group.a_key.row_len(),
+            group.a_key.col_len(),
+            group.b_key.row_len(),
+            group.layout.group.num_polynomials(),
+            group.num_blocks,
+            group.num_digits_open,
+        );
+        max_a_len = max_a_len.max(a_len);
+        max_b_len = max_b_len.max(b_len);
+        d_width += group_d_width;
+    }
+
+    expected_root_setup_len(lp.d_key.row_len(), d_width, max_a_len, max_b_len)
 }
 
 #[test]
@@ -366,38 +434,6 @@ fn setup_envelope_poly_counts_match_shipped_table_keys() {
 }
 
 #[test]
-fn setup_envelope_endpoint_poly_scan_matches_exhaustive_scan() {
-    fn exhaustive_envelope<Cfg: CommitmentConfig>(
-        max_num_vars: usize,
-        max_num_batched_polys: usize,
-    ) -> SetupMatrixEnvelope {
-        let mut envelope = SetupMatrixEnvelope { max_setup_len: 1 };
-        super::inflate_setup_envelope_from_schedule_catalog::<Cfg>(
-            max_num_vars,
-            max_num_batched_polys,
-            &mut envelope,
-        )
-        .expect("catalog setup envelope inflation");
-        crate::conservative_commitment::inflate_setup_envelope_for_conservative_commitments::<Cfg>(
-            max_num_vars,
-            max_num_batched_polys,
-            &mut envelope,
-        )
-        .expect("conservative setup envelope inflation");
-        envelope
-    }
-
-    const MAX_NV: usize = 30;
-    let exhaustive = exhaustive_envelope::<fp128::D64OneHot>(MAX_NV, 4);
-    let endpoint = super::proof_optimized_max_setup_matrix_size::<fp128::D64OneHot>(MAX_NV, 4)
-        .expect("endpoint poly scan");
-    assert_eq!(
-        exhaustive.max_setup_len, endpoint.max_setup_len,
-        "D64OneHot nv<={MAX_NV}: endpoint scan must match exhaustive poly scan"
-    );
-}
-
-#[test]
 #[cfg(feature = "schedules-fp128-d64-onehot")]
 fn proof_optimized_setup_includes_precommitted_multi_group_root_catalog_entries() {
     type Cfg = fp128::D64OneHot;
@@ -433,65 +469,63 @@ fn proof_optimized_setup_includes_precommitted_multi_group_root_catalog_entries(
 }
 
 #[test]
-fn proof_optimized_setup_includes_conservative_precommit_inflation() {
+fn proof_optimized_setup_includes_arbitrary_precommit_group_sizes() {
     type Cfg = fp128::D64OneHot;
 
-    let runtime_only = setup_matrix_envelope_for_shape::<Cfg>(
-        &worst_case_multi_group_opening_batch_for_shape(30, 4).expect("valid opening batch"),
+    let layout = OpeningClaimsLayout::from_root_groups(
+        &[PolynomialGroupLayout::new(8, 1)],
+        PolynomialGroupLayout::new(7, 1),
     )
-    .expect("runtime envelope")
-    .expect("supported runtime schedule");
-
-    let proof_optimized = super::proof_optimized_max_setup_matrix_size::<Cfg>(30, 4)
-        .expect("proof-optimized setup envelope");
+    .expect("larger precommitted group layout");
+    let runtime = setup_matrix_envelope_for_shape::<Cfg>(&layout)
+        .expect("runtime setup envelope")
+        .expect("larger precommitted group should be schedulable");
+    let setup_envelope =
+        super::proof_optimized_max_setup_matrix_size::<Cfg>(8, 1).expect("setup envelope");
 
     assert!(
-        proof_optimized.max_setup_len > runtime_only.max_setup_len,
-        "proof-optimized setup sizing must include conservative precommit B-rank capacity"
+        setup_envelope.max_setup_len >= runtime.max_setup_len,
+        "setup envelope must cover precommitted groups that are larger than the final group"
     );
 }
 
 #[test]
-#[ignore = "full envelope exhaustive cross-check is slow; run before envelope logic changes"]
-fn setup_envelope_endpoint_poly_scan_full_manual() {
-    fn exhaustive_envelope<Cfg: CommitmentConfig>(
-        max_num_vars: usize,
-        max_num_batched_polys: usize,
-    ) -> SetupMatrixEnvelope {
-        let mut envelope = SetupMatrixEnvelope { max_setup_len: 1 };
-        super::inflate_setup_envelope_from_schedule_catalog::<Cfg>(
-            max_num_vars,
-            max_num_batched_polys,
-            &mut envelope,
-        )
-        .expect("catalog setup envelope inflation");
-        crate::conservative_commitment::inflate_setup_envelope_for_conservative_commitments::<Cfg>(
-            max_num_vars,
-            max_num_batched_polys,
-            &mut envelope,
-        )
-        .expect("conservative setup envelope inflation");
-        envelope
-    }
+fn grouped_root_runtime_setup_uses_per_group_roles_and_summed_d_width() {
+    type Cfg = fp128::D64OneHot;
 
-    for max_nv in [16usize, 24, 30] {
-        let exhaustive = exhaustive_envelope::<fp128::D64OneHot>(max_nv, 4);
-        let endpoint = super::proof_optimized_max_setup_matrix_size::<fp128::D64OneHot>(max_nv, 4)
-            .expect("endpoint poly scan");
-        assert_eq!(
-            exhaustive.max_setup_len, endpoint.max_setup_len,
-            "D64OneHot nv<={max_nv}: endpoint scan must match exhaustive poly scan"
-        );
+    let layout = OpeningClaimsLayout::from_root_groups(
+        &[PolynomialGroupLayout::new(24, 1)],
+        PolynomialGroupLayout::new(20, 1),
+    )
+    .expect("grouped root layout");
+    let key = crate::opening_schedule_key::<Cfg>(&layout).expect("grouped root key");
+    let schedule = Cfg::runtime_schedule(key).expect("grouped root schedule");
+    let root_params = root_commit_params_from_schedule(&schedule)
+        .expect("root params lookup")
+        .expect("grouped root should carry params");
 
-        let exhaustive_full = exhaustive_envelope::<fp128::D64Full>(max_nv, 4);
-        let endpoint_full =
-            super::proof_optimized_max_setup_matrix_size::<fp128::D64Full>(max_nv, 4)
-                .expect("endpoint poly scan");
-        assert_eq!(
-            exhaustive_full.max_setup_len, endpoint_full.max_setup_len,
-            "D64Full nv<={max_nv}: endpoint scan must match exhaustive poly scan"
-        );
-    }
+    let expected = expected_runtime_root_setup_len(&root_params, &layout);
+    let actual = super::root_runtime_matrix_len_for_opening_batch(&root_params, &layout)
+        .expect("grouped root runtime setup len");
+    assert_eq!(
+        actual, expected,
+        "grouped-root setup footprint must use per-group A/B widths and shared D width"
+    );
+
+    let final_group = layout.root_final_group_layout().expect("final group");
+    let precommitted_d_width: usize = root_params
+        .precommitted_groups
+        .iter()
+        .map(|group| group.d_segment_width().expect("precommitted D width"))
+        .sum();
+    let expected_d_width =
+        final_group.num_polynomials() * root_params.num_blocks * root_params.num_digits_open
+            + precommitted_d_width;
+    assert_eq!(
+        root_params.d_key.col_len(),
+        expected_d_width,
+        "multi-group root D columns are final plus all precommitted segments"
+    );
 }
 
 #[test]

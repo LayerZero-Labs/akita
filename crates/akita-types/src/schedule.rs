@@ -268,12 +268,6 @@ impl AkitaScheduleLookupKey {
         }
         for layout in &self.precommitteds {
             layout.group.validate()?;
-            if layout.group.num_vars() > self.final_group.num_vars() / 2 {
-                return Err(AkitaError::InvalidInput(
-                    "multi-group root requires precommitted groups to have at most half the final num_vars"
-                        .to_string(),
-                ));
-            }
             layout.validate()?;
         }
         Ok(())
@@ -1247,7 +1241,7 @@ mod tests {
     }
 
     #[test]
-    fn group_batch_key_rejects_precommitted_num_vars_above_main() {
+    fn group_batch_key_allows_precommitted_num_vars_above_main() {
         let multi_group_key = AkitaScheduleLookupKey {
             final_group: PolynomialGroupLayout::new(20, 3),
             precommitteds: vec![PrecommittedGroupParams {
@@ -1260,14 +1254,13 @@ mod tests {
             }],
         };
 
-        let err = multi_group_key
+        multi_group_key
             .validate()
-            .expect_err("precommitted groups above the main num_vars must be rejected");
-        assert!(matches!(err, AkitaError::InvalidInput(_)));
+            .expect("precommitted groups larger than the main group are allowed");
     }
 
     #[test]
-    fn group_batch_key_rejects_precommitted_num_vars_above_half_main() {
+    fn group_batch_key_allows_precommitted_num_vars_above_half_main() {
         let multi_group_key = AkitaScheduleLookupKey {
             final_group: PolynomialGroupLayout::new(20, 3),
             precommitteds: vec![PrecommittedGroupParams {
@@ -1282,7 +1275,7 @@ mod tests {
 
         multi_group_key
             .validate()
-            .expect_err("precommitted groups above half the main key must be rejected");
+            .expect("precommitted groups above half the main key are allowed");
     }
 
     #[test]

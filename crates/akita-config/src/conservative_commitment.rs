@@ -4,8 +4,6 @@
 //! use a B rank conservative for a later multi-group root whose final basis is not
 //! known at precommit time.
 
-use crate::matrix_envelope::accumulate_matrix_envelope_for_level;
-use crate::proof_optimized::setup_envelope_poly_counts;
 use crate::{policy_of, CommitmentConfig};
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::AkitaError;
@@ -90,23 +88,6 @@ pub(crate) fn conservative_commit_params<Cfg: CommitmentConfig>(
 ) -> Result<LevelParams, AkitaError> {
     let schedule = conservative_commit_schedule::<Cfg>(key)?;
     Ok(root_commit_params(&schedule, "conservative commit schedule")?.clone())
-}
-
-pub(crate) fn inflate_setup_envelope_for_conservative_commitments<Cfg: CommitmentConfig>(
-    max_num_vars: usize,
-    max_num_batched_polys: usize,
-    envelope: &mut SetupMatrixEnvelope,
-) -> Result<(), AkitaError> {
-    let poly_counts = setup_envelope_poly_counts(max_num_batched_polys);
-    for num_vars in 1..=max_num_vars {
-        for &num_polys in &poly_counts {
-            let key = PolynomialGroupLayout::new(num_vars, num_polys);
-            if let Ok(params) = conservative_commit_params::<Cfg>(&key) {
-                accumulate_matrix_envelope_for_level(&params, &mut envelope.max_setup_len)?;
-            }
-        }
-    }
-    Ok(())
 }
 
 pub(crate) fn conservative_commit_schedule<Cfg: CommitmentConfig>(
