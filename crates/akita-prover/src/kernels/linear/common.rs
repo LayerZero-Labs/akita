@@ -119,8 +119,19 @@ pub(super) fn validate_digit_rows_for_log_basis<const D: usize>(
     {
         Ok(())
     } else {
+        let offending = rows
+            .iter()
+            .take(len)
+            .enumerate()
+            .flat_map(|(row, coeffs)| {
+                coeffs
+                    .iter()
+                    .enumerate()
+                    .map(move |(col, &coeff)| (row, col, coeff))
+            })
+            .find(|&(_, _, coeff)| !(-bound..bound).contains(&i16::from(coeff)));
         Err(AkitaError::InvalidInput(format!(
-            "predecomposed digit row contains a coefficient outside the balanced log_basis range {context}"
+            "predecomposed digit row contains a coefficient outside the balanced log_basis range {context}: log_basis={log_basis}, offending={offending:?}"
         )))
     }
 }

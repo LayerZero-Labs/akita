@@ -442,7 +442,14 @@ pub(crate) fn derive_optimal_suffix_schedule(
     }
 
     let mut best_fold_per_lb: BTreeMap<u32, FoldSuffix> = BTreeMap::new();
-    let (min_log_basis, max_log_basis) = policy.basis_range;
+    let (configured_min_log_basis, max_log_basis) = policy.basis_range;
+    let min_log_basis = configured_min_log_basis
+        .max(policy.decomposition.log_basis)
+        .max(
+            (policy.decomposition.field_bits() < 128)
+                .then_some(5)
+                .unwrap_or(0),
+        );
     for lb in min_log_basis..=max_log_basis {
         if lb < current_lb {
             continue;
@@ -842,7 +849,14 @@ fn find_schedule_inner(
     let root_num_chunks = policy.chunks_at_level(0);
     let root_witness_chunk = policy.witness_chunk_for_level(0);
 
-    let (min_log_basis, max_log_basis) = policy.basis_range;
+    let (configured_min_log_basis, max_log_basis) = policy.basis_range;
+    let min_log_basis = configured_min_log_basis
+        .max(policy.decomposition.log_basis)
+        .max(
+            (policy.decomposition.field_bits() < 128)
+                .then_some(5)
+                .unwrap_or(0),
+        );
     for candidate_log_basis in min_log_basis..=max_log_basis {
         let level_decomp = DecompositionParams {
             log_basis: candidate_log_basis,

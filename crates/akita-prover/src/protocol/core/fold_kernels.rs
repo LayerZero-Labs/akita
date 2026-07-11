@@ -125,20 +125,32 @@ where
     let mut openings = Vec::with_capacity(opening_batch.num_total_polynomials());
     let mut claim_offset = 0usize;
     for (group_index, prepared_point) in prepared_points.iter().enumerate() {
-        let group_layout = opening_batch.group_layout(group_index)?;
+        let group_layout = opening_batch.group_layout(group_index).map_err(|err| {
+            AkitaError::InvalidInput(format!("trace group layout {group_index} failed: {err:?}"))
+        })?;
         let end = claim_offset
             .checked_add(group_layout.num_polynomials())
             .ok_or(AkitaError::InvalidProof)?;
-        let group_folded_rings = folded_rings
-            .get(claim_offset..end)
-            .ok_or(AkitaError::InvalidProof)?;
+        let group_folded_rings = folded_rings.get(claim_offset..end).ok_or_else(|| {
+            AkitaError::InvalidInput(format!(
+                "folded ring range {claim_offset}..{end} is outside {} folded rings",
+                folded_rings.len()
+            ))
+        })?;
         for folded_ring in group_folded_rings {
-            openings.push(scalar_opening_from_folded_ring::<F, E, D>(
-                folded_ring,
-                prepared_point,
-                inner_claim_point,
-                basis,
-            )?);
+            openings.push(
+                scalar_opening_from_folded_ring::<F, E, D>(
+                    folded_ring,
+                    prepared_point,
+                    inner_claim_point,
+                    basis,
+                )
+                .map_err(|err| {
+                    AkitaError::InvalidInput(format!(
+                        "scalar opening group {group_index} failed: {err:?}"
+                    ))
+                })?,
+            );
         }
         claim_offset = end;
     }
@@ -152,8 +164,11 @@ where
             sample_public_row_coefficients::<F, E, T>(opening_batch, transcript)?
         }
     };
-    let ordinary_trace_eval_target =
-        opening_batch.batched_eval_target(&row_coefficients, &openings)?;
+    let ordinary_trace_eval_target = opening_batch
+        .batched_eval_target(&row_coefficients, &openings)
+        .map_err(|err| {
+            AkitaError::InvalidInput(format!("batched trace evaluation failed: {err:?}"))
+        })?;
     let trace_eval_target =
         reduction
             .as_ref()
@@ -162,7 +177,12 @@ where
                     reduction.final_claim,
                     ordinary_trace_eval_target,
                     reduction.final_factor,
-                )?;
+                )
+                .map_err(|err| {
+                    AkitaError::InvalidInput(format!(
+                        "extension trace reduction check failed: {err:?}"
+                    ))
+                })?;
                 Ok(reduction.final_claim)
             })?;
     let trace_claim_scales = reduction

@@ -84,7 +84,10 @@ where
         + RuntimeOpeningProveBackendFor<F, RootTensorProjectionPoly<F>>,
     R: DigitRowsComputeBackend<F>,
 {
-    let opening_batch = fold_claims.opening_claims().layout()?;
+    let opening_batch = fold_claims
+        .opening_claims()
+        .layout()
+        .map_err(|err| AkitaError::InvalidInput(format!("opening batch layout failed: {err:?}")))?;
     let fold_polys = fold_claims.flat_polys();
     let tensor = stack.tensor();
     // A-role fold dimension: the EOR sumcheck and tensor projection operate on
@@ -141,6 +144,9 @@ where
                 transcript,
                 relation_matrix_row_layout,
                 terminal_tail_t_vectors,
+            })
+            .map_err(|err| {
+                AkitaError::InvalidInput(format!("finish prepared fold failed: {err:?}"))
             })
         } else {
             let transformed: Vec<RootTensorProjectionPoly<F>> = {
@@ -278,7 +284,10 @@ where
     // claim polynomial at it, and derive the trace target. Typed outputs are
     // converted to D-free carriers (`PreparedOpeningPoint`, `RingVec`) inside
     // the arm.
-    let opening_batch = fold_claims.opening_claims().layout()?;
+    let opening_batch = fold_claims
+        .opening_claims()
+        .layout()
+        .map_err(|err| AkitaError::InvalidInput(format!("opening batch layout failed: {err:?}")))?;
     let (prepared_points, e_folded_by_claim, trace_target, row_coefficients, row_coefficient_rings) =
         dispatch_for_field!(
             ProtocolDispatchSlot::Role(RingRole::Inner),
@@ -290,7 +299,13 @@ where
                 let mut e_folded_by_claim =
                     Vec::with_capacity(opening_batch.num_total_polynomials());
                 for group_index in 0..opening_batch.num_groups() {
-                    let group_lp = level_params.root_group_params(&opening_batch, group_index)?;
+                    let group_lp = level_params
+                        .root_group_params(&opening_batch, group_index)
+                        .map_err(|err| {
+                            AkitaError::InvalidInput(format!(
+                                "root group params {group_index} failed: {err:?}"
+                            ))
+                        })?;
                     let target_len = alpha_bits
                         .checked_add(group_lp.m_vars())
                         .and_then(|n| n.checked_add(group_lp.r_vars()))
@@ -308,8 +323,17 @@ where
                         basis,
                         opening_layout,
                         alpha_bits,
-                    )?;
-                    let group_polys = fold_claims.group_polys(group_index)?;
+                    )
+                    .map_err(|err| {
+                        AkitaError::InvalidInput(format!(
+                            "prepare opening point group {group_index} failed: {err:?}"
+                        ))
+                    })?;
+                    let group_polys = fold_claims.group_polys(group_index).map_err(|err| {
+                        AkitaError::InvalidInput(format!(
+                            "root group polynomials {group_index} failed: {err:?}"
+                        ))
+                    })?;
                     let (group_folded_rings, group_e_folded_by_claim) =
                         evaluate_claims_at_prepared_point(
                             opening.backend(),
@@ -317,7 +341,12 @@ where
                             group_polys,
                             &prepared_point,
                             group_lp.block_len(),
-                        )?;
+                        )
+                        .map_err(|err| {
+                            AkitaError::InvalidInput(format!(
+                                "evaluate claims group {group_index} failed: {err:?}"
+                            ))
+                        })?;
                     for pt in &prepared_point.padded_point {
                         append_ext_field::<F, E, T>(transcript, ABSORB_EVALUATION_CLAIMS, pt);
                     }
@@ -343,8 +372,14 @@ where
                     trace_opening_batch,
                     row_coefficients,
                     transcript,
-                )?;
-                let row_coefficient_rings = row_coefficient_rings::<F, E, D>(&row_coefficients)?;
+                )
+                .map_err(|err| {
+                    AkitaError::InvalidInput(format!("compute trace target failed: {err:?}"))
+                })?;
+                let row_coefficient_rings = row_coefficient_rings::<F, E, D>(&row_coefficients)
+                    .map_err(|err| {
+                        AkitaError::InvalidInput(format!("row coefficient rings failed: {err:?}"))
+                    })?;
                 Ok::<_, AkitaError>((
                     prepared_points,
                     e_folded_by_claim,
@@ -357,7 +392,9 @@ where
         .map_err(|err| {
             AkitaError::InvalidInput(format!("root opening preparation failed: {err:?}"))
         })?;
-    let commitment = fold_claims.fold_commitment(level_params)?;
+    let commitment = fold_claims.fold_commitment(level_params).map_err(|err| {
+        AkitaError::InvalidInput(format!("fold commitment preparation failed: {err:?}"))
+    })?;
     let (instance, witness) = RingRelationProver::new(
         opening,
         stack.ring_switch(),

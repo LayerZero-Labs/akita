@@ -268,7 +268,11 @@ where
     let role_dims = level_params.role_dims();
     let commit_d = role_dims.d_b();
     if !commitment.can_decode_vec(commit_d) {
-        return Err(AkitaError::InvalidProof);
+        return Err(AkitaError::InvalidInput(format!(
+            "suffix commitment length {} is not decodable at B-role dimension {}",
+            commitment.coeffs().len(),
+            commit_d,
+        )));
     }
     // D-free suffix hint: the cache carries the flat `AkitaCommitmentHint<F>`
     // directly (Slice A re-homed the recomposed rows), so there is no typed
@@ -289,9 +293,13 @@ where
     let needs_extension_reduction = <E as ExtField<F>>::EXT_DEGREE != 1;
     let logical_polys = [logical_w];
     let fold_polys = [&w];
-    let eor_opening_batch =
-        OpeningClaims::with_padded_point(opening_point, opening_point.len(), 1)?;
-    let recursive_num_vars = level_params.recursive_opening_num_vars()?;
+    let eor_opening_batch = OpeningClaims::with_padded_point(opening_point, opening_point.len(), 1)
+        .map_err(|err| {
+            AkitaError::InvalidInput(format!("suffix EOR opening batch failed: {err:?}"))
+        })?;
+    let recursive_num_vars = level_params.recursive_opening_num_vars().map_err(|err| {
+        AkitaError::InvalidInput(format!("suffix recursive arity failed: {err:?}"))
+    })?;
     // §6 invariant — commitment vector length == num_rings · ring_dim. Carry the
     // commitment as the D-free flat `Commitment<F>`; the kernel reinterprets it
     // under `D` at the fold-entry boundary (`prove_fold` `try_to_vec::<D>`),
@@ -302,7 +310,8 @@ where
         recursive_num_vars,
         &fold_polys,
         suffix_commitment,
-    )?;
+    )
+    .map_err(|err| AkitaError::InvalidInput(format!("suffix opening data failed: {err:?}")))?;
     prepare_fold_inner::<F, E, T, _, _, C, O, TS, R>(
         stack,
         needs_extension_reduction,
@@ -319,6 +328,7 @@ where
         relation_matrix_row_layout,
         terminal_tail_t_vectors,
     )
+    .map_err(|err| AkitaError::InvalidInput(format!("suffix fold preparation failed: {err:?}")))
 }
 
 #[cfg(test)]
