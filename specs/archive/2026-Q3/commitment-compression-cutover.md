@@ -1,6 +1,19 @@
 # Spec: Commitment Compression Cutover
 
-Status: draft planning spec.
+| Field         | Value |
+|---------------|-------|
+| Author(s)     | Quang Dao |
+| Created       | 2026-05-01 |
+| Status        | superseded |
+| PR            | |
+| Supersedes    | |
+| Superseded-by | `specs/compressed-commitments.md` |
+| Book-chapter  | |
+
+> Historical warning: this draft describes optional compression, variable
+> depth, scalar-only experiments, and setup offsets that are not part of the
+> final design. Use [`specs/compressed-commitments.md`](../../compressed-commitments.md)
+> for implementation.
 
 This spec maps the PR stack for removing the current tiered-commitment
 implementation and replacing it with commitment compression.

@@ -355,7 +355,7 @@ The current first rollout has `W_g = 1` for every group, so
 means each group contributes one folded response segment `z_hat_g`. Public
 openings bind through the fused trace term in stage-2 sumcheck, not through
 dedicated M-matrix rows (see
-[`specs/commitment-compression-cutover.md`](commitment-compression-cutover.md)).
+[`specs/compressed-commitments.md`](compressed-commitments.md)).
 
 Recursive suffix levels continue to use:
 

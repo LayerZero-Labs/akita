@@ -24,3 +24,4 @@ to track current behavior; update the owning book chapter instead.
 | `2026-Q2/akita-sis-consolidation.md` | superseded | `book/src/how/security.md` | 2026-Q2 |
 | `2026-Q2/sis-euclidean-estimator.md` | superseded | `book/src/how/security.md` | 2026-Q2 |
 | `2026-Q2/sis-infinity-estimator-implementation-plan.md` | superseded | _(slice plan superseded by cutover spec)_ | 2026-Q2 |
+| `2026-Q3/commitment-compression-cutover.md` | superseded | _(replaced by `specs/compressed-commitments.md`)_ | 2026-Q3 |
