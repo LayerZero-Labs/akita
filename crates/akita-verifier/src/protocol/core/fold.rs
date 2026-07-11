@@ -638,7 +638,7 @@ where
         stage1.stage1_point,
         rs.relation_matrix_evaluator.clone(),
         &setup.expanded,
-        &relation_instance,
+        relation_instance,
         rs.alpha,
         relation_claim,
         rs.col_bits,
