@@ -264,7 +264,6 @@ where
         .total_ring_elements_at_dyn(ring_d)?;
     let setup_eval_len = if ring_d == SETUP_OFFLOAD_D_SETUP {
         let setup_prefix_selection = select_setup_prefix_slot(
-            expanded.seed(),
             setup_len,
             |slot_id| {
                 prefix_slots

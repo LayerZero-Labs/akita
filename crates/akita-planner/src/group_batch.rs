@@ -237,7 +237,7 @@ fn multi_group_root_direct_cost_score(
         "multi-group main root-direct score",
     )?;
 
-    for group in &params.precommitted_groups {
+    for group in params.precommitted_group_iter() {
         let group_cost = root_direct_split_cost(
             group.a_key.row_len(),
             group.num_blocks,
@@ -404,7 +404,7 @@ pub(crate) fn multi_group_root_next_w_len(
     }
 
     let r_rows =
-        params.relation_matrix_row_count_for(params.precommitted_groups.len() + 1, layout)?;
+        params.relation_matrix_row_count_for(params.precommitted_group_count() + 1, layout)?;
     let r_count = r_rows
         .checked_mul(compute_num_digits_full_field(field_bits, params.log_basis))
         .ok_or_else(|| {
@@ -689,7 +689,7 @@ pub fn find_group_batch_schedule(
                     current_witness_len: next_w_len,
                     current_witness_len_terminal: next_w_len_terminal,
                     current_lb: candidate_log_basis,
-                    incoming_n_prefix: must_recurse.then_some(n_prefix),
+                    incoming_setup_prefix: must_recurse.then_some(natural_len),
                 },
                 0,
             )?;
@@ -1088,9 +1088,14 @@ mod tests {
             folds[0].params.setup_contribution_mode,
             SetupContributionMode::Recursive
         );
-        assert_eq!(folds[1].params.precommitted_groups.len(), 1);
+        assert!(folds[1].params.setup_prefix.is_some());
         assert_eq!(
-            folds[1].params.precommitted_groups[0]
+            folds[1]
+                .params
+                .setup_prefix
+                .as_ref()
+                .expect("setup prefix")
+                .commitment_params
                 .layout
                 .group
                 .num_polynomials(),

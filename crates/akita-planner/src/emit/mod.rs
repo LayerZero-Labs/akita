@@ -63,17 +63,18 @@ fn setup_prefix_group_from_params(
     include_setup_prefix_group: bool,
 ) -> Option<GeneratedSetupPrefixGroup> {
     include_setup_prefix_group
-        .then(|| {
-            p.precommitted_groups
-                .first()
-                .map(|group| GeneratedSetupPrefixGroup {
-                    m_vars: group.layout.m_vars as u32,
-                    r_vars: group.layout.r_vars as u32,
-                    n_a: group.a_key.row_len() as u32,
-                    n_b: group.b_key.row_len() as u32,
-                })
-        })
+        .then_some(p.setup_prefix.as_ref())
         .flatten()
+        .map(|setup_prefix| {
+            let group = &setup_prefix.commitment_params;
+            GeneratedSetupPrefixGroup {
+                natural_len: setup_prefix.natural_len as u32,
+                m_vars: group.layout.m_vars as u32,
+                r_vars: group.layout.r_vars as u32,
+                n_a: group.a_key.row_len() as u32,
+                n_b: group.b_key.row_len() as u32,
+            }
+        })
 }
 
 fn schedule_to_generated_steps(
@@ -86,8 +87,7 @@ fn schedule_to_generated_steps(
         .enumerate()
         .map(|(idx, step)| match step {
             Step::Fold(fold) => {
-                let include_setup_prefix_group =
-                    idx > 0 && !fold.params.precommitted_groups.is_empty();
+                let include_setup_prefix_group = idx > 0 && fold.params.setup_prefix.is_some();
                 let setup_prefix_group =
                     setup_prefix_group_from_params(&fold.params, include_setup_prefix_group);
                 let fold_step = fold_step_from_params(&fold.params);
@@ -163,8 +163,8 @@ fn emit_setup_contribution_mode(mode: SetupContributionMode) -> &'static str {
 fn emit_setup_prefix_group(group: Option<GeneratedSetupPrefixGroup>) -> String {
     match group {
         Some(group) => format!(
-            "Some(GeneratedSetupPrefixGroup {{ m_vars: {}, r_vars: {}, n_a: {}, n_b: {} }})",
-            group.m_vars, group.r_vars, group.n_a, group.n_b
+            "Some(GeneratedSetupPrefixGroup {{ natural_len: {}, m_vars: {}, r_vars: {}, n_a: {}, n_b: {} }})",
+            group.natural_len, group.m_vars, group.r_vars, group.n_a, group.n_b
         ),
         None => "None".to_string(),
     }
@@ -210,8 +210,7 @@ fn emit_schedule_entry(
     for (idx, step) in schedule.steps.iter().enumerate() {
         match step {
             Step::Fold(fold) => {
-                let include_setup_prefix_group =
-                    idx > 0 && !fold.params.precommitted_groups.is_empty();
+                let include_setup_prefix_group = idx > 0 && fold.params.setup_prefix.is_some();
                 writeln!(
                     out,
                     "        {},",
@@ -349,7 +348,7 @@ fn schedule_uses_fold_with_setup(schedule: &Schedule) -> bool {
         let Step::Fold(fold) = step else {
             return false;
         };
-        let include_setup_prefix_group = idx > 0 && !fold.params.precommitted_groups.is_empty();
+        let include_setup_prefix_group = idx > 0 && fold.params.setup_prefix.is_some();
         include_setup_prefix_group
             || fold.params.setup_contribution_mode != SetupContributionMode::Direct
     })

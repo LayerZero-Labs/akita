@@ -348,23 +348,37 @@ impl GeneratedFoldStep {
                 .ok_or_else(|| no_layout("D"))?;
         let main_d_width = decomposed_w_ring_count(num_digits_open_val, num_blocks, num_claims)
             .ok_or_else(|| no_layout("D"))?;
-        let precommitted_groups = setup_prefix_group
-            .map(|group| {
-                group.expand_to_precommitted_group(
-                    policy,
-                    &ring_challenge_cfg,
-                    fold_shape,
-                    log_basis,
-                )
-            })
+        let setup_prefix = if let Some(group) = setup_prefix_group {
+            let commitment_params = group.expand_to_precommitted_group(
+                policy,
+                &ring_challenge_cfg,
+                fold_shape,
+                log_basis,
+            )?;
+            let n_prefix = 1usize
+                .checked_shl(commitment_params.layout.group.num_vars() as u32)
+                .ok_or_else(|| {
+                    AkitaError::InvalidSetup("generated setup-prefix length overflow".into())
+                })?;
+            if group.natural_len as usize > n_prefix {
+                return Err(AkitaError::InvalidSetup(
+                    "generated setup-prefix natural length exceeds commitment domain".into(),
+                ));
+            }
+            Some(akita_types::setup_prefix_slot_id(
+                policy.ring_dimension,
+                group.natural_len as usize,
+                commitment_params,
+            ))
+        } else {
+            None
+        };
+        let precommitted_groups = Vec::new();
+        let precommitted_d_width = setup_prefix
+            .as_ref()
+            .map(|prefix| prefix.commitment_params.d_segment_width())
             .transpose()?
-            .into_iter()
-            .collect::<Vec<_>>();
-        let precommitted_d_width = precommitted_groups.iter().try_fold(0usize, |acc, group| {
-            acc.checked_add(group.d_segment_width()?).ok_or_else(|| {
-                AkitaError::InvalidSetup("generated setup-prefix D width overflow".into())
-            })
-        })?;
+            .unwrap_or(0);
         let d_matrix_width = main_d_width
             .checked_add(precommitted_d_width)
             .ok_or_else(|| AkitaError::InvalidSetup("generated D width overflow".into()))?;
@@ -454,6 +468,7 @@ impl GeneratedFoldStep {
             // a root-direct commit stays single-chunk.
             witness_chunk: akita_types::ChunkedWitnessCfg::default(),
             precommitted_groups,
+            setup_prefix,
             role_dims: CommitmentRingDims::uniform(ring_d),
             setup_contribution_mode,
         };
@@ -644,6 +659,7 @@ impl GeneratedFoldStep {
             cached_num_digits_fold_value: 1,
             witness_chunk: akita_types::ChunkedWitnessCfg::default(),
             precommitted_groups,
+            setup_prefix: None,
             role_dims: CommitmentRingDims::uniform(ring_d),
             setup_contribution_mode,
         };

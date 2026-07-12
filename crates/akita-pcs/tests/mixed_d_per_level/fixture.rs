@@ -221,6 +221,7 @@ fn expand_envelope_witness_at_ring_d(
         cached_num_digits_fold_claims: 0,
         cached_num_digits_fold_value: 1,
         precommitted_groups: Vec::new(),
+        setup_prefix: None,
         witness_chunk: akita_types::witness::ChunkedWitnessCfg::default_non_chunked(),
         role_dims: CommitmentRingDims::uniform(target_ring_d),
         setup_contribution_mode: akita_types::SetupContributionMode::Direct,

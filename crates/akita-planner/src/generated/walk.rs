@@ -11,8 +11,7 @@ use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::AkitaError;
 use akita_types::{
     direct_witness_bytes, extension_opening_reduction_level_bytes, level_proof_bytes,
-    segment_typed_witness_shape_from_groups, w_ring_element_count_for_chunks,
-    w_ring_element_count_with_counts_for_layout_bits, AkitaScheduleInputs, AkitaScheduleLookupKey,
+    segment_typed_witness_shape_from_groups, AkitaScheduleInputs, AkitaScheduleLookupKey,
     CleartextWitnessShape, DirectStep, FoldStep, LevelParams, PolynomialGroupLayout,
     PrecommittedLevelParams, RelationMatrixRowLayout, Schedule, Step,
 };
@@ -21,6 +20,7 @@ use crate::generated::{
     validate_entry_key, GeneratedFoldStep, GeneratedScheduleTableEntry, GeneratedStep,
 };
 use crate::group_batch::{multi_group_root_next_w_len, multi_group_root_precommitted_groups};
+use crate::schedule_params::planned_next_witness_len;
 use crate::PlannerPolicy;
 
 pub(crate) struct GeneratedEntryWalkOutput {
@@ -116,28 +116,24 @@ fn walk_scalar_generated_schedule_entry(
                 } else {
                     1
                 };
-                // Chunk count of the witness this level commits/produces.
-                let num_chunks = policy.chunks_at_level(fold_level);
                 let (next_w_len, next_lp, layout) = if is_terminal {
-                    let ring_len = w_ring_element_count_for_chunks(
+                    let len = planned_next_witness_len(
                         field_bits,
                         &lp,
                         num_polynomials,
                         RelationMatrixRowLayout::WithoutDBlock,
-                        num_chunks,
+                        lp.witness_chunk.num_chunks,
                     )?;
-                    let len = checked_ring_field_len(ring_len, lp.ring_dimension)?;
                     terminal_witness_field_len = Some(len);
                     (len, None, RelationMatrixRowLayout::WithoutDBlock)
                 } else {
-                    let ring_len = w_ring_element_count_for_chunks(
+                    let len = planned_next_witness_len(
                         field_bits,
                         &lp,
                         num_polynomials,
                         RelationMatrixRowLayout::WithDBlock,
-                        num_chunks,
+                        lp.witness_chunk.num_chunks,
                     )?;
-                    let len = checked_ring_field_len(ring_len, lp.ring_dimension)?;
                     if next.fold_step().is_none() {
                         return Err(AkitaError::InvalidSetup(
                             "generated non-terminal successor must be a fold step".to_string(),
@@ -373,14 +369,13 @@ fn walk_multi_group_generated_schedule_entry(
                             RelationMatrixRowLayout::WithoutDBlock,
                         )?
                     } else {
-                        let ring = w_ring_element_count_with_counts_for_layout_bits(
+                        planned_next_witness_len(
                             field_bits,
                             &lp,
                             1,
-                            1,
                             RelationMatrixRowLayout::WithoutDBlock,
-                        )?;
-                        checked_ring_field_len(ring, lp.ring_dimension)?
+                            lp.witness_chunk.num_chunks,
+                        )?
                     };
                     terminal_witness_field_len = Some(len);
                     (len, None, RelationMatrixRowLayout::WithoutDBlock)
@@ -393,14 +388,13 @@ fn walk_multi_group_generated_schedule_entry(
                             RelationMatrixRowLayout::WithDBlock,
                         )?
                     } else {
-                        let ring = w_ring_element_count_with_counts_for_layout_bits(
+                        planned_next_witness_len(
                             field_bits,
                             &lp,
                             1,
-                            1,
                             RelationMatrixRowLayout::WithDBlock,
-                        )?;
-                        checked_ring_field_len(ring, lp.ring_dimension)?
+                            lp.witness_chunk.num_chunks,
+                        )?
                     };
                     if next.fold_step().is_none() {
                         return Err(AkitaError::InvalidSetup(
@@ -823,10 +817,4 @@ fn validate_expanded_level_params(
     }
     lp.num_digits_fold(num_claims, policy.decomposition.field_bits())?;
     Ok(lp.clone())
-}
-
-fn checked_ring_field_len(ring_len: usize, ring_dimension: usize) -> Result<usize, AkitaError> {
-    ring_len.checked_mul(ring_dimension).ok_or_else(|| {
-        AkitaError::InvalidSetup("generated next witness length overflow".to_string())
-    })
 }

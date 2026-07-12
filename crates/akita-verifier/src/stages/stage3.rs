@@ -179,7 +179,6 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
                 stage3_offload_natural_field_len(self.plan.required()?, ring_d)?;
             ensure_setup_envelope(&setup.expanded, self.plan.required()?, ring_d)?;
             let setup_prefix_selection = select_setup_prefix_slot(
-                setup.expanded.seed(),
                 setup_len,
                 |id| {
                     setup

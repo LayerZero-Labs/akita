@@ -526,6 +526,40 @@ mod tests {
     type SmallF = Fp64<4294967197>;
     const SMALL_D: usize = 64;
 
+    fn prefix_commitment_params(n_prefix: usize, d_setup: usize) -> crate::PrecommittedLevelParams {
+        crate::PrecommittedLevelParams {
+            layout: crate::PrecommittedGroupParams {
+                group: crate::PolynomialGroupLayout::singleton(n_prefix.trailing_zeros() as usize),
+                m_vars: 0,
+                r_vars: 0,
+                log_basis: 1,
+                n_a: 1,
+                conservative_n_b: 1,
+            },
+            a_key: crate::AjtaiKeyParams::new_unchecked(
+                crate::sis::DEFAULT_SIS_SECURITY_BITS,
+                crate::SisModulusFamily::Q128,
+                1,
+                1,
+                1,
+                d_setup,
+            ),
+            b_key: crate::AjtaiKeyParams::new_unchecked(
+                crate::sis::DEFAULT_SIS_SECURITY_BITS,
+                crate::SisModulusFamily::Q128,
+                1,
+                1,
+                1,
+                d_setup,
+            ),
+            num_blocks: 1,
+            block_len: n_prefix / d_setup,
+            num_digits_commit: 1,
+            num_digits_open: 1,
+            num_digits_fold_one: 1,
+        }
+    }
+
     fn seed(public_matrix_seed: PublicMatrixSeed) -> AkitaSetupSeed {
         AkitaSetupSeed {
             max_num_vars: 8,
@@ -538,21 +572,13 @@ mod tests {
 
     #[test]
     fn verifier_setup_prefix_slots_roundtrip() {
-        use crate::proof::{
-            RingVec, SetupPrefixPublicCommitment, SetupPrefixSlotId, SetupPrefixVerifierSlot,
-        };
+        use crate::proof::{RingVec, SetupPrefixPublicCommitment, SetupPrefixVerifierSlot};
 
         let setup_seed = seed([7u8; 32]);
         let shared_matrix = derive_public_matrix_flat::<F, D>(2, &setup_seed.public_matrix_seed);
         let mut prefix_slots = SetupPrefixVerifierRegistry::new();
         let slot = SetupPrefixVerifierSlot {
-            id: SetupPrefixSlotId {
-                setup_seed_digest: [1u8; 32],
-                d_setup: D,
-                natural_len: D - 1,
-                n_prefix: D,
-                level_params_digest: [2u8; 32],
-            },
+            id: crate::setup_prefix_slot_id(D, D - 1, prefix_commitment_params(D, D)),
             natural_len: D - 1,
             padded_len: D,
             commitment: SetupPrefixPublicCommitment {

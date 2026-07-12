@@ -87,12 +87,13 @@ fn checked_power_of_two_vars(field_len: usize, context: &'static str) -> Result<
 
 pub(crate) fn suffix_opening_layout(
     current_witness_len: usize,
-    incoming_n_prefix: Option<usize>,
+    incoming_setup_prefix: Option<usize>,
 ) -> Result<OpeningClaimsLayout, AkitaError> {
     let witness_vars = checked_power_of_two_vars(current_witness_len, "suffix witness length")?;
     let witness_group = PolynomialGroupLayout::singleton(witness_vars);
-    match incoming_n_prefix {
-        Some(n_prefix) => {
+    match incoming_setup_prefix {
+        Some(natural_len) => {
+            let n_prefix = padded_setup_prefix_len(natural_len);
             if n_prefix == 0 || !n_prefix.is_power_of_two() {
                 return Err(AkitaError::InvalidSetup(
                     "incoming setup prefix length must be a nonzero power of two".to_string(),
@@ -152,7 +153,7 @@ fn grouped_next_witness_len(
         params.num_digits_open,
         params.num_digits_fold(final_num_polys, field_bits)?,
     )?;
-    for group in &params.precommitted_groups {
+    for group in params.precommitted_group_iter() {
         let group_rings = grouped_segment_rings(
             group.layout.group.num_polynomials(),
             group.num_blocks,
@@ -168,7 +169,7 @@ fn grouped_next_witness_len(
     }
 
     let r_rows =
-        params.relation_matrix_row_count_for(params.precommitted_groups.len() + 1, layout)?;
+        params.relation_matrix_row_count_for(params.precommitted_group_count() + 1, layout)?;
     let r_count = r_rows
         .checked_mul(akita_types::sis::compute_num_digits_full_field(
             field_bits,
@@ -370,7 +371,7 @@ fn derive_candidate_level_params(
     current_witness_len: usize,
     log_basis: u32,
     fold_level: usize,
-    incoming_n_prefix: Option<usize>,
+    incoming_setup_prefix: Option<usize>,
 ) -> Result<Option<(LevelParams, usize, usize)>, AkitaError> {
     // Chunk count of the witness this level commits/produces (sized below as
     // `next_witness_len`). Equal for the metadata field and the width pricing so
@@ -392,8 +393,9 @@ fn derive_candidate_level_params(
         )));
     }
 
-    let setup_prefix_group = match incoming_n_prefix {
-        Some(n_prefix) => {
+    let setup_prefix = match incoming_setup_prefix {
+        Some(natural_len) => {
+            let n_prefix = padded_setup_prefix_len(natural_len);
             let Some(group) = derive_setup_prefix_group(
                 policy,
                 &ring_challenge_cfg,
@@ -404,7 +406,11 @@ fn derive_candidate_level_params(
             else {
                 return Ok(None);
             };
-            Some(group)
+            Some(akita_types::setup_prefix_slot_id(
+                SETUP_OFFLOAD_D_SETUP,
+                natural_len,
+                group,
+            ))
         }
         None => None,
     };
@@ -476,12 +482,12 @@ fn derive_candidate_level_params(
         let Some(main_d_width) = decomposed_w_ring_count(delta_open, num_blocks, 1) else {
             continue;
         };
-        let precommitted_groups = setup_prefix_group.iter().cloned().collect::<Vec<_>>();
-        let precommitted_d_width = precommitted_groups.iter().try_fold(0usize, |acc, group| {
-            acc.checked_add(group.d_segment_width()?).ok_or_else(|| {
-                AkitaError::InvalidSetup("recursive setup-prefix D width overflow".to_string())
-            })
-        })?;
+        let precommitted_groups = Vec::new();
+        let precommitted_d_width = setup_prefix
+            .as_ref()
+            .map(|prefix| prefix.commitment_params.d_segment_width())
+            .transpose()?
+            .unwrap_or(0);
         let width_w = main_d_width
             .checked_add(precommitted_d_width)
             .ok_or_else(|| AkitaError::InvalidSetup("recursive D width overflow".to_string()))?;
@@ -513,6 +519,7 @@ fn derive_candidate_level_params(
             cached_num_digits_fold_value: 1,
             witness_chunk: policy.witness_chunk_for_level(fold_level),
             precommitted_groups,
+            setup_prefix: setup_prefix.clone(),
             role_dims: CommitmentRingDims::uniform(policy.ring_dimension),
             setup_contribution_mode: SetupContributionMode::Direct,
         }
@@ -587,10 +594,10 @@ pub(crate) struct DirectSuffix {
 /// - `best_direct` — best no-outgoing-prefix terminal schedule whose first
 ///   step is a `Step::Direct` (parent scores under
 ///   `RelationMatrixRowLayout::WithoutDBlock`). It ignores
-///   `incoming_n_prefix`, because a direct child means the parent did not
+///   `incoming_setup_prefix`, because a direct child means the parent did not
 ///   offload a new setup prefix into that child.
 /// - `best_fold_per_lb` — best `Step::Fold`-first schedule per first-fold
-///   `log_basis`, consuming `incoming_n_prefix` when one is present.
+///   `log_basis`, consuming `incoming_setup_prefix` when one is present.
 #[derive(Clone)]
 pub(crate) struct SuffixResult {
     pub(crate) best_direct: Option<DirectSuffix>,
@@ -714,7 +721,7 @@ pub(crate) struct SuffixState {
     pub(crate) current_witness_len: usize,
     pub(crate) current_witness_len_terminal: usize,
     pub(crate) current_lb: u32,
-    pub(crate) incoming_n_prefix: Option<usize>,
+    pub(crate) incoming_setup_prefix: Option<usize>,
 }
 
 impl SuffixState {
@@ -724,7 +731,7 @@ impl SuffixState {
             self.current_witness_len,
             self.current_witness_len_terminal,
             self.current_lb,
-            self.incoming_n_prefix.unwrap_or(0),
+            self.incoming_setup_prefix.unwrap_or(0),
         )
     }
 }
@@ -849,6 +856,7 @@ pub(crate) fn root_level_params_candidate(
         cached_num_digits_fold_value: 1,
         witness_chunk: ctx.witness_chunk,
         precommitted_groups: ctx.precommitted_groups.to_vec(),
+        setup_prefix: None,
         role_dims: CommitmentRingDims::uniform(d),
         setup_contribution_mode: SetupContributionMode::Direct,
     }
@@ -870,7 +878,7 @@ pub(crate) fn root_level_params_candidate(
 /// At each state: `best_direct` ships the witness directly without consuming
 /// or forwarding an incoming prefix; `best_fold` keeps one fold candidate per
 /// `log_basis` (from [`derive_candidate_level_params`]) and consumes
-/// `incoming_n_prefix` when present.
+/// `incoming_setup_prefix` when present.
 pub(crate) fn derive_optimal_suffix_schedule(
     ctx: &SuffixCtx<'_>,
     memo: &mut ScheduleMemo,
@@ -888,7 +896,7 @@ pub(crate) fn derive_optimal_suffix_schedule(
         current_witness_len,
         current_witness_len_terminal,
         current_lb,
-        incoming_n_prefix,
+        incoming_setup_prefix,
     } = state;
     let memo_key = state.memo_key();
     if depth <= MAX_RECURSION_DEPTH {
@@ -936,7 +944,7 @@ pub(crate) fn derive_optimal_suffix_schedule(
                 current_witness_len,
                 lb,
                 level,
-                incoming_n_prefix,
+                incoming_setup_prefix,
             )?
         else {
             continue;
@@ -958,7 +966,8 @@ pub(crate) fn derive_optimal_suffix_schedule(
             }
         };
 
-        let current_opening_layout = suffix_opening_layout(current_witness_len, incoming_n_prefix)?;
+        let current_opening_layout =
+            suffix_opening_layout(current_witness_len, incoming_setup_prefix)?;
         let natural_len = active_setup_field_len(
             &candidate_params,
             &current_opening_layout,
@@ -968,7 +977,7 @@ pub(crate) fn derive_optimal_suffix_schedule(
         let must_recurse = policy.recursive_setup_planning
             && level <= 1
             && n_prefix > SETUP_OFFLOAD_MIN_PREFIX_FIELD_LEN;
-        let child_incoming_n_prefix = must_recurse.then_some(n_prefix);
+        let child_incoming_setup_prefix = must_recurse.then_some(natural_len);
 
         let child_suffix = derive_optimal_suffix_schedule(
             ctx,
@@ -978,7 +987,7 @@ pub(crate) fn derive_optimal_suffix_schedule(
                 current_witness_len: next_witness_len,
                 current_witness_len_terminal: next_witness_len_terminal,
                 current_lb: lb,
-                incoming_n_prefix: child_incoming_n_prefix,
+                incoming_setup_prefix: child_incoming_setup_prefix,
             },
             depth + 1,
         )?;
@@ -988,8 +997,8 @@ pub(crate) fn derive_optimal_suffix_schedule(
         // hypothetical incoming prefix for fold-first alternatives.
         if let Some(direct_suffix) = child_suffix.best_direct {
             let field_bits = policy.decomposition.field_bits();
-            let terminal_opening_layout = incoming_n_prefix
-                .map(|_| suffix_opening_layout(current_witness_len, incoming_n_prefix))
+            let terminal_opening_layout = incoming_setup_prefix
+                .map(|_| suffix_opening_layout(current_witness_len, incoming_setup_prefix))
                 .transpose()?;
             if let Some((direct_step, suffix_cost)) = try_terminal_direct_suffix_cost(
                 direct_suffix.current_w_len,
@@ -1332,7 +1341,7 @@ pub(crate) fn find_single_group_schedule(
                     current_witness_len: next_w_len,
                     current_witness_len_terminal: next_w_len_terminal,
                     current_lb: candidate_log_basis,
-                    incoming_n_prefix: None,
+                    incoming_setup_prefix: None,
                 },
                 0,
             )?;

@@ -2,6 +2,7 @@
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GeneratedSetupPrefixGroup {
+    pub natural_len: u32,
     pub m_vars: u32,
     pub r_vars: u32,
     pub n_a: u32,

@@ -520,8 +520,9 @@ mod tests {
         fn prefix_slots_roundtrip_through_setup_cache() {
             with_test_cache_dir("prefix-slots", || {
                 use akita_types::{
-                    setup_seed_digest, AkitaCommitmentHint, DigitBlocks, RingVec,
-                    SetupPrefixPublicCommitment, SetupPrefixSlot, SetupPrefixSlotId,
+                    setup_prefix_slot_id, AjtaiKeyParams, AkitaCommitmentHint, DigitBlocks,
+                    PolynomialGroupLayout, PrecommittedGroupParams, PrecommittedLevelParams,
+                    RingVec, SetupPrefixPublicCommitment, SetupPrefixSlot, SisModulusFamily,
                 };
 
                 const MAX_VARS: usize = 13;
@@ -529,13 +530,38 @@ mod tests {
                 cleanup_setup_file_shape(MAX_VARS, 1);
 
                 let mut setup = new_prover_setup::<TestF, Cfg>(MAX_VARS, 1).unwrap();
-                let id = SetupPrefixSlotId {
-                    setup_seed_digest: setup_seed_digest(setup.expanded.seed()).unwrap(),
-                    d_setup: TEST_D,
-                    natural_len: 1,
-                    n_prefix: TEST_D,
-                    level_params_digest: [9u8; 32],
+                let commitment_params = PrecommittedLevelParams {
+                    layout: PrecommittedGroupParams {
+                        group: PolynomialGroupLayout::singleton(TEST_D.trailing_zeros() as usize),
+                        m_vars: 0,
+                        r_vars: 0,
+                        log_basis: 1,
+                        n_a: 1,
+                        conservative_n_b: 1,
+                    },
+                    a_key: AjtaiKeyParams::new_unchecked(
+                        akita_types::DEFAULT_SIS_SECURITY_BITS,
+                        SisModulusFamily::Q128,
+                        1,
+                        1,
+                        1,
+                        TEST_D,
+                    ),
+                    b_key: AjtaiKeyParams::new_unchecked(
+                        akita_types::DEFAULT_SIS_SECURITY_BITS,
+                        SisModulusFamily::Q128,
+                        1,
+                        1,
+                        1,
+                        TEST_D,
+                    ),
+                    num_blocks: 1,
+                    block_len: 1,
+                    num_digits_commit: 1,
+                    num_digits_open: 1,
+                    num_digits_fold_one: 1,
                 };
+                let id = setup_prefix_slot_id(TEST_D, 1, commitment_params);
                 // One block of zero planes at the setup ring dimension.
                 let decomposed = DigitBlocks::empty(TEST_D);
                 let hint = AkitaCommitmentHint::singleton(decomposed);

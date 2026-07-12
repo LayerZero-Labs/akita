@@ -765,7 +765,7 @@ fn recursive_d64_onehot_catalog_materializes_setup_prefix_groups() {
     }));
     assert!(schedule
         .fold_steps()
-        .any(|fold| !fold.params.precommitted_groups.is_empty()));
+        .any(|fold| fold.params.setup_prefix.is_some()));
 }
 
 #[test]

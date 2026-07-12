@@ -10,9 +10,9 @@ use akita_prover::{
 };
 use akita_serialization::Valid;
 use akita_types::{
-    active_setup_field_len, digest_level_params, dispatch_for_field, padded_setup_prefix_len,
-    setup_prefix_level_params, setup_prefix_slot_id, setup_seed_digest, LevelParams,
-    OpeningClaimsLayout, SETUP_OFFLOAD_D_SETUP,
+    active_setup_field_len, dispatch_for_field, padded_setup_prefix_len, setup_prefix_level_params,
+    setup_prefix_precommitted_params, setup_prefix_slot_id, LevelParams, OpeningClaimsLayout,
+    SETUP_OFFLOAD_D_SETUP,
 };
 
 fn commit_setup_prefix_for_level<F, B>(
@@ -28,20 +28,25 @@ where
     B: CommitmentComputeBackend<F>,
 {
     let d_setup = SETUP_OFFLOAD_D_SETUP;
-    let seed_digest = setup_seed_digest(setup.expanded.seed())
-        .map_err(|err| AkitaError::InvalidSetup(format!("setup seed digest failed: {err}")))?;
-    let Some(prefix_params) = setup_prefix_level_params(commitment_params, n_prefix, d_setup)?
-    else {
-        return Ok(());
+    let (id, prefix_params) = if let Some(template) = &commitment_params.setup_prefix {
+        if template.natural_len != natural_len || template.n_prefix()? != n_prefix {
+            return Err(AkitaError::InvalidSetup(
+                "setup prefix template does not match requested prefix length".to_string(),
+            ));
+        }
+        (template.clone(), template.commitment_params.clone())
+    } else {
+        let Some(prefix_level_params) =
+            setup_prefix_level_params(commitment_params, n_prefix, d_setup)?
+        else {
+            return Ok(());
+        };
+        let prefix_params = setup_prefix_precommitted_params(&prefix_level_params, n_prefix)?;
+        (
+            setup_prefix_slot_id(d_setup, natural_len, prefix_params.clone()),
+            prefix_params,
+        )
     };
-    let level_params_digest = digest_level_params(std::slice::from_ref(&prefix_params));
-    let id = setup_prefix_slot_id(
-        seed_digest,
-        d_setup,
-        natural_len,
-        n_prefix,
-        level_params_digest,
-    );
     if setup.prefix_slots.get(&id).is_some() {
         return Ok(());
     }
@@ -57,8 +62,6 @@ where
                 backend,
                 prepared,
                 &prefix_params,
-                level_params_digest,
-                seed_digest,
                 n_prefix,
                 natural_len,
             )
@@ -187,7 +190,7 @@ mod tests {
             id.check().expect("slot id shape");
             assert_eq!(id.d_setup, SETUP_OFFLOAD_D_SETUP);
             assert_eq!(slot.natural_len, id.natural_len);
-            assert_eq!(slot.padded_len, id.n_prefix);
+            assert_eq!(slot.padded_len, id.n_prefix().expect("padded len"));
             assert!(slot.natural_len <= slot.padded_len);
             assert!(slot.padded_len.is_power_of_two());
         }
