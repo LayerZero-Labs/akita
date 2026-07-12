@@ -2,6 +2,7 @@
 
 use akita_challenges::TensorChallengeShape;
 use akita_field::AkitaError;
+use akita_types::layout::digit_math::optimal_m_r_split;
 use akita_types::sis::{
     compute_num_digits_full_field, decomposed_s_block_ring_count, decomposed_t_ring_count,
     fold_witness_digit_plan, min_secure_rank, num_digits_open, num_digits_s_commit,
@@ -250,6 +251,62 @@ fn multi_group_root_direct_cost_score(
     Ok(total)
 }
 
+fn compute_one_group_root_direct_level_params(
+    key: PolynomialGroupLayout,
+    policy: &PlannerPolicy,
+    ring_challenge_config: RingChallengeConfigFn<'_>,
+    fold_challenge_shape: TensorChallengeShape,
+) -> Result<Option<LevelParams>, AkitaError> {
+    key.validate()?;
+    let ring_challenge_cfg = ring_challenge_config(policy.ring_dimension)?;
+    let d = policy.ring_dimension;
+    let log_basis = policy.decomposition.log_basis;
+    let alpha = (d as u32).trailing_zeros() as usize;
+
+    let (m_vars, r_vars) = if key.num_vars() > alpha {
+        let fold_challenge = akita_types::sis::FoldChallengeNorms::new(
+            &ring_challenge_cfg,
+            TensorChallengeShape::Flat,
+        );
+        let is_onehot = policy.decomposition.log_commit_bound == 1;
+        let fold_witness = FoldWitnessNorms::new(log_basis, d, policy.onehot_chunk_size, is_onehot);
+        let (m_vars, r_vars, _scoring_n_a) = optimal_m_r_split(
+            policy.min_sis_security_bits,
+            policy.sis_family,
+            d as u32,
+            key.num_polynomials(),
+            policy.ring_subfield_norm_bound,
+            fold_challenge,
+            fold_witness,
+            &ring_challenge_cfg,
+            TensorChallengeShape::Flat,
+            policy.decomposition,
+            policy.onehot_chunk_size,
+            key.num_vars() - alpha,
+            0,
+        );
+        (m_vars, r_vars)
+    } else {
+        (0, 0)
+    };
+
+    root_level_params_candidate(
+        &RootLevelCandidateCtx {
+            policy,
+            ring_challenge_cfg: &ring_challenge_cfg,
+            fold_challenge_shape,
+            precommitted_d_width: 0,
+            precommitted_groups: &[],
+            // Root-direct ships the raw polynomial on the wire (no chunked commitment).
+            witness_chunk: akita_types::ChunkedWitnessCfg::default(),
+        },
+        key.num_polynomials(),
+        log_basis,
+        m_vars,
+        r_vars,
+    )
+}
+
 pub(crate) fn multi_group_root_precommitted_groups(
     key: &AkitaScheduleLookupKey,
     policy: &PlannerPolicy,
@@ -368,6 +425,14 @@ fn compute_multi_group_root_direct_level_params(
     fold_challenge_shape: TensorChallengeShape,
 ) -> Result<Option<LevelParams>, AkitaError> {
     key.validate()?;
+    if key.precommitteds.is_empty() {
+        return compute_one_group_root_direct_level_params(
+            key.final_group,
+            policy,
+            ring_challenge_config,
+            fold_challenge_shape,
+        );
+    }
     let (precommitted_groups, precommitted_d_width) = multi_group_root_precommitted_groups(
         key,
         policy,
@@ -437,8 +502,8 @@ fn compute_multi_group_root_direct_level_params(
 
 /// Build a schedule from the full lookup key.
 ///
-/// Dense or chunked single-group keys are routed to the scalar DP. One-hot
-/// single-group keys and keys with precommitted groups use the grouped root
+/// Dense or chunked one-group keys are routed to the scalar DP. One-hot
+/// one-group keys and keys with precommitted groups use the grouped root
 /// planner for level 0, then the scalar suffix DP for recursive levels.
 pub fn find_group_batch_schedule(
     key: &AkitaScheduleLookupKey,
@@ -473,39 +538,38 @@ pub fn find_group_batch_schedule(
     let ring_challenge_config: RingChallengeConfigFn<'_> = &ring_challenge_config;
     let field_bits = policy.decomposition.field_bits();
     let challenge_field_bits = field_bits * policy.chal_ext_degree as u32;
-    let direct_current_w_len = key.opening_layout()?.root_direct_witness_len()?;
-    let direct_fold_shape = fold_challenge_shape_at_level(AkitaScheduleInputs {
-        num_vars: key.final_group.num_vars(),
-        level: 0,
-        current_w_len: direct_current_w_len,
-    });
-    let mut best: Option<(usize, Vec<Step>)> = if let Some(params) =
-        compute_multi_group_root_direct_level_params(
-            key,
-            policy,
-            ring_challenge_config,
-            direct_fold_shape,
-        )? {
-        let witness_shape = CleartextWitnessShape::FieldElements(direct_current_w_len);
-        let direct_bytes = direct_witness_bytes(field_bits, &witness_shape);
-        Some((
-            direct_bytes,
-            vec![Step::Direct(DirectStep {
-                current_w_len: direct_current_w_len,
-                witness_shape,
-                direct_bytes,
-                params: Some(params),
-            })],
-        ))
-    } else {
-        None
-    };
-
     let root_current_w_len = 1usize
         .checked_shl(key.final_group.num_vars() as u32)
         .ok_or_else(|| {
             AkitaError::InvalidSetup("multi-group root-fold witness length overflow".to_string())
         })?;
+    let direct_current_w_len = if key.precommitteds.is_empty() {
+        root_current_w_len
+    } else {
+        key.opening_layout()?.root_direct_witness_len()?
+    };
+    let direct_fold_shape = fold_challenge_shape_at_level(AkitaScheduleInputs {
+        num_vars: key.final_group.num_vars(),
+        level: 0,
+        current_w_len: direct_current_w_len,
+    });
+    let direct_params = compute_multi_group_root_direct_level_params(
+        key,
+        policy,
+        ring_challenge_config,
+        direct_fold_shape,
+    )?;
+    let witness_shape = CleartextWitnessShape::FieldElements(direct_current_w_len);
+    let direct_bytes = direct_witness_bytes(field_bits, &witness_shape);
+    let mut best: Option<(usize, Vec<Step>)> = Some((
+        direct_bytes,
+        vec![Step::Direct(DirectStep {
+            current_w_len: direct_current_w_len,
+            witness_shape,
+            direct_bytes,
+            params: direct_params,
+        })],
+    ));
     let fold_challenge_shape = fold_challenge_shape_at_level(AkitaScheduleInputs {
         num_vars: key.final_group.num_vars(),
         level: 0,
@@ -535,8 +599,13 @@ pub fn find_group_batch_schedule(
         fold_challenge_shape,
         precommitted_d_width,
         precommitted_groups: &precommitted_groups,
-        // Multi-group folded roots are currently single-chunk only.
-        witness_chunk: akita_types::ChunkedWitnessCfg::default(),
+        // Precommitted grouped roots are single-chunk; the one-group case uses
+        // the policy's scalar chunking.
+        witness_chunk: if key.precommitteds.is_empty() {
+            policy.witness_chunk_for_level(0)
+        } else {
+            akita_types::ChunkedWitnessCfg::default()
+        },
     };
     let suffix_ctx = SuffixCtx {
         policy,
@@ -555,10 +624,21 @@ pub fn find_group_batch_schedule(
     let min_r_vars: usize = if reduced_vars >= 3 { 1 } else { 0 };
     let max_r_vars: usize = (reduced_vars - 1).min(usize::BITS as usize - 1);
     let (min_log_basis, max_log_basis) = policy.basis_range;
+    let root_num_chunks = if key.precommitteds.is_empty() {
+        policy.chunks_at_level(0)
+    } else {
+        1
+    };
 
     for candidate_log_basis in min_log_basis..=max_log_basis {
         for r_vars in (min_r_vars..=max_r_vars).rev() {
             let m_vars = reduced_vars - r_vars;
+            let Some(num_blocks) = 1usize.checked_shl(r_vars as u32) else {
+                continue;
+            };
+            if root_num_chunks > 1 && !num_blocks.is_multiple_of(root_num_chunks) {
+                continue;
+            }
             let Some(candidate_params) = root_level_params_candidate(
                 &candidate_ctx,
                 key.final_group.num_polynomials(),

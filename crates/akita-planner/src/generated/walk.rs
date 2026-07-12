@@ -192,13 +192,6 @@ fn walk_scalar_generated_schedule_entry(
             }
             GeneratedStep::Direct(direct) => {
                 let (witness_shape, direct_current_w_len, params) = if fold_level == 0 {
-                    let direct_w_len = expected_root_w_len
-                        .checked_mul(key.num_polynomials())
-                        .ok_or_else(|| {
-                            AkitaError::InvalidSetup(
-                                "generated root-direct witness length overflow".to_string(),
-                            )
-                        })?;
                     let params = direct
                         .commit
                         .map(|commit| {
@@ -215,8 +208,8 @@ fn walk_scalar_generated_schedule_entry(
                         })
                         .transpose()?;
                     (
-                        CleartextWitnessShape::FieldElements(direct_w_len),
-                        direct_w_len,
+                        CleartextWitnessShape::FieldElements(expected_root_w_len),
+                        expected_root_w_len,
                         params,
                     )
                 } else {

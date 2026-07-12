@@ -1714,6 +1714,12 @@ pub(crate) static FP128_D64_ONEHOT_TENSOR_SCHEDULES: &[GeneratedScheduleTableEnt
     GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(41, 4), precommitteds: &[], steps: &[
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(41, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(20, 1), m_vars: 11, r_vars: 3, log_basis: 2, n_a: 7, conservative_n_b: 1 }], steps: &[
+        GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
+    ] },
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(41, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(20, 1), m_vars: 11, r_vars: 3, log_basis: 2, n_a: 7, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(20, 1), m_vars: 11, r_vars: 3, log_basis: 2, n_a: 7, conservative_n_b: 1 }], steps: &[
+        GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
+    ] },
     GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(42, 1), precommitteds: &[], steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 33, r_vars: 3, n_a: 11, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 2, m_vars: 21, r_vars: 15, n_a: 8, n_b: 2, n_d: 1 }),
@@ -1753,52 +1759,154 @@ pub(crate) static FP128_D64_ONEHOT_TENSOR_SCHEDULES: &[GeneratedScheduleTableEnt
     GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(42, 4), precommitteds: &[], steps: &[
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(42, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(21, 1), m_vars: 12, r_vars: 3, log_basis: 2, n_a: 7, conservative_n_b: 1 }], steps: &[
+        GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
+    ] },
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(42, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(21, 1), m_vars: 12, r_vars: 3, log_basis: 2, n_a: 7, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(21, 1), m_vars: 12, r_vars: 3, log_basis: 2, n_a: 7, conservative_n_b: 1 }], steps: &[
+        GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
+    ] },
     GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(43, 1), precommitteds: &[], steps: &[
+        GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
+    ] },
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(43, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(21, 1), m_vars: 12, r_vars: 3, log_basis: 2, n_a: 7, conservative_n_b: 1 }], steps: &[
+        GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
+    ] },
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(43, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(21, 1), m_vars: 12, r_vars: 3, log_basis: 2, n_a: 7, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(21, 1), m_vars: 12, r_vars: 3, log_basis: 2, n_a: 7, conservative_n_b: 1 }], steps: &[
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
     GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(43, 4), precommitteds: &[], steps: &[
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(43, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(21, 1), m_vars: 12, r_vars: 3, log_basis: 2, n_a: 7, conservative_n_b: 1 }], steps: &[
+        GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
+    ] },
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(43, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(21, 1), m_vars: 12, r_vars: 3, log_basis: 2, n_a: 7, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(21, 1), m_vars: 12, r_vars: 3, log_basis: 2, n_a: 7, conservative_n_b: 1 }], steps: &[
+        GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
+    ] },
     GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(44, 1), precommitteds: &[], steps: &[
+        GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
+    ] },
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(44, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(22, 1), m_vars: 13, r_vars: 3, log_basis: 2, n_a: 7, conservative_n_b: 1 }], steps: &[
+        GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
+    ] },
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(44, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(22, 1), m_vars: 13, r_vars: 3, log_basis: 2, n_a: 7, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(22, 1), m_vars: 13, r_vars: 3, log_basis: 2, n_a: 7, conservative_n_b: 1 }], steps: &[
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
     GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(44, 4), precommitteds: &[], steps: &[
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(44, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(22, 1), m_vars: 13, r_vars: 3, log_basis: 2, n_a: 7, conservative_n_b: 1 }], steps: &[
+        GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
+    ] },
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(44, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(22, 1), m_vars: 13, r_vars: 3, log_basis: 2, n_a: 7, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(22, 1), m_vars: 13, r_vars: 3, log_basis: 2, n_a: 7, conservative_n_b: 1 }], steps: &[
+        GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
+    ] },
     GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(45, 1), precommitteds: &[], steps: &[
+        GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
+    ] },
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(45, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(22, 1), m_vars: 13, r_vars: 3, log_basis: 2, n_a: 7, conservative_n_b: 1 }], steps: &[
+        GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
+    ] },
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(45, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(22, 1), m_vars: 13, r_vars: 3, log_basis: 2, n_a: 7, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(22, 1), m_vars: 13, r_vars: 3, log_basis: 2, n_a: 7, conservative_n_b: 1 }], steps: &[
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
     GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(45, 4), precommitteds: &[], steps: &[
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(45, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(22, 1), m_vars: 13, r_vars: 3, log_basis: 2, n_a: 7, conservative_n_b: 1 }], steps: &[
+        GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
+    ] },
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(45, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(22, 1), m_vars: 13, r_vars: 3, log_basis: 2, n_a: 7, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(22, 1), m_vars: 13, r_vars: 3, log_basis: 2, n_a: 7, conservative_n_b: 1 }], steps: &[
+        GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
+    ] },
     GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(46, 1), precommitteds: &[], steps: &[
+        GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
+    ] },
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(46, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(23, 1), m_vars: 14, r_vars: 3, log_basis: 2, n_a: 7, conservative_n_b: 1 }], steps: &[
+        GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
+    ] },
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(46, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(23, 1), m_vars: 14, r_vars: 3, log_basis: 2, n_a: 7, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(23, 1), m_vars: 14, r_vars: 3, log_basis: 2, n_a: 7, conservative_n_b: 1 }], steps: &[
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
     GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(46, 4), precommitteds: &[], steps: &[
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(46, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(23, 1), m_vars: 14, r_vars: 3, log_basis: 2, n_a: 7, conservative_n_b: 1 }], steps: &[
+        GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
+    ] },
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(46, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(23, 1), m_vars: 14, r_vars: 3, log_basis: 2, n_a: 7, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(23, 1), m_vars: 14, r_vars: 3, log_basis: 2, n_a: 7, conservative_n_b: 1 }], steps: &[
+        GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
+    ] },
     GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(47, 1), precommitteds: &[], steps: &[
+        GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
+    ] },
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(47, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(23, 1), m_vars: 14, r_vars: 3, log_basis: 2, n_a: 7, conservative_n_b: 1 }], steps: &[
+        GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
+    ] },
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(47, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(23, 1), m_vars: 14, r_vars: 3, log_basis: 2, n_a: 7, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(23, 1), m_vars: 14, r_vars: 3, log_basis: 2, n_a: 7, conservative_n_b: 1 }], steps: &[
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
     GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(47, 4), precommitteds: &[], steps: &[
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(47, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(23, 1), m_vars: 14, r_vars: 3, log_basis: 2, n_a: 7, conservative_n_b: 1 }], steps: &[
+        GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
+    ] },
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(47, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(23, 1), m_vars: 14, r_vars: 3, log_basis: 2, n_a: 7, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(23, 1), m_vars: 14, r_vars: 3, log_basis: 2, n_a: 7, conservative_n_b: 1 }], steps: &[
+        GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
+    ] },
     GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(48, 1), precommitteds: &[], steps: &[
+        GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
+    ] },
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(48, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(24, 1), m_vars: 15, r_vars: 3, log_basis: 2, n_a: 8, conservative_n_b: 1 }], steps: &[
+        GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
+    ] },
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(48, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(24, 1), m_vars: 15, r_vars: 3, log_basis: 2, n_a: 8, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(24, 1), m_vars: 15, r_vars: 3, log_basis: 2, n_a: 8, conservative_n_b: 1 }], steps: &[
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
     GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(48, 4), precommitteds: &[], steps: &[
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(48, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(24, 1), m_vars: 15, r_vars: 3, log_basis: 2, n_a: 8, conservative_n_b: 1 }], steps: &[
+        GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
+    ] },
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(48, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(24, 1), m_vars: 15, r_vars: 3, log_basis: 2, n_a: 8, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(24, 1), m_vars: 15, r_vars: 3, log_basis: 2, n_a: 8, conservative_n_b: 1 }], steps: &[
+        GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
+    ] },
     GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(49, 1), precommitteds: &[], steps: &[
+        GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
+    ] },
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(49, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(24, 1), m_vars: 15, r_vars: 3, log_basis: 2, n_a: 8, conservative_n_b: 1 }], steps: &[
+        GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
+    ] },
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(49, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(24, 1), m_vars: 15, r_vars: 3, log_basis: 2, n_a: 8, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(24, 1), m_vars: 15, r_vars: 3, log_basis: 2, n_a: 8, conservative_n_b: 1 }], steps: &[
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
     GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(49, 4), precommitteds: &[], steps: &[
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(49, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(24, 1), m_vars: 15, r_vars: 3, log_basis: 2, n_a: 8, conservative_n_b: 1 }], steps: &[
+        GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
+    ] },
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(49, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(24, 1), m_vars: 15, r_vars: 3, log_basis: 2, n_a: 8, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(24, 1), m_vars: 15, r_vars: 3, log_basis: 2, n_a: 8, conservative_n_b: 1 }], steps: &[
+        GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
+    ] },
     GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(50, 1), precommitteds: &[], steps: &[
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(50, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(25, 1), m_vars: 16, r_vars: 3, log_basis: 2, n_a: 8, conservative_n_b: 1 }], steps: &[
+        GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
+    ] },
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(50, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(25, 1), m_vars: 16, r_vars: 3, log_basis: 2, n_a: 8, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(25, 1), m_vars: 16, r_vars: 3, log_basis: 2, n_a: 8, conservative_n_b: 1 }], steps: &[
+        GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
+    ] },
     GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(50, 4), precommitteds: &[], steps: &[
+        GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
+    ] },
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(50, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(25, 1), m_vars: 16, r_vars: 3, log_basis: 2, n_a: 8, conservative_n_b: 1 }], steps: &[
+        GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
+    ] },
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(50, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(25, 1), m_vars: 16, r_vars: 3, log_basis: 2, n_a: 8, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(25, 1), m_vars: 16, r_vars: 3, log_basis: 2, n_a: 8, conservative_n_b: 1 }], steps: &[
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
 ];
@@ -1821,6 +1929,6 @@ pub(crate) static CATALOG_IDENTITY: GeneratedScheduleCatalogIdentity = Generated
     root_fold_shape: TensorChallengeShape::Tensor,
     ring_dimensions: CATALOG_RING_DIMENSIONS,
     ring_challenge_config_digest: 12477507731232336810,
-    key_count: 212,
-    key_digest: 12330078903954524131,
+    key_count: 248,
+    key_digest: 2186947080036796037,
 };
