@@ -425,19 +425,4 @@ mod ntt_slot_cache_any {
         assert_eq!(d128.ring_d(), 128);
         assert_eq!(d256.ring_d(), 256);
     }
-
-    #[test]
-    fn ntt_cache_map_keys_by_ring_d_and_length() {
-        let mut map = NttCacheMap::new();
-        let key = NttCacheKey {
-            ring_d: 64,
-            num_ring_elements: 1,
-        };
-        map.insert(
-            key,
-            std::sync::Arc::new(sample_cache::<Prime32Offset99, 64>().into()),
-        );
-        assert!(map.contains_key(&key));
-        assert_eq!(map.get(&key).expect("slot").ring_d(), 64);
-    }
 }

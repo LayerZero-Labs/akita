@@ -28,7 +28,7 @@ use akita_field::unreduced::{HasWide, ReduceTo};
 use akita_field::{
     AdditiveGroup, AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, HalvingField,
 };
-use akita_types::{AkitaExpandedSetup, FpExtEncoding, NttCacheKey};
+use akita_types::{AkitaExpandedSetup, FpExtEncoding, NttCacheKey, PreparedNttPlan};
 use std::sync::Arc;
 
 macro_rules! delegate_compute_backend_setup {
@@ -42,8 +42,9 @@ macro_rules! delegate_compute_backend_setup {
             fn prepare_expanded<const D: usize>(
                 &self,
                 expanded: Arc<AkitaExpandedSetup<F>>,
+                plan: PreparedNttPlan,
             ) -> Result<Self::PreparedSetup, AkitaError> {
-                CpuBackend.prepare_expanded::<D>(expanded)
+                CpuBackend.prepare_expanded::<D>(expanded, plan)
             }
 
             fn ensure_ntt_slot(
@@ -52,14 +53,6 @@ macro_rules! delegate_compute_backend_setup {
                 key: NttCacheKey,
             ) -> Result<(), AkitaError> {
                 CpuBackend.ensure_ntt_slot(prepared, key)
-            }
-
-            fn register_setup_contract_ntt_slot(
-                &self,
-                prepared: &Self::PreparedSetup,
-                key: NttCacheKey,
-            ) -> Result<(), AkitaError> {
-                CpuBackend.register_setup_contract_ntt_slot(prepared, key)
             }
 
             fn with_ntt_slot<R>(
@@ -76,6 +69,13 @@ macro_rules! delegate_compute_backend_setup {
                 prepared: &'a Self::PreparedSetup,
             ) -> &'a AkitaExpandedSetup<F> {
                 CpuBackend.prepared_expanded_setup(prepared)
+            }
+
+            fn prepared_ntt_plan<'a>(
+                &self,
+                prepared: &'a Self::PreparedSetup,
+            ) -> &'a PreparedNttPlan {
+                CpuBackend.prepared_ntt_plan(prepared)
             }
         }
     };

@@ -291,7 +291,12 @@ mod tests {
         let point = vec![F::zero(); NV];
 
         let setup = AkitaCommitmentScheme::<Cfg>::setup_prover(NV, 1).unwrap();
-        let prepared = CpuBackend.prepare_setup(&setup).unwrap();
+        let prepared = CpuBackend
+            .prepare_setup(
+                &setup,
+                &akita_types::PreparedNttPlan::base_envelope(setup.expanded.as_ref()).unwrap(),
+            )
+            .unwrap();
         let stack = akita_prover::UniformProverStack::uniform(
             &CpuBackend,
             &prepared,
@@ -445,7 +450,12 @@ mod tests {
             .collect();
 
         let setup = AkitaCommitmentScheme::<Cfg>::setup_prover(NV, 1).unwrap();
-        let prepared = CpuBackend.prepare_setup(&setup).unwrap();
+        let prepared = CpuBackend
+            .prepare_setup(
+                &setup,
+                &akita_types::PreparedNttPlan::base_envelope(setup.expanded.as_ref()).unwrap(),
+            )
+            .unwrap();
         let stack = akita_prover::UniformProverStack::uniform(
             &CpuBackend,
             &prepared,
@@ -629,7 +639,12 @@ mod tests {
             .collect();
 
         let setup = AkitaCommitmentScheme::<Cfg>::setup_prover(NV, 1).unwrap();
-        let prepared = CpuBackend.prepare_setup(&setup).unwrap();
+        let prepared = CpuBackend
+            .prepare_setup(
+                &setup,
+                &akita_types::PreparedNttPlan::base_envelope(setup.expanded.as_ref()).unwrap(),
+            )
+            .unwrap();
         let stack = akita_prover::UniformProverStack::uniform(
             &CpuBackend,
             &prepared,
@@ -912,7 +927,12 @@ mod tests {
             .collect();
 
         let setup = AkitaCommitmentScheme::<Cfg>::setup_prover(NV, 1).unwrap();
-        let prepared = CpuBackend.prepare_setup(&setup).unwrap();
+        let prepared = CpuBackend
+            .prepare_setup(
+                &setup,
+                &akita_types::PreparedNttPlan::base_envelope(setup.expanded.as_ref()).unwrap(),
+            )
+            .unwrap();
         let stack = akita_prover::UniformProverStack::uniform(
             &CpuBackend,
             &prepared,

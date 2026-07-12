@@ -260,7 +260,12 @@ where
     purge_setup_cache(nv);
 
     let setup = AkitaCommitmentScheme::<Cfg>::setup_prover(nv, 1).unwrap();
-    let prepared = CpuBackend.prepare_setup(&setup).unwrap();
+    let prepared = CpuBackend
+        .prepare_setup(
+            &setup,
+            &akita_types::PreparedNttPlan::base_envelope(setup.expanded.as_ref()).unwrap(),
+        )
+        .unwrap();
     let stack =
         akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
             .expect("stack");
@@ -430,7 +435,12 @@ fn chunked_multi_chunk_prove_verify() {
         let expected_opening = opening_from_poly::<D, _>(&poly, &pt, &layout);
 
         let setup = AkitaCommitmentScheme::<Cfg>::setup_prover(NV, 1).unwrap();
-        let prepared = CpuBackend.prepare_setup(&setup).unwrap();
+        let prepared = CpuBackend
+            .prepare_setup(
+                &setup,
+                &akita_types::PreparedNttPlan::base_envelope(setup.expanded.as_ref()).unwrap(),
+            )
+            .unwrap();
         let stack = akita_prover::UniformProverStack::uniform(
             &CpuBackend,
             &prepared,
@@ -520,7 +530,12 @@ fn full_d64_prove_verify() {
         purge_setup_cache(FULL_TEST_NV);
 
         let setup = AkitaCommitmentScheme::<Cfg>::setup_prover(FULL_TEST_NV, 1).unwrap();
-        let prepared = CpuBackend.prepare_setup(&setup).unwrap();
+        let prepared = CpuBackend
+            .prepare_setup(
+                &setup,
+                &akita_types::PreparedNttPlan::base_envelope(setup.expanded.as_ref()).unwrap(),
+            )
+            .unwrap();
         let stack = akita_prover::UniformProverStack::uniform(
             &CpuBackend,
             &prepared,
@@ -700,7 +715,12 @@ fn trace_internalization_rejects_tampered_recursive_fold_handle() {
         purge_setup_cache(NV);
 
         let setup = AkitaCommitmentScheme::<Cfg>::setup_prover(NV, 2).unwrap();
-        let prepared = CpuBackend.prepare_setup(&setup).unwrap();
+        let prepared = CpuBackend
+            .prepare_setup(
+                &setup,
+                &akita_types::PreparedNttPlan::base_envelope(setup.expanded.as_ref()).unwrap(),
+            )
+            .unwrap();
         let stack = akita_prover::UniformProverStack::uniform(
             &CpuBackend,
             &prepared,
@@ -884,7 +904,12 @@ fn full_d64_tiny_root_direct_roundtrip_and_serialization() {
         let opening = opening_from_poly::<D, _>(&poly, &opening_point, &layout);
 
         let setup = AkitaCommitmentScheme::<Cfg>::setup_prover(nv, 1).unwrap();
-        let prepared = CpuBackend.prepare_setup(&setup).unwrap();
+        let prepared = CpuBackend
+            .prepare_setup(
+                &setup,
+                &akita_types::PreparedNttPlan::base_envelope(setup.expanded.as_ref()).unwrap(),
+            )
+            .unwrap();
         let stack = akita_prover::UniformProverStack::uniform(
             &CpuBackend,
             &prepared,
@@ -1066,7 +1091,12 @@ fn adaptive_onehot_direct_tail_uses_terminal_schedule_basis() {
         purge_setup_cache(nv);
 
         let setup = AkitaCommitmentScheme::<Cfg>::setup_prover(nv, 1).unwrap();
-        let prepared = CpuBackend.prepare_setup(&setup).unwrap();
+        let prepared = CpuBackend
+            .prepare_setup(
+                &setup,
+                &akita_types::PreparedNttPlan::base_envelope(setup.expanded.as_ref()).unwrap(),
+            )
+            .unwrap();
         let stack = akita_prover::UniformProverStack::uniform(
             &CpuBackend,
             &prepared,
@@ -1202,7 +1232,12 @@ fn batched_onehot_same_point_round_trip() {
         purge_setup_cache(nv);
 
         let setup = AkitaCommitmentScheme::<Cfg>::setup_prover(nv, 2).unwrap();
-        let prepared = CpuBackend.prepare_setup(&setup).unwrap();
+        let prepared = CpuBackend
+            .prepare_setup(
+                &setup,
+                &akita_types::PreparedNttPlan::base_envelope(setup.expanded.as_ref()).unwrap(),
+            )
+            .unwrap();
         let stack = akita_prover::UniformProverStack::uniform(
             &CpuBackend,
             &prepared,
@@ -1317,7 +1352,12 @@ fn batched_onehot_same_point_rejects_tampered_root_stage1_s_claim() {
 
         let setup =
             AkitaCommitmentScheme::<Cfg>::setup_prover(nv, SAME_POINT_ONEHOT_BATCH_SIZE).unwrap();
-        let prepared = CpuBackend.prepare_setup(&setup).unwrap();
+        let prepared = CpuBackend
+            .prepare_setup(
+                &setup,
+                &akita_types::PreparedNttPlan::base_envelope(setup.expanded.as_ref()).unwrap(),
+            )
+            .unwrap();
         let stack = akita_prover::UniformProverStack::uniform(
             &CpuBackend,
             &prepared,

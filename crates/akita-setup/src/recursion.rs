@@ -99,7 +99,8 @@ where
     let terminal_fold_idx = folds.len().saturating_sub(1);
 
     let backend = CpuBackend;
-    let prepared = backend.prepare_setup(setup)?;
+    let ntt_plan = akita_types::PreparedNttPlan::base_envelope(setup.expanded.as_ref())?;
+    let prepared = backend.prepare_setup(setup, &ntt_plan)?;
     for (idx, fold) in folds.iter().enumerate() {
         if idx >= terminal_fold_idx {
             continue;

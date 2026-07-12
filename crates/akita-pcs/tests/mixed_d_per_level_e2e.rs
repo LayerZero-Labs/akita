@@ -202,7 +202,12 @@ fn prove_mixed_fixture() -> MixedDFixture {
 
     let setup = Scheme::setup_prover(NUM_VARS, 1).expect("setup");
     assert_eq!(setup.expanded.seed().gen_ring_dim, ENVELOPE_D);
-    let prepared = CpuBackend.prepare_setup(&setup).expect("prepared setup");
+    let prepared = CpuBackend
+        .prepare_setup(
+            &setup,
+            &akita_types::PreparedNttPlan::base_envelope(setup.expanded.as_ref()).unwrap(),
+        )
+        .expect("prepared setup");
     let stack =
         akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
             .expect("stack");
@@ -498,7 +503,12 @@ fn mixed_d_malformed_hint_digit_length_rejected() {
         let point = random_point(NUM_VARS, 0xcede_0002);
 
         let setup = Scheme::setup_prover(NUM_VARS, 1).expect("setup");
-        let prepared = CpuBackend.prepare_setup(&setup).expect("prepared setup");
+        let prepared = CpuBackend
+            .prepare_setup(
+                &setup,
+                &akita_types::PreparedNttPlan::base_envelope(setup.expanded.as_ref()).unwrap(),
+            )
+            .expect("prepared setup");
         let stack = akita_prover::UniformProverStack::uniform(
             &CpuBackend,
             &prepared,
@@ -557,7 +567,12 @@ fn mixed_d_schedule_with_non_dividing_level_dim_is_rejected() {
         let opening = opening_from_poly::<ENVELOPE_D, _>(&poly, &point, &layout);
 
         let setup = BadScheme::setup_prover(NUM_VARS, 1).expect("setup");
-        let prepared = CpuBackend.prepare_setup(&setup).expect("prepared setup");
+        let prepared = CpuBackend
+            .prepare_setup(
+                &setup,
+                &akita_types::PreparedNttPlan::base_envelope(setup.expanded.as_ref()).unwrap(),
+            )
+            .expect("prepared setup");
         let stack = akita_prover::UniformProverStack::uniform(
             &CpuBackend,
             &prepared,

@@ -324,7 +324,11 @@ mod tests {
             .min(n_prefix);
         let mut setup = test_setup::<D>(&level_params, n_prefix);
         let backend = CpuBackend;
-        let prepared = backend.prepare_setup(&setup).expect("prepared setup");
+        let ntt_plan =
+            akita_types::PreparedNttPlan::base_envelope(setup.expanded.as_ref()).expect("NTT plan");
+        let prepared = backend
+            .prepare_setup(&setup, &ntt_plan)
+            .expect("prepared setup");
         let seed_digest = setup_seed_digest(setup.expanded.seed()).expect("digest");
         let slot = commit_setup_prefix::<F, D, _>(
             &setup.expanded,

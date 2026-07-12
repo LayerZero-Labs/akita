@@ -11,7 +11,12 @@ fn batched_commit_matches_individual_commits() {
     let poly_a = DensePoly::<F>::from_field_evals(num_vars, D, &evals_a).unwrap();
     let poly_b = DensePoly::<F>::from_field_evals(num_vars, D, &evals_b).unwrap();
     let setup = Scheme::setup_prover(num_vars, 2).unwrap();
-    let prepared = CpuBackend.prepare_setup(&setup).unwrap();
+    let prepared = CpuBackend
+        .prepare_setup(
+            &setup,
+            &akita_types::PreparedNttPlan::base_envelope(setup.expanded.as_ref()).unwrap(),
+        )
+        .unwrap();
     let stack =
         akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
             .expect("stack");
@@ -56,7 +61,12 @@ fn batched_root_direct_fast_path_round_trip() {
         })
         .collect();
     let setup = Scheme::setup_prover(NUM_VARS, NUM_POLYS).unwrap();
-    let prepared = CpuBackend.prepare_setup(&setup).unwrap();
+    let prepared = CpuBackend
+        .prepare_setup(
+            &setup,
+            &akita_types::PreparedNttPlan::base_envelope(setup.expanded.as_ref()).unwrap(),
+        )
+        .unwrap();
     let stack =
         akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
             .expect("stack");
@@ -148,7 +158,12 @@ fn batched_root_direct_rejects_wrong_opening() {
         })
         .collect();
     let setup = Scheme::setup_prover(NUM_VARS, NUM_POLYS).unwrap();
-    let prepared = CpuBackend.prepare_setup(&setup).unwrap();
+    let prepared = CpuBackend
+        .prepare_setup(
+            &setup,
+            &akita_types::PreparedNttPlan::base_envelope(setup.expanded.as_ref()).unwrap(),
+        )
+        .unwrap();
     let stack =
         akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
             .expect("stack");
@@ -203,7 +218,12 @@ fn batched_verify_accepts_consistent_openings_and_rejects_bad_inputs() {
     let poly_a = DensePoly::<F>::from_field_evals(num_vars, D, &evals_a).unwrap();
     let poly_b = DensePoly::<F>::from_field_evals(num_vars, D, &evals_b).unwrap();
     let setup = Scheme::setup_prover(num_vars, 2).unwrap();
-    let prepared = CpuBackend.prepare_setup(&setup).unwrap();
+    let prepared = CpuBackend
+        .prepare_setup(
+            &setup,
+            &akita_types::PreparedNttPlan::base_envelope(setup.expanded.as_ref()).unwrap(),
+        )
+        .unwrap();
     let stack =
         akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
             .expect("stack");

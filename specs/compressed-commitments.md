@@ -622,7 +622,7 @@ views begin at coefficient zero, and the cached object is a flat transformed
 prefix. At a fixed `d`, equal-length views are literally the same cache entry,
 and a longer warmed prefix serves every shorter view by slicing.
 
-The schedule compiler derives one `PreparedNttPlan` (name illustrative) for
+The schedule compiler derives one `PreparedNttPlan` for
 the complete authenticated schedule catalog accepted by one backend-prepared
 proving context. For each active compression dimension, it takes the maximum
 flat prefix across every F/H map, layer, and commitment identity in that
@@ -638,14 +638,16 @@ plan is constructed; this is exact division, not padding. Structural padding
 used by a higher-level matrix layout is not part of the cached setup prefix.
 
 `AkitaProverSetup` remains the backend-independent expanded setup artifact; it
-does not store CPU/accelerator NTT state. The scheme derives the checked
-`PreparedNttPlan` from its validated schedule catalog and passes it to the one
-canonical `ComputeBackendSetup::prepare_setup` boundary. That boundary
-registers and eagerly materializes all planned keys in the backend-prepared
-context before any commitment or transcript work. Compression must not rely on the current
-`with_shared_ntt::<D>()` helper, which always requests the full setup envelope.
+does not store CPU/accelerator NTT state. `PreparedNttPlan` accepts checked
+`(d,prefix)` requirements; authenticated schedule replay supplies the complete
+compression requirement set in the schedule-compilation slice. The scheme
+passes the resulting plan to the one canonical
+`ComputeBackendSetup::prepare_setup` boundary. That boundary registers and
+eagerly materializes all planned keys in the backend-prepared context before
+any commitment or transcript work. Compression does not request the full setup
+envelope when a shorter planned prefix suffices.
 It obtains the schedule-planned key and borrows the corresponding prefix slot
-through the canonical backend cache API. Profile output reports each
+through the canonical backend cache API. The profiling follow-up reports each
 `(d,prefix)` entry and counts both its cyclic and negacyclic storage.
 
 The backend-prepared contract coalesces compression and existing role-cache
@@ -654,14 +656,18 @@ is the larger of `compression_envelope[d]` and any A/B/D cache prefix already
 required at that dimension. Thus a longer existing role cache serves every
 compression layer by slicing; otherwise prover setup stores exactly the
 compression envelope. Commit and opening clusters never construct, extend, or
-rebuild these slots. Lazy construction is permitted only as a diagnostic test
-fallback and is a production/profile failure.
+rebuild these slots on normal planned paths. A checked lazy construction path
+remains available for graceful correctness when an operation requests a valid
+slot absent from the plan; it emits a diagnostic so profiles and tests can
+detect incomplete planning. The catalog-replay/profiling slice adds the explicit
+operation-time build counter and asserts that normal prepared A/B/D and
+compression paths leave it at zero.
 
 `PreparedNttPlan` is the sole key-selection authority. Given `(d, required
 prefix)`, it returns the containing canonical slot and checked slice length.
 Callers do not search the cache map, choose between equal and longer keys, or
-construct `NttCacheKey` directly. A backend context prepared without the
-validated catalog plan cannot enter a compression proving path.
+construct `NttCacheKey` directly. Every fallback key is constructed by the
+same plan authority after dispatch and expanded-matrix bounds validation.
 
 F-chain execution uses the commit operation cluster; H-chain execution uses the
 opening cluster. Recursive next-F maps use the active level's commit cluster.
@@ -1583,7 +1589,7 @@ list is neither necessary nor sufficient. These authorities must agree:
   `AkitaProverSetup` itself remains backend-state-free. Commitment execution
   consumes F slices; opening execution consumes F/H slices; recursive levels
   consume only slices authorized by their authenticated schedule. An unplanned
-  lazy cache build is a profile/test diagnostic failure.
+  lazy cache build emits a profile/test diagnostic and preserves correctness.
 
 The arithmetic test matrix has three layers. Kernel tests compare the fused
 result with direct schoolbook cyclic and negacyclic multiplication for signed

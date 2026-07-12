@@ -73,7 +73,7 @@ pub use layout::{
     RingMatrixView, RingOpeningPoint, RingRole, MAX_FOLD_LEVELS, MIN_A_ROLE_FOLD_CHALLENGE_RING_D,
     SUPPORTED_CHALLENGE_RING_DIMS,
 };
-pub use ntt_cache::NttCacheKey;
+pub use ntt_cache::{NttCacheKey, PreparedNttPlan};
 pub use proof::{
     absorb_interstage_claims, combine_polys, eval_poly, linear_combination,
     range_check_eval_from_s, reorder_stage1_coords, stage1_interstage_batch_weights,

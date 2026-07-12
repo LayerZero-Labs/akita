@@ -289,7 +289,12 @@ fn make_verify_fixture(num_vars: usize) -> VerifyFixture {
 
     let (poly, evals) = make_dense_poly(full_num_vars);
     let setup = Scheme::setup_prover(full_num_vars, 1).unwrap();
-    let prepared = CpuBackend.prepare_setup(&setup).unwrap();
+    let prepared = CpuBackend
+        .prepare_setup(
+            &setup,
+            &akita_types::PreparedNttPlan::base_envelope(setup.expanded.as_ref()).unwrap(),
+        )
+        .unwrap();
     let stack =
         akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
             .expect("stack");

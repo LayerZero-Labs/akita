@@ -9,7 +9,7 @@ use crate::compute::plans::{
     RecursiveWitnessCommitRowsPlan, RingSwitchQuotientRowsPlan, RingSwitchRelationRows,
     RingSwitchRelationRowsPlan, SparseRingCommitRowsPlan,
 };
-use crate::kernels::crt_ntt::{build_ntt_slot, NttCacheMap, NttSlotCache};
+use crate::kernels::crt_ntt::{build_ntt_slot, NttCacheMap};
 use crate::kernels::linear::{
     fused_ring_switch_relation_rows_prover_bounds, mat_vec_mul_ntt_dense_digits_i8_trusted,
     mat_vec_mul_ntt_i8_dense, mat_vec_mul_ntt_i8_dense_single_row, mat_vec_mul_ntt_i8_strided,
@@ -19,7 +19,7 @@ use crate::kernels::linear::{
 use akita_algebra::CyclotomicRing;
 use akita_field::unreduced::{HasWide, ReduceTo};
 use akita_field::{AdditiveGroup, AkitaError, CanonicalField, FieldCore, HalvingField};
-use akita_types::{dispatch_for_field, AkitaExpandedSetup, NttCacheKey};
+use akita_types::{dispatch_for_field, AkitaExpandedSetup, NttCacheKey, PreparedNttPlan};
 use std::array::from_fn;
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
@@ -31,11 +31,12 @@ pub struct CpuBackend;
 /// CPU-prepared setup keyed by runtime ring dimension.
 ///
 /// NTT caches are keyed by [`NttCacheKey`]. [`ComputeBackendSetup::prepare_setup`]
-/// registers the minimum envelope slot on the setup contract; additional slots may
+/// registers every planned slot on the setup contract; additional slots may
 /// be built lazily via [`ComputeBackendSetup::ensure_ntt_slot`].
 #[derive(Debug)]
 pub struct CpuPreparedSetup<F: FieldCore> {
     expanded: Arc<AkitaExpandedSetup<F>>,
+    ntt_plan: PreparedNttPlan,
     shared_ntt: Mutex<NttCacheMap>,
     ntt_i8_capacity_by_ring_d: Mutex<HashMap<usize, CrtI8CapacityProfile>>,
     /// Keys promised at [`ComputeBackendSetup::prepare_setup`]; lazy builds outside
@@ -74,30 +75,6 @@ impl From<CrtI8CapacityProfile> for PreparedCrtNttProfile {
 }
 
 impl<F: FieldCore + CanonicalField> CpuPreparedSetup<F> {
-    fn envelope_ntt_key<const D: usize>(&self) -> Result<NttCacheKey, AkitaError> {
-        NttCacheKey::from_envelope(&self.expanded, D)
-    }
-
-    pub(crate) fn with_shared_ntt<const D: usize, R>(
-        &self,
-        f: impl FnOnce(&NttSlotCache<D>) -> Result<R, AkitaError>,
-    ) -> Result<R, AkitaError> {
-        let key = self.envelope_ntt_key::<D>()?;
-        let slot = {
-            let cache = self
-                .shared_ntt
-                .lock()
-                .map_err(|_| AkitaError::InvalidSetup("NTT cache lock poisoned".into()))?;
-            Arc::clone(cache.get(&key).ok_or_else(|| {
-                AkitaError::InvalidSetup(format!(
-                    "prepared setup NTT slot not warmed for ring_d={} num_ring_elements={}",
-                    key.ring_d, key.num_ring_elements
-                ))
-            })?)
-        };
-        f(slot.as_d::<D>()?)
-    }
-
     /// In-memory byte footprint of all shared setup NTT caches.
     pub fn shared_ntt_cache_bytes(&self) -> usize {
         self.shared_ntt
@@ -128,10 +105,10 @@ fn build_ntt_slot_for_key<F: FieldCore + CanonicalField>(
     expanded: &AkitaExpandedSetup<F>,
     key: NttCacheKey,
 ) -> Result<crate::kernels::crt_ntt::NttSlotCacheAny, AkitaError> {
-    dispatch_for_field!(ProtocolDispatchSlot::Ntt, F, key.ring_d, |RING_D| {
+    dispatch_for_field!(ProtocolDispatchSlot::Ntt, F, key.ring_d(), |RING_D| {
         let view = expanded
             .shared_matrix()
-            .ring_view::<RING_D>(1, key.num_ring_elements)?;
+            .ring_view::<RING_D>(1, key.num_ring_elements())?;
         Ok(build_ntt_slot(view)?.into())
     })
 }
@@ -145,7 +122,7 @@ fn record_ntt_profile_on_prepared<F: FieldCore>(
         .ntt_i8_capacity_by_ring_d
         .lock()
         .map_err(|_| AkitaError::InvalidSetup("NTT profile lock poisoned".into()))?
-        .entry(key.ring_d)
+        .entry(key.ring_d())
         .or_insert(profile);
     Ok(())
 }
@@ -154,7 +131,7 @@ fn insert_ntt_slot_on_prepared<F: FieldCore + CanonicalField>(
     prepared: &CpuPreparedSetup<F>,
     key: NttCacheKey,
 ) -> Result<(), AkitaError> {
-    let profile = dispatch_for_field!(ProtocolDispatchSlot::Ntt, F, key.ring_d, |RING_D| {
+    let profile = dispatch_for_field!(ProtocolDispatchSlot::Ntt, F, key.ring_d(), |RING_D| {
         selected_crt_i8_capacity_profile::<F, RING_D>()
     })?;
     if prepared
@@ -219,8 +196,8 @@ fn ensure_ntt_slot_on_prepared<F: FieldCore + CanonicalField>(
     {
         tracing::warn!(
             target: "akita_prover::ntt_cache",
-            ring_d = key.ring_d,
-            num_ring_elements = key.num_ring_elements,
+            ring_d = key.ring_d(),
+            num_ring_elements = key.num_ring_elements(),
             setup_contract_keys = prepared
                 .setup_contract_ntt_keys
                 .lock()
@@ -243,17 +220,25 @@ fn validate_digit_row_request(
             "prepared setup row width must be nonzero".to_string(),
         ));
     }
-    let required = row_len.checked_mul(row_width).ok_or_else(|| {
-        AkitaError::InvalidSetup(format!(
-            "digit row request overflows: row_len={row_len} row_width={row_width}"
-        ))
-    })?;
+    let required = checked_ntt_prefix(row_len, row_width, "digit row request")?;
     if required > total_ring_elements {
         return Err(AkitaError::InvalidSetup(format!(
             "digit row request needs {required} setup ring elements but prepared setup has {total_ring_elements}"
         )));
     }
     Ok(())
+}
+
+fn checked_ntt_prefix(
+    row_count: usize,
+    row_width: usize,
+    operation: &str,
+) -> Result<usize, AkitaError> {
+    row_count.checked_mul(row_width).ok_or_else(|| {
+        AkitaError::InvalidSetup(format!(
+            "{operation} NTT prefix overflows: row_count={row_count} row_width={row_width}"
+        ))
+    })
 }
 
 impl<F> ComputeBackendSetup<F> for CpuBackend
@@ -265,21 +250,19 @@ where
     fn prepare_expanded<const D: usize>(
         &self,
         expanded: Arc<AkitaExpandedSetup<F>>,
+        plan: PreparedNttPlan,
     ) -> Result<Self::PreparedSetup, AkitaError> {
-        Ok(CpuPreparedSetup {
+        let prepared = CpuPreparedSetup {
             expanded,
+            ntt_plan: plan.clone(),
             shared_ntt: Mutex::new(NttCacheMap::new()),
             ntt_i8_capacity_by_ring_d: Mutex::new(HashMap::new()),
             setup_contract_ntt_keys: Mutex::new(HashSet::new()),
-        })
-    }
-
-    fn register_setup_contract_ntt_slot(
-        &self,
-        prepared: &Self::PreparedSetup,
-        key: NttCacheKey,
-    ) -> Result<(), AkitaError> {
-        register_setup_contract_ntt_slot_on_prepared(prepared, key)
+        };
+        for &key in plan.slots() {
+            register_setup_contract_ntt_slot_on_prepared(&prepared, key)?;
+        }
+        Ok(prepared)
     }
 
     fn ensure_ntt_slot(
@@ -304,7 +287,8 @@ where
             Arc::clone(cache.get(&key).ok_or_else(|| {
                 AkitaError::InvalidSetup(format!(
                     "prepared setup NTT slot not warmed for ring_d={} num_ring_elements={}",
-                    key.ring_d, key.num_ring_elements
+                    key.ring_d(),
+                    key.num_ring_elements()
                 ))
             })?)
         };
@@ -316,6 +300,10 @@ where
         prepared: &'a Self::PreparedSetup,
     ) -> &'a AkitaExpandedSetup<F> {
         prepared.expanded.as_ref()
+    }
+
+    fn prepared_ntt_plan<'a>(&self, prepared: &'a Self::PreparedSetup) -> &'a PreparedNttPlan {
+        &prepared.ntt_plan
     }
 }
 
@@ -334,7 +322,8 @@ where
                 log_basis,
             } => {
                 let row_width = digit_block_slices.first().map_or(0, |digits| digits.len());
-                prepared.with_shared_ntt::<D, _>(|ntt| {
+                let required = checked_ntt_prefix(plan.n_a, row_width, "dense commit")?;
+                CpuBackend.with_planned_ntt_slot::<D, _>(prepared, required, |ntt| {
                     mat_vec_mul_ntt_dense_digits_i8_trusted(
                         ntt,
                         plan.n_a,
@@ -355,7 +344,8 @@ where
                     })
                 })?;
                 if plan.n_a == 1 {
-                    prepared.with_shared_ntt::<D, _>(|ntt| {
+                    let required = checked_ntt_prefix(plan.n_a, row_width, "dense commit")?;
+                    CpuBackend.with_planned_ntt_slot::<D, _>(prepared, required, |ntt| {
                         Ok(mat_vec_mul_ntt_i8_dense_single_row(
                             ntt,
                             row_width,
@@ -368,7 +358,8 @@ where
                         .collect())
                     })
                 } else {
-                    prepared.with_shared_ntt::<D, _>(|ntt| {
+                    let required = checked_ntt_prefix(plan.n_a, row_width, "dense commit")?;
+                    CpuBackend.with_planned_ntt_slot::<D, _>(prepared, required, |ntt| {
                         mat_vec_mul_ntt_i8_dense(
                             ntt,
                             plan.n_a,
@@ -461,7 +452,8 @@ where
             .checked_mul(plan.num_digits_commit)
             .ok_or_else(|| AkitaError::InvalidSetup("recursive A width overflow".to_string()))?;
         if plan.num_digits_commit == 1 {
-            prepared.with_shared_ntt::<D, _>(|ntt| {
+            let required = checked_ntt_prefix(plan.n_rows, row_width, "recursive witness")?;
+            CpuBackend.with_planned_ntt_slot::<D, _>(prepared, required, |ntt| {
                 mat_vec_mul_ntt_raw_i8_strided(
                     ntt,
                     plan.n_rows,
@@ -480,7 +472,8 @@ where
                     CyclotomicRing::from_coefficients(coeffs)
                 })
                 .collect();
-            prepared.with_shared_ntt::<D, _>(|ntt| {
+            let required = checked_ntt_prefix(plan.n_rows, row_width, "recursive witness")?;
+            CpuBackend.with_planned_ntt_slot::<D, _>(prepared, required, |ntt| {
                 mat_vec_mul_ntt_i8_strided(
                     ntt,
                     plan.n_rows,
@@ -515,7 +508,8 @@ where
                 .shared_matrix
                 .total_ring_elements_at::<D>()?,
         )?;
-        prepared.with_shared_ntt::<D, _>(|ntt| {
+        let required = checked_ntt_prefix(row_len, digits.len(), "digit rows")?;
+        CpuBackend.with_planned_ntt_slot::<D, _>(prepared, required, |ntt| {
             mat_vec_mul_ntt_single_i8(ntt, row_len, digits.len(), digits, log_basis)
         })
     }
@@ -540,7 +534,8 @@ where
                 .shared_matrix
                 .total_ring_elements_at::<D>()?,
         )?;
-        prepared.with_shared_ntt::<D, _>(|ntt| {
+        let required = checked_ntt_prefix(row_len, digits.len(), "cyclic digit rows")?;
+        CpuBackend.with_planned_ntt_slot::<D, _>(prepared, required, |ntt| {
             mat_vec_mul_ntt_single_i8_cyclic(ntt, row_len, digits.len(), digits, log_basis)
         })
     }
@@ -558,7 +553,15 @@ where
     where
         F: HalvingField,
     {
-        prepared.with_shared_ntt::<D, _>(|ntt| {
+        let required = [
+            checked_ntt_prefix(plan.n_d, plan.e_hat.len(), "ring-switch D relation")?,
+            checked_ntt_prefix(plan.n_b, plan.t_hat.len(), "ring-switch B relation")?,
+            checked_ntt_prefix(plan.n_a, plan.z_segment.len(), "ring-switch A relation")?,
+        ]
+        .into_iter()
+        .max()
+        .unwrap_or(0);
+        CpuBackend.with_planned_ntt_slot::<D, _>(prepared, required, |ntt| {
             let (d_cyclic, b_cyclic, a_quotients) = fused_ring_switch_relation_rows_prover_bounds(
                 ntt,
                 plan.n_d,
@@ -586,7 +589,8 @@ where
     where
         F: HalvingField,
     {
-        prepared.with_shared_ntt::<D, _>(|ntt| {
+        let required = checked_ntt_prefix(plan.n_a, plan.z_segment.len(), "ring-switch quotient")?;
+        CpuBackend.with_planned_ntt_slot::<D, _>(prepared, required, |ntt| {
             let (_d_cyclic, _b_cyclic, a_quotients) =
                 fused_ring_switch_relation_rows_prover_bounds(
                     ntt,
@@ -632,7 +636,12 @@ mod tests {
     fn prepared() -> CpuPreparedSetup<F> {
         let setup =
             AkitaProverSetup::<F>::generate_with_capacity(8, 1, D, setup_envelope(D)).unwrap();
-        CpuBackend.prepare_setup(&setup).unwrap()
+        CpuBackend
+            .prepare_setup(
+                &setup,
+                &akita_types::PreparedNttPlan::base_envelope(setup.expanded.as_ref()).unwrap(),
+            )
+            .unwrap()
     }
 
     #[test]
@@ -641,7 +650,12 @@ mod tests {
             AkitaProverSetup::<F>::generate_with_capacity(8, 1, D, setup_envelope(D)).unwrap();
         let setup_b =
             AkitaProverSetup::<F>::generate_with_capacity(9, 1, D, setup_envelope(D)).unwrap();
-        let prepared = CpuBackend.prepare_setup(&setup_a).unwrap();
+        let prepared = CpuBackend
+            .prepare_setup(
+                &setup_a,
+                &akita_types::PreparedNttPlan::base_envelope(setup_a.expanded.as_ref()).unwrap(),
+            )
+            .unwrap();
 
         CpuBackend
             .validate_prepared_setup(&prepared, setup_a.expanded.as_ref())
@@ -662,7 +676,12 @@ mod tests {
             AkitaProverSetup::<F>::generate_with_capacity(8, 1, D, setup_envelope(D)).unwrap();
         assert!(!Arc::ptr_eq(&setup_a.expanded, &setup_b.expanded));
 
-        let prepared = CpuBackend.prepare_setup(&setup_a).unwrap();
+        let prepared = CpuBackend
+            .prepare_setup(
+                &setup_a,
+                &akita_types::PreparedNttPlan::base_envelope(setup_a.expanded.as_ref()).unwrap(),
+            )
+            .unwrap();
 
         CpuBackend
             .validate_prepared_setup(&prepared, setup_b.expanded.as_ref())
@@ -686,13 +705,54 @@ mod tests {
     fn prepare_setup_registers_envelope_ntt_contract() {
         let setup =
             AkitaProverSetup::<F>::generate_with_capacity(8, 1, D, setup_envelope(D)).unwrap();
-        let prepared = CpuBackend.prepare_setup(&setup).expect("prepared");
+        let prepared = CpuBackend
+            .prepare_setup(
+                &setup,
+                &akita_types::PreparedNttPlan::base_envelope(setup.expanded.as_ref()).unwrap(),
+            )
+            .expect("prepared");
         assert!(prepared.shared_ntt_cache_bytes() > 0);
         let envelope_key =
             NttCacheKey::from_envelope(setup.expanded.as_ref(), D).expect("envelope key");
         CpuBackend
             .with_ntt_slot(&prepared, envelope_key, |_| Ok(()))
             .expect("envelope slot from setup contract");
+    }
+
+    #[test]
+    fn prepared_plan_sorts_coalesces_and_checks_compression_requirements() {
+        let setup =
+            AkitaProverSetup::<F>::generate_with_capacity(8, 1, D, setup_envelope(D)).unwrap();
+        let plan = PreparedNttPlan::with_compression_requirements(
+            setup.expanded.as_ref(),
+            [(32, 1), (32, 2), (32, 1)],
+        )
+        .expect("plan");
+
+        assert_eq!(plan.slots().len(), 2);
+        assert_eq!(plan.slots()[0].ring_d(), 32);
+        assert_eq!(plan.slots()[0].num_ring_elements(), 2);
+        assert_eq!(plan.slots()[1].ring_d(), D);
+        assert_eq!(
+            plan.resolve(32, 1).expect("containing slot"),
+            plan.slots()[0]
+        );
+
+        assert!(
+            PreparedNttPlan::with_compression_requirements(setup.expanded.as_ref(), [(8, 1)])
+                .is_err()
+        );
+        let oversized_prefix = setup
+            .expanded
+            .shared_matrix()
+            .total_ring_elements_at_dyn(32)
+            .expect("D=32 setup view")
+            + 1;
+        assert!(PreparedNttPlan::with_compression_requirements(
+            setup.expanded.as_ref(),
+            [(32, oversized_prefix)]
+        )
+        .is_err());
     }
 
     #[test]
@@ -711,33 +771,39 @@ mod tests {
     }
 
     #[test]
-    fn cpu_prepared_setup_warms_multiple_ntt_slots() {
+    fn prepared_plan_eagerly_warms_slots_and_lazy_fallback_remains_available() {
         let setup =
             AkitaProverSetup::<F>::generate_with_capacity(8, 1, D, setup_envelope(D)).unwrap();
-        let prepared = CpuBackend.prepare_setup(&setup).expect("prepared");
-        let envelope_key =
-            NttCacheKey::from_envelope(setup.expanded.as_ref(), D).expect("envelope key");
-        let partial_key = NttCacheKey {
-            ring_d: D,
-            num_ring_elements: 1,
-        };
+        let plan =
+            PreparedNttPlan::with_compression_requirements(setup.expanded.as_ref(), [(32, 1)])
+                .expect("plan");
+        let prepared = CpuBackend.prepare_setup(&setup, &plan).expect("prepared");
+        assert_eq!(prepared.shared_ntt.lock().unwrap().len(), 2);
+
         CpuBackend
-            .ensure_ntt_slot(&prepared, partial_key)
-            .expect("warm partial slot");
-        assert!(prepared.shared_ntt_cache_bytes() > 0);
+            .with_planned_ntt_slot::<32, _>(&prepared, 1, |_| Ok(()))
+            .expect("eager compression slot");
+        assert_eq!(prepared.shared_ntt.lock().unwrap().len(), 2);
+
         CpuBackend
-            .with_ntt_slot(&prepared, envelope_key, |_| Ok(()))
-            .expect("envelope slot still available");
-        CpuBackend
-            .with_ntt_slot(&prepared, partial_key, |_| Ok(()))
-            .expect("partial slot retrievable");
-        let miss = NttCacheKey {
-            ring_d: D,
-            num_ring_elements: 99_999,
-        };
+            .with_planned_ntt_slot::<16, _>(&prepared, 1, |_| Ok(()))
+            .expect("checked lazy fallback");
+        assert_eq!(prepared.shared_ntt.lock().unwrap().len(), 3);
+
         assert!(CpuBackend
-            .with_ntt_slot(&prepared, miss, |_| Ok(()))
+            .with_planned_ntt_slot::<16, _>(&prepared, 99_999, |_| Ok(()))
             .is_err());
+        assert_eq!(prepared.shared_ntt.lock().unwrap().len(), 3);
+    }
+
+    #[test]
+    fn planned_slot_serves_zero_work_without_constructing_zero_length_cache() {
+        let prepared = prepared();
+        let before = prepared.shared_ntt.lock().unwrap().len();
+        CpuBackend
+            .with_planned_ntt_slot::<D, _>(&prepared, 0, |_| Ok(()))
+            .expect("zero work uses the containing prepared slot");
+        assert_eq!(prepared.shared_ntt.lock().unwrap().len(), before);
     }
 
     #[test]
@@ -748,8 +814,8 @@ mod tests {
         let via_backend = CpuBackend
             .digit_rows::<D>(&prepared, 2, &digits, log_basis)
             .expect("backend digit rows");
-        let direct = prepared
-            .with_shared_ntt::<D, _>(|ntt| {
+        let direct = CpuBackend
+            .with_planned_ntt_slot::<D, _>(&prepared, 2 * digits.len(), |ntt| {
                 mat_vec_mul_ntt_single_i8(ntt, 2, digits.len(), &digits, log_basis)
             })
             .expect("direct digit rows");
@@ -764,8 +830,8 @@ mod tests {
         let via_backend = CpuBackend
             .digit_rows::<D>(&prepared, 2, &digits, log_basis)
             .expect("backend digit rows");
-        let direct = prepared
-            .with_shared_ntt::<D, _>(|ntt| {
+        let direct = CpuBackend
+            .with_planned_ntt_slot::<D, _>(&prepared, 2 * digits.len(), |ntt| {
                 mat_vec_mul_ntt_single_i8(ntt, 2, digits.len(), &digits, log_basis)
             })
             .expect("direct digit rows");
@@ -780,8 +846,8 @@ mod tests {
         let via_backend = CpuBackend
             .cyclic_digit_rows::<D>(&prepared, 2, &digits, log_basis)
             .expect("backend cyclic digit rows");
-        let direct = prepared
-            .with_shared_ntt::<D, _>(|ntt| {
+        let direct = CpuBackend
+            .with_planned_ntt_slot::<D, _>(&prepared, 2 * digits.len(), |ntt| {
                 mat_vec_mul_ntt_single_i8_cyclic(ntt, 2, digits.len(), &digits, log_basis)
             })
             .expect("direct cyclic digit rows");
@@ -809,8 +875,8 @@ mod tests {
                 },
             )
             .expect("backend ring-switch relation rows");
-        let direct = prepared
-            .with_shared_ntt::<D, _>(|ntt| {
+        let direct = CpuBackend
+            .with_planned_ntt_slot::<D, _>(&prepared, z_segment.len(), |ntt| {
                 fused_ring_switch_relation_rows(ntt, 1, 1, 1, &e_hat, &t_hat, &z_segment, 3)
             })
             .expect("direct fused ring-switch relation rows");

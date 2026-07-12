@@ -383,7 +383,12 @@ fn fp32_ext4_root_fold_roundtrip_uses_extension_gamma() {
         });
 
     let setup = SmallScheme::setup_prover(NUM_VARS, 1).unwrap();
-    let prepared = CpuBackend.prepare_setup(&setup).unwrap();
+    let prepared = CpuBackend
+        .prepare_setup(
+            &setup,
+            &akita_types::PreparedNttPlan::base_envelope(setup.expanded.as_ref()).unwrap(),
+        )
+        .unwrap();
     let stack =
         akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
             .expect("stack");
@@ -535,7 +540,12 @@ fn fp32_ext4_outer_extension_uses_root_tensor_projection() {
         });
 
     let setup = SmallScheme::setup_prover(NUM_VARS, 2).unwrap();
-    let prepared = CpuBackend.prepare_setup(&setup).unwrap();
+    let prepared = CpuBackend
+        .prepare_setup(
+            &setup,
+            &akita_types::PreparedNttPlan::base_envelope(setup.expanded.as_ref()).unwrap(),
+        )
+        .unwrap();
     let stack =
         akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
             .expect("stack");
@@ -641,7 +651,12 @@ fn fp32_ext4_extension_rejects_tampered_reduction_partial() {
         });
 
     let setup = SmallScheme::setup_prover(NUM_VARS, 2).unwrap();
-    let prepared = CpuBackend.prepare_setup(&setup).unwrap();
+    let prepared = CpuBackend
+        .prepare_setup(
+            &setup,
+            &akita_types::PreparedNttPlan::base_envelope(setup.expanded.as_ref()).unwrap(),
+        )
+        .unwrap();
     let stack =
         akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
             .expect("stack");
@@ -730,7 +745,12 @@ fn fp32_ext4_batched_extension_uses_root_tensor_projection() {
     let opening_a = opening_at(&point_a);
 
     let setup = SmallScheme::setup_prover(NUM_VARS, 2).unwrap();
-    let prepared = CpuBackend.prepare_setup(&setup).unwrap();
+    let prepared = CpuBackend
+        .prepare_setup(
+            &setup,
+            &akita_types::PreparedNttPlan::base_envelope(setup.expanded.as_ref()).unwrap(),
+        )
+        .unwrap();
     let stack =
         akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
             .expect("stack");

@@ -51,7 +51,12 @@ fn prove_tail_bound_with_grind_onehot_fixture(num_vars: usize, seed: u64) -> Tai
     let opening = opening_from_poly::<ONEHOT_D, _>(&poly, &point, &layout);
 
     let setup = Scheme::setup_prover(num_vars, 1).expect("setup");
-    let prepared = CpuBackend.prepare_setup(&setup).expect("prepare setup");
+    let prepared = CpuBackend
+        .prepare_setup(
+            &setup,
+            &akita_types::PreparedNttPlan::base_envelope(setup.expanded.as_ref()).unwrap(),
+        )
+        .expect("prepare setup");
     let stack =
         akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
             .expect("stack");
@@ -208,7 +213,12 @@ fn logging_transcript_event_stream_equality_tail_bound_with_grind() {
         let opening = opening_from_poly::<ONEHOT_D, _>(&poly, &point, &layout);
 
         let setup = Scheme::setup_prover(num_vars, 1).expect("setup");
-        let prepared = CpuBackend.prepare_setup(&setup).expect("prepare setup");
+        let prepared = CpuBackend
+            .prepare_setup(
+                &setup,
+                &akita_types::PreparedNttPlan::base_envelope(setup.expanded.as_ref()).unwrap(),
+            )
+            .expect("prepare setup");
         let stack = akita_prover::UniformProverStack::uniform(
             &CpuBackend,
             &prepared,

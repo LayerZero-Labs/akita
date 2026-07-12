@@ -124,7 +124,12 @@ where
         .collect::<Result<Vec<_>, _>>()
         .expect("benchmark root projection");
     let setup = AkitaCommitmentScheme::<Cfg>::setup_prover(num_vars, num_polys).unwrap();
-    let prepared = CpuBackend.prepare_setup(&setup).unwrap();
+    let prepared = CpuBackend
+        .prepare_setup(
+            &setup,
+            &akita_types::PreparedNttPlan::base_envelope(setup.expanded.as_ref()).unwrap(),
+        )
+        .unwrap();
     let stack =
         akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
             .expect("stack");

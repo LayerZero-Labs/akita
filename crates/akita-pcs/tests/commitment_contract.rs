@@ -22,7 +22,7 @@ use akita_prover::{
     batched_commit_with_params, commit_with_params, AkitaProverSetup, CpuBackend, CpuPreparedSetup,
     DensePoly,
 };
-use akita_types::{NttCacheKey, OpeningClaimsLayout};
+use akita_types::{NttCacheKey, OpeningClaimsLayout, PreparedNttPlan};
 
 type Cfg = fp64::D64Full;
 type F = <Cfg as CommitmentConfig>::Field;
@@ -103,8 +103,9 @@ where
     fn prepare_expanded<const RING_D: usize>(
         &self,
         expanded: std::sync::Arc<akita_types::AkitaExpandedSetup<F>>,
+        plan: PreparedNttPlan,
     ) -> Result<Self::PreparedSetup, AkitaError> {
-        CpuBackend.prepare_expanded::<RING_D>(expanded)
+        CpuBackend.prepare_expanded::<RING_D>(expanded, plan)
     }
 
     fn ensure_ntt_slot(
@@ -129,6 +130,10 @@ where
         prepared: &'a Self::PreparedSetup,
     ) -> &'a akita_types::AkitaExpandedSetup<F> {
         CpuBackend.prepared_expanded_setup(prepared)
+    }
+
+    fn prepared_ntt_plan<'a>(&self, prepared: &'a Self::PreparedSetup) -> &'a PreparedNttPlan {
+        CpuBackend.prepared_ntt_plan(prepared)
     }
 }
 
@@ -189,7 +194,10 @@ fn custom_commit_source_runs_commit_with_params() {
     let setup = AkitaProverSetup::<F>::generate_with_capacity(NUM_VARS, 1, D, setup_envelope)
         .expect("setup");
     let prepared = ContractCommitBackend
-        .prepare_setup(&setup)
+        .prepare_setup(
+            &setup,
+            &PreparedNttPlan::base_envelope(setup.expanded.as_ref()).expect("NTT plan"),
+        )
         .expect("prepared");
     let expanded = setup.expanded.as_ref();
     let contract_ctx =
@@ -203,7 +211,12 @@ fn custom_commit_source_runs_commit_with_params() {
     )
     .expect("contract commit");
 
-    let cpu_prepared = CpuBackend.prepare_setup(&setup).expect("cpu prepared");
+    let cpu_prepared = CpuBackend
+        .prepare_setup(
+            &setup,
+            &akita_types::PreparedNttPlan::base_envelope(setup.expanded.as_ref()).unwrap(),
+        )
+        .expect("cpu prepared");
     let cpu_ctx = OperationCtx::new(&CpuBackend, &cpu_prepared, expanded).expect("cpu ctx");
     let (dense_commitment, dense_hint) = commit_with_params::<F, DensePoly<F>, CpuBackend>(
         std::slice::from_ref(&dense),
@@ -238,7 +251,10 @@ fn custom_commit_source_runs_batched_commit_with_params() {
     let setup = AkitaProverSetup::<F>::generate_with_capacity(NUM_VARS, 1, D, setup_envelope)
         .expect("setup");
     let prepared = ContractCommitBackend
-        .prepare_setup(&setup)
+        .prepare_setup(
+            &setup,
+            &PreparedNttPlan::base_envelope(setup.expanded.as_ref()).expect("NTT plan"),
+        )
         .expect("prepared");
     let expanded = setup.expanded.as_ref();
     let contract_ctx =
@@ -253,7 +269,12 @@ fn custom_commit_source_runs_batched_commit_with_params() {
         )
         .expect("contract batched commit");
 
-    let cpu_prepared = CpuBackend.prepare_setup(&setup).expect("cpu prepared");
+    let cpu_prepared = CpuBackend
+        .prepare_setup(
+            &setup,
+            &akita_types::PreparedNttPlan::base_envelope(setup.expanded.as_ref()).unwrap(),
+        )
+        .expect("cpu prepared");
     let cpu_ctx = OperationCtx::new(&CpuBackend, &cpu_prepared, expanded).expect("cpu ctx");
     let (dense_commitment, dense_hint) = batched_commit_with_params::<F, DensePoly<F>, CpuBackend>(
         std::slice::from_ref(&dense),

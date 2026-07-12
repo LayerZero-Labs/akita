@@ -42,7 +42,12 @@ fn logged_dense_round_trip(num_vars: usize, shape_index: usize, basis_mode: Basi
         .collect();
 
     let setup = Scheme::setup_prover(num_vars, total_claims).unwrap();
-    let prepared = CpuBackend.prepare_setup(&setup).unwrap();
+    let prepared = CpuBackend
+        .prepare_setup(
+            &setup,
+            &akita_types::PreparedNttPlan::base_envelope(setup.expanded.as_ref()).unwrap(),
+        )
+        .unwrap();
     let stack =
         akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
             .expect("stack");
