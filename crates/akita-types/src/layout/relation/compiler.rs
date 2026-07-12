@@ -102,6 +102,11 @@ pub(super) fn compile_relation_layout(
     field_bits: u32,
     compression: Option<&compression_semantics::CompiledCompressionSemantics>,
 ) -> Result<RelationLayout, AkitaError> {
+    if lp.ring_dimension == 0 {
+        return Err(AkitaError::InvalidSetup(
+            "relation witness carrier ring dimension must be non-zero".into(),
+        ));
+    }
     if lp.log_basis == 0 || lp.log_basis >= 128 {
         return Err(AkitaError::InvalidSetup(
             "relation log_basis must be in 1..128".into(),
@@ -388,12 +393,15 @@ pub(super) fn compile_relation_layout(
     };
     let witness_layout =
         RelationLayout::compile_witness_layout(&segments, &row_plan, lp, field_bits)?;
+    let compression_witness_coeffs = compression.map_or(0, |local| local.total_coeffs);
     Ok(RelationLayout {
         segments,
         row_plan,
         negative_binary_support,
         support_derivation_version,
         total_coeffs: coeff_cursor,
+        compression_witness_coeffs,
+        carrier_ring_dim: lp.ring_dimension,
         witness_layout,
     })
 }

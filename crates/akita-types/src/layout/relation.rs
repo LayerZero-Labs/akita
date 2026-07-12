@@ -326,6 +326,11 @@ pub struct RelationLayout {
     negative_binary_support: Vec<CoeffSpan>,
     support_derivation_version: u8,
     total_coeffs: usize,
+    /// Flat F/H input and quotient coefficients appended after the physical
+    /// base z/e/t/r witness. Set only by the relation compiler.
+    compression_witness_coeffs: usize,
+    /// Authenticated carrier dimension for the physical successor witness.
+    carrier_ring_dim: usize,
     witness_layout: WitnessLayout,
 }
 
@@ -398,6 +403,57 @@ impl RelationLayout {
 
     pub fn total_coeffs(&self) -> usize {
         self.total_coeffs
+    }
+
+    /// Physical successor-witness length in field coefficients.
+    ///
+    /// The existing z/e/t/r witness is stored in authenticated carrier-ring
+    /// columns. Compression inputs and quotients are heterogeneous flat field
+    /// segments appended after that base. Their combined extent is padded once
+    /// so the complete successor witness again occupies whole carrier rings.
+    ///
+    /// This is the sole physical *length* authority. Semantic segments and
+    /// negative-binary support remain in the logical coordinates exposed by
+    /// [`Self::segments`], [`Self::total_coeffs`], and
+    /// [`Self::negative_binary_support`]. Translating those semantic spans into
+    /// physical witness coordinates belongs to the witness-emission and sparse-
+    /// provider slice. Carrier padding creates no semantic relation cells.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AkitaError::InvalidSetup`] when any base conversion,
+    /// compression addition, or final ring padding overflows `usize`.
+    pub fn physical_witness_field_coeff_len(&self) -> Result<usize, AkitaError> {
+        let carrier_ring_dim = self.carrier_ring_dim;
+        let base_coeffs = self
+            .witness_layout
+            .ring_len()?
+            .checked_mul(carrier_ring_dim)
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup(
+                    "relation base witness field coefficient count overflow".into(),
+                )
+            })?;
+        let unpadded_coeffs = base_coeffs
+            .checked_add(self.compression_witness_coeffs)
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup(
+                    "relation compression witness field coefficient count overflow".into(),
+                )
+            })?;
+        let rings = unpadded_coeffs
+            .checked_div(carrier_ring_dim)
+            .and_then(|rings| {
+                rings.checked_add(usize::from(
+                    !unpadded_coeffs.is_multiple_of(carrier_ring_dim),
+                ))
+            })
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup("relation witness carrier ring count overflow".into())
+            })?;
+        rings.checked_mul(carrier_ring_dim).ok_or_else(|| {
+            AkitaError::InvalidSetup("relation padded witness field coefficient overflow".into())
+        })
     }
 
     pub fn witness_layout(

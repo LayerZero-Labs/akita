@@ -40,11 +40,12 @@ fn certified_key(d: usize, raw_bound: u128, cols: usize) -> AjtaiKeyParams {
 fn chain(
     source: CompressionSourceId,
     source_key: &AjtaiKeyParams,
-    alphabets: [CompressionAlphabet; 2],
+    alphabets: &[CompressionAlphabet],
 ) -> CompressionChainSpec {
     let mut previous = source_key.row_len() * source_key.sis_table_key().ring_dimension as usize;
     let maps = alphabets
-        .into_iter()
+        .iter()
+        .copied()
         .enumerate()
         .map(|(index, alphabet)| {
             let d = if index == 0 { 64 } else { 32 };
@@ -55,15 +56,13 @@ fn chain(
                 }
             };
             let input = previous * depth;
-            let key = certified_key(
-                d,
-                if alphabet == CompressionAlphabet::NegativeBinary {
-                    1
-                } else {
-                    63
-                },
-                input / d,
-            );
+            let raw_bound = match alphabet {
+                CompressionAlphabet::NegativeBinary => 1,
+                CompressionAlphabet::OpeningBase { log_basis } => {
+                    ((1u128 << log_basis) - 1).max(63)
+                }
+            };
+            let key = certified_key(d, raw_bound, input / d);
             previous = key.row_len() * d;
             CompressionMapSpec::new(key, alphabet)
         })
@@ -112,6 +111,10 @@ fn empty_compression_is_byte_order_identical_to_the_single_group_oracle() {
     assert_eq!(
         layout.total_coeffs,
         (lens.z_len + lens.e_len + lens.t_len) * d + quotient_coeffs
+    );
+    assert_eq!(
+        layout.physical_witness_field_coeff_len().unwrap(),
+        layout.witness_layout(None).unwrap().ring_len().unwrap() * d
     );
     assert_eq!(
         layout.row_plan.padded_row_count,
@@ -228,7 +231,8 @@ fn checked_compression_extends_rows_and_directly_augments_existing_sources() {
         chain(
             CompressionSourceId::CurrentOuter,
             &lp.b_key,
-            [
+            &[
+                CompressionAlphabet::NegativeBinary,
                 CompressionAlphabet::NegativeBinary,
                 CompressionAlphabet::NegativeBinary,
             ],
@@ -236,7 +240,7 @@ fn checked_compression_extends_rows_and_directly_augments_existing_sources() {
         chain(
             CompressionSourceId::Opening,
             &lp.d_key,
-            [
+            &[
                 CompressionAlphabet::OpeningBase { log_basis: 6 },
                 CompressionAlphabet::NegativeBinary,
             ],
@@ -301,4 +305,193 @@ fn checked_compression_extends_rows_and_directly_augments_existing_sources() {
         .negative_binary_support
         .windows(2)
         .all(|pair| pair[0].end().unwrap() < pair[1].start));
+
+    let compression_coeffs = layout
+        .segments()
+        .iter()
+        .filter(|segment| {
+            matches!(
+                segment.id(),
+                RelationSegmentId::CompressionInput { .. }
+                    | RelationSegmentId::CompressionQuotient { .. }
+            )
+        })
+        .map(|segment| segment.span().len())
+        .sum::<usize>();
+    assert_eq!(layout.compression_witness_coeffs, compression_coeffs);
+    assert_eq!(
+        layout.total_coeffs(),
+        base.total_coeffs() + compression_coeffs
+    );
+    let carrier_d = lp.ring_dimension;
+    let base_coeffs = layout.witness_layout(None).unwrap().ring_len().unwrap() * carrier_d;
+    let unpadded = base_coeffs + compression_coeffs;
+    let expected = unpadded.div_ceil(carrier_d) * carrier_d;
+    assert_eq!(layout.physical_witness_field_coeff_len().unwrap(), expected);
+    let mut semantic_cursor = 0;
+    for segment in layout.segments() {
+        assert_eq!(segment.span().start(), semantic_cursor);
+        semantic_cursor = segment.span().end().unwrap();
+    }
+    assert_eq!(semantic_cursor, layout.total_coeffs());
+    let negative_xi = layout
+        .segments()
+        .iter()
+        .filter_map(|segment| match segment.id() {
+            RelationSegmentId::CompressionInput {
+                source: CompressionSourceId::CurrentOuter,
+                ..
+            }
+            | RelationSegmentId::CompressionInput {
+                source: CompressionSourceId::Opening,
+                map: 1,
+            } => Some(segment.span()),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        layout.negative_binary_support(),
+        normalize_support(negative_xi, layout.total_coeffs())
+            .unwrap()
+            .as_slice()
+    );
+}
+
+#[test]
+fn terminal_standalone_sizes_f_geometry_without_a_d_base_quotient() {
+    let (mut lp, opening) = level();
+    lp.b_key = certified_key(64, 63, 1);
+    let catalog = validate_compression_catalog::<F>(
+        &lp,
+        CompressionCatalogContext::StandaloneCommitment {
+            max_opening_log_basis: 6,
+        },
+        64,
+        vec![chain(
+            CompressionSourceId::CurrentOuter,
+            &lp.b_key,
+            &[
+                CompressionAlphabet::OpeningBase { log_basis: 4 },
+                CompressionAlphabet::NegativeBinary,
+            ],
+        )],
+    )
+    .unwrap();
+    let layout = catalog
+        .terminal_relation_layout::<F>(&lp, &opening)
+        .unwrap();
+    assert!(layout.compression_witness_coeffs > 0);
+    assert!(layout.segments().iter().any(|segment| matches!(
+        segment.id(),
+        RelationSegmentId::CompressionInput {
+            source: CompressionSourceId::CurrentOuter,
+            ..
+        }
+    )));
+    assert!(!layout.segments().iter().any(|segment| matches!(
+        segment.id(),
+        RelationSegmentId::BaseQuotient {
+            row: RelationRowId::D
+        }
+    )));
+    let base_coeffs = layout.witness_layout(None).unwrap().ring_len().unwrap() * 64;
+    assert!(layout.physical_witness_field_coeff_len().unwrap() > base_coeffs);
+}
+
+#[test]
+fn witness_field_sizing_rejects_zero_and_overflow() {
+    let (mut lp, opening) = level();
+    lp.ring_dimension = 0;
+    assert!(RelationLayout::from_authenticated_statement(
+        &lp,
+        &opening,
+        RelationMatrixRowLayout::WithDBlock,
+        lp.field_bits_for_cache(),
+    )
+    .is_err());
+    let (lp, opening) = level();
+    let mut layout = RelationLayout::from_authenticated_statement(
+        &lp,
+        &opening,
+        RelationMatrixRowLayout::WithDBlock,
+        lp.field_bits_for_cache(),
+    )
+    .unwrap();
+    layout.carrier_ring_dim = usize::MAX;
+    assert!(layout.physical_witness_field_coeff_len().is_err());
+    layout.carrier_ring_dim = 64;
+    layout.compression_witness_coeffs = usize::MAX;
+    assert!(layout.physical_witness_field_coeff_len().is_err());
+}
+
+#[test]
+fn multi_chunk_sizing_counts_replicated_base_storage() {
+    let mut lp = LevelParams::params_only(
+        crate::SisModulusFamily::Q128,
+        64,
+        6,
+        1,
+        1,
+        1,
+        SparseChallengeConfig::pm1_only(64),
+    )
+    .with_decomp(1, 3, 1, 1, 0)
+    .unwrap();
+    lp.witness_chunk = crate::ChunkedWitnessCfg {
+        num_chunks: 4,
+        num_activated_levels: 1,
+    };
+    lp.b_key = certified_key(64, 63, 1);
+    lp.d_key = certified_key(64, 63, 1);
+    let opening = OpeningClaimsLayout::new(2, 1).unwrap();
+    let base = RelationLayout::from_authenticated_statement(
+        &lp,
+        &opening,
+        RelationMatrixRowLayout::WithDBlock,
+        lp.field_bits_for_cache(),
+    )
+    .unwrap();
+    let catalog = validate_compression_catalog::<F>(
+        &lp,
+        CompressionCatalogContext::CoGeneratedLevel { opening: &opening },
+        64,
+        vec![
+            chain(
+                CompressionSourceId::CurrentOuter,
+                &lp.b_key,
+                &[
+                    CompressionAlphabet::NegativeBinary,
+                    CompressionAlphabet::NegativeBinary,
+                    CompressionAlphabet::NegativeBinary,
+                ],
+            ),
+            chain(
+                CompressionSourceId::Opening,
+                &lp.d_key,
+                &[
+                    CompressionAlphabet::OpeningBase { log_basis: 6 },
+                    CompressionAlphabet::NegativeBinary,
+                ],
+            ),
+        ],
+    )
+    .unwrap();
+    let layout = catalog.co_generated_relation_layout().unwrap();
+    let physical = layout.witness_layout(None).unwrap();
+    let base_physical = base.witness_layout(None).unwrap();
+    assert_eq!(physical, base_physical);
+    let z_sum = physical
+        .chunk_lengths
+        .iter()
+        .map(|lengths| lengths.z_len)
+        .sum::<usize>();
+    assert_eq!(z_sum, physical.chunk_lengths[0].z_len * 4);
+    let base_physical_coeffs = base_physical.ring_len().unwrap() * lp.ring_dimension;
+    assert_eq!(
+        physical.ring_len().unwrap() * lp.ring_dimension,
+        base_physical_coeffs
+    );
+    let unpadded = base_physical_coeffs + layout.compression_witness_coeffs;
+    let expected = unpadded.div_ceil(lp.ring_dimension) * lp.ring_dimension;
+    assert_eq!(layout.physical_witness_field_coeff_len().unwrap(), expected);
 }
