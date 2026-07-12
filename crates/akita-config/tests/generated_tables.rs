@@ -68,6 +68,10 @@ fn family_catalog_is_linked(family: &GeneratedFamily) -> bool {
         "fp128_d128_full" => fp128::D128Full::schedule_catalog().is_some(),
         "fp128_d128_onehot" => fp128::D128OneHot::schedule_catalog().is_some(),
         "fp128_d64_onehot" => fp128::D64OneHot::schedule_catalog().is_some(),
+        "fp128_d64_onehot_recursive" => {
+            <akita_config::RecursiveCommitmentConfig<fp128::D64OneHot> as CommitmentConfig>::schedule_catalog()
+                .is_some()
+        }
         "fp128_d64_full" => fp128::D64Full::schedule_catalog().is_some(),
         "fp128_d64_onehot_tensor" => {
             tensor_verifier::fp128::D64OneHotTensor::schedule_catalog().is_some()

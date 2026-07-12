@@ -7,6 +7,7 @@
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::{AkitaError, CanonicalField};
 
+use crate::config::SetupContributionMode;
 use crate::descriptor_bytes::{push_u128, push_u32, push_usize};
 use crate::layout::ring_dims::CommitmentRingDims;
 use crate::opening_claims::OpeningClaimsLayout;
@@ -109,6 +110,8 @@ pub struct LevelParams {
     pub precommitted_groups: Vec<PrecommittedLevelParams>,
     /// Per-role ring dimensions at this level (`d_a`, `d_b`, `d_d`).
     pub role_dims: CommitmentRingDims,
+    /// Authoritative per-level setup contribution strategy.
+    pub setup_contribution_mode: SetupContributionMode,
 }
 
 impl LevelParams {
@@ -185,6 +188,7 @@ impl LevelParams {
             witness_chunk: crate::witness::ChunkedWitnessCfg::default_non_chunked(),
             precommitted_groups: Vec::new(),
             role_dims: CommitmentRingDims::uniform(0),
+            setup_contribution_mode: SetupContributionMode::Direct,
         }
     }
 
@@ -246,6 +250,7 @@ impl LevelParams {
             witness_chunk: crate::witness::ChunkedWitnessCfg::default_non_chunked(),
             precommitted_groups: Vec::new(),
             role_dims: CommitmentRingDims::uniform(ring_dimension),
+            setup_contribution_mode: SetupContributionMode::Direct,
         }
     }
 
@@ -681,6 +686,7 @@ impl LevelParams {
                 group.append_descriptor_bytes(bytes);
             }
         }
+        append_setup_contribution_mode_descriptor_bytes(bytes, self.setup_contribution_mode);
     }
 
     /// Width of outer matrix B (column count of the B-key).
@@ -1206,6 +1212,7 @@ impl LevelParams {
             witness_chunk: self.witness_chunk,
             precommitted_groups: self.precommitted_groups.clone(),
             role_dims: self.role_dims,
+            setup_contribution_mode: self.setup_contribution_mode,
         };
         let field_bits = self.field_bits_for_cache();
         rebuilt.with_fold_linf_cap_config(field_bits, self.cached_num_digits_fold_claims)
@@ -1272,9 +1279,20 @@ impl LevelParams {
             witness_chunk: self.witness_chunk,
             precommitted_groups: self.precommitted_groups.clone(),
             role_dims: other.role_dims,
+            setup_contribution_mode: other.setup_contribution_mode,
         }
         .with_fold_linf_cap_config(field_bits, 0)
     }
+}
+
+fn append_setup_contribution_mode_descriptor_bytes(
+    bytes: &mut Vec<u8>,
+    mode: SetupContributionMode,
+) {
+    bytes.push(match mode {
+        SetupContributionMode::Direct => 0,
+        SetupContributionMode::Recursive => 1,
+    });
 }
 
 fn append_sparse_challenge_descriptor_bytes(bytes: &mut Vec<u8>, config: &SparseChallengeConfig) {
@@ -1320,17 +1338,14 @@ mod tests {
             SparseChallengeConfig::pm1_only(3),
         )
     }
-
     fn sample_layout_lp() -> LevelParams {
         sample_params_only().with_decomp(4, 2, 2, 2, 0).unwrap()
     }
-
     fn laid_out_sample_lp() -> LevelParams {
         sample_params_only()
             .with_layout(&sample_layout_lp(), 128)
             .unwrap()
     }
-
     fn sample_multi_group_root_params() -> (LevelParams, OpeningClaimsLayout) {
         use crate::schedule::PrecommittedGroupParams;
         let lp = sample_params_only()

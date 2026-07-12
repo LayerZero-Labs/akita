@@ -91,6 +91,7 @@ pub mod conservative_commitment;
 pub mod generated_families;
 mod matrix_envelope;
 pub mod proof_optimized;
+pub mod recursive_commitment;
 pub mod schedule_selection;
 pub mod tensor_verifier;
 #[cfg(feature = "test-support")]
@@ -101,6 +102,7 @@ pub use proof_optimized::{
     matrix_envelope_for_schedule, setup_level_params_from_runtime_schedule,
     worst_case_multi_group_opening_batch_for_shape,
 };
+pub use recursive_commitment::RecursiveCommitmentConfig;
 pub use schedule_selection::effective_batched_schedule;
 pub use transcript_binding::bind_transcript_instance_descriptor;
 
@@ -124,6 +126,7 @@ pub fn policy_of<Cfg: CommitmentConfig>() -> PlannerPolicy {
         basis_range: Cfg::basis_range(),
         onehot_chunk_size: Cfg::onehot_chunk_size(),
         witness_chunk: Cfg::chunked_witness_cfg(),
+        recursive_setup_planning: Cfg::recursive_setup_planning(),
     }
 }
 
@@ -286,6 +289,14 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     /// presets override this to price the chunked witness layout.
     fn chunked_witness_cfg() -> ChunkedWitnessCfg {
         ChunkedWitnessCfg::default()
+    }
+
+    /// Whether schedule planning may emit recursive setup-contribution edges.
+    ///
+    /// Ordinary configs are direct-only. Config adapters that opt into recursive
+    /// setup offloading override this and use a separate generated catalog.
+    fn recursive_setup_planning() -> bool {
+        false
     }
 
     /// Optional shipped schedule catalog for this preset.

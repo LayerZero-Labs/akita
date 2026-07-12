@@ -76,6 +76,11 @@ pub struct PlannerPolicy {
     /// a single-chunk table. `ChunkedWitnessCfg::default()` (single chunk) leaves
     /// every schedule byte-identical to the historical layout.
     pub witness_chunk: ChunkedWitnessCfg,
+    /// Whether the DP is allowed to plan recursive setup offloading edges.
+    ///
+    /// Ordinary configs keep this false and emit direct-only schedules. The
+    /// recursion config adapter sets it true and gets a separate catalog identity.
+    pub recursive_setup_planning: bool,
 }
 
 impl PlannerPolicy {

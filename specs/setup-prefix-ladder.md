@@ -187,7 +187,9 @@ commitment needs.
 
 Planner-aware setup-prefix scheduling is future work. That later PR should make
 the planner price and constrain candidate next-fold params against the current
-fold's setup-prefix footprint.
+fold's setup-prefix footprint. The proposed per-fold mode, eligibility gates,
+and two-group suffix transition are specified in
+[`setup-offloading-planner.md`](setup-offloading-planner.md).
 
 ### Runtime Fallback
 
@@ -210,6 +212,7 @@ the implemented subset.
 
 - `STACK.md`, slice 02B (`setup-prefix-ladder`) and 02D (`setup-offload-gating`)
 - `specs/setup-product-sumcheck.md`
+- `specs/setup-offloading-planner.md`
 - `crates/akita-types/src/proof/setup_prefix.rs`
 - `crates/akita-prover/src/api/setup_prefix.rs`
 - `crates/akita-setup/src/recursion.rs`

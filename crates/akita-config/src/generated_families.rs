@@ -23,7 +23,7 @@ use akita_types::{
 
 use crate::conservative_commitment::conservative_commit_params;
 use crate::proof_optimized::{fp128, fp32, fp64};
-use crate::{policy_of, tensor_verifier, CommitmentConfig};
+use crate::{policy_of, tensor_verifier, CommitmentConfig, RecursiveCommitmentConfig};
 
 /// Default batched opening sizes emitted for every Akita shipped family.
 pub const DEFAULT_NUM_POLYS: &[usize] = &[1, 4];
@@ -293,6 +293,14 @@ pub const ALL_GENERATED_FAMILIES: &[GeneratedFamily] = &[
         1,
         50,
         fp128::D64OneHot
+    ),
+    family_row!(
+        "fp128_d64_onehot_recursive",
+        "FP128_D64_ONEHOT_RECURSIVE_SCHEDULES",
+        "fp128-d64-onehot-recursive",
+        1,
+        50,
+        RecursiveCommitmentConfig<fp128::D64OneHot>
     ),
     family_row!(
         "fp128_d64_full",

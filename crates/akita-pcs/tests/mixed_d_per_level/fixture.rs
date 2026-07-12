@@ -223,6 +223,7 @@ fn expand_envelope_witness_at_ring_d(
         precommitted_groups: Vec::new(),
         witness_chunk: akita_types::witness::ChunkedWitnessCfg::default_non_chunked(),
         role_dims: CommitmentRingDims::uniform(target_ring_d),
+        setup_contribution_mode: akita_types::SetupContributionMode::Direct,
     };
     params.stamp_role_dims_from_keys();
     params.with_fold_linf_cap_config(policy.decomposition.field_bits(), num_claims)

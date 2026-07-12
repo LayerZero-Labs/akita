@@ -1,0 +1,98 @@
+//! Recursive setup-offloading config adapter.
+
+use crate::CommitmentConfig;
+use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
+use akita_field::AkitaError;
+use akita_types::{
+    AkitaScheduleInputs, ChunkedWitnessCfg, DecompositionParams, SetupMatrixEnvelope,
+    SisModulusFamily, SETUP_OFFLOAD_D_SETUP,
+};
+#[cfg(feature = "schedules-fp128-d64-onehot-recursive")]
+use std::any::TypeId;
+use std::marker::PhantomData;
+
+/// Config adapter that enables recursion-aware setup offloading schedules.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct RecursiveCommitmentConfig<Cfg>(PhantomData<Cfg>);
+
+impl<Cfg: CommitmentConfig> CommitmentConfig for RecursiveCommitmentConfig<Cfg> {
+    type Field = Cfg::Field;
+    type ExtField = Cfg::ExtField;
+
+    const D: usize = Cfg::D;
+
+    fn decomposition() -> DecompositionParams {
+        Cfg::decomposition()
+    }
+
+    fn ring_challenge_config(d: usize) -> Result<SparseChallengeConfig, AkitaError> {
+        Cfg::ring_challenge_config(d)
+    }
+
+    fn fold_challenge_shape_at_level(inputs: AkitaScheduleInputs) -> TensorChallengeShape {
+        Cfg::fold_challenge_shape_at_level(inputs)
+    }
+
+    fn sis_modulus_family() -> SisModulusFamily {
+        Cfg::sis_modulus_family()
+    }
+
+    fn ring_subfield_embedding_norm_bound() -> u32 {
+        Cfg::ring_subfield_embedding_norm_bound()
+    }
+
+    fn max_setup_matrix_size(
+        max_num_vars: usize,
+        max_num_batched_polys: usize,
+    ) -> Result<SetupMatrixEnvelope, AkitaError> {
+        Cfg::max_setup_matrix_size(max_num_vars, max_num_batched_polys)
+    }
+
+    fn basis_range() -> (u32, u32) {
+        Cfg::basis_range()
+    }
+
+    fn onehot_chunk_size() -> usize {
+        Cfg::onehot_chunk_size()
+    }
+
+    fn chunked_witness_cfg() -> ChunkedWitnessCfg {
+        Cfg::chunked_witness_cfg()
+    }
+
+    fn recursive_setup_planning() -> bool {
+        true
+    }
+
+    fn schedule_catalog() -> Option<akita_planner::GeneratedScheduleTable> {
+        #[cfg(feature = "schedules-fp128-d64-onehot-recursive")]
+        {
+            if TypeId::of::<Cfg>() == TypeId::of::<crate::proof_optimized::fp128::D64OneHot>() {
+                return Some(akita_schedules::fp128_d64_onehot_recursive_table());
+            }
+        }
+        None
+    }
+
+    fn runtime_schedule(
+        key: akita_types::AkitaScheduleLookupKey,
+    ) -> Result<akita_types::Schedule, AkitaError> {
+        if Cfg::D != SETUP_OFFLOAD_D_SETUP {
+            return Err(AkitaError::InvalidSetup(
+                "recursive setup planning requires D64".to_string(),
+            ));
+        }
+        if Cfg::chunked_witness_cfg().uses_multi_chunk() {
+            return Err(AkitaError::InvalidSetup(
+                "recursive setup planning does not support multi-chunk witnesses".to_string(),
+            ));
+        }
+        akita_planner::resolve_group_batch_schedule(
+            &key,
+            &crate::policy_of::<Self>(),
+            Self::ring_challenge_config,
+            Self::fold_challenge_shape_at_level,
+            Self::schedule_catalog(),
+        )
+    }
+}

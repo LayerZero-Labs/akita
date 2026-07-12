@@ -17,16 +17,19 @@ use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::AkitaError;
 
 use crate::generated::{
-    GeneratedDirectStep, GeneratedFoldStep, GeneratedScheduleTableEntry, GeneratedStep,
+    GeneratedDirectStep, GeneratedFoldStep, GeneratedScheduleTableEntry, GeneratedSetupPrefixGroup,
+    GeneratedStep,
 };
 use crate::PlannerPolicy;
 use akita_types::sis::{
     decomposed_s_block_ring_count, decomposed_t_ring_count, decomposed_w_ring_count,
-    min_secure_rank, num_digits_open, num_digits_s_commit, rounded_up_collision_inf_norm,
-    rounded_up_role_a_inf_norm, SisTableKey,
+    fold_witness_digit_plan, min_secure_rank, num_digits_open, num_digits_s_commit,
+    rounded_up_collision_inf_norm, rounded_up_role_a_inf_norm, FoldChallengeNorms,
+    FoldWitnessLinfCapConfig, FoldWitnessNorms, SisTableKey,
 };
 use akita_types::{
-    AjtaiKeyParams, CommitmentRingDims, DecompositionParams, LevelParams, PrecommittedLevelParams,
+    AjtaiKeyParams, CommitmentRingDims, DecompositionParams, LevelParams, PolynomialGroupLayout,
+    PrecommittedGroupParams, PrecommittedLevelParams,
 };
 
 fn require_exact_rank(
@@ -48,6 +51,141 @@ fn require_exact_rank(
         )));
     }
     Ok(())
+}
+
+impl GeneratedSetupPrefixGroup {
+    fn expand_to_precommitted_group(
+        self,
+        policy: &PlannerPolicy,
+        ring_challenge_cfg: &SparseChallengeConfig,
+        fold_shape: TensorChallengeShape,
+        log_basis: u32,
+    ) -> Result<PrecommittedLevelParams, AkitaError> {
+        let d = policy.ring_dimension;
+        let family = policy.sis_family;
+        let min_security_bits = policy.min_sis_security_bits;
+        let m_vars = self.m_vars as usize;
+        let r_vars = self.r_vars as usize;
+        let num_blocks = 1usize.checked_shl(r_vars as u32).ok_or_else(|| {
+            AkitaError::InvalidSetup("generated setup-prefix 2^r_vars overflows usize".to_string())
+        })?;
+        let block_len = 1usize.checked_shl(m_vars as u32).ok_or_else(|| {
+            AkitaError::InvalidSetup("generated setup-prefix 2^m_vars overflows usize".to_string())
+        })?;
+        let prefix_num_vars = m_vars
+            .checked_add(r_vars)
+            .and_then(|n| n.checked_add(d.trailing_zeros() as usize))
+            .ok_or_else(|| AkitaError::InvalidSetup("setup-prefix num_vars overflow".into()))?;
+        let layout = PrecommittedGroupParams {
+            group: PolynomialGroupLayout::singleton(prefix_num_vars),
+            m_vars,
+            r_vars,
+            log_basis,
+            n_a: self.n_a as usize,
+            conservative_n_b: self.n_b as usize,
+        };
+        let decomp = DecompositionParams {
+            log_basis,
+            ..policy.decomposition
+        };
+        let num_digits_commit = num_digits_s_commit(decomp, false);
+        let num_digits_open_val = num_digits_open(decomp);
+        let no_layout = |role: &str| {
+            AkitaError::InvalidSetup(format!(
+                "no audited setup-prefix {role}-role layout for generated schedule \
+                 (family={family:?}, d={d}, log_basis={log_basis})"
+            ))
+        };
+        let inner_width = decomposed_s_block_ring_count(block_len, num_digits_commit)
+            .ok_or_else(|| no_layout("A"))?;
+        let a_bucket = rounded_up_role_a_inf_norm(
+            min_security_bits,
+            family,
+            d,
+            decomp,
+            ring_challenge_cfg,
+            fold_shape,
+            false,
+            0,
+            policy.ring_subfield_norm_bound,
+            r_vars,
+            1,
+            inner_width as u64,
+        )
+        .ok_or_else(|| no_layout("A"))?;
+        require_exact_rank(
+            "setup-prefix a",
+            SisTableKey {
+                min_security_bits,
+                family,
+                ring_dimension: d as u32,
+                coeff_linf_bound: a_bucket,
+            },
+            inner_width,
+            self.n_a as usize,
+        )?;
+        let b_bucket = rounded_up_collision_inf_norm(min_security_bits, family, d, log_basis)
+            .ok_or_else(|| no_layout("B"))?;
+        let outer_width =
+            decomposed_t_ring_count(self.n_a as usize, num_digits_open_val, num_blocks, 1)
+                .ok_or_else(|| no_layout("B"))?;
+        require_exact_rank(
+            "setup-prefix b",
+            SisTableKey {
+                min_security_bits,
+                family,
+                ring_dimension: d as u32,
+                coeff_linf_bound: b_bucket,
+            },
+            outer_width,
+            self.n_b as usize,
+        )?;
+        let a_key = AjtaiKeyParams::try_new(
+            min_security_bits,
+            family,
+            self.n_a as usize,
+            inner_width,
+            a_bucket,
+            d,
+        )?;
+        let b_key = AjtaiKeyParams::try_new(
+            min_security_bits,
+            family,
+            self.n_b as usize,
+            outer_width,
+            b_bucket,
+            d,
+        )?;
+        let fold_linf_cap_config = FoldWitnessLinfCapConfig::for_fold_level(
+            ring_challenge_cfg,
+            fold_shape,
+            d,
+            inner_width,
+        )?;
+        let challenge = FoldChallengeNorms {
+            infinity_norm: fold_shape.effective_infinity_norm(ring_challenge_cfg) as u128,
+            l1_norm: fold_shape.effective_l1_mass(ring_challenge_cfg) as u128,
+        };
+        let (num_digits_fold_one, _) = fold_witness_digit_plan(
+            r_vars,
+            1,
+            policy.decomposition.field_bits(),
+            log_basis,
+            challenge,
+            FoldWitnessNorms::new(log_basis, d, 1, false),
+            &fold_linf_cap_config,
+        )?;
+        Ok(PrecommittedLevelParams {
+            layout,
+            a_key,
+            b_key,
+            num_blocks,
+            block_len,
+            num_digits_commit,
+            num_digits_open: num_digits_open_val,
+            num_digits_fold_one,
+        })
+    }
 }
 
 impl GeneratedFoldStep {
@@ -184,8 +322,29 @@ impl GeneratedFoldStep {
         let d_bucket =
             rounded_up_collision_inf_norm(min_security_bits, sis_family, ring_d, log_basis)
                 .ok_or_else(|| no_layout("D"))?;
-        let d_matrix_width = decomposed_w_ring_count(num_digits_open_val, num_blocks, num_claims)
+        let main_d_width = decomposed_w_ring_count(num_digits_open_val, num_blocks, num_claims)
             .ok_or_else(|| no_layout("D"))?;
+        let precommitted_groups = self
+            .setup_prefix_group
+            .map(|group| {
+                group.expand_to_precommitted_group(
+                    policy,
+                    &ring_challenge_cfg,
+                    fold_shape,
+                    log_basis,
+                )
+            })
+            .transpose()?
+            .into_iter()
+            .collect::<Vec<_>>();
+        let precommitted_d_width = precommitted_groups.iter().try_fold(0usize, |acc, group| {
+            acc.checked_add(group.d_segment_width()?).ok_or_else(|| {
+                AkitaError::InvalidSetup("generated setup-prefix D width overflow".into())
+            })
+        })?;
+        let d_matrix_width = main_d_width
+            .checked_add(precommitted_d_width)
+            .ok_or_else(|| AkitaError::InvalidSetup("generated D width overflow".into()))?;
 
         let num_digits_open = num_digits_open_val;
 
@@ -271,8 +430,9 @@ impl GeneratedFoldStep {
             // (`schedule_from_entry`) stamp the per-level value for fold steps so
             // a root-direct commit stays single-chunk.
             witness_chunk: akita_types::ChunkedWitnessCfg::default(),
-            precommitted_groups: Vec::new(),
+            precommitted_groups,
             role_dims: CommitmentRingDims::uniform(ring_d),
+            setup_contribution_mode: self.setup_contribution_mode,
         };
         let mut params =
             params.with_fold_linf_cap_config(policy.decomposition.field_bits(), num_claims)?;
@@ -440,6 +600,7 @@ impl GeneratedFoldStep {
             witness_chunk: akita_types::ChunkedWitnessCfg::default(),
             precommitted_groups,
             role_dims: CommitmentRingDims::uniform(ring_d),
+            setup_contribution_mode: self.setup_contribution_mode,
         };
         let mut params =
             params.with_fold_linf_cap_config(policy.decomposition.field_bits(), main_num_polys)?;

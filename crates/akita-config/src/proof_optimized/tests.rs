@@ -751,6 +751,23 @@ fn generated_fp128_schedule_tables_match_cfg_schedule() {
     assert_every_table_entry_materializes::<fp128::D64OneHot>(fp128_d64_onehot_table());
 }
 
+#[cfg(feature = "schedules-fp128-d64-onehot-recursive")]
+#[test]
+fn recursive_d64_onehot_catalog_materializes_setup_prefix_groups() {
+    type Cfg = crate::RecursiveCommitmentConfig<fp128::D64OneHot>;
+    let schedule = <Cfg as CommitmentConfig>::runtime_schedule(AkitaScheduleLookupKey::single(
+        PolynomialGroupLayout::new(46, 1),
+    ))
+    .expect("recursive schedule catalog entry");
+
+    assert!(schedule.fold_steps().any(|fold| {
+        fold.params.setup_contribution_mode == akita_types::SetupContributionMode::Recursive
+    }));
+    assert!(schedule
+        .fold_steps()
+        .any(|fold| !fold.params.precommitted_groups.is_empty()));
+}
+
 #[test]
 #[cfg(feature = "schedules-default")]
 fn generated_small_field_schedule_tables_match_cfg_schedule() {

@@ -365,6 +365,8 @@ Risks to resolve before implementation:
 
 - `specs/setup-product-sumcheck.md`
 - `specs/setup-prefix-ladder.md`
+- `specs/setup-offloading-planner.md` — planner-owned per-fold offload
+  selection and successor two-group scheduling.
 - `crates/akita-prover/src/protocol/core/fold.rs`
 - `crates/akita-prover/src/protocol/sumcheck/setup_sumcheck.rs`
 - `crates/akita-verifier/src/stages/stage3.rs`

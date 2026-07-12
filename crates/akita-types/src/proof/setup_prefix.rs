@@ -23,6 +23,9 @@ const MAX_SETUP_PREFIX_SLOTS: usize = 4096;
 /// Ring dimension used when delegating setup claims to a flat coefficient prefix.
 pub const SETUP_OFFLOAD_D_SETUP: usize = 64;
 
+/// Minimum padded setup-prefix field length for recursive setup offloading.
+pub const SETUP_OFFLOAD_MIN_PREFIX_FIELD_LEN: usize = 1 << 10;
+
 /// Identity for one committed setup-prefix slot.
 ///
 /// `natural_len` distinguishes exact prefixes that share a padded commitment
@@ -719,52 +722,57 @@ where
     }
 }
 
-/// Return the packed role widths `(W_A, W_B, W_D)` for one active level shape.
-fn active_setup_role_widths(
-    level_params: &LevelParams,
-    opening_batch: &OpeningClaimsLayout,
-) -> Result<(usize, usize, usize), AkitaError> {
-    level_params.require_scalar_level("active_setup_role_widths")?;
-    let w_a = level_params
-        .block_len
-        .checked_mul(level_params.num_digits_commit)
-        .ok_or_else(|| AkitaError::InvalidSetup("A setup width overflow".to_string()))?;
-    let num_claims = opening_batch.num_total_polynomials();
-    let max_group_poly_count = opening_batch.num_total_polynomials();
-    let w_d = num_claims
-        .checked_mul(level_params.num_blocks)
-        .and_then(|n| n.checked_mul(level_params.num_digits_open))
-        .ok_or_else(|| AkitaError::InvalidSetup("D setup width overflow".to_string()))?;
-    let w_b = max_group_poly_count
-        .checked_mul(level_params.a_key.row_len())
-        .and_then(|n| n.checked_mul(level_params.num_blocks))
-        .and_then(|n| n.checked_mul(level_params.num_digits_open))
-        .ok_or_else(|| AkitaError::InvalidSetup("B setup width overflow".to_string()))?;
-    Ok((w_a, w_b, w_d))
-}
-
-/// Active packed setup footprint in ring slots: `max(n_a W_A, n_b W_B, n_d W_D)`.
+/// Active packed setup footprint in ring slots.
 fn active_setup_ring_slots(
     level_params: &LevelParams,
     opening_batch: &OpeningClaimsLayout,
 ) -> Result<usize, AkitaError> {
-    let (w_a, w_b, w_d) = active_setup_role_widths(level_params, opening_batch)?;
-    let a_slots = level_params
-        .a_key
-        .row_len()
-        .checked_mul(w_a)
-        .ok_or_else(|| AkitaError::InvalidSetup("A setup footprint overflow".to_string()))?;
-    let b_slots = level_params
-        .b_key
-        .row_len()
-        .checked_mul(w_b)
-        .ok_or_else(|| AkitaError::InvalidSetup("B setup footprint overflow".to_string()))?;
+    opening_batch.check()?;
+    level_params.validate_root_opening_batch(opening_batch)?;
+
+    let mut max_slots = 0usize;
+    let mut shared_d_width = 0usize;
+    for group_index in 0..opening_batch.num_groups() {
+        let group_layout = opening_batch.group_layout(group_index)?;
+        let group_params = level_params.root_group_params(opening_batch, group_index)?;
+        let a_width = group_params
+            .block_len()
+            .checked_mul(group_params.num_digits_commit())
+            .ok_or_else(|| AkitaError::InvalidSetup("A setup width overflow".to_string()))?;
+        let a_slots = group_params
+            .a_rows_len()
+            .checked_mul(a_width)
+            .ok_or_else(|| AkitaError::InvalidSetup("A setup footprint overflow".to_string()))?;
+
+        let b_width = group_layout
+            .num_polynomials()
+            .checked_mul(group_params.a_rows_len())
+            .and_then(|n| n.checked_mul(group_params.num_blocks()))
+            .and_then(|n| n.checked_mul(group_params.num_digits_open()))
+            .ok_or_else(|| AkitaError::InvalidSetup("B setup width overflow".to_string()))?;
+        let b_slots = group_params
+            .b_rows_len()
+            .checked_mul(b_width)
+            .ok_or_else(|| AkitaError::InvalidSetup("B setup footprint overflow".to_string()))?;
+
+        let d_width = group_layout
+            .num_polynomials()
+            .checked_mul(group_params.num_blocks())
+            .and_then(|n| n.checked_mul(group_params.num_digits_open()))
+            .ok_or_else(|| AkitaError::InvalidSetup("D setup width overflow".to_string()))?;
+        shared_d_width = shared_d_width
+            .checked_add(d_width)
+            .ok_or_else(|| AkitaError::InvalidSetup("D setup width overflow".to_string()))?;
+
+        max_slots = max_slots.max(a_slots).max(b_slots);
+    }
+
     let d_slots = level_params
         .d_key
         .row_len()
-        .checked_mul(w_d)
+        .checked_mul(shared_d_width)
         .ok_or_else(|| AkitaError::InvalidSetup("D setup footprint overflow".to_string()))?;
-    Ok(a_slots.max(b_slots).max(d_slots))
+    Ok(max_slots.max(d_slots))
 }
 
 /// Active flat coefficient count `N_active^F = D_setup * N_active^R`.
@@ -938,7 +946,12 @@ mod tests {
     fn active_setup_field_len_matches_packed_role_maximum() {
         let lp = sample_level_params();
         let opening_batch = OpeningClaimsLayout::new(5, 3).expect("opening batch");
-        let (w_a, w_b, w_d) = active_setup_role_widths(&lp, &opening_batch).expect("widths");
+        let w_a = lp.block_len * lp.num_digits_commit;
+        let w_b = opening_batch.num_total_polynomials()
+            * lp.a_key.row_len()
+            * lp.num_blocks
+            * lp.num_digits_open;
+        let w_d = opening_batch.num_total_polynomials() * lp.num_blocks * lp.num_digits_open;
         let expected_ring_slots = lp
             .a_key
             .row_len()

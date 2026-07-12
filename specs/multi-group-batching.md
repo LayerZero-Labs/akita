@@ -1460,9 +1460,11 @@ The following choices close the open questions from the first draft:
 2. **Setup capacity:** keep the public setup surface on `max_num_vars`,
   `max_num_batched_polys`, and `max_setup_len` for Phase 1. Add an explicit
   group-count setup API field only if Phase 2 envelope scans show a need.
-3. **Recursive setup contribution:** explicitly delay generalization until
-  a later root-layout generalization. The multi-group opening phase keeps the
-  existing reject.
+3. **Recursive setup contribution:** multi-group Stage 3 is implemented for a
+   folded root that hands off to a singleton recursive suffix. Carrying the
+   setup-prefix opening into that successor as a precommitted group remains the
+   planner/boundary follow-up specified in
+   [`setup-offloading-planner.md`](setup-offloading-planner.md).
 4. **Planner key exposure:** keep `AkitaScheduleLookupKey` as the canonical
   config/planner key. Public final-commit callers pass
   `PolynomialGroupLayout`s for precommitted groups; opening callers should use

@@ -137,6 +137,7 @@ mod tests {
             basis_range: (3, 4),
             onehot_chunk_size: 1,
             witness_chunk: ChunkedWitnessCfg::default(),
+            recursive_setup_planning: false,
         }
     }
 
@@ -164,6 +165,8 @@ mod tests {
             n_a: lp.a_key.row_len() as u32,
             n_b: lp.b_key.row_len() as u32,
             n_d: lp.d_key.row_len() as u32,
+            setup_prefix_group: None,
+            setup_contribution_mode: lp.setup_contribution_mode,
         }
     }
 
