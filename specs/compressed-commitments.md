@@ -6,32 +6,33 @@
 | Created       | 2026-07-11 |
 | Status        | proposed |
 | PR            | |
-| Supersedes    | `specs/archive/2026-Q3/commitment-compression-cutover.md` |
+| Supersedes    | |
 | Superseded-by | |
 | Book-chapter  | |
 
 ## Summary
 
-Akita will replace every transmitted Ajtai commitment with a generated
-compression chain of depth two or three. Each map recommits a scheduled gadget
-decomposition of the preceding image. A map may use the opening-base alphabet
-or the negative-binary alphabet `{-1, 0}`; production search permits the
-opening-base alphabet only for the first map and uses negative binary
-thereafter. The binary certificate is local to the scheduled binary digits and fuses
-into the existing digit-range sumcheck without raising its individual degree.
-The canonical payload is one rank-one terminal ring element: `d = 8`, `16`,
-and `32` over q128, q64, and q32, respectively. It serializes to 128 bytes in
-every field. The planner selects two or three maps, and every map is priced as
-a standalone MSIS instance.
+Akita replaces every transmitted Ajtai commitment with a generated compression
+chain of depth two or three. Each map recommits a scheduled gadget decomposition
+of the preceding image and carries its own authenticated alphabet. Any map may
+use the negative-binary alphabet `{-1, 0}`. The production planner additionally
+permits the opening-base alphabet on the first map and requires negative binary
+thereafter. The binary certificate is local to the scheduled binary digits and
+fuses into the existing Stage-2 sumcheck that carries the digit-range claim,
+without raising its individual degree.
+The payload shape is a planner output, subject to the same standalone SIS
+security checks as every preceding map. The shipped planner configurations
+select one rank-one terminal ring element with `d = 8`, `16`, and `32` over
+q128, q64, and q32, respectively, and therefore serialize to 128 bytes. The
+protocol does not enforce that byte count independently of the generated plan.
+The planner selects two or three maps, and every map is priced as a standalone
+MSIS instance.
 
-This is a mandatory protocol cutover, not an optional encoding. It includes
-native mixed ring dimensions down to `d = 1`, prefix-shared setup matrices,
+This is the protocol encoding, not an optional mode. It includes
+native mixed ring dimensions down to `d = 8`, prefix-shared setup matrices,
 and schedule-frozen compression metadata for standalone and multi-group
-commitments. B/D block-axis slicing is deferred from this PR. The spec also
-records the intended sumcheck-stage reorder:
-the complete relation sumcheck moves into the last part of stage 1, while the
-setup product and carried-claim reduction become stage 2. The digit-range chain,
-including the extra binary obligation, remains independent of that move.
+commitments. B/D block-axis slicing has a specified composition boundary but is
+not part of the implementation covered here.
 
 ## Intent
 
@@ -68,7 +69,7 @@ are relation witnesses. `G_b` is the signed gadget map for base `b`. Every
 standalone SIS certificate.
 
 The chain depth is explicit in the generated schedule and is restricted to two
-or three maps in this cutover. “Layer” refers
+or three maps. “Layer” refers
 to F/H recommitments, not the original B/D commitment and not B/D input slicing.
 
 ### Coverage
@@ -84,10 +85,10 @@ compression output. In particular, precommitted groups may be created at
 different times and retain independent frozen F plans and payloads. Their
 relations may later batch at the same opening point.
 
-The terminal recursive `u` is removed by terminal re-anchoring. It is not sent
-raw and is not run through a redundant compression chain. The terminal relation
-layout therefore omits both the B commitment output and D opening rows when the
-cleartext terminal witness contract makes them unnecessary.
+The last recursive transition binds the transparent terminal state as
+`t = A w_terminal` in the next-state transcript slot. It therefore creates no
+outgoing `u`, B row, or F chain. The terminal level directly checks the revealed
+witness against this exact `t` state and has no D row or H chain.
 
 The F chain of the commitment entering the terminal step must still be checked.
 If its compression digits are part of the cleartext terminal witness, decoding
@@ -98,7 +99,12 @@ explicitly.
 
 ### Per-map alphabet contract
 
-The first compression map may use either the opening base or negative binary:
+Every `F_j` and `H_j` descriptor contains an authenticated alphabet tag. The
+relation layout, digit spans, binary support, range proof, and security
+certificate are all derived from that same tag; none may infer an alphabet from
+the map index. Any map may be negative binary. The production search permits an
+opening-base alphabet only on the first map and uses negative binary for every
+later map:
 
 - If it uses the opening-base alphabet and commitment/opening schedules are
   co-generated, `b_F = b_H = b_1`.
@@ -110,11 +116,20 @@ The first compression map may use either the opening base or negative binary:
 - The frozen B and F1 ranks are validated against the actual later `b_1`.
   Conservative generation prices them for the largest permitted later base,
   following the existing conservative-B principle.
-- A negative-binary first map is independent of the later opening base. Its
-  digit depth is the field bit width, its exact collision bound is one, and its
-  support participates in the local binary certificate.
-- Every later map is negative binary and is not sized conservatively over
-  opening bases.
+- A negative-binary map is independent of the opening base. Its digit depth is
+  the field bit width, its exact collision bound is one, and its complete input
+  digit span participates in the local binary certificate.
+- An opening-base map is priced at the collision bound certified by the generic
+  range proof, namely `b_range - 1` for the level-wide balanced range alphabet.
+  Its honest gadget base `b_cmp` determines recomposition and completeness but
+  does not tighten adversarial digits by itself. In particular, it is unsound
+  to price the map at `b_cmp - 1` when `b_cmp < b_range` unless a separate
+  verifier obligation enforces that narrower complete span.
+- A negative-binary map is priced at bound one if and only if its complete digit
+  span is included in the verifier-enforced binary support. Missing, partial,
+  overlapping, or out-of-range spans invalidate the descriptor.
+- Later production maps are negative binary and are not sized conservatively
+  over opening bases.
 
 The planner normally chooses equal F/H dimensions at each compression layer,
 but equality and dimension monotonicity are planner preferences, not semantic
@@ -140,13 +155,16 @@ negative binary. At the point
 sum_x 1_{I_bin}(x) eq(r_virt, x) W(x)(W(x) + 1) = 0.          (BIN)
 ```
 
-This polynomial vanishes exactly at `W(x) in {-1, 0}`. After the generic
-virtualization claim is fixed, the transcript samples a fresh `rho_bin` and
-batches (BIN) with the existing quadratic relation using the pointwise Boolean
-weight
+The underlying table is identically zero exactly when every supported digit is
+in `{-1,0}`. If it is nonzero, evaluation at random `r_virt` fails to detect it
+with probability at most `m/|E|`. After the generic virtualization claim is
+fixed, the transcript samples the ordinary Stage-2 batching challenge `gamma`
+and, when `I_bin` is nonempty, a distinct fresh `rho_bin`. Stage 2 batches (BIN)
+with the carried generic-range claim using the pointwise Boolean weight
 
 ```text
-omega_bin(x) = eq(r_virt, x) (1 + rho_bin 1_{I_bin}(x)).
+omega_bin(x) = gamma eq(r_virt, x)
+             + rho_bin 1_{I_bin}(x) eq(r_virt, x).
 ```
 
 The implementation must not multiply two separately represented multilinear
@@ -155,7 +173,7 @@ extension of the pointwise Boolean table:
 
 ```text
 omega_tilde(X)
-  = eq(r_virt, X) + rho_bin eq_I_bin(r_virt, X),
+  = gamma eq(r_virt, X) + rho_bin eq_I_bin(r_virt, X),
 
 eq_I_bin(r, X)
   = MLE_X [ x |-> 1_{I_bin}(x) eq(r, x) ].
@@ -166,12 +184,16 @@ two in `W` and degree one in every weight coordinate, exactly as before.
 `I_bin` is a short union of schedule-known intervals or subcubes. The prover
 stores only the nonzero portions. The verifier evaluates `eq_I_bin` by affine
 interval equality contractions; it never allocates a dense support table.
+For each nonterminal level with nonempty support, the security ledger charges
+both the `m/|E|` restricted-table anchor error and the `1/|E|` fresh-batching
+error. These are in addition to, not hidden inside, the unchanged degree-three
+Stage-2 sumcheck error.
 
 ### Invariants
 
 1. **Mandatory encoding.** No supported config, test, CI mode, profile, or
    benchmark sends a raw B/D commitment or exposes a compression opt-out.
-2. **Depth two or three.** Any other depth is malformed in this cutover. Every
+2. **Depth two or three.** Any other depth is malformed. Every
    descriptor length, witness span, relation row, and transcript event is
    derived from the frozen F/H map lists.
 3. **Independent identities.** One public compressed payload corresponds to one
@@ -189,15 +211,16 @@ interval equality contractions; it never allocates a dense support table.
 8. **Exact binary-map norm.** Every negative-binary map uses coefficient bound one and
    is accepted only when the verifier enforces (BIN) for the corresponding
    input positions.
-9. **Native dimensions.** F/H dimensions are powers of two and may be
-   `1, 2, 4, 8, 16` or any larger supported dimension. Scalar-only compression
-   is explicitly rejected as an architecture.
+9. **Native dimensions.** F/H dimensions are powers of two accepted by the
+   field tier's compression dispatch table. Production execution supports
+   `d >= 8`; `d = 1,2,4` are rejected rather than routed through an implicit
+   scalar or schoolbook fallback.
 10. **Canonical row order.** Relation rows are ordered
     `consistency | A | B groups | D | (F_j groups | H_j)_{j=1..max(L_F,L_H)} |
     evaluation trace`. Omitted roles contribute zero rows without reordering
     surviving roles.
-11. **One quotient per native ring row.** Each nonscalar row uses a quotient in
-    its own ring. Scalar `d = 1` rows need no negacyclic quotient.
+11. **One quotient per native ring row.** Every F/H row uses a quotient in its
+    own `d >= 8` ring.
 12. **Shared setup prefix.** Every logical A/B/D/F/H view begins at flat setup
     coefficient zero. No per-role offset or additional setup domain label is
     introduced.
@@ -216,31 +239,31 @@ interval equality contractions; it never allocates a dense support table.
 
 - Zero knowledge. Future ZK randomness belongs in the zeroth/original
   commitment layer; compression then commits to an already hiding image.
-- Backward-compatible proof or schedule decoding.
 - A raw-commitment fallback or proof-time depth/alphabet negotiation.
 - A multi-target SIS security claim.
-- B/D block-axis slicing or restoration of the old “tiered commitment” feature.
-  Slicing is a possible follow-up after distributed and multi-chunk schedules
-  provide evidence that it reduces real setup envelopes.
-- Mandating a fixed list of payload sizes. They are planner outcomes; only the
-  shipped default and security floor are normative.
+- B/D block-axis slicing. The interface and equations are fixed below, but the
+  planner, descriptors, prover, and verifier implemented here are unsliced.
 
 ## Parameterization and performance model
 
-### Default payload
+### Payload
 
-The production planner targets 128 bytes across the shipped field widths by
-halving field width while doubling the terminal ring dimension:
+Payload coefficient count, native dimension, and rank are planner outputs. A
+candidate is admissible only if the terminal map passes schedule validation and
+its standalone SIS certificate clears the configured security floors. Payload
+bytes are then the consequence
+
+```text
+terminal rank * terminal ring dimension * canonical field-element bytes.
+```
+
+The shipped planner configurations select the following shapes:
 
 | field | coefficient bytes | terminal `d` | terminal rank | coefficients | bytes |
 |-------|-------------------|-------|------------|--------------|-------|
 | q128  | 16 | 8  | 1 | 8  | 128 |
 | q64   | 8  | 16 | 1 | 16 | 128 |
 | q32   | 4  | 32 | 1 | 32 | 128 |
-
-The planner may select, for example, 192- or 256-byte payloads when the smaller
-setup matrix and faster direct verifier justify the larger wire image. Such
-alternatives must be produced by the same estimator and descriptor path.
 
 ### Natural q128 anchor
 
@@ -258,9 +281,9 @@ payload, the following matrix-optimal three-map shapes are reference points:
 
 These figures are regression anchors, not hand-authored production parameters.
 The checked-in/generated planner output must reproduce them (within documented
-estimator changes). The protocol-wide floor remains 138 classical bits until a
-separate security-policy cutover, but the shipped 128-byte default must also
-report at least 128 bits under the ADPS quantum Core-SVP model.
+estimator changes). The protocol-wide floor is 138 classical bits, and every
+compression map must also report at least 128 bits under the ADPS quantum
+Core-SVP model.
 
 For the 4 KiB q128 anchor, the selected maps have the following estimates:
 
@@ -299,19 +322,67 @@ Persistent setup allocation and direct-verifier scanning are governed by the
 maximum active compact view, not the sum of matrix sizes, because every view
 reuses the same prefix.
 
-### Deferred B/D slicing
+### B/D block-axis slicing interface
 
-This PR keeps the existing unsliced block-fast B/D source geometry. It adds no
-slice count, slice selector, or sliced witness layout to public descriptors.
-The compression-chain input is expressed only as a checked flat source-image
-coefficient count, so a later slicing implementation can feed the same
-interface without changing chain semantics.
+The compression chain consumes a checked flat source-image vector. In this
+implementation that vector is the ordinary unsliced B or D image. A later
+slicing implementation may construct the same input as follows without changing
+any F/H chain equation.
 
-Planner reports may estimate hypothetical slice counts `2/4/8` for diagnostics,
-but those estimates cannot alter schedules or proofs. A follow-up slicing PR
-requires measurements from multi-chunk and distributed schedules showing that
-the unsliced B/D view, rather than a compression map or another role, determines
-the live setup envelope.
+For one commitment identity, let the source digit vector have canonical
+logical coordinates `[block][source_row][digit]`, with `block` the only sliced
+axis. Commitment identities remain outside this vector and are never joined by
+slicing. For a
+power-of-two slice count `f` dividing the block count `B`, slice `s` owns the
+half-open block interval
+
+```text
+[s * B/f, (s + 1) * B/f),                 0 <= s < f.
+```
+
+Every slice retains all source rows and digit planes. It is therefore
+a union of one contiguous block interval in each digit plane, not necessarily
+one contiguous interval of the physical witness. The canonical restricted
+digit vector is obtained by iterating slice-local block, then source row, then
+digit in the same order as the unsliced layout. No padding,
+gaps, duplicate coordinates, or reordered coordinates are allowed.
+
+One narrower source matrix is reused for every slice. For B, compute
+
+```text
+u_s = B_slice * t_hat|_s,                  0 <= s < f_B,
+u_source = u_0 || ... || u_(f_B-1).
+```
+
+For D, compute `v_s` and `v_source` analogously with an independently selected
+`f_D`. The first F or H map decomposes the coefficient vector of `u_source` or
+`v_source` in exactly this slice-major order. Subsequent compression maps are
+unchanged. The public payload remains one schedule-sized image for each commitment
+identity, not one payload per slice. At a multi-group root, each B-side
+commitment applies this construction independently under its own frozen plan;
+the identities are not concatenated before compression. The D-side construction
+applies once to the opening identity defined by the opening schedule.
+
+A slicing descriptor must authenticate the source role, original block count,
+slice count, blocks per slice, matrix shape, per-slice image coefficient count,
+total concatenated source-image coefficient count, and all derived witness and
+relation spans. Validation uses checked arithmetic and rejects a non-power-of-two
+slice count, nondivisibility, zero or oversized dimensions, inconsistent totals,
+and any partition that is not an exact cover. Binary support is derived only
+from F/H digit spans after the sliced source images have been concatenated.
+
+Security certification prices the reused source matrix at the width of one
+slice and prices the first compression map at the full concatenated source-image
+width. Because reuse induces a structured repeated-matrix relation, the slicing
+implementation requires a binding reduction for that exact structure; security
+must not be inferred by treating the slice applications as independent random
+matrices. Setup evaluation folds all slice weights onto the single stored source
+view, while relation rows retain one residual per slice in increasing slice
+order.
+
+No slice count or slice selector appears in the schedules implemented by this
+work, and no diagnostic slice estimate may affect a proof. Slicing is a
+follow-up implementation with separate security review and regression tests.
 
 ## Design
 
@@ -356,19 +427,284 @@ thin `_for_level` wrappers or separate “certified” versus “executed” bou
 
 ### Small-ring execution and SIS tables
 
-Current runtime roles and protocol dispatch bottom out at d=16, while production
-SIS tables cover only d=32/64/128/256 and coefficient-bound buckets begin at
-two. The cutover must:
+Compression execution and certification must:
 
 1. extend the SIS estimator and generated production tables to exact bound one
-   and dimensions `1,2,4,8,16`;
+   and every compression-dispatch dimension, beginning at `d = 8`;
 2. keep exact requested bounds in certification—do not round one up to two for
    any negative-binary layer;
 3. add a compression execution dispatch independent of A-role sparse-challenge
    support and the current field-specific B/D minima;
-4. provide a correct small-ring multiplication path when NTT/packed kernels do
-   not support the dimension, with optimized specializations optional;
-5. keep d=1 valid, while exercising mixed non-scalar defaults in every field.
+4. extend the cached CRT/NTT path through `d = 8`; a production descriptor is
+   invalid when its dimension lacks the compression, NTT, or SIS-table
+   capability for the active field preset;
+5. exercise mixed dimensions and the smallest enabled dimension in every field
+   preset. Supporting `d = 1,2,4` later requires an explicit dispatch, cache,
+   quotient, SIS-table, and performance-policy extension.
+
+### Compression dispatch and cached NTT contract
+
+Do not broaden `RingRole::{Inner,Outer,Opening}` to make small F/H dimensions
+look like B/D support. Add a purpose-specific compression dispatch slot and
+derive all validators and runtime-to-const-generic arms from the same policy
+table. The initial production policy is:
+
+| field tier | A-role | B/D roles | compression roles | CRT/NTT cache |
+|------------|--------|-----------|-------------------|---------------|
+| q128 | unchanged: `64,128` | unchanged: `16..256` | `8,16,32,64` | `8..512` |
+| q64  | unchanged: `64..256` | unchanged: `32..256` | `16,32,64,128` | `16..1024` |
+| q32  | unchanged: `64..256` | unchanged: `64..256` | `32,64,128,256` | `32..2048` |
+
+Every range is the listed powers of two. The compression table expresses
+execution capability, not planner preference: an apparently attractive map is
+still rejected unless an exact `(field family, d, coefficient bound)` SIS row
+exists and its rank clears the security floor. The shipped planner fixtures are
+expected to select terminal `d = 8,16,32` for q128/q64/q32, respectively, but
+the verifier validates the descriptor against the capability and SIS tables
+rather than inferring a dimension from the field width.
+
+The tier minima are intentional. Supporting `d=8` for q64 or q32, or `d=16`
+for q32, would add planner states, SIS rows, dispatch branches, and heavy
+const-generic kernel instantiations without serving a shipped schedule. Such a
+dimension is added only after a measured planner candidate justifies the code
+size and compile-time cost. Arithmetic roots existing in the CRT primes are not
+by themselves a reason to expose a protocol arm.
+
+The tier maxima `64,128,256` are equally intentional. Compression does not
+reuse the larger NTT capability merely because another role requires it. A map
+above the active compression maximum is malformed even when its dimension is
+present in the field tier's NTT or A/B/D dispatch tables.
+
+Heavy compression dispatch occurs at one canonical compute-backend boundary.
+Planner, chain, hint, and protocol code pass a checked runtime plan to that
+boundary; they do not each expand the runtime-to-const-generic macro. This
+limits each admitted `(field,d)` kernel to the necessary backend/cache
+instantiations instead of multiplying it across protocol call sites. The
+implementation report records clean release build time and text/binary size
+before and after the new arms; unexplained duplicate kernel monomorphizations
+must be removed before adding another dimension.
+
+Concretely, `dispatch/mod.rs` gains
+`ProtocolDispatchSlot::Compression`, while `dispatch/policy.rs` gains its arm
+list for every tier. `ProtocolDispatchSlot::Ntt` gains the corresponding tier
+minimum (`8,16,32`), `NttSlotCacheAny` gains `D8`, and the global dispatch-arm
+union gains `8`.
+`Envelope` and A/B/D role arms do not change. The NTT minimum is no longer
+derived from the B/D minimum. Compression schedule validation checks, in this
+order:
+
+1. nonzero power-of-two `d` and membership in the field-tier compression slot;
+2. `d | gen_ring_dim` for the shared flat setup;
+3. membership in the field-tier NTT slot for the selected backend path;
+4. exact agreement between plan dimension and `SisTableKey.ring_dimension`;
+5. an audited SIS row at the authenticated coefficient bound and adequate rank;
+6. checked divisibility of input/output/setup/quotient field lengths by `d`.
+
+No caller may validate only the global `SUPPORTED_RING_DIMS` union. That union
+exists for monomorphization synchronization; purpose and field-tier membership
+are the semantic gates.
+
+The existing CRT auxiliary primes already support the new smaller transforms,
+so no new primes are required: a primitive root for the larger power-of-two
+domain yields the needed smaller domain. Nevertheless, each tier's newly
+enabled minimum (`d=8,16,32`) must receive explicit twiddle, round-trip,
+negacyclic product, cyclic product, and CRT-capacity tests. The capacity profile
+and chunking logic remain authoritative; a smaller ring creates more ring
+columns for a fixed flat width and must not bypass safe-accumulation chunking.
+
+### NTT cache planning
+
+`NttSlotCache<D>` already stores both negacyclic and cyclic transforms of the
+same flat setup prefix. Retain that representation. A cache entry is identified
+by
+
+```text
+(ring_d, num_prefix_ring_elements).
+```
+
+No role, map identity, or matrix shape belongs in the key: all logical setup
+views begin at coefficient zero, and the cached object is a flat transformed
+prefix. At a fixed `d`, equal-length views are literally the same cache entry,
+and a longer warmed prefix serves every shorter view by slicing.
+
+The schedule compiler derives one `PreparedNttPlan` (name illustrative) by
+taking, for each active compression dimension, the maximum flat prefix across
+every F/H map at every scheduled layer and commitment identity:
+
+```text
+compression_envelope[d]
+  = max_{F/H map K with d_K=d} (required_field_coeffs(K) / d).
+```
+
+Every participating footprint is validated as divisible by `d` before this
+plan is constructed; this is exact division, not padding. Structural padding
+used by a higher-level matrix layout is not part of the cached setup prefix.
+
+It registers and eagerly materializes those distinct keys during prover setup,
+before any commitment or transcript work. Compression must not rely on the current
+`with_shared_ntt::<D>()` helper, which always requests the full setup envelope.
+It obtains the schedule-planned key and borrows the corresponding prefix slot
+through the canonical backend cache API. Profile output reports each
+`(d,prefix)` entry and counts both its cyclic and negacyclic storage.
+
+The prepared-setup contract coalesces compression and existing role-cache
+requirements before construction. For each `d`, it owns one slot whose length
+is the larger of `compression_envelope[d]` and any A/B/D cache prefix already
+required at that dimension. Thus a longer existing role cache serves every
+compression layer by slicing; otherwise prover setup stores exactly the
+compression envelope. Commit and opening clusters never construct, extend, or
+rebuild these slots. Lazy construction is permitted only as a diagnostic test
+fallback and is a production/profile failure.
+
+F-chain execution uses the commit operation cluster; H-chain execution uses the
+opening cluster. Recursive next-F maps use the active level's commit cluster.
+The ring-switch cluster continues to own the existing relation quotient path;
+compression quotients are produced by compression-chain execution as described
+next, so they are not recomputed through the A-role quotient API.
+
+### Multi-map compression fusion
+
+Cache sharing and execution fusion are distinct. Every map at the same `d`
+already shares one transformed setup prefix. A fused runtime matvec is allowed
+only when all input digit vectors are simultaneously fixed. In the ordinary
+fold schedule, H is computed before the fold challenge while the next F input
+depends on that challenge. Those F/H maps share the prepared cache but cross a
+transcript/data-dependency barrier, so their negacyclic chain images cannot be
+evaluated together. Likewise, adjacent layers of one chain are sequential
+because the next decomposition depends on the preceding image.
+
+That barrier does not force the F quotient to be completed at commitment time.
+The F chain needs only `u_neg` to derive its next image and payload. At opening
+time, every F digit vector is available from its authenticated hint and its
+negacyclic RHS is already determined by the successor gadget image or terminal
+payload. Its missing cyclic product may therefore be completed in the same
+matrix scan that computes an equal-shape H map. For one aligned layer, the
+opening bucket requests
+
+```text
+F item: cyclic only; known u_neg
+H item: cyclic and negacyclic
+```
+
+and derives both quotients after the scan. This does not move a transcript
+event or defer any value needed to construct the F commitment.
+
+Independent maps in the same operation window can be fused. The primary case
+is several group/commitment maps with the same dimension and generated shape.
+Expose one canonical batch backend operation whose items request negacyclic,
+cyclic, or both outputs; a batch of length one is the ordinary path. Its first
+optimized bucket requires equal
+
+```text
+(field tier, d, row count, column count, authenticated digit bound).
+```
+
+For a bucket of `R` right-hand sides requesting both domains, the kernel
+column-tiles once. For each setup entry it loads the cached
+cyclic/negacyclic pair once, constructs the paired digit transforms for each
+right-hand side, and updates `R` pairs of row accumulators. With matrix shape
+`n` by `L`, separate execution reads roughly `2 R n L` transformed setup
+elements, whereas the batch reads `2 n L`. Thus two simultaneously available
+maps can remove about half of setup-cache traffic.
+
+For the common one-F/one-H case across the commitment/opening boundary, eager
+paired execution reads `4 n L` setup elements in total. Deferred F completion
+reads `n L` negacyclic entries during commitment, then one `2 n L` paired slot
+scan during opening for F-cyclic plus H-cyclic/negacyclic, reducing total setup
+traffic to `3 n L`, or 25%. With `G` aligned F maps completed beside one H map,
+the corresponding traffic changes from `2(G+1)nL` to `(G+2)nL` before any
+additional same-window F batching.
+
+Neither form removes digit transforms, pointwise multiply-accumulates, or
+inverse transforms required by the requested domains. In particular, deferring
+F cyclic completion loses the shared coefficient reduction of constructing an
+F cyclic/negacyclic transform pair at once. The backend chooses eager paired or
+deferred completion from a measured internal execution policy; this is not a
+descriptor or transcript choice. Accumulator memory grows as `O(R n)` and the
+batch size must be capped by the same L2-derived tiling policy used by the
+current fused A/B/D kernel.
+
+The common implementation owns CRT safe-width chunking for the whole bucket.
+Maps with different certified bounds are placed in different buckets rather
+than forcing all of them to the loosest capacity bound. Exact-shape grouping is
+the production fast path. For rank-one maps with the same `d` but slightly
+different widths, a later optimization may fuse the common column prefix and
+run the tails separately. Do not apply that shortcut to rank greater than one:
+because the flat setup view is reshaped row-major with the map's own column
+stride, unequal widths assign shared flat entries to different `(row,column)`
+positions.
+
+The planner may use exact fusion eligibility as a final tie-break between
+otherwise equivalent candidates, but it must not weaken SIS security or enlarge
+the setup envelope merely to align shapes. Profiles report bucket sizes, setup
+elements loaded, digit transforms, pointwise products, and tail work. The
+batched and independent kernels are compared on the common q128/q64/q32
+1-KiB-image cases; fusion stays enabled only when it improves the applicable
+prover benchmark without violating the 5% gate elsewhere.
+
+Verifier fusion is broader because it has no secret-input dependency: all
+same-prefix setup weights, including equal-shape F/H maps, are accumulated into
+the single combined setup-prefix scan already required below. Direct and
+offloaded verification must use that combined scan rather than evaluating one
+setup MLE per compression map.
+
+### Native compression quotient
+
+For one compression map `K` at dimension `d`, let `xi` be its packed input
+digits. Compute the negacyclic and cyclic matrix products together:
+
+```text
+u_neg = K * xi              in F[X]/(X^d + 1),
+u_cyc = K * xi              in F[X]/(X^d - 1),
+r_K   = (u_cyc - u_neg) / 2.
+```
+
+Coefficientwise division by two is valid for every supported odd prime. These
+objects satisfy the canonical polynomial lift
+
+```text
+K xi = u_neg + (X^d + 1) r_K             in F[X].
+```
+
+For a nonterminal row, honest recomposition gives
+`u_neg = G xi_next`; for a terminal row it gives `u_neg = payload`. Thus the
+same `r_K` is the quotient for
+
+```text
+K xi - G xi_next = (X^d + 1) r_K
+```
+
+or the terminal equation. Gadget recomposition itself uses field scalars and
+does not create an additional ring-product quotient.
+
+Add one canonical batched compression matvec kernel that consumes the
+schedule-sized `NttSlotCache<d>` prefix and returns the requested cyclic and/or
+negacyclic image for each batch item. The canonical quotient derivation then
+returns `(u_neg,r_K)`, accepting a previously determined `u_neg` for a deferred
+F completion. When both domains are requested, the kernel must fuse their
+accumulations over the same column tiles and construct the input's two digit
+transforms together; invoking
+`mat_vec_mul_ntt_single_i8` and its cyclic sibling as two independent full
+passes is the correctness oracle, not the performance implementation. The
+negative-binary alphabet uses the exact signed digits `{-1,0}` with the base-2
+kernel bound; an opening-base map uses its authenticated log basis. Both paths
+remain subject to the existing CRT safe-width chunking.
+
+Chain execution already needs `u_neg` to derive the next digit vector. Eager
+execution also derives and decomposes `r_K` immediately. Deferred F execution
+retains the authenticated digit segments already required by the relation; its
+known negacyclic RHS is reconstructed from the successor segment or terminal
+payload rather than storing an NTT-domain image. At opening, cyclic completion
+derives and decomposes `r_K` before relation-witness assembly. Do not persist
+transformed digit vectors merely to bridge the phases: their memory cost
+defeats the cache-traffic saving. The descriptor fixes one logical quotient and
+both execution strategies call the same canonical quotient derivation.
+
+For distributed execution, each worker computes its additive `u_neg` and
+`r_K` contributions from its column shard. Reducing `u_neg` produces the global
+intermediate image and reducing `r_K` produces the global quotient. It is
+unnecessary to communicate `u_cyc` separately because the quotient operation
+is linear. Both reductions use the map's native row shape.
 
 `RingRole::{Inner,Outer,Opening}` need not be overloaded with compression
 semantics. Prefer one generalized canonical matrix-role descriptor used by
@@ -481,7 +817,7 @@ sum_j  F_L,j xi_FL,j                            = u_pub.
 The H rows are analogous. One schedule-derived machine owns the public RHS for
 local quotient construction; the payload itself appears once in the proof and
 transcript. Every machine carries a complete-shaped local quotient contribution
-for each non-scalar row family at that family's native dimension.
+for every F/H row family at that family's native dimension.
 
 Independent commitment identities remain independent under distribution.
 Multi-group payloads are never concatenated into one F chain. Their canonical
@@ -511,12 +847,12 @@ Preferred implementation order:
    canonical relation-provider foundations;
 2. rebase the distributed implementation onto those authorities and add
    machine sharding;
-3. finish compression's recursive/multi-group cutover on the composed layout;
+3. finish compression's recursive/multi-group integration on the composed layout;
 4. add the distributed process runtime only after the composed single-host
    prover and structured verifier pass end to end.
 
 This ordering avoids freezing a `z/e/t/r`-only distributed public type and
-avoids extending the old flat multi-chunk layout with global F/H tails that
+avoids extending the flat multi-chunk layout with global F/H tails that
 would immediately need to be removed.
 
 ### Relation rows and quotient construction
@@ -565,10 +901,11 @@ and quotient requirement. This avoids materializing a single dense
 `relation_matrix_col_evals` over all compression columns and avoids duplicating
 role formulas between direct and recursive setup modes.
 
-Every non-scalar native relation `y = K x` contributes its own negacyclic
-quotient at that role's ring dimension. Quotient witness spans and row counts are
-part of the descriptor. Checked conversions project a shared flat coefficient
-view into a role ring; divisibility must be validated before projection.
+Every F/H native relation `y = K x` contributes its own negacyclic quotient at
+that role's ring dimension. There is no scalar-row exception or quotient-free
+compression path. Quotient witness spans and row counts are part of the
+descriptor. Checked conversions project a shared flat coefficient view into a
+role ring; divisibility must be validated before projection.
 
 The public RHS is zero on B, D, and every nonterminal chain row. Only the
 terminal F/H rows contain the transmitted compressed payloads. `RelationRhsLayout`, relation-claim
@@ -606,10 +943,11 @@ the final claim.
 
 Use the smallest active native ring as the common scan coordinate, projecting
 larger native roles onto it. Since all supported dimensions are powers of two,
-this does not require planner-enforced monotonicity. If d=1 is active the scan
-is simply a flat field-coefficient scan. The recursively committed setup prefix
-may remain packed at its existing storage dimension; its logical claim must be
-the same flattened prefix claim.
+this does not require planner-enforced monotonicity. The smallest production
+compression coordinate is `d=8`; dimensions `1,2,4` have no implicit scalar or
+schoolbook path. The recursively committed setup prefix may remain packed at
+its existing storage dimension; its logical claim must be the same flattened
+prefix claim.
 
 Current envelope code comparing `row_len * col_len` ring elements must be
 replaced with flat-coefficient footprint comparisons so mixed dimensions are
@@ -624,6 +962,19 @@ receive it from the bound schedule descriptor. Root proof containers hold one
 terminal F payload per commitment identity; fold proofs hold the terminal H
 opening payload and, when nonterminal, the next terminal F payload.
 
+The payload encoding is exactly the terminal output vector in ring-row-major
+coefficient order `(row_0.c_0, ..., row_0.c_(d-1), row_1.c_0, ...)`. Each
+coefficient uses the field's canonical fixed-width `AkitaSerialize` encoding.
+The payload contains no vector
+length, ring dimension, rank, alphabet, chain depth, or other header; those
+values come from the already-bound descriptor. Consequently its encoded length
+is exactly the coefficient count fixed by the validated terminal-map plan times
+the canonical field-element width. A containing proof derives the number and order of
+payloads from the schedule rather than serializing an attacker-controlled
+count. Deserialization validates the descriptor and expected coefficient count
+before reading or allocating, rejects truncation and trailing coefficients, and
+constructs the native ring view only after checked divisibility.
+
 Descriptor bytes must bind, in stable order:
 
 - both chain depths and every layer's base/digit depth;
@@ -632,29 +983,239 @@ Descriptor bytes must bind, in stable order:
 - expected public payload coefficient counts;
 - terminal role omissions and the binary-support derivation version.
 
-Use new transcript labels for compressed payloads and `rho_bin`; do not reuse
-the abandoned PR's optional-compression labels. Absorb the schedule descriptor
-before any payload interpreted by it. Transcript tests must pin the order and
-prove that changing any plan field changes the transcript.
+Use dedicated transcript labels for compressed payloads and `rho_bin`. Absorb
+the schedule descriptor before any payload interpreted by it. Transcript tests
+must pin the order and prove that changing any plan field changes the transcript.
 
-### Sumcheck stage ownership
+### Sumcheck integration
 
-The target protocol has two conceptual chains:
+The protocol has two independent proof obligations:
 
 1. the digit-range chain, including (BIN);
 2. the linear relation chain, including all compression rows.
 
-They remain decoupled. The relation rows move together into the final substage
-of stage 1, after the large-basis digit-range substages. The current stage-3
-setup product and carried stage-2 claim then become stage 2. Moving relation
-ownership must not move (BIN): it remains attached to digit virtualization at
-`r_virt`.
+Compression does not reorder them. (BIN) remains attached to digit
+virtualization at `r_virt`, while every F/H equation joins the ordinary linear
+relation sumcheck. When verifier offloading is enabled, its setup-product and
+carried-claim machinery consumes the same relation claim and combined setup
+weights; the offloading protocol alone determines how those messages are split
+into stages. Compression introduces no second stage model and does not change
+the protocol organization when offloading is disabled.
 
-Implementation may land compression against the current three-stage internals
-only as an explicitly temporary, transcript-breaking stack dependency. The
-final PR cannot retain two public stage models. Proof types, shape accounting,
-profile reporting, transcript labels, and book terminology must describe the
-optimized two-stage contract.
+In the current implementation both compression obligations enter the fused
+`akita_stage2` sumcheck. `akita_stage1` remains unchanged: it proves the generic
+digit-range polynomial and returns `(s_claim, r_virt)`. Let
+
+```text
+S(w)        = w(w + 1),
+p_base(y_A,x_A) = a_dA(y_A) m_base(x_A),
+p_cmp(z)    = sum_K p_K(z), one sparse provider per native row family K,
+eq_bin(X)   = MLE_X [z |-> 1_I_bin(z) eq(r_virt, z)].
+```
+
+The existing rows keep their current `d_A` factorization and `a_dA` table.
+Provider `K` interprets only its own semantic span at native dimension `d_K`
+and uses its own
+
+```text
+a_dK = (1, alpha, ..., alpha^(d_K-1)).
+```
+
+It then places those Boolean weights at the corresponding addresses `z` of the
+canonical committed witness. The shared Stage-2 coordinate is only an address
+space; it is not a claim that every row has the same native `(y,x)` axes or the
+same `a` length. Stage 2 proves exactly
+
+```text
+gamma s_claim + relation_claim + trace_claim
+ = sum_z (gamma eq(r_virt,z) + rho_bin eq_bin(z)) S(W(z))
+   + sum_z W(z) (p_base(z) + sum_K p_K(z))
+   + trace_oracle.
+```
+
+The added binary claim is zero, so it does not change the input claim. The
+coefficient of that claim is `rho_bin`, not `gamma*rho_bin`; otherwise the
+binary obligation would disappear whenever `gamma = 0`. Both added terms have
+individual degree at most three, so Stage 2 retains its current round count,
+degree bound, and proof bytes.
+
+#### Compression rows in the relation matrix
+
+For each commitment identity, the scheduled rows and their nonzero witness
+support are:
+
+| row family | nonzero witness spans | public right-hand side |
+|------------|-----------------------|------------------------|
+| B | source B digits, `xi_F,1`, B quotient | zero |
+| D | source D digits, `xi_H,1`, D quotient | zero |
+| `F_j`, `j < L_F` | `xi_F,j`, `xi_F,j+1`, F_j quotient | zero |
+| `F_L` | `xi_F,L`, F_L quotient | terminal F payload |
+| `H_j`, `j < L_H` | `xi_H,j`, `xi_H,j+1`, H_j quotient | zero |
+| `H_L` | `xi_H,L`, H_L quotient | terminal H payload |
+
+The B and D rows are the existing source rows augmented by the first gadget
+recomposition term; they are not duplicated. Each nonterminal F/H row is
+`K_j xi_j = G_j xi_j+1` before quotient lifting. Each terminal row is
+`K_L xi_L = payload`. The quotient span represents the unique lift through
+`X^d+1` at that row family's native dimension. Signs in the column provider
+are derived once from the canonical identity
+`M w = y + (X^d+1) r`; quotient construction, prover weights, and verifier
+evaluation must consume that same provider.
+
+The existing B/D setup-matrix contributions and their native `a_dB`/`a_dD`
+factorizations remain on the current relation path. Only the new
+`-G xi_F,1` or `-G xi_H,1` support is supplied sparsely at the corresponding
+B/D native dimension. Later F/H rows are entirely compression providers. This
+keeps the existing ring-relation implementation intact while allowing every
+new row family to select an independently smaller ring.
+
+These families occupy the row order already fixed above:
+
+```text
+consistency | A | B groups | D |
+(F_j groups | H_j) for j = 1..max(L_F,L_H) | evaluation trace.
+```
+
+An absent group/layer contributes zero semantic rows and cannot reorder the
+surviving families; padding is derived only after the live schedule rows.
+`tau1` weights are taken at these authenticated row offsets. Only the last row
+of each present chain reads a public payload.
+
+Do not append compression columns to the dense
+`relation_matrix_col_evals_compact: Vec<E>`. Compile their row-batched weights
+into a compact object whose runs refer to checked semantic witness spans:
+
+```rust
+struct SparseRelationWeights<E> {
+    // Sorted, disjoint live Stage-2-coordinate runs; no padded zeros.
+    runs: Vec<SparseWeightRun<E>>,
+}
+
+struct CompressionRelationProvider {
+    row_span: RowSpan,
+    input_span: WitnessSpan,
+    successor_span: Option<WitnessSpan>,
+    quotient_span: Option<WitnessSpan>,
+    setup_view: SetupView,
+    native_ring_dim: usize,
+}
+```
+
+The exact Rust names may differ, but the provider is the sole authority for
+quotient construction, row-batched prover weights, direct verification, and
+offloaded setup weights. Construction validates sorted nonoverlapping spans,
+row bounds, native-ring divisibility, quotient presence, and the terminal RHS
+before allocating weights. Overlapping runs from different row families are
+summed into one sparse accumulator so the witness is not rescanned per map.
+
+At construction, each provider emits weights only for the flattened Stage-2
+cells touched by its input, successor, and quotient spans. This full-coordinate
+representation decouples native compression rings from the existing relation
+factorization. For flat coefficient offset `ell` within a native `d_K` span,
+the provider uses
+
+```text
+x_K = floor(ell / d_K),
+y_K = ell mod d_K,
+coefficient weight = alpha^y_K * native column weight at x_K,
+```
+
+then maps `ell` through the checked semantic layout to the committed-witness
+address. It never pads `a_dK` to length `d_A` and never interprets the span with
+`y_A`. In every round, sibling
+sparse weights `p_0,p_1` are paired with witness values `w_0,w_1`; the prover
+adds the coefficients of `p(t)w(t)` and binds
+`p' = p_0 + r(p_1-p_0)`. This costs `O(s_cmp,r)`, with
+`s_cmp,r+1 <= ceil(s_cmp,r/2)`. No operation is proportional to the padded
+witness width merely because compression is enabled. A provider may retain its
+native `a_dK(y_K)m_K(x_K)` factorization while constructing round zero when that
+is cheaper, but the folded sparse state has the same full-address semantics.
+
+The compact relation contribution is computed as a separate coefficient array
+and added to the existing relation round polynomial. It must be included in all
+current Stage-2 execution paths: compact and full dense terms, prefix-y,
+prefix-x, the fused next-prefix cache, `round2_prefix`, and the two-round
+bivariate skip proof. Disabling the two-round prefix when compression is
+present is not an acceptable implementation because it converts a sparse
+protocol addition into a global prover regression.
+
+#### Sparse binary-support prover
+
+The descriptor derives `I_bin` as sorted, disjoint complete digit spans in the
+flattened Stage-2 Boolean order. A checked constructor rejects overlap,
+out-of-range endpoints, partial map spans, padding, and any negative-binary map
+whose complete input span is absent. It initializes only
+
+```text
+p_0[z] = rho_bin eq(r_virt,z),  z in I_bin,
+```
+
+using interval equality recurrences; it does not construct a length-`2^m`
+indicator or equality table. The ordinary `GruenSplitEq` state continues to
+represent `gamma eq(r_virt,z)`. A `RestrictedEqState` stores sorted active
+`(index, weight)` runs for `p_r`. In each ordinary round it:
+
+1. visits only sibling pairs touched by a nonzero `p_r` entry;
+2. reads the corresponding `w_0,w_1` from the already-live witness table;
+3. adds the coefficients of
+   `p_r(t) * w(t) * (w(t)+1)` to the round polynomial; and
+4. binds `p_(r+1)[i] = p_r[2i] + r(p_r[2i+1]-p_r[2i])`, merging siblings and
+   dropping zero runs.
+
+Thus memory is `O(|I_bin|)`, the first-round work is `O(|I_bin|)`, and active
+support never grows. This state is orthogonal to `GruenSplitEq`: changing the
+global split-equality kernels to branch on membership across the entire witness
+would violate the support-proportional requirement.
+
+The two-round prefix path needs a sparse bivariate contribution built from the
+same support runs. It reconstructs the binary portions of rounds zero and one,
+then binds the sparse state at both challenges during the existing handoff.
+Likewise, every cached/fused next-round path must cache the sum of base,
+compression-relation, and restricted-binary coefficients. The implementation
+may factor this through one canonical `round_poly`/`bind` sparse-state API; it
+must not add separate copies of the protocol formula to each optimized kernel.
+
+#### Verifier and transcript
+
+After Stage 1 has transcript-bound `s_claim` and `r_virt`, the transcript draws
+`gamma` and then, iff the descriptor-derived `I_bin` is nonempty, `rho_bin`
+under distinct labels. The descriptor and therefore this branch were absorbed
+earlier. A terminal cleartext fold, which validates its scheduled binary spans
+directly, draws neither challenge and does not create a vacuous restricted
+state. Verifier offloading does not alter this ordering; it only changes how
+the already-fixed relation/setup claim is discharged.
+
+At the final Stage-2 point `r_2`, the verifier evaluates
+
+```text
+eq_aug = gamma eq(r_virt,r_2)
+       + rho_bin sum_(z in I_bin) eq(r_virt,z) eq(r_2,z)
+```
+
+and returns `eq_aug W(r_2)(W(r_2)+1)` for the virtual oracle. The restricted
+sum uses the canonical `eval_offset_eq_interval` machinery (extended once if a
+two-point factor API is needed) over the descriptor's interval union; it never
+materializes `I_bin`. Complexity is `O(k_bin * m)` for `k_bin` spans and `m`
+Stage-2 variables, with power-of-two subcubes contracted in constant work per
+boundary node.
+
+For the relation oracle, `RelationMatrixEvaluator` computes
+
+```text
+p_relation(r_2) = a(r_y) m_base(r_x)
+                + sum_provider provider.eval_tau_weighted(r_2, tau1, alpha).
+```
+
+Each compression provider evaluates its input setup view, gadget-successor
+span, and quotient span directly from their offsets and native dimensions.
+The direct setup path folds all active logical setup weights onto one shared
+prefix scan; the offloaded path commits to the identical combined weights.
+Non-setup verifier work is proportional to the number of maps, native rows,
+and support boundaries; setup-dependent work is one scan of the maximum active
+flat prefix, never a sum of role footprints and never the global witness length.
+`AkitaStage2Verifier::new` validates all counts and points before evaluation,
+and every interval arithmetic failure returns `AkitaError` rather than indexing
+or allocating unchecked.
 
 ### Conservative and multi-group commitments
 
@@ -689,8 +1250,11 @@ quotient tail, and both can change later fold shapes and sumcheck rounds. Every
 candidate must therefore solve the compression plan inside the same recurrence
 that derives its successor witness and proof cost.
 
-The planner policy may specify allowed native dimensions, the mandatory
-terminal-byte target, and the allowed depth range, but has no enable field.
+The planner policy specifies allowed native dimensions, ranks, depth range, and
+an objective or cap for terminal payload bytes. Payload size is never a
+standalone verifier rule: schedule validation recomputes the terminal shape,
+exact wire length, and SIS certificate, and accepts precisely when those facts
+are mutually consistent and meet the configured security floor.
 Bind these choices into the policy digest and generated catalog identity. Candidate
 generation must include both depths and both permitted first-map alphabets;
 later maps are negative binary. Candidates with the same terminal payload are
@@ -700,14 +1264,13 @@ growth, and prover work.
 Candidate scoring is lexicographic:
 
 1. completeness and at least 138-bit standalone classical security, plus the
-   selected preset's quantum floor (128 bits for the shipped default);
-2. the 128-byte production target;
-3. minimum global compact setup prefix;
-4. minimum sum of active per-level direct scans;
-5. smaller recursive witness and prover work;
-6. smaller remaining proof bytes.
+   128-bit quantum floor for every compression map;
+2. minimum global compact setup prefix;
+3. minimum sum of active per-level direct scans;
+4. smaller recursive witness and prover work;
+5. smaller remaining proof bytes.
 
-The current suffix dynamic program minimizes bytes alone. This cutover needs a
+The suffix dynamic program needs a
 Pareto state or equivalent structured score: the global prefix is a maximum
 across levels, verifier work is closer to a sum, and neither can be faithfully
 converted into proof bytes.
@@ -729,21 +1292,125 @@ splits may change, but ownership must not drift across crates.
 
 | Concern | Current anchors | Required direction |
 |---------|-----------------|--------------------|
-| Dimensions/roles | `akita-types/src/layout/ring_dims.rs` | retain A/B/D dims; add checked compression map dims and small-ring support |
+| Dimensions/roles | `akita-types/src/layout/ring_dims.rs` | retain A/B/D dims; add checked compression map dimensions beginning at d=8 |
 | Level/schedule metadata | `akita-types/src/layout/params.rs`, `schedule.rs` | first-class depth-two/three F/H plans with per-map alphabets; freeze group plans |
-| SIS sizing | `akita-types/src/sis/`, `akita-sis-estimator/` | d=1..16, exact bound 1, standalone 138-bit generated tables |
-| Dispatch | `akita-types/src/dispatch/policy.rs` | compression slot/path independent of fold-challenge minima |
+| SIS sizing | `akita-types/src/sis/`, `akita-sis-estimator/` | tier-bounded compression dimensions q128 d=8..64, q64 d=16..128, q32 d=32..256; exact bound 1 and standalone 138-bit generated tables |
+| Dispatch | `akita-types/src/dispatch/{mod,policy}.rs` | compression slot/path independent of fold-challenge minima |
+| NTT cache | `akita-types/src/ntt_cache.rs`, `akita-prover/src/kernels/crt_ntt.rs`, prepared-setup contract | add D8, schedule exact per-dimension prefixes, and cache the cyclic/negacyclic pair once |
+| Compression kernels | `akita-prover/src/kernels/{crt_ntt,linear}/`, compute backends | one domain-selective batched native-map pass supporting eager pairs and deferred cyclic completion under existing safe-width chunking |
 | Setup envelope | planner `matrix_envelope.rs` | flat-coefficient maximum over all active views |
 | Flat setup views | `akita-types`/`akita-pcs` matrix and setup modules | all roles start at coefficient zero; no cursor |
 | Witness | `akita-types/src/witness.rs`, prover hints | checked compression spans and binary support derivation |
 | Relation prover | `akita-prover/src/protocol/ring_relation*` | native-role providers, sparse F/H logic, per-role quotients |
 | Ring switch | `akita-types/src/proof/relation_matrix_cols.rs`, prover finalize | stop requiring one dense uniform compression-column vector |
-| Range proof | prover `sumcheck/akita_stage1`, verifier stage 1 | fused `omega_tilde`, fresh `rho_bin`, succinct interval evaluator |
-| Relation verifier | `akita-verifier/src/stages/stage2.rs` during transition | validate all F/H equations and native quotients |
-| Setup offload | `setup_contribution`, verifier `stages/stage3.rs` | generalized providers and one shared-prefix scan/claim |
-| Proof schema | `akita-types/src/proof/{commitment,levels,shapes,hints}.rs` | compressed payloads, two-stage ownership, exact size checks |
+| Range proof | prover `sumcheck/akita_stage1` | unchanged generic range claim and `r_virt` output |
+| Fused Stage 2 | prover `sumcheck/akita_stage2/{lifecycle,round_flow,dense_terms,x_prefix,y_prefix,round2_prefix,two_round_prefix}`, verifier `stages/stage2.rs` | sparse restricted-equality state plus sparse compression-relation weights in every optimized path |
+| Relation verifier | `akita-verifier/src/protocol/ring_switch.rs`, `stages/stage2.rs` | validate and evaluate all F/H equations and native quotients |
+| Setup offload | `setup_contribution`, verifier offloading path | consume generalized providers and the same shared-prefix claim without changing the compression protocol |
+| Proof schema | `akita-types/src/proof/{commitment,levels,shapes,hints}.rs` | compressed payloads and exact size checks |
 | Commit/open APIs | `akita-pcs/src/scheme`, prover compute/ring switch | mandatory chains, frozen conservative plans, no fallback |
 | Profiles/tests | `akita-pcs/examples/profile`, scheme tests | payload/setup/scan reporting and full preset coverage |
+
+### Concrete small-ring arithmetic implementation surface
+
+The small-ring work is a vertical slice; adding `8` to one global constant is
+insufficient and must fail synchronization tests until all of these authorities
+agree:
+
+- `akita-types/src/layout/ring_dims.rs` adds `8` to the const-generic union but
+  does not change any existing A/B/D role minimum. Its generic "supported"
+  predicate remains a monomorphization fact, not a protocol authorization.
+- `akita-types/src/dispatch/{mod,policy}.rs` adds the `Compression` slot and
+  derives compression and NTT arms per field tier. `ntt_min_ring_d` is derived
+  from the NTT slot itself, not from the B/D role policy. Synchronization tests
+  pin the role, compression, NTT, envelope, and global-union tables separately.
+- `akita-prover/src/kernels/crt_ntt.rs` adds `NttSlotCacheAny::D8`. Its cache
+  constructor builds both transforms for exactly the requested flat prefix and
+  retains the existing CRT-capacity partitioning. The cyclic and negacyclic
+  tables are one logical cache slot and are accounted together.
+- `akita-prover/src/compute/{backend,cpu,delegating_cpu,stack}.rs` exposes one
+  batched compression operation taking a validated cache key and checked
+  same-shape buckets. CPU and delegated backends dispatch the same dimension
+  arms. A one-item batch is the canonical single-map path. The operation does not call
+  `with_shared_ntt`, because that helper requests the full setup envelope, and
+  it does not compose two public backend calls that each scan and transform the
+  digits independently.
+- `akita-prover/src/kernels/linear/` owns the fused implementation. It shares
+  setup loads across eligible right-hand sides and shares digit loading,
+  tiling, safe-width chunk boundaries, and CRT reconstruction between the
+  requested cyclic and negacyclic outputs. The returned canonical object is a
+  checked batch of requested domain images; the quotient derivation consumes
+  those images or a descriptor-derived known negacyclic RHS.
+- `akita-types/src/sis/ajtai_key.rs`, generated SIS data, and
+  `akita-sis-estimator/src/width_table.rs` gain exact-bound-one keys and ranks
+  for every compression arm. Planner construction and verifier validation call
+  the same `SisTableKey`/minimum-rank authority; neither rounds bound one to an
+  existing bound-two bucket.
+- The schedule/planner computes one compression envelope across every layer for
+  each active `d`, coalesces it with any longer existing role-cache requirement,
+  and eagerly builds the resulting slots during prover setup. Commitment
+  execution consumes F slices; opening execution consumes F/H slices;
+  recursive levels consume only slices authorized by their authenticated
+  schedule. An unplanned lazy cache build is a profile/test diagnostic failure.
+
+The arithmetic test matrix has three layers. Kernel tests compare the fused
+result with direct schoolbook cyclic and negacyclic multiplication for signed
+digits and opening-base digits. Backend tests compare each allowed runtime arm
+with the const-generic kernel and verify exact-prefix cache reuse. Protocol
+tests exercise mixed dimensions in one proof, reject a dimension that belongs
+to the global union but not the active purpose/tier slot, and reject missing
+SIS or NTT capability before allocation.
+
+### Concrete Stage-2 implementation surface
+
+The first implementation should follow this cut line; moving a responsibility
+requires preserving the same single source of truth.
+
+- `akita-types/src/witness.rs` and the schedule/layout modules construct checked
+  semantic F/H input, successor, quotient, row, and binary-support spans. They
+  expose no physical offset computed independently by prover or verifier.
+- `akita-types/src/proof/relation_matrix_cols.rs` stops returning one monolithic
+  compression-extended vector. Its canonical result contains the existing base
+  weights plus `SparseRelationWeights` compiled from the relation providers.
+  Dense expansion exists only under tests.
+- `akita-prover/src/protocol/ring_relation*` uses those same providers to build
+  each native quotient and terminal RHS. It must not independently reconstruct
+  gadget signs or row offsets.
+- `akita-prover/src/protocol/core/fold.rs` absorbs `s_claim`, samples `gamma`,
+  conditionally samples `rho_bin`, and passes the transcript-bound support and
+  both sparse states into Stage 2. Terminal cleartext flow performs direct span
+  validation and skips these challenges as specified above.
+- `akita-prover/src/protocol/sumcheck/akita_stage2/lifecycle.rs` validates and
+  owns `RestrictedEqState` and `SparseRelationState`. The existing
+  `GruenSplitEq::with_initial_scalar(stage1_point, gamma)` remains the generic
+  component; the Stage-2 input claim remains
+  `gamma*s_claim + relation_claim + trace_claim`.
+- `dense_terms.rs`, `x_prefix.rs`, and `y_prefix.rs` compute the existing base
+  polynomials and add the two sparse states through one canonical coefficient
+  API. `round_flow.rs` binds both states on every challenge and includes them in
+  every cached next-round polynomial.
+- `round2_prefix.rs` and `sumcheck/two_round_prefix/stage2.rs` add the sparse
+  bivariate grids and perform the same two-challenge handoff as the base terms.
+  They may call state methods but may not reimplement support derivation or row
+  formulas.
+- `akita-algebra/src/offset_eq.rs` owns any required two-point restricted
+  interval contraction. Prover initialization, verifier final evaluation, and
+  tests call this one primitive.
+- `akita-verifier/src/protocol/core/fold.rs` mirrors the challenge schedule and
+  rejects descriptor/support disagreement before constructing Stage 2.
+  `akita-verifier/src/stages/stage2.rs` stores `rho_bin` and the checked support,
+  uses `eq_aug` in `expected_output_claim`, and keeps degree bound three.
+- `akita-verifier/src/protocol/ring_switch.rs` and setup-contribution modules
+  evaluate the same compression providers in direct and offloaded modes. The
+  former returns the sparse compression contribution at the final full Stage-2
+  point; the latter folds identical setup weights into the shared prefix.
+- Transcript-label modules add exactly one conditional binary-batching label;
+  fixtures pin absent/present support, direct/offloaded verification,
+  recursive/multi-group schedules, and terminal omission.
+- Stage-2 unit tests compare every optimized path with a dense full-coordinate
+  oracle. Cross-crate tests tamper each row/support/payload role. Benchmark code
+  implements the two controls and counters specified below without exposing a
+  production opt-out.
 
 ## Evaluation
 
@@ -752,11 +1419,14 @@ splits may change, but ownership must not drift across crates.
 - [ ] Every shipped q128/q64/q32 schedule contains an explicit depth-two or
   depth-three F/H chain where its B/D commitment exists; terminal omissions are
   explicit.
-- [ ] Default public payload is 128 bytes for q128/q64/q32 and is independently
-  deserialized with the schedule-derived exact coefficient count.
-- [ ] Generated SIS tables include d=1,2,4,8,16 and exact coefficient bound one;
+- [ ] Every public payload is independently deserialized with the
+  schedule-derived exact coefficient count; shipped q128/q64/q32 fixtures select
+  the displayed rank-one shapes and consequently encode to 128 bytes.
+- [ ] Generated SIS tables include every dimension in the applicable
+  field-tier compression slot—q128 `d=8..64`, q64 `d=16..128`, and q32
+  `d=32..256`—and exact coefficient bound one;
   every B/D/F/H key reports standalone classical and quantum costs, clears the
-  138-bit classical floor, and every shipped-default compression map clears
+  138-bit classical floor, and every compression map clears
   128 quantum bits under the selected model.
 - [ ] Opening-base-first conservative commitments freeze base four, reject
   later `b_1 < 4`, and validate frozen B/F1 sizing against actual later bases
@@ -782,12 +1452,26 @@ splits may change, but ownership must not drift across crates.
   images as if standalone terminal-map certification covered the repeated-column map.
 - [ ] Compact matrix footprint tests verify `n*L` field coefficients and prefix
   reuse; no code path sums role footprints for allocation.
+- [ ] Prover setup eagerly materializes exactly one cyclic/negacyclic cache slot
+  per active dimension, sized to the maximum of the all-layer compression
+  envelope and any existing role-cache requirement. Commit/open execution has
+  zero cache builds, and every shorter F/H view is served by slicing that slot.
 - [ ] Direct and recursive setup-contribution modes produce identical combined
   claims for mixed F/H dimensions.
 - [ ] Relation-row layout tests pin the canonical order and terminal omissions.
-- [ ] Every nonscalar F/H relation includes the correct native-ring quotient;
-  scalar rows omit it. Dense arithmetic reference tests cover d=1,2,4,8,16.
-- [ ] No raw commitment/compression policy/tiered flag survives in configs,
+- [ ] Every F/H relation includes the correct native-ring quotient at its own
+  dimension. Dense arithmetic reference tests cover every compression-dispatch
+  dimension, including the tier minima d=8/16/32; dimensions below the active
+  tier minimum are rejected.
+- [ ] Eligible equal-shape compression maps use the batched multi-RHS kernel;
+  its outputs match independent cyclic/negacyclic reference calls, profiles
+  account for shared setup loads, and transcript-dependent F/H or adjacent
+  chain maps are never fused across their dependency barrier.
+- [ ] Eager paired quotient construction and deferred F-cyclic completion
+  produce identical quotient digits and proof bytes. The q128/q64/q32 1-KiB
+  F/H benchmarks select the faster internal strategy and report setup traffic,
+  coefficient reductions, pointwise products, and peak accumulator memory.
+- [ ] No raw-commitment or compression opt-out flag exists in configs,
   generated catalogs, public APIs, proof enums, profiles, or tests.
 - [ ] The final recursive `u` is absent from the wire and transcript.
 - [ ] Malformed-proof fuzz/property tests cover overflow, unsupported dims,
@@ -795,8 +1479,16 @@ splits may change, but ownership must not drift across crates.
   chain metadata without verifier panic or unbounded allocation.
 - [ ] Proof-size accounting and profile output separately report terminal F/H payloads,
   compression witnesses, relation proof, setup prefix, and live setup scan.
-- [ ] The final protocol exposes the optimized two-stage sumcheck ownership;
-  relation rows and (BIN) remain in their specified independent chains.
+- [ ] Direct verification and verifier-offloaded verification accept the same
+  F/H relation and setup claims; enabling offloading changes only the offloading
+  message schedule, not compression descriptors, payloads, or equations.
+- [ ] Paired release benchmarks satisfy the 5% hard prover and verifier limits
+  for both Stage 2 and end-to-end workloads; reports include the 2% target,
+  confidence intervals, and support-scan counters.
+- [ ] Every optimized Stage-2 path, including the two-round prefix and cached
+  fused-next-round paths, matches one dense reference with binary and relation
+  supports at the first/last index, across pair boundaries, overlapping after
+  projection, and empty where no negative-binary map exists.
 
 ### Testing strategy
 
@@ -817,26 +1509,65 @@ rtk cargo nextest run --profile ci --no-default-features --features parallel,dis
 ```
 
 Run relevant nondefault feature/profile matrices already exercised by CI; the
-cutover is incomplete if a test or benchmark needs a raw-commitment fallback.
+protocol is incomplete if a test or benchmark needs a raw-commitment fallback.
 
 ### Performance and reports
+
+Performance is a release gate, not an advisory. For each shipped field, the
+representative 1/4/8-KiB workloads, W1 and supported distributed worker counts,
+and both direct and verifier-offloaded setup modes, measure paired runs on the
+same pinned machine, feature set, thread count, schedule catalog, and public
+input. Planner/setup generation and cold filesystem I/O are reported separately.
+Prover time means commitment/opening computation plus proof generation;
+verifier time means checked deserialization, schedule validation, and proof
+verification.
+
+For both prover and verifier, the median enabled/control ratio must be at most
+`1.05`; `1.02` is the optimization target. Use at least ten warmups and thirty
+paired samples, with each reported sample batched long enough to exceed timer
+noise. Report the median, p95, and a bootstrap 95% confidence interval. A noisy
+CI does not relax the median gate; the benchmark must instead increase its
+batch duration.
+
+Two controls are required:
+
+1. a Stage-2 microbenchmark over the same expanded witness and relation layout,
+   comparing the complete sparse binary/relation additions with a
+   benchmark-only arithmetic control that omits those zero/additive terms; and
+2. an end-to-end benchmark at the same application input and security target,
+   comparing the planner-selected compressed schedule with a benchmark-only
+   source-commitment control.
+
+These controls are harness internals, not protocol configurations: they cannot
+serialize proofs, enter generated catalogs, or create a raw-commitment fallback.
+The Stage-2 gate isolates implementation quality; the end-to-end gate prevents
+the planner from hiding excessive commitment or verification work behind a
+fast sparse sumcheck. A shipped planner fixture that exceeds 5% on either side
+is rejected or replanned. Results between 2% and 5% require an explicit profile
+showing the remaining dominant kernels.
+
+Instrumentation must also report, per Stage-2 round, base witness cells,
+compression-relation cells, binary-support cells, and sparse-state entries
+folded. Tests assert that the last two counters are bounded by their live
+supports and never by the padded witness length. Add dense-reference benchmark
+variants only for correctness and diagnosis; they are excluded from production
+measurements.
 
 Add a reproducible arbitrary-chain sweep to `akita-sis-estimator` or the planner. For
 incoming native images of 1, 2, 4, and 8 KiB and every shipped field/base, report:
 
 - every F/H map's `(d,n)`, digit width, and standalone classical/quantum security;
-- first-layer and terminal payload bytes;
+- intermediate-image bytes and the planner-selected terminal payload;
 - compact matrix field coefficients and bytes;
 - maximum persistent prefix and per-level live scan;
 - estimated direct-verifier field additions/multiplications;
 - diagnostic hypothetical B/D slicing envelopes, clearly marked as non-protocol estimates.
 
-The q128 4 KiB table above and universal 128-byte defaults are checked
-regressions. The verifier expectation is at most a few tens of thousands of
-field multiplications for typical F/H views; if measurement materially exceeds
-that, first optimize the shared-prefix/sparse evaluator before enlarging the
-default payload. A larger payload is a reviewed planner change, not an automatic
-fallback.
+The q128 4 KiB table above and the shipped q128/q64/q32 payload fixtures are
+checked regressions. The verifier expectation is at most a few tens of
+thousands of field multiplications for typical F/H views; if measurement
+materially exceeds that, optimize the shared-prefix/sparse evaluator or let the
+planner select a different admissible chain.
 
 ## Execution plan
 
@@ -856,26 +1587,23 @@ Implementation proceeds only after this proposed spec is approved.
    quotient construction and sparse F/H relation
    providers. Establish dense-reference equivalence before verifier wiring;
    machine distribution composes with these authorities on the public companion
-   branch rather than extending the old flat chunk layout.
+   branch rather than extending the flat chunk layout.
 5. **Local binary range.** Add derived `I_bin`, fresh `rho_bin`, fused
    `omega_tilde`, succinct prover/verifier evaluators, and unchanged-degree
    tests.
 6. **Verifier and setup contribution.** Generalize the setup plan/evaluator,
    validate every chain and payload, and prove direct/recursive setup-mode
    equivalence with one prefix scan.
-7. **Recursive, terminal, and multi-group cutover.** Compress every required
+7. **Recursive, terminal, and multi-group integration.** Compress every required
    F/H identity, remove final recursive `u`, and cover heterogeneous frozen
    group plans plus disk persistence.
-8. **Stage reorder and schema cleanup.** Move relation to the final stage-1
-   substage, rename setup/carried reduction to stage 2, delete stage-3 public
-   schema and all raw/optional/old-tiered artifacts.
-9. **Production gates and docs.** Run full CI/profile sweeps, update proof-size
+8. **Production gates and docs.** Run full CI/profile sweeps, update proof-size
    and verifier reports, fold durable protocol exposition into the book, and
    advance/archive specs according to `specs/PRUNING.md`.
 
 Each implementation slice must preserve one canonical function per concept. Temporary adapters
-must be removed in the same stack; no forwarding wrappers or parallel legacy
-and compressed planners remain at completion.
+must be removed in the same stack; no forwarding wrappers or parallel planners
+remain at completion.
 
 ## Alternatives considered
 
@@ -915,8 +1643,8 @@ does not negotiate or alter depth after the schedule is frozen.
 ### Scalar-only terminal maps
 
 Rejected. They throw away compact ring storage and make terminal setup matrices
-unnecessarily large. Rank-one native rings give the universal 128-byte endpoint
-at `d = 8,16,32` over q128/q64/q32 and materially reduce setup/verifier work.
+unnecessarily large. The shipped rank-one native-ring choices give a 128-byte
+endpoint at `d = 8,16,32` over q128/q64/q32 and materially reduce setup/verifier work.
 
 ### Disjoint setup offsets
 
@@ -930,36 +1658,22 @@ Rejected. Groups are created and frozen independently, sometimes at different
 times. Concatenation changes commitment identity and later-opening semantics.
 Batch their relation claims, not their transmitted commitments.
 
-### Restore “tiered commitment”
-
-Rejected. The old feature mixed setup-width slicing, an extra recommitment, an
-optional flag, and a ring-sized wire output. The compression cutover restores
-none of it. A future block-axis-slicing proposal must be justified independently
-from measurements and must feed the same mandatory compression-chain interface.
-
 ## Documentation
 
 After implementation stabilizes, fold the protocol explanation into
 `book/src/how/optimizations.md`, the security contract into
-`book/src/how/security.md`, the stage ownership into
+`book/src/how/security.md`, sumcheck integration into
 `book/src/how/proving/sumcheck-stages.md`, and planner tradeoffs into
 `book/src/how/configuration.md`. Update `book/src/how/recursion.md` for terminal
 re-anchoring and `book/src/how/verification.md` for descriptor/no-panic checks.
 Until then this spec is the implementation source of truth.
 
-The superseded cutover draft is archived as historical design. It must not be
-used for optionality, variable depth, scalar-only execution, or setup offsets.
-
 ## References
 
 - Paper source and parameter discussion: private `paper-note` entry “lattice
   jolt akita”, Akita Sections 2 and 4.
-- Superseded local draft: `specs/archive/2026-Q3/commitment-compression-cutover.md`.
-- Abandoned implementation: GitHub PR #260 / branch
-  `quang/commitment-compression` (conceptual archaeology only).
 - Setup prefix and offload: `specs/setup-prefix-ladder.md`,
   `specs/setup-product-sumcheck.md`, `specs/batched-stage3-setup-opening.md`.
-- Stage-reorder rationale: `specs/setup-layout-repack.md`.
 - Terminal contract: `specs/terminal-fold-cutover.md`.
 - Mixed-role baseline: `book/src/how/architecture.md` and
   `crates/akita-types/src/layout/ring_dims.rs`.
