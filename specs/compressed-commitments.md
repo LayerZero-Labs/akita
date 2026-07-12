@@ -1848,7 +1848,9 @@ Implementation proceeds only after this proposed spec is approved.
 5. **Unify sparse folding.** Introduce one restricted-equality/sparse-relation
    engine with round polynomial, bind, and two-round-grid operations. Migrate
    every optimized Stage-2 path with empty sparse state; proof bytes remain
-   unchanged and each path matches the dense oracle.
+   unchanged and each path matches the dense oracle. Production construction
+   remains empty in this step; step 7 supplies nonempty provider weights,
+   restricted-equality weights, and their corresponding input claims.
 6. **Compile schedules and hints.** Compile the deterministic catalog supplied
    by the dedicated schedule-generation PR into envelopes, summed cache-memory
    reports, frozen group choices, and validated F/H hint data. Planner/type code

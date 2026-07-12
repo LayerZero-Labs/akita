@@ -88,6 +88,7 @@ enum WTable<E: FieldCore> {
 
 struct Stage2TwoRoundPrefix<E: FieldCore> {
     skip_state: Stage2BivariateSkipState<E>,
+    sparse_grid: Option<SparseTwoRoundGrid<E>>,
     first_challenge: Option<E>,
 }
 
@@ -213,6 +214,9 @@ pub struct AkitaStage2Prover<E: FieldCore> {
     s_claim: E,
     input_claim: E,
     split_eq: GruenSplitEq<E>,
+    // Production construction is intentionally empty until the internal compressed-proof
+    // harness supplies provider weights, restricted-equality weights, and claims in slice 7.
+    sparse_state: Stage2SparseState<E>,
 
     alpha_compact: Vec<E>,
     relation_matrix_col_evals_compact: Vec<E>,
@@ -236,8 +240,11 @@ mod dense_terms;
 mod lifecycle;
 mod round2_prefix;
 mod round_flow;
+mod sparse_state;
 mod x_prefix;
 mod y_prefix;
+
+use sparse_state::{SparseTwoRoundGrid, Stage2SparseState};
 
 impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
     // Fused relation (`alpha * m`) + optional trace-weight addend for one witness
