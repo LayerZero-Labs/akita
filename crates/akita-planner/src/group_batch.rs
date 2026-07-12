@@ -933,18 +933,14 @@ mod tests {
     }
 
     #[test]
-    fn onehot_single_group_uses_grouped_direct_sizing() {
+    fn onehot_single_group_preserves_scalar_direct_sizing() {
         let final_group = PolynomialGroupLayout::new(6, 3);
         let key = AkitaScheduleLookupKey::single(final_group);
         let policy = flat_policy();
 
         let schedule = find_group_batch_schedule(&key, &policy, ring_challenge_config, fold_shape)
             .expect("one-hot single-group key should use grouped planner");
-        let expected_w_len = key
-            .opening_layout()
-            .expect("opening layout")
-            .root_direct_witness_len()
-            .expect("direct witness len");
+        let expected_w_len = 1usize << final_group.num_vars();
 
         let Step::Direct(direct) = schedule
             .steps
@@ -954,6 +950,10 @@ mod tests {
             panic!("expected tiny single-group one-hot key to stay direct");
         };
         assert_eq!(direct.current_w_len, expected_w_len);
+        assert!(
+            direct.params.is_some(),
+            "committable root-direct scalar-compatible entry should retain commit params"
+        );
     }
 
     #[test]
