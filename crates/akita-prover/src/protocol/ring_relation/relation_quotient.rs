@@ -4,6 +4,7 @@ use crate::compute::{
     OperationCtx, RingSwitchProveBackend, RingSwitchQuotientKernel, RingSwitchQuotientPlan,
     RingSwitchRelationKernel, RingSwitchRelationPlan,
 };
+use crate::kernels::linear::quotient_from_cyclic_and_negacyclic;
 use crate::protocol::ring_switch::PreparedRingSwitchGroup;
 use crate::validation::validate_i8_setup_log_basis;
 use akita_types::{LevelParams, RelationGroupId, RelationRowId, RelationRowPlan};
@@ -112,16 +113,6 @@ where
 
 /// Relation quotient `r` returned by [`compute_multi_group_relation_quotient`].
 pub(crate) type RelationQuotientOutput<F, const D: usize> = Vec<CyclotomicRing<F, D>>;
-
-fn quotient_from_cyclic_and_reduced<F: FieldCore + HalvingField, const D: usize>(
-    cyclic: &CyclotomicRing<F, D>,
-    reduced: &CyclotomicRing<F, D>,
-) -> CyclotomicRing<F, D> {
-    let cyc_c = cyclic.coefficients();
-    let red_c = reduced.coefficients();
-    let quotient = std::array::from_fn(|k| (cyc_c[k] - red_c[k]).half());
-    CyclotomicRing::from_coefficients(quotient)
-}
 
 fn add_cyclic_ring_product<F: FieldCore, const D: usize>(
     acc: &mut [F; D],
@@ -363,7 +354,7 @@ where
                 group.params.num_digits_commit(),
                 log_basis,
             )?;
-            quotient_from_cyclic_and_reduced(&consistency_z_cyclic, &consistency_z_reduced)
+            quotient_from_cyclic_and_negacyclic(&consistency_z_cyclic, &consistency_z_reduced)
         };
         let quotient = parallel_high_half_accumulate::<F, _, D>(challenges, |i| Some(e_folded[i]))?;
         let mut quotient = CyclotomicRing::from_slice(&quotient);
@@ -414,7 +405,7 @@ where
                 .b_cyclic
                 .get(commit_idx)
                 .ok_or(AkitaError::InvalidProof)?;
-            result[row_idx] = quotient_from_cyclic_and_reduced(cyclic, &y[row_idx]);
+            result[row_idx] = quotient_from_cyclic_and_negacyclic(cyclic, &y[row_idx]);
         }
     }
 
@@ -431,7 +422,7 @@ where
         }
         for (d_idx, cyclic) in d_cyclic_rows.iter().enumerate() {
             let row_idx = d_start.checked_add(d_idx).ok_or(AkitaError::InvalidProof)?;
-            result[row_idx] = quotient_from_cyclic_and_reduced(cyclic, &y[row_idx]);
+            result[row_idx] = quotient_from_cyclic_and_negacyclic(cyclic, &y[row_idx]);
         }
     }
     Ok(result)

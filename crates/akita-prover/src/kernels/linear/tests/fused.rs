@@ -235,3 +235,54 @@ fn fused_split_eq_quotients_uses_role_local_packed_widths() {
     assert_eq!(b_rows, expected_b);
     assert_eq!(a_rows, expected_a);
 }
+
+#[test]
+fn fused_split_eq_rejects_short_cyclic_cache_without_panicking() {
+    type F = Fp64<4294967197>;
+    const D: usize = 64;
+    let flat = FlatMatrix::from_ring_slice(&[CyclotomicRing::<F, D>::zero()]);
+    let slot = build_ntt_slot(flat.ring_view::<D>(1, 1).expect("one cache entry"))
+        .expect("Q32 test cache");
+    let digits = [[1i8; D]];
+
+    assert!(fused_split_eq_quotients::<F, D>(&slot, 2, 0, 0, &digits, &[], &[], 0).is_err());
+}
+
+#[test]
+fn fused_split_eq_rejects_short_negacyclic_cache_without_panicking() {
+    type F = Fp64<4294967197>;
+    const D: usize = 64;
+    let flat = FlatMatrix::from_ring_slice(&[CyclotomicRing::<F, D>::zero()]);
+    let slot = build_ntt_slot(flat.ring_view::<D>(1, 1).expect("one cache entry"))
+        .expect("Q32 test cache");
+    let NttSlotCache::Q32 {
+        mut neg,
+        cyc,
+        params,
+    } = slot
+    else {
+        panic!("test field must use Q32 cache");
+    };
+    neg.clear();
+    let malformed = NttSlotCache::Q32 { neg, cyc, params };
+    let centered = [[1i32; D]];
+
+    assert!(fused_split_eq_quotients::<F, D>(&malformed, 0, 0, 1, &[], &[], &centered, 1).is_err());
+}
+
+#[test]
+fn fused_split_eq_enforces_balanced_digit_endpoints() {
+    type F = Fp64<4294967197>;
+    const D: usize = 64;
+    let flat = FlatMatrix::from_ring_slice(&[CyclotomicRing::<F, D>::zero()]);
+    let slot = build_ntt_slot(flat.ring_view::<D>(1, 1).expect("one cache entry"))
+        .expect("Q32 test cache");
+
+    for digit in [-32i8, 31] {
+        let coeffs = [[digit; D]];
+        fused_split_eq_quotients::<F, D>(&slot, 1, 0, 0, &coeffs, &[], &[], 0)
+            .expect("balanced endpoint is valid");
+    }
+    let invalid = [[32i8; D]];
+    assert!(fused_split_eq_quotients::<F, D>(&slot, 1, 0, 0, &invalid, &[], &[], 0).is_err());
+}

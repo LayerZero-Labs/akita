@@ -8,7 +8,9 @@ use super::{
     mat_vec_mul_ntt_raw_i8_strided, mat_vec_mul_ntt_single_i8_cyclic, mat_vec_mul_unchecked,
     precompute_dense_mat_ntt_with_params,
 };
-use crate::kernels::crt_ntt::{build_ntt_slot, select_crt_ntt_params, ProtocolCrtNttParams};
+use crate::kernels::crt_ntt::{
+    build_ntt_slot, select_crt_ntt_params, NttSlotCache, ProtocolCrtNttParams,
+};
 use akita_algebra::ntt::{
     tables::{Q128_NUM_PRIMES, Q32_NUM_PRIMES, Q64_NUM_PRIMES},
     PrimeWidth,

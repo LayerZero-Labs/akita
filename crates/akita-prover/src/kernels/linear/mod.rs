@@ -37,6 +37,7 @@ use block_parallel::*;
 use capacity::*;
 pub(crate) use capacity::{selected_crt_i8_capacity_profile, CrtI8CapacityProfile};
 use chunked_matvec::*;
+pub(crate) use common::quotient_from_cyclic_and_negacyclic;
 use common::*;
 #[cfg(test)]
 use crt_matvec::precompute_dense_mat_ntt_with_params;
