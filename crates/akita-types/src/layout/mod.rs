@@ -7,6 +7,7 @@
 //! directly. This module retains the layout glue the replay path reaches
 //! through `CommitmentConfig`.
 
+pub(crate) mod compression;
 pub mod digit_math;
 pub mod flat_matrix;
 pub mod opening_point;

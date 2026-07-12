@@ -425,16 +425,62 @@ struct CompressionMapSpec {
 
 struct CompressionChainSpec {
     source: CompressionSourceId,
-    maps: NonEmptyVec<CompressionMapSpec>,
+    maps: Vec<CompressionMapSpec>, // checked length 2..=3
 }
 
-struct ValidatedCompressionPlan {
+struct ValidatedCompressionCatalog {
     // private, checked compiled fields
 }
 ```
 
+`CompressionAlphabet` is either `NegativeBinary` or
+`OpeningBase { log_basis }`. The latter authenticates the map's honest
+recomposition base `b_cmp`; it is not the range-check base. The compiler derives
+the canonical field bit width from the active field, uses exactly that many
+negative-binary digits, and uses the ordinary full-field digit-count primitive
+for an opening-base map. Every active opening-base map requires
+`0 < log2(b_cmp) <= log2(b_range) < 128`: the level-wide range proof must cover
+every digit admitted by the map's recomposition base. In a co-generated level,
+the current F1 and opening H1 maps additionally require `b_cmp = b_range`; a
+frozen precommitted F1 may use its authenticated smaller base. Standalone
+commitment creation fixes an opening-base F1 to base 4; a negative-binary F1
+remains base-independent. The standalone compiler receives the authenticated
+maximum permitted later opening base from the configuration policy and requires
+it to cover base 4. The ordinary standalone `LevelParams.log_basis` may remain
+the minimum configured base and is not reused as this conservative maximum.
+SIS collision pricing for an opening-base input uses
+`b_range - 1`, where `b_range` is the level-wide authenticated range-proof base;
+it never substitutes `b_cmp - 1`. Negative-binary pricing uses raw bound one
+only for the complete compiler-derived input span.
+An opening-base alphabet is valid only on the first map of a chain; every later
+map is negative binary. The first map may also be negative binary.
+
+One `validate_and_compile` call consumes every chain spec for the level and
+returns the sole `ValidatedCompressionCatalog`; there is no separately
+constructible per-chain validated plan. The compiler rejects missing,
+duplicate, or out-of-range sources. A co-generated level requires the current
+F chain, every frozen precommitted F chain, and the opening H chain in canonical
+order; standalone creation requires exactly its new current F chain. This
+validates the catalog's geometry,
+dispatch, and SIS certificates, but does not by itself authorize protocol
+execution: only the semantic-layout compiler may certify that every bound-one
+map input is present in the verifier-enforced binary support.
+
+Catalog compilation authenticates whether its context is a co-generated level
+or standalone commitment creation; this is protocol meaning, not an execution
+strategy flag. The standalone context carries the authenticated maximum later
+opening base used by the existing conservative-B policy; the compiled catalog
+retains that effective range/security base. It does not infer context from the legacy
+`RelationMatrixRowLayout`: `WithoutDBlock` currently conflates standalone and
+terminal paths. A terminal proof creates no new catalog. Its semantic layout
+must consume the already-frozen incoming commitment catalog and reject any
+attempt to compile a new current B/F or opening D/H chain.
+
 `CompressionSourceId` resolves the existing B/D role identity and key; it does
-not copy source dimensions or key metadata. `AjtaiKeyParams` is the sole owner
+not copy source dimensions or key metadata. Its stable variants distinguish the
+current B source, each authenticated precommitted B source, and the opening D
+source; an opening source is invalid when the D block is absent.
+`AjtaiKeyParams` is the sole owner
 of row length, column length, `SisTableKey`, and ring dimension. Digit depth,
 coefficient lengths, witness spans, and binary support are derived facts, never
 free plan fields or serialized vectors.
@@ -452,8 +498,10 @@ payload_coeffs   = output_coeffs_L.
 
 One canonical digit-math primitive derives each digit depth and gadget scalar
 from the authenticated alphabet, field, and base. No caller supplies both an
-alphabet and its derived depth. The validated plan exposes checked getters;
-only the semantic-layout compiler may turn those facts into spans and support.
+alphabet and its derived depth. The semantic-layout compiler consumes the
+catalog's private compiled maps directly; do not add integer-index forwarding
+getters merely to reveal those fields. Only that compiler may turn the compiled
+facts into spans and support.
 
 Names may change during implementation, but these authorities and equalities
 are normative and descriptor-bound. There is one B-side chain per commitment identity and one
@@ -949,17 +997,22 @@ layout whose native order is:
 
 ```text
 consistency
-A
-B_1 ... B_G
+A_current
+B_current
+(A_precommitted_i, B_precommitted_i) for i in authenticated precommitted order
 D
-(Fell_1 ... Fell_G
+(Fell_current, Fell_precommitted_0, ..., Fell_precommitted_(G-2)
  Hell) for ell = 1..max(L_F,L_H)
 evaluation trace
 ```
 
-At recursive scalar levels `G=1`. At a multi-group root the frozen group chains
-appear in group schedule order, followed by the newly committed group. The
-evaluation trace remains last.
+At recursive scalar levels there is only the current group. This current-first
+order preserves the existing multi-group A/B relation order and therefore the
+existing proof bytes when Slice 3 migrates those rows. `CompressionSourceId`
+distinguishes `CurrentOuter`, `PrecommittedOuter(i)`, and `Opening`; no compiler
+infers identity from an untyped vector position. Compression layers use that
+same current-first order, omit absent layers, and place H after the live F rows
+at each layer. The evaluation trace remains last.
 
 Within each B or D family, source rows retain the existing unsliced block-fast
 order. The first compression map consumes the decomposition of that image.
