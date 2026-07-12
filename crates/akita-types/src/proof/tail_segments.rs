@@ -22,7 +22,7 @@ use crate::proof::CleartextWitnessShape;
 use crate::proof::{RingVec, TerminalWitnessTranscriptParts};
 use crate::sis::compute_num_digits_full_field;
 use crate::tail_golomb_rice_low_bits::{cap_rice_low_bits, wire_rice_low_bits_from_rule};
-use crate::{LevelParams, RelationMatrixRowLayout};
+use crate::{LevelParams, OpeningClaimsLayout, RelationMatrixRowLayout, RelationRowPlan};
 
 /// Public segment geometry for a transparent terminal witness.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -599,11 +599,21 @@ pub fn tail_segment_layout(
         .checked_mul(lp.a_key.row_len())
         .and_then(|n| n.checked_mul(depth_open))
         .ok_or_else(|| AkitaError::InvalidSetup("tail t plane count overflow".to_string()))?;
-    let r_plane_rings = lp
-        .relation_matrix_row_count_for(
-            num_commitment_groups,
-            RelationMatrixRowLayout::WithoutDBlock,
-        )?
+    let opening = OpeningClaimsLayout::new(
+        lp.m_vars
+            .checked_add(lp.r_vars)
+            .ok_or_else(|| AkitaError::InvalidSetup("opening arity overflow".into()))?,
+        num_w_vectors,
+    )?;
+    if opening.num_groups() != num_commitment_groups {
+        return Err(AkitaError::InvalidSetup(
+            "tail commitment group count disagrees with opening context".into(),
+        ));
+    }
+    let r_rows =
+        RelationRowPlan::compile_base(lp, &opening, RelationMatrixRowLayout::WithoutDBlock)?
+            .trace_row();
+    let r_plane_rings = r_rows
         .checked_mul(compute_num_digits_full_field(field_bits, lp.log_basis))
         .ok_or_else(|| AkitaError::InvalidSetup("tail r plane count overflow".to_string()))?;
     let total_plane_rings = z_plane_rings
@@ -614,11 +624,7 @@ pub fn tail_segment_layout(
     let logical_num_elems = total_plane_rings
         .checked_mul(d)
         .ok_or_else(|| AkitaError::InvalidSetup("tail logical elem overflow".to_string()))?;
-    let r_field_elems = lp
-        .relation_matrix_row_count_for(
-            num_commitment_groups,
-            RelationMatrixRowLayout::WithoutDBlock,
-        )?
+    let r_field_elems = r_rows
         .checked_mul(d)
         .ok_or_else(|| AkitaError::InvalidSetup("tail r field count overflow".to_string()))?;
     Ok(TailSegmentLayout {

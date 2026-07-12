@@ -22,6 +22,7 @@
   - [Transcript and instance binding](./how/transcript.md)
   - [The proving protocol](./how/proving/proving.md)
     - [Opening points and block order](./how/proving/opening-points-block-order.md)
+    - [Relation layout](./how/proving/relation-layout.md)
     - [Root fold and ring switching](./how/proving/root-fold-ring-switch.md)
     - [Sumcheck stages](./how/proving/sumcheck-stages.md)
     - [Extension-opening reduction](./how/proving/extension-opening-reduction.md)

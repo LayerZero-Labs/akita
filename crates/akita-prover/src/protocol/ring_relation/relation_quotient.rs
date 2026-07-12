@@ -6,7 +6,7 @@ use crate::compute::{
 };
 use crate::protocol::ring_switch::PreparedRingSwitchGroup;
 use crate::validation::validate_i8_setup_log_basis;
-use akita_types::{LevelParams, RelationMatrixRowLayout};
+use akita_types::{LevelParams, RelationGroupId, RelationRowId, RelationRowPlan};
 
 /// Add only the high-half quotient contribution of `challenge * ring`.
 ///
@@ -227,7 +227,7 @@ pub(crate) fn compute_multi_group_relation_quotient<F, B, const D: usize>(
     group_challenges: &[Challenges],
     e_hat_concat: &[[i8; D]],
     y: &[CyclotomicRing<F, D>],
-    relation_matrix_row_layout: RelationMatrixRowLayout,
+    row_plan: &RelationRowPlan,
 ) -> Result<RelationQuotientOutput<F, D>, AkitaError>
 where
     F: FieldCore + CanonicalField + FromPrimitiveInt + HalvingField,
@@ -243,15 +243,13 @@ where
     }
     let backend = ring_switch_ctx.backend();
     let prepared = ring_switch_ctx.prepared();
-    let n_d_active = lp.n_d_active_for(relation_matrix_row_layout);
-    let num_rows =
-        lp.relation_matrix_row_count_for(opening_batch.num_groups(), relation_matrix_row_layout)?;
+    let d_family = row_plan.family(RelationRowId::D).ok();
+    let n_d_active = d_family.map_or(0, |family| family.rows().len());
+    let num_rows = row_plan.trace_row();
     if y.len() != num_rows {
         return Err(AkitaError::InvalidProof);
     }
-    let d_start = num_rows
-        .checked_sub(n_d_active)
-        .ok_or(AkitaError::InvalidProof)?;
+    let d_start = d_family.map_or(num_rows, |family| family.rows().start());
     let mut result = vec![CyclotomicRing::<F, D>::zero(); num_rows];
     let mut d_cyclic_rows: Option<Vec<CyclotomicRing<F, D>>> = None;
     let order = opening_batch.root_group_order()?;
@@ -370,10 +368,21 @@ where
         let quotient = parallel_high_half_accumulate::<F, _, D>(challenges, |i| Some(e_folded[i]))?;
         let mut quotient = CyclotomicRing::from_slice(&quotient);
         quotient -= consistency_z_quotient;
-        result[0] += quotient;
+        let consistency_row = row_plan.family(RelationRowId::Consistency)?.rows().start();
+        result[consistency_row] += quotient;
 
-        let a_range =
-            lp.root_a_row_range(opening_batch, group_index, relation_matrix_row_layout)?;
+        let final_group_index = opening_batch.root_final_group_index()?;
+        let relation_group = if group_index == final_group_index {
+            RelationGroupId::Current
+        } else {
+            RelationGroupId::Precommitted { index: group_index }
+        };
+        let a_range = row_plan
+            .family(RelationRowId::A {
+                group: relation_group,
+            })?
+            .rows()
+            .range();
         if a_range.len() != n_a {
             return Err(AkitaError::InvalidProof);
         }
@@ -391,8 +400,12 @@ where
             result[row_idx] = CyclotomicRing::from_slice(&quotient);
         }
 
-        let b_range =
-            lp.root_commitment_row_range(opening_batch, group_index, relation_matrix_row_layout)?;
+        let b_range = row_plan
+            .family(RelationRowId::B {
+                group: relation_group,
+            })?
+            .rows()
+            .range();
         if b_range.len() != n_b {
             return Err(AkitaError::InvalidProof);
         }

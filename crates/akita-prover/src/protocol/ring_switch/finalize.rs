@@ -25,7 +25,6 @@ pub fn ring_switch_finalize<F, E, T>(
     w: &RecursiveWitnessFlat,
     lp: &LevelParams,
     gamma: Option<&[E]>,
-    relation_matrix_row_layout: RelationMatrixRowLayout,
 ) -> Result<RingSwitchOutput<E>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling,
@@ -49,8 +48,6 @@ where
         };
         let alpha: E = sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_RING_SWITCH);
 
-        let opening_batch = instance.opening_batch();
-
         let num_ring_elems = w.len() / D;
         let live_x_cols = num_ring_elems;
         let col_bits = num_ring_elems
@@ -61,14 +58,24 @@ where
             .trailing_zeros() as usize;
         let ring_bits = D.trailing_zeros() as usize;
         let num_sc_vars = col_bits + ring_bits;
-        let num_i =
-            lp.relation_row_index_num_vars_for_layout(relation_matrix_row_layout, opening_batch)?;
+        let num_i = instance
+            .relation_layout()
+            .row_plan()
+            .padded_row_count()
+            .trailing_zeros() as usize;
 
-        let tau0: Vec<E> = match relation_matrix_row_layout {
-            RelationMatrixRowLayout::WithDBlock => (0..num_sc_vars)
+        let has_d = instance
+            .relation_layout()
+            .row_plan()
+            .families()
+            .iter()
+            .any(|family| matches!(family.id(), RelationRowId::D));
+        let tau0: Vec<E> = if has_d {
+            (0..num_sc_vars)
                 .map(|_| sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_TAU0))
-                .collect(),
-            RelationMatrixRowLayout::WithoutDBlock => Vec::new(),
+                .collect()
+        } else {
+            Vec::new()
         };
         let tau1: Vec<E> = (0..num_i)
             .map(|_| sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_TAU1))
@@ -90,11 +97,9 @@ where
                     instance,
                     alpha,
                     &ring_alpha_evals_y,
-                    dims,
                     lp,
                     &tau1,
                     gamma,
-                    relation_matrix_row_layout,
                 )
             },
             || build_w_evals_compact(w.as_i8_digits(), D, 1),
@@ -106,11 +111,9 @@ where
                 instance,
                 alpha,
                 &ring_alpha_evals_y,
-                dims,
                 lp,
                 &tau1,
                 gamma,
-                relation_matrix_row_layout,
             )?;
             let w_compact = build_w_evals_compact(w.as_i8_digits(), D, 1);
             (Ok(relation_matrix_col_evals), w_compact)

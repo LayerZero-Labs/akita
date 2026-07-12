@@ -3,6 +3,7 @@ use std::sync::Arc;
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_field::{AkitaError, FieldCore};
 
+use crate::layout::relation::RelationRowPlan;
 use crate::layout::{LevelParams, RelationMatrixRowLayout};
 
 /// Minimal setup-contribution data needed to derive setup-index weights.
@@ -39,8 +40,8 @@ impl<E: FieldCore> SetupContributionPlanInputs<E> {
     /// Returns an error when level layout parameters are inconsistent.
     pub fn from_level_params(
         lp: &LevelParams,
+        row_plan: &RelationRowPlan,
         num_polys_per_group: &[usize],
-        relation_matrix_row_layout: RelationMatrixRowLayout,
         depth_fold: usize,
     ) -> Result<Self, AkitaError> {
         let num_polynomials: usize = num_polys_per_group.iter().copied().sum();
@@ -76,13 +77,48 @@ impl<E: FieldCore> SetupContributionPlanInputs<E> {
                 "B-key column width is too small for setup contribution layout".into(),
             ));
         }
-        let rows = lp.relation_matrix_row_count_for(num_groups, relation_matrix_row_layout)?;
+        let rows = row_plan.trace_row();
+        let relation_matrix_row_layout = if row_plan
+            .families()
+            .iter()
+            .any(|family| matches!(family.id(), crate::RelationRowId::D))
+        {
+            RelationMatrixRowLayout::WithDBlock
+        } else {
+            RelationMatrixRowLayout::WithoutDBlock
+        };
+        let a_family = row_plan.family(crate::RelationRowId::A {
+            group: crate::RelationGroupId::Current,
+        })?;
+        let b_family = row_plan.family(crate::RelationRowId::B {
+            group: crate::RelationGroupId::Current,
+        })?;
+        let d_family = row_plan
+            .families()
+            .iter()
+            .find(|family| matches!(family.id(), crate::RelationRowId::D));
+        let n_a = a_family.rows().len();
+        let n_b = b_family.rows().len();
+        let n_d = d_family.map_or(0, |family| family.rows().len());
+        if n_a != lp.a_key.row_len()
+            || n_b != lp.b_key.row_len()
+            || (n_d != 0 && n_d != lp.d_key.row_len())
+            || a_family.native_ring_dim() != lp.a_key.sis_table_key().ring_dimension as usize
+            || b_family.native_ring_dim() != lp.b_key.sis_table_key().ring_dimension as usize
+            || d_family.is_some_and(|family| {
+                family.native_ring_dim() != lp.d_key.sis_table_key().ring_dimension as usize
+            })
+        {
+            return Err(AkitaError::InvalidSetup(
+                "relation plan matrix rows disagree with level parameters".into(),
+            ));
+        }
         Ok(Self {
             relation_matrix_row_layout,
             rows,
-            n_a: lp.a_key.row_len(),
-            n_b: lp.b_key.row_len(),
-            n_d: lp.d_key.row_len(),
+            n_a,
+            n_b,
+            n_d,
             num_groups,
             num_polys_per_group: num_polys_per_group.to_vec(),
             num_t_vectors: num_polynomials,

@@ -3,16 +3,17 @@
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::AkitaError;
 use akita_types::sis::{
-    compute_num_digits_full_field, decomposed_s_block_ring_count, decomposed_t_ring_count,
-    decomposed_w_ring_count, fold_witness_digit_plan, min_secure_rank, num_digits_open,
-    num_digits_s_commit, rounded_up_collision_inf_norm, rounded_up_role_a_inf_norm, AjtaiKeyParams,
-    FoldChallengeNorms, FoldWitnessLinfCapConfig, FoldWitnessNorms, SisTableKey,
+    decomposed_s_block_ring_count, decomposed_t_ring_count, decomposed_w_ring_count,
+    fold_witness_digit_plan, min_secure_rank, num_digits_open, num_digits_s_commit,
+    rounded_up_collision_inf_norm, rounded_up_role_a_inf_norm, AjtaiKeyParams, FoldChallengeNorms,
+    FoldWitnessLinfCapConfig, FoldWitnessNorms, SisTableKey,
 };
 use akita_types::{
     direct_witness_bytes, extension_opening_reduction_level_bytes, level_proof_bytes,
     AkitaScheduleInputs, AkitaScheduleLookupKey, CleartextWitnessShape, CommitmentRingDims,
-    DecompositionParams, DirectStep, FoldStep, LevelParams, PolynomialGroupLayout,
-    PrecommittedGroupParams, PrecommittedLevelParams, RelationMatrixRowLayout, Schedule, Step,
+    DecompositionParams, DirectStep, FoldStep, LevelParams, OpeningClaimsLayout,
+    PolynomialGroupLayout, PrecommittedGroupParams, PrecommittedLevelParams, RelationLayout,
+    RelationMatrixRowLayout, Schedule, Step,
 };
 
 use crate::schedule_params::{
@@ -291,41 +292,6 @@ pub(crate) fn multi_group_root_precommitted_groups(
     Ok((precommitted_groups, precommitted_d_width))
 }
 
-fn multi_group_root_segment_rings(
-    num_polys: usize,
-    num_blocks: usize,
-    block_len: usize,
-    n_a: usize,
-    num_digits_commit: usize,
-    num_digits_open: usize,
-    num_digits_fold: usize,
-) -> Result<usize, AkitaError> {
-    let e_hat = num_polys
-        .checked_mul(num_blocks)
-        .and_then(|n| n.checked_mul(num_digits_open))
-        .ok_or_else(|| {
-            AkitaError::InvalidSetup("multi-group root e-hat witness overflow".to_string())
-        })?;
-    let t_hat = num_polys
-        .checked_mul(num_blocks)
-        .and_then(|n| n.checked_mul(n_a))
-        .and_then(|n| n.checked_mul(num_digits_open))
-        .ok_or_else(|| {
-            AkitaError::InvalidSetup("multi-group root t-hat witness overflow".to_string())
-        })?;
-    let z_hat = block_len
-        .checked_mul(num_digits_commit)
-        .and_then(|n| n.checked_mul(num_digits_fold))
-        .ok_or_else(|| {
-            AkitaError::InvalidSetup("multi-group root z-hat witness overflow".to_string())
-        })?;
-
-    e_hat
-        .checked_add(t_hat)
-        .and_then(|n| n.checked_add(z_hat))
-        .ok_or_else(|| AkitaError::InvalidSetup("multi-group root witness overflow".to_string()))
-}
-
 pub(crate) fn multi_group_root_next_w_len(
     field_bits: u32,
     params: &LevelParams,
@@ -338,42 +304,24 @@ pub(crate) fn multi_group_root_next_w_len(
         ));
     }
 
-    let mut total = multi_group_root_segment_rings(
-        main_num_polys,
-        params.num_blocks,
-        params.block_len,
-        params.a_key.row_len(),
-        params.num_digits_commit,
-        params.num_digits_open,
-        params.num_digits_fold(main_num_polys, field_bits)?,
+    let precommitteds = params
+        .precommitted_groups
+        .iter()
+        .map(|group| group.layout.group)
+        .collect::<Vec<_>>();
+    let opening = OpeningClaimsLayout::from_root_groups(
+        &precommitteds,
+        PolynomialGroupLayout::new(
+            params
+                .m_vars
+                .checked_add(params.r_vars)
+                .ok_or_else(|| AkitaError::InvalidSetup("root opening arity overflow".into()))?,
+            main_num_polys,
+        ),
     )?;
-    for group in &params.precommitted_groups {
-        let group_rings = multi_group_root_segment_rings(
-            group.layout.group.num_polynomials(),
-            group.num_blocks,
-            group.block_len,
-            group.a_key.row_len(),
-            group.num_digits_commit,
-            group.num_digits_open,
-            group.num_digits_fold_one,
-        )?;
-        total = total.checked_add(group_rings).ok_or_else(|| {
-            AkitaError::InvalidSetup("multi-group root witness overflow".to_string())
-        })?;
-    }
-
-    let r_rows =
-        params.relation_matrix_row_count_for(params.precommitted_groups.len() + 1, layout)?;
-    let r_count = r_rows
-        .checked_mul(compute_num_digits_full_field(field_bits, params.log_basis))
-        .ok_or_else(|| {
-            AkitaError::InvalidSetup("multi-group root r-tail witness overflow".to_string())
-        })?;
-
-    let rings = total
-        .checked_add(r_count)
-        .ok_or_else(|| AkitaError::InvalidSetup("multi-group root witness overflow".to_string()))?;
-
+    let rings = RelationLayout::from_authenticated_statement(params, &opening, layout, field_bits)?
+        .witness_layout(None)?
+        .ring_len()?;
     rings.checked_mul(params.ring_dimension).ok_or_else(|| {
         AkitaError::InvalidSetup("multi-group root next witness length overflow".to_string())
     })
@@ -890,13 +838,18 @@ mod tests {
             panic!("expected multi-group root fold");
         };
 
-        let runtime_next_w_len = root
-            .params
-            .root_next_w_len::<Prime128OffsetA7F7>(
-                &opening_batch,
-                RelationMatrixRowLayout::WithDBlock,
-            )
-            .expect("runtime next w len");
+        let runtime_next_w_len = RelationLayout::from_authenticated_statement(
+            &root.params,
+            &opening_batch,
+            RelationMatrixRowLayout::WithDBlock,
+            <Prime128OffsetA7F7 as akita_field::CanonicalField>::modulus_bits(),
+        )
+        .expect("semantic layout")
+        .witness_layout(None)
+        .expect("witness layout")
+        .ring_len()
+        .expect("runtime next w len")
+            * root.params.ring_dimension;
         assert_eq!(root.next_w_len, runtime_next_w_len);
 
         let expected_d_width = root

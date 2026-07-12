@@ -9,24 +9,22 @@ use akita_serialization::DEFAULT_MAX_SEQUENCE_LEN;
 
 use crate::{r_decomp_levels, LevelParams};
 
-use super::{
-    resolve_source_key, CompressionAlphabet, CompressionSourceId, ValidatedCompressionCatalog,
-};
+use super::{resolve_source_key, CompressionAlphabet, CompressionSourceId};
 
-const BINARY_SUPPORT_DERIVATION_VERSION: u8 = 1;
+pub(in crate::layout) const BINARY_SUPPORT_DERIVATION_VERSION: u8 = 1;
 
 /// Flat field-coefficient cells in the compression-local witness arena.
 ///
 /// Ring dimension is intentionally absent: one digit segment is viewed at the
 /// current map dimension and at its predecessor's output dimension.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct CoeffSpan {
-    start: usize,
-    len: usize,
+pub(in crate::layout) struct CoeffSpan {
+    pub(in crate::layout) start: usize,
+    pub(in crate::layout) len: usize,
 }
 
 impl CoeffSpan {
-    fn end(self) -> Result<usize, AkitaError> {
+    pub(in crate::layout) fn end(self) -> Result<usize, AkitaError> {
         self.start
             .checked_add(self.len)
             .ok_or_else(|| AkitaError::InvalidSetup("compression span end overflow".into()))
@@ -34,7 +32,7 @@ impl CoeffSpan {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum SegmentId {
+pub(in crate::layout) enum SegmentId {
     Xi {
         source: CompressionSourceId,
         map: usize,
@@ -46,59 +44,61 @@ enum SegmentId {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct CompressionSegment {
-    id: SegmentId,
-    span: CoeffSpan,
+pub(in crate::layout) struct CompressionSegment {
+    pub(in crate::layout) id: SegmentId,
+    pub(in crate::layout) span: CoeffSpan,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct CompressionRowId {
-    source: CompressionSourceId,
-    map: usize,
+pub(in crate::layout) struct CompressionRowId {
+    pub(in crate::layout) source: CompressionSourceId,
+    pub(in crate::layout) map: usize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct RowSpan {
-    start: usize,
-    len: usize,
+pub(in crate::layout) struct RowSpan {
+    pub(in crate::layout) start: usize,
+    pub(in crate::layout) len: usize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum CompressionRowRhs {
+pub(in crate::layout) enum CompressionRowRhs {
     Zero,
     TerminalPayload { coeffs: usize },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct CompressionRowProvider {
-    id: CompressionRowId,
-    rows: RowSpan,
-    input: SegmentId,
-    successor: Option<SegmentId>,
-    quotient: SegmentId,
-    native_ring_dim: usize,
-    rhs: CompressionRowRhs,
+pub(in crate::layout) struct CompressionRowProvider {
+    pub(in crate::layout) id: CompressionRowId,
+    pub(in crate::layout) rows: RowSpan,
+    pub(in crate::layout) input: SegmentId,
+    pub(in crate::layout) successor: Option<SegmentId>,
+    pub(in crate::layout) successor_log_basis: Option<u32>,
+    pub(in crate::layout) quotient: SegmentId,
+    pub(in crate::layout) native_ring_dim: usize,
+    pub(in crate::layout) rhs: CompressionRowRhs,
 }
 
 /// Compression support to add to one already-existing B/D row family.
 /// Global row identity and the source role are resolved only during Slice 3.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct AugmentationIntent {
-    source: CompressionSourceId,
-    compression_input: SegmentId,
+pub(in crate::layout) struct AugmentationIntent {
+    pub(in crate::layout) source: CompressionSourceId,
+    pub(in crate::layout) compression_input: SegmentId,
+    pub(in crate::layout) compression_log_basis: u32,
 }
 
 /// Checked, compression-local semantics. This is stored but not executable.
 #[allow(dead_code)] // Read by the relation-layout composition slice.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) struct CompiledCompressionSemantics {
-    segments: Vec<CompressionSegment>,
-    rows: Vec<CompressionRowProvider>,
-    augmentations: Vec<AugmentationIntent>,
-    negative_binary_inputs: Vec<SegmentId>,
-    binary_support_derivation_version: u8,
-    total_coeffs: usize,
-    total_rows: usize,
+pub(in crate::layout) struct CompiledCompressionSemantics {
+    pub(in crate::layout) segments: Vec<CompressionSegment>,
+    pub(in crate::layout) rows: Vec<CompressionRowProvider>,
+    pub(in crate::layout) augmentations: Vec<AugmentationIntent>,
+    pub(in crate::layout) negative_binary_inputs: Vec<SegmentId>,
+    pub(in crate::layout) binary_support_derivation_version: u8,
+    pub(in crate::layout) total_coeffs: usize,
+    pub(in crate::layout) total_rows: usize,
 }
 
 fn checked_add_capped(current: usize, len: usize, label: &str) -> Result<usize, AkitaError> {
@@ -161,25 +161,51 @@ fn segment_span(segments: &[CompressionSegment], id: SegmentId) -> Result<CoeffS
         .ok_or_else(|| AkitaError::InvalidSetup("compression semantic segment is missing".into()))
 }
 
+fn alphabet_log_basis(alphabet: CompressionAlphabet) -> u32 {
+    match alphabet {
+        CompressionAlphabet::NegativeBinary => 1,
+        CompressionAlphabet::OpeningBase { log_basis } => log_basis,
+    }
+}
+
+fn chain_map(
+    chains: &[super::CompiledCompressionChain],
+    chain_index: usize,
+    map_index: usize,
+) -> Result<
+    (
+        &super::CompiledCompressionChain,
+        &super::CompiledCompressionMap,
+    ),
+    AkitaError,
+> {
+    let chain = chains.get(chain_index).ok_or_else(|| {
+        AkitaError::InvalidSetup("compression semantic chain index is absent".into())
+    })?;
+    let map = chain.maps.get(map_index).ok_or_else(|| {
+        AkitaError::InvalidSetup("compression semantic map index is absent".into())
+    })?;
+    Ok((chain, map))
+}
+
 /// Compile semantics already guaranteed by the parent catalog validator.
 ///
 /// This function validates only new semantic allocation and native-view facts;
 /// it does not repeat catalog geometry, security, or alphabet validation.
 pub(super) fn compile<F: CanonicalField>(
     lp: &LevelParams,
-    catalog: &ValidatedCompressionCatalog,
+    chains: &[super::CompiledCompressionChain],
 ) -> Result<CompiledCompressionSemantics, AkitaError> {
-    let max_depth = catalog
-        .chains
+    let max_depth = chains
         .iter()
         .map(|chain| chain.maps.len())
         .max()
         .ok_or_else(|| AkitaError::InvalidSetup("compression catalog is empty".into()))?;
     let (total_maps, total_segments) =
-        checked_semantic_capacities(catalog.chains.iter().map(|chain| chain.maps.len()))?;
+        checked_semantic_capacities(chains.iter().map(|chain| chain.maps.len()))?;
     let mut ordered_maps = Vec::with_capacity(total_maps);
     for map in 0..max_depth {
-        for (chain, spec) in catalog.chains.iter().enumerate() {
+        for (chain, spec) in chains.iter().enumerate() {
             if spec.maps.get(map).is_some() {
                 ordered_maps.push((chain, map));
             }
@@ -193,8 +219,7 @@ pub(super) fn compile<F: CanonicalField>(
     // All xi segments precede all quotients. Each suborder is layer-major and
     // retains the catalog's current/precommitted/opening source order.
     for &(chain_index, map_index) in &ordered_maps {
-        let chain = &catalog.chains[chain_index];
-        let map = &chain.maps[map_index];
+        let (chain, map) = chain_map(chains, chain_index, map_index)?;
         let d = map.key.sis_table_key().ring_dimension as usize;
         let id = SegmentId::Xi {
             source: chain.source,
@@ -207,7 +232,15 @@ pub(super) fn compile<F: CanonicalField>(
                 .sis_table_key()
                 .ring_dimension as usize
         } else {
-            chain.maps[map_index - 1].key.sis_table_key().ring_dimension as usize
+            chain
+                .maps
+                .get(map_index - 1)
+                .ok_or_else(|| {
+                    AkitaError::InvalidSetup("compression predecessor map is absent".into())
+                })?
+                .key
+                .sis_table_key()
+                .ring_dimension as usize
         };
         validate_span_view(span, predecessor_d, "xi predecessor view")?;
         segments.push(CompressionSegment { id, span });
@@ -218,8 +251,7 @@ pub(super) fn compile<F: CanonicalField>(
 
     let quotient_levels = r_decomp_levels::<F>(lp.log_basis);
     for &(chain_index, map_index) in &ordered_maps {
-        let chain = &catalog.chains[chain_index];
-        let map = &chain.maps[map_index];
+        let (chain, map) = chain_map(chains, chain_index, map_index)?;
         let d = map.key.sis_table_key().ring_dimension as usize;
         let len = map
             .output_coeffs
@@ -239,8 +271,7 @@ pub(super) fn compile<F: CanonicalField>(
     let mut rows = Vec::with_capacity(total_maps);
     let mut total_rows = 0usize;
     for &(chain_index, map_index) in &ordered_maps {
-        let chain = &catalog.chains[chain_index];
-        let map = &chain.maps[map_index];
+        let (chain, map) = chain_map(chains, chain_index, map_index)?;
         let row_start = total_rows;
         total_rows = checked_add_capped(total_rows, map.key.row_len(), "local row count")?;
         let input = SegmentId::Xi {
@@ -258,6 +289,10 @@ pub(super) fn compile<F: CanonicalField>(
         } else {
             None
         };
+        let successor_log_basis = chain
+            .maps
+            .get(map_index + 1)
+            .map(|next| alphabet_log_basis(next.alphabet));
         let quotient = SegmentId::Quotient {
             source: chain.source,
             map: map_index,
@@ -274,6 +309,7 @@ pub(super) fn compile<F: CanonicalField>(
             },
             input,
             successor,
+            successor_log_basis,
             quotient,
             native_ring_dim: map.key.sis_table_key().ring_dimension as usize,
             rhs: if map_index + 1 < chain.maps.len() {
@@ -286,17 +322,22 @@ pub(super) fn compile<F: CanonicalField>(
         });
     }
 
-    let augmentations = catalog
-        .chains
+    let augmentations = chains
         .iter()
-        .map(|chain| AugmentationIntent {
-            source: chain.source,
-            compression_input: SegmentId::Xi {
+        .map(|chain| {
+            let first = chain.maps.first().ok_or_else(|| {
+                AkitaError::InvalidSetup("compression first map is absent".into())
+            })?;
+            Ok(AugmentationIntent {
                 source: chain.source,
-                map: 0,
-            },
+                compression_input: SegmentId::Xi {
+                    source: chain.source,
+                    map: 0,
+                },
+                compression_log_basis: alphabet_log_basis(first.alphabet),
+            })
         })
-        .collect();
+        .collect::<Result<Vec<_>, AkitaError>>()?;
 
     Ok(CompiledCompressionSemantics {
         segments,
@@ -341,7 +382,9 @@ mod tests {
             1,
             1,
             SparseChallengeConfig::pm1_only(64),
-        );
+        )
+        .with_decomp(1, 1, 1, 1, 0)
+        .unwrap();
         lp.b_key = certified_key(32, 63, 1);
         lp.d_key = certified_key(32, 63, 1);
         if !with_precommitted {
@@ -430,8 +473,8 @@ mod tests {
 
     #[test]
     fn checked_catalog_compiles_layer_major_mixed_dimension_semantics() {
-        let (_lp, catalog) = checked_mixed_catalog();
-        let semantics = catalog.semantics.as_ref().unwrap();
+        let (lp, catalog) = checked_mixed_catalog();
+        let semantics = compile::<F>(&lp, &catalog.chains).unwrap();
         let xi_ids = semantics
             .segments
             .iter()
@@ -480,12 +523,31 @@ mod tests {
             semantics.rows.last().unwrap().rhs,
             CompressionRowRhs::TerminalPayload { .. }
         ));
+        let global = catalog.co_generated_relation_layout().unwrap();
+        for id in [
+            crate::RelationRowId::B {
+                group: crate::RelationGroupId::Current,
+            },
+            crate::RelationRowId::B {
+                group: crate::RelationGroupId::Precommitted { index: 0 },
+            },
+            crate::RelationRowId::D,
+        ] {
+            assert_eq!(
+                global.row_plan().family(id).unwrap().rhs(),
+                crate::layout::relation::RelationRowRhs::Zero
+            );
+        }
+        assert!(global.row_plan().families().iter().any(|family| matches!(
+            family.rhs(),
+            crate::layout::relation::RelationRowRhs::TerminalPayload { .. }
+        )));
     }
 
     #[test]
     fn quotient_spans_use_active_base_and_native_row_dimension() {
         let (lp, catalog) = checked_mixed_catalog();
-        let semantics = catalog.semantics.as_ref().unwrap();
+        let semantics = compile::<F>(&lp, &catalog.chains).unwrap();
         let levels = r_decomp_levels::<F>(lp.log_basis);
         for row in &semantics.rows {
             let quotient = segment_span(&semantics.segments, row.quotient).unwrap();
@@ -496,8 +558,8 @@ mod tests {
 
     #[test]
     fn negative_binary_inputs_are_exact_ordered_xi_ids() {
-        let (_lp, catalog) = checked_mixed_catalog();
-        let semantics = catalog.semantics.as_ref().unwrap();
+        let (lp, catalog) = checked_mixed_catalog();
+        let semantics = compile::<F>(&lp, &catalog.chains).unwrap();
         assert_eq!(
             semantics.negative_binary_inputs,
             vec![
@@ -555,7 +617,7 @@ mod tests {
             specs,
         )
         .unwrap();
-        let semantics = catalog.semantics.as_ref().unwrap();
+        let semantics = compile::<F>(&lp, &catalog.chains).unwrap();
         assert_eq!(semantics.negative_binary_inputs.len(), 4);
         assert_eq!(semantics.segments.len(), 8);
     }
@@ -577,7 +639,10 @@ mod tests {
             vec![spec],
         )
         .unwrap();
-        assert!(catalog.semantics.is_none());
+        assert!(matches!(
+            catalog.purpose,
+            super::super::CompressionCatalogPurpose::Standalone { .. }
+        ));
     }
 
     #[test]

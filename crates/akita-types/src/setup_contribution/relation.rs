@@ -4,8 +4,9 @@ use akita_algebra::eq_poly::EqPolynomial;
 use akita_field::{AkitaError, CanonicalField, FieldCore};
 
 use crate::{
-    LevelParams, RelationMatrixRowLayout, RingRelationInstance, SetupContributionGroupInputs,
-    SetupContributionPlan, SetupContributionPlanInputs, SetupContributionStatic, WitnessLayout,
+    LevelParams, RelationGroupId, RelationRowId, RingRelationInstance,
+    SetupContributionGroupInputs, SetupContributionPlan, SetupContributionPlanInputs,
+    SetupContributionStatic, WitnessLayout,
 };
 
 /// Setup-contribution planning artifact shared by direct replay and recursive
@@ -39,12 +40,12 @@ where
     E: FieldCore,
 {
     let opening_batch = relation.opening_batch();
-    let relation_matrix_row_layout = relation.relation_matrix_row_layout();
-    let chunk_layout = relation.segment_layout(lp, witness_ring_len)?;
+    let relation_layout = relation.relation_layout();
+    let row_plan = relation_layout.row_plan();
+    let chunk_layout = relation_layout.witness_layout(witness_ring_len)?.clone();
     let num_polys = opening_batch.num_total_polynomials();
     let depth_fold = lp.num_digits_fold(num_polys, lp.field_bits_for_cache())?;
-    let rows =
-        lp.relation_matrix_row_count_for(opening_batch.num_groups(), relation_matrix_row_layout)?;
+    let rows = row_plan.trace_row();
     let eq_tau1: Arc<[E]> = EqPolynomial::evals(tau1)?.into();
     if eq_tau1.len() < rows {
         return Err(AkitaError::InvalidSize {
@@ -53,16 +54,15 @@ where
         });
     }
 
-    let n_d_active = lp.n_d_active_for(relation_matrix_row_layout);
-    let d_row_start = rows
-        .checked_sub(n_d_active)
-        .ok_or(AkitaError::InvalidProof)?;
+    let d_family = row_plan.family(RelationRowId::D).ok();
+    let n_d_active = d_family.map_or(0, |family| family.rows().len());
+    let d_row_start = d_family.map_or(rows, |family| family.rows().start());
 
     let (inputs, groups, d_physical_cols) = if lp.has_precommitted_groups() {
         prepare_multi_group_setup_artifact_inputs(
             lp,
+            row_plan,
             opening_batch,
-            relation_matrix_row_layout,
             &chunk_layout,
             rows,
             depth_fold,
@@ -71,7 +71,7 @@ where
     } else {
         prepare_single_group_setup_artifact_inputs(
             lp,
-            relation_matrix_row_layout,
+            row_plan,
             &chunk_layout,
             rows,
             depth_fold,
@@ -99,7 +99,7 @@ where
 #[allow(clippy::too_many_arguments)]
 fn prepare_single_group_setup_artifact_inputs<E: FieldCore>(
     lp: &LevelParams,
-    relation_matrix_row_layout: RelationMatrixRowLayout,
+    row_plan: &crate::RelationRowPlan,
     chunk_layout: &WitnessLayout,
     rows: usize,
     depth_fold: usize,
@@ -113,12 +113,8 @@ fn prepare_single_group_setup_artifact_inputs<E: FieldCore>(
     ),
     AkitaError,
 > {
-    let mut inputs = SetupContributionPlanInputs::from_level_params(
-        lp,
-        &[num_polys],
-        relation_matrix_row_layout,
-        depth_fold,
-    )?;
+    let mut inputs =
+        SetupContributionPlanInputs::from_level_params(lp, row_plan, &[num_polys], depth_fold)?;
     inputs.eq_tau1 = eq_tau1;
     if inputs.rows != rows {
         return Err(AkitaError::InvalidSetup(
@@ -135,8 +131,8 @@ fn prepare_single_group_setup_artifact_inputs<E: FieldCore>(
 #[allow(clippy::too_many_arguments)]
 fn prepare_multi_group_setup_artifact_inputs<E: FieldCore>(
     lp: &LevelParams,
+    row_plan: &crate::RelationRowPlan,
     opening_batch: &crate::OpeningClaimsLayout,
-    relation_matrix_row_layout: RelationMatrixRowLayout,
     chunk_layout: &WitnessLayout,
     rows: usize,
     depth_fold: usize,
@@ -188,20 +184,39 @@ fn prepare_multi_group_setup_artifact_inputs<E: FieldCore>(
             .ok_or_else(|| {
                 AkitaError::InvalidSetup("multi-group B vector width overflow".to_string())
             })?;
-        let a_range =
-            lp.root_a_row_range(opening_batch, group_index, relation_matrix_row_layout)?;
-        let b_range =
-            lp.root_commitment_row_range(opening_batch, group_index, relation_matrix_row_layout)?;
+        let semantic_group = if group_index == opening_batch.root_final_group_index()? {
+            RelationGroupId::Current
+        } else {
+            RelationGroupId::Precommitted { index: group_index }
+        };
+        let a_range = row_plan
+            .family(RelationRowId::A {
+                group: semantic_group,
+            })?
+            .rows()
+            .range();
+        let b_range = row_plan
+            .family(RelationRowId::B {
+                group: semantic_group,
+            })?
+            .rows()
+            .range();
         if a_range.len() != n_a || b_range.len() != n_b {
             return Err(AkitaError::InvalidSetup(
                 "multi-group row ranges do not match group matrix heights".to_string(),
             ));
         }
         let e_col_offset = d_physical_cols;
-        let e_len = k_g
+        let arithmetic_e_len = k_g
             .checked_mul(num_blocks)
             .and_then(|n| n.checked_mul(depth_open))
             .ok_or_else(|| AkitaError::InvalidSetup("multi-group e width overflow".to_string()))?;
+        let e_len = chunk_layout.chunk_lengths[order_pos].e_len;
+        if e_len != arithmetic_e_len {
+            return Err(AkitaError::InvalidSetup(
+                "multi-group evaluator E width disagrees with semantic witness layout".into(),
+            ));
+        }
         d_physical_cols = d_physical_cols
             .checked_add(e_len)
             .ok_or_else(|| AkitaError::InvalidSetup("multi-group e width overflow".to_string()))?;
@@ -230,12 +245,36 @@ fn prepare_multi_group_setup_artifact_inputs<E: FieldCore>(
         });
     }
 
+    let current_a = row_plan.family(RelationRowId::A {
+        group: RelationGroupId::Current,
+    })?;
+    let current_b = row_plan.family(RelationRowId::B {
+        group: RelationGroupId::Current,
+    })?;
+    let d_family = row_plan.family(RelationRowId::D).ok();
+    if current_a.rows().len() != lp.a_key.row_len()
+        || current_b.rows().len() != lp.b_key.row_len()
+        || current_a.native_ring_dim() != lp.a_key.sis_table_key().ring_dimension as usize
+        || current_b.native_ring_dim() != lp.b_key.sis_table_key().ring_dimension as usize
+        || d_family.is_some_and(|family| {
+            family.rows().len() != lp.d_key.row_len()
+                || family.native_ring_dim() != lp.d_key.sis_table_key().ring_dimension as usize
+        })
+    {
+        return Err(AkitaError::InvalidSetup(
+            "multi-group relation plan disagrees with current setup geometry".into(),
+        ));
+    }
     let inputs = SetupContributionPlanInputs {
-        relation_matrix_row_layout,
+        relation_matrix_row_layout: if d_family.is_some() {
+            crate::RelationMatrixRowLayout::WithDBlock
+        } else {
+            crate::RelationMatrixRowLayout::WithoutDBlock
+        },
         rows,
-        n_a: lp.a_key.row_len(),
-        n_b: lp.b_key.row_len(),
-        n_d: lp.d_key.row_len(),
+        n_a: current_a.rows().len(),
+        n_b: current_b.rows().len(),
+        n_d: d_family.map_or(0, |family| family.rows().len()),
         num_groups: opening_batch.num_groups(),
         num_polys_per_group: opening_batch.group_sizes(),
         num_t_vectors: opening_batch.num_total_polynomials(),

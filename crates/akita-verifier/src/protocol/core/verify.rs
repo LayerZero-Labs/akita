@@ -304,7 +304,12 @@ where
 {
     let opening_batch = claims.layout().map_err(|_| AkitaError::InvalidProof)?;
     params.validate_root_opening_batch(&opening_batch)?;
-    let ring_dim = params.role_dims().d_b();
+    let relation_layout = RelationLayout::from_authenticated_statement(
+        params,
+        &opening_batch,
+        RelationMatrixRowLayout::WithDBlock,
+        F::modulus_bits(),
+    )?;
 
     if opening_batch.num_total_polynomials() != witnesses.len() {
         return Err(AkitaError::InvalidProof);
@@ -319,9 +324,16 @@ where
         }
 
         let commitment = claims.group_commitment(group_index).copied()?;
-        let expected_rows = params.root_group_commitment_rows(&opening_batch, group_index)?;
-        let commitment_view = RingView::new(commitment.rows().coeffs(), ring_dim)?;
-        if commitment_view.num_rings() != expected_rows {
+        let relation_group = if group_index == final_group {
+            RelationGroupId::Current
+        } else {
+            RelationGroupId::Precommitted { index: group_index }
+        };
+        let family = relation_layout.row_plan().family(RelationRowId::B {
+            group: relation_group,
+        })?;
+        let commitment_view = RingView::new(commitment.rows().coeffs(), family.native_ring_dim())?;
+        if commitment_view.num_rings() != family.rows().len() {
             return Err(AkitaError::InvalidProof);
         }
 
@@ -330,7 +342,7 @@ where
         let recomputed_matches = dispatch_for_field!(
             akita_types::ProtocolDispatchSlot::Role(akita_types::RingRole::Outer),
             F,
-            ring_dim,
+            family.native_ring_dim(),
             |D| {
                 let recomputed = if group_index == final_group {
                     validate_direct_group_shape::<F>(
@@ -338,7 +350,7 @@ where
                         params,
                         setup_seed,
                         group_layout.num_vars(),
-                        ring_dim,
+                        family.native_ring_dim(),
                     )?;
                     recommit_direct_witness_group::<F, D>(group_witnesses, setup, params)?
                 } else {
@@ -351,7 +363,7 @@ where
                         group_params,
                         setup_seed,
                         group_layout.num_vars(),
-                        ring_dim,
+                        family.native_ring_dim(),
                     )?;
                     recommit_direct_witness_group::<F, D>(group_witnesses, setup, group_params)?
                 };

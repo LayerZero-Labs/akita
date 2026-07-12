@@ -2,10 +2,10 @@
 
 use akita_field::{AkitaError, CanonicalField};
 
-use crate::sis::compute_num_digits_full_field;
 use crate::PolynomialGroupLayout;
 use crate::{
-    CleartextWitnessShape, LevelParams, RelationMatrixRowLayout, EXTENSION_OPENING_REDUCTION_DEGREE,
+    CleartextWitnessShape, LevelParams, OpeningClaimsLayout, RelationLayout,
+    RelationMatrixRowLayout, EXTENSION_OPENING_REDUCTION_DEGREE,
 };
 
 /// Field element size in bytes for a field with `field_bits` bits.
@@ -132,30 +132,25 @@ pub fn planned_w_ring_element_count<F: CanonicalField>(
     field_bits: u32,
     lp: &LevelParams,
 ) -> Result<usize, AkitaError> {
-    let _field_marker = core::marker::PhantomData::<F>;
-    let e_hat_count = lp
-        .num_blocks
-        .checked_mul(lp.num_digits_open)
-        .ok_or_else(|| AkitaError::InvalidSetup("planned W width overflow".to_string()))?;
-    let t_hat_count = lp
-        .num_blocks
-        .checked_mul(lp.a_key.row_len())
-        .and_then(|n| n.checked_mul(lp.num_digits_open))
-        .ok_or_else(|| AkitaError::InvalidSetup("planned T width overflow".to_string()))?;
-    let z_pre_count = lp
-        .inner_width()
-        .checked_mul(lp.num_digits_fold(1, field_bits)?)
-        .ok_or_else(|| AkitaError::InvalidSetup("planned Z width overflow".to_string()))?;
-    let r_count = lp
-        .relation_matrix_row_count_for(1, RelationMatrixRowLayout::WithDBlock)?
-        .checked_mul(compute_num_digits_full_field(field_bits, lp.log_basis))
-        .ok_or_else(|| AkitaError::InvalidSetup("planned r-tail width overflow".to_string()))?;
-
-    e_hat_count
-        .checked_add(t_hat_count)
-        .and_then(|n| n.checked_add(z_pre_count))
-        .and_then(|n| n.checked_add(r_count))
-        .ok_or_else(|| AkitaError::InvalidSetup("planned witness width overflow".to_string()))
+    if field_bits != F::modulus_bits() {
+        return Err(AkitaError::InvalidSetup(
+            "planned witness field width disagrees with field type".into(),
+        ));
+    }
+    let opening = OpeningClaimsLayout::new(
+        lp.m_vars
+            .checked_add(lp.r_vars)
+            .ok_or_else(|| AkitaError::InvalidSetup("opening arity overflow".into()))?,
+        1,
+    )?;
+    RelationLayout::from_authenticated_statement(
+        lp,
+        &opening,
+        RelationMatrixRowLayout::WithDBlock,
+        field_bits,
+    )?
+    .witness_layout(None)?
+    .ring_len()
 }
 
 /// Planned recursive witness size in field elements for a singleton fold.

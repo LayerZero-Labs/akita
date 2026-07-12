@@ -1,7 +1,9 @@
 //! Runtime schedule shapes shared by configs, prover, verifier, and planner.
 
 use crate::descriptor_bytes::{push_u32, push_usize};
-use crate::{CleartextWitnessShape, LevelParams, OpeningClaimsLayout, PolynomialGroupLayout};
+use crate::{
+    CleartextWitnessShape, LevelParams, OpeningClaimsLayout, PolynomialGroupLayout, RelationLayout,
+};
 use akita_field::{AkitaError, CanonicalField};
 
 /// Public inputs that deterministically select one level's active Akita params.
@@ -327,33 +329,23 @@ pub fn w_ring_element_count_with_counts_for_layout_bits(
     layout: crate::layout::RelationMatrixRowLayout,
 ) -> Result<usize, AkitaError> {
     lp.require_scalar_level("w_ring_element_count_with_counts_for_layout_bits")?;
-    let e_hat_count = num_polynomials
-        .checked_mul(lp.num_blocks)
-        .and_then(|n| n.checked_mul(lp.num_digits_open))
-        .ok_or_else(|| AkitaError::InvalidSetup("witness W width overflow".to_string()))?;
-    let t_hat_count = num_polynomials
-        .checked_mul(lp.num_blocks)
-        .and_then(|n| n.checked_mul(lp.a_key.row_len()))
-        .and_then(|n| n.checked_mul(lp.num_digits_open))
-        .ok_or_else(|| AkitaError::InvalidSetup("witness T width overflow".to_string()))?;
-    let num_digits_fold = lp.num_digits_fold(num_polynomials, field_bits)?;
-    let z_pre_count = num_z_segments
-        .checked_mul(lp.inner_width())
-        .and_then(|n| n.checked_mul(num_digits_fold))
-        .ok_or_else(|| AkitaError::InvalidSetup("witness Z width overflow".to_string()))?;
-    let r_rows = lp.relation_matrix_row_count_for(1, layout)?;
-    let r_count = r_rows
-        .checked_mul(crate::sis::compute_num_digits_full_field(
-            field_bits,
-            lp.log_basis,
-        ))
-        .ok_or_else(|| AkitaError::InvalidSetup("witness r-tail width overflow".to_string()))?;
-
-    e_hat_count
-        .checked_add(t_hat_count)
-        .and_then(|n| n.checked_add(z_pre_count))
-        .and_then(|n| n.checked_add(r_count))
-        .ok_or_else(|| AkitaError::InvalidSetup("witness width overflow".to_string()))
+    if num_z_segments == 0 {
+        return Err(AkitaError::InvalidSetup(
+            "witness must have a z segment".into(),
+        ));
+    }
+    let opening = OpeningClaimsLayout::new(
+        lp.m_vars
+            .checked_add(lp.r_vars)
+            .ok_or_else(|| AkitaError::InvalidSetup("opening arity overflow".into()))?,
+        num_polynomials,
+    )?;
+    let mut resolved = lp.clone();
+    resolved.witness_chunk.num_chunks = num_z_segments;
+    resolved.witness_chunk.num_activated_levels = usize::from(num_z_segments > 1);
+    RelationLayout::from_authenticated_statement(&resolved, &opening, layout, field_bits)?
+        .witness_layout(None)?
+        .ring_len()
 }
 
 /// Witness ring-element count for a chunked (multi-chunk) or single-chunk layout.
@@ -395,15 +387,6 @@ pub fn w_ring_element_count_for_chunks(
             "w_ring_element_count_for_chunks: num_chunks must be >= 1".to_string(),
         ));
     }
-    if num_chunks == 1 {
-        return w_ring_element_count_with_counts_for_layout_bits(
-            field_bits,
-            lp,
-            num_polynomials,
-            1,
-            layout,
-        );
-    }
     if !num_chunks.is_power_of_two() {
         return Err(AkitaError::InvalidSetup(
             "w_ring_element_count_for_chunks: num_chunks must be a power of two".to_string(),
@@ -415,48 +398,13 @@ pub fn w_ring_element_count_for_chunks(
             lp.num_blocks
         )));
     }
-    let overflow = || AkitaError::InvalidSetup("chunked witness width overflow".to_string());
-    let blocks_per_chunk = lp.num_blocks / num_chunks;
-    // ê / t̂: partitioned over the per-chunk block window.
-    let e_chunk = num_polynomials
-        .checked_mul(blocks_per_chunk)
-        .and_then(|n| n.checked_mul(lp.num_digits_open))
-        .ok_or_else(overflow)?;
-    let t_chunk = num_polynomials
-        .checked_mul(blocks_per_chunk)
-        .and_then(|n| n.checked_mul(lp.a_key.row_len()))
-        .and_then(|n| n.checked_mul(lp.num_digits_open))
-        .ok_or_else(overflow)?;
-    // ẑ: replicated full fold width in every chunk (not divided by num_chunks).
-    let num_digits_fold = lp.num_digits_fold(num_polynomials, field_bits)?;
-    let z_chunk = lp
-        .inner_width()
-        .checked_mul(num_digits_fold)
-        .ok_or_else(overflow)?;
-    let body = e_chunk
-        .checked_add(t_chunk)
-        .and_then(|n| n.checked_add(z_chunk))
-        .ok_or_else(overflow)?;
-    // Shared r-tail: one summed quotient (r = Σ_j r_j) for all chunks. The
-    // per-node relations stack horizontally (M = [M_0 | … | M_{num_chunks-1}]),
-    // sharing the same row blocks — concatenation adds columns, not rows — and
-    // the partial commitments u_j are summed into one u. So the quotient keeps the
-    // single-machine shape (priced with `num_commitments = 1`, UNCHANGED from the
-    // single-chunk layout); only the replicated ẑ grows. Pricing it with
-    // `num_chunks` here would over-count the tail and break the prover's
-    // `emitted == next_w_len` and the verifier's single-machine `r_len`.
-    let r_rows = lp.relation_matrix_row_count_for(1, layout)?;
-    let r_count = r_rows
-        .checked_mul(crate::sis::compute_num_digits_full_field(
-            field_bits,
-            lp.log_basis,
-        ))
-        .ok_or_else(overflow)?;
-
-    num_chunks
-        .checked_mul(body)
-        .and_then(|n| n.checked_add(r_count))
-        .ok_or_else(overflow)
+    w_ring_element_count_with_counts_for_layout_bits(
+        field_bits,
+        lp,
+        num_polynomials,
+        num_chunks,
+        layout,
+    )
 }
 
 /// Parameters for one fold level in the computed schedule.

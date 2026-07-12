@@ -53,20 +53,33 @@ where
     if openings.len() != num_claims {
         return Err(AkitaError::InvalidProof);
     }
-    let ring_dim = root_lp.role_dims().d_b();
+    let relation_layout = RelationLayout::from_authenticated_statement(
+        root_lp,
+        &opening_batch,
+        relation_matrix_row_layout,
+        F::modulus_bits(),
+    )?;
+    let final_group_index = opening_batch.root_final_group_index()?;
 
     // Transcript binding, D-free and byte-identical to the prover's absorb
     // (`ProverOpeningData::append_to_transcript`): batch shape header, then each
-    // group commitment's flat coefficients under `ring_dim` in `OpeningClaims`
+    // group commitment's flat coefficients under its semantic B-family dimension in `OpeningClaims`
     // order, then the shared opening point. Each group's committed row count is
     // validated against its (final vs frozen-precommit) params before the
     // absorb, so a swapped/truncated group commitment rejects here.
     opening_batch.append_batch_shape_to_transcript::<F, T>(transcript)?;
     for group_index in 0..opening_batch.num_groups() {
         let commitment = claims.group_commitment(group_index)?;
-        let expected_rows = root_lp.root_group_commitment_rows(&opening_batch, group_index)?;
-        let commitment_view = RingView::new(commitment.rows().coeffs(), ring_dim)?;
-        if commitment_view.num_rings() != expected_rows {
+        let relation_group = if group_index == final_group_index {
+            RelationGroupId::Current
+        } else {
+            RelationGroupId::Precommitted { index: group_index }
+        };
+        let family = relation_layout.row_plan().family(RelationRowId::B {
+            group: relation_group,
+        })?;
+        let commitment_view = RingView::new(commitment.rows().coeffs(), family.native_ring_dim())?;
+        if commitment_view.num_rings() != family.rows().len() {
             return Err(AkitaError::InvalidProof);
         }
         commitment_view.append_flat_to_transcript::<T>(ABSORB_COMMITMENT, transcript)?;
@@ -382,16 +395,30 @@ where
 
     // Concatenate group commitment rows in relation-matrix row (final-first) order, matching
     // the prover's `RingRelationProver` commitment-row concatenation and
-    // `relation_rhs_layout_for` block order.
-    let order = opening_batch.root_group_order()?;
+    // semantic relation-plan commitment-family order.
+    let relation_layout = RelationLayout::from_authenticated_statement(
+        root_lp,
+        opening_batch,
+        relation_matrix_row_layout,
+        F::modulus_bits(),
+    )?;
     let mut commitment_coeffs = Vec::new();
-    for &group_index in &order {
+    let final_group_index = opening_batch.root_final_group_index()?;
+    for &relation_group in relation_layout.row_plan().group_order() {
+        let group_index = match relation_group {
+            RelationGroupId::Current => final_group_index,
+            RelationGroupId::Precommitted { index } => index,
+        };
         let commitment = claims.group_commitment(group_index)?;
         commitment_coeffs.extend_from_slice(commitment.rows().coeffs());
     }
     let commitment_rows = RingVec::from_coeffs(commitment_coeffs);
 
-    let w_len = root_lp.root_next_w_len::<F>(opening_batch, relation_matrix_row_layout)?;
+    let w_len = relation_layout
+        .witness_layout(None)?
+        .ring_len()?
+        .checked_mul(root_lp.role_dims().d_a())
+        .ok_or_else(|| AkitaError::InvalidSetup("root witness length overflow".into()))?;
 
     let stage1_proof = proof.fold_stage1()?;
     let next_w_commitment = proof.fold_next_w_commitment()?;

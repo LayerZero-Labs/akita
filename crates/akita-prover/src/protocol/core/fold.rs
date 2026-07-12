@@ -27,14 +27,14 @@ fn trace_layout_for_instance<F: FieldCore + CanonicalField>(
     ),
     AkitaError,
 > {
-    let witness_layout = instance.segment_layout(lp, None)?;
+    let witness_layout = instance.relation_layout().witness_layout(None)?;
     let segment = *witness_layout
         .chunks
         .first()
         .ok_or_else(|| AkitaError::InvalidSetup("empty witness layout".to_string()))?;
     let layout = trace_weight_layout_from_segment(
         lp,
-        &witness_layout,
+        witness_layout,
         col_bits,
         ring_bits,
         num_trace_blocks,
@@ -543,11 +543,6 @@ where
         build_output.terminal_artifacts,
         terminal_direct_witness_shape,
     )?;
-    let relation_matrix_row_layout = if is_terminal_fold {
-        RelationMatrixRowLayout::WithoutDBlock
-    } else {
-        RelationMatrixRowLayout::WithDBlock
-    };
     let rs = ring_switch_finalize::<F, E, T>(
         &prepared_fold.instance,
         expanded.as_ref(),
@@ -555,17 +550,10 @@ where
         &logical_w,
         lp,
         prepared_fold.row_coefficients.as_deref(),
-        relation_matrix_row_layout,
     )?;
 
-    let relation_rhs_layout = relation_rhs_layout_for(
-        lp,
-        prepared_fold.instance.opening_batch(),
-        prepared_fold.instance.relation_matrix_row_layout(),
-    )?;
     let relation_claim = relation_claim_from_layout_extension::<F, E>(
-        prepared_fold.instance.role_dims(),
-        &relation_rhs_layout,
+        prepared_fold.instance.relation_layout().row_plan(),
         &rs.tau1,
         rs.alpha,
         prepared_fold.instance.v(),
@@ -585,9 +573,11 @@ where
     };
     // EvaluationTrace is the last padded relation row: weight openings by
     // `eq(tau1, EvaluationTrace_row_index)`.
-    let opening_batch = prepared_fold.instance.opening_batch();
-    let evaluation_trace_row =
-        lp.evaluation_trace_row_index_for_layout(relation_matrix_row_layout, opening_batch)?;
+    let evaluation_trace_row = prepared_fold
+        .instance
+        .relation_layout()
+        .row_plan()
+        .trace_row();
     let evaluation_trace_weight = evaluation_trace_row_weight(evaluation_trace_row, &rs.tau1)?;
     let trace_opening_claim = evaluation_trace_weight * prepared_fold.trace_eval_target;
     ensure_trace_stage2_supported(E::EXT_DEGREE)?;

@@ -389,7 +389,7 @@ mod tests {
         lp: &LevelParams,
         relation_matrix_row_layout: RelationMatrixRowLayout,
         num_polys: usize,
-    ) -> Result<WitnessLayout, AkitaError> {
+    ) -> Result<(WitnessLayout, usize), AkitaError> {
         let opening_batch = OpeningClaimsLayout::new(32, num_polys)?;
         let opening_point = RingOpeningPoint {
             a: vec![F::zero(); lp.block_len],
@@ -405,15 +405,8 @@ mod tests {
         let v = vec![CyclotomicRing::<F, D>::zero(); lp.d_key.row_len()];
         let commitment_rows = vec![CyclotomicRing::<F, D>::zero(); lp.b_key.row_len()];
         let row_coefficient_rings = vec![CyclotomicRing::<F, D>::zero(); num_claims];
-        let relation_rhs_layout =
-            akita_types::relation_rhs_layout_for(lp, &opening_batch, relation_matrix_row_layout)?;
-        let relation_rhs = akita_types::assemble_relation_rhs::<F>(
-            lp.role_dims(),
-            &relation_rhs_layout,
-            &akita_types::RingVec::from_ring_elems(&v),
-            &akita_types::RingVec::from_ring_elems(&commitment_rows),
-        )?;
         let instance = RingRelationInstance::<F>::new(
+            lp,
             relation_matrix_row_layout,
             vec![challenges],
             vec![opening_point],
@@ -421,11 +414,13 @@ mod tests {
             opening_batch,
             vec![F::zero(); num_claims],
             akita_types::RingVec::from_ring_elems(&row_coefficient_rings),
-            relation_rhs,
+            akita_types::RingVec::from_ring_elems(&commitment_rows),
             akita_types::RingVec::from_ring_elems(&v),
-            lp.role_dims(),
         )?;
-        instance.segment_layout(lp, None)
+        Ok((
+            instance.relation_layout().witness_layout(None)?.clone(),
+            instance.relation_layout().row_plan().trace_row(),
+        ))
     }
 
     fn fixture() -> StructuredFixture {
@@ -441,14 +436,12 @@ mod tests {
         let n_b = 2usize;
         let n_d = 2usize;
         let num_claims = 3usize;
-        let num_points = 1usize;
         let total_blocks = num_blocks * num_claims;
-        let rows = 1 + n_a + n_b * num_points + n_d;
         let inner_width = block_len * depth_commit;
 
         let levels = r_decomp_levels::<F>(log_basis);
         let lp = fixture_lp();
-        let chunk_layout = ring_relation_segment_layout_for_opening_shape(
+        let (chunk_layout, rows) = ring_relation_segment_layout_for_opening_shape(
             &lp,
             RelationMatrixRowLayout::WithDBlock,
             num_claims,
@@ -459,7 +452,7 @@ mod tests {
         let offset_t = chunk0.offset_t;
         let offset_z = chunk0.offset_z;
         let offset_r = chunk0.offset_r.expect("single chunk carries r-tail");
-        let total_len = offset_r + rows * levels;
+        let total_len = chunk_layout.ring_len().expect("witness ring length");
         let bits = total_len.next_power_of_two().trailing_zeros() as usize;
 
         let opening_point = RingOpeningPoint {

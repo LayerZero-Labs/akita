@@ -16,9 +16,10 @@ use akita_transcript::{sample_ext_challenge, Transcript};
 use akita_types::{
     gadget_row_scalars, prepare_setup_contribution_artifact, r_decomp_levels,
     validate_role_dispatch, AkitaExpandedSetup, CommitmentRingDims, FpExtEncoding, LevelParams,
-    RelationMatrixRowLayout, RingMultiplierOpeningPoint, RingRelationInstance, RingRole, RingVec,
-    SetupContributionArtifact, SetupContributionGroupInputs, SetupContributionPlanInputs,
-    SetupContributionStatic, TerminalWitnessTranscriptParts, WitnessChunkLayout, WitnessLayout,
+    RelationGroupId, RelationMatrixRowLayout, RelationRowId, RingMultiplierOpeningPoint,
+    RingRelationInstance, RingRole, RingVec, SetupContributionArtifact,
+    SetupContributionGroupInputs, SetupContributionPlanInputs, SetupContributionStatic,
+    TerminalWitnessTranscriptParts, WitnessChunkLayout, WitnessLayout,
 };
 use std::ops::Range;
 
@@ -183,13 +184,7 @@ where
         return Err(AkitaError::InvalidProof);
     }
     transcript.absorb_and_record_serde(ABSORB_NEXT_LEVEL_WITNESS_BINDING, w_commitment);
-    ring_switch_verifier_core::<F, E, T, D>(
-        replay,
-        w_len,
-        transcript,
-        RelationMatrixRowLayout::WithDBlock,
-    )?
-    .into_intermediate()
+    ring_switch_verifier_core::<F, E, T, D>(replay, w_len, transcript)?.into_intermediate()
 }
 
 /// Terminal variant of [`ring_switch_verifier`].
@@ -216,13 +211,7 @@ where
     T: Transcript<F>,
 {
     transcript.absorb_and_record_bytes(ABSORB_TERMINAL_W_REMAINDER, &terminal_parts.remainder);
-    ring_switch_verifier_core::<F, E, T, D>(
-        replay,
-        w_len,
-        transcript,
-        RelationMatrixRowLayout::WithoutDBlock,
-    )?
-    .into_terminal_as_output()
+    ring_switch_verifier_core::<F, E, T, D>(replay, w_len, transcript)?.into_terminal_as_output()
 }
 
 #[tracing::instrument(skip_all, name = "ring_switch_verifier_core")]
@@ -231,7 +220,6 @@ fn ring_switch_verifier_core<F, E, T, const D: usize>(
     replay: &RingSwitchReplay<'_, F, E>,
     w_len: usize,
     transcript: &mut T,
-    relation_matrix_row_layout: RelationMatrixRowLayout,
 ) -> Result<RingSwitchVerifyCoreOutput<E>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling,
@@ -240,6 +228,7 @@ where
 {
     let relation = replay.relation;
     let lp = replay.lp;
+    let relation_matrix_row_layout = relation.relation_matrix_row_layout();
     let opening_batch = relation.opening_batch();
     let num_polys = opening_batch.num_total_polynomials();
     let gamma = replay.row_coefficients;
@@ -279,8 +268,11 @@ where
         .trailing_zeros() as usize;
     let ring_bits = validate_ring_dispatch::<D>()?;
     let num_sc_vars = col_bits + ring_bits;
-    let num_i =
-        lp.relation_row_index_num_vars_for_layout(relation_matrix_row_layout, opening_batch)?;
+    let num_i = relation
+        .relation_layout()
+        .row_plan()
+        .padded_row_count()
+        .trailing_zeros() as usize;
 
     let tau0 = match relation_matrix_row_layout {
         RelationMatrixRowLayout::WithDBlock => Some(
@@ -390,7 +382,7 @@ where
 
     let chunk_layout = &setup_artifact.chunk_layout;
 
-    let order = opening_batch.root_group_order()?;
+    let order = relation.relation_layout().row_plan().group_order();
     if chunk_layout.chunks.len() != order.len() || chunk_layout.chunk_lengths.len() != order.len() {
         return Err(AkitaError::InvalidSetup(
             "multi-group witness layout does not match root group order".to_string(),
@@ -399,7 +391,12 @@ where
 
     let alpha_pows_a = scalar_powers(alpha, D);
     let mut groups = Vec::with_capacity(order.len());
-    for (order_pos, &group_index) in order.iter().enumerate() {
+    let final_group_index = opening_batch.root_final_group_index()?;
+    for (order_pos, &relation_group) in order.iter().enumerate() {
+        let group_index = match relation_group {
+            RelationGroupId::Current => final_group_index,
+            RelationGroupId::Precommitted { index } => index,
+        };
         let group_lp = lp.root_group_params(opening_batch, group_index)?;
         let group_layout = opening_batch.group_layout(group_index)?;
         #[cfg(test)]
@@ -456,16 +453,22 @@ where
             .map(|idx| ring_multiplier_point.eval_a_at_dyn::<E>(idx, &alpha_pows_a))
             .collect::<Result<Vec<_>, _>>()?;
 
-        let a_range = lp.root_a_row_range(
-            opening_batch,
-            group_index,
-            relation.relation_matrix_row_layout(),
-        )?;
-        let b_range = lp.root_commitment_row_range(
-            opening_batch,
-            group_index,
-            relation.relation_matrix_row_layout(),
-        )?;
+        let a_range = relation
+            .relation_layout()
+            .row_plan()
+            .family(RelationRowId::A {
+                group: relation_group,
+            })?
+            .rows()
+            .range();
+        let b_range = relation
+            .relation_layout()
+            .row_plan()
+            .family(RelationRowId::B {
+                group: relation_group,
+            })?
+            .rows()
+            .range();
         if a_range.len() != n_a || b_range.len() != n_b {
             return Err(AkitaError::InvalidSetup(
                 "multi-group row ranges do not match group matrix heights".to_string(),

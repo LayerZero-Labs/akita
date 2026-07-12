@@ -1004,18 +1004,32 @@ fn multi_group_packed_direct_matches_row_fallback_with_mismatched_t_cols() {
 
 #[test]
 fn from_level_params_rejects_non_pow2_num_blocks() {
-    let mut lp = LevelParams::log_basis_stub(3);
-    lp.ring_dimension = 64;
-    lp.role_dims = crate::CommitmentRingDims::uniform(64);
+    let valid = LevelParams::params_only(
+        crate::SisModulusFamily::Q128,
+        64,
+        3,
+        1,
+        1,
+        1,
+        akita_challenges::SparseChallengeConfig::pm1_only(64),
+    )
+    .with_decomp(1, 1, 2, 3, 0)
+    .unwrap();
+    let opening = crate::OpeningClaimsLayout::new(1, 2).unwrap();
+    let semantic = crate::RelationLayout::from_authenticated_statement(
+        &valid,
+        &opening,
+        RelationMatrixRowLayout::WithoutDBlock,
+        F::modulus_bits(),
+    )
+    .unwrap();
+    let mut lp = valid;
     lp.num_blocks = 3;
     lp.block_len = 8;
     lp.num_digits_commit = 2;
     lp.num_digits_open = 3;
-    assert!(SetupContributionPlanInputs::<F>::from_level_params(
-        &lp,
-        &[2],
-        RelationMatrixRowLayout::WithoutDBlock,
-        2,
-    )
-    .is_err());
+    assert!(
+        SetupContributionPlanInputs::<F>::from_level_params(&lp, semantic.row_plan(), &[2], 2,)
+            .is_err()
+    );
 }

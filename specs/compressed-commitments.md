@@ -1447,7 +1447,7 @@ setup-independent. No additional independence assumption is permitted.
 generated schedule catalog + field/security policy
     -> ValidatedCompressionCatalog
         -> CompiledCompressionSemantics
-        -> SemanticRelationLayout
+        -> RelationLayout
             -> RelationRowPlan
             -> derived binary support
         -> PreparedNttPlan
@@ -1472,7 +1472,7 @@ successor span may be interpreted under both adjacent row dimensions after
 checked divisibility. Quotient depth comes from the active proof level, not a
 standalone catalog's conservative maximum opening base.
 
-`SemanticRelationLayout` is the sole authority for stable row identities,
+`RelationLayout` is the sole authority for stable row identities,
 semantic witness addresses, quotient spans, omissions, and binary support.
 `RelationRowPlan` is its public-data projection consumed by prover, verifier,
 direct setup evaluation, and verifier offloading. Consumers refer to semantic
@@ -1829,7 +1829,7 @@ Implementation proceeds only after this proposed spec is approved.
    witness offsets or absolute A/B/D/trace row offsets in this slice.
 3. **Compile and migrate the global semantic relation.** Move—not copy—the
    existing z/e/t/r resolver and A/B/D relation construction into the sole
-   `SemanticRelationLayout` and embedded `RelationRowPlan`; translate the
+   `RelationLayout` and embedded `RelationRowPlan`; translate the
    negative-binary segment identities into the one normalized global support,
    compose the checked
    compression-local semantics, migrate setup contribution and every existing

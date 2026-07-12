@@ -427,6 +427,31 @@ impl<'a, F> RingView<'a, F> {
         self.coeffs
     }
 
+    /// Borrow the validated coefficient view as typed ring elements.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AkitaError::InvalidProof`] when `D` differs from the view's
+    /// scheduled ring dimension.
+    #[inline]
+    pub fn as_ring_slice<const D: usize>(&self) -> Result<&'a [CyclotomicRing<F, D>], AkitaError>
+    where
+        F: FieldCore,
+    {
+        if D == 0 || self.ring_dim != D {
+            return Err(AkitaError::InvalidProof);
+        }
+        let ring_count = self.coeffs.len() / D;
+        // SAFETY: `RingView::new` established whole `D`-coefficient blocks and
+        // `CyclotomicRing<F, D>` is transparent over `[F; D]`.
+        Ok(unsafe {
+            std::slice::from_raw_parts(
+                self.coeffs.as_ptr() as *const CyclotomicRing<F, D>,
+                ring_count,
+            )
+        })
+    }
+
     /// Absorb this view's coefficients into `transcript` using the D-free flat
     /// encoding, byte-identical to the typed
     /// [`Commitment::append_to_transcript`] path.

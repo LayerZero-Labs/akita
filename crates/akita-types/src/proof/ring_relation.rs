@@ -1,173 +1,18 @@
 //! Shared public statement for the per-fold negacyclic-ring relation `M * z = y + (X^D + 1) * r`.
 
 use super::OpeningClaimsLayout;
+use crate::layout::relation::RelationLayout;
 use crate::layout::{CommitmentRingDims, RingRole};
 use crate::validate_role_dispatch;
-use crate::witness::{WitnessChunkLayout, WitnessChunkLengths, WitnessLayout};
 use crate::FpExtEncoding;
 use crate::{
-    embed_ring_subfield_scalar, r_decomp_levels, LevelParams, RelationMatrixRowLayout,
-    RingMultiplierOpeningPoint, RingOpeningPoint, RingVec,
+    embed_ring_subfield_scalar, LevelParams, RelationMatrixRowLayout, RingMultiplierOpeningPoint,
+    RingOpeningPoint, RingVec,
 };
 use akita_algebra::CyclotomicRing;
 use akita_challenges::Challenges;
 use akita_field::{AkitaError, FieldCore};
 use akita_field::{CanonicalField, ExtField, FromPrimitiveInt};
-
-/// Ring-column counts per witness segment in emission order (`z ‖ e ‖ t ‖ …`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct RingRelationSegmentLengths {
-    pub z_len: usize,
-    pub e_len: usize,
-    pub t_len: usize,
-}
-
-/// Opening-batch counts that determine witness segment widths.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct RingRelationOpeningCounts {
-    pub num_claims: usize,
-    pub num_t_vectors: usize,
-}
-
-/// Multi-group witness segment ring-column counts in segment-type-major emission order.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct MultiGroupRingRelationSegmentLengths {
-    pub z_lens: Vec<usize>,
-    pub e_lens: Vec<usize>,
-    pub t_lens: Vec<usize>,
-}
-
-/// Witness segment lengths shared by prover emission, layout offsets, and M-table sizing.
-pub fn ring_relation_segment_lengths<F: FieldCore + CanonicalField>(
-    lp: &LevelParams,
-    opening_counts: RingRelationOpeningCounts,
-    _relation_matrix_row_layout: RelationMatrixRowLayout,
-) -> Result<RingRelationSegmentLengths, AkitaError> {
-    let num_blocks = lp.num_blocks;
-    if num_blocks == 0 || !num_blocks.is_power_of_two() {
-        return Err(AkitaError::InvalidSetup(
-            "num_blocks must be a non-zero power of two".to_string(),
-        ));
-    }
-    let depth_open = lp.num_digits_open;
-    let depth_commit = lp.num_digits_commit;
-    let RingRelationOpeningCounts {
-        num_claims,
-        num_t_vectors,
-    } = opening_counts;
-    let depth_fold = lp.num_digits_fold(num_t_vectors, lp.field_bits_for_cache())?;
-    if depth_open == 0 || depth_commit == 0 || depth_fold == 0 {
-        return Err(AkitaError::InvalidSetup(
-            "prepared ring-switch layout has zero width".to_string(),
-        ));
-    }
-    let total_blocks = num_blocks
-        .checked_mul(num_claims)
-        .ok_or_else(|| AkitaError::InvalidSetup("total block count overflow".to_string()))?;
-    let t_total_blocks = num_blocks
-        .checked_mul(num_t_vectors)
-        .ok_or_else(|| AkitaError::InvalidSetup("T block count overflow".to_string()))?;
-
-    let e_len = depth_open
-        .checked_mul(total_blocks)
-        .ok_or_else(|| AkitaError::InvalidSetup("e-hat segment length overflow".to_string()))?;
-    let t_len = depth_open
-        .checked_mul(lp.a_key.row_len())
-        .and_then(|len| len.checked_mul(t_total_blocks))
-        .ok_or_else(|| AkitaError::InvalidSetup("T segment length overflow".to_string()))?;
-    let z_len = depth_fold
-        .checked_mul(depth_commit)
-        .and_then(|len| len.checked_mul(lp.block_len))
-        .ok_or_else(|| AkitaError::InvalidSetup("Z segment length overflow".to_string()))?;
-
-    Ok(RingRelationSegmentLengths {
-        z_len,
-        e_len,
-        t_len,
-    })
-}
-
-/// Per-group `z ‖ e ‖ t` widths for multi-group roots in final-first witness order.
-pub fn multi_group_ring_relation_segment_lengths<F: FieldCore + CanonicalField>(
-    lp: &LevelParams,
-    opening_batch: &OpeningClaimsLayout,
-) -> Result<MultiGroupRingRelationSegmentLengths, AkitaError> {
-    if !lp.has_precommitted_groups() {
-        return Err(AkitaError::InvalidSetup(
-            "multi-group ring-relation segment lengths require precommitted groups".to_string(),
-        ));
-    }
-    opening_batch.check()?;
-    let final_group_index = opening_batch.root_final_group_index()?;
-    lp.validate_root_opening_batch(opening_batch)?;
-    let field_bits = lp.field_bits_for_cache();
-    let num_groups = opening_batch.num_groups();
-    let mut z_lens = Vec::with_capacity(num_groups);
-    let mut e_lens = Vec::with_capacity(num_groups);
-    let mut t_lens = Vec::with_capacity(num_groups);
-
-    let mut push_group_lens = |num_polys: usize,
-                               num_blocks: usize,
-                               block_len: usize,
-                               n_a: usize,
-                               num_digits_commit: usize,
-                               num_digits_open: usize,
-                               num_digits_fold: usize|
-     -> Result<(), AkitaError> {
-        let e_len = num_polys
-            .checked_mul(num_blocks)
-            .and_then(|n| n.checked_mul(num_digits_open))
-            .ok_or_else(|| {
-                AkitaError::InvalidSetup("multi-group e-hat width overflow".to_string())
-            })?;
-        let t_len = num_polys
-            .checked_mul(num_blocks)
-            .and_then(|n| n.checked_mul(n_a))
-            .and_then(|n| n.checked_mul(num_digits_open))
-            .ok_or_else(|| {
-                AkitaError::InvalidSetup("multi-group t-hat width overflow".to_string())
-            })?;
-        let z_len = block_len
-            .checked_mul(num_digits_commit)
-            .and_then(|n| n.checked_mul(num_digits_fold))
-            .ok_or_else(|| {
-                AkitaError::InvalidSetup("multi-group z-hat width overflow".to_string())
-            })?;
-        z_lens.push(z_len);
-        e_lens.push(e_len);
-        t_lens.push(t_len);
-        Ok(())
-    };
-
-    let final_group = opening_batch.group_layout(final_group_index)?;
-    push_group_lens(
-        final_group.num_polynomials(),
-        lp.num_blocks,
-        lp.block_len,
-        lp.a_key.row_len(),
-        lp.num_digits_commit,
-        lp.num_digits_open,
-        lp.num_digits_fold(final_group.num_polynomials(), field_bits)?,
-    )?;
-    for (pre_idx, pre_params) in lp.precommitted_groups.iter().enumerate() {
-        let group = opening_batch.group_layout(pre_idx)?;
-        push_group_lens(
-            group.num_polynomials(),
-            pre_params.num_blocks,
-            pre_params.block_len,
-            pre_params.a_key.row_len(),
-            pre_params.num_digits_commit,
-            pre_params.num_digits_open,
-            pre_params.num_digits_fold_one,
-        )?;
-    }
-
-    Ok(MultiGroupRingRelationSegmentLengths {
-        z_lens,
-        e_lens,
-        t_lens,
-    })
-}
 
 /// Public statement of the negacyclic-ring matrix relation at one fold level.
 ///
@@ -176,7 +21,7 @@ pub fn multi_group_ring_relation_segment_lengths<F: FieldCore + CanonicalField>(
 /// and [`Self::row_coefficient_rings_trusted`].
 #[derive(Debug, Clone)]
 pub struct RingRelationInstance<F: FieldCore> {
-    relation_matrix_row_layout: RelationMatrixRowLayout,
+    relation_layout: RelationLayout,
     group_challenges: Vec<Challenges>,
     group_opening_points: Vec<RingOpeningPoint<F>>,
     group_ring_multiplier_points: Vec<RingMultiplierOpeningPoint<F>>,
@@ -194,6 +39,7 @@ impl<F: FieldCore + CanonicalField> RingRelationInstance<F> {
     /// Does not sample from the transcript; callers must absorb/sample before calling.
     #[allow(clippy::too_many_arguments)]
     pub fn new(
+        lp: &LevelParams,
         relation_matrix_row_layout: RelationMatrixRowLayout,
         group_challenges: Vec<Challenges>,
         group_opening_points: Vec<RingOpeningPoint<F>>,
@@ -201,11 +47,26 @@ impl<F: FieldCore + CanonicalField> RingRelationInstance<F> {
         opening_batch: OpeningClaimsLayout,
         gamma: Vec<F>,
         row_coefficient_rings: RingVec<F>,
-        rhs: RingVec<F>,
+        commitment_rows: RingVec<F>,
         v: RingVec<F>,
-        role_dims: CommitmentRingDims,
     ) -> Result<Self, AkitaError> {
         opening_batch.check()?;
+        let relation_layout = RelationLayout::from_authenticated_statement(
+            lp,
+            &opening_batch,
+            relation_matrix_row_layout,
+            F::modulus_bits(),
+        )?;
+        let role_dims = CommitmentRingDims {
+            inner: lp.a_key.sis_table_key().ring_dimension as usize,
+            outer: lp.b_key.sis_table_key().ring_dimension as usize,
+            opening: lp.d_key.sis_table_key().ring_dimension as usize,
+        };
+        let rhs = crate::proof::relation::assemble_relation_rhs(
+            relation_layout.row_plan(),
+            &v,
+            &commitment_rows,
+        )?;
         let num_groups = opening_batch.num_groups();
         if group_challenges.len() != num_groups
             || group_opening_points.len() != num_groups
@@ -215,10 +76,14 @@ impl<F: FieldCore + CanonicalField> RingRelationInstance<F> {
                 "ring relation group carrier count does not match opening batch".to_string(),
             ));
         }
-        for g in 0..num_groups {
+        for (g, ((challenges, opening_point), multiplier_point)) in group_challenges
+            .iter()
+            .zip(&group_opening_points)
+            .zip(&group_ring_multiplier_points)
+            .enumerate()
+        {
             let group_layout = opening_batch.group_layout(g)?;
             let k_g = group_layout.num_polynomials();
-            let challenges = &group_challenges[g];
             if challenges.num_claims() != k_g {
                 return Err(AkitaError::InvalidInput(format!(
                     "ring relation group {g} challenges claim count {} does not match K_g={k_g}",
@@ -226,12 +91,12 @@ impl<F: FieldCore + CanonicalField> RingRelationInstance<F> {
                 )));
             }
             let num_blocks_g = challenges.num_blocks_per_claim();
-            if group_opening_points[g].b.len() != num_blocks_g {
+            if opening_point.b.len() != num_blocks_g {
                 return Err(AkitaError::InvalidInput(format!(
                     "ring relation group {g} opening point block count does not match challenges"
                 )));
             }
-            if group_ring_multiplier_points[g].b_len() != num_blocks_g {
+            if multiplier_point.b_len() != num_blocks_g {
                 return Err(AkitaError::InvalidInput(format!(
                     "ring relation group {g} ring multiplier block count does not match challenges"
                 )));
@@ -280,14 +145,14 @@ impl<F: FieldCore + CanonicalField> RingRelationInstance<F> {
             .chunks_exact(role_dims.d_a())
             .enumerate()
         {
-            if gamma.get(idx) != Some(&chunk[0]) {
+            if gamma.get(idx) != chunk.first() {
                 return Err(AkitaError::InvalidInput(
                     "ring relation gamma does not match row coefficient rings".to_string(),
                 ));
             }
         }
         Ok(Self {
-            relation_matrix_row_layout,
+            relation_layout,
             group_challenges,
             group_opening_points,
             group_ring_multiplier_points,
@@ -303,6 +168,7 @@ impl<F: FieldCore + CanonicalField> RingRelationInstance<F> {
     /// Construct from typed kernel outputs at a ring-relation boundary.
     #[allow(clippy::too_many_arguments)]
     pub fn from_parts<const D: usize>(
+        lp: &LevelParams,
         relation_matrix_row_layout: RelationMatrixRowLayout,
         group_challenges: Vec<Challenges>,
         group_opening_points: Vec<RingOpeningPoint<F>>,
@@ -310,10 +176,11 @@ impl<F: FieldCore + CanonicalField> RingRelationInstance<F> {
         opening_batch: OpeningClaimsLayout,
         gamma: Vec<F>,
         row_coefficient_rings: &[CyclotomicRing<F, D>],
-        rhs: &[CyclotomicRing<F, D>],
+        commitment_rows: &[CyclotomicRing<F, D>],
         v: &[CyclotomicRing<F, D>],
     ) -> Result<Self, AkitaError> {
         Self::new(
+            lp,
             relation_matrix_row_layout,
             group_challenges,
             group_opening_points,
@@ -321,9 +188,8 @@ impl<F: FieldCore + CanonicalField> RingRelationInstance<F> {
             opening_batch,
             gamma,
             RingVec::from_ring_elems(row_coefficient_rings),
-            RingVec::from_ring_elems(rhs),
+            RingVec::from_ring_elems(commitment_rows),
             RingVec::from_ring_elems(v),
-            CommitmentRingDims::uniform(D),
         )
     }
 
@@ -338,7 +204,21 @@ impl<F: FieldCore + CanonicalField> RingRelationInstance<F> {
     }
 
     pub fn relation_matrix_row_layout(&self) -> RelationMatrixRowLayout {
-        self.relation_matrix_row_layout
+        if self
+            .relation_layout
+            .row_plan()
+            .families()
+            .iter()
+            .any(|family| matches!(family.id(), crate::RelationRowId::D))
+        {
+            RelationMatrixRowLayout::WithDBlock
+        } else {
+            RelationMatrixRowLayout::WithoutDBlock
+        }
+    }
+
+    pub fn relation_layout(&self) -> &RelationLayout {
+        &self.relation_layout
     }
 
     pub fn opening_batch(&self) -> &OpeningClaimsLayout {
@@ -401,6 +281,9 @@ impl<F: FieldCore + CanonicalField> RingRelationInstance<F> {
             )));
         }
         validate_role_dispatch::<D>(self.role_dims, RingRole::Inner)?;
+        self.relation_layout
+            .row_plan()
+            .validate_uniform_execution(D)?;
         if !self.row_coefficient_rings.can_decode_vec(D)
             || !self.rhs.can_decode_vec(D)
             || !self.v.can_decode_vec(D)
@@ -442,11 +325,14 @@ impl<F: FieldCore + CanonicalField> RingRelationInstance<F> {
     }
 
     /// Validate layout-dependent D-row payload shape.
-    pub fn check_v_shape_for_level(&self, lp: &LevelParams) -> Result<(), AkitaError> {
-        let expected = match self.relation_matrix_row_layout {
-            RelationMatrixRowLayout::WithDBlock => lp.d_key.row_len(),
-            RelationMatrixRowLayout::WithoutDBlock => 0,
-        };
+    pub fn check_v_shape_for_level(&self, _lp: &LevelParams) -> Result<(), AkitaError> {
+        let expected = self
+            .relation_layout
+            .row_plan()
+            .families()
+            .iter()
+            .find(|family| matches!(family.id(), crate::RelationRowId::D))
+            .map_or(0, |family| family.rows().len());
         let d_d = self.role_dims.d_d();
         let actual = if self.v.coeff_len() == 0 {
             0
@@ -479,240 +365,12 @@ impl<F: FieldCore + CanonicalField> RingRelationInstance<F> {
         for &coefficient in row_coefficients {
             let ring =
                 embed_ring_subfield_scalar::<F, E, D>(coefficient, AkitaError::InvalidProof)?;
-            gamma.push(ring.coefficients()[0]);
+            gamma.push(*ring.coefficients().first().ok_or_else(|| {
+                AkitaError::InvalidInput("row coefficient ring has no coefficients".into())
+            })?);
             row_coefficient_rings.push(ring);
         }
         Ok((gamma, RingVec::from_ring_elems(&row_coefficient_rings)))
-    }
-
-    /// Resolve the layout-agnostic [`WitnessLayout`] for this level's witness,
-    /// validating shape and (when supplied) capacity at the boundary.
-    ///
-    /// This is the **single source of truth** for witness column offsets shared
-    /// by the distributed prover's emission and the verifier's row-MLE
-    /// evaluation. `lp.witness_chunk.num_chunks = 1` yields a single chunk with
-    /// the historical `z ‖ e ‖ t ‖ u ‖ r` offsets; `num_chunks = W` lays out `W`
-    /// contiguous `[zᵢ | eᵢ | t̂ᵢ]` strides (z-first, `zᵢ` replicated, `eᵢ`/`t̂ᵢ`
-    /// partitioned) followed by one shared `r̂` tail sized at the single-machine
-    /// row count. Pass `witness_ring_len = Some(w_len / D)` to enforce the
-    /// no-panic capacity bound at this boundary.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`AkitaError::InvalidSetup`] (never panics) for a malformed chunk
-    /// count (`0`, non-power-of-two, `> num_blocks`, or `∤ num_blocks`), a
-    /// non-power-of-two block window, or any offset/length arithmetic overflow, or a
-    /// layout whose `r̂` tail would exceed the committed witness capacity.
-    pub fn segment_layout(
-        &self,
-        lp: &LevelParams,
-        witness_ring_len: Option<usize>,
-    ) -> Result<WitnessLayout, AkitaError> {
-        let num_chunks = lp.witness_chunk.num_chunks;
-        if num_chunks == 0 {
-            return Err(AkitaError::InvalidSetup(
-                "witness chunk count must be >= 1".to_string(),
-            ));
-        }
-
-        let relation_rhs_layout = crate::proof::relation::relation_rhs_layout_for(
-            lp,
-            &self.opening_batch,
-            self.relation_matrix_row_layout,
-        )?;
-        let expected_rhs_coeff_len =
-            crate::proof::relation::relation_rhs_coeff_len(self.role_dims, &relation_rhs_layout)?;
-        if self.rhs.coeff_len() != expected_rhs_coeff_len {
-            return Err(AkitaError::InvalidSetup(format!(
-                "ring relation rhs coefficient length {} does not match per-role layout (expected {expected_rhs_coeff_len})",
-                self.rhs.coeff_len()
-            )));
-        }
-        let relation_rhs_rows = lp.relation_matrix_row_count_for(
-            self.opening_batch.num_groups(),
-            self.relation_matrix_row_layout,
-        )?;
-        let r_levels = r_decomp_levels::<F>(lp.log_basis);
-        let r_len_total = relation_rhs_rows
-            .checked_mul(r_levels)
-            .ok_or_else(|| AkitaError::InvalidSetup("r-tail length overflow".to_string()))?;
-
-        if lp.has_precommitted_groups() {
-            lp.reject_multi_group_multi_chunk("segment_layout")?;
-            // Group-major layout: one chunk per group in `root_group_order()`
-            // (final group first), each holding that group's contiguous
-            // `[z_g ‖ e_g ‖ t_g]`, followed by one shared trailing `r` carried by
-            // the last chunk. `multi_group_ring_relation_segment_lengths` returns the
-            // per-group widths already in that order. The per-chunk block-window
-            // fields (`blocks_per_chunk`, `global_block_base`) are inert here:
-            // each group is a single, non-windowed segment stride.
-            let MultiGroupRingRelationSegmentLengths {
-                z_lens,
-                e_lens,
-                t_lens,
-            } = multi_group_ring_relation_segment_lengths::<F>(lp, &self.opening_batch)?;
-            let num_groups = z_lens.len();
-            let mut chunks = Vec::with_capacity(num_groups);
-            let mut chunk_lengths = Vec::with_capacity(num_groups);
-            let mut base = 0usize;
-            for p in 0..num_groups {
-                let z_g = z_lens[p];
-                let e_g = e_lens[p];
-                let t_g = t_lens[p];
-                let offset_e = base.checked_add(z_g).ok_or_else(|| {
-                    AkitaError::InvalidSetup("multi-group e offset overflow".to_string())
-                })?;
-                let offset_t = offset_e.checked_add(e_g).ok_or_else(|| {
-                    AkitaError::InvalidSetup("multi-group t offset overflow".to_string())
-                })?;
-                let after_t = offset_t.checked_add(t_g).ok_or_else(|| {
-                    AkitaError::InvalidSetup("multi-group stride overflow".to_string())
-                })?;
-                let is_last = p + 1 == num_groups;
-                chunks.push(WitnessChunkLayout {
-                    offset_z: base,
-                    offset_e,
-                    offset_t,
-                    offset_r: is_last.then_some(after_t),
-                    global_block_base: 0,
-                });
-                chunk_lengths.push(WitnessChunkLengths {
-                    z_len: z_g,
-                    e_len: e_g,
-                    t_len: t_g,
-                    r_len: is_last.then_some(r_len_total),
-                });
-                base = after_t;
-            }
-            let layout = WitnessLayout {
-                blocks_per_chunk: lp.num_blocks,
-                chunks,
-                chunk_lengths,
-            };
-            if let Some(witness_ring_len) = witness_ring_len {
-                let offset_r = layout.r_offset()?;
-                let needed = offset_r.checked_add(r_len_total).ok_or_else(|| {
-                    AkitaError::InvalidSetup("witness capacity overflow".to_string())
-                })?;
-                if needed > witness_ring_len {
-                    return Err(AkitaError::InvalidSetup(format!(
-                        "resolved witness layout requires {needed} ring columns but only {witness_ring_len} are committed"
-                    )));
-                }
-            }
-            return Ok(layout);
-        }
-
-        let num_claims = self.opening_batch.num_total_polynomials();
-        let lens = ring_relation_segment_lengths::<F>(
-            lp,
-            RingRelationOpeningCounts {
-                num_claims,
-                num_t_vectors: num_claims,
-            },
-            self.relation_matrix_row_layout,
-        )?;
-        let RingRelationSegmentLengths {
-            z_len,
-            e_len,
-            t_len,
-        } = lens;
-        let num_blocks = lp.num_blocks;
-
-        // The single-chunk layout is the `num_chunks = 1` case of the chunked
-        // construction below; only multi-chunk needs the extra well-formedness checks.
-        if num_chunks > 1 {
-            if !num_chunks.is_power_of_two() {
-                return Err(AkitaError::InvalidSetup(
-                    "witness chunk count must be a power of two".to_string(),
-                ));
-            }
-            if num_chunks > num_blocks {
-                return Err(AkitaError::InvalidSetup(
-                    "witness chunk count exceeds num_blocks".to_string(),
-                ));
-            }
-            if !num_blocks.is_multiple_of(num_chunks) {
-                return Err(AkitaError::InvalidSetup(
-                    "witness chunk count must divide num_blocks".to_string(),
-                ));
-            }
-            if !(num_blocks / num_chunks).is_power_of_two() {
-                return Err(AkitaError::InvalidSetup(
-                    "witness chunk block window must be a power of two".to_string(),
-                ));
-            }
-            if !e_len.is_multiple_of(num_chunks) || !t_len.is_multiple_of(num_chunks) {
-                return Err(AkitaError::InvalidSetup(
-                    "partitioned witness segment lengths must divide evenly across chunks"
-                        .to_string(),
-                ));
-            }
-        }
-
-        // `ê`/`t̂` are partitioned across windows; `ẑ` is replicated full-width
-        // in every window. The shared `r̂` tails the last window.
-        let blocks_per_chunk = num_blocks / num_chunks;
-        let e_len_j = e_len / num_chunks;
-        let t_len_j = t_len / num_chunks;
-        let stride = z_len
-            .checked_add(e_len_j)
-            .and_then(|s| s.checked_add(t_len_j))
-            .ok_or_else(|| AkitaError::InvalidSetup("chunk stride overflow".to_string()))?;
-
-        let mut chunks = Vec::with_capacity(num_chunks);
-        let mut chunk_lengths = Vec::with_capacity(num_chunks);
-        for j in 0..num_chunks {
-            let is_last = j == num_chunks - 1;
-            let base = j
-                .checked_mul(stride)
-                .ok_or_else(|| AkitaError::InvalidSetup("chunk base overflow".to_string()))?;
-            let offset_e = base
-                .checked_add(z_len)
-                .ok_or_else(|| AkitaError::InvalidSetup("chunk e offset overflow".to_string()))?;
-            let offset_t = offset_e
-                .checked_add(e_len_j)
-                .ok_or_else(|| AkitaError::InvalidSetup("chunk t offset overflow".to_string()))?;
-            let after_t = offset_t
-                .checked_add(t_len_j)
-                .ok_or_else(|| AkitaError::InvalidSetup("chunk r offset overflow".to_string()))?;
-            let offset_r = if is_last { Some(after_t) } else { None };
-            let global_block_base = j.checked_mul(blocks_per_chunk).ok_or_else(|| {
-                AkitaError::InvalidSetup("global block base overflow".to_string())
-            })?;
-            chunks.push(WitnessChunkLayout {
-                offset_z: base,
-                offset_e,
-                offset_t,
-                offset_r,
-                global_block_base,
-            });
-            chunk_lengths.push(WitnessChunkLengths {
-                z_len,
-                e_len: e_len_j,
-                t_len: t_len_j,
-                r_len: is_last.then_some(r_len_total),
-            });
-        }
-        let layout = WitnessLayout {
-            blocks_per_chunk,
-            chunks,
-            chunk_lengths,
-        };
-
-        if let Some(witness_ring_len) = witness_ring_len {
-            let r_offset = layout.r_offset()?;
-            let needed = r_offset
-                .checked_add(r_len_total)
-                .ok_or_else(|| AkitaError::InvalidSetup("witness capacity overflow".to_string()))?;
-            if needed > witness_ring_len {
-                return Err(AkitaError::InvalidSetup(format!(
-                    "resolved witness layout requires {needed} ring columns but only {witness_ring_len} are committed"
-                )));
-            }
-        }
-
-        Ok(layout)
     }
 }
 
@@ -720,6 +378,7 @@ impl<F: FieldCore + CanonicalField> RingRelationInstance<F> {
 mod tests {
     use super::*;
     use crate::layout::PrecommittedLevelParams;
+    use crate::r_decomp_levels;
     use crate::PolynomialGroupLayout;
     use akita_challenges::{SparseChallenge, SparseChallengeConfig};
     use akita_field::Fp32;
@@ -749,6 +408,10 @@ mod tests {
             fold_challenge_config(),
         )
         .with_decomp(2, 1, 1, 2, 0)
+        .map(|mut lp| {
+            lp.field_bits_hint = F::modulus_bits();
+            lp
+        })
         .expect("test params")
     }
 
@@ -775,6 +438,7 @@ mod tests {
         let opening_point = opening_point(&lp);
         let ring_multiplier_point = RingMultiplierOpeningPoint::from_base(&opening_point);
         let err = RingRelationInstance::<F>::new(
+            &lp,
             RelationMatrixRowLayout::WithoutDBlock,
             vec![test_challenges(&lp, opening_batch.num_total_polynomials())],
             vec![opening_point],
@@ -784,14 +448,12 @@ mod tests {
             RingVec::from_ring_elems::<D>(&[CyclotomicRing::one()]),
             RingVec::from_ring_elems::<D>(&[]),
             RingVec::from_ring_elems::<D>(&[]),
-            CommitmentRingDims::uniform(D),
         )
         .expect_err("empty rhs must be rejected");
-        assert!(
-            format!("{err:?}")
-                .contains("ring relation rhs must contain at least the consistency row"),
-            "unexpected error: {err:?}"
-        );
+        assert!(matches!(
+            err,
+            AkitaError::InvalidProof | AkitaError::InvalidSize { .. }
+        ));
     }
 
     fn chunk_test_level_params(r_vars: usize) -> LevelParams {
@@ -806,21 +468,32 @@ mod tests {
             fold_challenge_config(),
         )
         .with_decomp(2, r_vars, 1, 2, 0)
+        .map(|mut lp| {
+            lp.field_bits_hint = F::modulus_bits();
+            lp
+        })
         .expect("test params")
     }
 
-    /// Build a minimal `WithDBlock` relation instance whose layout-relevant
-    /// shape is `opening_batch.num_total_polynomials() = num_claims` and `y.len() =
-    /// num_rows` (the only fields [`RingRelationInstance::segment_layout`] reads).
+    /// Build a minimal `WithDBlock` relation instance.
     fn build_instance(
         lp: &LevelParams,
         num_claims: usize,
-        num_rows: usize,
+        _num_rows: usize,
     ) -> RingRelationInstance<F> {
+        try_build_instance(lp, num_claims, _num_rows).expect("instance")
+    }
+
+    fn try_build_instance(
+        lp: &LevelParams,
+        num_claims: usize,
+        _num_rows: usize,
+    ) -> Result<RingRelationInstance<F>, AkitaError> {
         let opening_batch = OpeningClaimsLayout::new(8, num_claims).expect("opening batch");
         let opening_point = opening_point(lp);
         let ring_multiplier_point = RingMultiplierOpeningPoint::from_base(&opening_point);
         RingRelationInstance::<F>::new(
+            lp,
             RelationMatrixRowLayout::WithDBlock,
             vec![test_challenges(lp, num_claims)],
             vec![opening_point],
@@ -828,11 +501,9 @@ mod tests {
             opening_batch,
             vec![F::one(); num_claims],
             RingVec::from_ring_elems::<D>(&vec![CyclotomicRing::one(); num_claims]),
-            RingVec::from_ring_elems::<D>(&vec![CyclotomicRing::zero(); num_rows]),
-            RingVec::from_ring_elems::<D>(&[]),
-            CommitmentRingDims::uniform(D),
+            RingVec::from_ring_elems::<D>(&vec![CyclotomicRing::zero(); lp.b_key.row_len()]),
+            RingVec::from_ring_elems::<D>(&vec![CyclotomicRing::zero(); lp.d_key.row_len()]),
         )
-        .expect("instance")
     }
 
     #[test]
@@ -840,20 +511,13 @@ mod tests {
         let lp = chunk_test_level_params(1);
         assert_eq!(lp.witness_chunk.num_chunks, 1);
         let num_claims = 3;
-        let lens = ring_relation_segment_lengths::<F>(
-            &lp,
-            RingRelationOpeningCounts {
-                num_claims,
-                num_t_vectors: num_claims,
-            },
-            RelationMatrixRowLayout::WithDBlock,
-        )
-        .expect("lengths");
-
-        let resolved = build_instance(&lp, num_claims, 4)
-            .segment_layout(&lp, None)
+        let instance = build_instance(&lp, num_claims, 4);
+        let resolved = instance
+            .relation_layout()
+            .witness_layout(None)
             .expect("resolved layout");
         assert_eq!(resolved.num_chunks(), 1);
+        let lens = resolved.chunk_lengths[0];
         let chunk = resolved.chunks[0];
         // Legacy single-chunk offsets: z-first, then e, t, (u), r.
         assert_eq!(chunk.offset_z, 0);
@@ -876,37 +540,33 @@ mod tests {
                     num_activated_levels: 1,
                 };
             }
-            let lens = ring_relation_segment_lengths::<F>(
-                &lp,
-                RingRelationOpeningCounts {
-                    num_claims,
-                    num_t_vectors: num_claims,
-                },
-                RelationMatrixRowLayout::WithDBlock,
-            )
-            .expect("lengths");
-            let layout = build_instance(&lp, num_claims, 4)
-                .segment_layout(&lp, None)
+            let instance = build_instance(&lp, num_claims, 4);
+            let layout = instance
+                .relation_layout()
+                .witness_layout(None)
                 .expect("layout");
             assert_eq!(layout.num_chunks(), w);
             assert_eq!(layout.blocks_per_chunk, lp.num_blocks / w);
+            let z_len = layout.chunk_lengths[0].z_len;
+            let e_len: usize = layout.chunk_lengths.iter().map(|l| l.e_len).sum();
+            let t_len: usize = layout.chunk_lengths.iter().map(|l| l.t_len).sum();
 
             // Partitioned e/t lengths sum to the single-machine totals; z replicated.
             let e_sum: usize = layout.chunk_lengths.iter().map(|l| l.e_len).sum();
             let t_sum: usize = layout.chunk_lengths.iter().map(|l| l.t_len).sum();
-            assert_eq!(e_sum, lens.e_len);
-            assert_eq!(t_sum, lens.t_len);
+            assert_eq!(e_sum, e_len);
+            assert_eq!(t_sum, t_len);
             for l in &layout.chunk_lengths {
-                assert_eq!(l.z_len, lens.z_len);
+                assert_eq!(l.z_len, z_len);
             }
 
             // Offsets are contiguous z-first per chunk; only the last chunk has r̂.
-            let stride = lens.z_len + lens.e_len / w + lens.t_len / w;
+            let stride = z_len + e_len / w + t_len / w;
             for (j, chunk) in layout.chunks.iter().enumerate() {
                 let base = j * stride;
                 assert_eq!(chunk.offset_z, base);
-                assert_eq!(chunk.offset_e, base + lens.z_len);
-                assert_eq!(chunk.offset_t, base + lens.z_len + lens.e_len / w);
+                assert_eq!(chunk.offset_e, base + z_len);
+                assert_eq!(chunk.offset_t, base + z_len + e_len / w);
                 assert_eq!(chunk.global_block_base, j * (lp.num_blocks / w));
                 if j + 1 == w {
                     assert_eq!(chunk.offset_r, Some(w * stride));
@@ -931,9 +591,7 @@ mod tests {
             num_chunks: 3,
             num_activated_levels: 1,
         };
-        assert!(build_instance(&lp, num_claims, 4)
-            .segment_layout(&lp, None)
-            .is_err());
+        assert!(try_build_instance(&lp, num_claims, 4).is_err());
 
         // num_chunks = 16 exceeds num_blocks = 8.
         let mut lp = chunk_test_level_params(3);
@@ -941,9 +599,7 @@ mod tests {
             num_chunks: 16,
             num_activated_levels: 1,
         };
-        assert!(build_instance(&lp, num_claims, 4)
-            .segment_layout(&lp, None)
-            .is_err());
+        assert!(try_build_instance(&lp, num_claims, 4).is_err());
     }
 
     #[test]
@@ -953,37 +609,28 @@ mod tests {
         // A witness ring capacity of 1 is far smaller than offset_r + r_len.
         assert!(
             build_instance(&lp, num_claims, 4)
-                .segment_layout(&lp, Some(1))
+                .relation_layout()
+                .witness_layout(Some(1))
                 .is_err(),
             "tiny witness capacity must be rejected"
         );
         // A generous capacity passes.
         build_instance(&lp, num_claims, 4)
-            .segment_layout(&lp, Some(1 << 20))
+            .relation_layout()
+            .witness_layout(Some(1 << 20))
             .expect("ample capacity");
     }
 
     #[test]
     fn relation_segment_layout_uses_same_axis_contract() {
-        use crate::proof::relation::RelationRhsLayout;
-
         let lp = test_level_params();
         let opening_batch = OpeningClaimsLayout::new(2, 3).expect("valid batch");
         let opening_point = opening_point(&lp);
         let ring_multiplier_point = RingMultiplierOpeningPoint::from_base(&opening_point);
-        let relation_rhs_layout = RelationRhsLayout::uniform(
-            lp.d_key.row_len(),
-            lp.a_key.row_len(),
-            lp.b_key.row_len(),
-            0,
-            1,
-        );
-        let relation_rhs_rows = lp
-            .relation_matrix_row_count_for(1, RelationMatrixRowLayout::WithDBlock)
-            .expect("row count");
-        let v_zeros = vec![CyclotomicRing::zero(); relation_rhs_layout.n_d];
-        let y_zeros = vec![CyclotomicRing::zero(); relation_rhs_rows];
+        let v_zeros = vec![CyclotomicRing::zero(); lp.d_key.row_len()];
+        let commitment_zeros = vec![CyclotomicRing::zero(); lp.b_key.row_len()];
         let instance = RingRelationInstance::<F>::from_parts::<D>(
+            &lp,
             RelationMatrixRowLayout::WithDBlock,
             vec![test_challenges(&lp, opening_batch.num_total_polynomials())],
             vec![opening_point],
@@ -991,22 +638,17 @@ mod tests {
             opening_batch,
             vec![F::one(); 3],
             &[CyclotomicRing::one(); 3],
-            &y_zeros,
+            &commitment_zeros,
             &v_zeros,
         )
         .expect("same-axis relation");
 
-        let layout = instance.segment_layout(&lp, None).expect("layout");
+        let layout = instance
+            .relation_layout()
+            .witness_layout(None)
+            .expect("layout");
         let chunk = layout.chunks[0];
-        let lens = ring_relation_segment_lengths::<F>(
-            &lp,
-            RingRelationOpeningCounts {
-                num_claims: instance.opening_batch().num_total_polynomials(),
-                num_t_vectors: instance.opening_batch().num_total_polynomials(),
-            },
-            instance.relation_matrix_row_layout(),
-        )
-        .expect("segment lengths");
+        let lens = layout.chunk_lengths[0];
         assert_eq!(layout.num_chunks(), 1);
         assert_eq!(chunk.offset_z, 0);
         assert_eq!(chunk.offset_e, lens.z_len);
@@ -1029,6 +671,10 @@ mod tests {
             fold_challenge_config(),
         )
         .with_decomp(2, 2, 2, 2, 0)
+        .map(|mut lp| {
+            lp.field_bits_hint = F::modulus_bits();
+            lp
+        })
         .expect("multi-group main params");
         let precommit_lp = LevelParams::params_only(
             crate::SisModulusFamily::Q128,
@@ -1040,6 +686,10 @@ mod tests {
             fold_challenge_config(),
         )
         .with_decomp(2, 2, 2, 2, 0)
+        .map(|mut lp| {
+            lp.field_bits_hint = F::modulus_bits();
+            lp
+        })
         .expect("multi-group precommit params");
         let precommit = PrecommittedLevelParams {
             layout: PrecommittedGroupParams::from_params(
@@ -1067,17 +717,17 @@ mod tests {
     #[test]
     fn multi_group_segment_layout_total_matches_root_next_w_len() {
         let (lp, opening_batch) = multi_group_one_three_fixture();
-        let relation_rhs_rows = lp
-            .relation_matrix_row_count_for(
-                opening_batch.num_groups(),
-                RelationMatrixRowLayout::WithDBlock,
-            )
-            .expect("row count");
+        let commitment_rows = lp.b_key.row_len()
+            + lp.precommitted_groups
+                .iter()
+                .map(|group| group.b_key.row_len())
+                .sum::<usize>();
         let opening_point_pre = opening_point(&lp);
         let opening_point_final = opening_point(&lp);
         let ring_multiplier_pre = RingMultiplierOpeningPoint::from_base(&opening_point_pre);
         let ring_multiplier_final = RingMultiplierOpeningPoint::from_base(&opening_point_final);
         let instance = RingRelationInstance::<F>::new(
+            &lp,
             RelationMatrixRowLayout::WithDBlock,
             vec![test_challenges(&lp, 3), test_challenges(&lp, 1)],
             vec![opening_point_pre, opening_point_final],
@@ -1085,26 +735,56 @@ mod tests {
             opening_batch.clone(),
             vec![F::one(); 4],
             RingVec::from_ring_elems::<D>(&vec![CyclotomicRing::one(); 4]),
-            RingVec::from_ring_elems::<D>(&vec![CyclotomicRing::zero(); relation_rhs_rows]),
+            RingVec::from_ring_elems::<D>(&vec![CyclotomicRing::zero(); commitment_rows]),
             RingVec::from_ring_elems::<D>(&vec![CyclotomicRing::zero(); lp.d_key.row_len()]),
-            CommitmentRingDims::uniform(D),
         )
         .expect("multi-group instance");
 
         let layout = instance
-            .segment_layout(&lp, None)
+            .relation_layout()
+            .witness_layout(None)
             .expect("multi-group segment layout");
-        let segment_lens = multi_group_ring_relation_segment_lengths::<F>(&lp, &opening_batch)
-            .expect("segment lens");
-        let num_groups = segment_lens.z_lens.len();
+        let plan = instance.relation_layout().row_plan();
+        assert_eq!(
+            plan.families()
+                .iter()
+                .map(|family| family.id())
+                .collect::<Vec<_>>(),
+            vec![
+                crate::RelationRowId::Consistency,
+                crate::RelationRowId::A {
+                    group: crate::RelationGroupId::Current
+                },
+                crate::RelationRowId::B {
+                    group: crate::RelationGroupId::Current
+                },
+                crate::RelationRowId::A {
+                    group: crate::RelationGroupId::Precommitted { index: 0 }
+                },
+                crate::RelationRowId::B {
+                    group: crate::RelationGroupId::Precommitted { index: 0 }
+                },
+                crate::RelationRowId::D,
+            ]
+        );
+        let expected_geometry = [(0, 1), (1, 2), (3, 4), (7, 2), (9, 4), (13, 3)];
+        for (family, (start, len)) in plan.families().iter().zip(expected_geometry) {
+            assert_eq!(family.rows().start(), start);
+            assert_eq!(family.rows().len(), len);
+            assert_eq!(family.native_ring_dim(), D);
+        }
+        assert_eq!(plan.trace_row(), 16);
+        assert_eq!(plan.padded_row_count(), 32);
+        let num_groups = layout.num_chunks();
         // Group-major: one chunk per group, each holding a contiguous
         // `[z_g | e_g | t_g]` stride; only the last chunk carries the single
         // shared `r` tail.
         assert_eq!(layout.num_chunks(), num_groups);
-        let z_total: usize = segment_lens.z_lens.iter().sum();
-        let e_total: usize = segment_lens.e_lens.iter().sum();
-        let t_total: usize = segment_lens.t_lens.iter().sum();
-        let r_len_total = relation_rhs_rows * r_decomp_levels::<F>(lp.log_basis);
+        let z_total: usize = layout.chunk_lengths.iter().map(|lens| lens.z_len).sum();
+        let e_total: usize = layout.chunk_lengths.iter().map(|lens| lens.e_len).sum();
+        let t_total: usize = layout.chunk_lengths.iter().map(|lens| lens.t_len).sum();
+        let r_len_total =
+            instance.relation_layout().row_plan().trace_row() * r_decomp_levels::<F>(lp.log_basis);
 
         let mut base = 0usize;
         for (p, (chunk, lengths)) in layout
@@ -1113,12 +793,9 @@ mod tests {
             .zip(layout.chunk_lengths.iter())
             .enumerate()
         {
-            let z_g = segment_lens.z_lens[p];
-            let e_g = segment_lens.e_lens[p];
-            let t_g = segment_lens.t_lens[p];
-            assert_eq!(lengths.z_len, z_g);
-            assert_eq!(lengths.e_len, e_g);
-            assert_eq!(lengths.t_len, t_g);
+            let z_g = lengths.z_len;
+            let e_g = lengths.e_len;
+            let t_g = lengths.t_len;
             assert_eq!(chunk.offset_z, base);
             assert_eq!(chunk.offset_e, base + z_g);
             assert_eq!(chunk.offset_t, base + z_g + e_g);
@@ -1134,10 +811,99 @@ mod tests {
         assert_eq!(base, z_total + e_total + t_total);
 
         let witness_ring_cols = z_total + e_total + t_total + r_len_total;
-        let expected_w_len = lp
-            .root_next_w_len::<F>(&opening_batch, RelationMatrixRowLayout::WithDBlock)
-            .expect("root next w len");
+        let expected_w_len = layout.ring_len().expect("root next w len") * D;
         assert_eq!(witness_ring_cols * D, expected_w_len);
+    }
+
+    #[test]
+    fn uniform_execution_rejects_divisible_mixed_precommitted_dimension() {
+        use crate::schedule::PrecommittedGroupParams;
+        const CURRENT_D: usize = 64;
+        const PRE_D: usize = 32;
+        let make = |d| {
+            LevelParams::params_only(
+                crate::SisModulusFamily::Q32,
+                d,
+                3,
+                2,
+                4,
+                3,
+                fold_challenge_config(),
+            )
+            .with_decomp(2, 2, 2, 2, 0)
+            .map(|mut lp| {
+                lp.field_bits_hint = F::modulus_bits();
+                lp
+            })
+            .unwrap()
+        };
+        let mut lp = make(CURRENT_D);
+        let pre_lp = make(PRE_D);
+        lp.precommitted_groups.push(PrecommittedLevelParams {
+            layout: PrecommittedGroupParams::from_params(PolynomialGroupLayout::new(4, 1), &pre_lp),
+            a_key: pre_lp.a_key.clone(),
+            b_key: pre_lp.b_key.clone(),
+            num_blocks: pre_lp.num_blocks,
+            block_len: pre_lp.block_len,
+            num_digits_commit: pre_lp.num_digits_commit,
+            num_digits_open: pre_lp.num_digits_open,
+            num_digits_fold_one: pre_lp.num_digits_fold_one,
+        });
+        let opening = OpeningClaimsLayout::from_root_groups(
+            &[PolynomialGroupLayout::new(4, 1)],
+            PolynomialGroupLayout::new(4, 1),
+        )
+        .unwrap();
+        let point = opening_point(&lp);
+        let multiplier = RingMultiplierOpeningPoint::from_base(&point);
+        let commitment_coeffs =
+            vec![F::zero(); lp.b_key.row_len() * CURRENT_D + pre_lp.b_key.row_len() * PRE_D];
+        assert!(commitment_coeffs.len().is_multiple_of(CURRENT_D));
+        let instance = RingRelationInstance::<F>::new(
+            &lp,
+            RelationMatrixRowLayout::WithDBlock,
+            vec![test_challenges(&lp, 1), test_challenges(&lp, 1)],
+            vec![point.clone(), point],
+            vec![multiplier.clone(), multiplier],
+            opening,
+            vec![F::one(); 2],
+            RingVec::from_ring_elems::<CURRENT_D>(&[CyclotomicRing::one(); 2]),
+            RingVec::from_coeffs(commitment_coeffs),
+            RingVec::from_ring_elems::<CURRENT_D>(&vec![
+                CyclotomicRing::zero();
+                lp.d_key.row_len()
+            ]),
+        )
+        .unwrap();
+        assert!(instance.ensure_ring_dim::<CURRENT_D>().is_err());
+    }
+
+    #[test]
+    fn multi_group_without_d_omits_only_opening_family() {
+        let (lp, opening) = multi_group_one_three_fixture();
+        let with_d = crate::RelationRowPlan::compile_base(
+            &lp,
+            &opening,
+            RelationMatrixRowLayout::WithDBlock,
+        )
+        .unwrap();
+        let without_d = crate::RelationRowPlan::compile_base(
+            &lp,
+            &opening,
+            RelationMatrixRowLayout::WithoutDBlock,
+        )
+        .unwrap();
+        assert!(without_d.family(crate::RelationRowId::D).is_err());
+        assert_eq!(
+            with_d.trace_row() - without_d.trace_row(),
+            lp.d_key.row_len()
+        );
+        assert_eq!(without_d.trace_row(), 13);
+        assert_eq!(without_d.padded_row_count(), 16);
+        assert_eq!(
+            &with_d.families()[..with_d.families().len() - 1],
+            without_d.families()
+        );
     }
 
     #[test]
@@ -1147,17 +913,17 @@ mod tests {
             num_chunks: 2,
             num_activated_levels: 1,
         };
-        let relation_rhs_rows = lp
-            .relation_matrix_row_count_for(
-                opening_batch.num_groups(),
-                RelationMatrixRowLayout::WithDBlock,
-            )
-            .expect("row count");
+        let commitment_rows = lp.b_key.row_len()
+            + lp.precommitted_groups
+                .iter()
+                .map(|group| group.b_key.row_len())
+                .sum::<usize>();
         let opening_point_pre = opening_point(&lp);
         let opening_point_final = opening_point(&lp);
         let ring_multiplier_pre = RingMultiplierOpeningPoint::from_base(&opening_point_pre);
         let ring_multiplier_final = RingMultiplierOpeningPoint::from_base(&opening_point_final);
-        let instance = RingRelationInstance::<F>::new(
+        let err = RingRelationInstance::<F>::new(
+            &lp,
             RelationMatrixRowLayout::WithDBlock,
             vec![test_challenges(&lp, 3), test_challenges(&lp, 1)],
             vec![opening_point_pre, opening_point_final],
@@ -1165,14 +931,10 @@ mod tests {
             opening_batch,
             vec![F::one(); 4],
             RingVec::from_ring_elems::<D>(&vec![CyclotomicRing::one(); 4]),
-            RingVec::from_ring_elems::<D>(&vec![CyclotomicRing::zero(); relation_rhs_rows]),
+            RingVec::from_ring_elems::<D>(&vec![CyclotomicRing::zero(); commitment_rows]),
             RingVec::from_ring_elems::<D>(&vec![CyclotomicRing::zero(); lp.d_key.row_len()]),
-            CommitmentRingDims::uniform(D),
         )
-        .expect("multi-group instance");
-        let err = instance
-            .segment_layout(&lp, None)
-            .expect_err("multi-group multi-chunk must reject");
+        .expect_err("multi-group multi-chunk must reject");
         assert!(
             format!("{err:?}").contains(crate::MULTI_GROUP_ROOT_MULTI_CHUNK_UNSUPPORTED),
             "unexpected error: {err:?}"
