@@ -11,8 +11,9 @@ use akita_types::sis::{
     min_secure_rank, rounded_up_collision_inf_norm, SisTableKey, DEFAULT_SIS_SECURITY_BITS,
 };
 use akita_types::{
-    AjtaiKeyParams, AkitaScheduleInputs, DecompositionParams, LevelParams, OpeningClaimsLayout,
-    PolynomialGroupLayout, Schedule, SetupMatrixEnvelope, SisModulusFamily, Step,
+    AjtaiKeyParams, AkitaScheduleInputs, AkitaScheduleLookupKey, DecompositionParams, LevelParams,
+    OpeningClaimsLayout, PolynomialGroupLayout, Schedule, SetupMatrixEnvelope, SisModulusFamily,
+    Step,
 };
 use std::marker::PhantomData;
 
@@ -104,8 +105,8 @@ pub(crate) fn conservative_commit_schedule<Cfg: CommitmentConfig>(
     let mut policy = policy_of::<Cfg>();
     policy.basis_range = (min_basis, min_basis);
     policy.decomposition.log_basis = min_basis;
-    let mut schedule = akita_planner::find_schedule(
-        *key,
+    let mut schedule = akita_planner::find_group_batch_schedule(
+        &AkitaScheduleLookupKey::single(*key),
         &policy,
         Cfg::ring_challenge_config,
         Cfg::fold_challenge_shape_at_level,

@@ -15,7 +15,7 @@
 
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::AkitaError;
-use akita_planner::{find_group_batch_schedule, find_schedule, EmitSpec, PlannerPolicy};
+use akita_planner::{find_group_batch_schedule, EmitSpec, PlannerPolicy};
 use akita_types::{
     AkitaScheduleInputs, AkitaScheduleLookupKey, OpeningClaimsLayout, PolynomialGroupLayout,
     PrecommittedGroupParams, Schedule,
@@ -53,7 +53,7 @@ pub struct GeneratedFamily {
     /// Opening-batch sizes (`num_polys`) enumerated for this family.
     pub num_polys: &'static [usize],
     /// Pure DP regeneration that ignores any shipped table
-    /// (`find_schedule(key, &policy_of::<Cfg>(), …)`).
+    /// (`find_group_batch_schedule(single-key, &policy_of::<Cfg>(), …)`).
     pub regen: fn(PolynomialGroupLayout) -> Result<Schedule, AkitaError>,
     /// Pure multi-group DP regeneration that ignores any shipped table.
     pub regen_group_batch: fn(AkitaScheduleLookupKey) -> Result<Schedule, AkitaError>,
@@ -98,8 +98,8 @@ pub fn family_keys(family: &GeneratedFamily) -> Result<Vec<PolynomialGroupLayout
 
 /// Pure DP regeneration for `Cfg` — never consults the shipped table.
 fn regen<Cfg: CommitmentConfig>(key: PolynomialGroupLayout) -> Result<Schedule, AkitaError> {
-    find_schedule(
-        key,
+    find_group_batch_schedule(
+        &AkitaScheduleLookupKey::single(key),
         &policy_of::<Cfg>(),
         Cfg::ring_challenge_config,
         Cfg::fold_challenge_shape_at_level,

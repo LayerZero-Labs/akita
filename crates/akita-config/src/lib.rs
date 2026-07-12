@@ -6,7 +6,7 @@
 //! a schedule-table hit expands the compact entry through the planner's
 //! canonical walker [`akita_planner::schedule_from_entry`]; a table miss
 //! regenerates the schedule with the offline DP search
-//! [`akita_planner::find_schedule`], driven by the `Cfg`-derived
+//! [`akita_planner::find_group_batch_schedule`], driven by the `Cfg`-derived
 //! [`policy_of`] bridge. Fallback is the default for every preset.
 
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
@@ -108,7 +108,7 @@ pub use transcript_binding::bind_transcript_instance_descriptor;
 /// preset.
 ///
 /// This is the single bridge between a [`CommitmentConfig`] preset and
-/// [`akita_planner::find_schedule`]: every brute-force input is *derived*
+/// [`akita_planner::find_group_batch_schedule`]: every brute-force input is *derived*
 /// from the `Cfg` impl, so the `Cfg` impl stays the one source of truth for
 /// each preset's `(D, decomposition, sis_family, …)`. Never hand-write a
 /// `PlannerPolicy` literal per preset.

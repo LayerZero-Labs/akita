@@ -692,11 +692,11 @@ fn regen_hint() -> &'static str {
      crates/akita-schedules/src/generated"
 }
 
-/// The shipped tables must expand to exactly what `find_schedule` produces.
+/// The shipped tables must expand to exactly what the key-shaped DP produces.
 /// Rolled into one test so the panic message can summarize per-family
 /// mismatch counts.
 #[test]
-fn generated_schedule_tables_match_find_schedule() {
+fn generated_schedule_tables_match_key_planner() {
     let mut mismatches = Vec::new();
     for family in ALL_GENERATED_FAMILIES {
         check_family(family, &mut mismatches);
@@ -721,7 +721,7 @@ fn generated_schedule_tables_match_find_schedule() {
         .map(Mismatch::render)
         .collect::<String>();
     panic!(
-        "{count} schedule-table issue(s) disagree with `find_schedule` output.\n\
+        "{count} schedule-table issue(s) disagree with key-shaped DP output.\n\
          Per-family counts:\n  {summary}\n\n\
          First issues:\n{preview}\n\
          Regenerate the shipped tables with:\n  {hint}",

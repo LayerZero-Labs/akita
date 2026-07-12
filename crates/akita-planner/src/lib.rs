@@ -1,7 +1,7 @@
 //! Offline schedule planner for the Akita polynomial commitment scheme.
 //!
-//! This crate is a **pure, `Cfg`-free DP library**. The single entry point
-//! is [`find_schedule`], which runs an exhaustive dynamic program to
+//! This crate is a **pure, `Cfg`-free DP library**. The DP entry point
+//! is [`find_group_batch_schedule`], which runs an exhaustive dynamic program to
 //! minimize proof size for a schedule lookup key. Every per-preset input is
 //! carried by the plain-value [`PlannerPolicy`] plus a `ring_challenge_config` /
 //! `fold_challenge_shape_at_level` closure pair, so the planner names no `CommitmentConfig`
@@ -37,7 +37,6 @@ pub use group_batch::find_group_batch_schedule;
 pub use resolve::{
     estimate_proof_bytes, resolve_group_batch_schedule, resolve_schedule, schedule_from_entry,
 };
-pub use schedule_params::find_schedule;
 
 /// Plain-value brute-force inputs the planner DP needs.
 ///

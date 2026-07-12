@@ -4,7 +4,8 @@
 //! prover, verifier) uses to obtain a [`Schedule`] for a lookup key. When a
 //! preset supplies a catalog, identity is validated and the compact entry
 //! is expanded via [`schedule_from_entry`]; on a miss (or no catalog) the
-//! schedule is regenerated with the offline DP search [`crate::find_schedule`].
+//! schedule is regenerated with the offline key-shaped DP search
+//! [`crate::find_group_batch_schedule`].
 
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::AkitaError;
@@ -108,11 +109,12 @@ pub fn estimate_proof_bytes(
 mod tests {
     use super::*;
     use crate::catalog_identity::expected_catalog_identity;
+    use crate::find_group_batch_schedule;
     use crate::generated::{
         validate_generated_schedule_entry, GeneratedDirectStep, GeneratedFoldStep,
         GeneratedScheduleTable, GeneratedStep,
     };
-    use crate::{find_group_batch_schedule, find_schedule};
+    use crate::schedule_params::find_single_group_schedule;
     use akita_types::{
         AkitaScheduleLookupKey, ChunkedWitnessCfg, DecompositionParams, LevelParams,
         MultiChunkProfileId, PolynomialGroupLayout, PrecommittedGroupParams, SisModulusFamily,
@@ -144,6 +146,13 @@ mod tests {
 
     fn fold_shape(_: AkitaScheduleInputs) -> TensorChallengeShape {
         TensorChallengeShape::Flat
+    }
+
+    fn find_single_schedule(
+        key: PolynomialGroupLayout,
+        policy: &PlannerPolicy,
+    ) -> Result<Schedule, AkitaError> {
+        find_single_group_schedule(key, policy, ring_challenge_config, fold_shape)
     }
 
     fn generated_fold_step(lp: &LevelParams) -> GeneratedFoldStep {
@@ -183,13 +192,12 @@ mod tests {
     }
 
     #[test]
-    fn resolve_schedule_none_matches_find_schedule() {
+    fn resolve_schedule_none_matches_key_planner() {
         let key = PolynomialGroupLayout::new(20, 1);
         let policy = flat_policy();
         let via_resolve = resolve_schedule(key, &policy, ring_challenge_config, fold_shape, None)
             .expect("resolve");
-        let via_find =
-            find_schedule(key, &policy, ring_challenge_config, fold_shape).expect("find");
+        let via_find = find_single_schedule(key, &policy).expect("find");
         assert_eq!(via_resolve.total_bytes, via_find.total_bytes);
     }
 
@@ -203,8 +211,7 @@ mod tests {
             num_activated_levels: 2,
         };
         let key = PolynomialGroupLayout::new(24, 1);
-        let schedule =
-            find_schedule(key, &policy, ring_challenge_config, fold_shape).expect("schedule");
+        let schedule = find_single_schedule(key, &policy).expect("schedule");
         let last_fold = schedule
             .steps
             .iter()
@@ -225,20 +232,19 @@ mod tests {
         let base = flat_policy();
         let mut explicit_default = flat_policy();
         explicit_default.witness_chunk = ChunkedWitnessCfg::default();
-        let a = find_schedule(key, &base, ring_challenge_config, fold_shape).expect("a");
-        let b =
-            find_schedule(key, &explicit_default, ring_challenge_config, fold_shape).expect("b");
+        let a = find_single_schedule(key, &base).expect("a");
+        let b = find_single_schedule(key, &explicit_default).expect("b");
         assert_eq!(a.total_bytes, b.total_bytes);
         assert_eq!(a.steps.len(), b.steps.len());
     }
 
     #[test]
-    fn all_multi_chunk_profiles_find_schedule_with_single_chunk_terminal() {
+    fn all_multi_chunk_profiles_use_single_chunk_terminal() {
         let key = PolynomialGroupLayout::new(24, 1);
         for profile in MultiChunkProfileId::ALL {
             let mut policy = flat_policy();
             policy.witness_chunk = profile.cfg();
-            let schedule = find_schedule(key, &policy, ring_challenge_config, fold_shape)
+            let schedule = find_single_schedule(key, &policy)
                 .unwrap_or_else(|err| panic!("profile {profile:?} must plan at nv=24: {err:?}"));
             let last_fold = schedule
                 .steps
@@ -257,14 +263,14 @@ mod tests {
     }
 
     #[test]
-    fn find_schedule_rejects_non_power_of_two_chunks() {
+    fn key_planner_rejects_non_power_of_two_chunks() {
         let mut policy = flat_policy();
         policy.witness_chunk = ChunkedWitnessCfg {
             num_chunks: 6,
             num_activated_levels: 2,
         };
         let key = PolynomialGroupLayout::new(20, 1);
-        let err = find_schedule(key, &policy, ring_challenge_config, fold_shape)
+        let err = find_single_schedule(key, &policy)
             .expect_err("non-power-of-two chunk count must be rejected");
         assert!(matches!(err, AkitaError::InvalidSetup(_)));
     }
@@ -306,8 +312,7 @@ mod tests {
     fn validate_generated_entry_accepts_materialized_dp_schedule() {
         let key = PolynomialGroupLayout::new(20, 1);
         let policy = flat_policy();
-        let schedule =
-            find_schedule(key, &policy, ring_challenge_config, fold_shape).expect("find schedule");
+        let schedule = find_single_schedule(key, &policy).expect("find schedule");
         let entry = generated_entry_from_steps(key, generated_steps_from_schedule(&schedule));
 
         validate_generated_schedule_entry(
@@ -324,8 +329,7 @@ mod tests {
     fn validate_generated_entry_rejects_overstated_b_rank() {
         let key = PolynomialGroupLayout::new(20, 1);
         let policy = flat_policy();
-        let schedule =
-            find_schedule(key, &policy, ring_challenge_config, fold_shape).expect("find schedule");
+        let schedule = find_single_schedule(key, &policy).expect("find schedule");
         let mut steps = generated_steps_from_schedule(&schedule);
         match steps
             .iter_mut()
@@ -356,8 +360,7 @@ mod tests {
     fn validate_generated_entry_rejects_overstated_a_rank() {
         let key = PolynomialGroupLayout::new(20, 1);
         let policy = flat_policy();
-        let schedule =
-            find_schedule(key, &policy, ring_challenge_config, fold_shape).expect("find schedule");
+        let schedule = find_single_schedule(key, &policy).expect("find schedule");
         let mut steps = generated_steps_from_schedule(&schedule);
         match steps
             .iter_mut()
@@ -388,8 +391,7 @@ mod tests {
     fn validate_generated_entry_rejects_understated_a_rank() {
         let key = PolynomialGroupLayout::new(20, 1);
         let policy = flat_policy();
-        let schedule =
-            find_schedule(key, &policy, ring_challenge_config, fold_shape).expect("find schedule");
+        let schedule = find_single_schedule(key, &policy).expect("find schedule");
         let mut steps = generated_steps_from_schedule(&schedule);
         match steps
             .iter_mut()
@@ -423,8 +425,7 @@ mod tests {
     fn resolve_schedule_rejects_corrupt_table_hit() {
         let key = PolynomialGroupLayout::new(20, 1);
         let policy = flat_policy();
-        let schedule =
-            find_schedule(key, &policy, ring_challenge_config, fold_shape).expect("find schedule");
+        let schedule = find_single_schedule(key, &policy).expect("find schedule");
         let mut steps = generated_steps_from_schedule(&schedule);
         match steps
             .iter_mut()
@@ -455,8 +456,7 @@ mod tests {
     fn walk_validate_matches_materialize_total_bytes() {
         let key = PolynomialGroupLayout::new(20, 1);
         let policy = flat_policy();
-        let schedule =
-            find_schedule(key, &policy, ring_challenge_config, fold_shape).expect("find schedule");
+        let schedule = find_single_schedule(key, &policy).expect("find schedule");
         let entry = generated_entry_from_steps(key, generated_steps_from_schedule(&schedule));
 
         let validated = estimate_proof_bytes(
@@ -484,7 +484,7 @@ mod tests {
         let policy = flat_policy();
         let pre = PrecommittedGroupParams::from_params(
             pre_key,
-            find_schedule(pre_key, &policy, ring_challenge_config, fold_shape)
+            find_single_schedule(pre_key, &policy)
                 .expect("precommit schedule")
                 .steps
                 .first()
