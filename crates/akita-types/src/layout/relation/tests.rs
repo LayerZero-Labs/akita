@@ -105,6 +105,21 @@ fn empty_compression_is_byte_order_identical_to_the_single_group_oracle() {
         1 + layout.row_plan.families[1].rows.len
     );
     assert!(layout.negative_binary_support.is_empty());
+    assert!(layout
+        .physical_negative_binary_support()
+        .unwrap()
+        .is_empty());
+    assert!(layout
+        .physical_compression_segment_span(RelationSegmentId::Z {
+            group: RelationGroupId::Current,
+        })
+        .is_err());
+    assert!(layout
+        .physical_compression_segment_span(RelationSegmentId::CompressionInput {
+            source: CompressionSourceId::CurrentOuter,
+            map: 0,
+        })
+        .is_err());
     let quotient_coeffs = layout.row_plan.trace_row
         * compute_num_digits_full_field(F::modulus_bits(), lp.log_basis)
         * d;
@@ -334,6 +349,25 @@ fn checked_compression_extends_rows_and_directly_augments_existing_sources() {
         semantic_cursor = segment.span().end().unwrap();
     }
     assert_eq!(semantic_cursor, layout.total_coeffs());
+    let logical_compression_base = base.total_coeffs();
+    let physical_compression_base =
+        layout.witness_layout(None).unwrap().ring_len().unwrap() * carrier_d;
+    for segment in layout.segments().iter().filter(|segment| {
+        matches!(
+            segment.id(),
+            RelationSegmentId::CompressionInput { .. }
+                | RelationSegmentId::CompressionQuotient { .. }
+        )
+    }) {
+        let physical = layout
+            .physical_compression_segment_span(segment.id())
+            .unwrap();
+        assert_eq!(physical.len(), segment.span().len());
+        assert_eq!(
+            physical.start(),
+            physical_compression_base + segment.span().start() - logical_compression_base
+        );
+    }
     let negative_xi = layout
         .segments()
         .iter()
@@ -355,6 +389,56 @@ fn checked_compression_extends_rows_and_directly_augments_existing_sources() {
             .unwrap()
             .as_slice()
     );
+    let physical_support = layout.physical_negative_binary_support().unwrap();
+    assert_eq!(
+        physical_support.len(),
+        layout.negative_binary_support().len()
+    );
+    for (physical, logical) in physical_support
+        .iter()
+        .zip(layout.negative_binary_support())
+    {
+        assert_eq!(physical.len(), logical.len());
+        assert_eq!(
+            physical.start(),
+            physical_compression_base + logical.start() - logical_compression_base
+        );
+    }
+    assert!(physical_support
+        .windows(2)
+        .all(|pair| pair[0].end().unwrap() < pair[1].start()));
+    let unpadded_physical_end = physical_compression_base + compression_coeffs;
+    assert!(physical_support
+        .iter()
+        .all(|span| span.end().unwrap() <= unpadded_physical_end));
+    assert!(unpadded_physical_end <= layout.physical_witness_field_coeff_len().unwrap());
+
+    let compression_id = layout
+        .segments()
+        .iter()
+        .find(|segment| matches!(segment.id(), RelationSegmentId::CompressionInput { .. }))
+        .unwrap()
+        .id();
+    let mut malformed = layout.clone();
+    malformed.total_coeffs = malformed.compression_witness_coeffs - 1;
+    assert!(malformed
+        .physical_compression_segment_span(compression_id)
+        .is_err());
+    let mut malformed_support = layout.clone();
+    malformed_support.negative_binary_support[0].start = 0;
+    assert!(malformed_support
+        .physical_negative_binary_support()
+        .is_err());
+    let mut zero_carrier = layout.clone();
+    zero_carrier.carrier_ring_dim = 0;
+    assert!(zero_carrier
+        .physical_compression_segment_span(compression_id)
+        .is_err());
+    let mut overflowing = layout.clone();
+    overflowing.carrier_ring_dim = usize::MAX;
+    assert!(overflowing
+        .physical_compression_segment_span(compression_id)
+        .is_err());
 }
 
 #[test]
@@ -396,6 +480,24 @@ fn terminal_standalone_sizes_f_geometry_without_a_d_base_quotient() {
     )));
     let base_coeffs = layout.witness_layout(None).unwrap().ring_len().unwrap() * 64;
     assert!(layout.physical_witness_field_coeff_len().unwrap() > base_coeffs);
+    for segment in layout.segments().iter().filter(|segment| {
+        matches!(
+            segment.id(),
+            RelationSegmentId::CompressionInput { .. }
+                | RelationSegmentId::CompressionQuotient { .. }
+        )
+    }) {
+        let physical = layout
+            .physical_compression_segment_span(segment.id())
+            .unwrap();
+        assert_eq!(physical.len(), segment.span().len());
+        assert!(physical.start() >= base_coeffs);
+    }
+    assert!(layout
+        .physical_negative_binary_support()
+        .unwrap()
+        .iter()
+        .all(|span| span.start() >= base_coeffs));
 }
 
 #[test]
@@ -494,4 +596,16 @@ fn multi_chunk_sizing_counts_replicated_base_storage() {
     let unpadded = base_physical_coeffs + layout.compression_witness_coeffs;
     let expected = unpadded.div_ceil(lp.ring_dimension) * lp.ring_dimension;
     assert_eq!(layout.physical_witness_field_coeff_len().unwrap(), expected);
+    let first_compression = layout
+        .segments()
+        .iter()
+        .find(|segment| matches!(segment.id(), RelationSegmentId::CompressionInput { .. }))
+        .unwrap();
+    assert_eq!(
+        layout
+            .physical_compression_segment_span(first_compression.id())
+            .unwrap()
+            .start(),
+        base_physical_coeffs
+    );
 }

@@ -415,9 +415,10 @@ impl RelationLayout {
     /// This is the sole physical *length* authority. Semantic segments and
     /// negative-binary support remain in the logical coordinates exposed by
     /// [`Self::segments`], [`Self::total_coeffs`], and
-    /// [`Self::negative_binary_support`]. Translating those semantic spans into
-    /// physical witness coordinates belongs to the witness-emission and sparse-
-    /// provider slice. Carrier padding creates no semantic relation cells.
+    /// [`Self::negative_binary_support`]. Consumers that address physical
+    /// compression storage must use [`Self::physical_compression_segment_span`]
+    /// or [`Self::physical_negative_binary_support`]. Carrier padding creates
+    /// no semantic relation cells.
     ///
     /// # Errors
     ///
@@ -453,6 +454,105 @@ impl RelationLayout {
             })?;
         rings.checked_mul(carrier_ring_dim).ok_or_else(|| {
             AkitaError::InvalidSetup("relation padded witness field coefficient overflow".into())
+        })
+    }
+
+    /// Resolve a compression segment into physical successor-witness field
+    /// coefficient coordinates.
+    ///
+    /// Logical compression segments begin after every logical base segment.
+    /// Physical compression storage instead begins after the existing physical
+    /// base [`WitnessLayout`]. This method performs that checked base shift while
+    /// preserving the segment's field-coefficient length. Final carrier padding
+    /// is never part of a returned span.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AkitaError::InvalidSetup`] when `id` is not a compression
+    /// input/quotient, is absent, lies outside the compiled compression suffix,
+    /// or the physical projection overflows `usize`.
+    pub fn physical_compression_segment_span(
+        &self,
+        id: RelationSegmentId,
+    ) -> Result<CoeffSpan, AkitaError> {
+        if !matches!(
+            id,
+            RelationSegmentId::CompressionInput { .. }
+                | RelationSegmentId::CompressionQuotient { .. }
+        ) {
+            return Err(AkitaError::InvalidSetup(
+                "physical compression projection requires a compression segment".into(),
+            ));
+        }
+        let span = self.segment(id)?.span;
+        self.project_compression_span(span)
+    }
+
+    /// Negative-binary support in physical successor-witness field-coefficient
+    /// coordinates.
+    ///
+    /// This translates the compiler-normalized logical support without
+    /// expanding it. Sorted, disjoint runs remain sorted and disjoint; quotient
+    /// segments and final carrier padding remain excluded.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AkitaError::InvalidSetup`] when compiled support is outside the
+    /// compression suffix or a physical projection overflows `usize`.
+    pub fn physical_negative_binary_support(&self) -> Result<Vec<CoeffSpan>, AkitaError> {
+        self.negative_binary_support
+            .iter()
+            .copied()
+            .map(|span| self.project_compression_span(span))
+            .collect()
+    }
+
+    fn compression_bases(&self) -> Result<(usize, usize), AkitaError> {
+        if self.carrier_ring_dim == 0 {
+            return Err(AkitaError::InvalidSetup(
+                "relation physical compression carrier dimension must be non-zero".into(),
+            ));
+        }
+        let logical = self
+            .total_coeffs
+            .checked_sub(self.compression_witness_coeffs)
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup(
+                    "relation compression length exceeds logical coefficient arena".into(),
+                )
+            })?;
+        let physical = self
+            .witness_layout
+            .ring_len()?
+            .checked_mul(self.carrier_ring_dim)
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup(
+                    "relation physical compression base coefficient overflow".into(),
+                )
+            })?;
+        Ok((logical, physical))
+    }
+
+    fn project_compression_span(&self, span: CoeffSpan) -> Result<CoeffSpan, AkitaError> {
+        let (logical_base, physical_base) = self.compression_bases()?;
+        let logical_end = span.end()?;
+        if span.start < logical_base || logical_end > self.total_coeffs {
+            return Err(AkitaError::InvalidSetup(
+                "relation span is outside the logical compression suffix".into(),
+            ));
+        }
+        let local_start = span.start.checked_sub(logical_base).ok_or_else(|| {
+            AkitaError::InvalidSetup("relation compression-local offset underflow".into())
+        })?;
+        let start = physical_base.checked_add(local_start).ok_or_else(|| {
+            AkitaError::InvalidSetup("relation physical compression span overflow".into())
+        })?;
+        start.checked_add(span.len).ok_or_else(|| {
+            AkitaError::InvalidSetup("relation physical compression span overflow".into())
+        })?;
+        Ok(CoeffSpan {
+            start,
+            len: span.len,
         })
     }
 
