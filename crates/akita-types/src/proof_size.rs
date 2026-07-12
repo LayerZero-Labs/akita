@@ -149,7 +149,7 @@ mod tests {
     use akita_sumcheck::{CompressedUniPoly, EqFactoredSumcheckProof, SumcheckProof};
 
     use crate::golomb_rice::golomb_rice_encode_vec;
-    use crate::proof::{segment_typed_witness_shape, SegmentTypedWitness};
+    use crate::proof::{segment_typed_witness_shape_from_groups, SegmentTypedWitness};
     use crate::tail_golomb_rice_z_params;
     use crate::{
         direct_witness_bytes, AkitaIntermediateStage2Proof, AkitaLevelProof, AkitaStage1Proof,
@@ -164,22 +164,28 @@ mod tests {
         num_claims: usize,
     ) -> (CleartextWitnessProof<F>, CleartextWitnessShape) {
         let field_bits = F::modulus_bits();
-        let shape = segment_typed_witness_shape(lp, field_bits, num_claims, num_claims, 1, 1)
-            .expect("segment-typed witness shape");
+        let shape = segment_typed_witness_shape_from_groups(
+            lp,
+            field_bits,
+            [(lp as &dyn crate::LevelParamsLike, num_claims, num_claims, 1)],
+            1,
+        )
+        .expect("segment-typed witness shape");
         let CleartextWitnessShape::SegmentTyped(ref segment_shape) = shape else {
             panic!("expected segment-typed witness shape");
         };
-        let layout = segment_shape.layout;
+        let layout = segment_shape.layout.clone();
+        let group = layout.groups[0];
         let (rice_low_bits, zigzag_w) =
             tail_golomb_rice_z_params(lp, num_claims).expect("golomb z params");
         let z_payload =
-            golomb_rice_encode_vec(&vec![0i64; layout.z_coords], rice_low_bits, zigzag_w)
+            golomb_rice_encode_vec(&vec![0i64; group.z_coords], rice_low_bits, zigzag_w)
                 .expect("encode zero z segment");
         let witness = SegmentTypedWitness {
-            layout,
-            z_payload,
-            e_fields: RingVec::from_coeffs(vec![F::zero(); layout.e_field_elems]),
-            t_fields: RingVec::from_coeffs(vec![F::zero(); layout.t_field_elems]),
+            layout: layout.clone(),
+            z_payloads: vec![z_payload],
+            e_fields: RingVec::from_coeffs(vec![F::zero(); group.e_field_elems]),
+            t_fields: RingVec::from_coeffs(vec![F::zero(); group.t_field_elems]),
             r_fields: RingVec::from_coeffs(vec![F::zero(); layout.r_field_elems]),
         };
         (CleartextWitnessProof::SegmentTyped(witness), shape)

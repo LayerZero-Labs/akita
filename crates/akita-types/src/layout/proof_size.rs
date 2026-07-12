@@ -33,7 +33,7 @@ pub fn direct_witness_bytes(field_bits: u32, shape: &CleartextWitnessShape) -> u
             crate::proof::segment_typed_witness_upper_bound_bytes(
                 field_bits,
                 &segment_shape.layout,
-                segment_shape.z_payload_bytes,
+                segment_shape.layout.z_payload_bytes(),
             )
         }
     }

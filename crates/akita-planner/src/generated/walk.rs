@@ -11,7 +11,7 @@ use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::AkitaError;
 use akita_types::{
     direct_witness_bytes, extension_opening_reduction_level_bytes, level_proof_bytes,
-    segment_typed_witness_shape, w_ring_element_count_for_chunks,
+    segment_typed_witness_shape_from_groups, w_ring_element_count_for_chunks,
     w_ring_element_count_with_counts_for_layout_bits, AkitaScheduleInputs, AkitaScheduleLookupKey,
     CleartextWitnessShape, DirectStep, FoldStep, LevelParams, PolynomialGroupLayout,
     PrecommittedLevelParams, RelationMatrixRowLayout, Schedule, Step,
@@ -192,6 +192,13 @@ fn walk_scalar_generated_schedule_entry(
             }
             GeneratedStep::Direct(direct) => {
                 let (witness_shape, direct_current_w_len, params) = if fold_level == 0 {
+                    let direct_w_len = expected_root_w_len
+                        .checked_mul(key.num_polynomials())
+                        .ok_or_else(|| {
+                            AkitaError::InvalidSetup(
+                                "generated root-direct witness length overflow".to_string(),
+                            )
+                        })?;
                     let params = direct
                         .commit
                         .map(|commit| {
@@ -208,8 +215,8 @@ fn walk_scalar_generated_schedule_entry(
                         })
                         .transpose()?;
                     (
-                        CleartextWitnessShape::FieldElements(expected_root_w_len),
-                        expected_root_w_len,
+                        CleartextWitnessShape::FieldElements(direct_w_len),
+                        direct_w_len,
                         params,
                     )
                 } else {
@@ -240,12 +247,15 @@ fn walk_scalar_generated_schedule_entry(
                                 .to_string(),
                         ));
                     }
-                    let witness_shape = segment_typed_witness_shape(
+                    let witness_shape = segment_typed_witness_shape_from_groups(
                         terminal_lp,
                         field_bits,
-                        num_polynomials,
-                        num_polynomials,
-                        1,
+                        [(
+                            terminal_lp as &dyn akita_types::LevelParamsLike,
+                            num_polynomials,
+                            num_polynomials,
+                            1,
+                        )],
                         1,
                     )?;
                     (witness_shape, len, None)
@@ -324,11 +334,6 @@ fn walk_multi_group_generated_schedule_entry(
                     ))
                 })?;
                 let is_terminal = matches!(next, GeneratedStep::Direct(_));
-                if fold_level == 0 && is_terminal {
-                    return Err(AkitaError::InvalidSetup(
-                        "multi-group terminal root folds are not supported yet".to_string(),
-                    ));
-                }
                 let inputs = AkitaScheduleInputs {
                     num_vars: key.final_group.num_vars(),
                     level: fold_level,
@@ -364,14 +369,23 @@ fn walk_multi_group_generated_schedule_entry(
                 };
 
                 let (next_w_len, next_lp, layout) = if is_terminal {
-                    let ring = w_ring_element_count_with_counts_for_layout_bits(
-                        field_bits,
-                        &lp,
-                        1,
-                        1,
-                        RelationMatrixRowLayout::WithoutDBlock,
-                    )?;
-                    let len = checked_ring_field_len(ring, lp.ring_dimension)?;
+                    let len = if fold_level == 0 {
+                        multi_group_root_next_w_len(
+                            field_bits,
+                            &lp,
+                            key.final_group.num_polynomials(),
+                            RelationMatrixRowLayout::WithoutDBlock,
+                        )?
+                    } else {
+                        let ring = w_ring_element_count_with_counts_for_layout_bits(
+                            field_bits,
+                            &lp,
+                            1,
+                            1,
+                            RelationMatrixRowLayout::WithoutDBlock,
+                        )?;
+                        checked_ring_field_len(ring, lp.ring_dimension)?
+                    };
                     terminal_witness_field_len = Some(len);
                     (len, None, RelationMatrixRowLayout::WithoutDBlock)
                 } else {
@@ -495,8 +509,37 @@ fn walk_multi_group_generated_schedule_entry(
                             "terminal direct step missing predecessor fold params".to_string(),
                         )
                     })?;
-                    let witness_shape =
-                        segment_typed_witness_shape(terminal_lp, field_bits, 1, 1, 1, 1)?;
+                    let witness_shape = if fold_level == 1 && terminal_lp.has_precommitted_groups()
+                    {
+                        let opening_batch = key.opening_layout()?;
+                        let order = opening_batch.root_group_order()?;
+                        let mut group_shapes: Vec<(
+                            &dyn akita_types::LevelParamsLike,
+                            usize,
+                            usize,
+                            usize,
+                        )> = Vec::with_capacity(order.len());
+                        for &group_index in &order {
+                            let group_lp =
+                                terminal_lp.root_group_params(&opening_batch, group_index)?;
+                            let group_polys =
+                                opening_batch.group_layout(group_index)?.num_polynomials();
+                            group_shapes.push((group_lp, group_polys, group_polys, 1));
+                        }
+                        segment_typed_witness_shape_from_groups(
+                            terminal_lp,
+                            field_bits,
+                            group_shapes,
+                            opening_batch.num_groups(),
+                        )?
+                    } else {
+                        segment_typed_witness_shape_from_groups(
+                            terminal_lp,
+                            field_bits,
+                            [(terminal_lp as &dyn akita_types::LevelParamsLike, 1, 1, 1)],
+                            1,
+                        )?
+                    };
                     (witness_shape, len, None)
                 };
                 if direct_current_w_len == 0 {

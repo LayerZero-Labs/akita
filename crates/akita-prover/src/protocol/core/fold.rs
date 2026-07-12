@@ -9,10 +9,11 @@ use akita_field::unreduced::ReduceTo;
 use akita_field::AdditiveGroup;
 
 use crate::protocol::ring_switch::RingSwitchTerminalArtifacts;
-use akita_types::build_segment_typed_witness;
+use akita_types::build_segment_typed_witness_from_groups;
 use akita_types::dispatch_for_field;
-use akita_types::validate_segment_typed_z_payload;
 use akita_types::CleartextWitnessShape;
+use akita_types::OpeningClaimsLayout;
+use akita_types::SegmentTypedWitnessGroupParts;
 
 fn trace_layout_for_instance<F: FieldCore + CanonicalField>(
     lp: &LevelParams,
@@ -542,6 +543,7 @@ where
         },
         build_output.terminal_artifacts,
         terminal_direct_witness_shape,
+        prepared_fold.instance.opening_batch(),
     )?;
     let relation_matrix_row_layout = if is_terminal_fold {
         RelationMatrixRowLayout::WithoutDBlock
@@ -773,6 +775,7 @@ pub(in crate::protocol::core) fn bind_next_witness_for_ring_switch<F, T>(
     final_log_basis: Option<u32>,
     terminal_artifacts: Option<RingSwitchTerminalArtifacts<F>>,
     terminal_direct_witness_shape: Option<&CleartextWitnessShape>,
+    opening_batch: &OpeningClaimsLayout,
 ) -> Result<BoundNextWitness<F>, AkitaError>
 where
     F: FieldCore + CanonicalField + HalvingField + AkitaSerialize,
@@ -794,31 +797,42 @@ where
                     "terminal fold expected segment-typed witness shape".to_string(),
                 ));
             };
-            let (num_w_vectors, num_t_vectors, num_z_segments) =
-                akita_types::tail_segment_multiplicities_from_layout(lp, &scheduled_shape.layout)?;
-            let segment = build_segment_typed_witness::<F>(
+            let group_parts = artifacts
+                .groups
+                .iter()
+                .enumerate()
+                .map(|(layout_index, group)| {
+                    let params = lp.root_group_params(opening_batch, group.group_index)?;
+                    let (num_w_vectors, num_t_vectors, num_z_segments) =
+                        akita_types::tail_segment_multiplicities_from_layout_for_params(
+                            params,
+                            lp.ring_dimension,
+                            &scheduled_shape.layout,
+                            layout_index,
+                        )?;
+                    Ok(SegmentTypedWitnessGroupParts {
+                        params,
+                        num_w_vectors,
+                        num_t_vectors,
+                        num_z_segments,
+                        e_folded: &group.e_folded,
+                        recomposed_inner_rows: &group.recomposed_inner_rows,
+                        z_folded_centered_flat: group.z_folded_centered_flat(),
+                    })
+                })
+                .collect::<Result<Vec<_>, AkitaError>>()?;
+            let segment = build_segment_typed_witness_from_groups::<F>(
                 artifacts.ring_dim(),
-                &artifacts.e_folded,
-                &artifacts.recomposed_inner_rows,
-                artifacts.z_folded_centered_flat(),
+                &group_parts,
                 &artifacts.r,
                 lp,
-                num_w_vectors,
-                num_t_vectors,
-                num_z_segments,
-                1,
+                opening_batch.num_groups(),
             )?;
             if segment.layout != scheduled_shape.layout {
                 return Err(AkitaError::InvalidSetup(
                     "segment-typed witness layout does not match schedule".to_string(),
                 ));
             }
-            validate_segment_typed_z_payload(
-                &segment,
-                lp,
-                num_t_vectors,
-                scheduled_shape.z_payload_bytes,
-            )?;
             let parts = segment.terminal_transcript_parts()?;
             transcript.absorb_and_record_bytes(ABSORB_TERMINAL_W_REMAINDER, &parts.remainder);
             return Ok((None, Some(CleartextWitnessProof::SegmentTyped(segment))));

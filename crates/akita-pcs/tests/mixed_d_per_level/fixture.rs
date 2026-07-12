@@ -15,7 +15,7 @@ use akita_types::sis::{
     rounded_up_role_a_inf_norm, SisTableKey,
 };
 use akita_types::{
-    direct_witness_bytes, level_proof_bytes, segment_typed_witness_shape,
+    direct_witness_bytes, level_proof_bytes, segment_typed_witness_shape_from_groups,
     w_ring_element_count_with_counts_for_layout_bits, AjtaiKeyParams, AkitaScheduleInputs,
     AkitaScheduleLookupKey, CommitmentRingDims, DecompositionParams, DirectStep, FoldStep,
     LevelParams, PolynomialGroupLayout, RelationMatrixRowLayout, Schedule, Step,
@@ -497,12 +497,15 @@ where
         } else {
             1
         };
-        let witness_shape = segment_typed_witness_shape(
+        let witness_shape = segment_typed_witness_shape_from_groups(
             terminal_lp,
             field_bits,
-            terminal_num_polynomials,
-            terminal_num_polynomials,
-            1,
+            [(
+                terminal_lp as &dyn akita_types::LevelParamsLike,
+                terminal_num_polynomials,
+                terminal_num_polynomials,
+                1,
+            )],
             1,
         )?;
         let direct_bytes = direct_witness_bytes(field_bits, &witness_shape);

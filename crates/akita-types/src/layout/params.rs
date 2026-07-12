@@ -554,6 +554,30 @@ impl LevelParams {
         Ok(decomposed_fold_digits)
     }
 
+    /// Honest-prover per-coefficient folded-response cap for a root group using
+    /// group-local geometry and the root level's shared challenge/cap policy.
+    pub fn fold_witness_linf_cap_for_params(
+        &self,
+        params: &(impl LevelParamsLike + ?Sized),
+        num_claims: usize,
+        field_bits: u32,
+    ) -> Result<u128, AkitaError> {
+        let challenge = crate::sis::FoldChallengeNorms::new(
+            &self.fold_challenge_config,
+            self.fold_challenge_shape,
+        );
+        let (_decomposed_fold_digits, inf_norm_bound) = crate::sis::fold_witness_digit_plan(
+            params.r_vars(),
+            num_claims,
+            field_bits,
+            params.log_basis(),
+            challenge,
+            self.fold_witness_norms_for_params(params),
+            &self.fold_linf_cap_config,
+        )?;
+        Ok(inf_norm_bound)
+    }
+
     /// Set the one-hot chunk size `K`, returning the updated params.
     #[inline]
     #[must_use]

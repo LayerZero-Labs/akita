@@ -331,6 +331,7 @@ fn verify_stage2<F, E, T>(
     relation_claim: E,
     lp: &LevelParams,
     num_segments: usize,
+    opening_batch: &OpeningClaimsLayout,
     setup_claim: Option<E>,
     trace: Option<TraceWireAtRoleA<'_, F, E>>,
 ) -> Result<Vec<E>, AkitaError>
@@ -340,9 +341,13 @@ where
     T: Transcript<F>,
 {
     let witness_oracle = match stage2 {
-        AkitaStage2Proof::Terminal(proof) => {
-            stage2_cleartext_oracle::<F, E>(&proof.final_witness, physical_w_len, lp, num_segments)?
-        }
+        AkitaStage2Proof::Terminal(proof) => stage2_cleartext_oracle::<F, E>(
+            &proof.final_witness,
+            physical_w_len,
+            lp,
+            num_segments,
+            opening_batch,
+        )?,
         AkitaStage2Proof::Intermediate(proof) => Stage2WitnessOracle::ClaimedEval {
             eval: proof.next_w_eval(),
         },
@@ -845,6 +850,7 @@ where
         relation_claim,
         prepared.lp,
         num_groups,
+        relation_instance.opening_batch(),
         setup_claim,
         trace_wire,
     )?;

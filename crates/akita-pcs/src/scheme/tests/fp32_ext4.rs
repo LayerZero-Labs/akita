@@ -213,12 +213,15 @@ impl CommitmentConfig for Fp32RingSubfieldRootFoldCfg {
             akita_types::RelationMatrixRowLayout::WithoutDBlock,
         )?;
         let next_w_len = w_ring * Self::D;
-        let witness_shape = akita_types::segment_typed_witness_shape(
+        let witness_shape = akita_types::segment_typed_witness_shape_from_groups(
             &lp,
             Self::Field::modulus_bits(),
-            opening_batch.num_total_polynomials(),
-            opening_batch.num_total_polynomials(),
-            1,
+            [(
+                &lp as &dyn akita_types::LevelParamsLike,
+                opening_batch.num_total_polynomials(),
+                opening_batch.num_total_polynomials(),
+                1,
+            )],
             1,
         )?;
         let direct_bytes =
@@ -311,12 +314,15 @@ impl CommitmentConfig for Fp32RingSubfieldOuterFallbackCfg {
             akita_types::RelationMatrixRowLayout::WithoutDBlock,
         )?;
         let next_w_len = w_ring * Self::D;
-        let witness_shape = akita_types::segment_typed_witness_shape(
+        let witness_shape = akita_types::segment_typed_witness_shape_from_groups(
             &lp,
             Self::Field::modulus_bits(),
-            opening_batch.num_total_polynomials(),
-            opening_batch.num_total_polynomials(),
-            1,
+            [(
+                &lp as &dyn akita_types::LevelParamsLike,
+                opening_batch.num_total_polynomials(),
+                opening_batch.num_total_polynomials(),
+                1,
+            )],
             1,
         )?;
         let direct_bytes =

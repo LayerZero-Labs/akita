@@ -671,10 +671,16 @@ impl RingRelationProver {
         let flattened_hint = flatten_commitment_hints_for_ring_relation::<F>(hints, &group_sizes)?;
         let opening_backend = opening_ctx.backend();
 
-        // Concatenated folded `e` rows in claim order (flat A-role storage).
+        // Concatenated folded `e` rows in the same order as the terminal witness.
+        let e_folded_order = if lp.has_precommitted_groups() {
+            opening_batch.root_group_order()?
+        } else {
+            (0..group_e_folded.len()).collect()
+        };
         let e_folded = RingVec::from_coeffs(
-            group_e_folded
-                .iter()
+            e_folded_order
+                .into_iter()
+                .map(|group_index| &group_e_folded[group_index])
                 .flat_map(|block| block.coeffs().iter().copied())
                 .collect(),
         );

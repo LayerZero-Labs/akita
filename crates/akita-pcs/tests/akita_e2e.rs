@@ -1364,7 +1364,7 @@ fn batched_onehot_same_point_rejects_tampered_root_stage1_s_claim() {
                     .expect("terminal root proof must carry terminal stage-2 proof")
                 {
                     akita_types::CleartextWitnessProof::SegmentTyped(segment) => {
-                        segment.z_payload[0] ^= 1;
+                        segment.z_payloads[0][0] ^= 1;
                     }
                     akita_types::CleartextWitnessProof::FieldElements(_) => {
                         panic!("expected segment-typed final witness for tamper test");

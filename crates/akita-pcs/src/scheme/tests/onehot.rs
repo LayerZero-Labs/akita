@@ -410,14 +410,16 @@ fn multi_group_root_round_trip_onehot(
         setup_contribution_mode,
     )
     .expect("multi-group prove");
-    assert!(matches!(
+    assert!(!matches!(
         proof.root,
-        akita_types::AkitaBatchedRootProof::Fold(_)
+        akita_types::AkitaBatchedRootProof::ZeroFold { .. }
     ));
-    assert!(
-        !proof.steps.is_empty(),
-        "multi-group root must hand off to a suffix"
-    );
+    if matches!(proof.root, akita_types::AkitaBatchedRootProof::Fold(_)) {
+        assert!(
+            !proof.steps.is_empty(),
+            "intermediate multi-group root must hand off to a suffix"
+        );
+    }
 
     let shape = proof.shape();
     let mut bytes = Vec::new();
@@ -561,15 +563,16 @@ fn multi_group_root_folded_two_group_onehot_round_trips() {
         akita_types::SetupContributionMode::Direct,
     )
     .expect("multi-group prove");
-    assert!(matches!(
+    assert!(!matches!(
         proof.root,
-        akita_types::AkitaBatchedRootProof::Fold(_)
+        akita_types::AkitaBatchedRootProof::ZeroFold { .. }
     ));
-    // The multi-group root folds into a singleton recursive suffix.
-    assert!(
-        !proof.steps.is_empty(),
-        "multi-group root must hand off to a suffix"
-    );
+    if matches!(proof.root, akita_types::AkitaBatchedRootProof::Fold(_)) {
+        assert!(
+            !proof.steps.is_empty(),
+            "intermediate multi-group root must hand off to a suffix"
+        );
+    }
 
     let shape = proof.shape();
     let mut bytes = Vec::new();
@@ -774,14 +777,16 @@ fn multi_group_root_folded_three_group_onehot_round_trips() {
         akita_types::SetupContributionMode::Direct,
     )
     .expect("multi-group prove");
-    assert!(matches!(
+    assert!(!matches!(
         proof.root,
-        akita_types::AkitaBatchedRootProof::Fold(_)
+        akita_types::AkitaBatchedRootProof::ZeroFold { .. }
     ));
-    assert!(
-        !proof.steps.is_empty(),
-        "multi-group root must hand off to a suffix"
-    );
+    if matches!(proof.root, akita_types::AkitaBatchedRootProof::Fold(_)) {
+        assert!(
+            !proof.steps.is_empty(),
+            "intermediate multi-group root must hand off to a suffix"
+        );
+    }
 
     let shape = proof.shape();
     let mut bytes = Vec::new();

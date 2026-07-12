@@ -165,8 +165,9 @@ where
         return 0;
     };
     scheduled
-        .z_payload_bytes
-        .saturating_sub(witness.z_payload.len())
+        .layout
+        .z_payload_bytes()
+        .saturating_sub(witness.z_payloads.iter().map(Vec::len).sum::<usize>())
 }
 
 /// Check the runtime proof size against a planner estimate, tolerating the

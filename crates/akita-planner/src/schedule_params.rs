@@ -1,15 +1,15 @@
-//! Schedule planner that finds the global minimum proof size.
+//! Single-group schedule planner that finds the global minimum proof size.
 //!
-//! Public entry: [`find_schedule`]. The search is `Cfg`-free: every
+//! Internal entry: `find_single_group_schedule`. The search is `Cfg`-free: every
 //! per-preset input is carried by the plain-value [`PlannerPolicy`] plus
 //! the `ring_challenge_config` / `fold_challenge_shape_at_level` closures,
 //! exactly the shape `crate::schedule_from_entry` already consumes. This keeps the
 //! DP a pure function of `(policy, key)` so `akita-config` can call it
-//! directly on a schedule-table miss without a dependency cycle.
+//! through the key-shaped planner on a schedule-table miss without a dependency cycle.
 
 use std::collections::{BTreeMap, HashMap};
 
-use akita_challenges::TensorChallengeShape;
+use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::AkitaError;
 use akita_types::layout::digit_math::optimal_m_r_split;
 use akita_types::sis::{
@@ -20,9 +20,10 @@ use akita_types::sis::{
 };
 use akita_types::{
     direct_witness_bytes, extension_opening_reduction_level_bytes, level_proof_bytes,
-    segment_typed_witness_shape, w_ring_element_count_for_chunks, AkitaScheduleInputs,
+    segment_typed_witness_shape_from_groups, w_ring_element_count_for_chunks, AkitaScheduleInputs,
     ChunkedWitnessCfg, CleartextWitnessShape, CommitmentRingDims, DecompositionParams, DirectStep,
-    FoldStep, LevelParams, PolynomialGroupLayout, RelationMatrixRowLayout, Schedule, Step,
+    FoldStep, LevelParams, PolynomialGroupLayout, PrecommittedLevelParams, RelationMatrixRowLayout,
+    Schedule, Step,
 };
 
 use crate::PlannerPolicy;
@@ -72,7 +73,7 @@ const MAX_RECURSION_DEPTH: usize = 12;
 
 /// Compute parameters that generate the smallest witness for the next
 /// fold level. Note that this is not the optimum case: in the optimum
-/// case (similar to `find_schedule`), we should check that current proof
+/// case (similar to the root search), we should check that current proof
 /// size + suffix cost is the smallest. However, as time blows up, we
 /// don't do that here.
 fn derive_candidate_level_params(
@@ -303,12 +304,15 @@ fn make_terminal_direct_step(
             "terminal-direct witness does not support a multi-chunk last fold level".to_string(),
         ));
     }
-    let witness_shape = segment_typed_witness_shape(
+    let witness_shape = segment_typed_witness_shape_from_groups(
         terminal_lp,
         field_bits,
-        num_polynomials,
-        num_polynomials,
-        1,
+        [(
+            terminal_lp as &dyn akita_types::LevelParamsLike,
+            num_polynomials,
+            num_polynomials,
+            1,
+        )],
         1,
     )?;
     let direct_bytes = direct_witness_bytes(field_bits, &witness_shape);
@@ -375,6 +379,134 @@ pub(crate) struct SuffixCtx<'a> {
     pub(crate) ring_challenge_config: RingChallengeConfigFn<'a>,
     pub(crate) num_vars: usize,
     pub(crate) key: PolynomialGroupLayout,
+}
+
+/// Shared inputs for root-level `LevelParams` candidates.
+pub(crate) struct RootLevelCandidateCtx<'a> {
+    pub(crate) policy: &'a PlannerPolicy,
+    pub(crate) ring_challenge_cfg: &'a SparseChallengeConfig,
+    pub(crate) fold_challenge_shape: TensorChallengeShape,
+    pub(crate) precommitted_d_width: usize,
+    pub(crate) precommitted_groups: &'a [PrecommittedLevelParams],
+    pub(crate) witness_chunk: ChunkedWitnessCfg,
+}
+
+/// Build root-level params for either a scalar root or a grouped root.
+///
+/// The scalar case passes no precommitted groups and zero extra D width. A
+/// grouped root passes the precommitted D segments and stores their layouts in
+/// the resulting params; the A/B sizing for the live root group is otherwise
+/// identical.
+pub(crate) fn root_level_params_candidate(
+    ctx: &RootLevelCandidateCtx<'_>,
+    num_polynomials: usize,
+    log_basis: u32,
+    m_vars: usize,
+    r_vars: usize,
+) -> Result<Option<LevelParams>, AkitaError> {
+    let policy = ctx.policy;
+    let d = policy.ring_dimension;
+    let family = policy.sis_family;
+    let decomp = policy.decomposition;
+    let level_decomp = DecompositionParams {
+        log_basis,
+        ..decomp
+    };
+    let num_digits_commit = num_digits_s_commit(level_decomp, true);
+    let num_digits_open = num_digits_open(level_decomp);
+    let Some(num_blocks) = 1usize.checked_shl(r_vars as u32) else {
+        return Ok(None);
+    };
+    let Some(block_len) = 1usize.checked_shl(m_vars as u32) else {
+        return Ok(None);
+    };
+
+    let Some(width_s) = decomposed_s_block_ring_count(block_len, num_digits_commit) else {
+        return Ok(None);
+    };
+    let Some(norm_s) = rounded_up_role_a_inf_norm(
+        policy.min_sis_security_bits,
+        family,
+        d,
+        level_decomp,
+        ctx.ring_challenge_cfg,
+        ctx.fold_challenge_shape,
+        true,
+        policy.onehot_chunk_size,
+        policy.ring_subfield_norm_bound,
+        r_vars,
+        num_polynomials,
+        width_s as u64,
+    ) else {
+        return Ok(None);
+    };
+    let Ok(a_key) = AjtaiKeyParams::try_new_with_min_rank(sis_key(policy, norm_s), width_s) else {
+        return Ok(None);
+    };
+    let n_a = a_key.row_len();
+
+    let Some(norm_t) =
+        rounded_up_collision_inf_norm(policy.min_sis_security_bits, family, d, log_basis)
+    else {
+        return Ok(None);
+    };
+    let Some(width_t) = decomposed_t_ring_count(n_a, num_digits_open, num_blocks, num_polynomials)
+    else {
+        return Ok(None);
+    };
+    let Ok(b_key) = AjtaiKeyParams::try_new_with_min_rank(sis_key(policy, norm_t), width_t) else {
+        return Ok(None);
+    };
+
+    let Some(norm_w) =
+        rounded_up_collision_inf_norm(policy.min_sis_security_bits, family, d, log_basis)
+    else {
+        return Ok(None);
+    };
+    let Some(main_d_width) = decomposed_w_ring_count(num_digits_open, num_blocks, num_polynomials)
+    else {
+        return Ok(None);
+    };
+    let d_width = main_d_width
+        .checked_add(ctx.precommitted_d_width)
+        .ok_or_else(|| AkitaError::InvalidSetup("root D width overflow".to_string()))?;
+    let Ok(d_key) = AjtaiKeyParams::try_new_with_min_rank(sis_key(policy, norm_w), d_width) else {
+        return Ok(None);
+    };
+
+    let onehot_chunk_size = if decomp.log_commit_bound == 1 {
+        policy.onehot_chunk_size
+    } else {
+        0
+    };
+    let mut params = LevelParams {
+        ring_dimension: d,
+        log_basis,
+        a_key,
+        b_key,
+        d_key,
+        num_blocks,
+        block_len,
+        m_vars,
+        r_vars,
+        fold_challenge_config: *ctx.ring_challenge_cfg,
+        fold_challenge_shape: ctx.fold_challenge_shape,
+        num_digits_commit,
+        num_digits_open,
+        onehot_chunk_size,
+        fold_linf_cap_config: FoldWitnessLinfCapConfig::worst_case_beta_only(),
+        num_digits_fold_one: 1,
+        field_bits_hint: 0,
+        cached_num_digits_fold_claims: 0,
+        cached_num_digits_fold_value: 1,
+        witness_chunk: ctx.witness_chunk,
+        precommitted_groups: ctx.precommitted_groups.to_vec(),
+        role_dims: CommitmentRingDims::uniform(d),
+    }
+    .with_fold_linf_cap_config(decomp.field_bits(), num_polynomials)?;
+
+    params.stamp_role_dims_from_keys();
+    Ok(Some(params))
 }
 
 /// Suffix DP for the optimal recursive schedule at
@@ -604,15 +736,6 @@ fn compute_root_direct_level_params(
     let decomp = policy.decomposition;
     let alpha = (d as u32).trailing_zeros() as usize;
 
-    let level_decomp = DecompositionParams {
-        log_basis,
-        ..decomp
-    };
-    // Root-direct commits against `log_commit_bound` (the root form of
-    // `num_digits_s_commit`) and opens at `log_open_bound`.
-    let depth_commit = num_digits_s_commit(level_decomp, true);
-    let depth_open = num_digits_open(level_decomp);
-
     // Outer/inner variable split: brute-force the optimum for a normal root,
     // single-block `(0, 0)` for a tiny root (`num_vars <= log2(d)`). The
     // optimizer recomputes the fold-priced A collision per `r` internally
@@ -649,103 +772,24 @@ fn compute_root_direct_level_params(
         (0, 0)
     };
 
-    let Some(num_blocks) = 1usize.checked_shl(r_vars as u32) else {
-        return Ok(None);
-    };
-    let Some(block_len) = 1usize.checked_shl(m_vars as u32) else {
-        return Ok(None);
-    };
-
-    // The A/B/D keys, composed from the `akita_types::sis` primitives:
-    // norm -> width -> tight SIS-secure rank -> key. `t_vectors = num_claims`
-    // folds the batched-root scaling into the B/D widths (the root commits
-    // `num_claims` polynomials) — no separate per-claim-then-scale pass.
-    let Some(width_s) = decomposed_s_block_ring_count(block_len, depth_commit) else {
-        return Ok(None);
-    };
-    let Some(norm_s) = rounded_up_role_a_inf_norm(
-        policy.min_sis_security_bits,
-        sis_family,
-        d,
-        level_decomp,
-        &ring_challenge_cfg,
-        fold_challenge_shape,
-        true,
-        policy.onehot_chunk_size,
-        policy.ring_subfield_norm_bound,
-        r_vars,
+    root_level_params_candidate(
+        &RootLevelCandidateCtx {
+            policy,
+            ring_challenge_cfg: &ring_challenge_cfg,
+            fold_challenge_shape,
+            precommitted_d_width: 0,
+            precommitted_groups: &[],
+            // Root-direct ships the raw polynomial on the wire (no chunked commitment).
+            witness_chunk: ChunkedWitnessCfg::default(),
+        },
         num_claims,
-        width_s as u64,
-    ) else {
-        return Ok(None);
-    };
-    let Ok(a_key) = AjtaiKeyParams::try_new_with_min_rank(sis_key(policy, norm_s), width_s) else {
-        return Ok(None);
-    };
-    let n_a = a_key.row_len();
-    let Some(norm_t) =
-        rounded_up_collision_inf_norm(policy.min_sis_security_bits, sis_family, d, log_basis)
-    else {
-        return Ok(None);
-    };
-    let Some(width_t) = decomposed_t_ring_count(n_a, depth_open, num_blocks, num_claims) else {
-        return Ok(None);
-    };
-    let Ok(b_key) = AjtaiKeyParams::try_new_with_min_rank(sis_key(policy, norm_t), width_t) else {
-        return Ok(None);
-    };
-    let Some(norm_w) =
-        rounded_up_collision_inf_norm(policy.min_sis_security_bits, sis_family, d, log_basis)
-    else {
-        return Ok(None);
-    };
-    let Some(width_w) = decomposed_w_ring_count(depth_open, num_blocks, num_claims) else {
-        return Ok(None);
-    };
-    let Ok(d_key) = AjtaiKeyParams::try_new_with_min_rank(sis_key(policy, norm_w), width_w) else {
-        return Ok(None);
-    };
-
-    // A one-hot root (`log_commit_bound == 1`) commits a sparse witness; record
-    // its chunk size so `num_digits_fold` and the binding norm size the folded
-    // witness against `nonzeros = ceil(D/K)` instead of `D`.
-    let onehot_chunk_size = if decomp.log_commit_bound == 1 {
-        policy.onehot_chunk_size
-    } else {
-        0
-    };
-
-    let mut root_direct_params = LevelParams {
-        ring_dimension: d,
         log_basis,
-        a_key,
-        b_key,
-        d_key,
-        num_blocks,
-        block_len,
         m_vars,
         r_vars,
-        fold_challenge_config: ring_challenge_cfg,
-        fold_challenge_shape,
-        num_digits_commit: depth_commit,
-        num_digits_open: depth_open,
-        onehot_chunk_size,
-        fold_linf_cap_config: FoldWitnessLinfCapConfig::worst_case_beta_only(),
-        num_digits_fold_one: 1,
-        field_bits_hint: 0,
-        cached_num_digits_fold_claims: 0,
-        cached_num_digits_fold_value: 1,
-        // Root-direct ships the raw polynomial on the wire (no chunked commitment).
-        witness_chunk: ChunkedWitnessCfg::default(),
-        precommitted_groups: Vec::new(),
-        role_dims: CommitmentRingDims::uniform(d),
-    }
-    .with_fold_linf_cap_config(decomp.field_bits(), num_claims)?;
-    root_direct_params.stamp_role_dims_from_keys();
-    Ok(Some(root_direct_params))
+    )
 }
 
-/// Find the optimal schedule for a root schedule lookup key under `policy`.
+/// Find the optimal single-group schedule for a root schedule lookup key under `policy`.
 ///
 /// Runs an exhaustive DP that minimizes proof size. The result is a pure,
 /// deterministic function of `(policy, key)` (plus the `ring_challenge_config` /
@@ -758,21 +802,7 @@ fn compute_root_direct_level_params(
 /// Returns an error if vector counts are invalid or if the witness length
 /// overflows. The function never panics on malformed input — it is
 /// verifier-reachable and audited under the no-panic contract.
-pub fn find_schedule(
-    key: PolynomialGroupLayout,
-    policy: &PlannerPolicy,
-    ring_challenge_config: impl Fn(usize) -> Result<akita_challenges::SparseChallengeConfig, AkitaError>,
-    fold_challenge_shape_at_level: impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
-) -> Result<Schedule, AkitaError> {
-    find_schedule_inner(
-        key,
-        policy,
-        ring_challenge_config,
-        fold_challenge_shape_at_level,
-    )
-}
-
-fn find_schedule_inner(
+pub(crate) fn find_single_group_schedule(
     key: PolynomialGroupLayout,
     policy: &PlannerPolicy,
     ring_challenge_config: impl Fn(usize) -> Result<akita_challenges::SparseChallengeConfig, AkitaError>,
@@ -844,13 +874,6 @@ fn find_schedule_inner(
 
     let (min_log_basis, max_log_basis) = policy.basis_range;
     for candidate_log_basis in min_log_basis..=max_log_basis {
-        let level_decomp = DecompositionParams {
-            log_basis: candidate_log_basis,
-            ..policy.decomposition
-        };
-        let num_digits_commit = num_digits_s_commit(level_decomp, true);
-        let num_digits_open = num_digits_open(level_decomp);
-
         for r_vars in (min_r_vars..=max_r_vars).rev() {
             let Some(num_blocks) = 1usize.checked_shl(r_vars as u32) else {
                 continue;
@@ -861,106 +884,23 @@ fn find_schedule_inner(
             }
             let m_vars = reduced_vars - r_vars;
 
-            let Some(block_len) = 1usize.checked_shl(m_vars as u32) else {
-                continue;
-            };
-
-            // Compose the three SIS-secure keys from the `akita_types::sis`
-            // primitives: norm -> width -> tight rank -> key.
-            let family = policy.sis_family;
-            let d = policy.ring_dimension;
-            let Some(width_s) = decomposed_s_block_ring_count(block_len, num_digits_commit) else {
-                continue;
-            };
-            let Some(norm_s) = rounded_up_role_a_inf_norm(
-                policy.min_sis_security_bits,
-                family,
-                d,
-                level_decomp,
-                &ring_challenge_cfg,
-                fold_challenge_shape,
-                true,
-                policy.onehot_chunk_size,
-                policy.ring_subfield_norm_bound,
-                r_vars,
+            let Some(candidate_params) = root_level_params_candidate(
+                &RootLevelCandidateCtx {
+                    policy,
+                    ring_challenge_cfg: &ring_challenge_cfg,
+                    fold_challenge_shape,
+                    precommitted_d_width: 0,
+                    precommitted_groups: &[],
+                    witness_chunk: root_witness_chunk,
+                },
                 key.num_polynomials(),
-                width_s as u64,
-            ) else {
-                continue;
-            };
-            let Ok(a_key) = AjtaiKeyParams::try_new_with_min_rank(sis_key(policy, norm_s), width_s)
-            else {
-                continue;
-            };
-            let n_a = a_key.row_len();
-            let Some(norm_t) = rounded_up_collision_inf_norm(
-                policy.min_sis_security_bits,
-                family,
-                d,
                 candidate_log_basis,
-            ) else {
-                continue;
-            };
-            let Some(width_t) =
-                decomposed_t_ring_count(n_a, num_digits_open, num_blocks, key.num_polynomials())
-            else {
-                continue;
-            };
-            let Ok(b_key) = AjtaiKeyParams::try_new_with_min_rank(sis_key(policy, norm_t), width_t)
-            else {
-                continue;
-            };
-            let Some(norm_w) = rounded_up_collision_inf_norm(
-                policy.min_sis_security_bits,
-                family,
-                d,
-                candidate_log_basis,
-            ) else {
-                continue;
-            };
-            let Some(width_w) =
-                decomposed_w_ring_count(num_digits_open, num_blocks, key.num_polynomials())
-            else {
-                continue;
-            };
-            let Ok(d_key) = AjtaiKeyParams::try_new_with_min_rank(sis_key(policy, norm_w), width_w)
-            else {
-                continue;
-            };
-
-            let onehot_chunk_size = if policy.decomposition.log_commit_bound == 1 {
-                policy.onehot_chunk_size
-            } else {
-                0
-            };
-            let Ok(mut candidate_params) = LevelParams {
-                ring_dimension: policy.ring_dimension,
-                log_basis: candidate_log_basis,
-                a_key,
-                b_key,
-                d_key,
-                num_blocks,
-                block_len,
                 m_vars,
                 r_vars,
-                fold_challenge_config: ring_challenge_cfg,
-                fold_challenge_shape,
-                num_digits_commit,
-                num_digits_open,
-                onehot_chunk_size,
-                fold_linf_cap_config: FoldWitnessLinfCapConfig::worst_case_beta_only(),
-                num_digits_fold_one: 1,
-                field_bits_hint: 0,
-                cached_num_digits_fold_claims: 0,
-                cached_num_digits_fold_value: 1,
-                witness_chunk: root_witness_chunk,
-                precommitted_groups: Vec::new(),
-                role_dims: CommitmentRingDims::uniform(policy.ring_dimension),
-            }
-            .with_fold_linf_cap_config(field_bits, key.num_polynomials()) else {
+            )?
+            else {
                 continue;
             };
-            candidate_params.stamp_role_dims_from_keys();
 
             let next_withness_len_impl = |layout| -> Result<usize, AkitaError> {
                 let rings = w_ring_element_count_for_chunks(
