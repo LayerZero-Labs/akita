@@ -7,7 +7,7 @@
 //! directly. This module retains the layout glue the replay path reaches
 //! through `CommitmentConfig`.
 
-pub(crate) mod compression;
+pub mod compression;
 pub mod digit_math;
 pub mod flat_matrix;
 pub mod opening_point;
@@ -16,6 +16,11 @@ pub mod proof_size;
 pub mod relation;
 pub mod ring_dims;
 
+pub use compression::{
+    compression_digit_depth, validate_compression_catalog, CompressionAlphabet,
+    CompressionCatalogContext, CompressionCatalogProjection, CompressionChainSpec,
+    CompressionMapSpec, CompressionSourceId, ValidatedCompressionCatalog,
+};
 pub use digit_math::{gadget_row_scalars, isqrt_ceil};
 pub use flat_matrix::{FlatMatrix, RingMatrixView};
 pub use opening_point::{
@@ -34,9 +39,9 @@ pub use proof_size::{
     proof_ring_vec_bytes, sumcheck_rounds,
 };
 pub use relation::{
-    CoeffSpan, CompressionSourceId, GadgetInput, RelationGroupId, RelationLayout,
-    RelationRowFamily, RelationRowId, RelationRowInputs, RelationRowPlan, RelationRowRhs,
-    RelationSegment, RelationSegmentId, RowSpan,
+    CoeffSpan, GadgetInput, RelationGroupId, RelationLayout, RelationRowFamily, RelationRowId,
+    RelationRowInputs, RelationRowPlan, RelationRowRhs, RelationSegment, RelationSegmentId,
+    RowSpan,
 };
 pub use ring_dims::{
     validate_role_dims, validate_schedule_ring_dims, CommitmentRingDims, RingRole, MAX_FOLD_LEVELS,

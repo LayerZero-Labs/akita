@@ -323,6 +323,14 @@ must select among those candidates; it must not synthesize a rank or add a
 local security exception. This PR may regenerate schedule catalogs, but not SIS
 tables.
 
+Current SIS coverage begins at native dimension 32. The selector therefore
+intersects the compression dispatch arms with table coverage through
+`SisTableKey` lookup and `AjtaiKeyParams::try_new_with_min_rank`; dispatch arms
+8 or 16 are not candidates until the existing tables cover them. If no
+admissible chain reaches the configured payload target (including 128 bytes),
+selection returns the best admissible chain and reports that the target was
+missed.
+
 The search must also evaluate two-map candidates. At minimum these include an
 opening-base first map followed by the terminal map, and a negative-binary
 first map from the native image to a 256-byte rank-one intermediate followed by
@@ -455,7 +463,7 @@ only for the complete compiler-derived input span.
 An opening-base alphabet is valid only on the first map of a chain; every later
 map is negative binary. The first map may also be negative binary.
 
-One `validate_and_compile` call consumes every chain spec for the level and
+One `validate_compression_catalog` call consumes every chain spec for the level and
 returns the sole `ValidatedCompressionCatalog`; there is no separately
 constructible per-chain validated plan. The compiler rejects missing,
 duplicate, or out-of-range sources. A co-generated level requires the current
@@ -1399,12 +1407,17 @@ quotient tail, and both can change later fold shapes and sumcheck rounds. Every
 candidate must therefore solve the compression plan inside the same recurrence
 that derives its successor witness and proof cost.
 
-The planner policy specifies allowed native dimensions, ranks, depth range, and
-an objective or cap for terminal payload bytes. Payload size is never a
+The compression planner policy specifies an objective or cap for terminal
+payload bytes. Allowed native dimensions come from the field-tier compression
+dispatch slot, and admissible ranks come only from the checked-in SIS tables.
+Payload size is never a
 standalone verifier rule: schedule validation recomputes the terminal shape,
 exact wire length, and SIS certificate, and accepts precisely when those facts
 are mutually consistent and meet the configured security floor.
-Bind these choices into the policy digest and generated catalog identity. Candidate
+The integrated schedule generator binds the selected catalog into the policy
+digest and generated catalog identity. The standalone candidate-selection
+primitive receives its compression policy explicitly and does not mutate the
+identity of a schedule catalog that contains no compression plan. Candidate
 generation must include both depths and both permitted first-map alphabets;
 later maps are negative binary. Candidates with the same terminal payload are
 compared on setup envelope, verifier scan, logical matrix footprint, witness
@@ -1423,12 +1436,36 @@ Candidate scoring is lexicographic:
 1. completeness and the production security policy encoded by the checked-in
    SIS table (currently 138-bit standalone classical security); quantum cost is
    reported diagnostically unless a separate security PR changes policy;
-2. minimum global compact setup prefix;
-3. minimum total persistent prepared-cache bytes, summed over active native
+2. candidates whose terminal payload is at most the configured target precede
+   candidates that miss it, then smaller terminal payloads precede larger
+   payloads; the target is an optimization objective, not a validity rule;
+3. minimum global compact setup prefix;
+4. minimum total persistent prepared-cache bytes, summed over active native
    dimensions after catalog-wide envelope coalescing;
-4. minimum sum of active per-level direct scans;
-5. smaller recursive witness and prover work;
-6. smaller remaining proof bytes.
+5. minimum sum of active per-level direct scans and logical compact-matrix
+   coefficients;
+6. smaller recursive witness and prover work;
+7. smaller remaining proof bytes.
+
+The standalone selector implements the prefix of this order for one
+`CurrentOuter` source. It receives the existing certified
+`SetupMatrixEnvelope`, converts `max_setup_len * gen_ring_dim` to checked field
+coefficients, and scores the maximum of that base prefix and the compression
+prefix rounded up to a whole generation-dimension ring. Persistent-cache cost
+includes that full generation-dimension base
+slot plus each coalesced compression requirement at a different native
+dimension; a compression requirement at the generation dimension coalesces
+into the base slot. The remaining objectives are terminal payload bytes,
+global setup prefix, global cache coefficients, logical setup coefficients,
+then canonical catalog descriptor bytes as the final deterministic tie-breaker.
+The selector does not duplicate the configuration crate's A/B/D envelope
+coverage computation: its integrated caller supplies the certified envelope.
+It enumerates
+depths two and three, opening-base-four or negative-binary on the first map,
+and negative-binary on every later map. The search is protocol-sized rather
+than input-sized: there are two first alphabets and at most four compression
+dispatch arms per field tier, hence at most `2 * (4^2 + 4^3) = 160` raw
+dimension chains before SIS and divisibility filtering.
 
 The suffix dynamic program needs a
 Pareto state or equivalent structured score: the global prefix is a maximum
@@ -1843,7 +1880,7 @@ Implementation proceeds only after this proposed spec is approved.
    buckets. No generated SIS table changes here; a later security-model PR may
    add coverage and regenerate the affected schedules after separate review.
 2. **Compile compression-local semantics.** Add the private minimal input spec,
-   `validate_and_compile`, flat F/H input and quotient spans, local row spans,
+   `validate_compression_catalog`, flat F/H input and quotient spans, local row spans,
    B/D augmentation intents, and derived negative-binary segment provenance as dormant
    `pub(crate)` authorities with malformed-input tests. Do not assign global
    witness offsets or absolute A/B/D/trace row offsets in this slice.

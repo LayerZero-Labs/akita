@@ -65,7 +65,7 @@ fn chain_for_profile(
         .iter()
         .copied()
         .map(|alphabet| {
-            let depth = alphabet_facts(alphabet, field_bits, range_log_basis).unwrap();
+            let depth = compression_digit_depth(alphabet, field_bits, range_log_basis).unwrap();
             let raw_bound = match alphabet {
                 CompressionAlphabet::NegativeBinary => 1,
                 CompressionAlphabet::OpeningBase { .. } => (1u128 << range_log_basis) - 1,

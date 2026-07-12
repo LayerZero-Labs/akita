@@ -7,8 +7,8 @@ use akita_field::{CanonicalField, Prime128OffsetA7F7 as F};
 use akita_serialization::DEFAULT_MAX_SEQUENCE_LEN;
 
 use crate::layout::compression::{
-    validate_and_compile, CompressionAlphabet, CompressionCatalogContext, CompressionChainSpec,
-    CompressionMapSpec,
+    validate_compression_catalog, CompressionAlphabet, CompressionCatalogContext,
+    CompressionChainSpec, CompressionMapSpec,
 };
 use crate::sis::{sis_table_key_for_linf_bound, AjtaiKeyParams, DEFAULT_SIS_SECURITY_BITS};
 fn level() -> (LevelParams, OpeningClaimsLayout) {
@@ -65,10 +65,10 @@ fn chain(
                 input / d,
             );
             previous = key.row_len() * d;
-            CompressionMapSpec { key, alphabet }
+            CompressionMapSpec::new(key, alphabet)
         })
         .collect();
-    CompressionChainSpec { source, maps }
+    CompressionChainSpec::new(source, maps)
 }
 
 #[test]
@@ -242,7 +242,7 @@ fn checked_compression_extends_rows_and_directly_augments_existing_sources() {
             ],
         ),
     ];
-    let catalog = validate_and_compile::<F>(
+    let catalog = validate_compression_catalog::<F>(
         &lp,
         CompressionCatalogContext::CoGeneratedLevel { opening: &opening },
         64,

@@ -417,7 +417,7 @@ mod tests {
         let maps = shapes
             .iter()
             .map(|&(d, alphabet)| {
-                let depth = super::super::alphabet_facts(alphabet, 128, 6).unwrap();
+                let depth = super::super::compression_digit_depth(alphabet, 128, 6).unwrap();
                 let input = previous_output * depth;
                 assert!(input.is_multiple_of(d));
                 let raw_bound = match alphabet {
@@ -461,7 +461,7 @@ mod tests {
                 ],
             ),
         ];
-        let catalog = super::super::validate_and_compile::<F>(
+        let catalog = super::super::validate_compression_catalog::<F>(
             &lp,
             super::super::CompressionCatalogContext::CoGeneratedLevel { opening: &opening },
             64,
@@ -610,7 +610,7 @@ mod tests {
                 &[(32, CompressionAlphabet::NegativeBinary); 2],
             ),
         ];
-        let catalog = super::super::validate_and_compile::<F>(
+        let catalog = super::super::validate_compression_catalog::<F>(
             &lp,
             super::super::CompressionCatalogContext::CoGeneratedLevel { opening: &opening },
             64,
@@ -630,7 +630,7 @@ mod tests {
             &lp.b_key,
             &[(32, CompressionAlphabet::NegativeBinary); 2],
         );
-        let catalog = super::super::validate_and_compile::<F>(
+        let catalog = super::super::validate_compression_catalog::<F>(
             &lp,
             super::super::CompressionCatalogContext::StandaloneCommitment {
                 max_opening_log_basis: 6,

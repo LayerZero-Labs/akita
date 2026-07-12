@@ -2,7 +2,7 @@ use super::*;
 #[test]
 fn compiles_whole_catalog_and_derives_geometry() {
     let lp = level();
-    let catalog = validate_and_compile::<Prime128OffsetA7F7>(
+    let catalog = validate_compression_catalog::<Prime128OffsetA7F7>(
         &lp,
         CompressionCatalogContext::CoGeneratedLevel {
             opening: &scalar_opening(),
@@ -34,7 +34,7 @@ fn compiles_whole_catalog_and_derives_geometry() {
 #[test]
 fn schedule_projection_preserves_map_order_and_matches_dense_footprints() {
     let lp = level();
-    let catalog = validate_and_compile::<Prime128OffsetA7F7>(
+    let catalog = validate_compression_catalog::<Prime128OffsetA7F7>(
         &lp,
         CompressionCatalogContext::CoGeneratedLevel {
             opening: &scalar_opening(),
@@ -162,9 +162,13 @@ fn schedule_projection_coalesces_max_prefix_per_native_dimension() {
         1,
         second_input_coeffs / second_d,
     );
-    let catalog =
-        validate_and_compile::<Prime128OffsetA7F7>(&lp, standalone(lp.log_basis), 64, vec![spec])
-            .unwrap();
+    let catalog = validate_compression_catalog::<Prime128OffsetA7F7>(
+        &lp,
+        standalone(lp.log_basis),
+        64,
+        vec![spec],
+    )
+    .unwrap();
     let projection = catalog.project_for_schedule().unwrap();
 
     assert_eq!(projection.ntt_requirements.len(), 2);
@@ -185,7 +189,7 @@ fn schedule_projection_coalesces_max_prefix_per_native_dimension() {
 #[test]
 fn schedule_projection_descriptor_binds_frozen_first_map_base() {
     let lp = level();
-    let opening_base = validate_and_compile::<Prime128OffsetA7F7>(
+    let opening_base = validate_compression_catalog::<Prime128OffsetA7F7>(
         &lp,
         standalone(lp.log_basis),
         64,
@@ -202,7 +206,7 @@ fn schedule_projection_descriptor_binds_frozen_first_map_base() {
     .unwrap()
     .project_for_schedule()
     .unwrap();
-    let negative_binary = validate_and_compile::<Prime128OffsetA7F7>(
+    let negative_binary = validate_compression_catalog::<Prime128OffsetA7F7>(
         &lp,
         standalone(lp.log_basis),
         64,
@@ -234,7 +238,7 @@ fn schedule_projection_descriptor_binds_frozen_first_map_base() {
 #[test]
 fn schedule_projection_descriptor_binds_native_map_dimension() {
     let lp = level();
-    let d32 = validate_and_compile::<Prime128OffsetA7F7>(
+    let d32 = validate_compression_catalog::<Prime128OffsetA7F7>(
         &lp,
         standalone(lp.log_basis),
         64,
@@ -251,7 +255,7 @@ fn schedule_projection_descriptor_binds_native_map_dimension() {
     .unwrap()
     .project_for_schedule()
     .unwrap();
-    let d64 = validate_and_compile::<Prime128OffsetA7F7>(
+    let d64 = validate_compression_catalog::<Prime128OffsetA7F7>(
         &lp,
         standalone(lp.log_basis),
         64,
@@ -347,7 +351,7 @@ fn resolves_current_precommitted_and_opening_sources_in_canonical_order() {
             &[CompressionAlphabet::NegativeBinary; 2],
         ),
     ];
-    let catalog = validate_and_compile::<Prime128OffsetA7F7>(
+    let catalog = validate_compression_catalog::<Prime128OffsetA7F7>(
         &lp,
         CompressionCatalogContext::CoGeneratedLevel { opening: &opening },
         64,
@@ -365,7 +369,7 @@ fn resolves_current_precommitted_and_opening_sources_in_canonical_order() {
         &lp.b_key,
         &[CompressionAlphabet::NegativeBinary; 2],
     );
-    assert!(validate_and_compile::<Prime128OffsetA7F7>(
+    assert!(validate_compression_catalog::<Prime128OffsetA7F7>(
         &lp,
         standalone(lp.log_basis),
         64,
@@ -391,7 +395,7 @@ fn rejects_missing_duplicate_out_of_order_and_wrong_purpose_sources() {
             },
         ],
     ] {
-        assert!(validate_and_compile::<Prime128OffsetA7F7>(
+        assert!(validate_compression_catalog::<Prime128OffsetA7F7>(
             &lp,
             CompressionCatalogContext::CoGeneratedLevel { opening: &opening },
             64,
@@ -399,17 +403,20 @@ fn rejects_missing_duplicate_out_of_order_and_wrong_purpose_sources() {
         )
         .is_err());
     }
-    assert!(
-        validate_and_compile::<Prime128OffsetA7F7>(&lp, standalone(lp.log_basis), 64, good,)
-            .is_err()
-    );
+    assert!(validate_compression_catalog::<Prime128OffsetA7F7>(
+        &lp,
+        standalone(lp.log_basis),
+        64,
+        good,
+    )
+    .is_err());
     let standalone_negative_binary = chain_for(
         &lp,
         CompressionSourceId::CurrentOuter,
         &lp.b_key,
         &[CompressionAlphabet::NegativeBinary; 2],
     );
-    assert!(validate_and_compile::<Prime128OffsetA7F7>(
+    assert!(validate_compression_catalog::<Prime128OffsetA7F7>(
         &lp,
         standalone(lp.log_basis - 1),
         64,
@@ -423,7 +430,7 @@ fn purpose_enforces_base_and_source_semantics() {
     let lp = level();
     let mut wrong_current_base = current_and_opening_specs(&lp);
     wrong_current_base[0].maps[0].alphabet = CompressionAlphabet::OpeningBase { log_basis: 4 };
-    assert!(validate_and_compile::<Prime128OffsetA7F7>(
+    assert!(validate_compression_catalog::<Prime128OffsetA7F7>(
         &lp,
         CompressionCatalogContext::CoGeneratedLevel {
             opening: &scalar_opening(),
@@ -435,7 +442,7 @@ fn purpose_enforces_base_and_source_semantics() {
 
     let mut wrong_opening_base = current_and_opening_specs(&lp);
     wrong_opening_base[1].maps[0].alphabet = CompressionAlphabet::OpeningBase { log_basis: 4 };
-    assert!(validate_and_compile::<Prime128OffsetA7F7>(
+    assert!(validate_compression_catalog::<Prime128OffsetA7F7>(
         &lp,
         CompressionCatalogContext::CoGeneratedLevel {
             opening: &scalar_opening(),
@@ -454,7 +461,7 @@ fn purpose_enforces_base_and_source_semantics() {
             CompressionAlphabet::NegativeBinary,
         ],
     );
-    assert!(validate_and_compile::<Prime128OffsetA7F7>(
+    assert!(validate_compression_catalog::<Prime128OffsetA7F7>(
         &lp,
         standalone(lp.log_basis),
         64,
@@ -474,7 +481,7 @@ fn rejects_chain_depths_outside_two_or_three() {
             &[CompressionAlphabet::NegativeBinary; 2],
         );
         chain.maps.resize(depth, chain.maps[0].clone());
-        assert!(validate_and_compile::<Prime128OffsetA7F7>(
+        assert!(validate_compression_catalog::<Prime128OffsetA7F7>(
             &lp,
             standalone(lp.log_basis),
             64,
@@ -497,9 +504,13 @@ fn accepts_depth_three_with_negative_binary_later_maps() {
             CompressionAlphabet::NegativeBinary,
         ],
     );
-    let catalog =
-        validate_and_compile::<Prime128OffsetA7F7>(&lp, standalone(lp.log_basis), 64, vec![spec])
-            .unwrap();
+    let catalog = validate_compression_catalog::<Prime128OffsetA7F7>(
+        &lp,
+        standalone(lp.log_basis),
+        64,
+        vec![spec],
+    )
+    .unwrap();
     assert_eq!(catalog.chains[0].maps.len(), 3);
 }
 
@@ -559,7 +570,7 @@ fn rejects_noncanonical_or_insecure_map_keys() {
     for mutation in mutations {
         let mut spec = base.clone();
         spec.maps[0].key = mutation;
-        assert!(validate_and_compile::<Prime128OffsetA7F7>(
+        assert!(validate_compression_catalog::<Prime128OffsetA7F7>(
             &lp,
             standalone(lp.log_basis),
             64,
@@ -579,7 +590,7 @@ fn rejects_source_key_outside_field_family_and_production_security() {
         &lp.b_key,
         &[CompressionAlphabet::NegativeBinary; 2],
     );
-    assert!(validate_and_compile::<Prime128OffsetA7F7>(
+    assert!(validate_compression_catalog::<Prime128OffsetA7F7>(
         &lp,
         standalone(lp.log_basis),
         64,
@@ -603,7 +614,7 @@ fn rejects_source_key_outside_field_family_and_production_security() {
         &lp.b_key,
         &[CompressionAlphabet::NegativeBinary; 2],
     );
-    assert!(validate_and_compile::<Prime128OffsetA7F7>(
+    assert!(validate_compression_catalog::<Prime128OffsetA7F7>(
         &lp,
         standalone(lp.log_basis),
         64,
@@ -622,7 +633,7 @@ fn source_uses_recomputed_level_collision_bound() {
         &too_small.b_key,
         &[CompressionAlphabet::NegativeBinary; 2],
     );
-    assert!(validate_and_compile::<Prime128OffsetA7F7>(
+    assert!(validate_compression_catalog::<Prime128OffsetA7F7>(
         &too_small,
         standalone(too_small.log_basis),
         64,
@@ -638,7 +649,7 @@ fn source_uses_recomputed_level_collision_bound() {
         &conservative.b_key,
         &[CompressionAlphabet::NegativeBinary; 2],
     );
-    assert!(validate_and_compile::<Prime128OffsetA7F7>(
+    assert!(validate_compression_catalog::<Prime128OffsetA7F7>(
         &conservative,
         standalone(conservative.log_basis),
         64,
@@ -667,7 +678,7 @@ fn rejects_unsupported_sis_dimensions_dispatch_and_gen_divisibility() {
             2,
             d,
         );
-        assert!(validate_and_compile::<Prime128OffsetA7F7>(
+        assert!(validate_compression_catalog::<Prime128OffsetA7F7>(
             &lp,
             standalone(lp.log_basis),
             64,
@@ -678,14 +689,14 @@ fn rejects_unsupported_sis_dimensions_dispatch_and_gen_divisibility() {
     let mut dispatch_rejected = base.clone();
     let expected_input = lp.b_key.row_len() * D * 128;
     dispatch_rejected.maps[0].key = key(SisModulusFamily::Q128, 128, 1, expected_input / 128);
-    assert!(validate_and_compile::<Prime128OffsetA7F7>(
+    assert!(validate_compression_catalog::<Prime128OffsetA7F7>(
         &lp,
         standalone(lp.log_basis),
         128,
         vec![dispatch_rejected],
     )
     .is_err());
-    assert!(validate_and_compile::<Prime128OffsetA7F7>(
+    assert!(validate_compression_catalog::<Prime128OffsetA7F7>(
         &lp,
         standalone(lp.log_basis),
         48,
@@ -706,7 +717,7 @@ fn rejects_invalid_bases_and_chain_discontinuity() {
         );
         let mut spec = spec;
         spec.maps[0].alphabet = CompressionAlphabet::OpeningBase { log_basis };
-        assert!(validate_and_compile::<Prime128OffsetA7F7>(
+        assert!(validate_compression_catalog::<Prime128OffsetA7F7>(
             &lp,
             standalone(lp.log_basis),
             64,
@@ -721,7 +732,7 @@ fn rejects_invalid_bases_and_chain_discontinuity() {
         &[CompressionAlphabet::NegativeBinary; 2],
     );
     later_opening_base.maps[1].alphabet = CompressionAlphabet::OpeningBase { log_basis: 4 };
-    assert!(validate_and_compile::<Prime128OffsetA7F7>(
+    assert!(validate_compression_catalog::<Prime128OffsetA7F7>(
         &lp,
         standalone(lp.log_basis),
         64,
@@ -736,7 +747,7 @@ fn rejects_invalid_bases_and_chain_discontinuity() {
             &lp.b_key,
             &[CompressionAlphabet::NegativeBinary; 2],
         );
-        assert!(validate_and_compile::<Prime128OffsetA7F7>(
+        assert!(validate_compression_catalog::<Prime128OffsetA7F7>(
             &lp,
             standalone(lp.log_basis),
             64,
@@ -761,7 +772,7 @@ fn rejects_invalid_bases_and_chain_discontinuity() {
         key.coeff_linf_bound(),
         D,
     );
-    assert!(validate_and_compile::<Prime128OffsetA7F7>(
+    assert!(validate_compression_catalog::<Prime128OffsetA7F7>(
         &lp,
         standalone(lp.log_basis),
         64,

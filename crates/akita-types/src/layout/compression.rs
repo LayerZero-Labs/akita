@@ -15,9 +15,28 @@ pub(in crate::layout) mod semantics;
 
 #[allow(dead_code)] // Wired into schedule replay in the compression cutover slice.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum CompressionAlphabet {
+pub enum CompressionAlphabet {
     NegativeBinary,
     OpeningBase { log_basis: u32 },
+}
+
+/// Canonical digit depth used to decompose one compression-map input.
+pub fn compression_digit_depth(
+    alphabet: CompressionAlphabet,
+    field_bits: u32,
+    level_log_basis: u32,
+) -> Result<usize, AkitaError> {
+    match alphabet {
+        CompressionAlphabet::NegativeBinary => Ok(field_bits as usize),
+        CompressionAlphabet::OpeningBase { log_basis } => {
+            if log_basis == 0 || log_basis >= 128 || log_basis > level_log_basis {
+                return Err(AkitaError::InvalidSetup(
+                    "compression opening-base log_basis must be in 1..128 and no larger than the level base".into(),
+                ));
+            }
+            Ok(num_digits_for_bound(field_bits, field_bits, log_basis))
+        }
+    }
 }
 
 #[allow(dead_code)] // Wired into schedule replay in the compression cutover slice.
@@ -30,7 +49,7 @@ pub enum CompressionSourceId {
 
 #[allow(dead_code)] // Wired into schedule replay in the compression cutover slice.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum CompressionCatalogContext<'a> {
+pub enum CompressionCatalogContext<'a> {
     CoGeneratedLevel { opening: &'a OpeningClaimsLayout },
     StandaloneCommitment { max_opening_log_basis: u32 },
 }
@@ -49,16 +68,30 @@ enum CompressionCatalogPurpose {
 
 #[allow(dead_code)] // Wired into schedule replay in the compression cutover slice.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct CompressionMapSpec {
-    pub(crate) key: AjtaiKeyParams,
-    pub(crate) alphabet: CompressionAlphabet,
+pub struct CompressionMapSpec {
+    key: AjtaiKeyParams,
+    alphabet: CompressionAlphabet,
+}
+
+impl CompressionMapSpec {
+    #[must_use]
+    pub fn new(key: AjtaiKeyParams, alphabet: CompressionAlphabet) -> Self {
+        Self { key, alphabet }
+    }
 }
 
 #[allow(dead_code)] // Wired into schedule replay in the compression cutover slice.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct CompressionChainSpec {
-    pub(crate) source: CompressionSourceId,
-    pub(crate) maps: Vec<CompressionMapSpec>,
+pub struct CompressionChainSpec {
+    source: CompressionSourceId,
+    maps: Vec<CompressionMapSpec>,
+}
+
+impl CompressionChainSpec {
+    #[must_use]
+    pub fn new(source: CompressionSourceId, maps: Vec<CompressionMapSpec>) -> Self {
+        Self { source, maps }
+    }
 }
 
 #[allow(dead_code)] // Compiled catalog fields are consumed by later protocol slices.
@@ -104,17 +137,46 @@ pub(crate) struct CompressionMapHintFacts {
 /// independently by schedule replay, prepared NTT setup, and profile reporting.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[allow(dead_code)] // Consumed by schedule replay after compression candidate generation lands.
-pub(crate) struct CompressionCatalogProjection {
-    pub(crate) maps: Vec<CompressionMapHintFacts>,
-    pub(crate) ntt_requirements: Vec<(usize, usize)>,
-    pub(crate) payload_coeffs_by_source: Vec<(CompressionSourceId, usize)>,
-    pub(crate) first_map_alphabet_by_source: Vec<(CompressionSourceId, CompressionAlphabet)>,
-    pub(crate) logical_setup_coeffs: usize,
+pub struct CompressionCatalogProjection {
+    maps: Vec<CompressionMapHintFacts>,
+    ntt_requirements: Vec<(usize, usize)>,
+    payload_coeffs_by_source: Vec<(CompressionSourceId, usize)>,
+    first_map_alphabet_by_source: Vec<(CompressionSourceId, CompressionAlphabet)>,
+    logical_setup_coeffs: usize,
     /// Largest flat field-coefficient prefix required by any single map.
     /// Per-dimension transformed-cache maxima live in `ntt_requirements`.
-    pub(crate) max_flat_setup_prefix_coeffs: usize,
-    pub(crate) coalesced_cache_field_coeffs: usize,
-    pub(crate) descriptor_bytes: Vec<u8>,
+    max_flat_setup_prefix_coeffs: usize,
+    coalesced_cache_field_coeffs: usize,
+    descriptor_bytes: Vec<u8>,
+}
+
+impl CompressionCatalogProjection {
+    #[must_use]
+    pub fn ntt_requirements(&self) -> &[(usize, usize)] {
+        &self.ntt_requirements
+    }
+
+    #[must_use]
+    pub fn payload_coeffs(&self, source: CompressionSourceId) -> Option<usize> {
+        self.payload_coeffs_by_source
+            .iter()
+            .find_map(|&(candidate, coeffs)| (candidate == source).then_some(coeffs))
+    }
+
+    #[must_use]
+    pub fn logical_setup_coeffs(&self) -> usize {
+        self.logical_setup_coeffs
+    }
+
+    #[must_use]
+    pub fn max_flat_setup_prefix_coeffs(&self) -> usize {
+        self.max_flat_setup_prefix_coeffs
+    }
+
+    #[must_use]
+    pub fn descriptor_bytes(&self) -> &[u8] {
+        &self.descriptor_bytes
+    }
 }
 
 fn resolve_source_key(
@@ -138,7 +200,7 @@ fn resolve_source_key(
 
 #[allow(dead_code)] // Wired into schedule replay in the compression cutover slice.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct ValidatedCompressionCatalog {
+pub struct ValidatedCompressionCatalog {
     chains: Vec<CompiledCompressionChain>,
     purpose: CompressionCatalogPurpose,
 }
@@ -147,7 +209,7 @@ impl ValidatedCompressionCatalog {
     /// Project checked map facts for schedule replay, hints, NTT preparation,
     /// profile accounting, and future schedule-identity binding.
     #[allow(dead_code)] // Consumed by schedule replay after compression candidate generation lands.
-    pub(crate) fn project_for_schedule(&self) -> Result<CompressionCatalogProjection, AkitaError> {
+    pub fn project_for_schedule(&self) -> Result<CompressionCatalogProjection, AkitaError> {
         let total_maps = self.chains.iter().try_fold(0usize, |total, chain| {
             total.checked_add(chain.maps.len()).ok_or_else(|| {
                 AkitaError::InvalidSetup("compression projected map count overflow".into())
@@ -438,25 +500,6 @@ fn audit_key(
 }
 
 #[allow(dead_code)] // Reached through the dormant catalog compiler below.
-fn alphabet_facts(
-    alphabet: CompressionAlphabet,
-    field_bits: u32,
-    level_log_basis: u32,
-) -> Result<usize, AkitaError> {
-    match alphabet {
-        CompressionAlphabet::NegativeBinary => Ok(field_bits as usize),
-        CompressionAlphabet::OpeningBase { log_basis } => {
-            if log_basis == 0 || log_basis >= 128 || log_basis > level_log_basis {
-                return Err(AkitaError::InvalidSetup(
-                    "compression opening-base log_basis must be in 1..128 and no larger than the level base".into(),
-                ));
-            }
-            Ok(num_digits_for_bound(field_bits, field_bits, log_basis))
-        }
-    }
-}
-
-#[allow(dead_code)] // Reached through the dormant catalog compiler below.
 fn compile_chain<F: CanonicalField>(
     lp: &LevelParams,
     context: CompressionCatalogContext<'_>,
@@ -569,7 +612,7 @@ fn compile_chain<F: CanonicalField>(
                 _ => {}
             }
         }
-        let digit_depth = alphabet_facts(map.alphabet, field_bits, range_log_basis)?;
+        let digit_depth = compression_digit_depth(map.alphabet, field_bits, range_log_basis)?;
         let stored = map.key.sis_table_key();
         let required_bucket = match map.alphabet {
             CompressionAlphabet::NegativeBinary => {
@@ -685,7 +728,7 @@ fn compile_chain<F: CanonicalField>(
 
 /// Validate and compile the complete compression catalog for one level.
 #[allow(dead_code)] // Wired into schedule replay in the compression cutover slice.
-pub(crate) fn validate_and_compile<F: CanonicalField>(
+pub fn validate_compression_catalog<F: CanonicalField>(
     lp: &LevelParams,
     context: CompressionCatalogContext<'_>,
     gen_ring_dim: usize,

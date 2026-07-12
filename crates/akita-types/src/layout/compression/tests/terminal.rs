@@ -15,9 +15,13 @@ fn opening_base_accepts_larger_canonical_bucket() {
     spec.maps[0].key = key(SisModulusFamily::Q128, D, 127, first_col_len);
     let second_col_len = spec.maps[0].key.row_len() * 128;
     spec.maps[1].key = key(SisModulusFamily::Q128, D, 1, second_col_len);
-    let catalog =
-        validate_and_compile::<Prime128OffsetA7F7>(&lp, standalone(lp.log_basis), 64, vec![spec])
-            .unwrap();
+    let catalog = validate_compression_catalog::<Prime128OffsetA7F7>(
+        &lp,
+        standalone(lp.log_basis),
+        64,
+        vec![spec],
+    )
+    .unwrap();
     assert_eq!(catalog.chains[0].maps[0].key.coeff_linf_bound(), 127);
 }
 
@@ -38,7 +42,8 @@ fn frozen_standalone_terminal_join_binds_key_base_and_field() {
         ],
     );
     let catalog =
-        validate_and_compile::<Prime128OffsetA7F7>(&lp, standalone(6), 64, vec![spec]).unwrap();
+        validate_compression_catalog::<Prime128OffsetA7F7>(&lp, standalone(6), 64, vec![spec])
+            .unwrap();
     let opening = scalar_opening();
     let layout = catalog
         .terminal_relation_layout::<Prime128OffsetA7F7>(&lp, &opening)
@@ -95,7 +100,8 @@ fn binary_first_terminal_join_has_no_opening_base_lower_bound() {
         ],
     );
     let catalog =
-        validate_and_compile::<Prime128OffsetA7F7>(&lp, standalone(6), 64, vec![spec]).unwrap();
+        validate_compression_catalog::<Prime128OffsetA7F7>(&lp, standalone(6), 64, vec![spec])
+            .unwrap();
     let mut terminal = lp.clone();
     terminal.log_basis = 2;
     assert!(catalog
@@ -119,7 +125,7 @@ fn standalone_range_envelope_prices_conservative_base() {
         D,
         6,
     );
-    let catalog = validate_and_compile::<Prime128OffsetA7F7>(
+    let catalog = validate_compression_catalog::<Prime128OffsetA7F7>(
         &lp,
         standalone(6),
         64,
@@ -138,10 +144,13 @@ fn standalone_range_envelope_prices_conservative_base() {
     let mut underpriced = opening_base;
     let col_len = underpriced.maps[0].key.col_len();
     underpriced.maps[0].key = key(SisModulusFamily::Q128, D, 3, col_len);
-    assert!(
-        validate_and_compile::<Prime128OffsetA7F7>(&lp, standalone(6), 64, vec![underpriced],)
-            .is_err()
-    );
+    assert!(validate_compression_catalog::<Prime128OffsetA7F7>(
+        &lp,
+        standalone(6),
+        64,
+        vec![underpriced],
+    )
+    .is_err());
 
     let negative_binary = chain_for_profile(
         CompressionSourceId::CurrentOuter,
@@ -152,7 +161,7 @@ fn standalone_range_envelope_prices_conservative_base() {
         D,
         6,
     );
-    assert!(validate_and_compile::<Prime128OffsetA7F7>(
+    assert!(validate_compression_catalog::<Prime128OffsetA7F7>(
         &lp,
         standalone(6),
         64,
@@ -184,7 +193,8 @@ fn reduced_field_profiles_use_native_negative_binary_depths() {
         6,
     );
     let q64_catalog =
-        validate_and_compile::<Prime64Offset59>(&q64, standalone(6), 64, vec![q64_spec]).unwrap();
+        validate_compression_catalog::<Prime64Offset59>(&q64, standalone(6), 64, vec![q64_spec])
+            .unwrap();
     assert_eq!(q64_catalog.chains[0].maps[0].digit_depth, 64);
 
     let mut q32 = LevelParams::params_only(
@@ -208,7 +218,8 @@ fn reduced_field_profiles_use_native_negative_binary_depths() {
         6,
     );
     let q32_catalog =
-        validate_and_compile::<Prime32Offset99>(&q32, standalone(6), 64, vec![q32_spec]).unwrap();
+        validate_compression_catalog::<Prime32Offset99>(&q32, standalone(6), 64, vec![q32_spec])
+            .unwrap();
     assert_eq!(q32_catalog.chains[0].maps[0].digit_depth, 32);
 
     let q128 = level();
@@ -218,8 +229,11 @@ fn reduced_field_profiles_use_native_negative_binary_depths() {
         &q128.b_key,
         &[CompressionAlphabet::NegativeBinary; 2],
     );
-    assert!(
-        validate_and_compile::<Prime64Offset59>(&q128, standalone(6), 64, vec![cross_family],)
-            .is_err()
-    );
+    assert!(validate_compression_catalog::<Prime64Offset59>(
+        &q128,
+        standalone(6),
+        64,
+        vec![cross_family],
+    )
+    .is_err());
 }

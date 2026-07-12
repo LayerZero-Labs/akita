@@ -16,6 +16,7 @@ pub use policy::{
     inner_ring_dim_supported_for_tier, ntt_max_ring_d, ntt_min_ring_d,
     opening_ring_dim_supported_for_tier, outer_opening_ring_dim_supported_for_tier,
     outer_ring_dim_supported_for_tier, role_dim_supported_for_tier, slot_dim_supported_for_tier,
+    slot_dims_for_tier,
 };
 
 /// PCS base-field tier for protocol and NTT dispatch arm tables.

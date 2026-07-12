@@ -68,7 +68,12 @@ macro_rules! protocol_dispatch_policy {
             }
         }
 
-        fn arms_for_slot(tier: ProtocolRingDispatchTierId, slot: ProtocolDispatchSlot) -> &'static [usize] {
+        /// Canonical ring-degree arms enabled for `tier` and `slot`.
+        #[must_use]
+        pub fn slot_dims_for_tier(
+            tier: ProtocolRingDispatchTierId,
+            slot: ProtocolDispatchSlot,
+        ) -> &'static [usize] {
             match (tier, slot) {
                 (ProtocolRingDispatchTierId::Fp128, ProtocolDispatchSlot::Role(RingRole::Inner)) => {
                     &[$($i128),*]
@@ -117,7 +122,7 @@ macro_rules! protocol_dispatch_policy {
             slot: ProtocolDispatchSlot,
             d: usize,
         ) -> bool {
-            slice_contains(arms_for_slot(tier, slot), d)
+            slice_contains(slot_dims_for_tier(tier, slot), d)
         }
 
         /// Whether `d` is a supported ring degree for matrix `role` on `tier`.
@@ -400,8 +405,8 @@ mod tests {
             ProtocolRingDispatchTierId::Fp32,
         ] {
             assert_eq!(
-                arms_for_slot(tier, ProtocolDispatchSlot::Role(RingRole::Outer)),
-                arms_for_slot(tier, ProtocolDispatchSlot::Role(RingRole::Opening)),
+                slot_dims_for_tier(tier, ProtocolDispatchSlot::Role(RingRole::Outer)),
+                slot_dims_for_tier(tier, ProtocolDispatchSlot::Role(RingRole::Opening)),
                 "outer/opening diverged for {tier:?}; split policy rows intentionally"
             );
         }
@@ -414,7 +419,7 @@ mod tests {
             ProtocolRingDispatchTierId::Fp64,
             ProtocolRingDispatchTierId::Fp32,
         ] {
-            let arms = arms_for_slot(tier, ProtocolDispatchSlot::Ntt);
+            let arms = slot_dims_for_tier(tier, ProtocolDispatchSlot::Ntt);
             assert!(!arms.is_empty());
             assert_eq!(arms[0], ntt_min_ring_d(tier));
             assert_eq!(*arms.last().expect("ntt arms"), ntt_max_ring_d(tier));
@@ -442,14 +447,14 @@ mod tests {
                 ProtocolDispatchSlot::Envelope,
                 ProtocolDispatchSlot::Ntt,
             ] {
-                for &d in arms_for_slot(tier, slot) {
+                for &d in slot_dims_for_tier(tier, slot) {
                     assert!(
                         slot_dim_supported_for_tier(tier, slot, d),
                         "{tier:?} {slot:?} d={d}"
                     );
                 }
                 assert!(!slot_dim_supported_for_tier(tier, slot, 0));
-                if !slice_contains(arms_for_slot(tier, slot), 48) {
+                if !slice_contains(slot_dims_for_tier(tier, slot), 48) {
                     assert!(!slot_dim_supported_for_tier(tier, slot, 48));
                 }
             }

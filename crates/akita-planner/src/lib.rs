@@ -17,6 +17,7 @@ pub use akita_types::{
 };
 
 pub mod catalog_identity;
+pub mod compression;
 pub mod emit;
 pub mod generated;
 mod group_batch;
@@ -27,6 +28,9 @@ pub use akita_challenges::TensorChallengeShape;
 pub use catalog_identity::{
     expected_catalog_identity, identity_digest, key_digest, policy_digest,
     ring_challenge_config_digest, validate_catalog_identity,
+};
+pub use compression::{
+    select_standalone_compression, CompressionPlannerPolicy, CompressionSelection,
 };
 pub use emit::{refresh_generated_wiring, run_regen_fmt, write_family_module, EmitSpec};
 pub use generated::{

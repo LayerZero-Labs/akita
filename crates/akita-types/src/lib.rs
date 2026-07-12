@@ -9,9 +9,9 @@ pub(crate) mod descriptor_bytes;
 pub mod dispatch;
 pub use dispatch::{
     field_modulus, ntt_max_ring_d, ntt_min_ring_d, ntt_ring_degree_supported_for_field,
-    ntt_ring_degree_supported_for_tier, protocol_dispatch_tier, validate_ring_dispatch,
-    validate_role_dims_for_field, validate_role_dispatch, ProtocolDispatchSlot,
-    ProtocolRingDispatchTierId,
+    ntt_ring_degree_supported_for_tier, protocol_dispatch_tier, slot_dims_for_tier,
+    validate_ring_dispatch, validate_role_dims_for_field, validate_role_dispatch,
+    ProtocolDispatchSlot, ProtocolRingDispatchTierId,
 };
 pub mod extension_opening_reduction;
 pub mod field_reduction;
@@ -62,16 +62,18 @@ pub use instance_descriptor::{
     FOLD_GRIND_PROBE_ORDER_TRANSCRIPT_SHUFFLE,
 };
 pub use layout::{
-    basis_weights, block_rings_at_opening, direct_witness_bytes,
+    basis_weights, block_rings_at_opening, compression_digit_depth, direct_witness_bytes,
     extension_opening_reduction_level_bytes, extension_opening_reduction_proof_bytes, field_bytes,
     gadget_row_scalars, lagrange_weights, monomial_weights, packed_digits_bytes,
     padded_boolean_opening_vars, planned_next_w_len, planned_w_ring_element_count,
     proof_ring_vec_bytes, reduce_inner_opening_to_ring_element, ring_opening_point_from_field,
-    sumcheck_rounds, validate_role_dims, validate_schedule_ring_dims, BasisMode, BlockOrder,
-    CommitmentRingDims, FlatMatrix, LevelParams, LevelParamsLike, PrecommittedLevelParams,
-    RelationGroupId, RelationLayout, RelationMatrixRowLayout, RelationRowId, RelationRowPlan,
-    RingMatrixView, RingOpeningPoint, RingRole, MAX_FOLD_LEVELS, MIN_A_ROLE_FOLD_CHALLENGE_RING_D,
-    SUPPORTED_CHALLENGE_RING_DIMS,
+    sumcheck_rounds, validate_compression_catalog, validate_role_dims, validate_schedule_ring_dims,
+    BasisMode, BlockOrder, CommitmentRingDims, CompressionAlphabet, CompressionCatalogContext,
+    CompressionCatalogProjection, CompressionChainSpec, CompressionMapSpec, CompressionSourceId,
+    FlatMatrix, LevelParams, LevelParamsLike, PrecommittedLevelParams, RelationGroupId,
+    RelationLayout, RelationMatrixRowLayout, RelationRowId, RelationRowPlan, RingMatrixView,
+    RingOpeningPoint, RingRole, ValidatedCompressionCatalog, MAX_FOLD_LEVELS,
+    MIN_A_ROLE_FOLD_CHALLENGE_RING_D, SUPPORTED_CHALLENGE_RING_DIMS,
 };
 pub use ntt_cache::{NttCacheKey, PreparedNttPlan};
 pub use proof::{
