@@ -1,0 +1,5 @@
+policy=Classical138Quantum128WithIdealizedBcssV1
+bcss_review_below_bits=124.0
+accepted_boundary_rows_requiring_review=0
+status=NO_REVIEW_REQUIRED
+No accepted boundary row crossed the BCSS review line.

@@ -81,7 +81,7 @@ fn assert_policy_matches_cfg<Cfg: CommitmentConfig>() {
         ring_dimension: Cfg::D,
         decomposition: Cfg::decomposition(),
         sis_family: Cfg::sis_modulus_family(),
-        min_sis_security_bits: akita_types::DEFAULT_SIS_SECURITY_BITS,
+        sis_security_policy: akita_types::DEFAULT_SIS_SECURITY_POLICY,
         ring_subfield_norm_bound: Cfg::ring_subfield_embedding_norm_bound(),
         claim_ext_degree: Cfg::EXT_DEGREE,
         chal_ext_degree: Cfg::EXT_DEGREE,

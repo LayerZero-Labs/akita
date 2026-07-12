@@ -203,13 +203,13 @@ fn ring_dim_plan_accepts_mixed_d_schedule_all_divide_gen_ring_dim() {
 /// Nested per-role dims: B/D may use D=32 while d_a >= 64.
 #[test]
 fn ring_dim_plan_accepts_nested_opening_d32() {
-    use akita_types::sis::DEFAULT_SIS_SECURITY_BITS;
+    use akita_types::sis::DEFAULT_SIS_SECURITY_POLICY;
     use akita_types::{AjtaiKeyParams, SisModulusFamily};
 
     let mut step = make_fold_step(128, 4, 8);
     step.params.ring_dimension = 128;
     step.params.a_key = AjtaiKeyParams::new_unchecked(
-        DEFAULT_SIS_SECURITY_BITS,
+        DEFAULT_SIS_SECURITY_POLICY,
         SisModulusFamily::Q128,
         1,
         16,
@@ -217,7 +217,7 @@ fn ring_dim_plan_accepts_nested_opening_d32() {
         128,
     );
     step.params.b_key = AjtaiKeyParams::new_unchecked(
-        DEFAULT_SIS_SECURITY_BITS,
+        DEFAULT_SIS_SECURITY_POLICY,
         SisModulusFamily::Q128,
         1,
         16,
@@ -225,7 +225,7 @@ fn ring_dim_plan_accepts_nested_opening_d32() {
         64,
     );
     step.params.d_key = AjtaiKeyParams::new_unchecked(
-        DEFAULT_SIS_SECURITY_BITS,
+        DEFAULT_SIS_SECURITY_POLICY,
         SisModulusFamily::Q128,
         1,
         16,

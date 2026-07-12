@@ -48,7 +48,7 @@ fn layout_summary(
     let params = root_params(&schedule)?;
     let b_width = params.b_key.col_len();
     let norm_at_lmax = rounded_up_collision_inf_norm(
-        policy.min_sis_security_bits,
+        policy.sis_security_policy,
         Cfg::sis_modulus_family(),
         Cfg::D,
         max_basis,
@@ -56,7 +56,7 @@ fn layout_summary(
     .ok_or_else(|| AkitaError::InvalidSetup("B norm overflow".to_string()))?;
     let conservative_n_b = min_secure_rank(
         SisTableKey {
-            min_security_bits: policy.min_sis_security_bits,
+            policy: policy.sis_security_policy,
             family: Cfg::sis_modulus_family(),
             ring_dimension: Cfg::D as u32,
             coeff_linf_bound: norm_at_lmax,

@@ -10,7 +10,7 @@ use crate::{policy_of, CommitmentConfig};
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::AkitaError;
 use akita_types::sis::{
-    min_secure_rank, rounded_up_collision_inf_norm, SisTableKey, DEFAULT_SIS_SECURITY_BITS,
+    min_secure_rank, rounded_up_collision_inf_norm, SisSecurityPolicyId, SisTableKey,
 };
 use akita_types::{
     AjtaiKeyParams, AkitaScheduleInputs, DecompositionParams, LevelParams, OpeningClaimsLayout,
@@ -130,12 +130,13 @@ pub(crate) fn conservative_commit_schedule<Cfg: CommitmentConfig>(
         Cfg::fold_challenge_shape_at_level,
     )?;
     let params = root_commit_params_mut(&mut schedule, "conservative commit schedule")?;
-    widen_conservative_commit_params::<Cfg>(params)?;
+    widen_conservative_commit_params::<Cfg>(params, policy.sis_security_policy)?;
     Ok(schedule)
 }
 
 fn widen_conservative_commit_params<Cfg: CommitmentConfig>(
     params: &mut LevelParams,
+    sis_security_policy: SisSecurityPolicyId,
 ) -> Result<(), AkitaError> {
     let (min_basis, max_basis) = Cfg::basis_range();
     if params.log_basis != min_basis {
@@ -145,7 +146,7 @@ fn widen_conservative_commit_params<Cfg: CommitmentConfig>(
     }
 
     let conservative_norm = rounded_up_collision_inf_norm(
-        DEFAULT_SIS_SECURITY_BITS,
+        sis_security_policy,
         Cfg::sis_modulus_family(),
         Cfg::D,
         max_basis,
@@ -157,7 +158,7 @@ fn widen_conservative_commit_params<Cfg: CommitmentConfig>(
     })?;
     let conservative_n_b = min_secure_rank(
         SisTableKey {
-            min_security_bits: DEFAULT_SIS_SECURITY_BITS,
+            policy: sis_security_policy,
             family: Cfg::sis_modulus_family(),
             ring_dimension: Cfg::D as u32,
             coeff_linf_bound: conservative_norm,
@@ -170,7 +171,7 @@ fn widen_conservative_commit_params<Cfg: CommitmentConfig>(
         )
     })?;
     params.b_key = AjtaiKeyParams::try_new(
-        DEFAULT_SIS_SECURITY_BITS,
+        sis_security_policy,
         Cfg::sis_modulus_family(),
         conservative_n_b,
         params.b_key.col_len(),

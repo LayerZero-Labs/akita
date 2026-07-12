@@ -3,7 +3,8 @@
 use super::{
     ChunkedWitnessCfg, DecompositionParams, GeneratedDirectStep, GeneratedFoldStep,
     GeneratedScheduleCatalogIdentity, GeneratedScheduleTableEntry, GeneratedStep,
-    PolynomialGroupLayout, PrecommittedGroupParams, SisModulusFamily, TensorChallengeShape,
+    PolynomialGroupLayout, PrecommittedGroupParams, SisModulusFamily, SisSecurityPolicyId,
+    TensorChallengeShape,
 };
 
 #[rustfmt::skip]
@@ -86,7 +87,7 @@ pub(crate) static FP128_D128_FULL_SCHEDULES: &[GeneratedScheduleTableEntry] = &[
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
     GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(13, 4), precommitteds: &[], steps: &[
-        GeneratedStep::Direct(GeneratedDirectStep { commit: Some(GeneratedFoldStep { ring_d: 128, log_basis: 3, m_vars: 3, r_vars: 3, n_a: 2, n_b: 1, n_d: 1 }) }),
+        GeneratedStep::Direct(GeneratedDirectStep { commit: Some(GeneratedFoldStep { ring_d: 128, log_basis: 3, m_vars: 2, r_vars: 4, n_a: 2, n_b: 1, n_d: 1 }) }),
     ] },
     GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(14, 1), precommitteds: &[], steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, m_vars: 4, r_vars: 3, n_a: 2, n_b: 1, n_d: 1 }),
@@ -108,10 +109,10 @@ pub(crate) static FP128_D128_FULL_SCHEDULES: &[GeneratedScheduleTableEntry] = &[
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
     GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(15, 4), precommitteds: &[], steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, m_vars: 6, r_vars: 2, n_a: 2, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, m_vars: 9, r_vars: 3, n_a: 2, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, m_vars: 6, r_vars: 2, n_a: 3, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, m_vars: 9, r_vars: 4, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, m_vars: 8, r_vars: 3, n_a: 2, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, m_vars: 9, r_vars: 2, n_a: 2, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, m_vars: 8, r_vars: 3, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
     GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(16, 1), precommitteds: &[], steps: &[
@@ -130,10 +131,10 @@ pub(crate) static FP128_D128_FULL_SCHEDULES: &[GeneratedScheduleTableEntry] = &[
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
     GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(17, 1), precommitteds: &[], steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, m_vars: 6, r_vars: 4, n_a: 2, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, m_vars: 9, r_vars: 3, n_a: 2, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, m_vars: 6, r_vars: 4, n_a: 3, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, m_vars: 9, r_vars: 4, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, m_vars: 8, r_vars: 3, n_a: 2, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, m_vars: 9, r_vars: 2, n_a: 2, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, m_vars: 8, r_vars: 3, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
     GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(17, 4), precommitteds: &[], steps: &[
@@ -170,7 +171,7 @@ pub(crate) static FP128_D128_FULL_SCHEDULES: &[GeneratedScheduleTableEntry] = &[
     ] },
     GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(19, 4), precommitteds: &[], steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, m_vars: 7, r_vars: 5, n_a: 3, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, m_vars: 11, r_vars: 4, n_a: 2, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, m_vars: 10, r_vars: 5, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, m_vars: 9, r_vars: 4, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, m_vars: 8, r_vars: 3, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, m_vars: 8, r_vars: 3, n_a: 2, n_b: 1, n_d: 1 }),
@@ -195,7 +196,7 @@ pub(crate) static FP128_D128_FULL_SCHEDULES: &[GeneratedScheduleTableEntry] = &[
     ] },
     GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(21, 1), precommitteds: &[], steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, m_vars: 7, r_vars: 7, n_a: 3, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, m_vars: 11, r_vars: 4, n_a: 2, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, m_vars: 10, r_vars: 5, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, m_vars: 9, r_vars: 4, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, m_vars: 8, r_vars: 3, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, m_vars: 8, r_vars: 3, n_a: 2, n_b: 1, n_d: 1 }),
@@ -331,9 +332,9 @@ pub(crate) static FP128_D128_FULL_SCHEDULES: &[GeneratedScheduleTableEntry] = &[
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
     GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(28, 4), precommitteds: &[], steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 2, m_vars: 11, r_vars: 10, n_a: 3, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, m_vars: 13, r_vars: 8, n_a: 3, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, m_vars: 12, r_vars: 5, n_a: 3, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 2, m_vars: 11, r_vars: 10, n_a: 4, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 2, m_vars: 14, r_vars: 8, n_a: 3, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, m_vars: 11, r_vars: 6, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, m_vars: 10, r_vars: 4, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, m_vars: 9, r_vars: 3, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, m_vars: 8, r_vars: 3, n_a: 2, n_b: 1, n_d: 1 }),
@@ -351,7 +352,7 @@ pub(crate) static FP128_D128_FULL_SCHEDULES: &[GeneratedScheduleTableEntry] = &[
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
     GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(29, 4), precommitteds: &[], steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 2, m_vars: 11, r_vars: 11, n_a: 3, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 2, m_vars: 12, r_vars: 10, n_a: 4, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, m_vars: 14, r_vars: 8, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, m_vars: 11, r_vars: 6, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, m_vars: 10, r_vars: 4, n_a: 2, n_b: 1, n_d: 1 }),
@@ -361,9 +362,9 @@ pub(crate) static FP128_D128_FULL_SCHEDULES: &[GeneratedScheduleTableEntry] = &[
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
     GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(30, 1), precommitteds: &[], steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 2, m_vars: 11, r_vars: 12, n_a: 3, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, m_vars: 13, r_vars: 8, n_a: 3, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, m_vars: 12, r_vars: 5, n_a: 3, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 2, m_vars: 11, r_vars: 12, n_a: 4, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 2, m_vars: 14, r_vars: 8, n_a: 3, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, m_vars: 11, r_vars: 6, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, m_vars: 10, r_vars: 4, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, m_vars: 9, r_vars: 3, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, m_vars: 8, r_vars: 3, n_a: 2, n_b: 1, n_d: 1 }),
@@ -381,7 +382,7 @@ pub(crate) static FP128_D128_FULL_SCHEDULES: &[GeneratedScheduleTableEntry] = &[
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
     GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(31, 1), precommitteds: &[], steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 2, m_vars: 11, r_vars: 13, n_a: 3, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 2, m_vars: 12, r_vars: 12, n_a: 4, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, m_vars: 14, r_vars: 8, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, m_vars: 11, r_vars: 6, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, m_vars: 10, r_vars: 4, n_a: 2, n_b: 1, n_d: 1 }),
@@ -494,7 +495,7 @@ pub(crate) static FP128_D128_FULL_SCHEDULES: &[GeneratedScheduleTableEntry] = &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 2, m_vars: 15, r_vars: 14, n_a: 4, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 2, m_vars: 16, r_vars: 10, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, m_vars: 12, r_vars: 7, n_a: 3, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, m_vars: 11, r_vars: 4, n_a: 2, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, m_vars: 11, r_vars: 4, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, m_vars: 9, r_vars: 4, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, m_vars: 8, r_vars: 3, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, m_vars: 8, r_vars: 3, n_a: 2, n_b: 1, n_d: 1 }),
@@ -524,7 +525,7 @@ pub(crate) static FP128_D128_FULL_SCHEDULES: &[GeneratedScheduleTableEntry] = &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 2, m_vars: 15, r_vars: 16, n_a: 4, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 2, m_vars: 16, r_vars: 10, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, m_vars: 12, r_vars: 7, n_a: 3, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, m_vars: 11, r_vars: 4, n_a: 2, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, m_vars: 11, r_vars: 4, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, m_vars: 9, r_vars: 4, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, m_vars: 8, r_vars: 3, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, m_vars: 8, r_vars: 3, n_a: 2, n_b: 1, n_d: 1 }),
@@ -572,9 +573,9 @@ pub(crate) static FP128_D128_FULL_SCHEDULES: &[GeneratedScheduleTableEntry] = &[
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
     GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(40, 4), precommitteds: &[], steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 2, m_vars: 17, r_vars: 16, n_a: 4, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 2, m_vars: 17, r_vars: 16, n_a: 5, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 2, m_vars: 17, r_vars: 11, n_a: 3, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, m_vars: 13, r_vars: 7, n_a: 3, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, m_vars: 14, r_vars: 7, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, m_vars: 11, r_vars: 5, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, m_vars: 10, r_vars: 4, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, m_vars: 9, r_vars: 3, n_a: 2, n_b: 1, n_d: 1 }),
@@ -595,9 +596,9 @@ pub(crate) static FP128_D128_FULL_SCHEDULES: &[GeneratedScheduleTableEntry] = &[
     ] },
     GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(41, 4), precommitteds: &[], steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 2, m_vars: 18, r_vars: 16, n_a: 5, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 2, m_vars: 17, r_vars: 11, n_a: 3, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, m_vars: 14, r_vars: 7, n_a: 3, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, m_vars: 11, r_vars: 5, n_a: 3, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 2, m_vars: 16, r_vars: 12, n_a: 3, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, m_vars: 13, r_vars: 8, n_a: 3, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, m_vars: 12, r_vars: 5, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, m_vars: 10, r_vars: 4, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, m_vars: 9, r_vars: 3, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, m_vars: 8, r_vars: 3, n_a: 2, n_b: 1, n_d: 1 }),
@@ -605,9 +606,9 @@ pub(crate) static FP128_D128_FULL_SCHEDULES: &[GeneratedScheduleTableEntry] = &[
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
     GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(42, 1), precommitteds: &[], steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 2, m_vars: 17, r_vars: 18, n_a: 4, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 2, m_vars: 17, r_vars: 18, n_a: 5, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 2, m_vars: 17, r_vars: 11, n_a: 3, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, m_vars: 13, r_vars: 7, n_a: 3, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, m_vars: 14, r_vars: 7, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, m_vars: 11, r_vars: 5, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, m_vars: 10, r_vars: 4, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, m_vars: 9, r_vars: 3, n_a: 2, n_b: 1, n_d: 1 }),
@@ -628,9 +629,9 @@ pub(crate) static FP128_D128_FULL_SCHEDULES: &[GeneratedScheduleTableEntry] = &[
     ] },
     GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(43, 1), precommitteds: &[], steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 2, m_vars: 18, r_vars: 18, n_a: 5, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 2, m_vars: 17, r_vars: 11, n_a: 3, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, m_vars: 14, r_vars: 7, n_a: 3, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, m_vars: 11, r_vars: 5, n_a: 3, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 2, m_vars: 16, r_vars: 12, n_a: 3, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, m_vars: 13, r_vars: 8, n_a: 3, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, m_vars: 12, r_vars: 5, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, m_vars: 10, r_vars: 4, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, m_vars: 9, r_vars: 3, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, m_vars: 8, r_vars: 3, n_a: 2, n_b: 1, n_d: 1 }),
@@ -639,9 +640,9 @@ pub(crate) static FP128_D128_FULL_SCHEDULES: &[GeneratedScheduleTableEntry] = &[
     ] },
     GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(43, 4), precommitteds: &[], steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 2, m_vars: 19, r_vars: 17, n_a: 5, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 2, m_vars: 17, r_vars: 12, n_a: 3, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, m_vars: 13, r_vars: 8, n_a: 3, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, m_vars: 12, r_vars: 5, n_a: 3, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 2, m_vars: 17, r_vars: 12, n_a: 4, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 2, m_vars: 14, r_vars: 8, n_a: 3, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, m_vars: 11, r_vars: 6, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, m_vars: 10, r_vars: 4, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, m_vars: 9, r_vars: 3, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, m_vars: 8, r_vars: 3, n_a: 2, n_b: 1, n_d: 1 }),
@@ -672,9 +673,9 @@ pub(crate) static FP128_D128_FULL_SCHEDULES: &[GeneratedScheduleTableEntry] = &[
     ] },
     GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(45, 1), precommitteds: &[], steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 2, m_vars: 19, r_vars: 19, n_a: 5, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 2, m_vars: 17, r_vars: 12, n_a: 3, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, m_vars: 13, r_vars: 8, n_a: 3, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, m_vars: 12, r_vars: 5, n_a: 3, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 2, m_vars: 17, r_vars: 12, n_a: 4, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 2, m_vars: 14, r_vars: 8, n_a: 3, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, m_vars: 11, r_vars: 6, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, m_vars: 10, r_vars: 4, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, m_vars: 9, r_vars: 3, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, m_vars: 8, r_vars: 3, n_a: 2, n_b: 1, n_d: 1 }),
@@ -683,7 +684,7 @@ pub(crate) static FP128_D128_FULL_SCHEDULES: &[GeneratedScheduleTableEntry] = &[
     ] },
     GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(45, 4), precommitteds: &[], steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 2, m_vars: 20, r_vars: 18, n_a: 5, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 2, m_vars: 17, r_vars: 13, n_a: 3, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 2, m_vars: 18, r_vars: 12, n_a: 4, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, m_vars: 14, r_vars: 8, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, m_vars: 11, r_vars: 6, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, m_vars: 10, r_vars: 4, n_a: 2, n_b: 1, n_d: 1 }),
@@ -716,7 +717,7 @@ pub(crate) static FP128_D128_FULL_SCHEDULES: &[GeneratedScheduleTableEntry] = &[
     ] },
     GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(47, 1), precommitteds: &[], steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 2, m_vars: 20, r_vars: 20, n_a: 5, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 2, m_vars: 17, r_vars: 13, n_a: 3, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 2, m_vars: 18, r_vars: 12, n_a: 4, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, m_vars: 14, r_vars: 8, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, m_vars: 11, r_vars: 6, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, m_vars: 10, r_vars: 4, n_a: 2, n_b: 1, n_d: 1 }),
@@ -770,8 +771,8 @@ pub(crate) static FP128_D128_FULL_SCHEDULES: &[GeneratedScheduleTableEntry] = &[
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
     GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(49, 4), precommitteds: &[], steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 2, m_vars: 22, r_vars: 20, n_a: 5, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 2, m_vars: 19, r_vars: 13, n_a: 4, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 2, m_vars: 22, r_vars: 20, n_a: 6, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 2, m_vars: 20, r_vars: 13, n_a: 4, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, m_vars: 14, r_vars: 9, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, m_vars: 12, r_vars: 6, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, m_vars: 10, r_vars: 4, n_a: 2, n_b: 1, n_d: 1 }),
@@ -810,7 +811,7 @@ pub(crate) static CATALOG_RING_DIMENSIONS: &[usize] = &[128];
 pub(crate) static CATALOG_IDENTITY: GeneratedScheduleCatalogIdentity = GeneratedScheduleCatalogIdentity {
     family_name: "fp128_d128_full",
     sis_family: SisModulusFamily::Q128,
-    min_sis_security_bits: 138,
+    sis_security_policy: SisSecurityPolicyId::Classical138Quantum128WithIdealizedBcssV1,
     ring_dimension: 128,
     decomposition: DecompositionParams { log_basis: 3, log_commit_bound: 128, log_open_bound: None },
     ring_subfield_norm_bound: 1,

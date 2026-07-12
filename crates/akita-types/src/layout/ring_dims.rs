@@ -478,7 +478,7 @@ mod tests {
     #[test]
     fn accepts_nested_per_role_dims_with_matching_keys() {
         use crate::layout::{AjtaiKeyParams, SisModulusFamily};
-        use crate::sis::DEFAULT_SIS_SECURITY_BITS;
+        use crate::sis::DEFAULT_SIS_SECURITY_POLICY;
 
         let mut params = LevelParams::log_basis_stub(3);
         params.ring_dimension = 256;
@@ -488,7 +488,7 @@ mod tests {
         params.num_digits_open = 2;
         params.fold_challenge_config = fold_challenge_config_for_ring_dim(params.ring_dimension);
         params.a_key = AjtaiKeyParams::new_unchecked(
-            DEFAULT_SIS_SECURITY_BITS,
+            DEFAULT_SIS_SECURITY_POLICY,
             SisModulusFamily::Q128,
             1,
             16,
@@ -496,7 +496,7 @@ mod tests {
             256,
         );
         params.b_key = AjtaiKeyParams::new_unchecked(
-            DEFAULT_SIS_SECURITY_BITS,
+            DEFAULT_SIS_SECURITY_POLICY,
             SisModulusFamily::Q128,
             1,
             16,
@@ -504,7 +504,7 @@ mod tests {
             128,
         );
         params.d_key = AjtaiKeyParams::new_unchecked(
-            DEFAULT_SIS_SECURITY_BITS,
+            DEFAULT_SIS_SECURITY_POLICY,
             SisModulusFamily::Q128,
             1,
             16,
@@ -537,7 +537,7 @@ mod tests {
     #[test]
     fn accepts_nested_role_dims_with_opening_at_d32() {
         use crate::layout::{AjtaiKeyParams, SisModulusFamily};
-        use crate::sis::DEFAULT_SIS_SECURITY_BITS;
+        use crate::sis::DEFAULT_SIS_SECURITY_POLICY;
 
         let mut params = LevelParams::log_basis_stub(3);
         params.ring_dimension = 128;
@@ -547,7 +547,7 @@ mod tests {
         params.num_digits_open = 2;
         params.fold_challenge_config = fold_challenge_config_for_ring_dim(params.ring_dimension);
         params.a_key = AjtaiKeyParams::new_unchecked(
-            DEFAULT_SIS_SECURITY_BITS,
+            DEFAULT_SIS_SECURITY_POLICY,
             SisModulusFamily::Q128,
             1,
             16,
@@ -555,7 +555,7 @@ mod tests {
             128,
         );
         params.b_key = AjtaiKeyParams::new_unchecked(
-            DEFAULT_SIS_SECURITY_BITS,
+            DEFAULT_SIS_SECURITY_POLICY,
             SisModulusFamily::Q128,
             1,
             16,
@@ -563,7 +563,7 @@ mod tests {
             64,
         );
         params.d_key = AjtaiKeyParams::new_unchecked(
-            DEFAULT_SIS_SECURITY_BITS,
+            DEFAULT_SIS_SECURITY_POLICY,
             SisModulusFamily::Q128,
             1,
             16,

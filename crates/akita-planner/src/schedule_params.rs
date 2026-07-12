@@ -29,7 +29,7 @@ use crate::PlannerPolicy;
 
 fn sis_key(policy: &PlannerPolicy, coeff_linf_bound: u128) -> SisTableKey {
     SisTableKey {
-        min_security_bits: policy.min_sis_security_bits,
+        policy: policy.sis_security_policy,
         family: policy.sis_family,
         ring_dimension: policy.ring_dimension as u32,
         coeff_linf_bound,
@@ -129,7 +129,7 @@ fn derive_candidate_level_params(
             continue;
         };
         let Some(norm_s) = rounded_up_role_a_inf_norm(
-            policy.min_sis_security_bits,
+            policy.sis_security_policy,
             family,
             d,
             decomp,
@@ -150,7 +150,7 @@ fn derive_candidate_level_params(
         };
         let n_a = a_key.row_len();
         let Some(norm_t) =
-            rounded_up_collision_inf_norm(policy.min_sis_security_bits, family, d, log_basis)
+            rounded_up_collision_inf_norm(policy.sis_security_policy, family, d, log_basis)
         else {
             continue;
         };
@@ -162,7 +162,7 @@ fn derive_candidate_level_params(
             continue;
         };
         let Some(norm_w) =
-            rounded_up_collision_inf_norm(policy.min_sis_security_bits, family, d, log_basis)
+            rounded_up_collision_inf_norm(policy.sis_security_policy, family, d, log_basis)
         else {
             continue;
         };
@@ -630,7 +630,7 @@ fn compute_root_direct_level_params(
         let is_onehot = decomp.log_commit_bound == 1;
         let fold_witness = FoldWitnessNorms::new(log_basis, d, policy.onehot_chunk_size, is_onehot);
         let (m_vars, r_vars, _scoring_n_a) = optimal_m_r_split(
-            policy.min_sis_security_bits,
+            policy.sis_security_policy,
             sis_family,
             d as u32,
             num_claims,
@@ -664,7 +664,7 @@ fn compute_root_direct_level_params(
         return Ok(None);
     };
     let Some(norm_s) = rounded_up_role_a_inf_norm(
-        policy.min_sis_security_bits,
+        policy.sis_security_policy,
         sis_family,
         d,
         level_decomp,
@@ -684,7 +684,7 @@ fn compute_root_direct_level_params(
     };
     let n_a = a_key.row_len();
     let Some(norm_t) =
-        rounded_up_collision_inf_norm(policy.min_sis_security_bits, sis_family, d, log_basis)
+        rounded_up_collision_inf_norm(policy.sis_security_policy, sis_family, d, log_basis)
     else {
         return Ok(None);
     };
@@ -695,7 +695,7 @@ fn compute_root_direct_level_params(
         return Ok(None);
     };
     let Some(norm_w) =
-        rounded_up_collision_inf_norm(policy.min_sis_security_bits, sis_family, d, log_basis)
+        rounded_up_collision_inf_norm(policy.sis_security_policy, sis_family, d, log_basis)
     else {
         return Ok(None);
     };
@@ -873,7 +873,7 @@ fn find_schedule_inner(
                 continue;
             };
             let Some(norm_s) = rounded_up_role_a_inf_norm(
-                policy.min_sis_security_bits,
+                policy.sis_security_policy,
                 family,
                 d,
                 level_decomp,
@@ -894,7 +894,7 @@ fn find_schedule_inner(
             };
             let n_a = a_key.row_len();
             let Some(norm_t) = rounded_up_collision_inf_norm(
-                policy.min_sis_security_bits,
+                policy.sis_security_policy,
                 family,
                 d,
                 candidate_log_basis,
@@ -911,7 +911,7 @@ fn find_schedule_inner(
                 continue;
             };
             let Some(norm_w) = rounded_up_collision_inf_norm(
-                policy.min_sis_security_bits,
+                policy.sis_security_policy,
                 family,
                 d,
                 candidate_log_basis,

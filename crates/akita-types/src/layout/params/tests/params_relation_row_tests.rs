@@ -5,7 +5,7 @@ use crate::proof::relation::{relation_rhs_layout_for, relation_rhs_row_count};
 fn eight_quotient_rows_adds_one_tau1_var_for_evaluation_trace() {
     let mut lp = laid_out_sample_lp();
     lp.a_key = AjtaiKeyParams::new_unchecked(
-        lp.a_key.min_security_bits(),
+        lp.a_key.security_policy(),
         lp.a_key.sis_family(),
         2,
         lp.a_key.col_len(),
@@ -13,7 +13,7 @@ fn eight_quotient_rows_adds_one_tau1_var_for_evaluation_trace() {
         lp.ring_dimension,
     );
     lp.b_key = AjtaiKeyParams::new_unchecked(
-        lp.b_key.min_security_bits(),
+        lp.b_key.security_policy(),
         lp.b_key.sis_family(),
         3,
         lp.b_key.col_len(),
@@ -21,7 +21,7 @@ fn eight_quotient_rows_adds_one_tau1_var_for_evaluation_trace() {
         lp.ring_dimension,
     );
     lp.d_key = AjtaiKeyParams::new_unchecked(
-        lp.d_key.min_security_bits(),
+        lp.d_key.security_policy(),
         lp.d_key.sis_family(),
         2,
         lp.d_key.col_len(),

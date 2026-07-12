@@ -684,7 +684,7 @@ mod tests {
     use super::*;
     use akita_challenges::SparseChallengeConfig;
     use akita_field::Fp32;
-    use akita_types::{AjtaiKeyParams, RingVec, SisModulusFamily, DEFAULT_SIS_SECURITY_BITS};
+    use akita_types::{AjtaiKeyParams, RingVec, SisModulusFamily, DEFAULT_SIS_SECURITY_POLICY};
 
     type F = Fp32<251>;
     const D: usize = 32;
@@ -749,7 +749,7 @@ mod tests {
         .with_decomp(1, 0, 2, 1, 0)
         .expect("valid direct layout");
         params.b_key = AjtaiKeyParams::new_unchecked(
-            DEFAULT_SIS_SECURITY_BITS,
+            DEFAULT_SIS_SECURITY_POLICY,
             SisModulusFamily::Q32,
             1,
             128,

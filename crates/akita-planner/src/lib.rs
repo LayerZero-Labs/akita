@@ -13,7 +13,8 @@
 //! live in `akita-config`, the only crate that can name the presets.
 
 pub use akita_types::{
-    ChunkedWitnessCfg, DecompositionParams, SisModulusFamily, DEFAULT_SIS_SECURITY_BITS,
+    ChunkedWitnessCfg, DecompositionParams, SisModulusFamily, SisSecurityPolicyId,
+    DEFAULT_SIS_SECURITY_POLICY,
 };
 
 pub mod catalog_identity;
@@ -52,8 +53,8 @@ pub struct PlannerPolicy {
     pub decomposition: DecompositionParams,
     /// SIS modulus family (`Cfg::sis_modulus_family()`).
     pub sis_family: SisModulusFamily,
-    /// Minimum SIS security floor in bits for generated SIS-width tables.
-    pub min_sis_security_bits: u16,
+    /// Versioned SIS security policy for generated SIS-width tables.
+    pub sis_security_policy: SisSecurityPolicyId,
     /// `psi`-embedding infinity-norm expansion
     /// (`Cfg::ring_subfield_embedding_norm_bound()`).
     pub ring_subfield_norm_bound: u32,

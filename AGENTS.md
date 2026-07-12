@@ -68,5 +68,5 @@ Details: [`book/src/usage/feature-flags.md`](book/src/usage/feature-flags.md).
 | CI test timing | [`docs/ci-test-timing.md`](docs/ci-test-timing.md) |
 | Profiling harness | [`book/src/usage/profiling.md`](book/src/usage/profiling.md) |
 | Transcript hardening | [`specs/transcript-hardening.md`](specs/transcript-hardening.md) |
-| Offline SIS table regen | `cargo run -p akita-sis-estimator --release --features parallel --example euclidean_width_table -- --format rust-split` |
+| Offline SIS table regen | `cargo run -p akita-sis-estimator --release --features parallel --example infinity_width_table -- --format rust-split --profile local-minimum` |
 | Jolt verifier bench | [`profile/akita-recursion/README.md`](profile/akita-recursion/README.md) |

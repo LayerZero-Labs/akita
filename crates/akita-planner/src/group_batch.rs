@@ -22,7 +22,7 @@ use crate::PlannerPolicy;
 
 fn sis_key(policy: &PlannerPolicy, coeff_linf_bound: u128) -> SisTableKey {
     SisTableKey {
-        min_security_bits: policy.min_sis_security_bits,
+        policy: policy.sis_security_policy,
         family: policy.sis_family,
         ring_dimension: policy.ring_dimension as u32,
         coeff_linf_bound,
@@ -62,7 +62,7 @@ pub(crate) fn group_root_params_from_layout(
     let width_s = decomposed_s_block_ring_count(block_len, num_digits_commit)
         .ok_or_else(|| AkitaError::InvalidSetup("multi-group A width overflow".to_string()))?;
     let norm_s = rounded_up_role_a_inf_norm(
-        policy.min_sis_security_bits,
+        policy.sis_security_policy,
         family,
         d,
         level_decomp,
@@ -78,7 +78,7 @@ pub(crate) fn group_root_params_from_layout(
     .ok_or_else(|| AkitaError::InvalidSetup("no multi-group A-role norm".to_string()))?;
     let min_n_a = min_secure_rank(
         SisTableKey {
-            min_security_bits: policy.min_sis_security_bits,
+            policy: policy.sis_security_policy,
             family,
             ring_dimension: d as u32,
             coeff_linf_bound: norm_s,
@@ -92,7 +92,7 @@ pub(crate) fn group_root_params_from_layout(
         ));
     }
     let a_key = AjtaiKeyParams::try_new(
-        policy.min_sis_security_bits,
+        policy.sis_security_policy,
         family,
         layout.n_a,
         width_s,
@@ -105,9 +105,8 @@ pub(crate) fn group_root_params_from_layout(
     } else {
         layout.log_basis
     };
-    let norm_t =
-        rounded_up_collision_inf_norm(policy.min_sis_security_bits, family, d, b_norm_basis)
-            .ok_or_else(|| AkitaError::InvalidSetup("no multi-group B-role norm".to_string()))?;
+    let norm_t = rounded_up_collision_inf_norm(policy.sis_security_policy, family, d, b_norm_basis)
+        .ok_or_else(|| AkitaError::InvalidSetup("no multi-group B-role norm".to_string()))?;
     let width_t = decomposed_t_ring_count(
         layout.n_a,
         num_digits_open,
@@ -128,14 +127,8 @@ pub(crate) fn group_root_params_from_layout(
     } else {
         min_n_b
     };
-    let b_key = AjtaiKeyParams::try_new(
-        policy.min_sis_security_bits,
-        family,
-        n_b,
-        width_t,
-        norm_t,
-        d,
-    )?;
+    let b_key =
+        AjtaiKeyParams::try_new(policy.sis_security_policy, family, n_b, width_t, norm_t, d)?;
 
     let fold_linf_cap_config = FoldWitnessLinfCapConfig::for_fold_level(
         &ring_challenge_cfg,
@@ -407,7 +400,7 @@ fn multi_group_root_main_level_params_candidate(
         return Ok(None);
     };
     let Some(norm_s) = rounded_up_role_a_inf_norm(
-        policy.min_sis_security_bits,
+        policy.sis_security_policy,
         family,
         d,
         level_decomp,
@@ -428,7 +421,7 @@ fn multi_group_root_main_level_params_candidate(
     let n_a = a_key.row_len();
 
     let Some(norm_t) =
-        rounded_up_collision_inf_norm(policy.min_sis_security_bits, family, d, log_basis)
+        rounded_up_collision_inf_norm(policy.sis_security_policy, family, d, log_basis)
     else {
         return Ok(None);
     };
@@ -448,7 +441,7 @@ fn multi_group_root_main_level_params_candidate(
         .checked_add(ctx.precommitted_d_width)
         .ok_or_else(|| AkitaError::InvalidSetup("multi-group D width overflow".to_string()))?;
     let Some(norm_w) =
-        rounded_up_collision_inf_norm(policy.min_sis_security_bits, family, d, log_basis)
+        rounded_up_collision_inf_norm(policy.sis_security_policy, family, d, log_basis)
     else {
         return Ok(None);
     };
@@ -787,7 +780,7 @@ mod tests {
     use akita_field::Prime128OffsetA7F7;
     use akita_types::{
         AkitaScheduleLookupKey, DecompositionParams, PolynomialGroupLayout,
-        RelationMatrixRowLayout, SisModulusFamily, DEFAULT_SIS_SECURITY_BITS,
+        RelationMatrixRowLayout, SisModulusFamily, DEFAULT_SIS_SECURITY_POLICY,
     };
 
     fn flat_policy() -> PlannerPolicy {
@@ -799,7 +792,7 @@ mod tests {
                 log_open_bound: Some(8),
             },
             sis_family: SisModulusFamily::Q128,
-            min_sis_security_bits: DEFAULT_SIS_SECURITY_BITS,
+            sis_security_policy: DEFAULT_SIS_SECURITY_POLICY,
             ring_subfield_norm_bound: 1,
             claim_ext_degree: 4,
             chal_ext_degree: 4,

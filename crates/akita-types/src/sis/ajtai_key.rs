@@ -9,7 +9,34 @@
 use akita_field::AkitaError;
 
 use super::generated_sis_table::sis_max_widths;
-use crate::descriptor_bytes::{push_u128, push_u16, push_usize, sis_family_tag};
+use crate::descriptor_bytes::{push_u128, push_usize, sis_family_tag};
+
+/// Versioned policy identity used by SIS sizing and generated artifacts.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum SisSecurityPolicyId {
+    /// 138-bit classical and 128-bit conventional quantum hard gates, with
+    /// one idealized BCSS diagnostic.
+    #[default]
+    Classical138Quantum128WithIdealizedBcssV1,
+}
+
+impl SisSecurityPolicyId {
+    /// Stable wire/catalog tag for this policy.
+    pub const fn tag(self) -> u8 {
+        match self {
+            Self::Classical138Quantum128WithIdealizedBcssV1 => 1,
+        }
+    }
+
+    /// Descriptive policy name used in diagnostics and generated metadata.
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Classical138Quantum128WithIdealizedBcssV1 => {
+                "Classical138Quantum128WithIdealizedBcssV1"
+            }
+        }
+    }
+}
 
 /// SIS modulus family used to select generated security floors.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -23,11 +50,12 @@ pub enum SisModulusFamily {
     Q128,
 }
 
-/// Production SIS security floor for generated coefficient-`L∞` tables.
-pub const DEFAULT_SIS_SECURITY_BITS: u16 = 138;
+/// Default policy used by production presets.
+pub const DEFAULT_SIS_SECURITY_POLICY: SisSecurityPolicyId =
+    SisSecurityPolicyId::Classical138Quantum128WithIdealizedBcssV1;
 
-/// Security floors currently shipped in the production SIS table.
-pub const SUPPORTED_SIS_SECURITY_BITS: &[u16] = &[DEFAULT_SIS_SECURITY_BITS];
+/// Versioned policies with checked-in SIS table support.
+pub const SUPPORTED_SIS_SECURITY_POLICIES: &[SisSecurityPolicyId] = &[DEFAULT_SIS_SECURITY_POLICY];
 
 /// Coefficient-`L∞` collision buckets for norm-bound sizing.
 ///
@@ -42,8 +70,8 @@ pub const COEFF_LINF_BUCKETS: &[u128] = &[
 /// Canonical key for a generated SIS floor row.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct SisTableKey {
-    /// Minimum SIS security floor in bits.
-    pub min_security_bits: u16,
+    /// Versioned SIS security policy.
+    pub policy: SisSecurityPolicyId,
     /// SIS modulus family.
     pub family: SisModulusFamily,
     /// Ring dimension.
@@ -85,7 +113,7 @@ fn supports_family_dimension(sis_family: SisModulusFamily, d: u32) -> bool {
 /// Round a raw coefficient-`L∞` bound up to a generated table bucket.
 #[must_use]
 pub fn ceil_supported_linf_bound(
-    min_security_bits: u16,
+    policy: SisSecurityPolicyId,
     sis_family: SisModulusFamily,
     d: u32,
     linf: u128,
@@ -94,7 +122,7 @@ pub fn ceil_supported_linf_bound(
         return None;
     }
     let bucket = ceil_coeff_linf_bucket(linf)?;
-    sis_max_widths(min_security_bits, sis_family, d, bucket)?;
+    sis_max_widths(policy, sis_family, d, bucket)?;
     Some(bucket)
 }
 
@@ -104,14 +132,14 @@ pub fn ceil_supported_linf_bound(
 /// coefficient bound.
 #[must_use]
 pub fn sis_table_key_for_linf_bound(
-    min_security_bits: u16,
+    policy: SisSecurityPolicyId,
     sis_family: SisModulusFamily,
     d: u32,
     linf: u128,
 ) -> Option<SisTableKey> {
-    let coeff_linf_bound = ceil_supported_linf_bound(min_security_bits, sis_family, d, linf)?;
+    let coeff_linf_bound = ceil_supported_linf_bound(policy, sis_family, d, linf)?;
     Some(SisTableKey {
-        min_security_bits,
+        policy,
         family: sis_family,
         ring_dimension: d,
         coeff_linf_bound,
@@ -124,7 +152,7 @@ pub fn sis_table_key_for_linf_bound(
 /// Returns `None` when no generated SIS-floor row covers the configuration.
 pub fn min_secure_rank(key: SisTableKey, width: u64) -> Option<usize> {
     let widths = sis_max_widths(
-        key.min_security_bits,
+        key.policy,
         key.family,
         key.ring_dimension,
         key.coeff_linf_bound,
@@ -165,7 +193,7 @@ impl AjtaiKeyParams {
     /// Returns an error if any field is zero, if the SIS-floor tables do not
     /// cover the configuration, or if `row_len` is below the audited floor.
     pub fn try_new(
-        min_security_bits: u16,
+        policy: SisSecurityPolicyId,
         sis_family: SisModulusFamily,
         row_len: usize,
         col_len: usize,
@@ -183,30 +211,33 @@ impl AjtaiKeyParams {
             ));
         }
         let Some(key) = sis_table_key_for_linf_bound(
-            min_security_bits,
+            policy,
             sis_family,
             ring_dimension as u32,
             coeff_linf_bound,
         ) else {
             return Err(AkitaError::InvalidSetup(format!(
                 "AjtaiKeyParams: no audited SIS table key for \
-                     min_security_bits={min_security_bits} family={sis_family:?} \
-                     d={ring_dimension} coeff_linf_bound={coeff_linf_bound}"
+                     policy={} family={sis_family:?} \
+                     d={ring_dimension} coeff_linf_bound={coeff_linf_bound}",
+                policy.name()
             )));
         };
         let floor = min_secure_rank(key, col_len as u64).ok_or_else(|| {
             AkitaError::InvalidSetup(format!(
                 "AjtaiKeyParams: no audited SIS rank for \
-                     min_security_bits={min_security_bits} family={sis_family:?} \
+                     policy={} family={sis_family:?} \
                      d={ring_dimension} coeff_linf_bound={} col_len={col_len}",
+                policy.name(),
                 key.coeff_linf_bound
             ))
         })?;
         if row_len < floor {
             return Err(AkitaError::InvalidSetup(format!(
                 "AjtaiKeyParams: row_len {row_len} < SIS floor {floor} \
-                 (min_security_bits={min_security_bits}, family={sis_family:?}, \
+                 (policy={}, family={sis_family:?}, \
                  d={ring_dimension}, coeff_linf_bound={}, col_len={col_len})",
+                policy.name(),
                 key.coeff_linf_bound
             )));
         }
@@ -235,12 +266,15 @@ impl AjtaiKeyParams {
         let row_len = min_secure_rank(key, col_len as u64).ok_or_else(|| {
             AkitaError::InvalidSetup(format!(
                 "AjtaiKeyParams: no audited SIS rank for \
-                 min_security_bits={} family={:?} d={} coeff_linf_bound={} col_len={col_len}",
-                key.min_security_bits, key.family, key.ring_dimension, key.coeff_linf_bound
+                 policy={} family={:?} d={} coeff_linf_bound={} col_len={col_len}",
+                key.policy.name(),
+                key.family,
+                key.ring_dimension,
+                key.coeff_linf_bound
             ))
         })?;
         Self::try_new(
-            key.min_security_bits,
+            key.policy,
             key.family,
             row_len,
             col_len,
@@ -259,7 +293,7 @@ impl AjtaiKeyParams {
     /// [`try_new`](Self::try_new), which audits the SIS floor against the final
     /// width as the key is constructed.
     pub fn new_unchecked(
-        min_security_bits: u16,
+        policy: SisSecurityPolicyId,
         sis_family: SisModulusFamily,
         row_len: usize,
         col_len: usize,
@@ -270,7 +304,7 @@ impl AjtaiKeyParams {
             row_len,
             col_len,
             sis_table_key: SisTableKey {
-                min_security_bits,
+                policy,
                 family: sis_family,
                 ring_dimension: ring_dimension as u32,
                 coeff_linf_bound,
@@ -290,10 +324,10 @@ impl AjtaiKeyParams {
         self.col_len
     }
 
-    /// Minimum SIS security floor in bits.
+    /// Versioned SIS policy used to size and validate this key.
     #[inline]
-    pub fn min_security_bits(&self) -> u16 {
-        self.sis_table_key.min_security_bits
+    pub fn security_policy(&self) -> SisSecurityPolicyId {
+        self.sis_table_key.policy
     }
 
     /// Rounded coefficient-`L∞` bucket for SIS sizing.
@@ -316,7 +350,7 @@ impl AjtaiKeyParams {
 
     pub(crate) fn append_descriptor_bytes(&self, bytes: &mut Vec<u8>) {
         bytes.push(sis_family_tag(self.sis_family()));
-        push_u16(bytes, self.min_security_bits());
+        bytes.push(self.security_policy().tag());
         push_usize(bytes, self.row_len());
         push_usize(bytes, self.col_len());
         push_u128(bytes, self.coeff_linf_bound());
@@ -328,9 +362,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn unsupported_security_floor_rejects_linf_bucket() {
+    fn unsupported_shape_rejects_linf_bucket() {
         assert_eq!(
-            ceil_supported_linf_bound(128, SisModulusFamily::Q32, 32, 7),
+            ceil_supported_linf_bound(DEFAULT_SIS_SECURITY_POLICY, SisModulusFamily::Q32, 31, 7),
             None
         );
     }
@@ -338,10 +372,22 @@ mod tests {
     #[test]
     fn floor_slices_have_family_specific_rank_caps() {
         let bucket = 15;
-        if sis_max_widths(DEFAULT_SIS_SECURITY_BITS, SisModulusFamily::Q32, 32, bucket).is_some() {
+        if sis_max_widths(
+            DEFAULT_SIS_SECURITY_POLICY,
+            SisModulusFamily::Q32,
+            32,
+            bucket,
+        )
+        .is_some()
+        {
             assert_eq!(
-                sis_max_widths(DEFAULT_SIS_SECURITY_BITS, SisModulusFamily::Q32, 32, bucket)
-                    .map(<[u64]>::len),
+                sis_max_widths(
+                    DEFAULT_SIS_SECURITY_POLICY,
+                    SisModulusFamily::Q32,
+                    32,
+                    bucket
+                )
+                .map(<[u64]>::len),
                 Some(20)
             );
         }
@@ -351,14 +397,14 @@ mod tests {
     fn linf_key_rounds_to_coefficient_bucket() {
         let linf = 1_048_575u128;
         let key = sis_table_key_for_linf_bound(
-            DEFAULT_SIS_SECURITY_BITS,
+            DEFAULT_SIS_SECURITY_POLICY,
             SisModulusFamily::Q32,
             128,
             linf,
         );
         if let Some(key) = key {
             assert_eq!(key.coeff_linf_bound, linf);
-            assert_eq!(key.min_security_bits, DEFAULT_SIS_SECURITY_BITS);
+            assert_eq!(key.policy, DEFAULT_SIS_SECURITY_POLICY);
         }
     }
 

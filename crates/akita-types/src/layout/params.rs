@@ -206,7 +206,7 @@ impl LevelParams {
             ring_dimension,
             log_basis,
             a_key: AjtaiKeyParams::new_unchecked(
-                crate::sis::DEFAULT_SIS_SECURITY_BITS,
+                crate::sis::DEFAULT_SIS_SECURITY_POLICY,
                 sis_family,
                 n_a,
                 0,
@@ -214,7 +214,7 @@ impl LevelParams {
                 ring_dimension,
             ),
             b_key: AjtaiKeyParams::new_unchecked(
-                crate::sis::DEFAULT_SIS_SECURITY_BITS,
+                crate::sis::DEFAULT_SIS_SECURITY_POLICY,
                 sis_family,
                 n_b,
                 0,
@@ -222,7 +222,7 @@ impl LevelParams {
                 ring_dimension,
             ),
             d_key: AjtaiKeyParams::new_unchecked(
-                crate::sis::DEFAULT_SIS_SECURITY_BITS,
+                crate::sis::DEFAULT_SIS_SECURITY_POLICY,
                 sis_family,
                 n_d,
                 0,
@@ -1140,7 +1140,7 @@ impl LevelParams {
             ring_dimension: d,
             log_basis: self.log_basis,
             a_key: AjtaiKeyParams::new_unchecked(
-                self.a_key.min_security_bits(),
+                self.a_key.security_policy(),
                 self.a_key.sis_family(),
                 self.a_key.row_len,
                 inner_width,
@@ -1148,7 +1148,7 @@ impl LevelParams {
                 d,
             ),
             b_key: AjtaiKeyParams::new_unchecked(
-                self.b_key.min_security_bits(),
+                self.b_key.security_policy(),
                 self.b_key.sis_family(),
                 self.b_key.row_len,
                 outer_width,
@@ -1156,7 +1156,7 @@ impl LevelParams {
                 d,
             ),
             d_key: AjtaiKeyParams::new_unchecked(
-                self.d_key.min_security_bits(),
+                self.d_key.security_policy(),
                 self.d_key.sis_family(),
                 self.d_key.row_len,
                 d_matrix_width,
@@ -1206,7 +1206,7 @@ impl LevelParams {
             ring_dimension: d,
             log_basis: other.log_basis,
             a_key: AjtaiKeyParams::new_unchecked(
-                self.a_key.min_security_bits(),
+                self.a_key.security_policy(),
                 self.a_key.sis_family(),
                 self.a_key.row_len,
                 other.a_key.col_len,
@@ -1214,7 +1214,7 @@ impl LevelParams {
                 d,
             ),
             b_key: AjtaiKeyParams::new_unchecked(
-                self.b_key.min_security_bits(),
+                self.b_key.security_policy(),
                 self.b_key.sis_family(),
                 self.b_key.row_len,
                 other.b_key.col_len,
@@ -1222,7 +1222,7 @@ impl LevelParams {
                 d,
             ),
             d_key: AjtaiKeyParams::new_unchecked(
-                self.d_key.min_security_bits(),
+                self.d_key.security_policy(),
                 self.d_key.sis_family(),
                 self.d_key.row_len,
                 other.d_key.col_len,
@@ -1322,7 +1322,7 @@ mod tests {
             ),
             a_key: precommit_lp.a_key.clone(),
             b_key: AjtaiKeyParams::new_unchecked(
-                precommit_lp.b_key.min_security_bits(),
+                precommit_lp.b_key.security_policy(),
                 precommit_lp.b_key.sis_family(),
                 5,
                 precommit_lp.b_key.col_len(),

@@ -29,7 +29,7 @@ pub use akita::{
 };
 pub use config::{
     Adps16Mode, EstimateConfig, NearestNeighborModel, OptimizerConfig, ReductionCostModel,
-    SearchMode, ShapeModel,
+    SearchMode, ShapeModel, SisSecurityConstraint, SisSecurityDiagnostic, SisSecurityPolicy,
 };
 pub use cost::{CostValue, EstimateTag, LatticeCost, LogCost};
 pub use error::{EstimatorError, Result};

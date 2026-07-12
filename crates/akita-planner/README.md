@@ -129,12 +129,15 @@ For each level candidate, the planner derives the SIS layout in the same order:
 Production SIS lookups use `SisTableKey`:
 
 ```text
-(min_security_bits, sis_family, ring_dimension, coeff_linf_bound)
+(sis_security_policy, sis_family, ring_dimension, coeff_linf_bound)
 ```
 
-Only the 138-bit floor is generated today. The floor is part of `PlannerPolicy`,
-catalog identity, generated table expansion, and descriptor bytes, so a schedule
-generated for one SIS floor cannot be silently reused under another floor.
+The shipped policy is the descriptive
+`Classical138Quantum128WithIdealizedBcssV1`: hard ADPS16 classical 138-bit and
+conventional-quantum 128-bit constraints, with one non-gating idealized BCSS
+diagnostic. The policy is part of `PlannerPolicy`, catalog identity, generated
+table expansion, and descriptor bytes, so a schedule generated for one policy
+cannot be silently reused under another policy.
 
 The searched parameters are therefore small: mostly `log_basis` and the fold split. The matrix dimensions are consequences of those choices and of the fixed policy inputs.
 

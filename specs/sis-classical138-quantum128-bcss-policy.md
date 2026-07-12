@@ -4,7 +4,7 @@
 |---------------|-------|
 | Author(s)     | Quang Dao |
 | Created       | 2026-07-12 |
-| Status        | approved |
+| Status        | implemented |
 | PR            | |
 | Supersedes    | |
 | Superseded-by | |
@@ -184,32 +184,32 @@ review line.
 
 ### Acceptance Criteria
 
-- [ ] Add a public, versioned SIS policy identifier named descriptively, with
+- [x] Add a public, versioned SIS policy identifier named descriptively, with
       `Classical138Quantum128WithIdealizedBcssV1` as the initial policy.
-- [ ] Replace production identity that depends only on
+- [x] Replace production identity that depends only on
       `min_security_bits = 138` with identity that commits to the policy.
-- [ ] Generate every production cutoff from the intersection of full
+- [x] Generate every production cutoff from the intersection of full
       classical and conventional quantum optimizer runs.
-- [ ] Add a distinct BCSS reduction-cost model with exponent `0.2563`; do not
+- [x] Add a distinct BCSS reduction-cost model with exponent `0.2563`; do not
       overload `Adps16Mode::Quantum` or `Adps16Mode::Paranoid`.
-- [ ] Record BCSS scores, optimizer witnesses, margins, and whether the 124-bit
+- [x] Record BCSS scores, optimizer witnesses, margins, and whether the 124-bit
       review line was crossed for each generated boundary pair.
-- [ ] Keep the checked-in runtime table compact: the BCSS diagnostic may live
+- [x] Keep the checked-in runtime table compact: the BCSS diagnostic may live
       in generation CSV/metadata rather than verifier-facing row data.
-- [ ] Make generation visibly fail or produce a review-blocking result when an
+- [x] Make generation visibly fail or produce a review-blocking result when an
       accepted hard-policy boundary is below the BCSS review line.
-- [ ] Add fixed-cost tests for all three policy exponents and optimizer tests
+- [x] Add fixed-cost tests for all three policy exponents and optimizer tests
       showing that all models are independently optimized.
-- [ ] Add a regression where the row passing classical 138 fails conventional
+- [x] Add a regression where the row passing classical 138 fails conventional
       quantum 128, proving the table generator takes the intersection.
-- [ ] Add a regression where BCSS falls below 124 but hard constraints pass,
+- [x] Add a regression where BCSS falls below 124 but hard constraints pass,
       proving the row is flagged rather than silently rejected or accepted
       without provenance.
-- [ ] Regenerate all production SIS tables and any schedules whose selected
+- [x] Regenerate all production SIS tables and any schedules whose selected
       ranks change; retain the existing pure-DP/table expansion drift guard.
-- [ ] Update the book's security language from the pre-implementation wording
+- [x] Update the book's security language from the pre-implementation wording
       to the post-implementation wording only after regenerated tables land.
-- [ ] Run `cargo fmt -q`, `cargo clippy --all --message-format=short -q -- -D
+- [x] Run `cargo fmt -q`, `cargo clippy --all --message-format=short -q -- -D
       warnings`, `cargo test`, and `./scripts/check-doc-guardrails.sh`.
 
 ### Testing Strategy
@@ -374,11 +374,23 @@ identifier.
 
 ## Documentation
 
-While implementation is pending, the Akita Book should link this approved spec
-and continue to state that the checked-in table enforces only the current
-138-bit classical estimate. The implementation PR owns the durable explanation
-in `book/src/how/security.md`; after that fold, this spec should be marked
-`implemented` and archived under the normal pruning policy.
+The implementation is now present in the estimator, runtime policy identity,
+generated SIS tables, and generated schedule snapshot. The Akita Book owns the
+durable explanation in `book/src/how/security.md`; this spec remains the
+versioned design record and should be archived under the normal pruning policy
+only after the implementation has shipped.
+
+### Implementation disposition
+
+The production generator evaluated 6,240 rows with independent classical and
+conventional-quantum optimizers and emitted the compact Rust tables plus the
+35-column `policy_audit.csv` provenance sidecar. The idealized BCSS diagnostic
+was evaluated for every boundary pair; zero accepted rows crossed the 124-bit
+review line, so no manual review disposition is required for this snapshot.
+All 15 generated schedule families were regenerated from the policy-aware
+catalog, and runtime/catalog/descriptor identities now commit to the policy
+identifier. The estimator includes regression coverage for independent model
+optimization, the hard-policy intersection, and BCSS review reporting.
 
 `AGENTS.md` does not need a new operational command for the design-only PR. The
 existing offline generation command remains authoritative until implementation

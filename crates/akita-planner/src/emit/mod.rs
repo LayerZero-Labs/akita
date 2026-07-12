@@ -202,7 +202,7 @@ fn emit_identity_const(identity: &GeneratedScheduleCatalogIdentity) -> String {
             "GeneratedScheduleCatalogIdentity {{\n",
             "    family_name: \"{family_name}\",\n",
             "    sis_family: {sis_family},\n",
-            "    min_sis_security_bits: {min_sis_security_bits},\n",
+            "    sis_security_policy: SisSecurityPolicyId::{sis_security_policy},\n",
             "    ring_dimension: {ring_dimension},\n",
             "    decomposition: {decomposition},\n",
             "    ring_subfield_norm_bound: {ring_subfield_norm_bound},\n",
@@ -221,7 +221,7 @@ fn emit_identity_const(identity: &GeneratedScheduleCatalogIdentity) -> String {
         ring_dims = ring_dims,
         family_name = identity.family_name,
         sis_family = emit_sis_family(identity.sis_family),
-        min_sis_security_bits = identity.min_sis_security_bits,
+        sis_security_policy = identity.sis_security_policy.name(),
         ring_dimension = identity.ring_dimension,
         decomposition = emit_decomposition(identity.decomposition),
         ring_subfield_norm_bound = identity.ring_subfield_norm_bound,
@@ -276,7 +276,7 @@ pub fn emit_family_module(spec: &EmitSpec) -> Result<String, String> {
         "use super::{{\n    ChunkedWitnessCfg, GeneratedDirectStep, GeneratedFoldStep, \
          GeneratedScheduleCatalogIdentity, PolynomialGroupLayout, PrecommittedGroupParams, \
          GeneratedScheduleTableEntry, GeneratedStep, DecompositionParams, SisModulusFamily, \
-         TensorChallengeShape,\n}};"
+         SisSecurityPolicyId, TensorChallengeShape,\n}};"
     )
     .map_err(|e| e.to_string())?;
     writeln!(out).map_err(|e| e.to_string())?;

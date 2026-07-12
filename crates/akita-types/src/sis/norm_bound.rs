@@ -8,7 +8,7 @@
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::AkitaError;
 
-use super::ajtai_key::{ceil_supported_linf_bound, SisModulusFamily};
+use super::ajtai_key::{ceil_supported_linf_bound, SisModulusFamily, SisSecurityPolicyId};
 use super::decomposition_digits::{
     balanced_digit_abs_max, balanced_digit_max, num_digits_for_bound,
 };
@@ -27,13 +27,13 @@ pub use super::fold_linf_cap::{
 /// small digit is a digit that is between `-(basis/2)` and `basis/2 - 1`.
 /// Therefore, the largest abs value of their subtraction is `basis - 1`.
 pub fn rounded_up_collision_inf_norm(
-    min_security_bits: u16,
+    policy: SisSecurityPolicyId,
     sis_family: SisModulusFamily,
     ring_dimension: usize,
     log_basis: u32,
 ) -> Option<u128> {
     let linf = 1u128.checked_shl(log_basis)?.checked_sub(1)?;
-    ceil_supported_linf_bound(min_security_bits, sis_family, ring_dimension as u32, linf)
+    ceil_supported_linf_bound(policy, sis_family, ring_dimension as u32, linf)
 }
 
 /// Weak-binding lemma `L∞` norm bound:
@@ -66,7 +66,7 @@ pub fn weak_binding_inf_norm(
 #[must_use]
 #[allow(clippy::too_many_arguments)]
 pub fn rounded_up_role_a_inf_norm(
-    min_security_bits: u16,
+    policy: SisSecurityPolicyId,
     sis_family: SisModulusFamily,
     d: usize,
     decomposition: DecompositionParams,
@@ -106,7 +106,7 @@ pub fn rounded_up_role_a_inf_norm(
         ring_subfield_norm_bound,
         2u128.checked_mul(recomposed_inf_norm_bound)?,
     )?;
-    ceil_supported_linf_bound(min_security_bits, sis_family, d as u32, collision_linf)
+    ceil_supported_linf_bound(policy, sis_family, d as u32, collision_linf)
 }
 
 /// Effective fold-round challenge `(||c||_inf, ||c||_1)` for `beta_inf` sizing.
@@ -287,7 +287,7 @@ pub fn fold_witness_digit_plan(
 
 #[cfg(test)]
 mod tests {
-    use super::super::ajtai_key::DEFAULT_SIS_SECURITY_BITS;
+    use super::super::ajtai_key::DEFAULT_SIS_SECURITY_POLICY;
     use super::*;
 
     #[test]
@@ -385,7 +385,7 @@ mod tests {
         // Weak-binding collision `8 · ω · z` for `subfield = 1`.
         let collision_linf = 8u128 * challenge.l1_norm * z_bound;
         let envelope = ceil_supported_linf_bound(
-            DEFAULT_SIS_SECURITY_BITS,
+            DEFAULT_SIS_SECURITY_POLICY,
             SisModulusFamily::Q32,
             d as u32,
             collision_linf,
@@ -393,7 +393,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             rounded_up_role_a_inf_norm(
-                DEFAULT_SIS_SECURITY_BITS,
+                DEFAULT_SIS_SECURITY_POLICY,
                 SisModulusFamily::Q32,
                 d,
                 decomposition,
@@ -462,7 +462,7 @@ mod tests {
             "verifier envelope {z_bound} must cover honest cap {honest_cap}"
         );
         let digit_priced = rounded_up_role_a_inf_norm(
-            DEFAULT_SIS_SECURITY_BITS,
+            DEFAULT_SIS_SECURITY_POLICY,
             SisModulusFamily::Q64,
             d,
             decomposition,
@@ -477,7 +477,7 @@ mod tests {
         )
         .unwrap();
         let cap_priced = ceil_supported_linf_bound(
-            DEFAULT_SIS_SECURITY_BITS,
+            DEFAULT_SIS_SECURITY_POLICY,
             SisModulusFamily::Q64,
             d as u32,
             8u128
@@ -600,7 +600,7 @@ mod tests {
         .unwrap();
         let z_bound = balanced_digit_abs_max(decomposition.log_basis, delta_fold);
         let priced = rounded_up_role_a_inf_norm(
-            DEFAULT_SIS_SECURITY_BITS,
+            DEFAULT_SIS_SECURITY_POLICY,
             SisModulusFamily::Q32,
             d,
             decomposition,
@@ -617,7 +617,7 @@ mod tests {
         assert_eq!(
             priced,
             ceil_supported_linf_bound(
-                DEFAULT_SIS_SECURITY_BITS,
+                DEFAULT_SIS_SECURITY_POLICY,
                 SisModulusFamily::Q32,
                 d as u32,
                 8 * challenge.l1_norm * z_bound

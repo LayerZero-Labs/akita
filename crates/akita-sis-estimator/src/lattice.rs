@@ -22,7 +22,11 @@ const MIN_SIEVE_LOG2: f64 = -100.0 * std::f64::consts::LOG2_10;
 // Pinned lattice-estimator computes the sieve floor as Sage RR(1e-100), which
 // overflows to oo once repeated past the binary64 exponent range.
 const SAGE_RR_MAX_LOG2: f64 = 1024.0;
-const MAX_DENSE_PROFILE_DIM: u64 = 1_000_000;
+// The compact summary is numerically equivalent for the observables consumed
+// by the infinity probability path (see the simulator parity test). Keeping
+// dense sorting below this threshold prevents medium-width rows from spending
+// minutes sorting thousands of profile entries per optimizer probe.
+const MAX_DENSE_PROFILE_DIM: u64 = 1_000;
 
 /// Cached numeric values reused across optimizer probes for one modulus.
 #[derive(Clone, Copy, Debug)]

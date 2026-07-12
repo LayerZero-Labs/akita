@@ -11,7 +11,7 @@
 
 use crate::{
     akita::{scalar_sis_from_ring_wide, AkitaModulusFamily},
-    config::{EstimateConfig, OptimizerConfig, SearchMode},
+    config::{EstimateConfig, OptimizerConfig, ReductionCostModel, SearchMode, SisSecurityPolicy},
     cost::{CostValue, LatticeCost},
     error::{EstimatorError, Result},
     estimate,
@@ -40,9 +40,6 @@ pub const FAMILIES: &[AkitaModulusFamily] = &[
     AkitaModulusFamily::Q64,
     AkitaModulusFamily::Q128,
 ];
-
-/// Default target security bits for the infinity-norm comparison table.
-pub const DEFAULT_INFINITY_TARGET_BITS: f64 = 138.0;
 
 /// Default maximum rank emitted by the current Euclidean SIS table.
 pub const DEFAULT_MAX_RANK: u32 = 20;
@@ -104,8 +101,8 @@ pub struct InfinityWidthTableConfig {
     pub coeff_linf_bounds: Vec<u64>,
     /// Maximum module rank.
     pub max_rank: u32,
-    /// Security threshold for `rop_log2`.
-    pub target_bits: f64,
+    /// Versioned security policy used to accept rows and emit diagnostics.
+    pub policy: SisSecurityPolicy,
     /// Optional caller cap on ring-element width.
     pub search_cap: Option<u64>,
     /// Optimizer profile.
@@ -121,7 +118,7 @@ impl Default for InfinityWidthTableConfig {
             ring_dims: RING_DIMS.to_vec(),
             coeff_linf_bounds: COEFF_LINF_BUCKETS.to_vec(),
             max_rank: DEFAULT_MAX_RANK,
-            target_bits: DEFAULT_INFINITY_TARGET_BITS,
+            policy: SisSecurityPolicy::Classical138Quantum128WithIdealizedBcssV1,
             search_cap: None,
             profile: InfinityWidthProfile::LocalMinimum,
             progress_every: None,
@@ -136,8 +133,20 @@ pub fn is_full_infinity_width_table_config(config: &InfinityWidthTableConfig) ->
         && same_set(&config.ring_dims, RING_DIMS)
         && same_set(&config.coeff_linf_bounds, COEFF_LINF_BUCKETS)
         && config.max_rank == DEFAULT_MAX_RANK
-        && config.target_bits == DEFAULT_INFINITY_TARGET_BITS
+        && config.policy == SisSecurityPolicy::Classical138Quantum128WithIdealizedBcssV1
         && config.search_cap.is_none()
+}
+
+/// Independently optimized hard-policy costs and the idealized BCSS diagnostic
+/// for one boundary width.
+#[derive(Clone, Debug, PartialEq)]
+pub struct InfinityWidthPolicyCosts {
+    /// ADPS16 classical cost.
+    pub classical: LatticeCost,
+    /// Conventional ADPS16 quantum cost.
+    pub conventional_quantum: LatticeCost,
+    /// Idealized BCSS23 writable-QRAQM diagnostic cost.
+    pub idealized_bcss: LatticeCost,
 }
 
 /// One generated comparison row.
@@ -153,18 +162,18 @@ pub struct InfinityWidthRow {
     pub coeff_linf_bound: u64,
     /// Largest secure ring-element width found within the search cap.
     pub max_width: u64,
-    /// Security threshold.
-    pub target_bits: f64,
+    /// Versioned policy used to generate the row.
+    pub policy: SisSecurityPolicy,
     /// Actual cap used for this row.
     pub search_cap: u64,
     /// Whether `max_width == search_cap`, so the row is a lower bound.
     pub hit_cap: bool,
     /// Optimizer profile label.
     pub profile: InfinityWidthProfile,
-    /// Cost at `max_width`, if `max_width > 0`.
-    pub max_cost: Option<LatticeCost>,
-    /// Cost at `max_width + 1`, when that probe is representable.
-    pub next_cost: Option<LatticeCost>,
+    /// Independently optimized costs at `max_width`, if `max_width > 0`.
+    pub max_costs: Option<InfinityWidthPolicyCosts>,
+    /// Independently optimized costs at `max_width + 1`, when representable.
+    pub next_costs: Option<InfinityWidthPolicyCosts>,
 }
 
 impl InfinityWidthRow {
@@ -174,42 +183,70 @@ impl InfinityWidthRow {
         !self.hit_cap
     }
 
+    /// Whether the accepted boundary falls below the policy's non-gating BCSS
+    /// manual-review line.
+    #[must_use]
+    pub fn idealized_bcss_requires_review(&self) -> bool {
+        let diagnostic = self.policy.idealized_bcss_diagnostic();
+        self.max_costs.as_ref().is_some_and(|costs| {
+            !security_met(costs.idealized_bcss.rop, diagnostic.review_below_log2_rop)
+        })
+    }
+
     /// CSV header for row-oriented comparison artifacts.
     #[must_use]
     pub const fn csv_header() -> &'static str {
-        "family,d,rank,coeff_linf_bound,max_width,target_bits,search_cap,hit_cap,profile,max_rop_log2,next_rop_log2,max_security_margin_bits,next_failure_margin_bits,max_beta,max_zeta,next_beta,next_zeta"
+        "policy,family,d,rank,coeff_linf_bound,max_width,search_cap,hit_cap,profile,classical_target_bits,max_classical_rop_log2,next_classical_rop_log2,max_classical_margin_bits,next_classical_failure_margin_bits,max_classical_beta,max_classical_zeta,next_classical_beta,next_classical_zeta,quantum_target_bits,max_quantum_rop_log2,next_quantum_rop_log2,max_quantum_margin_bits,next_quantum_failure_margin_bits,max_quantum_beta,max_quantum_zeta,next_quantum_beta,next_quantum_zeta,bcss_review_below_bits,max_bcss_rop_log2,next_bcss_rop_log2,max_bcss_beta,max_bcss_zeta,next_bcss_beta,next_bcss_zeta,bcss_requires_review"
     }
 
     /// Format one CSV row.
     #[must_use]
     pub fn to_csv_record(&self) -> String {
         format!(
-            "{},{},{},{},{},{:.17},{},{},{},{},{},{},{},{},{},{},{}",
+            "{},{},{},{},{},{},{},{},{},{:.17},{},{},{},{},{},{},{},{},{:.17},{},{},{},{},{},{},{},{},{:.17},{},{},{},{},{},{},{}",
+            self.policy.label(),
             self.family.label(),
             self.d,
             self.rank,
             self.coeff_linf_bound,
             self.max_width,
-            self.target_bits,
             self.search_cap,
             self.hit_cap,
             self.profile.label(),
-            cost_log2_text(self.max_cost.as_ref().map(|cost| cost.rop)),
-            cost_log2_text(self.next_cost.as_ref().map(|cost| cost.rop)),
+            self.policy.classical_constraint().minimum_log2_rop,
+            cost_log2_text(self.max_costs.as_ref().map(|costs| costs.classical.rop)),
+            cost_log2_text(self.next_costs.as_ref().map(|costs| costs.classical.rop)),
             signed_margin_text(
-                self.max_cost
+                self.max_costs
                     .as_ref()
-                    .and_then(|cost| security_margin_bits(cost.rop, self.target_bits)),
+                    .and_then(|costs| security_margin_bits(costs.classical.rop, self.policy.classical_constraint().minimum_log2_rop)),
             ),
             signed_margin_text(
-                self.next_cost
+                self.next_costs
                     .as_ref()
-                    .and_then(|cost| security_failure_margin_bits(cost.rop, self.target_bits)),
+                    .and_then(|costs| security_failure_margin_bits(costs.classical.rop, self.policy.classical_constraint().minimum_log2_rop)),
             ),
-            optional_u32_text(self.max_cost.as_ref().and_then(|cost| cost.beta)),
-            optional_u64_text(self.max_cost.as_ref().and_then(|cost| cost.zeta)),
-            optional_u32_text(self.next_cost.as_ref().and_then(|cost| cost.beta)),
-            optional_u64_text(self.next_cost.as_ref().and_then(|cost| cost.zeta)),
+            optional_u32_text(self.max_costs.as_ref().and_then(|costs| costs.classical.beta)),
+            optional_u64_text(self.max_costs.as_ref().and_then(|costs| costs.classical.zeta)),
+            optional_u32_text(self.next_costs.as_ref().and_then(|costs| costs.classical.beta)),
+            optional_u64_text(self.next_costs.as_ref().and_then(|costs| costs.classical.zeta)),
+            self.policy.conventional_quantum_constraint().minimum_log2_rop,
+            cost_log2_text(self.max_costs.as_ref().map(|costs| costs.conventional_quantum.rop)),
+            cost_log2_text(self.next_costs.as_ref().map(|costs| costs.conventional_quantum.rop)),
+            signed_margin_text(self.max_costs.as_ref().and_then(|costs| security_margin_bits(costs.conventional_quantum.rop, self.policy.conventional_quantum_constraint().minimum_log2_rop))),
+            signed_margin_text(self.next_costs.as_ref().and_then(|costs| security_failure_margin_bits(costs.conventional_quantum.rop, self.policy.conventional_quantum_constraint().minimum_log2_rop))),
+            optional_u32_text(self.max_costs.as_ref().and_then(|costs| costs.conventional_quantum.beta)),
+            optional_u64_text(self.max_costs.as_ref().and_then(|costs| costs.conventional_quantum.zeta)),
+            optional_u32_text(self.next_costs.as_ref().and_then(|costs| costs.conventional_quantum.beta)),
+            optional_u64_text(self.next_costs.as_ref().and_then(|costs| costs.conventional_quantum.zeta)),
+            self.policy.idealized_bcss_diagnostic().review_below_log2_rop,
+            cost_log2_text(self.max_costs.as_ref().map(|costs| costs.idealized_bcss.rop)),
+            cost_log2_text(self.next_costs.as_ref().map(|costs| costs.idealized_bcss.rop)),
+            optional_u32_text(self.max_costs.as_ref().and_then(|costs| costs.idealized_bcss.beta)),
+            optional_u64_text(self.max_costs.as_ref().and_then(|costs| costs.idealized_bcss.zeta)),
+            optional_u32_text(self.next_costs.as_ref().and_then(|costs| costs.idealized_bcss.beta)),
+            optional_u64_text(self.next_costs.as_ref().and_then(|costs| costs.idealized_bcss.zeta)),
+            self.idealized_bcss_requires_review(),
         )
     }
 }
@@ -310,16 +347,22 @@ fn report_progress(progress_every: Option<usize>, completed: usize, total: usize
 /// looser.
 pub fn validate_infinity_width_rows(rows: &[InfinityWidthRow]) -> Result<()> {
     for row in rows {
-        if let Some(cost) = &row.max_cost {
-            if !security_met(cost.rop, row.target_bits) {
-                return invalid_config("rows", "max_width row does not meet target_bits");
+        let classical = row.policy.classical_constraint();
+        let quantum = row.policy.conventional_quantum_constraint();
+        if let Some(costs) = &row.max_costs {
+            if !security_met(costs.classical.rop, classical.minimum_log2_rop)
+                || !security_met(costs.conventional_quantum.rop, quantum.minimum_log2_rop)
+            {
+                return invalid_config("rows", "max_width row does not meet both hard constraints");
             }
         } else if row.max_width != 0 {
-            return invalid_config("rows", "positive max_width is missing max_cost");
+            return invalid_config("rows", "positive max_width is missing max_costs");
         }
-        if let Some(cost) = &row.next_cost {
-            if security_met(cost.rop, row.target_bits) {
-                return invalid_config("rows", "next_width row still meets target_bits");
+        if let Some(costs) = &row.next_costs {
+            if security_met(costs.classical.rop, classical.minimum_log2_rop)
+                && security_met(costs.conventional_quantum.rop, quantum.minimum_log2_rop)
+            {
+                return invalid_config("rows", "next_width row still meets both hard constraints");
             }
         }
     }
@@ -449,9 +492,6 @@ fn validate_table_config(config: &InfinityWidthTableConfig) -> Result<()> {
     if config.max_rank == 0 {
         return invalid_config("max_rank", "max_rank must be positive");
     }
-    if !config.target_bits.is_finite() || config.target_bits <= 0.0 {
-        return invalid_config("target_bits", "target_bits must be finite and positive");
-    }
     if config.search_cap == Some(0) {
         return invalid_config("search_cap", "search_cap must be positive when present");
     }
@@ -474,29 +514,62 @@ fn max_secure_width_row(
     estimator_config: &EstimateConfig,
 ) -> Result<InfinityWidthRow> {
     let search_cap = row_search_cap(d, table_config.search_cap)?;
-    let mut probe =
-        |width| estimate_width(family, d, rank, width, coeff_linf_bound, estimator_config);
-    let result = max_true_in_prefix(search_cap, |width| {
-        probe(width).map(|cost| security_met(cost.rop, table_config.target_bits))
-    })?;
-    let max_cost = if result.max_value == 0 {
+    let policy = table_config.policy;
+    let classical = policy.classical_constraint();
+    let quantum = policy.conventional_quantum_constraint();
+    let hard_probe = |width| {
+        let costs = estimate_hard_policy_width(
+            family,
+            d,
+            rank,
+            width,
+            coeff_linf_bound,
+            estimator_config,
+            policy,
+        )?;
+        Ok(security_met(costs.0.rop, classical.minimum_log2_rop)
+            && security_met(costs.1.rop, quantum.minimum_log2_rop))
+    };
+    let result = max_true_in_prefix(search_cap, hard_probe)?;
+    let max_costs = if result.max_value == 0 {
         None
     } else {
-        Some(probe(result.max_value)?)
+        Some(estimate_policy_width(
+            family,
+            d,
+            rank,
+            result.max_value,
+            coeff_linf_bound,
+            estimator_config,
+            policy,
+        )?)
     };
-    let next_cost = result.next_value.map(&mut probe).transpose()?;
+    let next_costs = result
+        .next_value
+        .map(|width| {
+            estimate_policy_width(
+                family,
+                d,
+                rank,
+                width,
+                coeff_linf_bound,
+                estimator_config,
+                policy,
+            )
+        })
+        .transpose()?;
     Ok(InfinityWidthRow {
         family,
         d,
         rank,
         coeff_linf_bound,
         max_width: result.max_value,
-        target_bits: table_config.target_bits,
+        policy,
         search_cap,
         hit_cap: result.hit_cap,
         profile: table_config.profile,
-        max_cost,
-        next_cost,
+        max_costs,
+        next_costs,
     })
 }
 
@@ -532,6 +605,92 @@ fn estimate_width(
 ) -> Result<LatticeCost> {
     let params = scalar_sis_from_ring_wide(family, d, rank, width, coeff_linf_bound)?;
     estimate(&params, config)
+}
+
+fn estimate_hard_policy_width(
+    family: AkitaModulusFamily,
+    d: u32,
+    rank: u32,
+    width: u64,
+    coeff_linf_bound: u64,
+    base_config: &EstimateConfig,
+    policy: SisSecurityPolicy,
+) -> Result<(LatticeCost, LatticeCost)> {
+    let classical = estimate_width_for_model(
+        family,
+        d,
+        rank,
+        width,
+        coeff_linf_bound,
+        base_config,
+        policy.classical_constraint().reduction_model,
+    )?;
+    let conventional_quantum = estimate_width_for_model(
+        family,
+        d,
+        rank,
+        width,
+        coeff_linf_bound,
+        base_config,
+        policy.conventional_quantum_constraint().reduction_model,
+    )?;
+    Ok((classical, conventional_quantum))
+}
+
+fn estimate_policy_width(
+    family: AkitaModulusFamily,
+    d: u32,
+    rank: u32,
+    width: u64,
+    coeff_linf_bound: u64,
+    base_config: &EstimateConfig,
+    policy: SisSecurityPolicy,
+) -> Result<InfinityWidthPolicyCosts> {
+    let (classical, conventional_quantum) = estimate_hard_policy_width(
+        family,
+        d,
+        rank,
+        width,
+        coeff_linf_bound,
+        base_config,
+        policy,
+    )?;
+    let idealized_bcss = estimate_width_for_model(
+        family,
+        d,
+        rank,
+        width,
+        coeff_linf_bound,
+        base_config,
+        policy.idealized_bcss_diagnostic().reduction_model,
+    )?;
+    Ok(InfinityWidthPolicyCosts {
+        classical,
+        conventional_quantum,
+        idealized_bcss,
+    })
+}
+
+fn estimate_width_for_model(
+    family: AkitaModulusFamily,
+    d: u32,
+    rank: u32,
+    width: u64,
+    coeff_linf_bound: u64,
+    base_config: &EstimateConfig,
+    red_cost_model: ReductionCostModel,
+) -> Result<LatticeCost> {
+    estimate_width(
+        family,
+        d,
+        rank,
+        width,
+        coeff_linf_bound,
+        &EstimateConfig {
+            red_cost_model,
+            ..*base_config
+        },
+    )
 }
 
 fn security_met(rop: CostValue, target_bits: f64) -> bool {
@@ -679,6 +838,26 @@ mod tests {
     }
 
     #[test]
+    fn prefix_search_scans_secure_prefix_before_cap() {
+        let mut probes = Vec::new();
+        let result = max_true_in_prefix(16, |value| {
+            probes.push(value);
+            Ok(true)
+        })
+        .unwrap();
+        assert_eq!(
+            result,
+            PrefixSearchResult {
+                max_value: 16,
+                next_value: None,
+                hit_cap: true,
+            }
+        );
+        assert_eq!(probes.first(), Some(&1));
+        assert_eq!(probes.last(), Some(&16));
+    }
+
+    #[test]
     fn prefix_search_ignores_late_secure_islands() {
         let result = max_true_in_prefix(32, |value| Ok(value <= 9 || value >= 17)).unwrap();
         assert_eq!(
@@ -694,8 +873,9 @@ mod tests {
     #[test]
     fn infinity_csv_header_includes_boundary_margins() {
         let header = InfinityWidthRow::csv_header();
-        assert!(header.contains("max_security_margin_bits"));
-        assert!(header.contains("next_failure_margin_bits"));
+        assert!(header.contains("max_classical_margin_bits"));
+        assert!(header.contains("next_quantum_failure_margin_bits"));
+        assert!(header.contains("bcss_requires_review"));
     }
 
     #[test]
@@ -731,7 +911,7 @@ mod tests {
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].max_width, 2);
         assert!(rows[0].hit_cap);
-        assert!(rows[0].max_cost.is_some());
+        assert!(rows[0].max_costs.is_some());
     }
 
     #[test]
@@ -747,5 +927,51 @@ mod tests {
         };
         let rows = generate_infinity_width_rows(&config).unwrap();
         validate_infinity_width_rows(&rows).unwrap();
+    }
+
+    #[test]
+    fn bcss_review_line_is_reported_without_changing_hard_acceptance() {
+        let config = InfinityWidthTableConfig {
+            families: vec![AkitaModulusFamily::Q32],
+            ring_dims: vec![32],
+            coeff_linf_bounds: vec![15],
+            max_rank: 1,
+            search_cap: Some(8),
+            profile: InfinityWidthProfile::LocalMinimum,
+            ..InfinityWidthTableConfig::default()
+        };
+        let mut row = generate_infinity_width_rows(&config).unwrap().remove(0);
+        assert!(row.max_width > 0);
+        assert!(!row.idealized_bcss_requires_review());
+        row.max_costs
+            .as_mut()
+            .expect("accepted row has policy costs")
+            .idealized_bcss
+            .rop = CostValue::finite_log2(123.9);
+        assert!(row.idealized_bcss_requires_review());
+        validate_infinity_width_rows(&[row]).unwrap();
+    }
+
+    #[test]
+    fn conventional_quantum_gate_rejects_classical_only_width() {
+        let policy = SisSecurityPolicy::Classical138Quantum128WithIdealizedBcssV1;
+        let costs = estimate_policy_width(
+            AkitaModulusFamily::Q32,
+            32,
+            3,
+            40,
+            15,
+            &InfinityWidthProfile::LocalMinimum.config(),
+            policy,
+        )
+        .unwrap();
+        assert!(security_met(
+            costs.classical.rop,
+            policy.classical_constraint().minimum_log2_rop
+        ));
+        assert!(!security_met(
+            costs.conventional_quantum.rop,
+            policy.conventional_quantum_constraint().minimum_log2_rop
+        ));
     }
 }

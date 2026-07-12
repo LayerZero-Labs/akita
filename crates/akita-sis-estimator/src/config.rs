@@ -13,6 +13,8 @@ pub enum ReductionCostModel {
         /// Cost mode.
         mode: Adps16Mode,
     },
+    /// BCSS23 idealized quantum-sieving model with writable QRAQM.
+    Bcss23Idealized,
     /// Becker-Ducas-Gama-Laarhoven 2016 model.
     Bdgl16,
     /// MATZOV model.
@@ -30,6 +32,81 @@ pub enum ReductionCostModel {
         /// Nearest-neighbor model used by the short-vector backend.
         nearest_neighbor: NearestNeighborModel,
     },
+}
+
+/// A hard lower bound attached to one independently optimized reduction model.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SisSecurityConstraint {
+    /// Reduction model to optimize.
+    pub reduction_model: ReductionCostModel,
+    /// Minimum accepted `log2(rop)` score.
+    pub minimum_log2_rop: f64,
+}
+
+/// A non-gating diagnostic attached to one independently optimized model.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SisSecurityDiagnostic {
+    /// Reduction model to optimize.
+    pub reduction_model: ReductionCostModel,
+    /// Score below which a generated boundary requires manual review.
+    pub review_below_log2_rop: f64,
+}
+
+/// Versioned SIS security policy understood by the offline estimator.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum SisSecurityPolicy {
+    /// Classical 138-bit and conventional-quantum 128-bit hard constraints,
+    /// with one non-gating idealized BCSS23 diagnostic.
+    Classical138Quantum128WithIdealizedBcssV1,
+}
+
+impl SisSecurityPolicy {
+    /// Stable descriptive label shared with generated runtime policy identity.
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Classical138Quantum128WithIdealizedBcssV1 => {
+                "Classical138Quantum128WithIdealizedBcssV1"
+            }
+        }
+    }
+
+    /// Hard ADPS16 classical constraint.
+    #[must_use]
+    pub const fn classical_constraint(self) -> SisSecurityConstraint {
+        match self {
+            Self::Classical138Quantum128WithIdealizedBcssV1 => SisSecurityConstraint {
+                reduction_model: ReductionCostModel::Adps16 {
+                    mode: Adps16Mode::Classical,
+                },
+                minimum_log2_rop: 138.0,
+            },
+        }
+    }
+
+    /// Hard conventional ADPS16 quantum constraint.
+    #[must_use]
+    pub const fn conventional_quantum_constraint(self) -> SisSecurityConstraint {
+        match self {
+            Self::Classical138Quantum128WithIdealizedBcssV1 => SisSecurityConstraint {
+                reduction_model: ReductionCostModel::Adps16 {
+                    mode: Adps16Mode::Quantum,
+                },
+                minimum_log2_rop: 128.0,
+            },
+        }
+    }
+
+    /// Non-gating idealized BCSS23 diagnostic and manual-review line.
+    #[must_use]
+    pub const fn idealized_bcss_diagnostic(self) -> SisSecurityDiagnostic {
+        match self {
+            Self::Classical138Quantum128WithIdealizedBcssV1 => SisSecurityDiagnostic {
+                reduction_model: ReductionCostModel::Bcss23Idealized,
+                review_below_log2_rop: 124.0,
+            },
+        }
+    }
 }
 
 impl Default for ReductionCostModel {
@@ -293,6 +370,7 @@ mod tests {
             ReductionCostModel::Adps16 {
                 mode: Adps16Mode::Paranoid,
             },
+            ReductionCostModel::Bcss23Idealized,
             ReductionCostModel::Bdgl16,
             ReductionCostModel::Matzov {
                 nearest_neighbor: NearestNeighborModel::Classical,
@@ -318,8 +396,38 @@ mod tests {
             SearchMode::ProvenPruned,
         ];
 
-        assert_eq!(reduction_models.len(), 7);
+        assert_eq!(reduction_models.len(), 8);
         assert_eq!(shape_models.len(), 5);
         assert_eq!(search_modes.len(), 4);
+    }
+
+    #[test]
+    fn descriptive_security_policy_pins_models_and_thresholds() {
+        let policy = SisSecurityPolicy::Classical138Quantum128WithIdealizedBcssV1;
+        assert_eq!(
+            policy.classical_constraint(),
+            SisSecurityConstraint {
+                reduction_model: ReductionCostModel::Adps16 {
+                    mode: Adps16Mode::Classical,
+                },
+                minimum_log2_rop: 138.0,
+            }
+        );
+        assert_eq!(
+            policy.conventional_quantum_constraint(),
+            SisSecurityConstraint {
+                reduction_model: ReductionCostModel::Adps16 {
+                    mode: Adps16Mode::Quantum,
+                },
+                minimum_log2_rop: 128.0,
+            }
+        );
+        assert_eq!(
+            policy.idealized_bcss_diagnostic(),
+            SisSecurityDiagnostic {
+                reduction_model: ReductionCostModel::Bcss23Idealized,
+                review_below_log2_rop: 124.0,
+            }
+        );
     }
 }

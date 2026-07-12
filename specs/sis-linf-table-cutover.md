@@ -4,11 +4,19 @@
 |---------------|-------|
 | Author(s)     | Quang Dao |
 | Created       | 2026-07-01 |
-| Status        | active |
+| Status        | superseded |
 | PR            | [#255](https://github.com/LayerZero-Labs/akita/pull/255) |
 | Supersedes    | `specs/archive/2026-Q2/sis-infinity-estimator-implementation-plan.md` Slice 7, `specs/archive/2026-Q2/sis-euclidean-estimator.md` for production SIS lookup |
-| Superseded-by | |
+| Superseded-by | `specs/sis-classical138-quantum128-bcss-policy.md` |
 | Book-chapter  | |
+
+> **Lifecycle note:** This document records the L-infinity table mechanics and
+> the original 138-bit classical cutover. The versioned policy identity,
+> hard classical/quantum acceptance rule, BCSS diagnostic, and current
+> generated artifacts are owned by
+> [`sis-classical138-quantum128-bcss-policy.md`](sis-classical138-quantum128-bcss-policy.md).
+> References below to a scalar `min_security_bits` floor describe the original
+> cutover and are not the current production contract.
 
 ## Summary
 

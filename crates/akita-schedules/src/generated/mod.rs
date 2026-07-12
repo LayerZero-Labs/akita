@@ -5,7 +5,9 @@ pub use akita_planner::generated::{
     GeneratedScheduleTable, GeneratedScheduleTableEntry, GeneratedStep, PolynomialGroupLayout,
     PrecommittedGroupParams, SisModulusFamily,
 };
-pub use akita_planner::{ChunkedWitnessCfg, DecompositionParams, TensorChallengeShape};
+pub use akita_planner::{
+    ChunkedWitnessCfg, DecompositionParams, SisSecurityPolicyId, TensorChallengeShape,
+};
 
 // @generated schedule module wiring begin
 #[cfg(feature = "fp128-d128-full")]

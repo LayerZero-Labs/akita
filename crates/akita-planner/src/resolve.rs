@@ -116,7 +116,7 @@ mod tests {
     use akita_types::{
         AkitaScheduleLookupKey, ChunkedWitnessCfg, DecompositionParams, LevelParams,
         MultiChunkProfileId, PolynomialGroupLayout, PrecommittedGroupParams, SisModulusFamily,
-        Step, DEFAULT_SIS_SECURITY_BITS,
+        Step, DEFAULT_SIS_SECURITY_POLICY,
     };
 
     fn flat_policy() -> PlannerPolicy {
@@ -128,7 +128,7 @@ mod tests {
                 log_open_bound: Some(8),
             },
             sis_family: SisModulusFamily::Q128,
-            min_sis_security_bits: DEFAULT_SIS_SECURITY_BITS,
+            sis_security_policy: DEFAULT_SIS_SECURITY_POLICY,
             ring_subfield_norm_bound: 1,
             claim_ext_degree: 4,
             chal_ext_degree: 4,
