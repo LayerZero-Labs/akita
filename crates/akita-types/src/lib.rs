@@ -70,10 +70,10 @@ pub use layout::{
     sumcheck_rounds, validate_compression_catalog, validate_role_dims, validate_schedule_ring_dims,
     BasisMode, BlockOrder, CommitmentRingDims, CompressionAlphabet, CompressionCatalogContext,
     CompressionCatalogProjection, CompressionChainSpec, CompressionMapSpec, CompressionSourceId,
-    FlatMatrix, LevelParams, LevelParamsLike, PrecommittedLevelParams, RelationGroupId,
-    RelationLayout, RelationMatrixRowLayout, RelationRowId, RelationRowPlan, RingMatrixView,
-    RingOpeningPoint, RingRole, ValidatedCompressionCatalog, MAX_FOLD_LEVELS,
-    MIN_A_ROLE_FOLD_CHALLENGE_RING_D, SUPPORTED_CHALLENGE_RING_DIMS,
+    FlatMatrix, LevelParams, LevelParamsLike, PrecommittedLevelParams, RelationFamilyProvider,
+    RelationGroupId, RelationLayout, RelationMatrixRowLayout, RelationRowId, RelationRowPlan,
+    RingMatrixView, RingOpeningPoint, RingRole, SharedSetupMatrixView, ValidatedCompressionCatalog,
+    MAX_FOLD_LEVELS, MIN_A_ROLE_FOLD_CHALLENGE_RING_D, SUPPORTED_CHALLENGE_RING_DIMS,
 };
 pub use ntt_cache::{NttCacheKey, PreparedNttPlan};
 pub use proof::{

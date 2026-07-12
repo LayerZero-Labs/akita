@@ -54,14 +54,26 @@ where
         });
     }
 
-    let d_family = row_plan.family(RelationRowId::D).ok();
-    let n_d_active = d_family.map_or(0, |family| family.rows().len());
-    let d_row_start = d_family.map_or(rows, |family| family.rows().start());
+    let d_provider = if row_plan
+        .families()
+        .iter()
+        .any(|family| matches!(family.id(), RelationRowId::D))
+    {
+        Some(relation_layout.family_provider(RelationRowId::D)?)
+    } else {
+        None
+    };
+    let n_d_active = d_provider
+        .as_ref()
+        .map_or(0, |provider| provider.rows().len());
+    let d_row_start = d_provider
+        .as_ref()
+        .map_or(rows, |provider| provider.rows().start());
 
     let (inputs, groups, d_physical_cols) = if lp.has_precommitted_groups() {
         prepare_multi_group_setup_artifact_inputs(
             lp,
-            row_plan,
+            relation_layout,
             opening_batch,
             &chunk_layout,
             rows,
@@ -71,7 +83,7 @@ where
     } else {
         prepare_single_group_setup_artifact_inputs(
             lp,
-            row_plan,
+            relation_layout,
             &chunk_layout,
             rows,
             depth_fold,
@@ -99,7 +111,7 @@ where
 #[allow(clippy::too_many_arguments)]
 fn prepare_single_group_setup_artifact_inputs<E: FieldCore>(
     lp: &LevelParams,
-    row_plan: &crate::RelationRowPlan,
+    relation_layout: &crate::RelationLayout,
     chunk_layout: &WitnessLayout,
     rows: usize,
     depth_fold: usize,
@@ -113,8 +125,12 @@ fn prepare_single_group_setup_artifact_inputs<E: FieldCore>(
     ),
     AkitaError,
 > {
-    let mut inputs =
-        SetupContributionPlanInputs::from_level_params(lp, row_plan, &[num_polys], depth_fold)?;
+    let mut inputs = SetupContributionPlanInputs::from_level_params(
+        lp,
+        relation_layout,
+        &[num_polys],
+        depth_fold,
+    )?;
     inputs.eq_tau1 = eq_tau1;
     if inputs.rows != rows {
         return Err(AkitaError::InvalidSetup(
@@ -131,7 +147,7 @@ fn prepare_single_group_setup_artifact_inputs<E: FieldCore>(
 #[allow(clippy::too_many_arguments)]
 fn prepare_multi_group_setup_artifact_inputs<E: FieldCore>(
     lp: &LevelParams,
-    row_plan: &crate::RelationRowPlan,
+    relation_layout: &crate::RelationLayout,
     opening_batch: &crate::OpeningClaimsLayout,
     chunk_layout: &WitnessLayout,
     rows: usize,
@@ -189,14 +205,14 @@ fn prepare_multi_group_setup_artifact_inputs<E: FieldCore>(
         } else {
             RelationGroupId::Precommitted { index: group_index }
         };
-        let a_range = row_plan
-            .family(RelationRowId::A {
+        let a_range = relation_layout
+            .family_provider(RelationRowId::A {
                 group: semantic_group,
             })?
             .rows()
             .range();
-        let b_range = row_plan
-            .family(RelationRowId::B {
+        let b_range = relation_layout
+            .family_provider(RelationRowId::B {
                 group: semantic_group,
             })?
             .rows()
@@ -245,13 +261,25 @@ fn prepare_multi_group_setup_artifact_inputs<E: FieldCore>(
         });
     }
 
-    let current_a = row_plan.family(RelationRowId::A {
+    let current_a_provider = relation_layout.family_provider(RelationRowId::A {
         group: RelationGroupId::Current,
     })?;
-    let current_b = row_plan.family(RelationRowId::B {
+    let current_b_provider = relation_layout.family_provider(RelationRowId::B {
         group: RelationGroupId::Current,
     })?;
-    let d_family = row_plan.family(RelationRowId::D).ok();
+    let d_provider = if relation_layout
+        .row_plan()
+        .families()
+        .iter()
+        .any(|family| matches!(family.id(), RelationRowId::D))
+    {
+        Some(relation_layout.family_provider(RelationRowId::D)?)
+    } else {
+        None
+    };
+    let current_a = current_a_provider.family();
+    let current_b = current_b_provider.family();
+    let d_family = d_provider.as_ref().map(|provider| provider.family());
     if current_a.rows().len() != lp.a_key.row_len()
         || current_b.rows().len() != lp.b_key.row_len()
         || current_a.native_ring_dim() != lp.a_key.sis_table_key().ring_dimension as usize

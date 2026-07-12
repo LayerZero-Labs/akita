@@ -46,11 +46,13 @@ pub use super::compression::CompressionSourceId;
 use super::RelationMatrixRowLayout;
 
 mod compiler;
+mod provider;
 mod rows;
 #[cfg(test)]
 mod tests;
 
 use compiler::compile_relation_layout;
+pub use provider::{RelationFamilyProvider, SharedSetupMatrixView};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 /// A half-open run in the logical field-coefficient arena.
@@ -391,6 +393,17 @@ impl RelationLayout {
 
     pub fn row_plan(&self) -> &RelationRowPlan {
         &self.row_plan
+    }
+
+    /// Resolve a row family as the canonical relation provider.
+    ///
+    /// The returned value borrows this layout. It stores no copied offsets or
+    /// geometry: every span is resolved from this layout's segment authority.
+    pub fn family_provider(
+        &self,
+        id: RelationRowId,
+    ) -> Result<RelationFamilyProvider<'_>, AkitaError> {
+        RelationFamilyProvider::new(self, self.row_plan.family(id)?)
     }
 
     pub fn negative_binary_support(&self) -> &[CoeffSpan] {
