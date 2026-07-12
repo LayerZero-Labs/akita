@@ -1,16 +1,19 @@
 //! Deterministic standalone commitment-compression candidate selection.
 
+mod replay;
+
 use akita_field::{AkitaError, CanonicalField};
-use akita_types::sis::{rounded_up_collision_inf_norm, sis_table_key_for_linf_bound};
 use akita_types::{
     compression_digit_depth, field_bytes, protocol_dispatch_tier, slot_dims_for_tier,
-    validate_compression_catalog, AjtaiKeyParams, CompressionAlphabet, CompressionCatalogContext,
-    CompressionChainSpec, CompressionMapSpec, CompressionSourceId, LevelParams,
-    ProtocolDispatchSlot, ProtocolRingDispatchTierId, SetupMatrixEnvelope, SisModulusFamily,
-    ValidatedCompressionCatalog, DEFAULT_SIS_SECURITY_BITS,
+    AjtaiKeyParams, CompressionAlphabet, CompressionCatalogContext, CompressionSourceId,
+    LevelParams, ProtocolDispatchSlot, SetupMatrixEnvelope, ValidatedCompressionCatalog,
 };
 
 use crate::PlannerPolicy;
+use replay::{
+    derive_compression_key, replay_compression_catalog, validate_replay_policy,
+    CompressionChainDescriptor, CompressionMapDescriptor,
+};
 
 /// Standalone compression objectives that do not participate in the generated
 /// schedule catalog identity until the planner cutover integrates compression.
@@ -124,14 +127,6 @@ fn candidate_score(
     )
 }
 
-fn field_family(tier: ProtocolRingDispatchTierId) -> SisModulusFamily {
-    match tier {
-        ProtocolRingDispatchTierId::Fp128 => SisModulusFamily::Q128,
-        ProtocolRingDispatchTierId::Fp64 => SisModulusFamily::Q64,
-        ProtocolRingDispatchTierId::Fp32 => SisModulusFamily::Q32,
-    }
-}
-
 struct Enumeration<'a, F> {
     policy: &'a PlannerPolicy,
     lp: &'a LevelParams,
@@ -150,29 +145,7 @@ impl<F: CanonicalField> Enumeration<'_, F> {
         d: usize,
         col_len: usize,
     ) -> Option<AjtaiKeyParams> {
-        let table_key = match alphabet {
-            CompressionAlphabet::NegativeBinary => sis_table_key_for_linf_bound(
-                self.policy.min_sis_security_bits,
-                self.policy.sis_family,
-                d as u32,
-                1,
-            )?,
-            CompressionAlphabet::OpeningBase { .. } => {
-                let coeff_linf_bound = rounded_up_collision_inf_norm(
-                    self.policy.min_sis_security_bits,
-                    self.policy.sis_family,
-                    d,
-                    self.policy.basis_range.1,
-                )?;
-                akita_types::SisTableKey {
-                    min_security_bits: self.policy.min_sis_security_bits,
-                    family: self.policy.sis_family,
-                    ring_dimension: d as u32,
-                    coeff_linf_bound,
-                }
-            }
-        };
-        AjtaiKeyParams::try_new_with_min_rank(table_key, col_len).ok()
+        derive_compression_key(self.policy, self.policy.basis_range.1, alphabet, d, col_len)
     }
 
     fn extend_chain(
@@ -180,11 +153,10 @@ impl<F: CanonicalField> Enumeration<'_, F> {
         target_depth: usize,
         first_alphabet: CompressionAlphabet,
         previous_output_coeffs: usize,
-        maps: &mut Vec<CompressionMapSpec>,
-        map_ring_dimensions: &mut Vec<usize>,
+        maps: &mut Vec<CompressionMapDescriptor>,
     ) {
         if maps.len() == target_depth {
-            self.finish_candidate(first_alphabet, maps, map_ring_dimensions);
+            self.finish_candidate(first_alphabet, maps);
             return;
         }
         let alphabet = if maps.is_empty() {
@@ -210,16 +182,11 @@ impl<F: CanonicalField> Enumeration<'_, F> {
             let Some(output_coeffs) = key.row_len().checked_mul(d) else {
                 continue;
             };
-            maps.push(CompressionMapSpec::new(key, alphabet));
-            map_ring_dimensions.push(d);
-            self.extend_chain(
-                target_depth,
-                first_alphabet,
-                output_coeffs,
-                maps,
-                map_ring_dimensions,
-            );
-            map_ring_dimensions.pop();
+            maps.push(CompressionMapDescriptor {
+                ring_d: d,
+                alphabet,
+            });
+            self.extend_chain(target_depth, first_alphabet, output_coeffs, maps);
             maps.pop();
         }
     }
@@ -227,17 +194,19 @@ impl<F: CanonicalField> Enumeration<'_, F> {
     fn finish_candidate(
         &mut self,
         first_alphabet: CompressionAlphabet,
-        maps: &[CompressionMapSpec],
-        map_ring_dimensions: &[usize],
+        maps: &[CompressionMapDescriptor],
     ) {
-        let spec = CompressionChainSpec::new(CompressionSourceId::CurrentOuter, maps.to_vec());
-        let Ok(catalog) = validate_compression_catalog::<F>(
+        let descriptor = CompressionChainDescriptor {
+            source: CompressionSourceId::CurrentOuter,
+            maps: maps.to_vec(),
+        };
+        let Ok(catalog) = replay_compression_catalog::<F>(
+            self.policy,
             self.lp,
             CompressionCatalogContext::StandaloneCommitment {
                 max_opening_log_basis: self.policy.basis_range.1,
             },
-            self.policy.ring_dimension,
-            vec![spec],
+            &[descriptor],
         ) else {
             return;
         };
@@ -268,7 +237,7 @@ impl<F: CanonicalField> Enumeration<'_, F> {
             descriptor_bytes: projection.descriptor_bytes().to_vec(),
             depth: maps.len(),
             first_alphabet,
-            map_ring_dimensions: map_ring_dimensions.to_vec(),
+            map_ring_dimensions: maps.iter().map(|map| map.ring_d).collect(),
         });
     }
 }
@@ -333,31 +302,13 @@ pub fn select_standalone_compression<F: CanonicalField>(
     lp: &LevelParams,
     setup_envelope: SetupMatrixEnvelope,
 ) -> Result<CompressionSelection, AkitaError> {
-    if policy.min_sis_security_bits != DEFAULT_SIS_SECURITY_BITS {
-        return Err(AkitaError::InvalidSetup(format!(
-            "compression candidate generation supports the shipped SIS security floor {DEFAULT_SIS_SECURITY_BITS}, got {}",
-            policy.min_sis_security_bits
-        )));
-    }
+    validate_replay_policy::<F>(policy, lp)?;
     if setup_envelope.max_setup_len == 0 {
         return Err(AkitaError::InvalidSetup(
             "compression planner setup envelope must be non-zero".into(),
         ));
     }
-    if lp.ring_dimension != policy.ring_dimension {
-        return Err(AkitaError::InvalidSetup(format!(
-            "compression planner ring dimension {} disagrees with level ring dimension {}",
-            policy.ring_dimension, lp.ring_dimension
-        )));
-    }
     let tier = protocol_dispatch_tier::<F>();
-    let expected_family = field_family(tier);
-    if policy.sis_family != expected_family {
-        return Err(AkitaError::InvalidSetup(format!(
-            "compression planner SIS family {:?} disagrees with field family {expected_family:?}",
-            policy.sis_family
-        )));
-    }
     let dimensions = slot_dims_for_tier(tier, ProtocolDispatchSlot::Compression);
     let source_d = lp.b_key.sis_table_key().ring_dimension as usize;
     let source_output_coeffs = lp.b_key.row_len().checked_mul(source_d).ok_or_else(|| {
@@ -391,7 +342,6 @@ pub fn select_standalone_compression<F: CanonicalField>(
                 depth,
                 first_alphabet,
                 source_output_coeffs,
-                &mut Vec::with_capacity(depth),
                 &mut Vec::with_capacity(depth),
             );
         }
@@ -441,7 +391,10 @@ mod tests {
     use super::*;
     use akita_challenges::SparseChallengeConfig;
     use akita_field::{Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59};
-    use akita_types::{ChunkedWitnessCfg, DecompositionParams};
+    use akita_types::sis::rounded_up_collision_inf_norm;
+    use akita_types::{
+        ChunkedWitnessCfg, DecompositionParams, SisModulusFamily, DEFAULT_SIS_SECURITY_BITS,
+    };
 
     fn synthetic_envelope() -> SetupMatrixEnvelope {
         SetupMatrixEnvelope { max_setup_len: 1 }
@@ -643,7 +596,6 @@ mod tests {
                     depth,
                     first_alphabet,
                     source_output_coeffs,
-                    &mut Vec::with_capacity(depth),
                     &mut Vec::with_capacity(depth),
                 );
             }
