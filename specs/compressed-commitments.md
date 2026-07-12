@@ -299,6 +299,25 @@ The base-16 first map is the narrowest margin in the displayed first layers;
 the terminal map is not the binding security constraint for this three-map
 frontier.
 
+The generated SIS authority uses one versioned production target:
+
+```text
+CompressionSisSecurityTarget {
+    classical_bits: 138,
+    quantum_bits: 128,
+    model: ADPS_CORE_SVP,
+    model_version: <generated-table version>,
+}
+```
+
+For every exact `(field family, d, coefficient bound)` key, its generated
+minimum rank is the least rank clearing both floors, equivalently the maximum
+of the classical and quantum rank floors. Planner certification, schedule
+validation, and verifier acceptance call this same generated authority. The
+target and estimator model/version are bound by the catalog policy digest; a
+change requires table regeneration and a new catalog, not a verifier-local
+constant or an informal paper estimate.
+
 The search must also evaluate two-map candidates. At minimum these include an
 opening-base first map followed by the terminal map, and a negative-binary
 first map from the native image to a 256-byte rank-one intermediate followed by
@@ -390,38 +409,55 @@ follow-up implementation with separate security review and regression tests.
 
 Do not extend `CommitmentRingDims` with F/H fields. That type remains the
 A/B/D fold-geometry contract. Replace parallel source-key and compression
-metadata with one canonical compressed-commitment plan, approximately:
+metadata with a minimal input spec and one canonical validated plan,
+approximately:
 
 ```rust
-struct AjtaiMapPlan {
+struct CompressionMapSpec {
     key: AjtaiKeyParams,
     alphabet: CompressionAlphabet,
-    digit_depth: usize,
-    ring_dim: usize,
-    input_coeffs: usize,
-    output_coeffs: usize,
 }
 
-struct CompressionChainPlan {
-    maps: Vec<AjtaiMapPlan>,
-    digit_spans: Vec<WitnessSpan>,
-    binary_support: Vec<WitnessSpan>,
+struct CompressionChainSpec {
+    source: CompressionSourceId,
+    maps: NonEmptyVec<CompressionMapSpec>,
 }
 
-struct CompressedCommitmentPlan {
-    source: AjtaiMapPlan,
-    chain: CompressionChainPlan,
+struct ValidatedCompressionPlan {
+    // private, checked compiled fields
 }
 ```
 
-Names may change during implementation, but these facts must remain explicit
-and descriptor-bound. There is one B-side chain per commitment identity and one
+`CompressionSourceId` resolves the existing B/D role identity and key; it does
+not copy source dimensions or key metadata. `AjtaiKeyParams` is the sole owner
+of row length, column length, `SisTableKey`, and ring dimension. Digit depth,
+coefficient lengths, witness spans, and binary support are derived facts, never
+free plan fields or serialized vectors.
+
+The checked constructor proves, with checked multiplication before allocation,
+
+```text
+d_i              = key_i.sis_table_key.ring_dimension
+input_coeffs_1   = source_output_coeffs * digit_depth_1
+input_coeffs_i   = output_coeffs_(i-1) * digit_depth_i       for i > 1
+input_coeffs_i   = key_i.col_len * d_i
+output_coeffs_i  = key_i.row_len * d_i
+payload_coeffs   = output_coeffs_L.
+```
+
+One canonical digit-math primitive derives each digit depth and gadget scalar
+from the authenticated alphabet, field, and base. No caller supplies both an
+alphabet and its derived depth. The validated plan exposes checked getters;
+only the semantic-layout compiler may turn those facts into spans and support.
+
+Names may change during implementation, but these authorities and equalities
+are normative and descriptor-bound. There is one B-side chain per commitment identity and one
 D-side chain per opening schedule. `PrecommittedGroupParams` must freeze the
 F chain in addition to its current geometry and conservative B
 rank. `ExecutionSchedule`/`LevelParams` must carry the current H chain and the F
 chain for the recursive commitment being created.
 
-Use checked constructors and one validation routine called by planner output,
+Use one checked constructor and validation routine called by planner output,
 setup generation, deserialization boundaries, prover, and verifier. Do not add
 thin `_for_level` wrappers or separate “certified” versus “executed” bounds.
 
@@ -527,9 +563,11 @@ views begin at coefficient zero, and the cached object is a flat transformed
 prefix. At a fixed `d`, equal-length views are literally the same cache entry,
 and a longer warmed prefix serves every shorter view by slicing.
 
-The schedule compiler derives one `PreparedNttPlan` (name illustrative) by
-taking, for each active compression dimension, the maximum flat prefix across
-every F/H map at every scheduled layer and commitment identity:
+The schedule compiler derives one `PreparedNttPlan` (name illustrative) for
+the complete authenticated schedule catalog accepted by one backend-prepared
+proving context. For each active compression dimension, it takes the maximum
+flat prefix across every F/H map, layer, and commitment identity in that
+catalog:
 
 ```text
 compression_envelope[d]
@@ -540,14 +578,18 @@ Every participating footprint is validated as divisible by `d` before this
 plan is constructed; this is exact division, not padding. Structural padding
 used by a higher-level matrix layout is not part of the cached setup prefix.
 
-It registers and eagerly materializes those distinct keys during prover setup,
-before any commitment or transcript work. Compression must not rely on the current
+`AkitaProverSetup` remains the backend-independent expanded setup artifact; it
+does not store CPU/accelerator NTT state. The scheme derives the checked
+`PreparedNttPlan` from its validated schedule catalog and passes it to the one
+canonical `ComputeBackendSetup::prepare_setup` boundary. That boundary
+registers and eagerly materializes all planned keys in the backend-prepared
+context before any commitment or transcript work. Compression must not rely on the current
 `with_shared_ntt::<D>()` helper, which always requests the full setup envelope.
 It obtains the schedule-planned key and borrows the corresponding prefix slot
 through the canonical backend cache API. Profile output reports each
 `(d,prefix)` entry and counts both its cyclic and negacyclic storage.
 
-The prepared-setup contract coalesces compression and existing role-cache
+The backend-prepared contract coalesces compression and existing role-cache
 requirements before construction. For each `d`, it owns one slot whose length
 is the larger of `compression_envelope[d]` and any A/B/D cache prefix already
 required at that dimension. Thus a longer existing role cache serves every
@@ -555,6 +597,12 @@ compression layer by slicing; otherwise prover setup stores exactly the
 compression envelope. Commit and opening clusters never construct, extend, or
 rebuild these slots. Lazy construction is permitted only as a diagnostic test
 fallback and is a production/profile failure.
+
+`PreparedNttPlan` is the sole key-selection authority. Given `(d, required
+prefix)`, it returns the containing canonical slot and checked slice length.
+Callers do not search the cache map, choose between equal and longer keys, or
+construct `NttCacheKey` directly. A backend context prepared without the
+validated catalog plan cannot enter a compression proving path.
 
 F-chain execution uses the commit operation cluster; H-chain execution uses the
 opening cluster. Recursive next-F maps use the active level's commit cluster.
@@ -596,8 +644,12 @@ cyclic, or both outputs; a batch of length one is the ordinary path. Its first
 optimized bucket requires equal
 
 ```text
-(field tier, d, row count, column count, authenticated digit bound).
+(field tier, d, row count, column count).
 ```
+
+The authenticated digit bound determines safe accumulator subchunking inside
+the bucket, not semantic fusion eligibility. Items with different bounds may
+share setup traffic while retaining their own checked capacity limits.
 
 For a bucket of `R` right-hand sides requesting both domains, the kernel
 column-tiles once. For each setup entry it loads the cached
@@ -624,15 +676,13 @@ descriptor or transcript choice. Accumulator memory grows as `O(R n)` and the
 batch size must be capped by the same L2-derived tiling policy used by the
 current fused A/B/D kernel.
 
-The common implementation owns CRT safe-width chunking for the whole bucket.
-Maps with different certified bounds are placed in different buckets rather
-than forcing all of them to the loosest capacity bound. Exact-shape grouping is
-the production fast path. For rank-one maps with the same `d` but slightly
-different widths, a later optimization may fuse the common column prefix and
-run the tails separately. Do not apply that shortcut to rank greater than one:
-because the flat setup view is reshaped row-major with the map's own column
-stride, unequal widths assign shared flat entries to different `(row,column)`
-positions.
+The common implementation owns CRT safe-width chunking for the whole bucket,
+with per-item subchunks where bounds differ. Exact-shape grouping is the
+production fast path. For unequal widths at the same `d`, a later flat-prefix
+fusion may maintain each item's own row/column counters while scanning the
+shared setup prefix, then run tails separately. A naive common-column-prefix
+shortcut is invalid for rank greater than one because each shape has its own
+row-major column stride; unequal-width fusion is deferred, not forbidden.
 
 The planner may use exact fusion eligibility as a final tie-break between
 otherwise equivalent candidates, but it must not weaken SIS security or enlarge
@@ -806,7 +856,21 @@ ColumnPartitioned    F/H compression digits
 ```
 
 The distributed layout applies these policies; compression code never assigns
-worker offsets independently. Local compression rows sum to the global rows:
+worker offsets independently. For a compression map `K` with successor gadget
+map `G`, worker `j` computes its partial negacyclic image and product quotient
+
+```text
+u_neg,j  = neg(K_j xi_j)
+r_prod,j = (cyc(K_j xi_j) - u_neg,j) / 2
+K_j xi_j = u_neg,j + (X^d + 1) r_prod,j.
+```
+
+The successor digits are derived from the reduced global image, so in general
+`u_neg,j != G_j xi_next,j`. Define the local residual
+`delta_j = u_neg,j - G_j xi_next,j`, with the schedule-designated RHS owner
+also subtracting the public terminal image. A worker's extended relation equals
+`delta_j`; it is not required to vanish. Reduction makes `sum_j delta_j = 0`,
+so the coordinated sumcheck proves the global rows:
 
 ```text
 sum_j (B_j t_j - G_b,j xi_F1,j)                 = 0
@@ -814,10 +878,14 @@ sum_j (F_ell,j xi_Fell,j - G_2,j xi_F(ell+1),j) = 0   for ell < L
 sum_j  F_L,j xi_FL,j                            = u_pub.
 ```
 
-The H rows are analogous. One schedule-derived machine owns the public RHS for
-local quotient construction; the payload itself appears once in the proof and
-transcript. Every machine carries a complete-shaped local quotient contribution
-for every F/H row family at that family's native dimension.
+The H rows are analogous. One schedule-derived machine owns the public RHS as
+an additive convention only; this does not make its local relation valid on its
+own. Every machine digit-decomposes and carries `r_prod,j` in the canonical
+quotient span at that row family's native dimension. Machines contribute round
+polynomials for their local residuals, and the coordinator sums those
+polynomials before each challenge. No worker-to-worker quotient reduction is
+needed, and no test may assert that an individual compression row vanishes.
+The payload itself appears once in the proof and transcript.
 
 Independent commitment identities remain independent under distribution.
 Multi-group payloads are never concatenated into one F chain. Their canonical
@@ -833,7 +901,7 @@ with the normative composition in
 
 #### Cross-PR ownership and preferred order
 
-This compression work owns `CompressionChainPlan`, semantic relation-row and
+This compression work owns `ValidatedCompressionCatalog`, semantic relation-row and
 relation-witness layouts, mixed-ring relation providers, F/H hints, and security
 certification. The distributed work owns machine input/output geometry,
 distribution policies applied to semantic segments, local additive relation
@@ -1261,29 +1329,95 @@ later maps are negative binary. Candidates with the same terminal payload are
 compared on setup envelope, verifier scan, logical matrix footprint, witness
 growth, and prover work.
 
+Catalog selection is a deterministic function of authenticated public geometry
+and the versioned policy. It is independent of the sampled setup coefficients,
+and the proof or prover hint cannot carry a free alternative schedule
+descriptor. A verifier derives the unique catalog entry before interpreting
+schedule-dependent bytes. If a future API permits a choice among entries, its
+security theorem and estimator must first price the resulting finite-union
+loss; arbitrary post-setup schedule choice is forbidden.
+
 Candidate scoring is lexicographic:
 
 1. completeness and at least 138-bit standalone classical security, plus the
    128-bit quantum floor for every compression map;
 2. minimum global compact setup prefix;
-3. minimum sum of active per-level direct scans;
-4. smaller recursive witness and prover work;
-5. smaller remaining proof bytes.
+3. minimum total persistent prepared-cache bytes, summed over active native
+   dimensions after catalog-wide envelope coalescing;
+4. minimum sum of active per-level direct scans;
+5. smaller recursive witness and prover work;
+6. smaller remaining proof bytes.
 
 The suffix dynamic program needs a
 Pareto state or equivalent structured score: the global prefix is a maximum
-across levels, verifier work is closer to a sum, and neither can be faithfully
+across levels, transformed NTT-cache storage is a sum across distinct active
+dimensions, verifier work is closer to a sum, and none can be faithfully
 converted into proof bytes.
 
 ### Shared-prefix security statement
 
 All logical maps reuse correlated prefixes of one seed-expanded matrix, as A,
-B, and D already do. The security writeup and code audit must extend the
-existing first-differing-relation extraction argument to F/H views, including
-heterogeneous prefix overlaps. It must identify the first failed
-layer and reduce it to that layer's standalone MSIS instance; it must not claim
-the matrices are independent. This proof obligation is required before the
-shared-prefix implementation is approved.
+B, and D already do. The paper's first-differing-relation extraction lemma
+already covers fixed heterogeneous prefix overlaps: it identifies the first
+failed layer and reduces it to that layer's standalone MSIS instance without
+claiming that the matrices are independent. The implementation audit must
+cross-check that its exact map order and prefix views instantiate that lemma
+and that deterministic catalog selection above makes the schedule fixed and
+setup-independent. No additional independence assumption is permitted.
+
+## Implementation authorities and dependency graph
+
+```text
+generated schedule catalog + field/security policy
+    -> ValidatedCompressionCatalog
+        -> SemanticRelationLayout
+            -> RelationRowPlan
+            -> derived binary support
+        -> PreparedNttPlan
+        -> prover-only CompressionExecutionBatch
+```
+
+`ValidatedCompressionCatalog` is the sole authority for map order, native
+dimension, rank, alphabet, SIS certificate, terminal omissions, and frozen
+group choices. It has private fields and one checked constructor in
+`akita-types`; no weaker raw or "certified" constructor exists.
+
+`SemanticRelationLayout` is the sole authority for stable row identities,
+semantic witness addresses, quotient spans, omissions, and binary support.
+`RelationRowPlan` is its public-data projection consumed by prover, verifier,
+direct setup evaluation, and verifier offloading. Consumers refer to semantic
+identities rather than recomputing offsets. `PreparedNttPlan` is a
+performance-only projection and cannot change protocol meaning.
+`CompressionExecutionBatch` is ephemeral prover state; batching and fusion may
+change it freely without changing the catalog, transcript, or proof.
+
+Hints are data, never authority. They carry a catalog identity plus secret
+digits and recomposition data, but do not repeat dimensions, alphabets, row
+offsets, support, or SIS parameters. Their identity and lengths are validated
+against the catalog before allocation or use.
+
+Implementation rules:
+
+- **Enforce:** checked private plan/layout types; migrate existing A/B/D
+  consumers to `RelationRowPlan` before adding F/H; one sparse folding engine
+  providing round polynomials, binding, and two-round grids; and real traits
+  only at backend or serialization boundaries.
+- **Encourage:** pure compiled projections, semantic IDs, test-only dense
+  oracles, and one internal multi-RHS arithmetic engine shared by single and
+  batched calls.
+- **Discourage:** single-use indirection, role-specific cache vocabulary, and
+  helper types that merely rename an existing checked value.
+- **Forbid:** thin `_for_level`, `_checked`, or `_certified` forwarding
+  wrappers; copied gadget, row, support, or key formulas; serialized derived
+  offsets/support; role/map identities in NTT cache keys; strategy flags in
+  protocol types; caller-selected cache keys or lazy warming; separate single
+  and batched kernels; production raw/dense/partial compression modes; and
+  verifier-reachable panics or unchecked indexing.
+
+A preparatory `pub(crate)` authority may land dormant behind tests, but no
+parallel public authority may land. When a new authority replaces an existing
+one, all consumers migrate and the old authority and temporary adapters are
+deleted in the same implementation slice.
 
 ## Architecture and code map
 
@@ -1296,8 +1430,8 @@ splits may change, but ownership must not drift across crates.
 | Level/schedule metadata | `akita-types/src/layout/params.rs`, `schedule.rs` | first-class depth-two/three F/H plans with per-map alphabets; freeze group plans |
 | SIS sizing | `akita-types/src/sis/`, `akita-sis-estimator/` | tier-bounded compression dimensions q128 d=8..64, q64 d=16..128, q32 d=32..256; exact bound 1 and standalone 138-bit generated tables |
 | Dispatch | `akita-types/src/dispatch/{mod,policy}.rs` | compression slot/path independent of fold-challenge minima |
-| NTT cache | `akita-types/src/ntt_cache.rs`, `akita-prover/src/kernels/crt_ntt.rs`, prepared-setup contract | add D8, schedule exact per-dimension prefixes, and cache the cyclic/negacyclic pair once |
-| Compression kernels | `akita-prover/src/kernels/{crt_ntt,linear}/`, compute backends | one domain-selective batched native-map pass supporting eager pairs and deferred cyclic completion under existing safe-width chunking |
+| NTT cache | `akita-types/src/ntt_cache.rs`, `akita-prover/src/kernels/crt_ntt.rs`, backend prepared-setup contract | add D8, compile catalog-wide per-dimension envelopes, and cache each cyclic/negacyclic pair once |
+| Compression kernels | `akita-prover/src/kernels/linear/fused_quotients.rs`, CRT/NTT helpers, compute backends | refactor the existing A/B/D tiler into one internal multi-RHS engine; compression uses the same paired transforms, safe-width chunking, and quotient primitive |
 | Setup envelope | planner `matrix_envelope.rs` | flat-coefficient maximum over all active views |
 | Flat setup views | `akita-types`/`akita-pcs` matrix and setup modules | all roles start at coefficient zero; no cursor |
 | Witness | `akita-types/src/witness.rs`, prover hints | checked compression spans and binary support derivation |
@@ -1329,29 +1463,36 @@ agree:
   retains the existing CRT-capacity partitioning. The cyclic and negacyclic
   tables are one logical cache slot and are accounted together.
 - `akita-prover/src/compute/{backend,cpu,delegating_cpu,stack}.rs` exposes one
-  batched compression operation taking a validated cache key and checked
+  batched compression operation taking a plan-resolved cache view and checked
   same-shape buckets. CPU and delegated backends dispatch the same dimension
-  arms. A one-item batch is the canonical single-map path. The operation does not call
+  arms exactly once at the outer backend boundary; a delegating backend forwards
+  the already selected operation without redispatch. A one-item batch is the
+  canonical single-map path. The operation does not call
   `with_shared_ntt`, because that helper requests the full setup envelope, and
   it does not compose two public backend calls that each scan and transform the
   digits independently.
-- `akita-prover/src/kernels/linear/` owns the fused implementation. It shares
+- `akita-prover/src/kernels/linear/fused_quotients.rs` owns one internal
+  multi-RHS engine used by the existing A/B/D flow and compression. It shares
   setup loads across eligible right-hand sides and shares digit loading,
   tiling, safe-width chunk boundaries, and CRT reconstruction between the
   requested cyclic and negacyclic outputs. The returned canonical object is a
   checked batch of requested domain images; the quotient derivation consumes
-  those images or a descriptor-derived known negacyclic RHS.
+  those images or a descriptor-derived known negacyclic RHS. Existing quotient
+  helpers are consolidated behind one arithmetic primitive; compression must
+  not add a second CRT tiler, quotient formula, or separate single-item kernel.
 - `akita-types/src/sis/ajtai_key.rs`, generated SIS data, and
   `akita-sis-estimator/src/width_table.rs` gain exact-bound-one keys and ranks
   for every compression arm. Planner construction and verifier validation call
   the same `SisTableKey`/minimum-rank authority; neither rounds bound one to an
   existing bound-two bucket.
-- The schedule/planner computes one compression envelope across every layer for
-  each active `d`, coalesces it with any longer existing role-cache requirement,
-  and eagerly builds the resulting slots during prover setup. Commitment
-  execution consumes F slices; opening execution consumes F/H slices;
-  recursive levels consume only slices authorized by their authenticated
-  schedule. An unplanned lazy cache build is a profile/test diagnostic failure.
+- The schedule compiler computes one compression envelope across every layer
+  and identity in the authenticated catalog for each active `d`, coalesces it
+  with any longer existing role-cache requirement, and passes the checked plan
+  to backend preparation. The backend eagerly builds the resulting slots;
+  `AkitaProverSetup` itself remains backend-state-free. Commitment execution
+  consumes F slices; opening execution consumes F/H slices; recursive levels
+  consume only slices authorized by their authenticated schedule. An unplanned
+  lazy cache build is a profile/test diagnostic failure.
 
 The arithmetic test matrix has three layers. Kernel tests compare the fused
 result with direct schoolbook cyclic and negacyclic multiplication for signed
@@ -1443,19 +1584,23 @@ requires preserving the same single source of truth.
 - [ ] Multi-group tests compress groups independently, allow heterogeneous F
   shapes, and reject swapped payloads or descriptors.
 - [ ] W2/W4/W8 distributed-chain tests reduce one canonical raw image,
-  intermediate image, and payload and match the single-machine F/H chain
-  byte-for-byte.
+  intermediate image, terminal payload, and summed product quotient and match
+  the corresponding single-machine values. Machine-local quotient witness
+  segments and proof encodings need not be byte-identical to W1.
 - [ ] Distributed semantic-layout tests shard F/H columns without requiring
   equal dimensions or exact divisibility, and derive binary support from only
-  the real negative-binary F/H shards.
+  the real negative-binary F/H shards. Summed round polynomials and the lifted
+  global relation vanish; individual worker residuals are not required to.
 - [ ] A negative fixture rejects independently compressing partial machine
   images as if standalone terminal-map certification covered the repeated-column map.
 - [ ] Compact matrix footprint tests verify `n*L` field coefficients and prefix
   reuse; no code path sums role footprints for allocation.
-- [ ] Prover setup eagerly materializes exactly one cyclic/negacyclic cache slot
-  per active dimension, sized to the maximum of the all-layer compression
-  envelope and any existing role-cache requirement. Commit/open execution has
-  zero cache builds, and every shorter F/H view is served by slicing that slot.
+- [ ] Backend preparation receives the catalog-derived `PreparedNttPlan` and
+  eagerly materializes exactly one cyclic/negacyclic cache slot per active
+  dimension, sized to the maximum of the catalog-wide compression envelope and
+  any existing role-cache requirement. `AkitaProverSetup` stores no backend NTT
+  state. Commit/open execution has zero cache builds, and every shorter F/H view
+  is served through the plan's checked slice resolver.
 - [ ] Direct and recursive setup-contribution modes produce identical combined
   claims for mixed F/H dimensions.
 - [ ] Relation-row layout tests pin the canonical order and terminal omissions.
@@ -1488,7 +1633,6 @@ requires preserving the same single source of truth.
 - [ ] Every optimized Stage-2 path, including the two-round prefix and cached
   fused-next-round paths, matches one dense reference with binary and relation
   supports at the first/last index, across pair boundaries, overlapping after
-  projection, and empty where no negative-binary map exists.
 
 ### Testing strategy
 
@@ -1559,7 +1703,8 @@ incoming native images of 1, 2, 4, and 8 KiB and every shipped field/base, repor
 - every F/H map's `(d,n)`, digit width, and standalone classical/quantum security;
 - intermediate-image bytes and the planner-selected terminal payload;
 - compact matrix field coefficients and bytes;
-- maximum persistent prefix and per-level live scan;
+- maximum flat persistent prefix, summed prepared NTT-cache bytes by dimension,
+  and per-level live scan;
 - estimated direct-verifier field additions/multiplications;
 - diagnostic hypothetical B/D slicing envelopes, clearly marked as non-protocol estimates.
 
@@ -1573,37 +1718,52 @@ planner select a different admissible chain.
 
 Implementation proceeds only after this proposed spec is approved.
 
-1. **Descriptor and arithmetic foundations.** Add compression-chain plan
-   types, canonical semantic relation-row and relation-witness layouts,
-   validation, descriptor bytes, small-ring arithmetic dispatch, exact
-   bound-one SIS estimation, and regenerated tables. No proof behavior changes.
-2. **Planner and setup envelope.** Generate mandatory F/H plans, conservative
-   frozen group metadata, flat-coefficient envelopes, and
-   parameter reports. Lock the q128/q64/q32 fixtures.
-3. **Commitment and hints.** Compute the generated root compression chain at commitment
-   time, persist explicit hints, and cut public commitment payloads to the new
-   checked flat encoding.
-4. **Witness and relations.** Materialize the semantic layout for W1, add native
-   quotient construction and sparse F/H relation
-   providers. Establish dense-reference equivalence before verifier wiring;
-   machine distribution composes with these authorities on the public companion
-   branch rather than extending the flat chunk layout.
-5. **Local binary range.** Add derived `I_bin`, fresh `rho_bin`, fused
-   `omega_tilde`, succinct prover/verifier evaluators, and unchanged-degree
-   tests.
-6. **Verifier and setup contribution.** Generalize the setup plan/evaluator,
-   validate every chain and payload, and prove direct/recursive setup-mode
-   equivalence with one prefix scan.
-7. **Recursive, terminal, and multi-group integration.** Compress every required
-   F/H identity, remove final recursive `u`, and cover heterogeneous frozen
-   group plans plus disk persistence.
-8. **Production gates and docs.** Run full CI/profile sweeps, update proof-size
-   and verifier reports, fold durable protocol exposition into the book, and
-   advance/archive specs according to `specs/PRUNING.md`.
+0. **Golden baselines.** Pin algebraic dense oracles, transcript fixtures,
+   proof bytes, release timings, cache counters, and current A/B/D quotient
+   results. No production behavior changes.
+1. **Arithmetic and security capabilities.** Add exact-bound SIS keys, the
+   versioned dual-security rank floor, tier-specific compression/NTT dispatch
+   through d=8, and synchronization tests. No protocol types or behavior change.
+2. **Compile semantic authorities.** Add the private minimal input spec,
+   `validate_and_compile`, semantic layout, row plan, and derived support as
+   dormant `pub(crate)` authorities with malformed-input tests.
+3. **Migrate existing relations.** Move A/B/D relation construction and setup
+   contribution onto `RelationRowPlan`, including mixed native dimensions, then
+   delete the uniform-layout authority. Existing proof bytes remain unchanged.
+4. **Unify arithmetic and preparation.** Refactor `fused_quotients` into the
+   shared multi-RHS core, consolidate quotient derivation, and add
+   `PreparedNttPlan` to the canonical backend preparation boundary. Migrate
+   A/B/D first, prove zero lazy builds, then exercise dormant F/H maps.
+5. **Unify sparse folding.** Introduce one restricted-equality/sparse-relation
+   engine with round polynomial, bind, and two-round-grid operations. Migrate
+   every optimized Stage-2 path with empty sparse state; proof bytes remain
+   unchanged and each path matches the dense oracle.
+6. **Compile schedules and hints.** Generate the deterministic catalog,
+   envelopes, summed cache-memory reports, frozen group choices, and validated
+   F/H hint data. Exercise full chain arithmetic internally without exposing an
+   alternate public encoding.
+7. **Internal compressed proof harness.** Wire F/H relation providers, native
+   product quotients, derived binary support, direct/offloaded evaluation, and
+   prover/verifier sparse folding under `cfg(test)`. Establish dense-oracle and
+   tamper equivalence before changing the public wire.
+8. **Atomic local protocol cutover.** In one review stack, update commitment and
+   proof schemas, transcript, commit/open, verifier, recursive and terminal
+   flows, multi-group handling, and disk persistence. Delete raw B/D public
+   semantics and every temporary adapter in the same stack; a partially wired
+   production W1 mode must not land.
+9. **Distributed follow-up.** After the semantic authorities merge, compose
+   machine ownership and aggregate-only compression residuals on the companion
+   branch. Test summed round polynomials and global lifted relations, never
+   worker-local vanishing.
+10. **Production gates and docs.** Run full CI/profile sweeps, enforce the 5%
+    gates, update proof/setup/cache reports, fold durable exposition into the
+    book, and advance/archive specs according to `specs/PRUNING.md`.
 
-Each implementation slice must preserve one canonical function per concept. Temporary adapters
-must be removed in the same stack; no forwarding wrappers or parallel planners
-remain at completion.
+Every slice must compile, pass its focused and guardrail tests, and preserve one
+canonical function per concept. A dormant internal authority is acceptable; a
+second public planner, layout, kernel, cache selector, or wire mode is not.
+Temporary adapters are removed in the same slice that migrates their final
+consumer.
 
 ## Alternatives considered
 
