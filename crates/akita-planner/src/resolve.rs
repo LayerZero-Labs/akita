@@ -165,8 +165,6 @@ mod tests {
             n_a: lp.a_key.row_len() as u32,
             n_b: lp.b_key.row_len() as u32,
             n_d: lp.d_key.row_len() as u32,
-            setup_prefix_group: None,
-            setup_contribution_mode: lp.setup_contribution_mode,
         }
     }
 
@@ -340,6 +338,7 @@ mod tests {
             .expect("schedule should contain a fold")
         {
             GeneratedStep::Fold(fold) => fold.n_b += 1,
+            GeneratedStep::FoldWithSetupMetadata(fold) => fold.fold.n_b += 1,
             GeneratedStep::Direct(_) => unreachable!("find guaranteed a fold"),
         }
         let entry = generated_entry_from_steps(key, steps);
@@ -371,6 +370,7 @@ mod tests {
             .expect("schedule should contain a fold")
         {
             GeneratedStep::Fold(fold) => fold.n_a += 1,
+            GeneratedStep::FoldWithSetupMetadata(fold) => fold.fold.n_a += 1,
             GeneratedStep::Direct(_) => unreachable!("find guaranteed a fold"),
         }
         let entry = generated_entry_from_steps(key, steps);
@@ -405,6 +405,10 @@ mod tests {
                 assert!(fold.n_a > 1, "test needs n_a > 1 to understate rank");
                 fold.n_a -= 1;
             }
+            GeneratedStep::FoldWithSetupMetadata(fold) => {
+                assert!(fold.fold.n_a > 1, "test needs n_a > 1 to understate rank");
+                fold.fold.n_a -= 1;
+            }
             GeneratedStep::Direct(_) => unreachable!("find guaranteed a fold"),
         }
         let entry = generated_entry_from_steps(key, steps);
@@ -436,6 +440,7 @@ mod tests {
             .expect("schedule should contain a fold")
         {
             GeneratedStep::Fold(fold) => fold.n_d += 1,
+            GeneratedStep::FoldWithSetupMetadata(fold) => fold.fold.n_d += 1,
             GeneratedStep::Direct(_) => unreachable!("find guaranteed a fold"),
         }
         let entry = generated_entry_from_steps(key, steps);

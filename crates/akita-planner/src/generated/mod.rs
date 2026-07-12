@@ -18,6 +18,11 @@ pub struct GeneratedFoldStep {
     /// Stored first-tier `B` rank.
     pub n_b: u32,
     pub n_d: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GeneratedFoldStepWithSetupMetadata {
+    pub fold: GeneratedFoldStep,
     pub setup_prefix_group: Option<GeneratedSetupPrefixGroup>,
     pub setup_contribution_mode: akita_types::SetupContributionMode,
 }
@@ -41,7 +46,26 @@ pub struct GeneratedDirectStep {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GeneratedStep {
     Fold(GeneratedFoldStep),
+    FoldWithSetupMetadata(GeneratedFoldStepWithSetupMetadata),
     Direct(GeneratedDirectStep),
+}
+
+impl GeneratedStep {
+    pub fn fold_step(&self) -> Option<&GeneratedFoldStep> {
+        match self {
+            Self::Fold(step) => Some(step),
+            Self::FoldWithSetupMetadata(step) => Some(&step.fold),
+            Self::Direct(_) => None,
+        }
+    }
+
+    pub fn fold_step_mut(&mut self) -> Option<&mut GeneratedFoldStep> {
+        match self {
+            Self::Fold(step) => Some(step),
+            Self::FoldWithSetupMetadata(step) => Some(&mut step.fold),
+            Self::Direct(_) => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

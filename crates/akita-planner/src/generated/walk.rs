@@ -86,7 +86,7 @@ fn walk_scalar_generated_schedule_entry(
 
     for (idx, step) in entry.steps.iter().enumerate() {
         match step {
-            GeneratedStep::Fold(level) => {
+            GeneratedStep::Fold(_) | GeneratedStep::FoldWithSetupMetadata(_) => {
                 let next = entry.steps.get(idx + 1).ok_or_else(|| {
                     AkitaError::InvalidSetup(format!(
                         "generated schedule ended with a fold step at level {fold_level}"
@@ -99,7 +99,7 @@ fn walk_scalar_generated_schedule_entry(
                     1
                 };
                 let mut lp = expand_validated_fold_level(
-                    level,
+                    step,
                     key,
                     policy,
                     ring_challenge_config,
@@ -138,13 +138,13 @@ fn walk_scalar_generated_schedule_entry(
                         num_chunks,
                     )?;
                     let len = checked_ring_field_len(ring_len, lp.ring_dimension)?;
-                    let GeneratedStep::Fold(next_level) = next else {
+                    if next.fold_step().is_none() {
                         return Err(AkitaError::InvalidSetup(
                             "generated non-terminal successor must be a fold step".to_string(),
                         ));
-                    };
+                    }
                     let mut next_lp = expand_validated_fold_level(
-                        next_level,
+                        next,
                         key,
                         policy,
                         ring_challenge_config,
@@ -195,8 +195,9 @@ fn walk_scalar_generated_schedule_entry(
                     let params = direct
                         .commit
                         .map(|commit| {
+                            let commit_step = GeneratedStep::Fold(commit);
                             expand_validated_fold_level(
-                                &commit,
+                                &commit_step,
                                 key,
                                 policy,
                                 ring_challenge_config,
@@ -320,7 +321,7 @@ fn walk_multi_group_generated_schedule_entry(
 
     for (idx, step) in entry.steps.iter().enumerate() {
         match step {
-            GeneratedStep::Fold(level) => {
+            GeneratedStep::Fold(_) | GeneratedStep::FoldWithSetupMetadata(_) => {
                 let next = entry.steps.get(idx + 1).ok_or_else(|| {
                     AkitaError::InvalidSetup(format!(
                         "generated multi-group schedule ended with a fold step at level {fold_level}"
@@ -342,7 +343,8 @@ fn walk_multi_group_generated_schedule_entry(
                             fold_shape,
                         )?;
                     validate_expanded_precommitted_groups(key, &precommitted_groups)?;
-                    level.expand_to_multi_group_root_level_params(
+                    expand_multi_group_root_fold_step(
+                        step,
                         policy,
                         ring_challenge_config,
                         fold_shape,
@@ -351,7 +353,8 @@ fn walk_multi_group_generated_schedule_entry(
                         precommitted_d_width,
                     )?
                 } else {
-                    level.expand_to_level_params(
+                    expand_fold_step(
+                        step,
                         policy,
                         ring_challenge_config,
                         fold_level,
@@ -399,18 +402,19 @@ fn walk_multi_group_generated_schedule_entry(
                         )?;
                         checked_ring_field_len(ring, lp.ring_dimension)?
                     };
-                    let GeneratedStep::Fold(next_level) = next else {
+                    if next.fold_step().is_none() {
                         return Err(AkitaError::InvalidSetup(
                             "generated multi-group non-terminal successor must be a fold step"
                                 .to_string(),
                         ));
-                    };
+                    }
                     let next_inputs = AkitaScheduleInputs {
                         num_vars: key.final_group.num_vars(),
                         level: fold_level + 1,
                         current_w_len: len,
                     };
-                    let next_lp = next_level.expand_to_level_params(
+                    let next_lp = expand_fold_step(
+                        next,
                         policy,
                         ring_challenge_config,
                         fold_level + 1,
@@ -594,7 +598,7 @@ fn validate_expanded_precommitted_groups(
 
 #[allow(clippy::too_many_arguments)]
 fn expand_validated_fold_level(
-    step: &GeneratedFoldStep,
+    step: &GeneratedStep,
     key: PolynomialGroupLayout,
     policy: &PlannerPolicy,
     ring_challenge_config: &impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
@@ -603,14 +607,18 @@ fn expand_validated_fold_level(
     current_w_len: usize,
     num_claims: usize,
 ) -> Result<LevelParams, AkitaError> {
-    validate_fold_geometry(step, key, policy, fold_level, current_w_len)?;
-    validate_log_basis(step.log_basis, policy)?;
+    let fold = step
+        .fold_step()
+        .ok_or_else(|| AkitaError::InvalidSetup("generated expected a fold step".to_string()))?;
+    validate_fold_geometry(fold, key, policy, fold_level, current_w_len)?;
+    validate_log_basis(fold.log_basis, policy)?;
     let inputs = AkitaScheduleInputs {
         num_vars: key.num_vars(),
         level: fold_level,
         current_w_len,
     };
-    let lp = step.expand_to_level_params(
+    let lp = expand_fold_step(
+        step,
         policy,
         ring_challenge_config,
         fold_level,
@@ -618,7 +626,72 @@ fn expand_validated_fold_level(
         fold_challenge_shape_at_level(inputs),
         num_claims,
     )?;
-    validate_expanded_level_params(&lp, step, policy, fold_level, num_claims)
+    validate_expanded_level_params(&lp, fold, policy, fold_level, num_claims)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn expand_fold_step(
+    step: &GeneratedStep,
+    policy: &PlannerPolicy,
+    ring_challenge_config: &impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
+    fold_level: usize,
+    current_w_len: usize,
+    fold_shape: TensorChallengeShape,
+    num_claims: usize,
+) -> Result<LevelParams, AkitaError> {
+    match step {
+        GeneratedStep::Fold(fold) => fold.expand_to_level_params(
+            policy,
+            ring_challenge_config,
+            fold_level,
+            current_w_len,
+            fold_shape,
+            num_claims,
+        ),
+        GeneratedStep::FoldWithSetupMetadata(fold) => fold.expand_to_level_params(
+            policy,
+            ring_challenge_config,
+            fold_level,
+            current_w_len,
+            fold_shape,
+            num_claims,
+        ),
+        GeneratedStep::Direct(_) => Err(AkitaError::InvalidSetup(
+            "generated expected a fold step".to_string(),
+        )),
+    }
+}
+
+fn expand_multi_group_root_fold_step(
+    step: &GeneratedStep,
+    policy: &PlannerPolicy,
+    ring_challenge_config: &impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
+    fold_shape: TensorChallengeShape,
+    main_num_polys: usize,
+    precommitted_groups: Vec<PrecommittedLevelParams>,
+    precommitted_d_width: usize,
+) -> Result<LevelParams, AkitaError> {
+    match step {
+        GeneratedStep::Fold(fold) => fold.expand_to_multi_group_root_level_params(
+            policy,
+            ring_challenge_config,
+            fold_shape,
+            main_num_polys,
+            precommitted_groups,
+            precommitted_d_width,
+        ),
+        GeneratedStep::FoldWithSetupMetadata(fold) => fold.expand_to_multi_group_root_level_params(
+            policy,
+            ring_challenge_config,
+            fold_shape,
+            main_num_polys,
+            precommitted_groups,
+            precommitted_d_width,
+        ),
+        GeneratedStep::Direct(_) => Err(AkitaError::InvalidSetup(
+            "generated expected a fold step".to_string(),
+        )),
+    }
 }
 
 fn validate_log_basis(log_basis: u32, policy: &PlannerPolicy) -> Result<(), AkitaError> {

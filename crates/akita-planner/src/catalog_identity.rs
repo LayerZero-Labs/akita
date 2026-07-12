@@ -392,6 +392,7 @@ fn collect_step_ring_dimensions(steps: &[GeneratedStep], dims: &mut Vec<usize>) 
     for step in steps {
         match step {
             GeneratedStep::Fold(f) => push_unique(dims, f.ring_d as usize),
+            GeneratedStep::FoldWithSetupMetadata(f) => push_unique(dims, f.fold.ring_d as usize),
             GeneratedStep::Direct(GeneratedDirectStep { commit: Some(c) }) => {
                 push_unique(dims, c.ring_d as usize);
             }

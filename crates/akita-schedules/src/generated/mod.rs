@@ -1,9 +1,10 @@
 #![allow(missing_docs)]
 
 pub use akita_planner::generated::{
-    GeneratedDirectStep, GeneratedFoldStep, GeneratedScheduleCatalogIdentity,
-    GeneratedScheduleTable, GeneratedScheduleTableEntry, GeneratedSetupPrefixGroup, GeneratedStep,
-    PolynomialGroupLayout, PrecommittedGroupParams, SetupContributionMode, SisModulusFamily,
+    GeneratedDirectStep, GeneratedFoldStep, GeneratedFoldStepWithSetupMetadata,
+    GeneratedScheduleCatalogIdentity, GeneratedScheduleTable, GeneratedScheduleTableEntry,
+    GeneratedSetupPrefixGroup, GeneratedStep, PolynomialGroupLayout, PrecommittedGroupParams,
+    SetupContributionMode, SisModulusFamily,
 };
 pub use akita_planner::{ChunkedWitnessCfg, DecompositionParams, TensorChallengeShape};
 
