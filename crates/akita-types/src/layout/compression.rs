@@ -359,8 +359,11 @@ impl ValidatedCompressionCatalog {
         Ok(())
     }
 
-    #[allow(dead_code)] // Schedule replay consumes this in the next crate cutover.
-    pub(crate) fn co_generated_relation_layout(
+    /// Return the canonical relation graph compiled for a co-generated level.
+    ///
+    /// Prover execution consumes this graph directly; the projected catalog is
+    /// reserved for setup/cache sizing and descriptor accounting.
+    pub fn co_generated_relation_layout(
         &self,
     ) -> Result<&crate::layout::relation::RelationLayout, AkitaError> {
         match &self.purpose {

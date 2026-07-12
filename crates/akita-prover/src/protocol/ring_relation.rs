@@ -30,6 +30,7 @@ use akita_types::{RingVec, RingView};
 use super::fold_grind::{self, ProverTranscriptGrind};
 use super::ring_relation_witness::{RingRelationGroupWitness, RingRelationWitness};
 
+mod compression_witness;
 mod relation_quotient;
 
 pub(crate) use relation_quotient::compute_multi_group_relation_quotient;
