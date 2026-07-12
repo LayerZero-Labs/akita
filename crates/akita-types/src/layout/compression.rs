@@ -2,6 +2,7 @@
 
 use akita_field::{AkitaError, CanonicalField};
 use akita_serialization::DEFAULT_MAX_SEQUENCE_LEN;
+use std::collections::BTreeMap;
 
 use crate::dispatch::{protocol_dispatch_tier, slot_dim_supported_for_tier, ProtocolDispatchSlot};
 use crate::sis::{
@@ -79,6 +80,43 @@ struct CompiledCompressionChain {
     payload_coeffs: usize,
 }
 
+/// One ordered map's replay facts for prover hint sizing and preparation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[allow(dead_code)] // Consumed by schedule replay after compression candidate generation lands.
+pub(crate) struct CompressionMapHintFacts {
+    pub(crate) source: CompressionSourceId,
+    pub(crate) map_index: usize,
+    pub(crate) alphabet: CompressionAlphabet,
+    pub(crate) native_ring_dim: usize,
+    pub(crate) rows: usize,
+    pub(crate) cols: usize,
+    pub(crate) digit_depth: usize,
+    pub(crate) input_coeffs: usize,
+    pub(crate) output_coeffs: usize,
+    pub(crate) prefix_ring_elements: usize,
+    pub(crate) is_terminal: bool,
+}
+
+/// Catalog-wide replay projection derived only from checked compiled maps.
+///
+/// This is not a second planner or protocol authority. It packages the
+/// performance and hint-shape projections that would otherwise be re-derived
+/// independently by schedule replay, prepared NTT setup, and profile reporting.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[allow(dead_code)] // Consumed by schedule replay after compression candidate generation lands.
+pub(crate) struct CompressionCatalogProjection {
+    pub(crate) maps: Vec<CompressionMapHintFacts>,
+    pub(crate) ntt_requirements: Vec<(usize, usize)>,
+    pub(crate) payload_coeffs_by_source: Vec<(CompressionSourceId, usize)>,
+    pub(crate) first_map_alphabet_by_source: Vec<(CompressionSourceId, CompressionAlphabet)>,
+    pub(crate) logical_setup_coeffs: usize,
+    /// Largest flat field-coefficient prefix required by any single map.
+    /// Per-dimension transformed-cache maxima live in `ntt_requirements`.
+    pub(crate) max_flat_setup_prefix_coeffs: usize,
+    pub(crate) coalesced_cache_field_coeffs: usize,
+    pub(crate) descriptor_bytes: Vec<u8>,
+}
+
 fn resolve_source_key(
     lp: &LevelParams,
     source: CompressionSourceId,
@@ -106,6 +144,159 @@ pub(crate) struct ValidatedCompressionCatalog {
 }
 
 impl ValidatedCompressionCatalog {
+    /// Project checked map facts for schedule replay, hints, NTT preparation,
+    /// profile accounting, and future schedule-identity binding.
+    #[allow(dead_code)] // Consumed by schedule replay after compression candidate generation lands.
+    pub(crate) fn project_for_schedule(&self) -> Result<CompressionCatalogProjection, AkitaError> {
+        let total_maps = self.chains.iter().try_fold(0usize, |total, chain| {
+            total.checked_add(chain.maps.len()).ok_or_else(|| {
+                AkitaError::InvalidSetup("compression projected map count overflow".into())
+            })
+        })?;
+        if total_maps > DEFAULT_MAX_SEQUENCE_LEN {
+            return Err(AkitaError::InvalidSetup(
+                "compression projected map count exceeds sequence cap".into(),
+            ));
+        }
+        let mut maps = Vec::with_capacity(total_maps);
+        let mut ntt_by_d = BTreeMap::<usize, usize>::new();
+        let mut payload_coeffs_by_source = Vec::with_capacity(self.chains.len());
+        let mut first_map_alphabet_by_source = Vec::with_capacity(self.chains.len());
+        let mut logical_setup_coeffs = 0usize;
+        let mut max_flat_setup_prefix_coeffs = 0usize;
+
+        for chain in &self.chains {
+            payload_coeffs_by_source.push((chain.source, chain.payload_coeffs));
+            let first_alphabet = chain.maps.first().map(|map| map.alphabet).ok_or_else(|| {
+                AkitaError::InvalidSetup("compiled compression chain has no maps".into())
+            })?;
+            first_map_alphabet_by_source.push((chain.source, first_alphabet));
+            for (map_index, map) in chain.maps.iter().enumerate() {
+                let native_ring_dim = map.key.sis_table_key().ring_dimension as usize;
+                let prefix_ring_elements = map
+                    .key
+                    .row_len()
+                    .checked_mul(map.key.col_len())
+                    .ok_or_else(|| {
+                        AkitaError::InvalidSetup("compression projected NTT prefix overflow".into())
+                    })?;
+                let setup_coeffs = prefix_ring_elements
+                    .checked_mul(native_ring_dim)
+                    .ok_or_else(|| {
+                        AkitaError::InvalidSetup(
+                            "compression projected setup footprint overflow".into(),
+                        )
+                    })?;
+                logical_setup_coeffs =
+                    logical_setup_coeffs
+                        .checked_add(setup_coeffs)
+                        .ok_or_else(|| {
+                            AkitaError::InvalidSetup(
+                                "compression total logical setup footprint overflow".into(),
+                            )
+                        })?;
+                max_flat_setup_prefix_coeffs = max_flat_setup_prefix_coeffs.max(setup_coeffs);
+                ntt_by_d
+                    .entry(native_ring_dim)
+                    .and_modify(|prefix| *prefix = (*prefix).max(prefix_ring_elements))
+                    .or_insert(prefix_ring_elements);
+                maps.push(CompressionMapHintFacts {
+                    source: chain.source,
+                    map_index,
+                    alphabet: map.alphabet,
+                    native_ring_dim,
+                    rows: map.key.row_len(),
+                    cols: map.key.col_len(),
+                    digit_depth: map.digit_depth,
+                    input_coeffs: map.input_coeffs,
+                    output_coeffs: map.output_coeffs,
+                    prefix_ring_elements,
+                    is_terminal: map_index + 1 == chain.maps.len(),
+                });
+            }
+        }
+
+        let ntt_requirements = ntt_by_d.into_iter().collect::<Vec<_>>();
+        let coalesced_cache_field_coeffs = ntt_requirements.iter().try_fold(
+            0usize,
+            |total, &(ring_d, prefix_ring_elements)| {
+                let field_coeffs = ring_d.checked_mul(prefix_ring_elements).ok_or_else(|| {
+                    AkitaError::InvalidSetup(
+                        "compression coalesced cache footprint overflow".into(),
+                    )
+                })?;
+                total.checked_add(field_coeffs).ok_or_else(|| {
+                    AkitaError::InvalidSetup(
+                        "compression total coalesced cache footprint overflow".into(),
+                    )
+                })
+            },
+        )?;
+        let mut descriptor_bytes = Vec::new();
+        self.append_projection_descriptor_bytes(&mut descriptor_bytes)?;
+
+        Ok(CompressionCatalogProjection {
+            maps,
+            ntt_requirements,
+            payload_coeffs_by_source,
+            first_map_alphabet_by_source,
+            logical_setup_coeffs,
+            max_flat_setup_prefix_coeffs,
+            coalesced_cache_field_coeffs,
+            descriptor_bytes,
+        })
+    }
+
+    #[allow(dead_code)] // Reached through the dormant schedule projection.
+    fn append_projection_descriptor_bytes(&self, bytes: &mut Vec<u8>) -> Result<(), AkitaError> {
+        use crate::descriptor_bytes::{push_u128, push_u32, push_usize};
+
+        bytes.extend_from_slice(b"AKITA-COMPRESSION-CATALOG-V1");
+        bytes.push(semantics::BINARY_SUPPORT_DERIVATION_VERSION);
+        ensure_projection_descriptor_len(bytes)?;
+        match &self.purpose {
+            CompressionCatalogPurpose::CoGenerated { .. } => bytes.push(0),
+            CompressionCatalogPurpose::Standalone {
+                max_opening_log_basis,
+                source_key,
+                field_modulus_minus_one,
+            } => {
+                bytes.push(1);
+                push_u32(bytes, *max_opening_log_basis);
+                source_key.append_descriptor_bytes(bytes);
+                push_u128(bytes, *field_modulus_minus_one);
+                ensure_projection_descriptor_len(bytes)?;
+            }
+        }
+        push_usize(bytes, self.chains.len());
+        for chain in &self.chains {
+            append_source_descriptor_bytes(bytes, chain.source);
+            push_usize(bytes, chain.source_output_coeffs);
+            push_usize(bytes, chain.maps.len());
+            for map in &chain.maps {
+                map.key.append_descriptor_bytes(bytes);
+                // The global Ajtai descriptor intentionally omits native D for existing
+                // schedule identities. Compression maps are heterogeneous, so bind D
+                // locally as part of this catalog descriptor.
+                push_u32(bytes, map.key.sis_table_key().ring_dimension);
+                match map.alphabet {
+                    CompressionAlphabet::NegativeBinary => bytes.push(0),
+                    CompressionAlphabet::OpeningBase { log_basis } => {
+                        bytes.push(1);
+                        push_u32(bytes, log_basis);
+                    }
+                }
+                push_usize(bytes, map.digit_depth);
+                push_usize(bytes, map.input_coeffs);
+                push_usize(bytes, map.output_coeffs);
+                ensure_projection_descriptor_len(bytes)?;
+            }
+            push_usize(bytes, chain.payload_coeffs);
+            ensure_projection_descriptor_len(bytes)?;
+        }
+        Ok(())
+    }
+
     #[allow(dead_code)] // Schedule replay consumes this in the next crate cutover.
     pub(crate) fn co_generated_relation_layout(
         &self,
@@ -177,6 +368,30 @@ impl ValidatedCompressionCatalog {
             F::modulus_bits(),
         )
     }
+}
+
+#[allow(dead_code)] // Reached through the dormant schedule projection.
+fn append_source_descriptor_bytes(bytes: &mut Vec<u8>, source: CompressionSourceId) {
+    use crate::descriptor_bytes::push_usize;
+
+    match source {
+        CompressionSourceId::CurrentOuter => bytes.push(0),
+        CompressionSourceId::PrecommittedOuter { index } => {
+            bytes.push(1);
+            push_usize(bytes, index);
+        }
+        CompressionSourceId::Opening => bytes.push(2),
+    }
+}
+
+#[allow(dead_code)] // Reached through the dormant schedule projection.
+fn ensure_projection_descriptor_len(bytes: &[u8]) -> Result<(), AkitaError> {
+    if bytes.len() > DEFAULT_MAX_SEQUENCE_LEN {
+        return Err(AkitaError::InvalidSetup(
+            "compression catalog descriptor exceeds sequence cap".into(),
+        ));
+    }
+    Ok(())
 }
 
 #[allow(dead_code)] // Reached through the dormant catalog compiler below.

@@ -1465,6 +1465,20 @@ dimension, rank, alphabet, SIS certificate, terminal omissions, and frozen
 group choices. It has private fields and one checked constructor in
 `akita-types`; no weaker raw or "certified" constructor exists.
 
+The catalog exposes one internal schedule projection derived from those private
+compiled maps. It contains source-major per-map hint shapes, payload lengths,
+canonical descriptor material (including the binary-support derivation
+version), coalesced maximum `(d,prefix_ring_elements)` NTT requirements, the
+largest single flat setup prefix in field coefficients, the sum of logical map
+matrix coefficients, and the sum of coalesced per-d cache coefficients. This
+projection does not reorder the layer-major semantic relation rows and does not
+become a second protocol authority. Descriptor material is prepared for the
+schedule-identity cutover but is not transcript input before that cutover.
+Production schedule replay constructs this projection only after the planner's
+authenticated candidate generator supplies the complete canonical chain specs;
+it never invents defaults when a generated entry contains no compression
+choice.
+
 `CompiledCompressionSemantics` is a non-executable, compression-local
 projection: flat-coefficient F/H input and quotient spans, layer-major local
 F/H row spans, typed B/D augmentation intents, and the ordered input-segment
@@ -1856,6 +1870,9 @@ Implementation proceeds only after this proposed spec is approved.
    reports, frozen group choices, and validated F/H hint data. Planner/type code
    may change here, but generated table/catalog files do not. Exercise full
    chain arithmetic internally without exposing an alternate public encoding.
+   The catalog-local projection may land before candidate generation, but
+   production schedules remain unpopulated until the generated policy supplies
+   canonical chain specs; no hard-coded fallback chain is permitted.
 7. **Internal compressed proof harness.** Wire F/H relation providers, native
    product quotients, derived binary support, direct/offloaded evaluation, and
    prover/verifier sparse folding under `cfg(test)`. Establish dense-oracle and
