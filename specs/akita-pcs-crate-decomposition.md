@@ -510,7 +510,7 @@ implements the prover trait from the prover crate rather than owning the
 trait definition.
 The next prover utility cut moves the NTT-backed linear kernels
 (`decompose_rows_i8*`, cached mat-vec dispatch, cyclic single-row dispatch,
-and split-eq quotient helpers) into `akita-prover`. Root setup, prover
+and ring-switch relation-row helpers) into `akita-prover`. Root setup, prover
 orchestration, polynomial backends, and benches now import those kernels from
 the prover crate.
 The follow-up helper cut moves shared decompose-fold helper kernels and the

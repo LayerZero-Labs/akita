@@ -7,25 +7,25 @@ fn checked_packed_rows<'a, T>(
     label: &str,
 ) -> Result<Vec<&'a [T]>, AkitaError> {
     let required = num_rows.checked_mul(width).ok_or_else(|| {
-        AkitaError::InvalidInput(format!("fused quotient {label} matrix shape overflow"))
+        AkitaError::InvalidInput(format!("fused relation row {label} matrix shape overflow"))
     })?;
     if flat.len() < required {
         return Err(AkitaError::InvalidInput(format!(
-            "fused quotient {label} cache is too short: actual={} required={required}",
+            "fused relation row {label} cache is too short: actual={} required={required}",
             flat.len()
         )));
     }
     (0..num_rows)
         .map(|row| {
             let start = row.checked_mul(width).ok_or_else(|| {
-                AkitaError::InvalidInput(format!("fused quotient {label} row offset overflow"))
+                AkitaError::InvalidInput(format!("fused relation row {label} row offset overflow"))
             })?;
             let end = start.checked_add(width).ok_or_else(|| {
-                AkitaError::InvalidInput(format!("fused quotient {label} row end overflow"))
+                AkitaError::InvalidInput(format!("fused relation row {label} row end overflow"))
             })?;
             flat.get(start..end).ok_or_else(|| {
                 AkitaError::InvalidInput(format!(
-                    "fused quotient {label} cache row is out of bounds"
+                    "fused relation row {label} cache row is out of bounds"
                 ))
             })
         })
@@ -33,7 +33,7 @@ fn checked_packed_rows<'a, T>(
 }
 
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
-pub(super) fn fused_split_eq_quotients_with_digit_bound<
+pub(super) fn fused_ring_switch_relation_rows_with_digit_bound<
     F: FieldCore + CanonicalField + HalvingField,
     const D: usize,
 >(
@@ -64,7 +64,7 @@ pub(super) fn fused_split_eq_quotients_with_digit_bound<
             let d_rows = checked_packed_rows($cyc, n_d, d_width, "D cyclic")?;
             let b_rows = checked_packed_rows($cyc, n_b, b_width, "B cyclic")?;
             let a_rows = checked_packed_rows($cyc, n_a, a_width, "A cyclic")?;
-            fused_split_eq_quotients_with_params(
+            fused_ring_switch_relation_rows_with_params(
                 &d_rows,
                 &b_rows,
                 &a_rows,

@@ -1,7 +1,7 @@
 use super::{centered_i32_ring, cyclic_product, quotient_from_cyclic_and_negacyclic};
 use crate::kernels::crt_ntt::build_ntt_slot;
 use crate::kernels::linear::{
-    fused_split_eq_quotients, mat_vec_mul_ntt_single_i8, mat_vec_mul_ntt_single_i8_cyclic,
+    fused_ring_switch_relation_rows, mat_vec_mul_ntt_single_i8, mat_vec_mul_ntt_single_i8_cyclic,
 };
 use akita_algebra::CyclotomicRing;
 use akita_field::{
@@ -92,7 +92,7 @@ fn assert_nonuniform_single_i8_paths<F: FieldCore + CanonicalField, const D: usi
     }
 }
 
-fn assert_fused_split_eq_zpre_chunks<
+fn assert_fused_ring_switch_relation_rows_zpre_chunks<
     F: FieldCore + CanonicalField + HalvingField,
     const D: usize,
 >(
@@ -111,8 +111,8 @@ fn assert_fused_split_eq_zpre_chunks<
     let z_pre = vec![[32_768i32; D]; cols];
 
     let (_d_rows, _b_rows, a_rows) =
-        fused_split_eq_quotients::<F, D>(&slot, 0, 0, 1, &[], &[], &z_pre, 32_768)
-            .expect("fused split-eq rows");
+        fused_ring_switch_relation_rows::<F, D>(&slot, 0, 0, 1, &[], &[], &z_pre, 32_768)
+            .expect("fused ring-switch relation rows");
 
     let z = centered_i32_ring(&z_pre[0]);
     let term = quotient_from_cyclic_and_negacyclic(&cyclic_product(&row, &z), &(row * z));
@@ -125,9 +125,9 @@ fn assert_fused_split_eq_zpre_chunks<
 }
 
 #[test]
-fn fused_split_eq_zpre_chunks_reduced_profiles() {
-    assert_fused_split_eq_zpre_chunks::<Prime32Offset99, 256>(32);
-    assert_fused_split_eq_zpre_chunks::<Prime64Offset59, 256>(8);
+fn fused_ring_switch_relation_rows_zpre_chunks_reduced_profiles() {
+    assert_fused_ring_switch_relation_rows_zpre_chunks::<Prime32Offset99, 256>(32);
+    assert_fused_ring_switch_relation_rows_zpre_chunks::<Prime64Offset59, 256>(8);
 }
 
 #[test]

@@ -153,7 +153,7 @@ performance overhead.
       safe CRT accumulation width for each linear-kernel operation:
       `max_safe_crt_accumulation_width` and `safe_crt_chunk_width` in
       `crates/akita-prover/src/kernels/linear/capacity.rs`.
-- [x] Q128 fused split-eq quotient tests compare against an independent
+- [x] Q128 fused ring-switch relation-row tests compare against an independent
       schoolbook high-half oracle and cover widths that previously exceeded the
       one-shot reconstruction bound.
 - [x] Q128 i8/digit matvec tests cover widths above the old single-accumulator
@@ -169,7 +169,7 @@ performance overhead.
 - [x] `log_basis > 6` in commitment/prover paths fails with `AkitaError`
       before reaching i8 decomposition assertions.
 - [x] Understated `z_pre_max_abs` / `z_pre_centered_inf_norm` cannot underplan
-      capacity or reach an unchecked centered LUT access. Fused quotient code
+      capacity or reach an unchecked centered LUT access. Fused relation-row code
       computes the actual centered infinity norm once, uses the larger of the
       provided hint and actual bound for capacity/LUT selection, and then uses
       unchecked LUT conversion only when that one-time bound proves it safe.
@@ -205,7 +205,7 @@ cargo test
 
 New or updated tests live near the affected code:
 
-- `crates/akita-prover/src/kernels/linear/tests.rs` for fused split-eq,
+- `crates/akita-prover/src/kernels/linear/tests.rs` for fused ring-switch relation rows,
   i8/digit matvec, single-row, block-parallel clamp parity, and chunking
   behavior.
 - `crates/akita-pcs/tests/algebra/ntt_crt.rs` for lower-level CRT
@@ -223,7 +223,7 @@ CRT kernel.
 
 The test suite includes:
 
-- Fused split-eq A quotient with fp128/Q128, `D=32`, centered `z_pre`, and
+- Fused ring-switch A-quotient relation rows with fp128/Q128, `D=32`, centered `z_pre`, and
   enough columns to exceed the old one-shot reconstruction bound.
 - i8 single-row, pair/triple or block-parallel paths with fp128/Q128, `D=64`,
   and a width that requires chunking.
@@ -280,12 +280,12 @@ chunk-result matrix when a row/block accumulator can be reused.
 
 | Area | Representative path | Issue | Implemented resolution |
 |------|---------------------|-------|------------------------|
-| Fused split-eq | `crates/akita-prover/src/kernels/linear/fused_quotients.rs` | D/B cyclic rows and A quotient rows reconstructed wide CRT accumulators once. | Keep the fused one-shot path only when every role is safe; otherwise chunk D and B cyclic rows by their digit bounds, chunk A quotient cyclic/negacyclic intermediates independently, reconstruct each chunk, and add native field rings. If one centered term is too large for CRT, use a field-native exact quotient path. |
+| Fused ring-switch relation rows | `crates/akita-prover/src/kernels/linear/ring_switch_relation_rows.rs` | D/B cyclic rows and A quotient rows reconstructed wide CRT accumulators once. | Keep the fused one-shot path only when every role is safe; otherwise chunk D and B cyclic rows by their digit bounds, chunk A quotient cyclic/negacyclic intermediates independently, reconstruct each chunk, and add native field rings. If one centered term is too large for CRT, use a field-native exact quotient path. |
 | Generic quotient | `crates/akita-prover/src/kernels/linear/crt_matvec.rs` | A production full-field CRT quotient path would be unsafe for fp128/Q128 because even one full-field RHS term may not fit. | Remove this as a production path. The file now contains `cfg(test)` dense CRT helpers used only as fixtures. |
 | i8/digit matvec | `i8_matvec.rs`, `digits.rs`, `single_cyclic.rs`, `block_parallel.rs` | Balanced i8 RHS is small but wide fp128 rows can exceed Q128 lift range. | Compute the safe width from `D`, field modulus, RHS bound, and CRT product; use `log_basis <= 6` to plan Akita-owned predecomposed digits with the balanced bound rather than the full `i8` bound; preserve one-shot accumulation when safe; otherwise chunk and add reconstructed native field results. |
 | Recursive witness raw-i8 | `compute/cpu.rs`, `ntt_matvec.rs`, `digits.rs` | The `num_digits_commit = 1` recursive witness specialization is a direct signed-i8 coefficient stream; ZK blinding can include `+1`, which is outside the balanced binary digit range. | Route this internal specialization through a no-allocation raw-i8 strided path. It computes the actual signed coefficient bound once, converts rows directly with `from_i8_with_params`, and chunks by that bound instead of using the balanced digit LUT. |
 | Block-parallel clamp | `digits.rs`, `block_parallel.rs` | Fast path could bypass the generic `inner_width = min(mat_width, data_width)` clamp. | Dispatch to block-parallel paths only when the full effective width is both present and safe; otherwise use the shared chunked generic path. |
-| Centered LUT bound | `crt_ntt_repr.rs`, `fused_quotients.rs` | `z_pre_max_abs` sized a LUT that was later indexed unchecked by actual coefficients. | Fused quotient code computes the actual centered bound once, uses it for capacity/LUT selection, avoids giant LUTs when the bound is too large, and calls unchecked LUT conversion only after the bound proves every coefficient is covered. |
+| Centered LUT bound | `crt_ntt_repr.rs`, `ring_switch_relation_rows.rs` | `z_pre_max_abs` sized a LUT that was later indexed unchecked by actual coefficients. | Fused relation-row code computes the actual centered bound once, uses it for capacity/LUT selection, avoids giant LUTs when the bound is too large, and calls unchecked LUT conversion only after the bound proves every coefficient is covered. |
 | Digit LUT contract | `crt_ntt_repr.rs` and predecomposed digit kernels | Full-`i8` LUT coverage solved a broader contract than Akita-owned digit kernels need, while using full `i8` as the capacity bound over-chunks fp128 paths. | `DigitMontLut` is a fixed-array, const-generic balanced-digit table sized to exactly `2^log_basis` entries. Public predecomposed digit APIs validate caller-owned rows once; lower kernels thread `log_basis` into LUT selection and capacity planning, then use allocation-free unchecked lookup in hot loops. |
 | Commit log basis | `api/commitment.rs`, `protocol/ring_switch.rs`, `protocol/quadratic_equation.rs`, `kernels/linear/ntt_matvec.rs` | Commit validation accepted `1..=128`; i8 decomposition supports `1..=6`. | Centralize `MAX_I8_LOG_BASIS = 6` in `validation.rs` and reject invalid setup/input log bases before decomposition. |
 | Sparse signed-ring contract | `backend/sparse_ring.rs` | Constructor accepted any nonzero `i8`; commit assumed signed units and used `unreachable!`. | Sparse ring construction now rejects all coefficients except `-1` and `1`, matching the commit path. |
@@ -379,11 +379,11 @@ coefficients must be signed units.
 
 Implemented order:
 
-1. Added adversarial coverage for fused split-eq and i8/digit cases, using
+1. Added adversarial coverage for fused ring-switch relation rows and i8/digit cases, using
    independent field arithmetic oracles.
 2. Added the shared CRT accumulation capacity helper and unit-tested Q128/Q32
    boundary decisions.
-3. Applied chunking to fused split-eq D/B cyclic rows and A quotient rows,
+3. Applied chunking to fused ring-switch relation rows D/B cyclic rows and A quotient rows,
    preserving the fused one-shot path when all roles are safe.
 4. Applied the same chunking policy to i8, digit, single-row, cyclic, and
    block-parallel kernels; block-parallel dispatch now requires full safe
@@ -415,7 +415,7 @@ Deviation policy:
 
 ## References
 
-- `crates/akita-prover/src/kernels/linear/fused_quotients.rs`
+- `crates/akita-prover/src/kernels/linear/ring_switch_relation_rows.rs`
 - `crates/akita-prover/src/kernels/linear/capacity.rs`
 - `crates/akita-prover/src/kernels/linear/common.rs`
 - `crates/akita-prover/src/kernels/linear/crt_matvec.rs`

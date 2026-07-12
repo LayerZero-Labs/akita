@@ -11,7 +11,7 @@ use crate::compute::plans::{
 };
 use crate::kernels::crt_ntt::{build_ntt_slot, NttCacheMap, NttSlotCache};
 use crate::kernels::linear::{
-    fused_split_eq_quotients_prover_bounds, mat_vec_mul_ntt_dense_digits_i8_trusted,
+    fused_ring_switch_relation_rows_prover_bounds, mat_vec_mul_ntt_dense_digits_i8_trusted,
     mat_vec_mul_ntt_i8_dense, mat_vec_mul_ntt_i8_dense_single_row, mat_vec_mul_ntt_i8_strided,
     mat_vec_mul_ntt_raw_i8_strided, mat_vec_mul_ntt_single_i8, mat_vec_mul_ntt_single_i8_cyclic,
     selected_crt_i8_capacity_profile, CrtI8CapacityProfile,
@@ -559,7 +559,7 @@ where
         F: HalvingField,
     {
         prepared.with_shared_ntt::<D, _>(|ntt| {
-            let (d_cyclic, b_cyclic, a_quotients) = fused_split_eq_quotients_prover_bounds(
+            let (d_cyclic, b_cyclic, a_quotients) = fused_ring_switch_relation_rows_prover_bounds(
                 ntt,
                 plan.n_d,
                 plan.n_b,
@@ -587,17 +587,18 @@ where
         F: HalvingField,
     {
         prepared.with_shared_ntt::<D, _>(|ntt| {
-            let (_d_cyclic, _b_cyclic, a_quotients) = fused_split_eq_quotients_prover_bounds(
-                ntt,
-                0,
-                0,
-                plan.n_a,
-                &[][..],
-                &[][..],
-                plan.z_segment,
-                plan.z_folded_centered_inf_norm,
-                1,
-            )?;
+            let (_d_cyclic, _b_cyclic, a_quotients) =
+                fused_ring_switch_relation_rows_prover_bounds(
+                    ntt,
+                    0,
+                    0,
+                    plan.n_a,
+                    &[][..],
+                    &[][..],
+                    plan.z_segment,
+                    plan.z_folded_centered_inf_norm,
+                    1,
+                )?;
             Ok(a_quotients)
         })
     }
@@ -612,7 +613,8 @@ mod tests {
     };
     use crate::compute::plans::RingSwitchRelationRowsPlan;
     use crate::kernels::linear::{
-        fused_split_eq_quotients, mat_vec_mul_ntt_single_i8, mat_vec_mul_ntt_single_i8_cyclic,
+        fused_ring_switch_relation_rows, mat_vec_mul_ntt_single_i8,
+        mat_vec_mul_ntt_single_i8_cyclic,
     };
     use crate::validation::MAX_I8_LOG_BASIS;
     use crate::AkitaProverSetup;
@@ -809,9 +811,9 @@ mod tests {
             .expect("backend ring-switch relation rows");
         let direct = prepared
             .with_shared_ntt::<D, _>(|ntt| {
-                fused_split_eq_quotients(ntt, 1, 1, 1, &e_hat, &t_hat, &z_segment, 3)
+                fused_ring_switch_relation_rows(ntt, 1, 1, 1, &e_hat, &t_hat, &z_segment, 3)
             })
-            .expect("direct fused split-eq rows");
+            .expect("direct fused ring-switch relation rows");
         assert_eq!(
             (
                 via_backend.d_cyclic,

@@ -45,14 +45,14 @@ struct PairedCenteredI32Request<'a, W: PrimeWidth, const K: usize, const D: usiz
     bounds: CenteredRhsBounds,
 }
 
-/// Fused column-tiled kernel for the three split-eq mat-vec products.
+/// Fused column-tiled kernel for the three ring-switch relation-row products.
 ///
 /// Replaces three separate NTT-cached mat-vec calls (D-cyclic, B-cyclic,
 /// A-quotient) with a single pass over the shared NTT cache. Within each
 /// column tile, cache entries are loaded once and reused across all three
 /// products with their exact row bounds, eliminating redundant DRAM reads.
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
-pub(super) fn fused_split_eq_quotients_with_params<
+pub(super) fn fused_ring_switch_relation_rows_with_params<
     F: FieldCore + CanonicalField + HalvingField,
     W: PrimeWidth,
     const K: usize,
@@ -104,7 +104,7 @@ pub(super) fn fused_split_eq_quotients_with_params<
         coeffs: z_folded_rings,
         bounds: z_bounds,
     }];
-    let ([d_result, b_result], [], [a_result]) = fused_quotient_rhs_batch::<F, W, K, D, 2, 0, 1>(
+    let ([d_result, b_result], [], [a_result]) = fused_relation_rows_batch::<F, W, K, D, 2, 0, 1>(
         &cyclic_requests,
         &[],
         &centered_requests,
@@ -136,14 +136,14 @@ fn validate_rows<W: PrimeWidth, const K: usize, const D: usize>(
 ) -> Result<(), AkitaError> {
     if rows.len() != num_rows || rows.iter().any(|row| row.len() < width) {
         return Err(AkitaError::InvalidInput(format!(
-            "fused quotient {label} matrix shape does not match request"
+            "fused relation row {label} matrix shape does not match request"
         )));
     }
     Ok(())
 }
 
 #[allow(clippy::type_complexity)]
-fn fused_quotient_rhs_batch<
+fn fused_relation_rows_batch<
     F: FieldCore + CanonicalField + HalvingField,
     W: PrimeWidth,
     const K: usize,
@@ -564,7 +564,7 @@ fn validate_i8_rows_and_bound<const D: usize>(
         .next_power_of_two();
     if abs > declared || lut > declared {
         return Err(AkitaError::InvalidInput(
-            "fused quotient digits exceed their declared balanced range".into(),
+            "fused relation row digits exceed their declared balanced range".into(),
         ));
     }
     Ok(ObservedI8Bounds { abs, lut })
@@ -711,7 +711,7 @@ fn accumulate_centered_quotient_rows_field<
         .collect()
 }
 
-/// Fused split-eq quotient kernel dispatching over [`NttSlotCache`] variants.
+/// Fused ring-switch relation-row kernel dispatching over [`NttSlotCache`] variants.
 ///
 /// Computes three NTT-cached mat-vec products in a single tiled pass:
 /// - D-cyclic: `cyc[0..n_d] · e_hat` (cyclic domain)
@@ -721,9 +721,9 @@ fn accumulate_centered_quotient_rows_field<
 /// All roles share the same underlying coefficient matrix, but each role uses
 /// its own packed row width.
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
-#[tracing::instrument(skip_all, name = "fused_split_eq_quotients")]
+#[tracing::instrument(skip_all, name = "fused_ring_switch_relation_rows")]
 #[cfg(test)]
-pub(crate) fn fused_split_eq_quotients<
+pub(crate) fn fused_ring_switch_relation_rows<
     F: FieldCore + CanonicalField + HalvingField,
     const D: usize,
 >(
@@ -743,7 +743,7 @@ pub(crate) fn fused_split_eq_quotients<
     ),
     AkitaError,
 > {
-    dispatch::fused_split_eq_quotients_with_digit_bound(
+    dispatch::fused_ring_switch_relation_rows_with_digit_bound(
         slot,
         n_d,
         n_b,
@@ -758,7 +758,7 @@ pub(crate) fn fused_split_eq_quotients<
 }
 
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
-pub(crate) fn fused_split_eq_quotients_prover_bounds<
+pub(crate) fn fused_ring_switch_relation_rows_prover_bounds<
     F: FieldCore + CanonicalField + HalvingField,
     const D: usize,
 >(
@@ -781,7 +781,7 @@ pub(crate) fn fused_split_eq_quotients_prover_bounds<
 > {
     validate_i8_log_basis(log_basis)?;
     let digit_bound = balanced_digit_abs_bound(log_basis);
-    dispatch::fused_split_eq_quotients_with_digit_bound(
+    dispatch::fused_ring_switch_relation_rows_with_digit_bound(
         slot,
         n_d,
         n_b,
@@ -827,7 +827,7 @@ mod paired_i8_tests {
             abs_bound: 1,
         }];
 
-        let ([], [actual], []) = fused_quotient_rhs_batch::<F, i32, Q32_NUM_PRIMES, D, 0, 1, 0>(
+        let ([], [actual], []) = fused_relation_rows_batch::<F, i32, Q32_NUM_PRIMES, D, 0, 1, 0>(
             &[],
             &requests,
             &[],
@@ -863,7 +863,7 @@ mod paired_i8_tests {
             coeffs: &coeffs,
             bounds: CenteredRhsBounds { capacity: 0 },
         }];
-        let result = fused_quotient_rhs_batch::<F, i32, Q32_NUM_PRIMES, D, 0, 0, 1>(
+        let result = fused_relation_rows_batch::<F, i32, Q32_NUM_PRIMES, D, 0, 0, 1>(
             &[],
             &[],
             &requests,
@@ -897,7 +897,7 @@ mod paired_i8_tests {
             coeffs: &coeffs,
             abs_bound: declared,
         }];
-        let ([result], [], []) = fused_quotient_rhs_batch::<F, i32, Q128_NUM_PRIMES, D, 1, 0, 0>(
+        let ([result], [], []) = fused_relation_rows_batch::<F, i32, Q128_NUM_PRIMES, D, 1, 0, 0>(
             &requests,
             &[],
             &[],

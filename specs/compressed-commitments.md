@@ -1521,7 +1521,7 @@ splits may change, but ownership must not drift across crates.
 | SIS sizing | `akita-types/src/sis/`, `akita-sis-estimator/` | use the existing canonical lookup and conservative coefficient-bound bucketing; a separate security PR owns model changes and table regeneration |
 | Dispatch | `akita-types/src/dispatch/{mod,policy}.rs` | compression slot/path independent of fold-challenge minima |
 | NTT cache | `akita-types/src/ntt_cache.rs`, `akita-prover/src/kernels/crt_ntt.rs`, backend prepared-setup contract | add D8, compile catalog-wide per-dimension envelopes, and cache each cyclic/negacyclic pair once |
-| Compression kernels | `akita-prover/src/kernels/linear/fused_quotients.rs`, CRT/NTT helpers, compute backends | refactor the existing A/B/D tiler into one internal multi-RHS engine; compression uses the same paired transforms, safe-width chunking, and quotient primitive |
+| Compression kernels | `akita-prover/src/kernels/linear/ring_switch_relation_rows.rs`, CRT/NTT helpers, compute backends | refactor the existing A/B/D tiler into one internal multi-RHS engine; compression uses the same paired transforms, safe-width chunking, and quotient primitive |
 | Setup envelope | planner `matrix_envelope.rs` | flat-coefficient maximum over all active views |
 | Flat setup views | `akita-types`/`akita-pcs` matrix and setup modules | all roles start at coefficient zero; no cursor |
 | Witness | `akita-types/src/witness.rs`, prover hints | checked compression spans and binary support derivation |
@@ -1562,7 +1562,7 @@ list is neither necessary nor sufficient. These authorities must agree:
   `with_shared_ntt`, because that helper requests the full setup envelope, and
   it does not compose two public backend calls that each scan and transform the
   digits independently.
-- `akita-prover/src/kernels/linear/fused_quotients.rs` owns one internal
+- `akita-prover/src/kernels/linear/ring_switch_relation_rows.rs` owns one internal
   multi-RHS engine used by the existing A/B/D flow and compression. It shares
   setup loads across eligible right-hand sides and shares digit loading,
   tiling, safe-width chunk boundaries, and CRT reconstruction between the
@@ -1835,7 +1835,7 @@ Implementation proceeds only after this proposed spec is approved.
    compression-local semantics, migrate setup contribution and every existing
    consumer, then delete the uniform-layout/offset authorities. Existing proof
    bytes remain unchanged.
-4. **Unify arithmetic and preparation.** Refactor `fused_quotients` into the
+4. **Unify arithmetic and preparation.** Refactor `ring_switch_relation_rows` into the
    shared multi-RHS core, consolidate quotient derivation, and add
    `PreparedNttPlan` to the canonical backend preparation boundary. Migrate
    A/B/D first, prove zero lazy builds, then exercise dormant F/H maps.
