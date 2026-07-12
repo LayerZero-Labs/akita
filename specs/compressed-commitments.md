@@ -299,24 +299,25 @@ The base-16 first map is the narrowest margin in the displayed first layers;
 the terminal map is not the binding security constraint for this three-map
 frontier.
 
-The generated SIS authority uses one versioned production target:
+### SIS-security prerequisite and PR boundary
 
-```text
-CompressionSisSecurityTarget {
-    classical_bits: 138,
-    quantum_bits: 128,
-    model: ADPS_CORE_SVP,
-    model_version: <generated-table version>,
-}
-```
+This PR does not change the production SIS security model, generated SIS
+tables, or generated schedules. The current checked-in 138-bit classical table
+remains the sole planner and verifier authority. Quantum estimates in this
+document are diagnostic exploration, not an additional acceptance floor.
 
-For every exact `(field family, d, coefficient bound)` key, its generated
-minimum rank is the least rank clearing both floors, equivalently the maximum
-of the classical and quantum rank floors. Planner certification, schedule
-validation, and verifier acceptance call this same generated authority. The
-target and estimator model/version are bound by the catalog policy digest; a
-change requires table regeneration and a new catalog, not a verifier-local
-constant or an informal paper estimate.
+A prerequisite security PR owns the decision whether to require 128-bit
+quantum security, the accuracy and versioning of the selected attack model,
+exact-bound-one and small-dimension table coverage, table regeneration, and all
+resulting schedule regeneration. It must compare the complete schedule and
+performance consequences before changing production policy.
+
+The compression implementation consumes that PR's ordinary `SisTableKey` and
+`min_secure_rank` authority unchanged. It must not edit generated SIS data or
+schedule files. Until the prerequisite supplies an exact audited row for a
+candidate `(field family, d, coefficient bound)`, that candidate is invalid;
+the compression PR must not round the bound, synthesize a rank, or add a local
+security exception.
 
 The search must also evaluate two-map candidates. At minimum these include an
 opening-base first map followed by the terminal map, and a negative-binary
@@ -465,8 +466,9 @@ thin `_for_level` wrappers or separate “certified” versus “executed” bou
 
 Compression execution and certification must:
 
-1. extend the SIS estimator and generated production tables to exact bound one
-   and every compression-dispatch dimension, beginning at `d = 8`;
+1. consume exact-bound-one rows and compression dimensions supplied by the
+   prerequisite SIS-security PR, beginning at `d = 8`, without regenerating
+   tables or schedules in this PR;
 2. keep exact requested bounds in certification—do not round one up to two for
    any negative-binary layer;
 3. add a compression execution dispatch independent of A-role sparse-challenge
@@ -1339,8 +1341,9 @@ loss; arbitrary post-setup schedule choice is forbidden.
 
 Candidate scoring is lexicographic:
 
-1. completeness and at least 138-bit standalone classical security, plus the
-   128-bit quantum floor for every compression map;
+1. completeness and the production security policy encoded by the checked-in
+   SIS table (currently 138-bit standalone classical security); quantum cost is
+   reported diagnostically until the prerequisite security PR changes policy;
 2. minimum global compact setup prefix;
 3. minimum total persistent prepared-cache bytes, summed over active native
    dimensions after catalog-wide envelope coalescing;
@@ -1428,7 +1431,7 @@ splits may change, but ownership must not drift across crates.
 |---------|-----------------|--------------------|
 | Dimensions/roles | `akita-types/src/layout/ring_dims.rs` | retain A/B/D dims; add checked compression map dimensions beginning at d=8 |
 | Level/schedule metadata | `akita-types/src/layout/params.rs`, `schedule.rs` | first-class depth-two/three F/H plans with per-map alphabets; freeze group plans |
-| SIS sizing | `akita-types/src/sis/`, `akita-sis-estimator/` | tier-bounded compression dimensions q128 d=8..64, q64 d=16..128, q32 d=32..256; exact bound 1 and standalone 138-bit generated tables |
+| SIS sizing | `akita-types/src/sis/`, `akita-sis-estimator/` | prerequisite security PR owns model choice, exact-bound-one/small-dimension rows, table regeneration, and schedule regeneration; this PR only consumes the canonical lookup |
 | Dispatch | `akita-types/src/dispatch/{mod,policy}.rs` | compression slot/path independent of fold-challenge minima |
 | NTT cache | `akita-types/src/ntt_cache.rs`, `akita-prover/src/kernels/crt_ntt.rs`, backend prepared-setup contract | add D8, compile catalog-wide per-dimension envelopes, and cache each cyclic/negacyclic pair once |
 | Compression kernels | `akita-prover/src/kernels/linear/fused_quotients.rs`, CRT/NTT helpers, compute backends | refactor the existing A/B/D tiler into one internal multi-RHS engine; compression uses the same paired transforms, safe-width chunking, and quotient primitive |
@@ -1480,11 +1483,11 @@ agree:
   those images or a descriptor-derived known negacyclic RHS. Existing quotient
   helpers are consolidated behind one arithmetic primitive; compression must
   not add a second CRT tiler, quotient formula, or separate single-item kernel.
-- `akita-types/src/sis/ajtai_key.rs`, generated SIS data, and
-  `akita-sis-estimator/src/width_table.rs` gain exact-bound-one keys and ranks
-  for every compression arm. Planner construction and verifier validation call
-  the same `SisTableKey`/minimum-rank authority; neither rounds bound one to an
-  existing bound-two bucket.
+- The prerequisite SIS-security PR supplies any exact-bound-one keys and ranks
+  required by compression. This PR changes neither generated SIS data nor
+  generated schedule catalogs. Planner construction and verifier validation
+  call the existing `SisTableKey`/minimum-rank authority; neither rounds bound
+  one to an existing bound-two bucket or substitutes a local estimate.
 - The schedule compiler computes one compression envelope across every layer
   and identity in the authenticated catalog for each active `d`, coalesces it
   with any longer existing role-cache requirement, and passes the checked plan
@@ -1563,12 +1566,13 @@ requires preserving the same single source of truth.
 - [ ] Every public payload is independently deserialized with the
   schedule-derived exact coefficient count; shipped q128/q64/q32 fixtures select
   the displayed rank-one shapes and consequently encode to 128 bytes.
-- [ ] Generated SIS tables include every dimension in the applicable
-  field-tier compression slot—q128 `d=8..64`, q64 `d=16..128`, and q32
-  `d=32..256`—and exact coefficient bound one;
-  every B/D/F/H key reports standalone classical and quantum costs, clears the
-  138-bit classical floor, and every compression map clears
-  128 quantum bits under the selected model.
+- [ ] The prerequisite security PR has supplied every exact SIS row used by a
+  shipped compression schedule. This PR's diff contains no generated SIS-table
+  or generated-schedule changes; B/D/F/H validation uses the unchanged
+  canonical lookup and rejects absent exact-bound-one/small-dimension rows.
+- [ ] Profiles report standalone classical and diagnostic quantum estimates for
+  every B/D/F/H key. Only the security policy encoded by the checked-in table
+  is an acceptance floor until the dedicated security review changes it.
 - [ ] Opening-base-first conservative commitments freeze base four, reject
   later `b_1 < 4`, and validate frozen B/F1 sizing against actual later bases
   without replanning. Binary-first commitments have no such base dependency.
@@ -1718,12 +1722,20 @@ planner select a different admissible chain.
 
 Implementation proceeds only after this proposed spec is approved.
 
-0. **Golden baselines.** Pin algebraic dense oracles, transcript fixtures,
-   proof bytes, release timings, cache counters, and current A/B/D quotient
-   results. No production behavior changes.
-1. **Arithmetic and security capabilities.** Add exact-bound SIS keys, the
-   versioned dual-security rank floor, tier-specific compression/NTT dispatch
-   through d=8, and synchronization tests. No protocol types or behavior change.
+0. **Reuse existing regression authorities.** Confirm coverage from schedule
+   drift tests, exact proof-size-versus-serialization tests, transcript/proof
+   fixtures, SIS goldens, and merge-base profile benchmarks. Add only missing
+   semantic or dense-oracle coverage needed to make later slices reviewable.
+   Temporary pre-cutover snapshots must be labeled and deleted in Slice 8;
+   durable tests assert protocol invariants rather than duplicating whole stale
+   artifacts.
+1. **Arithmetic capabilities and security dependency.** Open the dedicated SIS
+   security/model/table/schedule PR and resolve it before the production
+   cutover. It may stack on the minimal planner/type support needed to generate
+   compression schedules, but it exclusively owns all generated artifacts. In
+   this PR add only tier-specific compression/NTT execution dispatch through
+   d=8 and synchronization tests, then consume canonical keys. No generated SIS
+   or schedule files change here.
 2. **Compile semantic authorities.** Add the private minimal input spec,
    `validate_and_compile`, semantic layout, row plan, and derived support as
    dormant `pub(crate)` authorities with malformed-input tests.
@@ -1738,10 +1750,11 @@ Implementation proceeds only after this proposed spec is approved.
    engine with round polynomial, bind, and two-round-grid operations. Migrate
    every optimized Stage-2 path with empty sparse state; proof bytes remain
    unchanged and each path matches the dense oracle.
-6. **Compile schedules and hints.** Generate the deterministic catalog,
-   envelopes, summed cache-memory reports, frozen group choices, and validated
-   F/H hint data. Exercise full chain arithmetic internally without exposing an
-   alternate public encoding.
+6. **Compile schedules and hints.** Compile the deterministic catalog supplied
+   by the dedicated schedule-generation PR into envelopes, summed cache-memory
+   reports, frozen group choices, and validated F/H hint data. Planner/type code
+   may change here, but generated table/catalog files do not. Exercise full
+   chain arithmetic internally without exposing an alternate public encoding.
 7. **Internal compressed proof harness.** Wire F/H relation providers, native
    product quotients, derived binary support, direct/offloaded evaluation, and
    prover/verifier sparse folding under `cfg(test)`. Establish dense-oracle and
