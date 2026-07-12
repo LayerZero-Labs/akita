@@ -92,10 +92,10 @@ fn proof_optimized_max_setup_matrix_size_uncached<Cfg: CommitmentConfig>(
     }
 
     let poly_counts = setup_envelope_poly_counts(max_num_batched_polys);
-    let precommitted = PolynomialGroupLayout::new(max_num_vars, 1);
     let mut envelope = SetupMatrixEnvelope { max_setup_len: 1 };
     let mut saw_supported_shape = false;
     for main_num_vars in 1..=max_num_vars {
+        let precommitted = PolynomialGroupLayout::new(main_num_vars, 1);
         for &main_num_polys in &poly_counts {
             let main_group = PolynomialGroupLayout::new(main_num_vars, main_num_polys);
             let layout = OpeningClaimsLayout::from_root_groups(&[], main_group)?;

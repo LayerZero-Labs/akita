@@ -28,8 +28,7 @@ use crate::{policy_of, tensor_verifier, CommitmentConfig};
 /// Default batched opening sizes emitted for every Akita shipped family.
 pub const DEFAULT_NUM_POLYS: &[usize] = &[1, 4];
 
-/// Maximum number of singleton precommitted groups emitted for multi-group-root
-/// generated tables.
+/// Maximum number of precommitted groups emitted for multi-group-root generated tables.
 pub const DEFAULT_GROUP_BATCH_MAX_PRECOMMITTED_GROUPS: usize = 2;
 
 /// One generated schedule-table family.
@@ -148,11 +147,11 @@ fn group_batch_keys<Cfg: CommitmentConfig>(
         if pre_num_vars < min_precommitted_num_vars {
             continue;
         }
-        for pattern in precommitted_group_patterns(main.num_polynomials()) {
-            let mut precommitteds = Vec::with_capacity(pattern.len());
+        for num_precommitted in 1..=DEFAULT_GROUP_BATCH_MAX_PRECOMMITTED_GROUPS {
+            let mut precommitteds = Vec::with_capacity(num_precommitted);
             let mut supported = true;
-            for &num_polys in &pattern {
-                let pre_key = PolynomialGroupLayout::new(pre_num_vars, num_polys);
+            for _ in 0..num_precommitted {
+                let pre_key = PolynomialGroupLayout::new(pre_num_vars, 1);
                 let params = match conservative_commit_params::<Cfg>(&pre_key) {
                     Ok(params) => params,
                     Err(_) => {
@@ -174,47 +173,8 @@ fn group_batch_keys<Cfg: CommitmentConfig>(
             }
         }
     }
-    keys.extend(extra_group_batch_keys::<Cfg>(family)?);
     keys.sort_by(akita_planner::runtime_schedule_key_cmp);
     Ok(keys)
-}
-
-fn precommitted_group_patterns(main_num_polynomials: usize) -> Vec<Vec<usize>> {
-    let first_group = 1usize;
-    let second_group = (main_num_polynomials / 2).max(1);
-    let mut patterns = vec![vec![first_group]];
-    if DEFAULT_GROUP_BATCH_MAX_PRECOMMITTED_GROUPS >= 2 {
-        if second_group == first_group {
-            patterns.push(vec![first_group, first_group]);
-        } else {
-            patterns.push(vec![first_group, second_group]);
-        }
-    }
-    patterns
-}
-
-fn extra_group_batch_keys<Cfg: CommitmentConfig>(
-    family: &GeneratedFamily,
-) -> Result<Vec<AkitaScheduleLookupKey>, AkitaError> {
-    if family.module_name != "fp128_d64_onehot" {
-        return Ok(Vec::new());
-    }
-
-    let final_group = PolynomialGroupLayout::new(32, 2);
-    let pre_key = PolynomialGroupLayout::new(16, 1);
-    let Ok(params) = conservative_commit_params::<Cfg>(&pre_key) else {
-        return Ok(Vec::new());
-    };
-    let precommit = PrecommittedGroupParams::from_params(pre_key, &params);
-    let candidate = AkitaScheduleLookupKey {
-        final_group,
-        precommitteds: vec![precommit, precommit],
-    };
-    if regen_group_batch::<Cfg>(candidate.clone()).is_ok() {
-        Ok(vec![candidate])
-    } else {
-        Ok(Vec::new())
-    }
 }
 
 macro_rules! family_row {
@@ -427,14 +387,3 @@ pub const ALL_GENERATED_FAMILIES: &[GeneratedFamily] = &[
         fp32::D256OneHot
     ),
 ];
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn precommitted_group_patterns_include_two_singleton_groups() {
-        assert_eq!(precommitted_group_patterns(1), vec![vec![1], vec![1, 1]]);
-        assert_eq!(precommitted_group_patterns(4), vec![vec![1], vec![1, 2]]);
-    }
-}
