@@ -10,6 +10,8 @@ use crate::sis::{
 };
 use crate::{LevelParams, OpeningClaimsLayout, RingRole, MAX_SETUP_MATRIX_FIELD_ELEMENTS};
 
+mod semantics;
+
 #[allow(dead_code)] // Wired into schedule replay in the compression cutover slice.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CompressionAlphabet {
@@ -30,6 +32,13 @@ pub(crate) enum CompressionSourceId {
 pub(crate) enum CompressionCatalogContext<'a> {
     CoGeneratedLevel { opening: &'a OpeningClaimsLayout },
     StandaloneCommitment { max_opening_log_basis: u32 },
+}
+
+#[allow(dead_code)] // Retained protocol purpose gates semantic compilation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CompressionCatalogKind {
+    CoGenerated,
+    Standalone,
 }
 
 #[allow(dead_code)] // Wired into schedule replay in the compression cutover slice.
@@ -65,11 +74,32 @@ struct CompiledCompressionChain {
     payload_coeffs: usize,
 }
 
+fn resolve_source_key(
+    lp: &LevelParams,
+    source: CompressionSourceId,
+) -> Result<&AjtaiKeyParams, AkitaError> {
+    match source {
+        CompressionSourceId::CurrentOuter => Ok(&lp.b_key),
+        CompressionSourceId::PrecommittedOuter { index } => lp
+            .precommitted_groups
+            .get(index)
+            .map(|group| &group.b_key)
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup(
+                    "compression precommitted source index is out of range".into(),
+                )
+            }),
+        CompressionSourceId::Opening => Ok(&lp.d_key),
+    }
+}
+
 #[allow(dead_code)] // Wired into schedule replay in the compression cutover slice.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ValidatedCompressionCatalog {
+    kind: CompressionCatalogKind,
     range_log_basis: u32,
     chains: Vec<CompiledCompressionChain>,
+    semantics: Option<semantics::CompiledCompressionSemantics>,
 }
 
 #[allow(dead_code)] // Reached through the dormant catalog compiler below.
@@ -154,20 +184,7 @@ fn compile_chain<F: CanonicalField>(
         ));
     }
 
-    let source_key = match spec.source {
-        CompressionSourceId::CurrentOuter => &lp.b_key,
-        CompressionSourceId::PrecommittedOuter { index } => {
-            &lp.precommitted_groups
-                .get(index)
-                .ok_or_else(|| {
-                    AkitaError::InvalidSetup(
-                        "compression precommitted source index is out of range".into(),
-                    )
-                })?
-                .b_key
-        }
-        CompressionSourceId::Opening => &lp.d_key,
-    };
+    let source_key = resolve_source_key(lp, spec.source)?;
     let source_table_key = source_key.sis_table_key();
     let source_d = source_table_key.ring_dimension as usize;
     let required_source_bucket = rounded_up_collision_inf_norm(
@@ -387,6 +404,12 @@ pub(crate) fn validate_and_compile<F: CanonicalField>(
             "compression level log_basis must be in 1..128".into(),
         ));
     }
+    let kind = match context {
+        CompressionCatalogContext::CoGeneratedLevel { .. } => CompressionCatalogKind::CoGenerated,
+        CompressionCatalogContext::StandaloneCommitment { .. } => {
+            CompressionCatalogKind::Standalone
+        }
+    };
     let range_log_basis = match context {
         CompressionCatalogContext::CoGeneratedLevel { opening } => {
             opening.check()?;
@@ -422,6 +445,11 @@ pub(crate) fn validate_and_compile<F: CanonicalField>(
         .checked_add(precommitted_count)
         .and_then(|count| count.checked_add(opening_count))
         .ok_or_else(|| AkitaError::InvalidSetup("compression source count overflow".into()))?;
+    if expected_source_count > DEFAULT_MAX_SEQUENCE_LEN {
+        return Err(AkitaError::InvalidSetup(format!(
+            "compression source count {expected_source_count} exceeds cap {DEFAULT_MAX_SEQUENCE_LEN}"
+        )));
+    }
     let mut expected_sources = Vec::with_capacity(expected_source_count);
     expected_sources.push(CompressionSourceId::CurrentOuter);
     expected_sources.extend(
@@ -430,8 +458,12 @@ pub(crate) fn validate_and_compile<F: CanonicalField>(
     if opening_count == 1 {
         expected_sources.push(CompressionSourceId::Opening);
     }
-    let actual_sources: Vec<_> = specs.iter().map(|spec| spec.source).collect();
-    if actual_sources != expected_sources {
+    if specs.len() != expected_source_count
+        || !specs
+            .iter()
+            .zip(&expected_sources)
+            .all(|(spec, expected)| spec.source == *expected)
+    {
         return Err(AkitaError::InvalidSetup(format!(
             "compression catalog sources must be exactly {expected_sources:?} in canonical order"
         )));
@@ -454,10 +486,16 @@ pub(crate) fn validate_and_compile<F: CanonicalField>(
             )
         })
         .collect::<Result<Vec<_>, _>>()?;
-    Ok(ValidatedCompressionCatalog {
+    let mut catalog = ValidatedCompressionCatalog {
+        kind,
         range_log_basis,
         chains,
-    })
+        semantics: None,
+    };
+    if kind == CompressionCatalogKind::CoGenerated {
+        catalog.semantics = Some(semantics::compile::<F>(lp, &catalog)?);
+    }
+    Ok(catalog)
 }
 
 #[cfg(test)]

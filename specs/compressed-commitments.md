@@ -463,8 +463,9 @@ F chain, every frozen precommitted F chain, and the opening H chain in canonical
 order; standalone creation requires exactly its new current F chain. This
 validates the catalog's geometry,
 dispatch, and SIS certificates, but does not by itself authorize protocol
-execution: only the semantic-layout compiler may certify that every bound-one
-map input is present in the verifier-enforced binary support.
+relation execution: it may drive honest standalone chain computation, but only
+the semantic-layout compiler may certify that every bound-one map input is
+present in the verifier-enforced binary support of a proof.
 
 Catalog compilation authenticates whether its context is a co-generated level
 or standalone commitment creation; this is protocol meaning, not an execution
@@ -835,6 +836,17 @@ native dimensions, relation roles, and canonical virtual order. Binary support
 is derived from every F/H-input segment whose map alphabet is negative binary;
 it is never serialized as an
 attacker-controlled bitmap.
+
+The compression-local arena uses flat field coefficients as its address unit.
+It first allocates every `xi` segment in layer-major relation order—current F,
+authenticated precommitted F order, then H at each live layer—and then allocates
+the decomposed F/H quotient segments in that same family order. Missing layers
+allocate no placeholder. These starts remain local until the global semantic
+compiler performs one checked translation before padding. A `xi` span itself
+has no native-dimension tag: its current map and predecessor gadget views may
+interpret the same coefficients under different dimensions, and compilation
+checks divisibility for every such view. Quotient spans never enter binary
+support.
 
 Do not append global compression spans to today's flat multi-chunk
 `WitnessLayout`. Distributed proving applies machine-ownership policies to the
@@ -1434,6 +1446,7 @@ setup-independent. No additional independence assumption is permitted.
 ```text
 generated schedule catalog + field/security policy
     -> ValidatedCompressionCatalog
+        -> CompiledCompressionSemantics
         -> SemanticRelationLayout
             -> RelationRowPlan
             -> derived binary support
@@ -1445,6 +1458,19 @@ generated schedule catalog + field/security policy
 dimension, rank, alphabet, SIS certificate, terminal omissions, and frozen
 group choices. It has private fields and one checked constructor in
 `akita-types`; no weaker raw or "certified" constructor exists.
+
+`CompiledCompressionSemantics` is a non-executable, compression-local
+projection: flat-coefficient F/H input and quotient spans, layer-major local
+F/H row spans, typed B/D augmentation intents, and the ordered input-segment
+identities whose authenticated maps are negative binary. It stores no local or
+global support runs: the global compiler translates those identities once and
+derives the normalized support. It owns no absolute global witness or
+`tau1` row offset, padding, trace placement, physical chunk ownership, copied
+B/D source span, or second B/D quotient. A witness span has no intrinsic native
+ring dimension: the consuming relation-row view supplies the dimension, and a
+successor span may be interpreted under both adjacent row dimensions after
+checked divisibility. Quotient depth comes from the active proof level, not a
+standalone catalog's conservative maximum opening base.
 
 `SemanticRelationLayout` is the sole authority for stable row identities,
 semantic witness addresses, quotient spans, omissions, and binary support.
@@ -1796,12 +1822,19 @@ Implementation proceeds only after this proposed spec is approved.
    schedules using only the existing canonical SIS keys and conservative bound
    buckets. No generated SIS table changes here; a later security-model PR may
    add coverage and regenerate the affected schedules after separate review.
-2. **Compile semantic authorities.** Add the private minimal input spec,
-   `validate_and_compile`, semantic layout, row plan, and derived support as
-   dormant `pub(crate)` authorities with malformed-input tests.
-3. **Migrate existing relations.** Move A/B/D relation construction and setup
-   contribution onto `RelationRowPlan`, including mixed native dimensions, then
-   delete the uniform-layout authority. Existing proof bytes remain unchanged.
+2. **Compile compression-local semantics.** Add the private minimal input spec,
+   `validate_and_compile`, flat F/H input and quotient spans, local row spans,
+   B/D augmentation intents, and derived negative-binary segment provenance as dormant
+   `pub(crate)` authorities with malformed-input tests. Do not assign global
+   witness offsets or absolute A/B/D/trace row offsets in this slice.
+3. **Compile and migrate the global semantic relation.** Move—not copy—the
+   existing z/e/t/r resolver and A/B/D relation construction into the sole
+   `SemanticRelationLayout` and embedded `RelationRowPlan`; translate the
+   negative-binary segment identities into the one normalized global support,
+   compose the checked
+   compression-local semantics, migrate setup contribution and every existing
+   consumer, then delete the uniform-layout/offset authorities. Existing proof
+   bytes remain unchanged.
 4. **Unify arithmetic and preparation.** Refactor `fused_quotients` into the
    shared multi-RHS core, consolidate quotient derivation, and add
    `PreparedNttPlan` to the canonical backend preparation boundary. Migrate
