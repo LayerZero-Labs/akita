@@ -5,21 +5,27 @@ use crate::compute::backend::{
     DigitRowsComputeBackend, RingSwitchComputeBackend,
 };
 use crate::compute::plans::{
-    DenseCommitInput, DenseCommitRowsPlan, OneHotCommitBlocks, OneHotCommitRowsPlan,
-    RecursiveWitnessCommitRowsPlan, RingSwitchQuotientRowsPlan, RingSwitchRelationRows,
-    RingSwitchRelationRowsPlan, SparseRingCommitRowsPlan,
+    CompressionRowsOutput, CompressionRowsPlan, DenseCommitInput, DenseCommitRowsPlan,
+    OneHotCommitBlocks, OneHotCommitRowsPlan, RecursiveWitnessCommitRowsPlan,
+    RingSwitchQuotientRowsPlan, RingSwitchRelationRows, RingSwitchRelationRowsPlan,
+    SparseRingCommitRowsPlan,
 };
 use crate::kernels::crt_ntt::{build_ntt_slot, NttCacheMap};
 use crate::kernels::linear::{
-    fused_ring_switch_relation_rows_prover_bounds, mat_vec_mul_ntt_dense_digits_i8_trusted,
-    mat_vec_mul_ntt_i8_dense, mat_vec_mul_ntt_i8_dense_single_row, mat_vec_mul_ntt_i8_strided,
+    compression_rows_with_slot, fused_ring_switch_relation_rows_prover_bounds,
+    mat_vec_mul_ntt_dense_digits_i8_trusted, mat_vec_mul_ntt_i8_dense,
+    mat_vec_mul_ntt_i8_dense_single_row, mat_vec_mul_ntt_i8_strided,
     mat_vec_mul_ntt_raw_i8_strided, mat_vec_mul_ntt_single_i8, mat_vec_mul_ntt_single_i8_cyclic,
     selected_crt_i8_capacity_profile, CrtI8CapacityProfile,
 };
 use akita_algebra::CyclotomicRing;
 use akita_field::unreduced::{HasWide, ReduceTo};
 use akita_field::{AdditiveGroup, AkitaError, CanonicalField, FieldCore, HalvingField};
-use akita_types::{dispatch_for_field, AkitaExpandedSetup, NttCacheKey, PreparedNttPlan};
+use akita_types::dispatch::slot_dim_supported_for_tier;
+use akita_types::{
+    dispatch_for_field, protocol_dispatch_tier, AkitaExpandedSetup, NttCacheKey, PreparedNttPlan,
+    ProtocolDispatchSlot,
+};
 use std::array::from_fn;
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
@@ -539,6 +545,26 @@ where
             mat_vec_mul_ntt_single_i8_cyclic(ntt, row_len, digits.len(), digits, log_basis)
         })
     }
+
+    fn compression_rows<const D: usize>(
+        &self,
+        prepared: &Self::PreparedSetup,
+        plan: CompressionRowsPlan<'_, F, D>,
+    ) -> Result<Vec<CompressionRowsOutput<F, D>>, AkitaError>
+    where
+        F: HalvingField,
+    {
+        let tier = protocol_dispatch_tier::<F>();
+        if !slot_dim_supported_for_tier(tier, ProtocolDispatchSlot::Compression, D) {
+            return Err(AkitaError::InvalidSetup(format!(
+                "compression ring dimension {D} is outside field dispatch policy"
+            )));
+        }
+        let required = checked_ntt_prefix(plan.row_count, plan.column_count, "compression rows")?;
+        CpuBackend.with_planned_ntt_slot::<D, _>(prepared, required, |ntt| {
+            compression_rows_with_slot(ntt, plan)
+        })
+    }
 }
 
 impl<F> RingSwitchComputeBackend<F> for CpuBackend
@@ -615,14 +641,16 @@ mod tests {
         ComputeBackendSetup, CyclicRowsComputeBackend, DigitRowsComputeBackend,
         RingSwitchComputeBackend,
     };
-    use crate::compute::plans::RingSwitchRelationRowsPlan;
+    use crate::compute::plans::{
+        CompressionRowsItem, CompressionRowsMode, CompressionRowsPlan, RingSwitchRelationRowsPlan,
+    };
     use crate::kernels::linear::{
         fused_ring_switch_relation_rows, mat_vec_mul_ntt_single_i8,
         mat_vec_mul_ntt_single_i8_cyclic,
     };
     use crate::validation::MAX_I8_LOG_BASIS;
     use crate::AkitaProverSetup;
-    use akita_field::Prime64Offset59;
+    use akita_field::{Prime128Offset275, Prime32Offset99, Prime64Offset59};
     use akita_types::SetupMatrixEnvelope;
     use std::sync::Arc;
 
@@ -794,6 +822,59 @@ mod tests {
             .with_planned_ntt_slot::<16, _>(&prepared, 99_999, |_| Ok(()))
             .is_err());
         assert_eq!(prepared.shared_ntt.lock().unwrap().len(), 3);
+    }
+
+    #[test]
+    fn compression_rows_use_exact_and_containing_planned_slots_across_tiers() {
+        macro_rules! check_tier {
+            ($field:ty, $compression_d:literal) => {{
+                type TierField = $field;
+                const COMPRESSION_D: usize = $compression_d;
+                let setup = AkitaProverSetup::<TierField>::generate_with_capacity(
+                    8,
+                    1,
+                    D,
+                    setup_envelope(D),
+                )
+                .expect("tier setup");
+                let ntt_plan = PreparedNttPlan::with_compression_requirements(
+                    setup.expanded.as_ref(),
+                    [(COMPRESSION_D, 4)],
+                )
+                .expect("compression plan");
+                let prepared = CpuBackend
+                    .prepare_setup(&setup, &ntt_plan)
+                    .expect("prepared");
+                let before = prepared.shared_ntt.lock().unwrap().len();
+
+                for column_count in [4usize, 2] {
+                    let digits = vec![[-1i8; COMPRESSION_D]; column_count];
+                    let items: [CompressionRowsItem<'_, TierField, COMPRESSION_D>; 1] =
+                        [CompressionRowsItem {
+                            digits: &digits,
+                            digit_abs_bound: 1,
+                            mode: CompressionRowsMode::NegacyclicOnly,
+                        }];
+                    let output = CpuBackend
+                        .compression_rows(
+                            &prepared,
+                            CompressionRowsPlan {
+                                row_count: 1,
+                                column_count,
+                                items: &items,
+                            },
+                        )
+                        .expect("planned compression rows");
+                    assert_eq!(output.len(), 1);
+                    assert!(output[0].u_neg.is_some() && output[0].quotient.is_none());
+                    assert_eq!(prepared.shared_ntt.lock().unwrap().len(), before);
+                }
+            }};
+        }
+
+        check_tier!(Prime128Offset275, 8);
+        check_tier!(Prime64Offset59, 16);
+        check_tier!(Prime32Offset99, 32);
     }
 
     #[test]

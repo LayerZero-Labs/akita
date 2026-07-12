@@ -1,7 +1,7 @@
 use crate::compute::plans::{
-    DenseCommitRowsPlan, OneHotCommitRowsPlan, RecursiveWitnessCommitRowsPlan,
-    RingSwitchQuotientRowsPlan, RingSwitchRelationRows, RingSwitchRelationRowsPlan,
-    SparseRingCommitRowsPlan,
+    CompressionRowsOutput, CompressionRowsPlan, DenseCommitRowsPlan, OneHotCommitRowsPlan,
+    RecursiveWitnessCommitRowsPlan, RingSwitchQuotientRowsPlan, RingSwitchRelationRows,
+    RingSwitchRelationRowsPlan, SparseRingCommitRowsPlan,
 };
 use crate::kernels::crt_ntt::{NttSlotCache, NttSlotCacheAny};
 use crate::AkitaProverSetup;
@@ -143,7 +143,8 @@ where
     ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>;
 }
 
-/// Cyclic digit mat-vec operations needed by ring-switch relation code.
+/// Paired cyclic/negacyclic digit mat-vec operations shared by compression and
+/// ring-switch relation code.
 pub trait CyclicRowsComputeBackend<F>: DigitRowsComputeBackend<F>
 where
     F: FieldCore + CanonicalField,
@@ -156,6 +157,15 @@ where
         digits: &[[i8; D]],
         log_basis: u32,
     ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>;
+
+    /// Exact-shape runtime compression batch over one prepared setup prefix.
+    fn compression_rows<const D: usize>(
+        &self,
+        prepared: &Self::PreparedSetup,
+        plan: CompressionRowsPlan<'_, F, D>,
+    ) -> Result<Vec<CompressionRowsOutput<F, D>>, AkitaError>
+    where
+        F: HalvingField;
 }
 
 /// Commitment row operations for migrated root/ring commitment work.

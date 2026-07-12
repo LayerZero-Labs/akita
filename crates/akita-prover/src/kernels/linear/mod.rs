@@ -57,6 +57,7 @@ pub use ntt_matvec::{
     mat_vec_mul_ntt_i8, mat_vec_mul_ntt_i8_dense, mat_vec_mul_ntt_i8_dense_single_row,
     mat_vec_mul_ntt_i8_strided, mat_vec_mul_ntt_raw_i8_strided,
 };
+pub(crate) use ring_switch_relation_rows::compression_rows_with_slot;
 #[cfg(test)]
 pub(crate) use ring_switch_relation_rows::fused_ring_switch_relation_rows;
 pub(crate) use ring_switch_relation_rows::fused_ring_switch_relation_rows_prover_bounds;

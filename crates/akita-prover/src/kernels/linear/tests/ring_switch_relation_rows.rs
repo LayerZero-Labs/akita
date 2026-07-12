@@ -291,3 +291,144 @@ fn fused_ring_switch_relation_rows_enforces_balanced_digit_endpoints() {
         fused_ring_switch_relation_rows::<F, D>(&slot, 1, 0, 0, &invalid, &[], &[], 0).is_err()
     );
 }
+
+fn compression_modes_match_direct_products<
+    F: FieldCore + CanonicalField + HalvingField,
+    const D: usize,
+>() {
+    let rows = 2;
+    let cols = 3;
+    let matrix: Vec<CyclotomicRing<F, D>> = (0..rows * cols)
+        .map(|entry| {
+            CyclotomicRing::from_coefficients(std::array::from_fn(|coefficient| {
+                F::from_i64(((entry * 11 + coefficient * 7) % 19) as i64 - 9)
+            }))
+        })
+        .collect();
+    let flat = FlatMatrix::from_ring_slice(&matrix);
+    let slot = build_ntt_slot(
+        flat.ring_view::<D>(rows, cols)
+            .expect("compression matrix view"),
+    )
+    .expect("compression NTT slot");
+    let negative_binary: Vec<[i8; D]> = (0..cols)
+        .map(|column| std::array::from_fn(|coefficient| -(((column + coefficient) % 3 == 0) as i8)))
+        .collect();
+    let opening_digits: Vec<[i8; D]> = (0..cols)
+        .map(|column| std::array::from_fn(|coefficient| ((column * 17 + coefficient) % 64) as i8))
+        .collect();
+    let items = [
+        CompressionRowsItem {
+            digits: &negative_binary,
+            digit_abs_bound: 1,
+            mode: CompressionRowsMode::NegacyclicOnly,
+        },
+        CompressionRowsItem {
+            digits: &opening_digits,
+            digit_abs_bound: 63,
+            mode: CompressionRowsMode::EagerPaired,
+        },
+    ];
+    let output = compression_rows_with_slot(
+        &slot,
+        CompressionRowsPlan {
+            row_count: rows,
+            column_count: cols,
+            items: &items,
+        },
+    )
+    .expect("compression modes");
+
+    let direct = |digits: &[[i8; D]]| {
+        (0..rows)
+            .map(|row| {
+                (0..cols).fold(
+                    (CyclotomicRing::zero(), CyclotomicRing::zero()),
+                    |(mut neg, mut cyc), column| {
+                        let rhs =
+                            CyclotomicRing::from_coefficients(std::array::from_fn(|coefficient| {
+                                F::from_i64(digits[column][coefficient] as i64)
+                            }));
+                        neg += matrix[row * cols + column] * rhs;
+                        cyc += cyclic_product(&matrix[row * cols + column], &rhs);
+                        (neg, cyc)
+                    },
+                )
+            })
+            .collect::<Vec<_>>()
+    };
+    let expected_negative = direct(&negative_binary);
+    let expected_opening = direct(&opening_digits);
+    assert_eq!(
+        output[0].u_neg.as_ref().expect("negative image"),
+        &expected_negative
+            .iter()
+            .map(|(negative, _)| *negative)
+            .collect::<Vec<_>>()
+    );
+    assert!(output[0].quotient.is_none());
+    let known_opening = output[1].u_neg.as_ref().expect("paired negative image");
+    assert_eq!(
+        known_opening,
+        &expected_opening
+            .iter()
+            .map(|(negative, _)| *negative)
+            .collect::<Vec<_>>()
+    );
+    let expected_quotient = expected_opening
+        .iter()
+        .map(|(negative, cyclic)| quotient_from_cyclic_and_negacyclic(cyclic, negative))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        output[1].quotient.as_ref().expect("paired quotient"),
+        &expected_quotient
+    );
+
+    let known_items = [CompressionRowsItem {
+        digits: &opening_digits,
+        digit_abs_bound: 63,
+        mode: CompressionRowsMode::CyclicWithKnownNeg(known_opening),
+    }];
+    let known_output = compression_rows_with_slot(
+        &slot,
+        CompressionRowsPlan {
+            row_count: rows,
+            column_count: cols,
+            items: &known_items,
+        },
+    )
+    .expect("known-neg compression mode");
+    assert!(known_output[0].u_neg.is_none());
+    assert_eq!(known_output[0].quotient.as_ref(), Some(&expected_quotient));
+}
+
+#[test]
+fn compression_modes_cover_q128_d8_q64_d16_and_q32_d32() {
+    compression_modes_match_direct_products::<Prime128Offset275, 8>();
+    compression_modes_match_direct_products::<Prime64Offset59, 16>();
+    compression_modes_match_direct_products::<Prime32Offset99, 32>();
+}
+
+#[test]
+fn compression_rows_rejects_digits_outside_authenticated_bound() {
+    type F = Prime64Offset59;
+    const D: usize = 16;
+    let flat = FlatMatrix::from_ring_slice(&[CyclotomicRing::<F, D>::zero()]);
+    let slot = build_ntt_slot(flat.ring_view::<D>(1, 1).expect("one cache entry"))
+        .expect("Q64 test cache");
+    let digits = [[2i8; D]];
+    let items: [CompressionRowsItem<'_, F, D>; 1] = [CompressionRowsItem {
+        digits: &digits,
+        digit_abs_bound: 1,
+        mode: CompressionRowsMode::NegacyclicOnly,
+    }];
+    assert!(compression_rows_with_slot(
+        &slot,
+        CompressionRowsPlan {
+            row_count: 1,
+            column_count: 1,
+            items: &items,
+        }
+    )
+    .is_err());
+}

@@ -18,9 +18,9 @@ use super::operation_plans::{
     RingSwitchQuotientPlan, RingSwitchRelationPlan,
 };
 use super::plans::{
-    DenseCommitRowsPlan, OneHotCommitRowsPlan, RecursiveWitnessCommitRowsPlan,
-    RingSwitchQuotientRowsPlan, RingSwitchRelationRows, RingSwitchRelationRowsPlan,
-    SparseRingCommitRowsPlan,
+    CompressionRowsOutput, CompressionRowsPlan, DenseCommitRowsPlan, OneHotCommitRowsPlan,
+    RecursiveWitnessCommitRowsPlan, RingSwitchQuotientRowsPlan, RingSwitchRelationRows,
+    RingSwitchRelationRowsPlan, SparseRingCommitRowsPlan,
 };
 use crate::{CommitInnerWitness, DecomposeFoldWitness};
 use akita_algebra::CyclotomicRing;
@@ -114,6 +114,17 @@ macro_rules! delegate_cyclic_rows {
                 log_basis: u32,
             ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError> {
                 CpuBackend.cyclic_digit_rows(prepared, row_len, digits, log_basis)
+            }
+
+            fn compression_rows<const D: usize>(
+                &self,
+                prepared: &Self::PreparedSetup,
+                plan: CompressionRowsPlan<'_, F, D>,
+            ) -> Result<Vec<CompressionRowsOutput<F, D>>, AkitaError>
+            where
+                F: HalvingField,
+            {
+                CpuBackend.compression_rows(prepared, plan)
             }
         }
     };
@@ -357,6 +368,7 @@ pub struct OpeningCluster;
 
 delegate_compute_backend_setup!(OpeningCluster);
 delegate_digit_rows!(OpeningCluster);
+delegate_cyclic_rows!(OpeningCluster);
 delegate_opening_kernels!(OpeningCluster);
 
 /// Delegating tensor-cluster marker backend.
