@@ -229,7 +229,8 @@ Commitment compression introduces global images and payloads but does not
 require a global witness owner. The protocol distinguishes three objects:
 
 1. the raw B/D image, which is the sum of short machine contributions;
-2. one canonical two-layer F/H compression chain for that global image; and
+2. one canonical schedule-generated F/H compression chain for that global
+   image; and
 3. the chain's digit witnesses, whose matrix columns are partitioned across
    machines after the canonical decomposition is fixed.
 
@@ -242,21 +243,29 @@ u = sum_j u_j.
 The workers then execute one distributed canonical chain:
 
 ```text
-u = G_b xi_F,1
-u_1 = F_1 xi_F,1 = G_2 xi_F,2
-u_pub = F_2 xi_F,2.
+u = G_{A_F,1} xi_F,1
+u_k = F_k xi_F,k = G_{A_F,k+1} xi_F,k+1    for 1 <= k < L_F
+u_pub = F_LF xi_F,LF.
 ```
 
 1. Each worker derives only its scheduled coefficient/ring-column shard of
    `xi_F,1` from the canonical `u`.
-2. It computes the partial image `u_1,j = F_1,j xi_F,1,j`.
-3. The short reduction `u_1 = sum_j u_1,j` fixes the canonical intermediate.
-4. Each worker derives only its scheduled shard of `xi_F,2` from `u_1`.
-5. It computes `u_pub,j = F_2,j xi_F,2,j`, and the final short reduction fixes
-   `u_pub = sum_j u_pub,j`.
+2. At layer `k`, the domain-selective native-ring kernel computes each partial
+   negacyclic image `u_neg,k,j`. It may also compute the cyclic contribution and
+   quotient eagerly, or defer F-cyclic completion to an equal-shape opening
+   bucket as specified by the compression execution policy.
+3. The short reduction `u_k = sum_j u_neg,k,j` fixes the canonical image. When
+   quotient completion is eager, quotient contributions are available at this
+   point; when it is deferred, each worker later combines its F-cyclic
+   contribution with the partial negacyclic image it computed and retained.
+   The globally decomposed successor image is not a machine-local negacyclic
+   RHS. Workers do not communicate a separate cyclic image.
+4. If `k < L_F`, each worker derives only its scheduled shard of
+   `xi_F,k+1` from that global image and continues. Otherwise the reduction is
+   the public payload `u_pub`.
 
 Thus matrix multiplication and digit storage are both distributed, while the
-chain remains exactly the single global F1/F2 instance. Decomposition, map
+chain remains exactly the single global scheduled F-chain instance. Decomposition, map
 shapes, setup prefix, shard boundaries, and encoding are descriptor-bound. No
 compression-digit vector crosses the worker boundary. The H chain follows the
 same rule after reducing `v = sum_j v_j`.
@@ -269,9 +278,9 @@ decompose(sum_j u_j) != sum_j decompose(u_j).
 ```
 
 More importantly, independently compressed partials would change the binding
-instance from `F_2 xi_2` to repeated columns
-`[F_2 | ... | F_2] [xi_{2,0}; ...; xi_{2,W-1}]`. Standalone certification of
-the original F2 map would no longer price that wider witness. Sending one
+instance for the terminal map `F_L xi_L` to repeated columns
+`[F_L | ... | F_L] [xi_{L,0}; ...; xi_{L,W-1}]`. Standalone certification of
+the original terminal map would no longer price that wider witness. Sending one
 standalone payload per machine would preserve independent security but multiply
 wire size by `W`; that is not this protocol.
 
@@ -297,7 +306,7 @@ only four hard-coded ranges. Conceptually:
 ```text
 machine j:
   z_j | e_j | t_j
-  | xi_F1,j | xi_H1,j | xi_F2,j | xi_H2,j
+  | (xi_Fk,j)_{k in [L_F]} | (xi_Hk,j)_{k in [L_H]}
   | local quotient families_j
 ```
 
@@ -326,40 +335,57 @@ shard. The global chain rows are sums of local contributions:
 
 ```text
 sum_j (B_j t_j - G_b,j xi_F1,j)                 = 0
-sum_j (F_1,j xi_F1,j - G_2,j xi_F2,j)           = 0
-sum_j  F_2,j xi_F2,j                            = u_pub.
+sum_j (F_k,j xi_Fk,j - G_{A_F,k+1},j xi_F(k+1),j) = 0  for k < L_F
+sum_j  F_LF,j xi_F,LF,j                         = u_pub.
 ```
 
-The H rows are analogous. Exactly one designated RHS owner subtracts `u_pub`
-or `v_pub` in its local lifted row; every other machine uses zero RHS. This is
-only an additive convention for local quotient construction. The public
+For each compression map `K`, worker `j` computes
+
+```text
+u_neg,j  = neg(K_j xi_j)
+r_prod,j = (cyc(K_j xi_j) - u_neg,j) / 2
+K_j xi_j = u_neg,j + (X^d + 1) r_prod,j.
+```
+
+The successor digits come from the reduced global image, so generally
+`u_neg,j != G_j xi_next,j`. The local extended relation therefore equals the
+residual `delta_j = u_neg,j - G_j xi_next,j`, not zero; the coordinated
+sum-check proves `sum_j delta_j = 0`. The H rows are analogous. Exactly one
+designated RHS owner subtracts `u_pub` or `v_pub`; every other machine uses zero
+RHS. This is only an additive convention and does not make the owner's local
+row valid independently. The public
 payload and transcript contain no owner field because the owner is derived
 canonically from the schedule (initially machine zero).
 
-Every machine's quotient contribution retains the complete row-family shape,
-including F/H families, and uses each family's native ring dimension. Scalar
-families contribute no negacyclic quotient. Summing the lifted local identities
-recovers the one mixed-dimension global relation.
+Every machine digit-decomposes `r_prod,j`; its quotient contribution retains the
+complete row-family shape, including F/H families, and uses each family's
+native ring dimension. Every F/H row has a product-quotient contribution; there
+is no scalar or quotient-free compression exception. The coordinator sums
+local round polynomials before each challenge. Summing the local residuals and
+lifted contributions recovers the one mixed-dimension global relation without
+quotient-reduction communication.
 
-The negative-binary support is the union of the real local F2/H2 input spans.
-Structural zero slots are excluded. Each worker contributes its sparse support
-to the existing fused range sum-check; the coordinator sums round polynomials
-as usual. No separate global binary table is materialized.
+The negative-binary support is the union of every real local F/H input span
+whose authenticated map alphabet is negative binary, at any layer. Structural
+zero slots are excluded. A map is priced at coefficient bound one only when its
+complete global span is the disjoint union of these verifier-enforced local
+supports. Each worker contributes the restricted-equality round polynomial for
+its real sparse support to the fused Stage-2 sum-check; the coordinator sums it
+with the ordinary carried-range and relation polynomials before deriving the
+single challenge. After that challenge each worker sibling-folds its local
+sparse weights, so work and memory remain proportional to projected real
+support. Structural-zero shards contribute neither entries nor work. No
+separate global binary table is materialized.
 
-#### Input-sliced B/D maps
+#### B/D source geometry
 
-Compression's B/D input slicing and machine ownership share the same global
-block axis but are independent partitions. Both counts are powers of two and
-divide the block count, so their interval partitions are nested: a machine
-window contains whole role slices or lies within one role slice. A worker
-computes its contribution to every intersecting slice; the short reduction
-produces the canonical slice-major image vector consumed by F1/H1.
-
-The planner does not require `slice_count == W` or choose slices to mimic
-machine ownership. Since both counts are powers of two dividing the same block
-count, one partition automatically refines the other; no additional
-compatibility invariant is needed. They optimize different costs: role slices
-reduce the setup envelope, while machine windows distribute witness work.
+This implementation uses the unsliced B/D source images. Machine ownership
+partitions the input columns, and the short reduction reconstructs the single
+canonical image consumed by the first F/H map. B/D block-axis slicing is a
+separate extension: when implemented, it must use the exact slice-major source
+image, descriptor, and structured-matrix security contract specified by the
+commitment-compression design. It does not change F/H column sharding, and it
+must not identify slice count with machine count.
 
 #### Hints, groups, and cutover
 
@@ -516,9 +542,9 @@ not hide the protocol's communication pattern.
 For each distributed level:
 
 1. **Opening and partial commitments.** Each worker computes local `e/t`,
-   partial raw B/D slice images, and its partial claimed value. Short images and
-   scalars are summed. Workers run the distributed H1/H2 chain on the global D
-   image, retaining only their H digit shards.
+   partial raw B/D images, and its partial claimed value. Short images and
+   scalars are summed. Workers run the scheduled distributed H-chain on the
+   global D image, retaining only their H digit shards.
 2. **Transcript synchronization.** The coordinator absorbs the sums and
    broadcasts the transcript-derived challenge material.
 3. **Fold grinding.** For each candidate nonce, every worker computes only its
@@ -528,7 +554,7 @@ For each distributed level:
    without communication.
 5. **Next commitment.** Each worker commits its local recursive blocks using
    native setup columns. After reducing the raw B image, workers run the
-   distributed F1/F2 chain, retain only their F digit shards, and absorb the
+   scheduled distributed F-chain, retain only their F digit shards, and absorb the
    single compressed payload.
 6. **Range tree.** Workers build local subtrees; only local roots cross the
    network.
@@ -538,15 +564,17 @@ For each distributed level:
 8. **State handoff.** Each worker retains its local next witness. No witness
    gather occurs while the next output level remains distributed.
 
-Stage 3's public setup term must not be computed redundantly by every worker.
-Partition its setup-index range across workers or assign that public term to one
-worker, then sum it with the witness-local round contributions.
+When verifier offloading is enabled, its stage-3 public setup term must not be
+computed redundantly by every worker. Partition its setup-index range across
+workers or assign that public term to one worker, then sum it with the
+witness-local round contributions. Without verifier offloading, no stage-3
+setup-product phase is present.
 
 ### Communication contract
 
 Before cutover, communication is limited to:
 
-- raw B/D slice images, F1/H1 intermediate images, and final compressed payload
+- raw B/D images, intermediate F/H images, and final compressed payload
   contributions;
 - claimed values and carried claims;
 - one acceptance bit per grind probe;
@@ -901,7 +929,8 @@ Expected diffs:
   S3 these types are exercised by the native test/oracle path; the existing
   layout remains the sole production authority until the S4 atomic cutover.
 - apply `ColumnPartitioned` to every scheduled F/H digit segment and derive the
-  local negative-binary supports from real F2/H2 shards.
+  local negative-binary supports from every real shard whose map is tagged
+  negative binary.
 - `crates/akita-prover/src/protocol/fold_grind.rs`: return accepted local
   `z_j` witnesses as the primary output. Stop aggregating them into a global
   fold during distributed output levels. Acceptance requires every scheduled
@@ -915,9 +944,11 @@ Expected diffs:
   machine-major columns for the prover only; keep the dense implementation as a
   test oracle, not as the verifier path.
 
-Deliverable: every local lifted identity passes independently, their sum equals
-the public relation, every local quotient digit is range-checked, and a fixture
-guards against assuming additive digit decomposition.
+Deliverable: every ordinary additive local lifted identity passes
+independently; compression product quotients recompose their partial products,
+compression residuals and round polynomials vanish only after summation; every
+local quotient digit is range-checked; and a fixture guards against assuming
+additive digit decomposition.
 
 ### S4: Cut over recursive prover consumers atomically
 
@@ -935,7 +966,7 @@ Expected diffs:
   `output_machines > 1`.
 - `crates/akita-prover/src/protocol/ring_switch/{commit,finalize,evals}.rs`:
   accept hierarchical sources and return local evaluation providers.
-- reduce raw B/D slice images, deterministically recompute the one canonical
+- reduce raw B/D images, deterministically recompute the one canonical
   F/H chain on workers, and retain only scheduled compression-digit shards;
   never compress partial machine images independently.
 - `crates/akita-prover/src/protocol/sumcheck/`: expose one local
@@ -1077,7 +1108,9 @@ distributed-verifier API is introduced.
 - [ ] Local recursive indexing remains block-fast.
 - [ ] No distributed level concatenates machine buffers into one monolithic recursive view.
 - [ ] Relation, quotient, setup, and trace columns are emitted natively in machine-major order.
-- [ ] Local quotient identities hold independently and sum to the global lifted relation.
+- [ ] Ordinary additive local quotient identities hold independently;
+  compression product quotients recompose partial products and their residuals
+  vanish only after summation into the global lifted relation.
 - [ ] No live doc claims digit decompositions add across machines.
 - [ ] Partial-fold norms are independently priced and checked.
 - [ ] Distributed commitment equals an independent dense machine-major commitment.
@@ -1107,8 +1140,11 @@ distributed-verifier API is introduced.
 ## Required tests
 
 1. Native dense relation times native witness equals the semantic relation.
-2. Each local lifted relation recomposes from its local quotient digits.
-3. Summing local lifted relations yields the public global relation.
+2. Each ordinary local lifted relation recomposes from its quotient digits;
+   each compression product quotient recomposes its local cyclic/negacyclic
+   product difference.
+3. Summing local residuals and lifted contributions yields the public global
+   relation, including compression rows whose individual residuals are nonzero.
 4. A fixture demonstrates that decomposing after summing differs from summing
    decompositions, preventing the old documentation error from returning.
 5. Distributed commitment, opening, folding, trace, and setup paths match dense
