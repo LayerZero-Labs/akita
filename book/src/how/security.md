@@ -41,11 +41,28 @@ The production lookup is table-only. Verifier-reachable code must reject a
 missing table row or unsupported floor with `AkitaError`; it must not run the
 estimator at verification time.
 
+### Classical and quantum policy status
+
+The checked-in table currently enforces only the 138-bit classical ADPS16/LGSA
+estimate described above. A joint policy has been approved but is not yet
+implemented: 138 classical bits and 128 bits under the conventional ADPS16
+quantum Core-SVP model, with one separately reported BCSS diagnostic under
+explicitly idealized writable-QRAQM and asymptotic assumptions. BCSS is not a
+production rank constraint in that policy.
+
+The complete decision, assumptions, review line, claim language, and
+implementation acceptance criteria live in
+[`specs/sis-classical138-quantum128-bcss-policy.md`](../../../specs/sis-classical138-quantum128-bcss-policy.md).
+Do not describe the joint policy as enforced until its generated-table cutover
+is implemented.
+
 **Sources to fold in**
 
 - `crates/akita-types/src/sis/mod.rs`, `ajtai_key.rs`, `generated_sis_table.rs`, `norm_bound.rs`.
 - Paper §2.2 `def:msis`, §3.12 `sec:batched-soundness` ("MSIS targets", "Two norm models").
 - `docs/security-posture.md`, `specs/sis-linf-table-cutover.md`.
+- `specs/sis-classical138-quantum128-bcss-policy.md` (approved policy;
+  implementation pending).
 
 ## Norm bounds and weak binding
 

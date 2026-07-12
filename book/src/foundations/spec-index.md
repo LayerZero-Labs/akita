@@ -12,6 +12,10 @@ The active design frontier (keep as live specs): `setup-layout-repack`, `eor-str
 `akita-compute-backend-metal` (Metal tail), `crt-ntt-prime-profiles`,
 `transcript-immediate-fixes`.
 
+The approved SIS security-policy frontier is
+`sis-classical138-quantum128-bcss-policy`: a descriptive classical-138 /
+conventional-quantum-128 policy with one explicitly idealized BCSS diagnostic.
+
 ## Sources to fold in
 
 - `specs/PRUNING.md` (process + classification), `specs/archive/README.md`

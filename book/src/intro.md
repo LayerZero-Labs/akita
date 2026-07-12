@@ -63,6 +63,8 @@ and what is asserted vs proven. The canonical narrative lives in
 - `docs/security-posture.md`.
 - Paper §3.12 `sec:batched-soundness`, §3.11 `sec:akita-cwss` (audited soundness).
 - `specs/security-hardening.md`, `specs/sis-linf-table-cutover.md`, `specs/fold-linf-rejection.md`.
+- `specs/sis-classical138-quantum128-bcss-policy.md` (approved joint policy;
+  not yet enforced by the checked-in table).
 
 ## How to read this book
 
