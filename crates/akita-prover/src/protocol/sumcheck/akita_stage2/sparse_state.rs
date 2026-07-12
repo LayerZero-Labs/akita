@@ -1,6 +1,8 @@
+use akita_algebra::offset_eq::eq_interval_weights;
 use akita_algebra::poly::trim_trailing_zeros;
 use akita_field::{AkitaError, FieldCore, FromPrimitiveInt};
 use akita_sumcheck::UniPoly;
+use akita_types::RelationLayout;
 
 /// Sparse Stage-2 weights in the current full Boolean address space.
 ///
@@ -41,6 +43,119 @@ impl<E: FieldCore> Stage2SparseState<E> {
             relation,
             restricted_eq,
         })
+    }
+
+    /// Initialize the restricted binary range-check weights from the checked
+    /// physical relation layout.
+    ///
+    /// The initializer derives the complete sorted, disjoint, coalesced support
+    /// and padded Boolean domain from the layout compiled from the authenticated
+    /// statement; callers cannot substitute a second support or padding
+    /// authority. It visits exactly those live coefficients and stores
+    /// `rho_bin * eq(r_virt, z)` at address `z`; it never materializes either a
+    /// domain-sized support bitmap or a domain-sized equality table. Ordinary
+    /// sparse relation weights share the same state so every Stage-2 execution
+    /// path combines and binds the two additions through one implementation.
+    // Kept internal and deliberately unwired until the schedule descriptor and
+    // `rho_bin` transcript event land atomically; this slice exercises it
+    // through the nonempty protocol harness below.
+    #[allow(dead_code)]
+    pub(crate) fn with_negative_binary_support(
+        layout: &RelationLayout,
+        domain_len: usize,
+        relation: Vec<(usize, E)>,
+        r_virt: &[E],
+        rho_bin: E,
+    ) -> Result<Self, AkitaError> {
+        let physical_len = layout.physical_witness_field_coeff_len()?;
+        let expected_domain_len = physical_len.checked_next_power_of_two().ok_or_else(|| {
+            AkitaError::InvalidInput("Stage-2 physical witness domain overflow".into())
+        })?;
+        if domain_len != expected_domain_len {
+            return Err(AkitaError::InvalidSize {
+                expected: expected_domain_len,
+                actual: domain_len,
+            });
+        }
+        let support = layout.physical_negative_binary_support()?;
+        let restricted_eq = Self::restricted_eq_entries(
+            domain_len,
+            support.iter().map(|span| (span.start(), span.len())),
+            r_virt,
+            rho_bin,
+        )?;
+        Self::new(domain_len, relation, restricted_eq)
+    }
+
+    fn restricted_eq_entries<I>(
+        domain_len: usize,
+        runs: I,
+        r_virt: &[E],
+        rho_bin: E,
+    ) -> Result<Vec<(usize, E)>, AkitaError>
+    where
+        I: Clone + IntoIterator<Item = (usize, usize)>,
+    {
+        if domain_len == 0 || !domain_len.is_power_of_two() {
+            return Err(AkitaError::InvalidInput(
+                "sparse Stage-2 domain length must be a nonzero power of two".into(),
+            ));
+        }
+        if r_virt.len() != domain_len.trailing_zeros() as usize {
+            return Err(AkitaError::InvalidSize {
+                expected: domain_len.trailing_zeros() as usize,
+                actual: r_virt.len(),
+            });
+        }
+        let mut run_count = 0usize;
+        let mut support_len = 0usize;
+        let mut previous_end = None;
+        for (start, len) in runs.clone() {
+            run_count += 1;
+            if len == 0 {
+                return Err(AkitaError::InvalidInput(
+                    "negative-binary support must omit empty runs".into(),
+                ));
+            }
+            let end = start.checked_add(len).ok_or_else(|| {
+                AkitaError::InvalidInput("negative-binary support endpoint overflow".into())
+            })?;
+            if end > domain_len {
+                return Err(AkitaError::InvalidSize {
+                    expected: domain_len,
+                    actual: end,
+                });
+            }
+            if previous_end.is_some_and(|prior| prior >= start) {
+                return Err(AkitaError::InvalidInput(
+                    "negative-binary support runs must be sorted, disjoint, and coalesced".into(),
+                ));
+            }
+            support_len = support_len.checked_add(len).ok_or_else(|| {
+                AkitaError::InvalidInput("negative-binary support length overflow".into())
+            })?;
+            previous_end = Some(end);
+        }
+        if run_count == 0 {
+            return Err(AkitaError::InvalidInput(
+                "negative-binary Stage-2 support must be nonempty".into(),
+            ));
+        }
+
+        let mut entries = Vec::new();
+        entries.try_reserve_exact(support_len).map_err(|_| {
+            AkitaError::InvalidInput("negative-binary support allocation failed".into())
+        })?;
+        for (start, len) in runs {
+            let weights = eq_interval_weights(r_virt, start, len)?;
+            for (local, eq_weight) in weights.into_iter().enumerate() {
+                let weight = rho_bin * eq_weight;
+                if weight != E::zero() {
+                    entries.push((start + local, weight));
+                }
+            }
+        }
+        Ok(entries)
     }
 
     fn validate_entries(
@@ -226,7 +341,18 @@ fn bilinear_eval<E: FieldCore>(corners: [E; 4], x: E, y: E) -> E {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use akita_field::Prime128Offset275;
+    use akita_algebra::offset_eq::eq_eval_at_index;
+    use akita_challenges::SparseChallengeConfig;
+    use akita_field::{CanonicalField, Prime128Offset275, Prime128OffsetA7F7};
+    use akita_types::layout::{CoeffSpan, RelationSegmentId};
+    use akita_types::sis::{
+        sis_table_key_for_linf_bound, AjtaiKeyParams, DEFAULT_SIS_SECURITY_BITS,
+    };
+    use akita_types::{
+        validate_compression_catalog, CompressionAlphabet, CompressionCatalogContext,
+        CompressionChainSpec, CompressionMapSpec, CompressionSourceId, LevelParams,
+        OpeningClaimsLayout, SisModulusFamily,
+    };
 
     type F = Prime128Offset275;
 
@@ -242,6 +368,99 @@ mod tests {
         dense
     }
 
+    fn certified_key(d: usize, raw_bound: u128, cols: usize) -> AjtaiKeyParams {
+        let table = sis_table_key_for_linf_bound(
+            DEFAULT_SIS_SECURITY_BITS,
+            SisModulusFamily::Q128,
+            d as u32,
+            raw_bound,
+        )
+        .expect("test SIS row");
+        AjtaiKeyParams::try_new_with_min_rank(table, cols).expect("certified test key")
+    }
+
+    fn compression_chain(
+        source: CompressionSourceId,
+        source_key: &AjtaiKeyParams,
+        alphabets: &[CompressionAlphabet],
+    ) -> CompressionChainSpec {
+        let mut previous =
+            source_key.row_len() * source_key.sis_table_key().ring_dimension as usize;
+        let maps = alphabets
+            .iter()
+            .copied()
+            .enumerate()
+            .map(|(map, alphabet)| {
+                let d = if map == 0 { 64 } else { 32 };
+                let depth = match alphabet {
+                    CompressionAlphabet::NegativeBinary => {
+                        Prime128OffsetA7F7::modulus_bits() as usize
+                    }
+                    CompressionAlphabet::OpeningBase { log_basis } => {
+                        akita_types::sis::num_digits_for_bound(
+                            Prime128OffsetA7F7::modulus_bits(),
+                            Prime128OffsetA7F7::modulus_bits(),
+                            log_basis,
+                        )
+                    }
+                };
+                let bound = match alphabet {
+                    CompressionAlphabet::NegativeBinary => 1,
+                    CompressionAlphabet::OpeningBase { log_basis } => (1u128 << log_basis) - 1,
+                };
+                let key = certified_key(d, bound, previous * depth / d);
+                previous = key.row_len() * d;
+                CompressionMapSpec::new(key, alphabet)
+            })
+            .collect();
+        CompressionChainSpec::new(source, maps)
+    }
+
+    fn multilayer_layout() -> akita_types::RelationLayout {
+        let mut level = LevelParams::params_only(
+            SisModulusFamily::Q128,
+            64,
+            6,
+            1,
+            1,
+            1,
+            SparseChallengeConfig::pm1_only(64),
+        )
+        .with_decomp(1, 1, 1, 1, 0)
+        .expect("level");
+        level.b_key = certified_key(64, 63, 1);
+        level.d_key = certified_key(64, 63, 1);
+        let opening = OpeningClaimsLayout::new(2, 1).expect("opening");
+        validate_compression_catalog::<Prime128OffsetA7F7>(
+            &level,
+            CompressionCatalogContext::CoGeneratedLevel { opening: &opening },
+            64,
+            vec![
+                compression_chain(
+                    CompressionSourceId::CurrentOuter,
+                    &level.b_key,
+                    &[
+                        CompressionAlphabet::NegativeBinary,
+                        CompressionAlphabet::NegativeBinary,
+                        CompressionAlphabet::NegativeBinary,
+                    ],
+                ),
+                compression_chain(
+                    CompressionSourceId::Opening,
+                    &level.d_key,
+                    &[
+                        CompressionAlphabet::OpeningBase { log_basis: 6 },
+                        CompressionAlphabet::NegativeBinary,
+                    ],
+                ),
+            ],
+        )
+        .expect("catalog")
+        .co_generated_relation_layout()
+        .expect("relation layout")
+        .clone()
+    }
+
     #[test]
     fn checked_constructor_rejects_noncanonical_support() {
         assert!(Stage2SparseState::<F>::new(3, vec![], vec![]).is_err());
@@ -249,6 +468,167 @@ mod tests {
         assert!(Stage2SparseState::new(8, vec![(2, f(1)), (2, f(2))], vec![]).is_err());
         assert!(Stage2SparseState::new(8, vec![(8, f(1))], vec![]).is_err());
         assert!(Stage2SparseState::new(8, vec![(1, F::zero())], vec![]).is_err());
+
+        let point = [f(2), f(3), f(5)];
+        assert!(
+            Stage2SparseState::restricted_eq_entries(8, std::iter::empty(), &point, f(7),).is_err()
+        );
+        assert!(Stage2SparseState::restricted_eq_entries(8, [(1, 0)], &point, f(7)).is_err());
+        assert!(
+            Stage2SparseState::restricted_eq_entries(8, [(2, 2), (3, 1)], &point, f(7)).is_err()
+        );
+        assert!(
+            Stage2SparseState::restricted_eq_entries(8, [(2, 2), (2, 1)], &point, f(7)).is_err()
+        );
+        assert!(Stage2SparseState::restricted_eq_entries(8, [(7, 2)], &point, f(7)).is_err());
+        assert!(
+            Stage2SparseState::restricted_eq_entries(8, [(1, usize::MAX)], &point, f(7),).is_err()
+        );
+        assert!(Stage2SparseState::restricted_eq_entries(8, [(1, 1)], &point[..2], f(7)).is_err());
+    }
+
+    #[test]
+    fn projected_multilayer_binary_support_matches_verifier_terminal_formula() {
+        let layout = multilayer_layout();
+        let support = layout
+            .physical_negative_binary_support()
+            .expect("projected support");
+        assert!(
+            support.len() >= 2,
+            "opening-base gap must preserve multiple runs"
+        );
+
+        // Every negative-binary input layer is included, while the opening-base
+        // first H layer is absent. This checks the authenticated alphabet tag,
+        // not a hard-coded assumption about map indices.
+        for (source, map, is_binary) in [
+            (CompressionSourceId::CurrentOuter, 0, true),
+            (CompressionSourceId::CurrentOuter, 1, true),
+            (CompressionSourceId::CurrentOuter, 2, true),
+            (CompressionSourceId::Opening, 0, false),
+            (CompressionSourceId::Opening, 1, true),
+        ] {
+            let span = layout
+                .physical_compression_segment_span(RelationSegmentId::CompressionInput {
+                    source,
+                    map,
+                })
+                .expect("input span");
+            let covered = support.iter().any(|run| {
+                run.start() <= span.start() && run.start() + run.len() >= span.start() + span.len()
+            });
+            assert_eq!(
+                covered, is_binary,
+                "wrong support membership for {source:?}/{map}"
+            );
+        }
+
+        let domain_len = layout
+            .physical_witness_field_coeff_len()
+            .expect("physical witness length")
+            .next_power_of_two();
+        let num_vars = domain_len.trailing_zeros() as usize;
+        let r_virt: Vec<F> = (0..num_vars).map(|i| f(2 * i as u64 + 3)).collect();
+        let rho = f(41);
+        let relation = Vec::new();
+        let mut state = Stage2SparseState::with_negative_binary_support(
+            &layout, domain_len, relation, &r_virt, rho,
+        )
+        .expect("augmented sparse state");
+        assert!(Stage2SparseState::with_negative_binary_support(
+            &layout,
+            domain_len / 2,
+            Vec::new(),
+            &r_virt,
+            rho,
+        )
+        .is_err());
+        let initial_support = state.restricted_eq.len();
+        assert!(initial_support > 0);
+        assert!(initial_support <= support.iter().map(CoeffSpan::len).sum());
+
+        let mut witness: Vec<F> = (0..domain_len)
+            .map(|index| f((index as u64).wrapping_mul(17).wrapping_add(5)))
+            .collect();
+        let mut dense_weights = vec![F::zero(); domain_len];
+        for &(index, weight) in &state.restricted_eq {
+            dense_weights[index] = weight;
+        }
+        let prefix_grid = state
+            .two_round_grid(|index| witness[index])
+            .expect("nonempty sparse prefix grid");
+        assert_eq!(
+            prefix_grid.round0_poly(),
+            state.round_poly(|index| witness[index])
+        );
+
+        let r_stage2: Vec<F> = (0..num_vars).map(|i| f(3 * i as u64 + 11)).collect();
+        let mut previous_support = initial_support;
+        for (round, &challenge) in r_stage2.iter().enumerate() {
+            let round_poly = state.round_poly(|index| witness[index]);
+            for t in [F::zero(), F::one(), f(2), f(7)] {
+                let expected = witness
+                    .chunks_exact(2)
+                    .zip(dense_weights.chunks_exact(2))
+                    .fold(F::zero(), |acc, (w, weight)| {
+                        let w_t = w[0] + t * (w[1] - w[0]);
+                        let weight_t = weight[0] + t * (weight[1] - weight[0]);
+                        acc + weight_t * w_t * (w_t + F::one())
+                    });
+                assert_eq!(round_poly.evaluate(&t), expected, "round {round}");
+            }
+            if round == 0 {
+                let mut once_bound = state.clone();
+                once_bound.bind(challenge);
+                let folded_witness: Vec<F> = witness
+                    .chunks_exact(2)
+                    .map(|pair| pair[0] + challenge * (pair[1] - pair[0]))
+                    .collect();
+                assert_eq!(
+                    prefix_grid.round1_poly(challenge),
+                    once_bound.round_poly(|index| folded_witness[index])
+                );
+            }
+            state.bind(challenge);
+            assert!(state.restricted_eq.len() <= previous_support);
+            previous_support = state.restricted_eq.len();
+            witness = witness
+                .chunks_exact(2)
+                .map(|pair| pair[0] + challenge * (pair[1] - pair[0]))
+                .collect();
+            dense_weights = dense_weights
+                .chunks_exact(2)
+                .map(|pair| pair[0] + challenge * (pair[1] - pair[0]))
+                .collect();
+        }
+        let prover_terminal = state
+            .restricted_eq
+            .first()
+            .map_or(F::zero(), |&(index, value)| {
+                assert_eq!(index, 0);
+                value
+            });
+        let verifier_terminal = support.iter().fold(F::zero(), |acc, run| {
+            acc + run.range().fold(F::zero(), |run_acc, index| {
+                run_acc
+                    + rho * eq_eval_at_index(&r_virt, index) * eq_eval_at_index(&r_stage2, index)
+            })
+        });
+        assert_eq!(prover_terminal, verifier_terminal);
+        assert_eq!(prover_terminal, dense_weights[0]);
+    }
+
+    #[test]
+    fn binary_support_initializer_filters_algebraic_zeros_without_rejecting_support() {
+        let point = [F::zero(), F::one(), F::zero()];
+        let zero_rho =
+            Stage2SparseState::restricted_eq_entries(8, [(0, 3), (5, 2)], &point, F::zero())
+                .expect("structurally live support with zero challenge");
+        assert!(zero_rho.is_empty());
+
+        let entries = Stage2SparseState::restricted_eq_entries(8, [(0, 3), (5, 2)], &point, f(13))
+            .expect("degenerate Boolean point");
+        assert_eq!(entries, vec![(2, f(13))]);
     }
 
     #[test]
