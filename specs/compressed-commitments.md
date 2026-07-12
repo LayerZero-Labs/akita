@@ -299,25 +299,29 @@ The base-16 first map is the narrowest margin in the displayed first layers;
 the terminal map is not the binding security constraint for this three-map
 frontier.
 
-### SIS-security prerequisite and PR boundary
+### SIS-security authority and PR boundary
 
-This PR does not change the production SIS security model, generated SIS
-tables, or generated schedules. The current checked-in 138-bit classical table
-remains the sole planner and verifier authority. Quantum estimates in this
-document are diagnostic exploration, not an additional acceptance floor.
+This PR does not change the production SIS security model or generated SIS
+tables. The current checked-in 138-bit classical table remains the sole planner
+and verifier authority, and this PR generates compression schedules from the
+rows it already provides. Quantum estimates in this document are diagnostic
+exploration, not an additional acceptance floor.
 
-A prerequisite security PR owns the decision whether to require 128-bit
-quantum security, the accuracy and versioning of the selected attack model,
-exact-bound-one and small-dimension table coverage, table regeneration, and all
-resulting schedule regeneration. It must compare the complete schedule and
-performance consequences before changing production policy.
+A separate security PR owns any decision to require 128-bit quantum security,
+the accuracy and versioning of the selected attack model, additional table
+coverage, and table regeneration. It must compare the complete schedule and
+performance consequences before changing production policy. That investigation
+is not a dependency of compression.
 
-The compression implementation consumes that PR's ordinary `SisTableKey` and
-`min_secure_rank` authority unchanged. It must not edit generated SIS data or
-schedule files. Until the prerequisite supplies an exact audited row for a
-candidate `(field family, d, coefficient bound)`, that candidate is invalid;
-the compression PR must not round the bound, synthesize a rank, or add a local
-security exception.
+The compression implementation uses the existing `SisTableKey` and
+`min_secure_rank` authority unchanged. A raw coefficient bound is rounded up by
+the existing `sis_table_key_for_linf_bound` authority, so a negative-binary map
+with actual bound one is certified conservatively by the shipped bound-two
+bucket. A candidate is valid only when the existing lookup covers its field
+family, dimension, rounded bucket, and width at the required rank. The planner
+must select among those candidates; it must not synthesize a rank or add a
+local security exception. This PR may regenerate schedule catalogs, but not SIS
+tables.
 
 The search must also evaluate two-map candidates. At minimum these include an
 opening-base first map followed by the terminal map, and a negative-binary
@@ -466,11 +470,11 @@ thin `_for_level` wrappers or separate “certified” versus “executed” bou
 
 Compression execution and certification must:
 
-1. consume exact-bound-one rows and compression dimensions supplied by the
-   prerequisite SIS-security PR, beginning at `d = 8`, without regenerating
-   tables or schedules in this PR;
-2. keep exact requested bounds in certification—do not round one up to two for
-   any negative-binary layer;
+1. use the existing SIS rows and canonical bound-bucketing authority; in
+   particular, certify an actual bound-one negative-binary layer against the
+   existing bound-two bucket;
+2. generate schedules only from candidates covered by those existing rows,
+   even when arithmetic execution supports a smaller dimension;
 3. add a compression execution dispatch independent of A-role sparse-challenge
    support and the current field-specific B/D minima;
 4. extend the cached CRT/NTT path through `d = 8`; a production descriptor is
@@ -489,17 +493,19 @@ table. The initial production policy is:
 
 | field tier | A-role | B/D roles | compression roles | CRT/NTT cache |
 |------------|--------|-----------|-------------------|---------------|
-| q128 | unchanged: `64,128` | unchanged: `16..256` | `8,16,32,64` | `8..512` |
-| q64  | unchanged: `64..256` | unchanged: `32..256` | `16,32,64,128` | `16..1024` |
-| q32  | unchanged: `64..256` | unchanged: `64..256` | `32,64,128,256` | `32..2048` |
+| q128 | `64,128` | `32..256` | `8,16,32,64` | `8..512` |
+| q64  | `64..256` | `32..256` | `16,32,64,128` | `16..1024` |
+| q32  | `64..256` | `64..256` | `32,64,128,256` | `32..2048` |
 
 Every range is the listed powers of two. The compression table expresses
 execution capability, not planner preference: an apparently attractive map is
-still rejected unless an exact `(field family, d, coefficient bound)` SIS row
-exists and its rank clears the security floor. The shipped planner fixtures are
-expected to select terminal `d = 8,16,32` for q128/q64/q32, respectively, but
-the verifier validates the descriptor against the capability and SIS tables
-rather than inferring a dimension from the field width.
+still rejected unless the canonical SIS lookup can round its actual bound to a
+shipped `(field family, d, coefficient bucket)` row whose rank clears the
+security floor. In particular, the current tables begin at `d = 32`, so the
+initial generated schedules cannot select `d = 8` or `d = 16` even though the
+arithmetic path supports them. The verifier validates the descriptor against
+both execution capability and SIS coverage rather than inferring a dimension
+from the field width.
 
 The tier minima are intentional. Supporting `d=8` for q64 or q32, or `d=16`
 for q32, would add planner states, SIS rows, dispatch branches, and heavy
@@ -525,10 +531,9 @@ must be removed before adding another dimension.
 Concretely, `dispatch/mod.rs` gains
 `ProtocolDispatchSlot::Compression`, while `dispatch/policy.rs` gains its arm
 list for every tier. `ProtocolDispatchSlot::Ntt` gains the corresponding tier
-minimum (`8,16,32`), `NttSlotCacheAny` gains `D8`, and the global dispatch-arm
-union gains `8`.
-`Envelope` and A/B/D role arms do not change. The NTT minimum is no longer
-derived from the B/D minimum. Compression schedule validation checks, in this
+minimum (`8,16,32`), and `NttSlotCacheAny` gains `D8`.
+`Envelope` remains independent. The NTT minimum is derived from the NTT policy
+rather than the B/D minimum. Compression schedule validation checks, in this
 order:
 
 1. nonzero power-of-two `d` and membership in the field-tier compression slot;
@@ -538,9 +543,12 @@ order:
 5. an audited SIS row at the authenticated coefficient bound and adequate rank;
 6. checked divisibility of input/output/setup/quotient field lengths by `d`.
 
-No caller may validate only the global `SUPPORTED_RING_DIMS` union. That union
-exists for monomorphization synchronization; purpose and field-tier membership
-are the semantic gates.
+No caller may treat generic power-of-two validity as protocol authorization.
+Generic A/B/D schedule validation enforces structural invariants only: nonzero
+powers of two, the A-challenge capability, a protocol-wide B/D minimum of 32,
+and `d_d | d_b | d_a`. Exact execution authorization comes from the
+purpose-and-field-tier dispatch policy. Compression and NTT do not share or
+broaden an A/B/D dimension list.
 
 The existing CRT auxiliary primes already support the new smaller transforms,
 so no new primes are required: a primitive root for the larger power-of-two
@@ -1343,7 +1351,7 @@ Candidate scoring is lexicographic:
 
 1. completeness and the production security policy encoded by the checked-in
    SIS table (currently 138-bit standalone classical security); quantum cost is
-   reported diagnostically until the prerequisite security PR changes policy;
+   reported diagnostically unless a separate security PR changes policy;
 2. minimum global compact setup prefix;
 3. minimum total persistent prepared-cache bytes, summed over active native
    dimensions after catalog-wide envelope coalescing;
@@ -1431,7 +1439,7 @@ splits may change, but ownership must not drift across crates.
 |---------|-----------------|--------------------|
 | Dimensions/roles | `akita-types/src/layout/ring_dims.rs` | retain A/B/D dims; add checked compression map dimensions beginning at d=8 |
 | Level/schedule metadata | `akita-types/src/layout/params.rs`, `schedule.rs` | first-class depth-two/three F/H plans with per-map alphabets; freeze group plans |
-| SIS sizing | `akita-types/src/sis/`, `akita-sis-estimator/` | prerequisite security PR owns model choice, exact-bound-one/small-dimension rows, table regeneration, and schedule regeneration; this PR only consumes the canonical lookup |
+| SIS sizing | `akita-types/src/sis/`, `akita-sis-estimator/` | use the existing canonical lookup and conservative coefficient-bound bucketing; a separate security PR owns model changes and table regeneration |
 | Dispatch | `akita-types/src/dispatch/{mod,policy}.rs` | compression slot/path independent of fold-challenge minima |
 | NTT cache | `akita-types/src/ntt_cache.rs`, `akita-prover/src/kernels/crt_ntt.rs`, backend prepared-setup contract | add D8, compile catalog-wide per-dimension envelopes, and cache each cyclic/negacyclic pair once |
 | Compression kernels | `akita-prover/src/kernels/linear/fused_quotients.rs`, CRT/NTT helpers, compute backends | refactor the existing A/B/D tiler into one internal multi-RHS engine; compression uses the same paired transforms, safe-width chunking, and quotient primitive |
@@ -1450,17 +1458,18 @@ splits may change, but ownership must not drift across crates.
 
 ### Concrete small-ring arithmetic implementation surface
 
-The small-ring work is a vertical slice; adding `8` to one global constant is
-insufficient and must fail synchronization tests until all of these authorities
-agree:
+The small-ring work is a vertical slice; adding `8` to one generic dimension
+list is neither necessary nor sufficient. These authorities must agree:
 
-- `akita-types/src/layout/ring_dims.rs` adds `8` to the const-generic union but
-  does not change any existing A/B/D role minimum. Its generic "supported"
-  predicate remains a monomorphization fact, not a protocol authorization.
+- `akita-types/src/layout/ring_dims.rs` checks only A/B/D structural invariants,
+  including the protocol-wide B/D minimum `32`; it owns no broad supported-dims
+  list. Compression and NTT support live in their purpose-specific dispatch
+  policies.
 - `akita-types/src/dispatch/{mod,policy}.rs` adds the `Compression` slot and
   derives compression and NTT arms per field tier. `ntt_min_ring_d` is derived
   from the NTT slot itself, not from the B/D role policy. Synchronization tests
-  pin the role, compression, NTT, envelope, and global-union tables separately.
+  exhaustively compare each role, compression, NTT, and envelope runtime
+  dispatch against its policy predicate without another hand-maintained union.
 - `akita-prover/src/kernels/crt_ntt.rs` adds `NttSlotCacheAny::D8`. Its cache
   constructor builds both transforms for exactly the requested flat prefix and
   retains the existing CRT-capacity partitioning. The cyclic and negacyclic
@@ -1483,11 +1492,11 @@ agree:
   those images or a descriptor-derived known negacyclic RHS. Existing quotient
   helpers are consolidated behind one arithmetic primitive; compression must
   not add a second CRT tiler, quotient formula, or separate single-item kernel.
-- The prerequisite SIS-security PR supplies any exact-bound-one keys and ranks
-  required by compression. This PR changes neither generated SIS data nor
-  generated schedule catalogs. Planner construction and verifier validation
-  call the existing `SisTableKey`/minimum-rank authority; neither rounds bound
-  one to an existing bound-two bucket or substitutes a local estimate.
+- This PR changes no generated SIS data. Planner construction and verifier
+  validation call the existing `sis_table_key_for_linf_bound` and minimum-rank
+  authority, including its conservative rounding of actual bound one to the
+  shipped bound-two bucket. Generated schedule catalogs contain only candidates
+  accepted by that authority; neither side substitutes a local estimate.
 - The schedule compiler computes one compression envelope across every layer
   and identity in the authenticated catalog for each active `d`, coalesces it
   with any longer existing role-cache requirement, and passes the checked plan
@@ -1501,9 +1510,9 @@ The arithmetic test matrix has three layers. Kernel tests compare the fused
 result with direct schoolbook cyclic and negacyclic multiplication for signed
 digits and opening-base digits. Backend tests compare each allowed runtime arm
 with the const-generic kernel and verify exact-prefix cache reuse. Protocol
-tests exercise mixed dimensions in one proof, reject a dimension that belongs
-to the global union but not the active purpose/tier slot, and reject missing
-SIS or NTT capability before allocation.
+tests exercise mixed dimensions in one proof, reject a dimension accepted by a
+different purpose or tier, and reject missing SIS or NTT capability before
+allocation.
 
 ### Concrete Stage-2 implementation surface
 
@@ -1566,10 +1575,10 @@ requires preserving the same single source of truth.
 - [ ] Every public payload is independently deserialized with the
   schedule-derived exact coefficient count; shipped q128/q64/q32 fixtures select
   the displayed rank-one shapes and consequently encode to 128 bytes.
-- [ ] The prerequisite security PR has supplied every exact SIS row used by a
-  shipped compression schedule. This PR's diff contains no generated SIS-table
-  or generated-schedule changes; B/D/F/H validation uses the unchanged
-  canonical lookup and rejects absent exact-bound-one/small-dimension rows.
+- [ ] This PR's diff contains no generated SIS-table changes. Every generated
+  compression schedule uses the unchanged canonical lookup, including its
+  conservative coefficient-bound bucketing, and rejects unsupported
+  family/dimension/bucket/width combinations.
 - [ ] Profiles report standalone classical and diagnostic quantum estimates for
   every B/D/F/H key. Only the security policy encoded by the checked-in table
   is an acceptance floor until the dedicated security review changes it.
@@ -1729,13 +1738,11 @@ Implementation proceeds only after this proposed spec is approved.
    Temporary pre-cutover snapshots must be labeled and deleted in Slice 8;
    durable tests assert protocol invariants rather than duplicating whole stale
    artifacts.
-1. **Arithmetic capabilities and security dependency.** Open the dedicated SIS
-   security/model/table/schedule PR and resolve it before the production
-   cutover. It may stack on the minimal planner/type support needed to generate
-   compression schedules, but it exclusively owns all generated artifacts. In
-   this PR add only tier-specific compression/NTT execution dispatch through
-   d=8 and synchronization tests, then consume canonical keys. No generated SIS
-   or schedule files change here.
+1. **Arithmetic capabilities.** Add tier-specific compression/NTT execution
+   dispatch through d=8 and synchronization tests. Generate compression
+   schedules using only the existing canonical SIS keys and conservative bound
+   buckets. No generated SIS table changes here; a later security-model PR may
+   add coverage and regenerate the affected schedules after separate review.
 2. **Compile semantic authorities.** Add the private minimal input spec,
    `validate_and_compile`, semantic layout, row plan, and derived support as
    dormant `pub(crate)` authorities with malformed-input tests.

@@ -227,7 +227,7 @@ larger ring degree.
     root for the negacyclic NTT at `D = 256`), and every i32 prime must satisfy
     the same `512 | (p - 1)`; the reused i32 primes already satisfy the stronger
     `2048 | (p - 1)`.
-    `D = 512` and `D = 1024` are removed from `SUPPORTED_RING_DIMS`, the
+    `D = 512` and `D = 1024` are removed from the
     `dispatch_ring_dim` / `dispatch_ring_dim_result` arms, the fp16/fp32
     `D512Full` / `D512OneHot` public config presets, and the generated
     family/table lists; no production path may instantiate them.
@@ -377,7 +377,7 @@ Criteria sections above, with #134 providing the chunking implementation.
       `AkitaError::InvalidSetup` for `D > 256`.
       There is no `D`-keyed width fallback (no "16-bit field with `D > 64` uses
       Q64").
-- [ ] `D = 512` / `D = 1024` are removed from `SUPPORTED_RING_DIMS`, the
+- [ ] `D = 512` / `D = 1024` are removed from the
       `dispatch_ring_dim` / `dispatch_ring_dim_result` macro arms, the fp16/fp32
       `D512Full` / `D512OneHot` public config presets, `generated_families`, and
       any generated table/drift-guard list, with `cargo test -q` and the drift
@@ -697,7 +697,7 @@ Suggested implementation slices:
    that #134 Bugbot "wrong arg order" is closed as false positive (see audit
    section and #134 comment).
 1. Lower `MAX_CRT_RING_DEGREE` to `256`; remove `D = 512` / `D = 1024` from
-   `SUPPORTED_RING_DIMS`, the dispatch macros, the fp16/fp32 `D512*` presets, and
+   the dispatch macros, the fp16/fp32 `D512*` presets, and
    `generated_families`; confirm the drift guard and `cargo test -q` stay green.
 2. Add Q16 table + tests (`512 | (p - 1)`); add reduced Q32/Q64 tables + tests;
    rename the i32 raw-prime constant off the `D1024` label.

@@ -44,6 +44,54 @@ fn assert_single_i8_chunk_paths<F: FieldCore + CanonicalField, const D: usize>(c
     assert_eq!(cyclic, vec![expected_cyclic]);
 }
 
+fn assert_nonuniform_single_i8_paths<F: FieldCore + CanonicalField, const D: usize>() {
+    let log_basis = 6;
+    let cols = 3;
+    let rows = 2;
+    let matrix = (0..rows * cols)
+        .map(|entry| {
+            CyclotomicRing::from_coefficients(core::array::from_fn(|coeff| {
+                F::from_i64((entry * D + coeff + 1) as i64)
+            }))
+        })
+        .collect::<Vec<_>>();
+    let digits = (0..cols)
+        .map(|col| core::array::from_fn(|coeff| ((col * 11 + coeff * 7) % 64) as i8 - 32))
+        .collect::<Vec<_>>();
+    let flat = FlatMatrix::from_ring_slice(&matrix);
+    let slot = build_ntt_slot(
+        flat.ring_view::<D>(rows, cols)
+            .expect("valid ring matrix view"),
+    )
+    .expect("CRT+NTT dispatch should support this field and ring dimension");
+
+    let negacyclic = mat_vec_mul_ntt_single_i8::<F, D>(&slot, rows, cols, &digits, log_basis)
+        .expect("nonuniform negacyclic digit mat-vec");
+    let cyclic = mat_vec_mul_ntt_single_i8_cyclic::<F, D>(&slot, rows, cols, &digits, log_basis)
+        .expect("nonuniform cyclic digit mat-vec");
+    let digit_rings = digits
+        .iter()
+        .map(|digit| {
+            CyclotomicRing::from_coefficients(core::array::from_fn(|i| {
+                F::from_i64(i64::from(digit[i]))
+            }))
+        })
+        .collect::<Vec<_>>();
+
+    for row in 0..rows {
+        let expected_negacyclic = (0..cols).fold(CyclotomicRing::zero(), |mut acc, col| {
+            acc += matrix[row * cols + col] * digit_rings[col];
+            acc
+        });
+        let expected_cyclic = (0..cols).fold(CyclotomicRing::zero(), |mut acc, col| {
+            acc += cyclic_product(&matrix[row * cols + col], &digit_rings[col]);
+            acc
+        });
+        assert_eq!(negacyclic[row], expected_negacyclic);
+        assert_eq!(cyclic[row], expected_cyclic);
+    }
+}
+
 fn assert_fused_split_eq_zpre_chunks<
     F: FieldCore + CanonicalField + HalvingField,
     const D: usize,
@@ -146,6 +194,12 @@ fn mat_vec_mul_ntt_single_i8_cyclic_chunks_q128() {
 
 #[test]
 fn mat_vec_mul_ntt_single_i8_chunks_reduced_profiles() {
+    assert_single_i8_chunk_paths::<Prime128Offset275, 8>(3);
     assert_single_i8_chunk_paths::<Prime32Offset99, 256>(900);
     assert_single_i8_chunk_paths::<Prime64Offset59, 256>(8_200);
+}
+
+#[test]
+fn mat_vec_mul_ntt_single_i8_nonuniform_d8_matches_direct_products() {
+    assert_nonuniform_single_i8_paths::<Prime128Offset275, 8>();
 }

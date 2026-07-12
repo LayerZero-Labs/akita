@@ -30,7 +30,7 @@ pub enum ProtocolCrtNttParams<const D: usize> {
 /// - `q <= 2^32-99`, `D` in fp32 NTT tier band: Q32 (K=2)
 /// - `q <= 2^64-59`, `D` in fp64 NTT tier band: Q64 (K=3)
 /// - listed fp128 moduli, `D` in fp128 NTT tier band: Q128 (K=5)
-/// - profile CRT caps apply at `D >= 64`; smaller B/D degrees skip caps
+/// - profile CRT caps apply at `D >= 64`; smaller degrees skip caps
 ///
 /// # Errors
 ///
@@ -235,6 +235,7 @@ macro_rules! define_ntt_slot_cache_any {
 }
 
 define_ntt_slot_cache_any!(
+    8 => D8,
     16 => D16,
     32 => D32,
     64 => D64,
@@ -312,9 +313,10 @@ mod tests {
     #[test]
     fn selects_q32_params_across_tier_ntt_band() {
         assert!(matches!(
-            select_crt_ntt_params::<Prime32Offset99, 32>(),
+            select_crt_ntt_params::<Prime32Offset99, 16>(),
             Err(AkitaError::InvalidSetup(_))
         ));
+        assert_selects_q32_params::<Prime32Offset99, 32>();
         assert_selects_q32_params::<Prime32Offset99, 64>();
         assert_selects_q32_params::<Prime32Offset99, 128>();
         assert_selects_q32_params::<Prime32Offset99, 256>();
@@ -322,6 +324,11 @@ mod tests {
 
     #[test]
     fn selects_q64_params_across_tier_ntt_band() {
+        assert!(matches!(
+            select_crt_ntt_params::<Prime64Offset59, 8>(),
+            Err(AkitaError::InvalidSetup(_))
+        ));
+        assert_selects_q64_params::<Prime64Offset59, 16>();
         assert_selects_q64_params::<Prime64Offset59, 32>();
         assert_selects_q64_params::<Prime64Offset59, 64>();
         assert_selects_q64_params::<Prime64Offset59, 128>();
@@ -329,7 +336,8 @@ mod tests {
     }
 
     #[test]
-    fn fp128_tier_ntt_accepts_d16() {
+    fn fp128_tier_ntt_accepts_d8() {
+        assert_selects_q128_params::<Prime128OffsetA7F7, 8>();
         assert_selects_q128_params::<Prime128OffsetA7F7, 16>();
     }
 
@@ -404,11 +412,13 @@ mod ntt_slot_cache_any {
 
     #[test]
     fn from_maps_each_supported_ring_degree() {
+        let d8: NttSlotCacheAny = sample_cache::<Prime128OffsetA7F7, 8>().into();
         let d16: NttSlotCacheAny = sample_cache::<Prime128OffsetA7F7, 16>().into();
         let d32: NttSlotCacheAny = sample_cache::<akita_field::Prime64Offset59, 32>().into();
         let d64: NttSlotCacheAny = sample_cache::<Prime32Offset99, 64>().into();
         let d128: NttSlotCacheAny = sample_cache::<Prime32Offset99, 128>().into();
         let d256: NttSlotCacheAny = sample_cache::<Prime32Offset99, 256>().into();
+        assert_eq!(d8.ring_d(), 8);
         assert_eq!(d16.ring_d(), 16);
         assert_eq!(d32.ring_d(), 32);
         assert_eq!(d64.ring_d(), 64);
