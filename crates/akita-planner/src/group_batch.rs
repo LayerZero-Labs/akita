@@ -304,12 +304,6 @@ pub(crate) fn multi_group_root_precommitted_groups(
     ring_challenge_cfg: &SparseChallengeConfig,
     fold_challenge_shape: TensorChallengeShape,
 ) -> Result<(Vec<PrecommittedLevelParams>, usize), AkitaError> {
-    if key.precommitteds.is_empty() {
-        return Err(AkitaError::InvalidSetup(
-            "multi-group root params require at least one precommitted group".to_string(),
-        ));
-    }
-
     let precommitted_groups = key
         .precommitteds
         .iter()
@@ -374,12 +368,6 @@ pub(crate) fn multi_group_root_next_w_len(
     main_num_polys: usize,
     layout: RelationMatrixRowLayout,
 ) -> Result<usize, AkitaError> {
-    if params.precommitted_groups.is_empty() {
-        return Err(AkitaError::InvalidSetup(
-            "multi-group root witness sizing requires precommitted groups".to_string(),
-        ));
-    }
-
     let mut total = multi_group_root_segment_rings(
         main_num_polys,
         params.num_blocks,
@@ -614,7 +602,9 @@ pub fn find_group_batch_schedule(
     fold_challenge_shape_at_level: impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
 ) -> Result<Schedule, AkitaError> {
     key.validate()?;
-    if key.precommitteds.is_empty() {
+    if key.precommitteds.is_empty()
+        && (!policy.recursive_setup_planning || policy.decomposition.log_commit_bound != 1)
+    {
         return find_schedule(
             key.final_group,
             policy,
