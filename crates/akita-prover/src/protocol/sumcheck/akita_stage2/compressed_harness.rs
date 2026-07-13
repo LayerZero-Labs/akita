@@ -12,7 +12,11 @@ use crate::AkitaProverSetup;
 use akita_algebra::offset_eq::eq_eval_at_index;
 use akita_challenges::SparseChallengeConfig;
 use akita_field::{CanonicalField, Prime128OffsetA7F7};
+use akita_serialization::{AkitaSerialize, Compress, Validate};
 use akita_types::layout::RelationSegmentId;
+use akita_types::proof::compressed_wire::{
+    CompressedFoldPayload, CompressedFoldPayloadShape, ExactFieldPayload,
+};
 use akita_types::sis::{sis_table_key_for_linf_bound, AjtaiKeyParams, DEFAULT_SIS_SECURITY_BITS};
 use akita_types::{
     validate_compression_catalog, CompressionAlphabet, CompressionCatalogContext,
@@ -148,6 +152,58 @@ fn singleton_fixture() -> HarnessFixture {
     }
 }
 
+fn terminal_fixture() -> HarnessFixture {
+    let mut level = LevelParams::params_only(
+        SisModulusFamily::Q128,
+        64,
+        6,
+        1,
+        1,
+        1,
+        SparseChallengeConfig::pm1_only(64),
+    )
+    .with_decomp(1, 1, 1, 1, 0)
+    .expect("level");
+    level.b_key = certified_key(64, 63, 1);
+    let opening = OpeningClaimsLayout::new(2, 1).expect("opening");
+    let catalog = validate_compression_catalog::<F>(
+        &level,
+        CompressionCatalogContext::TerminalFold { opening: &opening },
+        64,
+        vec![compression_chain(
+            CompressionSourceId::CurrentOuter,
+            &level.b_key,
+            &[
+                CompressionAlphabet::NegativeBinary,
+                CompressionAlphabet::NegativeBinary,
+                CompressionAlphabet::NegativeBinary,
+            ],
+            level.log_basis,
+        )],
+    )
+    .expect("terminal catalog");
+    let layout = catalog
+        .terminal_relation_layout()
+        .expect("terminal relation layout")
+        .clone();
+    let projection = catalog.project_for_schedule().expect("projection");
+    let setup = AkitaProverSetup::<F>::generate_with_capacity(
+        8,
+        1,
+        64,
+        SetupMatrixEnvelope {
+            max_setup_len: projection.max_flat_setup_prefix_coeffs(),
+        },
+    )
+    .expect("setup");
+    HarnessFixture {
+        level,
+        catalog,
+        layout,
+        setup,
+    }
+}
+
 fn materialize_suffix(
     fixture: &HarnessFixture,
 ) -> crate::protocol::ring_relation::CompressionWitnessMaterialization<F> {
@@ -165,19 +221,60 @@ fn materialize_suffix(
     let ctx =
         OperationCtx::new(&CpuBackend, &prepared, fixture.setup.expanded.as_ref()).expect("ctx");
     let current_len = fixture.level.b_key.row_len() * 64;
-    let opening_len = fixture.level.d_key.row_len() * 64;
     let current = vec![-F::one(); current_len];
-    let opening = vec![F::from_u64(3); opening_len];
-    materialize_compression_witness(
-        &ctx,
-        &fixture.layout,
-        &[
-            (CompressionSourceId::CurrentOuter, current.as_slice()),
-            (CompressionSourceId::Opening, opening.as_slice()),
-        ],
-        fixture.level.log_basis,
+    let opening = vec![F::from_u64(3); fixture.level.d_key.row_len() * 64];
+    let mut sources = vec![(CompressionSourceId::CurrentOuter, current.as_slice())];
+    if projection
+        .payload_coeffs(CompressionSourceId::Opening)
+        .is_some()
+    {
+        sources.push((CompressionSourceId::Opening, opening.as_slice()));
+    }
+    materialize_compression_witness(&ctx, &fixture.layout, &sources, fixture.level.log_basis)
+        .expect("materialized compression witness")
+}
+
+fn commit_open_payload(
+    materialized: &crate::protocol::ring_relation::CompressionWitnessMaterialization<F>,
+) -> (CompressedFoldPayloadShape, CompressedFoldPayload<F>) {
+    let mut terminal_f = Vec::new();
+    let mut terminal_h = None;
+    for (source, coeffs) in &materialized.terminal_payloads {
+        let payload = ExactFieldPayload::new(coeffs.clone()).expect("nonempty terminal payload");
+        if *source == CompressionSourceId::Opening {
+            assert!(terminal_h.replace(payload).is_none());
+        } else {
+            terminal_f.push(payload);
+        }
+    }
+    let shape = CompressedFoldPayloadShape {
+        terminal_f_coeffs: terminal_f
+            .iter()
+            .map(|payload| payload.coeffs().len())
+            .collect(),
+        terminal_h_coeffs: terminal_h.as_ref().map(|payload| payload.coeffs().len()),
+    };
+    (
+        shape,
+        CompressedFoldPayload {
+            terminal_f,
+            terminal_h,
+        },
     )
-    .expect("materialized compression witness")
+}
+
+fn shadow_verify_payload(
+    materialized: &crate::protocol::ring_relation::CompressionWitnessMaterialization<F>,
+    payload: &CompressedFoldPayload<F>,
+) -> Result<(), AkitaError> {
+    let (expected_shape, expected) = commit_open_payload(materialized);
+    if payload.terminal_f.len() != expected_shape.terminal_f_coeffs.len()
+        || payload.terminal_h.is_some() != expected_shape.terminal_h_coeffs.is_some()
+        || payload != &expected
+    {
+        return Err(AkitaError::InvalidProof);
+    }
+    Ok(())
 }
 
 fn physical_witness_from_suffix(
@@ -576,6 +673,54 @@ fn harness_rejects_materialize_depth_mismatch_via_short_source_image() {
         fixture.level.log_basis,
     )
     .is_err());
+}
+
+#[test]
+fn harness_commit_open_payload_round_trips_through_shadow_verifier() {
+    for (fixture, expect_h) in [(singleton_fixture(), true), (terminal_fixture(), false)] {
+        let materialized = materialize_suffix(&fixture);
+        let (shape, payload) = commit_open_payload(&materialized);
+        assert_eq!(payload.terminal_h.is_some(), expect_h);
+
+        let mut bytes = Vec::new();
+        payload.serialize_uncompressed(&mut bytes).unwrap();
+        let decoded = CompressedFoldPayload::<F>::deserialize_exact(
+            &bytes,
+            Compress::No,
+            Validate::Yes,
+            &shape,
+        )
+        .expect("exact compressed payload");
+        shadow_verify_payload(&materialized, &decoded).expect("shadow verifier");
+
+        let mut tampered_coeffs = decoded.terminal_f[0].coeffs().to_vec();
+        tampered_coeffs[0] += F::one();
+        let mut tampered = decoded;
+        tampered.terminal_f[0] = ExactFieldPayload::new(tampered_coeffs).unwrap();
+        assert!(shadow_verify_payload(&materialized, &tampered).is_err());
+    }
+}
+
+#[test]
+fn harness_shadow_verifier_keeps_precommitted_f_sources_independent() {
+    let materialized = crate::protocol::ring_relation::CompressionWitnessMaterialization::<F> {
+        suffix_start: 0,
+        suffix_digits: Vec::new(),
+        terminal_payloads: vec![
+            (CompressionSourceId::CurrentOuter, vec![f(3), f(5)]),
+            (
+                CompressionSourceId::PrecommittedOuter { index: 0 },
+                vec![f(7), f(11)],
+            ),
+        ],
+    };
+    let (_, mut payload) = commit_open_payload(&materialized);
+    shadow_verify_payload(&materialized, &payload).expect("ordered F sources");
+    payload.terminal_f.swap(0, 1);
+    assert!(
+        shadow_verify_payload(&materialized, &payload).is_err(),
+        "independent F sources must not be interchangeable"
+    );
 }
 
 #[test]
