@@ -508,12 +508,12 @@ mod tests {
             }
         }
 
-        for capacity in 0..=4 {
+        for (capacity, actual_row) in actual.iter().enumerate().take(5) {
             let mut expected = GroupRoleBound::default();
             visit(capacity, &groups, GroupRoleBound::default(), &mut expected);
-            assert_eq!(actual[capacity].max_a_len, expected.max_a_len);
-            assert_eq!(actual[capacity].max_b_len, expected.max_b_len);
-            assert_eq!(actual[capacity].summed_d_width, expected.summed_d_width);
+            assert_eq!(actual_row.max_a_len, expected.max_a_len);
+            assert_eq!(actual_row.max_b_len, expected.max_b_len);
+            assert_eq!(actual_row.summed_d_width, expected.summed_d_width);
         }
     }
 
