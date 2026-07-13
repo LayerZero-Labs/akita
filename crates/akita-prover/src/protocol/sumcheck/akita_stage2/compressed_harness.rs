@@ -11,7 +11,7 @@ use crate::protocol::ring_relation::materialize_compression_witness;
 use crate::AkitaProverSetup;
 use akita_algebra::offset_eq::eq_eval_at_index;
 use akita_challenges::SparseChallengeConfig;
-use akita_field::{CanonicalField, FieldCore, FromPrimitiveInt, Prime128OffsetA7F7};
+use akita_field::{CanonicalField, Prime128OffsetA7F7};
 use akita_types::layout::RelationSegmentId;
 use akita_types::sis::{sis_table_key_for_linf_bound, AjtaiKeyParams, DEFAULT_SIS_SECURITY_BITS};
 use akita_types::{

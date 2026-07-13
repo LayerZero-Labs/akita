@@ -33,6 +33,7 @@ use super::ring_relation_witness::{RingRelationGroupWitness, RingRelationWitness
 mod compression_witness;
 mod relation_quotient;
 
+#[cfg(test)]
 pub(crate) use compression_witness::{
     materialize_compression_witness, CompressionWitnessMaterialization,
 };
