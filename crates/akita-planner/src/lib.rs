@@ -30,7 +30,10 @@ pub use catalog_identity::{
     ring_challenge_config_digest, validate_catalog_identity,
 };
 pub use compression::{
-    select_standalone_compression, CompressionPlannerPolicy, CompressionSelection,
+    rank_one_ring_dim_for_bytes, select_standalone_compression, CompressionByteLadder,
+    CompressionFirstMapAlphabet, CompressionPlannerPolicy, CompressionSelection, BINARY_256_128,
+    DEFAULT_COMPRESSION_BYTE_LADDERS, MAX_EXHAUSTIVE_COMPRESSION_CANDIDATES,
+    OPENING_BASE_1024_256_128, OPENING_BASE_512_256_128,
 };
 pub use emit::{refresh_generated_wiring, run_regen_fmt, write_family_module, EmitSpec};
 pub use generated::{
