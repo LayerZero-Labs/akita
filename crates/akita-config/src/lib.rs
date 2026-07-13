@@ -89,7 +89,6 @@ macro_rules! impl_multi_chunk_companion {
 
 pub mod conservative_commitment;
 pub mod generated_families;
-mod matrix_envelope;
 pub mod proof_optimized;
 pub mod recursive_commitment;
 pub mod schedule_selection;
