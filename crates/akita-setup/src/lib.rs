@@ -498,6 +498,74 @@ fn inflate_setup_envelope_for_prefix_slot(
     Ok(())
 }
 
+#[cfg(feature = "disk-persistence")]
+fn generate_recursive_profile_prefix_registry_for_key(
+    final_num_vars: usize,
+    total_polys: usize,
+    pre_groups: Vec<PolynomialGroupLayout>,
+    final_group: PolynomialGroupLayout,
+    key: AkitaScheduleLookupKey,
+) -> Result<PathBuf, AkitaError> {
+    type BaseCfg = akita_config::proof_optimized::fp128::D64OneHot;
+    type SetupCfg = RecursiveCommitmentConfig<BaseCfg>;
+    type F = <SetupCfg as CommitmentConfig>::Field;
+
+    let schedule = SetupCfg::runtime_schedule(key)?;
+    let slot_ids = recursive_prefixes::collect_setup_prefix_slot_ids(&schedule)?;
+    let layout = OpeningClaimsLayout::from_root_groups(&pre_groups, final_group)?;
+    let mut setup_envelope = matrix_envelope_for_schedule::<SetupCfg>(&schedule, &layout)?;
+    for slot_id in &slot_ids {
+        inflate_setup_envelope_for_prefix_slot(&mut setup_envelope, slot_id)?;
+    }
+    let mut setup = AkitaProverSetup::generate_with_capacity(
+        final_num_vars,
+        total_polys,
+        setup_gen_ring_dim::<SetupCfg>(),
+        setup_envelope,
+    )?;
+    save_prover_setup::<F, SetupCfg>(&setup, final_num_vars, total_polys)?;
+
+    let backend = CpuBackend;
+    let prepared = backend.prepare_setup(&setup)?;
+    recursive_prefixes::commit_setup_prefix_slots(&mut setup, &backend, &prepared, &slot_ids)?;
+
+    let storage_path =
+        save_prefix_registry_for_setup::<F, SetupCfg>(&setup, final_num_vars, total_polys)?;
+    tracing::info!(
+        slots = setup.prefix_slots.len(),
+        path = %storage_path.display(),
+        "wrote recursive profile setup-prefix registry"
+    );
+    Ok(storage_path)
+}
+
+/// Generate the setup-prefix registry sidecar needed by the scalar recursive
+/// profile case `onehot_fp128_d64:32:1:recursive`.
+///
+/// # Errors
+///
+/// Returns an error if setup cache generation/loading fails, the profile
+/// schedule cannot be resolved, a required prefix slot cannot be committed, or
+/// the sidecar cannot be written.
+#[cfg(feature = "disk-persistence")]
+pub fn generate_recursive_scalar_profile_prefix_registry() -> Result<PathBuf, AkitaError> {
+    const FINAL_NUM_VARS: usize = 32;
+    const FINAL_NUM_POLYS: usize = 1;
+
+    let final_group = PolynomialGroupLayout::new(FINAL_NUM_VARS, FINAL_NUM_POLYS);
+    let key = AkitaScheduleLookupKey {
+        final_group,
+        precommitteds: Vec::new(),
+    };
+    generate_recursive_profile_prefix_registry_for_key(
+        FINAL_NUM_VARS,
+        FINAL_NUM_POLYS,
+        Vec::new(),
+        final_group,
+        key,
+    )
+}
+
 /// Generate the setup-prefix registry sidecar needed by the recursive profile
 /// example `onehot_fp128_d64_multi_group_recursive`.
 ///
@@ -512,8 +580,6 @@ fn inflate_setup_envelope_for_prefix_slot(
 #[cfg(feature = "disk-persistence")]
 pub fn generate_recursive_example_prefix_registry() -> Result<PathBuf, AkitaError> {
     type BaseCfg = akita_config::proof_optimized::fp128::D64OneHot;
-    type SetupCfg = RecursiveCommitmentConfig<BaseCfg>;
-    type F = <SetupCfg as CommitmentConfig>::Field;
 
     const PRE_GROUPS: usize = 2;
     const PRE_NUM_VARS: usize = 16;
@@ -538,33 +604,27 @@ pub fn generate_recursive_example_prefix_registry() -> Result<PathBuf, AkitaErro
         final_group,
         precommitteds: vec![precommitted; PRE_GROUPS],
     };
-    let schedule = SetupCfg::runtime_schedule(key)?;
-    let slot_ids = recursive_prefixes::collect_setup_prefix_slot_ids(&schedule)?;
-    let layout = OpeningClaimsLayout::from_root_groups(&pre_groups, final_group)?;
-    let mut setup_envelope = matrix_envelope_for_schedule::<SetupCfg>(&schedule, &layout)?;
-    for slot_id in &slot_ids {
-        inflate_setup_envelope_for_prefix_slot(&mut setup_envelope, slot_id)?;
-    }
-    let mut setup = AkitaProverSetup::generate_with_capacity(
+    generate_recursive_profile_prefix_registry_for_key(
         FINAL_NUM_VARS,
         TOTAL_POLYS,
-        setup_gen_ring_dim::<SetupCfg>(),
-        setup_envelope,
-    )?;
-    save_prover_setup::<F, SetupCfg>(&setup, FINAL_NUM_VARS, TOTAL_POLYS)?;
+        pre_groups,
+        final_group,
+        key,
+    )
+}
 
-    let backend = CpuBackend;
-    let prepared = backend.prepare_setup(&setup)?;
-    recursive_prefixes::commit_setup_prefix_slots(&mut setup, &backend, &prepared, &slot_ids)?;
-
-    let storage_path =
-        save_prefix_registry_for_setup::<F, SetupCfg>(&setup, FINAL_NUM_VARS, TOTAL_POLYS)?;
-    tracing::info!(
-        slots = setup.prefix_slots.len(),
-        path = %storage_path.display(),
-        "wrote recursive example setup-prefix registry"
-    );
-    Ok(storage_path)
+/// Generate every setup-prefix registry sidecar currently needed by profile CI
+/// recursive setup cases.
+///
+/// # Errors
+///
+/// Returns an error if any profile registry cannot be generated.
+#[cfg(feature = "disk-persistence")]
+pub fn generate_recursive_profile_prefix_registries() -> Result<Vec<PathBuf>, AkitaError> {
+    Ok(vec![
+        generate_recursive_scalar_profile_prefix_registry()?,
+        generate_recursive_example_prefix_registry()?,
+    ])
 }
 
 #[cfg(feature = "disk-persistence")]

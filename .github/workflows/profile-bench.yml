@@ -104,6 +104,7 @@ jobs:
         run: |
           group_dir="$RUNNER_TEMP/bench/${{ matrix.group.name }}"
           echo "AKITA_BENCH_GROUP_DIR=$group_dir" >> "$GITHUB_ENV"
+          echo "LOCALAPPDATA=$group_dir/setup-cache" >> "$GITHUB_ENV"
           # pr/ holds the PR-side summary, base/ the merge-base side; both go
           # into one per-group handoff artifact for the report job.
           echo "AKITA_BENCH_ARTIFACT_DIR=$group_dir/pr" >> "$GITHUB_ENV"
@@ -220,12 +221,33 @@ jobs:
             "${case_args[@]}"
 
       - name: Build profile binary
+        env:
+          AKITA_BENCH_GROUP_CASES: ${{ matrix.group.cases }}
         run: |
+          features="parallel,profile-ci"
+          if grep -q ':recursive' <<< "$AKITA_BENCH_GROUP_CASES"; then
+            features="$features,disk-persistence"
+          fi
           cargo build --release --quiet --example profile \
-            --no-default-features --features parallel,profile-ci
+            --no-default-features --features "$features"
 
       - name: Verify profile-ci linkage isolation
         run: ./scripts/check_profile_ci_linkage.sh target/release/examples/profile
+
+      - name: Generate recursive setup-prefix registries
+        env:
+          AKITA_BENCH_GROUP_CASES: ${{ matrix.group.cases }}
+        run: |
+          if grep -q 'onehot_fp128_d64:32:1:recursive' <<< "$AKITA_BENCH_GROUP_CASES"; then
+            cargo run --release --quiet -p akita-setup \
+              --features disk-persistence,akita-config/schedules-fp128-d64-onehot-recursive \
+              --bin gen_recursive_prefix_registry -- scalar
+          fi
+          if grep -q 'onehot_fp128_d64_multi_group_recursive' <<< "$AKITA_BENCH_GROUP_CASES"; then
+            cargo run --release --quiet -p akita-setup \
+              --features disk-persistence,akita-config/schedules-fp128-d64-onehot-recursive \
+              --bin gen_recursive_prefix_registry -- multi-group
+          fi
 
       # On PRs the head and merge-base binaries run interleaved (PR, base,
       # PR, base, ...) so machine-state drift on shared runners lands on both
