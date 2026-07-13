@@ -119,7 +119,9 @@ pub use proof::{
     MAX_SETUP_MATRIX_FIELD_ELEMENTS, MULTI_GROUP_ROOT_DENSE_UNSUPPORTED,
     MULTI_GROUP_ROOT_MULTI_CHUNK_UNSUPPORTED, SETUP_OFFLOAD_D_SETUP, SETUP_SUMCHECK_DEGREE,
 };
-pub use proof_size::{level_proof_bytes, FOLD_GRIND_NONCE_BYTES};
+pub use proof_size::{
+    level_proof_bytes, CompressedFoldWirePayload, FoldWirePayload, FOLD_GRIND_NONCE_BYTES,
+};
 pub use schedule::{
     detect_field_modulus, multi_group_root_commit_params, r_decomp_levels, root_current_w_len,
     root_direct_schedule, schedule_is_root_direct, schedule_num_fold_levels,

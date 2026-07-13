@@ -11,7 +11,7 @@ use akita_types::sis::{
 use akita_types::{
     direct_witness_bytes, extension_opening_reduction_level_bytes, level_proof_bytes,
     AkitaScheduleInputs, AkitaScheduleLookupKey, CleartextWitnessShape, CommitmentRingDims,
-    DecompositionParams, DirectStep, FoldStep, LevelParams, OpeningClaimsLayout,
+    DecompositionParams, DirectStep, FoldStep, FoldWirePayload, LevelParams, OpeningClaimsLayout,
     PolynomialGroupLayout, PrecommittedGroupParams, PrecommittedLevelParams, RelationLayout,
     RelationMatrixRowLayout, Schedule, Step,
 };
@@ -696,11 +696,18 @@ pub fn find_group_batch_schedule(
                     field_bits,
                     challenge_field_bits,
                     &candidate_params,
-                    Some(&suffix_fold.first_fold_params),
+                    Some(FoldWirePayload::Native {
+                        next_level: &suffix_fold.first_fold_params,
+                        next_base_field_bits: field_bits,
+                    }),
                     next_w_len,
                     1,
                     RelationMatrixRowLayout::WithDBlock,
-                ) + eor_bytes;
+                )?
+                .checked_add(eor_bytes)
+                .ok_or_else(|| {
+                    AkitaError::InvalidSetup("multi-group root byte count overflow".into())
+                })?;
                 let total = root_proof_size + suffix_fold.total_bytes;
                 if best
                     .as_ref()

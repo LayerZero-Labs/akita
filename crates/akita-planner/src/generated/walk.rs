@@ -13,8 +13,8 @@ use akita_types::{
     direct_witness_bytes, extension_opening_reduction_level_bytes, level_proof_bytes,
     segment_typed_witness_shape, w_ring_element_count_for_chunks,
     w_ring_element_count_with_counts_for_layout_bits, AkitaScheduleInputs, AkitaScheduleLookupKey,
-    CleartextWitnessShape, DirectStep, FoldStep, LevelParams, PolynomialGroupLayout,
-    PrecommittedLevelParams, RelationMatrixRowLayout, Schedule, Step,
+    CleartextWitnessShape, DirectStep, FoldStep, FoldWirePayload, LevelParams,
+    PolynomialGroupLayout, PrecommittedLevelParams, RelationMatrixRowLayout, Schedule, Step,
 };
 
 use crate::generated::{
@@ -161,11 +161,14 @@ fn walk_scalar_generated_schedule_entry(
                     field_bits,
                     challenge_field_bits,
                     &lp,
-                    next_lp.as_ref(),
+                    next_lp.as_ref().map(|next_level| FoldWirePayload::Native {
+                        next_level,
+                        next_base_field_bits: field_bits,
+                    }),
                     next_w_len,
                     1,
                     layout,
-                )
+                )?
                 .checked_add(extension_opening_reduction_level_bytes(
                     challenge_field_bits,
                     policy.claim_ext_degree,
@@ -418,11 +421,14 @@ fn walk_multi_group_generated_schedule_entry(
                     field_bits,
                     challenge_field_bits,
                     &lp,
-                    next_lp.as_ref(),
+                    next_lp.as_ref().map(|next_level| FoldWirePayload::Native {
+                        next_level,
+                        next_base_field_bits: field_bits,
+                    }),
                     next_w_len,
                     1,
                     layout,
-                )
+                )?
                 .checked_add(extension_opening_reduction_level_bytes(
                     challenge_field_bits,
                     extension_opening_width,

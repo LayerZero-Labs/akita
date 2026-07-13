@@ -999,11 +999,15 @@ mod tests {
                     128,
                     128,
                     &lp,
-                    Some(&next_lp),
+                    Some(crate::FoldWirePayload::Native {
+                        next_level: &next_lp,
+                        next_base_field_bits: 128,
+                    }),
                     next_w_len,
                     1,
                     RelationMatrixRowLayout::WithDBlock,
-                ),
+                )
+                .unwrap(),
                 exact_level_proof_bytes::<F>(&lp, &next_lp, next_w_len).unwrap(),
                 "planned level bytes should match the serialized two-stage body at log_basis={log_basis}"
             );
@@ -1056,7 +1060,8 @@ mod tests {
                     next_w_len,
                     num_claims,
                     RelationMatrixRowLayout::WithoutDBlock,
-                ),
+                )
+                .unwrap(),
                 serialized_without_witness,
                 "planned terminal-level bytes should match the serialized terminal body \
                  (less final_witness) at log_basis={log_basis}"
@@ -1114,11 +1119,15 @@ mod tests {
                     128,
                     128,
                     &lp,
-                    Some(&next_lp),
+                    Some(crate::FoldWirePayload::Native {
+                        next_level: &next_lp,
+                        next_base_field_bits: 128,
+                    }),
                     next_w_len,
                     1,
                     RelationMatrixRowLayout::WithDBlock,
-                ),
+                )
+                .unwrap(),
                 root_proof.serialized_size(Compress::No),
                 "planned batched root bytes should match the serialized two-stage body at log_basis={log_basis}"
             );

@@ -22,7 +22,8 @@ use akita_types::{
     direct_witness_bytes, extension_opening_reduction_level_bytes, level_proof_bytes,
     segment_typed_witness_shape, w_ring_element_count_for_chunks, AkitaScheduleInputs,
     ChunkedWitnessCfg, CleartextWitnessShape, CommitmentRingDims, DecompositionParams, DirectStep,
-    FoldStep, LevelParams, PolynomialGroupLayout, RelationMatrixRowLayout, Schedule, Step,
+    FoldStep, FoldWirePayload, LevelParams, PolynomialGroupLayout, RelationMatrixRowLayout,
+    Schedule, Step,
 };
 
 use crate::PlannerPolicy;
@@ -503,7 +504,11 @@ pub(crate) fn derive_optimal_suffix_schedule(
                     next_witness_len_terminal,
                     1,
                     RelationMatrixRowLayout::WithoutDBlock,
-                ) + eor_bytes;
+                )?
+                .checked_add(eor_bytes)
+                .ok_or_else(|| {
+                    AkitaError::InvalidSetup("level proof byte count overflow".into())
+                })?;
                 let total = level_proof_size + suffix_cost;
                 let steps = vec![
                     Step::Fold(FoldStep {
@@ -523,11 +528,16 @@ pub(crate) fn derive_optimal_suffix_schedule(
                 policy.decomposition.field_bits(),
                 policy.decomposition.field_bits() * policy.chal_ext_degree as u32,
                 &candidate_params,
-                Some(&suffix_fold.first_fold_params),
+                Some(FoldWirePayload::Native {
+                    next_level: &suffix_fold.first_fold_params,
+                    next_base_field_bits: policy.decomposition.field_bits(),
+                }),
                 next_witness_len,
                 1,
                 RelationMatrixRowLayout::WithDBlock,
-            ) + eor_bytes;
+            )?
+            .checked_add(eor_bytes)
+            .ok_or_else(|| AkitaError::InvalidSetup("level proof byte count overflow".into()))?;
             let total = level_proof_size + suffix_fold.total_bytes;
             let mut steps = Vec::with_capacity(1 + suffix_fold.steps.len());
             steps.push(Step::Fold(FoldStep {
@@ -1031,7 +1041,11 @@ fn find_schedule_inner(
                         next_w_len_terminal,
                         1,
                         RelationMatrixRowLayout::WithoutDBlock,
-                    ) + eor_bytes;
+                    )?
+                    .checked_add(eor_bytes)
+                    .ok_or_else(|| {
+                        AkitaError::InvalidSetup("root proof byte count overflow".into())
+                    })?;
                     let total = root_proof_size + suffix_cost;
                     if total < best_cost {
                         best_cost = total;
@@ -1053,11 +1067,16 @@ fn find_schedule_inner(
                     field_bits,
                     field_bits * policy.chal_ext_degree as u32,
                     &candidate_params,
-                    Some(&suffix_fold.first_fold_params),
+                    Some(FoldWirePayload::Native {
+                        next_level: &suffix_fold.first_fold_params,
+                        next_base_field_bits: field_bits,
+                    }),
                     next_w_len,
                     1,
                     RelationMatrixRowLayout::WithDBlock,
-                ) + eor_bytes;
+                )?
+                .checked_add(eor_bytes)
+                .ok_or_else(|| AkitaError::InvalidSetup("root proof byte count overflow".into()))?;
                 let total = root_proof_size + suffix_fold.total_bytes;
                 if total < best_cost {
                     best_cost = total;
