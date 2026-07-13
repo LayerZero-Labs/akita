@@ -40,9 +40,10 @@ use akita_config::tensor_verifier;
 use akita_config::CommitmentConfig;
 use akita_field::AkitaError;
 use akita_types::{
-    AkitaScheduleLookupKey, DirectStep, FoldStep, PolynomialGroupLayout, Schedule,
-    SisModulusFamily, Step,
+    AkitaScheduleLookupKey, DirectStep, FoldStep, PolynomialGroupLayout, Schedule, Step,
 };
+#[cfg(feature = "all-schedules")]
+use akita_types::SisModulusFamily;
 
 #[cfg(feature = "all-schedules")]
 use akita_config::policy_of;

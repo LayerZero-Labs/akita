@@ -444,7 +444,7 @@ mod tests {
     }
 
     #[test]
-    fn compression_dims_do_not_broaden_abd_matrix_validation() {
+    fn compression_dims_do_not_broaden_a_b_d_matrix_validation() {
         assert!(slot_dim_supported_for_tier(
             ProtocolRingDispatchTierId::Fp128,
             ProtocolDispatchSlot::Compression,
