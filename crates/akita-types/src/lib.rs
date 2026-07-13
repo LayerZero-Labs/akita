@@ -94,7 +94,7 @@ pub use proof::{
     ring_subfield_packed_extension_opening_point, root_tensor_projection_enabled,
     sample_public_matrix_seed, sample_public_row_coefficients,
     segment_typed_witness_shape_from_groups, segment_typed_witness_upper_bound_bytes,
-    segment_typed_z_payload_bytes, select_setup_prefix_slot, setup_prefix_level_params,
+    segment_typed_z_payload_bytes, select_setup_prefix_slot,
     setup_prefix_precommitted_params, setup_prefix_slot_id, should_reject_multi_group_root,
     tail_golomb_rice_z_params, tail_segment_layout_from_groups,
     tail_segment_multiplicities_from_layout, tail_segment_multiplicities_from_layout_for_params,

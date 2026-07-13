@@ -90,6 +90,9 @@ impl<Cfg: CommitmentConfig> CommitmentConfig for RecursiveCommitmentConfig<Cfg> 
                 "recursive setup planning does not support multi-chunk witnesses".to_string(),
             ));
         }
+        if key.precommitteds.is_empty() {
+            return Cfg::runtime_schedule(key);
+        }
         akita_planner::resolve_group_batch_schedule(
             &key,
             &crate::policy_of::<Self>(),

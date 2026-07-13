@@ -65,7 +65,7 @@ where
     opening_batch.append_batch_shape_to_transcript::<F, T>(transcript)?;
     for group_index in 0..opening_batch.num_groups() {
         let commitment = claims.group_commitment(group_index)?;
-        let expected_rows = root_lp.root_group_commitment_rows(&opening_batch, group_index)?;
+        let expected_rows = root_lp.group_commitment_rows(&opening_batch, group_index)?;
         let commitment_view = RingView::new(commitment.rows().coeffs(), ring_dim)?;
         if commitment_view.num_rings() != expected_rows {
             return Err(AkitaError::InvalidProof);
@@ -354,7 +354,7 @@ where
     // prover's per-group absorb in `finish_prepared_fold`.
     let mut prepared_points = Vec::with_capacity(opening_batch.num_groups());
     for group_index in 0..opening_batch.num_groups() {
-        let group_lp = root_lp.root_group_params(opening_batch, group_index)?;
+        let group_lp = root_lp.group_params(opening_batch, group_index)?;
         let target_len = alpha_bits
             .checked_add(group_lp.m_vars())
             .and_then(|n| n.checked_add(group_lp.r_vars()))
@@ -396,7 +396,7 @@ where
     let w_len = match proof {
         AkitaBatchedRootProof::Terminal(_) => terminal_final_w_len,
         AkitaBatchedRootProof::Fold(_) => {
-            root_lp.root_next_w_len::<F>(opening_batch, relation_matrix_row_layout)?
+            root_lp.next_w_len::<F>(opening_batch, relation_matrix_row_layout)?
         }
         AkitaBatchedRootProof::ZeroFold { .. } => return Err(AkitaError::InvalidProof),
     };

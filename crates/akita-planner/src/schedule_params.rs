@@ -30,10 +30,11 @@ use crate::PlannerPolicy;
 mod candidate;
 mod suffix_dp;
 
+pub use candidate::suffix_opening_layout;
 pub(crate) use candidate::{
     compute_root_direct_level_params, derive_candidate_level_params, planned_next_witness_len,
     recursive_fold_level_params_candidate, scalar_root_fold_level_params_candidate,
-    suffix_opening_layout, terminal_witness_shape_for_opening_layout,
+    terminal_witness_shape_for_opening_layout,
 };
 use suffix_dp::try_terminal_direct_suffix_cost;
 pub(crate) use suffix_dp::{derive_optimal_suffix_schedule, ScheduleMemo, SuffixCtx, SuffixState};

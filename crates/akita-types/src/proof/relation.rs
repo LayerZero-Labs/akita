@@ -75,7 +75,7 @@ pub fn relation_rhs_layout_for(
             opening_batch.num_groups(),
         ));
     }
-    lp.validate_root_opening_batch(opening_batch)?;
+    lp.validate_opening_batch(opening_batch)?;
     let mut groups = Vec::with_capacity(lp.precommitted_group_count() + 1);
     groups.push(RelationGroupRows {
         n_a: lp.a_key.row_len(),

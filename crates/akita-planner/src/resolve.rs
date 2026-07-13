@@ -13,6 +13,7 @@ use akita_types::{AkitaScheduleInputs, AkitaScheduleLookupKey, PolynomialGroupLa
 
 use crate::catalog_identity::validate_catalog_identity;
 use crate::find_group_batch_schedule;
+use crate::find_schedule;
 use crate::generated::walk::walk_generated_schedule_entry;
 use crate::generated::{table_entry, GeneratedScheduleTable, GeneratedScheduleTableEntry};
 use crate::schedule_params::validate_policy_witness_chunk;
@@ -45,29 +46,49 @@ pub fn resolve_group_batch_schedule(
 ) -> Result<Schedule, AkitaError> {
     key.validate()?;
     validate_policy_witness_chunk(policy)?;
-    if let Some(table) = catalog {
-        validate_catalog_identity(
-            &table,
-            policy,
-            &ring_challenge_config,
-            &fold_challenge_shape_at_level,
-        )?;
-        if let Some(entry) = table_entry(table, key) {
-            return schedule_from_entry(
-                entry,
-                key,
+    let scalar_recursive_key =
+        key.precommitteds.is_empty() && policy.recursive_setup_planning;
+    if !scalar_recursive_key {
+        if let Some(table) = catalog {
+            validate_catalog_identity(
+                &table,
                 policy,
-                ring_challenge_config,
-                fold_challenge_shape_at_level,
-            );
+                &ring_challenge_config,
+                &fold_challenge_shape_at_level,
+            )?;
+            if let Some(entry) = table_entry(table, key) {
+                let schedule = schedule_from_entry(
+                    entry,
+                    key,
+                    policy,
+                    ring_challenge_config,
+                    fold_challenge_shape_at_level,
+                )?;
+                schedule.validate_structure()?;
+                return Ok(schedule);
+            }
         }
     }
-    find_group_batch_schedule(
+    if scalar_recursive_key {
+        let mut scalar_policy = *policy;
+        scalar_policy.recursive_setup_planning = false;
+        let schedule = find_schedule(
+            key.final_group,
+            &scalar_policy,
+            ring_challenge_config,
+            fold_challenge_shape_at_level,
+        )?;
+        schedule.validate_structure()?;
+        return Ok(schedule);
+    }
+    let schedule = find_group_batch_schedule(
         key,
         policy,
         ring_challenge_config,
         fold_challenge_shape_at_level,
-    )
+    )?;
+    schedule.validate_structure()?;
+    Ok(schedule)
 }
 
 /// Build the runtime [`Schedule`] for a compact generated entry.
@@ -78,14 +99,16 @@ pub fn schedule_from_entry(
     ring_challenge_config: impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
     fold_challenge_shape_at_level: impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
 ) -> Result<Schedule, AkitaError> {
-    Ok(walk_generated_schedule_entry(
+    let schedule = walk_generated_schedule_entry(
         entry,
         key,
         policy,
         &ring_challenge_config,
         &fold_challenge_shape_at_level,
     )?
-    .schedule)
+    .schedule;
+    schedule.validate_structure()?;
+    Ok(schedule)
 }
 
 pub fn estimate_proof_bytes(

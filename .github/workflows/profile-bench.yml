@@ -234,21 +234,6 @@ jobs:
       - name: Verify profile-ci linkage isolation
         run: ./scripts/check_profile_ci_linkage.sh target/release/examples/profile
 
-      - name: Generate recursive setup-prefix registries
-        env:
-          AKITA_BENCH_GROUP_CASES: ${{ matrix.group.cases }}
-        run: |
-          if grep -q 'onehot_fp128_d64:32:1:recursive' <<< "$AKITA_BENCH_GROUP_CASES"; then
-            cargo run --release --quiet -p akita-setup \
-              --features disk-persistence,akita-config/schedules-fp128-d64-onehot-recursive \
-              --bin gen_recursive_prefix_registry -- scalar
-          fi
-          if grep -q 'onehot_fp128_d64_multi_group_recursive' <<< "$AKITA_BENCH_GROUP_CASES"; then
-            cargo run --release --quiet -p akita-setup \
-              --features disk-persistence,akita-config/schedules-fp128-d64-onehot-recursive \
-              --bin gen_recursive_prefix_registry -- multi-group
-          fi
-
       # On PRs the head and merge-base binaries run interleaved (PR, base,
       # PR, base, ...) so machine-state drift on shared runners lands on both
       # sides of every pair instead of on one whole block.

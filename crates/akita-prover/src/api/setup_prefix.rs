@@ -312,8 +312,10 @@ mod tests {
             .expect("witness shape");
         let n_prefix = witness_ring_slots.checked_mul(D).expect("prefix length");
         let natural_len = active_setup_field_len(&level_params, &opening_batch, D)
-            .expect("natural len")
-            .min(n_prefix);
+            .expect("natural len");
+        if natural_len > n_prefix {
+            panic!("test fixture natural_len must fit padded prefix domain");
+        }
         let mut setup = test_setup::<D>(&level_params, n_prefix);
         let backend = CpuBackend;
         let prepared = backend.prepare_setup(&setup).expect("prepared setup");

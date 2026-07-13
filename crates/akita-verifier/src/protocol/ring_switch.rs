@@ -256,7 +256,7 @@ where
     // block geometry (final vs frozen-precommit). For a scalar batch this is the
     // single group at `lp`'s geometry, byte-identical to the historical check.
     for group_index in 0..opening_batch.num_groups() {
-        let group_lp = lp.root_group_params(opening_batch, group_index)?;
+        let group_lp = lp.group_params(opening_batch, group_index)?;
         let opening_point = relation.group_opening_point(group_index)?;
         if opening_point.a.len() < group_lp.block_len()
             || opening_point.b.len() != group_lp.num_blocks()
@@ -388,7 +388,7 @@ where
     let lp = replay.lp;
     let opening_batch = relation.opening_batch();
     lp.reject_multi_group_multi_chunk("prepare_relation_matrix_evaluator_multi_group")?;
-    lp.validate_root_opening_batch(opening_batch)?;
+    lp.validate_opening_batch(opening_batch)?;
     validate_role_dispatch::<D>(relation.role_dims(), RingRole::Inner)?;
     if replay.row_coefficients.len() != opening_batch.num_total_polynomials() {
         return Err(AkitaError::InvalidProof);
@@ -406,7 +406,7 @@ where
     let alpha_pows_a = scalar_powers(alpha, D);
     let mut groups = Vec::with_capacity(order.len());
     for (order_pos, &group_index) in order.iter().enumerate() {
-        let group_lp = lp.root_group_params(opening_batch, group_index)?;
+        let group_lp = lp.group_params(opening_batch, group_index)?;
         let group_layout = opening_batch.group_layout(group_index)?;
         #[cfg(test)]
         let setup_group = setup_artifact
@@ -462,12 +462,12 @@ where
             .map(|idx| ring_multiplier_point.eval_a_at_dyn::<E>(idx, &alpha_pows_a))
             .collect::<Result<Vec<_>, _>>()?;
 
-        let a_range = lp.root_a_row_range(
+        let a_range = lp.a_row_range(
             opening_batch,
             group_index,
             relation.relation_matrix_row_layout(),
         )?;
-        let b_range = lp.root_commitment_row_range(
+        let b_range = lp.commitment_row_range(
             opening_batch,
             group_index,
             relation.relation_matrix_row_layout(),

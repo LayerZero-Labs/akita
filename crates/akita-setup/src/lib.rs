@@ -7,27 +7,20 @@
 mod recursive_prefixes;
 
 #[cfg(feature = "disk-persistence")]
-use akita_config::matrix_envelope_for_schedule;
-use akita_config::CommitmentConfig;
-#[cfg(feature = "disk-persistence")]
-use akita_config::{ConservativeCommitmentConfig, RecursiveCommitmentConfig};
-use akita_field::unreduced::HasWide;
-use akita_field::{AkitaError, CanonicalField, FieldCore, RandomSampling};
-use akita_prover::AkitaProverSetup;
-#[cfg(feature = "disk-persistence")]
-use akita_prover::{ComputeBackendSetup, CpuBackend};
-use akita_serialization::Valid;
-#[cfg(feature = "disk-persistence")]
 use akita_serialization::{
     AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Validate,
 };
+use akita_config::CommitmentConfig;
+use akita_field::unreduced::HasWide;
+use akita_field::{AkitaError, CanonicalField, FieldCore, RandomSampling};
+use akita_prover::AkitaProverSetup;
+use akita_serialization::Valid;
 #[cfg(any(feature = "disk-persistence", test))]
 use akita_types::AkitaExpandedSetup;
 #[cfg(feature = "disk-persistence")]
 use akita_types::{
     detect_field_modulus, digest_effective_schedule, AkitaScheduleLookupKey, AkitaSetupSeed,
-    FlatMatrix, OpeningClaimsLayout, PolynomialGroupLayout, PrecommittedGroupParams,
-    SetupMatrixEnvelope, SetupPrefixProverRegistry, SetupPrefixSlotId,
+    FlatMatrix, PolynomialGroupLayout, SetupPrefixProverRegistry,
 };
 #[cfg(test)]
 use akita_types::{AkitaVerifierSetup, SetupPrefixVerifierRegistry};
@@ -41,6 +34,7 @@ use std::io::{Read, Write};
 use std::path::PathBuf;
 #[cfg(feature = "disk-persistence")]
 use std::sync::Arc;
+
 /// The setup-time generation ring dimension for config `Cfg`.
 ///
 /// Per the cutover decision, `gen_ring_dim` is the **max `ring_dimension` across
@@ -52,6 +46,24 @@ use std::sync::Arc;
 /// catalog would set this to the maximum dimension its levels use.
 fn setup_gen_ring_dim<Cfg: CommitmentConfig>() -> usize {
     akita_config::policy_of::<Cfg>().ring_dimension
+}
+
+#[cfg(feature = "disk-persistence")]
+fn validate_loaded_prefix_registry<F, Cfg>(
+    setup: &AkitaProverSetup<F>,
+    max_num_vars: usize,
+    max_num_batched_polys: usize,
+) -> Result<(), AkitaError>
+where
+    F: FieldCore,
+    Cfg: CommitmentConfig<Field = F>,
+{
+    if !Cfg::recursive_setup_planning() {
+        return Ok(());
+    }
+    let required_ids =
+        akita_config::setup_prefix_slot_ids_for_capacity::<Cfg>(max_num_vars, max_num_batched_polys)?;
+    recursive_prefixes::validate_prefix_registry_complete(&setup.prefix_slots, &required_ids)
 }
 
 /// Construct prover setup from a root commitment config.
@@ -84,44 +96,20 @@ where
     let gen_ring_dim = setup_gen_ring_dim::<Cfg>();
 
     #[cfg(feature = "disk-persistence")]
-    if Cfg::recursive_setup_planning() {
-        match load_prover_setup::<F, Cfg>(max_num_vars, max_num_batched_polys) {
-            Ok(mut setup) => {
-                attach_recursive_setup_prefix_registry::<F, Cfg>(&mut setup)?;
-                tracing::info!("Loaded recursive setup from disk; backend preparation is explicit");
-                return Ok(setup);
-            }
-            Err(e) => {
-                if let Some(storage_path) =
-                    get_storage_path::<Cfg>(max_num_vars, max_num_batched_polys)
-                {
-                    tracing::warn!(
-                        "Recursive setup cache unavailable at {}: {e}; regenerating",
-                        storage_path.display()
-                    );
-                } else {
-                    tracing::warn!("Recursive setup cache unavailable: {e}; regenerating");
-                }
-            }
-        }
-    }
-
-    let setup_envelope = Cfg::max_setup_matrix_size(max_num_vars, max_num_batched_polys)?;
-
-    #[cfg(feature = "disk-persistence")]
-    let max_setup_len = setup_envelope.max_setup_len;
+    let max_setup_len = Cfg::max_setup_matrix_size(max_num_vars, max_num_batched_polys)?.max_setup_len;
 
     #[cfg(feature = "disk-persistence")]
     {
         match load_prover_setup::<F, Cfg>(max_num_vars, max_num_batched_polys) {
             Ok(setup) => {
-                // A cached setup is acceptable only if its physical backing
-                // covers the packed setup envelope for the current request.
                 let cached_total = setup.expanded.shared_matrix().total_ring_elements();
                 let cached_shape_covers_request = cached_total >= max_setup_len;
                 if cached_shape_covers_request {
-                    let mut setup = setup;
-                    attach_recursive_setup_prefix_registry::<F, Cfg>(&mut setup)?;
+                    validate_loaded_prefix_registry::<F, Cfg>(
+                        &setup,
+                        max_num_vars,
+                        max_num_batched_polys,
+                    )?;
                     tracing::info!("Loaded setup from disk; backend preparation is explicit");
                     return Ok(setup);
                 }
@@ -130,13 +118,13 @@ where
                 {
                     let _ = fs::remove_file(&storage_path);
                     tracing::warn!(
-                            "Rejected cached setup from {}: have total={cached_total}, need total>={max_setup_len}; regenerating",
-                            storage_path.display()
-                        );
+                        "Rejected cached setup from {}: have total={cached_total}, need total>={max_setup_len}; regenerating",
+                        storage_path.display()
+                    );
                 } else {
                     tracing::warn!(
-                            "Rejected cached setup: have total={cached_total}, need total>={max_setup_len}; regenerating"
-                        );
+                        "Rejected cached setup: have total={cached_total}, need total>={max_setup_len}; regenerating"
+                    );
                 }
             }
             Err(e) => {
@@ -155,6 +143,8 @@ where
         }
     }
 
+    let setup_envelope = Cfg::max_setup_matrix_size(max_num_vars, max_num_batched_polys)?;
+
     let mut setup = AkitaProverSetup::generate_with_capacity(
         max_num_vars,
         max_num_batched_polys,
@@ -162,8 +152,7 @@ where
         setup_envelope,
     )?;
 
-    #[cfg(not(feature = "disk-persistence"))]
-    recursive_prefixes::populate_recursive_setup_prefixes::<F, Cfg>(
+    recursive_prefixes::populate_required_setup_prefix_slots::<F, Cfg>(
         &mut setup,
         max_num_vars,
         max_num_batched_polys,
@@ -174,16 +163,7 @@ where
         tracing::warn!("Failed to persist setup cache: {err}");
     }
 
-    #[cfg(feature = "disk-persistence")]
-    {
-        attach_recursive_setup_prefix_registry::<F, Cfg>(&mut setup)?;
-        Ok(setup)
-    }
-
-    #[cfg(not(feature = "disk-persistence"))]
-    {
-        Ok(setup)
-    }
+    Ok(setup)
 }
 
 // ---------------------------------------------------------------------------
@@ -276,355 +256,6 @@ pub(crate) fn get_storage_path<Cfg: CommitmentConfig>(
         path.push(cache_file_name::<Cfg>(max_num_vars, max_num_batched_polys));
         path
     })
-}
-
-#[cfg(feature = "disk-persistence")]
-const PREFIX_REGISTRY_MAGIC: &[u8; 8] = b"AKPFXR01";
-
-#[cfg(feature = "disk-persistence")]
-fn prefix_registry_storage_path<Cfg: CommitmentConfig>(
-    max_num_vars: usize,
-    max_num_batched_polys: usize,
-) -> Option<PathBuf> {
-    get_storage_path::<Cfg>(max_num_vars, max_num_batched_polys).map(|mut path| {
-        path.set_extension("prefix-registry");
-        path
-    })
-}
-
-#[cfg(feature = "disk-persistence")]
-fn save_prefix_registry_for_setup<
-    F: FieldCore + CanonicalField + akita_serialization::AkitaSerialize,
-    Cfg: CommitmentConfig<Field = F>,
->(
-    setup: &AkitaProverSetup<F>,
-    max_num_vars: usize,
-    max_num_batched_polys: usize,
-) -> Result<PathBuf, AkitaError> {
-    let Some(storage_path) =
-        prefix_registry_storage_path::<Cfg>(max_num_vars, max_num_batched_polys)
-    else {
-        return Err(AkitaError::InvalidSetup(
-            "could not determine setup-prefix registry path".to_string(),
-        ));
-    };
-
-    if let Some(parent) = storage_path.parent() {
-        fs::create_dir_all(parent).map_err(|err| {
-            AkitaError::InvalidSetup(format!(
-                "failed to create setup-prefix registry directory {}: {err}",
-                parent.display()
-            ))
-        })?;
-    }
-
-    let file = fs::File::create(&storage_path).map_err(|err| {
-        AkitaError::InvalidSetup(format!(
-            "failed to create setup-prefix registry file {}: {err}",
-            storage_path.display()
-        ))
-    })?;
-    let mut writer = std::io::BufWriter::new(file);
-    writer.write_all(PREFIX_REGISTRY_MAGIC).map_err(|err| {
-        AkitaError::InvalidSetup(format!(
-            "failed to write setup-prefix registry header {}: {err}",
-            storage_path.display()
-        ))
-    })?;
-    setup
-        .expanded
-        .seed()
-        .serialize_with_mode(&mut writer, Compress::Yes)
-        .map_err(|err| {
-            AkitaError::InvalidSetup(format!(
-                "failed to serialize setup-prefix registry identity {}: {err}",
-                storage_path.display()
-            ))
-        })?;
-    setup
-        .prefix_slots
-        .serialize_with_mode(&mut writer, Compress::Yes)
-        .map_err(|err| {
-            AkitaError::InvalidSetup(format!(
-                "failed to serialize setup-prefix registry {}: {err}",
-                storage_path.display()
-            ))
-        })?;
-    writer.flush().map_err(|err| {
-        AkitaError::InvalidSetup(format!(
-            "failed to flush setup-prefix registry {}: {err}",
-            storage_path.display()
-        ))
-    })?;
-    Ok(storage_path)
-}
-
-#[cfg(feature = "disk-persistence")]
-fn load_prefix_registry_for_setup<
-    F: FieldCore + Valid + akita_serialization::AkitaDeserialize<Context = ()>,
-    Cfg: CommitmentConfig<Field = F>,
->(
-    setup: &AkitaProverSetup<F>,
-) -> Result<SetupPrefixProverRegistry<F>, AkitaError> {
-    let seed = setup.expanded.seed();
-    let storage_path =
-        prefix_registry_storage_path::<Cfg>(seed.max_num_vars, seed.max_num_batched_polys)
-            .ok_or_else(|| {
-                AkitaError::InvalidSetup(
-                    "failed to determine setup-prefix registry path".to_string(),
-                )
-            })?;
-    let file = fs::File::open(&storage_path).map_err(|err| {
-        AkitaError::InvalidSetup(format!(
-            "failed to open setup-prefix registry {}: {err}",
-            storage_path.display()
-        ))
-    })?;
-    let mut reader = std::io::BufReader::new(file);
-    let mut magic = [0u8; 8];
-    reader.read_exact(&mut magic).map_err(|err| {
-        AkitaError::InvalidSetup(format!(
-            "failed to read setup-prefix registry header {}: {err}",
-            storage_path.display()
-        ))
-    })?;
-    if &magic != PREFIX_REGISTRY_MAGIC {
-        return Err(AkitaError::InvalidSetup(format!(
-            "setup-prefix registry {} has an unsupported header",
-            storage_path.display()
-        )));
-    }
-    let registry_seed =
-        AkitaSetupSeed::deserialize_with_mode(&mut reader, Compress::Yes, Validate::Yes, &())
-            .map_err(|err| {
-                AkitaError::InvalidSetup(format!(
-                    "failed to deserialize setup-prefix registry identity {}: {err}",
-                    storage_path.display()
-                ))
-            })?;
-    if &registry_seed != seed {
-        return Err(AkitaError::InvalidSetup(format!(
-            "setup-prefix registry {} does not match the loaded setup seed",
-            storage_path.display()
-        )));
-    }
-    let registry = SetupPrefixProverRegistry::<F>::deserialize_with_mode(
-        &mut reader,
-        Compress::Yes,
-        Validate::No,
-        &(),
-    )
-    .map_err(|err| {
-        AkitaError::InvalidSetup(format!(
-            "failed to deserialize setup-prefix registry {}: {err}",
-            storage_path.display()
-        ))
-    })?;
-    registry.check().map_err(|err| {
-        AkitaError::InvalidSetup(format!(
-            "setup-prefix registry {} failed validation: {err}",
-            storage_path.display()
-        ))
-    })?;
-    let mut trailing = [0u8; 1];
-    if reader.read(&mut trailing).map_err(|err| {
-        AkitaError::InvalidSetup(format!(
-            "failed to check setup-prefix registry EOF {}: {err}",
-            storage_path.display()
-        ))
-    })? != 0
-    {
-        return Err(AkitaError::InvalidSetup(format!(
-            "setup-prefix registry {} has trailing bytes starting with 0x{:02x}",
-            storage_path.display(),
-            trailing[0]
-        )));
-    }
-    Ok(registry)
-}
-
-#[cfg(feature = "disk-persistence")]
-fn attach_recursive_setup_prefix_registry<
-    F: FieldCore + Valid + akita_serialization::AkitaDeserialize<Context = ()>,
-    Cfg: CommitmentConfig<Field = F>,
->(
-    setup: &mut AkitaProverSetup<F>,
-) -> Result<(), AkitaError> {
-    if !Cfg::recursive_setup_planning() {
-        return Ok(());
-    }
-    setup.prefix_slots = SetupPrefixProverRegistry::new();
-    match load_prefix_registry_for_setup::<F, Cfg>(setup) {
-        Ok(registry) => {
-            let slots = registry.len();
-            setup.prefix_slots.replace_from(registry);
-            tracing::info!(slots, "attached setup-prefix registry sidecar");
-        }
-        Err(err) => {
-            tracing::warn!(
-                "recursive setup-prefix registry sidecar is unavailable; \
-                 run `cargo run -p akita-setup --features disk-persistence --bin gen_recursive_prefix_registry` before proving recursive setup workloads: {err}"
-            );
-        }
-    }
-    Ok(())
-}
-
-#[cfg(feature = "disk-persistence")]
-fn inflate_setup_envelope_for_prefix_slot(
-    envelope: &mut SetupMatrixEnvelope,
-    slot_id: &SetupPrefixSlotId,
-) -> Result<(), AkitaError> {
-    let n_prefix = slot_id.n_prefix()?;
-    let prefix_ring_len = n_prefix.checked_div(slot_id.d_setup).ok_or_else(|| {
-        AkitaError::InvalidSetup("setup-prefix slot has invalid padded length".to_string())
-    })?;
-    let params = &slot_id.commitment_params;
-    let a_len = params
-        .a_key
-        .row_len()
-        .checked_mul(params.inner_width())
-        .ok_or_else(|| AkitaError::InvalidSetup("setup-prefix A envelope overflow".to_string()))?;
-    let b_len = params
-        .b_key
-        .row_len()
-        .checked_mul(params.outer_width())
-        .ok_or_else(|| AkitaError::InvalidSetup("setup-prefix B envelope overflow".to_string()))?;
-    envelope.max_setup_len = envelope
-        .max_setup_len
-        .max(prefix_ring_len)
-        .max(a_len)
-        .max(b_len);
-    Ok(())
-}
-
-#[cfg(feature = "disk-persistence")]
-fn generate_recursive_profile_prefix_registry_for_key(
-    final_num_vars: usize,
-    total_polys: usize,
-    pre_groups: Vec<PolynomialGroupLayout>,
-    final_group: PolynomialGroupLayout,
-    key: AkitaScheduleLookupKey,
-) -> Result<PathBuf, AkitaError> {
-    type BaseCfg = akita_config::proof_optimized::fp128::D64OneHot;
-    type SetupCfg = RecursiveCommitmentConfig<BaseCfg>;
-    type F = <SetupCfg as CommitmentConfig>::Field;
-
-    let schedule = SetupCfg::runtime_schedule(key)?;
-    let slot_ids = recursive_prefixes::collect_setup_prefix_slot_ids(&schedule)?;
-    let layout = OpeningClaimsLayout::from_root_groups(&pre_groups, final_group)?;
-    let mut setup_envelope = matrix_envelope_for_schedule::<SetupCfg>(&schedule, &layout)?;
-    for slot_id in &slot_ids {
-        inflate_setup_envelope_for_prefix_slot(&mut setup_envelope, slot_id)?;
-    }
-    let mut setup = AkitaProverSetup::generate_with_capacity(
-        final_num_vars,
-        total_polys,
-        setup_gen_ring_dim::<SetupCfg>(),
-        setup_envelope,
-    )?;
-    save_prover_setup::<F, SetupCfg>(&setup, final_num_vars, total_polys)?;
-
-    let backend = CpuBackend;
-    let prepared = backend.prepare_setup(&setup)?;
-    recursive_prefixes::commit_setup_prefix_slots(&mut setup, &backend, &prepared, &slot_ids)?;
-
-    let storage_path =
-        save_prefix_registry_for_setup::<F, SetupCfg>(&setup, final_num_vars, total_polys)?;
-    tracing::info!(
-        slots = setup.prefix_slots.len(),
-        path = %storage_path.display(),
-        "wrote recursive profile setup-prefix registry"
-    );
-    Ok(storage_path)
-}
-
-/// Generate the setup-prefix registry sidecar needed by the scalar recursive
-/// profile case `onehot_fp128_d64:32:1:recursive`.
-///
-/// # Errors
-///
-/// Returns an error if setup cache generation/loading fails, the profile
-/// schedule cannot be resolved, a required prefix slot cannot be committed, or
-/// the sidecar cannot be written.
-#[cfg(feature = "disk-persistence")]
-pub fn generate_recursive_scalar_profile_prefix_registry() -> Result<PathBuf, AkitaError> {
-    const FINAL_NUM_VARS: usize = 32;
-    const FINAL_NUM_POLYS: usize = 1;
-
-    let final_group = PolynomialGroupLayout::new(FINAL_NUM_VARS, FINAL_NUM_POLYS);
-    let key = AkitaScheduleLookupKey {
-        final_group,
-        precommitteds: Vec::new(),
-    };
-    generate_recursive_profile_prefix_registry_for_key(
-        FINAL_NUM_VARS,
-        FINAL_NUM_POLYS,
-        Vec::new(),
-        final_group,
-        key,
-    )
-}
-
-/// Generate the setup-prefix registry sidecar needed by the recursive profile
-/// example `onehot_fp128_d64_multi_group_recursive`.
-///
-/// The current scope is intentionally narrow: two 16-variable precommitted
-/// singleton groups plus a 32-variable final group with two polynomials.
-///
-/// # Errors
-///
-/// Returns an error if setup cache generation/loading fails, the example
-/// schedule cannot be resolved, a required prefix slot cannot be committed, or
-/// the sidecar cannot be written.
-#[cfg(feature = "disk-persistence")]
-pub fn generate_recursive_example_prefix_registry() -> Result<PathBuf, AkitaError> {
-    type BaseCfg = akita_config::proof_optimized::fp128::D64OneHot;
-
-    const PRE_GROUPS: usize = 2;
-    const PRE_NUM_VARS: usize = 16;
-    const PRE_POLYS_PER_GROUP: usize = 1;
-    const FINAL_NUM_VARS: usize = 32;
-    const FINAL_NUM_POLYS: usize = 2;
-    const TOTAL_POLYS: usize = PRE_GROUPS * PRE_POLYS_PER_GROUP + FINAL_NUM_POLYS;
-
-    let pre_group = PolynomialGroupLayout::new(PRE_NUM_VARS, PRE_POLYS_PER_GROUP);
-    let pre_groups = vec![pre_group; PRE_GROUPS];
-    let pre_opening =
-        OpeningClaimsLayout::new(PRE_NUM_VARS, PRE_POLYS_PER_GROUP).map_err(|err| {
-            AkitaError::InvalidSetup(format!(
-                "failed to build recursive example precommit key: {err}"
-            ))
-        })?;
-    let pre_params =
-        ConservativeCommitmentConfig::<BaseCfg>::get_params_for_batched_commitment(&pre_opening)?;
-    let precommitted = PrecommittedGroupParams::from_params(pre_group, &pre_params);
-    let final_group = PolynomialGroupLayout::new(FINAL_NUM_VARS, FINAL_NUM_POLYS);
-    let key = AkitaScheduleLookupKey {
-        final_group,
-        precommitteds: vec![precommitted; PRE_GROUPS],
-    };
-    generate_recursive_profile_prefix_registry_for_key(
-        FINAL_NUM_VARS,
-        TOTAL_POLYS,
-        pre_groups,
-        final_group,
-        key,
-    )
-}
-
-/// Generate every setup-prefix registry sidecar currently needed by profile CI
-/// recursive setup cases.
-///
-/// # Errors
-///
-/// Returns an error if any profile registry cannot be generated.
-#[cfg(feature = "disk-persistence")]
-pub fn generate_recursive_profile_prefix_registries() -> Result<Vec<PathBuf>, AkitaError> {
-    Ok(vec![
-        generate_recursive_scalar_profile_prefix_registry()?,
-        generate_recursive_example_prefix_registry()?,
-    ])
 }
 
 #[cfg(feature = "disk-persistence")]

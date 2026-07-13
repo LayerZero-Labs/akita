@@ -136,11 +136,14 @@ where
         CleartextWitnessProof::SegmentTyped(_) => {
             let digits =
                 dispatch_for_field!(ProtocolDispatchSlot::Role(RingRole::Inner), F, d_a, |D| {
-                    if lp.has_precommitted_groups() {
+                    if !lp.precommitted_groups.is_empty() {
+                        return Err(AkitaError::InvalidProof);
+                    }
+                    if lp.setup_prefix.is_some() {
                         let order = opening_batch.root_group_order()?;
                         let mut groups = Vec::with_capacity(order.len());
                         for &group_index in &order {
-                            let params = lp.root_group_params(opening_batch, group_index)?;
+                            let params = lp.group_params(opening_batch, group_index)?;
                             let layout_index = groups.len();
                             witness
                                 .as_segment_typed()

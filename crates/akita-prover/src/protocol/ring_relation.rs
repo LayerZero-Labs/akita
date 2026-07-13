@@ -498,6 +498,13 @@ impl RingRelationProver {
     {
         validate_i8_setup_log_basis(lp.log_basis, "for i8 prover decomposition")?;
         validate_chunked_witness_cfg(&lp)?;
+        if matches!(
+            relation_matrix_row_layout,
+            RelationMatrixRowLayout::WithoutDBlock
+        ) && !lp.precommitted_groups.is_empty()
+        {
+            return Err(AkitaError::InvalidProof);
+        }
         let dims = lp.role_dims();
         let opening_batch = fold_claims.opening_claims().layout()?;
         let polys = fold_claims.flat_polys();
@@ -525,7 +532,7 @@ impl RingRelationProver {
             let group_commitment = fold_claims.opening_claims().group_commitment(group_index)?;
             let group_rows =
                 RingView::new(group_commitment.rows().coeffs(), dims.d_b())?.num_rings();
-            let expected_rows = lp.root_group_commitment_rows(&opening_batch, group_index)?;
+            let expected_rows = lp.group_commitment_rows(&opening_batch, group_index)?;
             if group_rows != expected_rows {
                 return Err(AkitaError::InvalidInput(
                     "batched prover received a commitment with the wrong length".to_string(),
@@ -539,7 +546,7 @@ impl RingRelationProver {
         }
         let commitment_rows = RingVec::from_coeffs(commitment_row_coeffs);
         for group_index in 0..num_groups {
-            let group_lp = lp.root_group_params(&opening_batch, group_index)?;
+            let group_lp = lp.group_params(&opening_batch, group_index)?;
             let opening_point = &group_opening_points[group_index];
             let ring_multiplier_point = &group_ring_multiplier_points[group_index];
             if opening_point.a.len() < group_lp.block_len()
@@ -607,7 +614,7 @@ impl RingRelationProver {
             let end = offset.checked_add(k_g).ok_or_else(|| {
                 AkitaError::InvalidSetup("multi-group e-folded offset overflow".to_string())
             })?;
-            let group_lp = lp.root_group_params(&opening_batch, group_index)?;
+            let group_lp = lp.group_params(&opening_batch, group_index)?;
             let (e_hat_g, e_folded_g) = dispatch_for_field!(
                 ProtocolDispatchSlot::Role(RingRole::Opening),
                 F,
@@ -697,7 +704,7 @@ impl RingRelationProver {
         let mut group_z = Vec::with_capacity(num_groups);
         let mut accepted_nonce = None;
         for group_index in 0..num_groups {
-            let group_lp = lp.root_group_params(&opening_batch, group_index)?;
+            let group_lp = lp.group_params(&opening_batch, group_index)?;
             let group_polys = fold_claims.group_polys(group_index)?;
             let (z_folded_rings, z_folded_centered_per_chunk, challenges, nonce) =
                 fold_grind::sample_fold_decompose_witness::<F, _, OB, T>(

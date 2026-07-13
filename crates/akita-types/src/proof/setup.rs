@@ -73,6 +73,28 @@ impl SetupMatrixEnvelope {
         self.include_matrix(params.b_key.row_len(), params.outer_width(), "B")?;
         self.include_matrix(params.d_key.row_len(), params.d_matrix_width(), "D")
     }
+
+    /// Include the rounded prefix storage and A/B footprints for one setup-prefix slot.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`akita_field::AkitaError::InvalidSetup`] when the slot shape overflows
+    /// `usize` or has an invalid padded length.
+    pub fn include_setup_prefix_slot(
+        &mut self,
+        slot: &crate::SetupPrefixSlotId,
+    ) -> Result<(), akita_field::AkitaError> {
+        let n_prefix = slot.n_prefix()?;
+        let prefix_ring_len = n_prefix.checked_div(slot.d_setup).ok_or_else(|| {
+            akita_field::AkitaError::InvalidSetup(
+                "setup-prefix slot has invalid padded length".to_string(),
+            )
+        })?;
+        let params = &slot.commitment_params;
+        self.max_setup_len = self.max_setup_len.max(prefix_ring_len);
+        self.include_matrix(params.a_key.row_len(), params.inner_width(), "setup-prefix A")?;
+        self.include_matrix(params.b_key.row_len(), params.outer_width(), "setup-prefix B")
+    }
 }
 
 /// Seed-only stage for deterministic setup expansion.
@@ -602,6 +624,24 @@ mod tests {
             max_setup_len: 2,
             public_matrix_seed,
         }
+    }
+
+    #[test]
+    fn setup_envelope_includes_setup_prefix_slot_footprints() {
+        use crate::proof::setup_prefix_slot_id;
+
+        let d_setup = 64usize;
+        let n_prefix = 1024usize;
+        let slot = setup_prefix_slot_id(
+            d_setup,
+            n_prefix - 1,
+            prefix_commitment_params(n_prefix, d_setup),
+        );
+        let mut envelope = SetupMatrixEnvelope::empty();
+        envelope
+            .include_setup_prefix_slot(&slot)
+            .expect("include setup prefix slot");
+        assert!(envelope.max_setup_len >= n_prefix / d_setup);
     }
 
     #[test]

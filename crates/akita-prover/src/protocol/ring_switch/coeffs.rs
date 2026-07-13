@@ -323,13 +323,13 @@ where
                     "ring-switch witness count does not match opening batch".to_string(),
                 ));
             }
-            lp.validate_root_opening_batch(opening_batch)?;
+            lp.validate_opening_batch(opening_batch)?;
             let order = opening_batch.root_group_order()?;
             let mut owned = Vec::with_capacity(groups.len());
             for (group_index, group) in groups.into_iter().enumerate() {
                 group.ensure_role_dim::<D>(RingRole::Opening)?;
                 group.ensure_role_dim::<D>(RingRole::Inner)?;
-                let group_lp = lp.root_group_params(opening_batch, group_index)?;
+                let group_lp = lp.group_params(opening_batch, group_index)?;
                 let RingRelationGroupWitness {
                     z_folded_rings,
                     z_folded_centered_per_chunk,
@@ -418,7 +418,7 @@ where
             let levels = r_decomp_levels::<F>(lp.log_basis);
             emit_r_decomposition_tail::<F, D>(&mut out, &r, levels, lp.log_basis);
             let expected =
-                lp.root_next_w_len::<F>(opening_batch, instance.relation_matrix_row_layout())?;
+                lp.next_w_len::<F>(opening_batch, instance.relation_matrix_row_layout())?;
             if out.len() != expected {
                 return Err(AkitaError::InvalidSize {
                     expected,

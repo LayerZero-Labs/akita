@@ -980,13 +980,13 @@ fn active_setup_ring_slots(
     opening_batch: &OpeningClaimsLayout,
 ) -> Result<usize, AkitaError> {
     opening_batch.check()?;
-    level_params.validate_root_opening_batch(opening_batch)?;
+    level_params.validate_opening_batch(opening_batch)?;
 
     let mut max_slots = 0usize;
     let mut shared_d_width = 0usize;
     for group_index in 0..opening_batch.num_groups() {
         let group_layout = opening_batch.group_layout(group_index)?;
-        let group_params = level_params.root_group_params(opening_batch, group_index)?;
+        let group_params = level_params.group_params(opening_batch, group_index)?;
         let a_width = group_params
             .block_len()
             .checked_mul(group_params.num_digits_commit())
@@ -1044,54 +1044,8 @@ pub fn padded_setup_prefix_len(natural_field_len: usize) -> usize {
     natural_field_len.max(1).next_power_of_two()
 }
 
-/// Repack `level_params` into a witness shape that commits a flat prefix of
-/// `n_prefix` setup coefficients at ring dimension `d_setup`.
-pub fn setup_prefix_level_params(
-    level_params: &LevelParams,
-    n_prefix: usize,
-    d_setup: usize,
-) -> Result<Option<LevelParams>, AkitaError> {
-    let ring_slots = n_prefix.checked_div(d_setup).ok_or_else(|| {
-        AkitaError::InvalidSetup("setup prefix length has invalid dimension".to_string())
-    })?;
-    let mut prefix_params = level_params.clone();
-    let num_digits_commit = crate::sis::compute_num_digits_full_field(
-        level_params.field_bits_for_cache(),
-        level_params.log_basis,
-    );
-    let mut num_blocks = 1usize;
-    while num_blocks <= ring_slots {
-        if ring_slots.is_multiple_of(num_blocks) {
-            let block_len = ring_slots / num_blocks;
-            let inner_width = block_len.checked_mul(num_digits_commit).ok_or_else(|| {
-                AkitaError::InvalidSetup("prefix inner width overflow".to_string())
-            })?;
-            let outer_width = num_blocks
-                .checked_mul(level_params.a_key.row_len())
-                .and_then(|n| n.checked_mul(level_params.num_digits_open))
-                .ok_or_else(|| {
-                    AkitaError::InvalidSetup("prefix outer width overflow".to_string())
-                })?;
-            if inner_width <= level_params.a_key.col_len()
-                && outer_width <= level_params.b_key.col_len()
-            {
-                prefix_params.num_blocks = num_blocks;
-                prefix_params.m_vars = num_blocks.trailing_zeros() as usize;
-                prefix_params.block_len = block_len;
-                prefix_params.r_vars = block_len.next_power_of_two().trailing_zeros() as usize;
-                prefix_params.num_digits_commit = num_digits_commit;
-                return Ok(Some(prefix_params));
-            }
-        }
-        num_blocks = num_blocks
-            .checked_mul(2)
-            .ok_or_else(|| AkitaError::InvalidSetup("prefix block count overflow".to_string()))?;
-    }
-    Ok(None)
-}
-
-/// Convert committed setup-prefix `LevelParams` into the precommitted-group
-/// metadata stored on the consuming fold.
+/// Repack `level_params` into the precommitted-group metadata stored on the
+/// consuming fold.
 pub fn setup_prefix_precommitted_params(
     prefix_params: &LevelParams,
     n_prefix: usize,
@@ -1150,6 +1104,10 @@ where
     Slot: ?Sized,
     Lookup: FnOnce(&SetupPrefixSlotId) -> Option<(&'a Slot, usize, usize)>,
 {
+    let Some(template) = &level_params.setup_prefix else {
+        return Ok(None);
+    };
+
     let n_prefix = padded_setup_prefix_len(natural_field_len);
     let setup_field_len = setup_ring_slots_at_d.checked_mul(d_setup).ok_or_else(|| {
         AkitaError::InvalidSetup("setup matrix field length overflow".to_string())
@@ -1160,33 +1118,25 @@ where
         ));
     }
     if n_prefix > setup_field_len {
-        return Ok(None);
+        return Err(AkitaError::InvalidSetup(
+            "setup prefix padded length exceeds shared matrix capacity".to_string(),
+        ));
     }
-    let slot_id = if let Some(template) = &level_params.setup_prefix {
-        let template_n_prefix = template.n_prefix()?;
-        if template.natural_len != natural_field_len || template_n_prefix != n_prefix {
-            return Err(AkitaError::InvalidSetup(coverage_error.to_string()));
-        }
-        template.clone()
-    } else {
-        let Some(prefix_params) = setup_prefix_level_params(level_params, n_prefix, d_setup)?
-        else {
-            return Ok(None);
-        };
-        let commitment_params = setup_prefix_precommitted_params(&prefix_params, n_prefix)?;
-        setup_prefix_slot_id(d_setup, natural_field_len, commitment_params)
-    };
-    let slot_n_prefix = slot_id.n_prefix()?;
-    if slot_n_prefix > setup_field_len {
-        return Ok(None);
-    };
-    let Some((slot, slot_natural_len, slot_padded_len)) = lookup_slot(&slot_id) else {
-        return Ok(None);
+
+    let template_n_prefix = template.n_prefix()?;
+    if template.natural_len != natural_field_len || template_n_prefix != n_prefix {
+        return Err(AkitaError::InvalidSetup(coverage_error.to_string()));
+    }
+
+    let Some((slot, slot_natural_len, slot_padded_len)) = lookup_slot(template) else {
+        return Err(AkitaError::InvalidSetup(
+            "required setup prefix slot is missing from registry".to_string(),
+        ));
     };
     if slot_natural_len != natural_field_len || slot_padded_len != n_prefix {
         return Err(AkitaError::InvalidSetup(coverage_error.to_string()));
     }
-    let setup_eval_len = slot_n_prefix.checked_div(d_setup).ok_or_else(|| {
+    let setup_eval_len = template_n_prefix.checked_div(d_setup).ok_or_else(|| {
         AkitaError::InvalidSetup("setup prefix padded length has invalid dimension".to_string())
     })?;
     Ok(Some((slot, setup_eval_len)))
@@ -1271,22 +1221,33 @@ mod tests {
     }
 
     #[test]
-    fn select_setup_prefix_slot_uses_canonical_id_and_checks_coverage() {
+    fn select_setup_prefix_slot_uses_exact_registry_match() {
         use akita_field::Prime32Offset99 as F;
 
         let level_params = prefix_eligible_level_params();
         let d_setup = 32usize;
         let natural_len = 33usize;
         let n_prefix = padded_setup_prefix_len(natural_len);
-        let prefix_params =
-            setup_prefix_level_params(&level_params, n_prefix, d_setup).expect("prefix params");
-        let prefix_params = prefix_params.expect("eligible prefix params");
-        let id = setup_prefix_slot_id(
-            d_setup,
-            natural_len,
-            setup_prefix_precommitted_params(&prefix_params, n_prefix)
-                .expect("precommitted prefix params"),
-        );
+        let commitment_params = PrecommittedLevelParams {
+            layout: PrecommittedGroupParams {
+                group: PolynomialGroupLayout::singleton(n_prefix.trailing_zeros() as usize),
+                m_vars: 0,
+                r_vars: 0,
+                log_basis: 3,
+                n_a: 1,
+                conservative_n_b: 1,
+            },
+            a_key: level_params.a_key.clone(),
+            b_key: level_params.b_key.clone(),
+            num_blocks: 1,
+            block_len: n_prefix / d_setup,
+            num_digits_commit: 2,
+            num_digits_open: 2,
+            num_digits_fold_one: 2,
+        };
+        let id = setup_prefix_slot_id(d_setup, natural_len, commitment_params);
+        let mut level_params = level_params;
+        level_params.setup_prefix = Some(id.clone());
         let slot = SetupPrefixVerifierSlot {
             id: id.clone(),
             natural_len,
@@ -1315,7 +1276,7 @@ mod tests {
         assert_eq!(&selection.0.id, &id);
         assert_eq!(selection.1, 2);
 
-        let selection = select_setup_prefix_slot(
+        let err = select_setup_prefix_slot(
             2,
             |candidate| {
                 registry
@@ -1327,11 +1288,37 @@ mod tests {
             d_setup,
             "slot does not cover request",
         )
-        .expect("different natural_len slot falls back");
-        assert!(
-            selection.is_none(),
-            "same padded prefix with different natural_len should use a different id"
-        );
+        .expect_err("different natural_len must fail");
+        assert!(err.to_string().contains("slot does not cover request"));
+    }
+
+    #[test]
+    fn select_setup_prefix_slot_rejects_missing_registry_entry() {
+        use akita_field::Prime32Offset99 as F;
+
+        let mut level_params = prefix_eligible_level_params();
+        let d_setup = 32usize;
+        let natural_len = 33usize;
+        let n_prefix = padded_setup_prefix_len(natural_len);
+        level_params.setup_prefix = Some(setup_prefix_slot_id(
+            d_setup,
+            natural_len,
+            setup_prefix_precommitted_params(&level_params, n_prefix).expect("prefix params"),
+        ));
+
+        let err = select_setup_prefix_slot::<SetupPrefixVerifierSlot<F>, _>(
+            2,
+            |_: &SetupPrefixSlotId| None,
+            &level_params,
+            natural_len,
+            d_setup,
+            "slot does not cover request",
+        )
+        .expect_err("missing registry entry must fail");
+        assert!(err
+            .to_string()
+            .contains("required setup prefix slot is missing from registry"));
+        let _ = F::zero();
     }
 
     #[test]

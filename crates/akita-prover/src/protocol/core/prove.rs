@@ -145,7 +145,7 @@ where
     }
     let schedule = effective_batched_schedule::<Cfg>(&opening_batch, claims.point())?;
     validate_schedule_ring_dims(&schedule, expanded.seed())?;
-    schedule.reject_multi_group_multi_chunk("batched prove")?;
+    schedule.validate_structure()?;
     let root_commit_params = match schedule.steps.first() {
         Some(Step::Fold(root)) => &root.params,
         Some(Step::Direct(root)) => root.params.as_ref().ok_or_else(|| {
@@ -311,7 +311,7 @@ where
         for (group_index, commitment) in commitments.iter().enumerate() {
             let expected_rows = root_scheduled
                 .params
-                .root_group_commitment_rows(&opening_batch, group_index)?;
+                .group_commitment_rows(&opening_batch, group_index)?;
             let view = RingView::new(commitment.rows().coeffs(), root_ring_dim)?;
             if view.num_rings() != expected_rows {
                 return Err(AkitaError::InvalidInput(

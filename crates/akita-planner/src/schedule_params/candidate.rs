@@ -123,7 +123,7 @@ fn checked_power_of_two_vars(field_len: usize, context: &'static str) -> Result<
     Ok(padded.trailing_zeros() as usize)
 }
 
-pub(crate) fn suffix_opening_layout(
+pub fn suffix_opening_layout(
     current_witness_len: usize,
     incoming_setup_prefix: Option<usize>,
 ) -> Result<OpeningClaimsLayout, AkitaError> {
@@ -176,7 +176,33 @@ fn grouped_segment_rings(
         .ok_or_else(|| AkitaError::InvalidSetup("group witness overflow".to_string()))
 }
 
-fn grouped_next_witness_len(
+pub(crate) fn planned_next_witness_len(
+    field_bits: u32,
+    params: &LevelParams,
+    final_num_polys: usize,
+    layout: RelationMatrixRowLayout,
+    num_chunks: usize,
+) -> Result<usize, AkitaError> {
+    if !params.precommitted_groups.is_empty() {
+        return Err(AkitaError::InvalidSetup(
+            "multi-group root witness sizing must use LevelParams::next_w_len".to_string(),
+        ));
+    }
+    if params.setup_prefix.is_some() {
+        if num_chunks > 1 {
+            return Err(AkitaError::InvalidSetup(
+                "setup-prefix grouped suffixes do not support multi-chunk witnesses".to_string(),
+            ));
+        }
+        return grouped_setup_prefix_next_witness_len(field_bits, params, final_num_polys, layout);
+    }
+
+    w_ring_element_count_for_chunks(field_bits, params, final_num_polys, layout, num_chunks)?
+        .checked_mul(params.ring_dimension)
+        .ok_or_else(|| AkitaError::InvalidSetup("next witness length overflow".into()))
+}
+
+fn grouped_setup_prefix_next_witness_len(
     field_bits: u32,
     params: &LevelParams,
     final_num_polys: usize,
@@ -206,8 +232,7 @@ fn grouped_next_witness_len(
             .ok_or_else(|| AkitaError::InvalidSetup("grouped witness overflow".to_string()))?;
     }
 
-    let r_rows =
-        params.relation_matrix_row_count_for(params.precommitted_group_count() + 1, layout)?;
+    let r_rows = params.relation_matrix_row_count_for(params.precommitted_group_count() + 1, layout)?;
     let r_count = r_rows
         .checked_mul(akita_types::sis::compute_num_digits_full_field(
             field_bits,
@@ -223,37 +248,21 @@ fn grouped_next_witness_len(
         .ok_or_else(|| AkitaError::InvalidSetup("grouped next witness length overflow".to_string()))
 }
 
-pub(crate) fn planned_next_witness_len(
-    field_bits: u32,
-    params: &LevelParams,
-    final_num_polys: usize,
-    layout: RelationMatrixRowLayout,
-    num_chunks: usize,
-) -> Result<usize, AkitaError> {
-    if params.has_precommitted_groups() {
-        if num_chunks > 1 {
-            return Err(AkitaError::InvalidSetup(
-                "setup-prefix grouped suffixes do not support multi-chunk witnesses".to_string(),
-            ));
-        }
-        return grouped_next_witness_len(field_bits, params, final_num_polys, layout);
-    }
-
-    w_ring_element_count_for_chunks(field_bits, params, final_num_polys, layout, num_chunks)?
-        .checked_mul(params.ring_dimension)
-        .ok_or_else(|| AkitaError::InvalidSetup("next witness length overflow".into()))
-}
-
 pub(crate) fn terminal_witness_shape_for_opening_layout(
     terminal_lp: &LevelParams,
     field_bits: u32,
     opening_layout: &OpeningClaimsLayout,
 ) -> Result<CleartextWitnessShape, AkitaError> {
+    if !terminal_lp.precommitted_groups.is_empty() {
+        return Err(AkitaError::InvalidSetup(
+            "grouped terminal direct witness layout is unsupported".to_string(),
+        ));
+    }
     let order = opening_layout.root_group_order()?;
     let mut group_shapes: Vec<(&dyn akita_types::LevelParamsLike, usize, usize, usize)> =
         Vec::with_capacity(order.len());
     for &group_index in &order {
-        let group_lp = terminal_lp.root_group_params(opening_layout, group_index)?;
+        let group_lp = terminal_lp.group_params(opening_layout, group_index)?;
         let group_polys = opening_layout.group_layout(group_index)?.num_polynomials();
         group_shapes.push((group_lp, group_polys, group_polys, 1));
     }
@@ -805,4 +814,78 @@ pub(crate) fn scalar_root_fold_level_params_candidate(
     .with_fold_linf_cap_config(policy.decomposition.field_bits(), num_claims)?;
     params.stamp_role_dims_from_keys();
     Ok(Some(params))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use akita_challenges::SparseChallengeConfig;
+    use akita_types::{PolynomialGroupLayout, SisModulusFamily};
+
+    fn grouped_level_params() -> LevelParams {
+        let fold_challenge_config = SparseChallengeConfig::pm1_only(3);
+        let mut params = LevelParams::params_only(
+            SisModulusFamily::Q128,
+            64,
+            3,
+            2,
+            2,
+            2,
+            fold_challenge_config,
+        )
+        .with_decomp(2, 2, 2, 2, 0)
+        .expect("grouped params");
+        let precommitted = LevelParams::params_only(
+            SisModulusFamily::Q128,
+            64,
+            3,
+            2,
+            2,
+            2,
+            fold_challenge_config,
+        )
+        .with_decomp(2, 2, 2, 2, 0)
+        .expect("precommitted params");
+        params.precommitted_groups = vec![PrecommittedLevelParams {
+            layout: PrecommittedGroupParams::from_params(
+                PolynomialGroupLayout::new(6, 1),
+                &precommitted,
+            ),
+            a_key: precommitted.a_key.clone(),
+            b_key: precommitted.b_key.clone(),
+            num_blocks: precommitted.num_blocks,
+            block_len: precommitted.block_len,
+            num_digits_commit: precommitted.num_digits_commit,
+            num_digits_open: precommitted.num_digits_open,
+            num_digits_fold_one: precommitted.num_digits_fold_one,
+        }];
+        params
+    }
+
+    #[test]
+    fn planned_next_witness_len_rejects_multi_group_root_level_params() {
+        let grouped = grouped_level_params();
+        let err = planned_next_witness_len(
+            128,
+            &grouped,
+            1,
+            RelationMatrixRowLayout::WithDBlock,
+            1,
+        )
+        .expect_err("multi-group root suffix sizing must use next_w_len");
+        assert!(matches!(err, AkitaError::InvalidSetup(_)));
+    }
+
+    #[test]
+    fn terminal_witness_shape_rejects_multi_group_root_level_params() {
+        let grouped = grouped_level_params();
+        let layout = OpeningClaimsLayout::from_groups(vec![
+            PolynomialGroupLayout::new(6, 1),
+            PolynomialGroupLayout::new(8, 1),
+        ])
+        .expect("opening layout");
+        let err = terminal_witness_shape_for_opening_layout(&grouped, 128, &layout)
+            .expect_err("grouped terminal witness shape is unsupported");
+        assert!(matches!(err, AkitaError::InvalidSetup(_)));
+    }
 }

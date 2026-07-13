@@ -2,6 +2,7 @@
 
 use crate::descriptor_bytes::{push_u32, push_usize};
 use crate::{CleartextWitnessShape, LevelParams, OpeningClaimsLayout, PolynomialGroupLayout};
+use crate::config::SetupContributionMode;
 use akita_field::{AkitaError, CanonicalField};
 
 /// Public inputs that deterministically select one level's active Akita params.
@@ -564,11 +565,174 @@ impl Schedule {
         self.fold_steps().count()
     }
 
-    /// Reject any fold level that combines precommitted groups with multi-chunk
-    /// witness layout.
-    pub fn reject_multi_group_multi_chunk(&self, context: &str) -> Result<(), AkitaError> {
-        for fold in self.fold_steps() {
-            fold.params.reject_multi_group_multi_chunk(context)?;
+    /// Validate protocol-level schedule topology before any witness is interpreted.
+    ///
+    /// This boundary owns stable step adjacency and grouped-fold shape. Planner
+    /// eligibility, setup-slot identity, and proof-object validation remain at
+    /// their respective boundaries.
+    pub fn validate_structure(&self) -> Result<(), AkitaError> {
+        if self.steps.is_empty() {
+            return Err(AkitaError::InvalidSetup(
+                "schedule must contain at least one step".to_string(),
+            ));
+        }
+
+        let last_index = self.steps.len() - 1;
+        for (index, step) in self.steps.iter().enumerate() {
+            match step {
+                Step::Fold(fold) => {
+                    fold.params
+                        .reject_multi_group_multi_chunk("schedule validation")?;
+                    if fold.current_w_len == 0 || fold.next_w_len == 0 {
+                        return Err(AkitaError::InvalidSetup(
+                            "fold witness lengths must be nonzero".to_string(),
+                        ));
+                    }
+
+                    let Some(successor) = self.steps.get(index + 1) else {
+                        return Err(AkitaError::InvalidSetup(
+                            "schedule must end with a direct step".to_string(),
+                        ));
+                    };
+                    let successor_w_len = match successor {
+                        Step::Fold(next_fold) => next_fold.current_w_len,
+                        Step::Direct(direct) => direct.current_w_len,
+                    };
+                    if fold.next_w_len != successor_w_len {
+                        return Err(AkitaError::InvalidSetup(format!(
+                            "schedule witness length mismatch between steps {index} and {}",
+                            index + 1
+                        )));
+                    }
+                    if fold.params.has_precommitted_groups()
+                        && !matches!(successor, Step::Fold(_))
+                    {
+                        return Err(AkitaError::InvalidSetup(
+                            "grouped fold must be followed by another fold".to_string(),
+                        ));
+                    }
+
+                    if index == 0 && fold.params.setup_prefix.is_some() {
+                        return Err(AkitaError::InvalidSetup(
+                            "root fold must not carry an incoming setup prefix".to_string(),
+                        ));
+                    }
+
+                    let successor_is_direct = matches!(successor, Step::Direct(_));
+                    if successor_is_direct {
+                        if fold.params.setup_contribution_mode
+                            != SetupContributionMode::Direct
+                        {
+                            return Err(AkitaError::InvalidSetup(
+                                "terminal fold must use direct setup contribution".to_string(),
+                            ));
+                        }
+                        if fold.params.has_precommitted_groups() {
+                            return Err(AkitaError::InvalidSetup(
+                                "terminal fold must be scalar".to_string(),
+                            ));
+                        }
+                    }
+
+                    if let Step::Fold(successor_fold) = successor {
+                        let successor_carries_setup_prefix_only =
+                            successor_fold.params.setup_prefix.is_some()
+                                && successor_fold.params.precommitted_groups.is_empty()
+                                && successor_fold.params.precommitted_group_count() == 1;
+
+                        match fold.params.setup_contribution_mode {
+                            SetupContributionMode::Recursive => {
+                                if successor_fold.params.setup_prefix.is_none() {
+                                    return Err(AkitaError::InvalidSetup(
+                                        "recursive fold successor must carry a setup prefix"
+                                            .to_string(),
+                                    ));
+                                }
+                                if !successor_fold.params.precommitted_groups.is_empty()
+                                    || successor_fold.params.precommitted_group_count() != 1
+                                {
+                                    return Err(AkitaError::InvalidSetup(
+                                        "recursive fold successor must carry only the setup prefix group"
+                                            .to_string(),
+                                    ));
+                                }
+                            }
+                            SetupContributionMode::Direct => {
+                                if successor_fold.params.setup_prefix.is_some() {
+                                    return Err(AkitaError::InvalidSetup(
+                                        "direct fold must not forward a setup prefix".to_string(),
+                                    ));
+                                }
+                            }
+                        }
+
+                        if successor_carries_setup_prefix_only
+                            && fold.params.setup_contribution_mode
+                                != SetupContributionMode::Recursive
+                        {
+                            return Err(AkitaError::InvalidSetup(
+                                "setup-prefix successor requires a recursive predecessor"
+                                    .to_string(),
+                            ));
+                        }
+                    }
+                }
+                Step::Direct(direct) => {
+                    if index != last_index {
+                        return Err(AkitaError::InvalidSetup(
+                            "direct step must be the final schedule step".to_string(),
+                        ));
+                    }
+                    if direct.current_w_len == 0 {
+                        return Err(AkitaError::InvalidSetup(
+                            "direct witness length must be nonzero".to_string(),
+                        ));
+                    }
+
+                    if index == 0 {
+                        let CleartextWitnessShape::FieldElements(witness_len) =
+                            &direct.witness_shape
+                        else {
+                            return Err(AkitaError::InvalidSetup(
+                                "root direct step requires a field-element witness".to_string(),
+                            ));
+                        };
+                        if *witness_len != direct.current_w_len {
+                            return Err(AkitaError::InvalidSetup(
+                                "root direct witness shape does not match current witness length"
+                                    .to_string(),
+                            ));
+                        }
+                        if direct
+                            .params
+                            .as_ref()
+                            .is_some_and(LevelParams::has_precommitted_groups)
+                        {
+                            return Err(AkitaError::InvalidSetup(
+                                "root direct step must be scalar".to_string(),
+                            ));
+                        }
+                    } else {
+                        let CleartextWitnessShape::SegmentTyped(shape) = &direct.witness_shape
+                        else {
+                            return Err(AkitaError::InvalidSetup(
+                                "terminal direct step requires a segment-typed witness".to_string(),
+                            ));
+                        };
+                        if shape.layout.logical_num_elems != direct.current_w_len {
+                            return Err(AkitaError::InvalidSetup(
+                                "terminal direct witness shape does not match current witness length"
+                                    .to_string(),
+                            ));
+                        }
+                        if direct.params.is_some() {
+                            return Err(AkitaError::InvalidSetup(
+                                "terminal direct step must not carry commitment params".to_string(),
+                            ));
+                        }
+                    }
+                }
+            }
         }
         Ok(())
     }
@@ -671,15 +835,15 @@ pub fn root_current_w_len(lp: &LevelParams) -> usize {
 
 /// Build the root-direct schedule for roots that do not admit a fold step.
 ///
-/// `current_w_len` is the flattened witness length in field elements (for a
-/// singleton group, `2^num_vars`; for multi-group batches, the per-group hypercube
-/// sizes summed over polynomials). `commit_params` carries the root commit
+/// `current_w_len` is the flattened witness length in field elements for a
+/// single scalar group (`2^num_vars`). `commit_params` carries the root commit
 /// layout that `Cfg::get_params_for_batched_commitment` returns for this
-/// schedule shape.
+/// schedule shape and must itself be scalar.
 ///
 /// # Errors
 ///
-/// Returns an error if `current_w_len` is zero.
+/// Returns an error if `current_w_len` is zero or `commit_params` carries
+/// precommitted groups.
 pub fn root_direct_schedule(
     current_w_len: usize,
     commit_params: LevelParams,
@@ -687,6 +851,11 @@ pub fn root_direct_schedule(
     if current_w_len == 0 {
         return Err(AkitaError::InvalidSetup(
             "root-direct witness length is zero".to_string(),
+        ));
+    }
+    if commit_params.has_precommitted_groups() {
+        return Err(AkitaError::InvalidSetup(
+            "root direct step must be scalar".to_string(),
         ));
     }
     Ok(Schedule {
@@ -936,6 +1105,71 @@ mod tests {
         (CleartextWitnessProof::SegmentTyped(witness), shape)
     }
 
+    fn grouped_level_params() -> LevelParams {
+        let fold_challenge_config = SparseChallengeConfig::pm1_only(3);
+        let mut params = LevelParams::params_only(
+            SisModulusFamily::Q128,
+            64,
+            3,
+            2,
+            2,
+            2,
+            fold_challenge_config,
+        )
+        .with_decomp(2, 2, 2, 2, 0)
+        .expect("grouped params");
+        let precommitted = LevelParams::params_only(
+            SisModulusFamily::Q128,
+            64,
+            3,
+            2,
+            2,
+            2,
+            fold_challenge_config,
+        )
+        .with_decomp(2, 2, 2, 2, 0)
+        .expect("precommitted params");
+        params.precommitted_groups = vec![crate::PrecommittedLevelParams {
+            layout: PrecommittedGroupParams::from_params(
+                PolynomialGroupLayout::new(6, 1),
+                &precommitted,
+            ),
+            a_key: precommitted.a_key.clone(),
+            b_key: precommitted.b_key.clone(),
+            num_blocks: precommitted.num_blocks,
+            block_len: precommitted.block_len,
+            num_digits_commit: precommitted.num_digits_commit,
+            num_digits_open: precommitted.num_digits_open,
+            num_digits_fold_one: precommitted.num_digits_fold_one,
+        }];
+        params
+    }
+
+    fn scalar_terminal_steps(
+        current_w_len: usize,
+        params: LevelParams,
+    ) -> (FoldStep, DirectStep) {
+        let (_, witness_shape) = segment_typed_final_witness(&params, 1);
+        let CleartextWitnessShape::SegmentTyped(shape) = &witness_shape else {
+            panic!("expected segment-typed witness");
+        };
+        let terminal_w_len = shape.layout.logical_num_elems;
+        (
+            FoldStep {
+                params,
+                current_w_len,
+                next_w_len: terminal_w_len,
+                level_bytes: 0,
+            },
+            DirectStep {
+                current_w_len: terminal_w_len,
+                witness_shape,
+                direct_bytes: 0,
+                params: None,
+            },
+        )
+    }
+
     #[test]
     fn root_direct_schedule_uses_field_element_payload() {
         let dummy_commit_params = LevelParams::params_only(
@@ -958,6 +1192,381 @@ mod tests {
         assert_eq!(step.witness_shape, CleartextWitnessShape::FieldElements(8));
         assert_eq!(step.direct_bytes, 0);
         assert_eq!(step.params.as_ref(), Some(&dummy_commit_params));
+    }
+
+    #[test]
+    fn schedule_structure_accepts_scalar_and_nonterminal_grouped_shapes() {
+        let scalar = LevelParams::params_only(
+            SisModulusFamily::Q128,
+            64,
+            3,
+            2,
+            2,
+            2,
+            SparseChallengeConfig::pm1_only(3),
+        )
+        .with_decomp(2, 2, 2, 2, 0)
+        .expect("scalar params");
+        let (terminal_fold, direct) = scalar_terminal_steps(64, scalar.clone());
+        let scalar_schedule = Schedule {
+            steps: vec![Step::Fold(terminal_fold.clone()), Step::Direct(direct.clone())],
+            total_bytes: 0,
+        };
+        scalar_schedule
+            .validate_structure()
+            .expect("scalar terminal schedule");
+
+        let grouped_schedule = Schedule {
+            steps: vec![
+                Step::Fold(FoldStep {
+                    params: grouped_level_params(),
+                    current_w_len: 128,
+                    next_w_len: terminal_fold.current_w_len,
+                    level_bytes: 0,
+                }),
+                Step::Fold(terminal_fold),
+                Step::Direct(direct),
+            ],
+            total_bytes: 0,
+        };
+        grouped_schedule
+            .validate_structure()
+            .expect("nonterminal grouped schedule");
+    }
+
+    #[test]
+    fn schedule_structure_rejects_empty_and_internal_direct_steps() {
+        assert!(Schedule {
+            steps: Vec::new(),
+            total_bytes: 0,
+        }
+        .validate_structure()
+        .is_err());
+
+        let params = grouped_level_params();
+        let direct = DirectStep {
+            current_w_len: 8,
+            witness_shape: CleartextWitnessShape::FieldElements(8),
+            direct_bytes: 0,
+            params: Some(params),
+        };
+        assert!(Schedule {
+            steps: vec![Step::Direct(direct.clone()), Step::Direct(direct)],
+            total_bytes: 0,
+        }
+        .validate_structure()
+        .is_err());
+    }
+
+    #[test]
+    fn root_direct_schedule_rejects_grouped_params() {
+        let grouped = grouped_level_params();
+        assert!(root_direct_schedule(8, grouped).is_err());
+    }
+
+    #[test]
+    fn schedule_structure_rejects_grouped_direct_and_terminal_fold() {
+        let grouped = grouped_level_params();
+        let grouped_direct = Schedule {
+            steps: vec![Step::Direct(DirectStep {
+                current_w_len: 8,
+                witness_shape: CleartextWitnessShape::FieldElements(8),
+                direct_bytes: 0,
+                params: Some(grouped.clone()),
+            })],
+            total_bytes: 0,
+        };
+        assert!(grouped_direct.validate_structure().is_err());
+
+        let scalar = LevelParams::params_only(
+            SisModulusFamily::Q128,
+            64,
+            3,
+            2,
+            2,
+            2,
+            SparseChallengeConfig::pm1_only(3),
+        )
+        .with_decomp(2, 2, 2, 2, 0)
+        .expect("scalar params");
+        let (_, direct) = scalar_terminal_steps(64, scalar);
+        let terminal_w_len = direct.current_w_len;
+        assert!(Schedule {
+            steps: vec![
+                Step::Fold(FoldStep {
+                    params: grouped,
+                    current_w_len: 128,
+                    next_w_len: terminal_w_len,
+                    level_bytes: 0,
+                }),
+                Step::Direct(direct),
+            ],
+            total_bytes: 0,
+        }
+        .validate_structure()
+        .is_err());
+    }
+
+    #[test]
+    fn schedule_structure_rejects_discontinuous_witness_lengths() {
+        let scalar = LevelParams::params_only(
+            SisModulusFamily::Q128,
+            64,
+            3,
+            2,
+            2,
+            2,
+            SparseChallengeConfig::pm1_only(3),
+        )
+        .with_decomp(2, 2, 2, 2, 0)
+        .expect("scalar params");
+        let (mut fold, direct) = scalar_terminal_steps(64, scalar);
+        fold.next_w_len = direct.current_w_len + 1;
+        assert!(Schedule {
+            steps: vec![Step::Fold(fold), Step::Direct(direct)],
+            total_bytes: 0,
+        }
+        .validate_structure()
+        .is_err());
+    }
+
+    #[test]
+    fn schedule_structure_rejects_grouped_multi_chunk() {
+        let mut grouped = grouped_level_params();
+        grouped.witness_chunk = crate::witness::ChunkedWitnessCfg {
+            num_chunks: 2,
+            num_activated_levels: 1,
+        };
+        let scalar = LevelParams::params_only(
+            SisModulusFamily::Q128,
+            64,
+            3,
+            2,
+            2,
+            2,
+            SparseChallengeConfig::pm1_only(3),
+        )
+        .with_decomp(2, 2, 2, 2, 0)
+        .expect("scalar params");
+        let (terminal_fold, direct) = scalar_terminal_steps(64, scalar);
+        assert!(Schedule {
+            steps: vec![
+                Step::Fold(FoldStep {
+                    params: grouped,
+                    current_w_len: 128,
+                    next_w_len: terminal_fold.current_w_len,
+                    level_bytes: 0,
+                }),
+                Step::Fold(terminal_fold),
+                Step::Direct(direct),
+            ],
+            total_bytes: 0,
+        }
+        .validate_structure()
+        .is_err());
+    }
+
+    fn scalar_level_params() -> LevelParams {
+        LevelParams::params_only(
+            SisModulusFamily::Q128,
+            64,
+            3,
+            2,
+            2,
+            2,
+            SparseChallengeConfig::pm1_only(3),
+        )
+        .with_decomp(2, 2, 2, 2, 0)
+        .expect("scalar params")
+    }
+
+    fn setup_prefix_only_params() -> LevelParams {
+        let fold_challenge_config = SparseChallengeConfig::pm1_only(3);
+        let precommitted = LevelParams::params_only(
+            SisModulusFamily::Q128,
+            64,
+            3,
+            2,
+            2,
+            2,
+            fold_challenge_config,
+        )
+        .with_decomp(2, 2, 2, 2, 0)
+        .expect("setup prefix params");
+        let mut params = scalar_level_params();
+        params.setup_prefix = Some(crate::setup_prefix_slot_id(
+            64,
+            1 << 12,
+            crate::PrecommittedLevelParams {
+                layout: crate::PrecommittedGroupParams::from_params(
+                    PolynomialGroupLayout::new(6, 1),
+                    &precommitted,
+                ),
+                a_key: precommitted.a_key.clone(),
+                b_key: precommitted.b_key.clone(),
+                num_blocks: precommitted.num_blocks,
+                block_len: precommitted.block_len,
+                num_digits_commit: precommitted.num_digits_commit,
+                num_digits_open: precommitted.num_digits_open,
+                num_digits_fold_one: precommitted.num_digits_fold_one,
+            },
+        ));
+        params
+    }
+
+    fn recursive_setup_offload_schedule() -> Schedule {
+        let recursive = {
+            let mut params = scalar_level_params();
+            params.setup_contribution_mode = SetupContributionMode::Recursive;
+            params
+        };
+        let setup_prefix_successor = setup_prefix_only_params();
+        let (terminal_fold, direct) = scalar_terminal_steps(64, scalar_level_params());
+        Schedule {
+            steps: vec![
+                Step::Fold(FoldStep {
+                    params: recursive,
+                    current_w_len: 256,
+                    next_w_len: 128,
+                    level_bytes: 0,
+                }),
+                Step::Fold(FoldStep {
+                    params: setup_prefix_successor,
+                    current_w_len: 128,
+                    next_w_len: terminal_fold.current_w_len,
+                    level_bytes: 0,
+                }),
+                Step::Fold(terminal_fold),
+                Step::Direct(direct),
+            ],
+            total_bytes: 0,
+        }
+    }
+
+    #[test]
+    fn schedule_structure_accepts_recursive_setup_offload_chain() {
+        recursive_setup_offload_schedule()
+            .validate_structure()
+            .expect("recursive setup offload chain");
+    }
+
+    #[test]
+    fn schedule_structure_rejects_recursive_to_direct() {
+        let mut schedule = recursive_setup_offload_schedule();
+        let terminal = schedule.steps.pop().expect("direct");
+        let Step::Direct(direct) = terminal else {
+            panic!("expected direct");
+        };
+        schedule.steps.pop();
+        schedule.steps.push(Step::Direct(direct));
+        assert!(schedule.validate_structure().is_err());
+    }
+
+    #[test]
+    fn schedule_structure_rejects_recursive_to_scalar_without_prefix() {
+        let recursive = {
+            let mut params = scalar_level_params();
+            params.setup_contribution_mode = SetupContributionMode::Recursive;
+            params
+        };
+        let (terminal_fold, direct) = scalar_terminal_steps(64, scalar_level_params());
+        assert!(Schedule {
+            steps: vec![
+                Step::Fold(FoldStep {
+                    params: recursive,
+                    current_w_len: 256,
+                    next_w_len: terminal_fold.current_w_len,
+                    level_bytes: 0,
+                }),
+                Step::Fold(terminal_fold),
+                Step::Direct(direct),
+            ],
+            total_bytes: 0,
+        }
+        .validate_structure()
+        .is_err());
+    }
+
+    #[test]
+    fn schedule_structure_rejects_direct_to_setup_prefix_successor() {
+        let (terminal_fold, direct) = scalar_terminal_steps(64, scalar_level_params());
+        assert!(Schedule {
+            steps: vec![
+                Step::Fold(FoldStep {
+                    params: scalar_level_params(),
+                    current_w_len: 256,
+                    next_w_len: 128,
+                    level_bytes: 0,
+                }),
+                Step::Fold(FoldStep {
+                    params: setup_prefix_only_params(),
+                    current_w_len: 128,
+                    next_w_len: terminal_fold.current_w_len,
+                    level_bytes: 0,
+                }),
+                Step::Fold(terminal_fold),
+                Step::Direct(direct),
+            ],
+            total_bytes: 0,
+        }
+        .validate_structure()
+        .is_err());
+    }
+
+    #[test]
+    fn schedule_structure_rejects_recursive_successor_with_extra_precommitted() {
+        let recursive = {
+            let mut params = scalar_level_params();
+            params.setup_contribution_mode = SetupContributionMode::Recursive;
+            params
+        };
+        let mut successor = setup_prefix_only_params();
+        successor.precommitted_groups = grouped_level_params().precommitted_groups;
+        let (terminal_fold, direct) = scalar_terminal_steps(64, scalar_level_params());
+        assert!(Schedule {
+            steps: vec![
+                Step::Fold(FoldStep {
+                    params: recursive,
+                    current_w_len: 256,
+                    next_w_len: 128,
+                    level_bytes: 0,
+                }),
+                Step::Fold(FoldStep {
+                    params: successor,
+                    current_w_len: 128,
+                    next_w_len: terminal_fold.current_w_len,
+                    level_bytes: 0,
+                }),
+                Step::Fold(terminal_fold),
+                Step::Direct(direct),
+            ],
+            total_bytes: 0,
+        }
+        .validate_structure()
+        .is_err());
+    }
+
+    #[test]
+    fn schedule_structure_rejects_root_fold_with_setup_prefix() {
+        let mut root = grouped_level_params();
+        root.setup_prefix = setup_prefix_only_params().setup_prefix;
+        let scalar = scalar_level_params();
+        let (terminal_fold, direct) = scalar_terminal_steps(64, scalar);
+        assert!(Schedule {
+            steps: vec![
+                Step::Fold(FoldStep {
+                    params: root,
+                    current_w_len: 256,
+                    next_w_len: terminal_fold.current_w_len,
+                    level_bytes: 0,
+                }),
+                Step::Fold(terminal_fold),
+                Step::Direct(direct),
+            ],
+            total_bytes: 0,
+        }
+        .validate_structure()
+        .is_err());
     }
 
     #[test]

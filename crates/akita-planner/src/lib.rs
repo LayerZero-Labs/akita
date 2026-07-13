@@ -38,7 +38,7 @@ pub use group_batch::find_group_batch_schedule;
 pub use resolve::{
     estimate_proof_bytes, resolve_group_batch_schedule, resolve_schedule, schedule_from_entry,
 };
-pub use schedule_params::find_schedule;
+pub use schedule_params::{find_schedule, suffix_opening_layout};
 pub use setup_capacity::{certify_setup_capacity, ConservativeGroupPlan, SetupCapacityCertificate};
 
 /// Plain-value brute-force inputs the planner DP needs.

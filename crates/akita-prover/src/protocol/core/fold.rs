@@ -303,7 +303,7 @@ where
                 let mut e_folded_by_claim =
                     Vec::with_capacity(opening_batch.num_total_polynomials());
                 for group_index in 0..opening_batch.num_groups() {
-                    let group_lp = level_params.root_group_params(&opening_batch, group_index)?;
+                    let group_lp = level_params.group_params(&opening_batch, group_index)?;
                     let target_len = alpha_bits
                         .checked_add(group_lp.m_vars())
                         .and_then(|n| n.checked_add(group_lp.r_vars()))
@@ -826,7 +826,7 @@ where
                 .iter()
                 .enumerate()
                 .map(|(layout_index, group)| {
-                    let params = lp.root_group_params(opening_batch, group.group_index)?;
+                    let params = lp.group_params(opening_batch, group.group_index)?;
                     let (num_w_vectors, num_t_vectors, num_z_segments) =
                         akita_types::tail_segment_multiplicities_from_layout_for_params(
                             params,

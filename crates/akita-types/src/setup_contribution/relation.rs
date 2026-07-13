@@ -150,7 +150,7 @@ fn prepare_multi_group_setup_artifact_inputs<E: FieldCore>(
     AkitaError,
 > {
     lp.reject_multi_group_multi_chunk("prepare_setup_contribution_artifact")?;
-    lp.validate_root_opening_batch(opening_batch)?;
+    lp.validate_opening_batch(opening_batch)?;
 
     let order = opening_batch.root_group_order()?;
     if chunk_layout.chunks.len() != order.len() || chunk_layout.chunk_lengths.len() != order.len() {
@@ -162,7 +162,7 @@ fn prepare_multi_group_setup_artifact_inputs<E: FieldCore>(
     let mut d_physical_cols = 0usize;
     let mut groups = Vec::with_capacity(order.len());
     for (order_pos, &group_index) in order.iter().enumerate() {
-        let group_lp = lp.root_group_params(opening_batch, group_index)?;
+        let group_lp = lp.group_params(opening_batch, group_index)?;
         let group_layout = opening_batch.group_layout(group_index)?;
         let k_g = group_layout.num_polynomials();
         let num_blocks = group_lp.num_blocks();
@@ -189,9 +189,9 @@ fn prepare_multi_group_setup_artifact_inputs<E: FieldCore>(
                 AkitaError::InvalidSetup("multi-group B vector width overflow".to_string())
             })?;
         let a_range =
-            lp.root_a_row_range(opening_batch, group_index, relation_matrix_row_layout)?;
+            lp.a_row_range(opening_batch, group_index, relation_matrix_row_layout)?;
         let b_range =
-            lp.root_commitment_row_range(opening_batch, group_index, relation_matrix_row_layout)?;
+            lp.commitment_row_range(opening_batch, group_index, relation_matrix_row_layout)?;
         if a_range.len() != n_a || b_range.len() != n_b {
             return Err(AkitaError::InvalidSetup(
                 "multi-group row ranges do not match group matrix heights".to_string(),

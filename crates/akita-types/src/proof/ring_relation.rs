@@ -98,7 +98,7 @@ pub fn multi_group_ring_relation_segment_lengths<F: FieldCore + CanonicalField>(
         ));
     }
     opening_batch.check()?;
-    lp.validate_root_opening_batch(opening_batch)?;
+    lp.validate_opening_batch(opening_batch)?;
     let field_bits = lp.field_bits_for_cache();
     let num_groups = opening_batch.num_groups();
     let mut z_lens = Vec::with_capacity(num_groups);
@@ -139,7 +139,7 @@ pub fn multi_group_ring_relation_segment_lengths<F: FieldCore + CanonicalField>(
     };
 
     for group_index in opening_batch.root_group_order()? {
-        let group_params = lp.root_group_params(opening_batch, group_index)?;
+        let group_params = lp.group_params(opening_batch, group_index)?;
         let group = opening_batch.group_layout(group_index)?;
         push_group_lens(
             group.num_polynomials(),
@@ -1055,7 +1055,7 @@ mod tests {
     }
 
     #[test]
-    fn multi_group_segment_layout_total_matches_root_next_w_len() {
+    fn multi_group_segment_layout_total_matches_next_w_len() {
         let (lp, opening_batch) = multi_group_one_three_fixture();
         let relation_rhs_rows = lp
             .relation_matrix_row_count_for(
@@ -1125,8 +1125,8 @@ mod tests {
 
         let witness_ring_cols = z_total + e_total + t_total + r_len_total;
         let expected_w_len = lp
-            .root_next_w_len::<F>(&opening_batch, RelationMatrixRowLayout::WithDBlock)
-            .expect("root next w len");
+            .next_w_len::<F>(&opening_batch, RelationMatrixRowLayout::WithDBlock)
+            .expect("next w len");
         assert_eq!(witness_ring_cols * D, expected_w_len);
     }
 

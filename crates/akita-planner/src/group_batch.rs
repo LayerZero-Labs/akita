@@ -1,20 +1,19 @@
 //! Multi-group root-batch schedule planning.
 
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
-use akita_field::AkitaError;
+use akita_field::{AkitaError, Prime128OffsetA7F7};
 use akita_types::sis::{
-    compute_num_digits_full_field, decomposed_s_block_ring_count, decomposed_t_ring_count,
+    decomposed_s_block_ring_count, decomposed_t_ring_count,
     decomposed_w_ring_count, fold_witness_digit_plan, min_secure_rank, num_digits_open,
     num_digits_s_commit, rounded_up_collision_inf_norm, rounded_up_role_a_inf_norm, AjtaiKeyParams,
     FoldChallengeNorms, FoldWitnessLinfCapConfig, FoldWitnessNorms, SisTableKey,
 };
 use akita_types::{
-    active_setup_field_len, direct_witness_bytes, extension_opening_reduction_level_bytes,
-    level_proof_bytes, padded_setup_prefix_len, AkitaScheduleInputs, AkitaScheduleLookupKey,
-    CleartextWitnessShape, CommitmentRingDims, DecompositionParams, DirectStep, FoldStep,
-    LevelParams, PolynomialGroupLayout, PrecommittedGroupParams, PrecommittedLevelParams,
-    RelationMatrixRowLayout, Schedule, SetupContributionMode, Step, SETUP_OFFLOAD_D_SETUP,
-    SETUP_OFFLOAD_MIN_PREFIX_FIELD_LEN,
+    active_setup_field_len, extension_opening_reduction_level_bytes, level_proof_bytes,
+    padded_setup_prefix_len, AkitaScheduleInputs, AkitaScheduleLookupKey, CommitmentRingDims,
+    DecompositionParams, FoldStep, LevelParams, PolynomialGroupLayout, PrecommittedGroupParams,
+    PrecommittedLevelParams, RelationMatrixRowLayout, Schedule, SetupContributionMode, Step,
+    SETUP_OFFLOAD_D_SETUP, SETUP_OFFLOAD_MIN_PREFIX_FIELD_LEN,
 };
 
 use crate::schedule_params::{
@@ -234,70 +233,6 @@ pub(crate) struct MultiGroupRootCandidateCtx<'a> {
     pub(crate) precommitted_groups: &'a [PrecommittedLevelParams],
 }
 
-fn checked_score_add(lhs: u128, rhs: u128, context: &'static str) -> Result<u128, AkitaError> {
-    lhs.checked_add(rhs)
-        .ok_or_else(|| AkitaError::InvalidSetup(format!("{context} overflow")))
-}
-
-fn checked_score_mul(lhs: u128, rhs: usize, context: &'static str) -> Result<u128, AkitaError> {
-    lhs.checked_mul(rhs as u128)
-        .ok_or_else(|| AkitaError::InvalidSetup(format!("{context} overflow")))
-}
-
-fn root_direct_split_cost(
-    n_a: usize,
-    num_blocks: usize,
-    block_len: usize,
-    num_digits_commit: usize,
-    num_digits_open: usize,
-    num_digits_fold: usize,
-    context: &'static str,
-) -> Result<u128, AkitaError> {
-    // Match `optimal_m_r_split`: opening `(1 + n_a) * delta_open * 2^r`
-    // plus folded witness `delta_commit * delta_fold * 2^m`.
-    let e_hat_cost = checked_score_mul(num_digits_open as u128, num_blocks, context)?;
-    let t_hat_cost = checked_score_mul(num_digits_open as u128, n_a, context)?;
-    let t_hat_cost = checked_score_mul(t_hat_cost, num_blocks, context)?;
-    let opening_cost = checked_score_add(e_hat_cost, t_hat_cost, context)?;
-
-    let z_hat_cost = checked_score_mul(num_digits_commit as u128, num_digits_fold, context)?;
-    let z_hat_cost = checked_score_mul(z_hat_cost, block_len, context)?;
-
-    checked_score_add(opening_cost, z_hat_cost, context)
-}
-
-fn multi_group_root_direct_cost_score(
-    params: &LevelParams,
-    main_num_polys: usize,
-    field_bits: u32,
-) -> Result<u128, AkitaError> {
-    let main_num_digits_fold = params.num_digits_fold(main_num_polys, field_bits)?;
-    let mut total = root_direct_split_cost(
-        params.a_key.row_len(),
-        params.num_blocks,
-        params.block_len,
-        params.num_digits_commit,
-        params.num_digits_open,
-        main_num_digits_fold,
-        "multi-group main root-direct score",
-    )?;
-
-    for group in params.precommitted_group_iter() {
-        let group_cost = root_direct_split_cost(
-            group.a_key.row_len(),
-            group.num_blocks,
-            group.block_len,
-            group.num_digits_commit,
-            group.num_digits_open,
-            group.num_digits_fold_one,
-            "multi-group precommitted root-direct score",
-        )?;
-        total = checked_score_add(total, group_cost, "multi-group root-direct score total")?;
-    }
-
-    Ok(total)
-}
-
 pub(crate) fn multi_group_root_precommitted_groups(
     key: &AkitaScheduleLookupKey,
     policy: &PlannerPolicy,
@@ -325,88 +260,6 @@ pub(crate) fn multi_group_root_precommitted_groups(
     }
 
     Ok((precommitted_groups, precommitted_d_width))
-}
-
-pub(crate) fn multi_group_root_segment_rings(
-    num_polys: usize,
-    num_blocks: usize,
-    block_len: usize,
-    n_a: usize,
-    num_digits_commit: usize,
-    num_digits_open: usize,
-    num_digits_fold: usize,
-) -> Result<usize, AkitaError> {
-    let e_hat = num_polys
-        .checked_mul(num_blocks)
-        .and_then(|n| n.checked_mul(num_digits_open))
-        .ok_or_else(|| {
-            AkitaError::InvalidSetup("multi-group root e-hat witness overflow".to_string())
-        })?;
-    let t_hat = num_polys
-        .checked_mul(num_blocks)
-        .and_then(|n| n.checked_mul(n_a))
-        .and_then(|n| n.checked_mul(num_digits_open))
-        .ok_or_else(|| {
-            AkitaError::InvalidSetup("multi-group root t-hat witness overflow".to_string())
-        })?;
-    let z_hat = block_len
-        .checked_mul(num_digits_commit)
-        .and_then(|n| n.checked_mul(num_digits_fold))
-        .ok_or_else(|| {
-            AkitaError::InvalidSetup("multi-group root z-hat witness overflow".to_string())
-        })?;
-
-    e_hat
-        .checked_add(t_hat)
-        .and_then(|n| n.checked_add(z_hat))
-        .ok_or_else(|| AkitaError::InvalidSetup("multi-group root witness overflow".to_string()))
-}
-
-pub(crate) fn multi_group_root_next_w_len(
-    field_bits: u32,
-    params: &LevelParams,
-    main_num_polys: usize,
-    layout: RelationMatrixRowLayout,
-) -> Result<usize, AkitaError> {
-    let mut total = multi_group_root_segment_rings(
-        main_num_polys,
-        params.num_blocks,
-        params.block_len,
-        params.a_key.row_len(),
-        params.num_digits_commit,
-        params.num_digits_open,
-        params.num_digits_fold(main_num_polys, field_bits)?,
-    )?;
-    for group in &params.precommitted_groups {
-        let group_rings = multi_group_root_segment_rings(
-            group.layout.group.num_polynomials(),
-            group.num_blocks,
-            group.block_len,
-            group.a_key.row_len(),
-            group.num_digits_commit,
-            group.num_digits_open,
-            group.num_digits_fold_one,
-        )?;
-        total = total.checked_add(group_rings).ok_or_else(|| {
-            AkitaError::InvalidSetup("multi-group root witness overflow".to_string())
-        })?;
-    }
-
-    let r_rows =
-        params.relation_matrix_row_count_for(params.precommitted_group_count() + 1, layout)?;
-    let r_count = r_rows
-        .checked_mul(compute_num_digits_full_field(field_bits, params.log_basis))
-        .ok_or_else(|| {
-            AkitaError::InvalidSetup("multi-group root r-tail witness overflow".to_string())
-        })?;
-
-    let rings = total
-        .checked_add(r_count)
-        .ok_or_else(|| AkitaError::InvalidSetup("multi-group root witness overflow".to_string()))?;
-
-    rings.checked_mul(params.ring_dimension).ok_or_else(|| {
-        AkitaError::InvalidSetup("multi-group root next witness length overflow".to_string())
-    })
 }
 
 pub(crate) fn multi_group_root_main_level_params_candidate(
@@ -525,75 +378,6 @@ pub(crate) fn multi_group_root_main_level_params_candidate(
     Ok(Some(params))
 }
 
-fn compute_multi_group_root_direct_level_params(
-    key: &AkitaScheduleLookupKey,
-    policy: &PlannerPolicy,
-    ring_challenge_cfg: &SparseChallengeConfig,
-    fold_challenge_shape: TensorChallengeShape,
-) -> Result<Option<LevelParams>, AkitaError> {
-    key.validate()?;
-    let (precommitted_groups, precommitted_d_width) = multi_group_root_precommitted_groups(
-        key,
-        policy,
-        ring_challenge_cfg,
-        fold_challenge_shape,
-    )?;
-
-    let main_num_polys = key.final_group.num_polynomials();
-    let main_num_vars = key.final_group.num_vars();
-    let candidate_ctx = MultiGroupRootCandidateCtx {
-        policy,
-        ring_challenge_cfg,
-        fold_challenge_shape,
-        precommitted_d_width,
-        precommitted_groups: &precommitted_groups,
-    };
-    let mut best: Option<(u128, LevelParams)> = None;
-    let alpha = (policy.ring_dimension as u32).trailing_zeros() as usize;
-    let candidates = if main_num_vars <= alpha {
-        vec![(0, 0)]
-    } else {
-        let reduced_vars = main_num_vars - alpha;
-        if reduced_vars <= 2 || reduced_vars >= 53 {
-            let r_vars = reduced_vars / 2;
-            vec![(reduced_vars - r_vars, r_vars)]
-        } else {
-            (1..reduced_vars)
-                .rev()
-                .map(|r_vars| (reduced_vars - r_vars, r_vars))
-                .collect()
-        }
-    };
-    let (min_log_basis, max_log_basis) = policy.basis_range;
-    for candidate_log_basis in min_log_basis..=max_log_basis {
-        for &(m_vars, r_vars) in &candidates {
-            let Some(candidate) = multi_group_root_main_level_params_candidate(
-                &candidate_ctx,
-                main_num_polys,
-                candidate_log_basis,
-                m_vars,
-                r_vars,
-            )?
-            else {
-                continue;
-            };
-            let score = multi_group_root_direct_cost_score(
-                &candidate,
-                main_num_polys,
-                policy.decomposition.field_bits(),
-            )?;
-            if best
-                .as_ref()
-                .is_none_or(|(best_score, _)| score < *best_score)
-            {
-                best = Some((score, candidate));
-            }
-        }
-    }
-
-    Ok(best.map(|(_, params)| params))
-}
-
 /// Build the phase-1 multi-group-root schedule from the full multi-group key.
 pub fn find_group_batch_schedule(
     key: &AkitaScheduleLookupKey,
@@ -602,12 +386,14 @@ pub fn find_group_batch_schedule(
     fold_challenge_shape_at_level: impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
 ) -> Result<Schedule, AkitaError> {
     key.validate()?;
-    if key.precommitteds.is_empty()
-        && (!policy.recursive_setup_planning || policy.decomposition.log_commit_bound != 1)
-    {
+    if key.precommitteds.is_empty() {
+        // Genuine multi-group roots only. Empty-precommit keys are scalar and
+        // must not enter recursion-enabled grouped planning.
+        let mut scalar_policy = *policy;
+        scalar_policy.recursive_setup_planning = false;
         return find_schedule(
             key.final_group,
-            policy,
+            &scalar_policy,
             ring_challenge_config,
             fold_challenge_shape_at_level,
         );
@@ -631,38 +417,14 @@ pub fn find_group_batch_schedule(
     let root_inputs = AkitaScheduleInputs::for_root(key.final_group)?;
     let root_fold_shape = fold_challenge_shape_at_level(root_inputs);
     let root_current_w_len = root_inputs.current_w_len;
-    let direct_current_w_len = key.opening_layout()?.root_direct_witness_len()?;
-    let mut best: Option<(usize, Vec<Step>)> = if let Some(params) =
-        compute_multi_group_root_direct_level_params(
-            key,
-            policy,
-            &ring_challenge_cfg,
-            root_fold_shape,
-        )? {
-        let witness_shape = CleartextWitnessShape::FieldElements(direct_current_w_len);
-        let direct_bytes = direct_witness_bytes(field_bits, &witness_shape);
-        Some((
-            direct_bytes,
-            vec![Step::Direct(DirectStep {
-                current_w_len: direct_current_w_len,
-                witness_shape,
-                direct_bytes,
-                params: Some(params),
-            })],
-        ))
-    } else {
-        None
-    };
+    let mut best: Option<(usize, Vec<Step>)> = None;
 
     let alpha = (policy.ring_dimension as u32).trailing_zeros() as usize;
     let reduced_vars = key.final_group.num_vars().saturating_sub(alpha);
     if reduced_vars == 0 {
-        let Some((total_bytes, steps)) = best else {
-            return Err(AkitaError::InvalidSetup(
-                "main multi-group root is not committable".to_string(),
-            ));
-        };
-        return Ok(Schedule { steps, total_bytes });
+        return Err(AkitaError::InvalidSetup(
+            "multi-group root must fold; root direct is unsupported".to_string(),
+        ));
     }
 
     let (precommitted_groups, precommitted_d_width) =
@@ -705,18 +467,13 @@ pub fn find_group_batch_schedule(
             else {
                 continue;
             };
-            let next_w_len = multi_group_root_next_w_len(
-                field_bits,
-                &candidate_params,
-                key.final_group.num_polynomials(),
+            let opening_batch = key.opening_layout()?;
+            let next_w_len = candidate_params.next_w_len::<Prime128OffsetA7F7>(
+                &opening_batch,
                 RelationMatrixRowLayout::WithDBlock,
             )?;
-            let next_w_len_terminal = multi_group_root_next_w_len(
-                field_bits,
-                &candidate_params,
-                key.final_group.num_polynomials(),
-                RelationMatrixRowLayout::WithoutDBlock,
-            )?;
+            // Grouped terminal folds are rejected; suffix folds are scalar.
+            let next_w_len_terminal = next_w_len;
             if next_w_len
                 .checked_mul(candidate_log_basis as usize)
                 .ok_or_else(|| {
@@ -729,13 +486,12 @@ pub fn find_group_batch_schedule(
                 continue;
             }
 
-            let opening_batch = key.opening_layout()?;
             let natural_len =
                 active_setup_field_len(&candidate_params, &opening_batch, SETUP_OFFLOAD_D_SETUP)?;
             let n_prefix = padded_setup_prefix_len(natural_len);
-            let must_recurse =
-                policy.recursive_setup_planning && n_prefix > SETUP_OFFLOAD_MIN_PREFIX_FIELD_LEN;
-            let child_suffix = derive_optimal_suffix_schedule(
+            let recursion_threshold_met = policy.recursive_setup_planning
+                && n_prefix > SETUP_OFFLOAD_MIN_PREFIX_FIELD_LEN;
+            let child_suffix_no_prefix = derive_optimal_suffix_schedule(
                 &suffix_ctx,
                 &mut memo,
                 SuffixState {
@@ -743,7 +499,7 @@ pub fn find_group_batch_schedule(
                     current_witness_len: next_w_len,
                     current_witness_len_terminal: next_w_len_terminal,
                     current_lb: candidate_log_basis,
-                    incoming_setup_prefix: must_recurse.then_some(natural_len),
+                    incoming_setup_prefix: None,
                 },
                 0,
             )?;
@@ -757,68 +513,49 @@ pub fn find_group_batch_schedule(
                 continue;
             };
 
-            if let Some(direct_suffix) = child_suffix.best_direct {
-                let order = opening_batch.root_group_order()?;
-                let mut group_shapes: Vec<(
-                    &dyn akita_types::LevelParamsLike,
-                    usize,
-                    usize,
-                    usize,
-                )> = Vec::with_capacity(order.len());
-                for &group_index in &order {
-                    let group_lp =
-                        candidate_params.root_group_params(&opening_batch, group_index)?;
-                    let group_polys = opening_batch.group_layout(group_index)?.num_polynomials();
-                    group_shapes.push((group_lp, group_polys, group_polys, 1));
-                }
-                let witness_shape = akita_types::segment_typed_witness_shape_from_groups(
-                    &candidate_params,
-                    field_bits,
-                    group_shapes,
-                    opening_batch.num_groups(),
-                )?;
-                let direct_bytes = direct_witness_bytes(field_bits, &witness_shape);
-                let root_proof_size = level_proof_bytes(
-                    field_bits,
-                    challenge_field_bits,
-                    &candidate_params,
-                    None,
-                    next_w_len_terminal,
-                    1,
-                    RelationMatrixRowLayout::WithoutDBlock,
-                ) + eor_bytes;
-                let total = root_proof_size + direct_bytes;
-                if best
-                    .as_ref()
-                    .is_none_or(|(best_total, _)| total < *best_total)
-                {
-                    best = Some((
-                        total,
-                        vec![
-                            Step::Fold(FoldStep {
-                                params: candidate_params.clone(),
-                                current_w_len: root_current_w_len,
-                                next_w_len: direct_suffix.current_w_len,
-                                level_bytes: root_proof_size,
-                            }),
-                            Step::Direct(DirectStep {
-                                current_w_len: direct_suffix.current_w_len,
-                                witness_shape,
-                                direct_bytes,
-                                params: None,
-                            }),
-                        ],
-                    ));
-                }
-            }
+            for suffix_fold in child_suffix_no_prefix.best_fold_per_lb.values() {
+                let child_is_terminal =
+                    matches!(suffix_fold.steps.get(1), Some(Step::Direct(_)));
+                let (fold_mode, suffix_fold) = if child_is_terminal {
+                    (
+                        SetupContributionMode::Direct,
+                        suffix_fold.clone(),
+                    )
+                } else if recursion_threshold_met {
+                    let prefixed_child_suffix = derive_optimal_suffix_schedule(
+                        &suffix_ctx,
+                        &mut memo,
+                        SuffixState {
+                            level: 1,
+                            current_witness_len: next_w_len,
+                            current_witness_len_terminal: next_w_len_terminal,
+                            current_lb: candidate_log_basis,
+                            incoming_setup_prefix: Some(natural_len),
+                        },
+                        0,
+                    )?;
+                    let child_lb = suffix_fold.first_fold_params.log_basis;
+                    let Some(prefixed_suffix_fold) =
+                        prefixed_child_suffix.best_fold_per_lb.get(&child_lb)
+                    else {
+                        continue;
+                    };
+                    if matches!(prefixed_suffix_fold.steps.get(1), Some(Step::Direct(_))) {
+                        continue;
+                    }
+                    (
+                        SetupContributionMode::Recursive,
+                        prefixed_suffix_fold.clone(),
+                    )
+                } else {
+                    (
+                        SetupContributionMode::Direct,
+                        suffix_fold.clone(),
+                    )
+                };
 
-            let mut fold_candidate_params = candidate_params.clone();
-            fold_candidate_params.setup_contribution_mode = if must_recurse {
-                SetupContributionMode::Recursive
-            } else {
-                SetupContributionMode::Direct
-            };
-            for suffix_fold in child_suffix.best_fold_per_lb.values() {
+                let mut fold_candidate_params = candidate_params.clone();
+                fold_candidate_params.setup_contribution_mode = fold_mode;
                 let root_proof_size = level_proof_bytes(
                     field_bits,
                     challenge_field_bits,
@@ -835,7 +572,7 @@ pub fn find_group_batch_schedule(
                 {
                     let mut steps = Vec::with_capacity(1 + suffix_fold.steps.len());
                     steps.push(Step::Fold(FoldStep {
-                        params: fold_candidate_params.clone(),
+                        params: fold_candidate_params,
                         current_w_len: root_current_w_len,
                         next_w_len,
                         level_bytes: root_proof_size,
@@ -970,7 +707,7 @@ mod tests {
 
         let runtime_next_w_len = root
             .params
-            .root_next_w_len::<Prime128OffsetA7F7>(
+            .next_w_len::<Prime128OffsetA7F7>(
                 &opening_batch,
                 RelationMatrixRowLayout::WithDBlock,
             )
@@ -1043,18 +780,20 @@ mod tests {
     }
 
     #[test]
-    fn recursive_policy_rejects_scalar_fallback_from_group_batch() {
+    fn recursive_policy_empty_precommit_dense_still_uses_scalar_planner() {
         let mut policy = flat_policy();
         policy.decomposition.log_commit_bound = 8;
         policy.recursive_setup_planning = true;
         let key = AkitaScheduleLookupKey::single(PolynomialGroupLayout::new(12, 1));
 
-        let err = find_group_batch_schedule(&key, &policy, ring_challenge_config, fold_shape)
-            .expect_err("recursive setup planning cannot route through scalar planner");
-
-        assert!(err
-            .to_string()
-            .contains("requires the grouped-batch scheduler"));
+        let schedule = find_group_batch_schedule(&key, &policy, ring_challenge_config, fold_shape)
+            .expect("empty-precommit recursive keys must still use the scalar planner");
+        for fold in schedule.fold_steps() {
+            assert_eq!(
+                fold.params.setup_contribution_mode,
+                SetupContributionMode::Direct
+            );
+        }
     }
 
     #[test]
@@ -1070,12 +809,11 @@ mod tests {
 
         let schedule = find_group_batch_schedule(&key, &policy, ring_challenge_config, fold_shape)
             .expect("multi-group schedule");
-        let params = match schedule.steps.first().expect("multi-group step") {
-            Step::Direct(direct) => direct.params.as_ref().expect("multi-group root params"),
-            Step::Fold(fold) => &fold.params,
+        let Step::Fold(root) = schedule.steps.first().expect("multi-group root step") else {
+            panic!("expected multi-group root fold");
         };
 
-        assert_eq!(params.log_basis, 4);
+        assert_eq!(root.params.log_basis, 4);
     }
 
     #[test]
@@ -1145,7 +883,7 @@ mod tests {
     }
 
     #[test]
-    fn recursive_policy_allows_group_batch_without_precommitted_groups() {
+    fn recursive_policy_delegates_empty_precommit_keys_to_scalar_planner() {
         let mut policy = flat_policy();
         policy.basis_range = (4, 4);
         policy.recursive_setup_planning = true;
@@ -1154,8 +892,16 @@ mod tests {
             precommitteds: Vec::new(),
         };
 
-        find_group_batch_schedule(&key, &policy, ring_challenge_config, fold_shape)
-            .expect("recursive grouped-batch schedule");
+        let schedule = find_group_batch_schedule(&key, &policy, ring_challenge_config, fold_shape)
+            .expect("empty-precommit keys must use the scalar planner");
+        for fold in schedule.fold_steps() {
+            assert_eq!(
+                fold.params.setup_contribution_mode,
+                SetupContributionMode::Direct
+            );
+            assert!(fold.params.setup_prefix.is_none());
+            assert!(fold.params.precommitted_groups.is_empty());
+        }
     }
 
     #[test]
@@ -1185,12 +931,11 @@ mod tests {
 
         let schedule = find_group_batch_schedule(&key, &policy, ring_challenge_config, fold_shape)
             .expect("multi-group schedule should allow larger precommitted groups");
-        let params = match schedule.steps.first().expect("multi-group step") {
-            Step::Direct(direct) => direct.params.as_ref().expect("multi-group root params"),
-            Step::Fold(fold) => &fold.params,
+        let Step::Fold(root) = schedule.steps.first().expect("multi-group root step") else {
+            panic!("expected multi-group root fold");
         };
 
-        assert_eq!(params.precommitted_groups[0].layout.group, pre_key);
+        assert_eq!(root.params.precommitted_groups[0].layout.group, pre_key);
     }
 
     #[test]
@@ -1206,5 +951,119 @@ mod tests {
             .expect_err("dense multi-group root schedules are phase-1 unsupported");
 
         assert!(matches!(err, AkitaError::InvalidSetup(_)));
+    }
+
+    #[test]
+    fn suffix_dp_omits_best_direct_when_incoming_setup_prefix_present() {
+        let mut policy = flat_policy();
+        policy.recursive_setup_planning = true;
+        policy.basis_range = (4, 4);
+        let key = PolynomialGroupLayout::new(24, 1);
+        let ring_cfg = ring_challenge_config(policy.ring_dimension).expect("ring cfg");
+        let ctx = SuffixCtx {
+            policy: &policy,
+            ring_challenge_cfg: &ring_cfg,
+            num_vars: key.num_vars(),
+            key,
+        };
+        let mut memo = ScheduleMemo::default();
+        let suffix = derive_optimal_suffix_schedule(
+            &ctx,
+            &mut memo,
+            SuffixState {
+                level: 1,
+                current_witness_len: 1 << 18,
+                current_witness_len_terminal: 1 << 16,
+                current_lb: 4,
+                incoming_setup_prefix: Some(1 << 12),
+            },
+            0,
+        )
+        .expect("suffix with incoming prefix");
+        assert!(suffix.best_direct.is_none());
+    }
+
+    #[test]
+    fn recursive_policy_terminal_child_stays_direct_when_threshold_met() {
+        let mut policy = flat_policy();
+        policy.basis_range = (4, 4);
+        policy.recursive_setup_planning = true;
+        policy.decomposition.log_open_bound = Some(128);
+        let pre_key = PolynomialGroupLayout::new(20, 1);
+        let key = AkitaScheduleLookupKey {
+            final_group: PolynomialGroupLayout::new(24, 1),
+            precommitteds: vec![precommitted_from_policy(pre_key, &policy)],
+        };
+
+        let schedule = find_group_batch_schedule(&key, &policy, ring_challenge_config, fold_shape)
+            .expect("schedule with terminal child");
+        let folds = schedule
+            .steps
+            .iter()
+            .filter_map(|step| match step {
+                Step::Fold(fold) => Some(fold),
+                Step::Direct(_) => None,
+            })
+            .collect::<Vec<_>>();
+        if folds.len() == 1 {
+            assert_eq!(
+                folds[0].params.setup_contribution_mode,
+                SetupContributionMode::Direct
+            );
+            return;
+        }
+        let terminal_fold = folds.last().expect("terminal fold");
+        assert_eq!(
+            terminal_fold.params.setup_contribution_mode,
+            SetupContributionMode::Direct
+        );
+        assert!(!terminal_fold.params.has_precommitted_groups());
+        let predecessor = folds[folds.len() - 2];
+        if matches!(
+            schedule.steps.get(folds.len()),
+            Some(Step::Direct(_))
+        ) {
+            // The fold immediately before Direct must remain Direct-mode when
+            // its child is the terminal fold.
+            if folds.len() == 2 {
+                assert_eq!(
+                    predecessor.params.setup_contribution_mode,
+                    SetupContributionMode::Direct
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn recursive_fold_successor_carries_only_setup_prefix_group() {
+        let mut policy = flat_policy();
+        policy.basis_range = (4, 4);
+        policy.recursive_setup_planning = true;
+        let pre_key = PolynomialGroupLayout::new(20, 1);
+        let key = AkitaScheduleLookupKey {
+            final_group: PolynomialGroupLayout::new(40, 2),
+            precommitteds: vec![precommitted_from_policy(pre_key, &policy)],
+        };
+
+        let schedule = find_group_batch_schedule(&key, &policy, ring_challenge_config, fold_shape)
+            .expect("recursive multi-group schedule");
+        for (index, step) in schedule.steps.iter().enumerate() {
+            let Step::Fold(fold) = step else {
+                continue;
+            };
+            if fold.params.setup_contribution_mode != SetupContributionMode::Recursive {
+                continue;
+            }
+            let Step::Fold(successor) = schedule
+                .steps
+                .get(index + 1)
+                .expect("recursive fold must have a successor")
+            else {
+                panic!("recursive fold successor must be another fold");
+            };
+            assert!(successor.params.setup_prefix.is_some());
+            assert!(successor.params.precommitted_groups.is_empty());
+            assert_eq!(successor.params.precommitted_group_count(), 1);
+        }
     }
 }

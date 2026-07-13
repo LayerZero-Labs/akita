@@ -8,18 +8,18 @@
 //! transitions and proof-byte totals.
 
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
-use akita_field::AkitaError;
+use akita_field::{AkitaError, Prime128OffsetA7F7};
 use akita_types::{
     direct_witness_bytes, extension_opening_reduction_level_bytes, level_proof_bytes,
     segment_typed_witness_shape_from_groups, AkitaScheduleInputs, AkitaScheduleLookupKey,
     CleartextWitnessShape, DirectStep, FoldStep, LevelParams, PolynomialGroupLayout,
-    PrecommittedLevelParams, RelationMatrixRowLayout, Schedule, Step,
+    PrecommittedLevelParams, RelationMatrixRowLayout, Schedule, SetupContributionMode, Step,
 };
 
 use crate::generated::{
     validate_entry_key, GeneratedFoldStep, GeneratedScheduleTableEntry, GeneratedStep,
 };
-use crate::group_batch::{multi_group_root_next_w_len, multi_group_root_precommitted_groups};
+use crate::group_batch::multi_group_root_precommitted_groups;
 use crate::schedule_params::planned_next_witness_len;
 use crate::PlannerPolicy;
 
@@ -38,6 +38,7 @@ pub(crate) fn walk_generated_schedule_entry(
     key.validate()?;
     validate_entry_key(entry, key)?;
     entry.validate()?;
+    reject_scalar_recursive_catalog_row(entry, key)?;
 
     if key.precommitteds.is_empty() {
         return walk_scalar_generated_schedule_entry(
@@ -56,6 +57,27 @@ pub(crate) fn walk_generated_schedule_entry(
         ring_challenge_config,
         fold_challenge_shape_at_level,
     )
+}
+
+fn reject_scalar_recursive_catalog_row(
+    entry: &GeneratedScheduleTableEntry,
+    key: &AkitaScheduleLookupKey,
+) -> Result<(), AkitaError> {
+    if !key.precommitteds.is_empty() {
+        return Ok(());
+    }
+    for step in entry.steps {
+        if let GeneratedStep::FoldWithSetupMetadata(meta) = step {
+            if meta.setup_contribution_mode == SetupContributionMode::Recursive {
+                return Err(AkitaError::InvalidSetup(
+                    "scalar lookup keys (empty precommitteds) do not support recursive setup \
+                     contribution; grouped-batch scheduling requires genuine precommits"
+                        .to_string(),
+                ));
+            }
+        }
+    }
+    Ok(())
 }
 
 fn walk_scalar_generated_schedule_entry(
@@ -114,6 +136,11 @@ fn walk_scalar_generated_schedule_entry(
                 } else {
                     1
                 };
+                if is_terminal && lp.has_precommitted_groups() {
+                    return Err(AkitaError::InvalidSetup(
+                        "grouped terminal fold must be followed by another fold".to_string(),
+                    ));
+                }
                 let (next_w_len, next_lp, layout) = if is_terminal {
                     let len = planned_next_witness_len(
                         field_bits,
@@ -361,31 +388,27 @@ fn walk_multi_group_generated_schedule_entry(
                     )?
                 };
 
+                if is_terminal && lp.has_precommitted_groups() {
+                    return Err(AkitaError::InvalidSetup(
+                        "grouped terminal fold must be followed by another fold".to_string(),
+                    ));
+                }
+
                 let (next_w_len, next_lp, layout) = if is_terminal {
-                    let len = if fold_level == 0 {
-                        multi_group_root_next_w_len(
-                            field_bits,
-                            &lp,
-                            key.final_group.num_polynomials(),
-                            RelationMatrixRowLayout::WithoutDBlock,
-                        )?
-                    } else {
-                        planned_next_witness_len(
-                            field_bits,
-                            &lp,
-                            1,
-                            RelationMatrixRowLayout::WithoutDBlock,
-                            lp.witness_chunk.num_chunks,
-                        )?
-                    };
+                    let len = planned_next_witness_len(
+                        field_bits,
+                        &lp,
+                        1,
+                        RelationMatrixRowLayout::WithoutDBlock,
+                        lp.witness_chunk.num_chunks,
+                    )?;
                     terminal_witness_field_len = Some(len);
                     (len, None, RelationMatrixRowLayout::WithoutDBlock)
                 } else {
                     let len = if fold_level == 0 {
-                        multi_group_root_next_w_len(
-                            field_bits,
-                            &lp,
-                            key.final_group.num_polynomials(),
+                        let opening_batch = key.opening_layout()?;
+                        lp.next_w_len::<Prime128OffsetA7F7>(
+                            &opening_batch,
                             RelationMatrixRowLayout::WithDBlock,
                         )?
                     } else {
@@ -456,37 +479,13 @@ fn walk_multi_group_generated_schedule_entry(
                 fold_level += 1;
                 current_w_len = next_w_len;
             }
-            GeneratedStep::Direct(direct) => {
-                let (witness_shape, direct_current_w_len, params) = if fold_level == 0 {
-                    let direct_current_w_len = key.opening_layout()?.root_direct_witness_len()?;
-                    let fold_shape = root_fold_shape;
-                    let params = match direct.commit {
-                        Some(commit) => {
-                            let (precommitted_groups, precommitted_d_width) =
-                                multi_group_root_precommitted_groups(
-                                    key,
-                                    policy,
-                                    &ring_challenge_cfg,
-                                    fold_shape,
-                                )?;
-                            validate_expanded_precommitted_groups(key, &precommitted_groups)?;
-                            Some(commit.expand_to_multi_group_root_level_params(
-                                policy,
-                                ring_challenge_config,
-                                fold_shape,
-                                key.final_group.num_polynomials(),
-                                precommitted_groups,
-                                precommitted_d_width,
-                            )?)
-                        }
-                        None => None,
-                    };
-                    (
-                        CleartextWitnessShape::FieldElements(direct_current_w_len),
-                        direct_current_w_len,
-                        params,
-                    )
-                } else {
+            GeneratedStep::Direct(_direct) => {
+                if fold_level == 0 {
+                    return Err(AkitaError::InvalidSetup(
+                        "multi-group root direct schedule is not supported".to_string(),
+                    ));
+                }
+                let (witness_shape, direct_current_w_len, params) = {
                     let len = terminal_witness_field_len.ok_or_else(|| {
                         AkitaError::InvalidSetup(
                             "terminal direct step missing precomputed witness length".to_string(),
@@ -497,37 +496,12 @@ fn walk_multi_group_generated_schedule_entry(
                             "terminal direct step missing predecessor fold params".to_string(),
                         )
                     })?;
-                    let witness_shape = if fold_level == 1 && terminal_lp.has_precommitted_groups()
-                    {
-                        let opening_batch = key.opening_layout()?;
-                        let order = opening_batch.root_group_order()?;
-                        let mut group_shapes: Vec<(
-                            &dyn akita_types::LevelParamsLike,
-                            usize,
-                            usize,
-                            usize,
-                        )> = Vec::with_capacity(order.len());
-                        for &group_index in &order {
-                            let group_lp =
-                                terminal_lp.root_group_params(&opening_batch, group_index)?;
-                            let group_polys =
-                                opening_batch.group_layout(group_index)?.num_polynomials();
-                            group_shapes.push((group_lp, group_polys, group_polys, 1));
-                        }
-                        segment_typed_witness_shape_from_groups(
-                            terminal_lp,
-                            field_bits,
-                            group_shapes,
-                            opening_batch.num_groups(),
-                        )?
-                    } else {
-                        segment_typed_witness_shape_from_groups(
-                            terminal_lp,
-                            field_bits,
-                            [(terminal_lp as &dyn akita_types::LevelParamsLike, 1, 1, 1)],
-                            1,
-                        )?
-                    };
+                    let witness_shape = segment_typed_witness_shape_from_groups(
+                        terminal_lp,
+                        field_bits,
+                        [(terminal_lp as &dyn akita_types::LevelParamsLike, 1, 1, 1)],
+                        1,
+                    )?;
                     (witness_shape, len, None)
                 };
                 if direct_current_w_len == 0 {

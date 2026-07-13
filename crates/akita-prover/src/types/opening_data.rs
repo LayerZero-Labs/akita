@@ -224,7 +224,7 @@ impl<'a, PointF: Clone, P, CommitF: FieldCore> ProverOpeningData<'a, PointF, P, 
 
         let mut group_order = (0..opening_batch.num_groups())
             .map(|group_index| {
-                let range = params.root_commitment_row_range(
+                let range = params.commitment_row_range(
                     &opening_batch,
                     group_index,
                     RelationMatrixRowLayout::WithDBlock,

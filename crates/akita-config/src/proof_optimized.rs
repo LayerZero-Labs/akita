@@ -106,7 +106,7 @@ fn proof_optimized_max_setup_matrix_size_uncached<Cfg: CommitmentConfig>(
             }
         }
     }
-    Ok(akita_planner::certify_setup_capacity(
+    let mut envelope = akita_planner::certify_setup_capacity(
         &crate::policy_of::<Cfg>(),
         max_num_vars,
         max_num_batched_polys,
@@ -114,7 +114,14 @@ fn proof_optimized_max_setup_matrix_size_uncached<Cfg: CommitmentConfig>(
         Cfg::ring_challenge_config,
         Cfg::fold_challenge_shape_at_level,
     )?
-    .envelope)
+    .envelope;
+    for slot_id in crate::setup_prefix_slots::setup_prefix_slot_ids_for_capacity::<Cfg>(
+        max_num_vars,
+        max_num_batched_polys,
+    )? {
+        envelope.include_setup_prefix_slot(&slot_id)?;
+    }
+    Ok(envelope)
 }
 
 #[cfg(test)]
@@ -215,7 +222,7 @@ fn root_runtime_matrix_len_for_opening_batch(
     lp: &LevelParams,
     layout: &OpeningClaimsLayout,
 ) -> Result<usize, AkitaError> {
-    let final_group_index = lp.validate_root_opening_batch(layout)?;
+    let final_group_index = lp.validate_opening_batch(layout)?;
     let final_group = layout.group_layout(final_group_index)?;
     let (mut max_a_len, mut max_b_len, mut d_width) = group_setup_footprint(
         lp.a_key.row_len(),

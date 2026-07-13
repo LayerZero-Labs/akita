@@ -91,7 +91,7 @@ where
         |D| {
             let mut prepared_points = Vec::with_capacity(opening_batch.num_groups());
             for group_index in 0..opening_batch.num_groups() {
-                let group_lp = lp.root_group_params(opening_batch, group_index)?;
+                let group_lp = lp.group_params(opening_batch, group_index)?;
                 let target_len = alpha_bits
                     .checked_add(group_lp.m_vars())
                     .and_then(|n| n.checked_add(group_lp.r_vars()))
@@ -159,7 +159,7 @@ fn suffix_commitment_rows<F: FieldCore>(
     let commitment_ring_dim = lp.role_dims().d_a();
     let mut group_order = (0..opening_batch.num_groups())
         .map(|group_index| {
-            let range = lp.root_commitment_row_range(
+            let range = lp.commitment_row_range(
                 opening_batch,
                 group_index,
                 RelationMatrixRowLayout::WithDBlock,

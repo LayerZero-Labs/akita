@@ -816,20 +816,20 @@ impl LevelParams {
             .ok_or_else(Self::relation_matrix_row_overflow)
     }
 
-    /// Number of commitment groups at a multi-group root (`precommitted + final`).
+    /// Number of commitment groups in this opening batch (`precommitted + final`).
     #[inline]
-    fn root_group_count(&self) -> usize {
+    fn group_count(&self) -> usize {
         self.precommitted_group_count() + 1
     }
 
-    pub fn validate_root_opening_batch(
+    pub fn validate_opening_batch(
         &self,
         opening_batch: &OpeningClaimsLayout,
     ) -> Result<usize, AkitaError> {
         opening_batch.check()?;
-        if opening_batch.num_groups() != self.root_group_count() {
+        if opening_batch.num_groups() != self.group_count() {
             return Err(AkitaError::InvalidSetup(
-                "root opening group count does not match level params".to_string(),
+                "opening group count does not match level params".to_string(),
             ));
         }
         for group_index in 0..self.precommitted_group_count() {
@@ -839,20 +839,20 @@ impl LevelParams {
             let group_layout = opening_batch.group_layout(group_index)?;
             if *group_layout != group_params.layout.group {
                 return Err(AkitaError::InvalidSetup(
-                    "precommitted root group layout does not match level params".to_string(),
+                    "precommitted group layout does not match level params".to_string(),
                 ));
             }
         }
         opening_batch.root_final_group_index()
     }
 
-    /// Sent commitment row count for one root commitment group.
-    pub fn root_group_commitment_rows(
+    /// Sent commitment row count for one opening group.
+    pub fn group_commitment_rows(
         &self,
         opening_batch: &OpeningClaimsLayout,
         group_index: usize,
     ) -> Result<usize, AkitaError> {
-        let final_group_index = self.validate_root_opening_batch(opening_batch)?;
+        let final_group_index = self.validate_opening_batch(opening_batch)?;
         if group_index == final_group_index {
             return Ok(self.b_key.row_len());
         }
@@ -861,13 +861,13 @@ impl LevelParams {
             .ok_or(AkitaError::InvalidProof)
     }
 
-    /// Group-local parameter view for root folded opening work.
-    pub fn root_group_params<'a>(
+    /// Group-local parameter view for folded opening work.
+    pub fn group_params<'a>(
         &'a self,
         opening_batch: &OpeningClaimsLayout,
         group_index: usize,
     ) -> Result<&'a dyn LevelParamsLike, AkitaError> {
-        let final_group_index = self.validate_root_opening_batch(opening_batch)?;
+        let final_group_index = self.validate_opening_batch(opening_batch)?;
         if group_index == final_group_index {
             return Ok(self);
         }
@@ -881,9 +881,9 @@ impl LevelParams {
         num_commitments: usize,
         layout: RelationMatrixRowLayout,
     ) -> Result<usize, AkitaError> {
-        if num_commitments != self.root_group_count() {
+        if num_commitments != self.group_count() {
             return Err(AkitaError::InvalidSetup(
-                "multi-group root relation rows require the real root group count".to_string(),
+                "multi-group relation rows require the real group count".to_string(),
             ));
         }
 
@@ -909,7 +909,7 @@ impl LevelParams {
         opening_batch: &OpeningClaimsLayout,
         group_index: usize,
     ) -> Result<usize, AkitaError> {
-        let final_group_index = self.validate_root_opening_batch(opening_batch)?;
+        let final_group_index = self.validate_opening_batch(opening_batch)?;
         if group_index > final_group_index {
             return Err(AkitaError::InvalidProof);
         }
@@ -965,14 +965,14 @@ impl LevelParams {
         }
     }
 
-    /// M-row range for one root commitment group.
-    pub fn root_commitment_row_range(
+    /// M-row range for one commitment group.
+    pub fn commitment_row_range(
         &self,
         opening_batch: &OpeningClaimsLayout,
         group_index: usize,
         layout: RelationMatrixRowLayout,
     ) -> Result<std::ops::Range<usize>, AkitaError> {
-        let final_group_index = self.validate_root_opening_batch(opening_batch)?;
+        let final_group_index = self.validate_opening_batch(opening_batch)?;
         let a_start = self.group_a_start(opening_batch, group_index)?;
         let n_a = self.group_a_rows(group_index, final_group_index)?;
         let n_b = self.group_b_rows(group_index, final_group_index)?;
@@ -986,14 +986,14 @@ impl LevelParams {
         Ok(start..end)
     }
 
-    /// M-row range for one root A block.
-    pub fn root_a_row_range(
+    /// M-row range for one opening group's A block.
+    pub fn a_row_range(
         &self,
         opening_batch: &OpeningClaimsLayout,
         group_index: usize,
         layout: RelationMatrixRowLayout,
     ) -> Result<std::ops::Range<usize>, AkitaError> {
-        let final_group_index = self.validate_root_opening_batch(opening_batch)?;
+        let final_group_index = self.validate_opening_batch(opening_batch)?;
         let start = self.group_a_start(opening_batch, group_index)?;
         let rows = self.group_a_rows(group_index, final_group_index)?;
         let end = start
@@ -1003,7 +1003,7 @@ impl LevelParams {
         Ok(start..end)
     }
 
-    fn root_segment_rings(
+    fn segment_rings(
         num_polys: usize,
         num_blocks: usize,
         block_len: usize,
@@ -1015,25 +1015,25 @@ impl LevelParams {
         let e_hat = num_polys
             .checked_mul(num_blocks)
             .and_then(|n| n.checked_mul(num_digits_open))
-            .ok_or_else(|| AkitaError::InvalidSetup("root e-hat witness overflow".to_string()))?;
+            .ok_or_else(|| AkitaError::InvalidSetup("e-hat witness overflow".to_string()))?;
         let t_hat = num_polys
             .checked_mul(num_blocks)
             .and_then(|n| n.checked_mul(n_a))
             .and_then(|n| n.checked_mul(num_digits_open))
-            .ok_or_else(|| AkitaError::InvalidSetup("root t-hat witness overflow".to_string()))?;
+            .ok_or_else(|| AkitaError::InvalidSetup("t-hat witness overflow".to_string()))?;
         let z_hat = block_len
             .checked_mul(num_digits_commit)
             .and_then(|n| n.checked_mul(num_digits_fold))
-            .ok_or_else(|| AkitaError::InvalidSetup("root z-hat witness overflow".to_string()))?;
+            .ok_or_else(|| AkitaError::InvalidSetup("z-hat witness overflow".to_string()))?;
 
         e_hat
             .checked_add(t_hat)
             .and_then(|n| n.checked_add(z_hat))
-            .ok_or_else(|| AkitaError::InvalidSetup("root witness segment overflow".to_string()))
+            .ok_or_else(|| AkitaError::InvalidSetup("witness segment overflow".to_string()))
     }
 
-    /// Root next-witness length in field elements for scalar or multi-group roots.
-    pub fn root_next_w_len<F: CanonicalField>(
+    /// Next-witness length in field elements for scalar or multi-group folds.
+    pub fn next_w_len<F: CanonicalField>(
         &self,
         opening_batch: &OpeningClaimsLayout,
         layout: RelationMatrixRowLayout,
@@ -1044,7 +1044,7 @@ impl LevelParams {
         if !self.has_precommitted_groups() {
             if opening_batch.num_groups() != 1 {
                 return Err(AkitaError::InvalidSetup(
-                    "scalar root params require a single opening group".to_string(),
+                    "scalar params require a single opening group".to_string(),
                 ));
             }
             return crate::schedule::w_ring_element_count_for_chunks(
@@ -1056,13 +1056,13 @@ impl LevelParams {
             )?
             .checked_mul(self.ring_dimension)
             .ok_or_else(|| {
-                AkitaError::InvalidSetup("root next witness length overflow".to_string())
+                AkitaError::InvalidSetup("next witness length overflow".to_string())
             });
         }
 
-        let final_group_index = self.validate_root_opening_batch(opening_batch)?;
+        let final_group_index = self.validate_opening_batch(opening_batch)?;
         let final_group = opening_batch.group_layout(final_group_index)?;
-        let mut total = Self::root_segment_rings(
+        let mut total = Self::segment_rings(
             final_group.num_polynomials(),
             self.num_blocks,
             self.block_len,
@@ -1072,7 +1072,7 @@ impl LevelParams {
             self.num_digits_fold(final_group.num_polynomials(), field_bits)?,
         )?;
         for group in self.precommitted_group_iter() {
-            let group_rings = Self::root_segment_rings(
+            let group_rings = Self::segment_rings(
                 group.layout.group.num_polynomials(),
                 group.num_blocks,
                 group.block_len,
@@ -1083,7 +1083,7 @@ impl LevelParams {
             )?;
             total = total
                 .checked_add(group_rings)
-                .ok_or_else(|| AkitaError::InvalidSetup("root witness overflow".to_string()))?;
+                .ok_or_else(|| AkitaError::InvalidSetup("witness overflow".to_string()))?;
         }
 
         let r_rows = self.relation_matrix_row_count_for(opening_batch.num_groups(), layout)?;
@@ -1092,13 +1092,13 @@ impl LevelParams {
                 field_bits,
                 self.log_basis,
             ))
-            .ok_or_else(|| AkitaError::InvalidSetup("root r-tail witness overflow".to_string()))?;
+            .ok_or_else(|| AkitaError::InvalidSetup("r-tail witness overflow".to_string()))?;
         total = total
             .checked_add(r_count)
-            .ok_or_else(|| AkitaError::InvalidSetup("root witness overflow".to_string()))?;
+            .ok_or_else(|| AkitaError::InvalidSetup("witness overflow".to_string()))?;
 
         total.checked_mul(self.ring_dimension).ok_or_else(|| {
-            AkitaError::InvalidSetup("root next witness length overflow".to_string())
+            AkitaError::InvalidSetup("next witness length overflow".to_string())
         })
     }
 
@@ -1142,7 +1142,7 @@ impl LevelParams {
             self.reject_multi_group_multi_chunk(
                 "LevelParams::evaluation_trace_row_index_for_layout",
             )?;
-            self.validate_root_opening_batch(opening_batch)?;
+            self.validate_opening_batch(opening_batch)?;
         } else {
             self.require_scalar_level("LevelParams::evaluation_trace_row_index_for_layout")?;
         }

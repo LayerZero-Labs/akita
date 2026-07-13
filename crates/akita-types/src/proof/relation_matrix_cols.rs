@@ -49,7 +49,7 @@ where
     let opening_batch = instance.opening_batch();
     lp.witness_chunk.validate()?;
     lp.reject_multi_group_multi_chunk("compute_relation_matrix_col_evals")?;
-    lp.validate_root_opening_batch(opening_batch)?;
+    lp.validate_opening_batch(opening_batch)?;
     if gamma.len() != opening_batch.num_total_polynomials() {
         return Err(AkitaError::InvalidProof);
     }
@@ -84,7 +84,7 @@ where
     let mut z_total = 0usize;
     let mut t_total = 0usize;
     for &group_index in &order {
-        let group_lp = lp.root_group_params(opening_batch, group_index)?;
+        let group_lp = lp.group_params(opening_batch, group_index)?;
         let group_layout = opening_batch.group_layout(group_index)?;
         group_e_offsets[group_index] = e_total;
         let k_g = group_layout.num_polynomials();
@@ -161,7 +161,7 @@ where
 
     let mut group_segments = Vec::with_capacity(opening_batch.num_groups());
     for (group_index, e_offset) in group_e_offsets.iter().copied().enumerate() {
-        let group_lp = lp.root_group_params(opening_batch, group_index)?;
+        let group_lp = lp.group_params(opening_batch, group_index)?;
         let group_layout = opening_batch.group_layout(group_index)?;
         let k_g = group_layout.num_polynomials();
         let opening_point = instance.group_opening_point(group_index)?;
@@ -225,9 +225,9 @@ where
             .map(|r| b_view.row_flat(r))
             .collect::<Result<_, _>>()?;
         let a_range =
-            lp.root_a_row_range(opening_batch, group_index, relation_matrix_row_layout)?;
+            lp.a_row_range(opening_batch, group_index, relation_matrix_row_layout)?;
         let b_range =
-            lp.root_commitment_row_range(opening_batch, group_index, relation_matrix_row_layout)?;
+            lp.commitment_row_range(opening_batch, group_index, relation_matrix_row_layout)?;
         let a_row_weights = &eq_tau1[a_range];
         let b_weights = &eq_tau1[b_range];
         let g_open: Vec<E> = gadget_row_scalars::<F>(depth_open, log_basis)
@@ -340,7 +340,7 @@ where
 
     if use_chunked_singleton_layout {
         let (z_seg, e_seg, t_seg) = group_segments.first().ok_or(AkitaError::InvalidProof)?;
-        let group_lp = lp.root_group_params(opening_batch, 0)?;
+        let group_lp = lp.group_params(opening_batch, 0)?;
         let num_blocks = group_lp.num_blocks();
         if num_blocks == 0 {
             return Err(AkitaError::InvalidSetup(

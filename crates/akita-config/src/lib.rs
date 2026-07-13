@@ -92,6 +92,7 @@ pub mod generated_families;
 pub mod proof_optimized;
 pub mod recursive_commitment;
 pub mod schedule_selection;
+pub mod setup_prefix_slots;
 pub mod tensor_verifier;
 #[cfg(feature = "test-support")]
 pub mod test_support;
@@ -101,6 +102,7 @@ pub use proof_optimized::{
     matrix_envelope_for_schedule, setup_level_params_from_runtime_schedule,
     worst_case_multi_group_opening_batch_for_shape,
 };
+pub use setup_prefix_slots::setup_prefix_slot_ids_for_capacity;
 pub use recursive_commitment::RecursiveCommitmentConfig;
 pub use schedule_selection::effective_batched_schedule;
 pub use transcript_binding::bind_transcript_instance_descriptor;

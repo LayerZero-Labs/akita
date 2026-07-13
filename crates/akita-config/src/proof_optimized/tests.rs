@@ -249,19 +249,24 @@ fn generated_fp128_schedule_tables_match_cfg_schedule() {
 
 #[cfg(feature = "schedules-fp128-d64-onehot-recursive")]
 #[test]
-fn recursive_d64_onehot_catalog_materializes_setup_prefix_groups() {
+fn recursive_d64_onehot_empty_key_delegates_to_scalar_catalog() {
     type Cfg = crate::RecursiveCommitmentConfig<fp128::D64OneHot>;
     let schedule = <Cfg as CommitmentConfig>::runtime_schedule(AkitaScheduleLookupKey::single(
         PolynomialGroupLayout::new(46, 1),
     ))
-    .expect("recursive schedule catalog entry");
+    .expect("empty-precommit recursive config should delegate to scalar catalog");
 
-    assert!(schedule.fold_steps().any(|fold| {
-        fold.params.setup_contribution_mode == akita_types::SetupContributionMode::Recursive
-    }));
-    assert!(schedule
-        .fold_steps()
-        .any(|fold| fold.params.setup_prefix.is_some()));
+    for fold in schedule.fold_steps() {
+        assert_eq!(
+            fold.params.setup_contribution_mode,
+            akita_types::SetupContributionMode::Direct,
+            "empty-precommit scalar keys must not materialize recursive setup contribution"
+        );
+        assert!(
+            fold.params.setup_prefix.is_none(),
+            "empty-precommit scalar keys must not carry setup_prefix groups"
+        );
+    }
 }
 
 #[test]

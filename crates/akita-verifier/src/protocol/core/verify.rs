@@ -303,7 +303,7 @@ where
     E: FieldCore,
 {
     let opening_batch = claims.layout().map_err(|_| AkitaError::InvalidProof)?;
-    params.validate_root_opening_batch(&opening_batch)?;
+    params.validate_opening_batch(&opening_batch)?;
     let ring_dim = params.role_dims().d_b();
 
     if opening_batch.num_total_polynomials() != witnesses.len() {
@@ -319,7 +319,7 @@ where
         }
 
         let commitment = claims.group_commitment(group_index).copied()?;
-        let expected_rows = params.root_group_commitment_rows(&opening_batch, group_index)?;
+        let expected_rows = params.group_commitment_rows(&opening_batch, group_index)?;
         let commitment_view = RingView::new(commitment.rows().coeffs(), ring_dim)?;
         if commitment_view.num_rings() != expected_rows {
             return Err(AkitaError::InvalidProof);
@@ -433,7 +433,7 @@ where
         .map_err(|_| AkitaError::InvalidProof)?;
     validate_schedule_ring_dims(&schedule, setup.expanded.seed())?;
     schedule
-        .reject_multi_group_multi_chunk("batched verify")
+        .validate_structure()
         .map_err(|_| AkitaError::InvalidProof)?;
     validate_schedule_onehot_chunk_size::<Cfg>(&schedule)?;
 

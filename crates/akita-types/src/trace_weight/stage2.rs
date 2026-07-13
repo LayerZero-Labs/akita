@@ -514,7 +514,7 @@ where
     let mut e_offsets = vec![0usize; opening_batch.num_groups()];
     let mut base = 0usize;
     for &group_index in &order {
-        let group_lp = lp.root_group_params(opening_batch, group_index)?;
+        let group_lp = lp.group_params(opening_batch, group_index)?;
         let group_layout = opening_batch.group_layout(group_index)?;
         let depth_fold = lp.num_digits_fold_for_params(
             group_lp,
@@ -550,7 +550,7 @@ where
     let mut batches = Vec::with_capacity(opening_batch.num_groups());
     let mut claim_offset = 0usize;
     for group_index in 0..opening_batch.num_groups() {
-        let group_lp = lp.root_group_params(opening_batch, group_index)?;
+        let group_lp = lp.group_params(opening_batch, group_index)?;
         let group_layout = opening_batch.group_layout(group_index)?;
         let prepared = &prepared_points[group_index];
         let num_group_blocks = group_lp.num_blocks();
@@ -750,7 +750,7 @@ where
             let mut e_offsets = vec![0usize; opening_batch.num_groups()];
             let mut base = 0usize;
             for &group_index in &order {
-                let group_lp = lp.root_group_params(opening_batch, group_index)?;
+                let group_lp = lp.group_params(opening_batch, group_index)?;
                 let group_layout = opening_batch.group_layout(group_index)?;
                 let depth_fold = lp.num_digits_fold_for_params(
                     group_lp,
@@ -790,7 +790,7 @@ where
             let mut table = vec![E::zero(); table_len];
             let mut claim_offset = 0usize;
             for group_index in 0..opening_batch.num_groups() {
-                let group_lp = lp.root_group_params(opening_batch, group_index)?;
+                let group_lp = lp.group_params(opening_batch, group_index)?;
                 let group_layout = opening_batch.group_layout(group_index)?;
                 let prepared = &prepared_points[group_index];
                 let inner = prepared.packed_inner_owned::<D>()?;
