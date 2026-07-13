@@ -77,7 +77,7 @@ Schedule types in `crates/akita-types/src/schedule.rs` are renamed and unified:
 | Type | Role |
 |------|------|
 | `PolynomialGroupLayout` | per-group opening/schedule dimensions (shared with opening layout) |
-| `PrecommittedGroupParams` | frozen standalone precommit metadata (`m_vars`, `r_vars`, basis, row counts) |
+| `PrecommittedGroupParams` | frozen standalone precommit identity (`m_vars`, `r_vars`, basis, A/B row counts and exact SIS keys, F-chain choice) |
 | `AkitaScheduleLookupKey` | multi-group-root schedule lookup key |
 
 Wire as `pub mod opening_claims` from `lib.rs`; re-export the public types at the
@@ -119,7 +119,10 @@ pub struct PrecommittedGroupParams {
     pub r_vars: usize,
     pub log_basis: u32,
     pub n_a: usize,
-    pub conservative_n_b: usize,
+    pub n_b: usize,
+    pub a_sis_key: SisTableKey,
+    pub b_sis_key: SisTableKey,
+    pub compression: FrozenCompressionChainChoice,
 }
 
 pub struct AkitaScheduleLookupKey {
@@ -432,7 +435,11 @@ impl AkitaScheduleLookupKey {
 }
 
 impl PrecommittedGroupParams {
-    pub fn from_params(group: PolynomialGroupLayout, params: &LevelParams) -> Self;
+    pub fn from_params(
+        group: PolynomialGroupLayout,
+        params: &LevelParams,
+        compression: FrozenCompressionChainChoice,
+    ) -> Result<Self, AkitaError>;
     pub fn validate(&self) -> Result<(), AkitaError>;
     pub fn validate_root_geometry(&self, ring_dimension: usize) -> Result<(), AkitaError>;
     pub fn validate_frozen_precommit(
@@ -818,7 +825,11 @@ impl AkitaScheduleLookupKey {
 }
 
 impl PrecommittedGroupParams {
-    pub fn from_params(group: PolynomialGroupLayout, params: &LevelParams) -> Self;
+    pub fn from_params(
+        group: PolynomialGroupLayout,
+        params: &LevelParams,
+        compression: FrozenCompressionChainChoice,
+    ) -> Result<Self, AkitaError>;
     pub fn validate(&self) -> Result<(), AkitaError>;
     pub fn validate_root_geometry(&self, ring_dimension: usize) -> Result<(), AkitaError>;
     pub fn validate_frozen_precommit(

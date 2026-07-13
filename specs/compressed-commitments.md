@@ -21,12 +21,12 @@ thereafter. The binary certificate is local to the scheduled binary digits and
 fuses into the existing Stage-2 sumcheck that carries the digit-range claim,
 without raising its individual degree.
 The payload shape is a planner output, subject to the same standalone SIS
-security checks as every preceding map. The shipped planner configurations
-select one rank-one terminal ring element with `d = 8`, `16`, and `32` over
-q128, q64, and q32, respectively, and therefore serialize to 128 bytes. The
-protocol does not enforce that byte count independently of the generated plan.
-The planner selects two or three maps, and every map is priced as a standalone
-MSIS instance.
+security checks as every preceding map. The planner targets 128 bytes but does
+not enforce that byte count independently of the generated plan. With the
+checked-in SIS tables, it selects a complete schedule according to the
+authenticated score and bounded guided policy; a secure payload may be larger
+than the target. The planner selects two or three maps, and every map is
+priced as a standalone MSIS instance.
 
 This is the protocol encoding, not an optional mode. It includes
 native mixed ring dimensions down to `d = 8`, prefix-shared setup matrices,
@@ -513,11 +513,12 @@ getters merely to reveal those fields. Only that compiler may turn the compiled
 facts into spans and support.
 
 Names may change during implementation, but these authorities and equalities
-are normative and descriptor-bound. There is one B-side chain per commitment identity and one
-D-side chain per opening schedule. `PrecommittedGroupParams` must freeze the
-F chain in addition to its current geometry and conservative B
-rank. `ExecutionSchedule`/`LevelParams` must carry the current H chain and the F
-chain for the recursive commitment being created.
+are normative and descriptor-bound. There is one B-side chain per commitment
+identity and one D-side chain per opening schedule. `PrecommittedGroupParams`
+freezes the exact A/B SIS table keys, row counts, root geometry, and F chain
+selected by the standalone commitment. `ExecutionSchedule`/`LevelParams`
+carries the current H chain and the F chain for the recursive commitment being
+created.
 
 Use one checked constructor and validation routine called by planner output,
 setup generation, deserialization boundaries, prover, and verifier. Do not add
@@ -630,11 +631,10 @@ views begin at coefficient zero, and the cached object is a flat transformed
 prefix. At a fixed `d`, equal-length views are literally the same cache entry,
 and a longer warmed prefix serves every shorter view by slicing.
 
-The schedule compiler derives one `PreparedNttPlan` for
-the complete authenticated schedule catalog accepted by one backend-prepared
-proving context. For each active compression dimension, it takes the maximum
-flat prefix across every F/H map, layer, and commitment identity in that
-catalog:
+Setup sizing derives one `SetupMatrixEnvelope` for the complete preset geometry
+accepted by the setup seed's `(max_num_vars, max_num_batched_polys)` capacity.
+For each active native dimension, it takes the maximum exact flat prefix across
+every A/B/D role and F/H map covered by that envelope. For compression alone:
 
 ```text
 compression_envelope[d]
@@ -644,12 +644,35 @@ compression_envelope[d]
 Every participating footprint is validated as divisible by `d` before this
 plan is constructed; this is exact division, not padding. Structural padding
 used by a higher-level matrix layout is not part of the cached setup prefix.
+The same checked aggregation also converts `d * prefix_ring_elements` to
+generation-dimension rings and max-coalesces it into the one physical
+coefficient-form setup capacity.
+
+```text
+                               physical coefficient-form setup
+matrix view (d, p) ── d·p ──► max over every matrix ── ceil(/ gen_ring_d)
+       │                                                    │
+       │                                                    ▼
+       │                                      max_setup_len generated rings
+       │                                      (one shared flat coefficient vector)
+       │
+       └────────────────────► group by native d, take max p
+                                                            │
+                                                            ▼
+                                      exact transformed prefixes
+                                      [(d0,p0), (d1,p1), ...]
+```
+
+Thus physical setup capacity is a maximum across coefficient footprints, not a
+sum. Rounding occurs only in the conversion to whole `gen_ring_d` rings. The
+transformed requirements retain exact native prefixes and remain separate
+across dimensions.
 
 `AkitaProverSetup` remains the backend-independent expanded setup artifact; it
-does not store CPU/accelerator NTT state. `PreparedNttPlan` accepts checked
-`(d,prefix)` requirements; authenticated schedule replay supplies the complete
-compression requirement set in the schedule-compilation slice. The scheme
-passes the resulting plan to the one canonical
+does not store CPU/accelerator NTT state. `Cfg::prepared_ntt_plan(expanded)`
+recomputes the exact envelope from the capacity authenticated by the setup seed
+and validates every `(d,prefix)` against the expanded matrix and field-tier NTT
+dispatch policy. The scheme passes the resulting plan to the one canonical
 `ComputeBackendSetup::prepare_setup` boundary. That boundary registers and
 eagerly materializes all planned keys in the backend-prepared context before
 any commitment or transcript work. Compression does not request the full setup
@@ -658,18 +681,17 @@ It obtains the schedule-planned key and borrows the corresponding prefix slot
 through the canonical backend cache API. The profiling follow-up reports each
 `(d,prefix)` entry and counts both its cyclic and negacyclic storage.
 
-The backend-prepared contract coalesces compression and existing role-cache
-requirements before construction. For each `d`, it owns one slot whose length
-is the larger of `compression_envelope[d]` and any A/B/D cache prefix already
-required at that dimension. Thus a longer existing role cache serves every
-compression layer by slicing; otherwise prover setup stores exactly the
-compression envelope. Commit and opening clusters never construct, extend, or
-rebuild these slots on normal planned paths. A checked lazy construction path
-remains available for graceful correctness when an operation requests a valid
-slot absent from the plan; it emits a diagnostic so profiles and tests can
-detect incomplete planning. The catalog-replay/profiling slice adds the explicit
-operation-time build counter and asserts that normal prepared A/B/D and
-compression paths leave it at zero.
+The envelope coalesces compression and role-cache requirements before backend
+construction. For each `d`, it owns one slot whose length is the larger of the
+compression and A/B/D prefixes required at that dimension. A longer role cache
+therefore serves every shorter compression view by slicing, and conversely;
+requirements at different dimensions remain distinct. There is no implicit
+full generation-dimension slot. Commit and opening clusters never construct,
+extend, or rebuild these slots on normal planned paths. A checked lazy
+construction path remains available for graceful correctness when an operation
+requests a valid slot absent from the plan. It emits a diagnostic and increments
+the prepared setup's successful-fallback-build counter; normal prepared A/B/D
+and compression paths must leave that counter at zero.
 
 `PreparedNttPlan` is the sole key-selection authority. Given `(d, required
 prefix)`, it returns the containing canonical slot and checked slice length.
@@ -1407,21 +1429,25 @@ quotient tail, and both can change later fold shapes and sumcheck rounds. Every
 candidate must therefore solve the compression plan inside the same recurrence
 that derives its successor witness and proof cost.
 
-The compression planner policy specifies an objective or cap for terminal
-payload bytes. Allowed native dimensions come from the field-tier compression
-dispatch slot, and admissible ranks come only from the checked-in SIS tables.
-Payload size is never a
+The compression planner policy specifies an objective for terminal payload
+bytes. The shipped policies use 128 bytes. This value is neither a cap nor a
 standalone verifier rule: schedule validation recomputes the terminal shape,
 exact wire length, and SIS certificate, and accepts precisely when those facts
-are mutually consistent and meet the configured security floor.
+are mutually consistent and meet the configured security floor. Allowed native
+dimensions come from the field-tier compression dispatch slot, and admissible
+ranks come only from the checked-in SIS tables.
 The integrated schedule generator binds the selected catalog into the policy
 digest and generated catalog identity. The standalone candidate-selection
 primitive receives its compression policy explicitly and does not mutate the
-identity of a schedule catalog that contains no compression plan. Candidate
-generation must include both depths and both permitted first-map alphabets;
-later maps are negative binary. Candidates with the same terminal payload are
-compared on setup envelope, verifier scan, logical matrix footprint, witness
-growth, and prover work.
+identity of a schedule catalog that contains no compression plan.
+`PlannerPolicy::compression_chain_presets` supplies an ordered, paper-guided
+list for each opening base. For each F/H source, the planner fully constructs
+and replay-validates choices in that order. A locally valid choice is retained
+only when it admits a complete schedule suffix; otherwise guided planning
+continues to the next preset rather than committing to a local dead end. Later
+maps are negative binary; the first map follows the authenticated preset
+alphabet. If no guided choice is feasible for that source, exhaustive chain
+enumeration provides the completeness fallback and applies the same checks.
 
 Catalog selection is a deterministic function of authenticated public geometry
 and the versioned policy. It is independent of the sampled setup coefficients,
@@ -1431,47 +1457,62 @@ schedule-dependent bytes. If a future API permits a choice among entries, its
 security theorem and estimator must first price the resulting finite-union
 loss; arbitrary post-setup schedule choice is forbidden.
 
-Candidate scoring is lexicographic:
+Whole-schedule generation is also guided first. `SearchMode::Guided` explores
+the ordered basis choices and bounded fold-split windows intended by the paper,
+using a locally ranked bounded ladder at each recursive state. It stops at the
+first candidate that admits a complete validated suffix rather than building
+the cross-product of guided choices. If it produces no valid schedule, `find_schedule` reruns
+the complete schedule search under `SearchMode::Exhaustive`. Exhaustive search
+is only a deterministic completeness fallback after guided search successfully
+reports that no feasible schedule exists. Validation and arithmetic errors
+propagate and do not trigger retry. Exhaustive search is not a configuration
+flag, wire choice, or verifier mode. Both modes use the same candidate
+construction, validation, security, setup-envelope, and proof-size authorities.
+
+The recurrence permits one nonterminal normalization expansion at the root.
+It is admissible only when
+
+```text
+next_witness_coeffs * log_basis < current_witness_coeffs * field_bits.
+```
+
+All products are checked. Every recursive level after the root must strictly
+decrease the witness coefficient count. Thus full-field commitments may expose
+their bounded digit and quotient structure once, while the suffix recurrence
+remains acyclic and an oversized normalization cannot bypass the original
+information budget.
+
+Among feasible whole schedules, scoring is lexicographic:
 
 1. completeness and the production security policy encoded by the checked-in
    SIS table (currently 138-bit standalone classical security); quantum cost is
    reported diagnostically unless a separate security PR changes policy;
-2. candidates whose terminal payload is at most the configured target precede
-   candidates that miss it, then smaller terminal payloads precede larger
-   payloads; the target is an optimization objective, not a validity rule;
-3. minimum global compact setup prefix;
-4. minimum total persistent prepared-cache bytes, summed over active native
+2. schedules whose terminal payload is at most the configured objective precede
+   schedules that miss it;
+3. minimum total proof bytes;
+4. smaller terminal payloads;
+5. minimum global compact setup prefix;
+6. minimum total persistent prepared-cache bytes, summed over active native
    dimensions after catalog-wide envelope coalescing;
-5. minimum sum of active per-level direct scans and logical compact-matrix
+7. minimum sum of active per-level direct scans and logical compact-matrix
    coefficients;
-6. smaller recursive witness and prover work;
-7. smaller remaining proof bytes.
+8. smaller recursive witness and prover work.
 
-The standalone selector implements the prefix of this order for one
-`CurrentOuter` source. It receives the existing certified
-`SetupMatrixEnvelope`, converts `max_setup_len * gen_ring_dim` to checked field
-coefficients, and scores the maximum of that base prefix and the compression
-prefix rounded up to a whole generation-dimension ring. Persistent-cache cost
-includes that full generation-dimension base
-slot plus each coalesced compression requirement at a different native
-dimension; a compression requirement at the generation dimension coalesces
-into the base slot. The remaining objectives are terminal payload bytes,
-global setup prefix, global cache coefficients, logical setup coefficients,
-then canonical catalog descriptor bytes as the final deterministic tie-breaker.
-The selector does not duplicate the configuration crate's A/B/D envelope
-coverage computation: its integrated caller supplies the certified envelope.
-It enumerates
-depths two and three, opening-base-four or negative-binary on the first map,
-and negative-binary on every later map. The search is protocol-sized rather
-than input-sized: there are two first alphabets and at most four compression
-dispatch arms per field tier, hence at most `2 * (4^2 + 4^3) = 160` raw
-dimension chains before SIS and divisibility filtering.
+The per-source selector accepts the certified `SetupMatrixEnvelope` and tries
+the ordered preset choices. Integrated schedule planning may advance to the
+next checked choice when an earlier choice has no valid recursive completion.
+Only the no-feasible-preset case enumerates all permitted depth-two and depth-three
+dimension/alphabet chains. The integrated whole-schedule recurrence then scores
+the resulting valid choices together with fold geometry. Physical setup cost is
+the maximum coefficient footprint converted to whole generation-dimension
+rings; persistent transformed-cache cost is the sum of exact
+per-native-dimension prefix maxima. No implicit full generation-dimension cache
+slot is charged.
 
-The suffix dynamic program needs a
-Pareto state or equivalent structured score: the global prefix is a maximum
-across levels, transformed NTT-cache storage is a sum across distinct active
-dimensions, verifier work is closer to a sum, and none can be faithfully
-converted into proof bytes.
+The suffix dynamic program retains a Pareto state or equivalent structured
+score: the global physical prefix is a maximum across levels, transformed
+NTT-cache storage is a sum across distinct active dimensions, verifier work is
+closer to a sum, and none can be faithfully converted into proof bytes.
 
 ### Shared-prefix security statement
 
@@ -1615,10 +1656,10 @@ list is neither necessary nor sufficient. These authorities must agree:
   same-shape buckets. CPU and delegated backends dispatch the same dimension
   arms exactly once at the outer backend boundary; a delegating backend forwards
   the already selected operation without redispatch. A one-item batch is the
-  canonical single-map path. The operation does not call
-  `with_shared_ntt`, because that helper requests the full setup envelope, and
-  it does not compose two public backend calls that each scan and transform the
-  digits independently.
+  canonical single-map path. The operation resolves its exact native prefix
+  through `PreparedNttPlan` and borrows the containing planned slot; it does not
+  compose two public backend calls that each scan and transform the digits
+  independently.
 - `akita-prover/src/kernels/linear/ring_switch_relation_rows.rs` owns one internal
   multi-RHS engine used by the existing A/B/D flow and compression. It shares
   setup loads across eligible right-hand sides and shares digit loading,
@@ -1633,14 +1674,16 @@ list is neither necessary nor sufficient. These authorities must agree:
   authority, including its conservative rounding of actual bound one to the
   shipped bound-two bucket. Generated schedule catalogs contain only candidates
   accepted by that authority; neither side substitutes a local estimate.
-- The schedule compiler computes one compression envelope across every layer
-  and identity in the authenticated catalog for each active `d`, coalesces it
-  with any longer existing role-cache requirement, and passes the checked plan
-  to backend preparation. The backend eagerly builds the resulting slots;
+- Config setup sizing computes one exact envelope across every role, layer,
+  identity, and supported schedule shape for the seed's authenticated capacity.
+  It max-coalesces each native `d`, and `Cfg::prepared_ntt_plan` passes those
+  checked prefixes to backend preparation. The backend eagerly builds the
+  resulting slots;
   `AkitaProverSetup` itself remains backend-state-free. Commitment execution
   consumes F slices; opening execution consumes F/H slices; recursive levels
   consume only slices authorized by their authenticated schedule. An unplanned
-  lazy cache build emits a profile/test diagnostic and preserves correctness.
+  lazy cache build emits a diagnostic, increments the prepared fallback counter,
+  and preserves correctness; normal execution leaves the counter at zero.
 
 The arithmetic test matrix has three layers. Kernel tests compare the fused
 result with direct schoolbook cyclic and negacyclic multiplication for signed
@@ -1709,8 +1752,9 @@ requires preserving the same single source of truth.
   depth-three F/H chain where its B/D commitment exists; terminal omissions are
   explicit.
 - [ ] Every public payload is independently deserialized with the
-  schedule-derived exact coefficient count; shipped q128/q64/q32 fixtures select
-  the displayed rank-one shapes and consequently encode to 128 bytes.
+  schedule-derived exact coefficient count; shipped q128/q64/q32 fixtures pin
+  the secure shapes selected from the unchanged SIS tables and report whether
+  the 128-byte planner objective is met.
 - [ ] This PR's diff contains no generated SIS-table changes. Every generated
   compression schedule uses the unchanged canonical lookup, including its
   conservative coefficient-bound bucketing, and rejects unsupported
@@ -1748,8 +1792,10 @@ requires preserving the same single source of truth.
   eagerly materializes exactly one cyclic/negacyclic cache slot per active
   dimension, sized to the maximum of the catalog-wide compression envelope and
   any existing role-cache requirement. `AkitaProverSetup` stores no backend NTT
-  state. Commit/open execution has zero cache builds, and every shorter F/H view
-  is served through the plan's checked slice resolver.
+  state, and no full generation-dimension slot is added unless an exact role or
+  compression requirement needs it. Commit/open execution has zero cache
+  builds, every shorter F/H view is served through the plan's checked slice
+  resolver, and the counted checked fallback remains zero on normal paths.
 - [ ] Direct and recursive setup-contribution modes produce identical combined
   claims for mixed F/H dimensions.
 - [ ] Relation-row layout tests pin the canonical order and terminal omissions.
@@ -1857,8 +1903,9 @@ incoming native images of 1, 2, 4, and 8 KiB and every shipped field/base, repor
 - estimated direct-verifier field additions/multiplications;
 - diagnostic hypothetical B/D slicing envelopes, clearly marked as non-protocol estimates.
 
-The q128 4 KiB table above and the shipped q128/q64/q32 payload fixtures are
-checked regressions. The verifier expectation is at most a few tens of
+The q128 4 KiB table above is a planning reference, and the shipped
+q128/q64/q32 payload fixtures are checked regressions under the unchanged SIS
+tables. The verifier expectation is at most a few tens of
 thousands of field multiplications for typical F/H views; if measurement
 materially exceeds that, optimize the shared-prefix/sparse evaluator or let the
 planner select a different admissible chain.

@@ -408,16 +408,27 @@ pub struct PrecommittedGroupParams {
     pub r_vars: usize,
     pub log_basis: u32,
     pub n_a: usize,
-    pub conservative_n_b: usize,
+    pub n_b: usize,
+    pub a_sis_key: SisTableKey,
+    pub b_sis_key: SisTableKey,
+    pub compression: FrozenCompressionChainChoice,
 }
 ```
 
 `PrecommittedGroupParams` records the root layout that was used to create the
-group commitment. The final planner must use the same `t_hat_g` shape for that
-group. In the `commit_final_group`/opening phase, every precommitted group must
-verify against the frozen `conservative_n_b`. The final group may use a
-non-conservative B rank because it is committed after the full multi-group root
-shape is known.
+group commitment. It authenticates the exact A/B SIS collision buckets and
+native dimensions, both row counts, and the selected standalone F chain. The
+final planner must use the same `t_hat_g` shape and replay that F chain. In the
+`commit_final_group`/opening phase, every precommitted group verifies against
+the frozen `n_b`, which the conservative precommit planner sized for the allowed
+basis envelope. The final group may use a basis-specific B rank because it is
+committed after the full multi-group root shape is known.
+
+The canonical constructor is fallible: it rejects unless the frozen F-chain
+source digest is exactly the descriptor digest of the same `b_key` whose table
+key and row count are stored in the carrier. Root-geometry validation first
+requires a nonzero power-of-two generation dimension, then validates the frozen
+native dimensions before any divisibility or logarithm calculation.
 
 The public final-commit API accepts precommitted `PolynomialGroupLayout`s and
 recomputes `PrecommittedGroupParams` internally under
@@ -558,7 +569,8 @@ For a group committed before the final multi-group proof is known:
    m_g, r_g, n_a_g, derived_B_width_g, n_b'_g, log_basis = l_g, num_digits_open(l_g), ...
    ```
 
-8. Store the frozen fields and `n_b'_g` in `PrecommittedGroupParams`.
+8. Store the frozen geometry, A/B row counts, exact A/B SIS table keys, and the
+   authenticated standalone F-chain choice in `PrecommittedGroupParams`.
 
 This protects the B relation for the precommitted group against any later
 root-group choice whose `log_basis <= l_max`, but only for the B role and only
@@ -912,7 +924,10 @@ m_vars
 r_vars
 log_basis
 n_a
-conservative_n_b
+n_b
+a_sis_key(min_security_bits, family, ring_dimension, coeff_linf_bound)
+b_sis_key(min_security_bits, family, ring_dimension, coeff_linf_bound)
+compression(source_key_digest, max_opening_log_basis, chain)
 ```
 
 Changing the group partition or normalized point-variable arity changes the
@@ -946,8 +961,8 @@ existing descriptor already has the two bindings needed for this shape:
   selections.
 - `PlanSection.effective_schedule_digest` binds the materialized schedule. For a
   multi-group root, the schedule descriptor includes the root `LevelParams`, its
-  `precommitted_groups`, each `PrecommittedGroupParams`, conservative B ranks, A/B
-  keys, block geometry, and digit counts.
+  `precommitted_groups`, each `PrecommittedGroupParams`, frozen A/B ranks and SIS
+  table keys, compression choice, block geometry, and digit counts.
 
 Setup seed and policy fields, including the basis range that defines `l_g` and
 `l_max`, remain bound through the existing `SetupSection` / `AlgebraSection`
@@ -977,7 +992,10 @@ m_vars
 r_vars
 log_basis
 n_a
-conservative_n_b
+n_b
+a_sis_key(min_security_bits, family, ring_dimension, coeff_linf_bound)
+b_sis_key(min_security_bits, family, ring_dimension, coeff_linf_bound)
+compression(source_key_digest, max_opening_log_basis, chain)
 ```
 
 Multi-group schedule precommitted params encode in transcript order through the
@@ -1042,7 +1060,7 @@ The verifier must follow this order:
 5. Reject if any schedule-derived precommitted layout differs from the layout
    recomputed from config policy.
 6. Reject if any precommitted group's commitment row count differs from its
-  frozen `conservative_n_b`.
+  frozen `n_b`.
 7. Validate commitment row counts and opening-batch routing.
 8. Only then run ring-switch replay and suffix verification.
 
@@ -1118,6 +1136,8 @@ At conservative precommit time:
   with `basis_range = (min_basis(Cfg), min_basis(Cfg))`;
 - the `PrecommittedGroupParams` must determine the same `t_hat_g` shape used by
   the commit witness;
+- its A/B SIS keys and row counts must equal the keys used by that commitment,
+  and its F-chain source digest must equal the frozen B-key descriptor digest;
 - conservative `n_b'` must pass `AjtaiKeyParams::try_new` for
   `(derived_B_width_g, norm_B(l_max))`;
 - the selected params must fit setup capacity.
@@ -1146,7 +1166,7 @@ At current `commit_final_group` time:
 - each precommitted group must have
   `group.num_vars <= final_group.num_vars / 2`;
 - each precommitted group must keep its `PrecommittedGroupParams` `m`, `r`,
-  `log_basis`, `n_a`, and B width;
+  `log_basis`, A/B row counts, exact A/B SIS keys, and F-chain choice;
 - each precommitted group must use the frozen conservative B row count in the
   multi-group root relation;
 - the final multi-group root schedule must fit setup capacity;
@@ -1294,9 +1314,10 @@ kernels land if B-row time is a bottleneck.
 - `OpeningClaimsLayout::from_group_sizes(nv, &[1, 3])` derives two groups.
 - `[1, 3]` and `[4]` produce different opening-batch digests.
 - Generated group-batch schedule lookup compares precommitted group params,
-  frozen group params, and `conservative_n_b`.
+  exact A/B SIS keys, frozen group params, `n_b`, and compression choice.
 - Descriptor bytes change when a precommitted group's `PrecommittedGroupParams`
-  `m`, `r`, `log_basis`, `n_a`, or conservative `n_b'` changes.
+  `m`, `r`, `log_basis`, A/B row counts, either SIS-key field, or F-chain choice
+  changes.
 - Scheduler multi-group root sizing accounts for one `z_hat_g` segment per group.
 - Scheduler multi-group D width reports `total_d_w_rings = sum_g w_hat_rings_g`.
 - Multi-group terminal root folds reject until the terminal witness layout exists.
