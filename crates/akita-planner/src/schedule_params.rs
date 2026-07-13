@@ -22,10 +22,14 @@ use akita_types::{
     direct_witness_bytes, extension_opening_reduction_level_bytes, level_proof_bytes,
     segment_typed_witness_shape, w_ring_element_count_for_chunks, AkitaScheduleInputs,
     ChunkedWitnessCfg, CleartextWitnessShape, CommitmentRingDims, DecompositionParams, DirectStep,
-    FoldStep, FoldWirePayload, LevelParams, PolynomialGroupLayout, RelationMatrixRowLayout,
-    Schedule, Step,
+    FoldStep, FoldWirePayload, LevelParams, OpeningClaimsLayout, PolynomialGroupLayout,
+    RelationMatrixRowLayout, Schedule, Step,
 };
 
+use crate::compression::{
+    fold_first_wire_payload, select_co_generated_bundle, select_terminal_bundle,
+    CompressionPlannerPolicy, FoldFirstSearchStats, LevelCompressionBundle,
+};
 use crate::PlannerPolicy;
 
 fn sis_key(policy: &PlannerPolicy, coeff_linf_bound: u128) -> SisTableKey {
@@ -273,6 +277,7 @@ fn derive_candidate_level_params(
 pub(crate) struct FoldSuffix {
     pub(crate) total_bytes: usize,
     pub(crate) first_fold_params: LevelParams,
+    pub(crate) first_fold_bundle: Option<LevelCompressionBundle>,
     pub(crate) steps: Vec<Step>,
 }
 
@@ -392,6 +397,7 @@ pub(crate) struct SuffixCtx<'a> {
     pub(crate) ring_challenge_config: RingChallengeConfigFn<'a>,
     pub(crate) num_vars: usize,
     pub(crate) key: PolynomialGroupLayout,
+    pub(crate) compression: Option<&'a CompressionPlannerPolicy>,
 }
 
 /// Suffix DP for the optimal recursive schedule at
@@ -420,6 +426,7 @@ pub(crate) fn derive_optimal_suffix_schedule<F: CanonicalField>(
         ring_challenge_config,
         num_vars,
         key,
+        compression,
     } = *ctx;
     let memo_key = (
         level,
@@ -464,7 +471,7 @@ pub(crate) fn derive_optimal_suffix_schedule<F: CanonicalField>(
         if lb < current_lb {
             continue;
         }
-        let Some((candidate_params, next_witness_len, next_witness_len_terminal)) =
+        let Some((mut candidate_params, mut next_witness_len, mut next_witness_len_terminal)) =
             derive_candidate_level_params(
                 policy,
                 ring_challenge_config,
@@ -475,6 +482,42 @@ pub(crate) fn derive_optimal_suffix_schedule<F: CanonicalField>(
         else {
             continue;
         };
+
+        let mut level_bundle = None::<LevelCompressionBundle>;
+        if let Some(compression_policy) = compression {
+            let opening_arity = candidate_params
+                .m_vars
+                .checked_add(candidate_params.r_vars)
+                .ok_or_else(|| AkitaError::InvalidSetup("opening arity overflow".into()))?;
+            let Ok(opening) = OpeningClaimsLayout::new(opening_arity, 1) else {
+                continue;
+            };
+            let mut stats = FoldFirstSearchStats::default();
+            let Ok(co_generated) = select_co_generated_bundle::<F>(
+                policy,
+                compression_policy,
+                &candidate_params,
+                &opening,
+                &mut stats,
+            ) else {
+                continue;
+            };
+            let Ok(terminal) = select_terminal_bundle::<F>(
+                policy,
+                compression_policy,
+                &candidate_params,
+                &opening,
+                &mut stats,
+            ) else {
+                continue;
+            };
+            next_witness_len = co_generated.successor_witness_field_coeffs();
+            next_witness_len_terminal = terminal.successor_witness_field_coeffs();
+            if next_witness_len >= current_witness_len {
+                continue;
+            }
+            level_bundle = Some(co_generated);
+        }
 
         let suffix = derive_optimal_suffix_schedule::<F>(
             ctx,
@@ -540,14 +583,30 @@ pub(crate) fn derive_optimal_suffix_schedule<F: CanonicalField>(
         }
         // Branch B: suffix is a Fold at level+1.
         for suffix_fold in suffix.best_fold_per_lb.values() {
+            let wire = match (
+                level_bundle.as_ref(),
+                suffix_fold.first_fold_bundle.as_ref(),
+            ) {
+                (Some(current), Some(successor)) => {
+                    let Ok(compressed) = fold_first_wire_payload(
+                        current,
+                        successor,
+                        policy.decomposition.field_bits(),
+                    ) else {
+                        continue;
+                    };
+                    FoldWirePayload::Compressed(compressed)
+                }
+                _ => FoldWirePayload::Native {
+                    next_level: &suffix_fold.first_fold_params,
+                    next_base_field_bits: policy.decomposition.field_bits(),
+                },
+            };
             let level_proof_size = level_proof_bytes(
                 policy.decomposition.field_bits(),
                 policy.decomposition.field_bits() * policy.chal_ext_degree as u32,
                 &candidate_params,
-                Some(FoldWirePayload::Native {
-                    next_level: &suffix_fold.first_fold_params,
-                    next_base_field_bits: policy.decomposition.field_bits(),
-                }),
+                Some(wire),
                 next_witness_len,
                 1,
                 RelationMatrixRowLayout::WithDBlock,
@@ -572,6 +631,7 @@ pub(crate) fn derive_optimal_suffix_schedule<F: CanonicalField>(
                 FoldSuffix {
                     total_bytes,
                     first_fold_params: candidate_params,
+                    first_fold_bundle: level_bundle,
                     steps,
                 },
             );
@@ -790,17 +850,39 @@ pub fn find_schedule<F: CanonicalField>(
     ring_challenge_config: impl Fn(usize) -> Result<akita_challenges::SparseChallengeConfig, AkitaError>,
     fold_challenge_shape_at_level: impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
 ) -> Result<Schedule, AkitaError> {
-    find_schedule_inner::<F>(
+    find_schedule_inner_with_compression::<F>(
         key,
         policy,
+        None,
         ring_challenge_config,
         fold_challenge_shape_at_level,
     )
 }
 
-fn find_schedule_inner<F: CanonicalField>(
+/// Like [`find_schedule`], but solves compression inside the fold-first
+/// recurrence: co-generated F/H bundles derive successor witness lengths and
+/// parent wire pricing uses [`FoldWirePayload::Compressed`]. Generated schedule
+/// tables keep calling [`find_schedule`] until the Slice 8 cutover.
+pub fn find_schedule_fold_first<F: CanonicalField>(
     key: PolynomialGroupLayout,
     policy: &PlannerPolicy,
+    compression: &CompressionPlannerPolicy,
+    ring_challenge_config: impl Fn(usize) -> Result<akita_challenges::SparseChallengeConfig, AkitaError>,
+    fold_challenge_shape_at_level: impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
+) -> Result<Schedule, AkitaError> {
+    find_schedule_inner_with_compression::<F>(
+        key,
+        policy,
+        Some(compression),
+        ring_challenge_config,
+        fold_challenge_shape_at_level,
+    )
+}
+
+fn find_schedule_inner_with_compression<F: CanonicalField>(
+    key: PolynomialGroupLayout,
+    policy: &PlannerPolicy,
+    compression: Option<&CompressionPlannerPolicy>,
     ring_challenge_config: impl Fn(usize) -> Result<akita_challenges::SparseChallengeConfig, AkitaError>,
     fold_challenge_shape_at_level: impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
 ) -> Result<Schedule, AkitaError> {
@@ -812,6 +894,7 @@ fn find_schedule_inner<F: CanonicalField>(
         ring_challenge_config,
         num_vars: key.num_vars(),
         key,
+        compression,
     };
 
     key.validate()?;

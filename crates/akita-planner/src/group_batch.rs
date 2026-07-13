@@ -613,6 +613,7 @@ pub fn find_group_batch_schedule<F: CanonicalField>(
         ring_challenge_config,
         num_vars: key.final_group.num_vars(),
         key: PolynomialGroupLayout::singleton(key.final_group.num_vars()),
+        compression: None,
     };
     let mut memo = ScheduleMemo::new();
     let total_polys = key.num_polynomials()?;

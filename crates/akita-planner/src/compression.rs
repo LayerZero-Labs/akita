@@ -6,7 +6,14 @@
 //! `bytes / field_bytes` and catalog replay succeeds. Exhaustive enumeration
 //! remains an explicit completeness fallback, not the default search shape.
 
+mod fold_first;
 mod replay;
+
+pub use fold_first::{
+    fold_first_wire_payload, select_co_generated_bundle, select_terminal_bundle,
+    successor_witness_field_coeffs, FoldFirstSearchStats, LevelCompressionBundle,
+    MAX_FOLD_FIRST_BUNDLE_ATTEMPTS,
+};
 
 use akita_field::{AkitaError, CanonicalField};
 use akita_types::{

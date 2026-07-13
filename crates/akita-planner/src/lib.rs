@@ -30,10 +30,12 @@ pub use catalog_identity::{
     ring_challenge_config_digest, validate_catalog_identity,
 };
 pub use compression::{
-    rank_one_ring_dim_for_bytes, select_standalone_compression, CompressionByteLadder,
-    CompressionFirstMapAlphabet, CompressionPlannerPolicy, CompressionSelection, BINARY_256_128,
+    fold_first_wire_payload, rank_one_ring_dim_for_bytes, select_co_generated_bundle,
+    select_standalone_compression, select_terminal_bundle, successor_witness_field_coeffs,
+    CompressionByteLadder, CompressionFirstMapAlphabet, CompressionPlannerPolicy,
+    CompressionSelection, FoldFirstSearchStats, LevelCompressionBundle, BINARY_256_128,
     DEFAULT_COMPRESSION_BYTE_LADDERS, MAX_EXHAUSTIVE_COMPRESSION_CANDIDATES,
-    OPENING_BASE_1024_256_128, OPENING_BASE_512_256_128,
+    MAX_FOLD_FIRST_BUNDLE_ATTEMPTS, OPENING_BASE_1024_256_128, OPENING_BASE_512_256_128,
 };
 pub use emit::{refresh_generated_wiring, run_regen_fmt, write_family_module, EmitSpec};
 pub use generated::{
@@ -44,7 +46,7 @@ pub use group_batch::find_group_batch_schedule;
 pub use resolve::{
     estimate_proof_bytes, resolve_group_batch_schedule, resolve_schedule, schedule_from_entry,
 };
-pub use schedule_params::find_schedule;
+pub use schedule_params::{find_schedule, find_schedule_fold_first};
 
 /// Plain-value brute-force inputs the planner DP needs.
 ///
