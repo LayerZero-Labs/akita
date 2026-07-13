@@ -73,9 +73,7 @@ fn walk_scalar_generated_schedule_entry(
                 "generated schedule challenge field bit width overflow".to_string(),
             )
         })?;
-    let expected_root_w_len = 1usize
-        .checked_shl(key.num_vars() as u32)
-        .ok_or_else(|| AkitaError::InvalidSetup("root witness length overflow".to_string()))?;
+    let expected_root_w_len = AkitaScheduleInputs::for_root(key)?.current_w_len;
 
     let mut steps = Vec::with_capacity(entry.steps.len());
     let mut fold_level = 0usize;
@@ -291,6 +289,9 @@ fn walk_multi_group_generated_schedule_entry(
     ring_challenge_config: &impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
     fold_challenge_shape_at_level: &impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
 ) -> Result<GeneratedEntryWalkOutput, AkitaError> {
+    let ring_challenge_cfg = ring_challenge_config(policy.ring_dimension)?;
+    let root_inputs = AkitaScheduleInputs::for_root(key.final_group)?;
+    let root_fold_shape = fold_challenge_shape_at_level(root_inputs);
     let extension_opening_width = policy.claim_ext_degree;
     let field_bits = policy.decomposition.field_bits();
     let challenge_field_bits = field_bits
@@ -303,11 +304,7 @@ fn walk_multi_group_generated_schedule_entry(
     let root_eor_key =
         PolynomialGroupLayout::new(key.final_group.num_vars(), key.num_polynomials()?);
 
-    let expected_root_w_len = 1usize
-        .checked_shl(key.final_group.num_vars() as u32)
-        .ok_or_else(|| {
-            AkitaError::InvalidSetup("multi-group root witness length overflow".into())
-        })?;
+    let expected_root_w_len = root_inputs.current_w_len;
     let mut steps = Vec::with_capacity(entry.steps.len());
     let mut total_bytes = 0usize;
     let mut fold_level = 0usize;
@@ -334,13 +331,17 @@ fn walk_multi_group_generated_schedule_entry(
                     level: fold_level,
                     current_w_len,
                 };
-                let fold_shape = fold_challenge_shape_at_level(inputs);
+                let fold_shape = if fold_level == 0 {
+                    root_fold_shape
+                } else {
+                    fold_challenge_shape_at_level(inputs)
+                };
                 let lp = if fold_level == 0 {
                     let (precommitted_groups, precommitted_d_width) =
                         multi_group_root_precommitted_groups(
                             key,
                             policy,
-                            ring_challenge_config,
+                            &ring_challenge_cfg,
                             fold_shape,
                         )?;
                     validate_expanded_precommitted_groups(key, &precommitted_groups)?;
@@ -453,18 +454,14 @@ fn walk_multi_group_generated_schedule_entry(
             GeneratedStep::Direct(direct) => {
                 let (witness_shape, direct_current_w_len, params) = if fold_level == 0 {
                     let direct_current_w_len = key.opening_layout()?.root_direct_witness_len()?;
-                    let fold_shape = fold_challenge_shape_at_level(AkitaScheduleInputs {
-                        num_vars: key.final_group.num_vars(),
-                        level: 0,
-                        current_w_len: direct_current_w_len,
-                    });
+                    let fold_shape = root_fold_shape;
                     let params = match direct.commit {
                         Some(commit) => {
                             let (precommitted_groups, precommitted_d_width) =
                                 multi_group_root_precommitted_groups(
                                     key,
                                     policy,
-                                    ring_challenge_config,
+                                    &ring_challenge_cfg,
                                     fold_shape,
                                 )?;
                             validate_expanded_precommitted_groups(key, &precommitted_groups)?;
