@@ -53,6 +53,7 @@ pub const COMPRESSION_BOUND_ONE_DIMS: &[(AkitaModulusFamily, u32)] = &[
     (AkitaModulusFamily::Q64, 16),
     (AkitaModulusFamily::Q64, 32),
     (AkitaModulusFamily::Q32, 32),
+    (AkitaModulusFamily::Q32, 64),
 ];
 
 /// Modulus families covered by Akita SIS table generation.
@@ -737,7 +738,7 @@ mod tests {
     #[test]
     fn infinity_defaults_cover_compression_dimensions() {
         assert_eq!(RING_DIMS, &[32, 64, 128, 256]);
-        assert_eq!(COMPRESSION_BOUND_ONE_DIMS.len(), 7);
+        assert_eq!(COMPRESSION_BOUND_ONE_DIMS.len(), 8);
         assert!(!InfinityWidthTableConfig::default()
             .coeff_linf_bounds
             .contains(&1));

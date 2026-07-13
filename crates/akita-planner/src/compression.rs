@@ -763,9 +763,10 @@ mod tests {
     }
 
     #[test]
-    fn default_ladders_select_binary_256_128_on_q128_and_q64() {
+    fn default_ladders_select_binary_256_128_across_field_tiers() {
         let q128 = assert_profile::<Prime128OffsetA7F7>(SisModulusFamily::Q128, 64, 32);
         let q64 = assert_profile::<Prime64Offset59>(SisModulusFamily::Q64, 128, 32);
+        let q32 = assert_profile::<Prime32Offset99>(SisModulusFamily::Q32, 256, 64);
         assert_eq!(
             (
                 q128.payload_bytes(),
@@ -810,21 +811,32 @@ mod tests {
                 1
             )
         );
-        assert!(q128.candidates_considered() <= DEFAULT_COMPRESSION_BYTE_LADDERS.len());
-        assert!(q64.candidates_considered() <= DEFAULT_COMPRESSION_BYTE_LADDERS.len());
-    }
-
-    #[test]
-    fn q32_falls_back_exhaustively_until_intermediate_bound_one_rows_exist() {
-        // Default ladders need rank-one 256-byte intermediates (d=64 on q32),
-        // but checked-in bound-one coverage is still only d=32 for q32.
-        let q32 = assert_profile::<Prime32Offset99>(SisModulusFamily::Q32, 256, 64);
-        assert!(q32.used_exhaustive_fallback());
-        assert!(q32.selected_ladder().is_none());
-        assert_eq!(q32.payload_bytes(), 128);
-        assert!(q32.target_met());
-        assert!(q32.candidates_considered() <= MAX_EXHAUSTIVE_COMPRESSION_CANDIDATES + 3);
-        assert!(q32.candidates_considered() > DEFAULT_COMPRESSION_BYTE_LADDERS.len());
+        assert_eq!(
+            (
+                q32.payload_bytes(),
+                q32.target_met(),
+                q32.depth(),
+                q32.first_alphabet(),
+                q32.map_ring_dimensions(),
+                q32.selected_ladder(),
+                q32.used_exhaustive_fallback(),
+                q32.candidates_considered()
+            ),
+            (
+                128,
+                true,
+                2,
+                CompressionAlphabet::NegativeBinary,
+                &[64, 32][..],
+                Some(BINARY_256_128),
+                false,
+                1
+            )
+        );
+        for selection in [&q128, &q64, &q32] {
+            assert!(!selection.used_exhaustive_fallback());
+            assert!(selection.candidates_considered() <= DEFAULT_COMPRESSION_BYTE_LADDERS.len());
+        }
     }
 
     #[test]

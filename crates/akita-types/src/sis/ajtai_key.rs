@@ -398,6 +398,7 @@ mod tests {
             (SisModulusFamily::Q64, 16),
             (SisModulusFamily::Q64, 32),
             (SisModulusFamily::Q32, 32),
+            (SisModulusFamily::Q32, 64),
         ] {
             let key = sis_table_key_for_linf_bound(DEFAULT_SIS_SECURITY_BITS, family, dimension, 1)
                 .expect("compression dimension should have a bound-one SIS row");
