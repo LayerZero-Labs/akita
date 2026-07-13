@@ -22,6 +22,7 @@ pub mod generated;
 mod group_batch;
 mod resolve;
 pub mod schedule_params;
+mod setup_capacity;
 
 pub use akita_challenges::TensorChallengeShape;
 pub use catalog_identity::{
@@ -37,6 +38,8 @@ pub use group_batch::find_group_batch_schedule;
 pub use resolve::{
     estimate_proof_bytes, resolve_group_batch_schedule, resolve_schedule, schedule_from_entry,
 };
+pub use schedule_params::find_schedule;
+pub use setup_capacity::{certify_setup_capacity, ConservativeGroupPlan, SetupCapacityCertificate};
 
 /// Plain-value brute-force inputs the planner DP needs.
 ///

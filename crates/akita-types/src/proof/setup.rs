@@ -1,7 +1,7 @@
 //! Shared setup data shapes for Akita prover and verifier APIs.
 
 use super::setup_prefix::SetupPrefixVerifierRegistry;
-use crate::FlatMatrix;
+use crate::{FlatMatrix, LevelParams};
 #[cfg(test)]
 use akita_algebra::CyclotomicRing;
 #[allow(unused_imports)]
@@ -39,6 +39,40 @@ const SHARED_MATRIX_LABEL: &[u8] = b"shared";
 pub struct SetupMatrixEnvelope {
     /// Number of generated ring elements at the setup generation dimension.
     pub max_setup_len: usize,
+}
+
+impl SetupMatrixEnvelope {
+    /// Start an empty role-local setup envelope.
+    #[must_use]
+    pub const fn empty() -> Self {
+        Self { max_setup_len: 1 }
+    }
+
+    /// Include one checked row-by-column matrix footprint.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`akita_field::AkitaError::InvalidSetup`] when the footprint
+    /// multiplication overflows `usize`.
+    pub fn include_matrix(
+        &mut self,
+        rows: usize,
+        columns: usize,
+        role: &'static str,
+    ) -> Result<(), akita_field::AkitaError> {
+        let len = rows.checked_mul(columns).ok_or_else(|| {
+            akita_field::AkitaError::InvalidSetup(format!("{role} setup envelope overflow"))
+        })?;
+        self.max_setup_len = self.max_setup_len.max(len);
+        Ok(())
+    }
+
+    /// Include all A/B/D role footprints for one committed level.
+    pub fn include_level(&mut self, params: &LevelParams) -> Result<(), akita_field::AkitaError> {
+        self.include_matrix(params.a_key.row_len(), params.inner_width(), "A")?;
+        self.include_matrix(params.b_key.row_len(), params.outer_width(), "B")?;
+        self.include_matrix(params.d_key.row_len(), params.d_matrix_width(), "D")
+    }
 }
 
 /// Seed-only stage for deterministic setup expansion.

@@ -110,11 +110,11 @@ mod tests {
     use super::*;
     use crate::catalog_identity::expected_catalog_identity;
     use crate::find_group_batch_schedule;
+    use crate::find_schedule;
     use crate::generated::{
         validate_generated_schedule_entry, GeneratedDirectStep, GeneratedFoldStep,
         GeneratedScheduleTable, GeneratedStep,
     };
-    use crate::schedule_params::find_single_group_schedule;
     use akita_types::{
         AkitaScheduleLookupKey, ChunkedWitnessCfg, DecompositionParams, LevelParams,
         MultiChunkProfileId, PolynomialGroupLayout, PrecommittedGroupParams, SisModulusFamily,
@@ -152,7 +152,7 @@ mod tests {
         key: PolynomialGroupLayout,
         policy: &PlannerPolicy,
     ) -> Result<Schedule, AkitaError> {
-        find_single_group_schedule(key, policy, ring_challenge_config, fold_shape)
+        find_schedule(key, policy, ring_challenge_config, fold_shape)
     }
 
     fn generated_fold_step(lp: &LevelParams) -> GeneratedFoldStep {
