@@ -133,7 +133,7 @@ Production SIS lookups use explicit role cells and the scalar `SisTableKey`:
  ring_dimension, coeff_linf_bound)
 ```
 
-The shipped policy is `Adps16Quantum128Bit`: a single ADPS16 quantum LGSA rule
+The shipped policy is `Quantum128BitADPS16`: a single ADPS16 quantum LGSA rule
 at a 128-bit target. The policy, table digest, exact profile, and role are part
 of planner inputs, catalog identity, generated table expansion, and descriptor
 bytes, so a schedule generated for one table cannot be silently reused under

@@ -31,9 +31,9 @@ impl SisTableDigest {
 
     /// Digest committed by the current generated artifact.
     pub const CURRENT: Self = Self([
-        0x0f, 0x63, 0x9d, 0x97, 0x08, 0xeb, 0x91, 0xbe, 0x54, 0x91, 0xdb, 0x34, 0x13, 0x92, 0x24,
-        0x18, 0x92, 0xed, 0x1f, 0xc8, 0xb8, 0x3f, 0xbe, 0x9c, 0x86, 0x73, 0x06, 0x88, 0x56, 0xda,
-        0x78, 0x08,
+        0x7c, 0xb1, 0x4c, 0xdf, 0xa5, 0xc8, 0x58, 0xa7, 0xd1, 0x82, 0xbc, 0x1f, 0xcf, 0x66, 0xfc,
+        0x06, 0xb0, 0x6e, 0xf4, 0x54, 0xc9, 0xb9, 0x16, 0x35, 0x1a, 0x75, 0xe9, 0xde, 0x6a, 0xee,
+        0x04, 0x0c,
     ]);
 }
 
@@ -77,21 +77,21 @@ impl SisMatrixRole {
 pub enum SisSecurityPolicyId {
     /// ADPS16 quantum LGSA estimator at a 128-bit target.
     #[default]
-    Adps16Quantum128Bit,
+    Quantum128BitADPS16,
 }
 
 impl SisSecurityPolicyId {
     /// Stable wire/catalog tag for this policy.
     pub const fn tag(self) -> u8 {
         match self {
-            Self::Adps16Quantum128Bit => 1,
+            Self::Quantum128BitADPS16 => 1,
         }
     }
 
     /// Descriptive policy name used in diagnostics and generated metadata.
     pub const fn name(self) -> &'static str {
         match self {
-            Self::Adps16Quantum128Bit => "Adps16Quantum128Bit",
+            Self::Quantum128BitADPS16 => "Quantum128BitADPS16",
         }
     }
 }
@@ -144,7 +144,7 @@ impl SisModulusProfileId {
 
 /// Default policy used by production presets.
 pub const DEFAULT_SIS_SECURITY_POLICY: SisSecurityPolicyId =
-    SisSecurityPolicyId::Adps16Quantum128Bit;
+    SisSecurityPolicyId::Quantum128BitADPS16;
 
 /// Policies with checked-in SIS table support.
 pub const SUPPORTED_SIS_SECURITY_POLICIES: &[SisSecurityPolicyId] = &[DEFAULT_SIS_SECURITY_POLICY];

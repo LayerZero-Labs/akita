@@ -886,7 +886,7 @@ pub(crate) static CATALOG_RING_DIMENSIONS: &[usize] = &[64];
 pub(crate) static CATALOG_IDENTITY: GeneratedScheduleCatalogIdentity = GeneratedScheduleCatalogIdentity {
     family_name: "fp128_d64_full",
     sis_modulus_profile: SisModulusProfileId::Q128OffsetA7F7,
-    sis_security_policy: SisSecurityPolicyId::Adps16Quantum128Bit,
+    sis_security_policy: SisSecurityPolicyId::Quantum128BitADPS16,
     sis_table_digest: SisTableDigest([0x34, 0xe5, 0x58, 0x3a, 0xbc, 0xb4, 0xe5, 0x57, 0xa5, 0xc6, 0x99, 0xda, 0x04, 0x7c, 0x1e, 0x54, 0x9a, 0xac, 0x57, 0x80, 0xdf, 0xe3, 0x74, 0xa8, 0xc0, 0xee, 0x78, 0x35, 0x89, 0xc2, 0xb6, 0xf9]),
     ring_dimension: 64,
     decomposition: DecompositionParams { log_basis: 3, log_commit_bound: 128, log_open_bound: None },

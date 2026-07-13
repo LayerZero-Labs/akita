@@ -18,7 +18,7 @@ scalar dimension:
     -> certified scalar cutoff
 ```
 
-The shipped policy is `Adps16Quantum128Bit`. It accepts a row only when the
+The shipped policy is `Quantum128BitADPS16`. It accepts a row only when the
 exhaustive ADPS16 quantum certificate reports a finite score or a classified
 above-target lower bound of at least 128 bits. A lookup for an unsupported
 policy, exact modulus profile, role, or scalar cell fails closed.

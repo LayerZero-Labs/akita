@@ -17,7 +17,7 @@ pub(crate) fn sis_scalar_cutoff(
     coeff_linf_bound: u128,
     n: u64,
 ) -> Option<ScalarCutoff> {
-    if policy != SisSecurityPolicyId::Adps16Quantum128Bit {
+    if policy != SisSecurityPolicyId::Quantum128BitADPS16 {
         return None;
     }
     match profile {

@@ -177,7 +177,7 @@ Production SIS table generation uses the planner-shaped infinity key:
 ```
 
 The checked-in production policy is
-`Adps16Quantum128Bit`: one ADPS16 quantum LGSA rule with a 128-bit target. The production table is
+`Quantum128BitADPS16`: one ADPS16 quantum LGSA rule with a 128-bit target. The production table is
 scalar-keyed by exact modulus profile, coefficient bound, and `n = rank * d`.
 The role-specific coverage declaration is the source of reachable cells.
 

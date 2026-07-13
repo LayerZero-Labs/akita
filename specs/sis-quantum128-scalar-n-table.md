@@ -39,7 +39,7 @@ deduplicates two requests only when they produce the same scalar SIS key.
 Policy identifier:
 
 ```text
-Adps16Quantum128Bit
+Quantum128BitADPS16
 ```
 
 The old policy identity and scalar `min_security_bits` identity are removed in
@@ -404,7 +404,7 @@ of host word size, map iteration order, and parallel generation order.
 
 ### Acceptance criteria
 
-- [x] The only production security policy is `Adps16Quantum128Bit`.
+- [x] The only production security policy is `Quantum128BitADPS16`.
 - [x] The estimator accepts only certified ADPS16 quantum scores at or above
       128.
 - [x] Generic infinite and failed estimates stop generation.
@@ -464,7 +464,7 @@ at the accepted and rejected boundary.
 ### Architecture
 
 ```text
-Adps16Quantum128Bit
+Quantum128BitADPS16
         |
         +-- hard gate: ADPS16 quantum score >= 128
         |

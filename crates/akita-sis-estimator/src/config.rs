@@ -47,7 +47,7 @@ pub struct SisSecurityConstraint {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum SisSecurityPolicy {
     /// ADPS16 quantum LGSA gate at 128 bits.
-    Adps16Quantum128Bit,
+    Quantum128BitADPS16,
 }
 
 impl SisSecurityPolicy {
@@ -55,7 +55,7 @@ impl SisSecurityPolicy {
     #[must_use]
     pub const fn label(self) -> &'static str {
         match self {
-            Self::Adps16Quantum128Bit => "Adps16Quantum128Bit",
+            Self::Quantum128BitADPS16 => "Quantum128BitADPS16",
         }
     }
 
@@ -63,7 +63,7 @@ impl SisSecurityPolicy {
     #[must_use]
     pub const fn adps16_quantum_constraint(self) -> SisSecurityConstraint {
         match self {
-            Self::Adps16Quantum128Bit => SisSecurityConstraint {
+            Self::Quantum128BitADPS16 => SisSecurityConstraint {
                 reduction_model: ReductionCostModel::Adps16 {
                     mode: Adps16Mode::Quantum,
                 },
@@ -370,7 +370,7 @@ mod tests {
 
     #[test]
     fn quantum_policy_pins_the_single_adps16_gate() {
-        let policy = SisSecurityPolicy::Adps16Quantum128Bit;
+        let policy = SisSecurityPolicy::Quantum128BitADPS16;
         assert_eq!(
             policy.adps16_quantum_constraint(),
             SisSecurityConstraint {

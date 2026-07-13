@@ -117,7 +117,7 @@ impl Default for InfinityWidthTableConfig {
             ring_dims: RING_DIMS.to_vec(),
             coeff_linf_bounds: COEFF_LINF_BUCKETS.to_vec(),
             max_rank: DEFAULT_MAX_RANK,
-            policy: SisSecurityPolicy::Adps16Quantum128Bit,
+            policy: SisSecurityPolicy::Quantum128BitADPS16,
             search_cap: None,
             profile: InfinityWidthProfile::LocalMinimum,
             progress_every: None,
@@ -131,7 +131,7 @@ pub fn is_full_infinity_width_table_config(config: &InfinityWidthTableConfig) ->
         && same_set(&config.ring_dims, RING_DIMS)
         && same_set(&config.coeff_linf_bounds, COEFF_LINF_BUCKETS)
         && config.max_rank == DEFAULT_MAX_RANK
-        && config.policy == SisSecurityPolicy::Adps16Quantum128Bit
+        && config.policy == SisSecurityPolicy::Quantum128BitADPS16
         && config.search_cap.is_none()
 }
 

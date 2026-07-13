@@ -5,7 +5,7 @@ use akita_sis_estimator::{
 
 #[test]
 fn policy_uses_only_the_adps16_quantum_model() {
-    let policy = SisSecurityPolicy::Adps16Quantum128Bit;
+    let policy = SisSecurityPolicy::Quantum128BitADPS16;
     assert_eq!(
         policy.adps16_quantum_constraint().reduction_model,
         ReductionCostModel::Adps16 {
