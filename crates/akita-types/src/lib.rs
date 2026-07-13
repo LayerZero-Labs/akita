@@ -134,7 +134,7 @@ pub use schedule::{
     w_ring_element_count_for_chunks, w_ring_element_count_with_counts_for_layout,
     w_ring_element_count_with_counts_for_layout_bits, AkitaScheduleInputs, AkitaScheduleLookupKey,
     DirectStep, ExecutionSchedule, FoldStep, PrecommittedGroupParams, Schedule,
-    ScheduleKeyPrecommitSource, Step,
+    ScheduleCompressionPlan, ScheduleKeyPrecommitSource, Step,
 };
 pub use setup_contribution::{
     ensure_setup_envelope, prepare_setup_contribution_artifact, setup_active_ring_elems_at,

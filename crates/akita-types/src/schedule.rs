@@ -1,8 +1,9 @@
 //! Runtime schedule shapes shared by configs, prover, verifier, and planner.
 
-use crate::descriptor_bytes::{push_u32, push_usize};
+use crate::descriptor_bytes::{blake2b_256, push_u32, push_usize};
 use crate::{
-    CleartextWitnessShape, LevelParams, OpeningClaimsLayout, PolynomialGroupLayout, RelationLayout,
+    CleartextWitnessShape, LevelCompressionPlan, LevelParams, OpeningClaimsLayout,
+    PolynomialGroupLayout, RelationLayout, MAX_FOLD_LEVELS,
 };
 use akita_field::{AkitaError, CanonicalField};
 
@@ -483,6 +484,85 @@ pub struct Schedule {
     pub total_bytes: usize,
 }
 
+/// Compression plans compiled for every fold in one schedule.
+///
+/// This remains separate from [`Schedule`] until the atomic protocol cutover.
+/// It lets the planner, generated-record compiler, and tests carry one owned,
+/// validated plan sequence without changing production schedule descriptors or
+/// wire behavior.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ScheduleCompressionPlan {
+    levels: Vec<LevelCompressionPlan>,
+}
+
+impl ScheduleCompressionPlan {
+    /// Validate and own one compression plan per fold step.
+    pub fn new(schedule: &Schedule, levels: Vec<LevelCompressionPlan>) -> Result<Self, AkitaError> {
+        let plan = Self { levels };
+        plan.validate_for_schedule(schedule)?;
+        Ok(plan)
+    }
+
+    #[must_use]
+    pub fn levels(&self) -> &[LevelCompressionPlan] {
+        &self.levels
+    }
+
+    /// Validate plan count, precommitted F slots, and terminal H omission.
+    pub fn validate_for_schedule(&self, schedule: &Schedule) -> Result<(), AkitaError> {
+        let fold_count = schedule.num_fold_levels();
+        if fold_count > MAX_FOLD_LEVELS {
+            return Err(AkitaError::InvalidSetup(format!(
+                "compression schedule has {fold_count} fold levels, max supported is {MAX_FOLD_LEVELS}"
+            )));
+        }
+        if self.levels.len() != fold_count {
+            return Err(AkitaError::InvalidSetup(format!(
+                "compression plan count {} disagrees with schedule fold count {fold_count}",
+                self.levels.len()
+            )));
+        }
+        for (level, (fold, plan)) in schedule.fold_steps().zip(&self.levels).enumerate() {
+            if plan.precommitted_f.len() != fold.params.precommitted_groups.len() {
+                return Err(AkitaError::InvalidSetup(format!(
+                    "compression plan level {level} has {} precommitted F slots, expected {}",
+                    plan.precommitted_f.len(),
+                    fold.params.precommitted_groups.len()
+                )));
+            }
+            let is_terminal = matches!(schedule.steps.get(level + 1), Some(Step::Direct(_)));
+            if is_terminal == plan.opening_h.is_some() {
+                return Err(AkitaError::InvalidSetup(if is_terminal {
+                    format!("terminal compression plan level {level} must omit H")
+                } else {
+                    format!("nonterminal compression plan level {level} must include H")
+                }));
+            }
+        }
+        Ok(())
+    }
+
+    /// Descriptor bytes for the dormant schedule compression record.
+    ///
+    /// Production [`Schedule::append_descriptor_bytes`] intentionally does not
+    /// call this before the atomic cutover.
+    pub fn descriptor_bytes(&self) -> Result<Vec<u8>, AkitaError> {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(b"AKITA-SCHEDULE-COMPRESSION-PLAN-V1");
+        push_usize(&mut bytes, self.levels.len());
+        for level in &self.levels {
+            let level_bytes = level.descriptor_bytes()?;
+            push_usize(&mut bytes, level_bytes.len());
+            bytes.extend_from_slice(&level_bytes);
+        }
+        Ok(bytes)
+    }
+
+    pub fn descriptor_digest(&self) -> Result<[u8; 32], AkitaError> {
+        Ok(blake2b_256(&self.descriptor_bytes()?))
+    }
+}
+
 impl Schedule {
     /// Iterate over the fold steps in execution order.
     pub fn fold_steps(&self) -> impl Iterator<Item = &FoldStep> + '_ {
@@ -736,7 +816,8 @@ mod tests {
         direct_witness_bytes, extension_opening_reduction_proof_bytes, level_proof_bytes,
         stage1_tree_stage_shapes, sumcheck_rounds, AkitaBatchedRootProof,
         AkitaIntermediateStage2Proof, AkitaLevelProof, AkitaStage1Proof, AkitaStage1StageProof,
-        AkitaStage2Proof, CleartextWitnessProof, ExtensionOpeningReductionProof,
+        AkitaStage2Proof, CleartextWitnessProof, CompressionAlphabet, CompressionChainChoice,
+        CompressionMapChoice, ExtensionOpeningReductionProof, FrozenCompressionChainChoice,
         RelationMatrixRowLayout, RingVec, SisModulusFamily, TerminalLevelProof,
         EXTENSION_OPENING_REDUCTION_DEGREE,
     };
@@ -895,6 +976,95 @@ mod tests {
         assert_eq!(
             step.witness_shape,
             CleartextWitnessShape::FieldElements(witness_len)
+        );
+    }
+
+    fn compression_chain(ring_d: u32) -> CompressionChainChoice {
+        CompressionChainChoice::Two([
+            CompressionMapChoice {
+                ring_d,
+                alphabet: CompressionAlphabet::OpeningBase { log_basis: 3 },
+            },
+            CompressionMapChoice {
+                ring_d,
+                alphabet: CompressionAlphabet::NegativeBinary,
+            },
+        ])
+    }
+
+    fn compression_level_plan(lp: &LevelParams, terminal: bool) -> LevelCompressionPlan {
+        LevelCompressionPlan {
+            current_f: FrozenCompressionChainChoice::new(&lp.b_key, 3, compression_chain(32)),
+            precommitted_f: Vec::new(),
+            opening_h: (!terminal).then(|| compression_chain(32)),
+        }
+    }
+
+    fn two_fold_schedule_for_compression_plan() -> Schedule {
+        let params = LevelParams::params_only(
+            SisModulusFamily::Q128,
+            64,
+            3,
+            1,
+            1,
+            1,
+            SparseChallengeConfig::pm1_only(1),
+        );
+        Schedule {
+            steps: vec![
+                Step::Fold(FoldStep {
+                    params: params.clone(),
+                    current_w_len: 1024,
+                    next_w_len: 512,
+                    level_bytes: 100,
+                }),
+                Step::Fold(FoldStep {
+                    params,
+                    current_w_len: 512,
+                    next_w_len: 256,
+                    level_bytes: 80,
+                }),
+                Step::Direct(DirectStep {
+                    current_w_len: 256,
+                    witness_shape: CleartextWitnessShape::FieldElements(256),
+                    direct_bytes: 4096,
+                    params: None,
+                }),
+            ],
+            total_bytes: 4276,
+        }
+    }
+
+    #[test]
+    fn dormant_schedule_compression_plan_validates_terminal_h_omission() {
+        let schedule = two_fold_schedule_for_compression_plan();
+        let levels = vec![
+            compression_level_plan(&schedule.fold_steps().next().unwrap().params, false),
+            compression_level_plan(&schedule.fold_steps().nth(1).unwrap().params, true),
+        ];
+        let plan = ScheduleCompressionPlan::new(&schedule, levels).expect("compression plan");
+        assert_eq!(plan.levels().len(), 2);
+
+        let mut malformed = plan.levels().to_vec();
+        malformed[1].opening_h = Some(compression_chain(32));
+        assert!(ScheduleCompressionPlan::new(&schedule, malformed).is_err());
+        assert!(ScheduleCompressionPlan::new(&schedule, Vec::new()).is_err());
+    }
+
+    #[test]
+    fn dormant_schedule_compression_digest_binds_level_choices() {
+        let schedule = two_fold_schedule_for_compression_plan();
+        let levels = vec![
+            compression_level_plan(&schedule.fold_steps().next().unwrap().params, false),
+            compression_level_plan(&schedule.fold_steps().nth(1).unwrap().params, true),
+        ];
+        let left = ScheduleCompressionPlan::new(&schedule, levels.clone()).unwrap();
+        let mut changed_levels = levels;
+        changed_levels[0].opening_h = Some(compression_chain(16));
+        let right = ScheduleCompressionPlan::new(&schedule, changed_levels).unwrap();
+        assert_ne!(
+            left.descriptor_digest().unwrap(),
+            right.descriptor_digest().unwrap()
         );
     }
 
