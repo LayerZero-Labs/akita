@@ -10,12 +10,12 @@ use akita_field::{AkitaError, CanonicalField};
 use akita_types::{
     compression_digit_depth, field_bytes, protocol_dispatch_tier, slot_dims_for_tier,
     CompressedFoldWirePayload, CompressionAlphabet, CompressionCatalogContext,
-    CompressionCatalogProjection, CompressionSourceId, LevelParams, OpeningClaimsLayout,
-    ProtocolDispatchSlot, ValidatedCompressionCatalog,
+    CompressionCatalogProjection, CompressionSourceId, LevelCompressionPlan, LevelParams,
+    OpeningClaimsLayout, ProtocolDispatchSlot, ValidatedCompressionCatalog,
 };
 
 use super::replay::{
-    derive_compression_key, replay_compression_catalog, validate_replay_policy,
+    compile_frozen_level_plan, derive_compression_key, validate_replay_policy,
     CompressionChainDescriptor, CompressionMapDescriptor,
 };
 use super::{
@@ -38,6 +38,7 @@ pub struct FoldFirstSearchStats {
 /// One checked co-generated or terminal compression bundle for a fold level.
 #[derive(Debug, Clone)]
 pub struct LevelCompressionBundle {
+    plan: LevelCompressionPlan,
     catalog: ValidatedCompressionCatalog,
     projection: CompressionCatalogProjection,
     selected_ladder: Option<CompressionByteLadder>,
@@ -47,6 +48,11 @@ pub struct LevelCompressionBundle {
 }
 
 impl LevelCompressionBundle {
+    #[must_use]
+    pub fn frozen_plan(&self) -> &LevelCompressionPlan {
+        &self.plan
+    }
+
     #[must_use]
     pub fn catalog(&self) -> &ValidatedCompressionCatalog {
         &self.catalog
@@ -230,7 +236,14 @@ fn finish_bundle<F: CanonicalField>(
     selected_ladder: Option<CompressionByteLadder>,
     maps: &[CompressionMapDescriptor],
 ) -> Result<Option<LevelCompressionBundle>, AkitaError> {
-    let catalog = match replay_compression_catalog::<F>(policy, lp, context, descriptors) {
+    let plan = match compile_frozen_level_plan(policy, lp, context, descriptors) {
+        Ok(plan) => plan,
+        Err(err) if akita_types::compression_capacity_infeasible(&err) => {
+            return Ok(None);
+        }
+        Err(err) => return Err(err),
+    };
+    let catalog = match plan.replay::<F>(lp, context) {
         Ok(catalog) => catalog,
         Err(err) if akita_types::compression_capacity_infeasible(&err) => {
             return Ok(None);
@@ -244,6 +257,7 @@ fn finish_bundle<F: CanonicalField>(
         .map(|map| map.alphabet)
         .ok_or_else(|| AkitaError::InvalidSetup("compression bundle has no maps".into()))?;
     Ok(Some(LevelCompressionBundle {
+        plan,
         catalog,
         projection,
         selected_ladder,
@@ -565,6 +579,12 @@ pub fn select_terminal_bundle<F: CanonicalField>(
     opening: &OpeningClaimsLayout,
     stats: &mut FoldFirstSearchStats,
 ) -> Result<LevelCompressionBundle, AkitaError> {
+    let tier = protocol_dispatch_tier::<F>();
+    let dimensions = slot_dims_for_tier(tier, ProtocolDispatchSlot::Compression);
+    let field_bits = F::modulus_bits();
+    let field_element_bytes = field_bytes(field_bits);
+    let co_generated_log_basis = lp.log_basis;
+
     for bundle in iter_terminal_bundles::<F>(policy, compression_policy, lp, opening, stats)? {
         if let Some(bundle) = bundle? {
             return Ok(bundle);
@@ -578,22 +598,88 @@ pub fn select_terminal_bundle<F: CanonicalField>(
         ));
     }
 
+    // Exhaustive over admitted F-only map shapes (terminal has no H chain).
+    for depth in 2..=3 {
+        for first_kind in [
+            CompressionFirstMapAlphabet::OpeningBase,
+            CompressionFirstMapAlphabet::NegativeBinary,
+        ] {
+            let first = first_alphabet(first_kind, co_generated_log_basis);
+            let mut stack: Vec<Vec<CompressionMapDescriptor>> = vec![Vec::new()];
+            while let Some(prefix) = stack.pop() {
+                if prefix.len() == depth {
+                    stats.exhaustive_map_shapes_tried =
+                        stats.exhaustive_map_shapes_tried.saturating_add(1);
+                    let image_bytes = {
+                        let mut bytes = Vec::with_capacity(prefix.len());
+                        let mut ok = true;
+                        for map in &prefix {
+                            let Some(target) = map.ring_d.checked_mul(field_element_bytes) else {
+                                ok = false;
+                                break;
+                            };
+                            bytes.push(target);
+                        }
+                        if !ok || bytes.windows(2).any(|pair| pair[0] <= pair[1]) {
+                            continue;
+                        }
+                        bytes
+                    };
+                    if let Some(bundle) = try_shared_maps_terminal::<F>(
+                        SharedMapsContext {
+                            policy,
+                            lp,
+                            opening,
+                            field_bits,
+                            field_element_bytes,
+                        },
+                        &prefix,
+                        &image_bytes,
+                        None,
+                    )? {
+                        stats.bundles_accepted = stats.bundles_accepted.saturating_add(1);
+                        return Ok(bundle);
+                    }
+                    continue;
+                }
+                let alphabet = if prefix.is_empty() {
+                    first
+                } else {
+                    CompressionAlphabet::NegativeBinary
+                };
+                for &d in dimensions {
+                    if !policy.ring_dimension.is_multiple_of(d) {
+                        continue;
+                    }
+                    let mut next = prefix.clone();
+                    next.push(CompressionMapDescriptor {
+                        ring_d: d,
+                        alphabet,
+                    });
+                    stack.push(next);
+                }
+            }
+        }
+    }
+
     Err(AkitaError::InvalidSetup(
-        "no terminal compression byte ladder materialized; terminal exhaustive fallback is requested but not implemented"
-            .into(),
+        "no terminal compression bundle is covered by current dispatch and SIS tables".into(),
     ))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::compression::{BINARY_256_128, OPENING_BASE_512_256_128};
+    use crate::compression::{
+        compile_compression_setup_artifacts, compile_compression_setup_artifacts_from_bundles,
+        BINARY_256_128, OPENING_BASE_512_256_128,
+    };
     use akita_challenges::SparseChallengeConfig;
     use akita_field::Prime128OffsetA7F7;
     use akita_types::sis::rounded_up_collision_inf_norm;
     use akita_types::{
-        AjtaiKeyParams, ChunkedWitnessCfg, DecompositionParams, SisModulusFamily,
-        DEFAULT_SIS_SECURITY_BITS,
+        AjtaiKeyParams, ChunkedWitnessCfg, DecompositionParams, SetupMatrixEnvelope,
+        SisModulusFamily, DEFAULT_SIS_SECURITY_BITS,
     };
 
     fn fixture() -> (PlannerPolicy, LevelParams, OpeningClaimsLayout) {
@@ -669,6 +755,70 @@ mod tests {
         assert!(stats.ladders_tried <= MAX_FOLD_FIRST_BUNDLE_ATTEMPTS);
         assert_eq!(stats.bundles_accepted, 1);
         assert_eq!(stats.exhaustive_map_shapes_tried, 0);
+    }
+
+    #[test]
+    fn frozen_plan_replays_to_the_same_catalog() {
+        let (policy, lp, opening) = fixture();
+        let mut stats = FoldFirstSearchStats::default();
+        let bundle = select_co_generated_bundle::<Prime128OffsetA7F7>(
+            &policy,
+            &CompressionPlannerPolicy::default(),
+            &lp,
+            &opening,
+            &mut stats,
+        )
+        .expect("bundle");
+        let replayed = bundle
+            .frozen_plan()
+            .replay::<Prime128OffsetA7F7>(
+                &lp,
+                CompressionCatalogContext::CoGeneratedLevel { opening: &opening },
+            )
+            .expect("replay");
+        assert_eq!(
+            replayed.project_for_schedule().expect("proj"),
+            *bundle.projection()
+        );
+        assert!(bundle.frozen_plan().descriptor_digest().is_ok());
+    }
+
+    #[test]
+    fn terminal_exhaustive_finds_bundle_when_ladders_miss() {
+        let (policy, lp, opening) = fixture();
+        let mut stats = FoldFirstSearchStats::default();
+        let compression = CompressionPlannerPolicy::with_ladders(128, &[], true);
+        let bundle = select_terminal_bundle::<Prime128OffsetA7F7>(
+            &policy,
+            &compression,
+            &lp,
+            &opening,
+            &mut stats,
+        )
+        .expect("terminal exhaustive");
+        assert!(bundle.selected_ladder().is_none());
+        assert!(stats.exhaustive_map_shapes_tried > 0);
+        assert!(bundle.frozen_plan().opening_h.is_none());
+    }
+
+    #[test]
+    fn setup_artifacts_from_bundles_match_projection_compile() {
+        let (policy, lp, opening) = fixture();
+        let mut stats = FoldFirstSearchStats::default();
+        let bundle = select_co_generated_bundle::<Prime128OffsetA7F7>(
+            &policy,
+            &CompressionPlannerPolicy::default(),
+            &lp,
+            &opening,
+            &mut stats,
+        )
+        .expect("bundle");
+        let base = SetupMatrixEnvelope { max_setup_len: 1 };
+        let from_bundles =
+            compile_compression_setup_artifacts_from_bundles(base, &[&bundle]).expect("bundles");
+        let from_proj =
+            compile_compression_setup_artifacts(base, &[bundle.projection()]).expect("proj");
+        assert_eq!(from_bundles, from_proj);
     }
 
     #[test]

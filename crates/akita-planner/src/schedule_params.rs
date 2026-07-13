@@ -531,8 +531,9 @@ pub(crate) fn derive_optimal_suffix_schedule<F: CanonicalField>(
                 .ok_or_else(|| AkitaError::InvalidSetup("opening arity overflow".into()))?;
             let opening = OpeningClaimsLayout::new(opening_arity, 1)?;
             let mut stats = FoldFirstSearchStats::default();
-            // Schedule DP is intentionally ladder-only. Fold-first exhaustive
-            // search does not yet cover terminal completion honestly.
+            // Schedule DP is intentionally ladder-only for co-generated paths.
+            // Terminal exhaustive is available via select_terminal_bundle when
+            // policy allows it; the DP keeps guided ladders for scoring.
             for bundle in iter_co_generated_bundles::<F>(
                 policy,
                 compression_policy,

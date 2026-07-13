@@ -112,6 +112,18 @@ pub fn compile_compression_setup_artifacts(
     })
 }
 
+/// Compile setup artifacts from one or more checked fold-first bundles.
+pub fn compile_compression_setup_artifacts_from_bundles(
+    base_envelope: SetupMatrixEnvelope,
+    bundles: &[&super::LevelCompressionBundle],
+) -> Result<CompressionSetupArtifacts, AkitaError> {
+    let projections = bundles
+        .iter()
+        .map(|bundle| bundle.projection())
+        .collect::<Vec<_>>();
+    compile_compression_setup_artifacts(base_envelope, &projections)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

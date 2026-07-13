@@ -16,14 +16,17 @@ pub use fold_first::{
     MAX_FOLD_FIRST_BUNDLE_ATTEMPTS,
 };
 pub(crate) use fold_first::{iter_co_generated_bundles, iter_terminal_bundles};
-pub use setup_compile::{compile_compression_setup_artifacts, CompressionSetupArtifacts};
+pub use setup_compile::{
+    compile_compression_setup_artifacts, compile_compression_setup_artifacts_from_bundles,
+    CompressionSetupArtifacts,
+};
 
 use akita_field::{AkitaError, CanonicalField};
 use akita_types::{
     compression_digit_depth, field_bytes, protocol_dispatch_tier, slot_dims_for_tier,
-    AjtaiKeyParams, CompressionAlphabet, CompressionCatalogContext, CompressionSourceId,
-    LevelParams, ProtocolDispatchSlot, SetupMatrixEnvelope, ValidatedCompressionCatalog,
-    STANDALONE_OPENING_BASE_LOG_BASIS,
+    AjtaiKeyParams, CompressionAlphabet, CompressionCatalogContext, CompressionCatalogProjection,
+    CompressionSourceId, LevelParams, ProtocolDispatchSlot, SetupMatrixEnvelope,
+    ValidatedCompressionCatalog, STANDALONE_OPENING_BASE_LOG_BASIS,
 };
 
 use crate::PlannerPolicy;
@@ -188,6 +191,20 @@ impl CompressionSelection {
         self.catalog
     }
 
+    /// Project the checked catalog for setup / hint compilation.
+    pub fn projection(&self) -> Result<CompressionCatalogProjection, AkitaError> {
+        self.catalog.project_for_schedule()
+    }
+
+    /// Compile this selection into global setup/cache objectives.
+    pub fn setup_artifacts(
+        &self,
+        base_envelope: SetupMatrixEnvelope,
+    ) -> Result<CompressionSetupArtifacts, AkitaError> {
+        let projection = self.projection()?;
+        compile_compression_setup_artifacts(base_envelope, &[&projection])
+    }
+
     #[must_use]
     pub fn payload_bytes(&self) -> usize {
         self.payload_bytes
@@ -313,18 +330,24 @@ impl<F: CanonicalField> Materializer<'_, F> {
         let projection = catalog.project_for_schedule().ok()?;
         let payload_coeffs = projection.payload_coeffs(CompressionSourceId::CurrentOuter)?;
         let payload_bytes = payload_coeffs.checked_mul(self.field_element_bytes)?;
-        let (global_setup_prefix_coeffs, global_cache_field_coeffs) = global_setup_objectives(
-            self.base_setup_coeffs,
-            self.policy.ring_dimension,
-            projection.max_flat_setup_prefix_coeffs(),
-            projection.ntt_requirements(),
+        let base_rings = self
+            .base_setup_coeffs
+            .checked_div(self.policy.ring_dimension)
+            .filter(|&rings| {
+                rings > 0 && self.base_setup_coeffs == rings * self.policy.ring_dimension
+            })?;
+        let artifacts = compile_compression_setup_artifacts(
+            SetupMatrixEnvelope {
+                max_setup_len: base_rings,
+            },
+            &[&projection],
         )
         .ok()?;
         Some(Candidate {
             catalog,
             payload_bytes,
-            global_setup_prefix_coeffs,
-            global_cache_field_coeffs,
+            global_setup_prefix_coeffs: artifacts.global_setup_prefix_coeffs(),
+            global_cache_field_coeffs: artifacts.global_cache_field_coeffs(),
             logical_setup_coeffs: projection.logical_setup_coeffs(),
             descriptor_bytes: projection.descriptor_bytes().to_vec(),
             depth: maps.len(),

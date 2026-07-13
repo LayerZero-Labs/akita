@@ -97,6 +97,26 @@ pub(super) fn replay_compression_catalog<F: CanonicalField>(
     descriptors: &[CompressionChainDescriptor],
 ) -> Result<ValidatedCompressionCatalog, AkitaError> {
     validate_replay_policy::<F>(policy, lp)?;
+    compile_frozen_level_plan(policy, lp, context, descriptors)?.replay::<F>(lp, context)
+}
+
+/// Compile descriptor choices into the owned frozen plan without validating the
+/// catalog yet. Callers that need both plan and catalog should replay the plan.
+pub(super) fn compile_frozen_level_plan(
+    policy: &PlannerPolicy,
+    lp: &LevelParams,
+    context: CompressionCatalogContext<'_>,
+    descriptors: &[CompressionChainDescriptor],
+) -> Result<LevelCompressionPlan, AkitaError> {
+    // Policy field checks require a field type; callers that already validated
+    // via `validate_replay_policy` may skip re-checking by going through
+    // `replay_compression_catalog`. Here we only need ring_dimension agreement.
+    if policy.ring_dimension != lp.ring_dimension {
+        return Err(AkitaError::InvalidSetup(format!(
+            "compression replay generation dimension {} disagrees with level dimension {}",
+            policy.ring_dimension, lp.ring_dimension
+        )));
+    }
     let fixed = descriptors
         .iter()
         .map(|descriptor| {
@@ -131,7 +151,7 @@ pub(super) fn replay_compression_catalog<F: CanonicalField>(
             }
         })
         .collect::<Result<Vec<_>, AkitaError>>()?;
-    let choice = match context {
+    match context {
         CompressionCatalogContext::CoGeneratedLevel { .. } => {
             let current = fixed
                 .first()
@@ -158,7 +178,7 @@ pub(super) fn replay_compression_catalog<F: CanonicalField>(
                     freeze_f(lp, *source, *max, *chain)
                 })
                 .collect::<Result<Vec<_>, AkitaError>>()?;
-            LevelCompressionPlan {
+            Ok(LevelCompressionPlan {
                 current_f: freeze_f(
                     lp,
                     CompressionSourceId::CurrentOuter,
@@ -167,8 +187,7 @@ pub(super) fn replay_compression_catalog<F: CanonicalField>(
                 )?,
                 precommitted_f: precommitted_outer,
                 opening_h: Some(*opening_chain),
-            }
-            .replay::<F>(lp, context)
+            })
         }
         CompressionCatalogContext::StandaloneCommitment => {
             let [(CompressionSourceId::CurrentOuter, max, chain)] = fixed.as_slice() else {
@@ -176,12 +195,11 @@ pub(super) fn replay_compression_catalog<F: CanonicalField>(
                     "standalone compression replay requires exactly current outer".into(),
                 ));
             };
-            LevelCompressionPlan {
+            Ok(LevelCompressionPlan {
                 current_f: freeze_f(lp, CompressionSourceId::CurrentOuter, *max, *chain)?,
                 precommitted_f: Vec::new(),
                 opening_h: None,
-            }
-            .replay::<F>(lp, context)
+            })
         }
         CompressionCatalogContext::TerminalFold { .. } => {
             let Some((CompressionSourceId::CurrentOuter, current_max, current_chain)) =
@@ -203,7 +221,7 @@ pub(super) fn replay_compression_catalog<F: CanonicalField>(
                     freeze_f(lp, *source, *max, *chain)
                 })
                 .collect::<Result<Vec<_>, AkitaError>>()?;
-            LevelCompressionPlan {
+            Ok(LevelCompressionPlan {
                 current_f: freeze_f(
                     lp,
                     CompressionSourceId::CurrentOuter,
@@ -212,11 +230,9 @@ pub(super) fn replay_compression_catalog<F: CanonicalField>(
                 )?,
                 precommitted_f: precommitted_outer,
                 opening_h: None,
-            }
-            .replay::<F>(lp, context)
+            })
         }
-    }?;
-    Ok(choice)
+    }
 }
 
 fn freeze_f(
