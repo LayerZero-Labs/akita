@@ -9,9 +9,9 @@ pub(crate) mod descriptor_bytes;
 pub mod dispatch;
 pub use dispatch::{
     field_modulus, ntt_max_ring_d, ntt_min_ring_d, ntt_ring_degree_supported_for_field,
-    ntt_ring_degree_supported_for_tier, protocol_dispatch_tier, slot_dims_for_tier,
-    validate_ring_dispatch, validate_role_dims_for_field, validate_role_dispatch,
-    ProtocolDispatchSlot, ProtocolRingDispatchTierId,
+    ntt_ring_degree_supported_for_tier, protocol_dispatch_tier, sis_family_for_field,
+    slot_dims_for_tier, validate_ring_dispatch, validate_role_dims_for_field,
+    validate_role_dispatch, ProtocolDispatchSlot, ProtocolRingDispatchTierId,
 };
 pub mod extension_opening_reduction;
 pub mod field_reduction;

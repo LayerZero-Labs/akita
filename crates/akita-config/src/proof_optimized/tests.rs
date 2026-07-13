@@ -562,7 +562,7 @@ fn assert_every_table_entry_materializes<Cfg: CommitmentConfig>(table: Generated
             entry.final_group.num_vars(),
             entry.final_group.num_polynomials(),
         );
-        schedule_from_entry(
+        schedule_from_entry::<Cfg::Field>(
             entry,
             &AkitaScheduleLookupKey::single(key),
             &policy,
@@ -647,7 +647,7 @@ fn assert_every_table_entry_has_crt_i8_capacity<Cfg: CommitmentConfig>(
             entry.final_group.num_vars(),
             entry.final_group.num_polynomials(),
         );
-        let schedule = schedule_from_entry(
+        let schedule = schedule_from_entry::<Cfg::Field>(
             entry,
             &AkitaScheduleLookupKey::single(key),
             &policy,
@@ -675,7 +675,7 @@ fn assert_generated_batched_roots_are_scaled<Cfg: CommitmentConfig>(table: Gener
             entry.final_group.num_vars(),
             entry.final_group.num_polynomials(),
         );
-        let generated = schedule_from_entry(
+        let generated = schedule_from_entry::<Cfg::Field>(
             entry,
             &AkitaScheduleLookupKey::single(key),
             &policy,

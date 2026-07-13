@@ -8,7 +8,7 @@
 //! transitions and proof-byte totals.
 
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
-use akita_field::AkitaError;
+use akita_field::{AkitaError, CanonicalField};
 use akita_types::{
     direct_witness_bytes, extension_opening_reduction_level_bytes, level_proof_bytes,
     segment_typed_witness_shape, w_ring_element_count_for_chunks,
@@ -28,13 +28,14 @@ pub(crate) struct GeneratedEntryWalkOutput {
     pub schedule: Schedule,
 }
 
-pub(crate) fn walk_generated_schedule_entry(
+pub(crate) fn walk_generated_schedule_entry<F: CanonicalField>(
     entry: &GeneratedScheduleTableEntry,
     key: &AkitaScheduleLookupKey,
     policy: &PlannerPolicy,
     ring_challenge_config: &impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
     fold_challenge_shape_at_level: &impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
 ) -> Result<GeneratedEntryWalkOutput, AkitaError> {
+    crate::schedule_params::validate_planner_field::<F>(policy)?;
     key.validate()?;
     validate_entry_key(entry, key)?;
     entry.validate()?;

@@ -9,6 +9,7 @@
 mod policy;
 
 use crate::layout::{CommitmentRingDims, RingRole};
+use crate::sis::SisModulusFamily;
 use akita_algebra::ntt::tables::{Q32_MODULUS, Q64_MODULUS};
 use akita_field::{AkitaError, CanonicalField};
 
@@ -61,6 +62,16 @@ pub fn protocol_dispatch_tier<F: CanonicalField>() -> ProtocolRingDispatchTierId
         ProtocolRingDispatchTierId::Fp64
     } else {
         ProtocolRingDispatchTierId::Fp128
+    }
+}
+
+/// SIS modulus family canonically associated with the concrete PCS field.
+#[inline]
+pub fn sis_family_for_field<F: CanonicalField>() -> SisModulusFamily {
+    match protocol_dispatch_tier::<F>() {
+        ProtocolRingDispatchTierId::Fp128 => SisModulusFamily::Q128,
+        ProtocolRingDispatchTierId::Fp64 => SisModulusFamily::Q64,
+        ProtocolRingDispatchTierId::Fp32 => SisModulusFamily::Q32,
     }
 }
 

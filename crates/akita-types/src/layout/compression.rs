@@ -832,11 +832,7 @@ pub fn validate_compression_catalog<F: CanonicalField>(
             "compression catalog sources must be exactly {expected_sources:?} in canonical order"
         )));
     }
-    let active_family = match protocol_dispatch_tier::<F>() {
-        crate::ProtocolRingDispatchTierId::Fp128 => SisModulusFamily::Q128,
-        crate::ProtocolRingDispatchTierId::Fp64 => SisModulusFamily::Q64,
-        crate::ProtocolRingDispatchTierId::Fp32 => SisModulusFamily::Q32,
-    };
+    let active_family = crate::sis_family_for_field::<F>();
     let chains = specs
         .iter()
         .map(|spec| compile_chain::<F>(lp, context, gen_ring_dim, active_family, spec))

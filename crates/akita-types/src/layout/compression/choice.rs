@@ -229,11 +229,7 @@ impl CompressionChoice<'_> {
             }
         }
 
-        let active_family = match protocol_dispatch_tier::<F>() {
-            crate::ProtocolRingDispatchTierId::Fp128 => SisModulusFamily::Q128,
-            crate::ProtocolRingDispatchTierId::Fp64 => SisModulusFamily::Q64,
-            crate::ProtocolRingDispatchTierId::Fp32 => SisModulusFamily::Q32,
-        };
+        let active_family = crate::sis_family_for_field::<F>();
         let specs = sources
             .into_iter()
             .map(|(source, max, chain, expected_key_digest)| {

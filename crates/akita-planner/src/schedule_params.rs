@@ -10,7 +10,7 @@
 use std::collections::{BTreeMap, HashMap};
 
 use akita_challenges::TensorChallengeShape;
-use akita_field::AkitaError;
+use akita_field::{AkitaError, CanonicalField};
 use akita_types::layout::digit_math::optimal_m_r_split;
 use akita_types::sis::{
     decomposed_s_block_ring_count, decomposed_t_ring_count, decomposed_w_ring_count,
@@ -70,6 +70,22 @@ type FoldShapeFn<'a> = &'a dyn Fn(AkitaScheduleInputs) -> TensorChallengeShape;
 // more than this many recursive fold levels; deeper search only blows up
 // memo state without changing emitted tables.
 const MAX_RECURSION_DEPTH: usize = 12;
+
+/// Bind a planner invocation to the concrete field whose schedule will be
+/// replayed. Compression SIS replay is field-generic, so accepting a policy
+/// for another modulus family here would create a type-erased split brain.
+pub(crate) fn validate_planner_field<F: CanonicalField>(
+    policy: &PlannerPolicy,
+) -> Result<(), AkitaError> {
+    let family = akita_types::sis_family_for_field::<F>();
+    if policy.sis_family != family {
+        return Err(AkitaError::InvalidSetup(format!(
+            "planner field family {family:?} disagrees with policy family {:?}",
+            policy.sis_family
+        )));
+    }
+    Ok(())
+}
 
 /// Compute parameters that generate the smallest witness for the next
 /// fold level. Note that this is not the optimum case: in the optimum
@@ -390,7 +406,7 @@ pub(crate) struct SuffixCtx<'a> {
 /// At each state: `best_direct` ships the witness directly (Terminal, no
 /// SIS audit, always present); `best_fold` keeps one fold candidate per
 /// `log_basis` (from [`derive_candidate_level_params`]).
-pub(crate) fn derive_optimal_suffix_schedule(
+pub(crate) fn derive_optimal_suffix_schedule<F: CanonicalField>(
     ctx: &SuffixCtx<'_>,
     memo: &mut ScheduleMemo,
     level: usize,
@@ -460,7 +476,7 @@ pub(crate) fn derive_optimal_suffix_schedule(
             continue;
         };
 
-        let suffix = derive_optimal_suffix_schedule(
+        let suffix = derive_optimal_suffix_schedule::<F>(
             ctx,
             memo,
             level + 1,
@@ -768,13 +784,13 @@ fn compute_root_direct_level_params(
 /// Returns an error if vector counts are invalid or if the witness length
 /// overflows. The function never panics on malformed input — it is
 /// verifier-reachable and audited under the no-panic contract.
-pub fn find_schedule(
+pub fn find_schedule<F: CanonicalField>(
     key: PolynomialGroupLayout,
     policy: &PlannerPolicy,
     ring_challenge_config: impl Fn(usize) -> Result<akita_challenges::SparseChallengeConfig, AkitaError>,
     fold_challenge_shape_at_level: impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
 ) -> Result<Schedule, AkitaError> {
-    find_schedule_inner(
+    find_schedule_inner::<F>(
         key,
         policy,
         ring_challenge_config,
@@ -782,12 +798,13 @@ pub fn find_schedule(
     )
 }
 
-fn find_schedule_inner(
+fn find_schedule_inner<F: CanonicalField>(
     key: PolynomialGroupLayout,
     policy: &PlannerPolicy,
     ring_challenge_config: impl Fn(usize) -> Result<akita_challenges::SparseChallengeConfig, AkitaError>,
     fold_challenge_shape_at_level: impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
 ) -> Result<Schedule, AkitaError> {
+    validate_planner_field::<F>(policy)?;
     let ring_challenge_config: RingChallengeConfigFn<'_> = &ring_challenge_config;
     let fold_shape: FoldShapeFn<'_> = &fold_challenge_shape_at_level;
     let suffix_ctx = SuffixCtx {
@@ -1002,7 +1019,7 @@ fn find_schedule_inner(
                 continue;
             }
 
-            let suffix = derive_optimal_suffix_schedule(
+            let suffix = derive_optimal_suffix_schedule::<F>(
                 &suffix_ctx,
                 &mut memo,
                 1,

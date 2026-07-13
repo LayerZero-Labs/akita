@@ -1,7 +1,7 @@
 //! Multi-group root-batch schedule planning.
 
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
-use akita_field::AkitaError;
+use akita_field::{AkitaError, CanonicalField};
 use akita_types::sis::{
     decomposed_s_block_ring_count, decomposed_t_ring_count, decomposed_w_ring_count,
     fold_witness_digit_plan, min_secure_rank, num_digits_open, num_digits_s_commit,
@@ -17,7 +17,8 @@ use akita_types::{
 };
 
 use crate::schedule_params::{
-    derive_optimal_suffix_schedule, find_schedule, RingChallengeConfigFn, ScheduleMemo, SuffixCtx,
+    derive_optimal_suffix_schedule, find_schedule, validate_planner_field, RingChallengeConfigFn,
+    ScheduleMemo, SuffixCtx,
 };
 use crate::PlannerPolicy;
 
@@ -513,15 +514,16 @@ fn compute_multi_group_root_direct_level_params(
 }
 
 /// Build the phase-1 multi-group-root schedule from the full multi-group key.
-pub fn find_group_batch_schedule(
+pub fn find_group_batch_schedule<F: CanonicalField>(
     key: &AkitaScheduleLookupKey,
     policy: &PlannerPolicy,
     ring_challenge_config: impl Fn(usize) -> Result<akita_challenges::SparseChallengeConfig, AkitaError>,
     fold_challenge_shape_at_level: impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
 ) -> Result<Schedule, AkitaError> {
+    validate_planner_field::<F>(policy)?;
     key.validate()?;
     if key.precommitteds.is_empty() {
-        return find_schedule(
+        return find_schedule::<F>(
             key.final_group,
             policy,
             ring_challenge_config,
@@ -661,7 +663,7 @@ pub fn find_group_batch_schedule(
                 continue;
             }
 
-            let suffix = derive_optimal_suffix_schedule(
+            let suffix = derive_optimal_suffix_schedule::<F>(
                 &suffix_ctx,
                 &mut memo,
                 1,
@@ -739,7 +741,7 @@ pub fn find_group_batch_schedule(
 mod tests {
     use super::*;
     use crate::find_schedule;
-    use akita_field::Prime128OffsetA7F7;
+    use akita_field::{Prime128OffsetA7F7, Prime32Offset99};
     use akita_types::{
         AkitaScheduleLookupKey, DecompositionParams, PolynomialGroupLayout,
         RelationMatrixRowLayout, SisModulusFamily, DEFAULT_SIS_SECURITY_BITS,
@@ -791,8 +793,13 @@ mod tests {
         key: PolynomialGroupLayout,
         policy: &PlannerPolicy,
     ) -> PrecommittedGroupParams {
-        let schedule =
-            crate::find_schedule(key, policy, ring_challenge_config, fold_shape).expect("schedule");
+        let schedule = crate::find_schedule::<Prime128OffsetA7F7>(
+            key,
+            policy,
+            ring_challenge_config,
+            fold_shape,
+        )
+        .expect("schedule");
         let params = match schedule.steps.first().expect("schedule step") {
             Step::Fold(fold) => fold.params.clone(),
             Step::Direct(direct) => direct.params.clone().expect("root-direct params"),
@@ -839,8 +846,13 @@ mod tests {
             precommitteds: vec![precommitted_from_policy(pre_key, &policy)],
         };
         let opening_batch = key.opening_layout().expect("opening layout");
-        let schedule = find_group_batch_schedule(&key, &policy, ring_challenge_config, fold_shape)
-            .expect("multi-group schedule");
+        let schedule = find_group_batch_schedule::<Prime128OffsetA7F7>(
+            &key,
+            &policy,
+            ring_challenge_config,
+            fold_shape,
+        )
+        .expect("multi-group schedule");
         let Step::Fold(root) = schedule.steps.first().expect("multi-group root step") else {
             panic!("expected multi-group root fold");
         };
@@ -890,14 +902,40 @@ mod tests {
         let key = AkitaScheduleLookupKey::single(final_group);
         let policy = flat_policy();
 
-        let via_multi_group =
-            find_group_batch_schedule(&key, &policy, ring_challenge_config, fold_shape)
-                .expect("single-group multi-group key should delegate to scalar DP");
-        let via_scalar =
-            find_schedule(final_group, &policy, ring_challenge_config, fold_shape).expect("scalar");
+        let via_multi_group = find_group_batch_schedule::<Prime128OffsetA7F7>(
+            &key,
+            &policy,
+            ring_challenge_config,
+            fold_shape,
+        )
+        .expect("single-group multi-group key should delegate to scalar DP");
+        let via_scalar = find_schedule::<Prime128OffsetA7F7>(
+            final_group,
+            &policy,
+            ring_challenge_config,
+            fold_shape,
+        )
+        .expect("scalar");
 
         assert_eq!(via_multi_group.total_bytes, via_scalar.total_bytes);
         assert_eq!(via_multi_group.steps.len(), via_scalar.steps.len());
+    }
+
+    #[test]
+    fn nonempty_group_batch_rejects_concrete_field_from_another_sis_family() {
+        let policy = flat_policy();
+        let key = AkitaScheduleLookupKey {
+            final_group: PolynomialGroupLayout::new(20, 1),
+            precommitteds: vec![precommitted(1, 20)],
+        };
+        let error = find_group_batch_schedule::<Prime32Offset99>(
+            &key,
+            &policy,
+            ring_challenge_config,
+            fold_shape,
+        )
+        .expect_err("nonempty Q128 group batch must reject an fp32 field type");
+        assert!(matches!(error, AkitaError::InvalidSetup(_)));
     }
 
     #[test]
@@ -911,8 +949,13 @@ mod tests {
             precommitteds: vec![precommitted_from_policy(pre_key, &policy)],
         };
 
-        let schedule = find_group_batch_schedule(&key, &policy, ring_challenge_config, fold_shape)
-            .expect("multi-group schedule");
+        let schedule = find_group_batch_schedule::<Prime128OffsetA7F7>(
+            &key,
+            &policy,
+            ring_challenge_config,
+            fold_shape,
+        )
+        .expect("multi-group schedule");
         let params = match schedule.steps.first().expect("multi-group step") {
             Step::Direct(direct) => direct.params.as_ref().expect("multi-group root params"),
             Step::Fold(fold) => &fold.params,
@@ -931,8 +974,13 @@ mod tests {
             precommitteds: vec![precommitted_from_policy(pre_key, &policy)],
         };
 
-        let schedule = find_group_batch_schedule(&key, &policy, ring_challenge_config, fold_shape)
-            .expect("multi-group schedule");
+        let schedule = find_group_batch_schedule::<Prime128OffsetA7F7>(
+            &key,
+            &policy,
+            ring_challenge_config,
+            fold_shape,
+        )
+        .expect("multi-group schedule");
         let Step::Fold(root) = schedule.steps.first().expect("multi-group root step") else {
             panic!("expected multi-group root fold");
         };
@@ -954,8 +1002,13 @@ mod tests {
             precommitteds: vec![precommitted(1, 20)],
         };
 
-        let err = find_group_batch_schedule(&key, &policy, ring_challenge_config, fold_shape)
-            .expect_err("dense multi-group root schedules are phase-1 unsupported");
+        let err = find_group_batch_schedule::<Prime128OffsetA7F7>(
+            &key,
+            &policy,
+            ring_challenge_config,
+            fold_shape,
+        )
+        .expect_err("dense multi-group root schedules are phase-1 unsupported");
 
         assert!(matches!(err, AkitaError::InvalidSetup(_)));
     }

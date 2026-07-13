@@ -3,10 +3,10 @@
 use akita_field::{AkitaError, CanonicalField};
 use akita_types::sis::{rounded_up_collision_inf_norm, sis_table_key_for_linf_bound};
 use akita_types::{
-    protocol_dispatch_tier, AjtaiKeyParams, CompressionAlphabet, CompressionCatalogContext,
-    CompressionChainChoice, CompressionChoice, CompressionFChoice, CompressionMapChoice,
-    CompressionSourceId, FrozenCompressionChainChoice, LevelParams, ProtocolRingDispatchTierId,
-    SisModulusFamily, ValidatedCompressionCatalog, DEFAULT_SIS_SECURITY_BITS,
+    AjtaiKeyParams, CompressionAlphabet, CompressionCatalogContext, CompressionChainChoice,
+    CompressionChoice, CompressionFChoice, CompressionMapChoice, CompressionSourceId,
+    FrozenCompressionChainChoice, LevelParams, ValidatedCompressionCatalog,
+    DEFAULT_SIS_SECURITY_BITS,
 };
 
 use crate::PlannerPolicy;
@@ -78,11 +78,7 @@ pub(super) fn validate_replay_policy<F: CanonicalField>(
             policy.ring_dimension, lp.ring_dimension
         )));
     }
-    let field_family = match protocol_dispatch_tier::<F>() {
-        ProtocolRingDispatchTierId::Fp128 => SisModulusFamily::Q128,
-        ProtocolRingDispatchTierId::Fp64 => SisModulusFamily::Q64,
-        ProtocolRingDispatchTierId::Fp32 => SisModulusFamily::Q32,
-    };
+    let field_family = akita_types::sis_family_for_field::<F>();
     if policy.sis_family != field_family {
         return Err(AkitaError::InvalidSetup(format!(
             "compression replay SIS family {:?} disagrees with field family {field_family:?}",

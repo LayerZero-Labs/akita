@@ -321,7 +321,7 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     /// (invalid key dimensions, witness overflow). Never panics — this is
     /// verifier-reachable.
     fn runtime_schedule(key: AkitaScheduleLookupKey) -> Result<Schedule, AkitaError> {
-        akita_planner::resolve_group_batch_schedule(
+        akita_planner::resolve_group_batch_schedule::<Self::Field>(
             &key,
             &policy_of::<Self>(),
             Self::ring_challenge_config,

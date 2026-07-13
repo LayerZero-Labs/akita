@@ -12,7 +12,7 @@ fn miswired_catalog_rejects_before_lookup() {
     let wrong_catalog = akita_schedules::fp128_d64_onehot_table();
     let key = PolynomialGroupLayout::new(28, 1);
 
-    let err = resolve_schedule(
+    let err = resolve_schedule::<fp128::Field>(
         key,
         &policy_of::<fp128::D64Full>(),
         fp128::D64Full::ring_challenge_config,
