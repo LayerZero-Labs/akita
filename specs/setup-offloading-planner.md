@@ -58,9 +58,10 @@ direct-only.
 - **The recursion window is fixed.** Only fold levels 0 and 1 may be recursive.
   Fold levels 2 and above are always direct.
 - **Threshold-qualified recursion is mandatory.** In a recursion config, a
-  non-terminal fold at level 0 or 1 with `N_prefix > 2^10` must be recursive.
-  If its successor cannot commit the prefix, that candidate edge is infeasible;
-  the planner may not turn that edge direct as a fallback.
+  fold at level 0 or 1 whose successor is also nonterminal and whose
+  `N_prefix > 2^10` must be recursive. If its successor cannot commit the
+  prefix, that candidate edge is infeasible; the planner may not turn that edge
+  direct as a fallback.
 - **Per-level mode is authoritative after config selection.** Every
   `LevelParams` records
   `SetupContributionMode`. Prover, verifier, generated-table replay, setup
@@ -68,10 +69,20 @@ direct-only.
 - **Recursive means an actual carried setup opening.** A recursive fold runs
   Stage 3, exposes `S_i(rho_setup)`, and passes the matching prefix slot into the
   successor's opening batch. It may not silently revert to a local setup scan.
+- **Mode and successor shape are equivalent.** When fold `i` has a successor,
+  it is `Recursive` if and only if fold `i + 1` contains exactly one setup-prefix
+  precommitted group beside its witness group. It is `Direct` if and only if fold
+  `i + 1` contains only its witness group. Generated replay, proving, and
+  verification enforce both directions.
 - **Direct means no outgoing setup group.** A direct fold may consume an
   incoming setup group, but it creates no setup claim for its successor.
-- **Terminal folds are direct.** A terminal fold has no successor commitment,
-  so it cannot offload its setup claim.
+- **Terminal folds are scalar and direct.** A terminal fold has no successor
+  commitment, so it cannot offload its setup claim or consume an incoming setup
+  group. It consumes exactly one witness group.
+- **Grouped steps are nonterminal folds.** A schedule `Direct` step and the last
+  `Fold` consume exactly one group. Any fold that consumes a setup-prefix group
+  must itself have another `Fold` as its successor. This is the canonical shape
+  defined by `specs/multi-group-batching.md`.
 - **One setup-prefix identity.** `SetupPrefixSlotId` remains the canonical
   identity. `natural_len` and `n_prefix` identify the prefix domain;
   `level_params_digest` identifies the exact commitment params, including
@@ -138,7 +149,7 @@ A fold is required to be marked `Recursive` exactly when:
 recursive config is selected
 the root schedule key is genuinely multi-group (precommitteds is nonempty)
 fold level is 0 or 1
-the schedule has a successor Fold step
+the successor is a nonterminal Fold, itself followed by another Fold
 all active role dimensions equal SETUP_OFFLOAD_D_SETUP = 64
 the level does not use distributed/multi-chunk witness layout
 N_prefix > SETUP_OFFLOAD_MIN_PREFIX_FIELD_LEN
@@ -150,7 +161,8 @@ of prefix size.
 
 Successor fit is a candidate-feasibility condition, not another mode gate. When
 the rules above require recursion, retain a proposed edge only if the successor
-can carry `N_prefix` as an independently derived setup-prefix precommitted group.
+is nonterminal and can carry `N_prefix` as an independently derived setup-prefix
+precommitted group.
 The planner tries its normal alternative parameters and suffixes, then chooses
 the smallest feasible proof with the existing comparator.
 
@@ -287,6 +299,9 @@ If fold `i` is recursive, Stage 3 produces a setup-prefix opening and fold
 [S_i, W_{i+1}] in storage order
 [W_{i+1}, S_i] in proof order
 ```
+
+Fold `i + 1` must be nonterminal. The planner must not create this transition
+when `i + 1` would be the last fold.
 
 If fold `i` is direct, fold `i + 1` receives only `[W_{i+1}]`, even when fold
 `i` itself consumed two groups. This allows an initial recursive prefix of the
@@ -621,8 +636,8 @@ For each existing `r_vars` candidate:
 6. Compute the main and setup groups' opening-segment widths.
 7. Derive one SIS-secure D key over their concatenation and store it on
    `candidate.d_key`.
-8. Compute intermediate and terminal witness lengths through generalized
-   `LevelParams` methods.
+8. Compute the grouped intermediate witness length. Compute a terminal witness
+   length only after confirming that the candidate has one group.
 9. Keep only the smallest outgoing witness for this basis.
 
 This work stays inside `derive_candidate_level_params`; no
@@ -633,13 +648,17 @@ introduced.
 
 For a fold-then-direct branch:
 
-- the current fold consumes any incoming setup group;
+- require `incoming_n_prefix = None`;
+- require the current opening layout to contain exactly one witness group;
 - set `setup_contribution_mode = Direct`;
-- use `MRowLayout::WithoutDBlock`;
+- use the scalar terminal row layout;
 - create no outgoing setup prefix;
-- derive the terminal witness shape from the actual opening layout.
+- derive the terminal witness shape from the scalar opening layout.
 
-A root-direct schedule has no incoming prefix and remains unchanged.
+If an incoming setup prefix exists, this terminal candidate is infeasible. The
+planner may choose a longer fold suffix, but it may not drop the prefix, merge it
+into the witness group, or reinterpret the last fold through a grouped terminal
+codec. A root-direct schedule remains valid only for a scalar root.
 
 ### Fold-Again Branch
 
@@ -651,7 +670,10 @@ For a fold-then-fold branch:
 4. Set:
 
    ```text
-   must_recurse = level <= 1 && n_prefix > 2^10
+   must_recurse =
+       level <= 1
+       && n_prefix > 2^10
+       && child has another Fold successor
    ```
 
 5. If `must_recurse`, mark the current candidate `Recursive` and recursively
@@ -697,16 +719,18 @@ each precommitted group's B rows
 shared D rows when WithDBlock
 ```
 
-The spec does not introduce another row formula. Generalized witness and
-terminal layout code calls:
+The spec does not introduce another row formula. Generalized intermediate
+witness layout code calls:
 
 ```text
 m_row_count_for(opening_batch.num_groups(), layout)
 segment_rings for each group
 ```
 
-Existing terminal witness and tail functions should accept the actual
-`OpeningClaimsLayout`; no new terminal-shape helper is introduced.
+Intermediate witness and tail functions accept the actual
+`OpeningClaimsLayout`. Terminal witness and tail functions remain scalar and
+must reject an opening layout with more than one group. No grouped terminal
+shape helper is introduced.
 
 ## Generated Replay
 
@@ -767,16 +791,20 @@ For each fold it:
 
    ```text
    expected_mode =
-     if multi_group_path && recursive policy && level <= 1 && n_prefix > 2^10
+     if multi_group_path
+        && recursive policy
+        && level <= 1
+        && n_prefix > 2^10
+        && successor is a nonterminal Fold
      then Recursive
      else Direct
    ```
 
 5. Rejects when the stored mode differs from `expected_mode`.
-6. For `Recursive`, validates that the generated successor has a compatible
-   `setup_prefix_group` and forwards the prefix.
+6. For `Recursive`, validates that the generated successor is nonterminal, has
+   a compatible `setup_prefix_group`, and forwards the prefix.
 7. For `Direct`, forwards no prefix.
-8. Rejects a terminal fold marked recursive.
+8. Rejects a terminal fold marked recursive or carrying an incoming prefix.
 
 `schedule_from_entry`, proof-byte estimation, and public generated-row
 validation already share this walker; no second replay implementation is
@@ -844,8 +872,8 @@ n_prefix / setup_generation_ring_dimension
 
 1. Evaluate setup directly as today. Under an ordinary config, every fold takes
    this path.
-2. If an incoming setup group exists, prove that incoming opening as part of
-   the current grouped fold.
+2. If an incoming setup group exists, require another successor fold and prove
+   that incoming opening as part of the current grouped fold.
 3. Emit only the next witness state.
 4. Construct a one-group successor batch.
 
@@ -854,6 +882,7 @@ n_prefix / setup_generation_ring_dimension
 Reject:
 
 - a recursive fold with no successor fold;
+- a recursive fold whose successor is terminal;
 - a recursive fold from the scalar/singular planner path;
 - a recursive fold outside uniform D64;
 - a recursive chunked/distributed fold;
@@ -862,8 +891,30 @@ Reject:
 - a missing required prefix slot;
 - a slot whose ID, lengths, commitment params, or commitment rows differ;
 - an incoming-prefix presence that disagrees with the predecessor mode;
+- any `Direct` step or terminal fold with more than one group;
 - a generated row mode that differs from dynamically derived eligibility;
 - malformed group order, row count, point projection, or setup opening.
+
+### Rejection Ownership
+
+The same invariant is enforced at each boundary for a different reason:
+
+1. The planner discards grouped direct and grouped terminal candidates. If no
+   supported candidate remains, planning returns `AkitaError::InvalidSetup`.
+2. Canonical schedule validation rejects stale generated rows and manually
+   constructed schedules whose mode, successor group, or terminal shape does not
+   match this policy.
+3. Setup preprocessing must materialize every exact slot required by the selected
+   schedules. A missing or mismatched slot is `AkitaError::InvalidSetup`; it is
+   never repaired by truncation or direct evaluation.
+4. The prover repeats schedule and slot validation before transcript mutation.
+   It returns `AkitaError` rather than constructing a different proof shape.
+5. The verifier reconstructs the expected schedule from public inputs. A received
+   grouped direct proof, grouped terminal proof, missing recursive payload, extra
+   prefix group, or wrong prefix identity is `AkitaError::InvalidProof`.
+
+These checks are intentionally redundant at trust boundaries. The planner owns
+selection, while schedule validation owns the canonical structural rule.
 
 ## Proof-Size Accounting
 
@@ -900,13 +951,16 @@ and are not per-proof bytes.
       ordinary scalar planner/catalog and contain only direct levels.
 - [ ] `LevelParams` and generated rows carry a per-fold setup mode.
 - [ ] In a recursion config, only levels 0 and 1 are recursive when their
-      prefixes exceed `2^10`; levels 2 and above are always direct.
+      prefixes exceed `2^10` and their successor is nonterminal; levels 2 and
+      above are always direct.
 - [ ] A required-recursive edge with incompatible successor params is discarded
       instead of downgraded to direct.
 - [ ] After applying those constraints, the existing planner comparator selects
       the smallest feasible proof.
 - [ ] Recursive successors use two existing opening groups; direct successors
       use one.
+- [ ] Every fold that consumes an incoming setup prefix is nonterminal; direct
+      steps and terminal folds consume exactly one group.
 - [ ] Generated recursive rows store `setup_prefix_group` for every fold that
       consumes an incoming setup prefix.
 - [ ] `setup_prefix_group.{m_vars,r_vars,n_a,n_b}` describe the prefix group's
@@ -949,6 +1003,8 @@ and are not per-proof bytes.
 - required-recursive successor-fit rejection rather than direct fallback;
 - independent prefix-group A/B derivation for incoming prefixes;
 - terminal mode is always direct;
+- terminal candidates with an incoming prefix are infeasible;
+- grouped direct roots and grouped terminal folds reject;
 - level 2 and later are always direct;
 - generated-row and DP parity;
 - direct/recursive catalog identity mismatch rejection.
@@ -984,6 +1040,7 @@ Prover/verifier end to end:
 - zero, one, and two recursive levels according to the two threshold checks;
 - level 2 and later remain direct even when their prefix exceeds the threshold;
 - a two-group direct fold returning to a one-group successor;
+- rejection when that two-group fold would be terminal;
 - tampering with setup commitment, opening, point, slot ID, or group order;
 - missing planned slot rejection.
 
@@ -1008,8 +1065,8 @@ bound. The planner must not enumerate a full split frontier.
    hook.
 2. Add per-level mode to `LevelParams` and generated rows.
 3. Generalize total setup-prefix sizing using existing group views.
-4. Generalize existing grouped `LevelParams` and terminal-layout methods beyond
-   root-only use.
+4. Generalize existing grouped `LevelParams` methods for nonterminal folds while
+   keeping terminal-layout methods scalar.
 5. Extend local suffix candidate derivation with incoming `n_prefix`.
 6. Implement edge-aware mode selection in the existing DP.
 7. Update generated replay; emit `setup_prefix_group`; regenerate separate
