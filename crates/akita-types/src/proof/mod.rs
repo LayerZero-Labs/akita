@@ -9,6 +9,8 @@
 
 pub mod batch;
 pub mod commitment;
+#[doc(hidden)]
+pub mod compressed_wire;
 pub mod relation;
 pub mod relation_matrix_cols;
 pub mod ring_relation;
