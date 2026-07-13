@@ -72,10 +72,10 @@ Moved **from `akita-types` to `akita-planner`** (new home, e.g.
 Stays **in `akita-types`** (foundational, depended on by `akita-types` core and
 by `akita-planner`):
 
-- `sis_floor` (`SisModulusFamily`, `min_rank_for_secure_width`,
+- `sis_floor` (`SisModulusProfileId`, `min_rank_for_secure_width`,
   `ceil_supported_collision`) — renamed out of the `generated` namespace to
   `akita_types::sis_floor` since it is a security-floor table, not a generated
-  *schedule*. `akita_types::SisModulusFamily` re-export is unchanged.
+  *schedule*. `akita_types::SisModulusProfileId` re-export is unchanged.
 - `level_proof_bytes` and the pure byte/layout helpers it uses
   (`field_bytes`, `proof_ring_vec_bytes`, `sumcheck_rounds`,
   `direct_witness_bytes`, `extension_opening_reduction_proof_bytes`,
@@ -115,7 +115,7 @@ pub fn get_schedule(
 Semantics: `get_schedule` consults the planner-owned shipped-table cache for
 `policy`; on a hit it expands the compact entry via the moved walker, on a miss
 (or no shipped table for the policy) it runs `find_schedule`. Every input the
-walker needs (`sis_family`, `decomposition`, `challenge_field_bits`,
+walker needs (`sis_modulus_profile`, `decomposition`, `challenge_field_bits`,
 `claim_ext_degree`, `ring_subfield_norm_bound`) is derivable from
 `PlannerPolicy`, so the call shape matches `find_schedule`'s and no new policy
 fields are required. Because the planner already owns every shipped table, it
@@ -124,7 +124,7 @@ also owns the `policy → table` mapping; `akita-config` no longer carries a
 
 #### Table selection (planner-owned registry)
 
-`shipped_table` is a `match` on `(sis_family, ring_dimension)` plus two binary
+`shipped_table` is a `match` on `(sis_modulus_profile, ring_dimension)` plus two binary
 discriminators, both derivable without naming any `Cfg`:
 
 - `onehot = (decomposition.log_commit_bound == 1)` — full-field presets carry
@@ -165,7 +165,7 @@ no behavior changes there.
    e2e (`akita_e2e.rs`).
 5. **Protocol agnosticism.** `akita-prover` and `akita-verifier` contain zero
    references to any `Generated*` schedule-table type (they already only use
-   `SisModulusFamily`, which stays in `akita-types`). Protected by: a grep-level
+   `SisModulusProfileId`, which stays in `akita-types`). Protected by: a grep-level
    check / review, and the crates compiling without depending on the planner's
    schedule-table module.
 6. **SIS security + verifier no-panic.** The moved expansion is verifier-reachable
@@ -197,7 +197,7 @@ no behavior changes there.
       `akita_types::{schedule_from_entry_bits, estimate_proof_bytes,
       generated_schedule_lookup_key}` and the `Generated*` types are gone from
       its public surface. `akita_types::sis_floor::*` and
-      `akita_types::SisModulusFamily` remain.
+      `akita_types::SisModulusProfileId` remain.
 - [ ] `akita-planner` exposes `resolve_schedule`, the `Generated*` types, the
       shipped tables, the `*_table()` constructors, and `schedule_from_entry_bits`
       / `estimate_proof_bytes`.
@@ -261,7 +261,7 @@ The current `generated` module conflates two concerns under one name:
 
 ```
 akita-types::generated
-├── sis_floor            ← SIS security-floor table (SisModulusFamily, ranks)
+├── sis_floor            ← SIS security-floor table (SisModulusProfileId, ranks)
 │                          USED BY akita-types core: layout/params.rs,
 │                          layout/digit_math.rs, sis_offline.rs, schedule.rs
 └── schedule-table repr  ← GeneratedCommitmentGroupScheduleKey/Entry/Step + static tables
@@ -306,7 +306,7 @@ boundary and called `Self::schedule_table()` / `Self::resolve_schedule`):
 fn runtime_schedule(key) -> Result<Option<Schedule>, AkitaError> {
     if let Some(entry) = Self::resolve_schedule(key)? {        // table_entry + validate (Cfg hook)
         return Ok(Some(akita_types::schedule_from_entry_bits(  // akita-types walker
-            entry, key, sis_family, decomposition, challenge_field_bits,
+            entry, key, sis_modulus_profile, decomposition, challenge_field_bits,
             claim_ext_degree, ring_subfield_norm_bound, stage1, fold_shape)?));
     }
     Ok(Some(akita_planner::find_schedule(key, &policy_of::<Self>(), stage1, fold_shape)?))
@@ -347,10 +347,10 @@ pub fn get_schedule(key, policy, stage1, fold_shape) -> Result<Schedule, AkitaEr
 
 `schedule_from_entry` is the relocated `schedule_from_entry_bits`, re-signed to
 take `&PlannerPolicy` instead of the seven loose values
-(`sis_family`, `root_decomp`, `challenge_field_bits`, `extension_opening_width`,
+(`sis_modulus_profile`, `root_decomp`, `challenge_field_bits`, `extension_opening_width`,
 `ring_subfield_norm_bound`, …), all projections of `PlannerPolicy`:
 
-- `sis_family` = `policy.sis_family`
+- `sis_modulus_profile` = `policy.sis_modulus_profile`
 - `root_decomp` = `policy.decomposition`
 - `challenge_field_bits` = `policy.decomposition.field_bits() * policy.chal_ext_degree`
 - `extension_opening_width` = `policy.claim_ext_degree`

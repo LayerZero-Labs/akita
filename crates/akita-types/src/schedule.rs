@@ -789,7 +789,7 @@ mod tests {
         stage1_tree_stage_shapes, sumcheck_rounds, AkitaBatchedRootProof,
         AkitaIntermediateStage2Proof, AkitaLevelProof, AkitaStage1Proof, AkitaStage1StageProof,
         AkitaStage2Proof, CleartextWitnessProof, ExtensionOpeningReductionProof,
-        RelationMatrixRowLayout, RingVec, SisModulusFamily, TerminalLevelProof,
+        RelationMatrixRowLayout, RingVec, SisModulusProfileId, TerminalLevelProof,
         EXTENSION_OPENING_REDUCTION_DEGREE,
     };
     use akita_algebra::CyclotomicRing;
@@ -806,10 +806,17 @@ mod tests {
         const D: usize = 64;
         let fold_challenge_config = SparseChallengeConfig::pm1_only(3);
         // num_blocks = 2^3 = 8, divisible by {1, 2, 4, 8}.
-        let lp =
-            LevelParams::params_only(SisModulusFamily::Q128, D, 3, 2, 2, 2, fold_challenge_config)
-                .with_decomp(2, 3, 2, 2, 0)
-                .unwrap();
+        let lp = LevelParams::params_only(
+            SisModulusProfileId::Q128OffsetA7F7,
+            D,
+            3,
+            2,
+            2,
+            2,
+            fold_challenge_config,
+        )
+        .with_decomp(2, 3, 2, 2, 0)
+        .unwrap();
         let field_bits = 128u32;
         let num_poly = 3usize;
 
@@ -847,10 +854,17 @@ mod tests {
         const D: usize = 64;
         let fold_challenge_config = SparseChallengeConfig::pm1_only(3);
         // num_blocks = 2^3 = 8.
-        let lp =
-            LevelParams::params_only(SisModulusFamily::Q128, D, 3, 2, 2, 2, fold_challenge_config)
-                .with_decomp(2, 3, 2, 2, 0)
-                .unwrap();
+        let lp = LevelParams::params_only(
+            SisModulusProfileId::Q128OffsetA7F7,
+            D,
+            3,
+            2,
+            2,
+            2,
+            fold_challenge_config,
+        )
+        .with_decomp(2, 3, 2, 2, 0)
+        .unwrap();
         // Non-power-of-two chunk count.
         assert!(matches!(
             w_ring_element_count_for_chunks(128, &lp, 1, RelationMatrixRowLayout::WithDBlock, 6),
@@ -897,7 +911,7 @@ mod tests {
     #[test]
     fn root_direct_schedule_uses_field_element_payload() {
         let dummy_commit_params = LevelParams::params_only(
-            crate::SisModulusFamily::Q128,
+            crate::SisModulusProfileId::Q128OffsetA7F7,
             64,
             3,
             1,
@@ -930,7 +944,7 @@ mod tests {
         assert_eq!(witness_len, 4 + 16 + 16);
 
         let dummy_commit_params = LevelParams::params_only(
-            crate::SisModulusFamily::Q128,
+            crate::SisModulusProfileId::Q128OffsetA7F7,
             64,
             3,
             1,
@@ -1030,13 +1044,20 @@ mod tests {
     fn planned_level_bytes_match_two_stage_payload_at_all_bases() {
         const D: usize = 64;
         let fold_challenge_config = SparseChallengeConfig::pm1_only(3);
-        let next_lp =
-            LevelParams::params_only(SisModulusFamily::Q128, D, 2, 2, 3, 2, fold_challenge_config);
+        let next_lp = LevelParams::params_only(
+            SisModulusProfileId::Q128OffsetA7F7,
+            D,
+            2,
+            2,
+            3,
+            2,
+            fold_challenge_config,
+        );
         let next_w_len = D * 8;
 
         for log_basis in 2..=6 {
             let lp = LevelParams::params_only(
-                SisModulusFamily::Q128,
+                SisModulusProfileId::Q128OffsetA7F7,
                 D,
                 log_basis,
                 2,
@@ -1071,7 +1092,7 @@ mod tests {
 
         for log_basis in 2..=6 {
             let lp = LevelParams::params_only(
-                SisModulusFamily::Q128,
+                SisModulusProfileId::Q128OffsetA7F7,
                 D,
                 log_basis,
                 2,
@@ -1127,13 +1148,20 @@ mod tests {
     fn planned_batched_root_bytes_match_two_stage_payload_at_all_bases() {
         const D: usize = 64;
         let fold_challenge_config = SparseChallengeConfig::pm1_only(3);
-        let next_lp =
-            LevelParams::params_only(SisModulusFamily::Q128, D, 2, 2, 3, 2, fold_challenge_config);
+        let next_lp = LevelParams::params_only(
+            SisModulusProfileId::Q128OffsetA7F7,
+            D,
+            2,
+            2,
+            3,
+            2,
+            fold_challenge_config,
+        );
         let next_w_len = D * 8;
 
         for log_basis in 2..=6 {
             let lp = LevelParams::params_only(
-                SisModulusFamily::Q128,
+                SisModulusProfileId::Q128OffsetA7F7,
                 D,
                 log_basis,
                 2,

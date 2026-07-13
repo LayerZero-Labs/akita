@@ -12,7 +12,7 @@ use akita_field::{CanonicalField, FieldCore};
 use crate::sis::{
     fold_witness_digit_plan, fold_witness_linf_cap_policy, min_secure_rank, num_digits_for_bound,
     rounded_up_role_a_inf_norm, FoldChallengeNorms, FoldWitnessLinfCapConfig, FoldWitnessNorms,
-    SisModulusFamily, SisSecurityPolicyId, SisTableKey,
+    SisModulusProfileId, SisSecurityPolicyId, SisTableKey,
 };
 use crate::DecompositionParams;
 
@@ -87,7 +87,7 @@ pub fn gadget_row_scalars<F: FieldCore + CanonicalField>(levels: usize, log_basi
 #[allow(clippy::too_many_arguments)]
 pub fn optimal_m_r_split(
     policy: SisSecurityPolicyId,
-    sis_family: SisModulusFamily,
+    sis_modulus_profile: SisModulusProfileId,
     d: u32,
     num_claims: usize,
     ring_subfield_norm_bound: u32,
@@ -125,7 +125,7 @@ pub fn optimal_m_r_split(
         };
         let Some(a_collision) = rounded_up_role_a_inf_norm(
             policy,
-            sis_family,
+            sis_modulus_profile,
             d as usize,
             decomposition,
             fold_challenge_config,
@@ -142,7 +142,9 @@ pub fn optimal_m_r_split(
         let Some(n_a) = min_secure_rank(
             SisTableKey {
                 policy,
-                family: sis_family,
+                table_digest: crate::sis::SisTableDigest::CURRENT,
+                modulus_profile: sis_modulus_profile,
+                role: crate::sis::SisMatrixRole::A,
                 ring_dimension: d,
                 coeff_linf_bound: a_collision,
             },

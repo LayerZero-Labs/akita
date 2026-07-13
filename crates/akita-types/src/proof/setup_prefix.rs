@@ -917,12 +917,12 @@ fn read_limited_usize<R: Read>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{LevelParams, OpeningClaimsLayout, SisModulusFamily};
+    use crate::{LevelParams, OpeningClaimsLayout, SisModulusProfileId};
     use akita_challenges::SparseChallengeConfig;
 
     fn sample_level_params() -> LevelParams {
         LevelParams::params_only(
-            SisModulusFamily::Q32,
+            SisModulusProfileId::Q32Offset99,
             32,
             3,
             2,

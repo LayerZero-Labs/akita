@@ -54,8 +54,9 @@ impl GeneratedScheduleTableEntry {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GeneratedScheduleCatalogIdentity {
     pub family_name: &'static str,
-    pub sis_family: SisModulusFamily,
+    pub sis_modulus_profile: SisModulusProfileId,
     pub sis_security_policy: akita_types::SisSecurityPolicyId,
+    pub sis_table_digest: akita_types::SisTableDigest,
     pub ring_dimension: usize,
     pub decomposition: akita_types::DecompositionParams,
     pub ring_subfield_norm_bound: u32,
@@ -84,8 +85,8 @@ pub struct GeneratedScheduleTable {
 pub mod expand;
 pub mod validate;
 pub(crate) mod walk;
-pub use akita_types::SisModulusFamily;
 pub use akita_types::{PolynomialGroupLayout, PrecommittedGroupParams};
+pub use akita_types::{SisModulusProfileId, SisTableDigest};
 pub use validate::{validate_generated_schedule_entry, validate_generated_schedule_table};
 
 /// Returns true when `entries` are ordered for [`table_entry`] binary search.

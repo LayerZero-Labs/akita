@@ -164,7 +164,7 @@ deterministically derive it:
 ```rust
 pub struct SetupSection {
     pub decomposition: DecompositionSection,
-    pub sis_modulus_family: SisModulusFamilySection,
+    pub sis_modulus_profile: SisModulusProfileIdSection,
     pub setup_seed_digest: [u8; 32],
     pub feature_mode: ProtocolFeatureMode,
     pub level_params_digest: [u8; 32],

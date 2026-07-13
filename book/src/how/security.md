@@ -9,32 +9,30 @@ model. Keep the marketing claim separate from audited reality. See
 
 ## SIS / MSIS and Ajtai sizing
 
-Production Ajtai key sizing uses generated Module-SIS width tables keyed by the
-versioned SIS policy, modulus family, ring dimension, and coefficient-`L∞`
-bound:
+Production Ajtai key sizing uses generated scalar Module-SIS width tables keyed
+by the SIS policy, exact modulus profile, coefficient-`L∞` bound, and
+scalar dimension:
 
 ```text
-(sis_security_policy, family, ring_dimension, coeff_linf_bound)
-    -> max secure width by module rank
+(sis_security_policy, modulus_profile, coeff_linf_bound, n = rank * d)
+    -> certified scalar cutoff
 ```
 
-The shipped policy is
-`Classical138Quantum128WithIdealizedBcssV1`. It accepts a row only when the
-full optimizer finds both at least 138 bits under the classical ADPS16 model
-and at least 128 bits under the conventional ADPS16 quantum model. A lookup
-for an unsupported policy returns `None` until a matching table is generated
-and checked in.
+The shipped policy is `Adps16Quantum128Bit`. It accepts a row only when the
+exhaustive ADPS16 quantum certificate reports a finite score or a classified
+above-target lower bound of at least 128 bits. A lookup for an unsupported
+policy, exact modulus profile, role, or scalar cell fails closed.
 
-The checked-in policy table was generated with the `local-minimum` optimizer
-profile. Each hard model and the idealized BCSS diagnostic runs an independent
-Python-compatible local beta and zeta search inside each table row. Parallel
-generation parallelizes rows; it does not make one row's optimizer exhaustive.
+The checked-in policy table may use `local-minimum` only to discover a candidate
+boundary. Every emitted boundary and its immediate rejected successor are
+certified by exhaustive search over the configured beta and zeta domain.
+Parallel generation parallelizes independent rows and does not change the
+certificate domain or output ordering.
 
-CSV table-generation artifacts include separate classical and conventional-
-quantum target margins, optimizer witnesses, and BCSS review flags so review can
-see how close each binary-searched width boundary is to every policy line.
-Narrow margins are not verifier-visible state, but they are sensitive provenance
-and should be audited before treating a new table as a durable security floor.
+CSV table-generation artifacts include the certified accepted and rejected
+successor witnesses, cutoff kind, cap provenance, and role provenance. These
+are audit inputs, not verifier-visible state, and are committed separately from
+the runtime table digest.
 
 The planner derives role bounds as coefficient-`L∞` values because those are the
 values enforced by the protocol. It does not convert production role bounds
@@ -45,27 +43,23 @@ The production lookup is table-only. Verifier-reachable code must reject a
 missing table row or unsupported floor with `AkitaError`; it must not run the
 estimator at verification time.
 
-### Classical and quantum policy
+### Quantum policy
 
-The checked-in table enforces the joint policy: 138 classical bits and 128 bits
-under the conventional ADPS16 quantum Core-SVP model. It separately reports one
-idealized BCSS diagnostic using the `0.2563 * beta` exponent, with a 124-bit
-manual-review line. BCSS is not a production rank constraint in this policy.
-The BCSS model assumes heuristic asymptotics, exponential reusable-sieve
-storage, and writable QRAQM with coherent access; it is not a concrete
-fault-tolerant resource estimate or an unqualified post-quantum security proof.
+The production rule is the ADPS16 quantum LGSA model with a 128-bit target. It
+is an attack-cost model, not a physical resource estimate or an unqualified
+post-quantum security proof.
 
-The complete decision, assumptions, review line, claim language, and
+The complete decision, assumptions, claim language, certificates, and
 implementation acceptance criteria live in
-[`specs/sis-classical138-quantum128-bcss-policy.md`](../../../specs/sis-classical138-quantum128-bcss-policy.md).
+[`specs/sis-quantum128-scalar-n-table.md`](../../../specs/sis-quantum128-scalar-n-table.md).
 
 **Sources to fold in**
 
 - `crates/akita-types/src/sis/mod.rs`, `ajtai_key.rs`, `generated_sis_table/`, `norm_bound.rs`.
 - Paper §2.2 `def:msis`, §3.12 `sec:batched-soundness` ("MSIS targets", "Two norm models").
-- `docs/security-posture.md`, `specs/sis-linf-table-cutover.md`.
-- `specs/sis-classical138-quantum128-bcss-policy.md` (implemented policy and
-  generation provenance).
+- `docs/security-posture.md`, `specs/sis-quantum128-scalar-n-table.md`.
+- `crates/akita-types/src/sis/generated_sis_table/policy_audit.csv` (certificates
+  and generation provenance).
 
 ## Norm bounds and weak binding
 

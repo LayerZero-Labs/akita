@@ -144,7 +144,7 @@ New tests to add:
 
 - `crates/akita-pcs/tests/no_panic_verifier_cfg.rs`: feeds adversarial `Schedule`/`LevelParams`/incidence to `verify_batched::<Cfg>` and confirms `Result::Err(AkitaError::...)` rather than panic. Run under both `--release` and `--debug`.
 - `crates/akita-cfg/tests/cfg_planner_free_overrides.rs`: defines a minimal `Cfg` impl that hard-codes a tiny `Schedule` and overrides every `Cfg` default. Builds with `--no-default-features` (planner feature off) and runs a round-trip prove/verify against a small claim. This is the contract test for the "planner-free Cfg" path.
-- `crates/akita-cfg/tests/cfg_blanket_presets.rs`: one assertion per preset that `Cfg::sis_modulus_family()`, `Cfg::decomposition()`, and `Cfg::get_params_for_prove(...)` succeed for a small known `CommitmentGroupScheduleKey`.
+- `crates/akita-cfg/tests/cfg_blanket_presets.rs`: one assertion per preset that `Cfg::sis_modulus_profile()`, `Cfg::decomposition()`, and `Cfg::get_params_for_prove(...)` succeed for a small known `CommitmentGroupScheduleKey`.
 - A `LoggingTranscript` golden test, comparing event streams pre/post refactor under the `logging-transcript` feature, to catch any reorderings introduced by collapsing the closure layer.
 
 Required CI matrix:
@@ -192,7 +192,7 @@ If `gen_schedule_tables` produces a non-cosmetic diff, or if `schedule.total_byt
 - Runtime schedule types: `Schedule`, `Step`, `FoldStep`, `DirectStep`, `AkitaSchedulePlan` and the `AkitaPlanned*` sub-structs, `AkitaScheduleInputs`, `CommitmentGroupScheduleKey`.
 - Generated schedule table types: `GeneratedScheduleTable`, `GeneratedScheduleTableEntry`, `GeneratedCommitmentGroupScheduleKey`, `GeneratedStep`, `GeneratedFoldStep`, `GeneratedDirectStep`.
 - **Generated schedule table data** (`crates/akita-types/src/generated/fp*.rs`) stays in `akita-types`. The data is small, pure, and does not bring search code with it. The `gen_schedule_tables` binary in `akita-planner` writes its output back into `crates/akita-types/src/generated/`. We pick this over moving the data files because (a) presets get to keep their `Cfg::schedule_table()` returning a static table without crossing crates, and (b) `akita-types` is already the canonical home for verifier-reachable static data.
-- SIS floor tables: [`SisModulusFamily`](crates/akita-types/src/generated/sis_floor.rs), `sis_max_widths`, `min_rank_for_secure_width`, `ceil_supported_collision`.
+- SIS floor tables: [`SisModulusProfileId`](crates/akita-types/src/generated/sis_floor.rs), `sis_max_widths`, `min_rank_for_secure_width`, `ceil_supported_collision`.
 - Decomposition / envelope: `DecompositionParams`, `CommitmentEnvelope`, `AjtaiRole`.
 - Transcript binding: `AkitaInstanceDescriptor` + all `*Section` types, `digest_effective_schedule`, `digest_level_params`.
 - Plan-translation helpers used at runtime: `schedule_from_plan`, `schedule_root_fold_step`. `scheduled_fold_execution` and `scheduled_next_level_params` stay here too, but their callback signatures change to `Result`-returning (see Invariants).
@@ -242,7 +242,7 @@ The production `find_optimal_schedule` takes a value-typed `SearchOptions`:
 pub struct SearchOptions {
     pub key: CommitmentGroupScheduleKey,
     pub decomposition: DecompositionParams,
-    pub sis_modulus_family: SisModulusFamily,
+    pub sis_modulus_profile: SisModulusProfileId,
     pub challenge_field_bits: u32,
     pub extension_opening_width: usize,
     pub recursive_witness_expansion: usize,
@@ -273,7 +273,7 @@ Plan-from-table materialization is similar:
 
 ```rust
 pub struct PlanPolicy {
-    pub sis_family: SisModulusFamily,
+    pub sis_modulus_profile: SisModulusProfileId,
     pub root_decomp: DecompositionParams,
     pub challenge_field_bits: u32,
     pub recursive_public_rows: usize,
@@ -338,7 +338,7 @@ use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
 use akita_types::{
     AjtaiRole, AkitaScheduleInputs, CommitmentGroupScheduleKey, AkitaSchedulePlan,
     ClaimIncidenceSummary, CommitmentEnvelope, DecompositionParams, GeneratedScheduleTable,
-    LevelParams, Schedule, SisModulusFamily,
+    LevelParams, Schedule, SisModulusProfileId,
 };
 
 pub trait Cfg: Clone + Send + Sync + 'static {
@@ -353,7 +353,7 @@ pub trait Cfg: Clone + Send + Sync + 'static {
 
     // -------- required config "facts" (no defaults) --------
     fn decomposition() -> DecompositionParams;
-    fn sis_modulus_family() -> SisModulusFamily;
+    fn sis_modulus_profile() -> SisModulusProfileId;
     fn stage1_challenge_config(d: usize) -> Result<SparseChallengeConfig, AkitaError>;
     fn envelope(max_num_vars: usize) -> CommitmentEnvelope;
     fn audited_root_rank(role: AjtaiRole, max_num_vars: usize) -> usize;
@@ -513,7 +513,7 @@ impl<const D: usize, C: Cfg> Cfg for WCfg<D, C> {
         akita_types::recursive_level_decomposition_from_root(C::decomposition())
     }
 
-    fn sis_modulus_family() -> SisModulusFamily { C::sis_modulus_family() }
+    fn sis_modulus_profile() -> SisModulusProfileId { C::sis_modulus_profile() }
     fn stage1_challenge_config(d: usize) -> Result<SparseChallengeConfig, AkitaError> {
         C::stage1_challenge_config(d)
     }
@@ -584,7 +584,7 @@ impl Cfg for fp128::D64OneHot {
     const D: usize = 64;
 
     fn decomposition() -> DecompositionParams { fp128_decomposition(/* ... */) }
-    fn sis_modulus_family() -> SisModulusFamily { SisModulusFamily::Q128 }
+    fn sis_modulus_profile() -> SisModulusProfileId { SisModulusProfileId::Q128OffsetA7F7 }
     fn stage1_challenge_config(d: usize) -> Result<SparseChallengeConfig, AkitaError> {
         fp128_stage1_challenge_config(d)
     }
@@ -819,7 +819,7 @@ The 80+ line closure block in today's `AkitaCommitmentScheme::batched_prove` col
 // crates/akita-types/src/generated/mod.rs
 mod sis_floor;
 pub use sis_floor::{
-    SisModulusFamily, ceil_supported_collision, min_rank_for_secure_width, sis_max_widths,
+    SisModulusProfileId, ceil_supported_collision, min_rank_for_secure_width, sis_max_widths,
 };
 
 pub struct GeneratedFoldStep { /* unchanged */ }

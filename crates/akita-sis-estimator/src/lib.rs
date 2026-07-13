@@ -25,11 +25,11 @@ pub mod width_table;
 
 pub use akita::{
     scalar_sis_from_ring, scalar_sis_from_ring_euclidean, scalar_sis_from_ring_wide,
-    AkitaModulusFamily,
+    AkitaModulusProfileId,
 };
 pub use config::{
     Adps16Mode, EstimateConfig, NearestNeighborModel, OptimizerConfig, ReductionCostModel,
-    SearchMode, ShapeModel, SisSecurityConstraint, SisSecurityDiagnostic, SisSecurityPolicy,
+    SearchMode, ShapeModel, SisSecurityConstraint, SisSecurityPolicy,
 };
 pub use cost::{CostValue, EstimateTag, LatticeCost, LogCost};
 pub use error::{EstimatorError, Result};
@@ -42,9 +42,10 @@ pub use params::{
 ///
 /// # Errors
 ///
-/// Returns validation errors for malformed inputs. Infinity-norm ADPS16 + LGSA
-/// estimates support fixed cells, beta search, and zeta search. Other profiles
-/// return [`EstimatorError::Unsupported`].
+/// Returns validation errors for malformed inputs. Infinity-norm LGSA estimates
+/// support fixed cells, beta search, and zeta search. The production SIS table
+/// uses the dedicated ADPS16 quantum configuration; the generic estimator still
+/// exposes other offline profiles where explicitly requested.
 pub fn estimate(params: &SisParameters, config: &EstimateConfig) -> Result<LatticeCost> {
     params.validate()?;
     config.validate()?;
@@ -64,8 +65,8 @@ pub fn estimate(params: &SisParameters, config: &EstimateConfig) -> Result<Latti
 /// # Errors
 ///
 /// Returns validation errors for malformed inputs. The actual estimator math is
-/// implemented for the fixed ADPS16 + LGSA target profile in this slice. Other
-/// profiles return [`EstimatorError::Unsupported`].
+/// implemented for the fixed LGSA target profile in this slice. Other profiles
+/// return [`EstimatorError::Unsupported`].
 pub fn cost_infinity(
     beta: u32,
     params: &SisParameters,
@@ -88,8 +89,8 @@ pub fn cost_infinity(
 ///
 /// # Errors
 ///
-/// Returns validation errors for malformed inputs. Infinity-norm ADPS16 + LGSA
-/// estimates support serial beta search. Unsupported search modes return
+/// Returns validation errors for malformed inputs. Infinity-norm LGSA estimates
+/// support serial beta search. Unsupported search modes return
 /// [`EstimatorError::Unsupported`].
 pub fn cost_zeta(
     zeta: u64,

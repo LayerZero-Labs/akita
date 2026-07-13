@@ -181,7 +181,7 @@ for a stacked follow-up.
 `akita-compute-backend-metal.md`, `crt-ntt-prime-profiles.md`,
 `transcript-immediate-fixes.md`, `eor-sumcheck-prover-acceleration.md`,
 `cross-repo-field-microbench.md`,
-`sis-classical138-quantum128-bcss-policy.md`, plus `TEMPLATE.md`,
+`sis-quantum128-scalar-n-table.md`, plus `TEMPLATE.md`,
 `SPEC_REVIEW.md`, and this file.
 
 ## Never commit / never fold

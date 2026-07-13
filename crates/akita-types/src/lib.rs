@@ -136,7 +136,8 @@ pub use setup_contribution::{
     SetupIndexWeightEvaluator,
 };
 pub use sis::{
-    AjtaiKeyParams, SisModulusFamily, SisSecurityPolicyId, SisTableKey, DEFAULT_SIS_SECURITY_POLICY,
+    AjtaiKeyParams, ScalarCutoff, SisMatrixRole, SisModulusProfileId, SisRoleCell,
+    SisSecurityPolicyId, SisTableDigest, SisTableKey, DEFAULT_SIS_SECURITY_POLICY,
 };
 pub use tail_golomb_rice_low_bits::{
     cap_rice_low_bits, wire_rice_low_bits, wire_rice_low_bits_from_rule, WIRE_RICE_LOW_BITS_DELTA,

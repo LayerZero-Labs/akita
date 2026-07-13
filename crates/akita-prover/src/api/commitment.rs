@@ -897,7 +897,7 @@ mod tests {
     use akita_challenges::SparseChallengeConfig;
     use akita_field::Fp64;
     use akita_types::DigitBlocks;
-    use akita_types::{SetupMatrixEnvelope, SisModulusFamily};
+    use akita_types::{SetupMatrixEnvelope, SisModulusProfileId};
 
     type F = Fp64<4294967197>;
     const D: usize = 64;
@@ -974,7 +974,7 @@ mod tests {
         .unwrap()
         .expanded;
         let params = LevelParams::params_only(
-            SisModulusFamily::Q32,
+            SisModulusProfileId::Q32Offset99,
             D,
             7,
             1,
@@ -1003,7 +1003,7 @@ mod tests {
     #[test]
     fn onehot_chunk_size_validator_rejects_mismatched_k() {
         let params = LevelParams::params_only(
-            SisModulusFamily::Q32,
+            SisModulusProfileId::Q32Offset99,
             D,
             2,
             1,
@@ -1026,7 +1026,7 @@ mod tests {
     #[test]
     fn validate_onehot_chunk_size_rejects_wrapped_onehot_mismatch() {
         let params = LevelParams::params_only(
-            SisModulusFamily::Q32,
+            SisModulusProfileId::Q32Offset99,
             D,
             2,
             1,

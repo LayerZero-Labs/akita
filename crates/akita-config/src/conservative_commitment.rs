@@ -14,7 +14,7 @@ use akita_types::sis::{
 };
 use akita_types::{
     AjtaiKeyParams, AkitaScheduleInputs, DecompositionParams, LevelParams, OpeningClaimsLayout,
-    PolynomialGroupLayout, Schedule, SetupMatrixEnvelope, SisModulusFamily, Step,
+    PolynomialGroupLayout, Schedule, SetupMatrixEnvelope, SisModulusProfileId, Step,
 };
 use std::marker::PhantomData;
 
@@ -41,8 +41,8 @@ impl<Cfg: CommitmentConfig> CommitmentConfig for ConservativeCommitmentConfig<Cf
         Cfg::fold_challenge_shape_at_level(inputs)
     }
 
-    fn sis_modulus_family() -> SisModulusFamily {
-        Cfg::sis_modulus_family()
+    fn sis_modulus_profile() -> SisModulusProfileId {
+        Cfg::sis_modulus_profile()
     }
 
     fn ring_subfield_embedding_norm_bound() -> u32 {
@@ -147,7 +147,8 @@ fn widen_conservative_commit_params<Cfg: CommitmentConfig>(
 
     let conservative_norm = rounded_up_collision_inf_norm(
         sis_security_policy,
-        Cfg::sis_modulus_family(),
+        Cfg::sis_modulus_profile(),
+        akita_types::SisMatrixRole::B,
         Cfg::D,
         max_basis,
     )
@@ -159,7 +160,9 @@ fn widen_conservative_commit_params<Cfg: CommitmentConfig>(
     let conservative_n_b = min_secure_rank(
         SisTableKey {
             policy: sis_security_policy,
-            family: Cfg::sis_modulus_family(),
+            table_digest: akita_types::sis::SisTableDigest::CURRENT,
+            modulus_profile: Cfg::sis_modulus_profile(),
+            role: akita_types::SisMatrixRole::B,
             ring_dimension: Cfg::D as u32,
             coeff_linf_bound: conservative_norm,
         },
@@ -172,7 +175,9 @@ fn widen_conservative_commit_params<Cfg: CommitmentConfig>(
     })?;
     params.b_key = AjtaiKeyParams::try_new(
         sis_security_policy,
-        Cfg::sis_modulus_family(),
+        akita_types::sis::SisTableDigest::CURRENT,
+        Cfg::sis_modulus_profile(),
+        akita_types::SisMatrixRole::B,
         conservative_n_b,
         params.b_key.col_len(),
         conservative_norm,

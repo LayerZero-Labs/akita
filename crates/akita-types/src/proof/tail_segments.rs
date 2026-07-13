@@ -1101,7 +1101,7 @@ pub fn emit_witness_z_folded_planes_inner<const D: usize>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::SisModulusFamily;
+    use crate::SisModulusProfileId;
     use akita_challenges::SparseChallengeConfig;
     use akita_field::CanonicalField;
     use akita_field::Prime128OffsetA7F7;
@@ -1110,7 +1110,7 @@ mod tests {
 
     fn test_lp() -> LevelParams {
         LevelParams::params_only(
-            SisModulusFamily::Q128,
+            SisModulusProfileId::Q128OffsetA7F7,
             8,
             3,
             2,

@@ -91,7 +91,7 @@ Mixed-dimension execution is exercised end-to-end by
 | `AkitaProverSetup<F>` | Prover setup wrapper; `gen_ring_dim` is runtime shape metadata |
 | `Commitment<F>`, `RingVec<F>` | protocol commitment and field-vector storage |
 | `CommitmentRingDims`, `validate_schedule_ring_dims` | Per-role ring dimensions and schedule validation |
-| `CommitmentConfig` | Single user-facing trait for every per-config policy hook (algebra, SIS family, decomposition, layout, schedule, transcript bind, prove/commitment params). Verifier-reachable hooks return `Result<_, AkitaError>` |
+| `CommitmentConfig` | Single user-facing trait for every per-config policy hook (algebra, exact SIS profile, decomposition, layout, schedule, transcript bind, prove/commitment params). Verifier-reachable hooks return `Result<_, AkitaError>` |
 | `LevelParams` | Per-level recursion layout and config (fold shape, ring/ext degrees, decomposition depth, `role_dims`) |
 | `PlanPolicy` | Value-typed inputs to `akita_types::schedule_plan_from_table` |
 | `PlannerPolicy` | `Cfg`-free projection of a preset for `akita_planner::find_schedule`; derive via `akita_config::policy_of::<Cfg>()` |

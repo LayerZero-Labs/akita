@@ -237,12 +237,12 @@ mod tests {
     use akita_field::Prime128Offset275 as F;
     use akita_types::{
         active_setup_field_len, digest_level_params, setup_seed_digest, OpeningClaimsLayout,
-        SetupMatrixEnvelope, SisModulusFamily,
+        SetupMatrixEnvelope, SisModulusProfileId,
     };
 
     fn prefix_level_params(ring_dimension: usize) -> LevelParams {
         LevelParams::params_only(
-            SisModulusFamily::Q128,
+            SisModulusProfileId::Q128OffsetA7F7,
             ring_dimension,
             3,
             2,

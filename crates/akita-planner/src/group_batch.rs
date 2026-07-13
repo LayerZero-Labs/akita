@@ -20,10 +20,16 @@ use crate::schedule_params::{
 };
 use crate::PlannerPolicy;
 
-fn sis_key(policy: &PlannerPolicy, coeff_linf_bound: u128) -> SisTableKey {
+fn sis_key(
+    policy: &PlannerPolicy,
+    role: akita_types::SisMatrixRole,
+    coeff_linf_bound: u128,
+) -> SisTableKey {
     SisTableKey {
         policy: policy.sis_security_policy,
-        family: policy.sis_family,
+        table_digest: policy.sis_table_digest,
+        modulus_profile: policy.sis_modulus_profile,
+        role,
         ring_dimension: policy.ring_dimension as u32,
         coeff_linf_bound,
     }
@@ -45,7 +51,7 @@ pub(crate) fn group_root_params_from_layout(
 
     let ring_challenge_cfg = ring_challenge_config(policy.ring_dimension)?;
     let d = policy.ring_dimension;
-    let family = policy.sis_family;
+    let family = policy.sis_modulus_profile;
     let level_decomp = DecompositionParams {
         log_basis: layout.log_basis,
         ..policy.decomposition
@@ -79,7 +85,9 @@ pub(crate) fn group_root_params_from_layout(
     let min_n_a = min_secure_rank(
         SisTableKey {
             policy: policy.sis_security_policy,
-            family,
+            table_digest: policy.sis_table_digest,
+            modulus_profile: family,
+            role: akita_types::SisMatrixRole::A,
             ring_dimension: d as u32,
             coeff_linf_bound: norm_s,
         },
@@ -93,7 +101,9 @@ pub(crate) fn group_root_params_from_layout(
     }
     let a_key = AjtaiKeyParams::try_new(
         policy.sis_security_policy,
+        policy.sis_table_digest,
         family,
+        akita_types::SisMatrixRole::A,
         layout.n_a,
         width_s,
         norm_s,
@@ -105,8 +115,14 @@ pub(crate) fn group_root_params_from_layout(
     } else {
         layout.log_basis
     };
-    let norm_t = rounded_up_collision_inf_norm(policy.sis_security_policy, family, d, b_norm_basis)
-        .ok_or_else(|| AkitaError::InvalidSetup("no multi-group B-role norm".to_string()))?;
+    let norm_t = rounded_up_collision_inf_norm(
+        policy.sis_security_policy,
+        family,
+        akita_types::SisMatrixRole::B,
+        d,
+        b_norm_basis,
+    )
+    .ok_or_else(|| AkitaError::InvalidSetup("no multi-group B-role norm".to_string()))?;
     let width_t = decomposed_t_ring_count(
         layout.n_a,
         num_digits_open,
@@ -114,8 +130,11 @@ pub(crate) fn group_root_params_from_layout(
         layout.group.num_polynomials(),
     )
     .ok_or_else(|| AkitaError::InvalidSetup("setup B width overflow".to_string()))?;
-    let min_n_b = min_secure_rank(sis_key(policy, norm_t), width_t as u64)
-        .ok_or_else(|| AkitaError::InvalidSetup("no multi-group B-role rank".to_string()))?;
+    let min_n_b = min_secure_rank(
+        sis_key(policy, akita_types::SisMatrixRole::B, norm_t),
+        width_t as u64,
+    )
+    .ok_or_else(|| AkitaError::InvalidSetup("no multi-group B-role rank".to_string()))?;
     let n_b = if conservative_b_rank {
         if layout.conservative_n_b < min_n_b {
             return Err(AkitaError::InvalidSetup(
@@ -127,8 +146,16 @@ pub(crate) fn group_root_params_from_layout(
     } else {
         min_n_b
     };
-    let b_key =
-        AjtaiKeyParams::try_new(policy.sis_security_policy, family, n_b, width_t, norm_t, d)?;
+    let b_key = AjtaiKeyParams::try_new(
+        policy.sis_security_policy,
+        policy.sis_table_digest,
+        family,
+        akita_types::SisMatrixRole::B,
+        n_b,
+        width_t,
+        norm_t,
+        d,
+    )?;
 
     let fold_linf_cap_config = FoldWitnessLinfCapConfig::for_fold_level(
         &ring_challenge_cfg,
@@ -381,7 +408,7 @@ fn multi_group_root_main_level_params_candidate(
 ) -> Result<Option<LevelParams>, AkitaError> {
     let policy = ctx.policy;
     let d = policy.ring_dimension;
-    let family = policy.sis_family;
+    let family = policy.sis_modulus_profile;
     let decomp = policy.decomposition;
     let level_decomp = DecompositionParams {
         log_basis,
@@ -415,21 +442,31 @@ fn multi_group_root_main_level_params_candidate(
     ) else {
         return Ok(None);
     };
-    let Ok(a_key) = AjtaiKeyParams::try_new_with_min_rank(sis_key(policy, norm_s), width_s) else {
+    let Ok(a_key) = AjtaiKeyParams::try_new_with_min_rank(
+        sis_key(policy, akita_types::SisMatrixRole::A, norm_s),
+        width_s,
+    ) else {
         return Ok(None);
     };
     let n_a = a_key.row_len();
 
-    let Some(norm_t) =
-        rounded_up_collision_inf_norm(policy.sis_security_policy, family, d, log_basis)
-    else {
+    let Some(norm_t) = rounded_up_collision_inf_norm(
+        policy.sis_security_policy,
+        family,
+        akita_types::SisMatrixRole::B,
+        d,
+        log_basis,
+    ) else {
         return Ok(None);
     };
     let Some(width_t) = decomposed_t_ring_count(n_a, num_digits_open, num_blocks, main_num_polys)
     else {
         return Ok(None);
     };
-    let Ok(b_key) = AjtaiKeyParams::try_new_with_min_rank(sis_key(policy, norm_t), width_t) else {
+    let Ok(b_key) = AjtaiKeyParams::try_new_with_min_rank(
+        sis_key(policy, akita_types::SisMatrixRole::B, norm_t),
+        width_t,
+    ) else {
         return Ok(None);
     };
 
@@ -440,12 +477,19 @@ fn multi_group_root_main_level_params_candidate(
     let d_width = main_d_width
         .checked_add(ctx.precommitted_d_width)
         .ok_or_else(|| AkitaError::InvalidSetup("multi-group D width overflow".to_string()))?;
-    let Some(norm_w) =
-        rounded_up_collision_inf_norm(policy.sis_security_policy, family, d, log_basis)
-    else {
+    let Some(norm_w) = rounded_up_collision_inf_norm(
+        policy.sis_security_policy,
+        family,
+        akita_types::SisMatrixRole::D,
+        d,
+        log_basis,
+    ) else {
         return Ok(None);
     };
-    let Ok(d_key) = AjtaiKeyParams::try_new_with_min_rank(sis_key(policy, norm_w), d_width) else {
+    let Ok(d_key) = AjtaiKeyParams::try_new_with_min_rank(
+        sis_key(policy, akita_types::SisMatrixRole::D, norm_w),
+        d_width,
+    ) else {
         return Ok(None);
     };
 
@@ -780,7 +824,7 @@ mod tests {
     use akita_field::Prime128OffsetA7F7;
     use akita_types::{
         AkitaScheduleLookupKey, DecompositionParams, PolynomialGroupLayout,
-        RelationMatrixRowLayout, SisModulusFamily, DEFAULT_SIS_SECURITY_POLICY,
+        RelationMatrixRowLayout, SisModulusProfileId, SisTableDigest, DEFAULT_SIS_SECURITY_POLICY,
     };
 
     fn flat_policy() -> PlannerPolicy {
@@ -791,8 +835,9 @@ mod tests {
                 log_commit_bound: 1,
                 log_open_bound: Some(8),
             },
-            sis_family: SisModulusFamily::Q128,
+            sis_modulus_profile: SisModulusProfileId::Q128OffsetA7F7,
             sis_security_policy: DEFAULT_SIS_SECURITY_POLICY,
+            sis_table_digest: SisTableDigest::CURRENT,
             ring_subfield_norm_bound: 1,
             claim_ext_degree: 4,
             chal_ext_degree: 4,

@@ -60,14 +60,14 @@ c667a48546f140c3a5454c7503c3ca44a264cce2
 
 (malb/lattice-estimator#217; strict descendant of malb#213 @ 27a581b)
 
-Historical single-model golden profile:
+Historical estimator golden profile:
 
 ```text
 norm = infinity
 red_cost_model = ADPS16
 red_shape_model = LGSA
 zeta = full optimizer
-target_bits = 138 (classical-only golden cells)
+target_bits = 128 (offline estimator regression cells)
 ```
 
 Refresh:
@@ -83,7 +83,7 @@ sage -python scripts/sis_golden/check_infinity.py
 ```
 
 For quick local smoke tests, use the same script with filters such as
-`--families q32 --dims 32 --ranks 1 --limit 2`.
+`--profiles q32 --dims 32 --ranks 1 --limit 2`.
 
 Profile flags (shared by refresh and replay):
 
@@ -172,25 +172,25 @@ AKITA_SIS_INFINITY_BENCH_SET=all-trusted \
 Production SIS table generation uses the planner-shaped infinity key:
 
 ```text
-(sis_security_policy, family, ring_dimension, coeff_linf_bound)
+(sis_security_policy, modulus_profile, role, ring_dimension, coeff_linf_bound)
     -> max widths by rank
 ```
 
-The checked-in policy is
-`Classical138Quantum128WithIdealizedBcssV1`: hard ADPS16 classical >=138 and
-conventional ADPS16 quantum >=128, plus one non-gating idealized BCSS
-diagnostic with a 124-bit review line. The diagnostic is recorded in generation
-CSV/provenance and does not independently gate a row.
+The checked-in production policy is
+`Adps16Quantum128Bit`: one ADPS16 quantum LGSA rule with a 128-bit target. The production table is
+scalar-keyed by exact modulus profile, coefficient bound, and `n = rank * d`.
+The role-specific coverage declaration is the source of reachable cells.
 
-The temporary 128-bit coefficient-`L∞` Rust split table used for PR benchmark
-comparison is preserved under `scripts/sis_golden/reference_linf_128/`. It is a
-reference artifact only and is not compiled by runtime crates.
+The production Rust split table is compiled from
+`crates/akita-types/src/sis/generated_sis_table/`; this directory also contains
+the policy audit CSV and structured-attack review artifact. There is no second
+runtime table or compatibility reference directory.
 
 Run a small smoke table:
 
 ```bash
 cargo run -p akita-sis-estimator --example infinity_width_table -- \
-  --families q32 --dims 32 --bounds 15 --max-rank 2 --search-cap 8
+  --profiles q32 --dims 32 --bounds 15 --max-rank 2 --search-cap 8
 ```
 
 Regenerate the committed smoke artifact:
@@ -198,7 +198,7 @@ Regenerate the committed smoke artifact:
 ```bash
 cargo run -p akita-sis-estimator --example infinity_width_table -- \
   --output scripts/sis_golden/infinity_width_table_smoke.csv \
-  --families q32,q64,q128 --dims 32 --bounds 15,255 --max-rank 3 --search-cap 8
+  --profiles q32,q64,q128 --dims 32 --bounds 15,255 --max-rank 3 --search-cap 8
 ```
 
 Run the planner keyspace as a CSV artifact:
@@ -232,12 +232,11 @@ tight cutoffs. Full `rust-split` generation also writes
 `policy_review.txt`; the compact Rust modules do not load those review-only
 artifacts.
 
-The checked-in policy table uses `--profile local-minimum`. This profile matches
-the Python `lattice-estimator` local search shape. Each hard model and the BCSS
-diagnostic run an independent optimizer search; the accepted width is the
-intersection of the two hard predicates. Building with `--features parallel`
-parallelizes independent table rows, but it does not make the local search
-inside one row exhaustive.
+The checked-in policy table may use `--profile local-minimum` for candidate
+discovery. The accepted width and immediate rejected successor are then
+certified by exhaustive search over the configured beta and zeta domain.
+Building with `--features parallel` parallelizes independent rows, but does not
+change the certificate domain or output ordering.
 
 The exhaustive profiles scan the full finite `zeta` range and the full finite
 `beta` range for each row. They are more conservative if they find a cheaper

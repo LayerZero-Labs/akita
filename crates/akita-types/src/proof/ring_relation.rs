@@ -740,7 +740,7 @@ mod tests {
 
     fn test_level_params() -> LevelParams {
         LevelParams::params_only(
-            crate::SisModulusFamily::Q32,
+            crate::SisModulusProfileId::Q32Offset99,
             D,
             2,
             1,
@@ -797,7 +797,7 @@ mod tests {
     fn chunk_test_level_params(r_vars: usize) -> LevelParams {
         // num_blocks = 2^r_vars, block_len = 2^m_vars, single-tier.
         LevelParams::params_only(
-            crate::SisModulusFamily::Q32,
+            crate::SisModulusProfileId::Q32Offset99,
             D,
             2,
             1,
@@ -1020,7 +1020,7 @@ mod tests {
     fn multi_group_one_three_fixture() -> (LevelParams, OpeningClaimsLayout) {
         use crate::schedule::PrecommittedGroupParams;
         let lp = LevelParams::params_only(
-            crate::SisModulusFamily::Q128,
+            crate::SisModulusProfileId::Q128OffsetA7F7,
             D,
             3,
             2,
@@ -1031,7 +1031,7 @@ mod tests {
         .with_decomp(2, 2, 2, 2, 0)
         .expect("multi-group main params");
         let precommit_lp = LevelParams::params_only(
-            crate::SisModulusFamily::Q128,
+            crate::SisModulusProfileId::Q128OffsetA7F7,
             D,
             3,
             2,

@@ -115,8 +115,8 @@ mod tests {
     use crate::{find_group_batch_schedule, find_schedule};
     use akita_types::{
         AkitaScheduleLookupKey, ChunkedWitnessCfg, DecompositionParams, LevelParams,
-        MultiChunkProfileId, PolynomialGroupLayout, PrecommittedGroupParams, SisModulusFamily,
-        Step, DEFAULT_SIS_SECURITY_POLICY,
+        MultiChunkProfileId, PolynomialGroupLayout, PrecommittedGroupParams, SisModulusProfileId,
+        SisTableDigest, Step, DEFAULT_SIS_SECURITY_POLICY,
     };
 
     fn flat_policy() -> PlannerPolicy {
@@ -127,8 +127,9 @@ mod tests {
                 log_commit_bound: 1,
                 log_open_bound: Some(8),
             },
-            sis_family: SisModulusFamily::Q128,
+            sis_modulus_profile: SisModulusProfileId::Q128OffsetA7F7,
             sis_security_policy: DEFAULT_SIS_SECURITY_POLICY,
+            sis_table_digest: SisTableDigest::CURRENT,
             ring_subfield_norm_bound: 1,
             claim_ext_degree: 4,
             chal_ext_degree: 4,

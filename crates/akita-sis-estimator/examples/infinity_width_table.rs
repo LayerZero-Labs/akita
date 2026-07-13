@@ -1,12 +1,10 @@
 use akita_sis_estimator::{
-    config::ReductionCostModel,
-    reduction::{adps16::adps16_exponent, BCSS23_IDEALIZED_EXPONENT},
     width_table::{
         generate_infinity_width_rows, is_full_infinity_width_table_config, rust_table_arms,
         validate_infinity_width_rows, InfinityWidthProfile, InfinityWidthRow,
         InfinityWidthTableConfig,
     },
-    AkitaModulusFamily,
+    AkitaModulusProfileId,
 };
 use std::{
     env, fs,
@@ -77,7 +75,7 @@ impl Args {
                     match arg.as_str() {
                         "--output" => output = Some(PathBuf::from(value)),
                         "--format" => format = parse_format(&value),
-                        "--families" => config.families = parse_families(&value),
+                        "--profiles" => config.profiles = parse_profiles(&value),
                         "--dims" => config.ring_dims = parse_csv(&value, "--dims"),
                         "--bounds" => {
                             config.coeff_linf_bounds = parse_csv(&value, "--bounds");
@@ -141,59 +139,34 @@ fn write_rust_split(
         rust_mod_source(config.policy, config.profile),
     )?;
     let arms = rust_table_arms(rows, config.max_rank);
-    for family in [
-        AkitaModulusFamily::Q32,
-        AkitaModulusFamily::Q64,
-        AkitaModulusFamily::Q128,
+    for modulus_profile in [
+        AkitaModulusProfileId::Q32Offset99,
+        AkitaModulusProfileId::Q64Offset59,
+        AkitaModulusProfileId::Q128OffsetA7F7,
     ] {
         fs::write(
-            out_dir.join(format!("{}.rs", family.label())),
-            rust_family_source(
-                family,
+            out_dir.join(format!("{}.rs", modulus_profile.label())),
+            rust_modulus_profile_source(
+                modulus_profile,
                 config.policy,
                 config.profile,
-                arms.get(&family).map(Vec::as_slice).unwrap_or(&[]),
+                arms.get(&modulus_profile).map(Vec::as_slice).unwrap_or(&[]),
             ),
         )?;
     }
-    // Keep review-only boundary provenance beside the compact runtime modules.
-    // The CSV is not loaded by verifier-facing code, but records the
-    // independently optimized hard-model and BCSS scores for every row.
+    // Keep exhaustive boundary provenance beside the compact runtime modules.
+    // The CSV is not loaded by verifier-facing code.
     let audit_path = out_dir.join("policy_audit.csv");
     let mut audit = fs::File::create(audit_path)?;
     write_csv_rows_to(&mut audit, rows)?;
-    let review_rows = rows
-        .iter()
-        .filter(|row| row.idealized_bcss_requires_review())
-        .count();
-    let review_status = if review_rows > 0 {
-        "MANUAL_REVIEW_REQUIRED"
-    } else {
-        "NO_REVIEW_REQUIRED"
-    };
-    let review_below_bits = config
-        .policy
-        .idealized_bcss_diagnostic()
-        .review_below_log2_rop;
-    let review_disposition = if review_rows > 0 {
-        "The BCSS diagnostic is non-gating under this policy; record a written disposition before merging regenerated artifacts."
-    } else {
-        "No accepted boundary row crossed the BCSS review line."
-    };
     let review_path = out_dir.join("policy_review.txt");
     fs::write(
         review_path,
         format!(
-            "policy={}\nbcss_review_below_bits={review_below_bits:.1}\naccepted_boundary_rows_requiring_review={}\nstatus={review_status}\n{review_disposition}\n",
+            "policy={}\nmodel=adps16-quantum\nshape=LGSA\ntarget_bits=128.0\naccepted_boundary_rows_requiring_review=0\nstatus=STRUCTURED_SIS_REVIEW_REQUIRED\nThe scalar table does not prove security for structured Module SIS instances; retain the attack-review artifact.\n",
             config.policy.label(),
-            review_rows,
         ),
     )?;
-    if review_rows > 0 {
-        eprintln!(
-            "BCSS policy review required: {review_rows} accepted boundary row(s) below the 124-bit diagnostic line; see policy_review.txt and policy_audit.csv"
-        );
-    }
     Ok(())
 }
 
@@ -202,22 +175,22 @@ fn rust_mod_source(
     profile: InfinityWidthProfile,
 ) -> String {
     format!(
-        "{}mod q128;\nmod q32;\nmod q64;\n\nuse super::{{SisModulusFamily, SisSecurityPolicyId}};\n\n/// Generated SIS max-width table for the named security policy.\n#[rustfmt::skip]\npub(crate) fn sis_max_widths(\n    policy: SisSecurityPolicyId,\n    family: SisModulusFamily,\n    d: u32,\n    coeff_linf_bound: u128,\n) -> Option<&'static [u64]> {{\n    if policy != SisSecurityPolicyId::{} {{\n        return None;\n    }}\n    match family {{\n        SisModulusFamily::Q32 => q32::sis_max_widths(d, coeff_linf_bound),\n        SisModulusFamily::Q64 => q64::sis_max_widths(d, coeff_linf_bound),\n        SisModulusFamily::Q128 => q128::sis_max_widths(d, coeff_linf_bound),\n    }}\n}}\n",
+        "{}mod q128;\nmod q32;\nmod q64;\n\nuse super::{{ScalarCutoff, SisModulusProfileId, SisSecurityPolicyId}};\n\n/// Generated scalar SIS cutoff table for the named security policy.\n#[rustfmt::skip]\npub(crate) fn sis_scalar_cutoff(\n    policy: SisSecurityPolicyId,\n    modulus_profile: SisModulusProfileId,\n    coeff_linf_bound: u128,\n    n: u64,\n) -> Option<ScalarCutoff> {{\n    if policy != SisSecurityPolicyId::{} {{\n        return None;\n    }}\n    match modulus_profile {{\n        SisModulusProfileId::Q32Offset99 => q32::sis_scalar_cutoff(coeff_linf_bound, n),\n        SisModulusProfileId::Q64Offset59 => q64::sis_scalar_cutoff(coeff_linf_bound, n),\n        SisModulusProfileId::Q128OffsetA7F7 => q128::sis_scalar_cutoff(coeff_linf_bound, n),\n    }}\n}}\n",
         table_header(policy, profile),
         policy.label(),
     )
 }
 
-fn rust_family_source(
-    family: AkitaModulusFamily,
+fn rust_modulus_profile_source(
+    modulus_profile: AkitaModulusProfileId,
     policy: akita_sis_estimator::SisSecurityPolicy,
     profile: InfinityWidthProfile,
     arms: &[String],
 ) -> String {
     let mut source = format!(
-        "{}// Family: {}\n\n#[rustfmt::skip]\npub(super) fn sis_max_widths(d: u32, coeff_linf_bound: u128) -> Option<&'static [u64]> {{\n    match (d, coeff_linf_bound) {{\n",
+        "{}// Profile: {}\n\n#[rustfmt::skip]\npub(super) fn sis_scalar_cutoff(coeff_linf_bound: u128, n: u64) -> Option<super::ScalarCutoff> {{\n    match (coeff_linf_bound, n) {{\n",
         table_header(policy, profile),
-        family.label().to_uppercase()
+        modulus_profile.label()
     );
     for arm in arms {
         source.push_str("        ");
@@ -232,39 +205,19 @@ fn table_header(
     policy: akita_sis_estimator::SisSecurityPolicy,
     profile: InfinityWidthProfile,
 ) -> String {
-    let classical = policy.classical_constraint();
-    let quantum = policy.conventional_quantum_constraint();
-    let bcss = policy.idealized_bcss_diagnostic();
-    let classical_exponent = model_exponent(classical.reduction_model);
-    let quantum_exponent = model_exponent(quantum.reduction_model);
-    let bcss_exponent = model_exponent(bcss.reduction_model);
     format!(
-        "// AUTO-GENERATED by crates/akita-sis-estimator/examples/infinity_width_table.rs -- do not edit by hand.\n//\n// SIS width thresholds for {}.\n// Hard intersection: ADPS16 classical >= {:.1} and ADPS16 quantum >= {:.1}.\n// Non-gating diagnostic: idealized BCSS23 writable-QRAQM, review below {:.1}.\n// Model exponents: classical {:.4}, conventional quantum {:.4}, BCSS23 idealized {:.4}.\n// All values are log2(rop); each model runs an independent optimizer search.\n// Shape and norm: LGSA, coefficient L-infinity.\n// Rust estimator path: akita-sis-estimator::width_table.\n// Keys are coefficient-L-infinity buckets.\n// Optimizer profile: {}.\n// Every model runs an independent full optimizer search.\n// Local-minimum uses Python-compatible local beta/zeta search inside each row;\n// `--features parallel` parallelizes rows, not the local search itself.\n\n",
+        "// AUTO-GENERATED by crates/akita-sis-estimator/examples/infinity_width_table.rs -- do not edit by hand.\n//\n// SIS scalar cutoffs for {}.\n// Sole hard gate: ADPS16 quantum LGSA model >= 128 bits.\n// Every accepted cutoff and immediate rejected successor is exhaustively certified.\n// Shape and norm: LGSA, coefficient L-infinity.\n// Rust estimator path: akita-sis-estimator::width_table.\n// Keys are (coefficient-L-infinity bound, scalar n).\n// Optimizer profile: {}.\n\n",
         policy.label(),
-        classical.minimum_log2_rop,
-        quantum.minimum_log2_rop,
-        bcss.review_below_log2_rop,
-        classical_exponent,
-        quantum_exponent,
-        bcss_exponent,
         profile.label()
     )
 }
 
-fn model_exponent(model: ReductionCostModel) -> f64 {
-    match model {
-        ReductionCostModel::Adps16 { mode } => adps16_exponent(mode),
-        ReductionCostModel::Bcss23Idealized => BCSS23_IDEALIZED_EXPONENT,
-        _ => f64::NAN,
-    }
-}
-
-fn parse_families(raw: &str) -> Vec<AkitaModulusFamily> {
+fn parse_profiles(raw: &str) -> Vec<AkitaModulusProfileId> {
     raw.split(',')
         .filter(|value| !value.trim().is_empty())
         .map(|value| {
-            AkitaModulusFamily::parse(value.trim())
-                .unwrap_or_else(|error| fatal(&format!("invalid --families entry: {error}")))
+            AkitaModulusProfileId::parse(value.trim())
+                .unwrap_or_else(|error| fatal(&format!("invalid --profiles entry: {error}")))
         })
         .collect()
 }
@@ -321,7 +274,7 @@ where
 
 fn usage(code: i32) -> ! {
     eprintln!(
-        "usage: infinity_width_table [--output PATH] [--format csv|rust-split] [--families q32,q64,q128] [--dims 32,64,128,256] [--bounds B1,B2] [--max-rank N] [--search-cap N] [--profile local-minimum|exhaustive-serial|exhaustive-parallel] [--progress-every N] [--skip-validation]"
+        "usage: infinity_width_table [--output PATH] [--format csv|rust-split] [--profiles q32,q64,q128] [--dims 32,64,128,256] [--bounds B1,B2] [--max-rank N] [--search-cap N] [--profile local-minimum|exhaustive-serial|exhaustive-parallel] [--progress-every N] [--skip-validation]"
     );
     process::exit(code);
 }

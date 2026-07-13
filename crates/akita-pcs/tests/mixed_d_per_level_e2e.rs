@@ -71,8 +71,8 @@ impl akita_config::CommitmentConfig for MixedD128To64 {
         Envelope::ring_challenge_config(d)
     }
 
-    fn sis_modulus_family() -> akita_types::SisModulusFamily {
-        Envelope::sis_modulus_family()
+    fn sis_modulus_profile() -> akita_types::SisModulusProfileId {
+        Envelope::sis_modulus_profile()
     }
 
     fn max_setup_matrix_size(
@@ -117,8 +117,8 @@ impl akita_config::CommitmentConfig for MixedDBadLevelDim {
         Envelope::ring_challenge_config(d)
     }
 
-    fn sis_modulus_family() -> akita_types::SisModulusFamily {
-        Envelope::sis_modulus_family()
+    fn sis_modulus_profile() -> akita_types::SisModulusProfileId {
+        Envelope::sis_modulus_profile()
     }
 
     fn max_setup_matrix_size(

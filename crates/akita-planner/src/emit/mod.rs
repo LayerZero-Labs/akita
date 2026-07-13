@@ -19,7 +19,7 @@ use akita_types::{
 use crate::catalog_identity::expected_catalog_identity;
 use crate::generated::{
     GeneratedDirectStep, GeneratedFoldStep, GeneratedScheduleCatalogIdentity,
-    GeneratedScheduleTableEntry, GeneratedStep, SisModulusFamily,
+    GeneratedScheduleTableEntry, GeneratedStep,
 };
 use crate::PlannerPolicy;
 
@@ -164,12 +164,17 @@ fn emit_decomposition(d: akita_types::DecompositionParams) -> String {
     }
 }
 
-fn emit_sis_family(family: SisModulusFamily) -> &'static str {
+fn emit_sis_modulus_profile(family: akita_types::SisModulusProfileId) -> &'static str {
     match family {
-        SisModulusFamily::Q32 => "SisModulusFamily::Q32",
-        SisModulusFamily::Q64 => "SisModulusFamily::Q64",
-        SisModulusFamily::Q128 => "SisModulusFamily::Q128",
+        akita_types::SisModulusProfileId::Q32Offset99 => "SisModulusProfileId::Q32Offset99",
+        akita_types::SisModulusProfileId::Q64Offset59 => "SisModulusProfileId::Q64Offset59",
+        akita_types::SisModulusProfileId::Q128OffsetA7F7 => "SisModulusProfileId::Q128OffsetA7F7",
     }
+}
+
+fn format_bytes(bytes: [u8; 32]) -> String {
+    let values = bytes.iter().map(|byte| format!("0x{byte:02x}"));
+    format!("[{}]", values.collect::<Vec<_>>().join(", "))
 }
 
 fn emit_root_fold_shape(shape: TensorChallengeShape) -> &'static str {
@@ -201,8 +206,9 @@ fn emit_identity_const(identity: &GeneratedScheduleCatalogIdentity) -> String {
             "pub(crate) static CATALOG_IDENTITY: GeneratedScheduleCatalogIdentity = ",
             "GeneratedScheduleCatalogIdentity {{\n",
             "    family_name: \"{family_name}\",\n",
-            "    sis_family: {sis_family},\n",
+            "    sis_modulus_profile: {sis_modulus_profile},\n",
             "    sis_security_policy: SisSecurityPolicyId::{sis_security_policy},\n",
+            "    sis_table_digest: SisTableDigest({sis_table_digest}),\n",
             "    ring_dimension: {ring_dimension},\n",
             "    decomposition: {decomposition},\n",
             "    ring_subfield_norm_bound: {ring_subfield_norm_bound},\n",
@@ -220,8 +226,9 @@ fn emit_identity_const(identity: &GeneratedScheduleCatalogIdentity) -> String {
         ),
         ring_dims = ring_dims,
         family_name = identity.family_name,
-        sis_family = emit_sis_family(identity.sis_family),
+        sis_modulus_profile = emit_sis_modulus_profile(identity.sis_modulus_profile),
         sis_security_policy = identity.sis_security_policy.name(),
+        sis_table_digest = format_bytes(identity.sis_table_digest.0),
         ring_dimension = identity.ring_dimension,
         decomposition = emit_decomposition(identity.decomposition),
         ring_subfield_norm_bound = identity.ring_subfield_norm_bound,
@@ -275,8 +282,8 @@ pub fn emit_family_module(spec: &EmitSpec) -> Result<String, String> {
         out,
         "use super::{{\n    ChunkedWitnessCfg, GeneratedDirectStep, GeneratedFoldStep, \
          GeneratedScheduleCatalogIdentity, PolynomialGroupLayout, PrecommittedGroupParams, \
-         GeneratedScheduleTableEntry, GeneratedStep, DecompositionParams, SisModulusFamily, \
-         SisSecurityPolicyId, TensorChallengeShape,\n}};"
+         GeneratedScheduleTableEntry, GeneratedStep, DecompositionParams, SisModulusProfileId, \
+         SisSecurityPolicyId, SisTableDigest, TensorChallengeShape,\n}};"
     )
     .map_err(|e| e.to_string())?;
     writeln!(out).map_err(|e| e.to_string())?;

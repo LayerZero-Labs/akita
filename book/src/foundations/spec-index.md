@@ -13,8 +13,8 @@ The active design frontier (keep as live specs): `setup-layout-repack`, `eor-str
 `transcript-immediate-fixes`.
 
 The approved SIS security-policy frontier is
-`sis-classical138-quantum128-bcss-policy`: a descriptive classical-138 /
-conventional-quantum-128 policy with one explicitly idealized BCSS diagnostic.
+`sis-quantum128-scalar-n-table`: a scalar, role-driven table using one ADPS16
+quantum LGSA policy at a 128-bit target.
 
 ## Sources to fold in
 

@@ -288,14 +288,14 @@ impl<E: FieldCore + FromPrimitiveInt + AkitaSerialize> AkitaStage1Verifier<E> {
 mod fold_grind_nonce_tests {
     use super::*;
     use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
-    use akita_types::{FoldLinfProtocolBinding, SisModulusFamily};
+    use akita_types::{FoldLinfProtocolBinding, SisModulusProfileId};
 
     fn sample_level_params(
         fold_challenge_config: SparseChallengeConfig,
         fold_shape: TensorChallengeShape,
     ) -> LevelParams {
         LevelParams::params_only(
-            SisModulusFamily::Q128,
+            SisModulusProfileId::Q128OffsetA7F7,
             64,
             3,
             2,

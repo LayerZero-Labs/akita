@@ -5,7 +5,7 @@ use num_traits::{ToPrimitive, Zero};
 
 use crate::{
     config::{EstimateConfig, ShapeModel},
-    cost::{CostValue, EstimateTag, LatticeCost},
+    cost::{CostValue, EstimateTag, LatticeCost, LogCost},
     error::{EstimatorError, Result},
     math::{erf, log2_positive, sis_trivially_easy},
     params::{Bound, SisParameters},
@@ -71,7 +71,12 @@ pub fn cost_infinity_fixed(
                 reason: "zeta must not exceed the lattice dimension".to_string(),
             })?;
     if effective_dimension < u64::from(beta) {
-        return Ok(infinite_cost(params, beta, zeta, effective_dimension));
+        return Ok(proven_above_target_cost(
+            params,
+            beta,
+            zeta,
+            effective_dimension,
+        ));
     }
 
     let identity_vectors = effective_dimension as i128 - params.n as i128;
@@ -315,6 +320,31 @@ fn infinite_cost(
         rop: CostValue::Infinity,
         red: Some(CostValue::Infinity),
         sieve: Some(CostValue::Infinity),
+        delta: Some(crate::reduction::delta(beta)),
+        beta: Some(beta),
+        eta: None,
+        zeta: Some(zeta),
+        d: effective_dimension,
+        prob: None,
+        repetitions: None,
+        tag: params
+            .tag
+            .as_ref()
+            .map(|value| EstimateTag::new(value.clone()))
+            .unwrap_or_default(),
+    }
+}
+
+fn proven_above_target_cost(
+    params: &SisParameters,
+    beta: u32,
+    zeta: u64,
+    effective_dimension: u64,
+) -> LatticeCost {
+    LatticeCost {
+        rop: CostValue::ProvenAboveTarget(LogCost::new(f64::INFINITY)),
+        red: None,
+        sieve: None,
         delta: Some(crate::reduction::delta(beta)),
         beta: Some(beta),
         eta: None,

@@ -49,7 +49,7 @@ where
         AlgebraSection::for_fields::<F, Cfg::ExtField, D>()?,
         SetupSection::from_parts(
             Cfg::decomposition(),
-            Cfg::sis_modulus_family(),
+            Cfg::sis_modulus_profile(),
             setup.seed(),
         )
         .map_err(|err| AkitaError::InvalidSetup(format!("descriptor setup identity: {err}")))?,

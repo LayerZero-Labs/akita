@@ -7,7 +7,7 @@ use akita_field::{Prime32Offset99, Prime64Offset59};
 
 fn sample_level_params() -> LevelParams {
     LevelParams::params_only(
-        SisModulusFamily::Q32,
+        SisModulusProfileId::Q32Offset99,
         64,
         3,
         2,
@@ -47,7 +47,7 @@ fn sample_descriptor() -> AkitaInstanceDescriptor {
                 log_commit_bound: 32,
                 log_open_bound: Some(32),
             },
-            sis_modulus_family: SisModulusFamily::Q32,
+            sis_modulus_profile: SisModulusProfileId::Q32Offset99,
             setup_seed_digest: [1; 32],
             protocol_features: ProtocolFeatureSet::current(),
             fold_linf: FoldLinfProtocolBinding::CURRENT,
@@ -58,8 +58,8 @@ fn sample_descriptor() -> AkitaInstanceDescriptor {
 }
 
 #[test]
-fn rejects_removed_q16_sis_family_tag() {
-    let err = decode_sis_family(std::io::Cursor::new([3u8]), Compress::No, Validate::Yes)
+fn rejects_removed_q16_sis_modulus_profile_tag() {
+    let err = decode_sis_modulus_profile(std::io::Cursor::new([3u8]), Compress::No, Validate::Yes)
         .expect_err("historical Q16 tag 3 must be rejected");
     assert!(matches!(err, SerializationError::InvalidData(_)));
 }
@@ -122,7 +122,7 @@ fn fold_linf_binding_is_part_of_setup_section() {
 #[test]
 fn effective_schedule_digest_binds_tail_bound_with_grind_policy() {
     let certified = LevelParams::params_only(
-        SisModulusFamily::Q128,
+        SisModulusProfileId::Q128OffsetA7F7,
         64,
         3,
         2,
@@ -136,7 +136,7 @@ fn effective_schedule_digest_binds_tail_bound_with_grind_policy() {
     .with_decomp(4, 2, 2, 2, 0)
     .expect("certified params");
     let worst_case_only = LevelParams::params_only(
-        SisModulusFamily::Q128,
+        SisModulusProfileId::Q128OffsetA7F7,
         64,
         3,
         2,
@@ -349,7 +349,7 @@ fn setup_seed_digest_matches_setup_section() {
             log_commit_bound: 32,
             log_open_bound: Some(32),
         },
-        SisModulusFamily::Q32,
+        SisModulusProfileId::Q32Offset99,
         &seed,
     )
     .expect("direct setup section");

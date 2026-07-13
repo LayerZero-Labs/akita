@@ -684,7 +684,10 @@ mod tests {
     use super::*;
     use akita_challenges::SparseChallengeConfig;
     use akita_field::Fp32;
-    use akita_types::{AjtaiKeyParams, RingVec, SisModulusFamily, DEFAULT_SIS_SECURITY_POLICY};
+    use akita_types::{
+        AjtaiKeyParams, RingVec, SisMatrixRole, SisModulusProfileId, SisTableDigest,
+        DEFAULT_SIS_SECURITY_POLICY,
+    };
 
     type F = Fp32<251>;
     const D: usize = 32;
@@ -710,7 +713,7 @@ mod tests {
     #[test]
     fn root_direct_recommitment_rejects_undersized_setup() {
         let params = LevelParams::params_only(
-            SisModulusFamily::Q32,
+            SisModulusProfileId::Q32Offset99,
             D,
             2,
             1,
@@ -738,7 +741,7 @@ mod tests {
     #[test]
     fn root_direct_recommitment_rejects_wrong_witness_dimension() {
         let mut params = LevelParams::params_only(
-            SisModulusFamily::Q32,
+            SisModulusProfileId::Q32Offset99,
             D,
             2,
             1,
@@ -750,7 +753,9 @@ mod tests {
         .expect("valid direct layout");
         params.b_key = AjtaiKeyParams::new_unchecked(
             DEFAULT_SIS_SECURITY_POLICY,
-            SisModulusFamily::Q32,
+            SisTableDigest::CURRENT,
+            SisModulusProfileId::Q32Offset99,
+            SisMatrixRole::B,
             1,
             128,
             0,

@@ -1,4 +1,5 @@
-//! Ajtai-commitment key sizing: the SIS modulus family, the `AjtaiKeyParams`
+//! Ajtai-commitment key sizing: exact SIS profiles, explicit matrix roles, and
+//! the `AjtaiKeyParams`
 //! type, the secure-rank lookup, and coefficient-`L∞` bucket rounding.
 //!
 //! This is the single home for "given a width and a rounded-up coefficient
@@ -8,53 +9,144 @@
 
 use akita_field::AkitaError;
 
-use super::generated_sis_table::sis_max_widths;
-use crate::descriptor_bytes::{push_u128, push_usize, sis_family_tag};
+use super::generated_sis_table::sis_scalar_cutoff as generated_sis_scalar_cutoff;
+use crate::descriptor_bytes::{push_u128, push_usize, sis_modulus_profile_tag};
 
-/// Versioned policy identity used by SIS sizing and generated artifacts.
+/// Digest of the generated scalar table and its coverage certificate.
+///
+/// The bytes are fixed width and are part of every runtime SIS identity. The
+/// value is replaced by the generator when the checked-in table changes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct SisTableDigest(pub [u8; 32]);
+
+impl Default for SisTableDigest {
+    fn default() -> Self {
+        Self::CURRENT
+    }
+}
+
+impl SisTableDigest {
+    /// Stable wire tag for the digest field.
+    pub const TAG: u8 = 1;
+
+    /// Digest committed by the current generated artifact.
+    pub const CURRENT: Self = Self([
+        0x0f, 0x63, 0x9d, 0x97, 0x08, 0xeb, 0x91, 0xbe, 0x54, 0x91, 0xdb, 0x34, 0x13, 0x92, 0x24,
+        0x18, 0x92, 0xed, 0x1f, 0xc8, 0xb8, 0x3f, 0xbe, 0x9c, 0x86, 0x73, 0x06, 0x88, 0x56, 0xda,
+        0x78, 0x08,
+    ]);
+}
+
+/// Matrix role whose coefficient and ring geometry is being priced.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum SisMatrixRole {
+    /// Fold witness and quotient matrix.
+    A,
+    /// Digit commitment matrix.
+    B,
+    /// Opening digit matrix.
+    D,
+    /// Optional tiered commitment matrix.
+    F,
+}
+
+impl SisMatrixRole {
+    /// Stable wire/catalog tag.
+    pub const fn tag(self) -> u8 {
+        match self {
+            Self::A => 1,
+            Self::B => 2,
+            Self::D => 3,
+            Self::F => 4,
+        }
+    }
+
+    /// Stable name used in generated provenance.
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::A => "A",
+            Self::B => "B",
+            Self::D => "D",
+            Self::F => "F",
+        }
+    }
+}
+
+/// Policy identity used by SIS sizing and generated artifacts.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum SisSecurityPolicyId {
-    /// 138-bit classical and 128-bit conventional quantum hard gates, with
-    /// one idealized BCSS diagnostic.
+    /// ADPS16 quantum LGSA estimator at a 128-bit target.
     #[default]
-    Classical138Quantum128WithIdealizedBcssV1,
+    Adps16Quantum128Bit,
 }
 
 impl SisSecurityPolicyId {
     /// Stable wire/catalog tag for this policy.
     pub const fn tag(self) -> u8 {
         match self {
-            Self::Classical138Quantum128WithIdealizedBcssV1 => 1,
+            Self::Adps16Quantum128Bit => 1,
         }
     }
 
     /// Descriptive policy name used in diagnostics and generated metadata.
     pub const fn name(self) -> &'static str {
         match self {
-            Self::Classical138Quantum128WithIdealizedBcssV1 => {
-                "Classical138Quantum128WithIdealizedBcssV1"
-            }
+            Self::Adps16Quantum128Bit => "Adps16Quantum128Bit",
         }
     }
 }
 
-/// SIS modulus family used to select generated security floors.
+/// Exact SIS modulus profile used to select generated security floors.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum SisModulusFamily {
+pub enum SisModulusProfileId {
     /// Representative q = 2^32 - 99.
-    Q32,
+    Q32Offset99,
     /// Representative q = 2^64 - 59.
-    Q64,
+    Q64Offset59,
     /// Representative q = 2^128 - (2^32 - 22537).
     #[default]
-    Q128,
+    Q128OffsetA7F7,
+}
+
+impl SisModulusProfileId {
+    /// Exact modulus represented by this profile.
+    pub const fn modulus(self) -> u128 {
+        match self {
+            Self::Q32Offset99 => 4_294_967_197,
+            Self::Q64Offset59 => 18_446_744_073_709_551_557,
+            Self::Q128OffsetA7F7 => 340_282_366_920_938_463_463_374_607_427_473_266_697,
+        }
+    }
+
+    /// Stable serialized tag.
+    pub const fn tag(self) -> u8 {
+        match self {
+            Self::Q32Offset99 => 1,
+            Self::Q64Offset59 => 2,
+            Self::Q128OffsetA7F7 => 3,
+        }
+    }
+
+    /// Stable descriptor name.
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Q32Offset99 => "Q32Offset99",
+            Self::Q64Offset59 => "Q64Offset59",
+            Self::Q128OffsetA7F7 => "Q128OffsetA7F7",
+        }
+    }
+
+    /// Validate an exact field modulus against this profile.
+    pub const fn matches_modulus(self, modulus: u128) -> bool {
+        self.modulus() == modulus
+    }
 }
 
 /// Default policy used by production presets.
 pub const DEFAULT_SIS_SECURITY_POLICY: SisSecurityPolicyId =
-    SisSecurityPolicyId::Classical138Quantum128WithIdealizedBcssV1;
+    SisSecurityPolicyId::Adps16Quantum128Bit;
 
-/// Versioned policies with checked-in SIS table support.
+/// Policies with checked-in SIS table support.
 pub const SUPPORTED_SIS_SECURITY_POLICIES: &[SisSecurityPolicyId] = &[DEFAULT_SIS_SECURITY_POLICY];
 
 /// Coefficient-`L∞` collision buckets for norm-bound sizing.
@@ -68,16 +160,94 @@ pub const COEFF_LINF_BUCKETS: &[u128] = &[
 ];
 
 /// Canonical key for a generated SIS floor row.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct SisTableKey {
-    /// Versioned SIS security policy.
+    /// SIS security policy.
     pub policy: SisSecurityPolicyId,
-    /// SIS modulus family.
-    pub family: SisModulusFamily,
+    /// Digest of the generated scalar table.
+    pub table_digest: SisTableDigest,
+    /// Exact SIS modulus profile.
+    pub modulus_profile: SisModulusProfileId,
+    /// Matrix role.
+    pub role: SisMatrixRole,
     /// Ring dimension.
     pub ring_dimension: u32,
     /// Rounded coefficient-`L∞` bound.
     pub coeff_linf_bound: u128,
+}
+
+/// One reachable role coverage cell used by generation and runtime checks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct SisRoleCell {
+    /// Matrix role.
+    pub role: SisMatrixRole,
+    /// Exact modulus profile.
+    pub modulus_profile: SisModulusProfileId,
+    /// Ring dimension.
+    pub ring_dimension: u32,
+    /// Exact role coefficient bound cell.
+    pub coeff_linf_bound: u128,
+    /// Maximum supported module rank.
+    pub max_module_rank: u32,
+    /// Largest required ring width from the planner domain.
+    pub required_max_width: u64,
+}
+
+/// Exact gadget anchors used by B and D.
+pub const GADGET_COEFF_LINF_ANCHORS: &[u128] = &[3, 7, 15, 31, 63, 127, 255];
+
+/// Current planner ring dimensions for A. The list starts at 64 and leaves
+/// room for larger A dimensions without forcing them onto B or D.
+pub const A_ROLE_RING_DIMS: &[u32] = &[64, 128, 256];
+
+/// Current planner ring dimensions for B and D, including the Q128 d=32 case.
+pub const BD_ROLE_RING_DIMS: &[u32] = &[32, 64, 128, 256];
+
+/// Explicit F-role dimensions. F shares the gadget anchor set but remains a
+/// separate role so future tiered commitments cannot silently alias B or D.
+pub const F_ROLE_RING_DIMS: &[u32] = &[32, 64, 128, 256];
+
+/// Explicit production roles, including the reserved tiered F matrix.
+pub const SIS_MATRIX_ROLES: &[SisMatrixRole] = &[
+    SisMatrixRole::A,
+    SisMatrixRole::B,
+    SisMatrixRole::D,
+    SisMatrixRole::F,
+];
+
+/// Return whether the exact role cell is part of the canonical coverage.
+///
+/// The function is deliberately role aware. It does not form a product of
+/// independent dimension and bound lists for one shared table.
+#[must_use]
+pub fn sis_role_cell(
+    role: SisMatrixRole,
+    modulus_profile: SisModulusProfileId,
+    ring_dimension: u32,
+    coeff_linf_bound: u128,
+) -> Option<SisRoleCell> {
+    let (dims, bounds) = match role {
+        SisMatrixRole::A => (A_ROLE_RING_DIMS, COEFF_LINF_BUCKETS),
+        SisMatrixRole::B | SisMatrixRole::D | SisMatrixRole::F => {
+            let dims = if role == SisMatrixRole::F {
+                F_ROLE_RING_DIMS
+            } else {
+                BD_ROLE_RING_DIMS
+            };
+            (dims, GADGET_COEFF_LINF_ANCHORS)
+        }
+    };
+    if !dims.contains(&ring_dimension) || !bounds.contains(&coeff_linf_bound) {
+        return None;
+    }
+    Some(SisRoleCell {
+        role,
+        modulus_profile,
+        ring_dimension,
+        coeff_linf_bound,
+        max_module_rank: 20,
+        required_max_width: 6_400_000_000_000,
+    })
 }
 
 /// Smallest coefficient-`L∞` bucket with `B >= linf`.
@@ -92,21 +262,21 @@ pub fn ceil_coeff_linf_bucket(linf: u128) -> Option<u128> {
         .find(|&bucket| linf <= bucket)
 }
 
-fn supports_family_dimension(sis_family: SisModulusFamily, d: u32) -> bool {
+fn supports_family_dimension(sis_modulus_profile: SisModulusProfileId, d: u32) -> bool {
     matches!(
-        (sis_family, d),
-        (SisModulusFamily::Q32, 32)
-            | (SisModulusFamily::Q32, 64)
-            | (SisModulusFamily::Q32, 128)
-            | (SisModulusFamily::Q32, 256)
-            | (SisModulusFamily::Q64, 32)
-            | (SisModulusFamily::Q64, 64)
-            | (SisModulusFamily::Q64, 128)
-            | (SisModulusFamily::Q64, 256)
-            | (SisModulusFamily::Q128, 32)
-            | (SisModulusFamily::Q128, 64)
-            | (SisModulusFamily::Q128, 128)
-            | (SisModulusFamily::Q128, 256)
+        (sis_modulus_profile, d),
+        (SisModulusProfileId::Q32Offset99, 32)
+            | (SisModulusProfileId::Q32Offset99, 64)
+            | (SisModulusProfileId::Q32Offset99, 128)
+            | (SisModulusProfileId::Q32Offset99, 256)
+            | (SisModulusProfileId::Q64Offset59, 32)
+            | (SisModulusProfileId::Q64Offset59, 64)
+            | (SisModulusProfileId::Q64Offset59, 128)
+            | (SisModulusProfileId::Q64Offset59, 256)
+            | (SisModulusProfileId::Q128OffsetA7F7, 32)
+            | (SisModulusProfileId::Q128OffsetA7F7, 64)
+            | (SisModulusProfileId::Q128OffsetA7F7, 128)
+            | (SisModulusProfileId::Q128OffsetA7F7, 256)
     )
 }
 
@@ -114,15 +284,34 @@ fn supports_family_dimension(sis_family: SisModulusFamily, d: u32) -> bool {
 #[must_use]
 pub fn ceil_supported_linf_bound(
     policy: SisSecurityPolicyId,
-    sis_family: SisModulusFamily,
+    table_digest: SisTableDigest,
+    sis_modulus_profile: SisModulusProfileId,
+    role: SisMatrixRole,
     d: u32,
     linf: u128,
 ) -> Option<u128> {
-    if linf == 0 || !supports_family_dimension(sis_family, d) {
+    if linf == 0 || !supports_family_dimension(sis_modulus_profile, d) {
         return None;
     }
-    let bucket = ceil_coeff_linf_bucket(linf)?;
-    sis_max_widths(policy, sis_family, d, bucket)?;
+    let bucket = match role {
+        SisMatrixRole::A => ceil_coeff_linf_bucket(linf)?,
+        SisMatrixRole::B | SisMatrixRole::D => GADGET_COEFF_LINF_ANCHORS
+            .iter()
+            .copied()
+            .find(|&candidate| linf <= candidate)?,
+        SisMatrixRole::F => GADGET_COEFF_LINF_ANCHORS
+            .iter()
+            .copied()
+            .find(|&candidate| linf <= candidate)?,
+    };
+    sis_role_cell(role, sis_modulus_profile, d, bucket)?;
+    sis_scalar_cutoff(
+        table_digest,
+        policy,
+        sis_modulus_profile,
+        bucket,
+        u64::from(d),
+    )?;
     Some(bucket)
 }
 
@@ -133,17 +322,53 @@ pub fn ceil_supported_linf_bound(
 #[must_use]
 pub fn sis_table_key_for_linf_bound(
     policy: SisSecurityPolicyId,
-    sis_family: SisModulusFamily,
+    table_digest: SisTableDigest,
+    sis_modulus_profile: SisModulusProfileId,
+    role: SisMatrixRole,
     d: u32,
     linf: u128,
 ) -> Option<SisTableKey> {
-    let coeff_linf_bound = ceil_supported_linf_bound(policy, sis_family, d, linf)?;
+    let coeff_linf_bound =
+        ceil_supported_linf_bound(policy, table_digest, sis_modulus_profile, role, d, linf)?;
     Some(SisTableKey {
         policy,
-        family: sis_family,
+        table_digest,
+        modulus_profile: sis_modulus_profile,
+        role,
         ring_dimension: d,
         coeff_linf_bound,
     })
+}
+
+/// Certified scalar cutoff stored by the generated artifact.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum ScalarCutoff {
+    /// The accepted value and its immediate successor were certified.
+    Exact(u64),
+    /// The search reached the configured cap at this value.
+    AtLeast(u64),
+}
+
+impl ScalarCutoff {
+    /// Largest accepted scalar column count represented by this cutoff.
+    pub const fn value(self) -> u64 {
+        match self {
+            Self::Exact(value) | Self::AtLeast(value) => value,
+        }
+    }
+}
+
+fn sis_scalar_cutoff(
+    table_digest: SisTableDigest,
+    policy: SisSecurityPolicyId,
+    modulus_profile: SisModulusProfileId,
+    coeff_linf_bound: u128,
+    n: u64,
+) -> Option<ScalarCutoff> {
+    if table_digest != SisTableDigest::CURRENT || policy != DEFAULT_SIS_SECURITY_POLICY {
+        return None;
+    }
+    generated_sis_scalar_cutoff(policy, modulus_profile, coeff_linf_bound, n)
 }
 
 /// Minimum generated SIS-secure module rank that supports `width` ring columns
@@ -151,16 +376,31 @@ pub fn sis_table_key_for_linf_bound(
 ///
 /// Returns `None` when no generated SIS-floor row covers the configuration.
 pub fn min_secure_rank(key: SisTableKey, width: u64) -> Option<usize> {
-    let widths = sis_max_widths(
-        key.policy,
-        key.family,
+    let role_cell = sis_role_cell(
+        key.role,
+        key.modulus_profile,
         key.ring_dimension,
         key.coeff_linf_bound,
     )?;
-    for (i, &max_w) in widths.iter().enumerate() {
-        if width <= max_w {
-            return Some(i + 1);
+    let d = u64::from(key.ring_dimension);
+    if d == 0 {
+        return None;
+    }
+    let m_need = width.checked_mul(d)?;
+    let mut rank = 1u32;
+    while rank <= role_cell.max_module_rank {
+        let n = u64::from(rank).checked_mul(d)?;
+        let cutoff = sis_scalar_cutoff(
+            key.table_digest,
+            key.policy,
+            key.modulus_profile,
+            key.coeff_linf_bound,
+            n,
+        )?;
+        if m_need <= cutoff.value() {
+            return Some(rank as usize);
         }
+        rank = rank.checked_add(1)?;
     }
     None
 }
@@ -170,7 +410,7 @@ pub fn min_secure_rank(key: SisTableKey, width: u64) -> Option<usize> {
 /// Each matrix in the protocol (A, B, D) is characterised by its row count
 /// (security rank), column count (message width), and the generated SIS-floor
 /// key used for security sizing.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AjtaiKeyParams {
     pub(crate) row_len: usize,
     pub(crate) col_len: usize,
@@ -192,9 +432,12 @@ impl AjtaiKeyParams {
     ///
     /// Returns an error if any field is zero, if the SIS-floor tables do not
     /// cover the configuration, or if `row_len` is below the audited floor.
+    #[allow(clippy::too_many_arguments)]
     pub fn try_new(
         policy: SisSecurityPolicyId,
-        sis_family: SisModulusFamily,
+        table_digest: SisTableDigest,
+        sis_modulus_profile: SisModulusProfileId,
+        role: SisMatrixRole,
         row_len: usize,
         col_len: usize,
         coeff_linf_bound: u128,
@@ -212,13 +455,15 @@ impl AjtaiKeyParams {
         }
         let Some(key) = sis_table_key_for_linf_bound(
             policy,
-            sis_family,
+            table_digest,
+            sis_modulus_profile,
+            role,
             ring_dimension as u32,
             coeff_linf_bound,
         ) else {
             return Err(AkitaError::InvalidSetup(format!(
                 "AjtaiKeyParams: no audited SIS table key for \
-                     policy={} family={sis_family:?} \
+                     policy={} profile={sis_modulus_profile:?} \
                      d={ring_dimension} coeff_linf_bound={coeff_linf_bound}",
                 policy.name()
             )));
@@ -226,7 +471,7 @@ impl AjtaiKeyParams {
         let floor = min_secure_rank(key, col_len as u64).ok_or_else(|| {
             AkitaError::InvalidSetup(format!(
                 "AjtaiKeyParams: no audited SIS rank for \
-                     policy={} family={sis_family:?} \
+                     policy={} profile={sis_modulus_profile:?} \
                      d={ring_dimension} coeff_linf_bound={} col_len={col_len}",
                 policy.name(),
                 key.coeff_linf_bound
@@ -235,7 +480,7 @@ impl AjtaiKeyParams {
         if row_len < floor {
             return Err(AkitaError::InvalidSetup(format!(
                 "AjtaiKeyParams: row_len {row_len} < SIS floor {floor} \
-                 (policy={}, family={sis_family:?}, \
+                 (policy={}, profile={sis_modulus_profile:?}, \
                  d={ring_dimension}, coeff_linf_bound={}, col_len={col_len})",
                 policy.name(),
                 key.coeff_linf_bound
@@ -266,16 +511,18 @@ impl AjtaiKeyParams {
         let row_len = min_secure_rank(key, col_len as u64).ok_or_else(|| {
             AkitaError::InvalidSetup(format!(
                 "AjtaiKeyParams: no audited SIS rank for \
-                 policy={} family={:?} d={} coeff_linf_bound={} col_len={col_len}",
+                 policy={} profile={:?} d={} coeff_linf_bound={} col_len={col_len}",
                 key.policy.name(),
-                key.family,
+                key.modulus_profile,
                 key.ring_dimension,
                 key.coeff_linf_bound
             ))
         })?;
         Self::try_new(
             key.policy,
-            key.family,
+            key.table_digest,
+            key.modulus_profile,
+            key.role,
             row_len,
             col_len,
             key.coeff_linf_bound,
@@ -292,9 +539,12 @@ impl AjtaiKeyParams {
     /// degenerate ranks. Production-facing schedule layouts are built through
     /// [`try_new`](Self::try_new), which audits the SIS floor against the final
     /// width as the key is constructed.
+    #[allow(clippy::too_many_arguments)]
     pub fn new_unchecked(
         policy: SisSecurityPolicyId,
-        sis_family: SisModulusFamily,
+        table_digest: SisTableDigest,
+        sis_modulus_profile: SisModulusProfileId,
+        role: SisMatrixRole,
         row_len: usize,
         col_len: usize,
         coeff_linf_bound: u128,
@@ -305,7 +555,9 @@ impl AjtaiKeyParams {
             col_len,
             sis_table_key: SisTableKey {
                 policy,
-                family: sis_family,
+                table_digest,
+                modulus_profile: sis_modulus_profile,
+                role,
                 ring_dimension: ring_dimension as u32,
                 coeff_linf_bound,
             },
@@ -324,7 +576,7 @@ impl AjtaiKeyParams {
         self.col_len
     }
 
-    /// Versioned SIS policy used to size and validate this key.
+    /// SIS policy used to size and validate this key.
     #[inline]
     pub fn security_policy(&self) -> SisSecurityPolicyId {
         self.sis_table_key.policy
@@ -336,10 +588,10 @@ impl AjtaiKeyParams {
         self.sis_table_key.coeff_linf_bound
     }
 
-    /// SIS modulus family used to validate this key.
+    /// Exact SIS modulus profile used to validate this key.
     #[inline]
-    pub fn sis_family(&self) -> SisModulusFamily {
-        self.sis_table_key.family
+    pub fn sis_modulus_profile(&self) -> SisModulusProfileId {
+        self.sis_table_key.modulus_profile
     }
 
     /// Full generated-table key used to validate this key.
@@ -349,8 +601,11 @@ impl AjtaiKeyParams {
     }
 
     pub(crate) fn append_descriptor_bytes(&self, bytes: &mut Vec<u8>) {
-        bytes.push(sis_family_tag(self.sis_family()));
+        bytes.push(sis_modulus_profile_tag(self.sis_modulus_profile()));
         bytes.push(self.security_policy().tag());
+        bytes.push(self.sis_table_key.role.tag());
+        bytes.extend_from_slice(&self.sis_table_key.table_digest.0);
+        bytes.extend_from_slice(&self.sis_table_key.ring_dimension.to_le_bytes());
         push_usize(bytes, self.row_len());
         push_usize(bytes, self.col_len());
         push_u128(bytes, self.coeff_linf_bound());
@@ -364,7 +619,14 @@ mod tests {
     #[test]
     fn unsupported_shape_rejects_linf_bucket() {
         assert_eq!(
-            ceil_supported_linf_bound(DEFAULT_SIS_SECURITY_POLICY, SisModulusFamily::Q32, 31, 7),
+            ceil_supported_linf_bound(
+                DEFAULT_SIS_SECURITY_POLICY,
+                SisTableDigest::CURRENT,
+                SisModulusProfileId::Q32Offset99,
+                SisMatrixRole::A,
+                31,
+                7,
+            ),
             None
         );
     }
@@ -372,24 +634,21 @@ mod tests {
     #[test]
     fn floor_slices_have_family_specific_rank_caps() {
         let bucket = 15;
-        if sis_max_widths(
+        if generated_sis_scalar_cutoff(
             DEFAULT_SIS_SECURITY_POLICY,
-            SisModulusFamily::Q32,
-            32,
+            SisModulusProfileId::Q32Offset99,
             bucket,
+            32,
         )
         .is_some()
         {
-            assert_eq!(
-                sis_max_widths(
-                    DEFAULT_SIS_SECURITY_POLICY,
-                    SisModulusFamily::Q32,
-                    32,
-                    bucket
-                )
-                .map(<[u64]>::len),
-                Some(20)
-            );
+            assert!(generated_sis_scalar_cutoff(
+                DEFAULT_SIS_SECURITY_POLICY,
+                SisModulusProfileId::Q32Offset99,
+                bucket,
+                32,
+            )
+            .is_some());
         }
     }
 
@@ -398,7 +657,9 @@ mod tests {
         let linf = 1_048_575u128;
         let key = sis_table_key_for_linf_bound(
             DEFAULT_SIS_SECURITY_POLICY,
-            SisModulusFamily::Q32,
+            SisTableDigest::CURRENT,
+            SisModulusProfileId::Q32Offset99,
+            SisMatrixRole::A,
             128,
             linf,
         );

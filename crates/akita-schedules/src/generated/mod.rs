@@ -3,7 +3,7 @@
 pub use akita_planner::generated::{
     GeneratedDirectStep, GeneratedFoldStep, GeneratedScheduleCatalogIdentity,
     GeneratedScheduleTable, GeneratedScheduleTableEntry, GeneratedStep, PolynomialGroupLayout,
-    PrecommittedGroupParams, SisModulusFamily,
+    PrecommittedGroupParams, SisModulusProfileId, SisTableDigest,
 };
 pub use akita_planner::{
     ChunkedWitnessCfg, DecompositionParams, SisSecurityPolicyId, TensorChallengeShape,

@@ -1,10 +1,10 @@
-# Spec: SIS Quantum 128 Policy and Role Driven Scalar Table
+# Spec: SIS ADPS16 Quantum 128-Bit Policy and Role Driven Scalar Table
 
 | Field         | Value |
 |---------------|-------|
 | Author(s)     | Quang Dao |
 | Created       | 2026-07-13 |
-| Status        | active |
+| Status        | implemented |
 | PR            | |
 | Supersedes    | the SIS policy and table specs deleted in this cutover |
 | Superseded-by | |
@@ -13,15 +13,9 @@
 ## Summary
 
 Production SIS sizing uses one hard security rule. The scalar infinity norm
-LGSA estimator must report at least 128 bits under the idealized BCSS quantum
-sieving cost
-
-```text
-log2(rop) = 0.2563 * beta.
-```
-
-This model assumes heuristic lattice sieving and writable QRAQM with coherent
-access. It is an attack cost model. It is not a physical resource estimate.
+LGSA estimator must report at least 128 bits under the ADPS16 quantum cost
+model. The model and its exact estimator revision are part of the policy
+identity. It is an attack cost model, not a physical resource estimate.
 
 The estimator receives scalar SIS parameters:
 
@@ -45,7 +39,7 @@ deduplicates two requests only when they produce the same scalar SIS key.
 Policy identifier:
 
 ```text
-IdealizedBcssQuantum128V1
+Adps16Quantum128Bit
 ```
 
 The old policy identity and scalar `min_security_bits` identity are removed in
@@ -58,7 +52,7 @@ the same cutover. Unsupported policy and table identities fail closed.
 Make the security rule, estimator, generated artifacts, planner, and runtime
 lookup agree on these points:
 
-1. The hard security target is 128 bits under the idealized BCSS cost model.
+1. The hard security target is 128 bits under the ADPS16 quantum cost model.
 2. The estimator uses scalar infinity norm SIS parameters.
 3. Each matrix role has its own required ring dimensions and coefficient bound
    cells.
@@ -68,15 +62,16 @@ lookup agree on these points:
 ### Hard acceptance
 
 For a candidate scalar instance `(modulus_profile, B, n, m)`, run the infinity
-norm LGSA optimizer under the dedicated BCSS cost model. The production model
-uses exponent `0.2563`.
+norm LGSA optimizer under the dedicated ADPS16 quantum cost model.
 
 Generation may use the `local-minimum` search to find a candidate boundary. It
 must certify the accepted boundary and the first rejected successor with an
 exhaustive search over the configured beta and zeta domain. The certificate
 domain is part of the policy identity.
 
-A candidate passes only when the certified estimate returns a finite score and
+A candidate passes only when the certified estimate returns a finite score or
+an explicit above-target lower bound. A finite score or represented lower bound
+must be at least 128 bits:
 
 ```text
 score.log2() >= 128.
@@ -85,8 +80,9 @@ score.log2() >= 128.
 The generator must not treat a generic `CostValue::Infinity` as secure.
 Numeric underflow, unsupported input, a failed search, or an unclassified
 infinite result stops generation. If the estimator can prove that a cost is
-above the target without representing the full value, it must return a distinct
-classified result with the reason and supporting witness. That result may pass.
+above the target without representing the full value, it returns the distinct
+`CostValue::ProvenAboveTarget` result with a supporting lower bound. That result
+may pass only when its bound is at least 128 bits.
 
 For each scalar key `(modulus_profile, B, n)`, store the largest certified `m`
 within the search range. Security cannot increase as `m` grows because an
@@ -120,8 +116,7 @@ catalog identity.
 After the tables land, accurate public language is:
 
 > Akita's generated SIS table targets at least 128 bits under a scalarized
-> infinity norm LGSA estimate that uses the idealized BCSS writable QRAQM
-> quantum sieving cost.
+> infinity norm LGSA estimate that uses the ADPS16 quantum cost model.
 
 Do not shorten this to an unqualified post quantum security claim. The table
 prices one known attack family on a scalarized instance. It does not prove that
@@ -370,9 +365,16 @@ Generation provenance includes:
 
 The checked in table and audit artifact must have a shared digest.
 
+The digest is SHA3-256 over the fixed UTF-8 domain tag
+`akita-sis-table-digest-adps16-quantum-128bit\0`, followed in this order by the generated files
+`q32.rs`, `q64.rs`, `q128.rs`, `policy_audit.csv`, and `policy_review.txt`.
+Each file is encoded as an unsigned little endian 64-bit byte length, its
+UTF-8 filename, a NUL byte, and its exact bytes. This encoding is independent
+of host word size, map iteration order, and parallel generation order.
+
 ## Invariants
 
-- The hard gate is the idealized BCSS score at 128 bits.
+- The hard gate is the ADPS16 quantum score at 128 bits.
 - A generic infinite estimate never passes.
 - Every accepted boundary has a complete certificate.
 - The estimator key contains the exact modulus, coefficient bound, scalar row
@@ -393,7 +395,7 @@ The checked in table and audit artifact must have a shared digest.
 - A shared ring dimension list for A, B, D, and F.
 - A shared coefficient ladder for all roles.
 - A dense base 32 row grid.
-- In cell interpolation.
+- Cell interpolation.
 - Reusing a modulus profile for another modulus of the same size.
 - Treating the scalar estimate as a proof against every structured attack.
 - Compatibility with the replaced SIS policy identity.
@@ -402,31 +404,34 @@ The checked in table and audit artifact must have a shared digest.
 
 ### Acceptance criteria
 
-- [ ] The only production security policy is `IdealizedBcssQuantum128V1`.
-- [ ] The estimator accepts only certified BCSS scores at or above 128.
-- [ ] Generic infinite and failed estimates stop generation.
-- [ ] The policy ID commits to all acceptance semantics.
-- [ ] Exact modulus profiles replace size only family selection.
-- [ ] Role coverage comes from the planner domain.
-- [ ] B and D cover every supported lower dimension, including dimension 32 for
+- [x] The only production security policy is `Adps16Quantum128Bit`.
+- [x] The estimator accepts only certified ADPS16 quantum scores at or above
+      128.
+- [x] Generic infinite and failed estimates stop generation.
+- [x] The policy ID commits to all acceptance semantics.
+- [x] Exact modulus profiles replace size only family selection.
+- [x] Role coverage comes from the planner domain.
+- [x] B and D cover every supported lower dimension, including dimension 32 for
       the 128 bit field.
-- [ ] A covers dimension 64 and every larger dimension the planner may choose.
-- [ ] F has explicit coverage.
-- [ ] The scalar table is the deduplicated union of required role cells.
-- [ ] The generator does not create unreachable dense grid cells.
-- [ ] Coefficient cells are selected per role.
-- [ ] Cap hits use `ScalarCutoff::AtLeast`.
-- [ ] Runtime lookup uses checked arithmetic and fails closed.
-- [ ] Generated tables, audit data, schedules, book text, and operational docs
+- [x] A covers dimension 64 and every larger dimension the planner may choose.
+- [x] F has explicit coverage.
+- [x] The scalar table is the deduplicated union of required role cells.
+- [x] The generator does not create unreachable dense grid cells.
+- [x] Coefficient cells are selected per role.
+- [x] Cap hits use `ScalarCutoff::AtLeast`.
+- [x] Runtime lookup uses checked arithmetic and fails closed.
+- [x] Generated tables, audit data, schedules, book text, and operational docs
       share the new identities and claim language.
-- [ ] Formatting, lint, tests, and documentation guardrails pass.
+- [x] Formatting, lint, tests, and documentation guardrails pass.
 
 ### Testing strategy
 
-Pin the BCSS fixed beta convention:
+Pin the ADPS16 quantum estimator configuration:
 
 ```text
-beta = 500 -> 128.15 bits
+reduction model = ADPS16(mode = quantum)
+shape model = LGSA
+target = 128 bits
 ```
 
 Test these cases:
@@ -459,9 +464,9 @@ at the accepted and rejected boundary.
 ### Architecture
 
 ```text
-IdealizedBcssQuantum128V1
+Adps16Quantum128Bit
         |
-        +-- hard gate: BCSS idealized score >= 128
+        +-- hard gate: ADPS16 quantum score >= 128
         |
 role coverage from planner
         |
@@ -493,7 +498,7 @@ runtime role lookup: n = rank*d, m_need = width*d
 
 | Option | Verdict |
 |--------|---------|
-| Keep BCSS as a 124 bit review line | Rejected because it does not add a distinct guard at the accepted boundary |
+| Keep a second quantum review line | Rejected because the production policy has one hard ADPS16 quantum gate |
 | Accept generic infinite estimates | Rejected because one value covers both high cost and numeric failure |
 | Use one dimension list for every matrix | Rejected because mixed dimension planning gives the roles different domains |
 | Use one coefficient ladder for every matrix | Rejected because the role formulas and useful cells differ |
@@ -504,7 +509,7 @@ runtime role lookup: n = rank*d, m_need = width*d
 
 ### Change control
 
-Changing the hard target, BCSS exponent, norm, shape model, estimator revision,
+Changing the hard target, ADPS16 mode, norm, shape model, estimator revision,
 certificate domain, or estimate result semantics requires a new policy ID.
 
 Changing role dimensions, role bounds, rank limits, exact modulus profiles,
@@ -521,11 +526,8 @@ Durable narrative belongs in `book/src/how/security.md`.
 
 ## References
 
-- Bonnetain, Chailloux, Schrottenloher, Shen, *Finding Many Collisions via
-  Reusable Quantum Walks*, EUROCRYPT 2023,
-  [IACR ePrint 2022/676](https://eprint.iacr.org/2022/676).
-- Cho, Hhan, Kim, Lee, Shen, *Does Quantum Lattice Sieving Require QRAM?*,
-  [IACR ePrint 2024/1700](https://eprint.iacr.org/2024/1700).
+- ADPS16 reduction and quantum cost implementation in the pinned
+  `third_party/lattice-estimator` checkout used by the estimator goldens.
 - Langlois, Stehle, *Worst Case to Average Case Reductions for Module Lattices*,
   [IACR ePrint 2012/090](https://eprint.iacr.org/2012/090).
 - [`sis-infinity-estimator-crate.md`](sis-infinity-estimator-crate.md), Rust

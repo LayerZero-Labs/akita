@@ -3,8 +3,8 @@
 use super::{
     ChunkedWitnessCfg, DecompositionParams, GeneratedDirectStep, GeneratedFoldStep,
     GeneratedScheduleCatalogIdentity, GeneratedScheduleTableEntry, GeneratedStep,
-    PolynomialGroupLayout, PrecommittedGroupParams, SisModulusFamily, SisSecurityPolicyId,
-    TensorChallengeShape,
+    PolynomialGroupLayout, PrecommittedGroupParams, SisModulusProfileId, SisSecurityPolicyId,
+    SisTableDigest, TensorChallengeShape,
 };
 
 #[rustfmt::skip]
@@ -180,7 +180,7 @@ pub(crate) static FP64_D128_ONEHOT_SCHEDULES: &[GeneratedScheduleTableEntry] = &
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
     GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(21, 4), precommitteds: &[], steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, m_vars: 11, r_vars: 3, n_a: 4, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 5, m_vars: 11, r_vars: 3, n_a: 4, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, m_vars: 9, r_vars: 4, n_a: 5, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, m_vars: 8, r_vars: 3, n_a: 4, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, m_vars: 7, r_vars: 3, n_a: 4, n_b: 1, n_d: 1 }),
@@ -204,7 +204,7 @@ pub(crate) static FP64_D128_ONEHOT_SCHEDULES: &[GeneratedScheduleTableEntry] = &
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
     GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(23, 1), precommitteds: &[], steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, m_vars: 11, r_vars: 5, n_a: 4, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 5, m_vars: 11, r_vars: 5, n_a: 4, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, m_vars: 9, r_vars: 4, n_a: 5, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, m_vars: 8, r_vars: 3, n_a: 4, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, m_vars: 7, r_vars: 3, n_a: 4, n_b: 1, n_d: 1 }),
@@ -320,7 +320,7 @@ pub(crate) static FP64_D128_ONEHOT_SCHEDULES: &[GeneratedScheduleTableEntry] = &
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
     GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(29, 4), precommitteds: &[], steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 2, m_vars: 14, r_vars: 8, n_a: 6, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 2, m_vars: 15, r_vars: 7, n_a: 6, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 2, m_vars: 13, r_vars: 6, n_a: 5, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, m_vars: 11, r_vars: 5, n_a: 5, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, m_vars: 9, r_vars: 4, n_a: 5, n_b: 1, n_d: 1 }),
@@ -350,7 +350,7 @@ pub(crate) static FP64_D128_ONEHOT_SCHEDULES: &[GeneratedScheduleTableEntry] = &
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
     GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(31, 1), precommitteds: &[], steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 2, m_vars: 14, r_vars: 10, n_a: 6, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 2, m_vars: 15, r_vars: 9, n_a: 6, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 2, m_vars: 13, r_vars: 6, n_a: 5, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, m_vars: 11, r_vars: 5, n_a: 5, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, m_vars: 9, r_vars: 4, n_a: 5, n_b: 1, n_d: 1 }),
@@ -360,7 +360,7 @@ pub(crate) static FP64_D128_ONEHOT_SCHEDULES: &[GeneratedScheduleTableEntry] = &
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
     GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(31, 4), precommitteds: &[], steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 2, m_vars: 15, r_vars: 9, n_a: 6, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 2, m_vars: 16, r_vars: 8, n_a: 6, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, m_vars: 13, r_vars: 7, n_a: 5, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, m_vars: 11, r_vars: 5, n_a: 5, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, m_vars: 9, r_vars: 4, n_a: 5, n_b: 1, n_d: 1 }),
@@ -396,8 +396,9 @@ pub(crate) static CATALOG_RING_DIMENSIONS: &[usize] = &[128];
 #[rustfmt::skip]
 pub(crate) static CATALOG_IDENTITY: GeneratedScheduleCatalogIdentity = GeneratedScheduleCatalogIdentity {
     family_name: "fp64_d128_onehot",
-    sis_family: SisModulusFamily::Q64,
-    sis_security_policy: SisSecurityPolicyId::Classical138Quantum128WithIdealizedBcssV1,
+    sis_modulus_profile: SisModulusProfileId::Q64Offset59,
+    sis_security_policy: SisSecurityPolicyId::Adps16Quantum128Bit,
+    sis_table_digest: SisTableDigest([0x34, 0xe5, 0x58, 0x3a, 0xbc, 0xb4, 0xe5, 0x57, 0xa5, 0xc6, 0x99, 0xda, 0x04, 0x7c, 0x1e, 0x54, 0x9a, 0xac, 0x57, 0x80, 0xdf, 0xe3, 0x74, 0xa8, 0xc0, 0xee, 0x78, 0x35, 0x89, 0xc2, 0xb6, 0xf9]),
     ring_dimension: 128,
     decomposition: DecompositionParams { log_basis: 3, log_commit_bound: 1, log_open_bound: Some(64) },
     ring_subfield_norm_bound: 2,

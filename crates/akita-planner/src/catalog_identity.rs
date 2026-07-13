@@ -41,8 +41,9 @@ struct CatalogValidationCacheKey {
 pub fn policy_digest(policy: &PlannerPolicy) -> [u8; 32] {
     let mut out = [0u8; 32];
     let mut h = Fnv64::new();
-    h.write_u64(sis_family_tag(policy.sis_family));
+    h.write_u64(sis_modulus_profile_tag(policy.sis_modulus_profile));
     h.write_u64(u64::from(policy.sis_security_policy.tag()));
+    h.write_bytes(&policy.sis_table_digest.0);
     h.write_u64(policy.ring_dimension as u64);
     write_decomposition(&mut h, policy.decomposition);
     h.write_u64(u64::from(policy.ring_subfield_norm_bound));
@@ -63,8 +64,9 @@ pub fn identity_digest(identity: &GeneratedScheduleCatalogIdentity) -> [u8; 32] 
     let mut out = [0u8; 32];
     let mut h = Fnv64::new();
     h.write_bytes(identity.family_name.as_bytes());
-    h.write_u64(sis_family_tag(identity.sis_family));
+    h.write_u64(sis_modulus_profile_tag(identity.sis_modulus_profile));
     h.write_u64(u64::from(identity.sis_security_policy.tag()));
+    h.write_bytes(&identity.sis_table_digest.0);
     h.write_u64(identity.ring_dimension as u64);
     write_decomposition(&mut h, identity.decomposition);
     h.write_u64(u64::from(identity.ring_subfield_norm_bound));
@@ -92,11 +94,11 @@ pub fn identity_digest(identity: &GeneratedScheduleCatalogIdentity) -> [u8; 32] 
     out
 }
 
-fn sis_family_tag(family: akita_types::SisModulusFamily) -> u64 {
+fn sis_modulus_profile_tag(family: akita_types::SisModulusProfileId) -> u64 {
     match family {
-        akita_types::SisModulusFamily::Q32 => 0,
-        akita_types::SisModulusFamily::Q64 => 1,
-        akita_types::SisModulusFamily::Q128 => 2,
+        akita_types::SisModulusProfileId::Q32Offset99 => 0,
+        akita_types::SisModulusProfileId::Q64Offset59 => 1,
+        akita_types::SisModulusProfileId::Q128OffsetA7F7 => 2,
     }
 }
 
@@ -109,8 +111,9 @@ fn sis_family_tag(family: akita_types::SisModulusFamily) -> u64 {
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct CatalogIdentityExpectation {
     family_name: &'static str,
-    sis_family: akita_types::SisModulusFamily,
+    sis_modulus_profile: akita_types::SisModulusProfileId,
     sis_security_policy: akita_types::SisSecurityPolicyId,
+    sis_table_digest: akita_types::SisTableDigest,
     ring_dimension: usize,
     decomposition: akita_types::DecompositionParams,
     ring_subfield_norm_bound: u32,
@@ -132,8 +135,9 @@ impl CatalogIdentityExpectation {
     fn from_embedded(identity: &GeneratedScheduleCatalogIdentity) -> Self {
         Self {
             family_name: identity.family_name,
-            sis_family: identity.sis_family,
+            sis_modulus_profile: identity.sis_modulus_profile,
             sis_security_policy: identity.sis_security_policy,
+            sis_table_digest: identity.sis_table_digest,
             ring_dimension: identity.ring_dimension,
             decomposition: identity.decomposition,
             ring_subfield_norm_bound: identity.ring_subfield_norm_bound,
@@ -169,8 +173,9 @@ fn catalog_identity_expectation(
         ring_challenge_config_digest(&ring_dimensions, &ring_challenge_config)?;
     Ok(CatalogIdentityExpectation {
         family_name,
-        sis_family: policy.sis_family,
+        sis_modulus_profile: policy.sis_modulus_profile,
         sis_security_policy: policy.sis_security_policy,
+        sis_table_digest: policy.sis_table_digest,
         ring_dimension: policy.ring_dimension,
         decomposition: policy.decomposition,
         ring_subfield_norm_bound: policy.ring_subfield_norm_bound,
@@ -206,8 +211,9 @@ pub fn expected_catalog_identity(
     )?;
     Ok(GeneratedScheduleCatalogIdentity {
         family_name: expected.family_name,
-        sis_family: expected.sis_family,
+        sis_modulus_profile: expected.sis_modulus_profile,
         sis_security_policy: expected.sis_security_policy,
+        sis_table_digest: expected.sis_table_digest,
         ring_dimension: expected.ring_dimension,
         decomposition: expected.decomposition,
         ring_subfield_norm_bound: expected.ring_subfield_norm_bound,
@@ -503,7 +509,9 @@ impl Fnv64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use akita_types::{DecompositionParams, SisModulusFamily, DEFAULT_SIS_SECURITY_POLICY};
+    use akita_types::{
+        DecompositionParams, SisModulusProfileId, SisTableDigest, DEFAULT_SIS_SECURITY_POLICY,
+    };
 
     fn flat_fold(_: AkitaScheduleInputs) -> TensorChallengeShape {
         TensorChallengeShape::Flat
@@ -517,8 +525,9 @@ mod tests {
                 log_commit_bound: 1,
                 log_open_bound: Some(8),
             },
-            sis_family: SisModulusFamily::Q128,
+            sis_modulus_profile: SisModulusProfileId::Q128OffsetA7F7,
             sis_security_policy: DEFAULT_SIS_SECURITY_POLICY,
+            sis_table_digest: SisTableDigest::CURRENT,
             ring_subfield_norm_bound: 1,
             claim_ext_degree: 4,
             chal_ext_degree: 4,

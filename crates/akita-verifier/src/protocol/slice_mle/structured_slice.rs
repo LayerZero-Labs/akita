@@ -342,8 +342,8 @@ mod tests {
     use akita_types::{
         gadget_row_scalars, r_decomp_levels, LevelParams, OpeningClaimsLayout,
         RelationMatrixRowLayout, RingMultiplierOpeningPoint, RingOpeningPoint,
-        RingRelationInstance, SetupContributionPlan, SetupContributionPlanInputs, SisModulusFamily,
-        WitnessLayout,
+        RingRelationInstance, SetupContributionPlan, SetupContributionPlanInputs,
+        SisModulusProfileId, WitnessLayout,
     };
 
     use crate::protocol::ring_switch::{
@@ -373,7 +373,7 @@ mod tests {
 
     fn fixture_lp() -> LevelParams {
         LevelParams::params_only(
-            SisModulusFamily::Q128,
+            SisModulusProfileId::Q128OffsetA7F7,
             D,
             5,
             2,
