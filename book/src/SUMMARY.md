@@ -26,6 +26,7 @@
     - [Sumcheck stages](./how/proving/sumcheck-stages.md)
     - [Extension-opening reduction](./how/proving/extension-opening-reduction.md)
     - [The distributed prover](./how/proving/distributed-prover.md)
+    - [GPU-oriented witness layout](./how/proving/witness_layout.md)
   - [Recursion and proof shape](./how/recursion.md)
   - [Verification](./how/verification.md)
     - [Matrix evaluation at a point](./how/verifying/matrix_evaluation.md)
