@@ -413,7 +413,7 @@ mod tests {
                 CompressionMapSpec::new(key, alphabet)
             })
             .collect();
-        CompressionChainSpec::new(source, maps)
+        CompressionChainSpec::new(source, 6, maps)
     }
 
     fn multilayer_layout() -> akita_types::RelationLayout {

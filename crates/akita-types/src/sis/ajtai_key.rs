@@ -9,7 +9,9 @@
 use akita_field::AkitaError;
 
 use super::generated_sis_table::sis_max_widths;
-use crate::descriptor_bytes::{push_u128, push_u16, push_usize, sis_family_tag};
+use crate::descriptor_bytes::{
+    blake2b_256, push_u128, push_u16, push_u32, push_usize, sis_family_tag,
+};
 
 /// SIS modulus family used to select generated security floors.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -312,6 +314,19 @@ impl AjtaiKeyParams {
     #[inline]
     pub fn sis_table_key(&self) -> SisTableKey {
         self.sis_table_key
+    }
+
+    /// Canonical digest of the complete key geometry used by compression.
+    ///
+    /// The compression source identity includes the native ring dimension in
+    /// addition to the fields shared by the broader instance descriptor.
+    #[must_use]
+    pub fn compression_source_descriptor_digest(&self) -> [u8; 32] {
+        let mut bytes = Vec::with_capacity(64);
+        bytes.extend_from_slice(b"AKITA-COMPRESSION-SOURCE-KEY-V1");
+        self.append_descriptor_bytes(&mut bytes);
+        push_u32(&mut bytes, self.sis_table_key().ring_dimension);
+        blake2b_256(&bytes)
     }
 
     pub(crate) fn append_descriptor_bytes(&self, bytes: &mut Vec<u8>) {

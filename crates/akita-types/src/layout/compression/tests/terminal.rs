@@ -25,29 +25,47 @@ fn opening_base_accepts_larger_canonical_bucket() {
     assert_eq!(catalog.chains[0].maps[0].key.coeff_linf_bound(), 127);
 }
 
+fn two_choice(first: CompressionAlphabet) -> CompressionChainChoice {
+    CompressionChainChoice::Two([
+        CompressionMapChoice {
+            ring_d: D as u32,
+            alphabet: first,
+        },
+        CompressionMapChoice {
+            ring_d: D as u32,
+            alphabet: CompressionAlphabet::NegativeBinary,
+        },
+    ])
+}
+
 #[test]
-fn frozen_standalone_terminal_join_binds_key_base_and_field() {
+fn terminal_fold_replay_binds_context_sources_base_and_field() {
     use crate::layout::relation::{
         RelationGroupId, RelationRowId, RelationRowInputs, RelationRowRhs,
     };
 
     let lp = level();
-    let spec = chain_for(
-        &lp,
-        CompressionSourceId::CurrentOuter,
-        &lp.b_key,
-        &[
-            CompressionAlphabet::OpeningBase { log_basis: 4 },
-            CompressionAlphabet::NegativeBinary,
-        ],
-    );
-    let catalog =
-        validate_compression_catalog::<Prime128OffsetA7F7>(&lp, standalone(6), 64, vec![spec])
-            .unwrap();
     let opening = scalar_opening();
-    let layout = catalog
-        .terminal_relation_layout::<Prime128OffsetA7F7>(&lp, &opening)
+    let choice = CompressionChoice {
+        f: CompressionFChoice {
+            current_outer: FrozenCompressionChainChoice::new(
+                &lp.b_key,
+                lp.log_basis,
+                two_choice(CompressionAlphabet::OpeningBase {
+                    log_basis: lp.log_basis,
+                }),
+            ),
+            precommitted_outer: &[],
+        },
+        opening: None,
+    };
+    let catalog = choice
+        .replay::<Prime128OffsetA7F7>(
+            &lp,
+            CompressionCatalogContext::TerminalFold { opening: &opening },
+        )
         .unwrap();
+    let layout = catalog.terminal_relation_layout().unwrap();
     let b = layout
         .row_plan()
         .family(RelationRowId::B {
@@ -62,7 +80,7 @@ fn frozen_standalone_terminal_join_binds_key_base_and_field() {
     else {
         panic!("terminal B must carry frozen F input");
     };
-    assert_eq!(input.log_basis(), 4);
+    assert_eq!(input.log_basis(), lp.log_basis);
     assert!(layout.row_plan().family(RelationRowId::D).is_err());
     assert!(layout.row_plan().families().iter().all(|family| !matches!(
         family.id(),
@@ -72,41 +90,39 @@ fn frozen_standalone_terminal_join_binds_key_base_and_field() {
         }
     )));
 
-    let mut too_small_base = lp.clone();
-    too_small_base.log_basis = 3;
-    assert!(catalog
-        .terminal_relation_layout::<Prime128OffsetA7F7>(&too_small_base, &opening)
+    assert!(choice
+        .replay::<Prime64Offset59>(
+            &lp,
+            CompressionCatalogContext::TerminalFold { opening: &opening },
+        )
         .is_err());
-    let mut wrong_key = lp.clone();
-    wrong_key.b_key = key(SisModulusFamily::Q128, D, 63, 2);
-    assert!(catalog
-        .terminal_relation_layout::<Prime128OffsetA7F7>(&wrong_key, &opening)
-        .is_err());
-    assert!(catalog
-        .terminal_relation_layout::<Prime64Offset59>(&lp, &opening)
+    assert!(choice
+        .replay::<Prime128OffsetA7F7>(&lp, standalone(lp.log_basis))
         .is_err());
 }
 
 #[test]
 fn binary_first_terminal_join_has_no_opening_base_lower_bound() {
-    let lp = level();
-    let spec = chain_for(
-        &lp,
-        CompressionSourceId::CurrentOuter,
-        &lp.b_key,
-        &[
-            CompressionAlphabet::NegativeBinary,
-            CompressionAlphabet::NegativeBinary,
-        ],
-    );
-    let catalog =
-        validate_compression_catalog::<Prime128OffsetA7F7>(&lp, standalone(6), 64, vec![spec])
-            .unwrap();
-    let mut terminal = lp.clone();
+    let mut terminal = level();
     terminal.log_basis = 2;
-    assert!(catalog
-        .terminal_relation_layout::<Prime128OffsetA7F7>(&terminal, &scalar_opening())
-        .is_ok());
+    let opening = scalar_opening();
+    let catalog = CompressionChoice {
+        f: CompressionFChoice {
+            current_outer: FrozenCompressionChainChoice::new(
+                &terminal.b_key,
+                4,
+                two_choice(CompressionAlphabet::NegativeBinary),
+            ),
+            precommitted_outer: &[],
+        },
+        opening: None,
+    }
+    .replay::<Prime128OffsetA7F7>(
+        &terminal,
+        CompressionCatalogContext::TerminalFold { opening: &opening },
+    )
+    .unwrap();
+    assert!(catalog.terminal_relation_layout().is_ok());
 }
 
 #[test]

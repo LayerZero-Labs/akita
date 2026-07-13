@@ -42,7 +42,7 @@ fn chain(
             CompressionMapSpec::new(map_key, CompressionAlphabet::NegativeBinary)
         })
         .collect();
-    CompressionChainSpec::new(source, maps)
+    CompressionChainSpec::new(source, 6, maps)
 }
 
 fn alphabet_chain(
@@ -67,7 +67,7 @@ fn alphabet_chain(
             CompressionMapSpec::new(map_key, alphabet)
         })
         .collect();
-    CompressionChainSpec::new(source, maps)
+    CompressionChainSpec::new(source, 6, maps)
 }
 
 fn mixed_layout() -> RelationLayout {

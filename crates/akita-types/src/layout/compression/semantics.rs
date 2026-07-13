@@ -429,7 +429,11 @@ mod tests {
                 super::super::CompressionMapSpec { key, alphabet }
             })
             .collect();
-        super::super::CompressionChainSpec { source, maps }
+        super::super::CompressionChainSpec {
+            source,
+            max_opening_log_basis: 6,
+            maps,
+        }
     }
 
     fn checked_mixed_catalog() -> (LevelParams, super::super::ValidatedCompressionCatalog) {
@@ -632,9 +636,7 @@ mod tests {
         );
         let catalog = super::super::validate_compression_catalog::<F>(
             &lp,
-            super::super::CompressionCatalogContext::StandaloneCommitment {
-                max_opening_log_basis: 6,
-            },
+            super::super::CompressionCatalogContext::StandaloneCommitment,
             64,
             vec![spec],
         )

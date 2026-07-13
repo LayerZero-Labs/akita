@@ -8,7 +8,8 @@ use akita_serialization::DEFAULT_MAX_SEQUENCE_LEN;
 
 use crate::layout::compression::{
     validate_compression_catalog, CompressionAlphabet, CompressionCatalogContext,
-    CompressionChainSpec, CompressionMapSpec,
+    CompressionChainChoice, CompressionChainSpec, CompressionChoice, CompressionFChoice,
+    CompressionMapChoice, CompressionMapSpec, FrozenCompressionChainChoice,
 };
 use crate::sis::{sis_table_key_for_linf_bound, AjtaiKeyParams, DEFAULT_SIS_SECURITY_BITS};
 fn level() -> (LevelParams, OpeningClaimsLayout) {
@@ -67,7 +68,7 @@ fn chain(
             CompressionMapSpec::new(key, alphabet)
         })
         .collect();
-    CompressionChainSpec::new(source, maps)
+    CompressionChainSpec::new(source, 6, maps)
 }
 
 #[test]
@@ -442,28 +443,35 @@ fn checked_compression_extends_rows_and_directly_augments_existing_sources() {
 }
 
 #[test]
-fn terminal_standalone_sizes_f_geometry_without_a_d_base_quotient() {
+fn terminal_fold_sizes_f_geometry_without_a_d_base_quotient() {
     let (mut lp, opening) = level();
     lp.b_key = certified_key(64, 63, 1);
-    let catalog = validate_compression_catalog::<F>(
-        &lp,
-        CompressionCatalogContext::StandaloneCommitment {
-            max_opening_log_basis: 6,
+    let catalog = CompressionChoice {
+        f: CompressionFChoice {
+            current_outer: FrozenCompressionChainChoice::new(
+                &lp.b_key,
+                6,
+                CompressionChainChoice::Two([
+                    CompressionMapChoice {
+                        ring_d: 64,
+                        alphabet: CompressionAlphabet::OpeningBase { log_basis: 4 },
+                    },
+                    CompressionMapChoice {
+                        ring_d: 32,
+                        alphabet: CompressionAlphabet::NegativeBinary,
+                    },
+                ]),
+            ),
+            precommitted_outer: &[],
         },
-        64,
-        vec![chain(
-            CompressionSourceId::CurrentOuter,
-            &lp.b_key,
-            &[
-                CompressionAlphabet::OpeningBase { log_basis: 4 },
-                CompressionAlphabet::NegativeBinary,
-            ],
-        )],
+        opening: None,
+    }
+    .replay::<F>(
+        &lp,
+        CompressionCatalogContext::TerminalFold { opening: &opening },
     )
     .unwrap();
-    let layout = catalog
-        .terminal_relation_layout::<F>(&lp, &opening)
-        .unwrap();
+    let layout = catalog.terminal_relation_layout().unwrap();
     assert!(layout.compression_witness_coeffs > 0);
     assert!(layout.segments().iter().any(|segment| matches!(
         segment.id(),

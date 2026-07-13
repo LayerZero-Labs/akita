@@ -1,4 +1,5 @@
 mod catalog;
+mod choice;
 mod projection_consistency;
 mod terminal;
 use super::*;
@@ -78,7 +79,11 @@ fn chain_for_profile(
             CompressionMapSpec { key, alphabet }
         })
         .collect();
-    CompressionChainSpec { source, maps }
+    CompressionChainSpec {
+        source,
+        max_opening_log_basis: range_log_basis,
+        maps,
+    }
 }
 
 fn scalar_opening() -> OpeningClaimsLayout {
@@ -86,9 +91,8 @@ fn scalar_opening() -> OpeningClaimsLayout {
 }
 
 fn standalone(max_opening_log_basis: u32) -> CompressionCatalogContext<'static> {
-    CompressionCatalogContext::StandaloneCommitment {
-        max_opening_log_basis,
-    }
+    let _ = max_opening_log_basis;
+    CompressionCatalogContext::StandaloneCommitment
 }
 
 fn current_and_opening_specs(lp: &LevelParams) -> Vec<CompressionChainSpec> {

@@ -63,7 +63,7 @@ fn compression_chain(
         CompressionMapSpec::new(key, alphabet)
     })
     .collect();
-    CompressionChainSpec::new(source, maps)
+    CompressionChainSpec::new(source, lp.log_basis, maps)
 }
 
 fn compression_projection(
@@ -187,9 +187,7 @@ fn projected_compression_requires_current_opening_identity() {
     current.stamp_role_dims_from_keys();
     let standalone = validate_compression_catalog::<F>(
         &current,
-        CompressionCatalogContext::StandaloneCommitment {
-            max_opening_log_basis: current.log_basis,
-        },
+        CompressionCatalogContext::StandaloneCommitment,
         64,
         vec![compression_chain(
             &current,

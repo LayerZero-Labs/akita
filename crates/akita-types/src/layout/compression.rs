@@ -13,50 +13,18 @@ use crate::{LevelParams, OpeningClaimsLayout, RingRole, MAX_SETUP_MATRIX_FIELD_E
 
 pub(in crate::layout) mod semantics;
 
-#[allow(dead_code)] // Wired into schedule replay in the compression cutover slice.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CompressionAlphabet {
-    NegativeBinary,
-    OpeningBase { log_basis: u32 },
-}
-
-/// Canonical digit depth used to decompose one compression-map input.
-pub fn compression_digit_depth(
-    alphabet: CompressionAlphabet,
-    field_bits: u32,
-    level_log_basis: u32,
-) -> Result<usize, AkitaError> {
-    match alphabet {
-        CompressionAlphabet::NegativeBinary => Ok(field_bits as usize),
-        CompressionAlphabet::OpeningBase { log_basis } => {
-            if log_basis == 0 || log_basis >= 128 || log_basis > level_log_basis {
-                return Err(AkitaError::InvalidSetup(
-                    "compression opening-base log_basis must be in 1..128 and no larger than the level base".into(),
-                ));
-            }
-            Ok(num_digits_for_bound(field_bits, field_bits, log_basis))
-        }
-    }
-}
-
-#[allow(dead_code)] // Wired into schedule replay in the compression cutover slice.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CompressionSourceId {
-    CurrentOuter,
-    PrecommittedOuter { index: usize },
-    Opening,
-}
-
-#[allow(dead_code)] // Wired into schedule replay in the compression cutover slice.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CompressionCatalogContext<'a> {
-    CoGeneratedLevel { opening: &'a OpeningClaimsLayout },
-    StandaloneCommitment { max_opening_log_basis: u32 },
-}
-
+mod choice;
+pub use choice::{
+    compression_digit_depth, CompressionAlphabet, CompressionCatalogContext,
+    CompressionChainChoice, CompressionChainSpec, CompressionChoice, CompressionFChoice,
+    CompressionMapChoice, CompressionMapSpec, CompressionSourceId, FrozenCompressionChainChoice,
+};
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum CompressionCatalogPurpose {
     CoGenerated {
+        relation_layout: crate::layout::relation::RelationLayout,
+    },
+    TerminalFold {
         relation_layout: crate::layout::relation::RelationLayout,
     },
     Standalone {
@@ -64,34 +32,6 @@ enum CompressionCatalogPurpose {
         source_key: AjtaiKeyParams,
         field_modulus_minus_one: u128,
     },
-}
-
-#[allow(dead_code)] // Wired into schedule replay in the compression cutover slice.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CompressionMapSpec {
-    key: AjtaiKeyParams,
-    alphabet: CompressionAlphabet,
-}
-
-impl CompressionMapSpec {
-    #[must_use]
-    pub fn new(key: AjtaiKeyParams, alphabet: CompressionAlphabet) -> Self {
-        Self { key, alphabet }
-    }
-}
-
-#[allow(dead_code)] // Wired into schedule replay in the compression cutover slice.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CompressionChainSpec {
-    source: CompressionSourceId,
-    maps: Vec<CompressionMapSpec>,
-}
-
-impl CompressionChainSpec {
-    #[must_use]
-    pub fn new(source: CompressionSourceId, maps: Vec<CompressionMapSpec>) -> Self {
-        Self { source, maps }
-    }
 }
 
 #[allow(dead_code)] // Compiled catalog fields are consumed by later protocol slices.
@@ -108,6 +48,7 @@ struct CompiledCompressionMap {
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct CompiledCompressionChain {
     source: CompressionSourceId,
+    max_opening_log_basis: u32,
     source_output_coeffs: usize,
     maps: Vec<CompiledCompressionMap>,
     payload_coeffs: usize,
@@ -297,7 +238,9 @@ impl ValidatedCompressionCatalog {
         let mut descriptor_bytes = Vec::new();
         self.append_projection_descriptor_bytes(&mut descriptor_bytes)?;
 
-        if let CompressionCatalogPurpose::CoGenerated { relation_layout } = &self.purpose {
+        if let CompressionCatalogPurpose::CoGenerated { relation_layout }
+        | CompressionCatalogPurpose::TerminalFold { relation_layout } = &self.purpose
+        {
             let cost = relation_layout.compression_structural_cost()?;
             let payload_coeffs =
                 payload_coeffs_by_source
@@ -392,6 +335,7 @@ impl ValidatedCompressionCatalog {
         ensure_projection_descriptor_len(bytes)?;
         match &self.purpose {
             CompressionCatalogPurpose::CoGenerated { .. } => bytes.push(0),
+            CompressionCatalogPurpose::TerminalFold { .. } => bytes.push(2),
             CompressionCatalogPurpose::Standalone {
                 max_opening_log_basis,
                 source_key,
@@ -407,6 +351,7 @@ impl ValidatedCompressionCatalog {
         push_usize(bytes, self.chains.len());
         for chain in &self.chains {
             append_source_descriptor_bytes(bytes, chain.source);
+            push_u32(bytes, chain.max_opening_log_basis);
             push_usize(bytes, chain.source_output_coeffs);
             push_usize(bytes, chain.maps.len());
             for map in &chain.maps {
@@ -442,70 +387,24 @@ impl ValidatedCompressionCatalog {
     ) -> Result<&crate::layout::relation::RelationLayout, AkitaError> {
         match &self.purpose {
             CompressionCatalogPurpose::CoGenerated { relation_layout } => Ok(relation_layout),
-            CompressionCatalogPurpose::Standalone { .. } => Err(AkitaError::InvalidSetup(
-                "standalone compression has no co-generated relation layout".into(),
+            CompressionCatalogPurpose::TerminalFold { .. }
+            | CompressionCatalogPurpose::Standalone { .. } => Err(AkitaError::InvalidSetup(
+                "compression catalog is not a co-generated WithDBlock level".into(),
             )),
         }
     }
 
-    #[allow(dead_code)] // Terminal schedule replay consumes this in the next crate cutover.
-    pub(crate) fn terminal_relation_layout<F: CanonicalField>(
+    /// Return the canonical relation graph for a terminal `WithoutDBlock` fold.
+    pub fn terminal_relation_layout(
         &self,
-        lp: &LevelParams,
-        opening: &OpeningClaimsLayout,
-    ) -> Result<crate::layout::relation::RelationLayout, AkitaError> {
-        let (max_opening_log_basis, source_key, field_modulus_minus_one) = match &self.purpose {
-            CompressionCatalogPurpose::Standalone {
-                max_opening_log_basis,
-                source_key,
-                field_modulus_minus_one,
-            } => (*max_opening_log_basis, source_key, *field_modulus_minus_one),
-            CompressionCatalogPurpose::CoGenerated { .. } => {
-                return Err(AkitaError::InvalidSetup(
-                    "terminal relation requires standalone incoming compression".into(),
-                ));
-            }
-        };
-        if (-F::one()).to_canonical_u128() != field_modulus_minus_one {
-            return Err(AkitaError::InvalidSetup(
-                "terminal compression field identity disagrees with the frozen catalog".into(),
-            ));
+    ) -> Result<&crate::layout::relation::RelationLayout, AkitaError> {
+        match &self.purpose {
+            CompressionCatalogPurpose::TerminalFold { relation_layout } => Ok(relation_layout),
+            CompressionCatalogPurpose::CoGenerated { .. }
+            | CompressionCatalogPurpose::Standalone { .. } => Err(AkitaError::InvalidSetup(
+                "compression catalog is not a terminal WithoutDBlock fold".into(),
+            )),
         }
-        if source_key != &lp.b_key || lp.log_basis > max_opening_log_basis {
-            return Err(AkitaError::InvalidSetup(
-                "terminal compression source key or opening base is incompatible".into(),
-            ));
-        }
-        if !lp.precommitted_groups.is_empty() || self.chains.len() != 1 {
-            return Err(AkitaError::InvalidSetup(
-                "terminal compression must be exactly the frozen CurrentOuter chain".into(),
-            ));
-        }
-        let chain = self.chains.first().ok_or_else(|| {
-            AkitaError::InvalidSetup("terminal compression chain is missing".into())
-        })?;
-        if chain.source != CompressionSourceId::CurrentOuter {
-            return Err(AkitaError::InvalidSetup(
-                "terminal compression source must be CurrentOuter".into(),
-            ));
-        }
-        let first_map = chain.maps.first().ok_or_else(|| {
-            AkitaError::InvalidSetup("terminal compression first map is missing".into())
-        })?;
-        if let CompressionAlphabet::OpeningBase { log_basis } = first_map.alphabet {
-            if lp.log_basis < log_basis {
-                return Err(AkitaError::InvalidSetup(
-                    "terminal opening base is smaller than the frozen F-chain base".into(),
-                ));
-            }
-        }
-        let local = semantics::compile::<F>(lp, &self.chains)?;
-        crate::layout::relation::RelationLayout::compile_terminal_compressed(
-            lp,
-            opening,
-            &local,
-            F::modulus_bits(),
-        )
     }
 }
 
@@ -595,7 +494,6 @@ fn audit_key(
 fn compile_chain<F: CanonicalField>(
     lp: &LevelParams,
     context: CompressionCatalogContext<'_>,
-    range_log_basis: u32,
     gen_ring_dim: usize,
     active_family: SisModulusFamily,
     spec: &CompressionChainSpec,
@@ -609,6 +507,39 @@ fn compile_chain<F: CanonicalField>(
         return Err(AkitaError::InvalidSetup(
             "compression gen_ring_dim must be non-zero".into(),
         ));
+    }
+    let range_log_basis = spec.max_opening_log_basis;
+    if !(1..128).contains(&range_log_basis) {
+        return Err(AkitaError::InvalidSetup(
+            "compression source max_opening_log_basis must be in 1..128".into(),
+        ));
+    }
+    match (context, spec.source) {
+        (
+            CompressionCatalogContext::CoGeneratedLevel { .. },
+            CompressionSourceId::CurrentOuter | CompressionSourceId::Opening,
+        ) if range_log_basis != lp.log_basis => {
+            return Err(AkitaError::InvalidSetup(
+                "new co-generated compression sources must freeze the level opening base".into(),
+            ));
+        }
+        (CompressionCatalogContext::CoGeneratedLevel { .. }, _)
+        | (CompressionCatalogContext::TerminalFold { .. }, _)
+            if lp.log_basis > range_log_basis =>
+        {
+            return Err(AkitaError::InvalidSetup(
+                "active opening base exceeds a frozen F-chain envelope".into(),
+            ));
+        }
+        (CompressionCatalogContext::StandaloneCommitment, _)
+            if range_log_basis < lp.log_basis || range_log_basis < 4 =>
+        {
+            return Err(AkitaError::InvalidSetup(
+                "standalone F-chain envelope must cover the commitment and minimum opening base"
+                    .into(),
+            ));
+        }
+        _ => {}
     }
 
     let source_key = resolve_source_key(lp, spec.source)?;
@@ -683,6 +614,19 @@ fn compile_chain<F: CanonicalField>(
             ));
         }
         if let CompressionAlphabet::OpeningBase { log_basis } = map.alphabet {
+            if index == 0
+                && matches!(
+                    context,
+                    CompressionCatalogContext::CoGeneratedLevel { .. }
+                        | CompressionCatalogContext::TerminalFold { .. }
+                )
+                && spec.source != CompressionSourceId::Opening
+                && log_basis > lp.log_basis
+            {
+                return Err(AkitaError::InvalidSetup(
+                    "active opening base is below a frozen F-chain first-map base".into(),
+                ));
+            }
             match (context, spec.source) {
                 (
                     CompressionCatalogContext::CoGeneratedLevel { .. },
@@ -694,7 +638,7 @@ fn compile_chain<F: CanonicalField>(
                     ));
                 }
                 (
-                    CompressionCatalogContext::StandaloneCommitment { .. },
+                    CompressionCatalogContext::StandaloneCommitment,
                     CompressionSourceId::CurrentOuter,
                 ) if log_basis != 4 => {
                     return Err(AkitaError::InvalidSetup(
@@ -812,6 +756,7 @@ fn compile_chain<F: CanonicalField>(
     }
     Ok(CompiledCompressionChain {
         source: spec.source,
+        max_opening_log_basis: spec.max_opening_log_basis,
         source_output_coeffs,
         maps,
         payload_coeffs: previous_output,
@@ -831,32 +776,30 @@ pub fn validate_compression_catalog<F: CanonicalField>(
             "compression level log_basis must be in 1..128".into(),
         ));
     }
-    let (range_log_basis, co_generated_opening) = match context {
+    let (relation_opening, terminal) = match context {
         CompressionCatalogContext::CoGeneratedLevel { opening } => {
             opening.check()?;
             lp.validate_root_opening_batch(opening)?;
-            (lp.log_basis, Some(opening))
+            (Some(opening), false)
         }
-        CompressionCatalogContext::StandaloneCommitment {
-            max_opening_log_basis,
-        } => {
+        CompressionCatalogContext::TerminalFold { opening } => {
+            opening.check()?;
+            lp.validate_root_opening_batch(opening)?;
+            (Some(opening), true)
+        }
+        CompressionCatalogContext::StandaloneCommitment => {
             if !lp.precommitted_groups.is_empty() {
                 return Err(AkitaError::InvalidSetup(
                     "standalone compression cannot include precommitted groups".into(),
                 ));
             }
-            if !(4..128).contains(&max_opening_log_basis) || max_opening_log_basis < lp.log_basis {
-                return Err(AkitaError::InvalidSetup(
-                    "standalone max_opening_log_basis must be in 4..128 and cover lp.log_basis"
-                        .into(),
-                ));
-            }
-            (max_opening_log_basis, None)
+            (None, false)
         }
     };
     let precommitted_count = match context {
-        CompressionCatalogContext::CoGeneratedLevel { .. } => lp.precommitted_groups.len(),
-        CompressionCatalogContext::StandaloneCommitment { .. } => 0,
+        CompressionCatalogContext::CoGeneratedLevel { .. }
+        | CompressionCatalogContext::TerminalFold { .. } => lp.precommitted_groups.len(),
+        CompressionCatalogContext::StandaloneCommitment => 0,
     };
     let opening_count = usize::from(matches!(
         context,
@@ -896,30 +839,36 @@ pub fn validate_compression_catalog<F: CanonicalField>(
     };
     let chains = specs
         .iter()
-        .map(|spec| {
-            compile_chain::<F>(
-                lp,
-                context,
-                range_log_basis,
-                gen_ring_dim,
-                active_family,
-                spec,
-            )
-        })
+        .map(|spec| compile_chain::<F>(lp, context, gen_ring_dim, active_family, spec))
         .collect::<Result<Vec<_>, _>>()?;
-    let purpose = if let Some(opening) = co_generated_opening {
+    let purpose = if let Some(opening) = relation_opening {
         let local = semantics::compile::<F>(lp, &chains)?;
-        CompressionCatalogPurpose::CoGenerated {
-            relation_layout: crate::layout::relation::RelationLayout::compile_compressed(
-                lp,
-                opening,
-                &local,
-                F::modulus_bits(),
-            )?,
+        if terminal {
+            CompressionCatalogPurpose::TerminalFold {
+                relation_layout:
+                    crate::layout::relation::RelationLayout::compile_terminal_compressed(
+                        lp,
+                        opening,
+                        &local,
+                        F::modulus_bits(),
+                    )?,
+            }
+        } else {
+            CompressionCatalogPurpose::CoGenerated {
+                relation_layout: crate::layout::relation::RelationLayout::compile_compressed(
+                    lp,
+                    opening,
+                    &local,
+                    F::modulus_bits(),
+                )?,
+            }
         }
     } else {
         CompressionCatalogPurpose::Standalone {
-            max_opening_log_basis: range_log_basis,
+            max_opening_log_basis: specs
+                .first()
+                .ok_or_else(|| AkitaError::InvalidSetup("standalone F chain is missing".into()))?
+                .max_opening_log_basis,
             source_key: lp.b_key.clone(),
             field_modulus_minus_one: (-F::one()).to_canonical_u128(),
         }

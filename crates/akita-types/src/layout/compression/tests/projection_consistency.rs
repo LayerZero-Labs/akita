@@ -17,7 +17,7 @@ fn mixed_dimension_chain(
             CompressionMapSpec::new(map_key, CompressionAlphabet::NegativeBinary)
         })
         .collect();
-    CompressionChainSpec::new(source, maps)
+    CompressionChainSpec::new(source, 6, maps)
 }
 
 #[test]

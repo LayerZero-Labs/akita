@@ -198,14 +198,13 @@ impl<F: CanonicalField> Enumeration<'_, F> {
     ) {
         let descriptor = CompressionChainDescriptor {
             source: CompressionSourceId::CurrentOuter,
+            max_opening_log_basis: self.policy.basis_range.1,
             maps: maps.to_vec(),
         };
         let Ok(catalog) = replay_compression_catalog::<F>(
             self.policy,
             self.lp,
-            CompressionCatalogContext::StandaloneCommitment {
-                max_opening_log_basis: self.policy.basis_range.1,
-            },
+            CompressionCatalogContext::StandaloneCommitment,
             &[descriptor],
         ) else {
             return;

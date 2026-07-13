@@ -292,6 +292,7 @@ fn schedule_projection_rejects_malformed_overflowing_compiled_map() {
     let catalog = ValidatedCompressionCatalog {
         chains: vec![CompiledCompressionChain {
             source: CompressionSourceId::CurrentOuter,
+            max_opening_log_basis: 6,
             source_output_coeffs: D,
             maps: vec![CompiledCompressionMap {
                 key: malformed_key,
@@ -391,6 +392,7 @@ fn rejects_missing_duplicate_out_of_order_and_wrong_purpose_sources() {
             good[0].clone(),
             CompressionChainSpec {
                 source: CompressionSourceId::PrecommittedOuter { index: 0 },
+                max_opening_log_basis: lp.log_basis,
                 maps: good[1].maps.clone(),
             },
         ],
@@ -410,15 +412,16 @@ fn rejects_missing_duplicate_out_of_order_and_wrong_purpose_sources() {
         good,
     )
     .is_err());
-    let standalone_negative_binary = chain_for(
+    let mut standalone_negative_binary = chain_for(
         &lp,
         CompressionSourceId::CurrentOuter,
         &lp.b_key,
         &[CompressionAlphabet::NegativeBinary; 2],
     );
+    standalone_negative_binary.max_opening_log_basis = lp.log_basis - 1;
     assert!(validate_compression_catalog::<Prime128OffsetA7F7>(
         &lp,
-        standalone(lp.log_basis - 1),
+        standalone(lp.log_basis),
         64,
         vec![standalone_negative_binary],
     )

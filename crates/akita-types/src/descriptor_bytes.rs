@@ -1,6 +1,14 @@
 //! Shared canonical byte helpers for Fiat-Shamir descriptor digests.
 
 use crate::layout::SisModulusFamily;
+use blake2::digest::{consts::U32, Digest};
+
+pub(crate) fn blake2b_256(bytes: &[u8]) -> [u8; 32] {
+    let digest = blake2::Blake2b::<U32>::digest(bytes);
+    let mut out = [0u8; 32];
+    out.copy_from_slice(&digest);
+    out
+}
 
 pub(crate) fn push_usize(bytes: &mut Vec<u8>, value: usize) {
     bytes.extend_from_slice(&(value as u64).to_le_bytes());

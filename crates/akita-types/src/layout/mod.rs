@@ -18,8 +18,10 @@ pub mod ring_dims;
 
 pub use compression::{
     compression_digit_depth, validate_compression_catalog, CompressionAlphabet,
-    CompressionCatalogContext, CompressionCatalogProjection, CompressionChainSpec,
-    CompressionMapSpec, CompressionSourceId, ValidatedCompressionCatalog,
+    CompressionCatalogContext, CompressionCatalogProjection, CompressionChainChoice,
+    CompressionChainSpec, CompressionChoice, CompressionFChoice, CompressionMapChoice,
+    CompressionMapSpec, CompressionSourceId, FrozenCompressionChainChoice,
+    ValidatedCompressionCatalog,
 };
 pub use digit_math::{gadget_row_scalars, isqrt_ceil};
 pub use flat_matrix::{FlatMatrix, RingMatrixView};

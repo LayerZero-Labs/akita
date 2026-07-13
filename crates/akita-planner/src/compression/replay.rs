@@ -3,10 +3,10 @@
 use akita_field::{AkitaError, CanonicalField};
 use akita_types::sis::{rounded_up_collision_inf_norm, sis_table_key_for_linf_bound};
 use akita_types::{
-    compression_digit_depth, protocol_dispatch_tier, validate_compression_catalog, AjtaiKeyParams,
-    CompressionAlphabet, CompressionCatalogContext, CompressionChainSpec, CompressionMapSpec,
-    CompressionSourceId, LevelParams, ProtocolRingDispatchTierId, SisModulusFamily,
-    ValidatedCompressionCatalog, DEFAULT_SIS_SECURITY_BITS,
+    protocol_dispatch_tier, AjtaiKeyParams, CompressionAlphabet, CompressionCatalogContext,
+    CompressionChainChoice, CompressionChoice, CompressionFChoice, CompressionMapChoice,
+    CompressionSourceId, FrozenCompressionChainChoice, LevelParams, ProtocolRingDispatchTierId,
+    SisModulusFamily, ValidatedCompressionCatalog, DEFAULT_SIS_SECURITY_BITS,
 };
 
 use crate::PlannerPolicy;
@@ -17,6 +17,7 @@ use crate::PlannerPolicy;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct CompressionChainDescriptor {
     pub(super) source: CompressionSourceId,
+    pub(super) max_opening_log_basis: u32,
     pub(super) maps: Vec<CompressionMapDescriptor>,
 }
 
@@ -26,29 +27,6 @@ pub(super) struct CompressionChainDescriptor {
 pub(super) struct CompressionMapDescriptor {
     pub(super) ring_d: usize,
     pub(super) alphabet: CompressionAlphabet,
-}
-
-fn source_output_coeffs(
-    lp: &LevelParams,
-    source: CompressionSourceId,
-) -> Result<usize, AkitaError> {
-    let key = match source {
-        CompressionSourceId::CurrentOuter => &lp.b_key,
-        CompressionSourceId::PrecommittedOuter { index } => {
-            &lp.precommitted_groups
-                .get(index)
-                .ok_or_else(|| {
-                    AkitaError::InvalidSetup(
-                        "compression descriptor precommitted source is out of range".into(),
-                    )
-                })?
-                .b_key
-        }
-        CompressionSourceId::Opening => &lp.d_key,
-    };
-    key.row_len()
-        .checked_mul(key.sis_table_key().ring_dimension as usize)
-        .ok_or_else(|| AkitaError::InvalidSetup("compression source size overflow".into()))
 }
 
 pub(super) fn derive_compression_key(
@@ -124,53 +102,163 @@ pub(super) fn replay_compression_catalog<F: CanonicalField>(
     descriptors: &[CompressionChainDescriptor],
 ) -> Result<ValidatedCompressionCatalog, AkitaError> {
     validate_replay_policy::<F>(policy, lp)?;
-    let range_log_basis = match context {
-        CompressionCatalogContext::CoGeneratedLevel { .. } => lp.log_basis,
-        CompressionCatalogContext::StandaloneCommitment {
-            max_opening_log_basis,
-        } => max_opening_log_basis,
-    };
-    let mut specs = Vec::with_capacity(descriptors.len());
-    for descriptor in descriptors {
-        let mut previous_output = source_output_coeffs(lp, descriptor.source)?;
-        let mut maps = Vec::with_capacity(descriptor.maps.len());
-        for map in &descriptor.maps {
-            let digit_depth =
-                compression_digit_depth(map.alphabet, F::modulus_bits(), range_log_basis)?;
-            let input_coeffs = previous_output.checked_mul(digit_depth).ok_or_else(|| {
-                AkitaError::InvalidSetup("compression replay input size overflow".into())
-            })?;
-            if map.ring_d == 0 || !input_coeffs.is_multiple_of(map.ring_d) {
-                return Err(AkitaError::InvalidSetup(
-                    "compression replay input is not divisible by its native dimension".into(),
-                ));
+    let fixed = descriptors
+        .iter()
+        .map(|descriptor| {
+            let maps = descriptor
+                .maps
+                .iter()
+                .map(|map| {
+                    Ok(CompressionMapChoice {
+                        ring_d: u32::try_from(map.ring_d).map_err(|_| {
+                            AkitaError::InvalidSetup(
+                                "compression replay dimension exceeds u32".into(),
+                            )
+                        })?,
+                        alphabet: map.alphabet,
+                    })
+                })
+                .collect::<Result<Vec<_>, AkitaError>>()?;
+            match maps.as_slice() {
+                [a, b] => Ok((
+                    descriptor.source,
+                    descriptor.max_opening_log_basis,
+                    CompressionChainChoice::Two([*a, *b]),
+                )),
+                [a, b, c] => Ok((
+                    descriptor.source,
+                    descriptor.max_opening_log_basis,
+                    CompressionChainChoice::Three([*a, *b, *c]),
+                )),
+                _ => Err(AkitaError::InvalidSetup(
+                    "compression replay chain depth must be in 2..=3".into(),
+                )),
             }
-            let key = derive_compression_key(
-                policy,
-                range_log_basis,
-                map.alphabet,
-                map.ring_d,
-                input_coeffs / map.ring_d,
-            )
-            .ok_or_else(|| {
-                AkitaError::InvalidSetup(
-                    "compression replay map is absent from the shipped SIS tables".into(),
-                )
-            })?;
-            let audited_ring_d = key.sis_table_key().ring_dimension as usize;
-            if audited_ring_d != map.ring_d {
+        })
+        .collect::<Result<Vec<_>, AkitaError>>()?;
+    let choice = match context {
+        CompressionCatalogContext::CoGeneratedLevel { .. } => {
+            let current = fixed
+                .first()
+                .filter(|(source, _, _)| *source == CompressionSourceId::CurrentOuter);
+            let opening = fixed
+                .last()
+                .filter(|(source, _, _)| *source == CompressionSourceId::Opening);
+            let (Some((_, current_max, current_chain)), Some((_, _, opening_chain))) =
+                (current, opening)
+            else {
                 return Err(AkitaError::InvalidSetup(
-                    "compression replay dimension disagrees with its audited SIS key".into(),
+                    "co-generated compression replay is missing current or opening source".into(),
                 ));
+            };
+            let precommitted_outer = fixed[1..fixed.len() - 1]
+                .iter()
+                .enumerate()
+                .map(|(index, (source, max, chain))| {
+                    if *source != (CompressionSourceId::PrecommittedOuter { index }) {
+                        return Err(AkitaError::InvalidSetup(
+                            "compression replay precommitted sources are out of order".into(),
+                        ));
+                    }
+                    freeze_f(lp, *source, *max, *chain)
+                })
+                .collect::<Result<Vec<_>, AkitaError>>()?;
+            CompressionChoice {
+                f: CompressionFChoice {
+                    current_outer: freeze_f(
+                        lp,
+                        CompressionSourceId::CurrentOuter,
+                        *current_max,
+                        *current_chain,
+                    )?,
+                    precommitted_outer: &precommitted_outer,
+                },
+                opening: Some(*opening_chain),
             }
-            previous_output = key.row_len().checked_mul(audited_ring_d).ok_or_else(|| {
-                AkitaError::InvalidSetup("compression replay output size overflow".into())
-            })?;
-            maps.push(CompressionMapSpec::new(key, map.alphabet));
+            .replay::<F>(lp, context)
         }
-        specs.push(CompressionChainSpec::new(descriptor.source, maps));
-    }
-    validate_compression_catalog::<F>(lp, context, policy.ring_dimension, specs)
+        CompressionCatalogContext::StandaloneCommitment => {
+            let [(CompressionSourceId::CurrentOuter, max, chain)] = fixed.as_slice() else {
+                return Err(AkitaError::InvalidSetup(
+                    "standalone compression replay requires exactly current outer".into(),
+                ));
+            };
+            CompressionChoice {
+                f: CompressionFChoice {
+                    current_outer: freeze_f(lp, CompressionSourceId::CurrentOuter, *max, *chain)?,
+                    precommitted_outer: &[],
+                },
+                opening: None,
+            }
+            .replay::<F>(lp, context)
+        }
+        CompressionCatalogContext::TerminalFold { .. } => {
+            let Some((CompressionSourceId::CurrentOuter, current_max, current_chain)) =
+                fixed.first()
+            else {
+                return Err(AkitaError::InvalidSetup(
+                    "terminal-fold compression replay is missing current outer".into(),
+                ));
+            };
+            let precommitted_outer = fixed[1..]
+                .iter()
+                .enumerate()
+                .map(|(index, (source, max, chain))| {
+                    if *source != (CompressionSourceId::PrecommittedOuter { index }) {
+                        return Err(AkitaError::InvalidSetup(
+                            "terminal-fold precommitted sources are out of order".into(),
+                        ));
+                    }
+                    freeze_f(lp, *source, *max, *chain)
+                })
+                .collect::<Result<Vec<_>, AkitaError>>()?;
+            CompressionChoice {
+                f: CompressionFChoice {
+                    current_outer: freeze_f(
+                        lp,
+                        CompressionSourceId::CurrentOuter,
+                        *current_max,
+                        *current_chain,
+                    )?,
+                    precommitted_outer: &precommitted_outer,
+                },
+                opening: None,
+            }
+            .replay::<F>(lp, context)
+        }
+    }?;
+    Ok(choice)
+}
+
+fn freeze_f(
+    lp: &LevelParams,
+    source: CompressionSourceId,
+    max_opening_log_basis: u32,
+    chain: CompressionChainChoice,
+) -> Result<FrozenCompressionChainChoice, AkitaError> {
+    let source_key = match source {
+        CompressionSourceId::CurrentOuter => &lp.b_key,
+        CompressionSourceId::PrecommittedOuter { index } => {
+            &lp.precommitted_groups
+                .get(index)
+                .ok_or_else(|| {
+                    AkitaError::InvalidSetup(
+                        "compression precommitted source index is out of bounds".into(),
+                    )
+                })?
+                .b_key
+        }
+        CompressionSourceId::Opening => {
+            return Err(AkitaError::InvalidSetup(
+                "opening compression is not a frozen F choice".into(),
+            ));
+        }
+    };
+    Ok(FrozenCompressionChainChoice::new(
+        source_key,
+        max_opening_log_basis,
+        chain,
+    ))
 }
 
 #[cfg(test)]
@@ -235,6 +323,7 @@ mod tests {
     ) -> CompressionChainDescriptor {
         CompressionChainDescriptor {
             source,
+            max_opening_log_basis: 4,
             maps: vec![
                 CompressionMapDescriptor {
                     ring_d: 32,
@@ -343,5 +432,37 @@ mod tests {
         let mut wrong_dimension = policy;
         wrong_dimension.ring_dimension *= 2;
         assert!(validate_replay_policy::<Prime128OffsetA7F7>(&wrong_dimension, &lp).is_err());
+    }
+
+    #[test]
+    fn terminal_fold_adapter_preserves_current_source_and_frozen_envelope() {
+        let (policy, lp) = fixture();
+        let opening = OpeningClaimsLayout::new(4, 1).expect("opening layout");
+        let descriptor = depth_two(
+            CompressionSourceId::CurrentOuter,
+            CompressionAlphabet::OpeningBase {
+                log_basis: lp.log_basis,
+            },
+        );
+        let context = CompressionCatalogContext::TerminalFold { opening: &opening };
+        let catalog = replay_compression_catalog::<Prime128OffsetA7F7>(
+            &policy,
+            &lp,
+            context,
+            std::slice::from_ref(&descriptor),
+        )
+        .expect("terminal catalog");
+        assert!(catalog.terminal_relation_layout().is_ok());
+        assert!(catalog.co_generated_relation_layout().is_err());
+
+        let mut wrong_source = descriptor;
+        wrong_source.source = CompressionSourceId::Opening;
+        assert!(replay_compression_catalog::<Prime128OffsetA7F7>(
+            &policy,
+            &lp,
+            context,
+            &[wrong_source],
+        )
+        .is_err());
     }
 }

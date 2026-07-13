@@ -95,7 +95,7 @@ fn chain(
             CompressionMapSpec::new(map_key, alphabet)
         })
         .collect();
-    CompressionChainSpec::new(source, maps)
+    CompressionChainSpec::new(source, 6, maps)
 }
 
 fn fixture() -> (
