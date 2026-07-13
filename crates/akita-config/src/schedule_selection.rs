@@ -55,8 +55,7 @@ where
             root_step.params.ring_dimension,
             num_vars,
         );
-        let needs_root_direct_rewrite =
-            !supports_opening_shape && !tensor_projection_enabled;
+        let needs_root_direct_rewrite = !supports_opening_shape && !tensor_projection_enabled;
 
         if opening_batch.num_groups() > 1 {
             if Cfg::EXT_DEGREE != 1 {

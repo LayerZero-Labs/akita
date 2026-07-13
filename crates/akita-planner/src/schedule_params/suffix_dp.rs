@@ -362,13 +362,9 @@ pub(crate) fn derive_optimal_suffix_schedule(
         // only when the prefix threshold is met and a compatible prefixed child
         // exists.
         for suffix_fold in child_suffix_no_prefix.best_fold_per_lb.values() {
-            let child_is_terminal =
-                matches!(suffix_fold.steps.get(1), Some(Step::Direct(_)));
+            let child_is_terminal = matches!(suffix_fold.steps.get(1), Some(Step::Direct(_)));
             let (fold_mode, suffix_fold) = if child_is_terminal {
-                (
-                    SetupContributionMode::Direct,
-                    suffix_fold.clone(),
-                )
+                (SetupContributionMode::Direct, suffix_fold.clone())
             } else if recursion_threshold_met {
                 let prefixed_child_suffix = derive_optimal_suffix_schedule(
                     ctx,
@@ -396,10 +392,7 @@ pub(crate) fn derive_optimal_suffix_schedule(
                     prefixed_suffix_fold.clone(),
                 )
             } else {
-                (
-                    SetupContributionMode::Direct,
-                    suffix_fold.clone(),
-                )
+                (SetupContributionMode::Direct, suffix_fold.clone())
             };
 
             let mut fold_candidate_params = candidate_params.clone();

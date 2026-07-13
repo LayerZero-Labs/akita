@@ -1,8 +1,8 @@
 //! Runtime schedule shapes shared by configs, prover, verifier, and planner.
 
+use crate::config::SetupContributionMode;
 use crate::descriptor_bytes::{push_u32, push_usize};
 use crate::{CleartextWitnessShape, LevelParams, OpeningClaimsLayout, PolynomialGroupLayout};
-use crate::config::SetupContributionMode;
 use akita_field::{AkitaError, CanonicalField};
 
 /// Public inputs that deterministically select one level's active Akita params.
@@ -14,27 +14,6 @@ pub struct AkitaScheduleInputs {
     pub level: usize,
     /// Current witness length in field elements before this level runs.
     pub current_w_len: usize,
-}
-
-impl AkitaScheduleInputs {
-    /// Canonical level-zero policy input for a root polynomial group.
-    ///
-    /// The root witness is one field element per Boolean-hypercube entry,
-    /// independent of batch count and of a direct proof's serialized witness.
-    pub fn for_root(group: PolynomialGroupLayout) -> Result<Self, AkitaError> {
-        group.validate()?;
-        let shift = u32::try_from(group.num_vars()).map_err(|_| {
-            AkitaError::InvalidSetup("root variable count exceeds shift width".to_string())
-        })?;
-        let current_w_len = 1usize
-            .checked_shl(shift)
-            .ok_or_else(|| AkitaError::InvalidSetup("root witness length overflow".to_string()))?;
-        Ok(Self {
-            num_vars: group.num_vars(),
-            level: 0,
-            current_w_len,
-        })
-    }
 }
 
 /// Schedule facts for one fold level.
@@ -604,8 +583,7 @@ impl Schedule {
                             index + 1
                         )));
                     }
-                    if fold.params.has_precommitted_groups()
-                        && !matches!(successor, Step::Fold(_))
+                    if fold.params.has_precommitted_groups() && !matches!(successor, Step::Fold(_))
                     {
                         return Err(AkitaError::InvalidSetup(
                             "grouped fold must be followed by another fold".to_string(),
@@ -620,9 +598,7 @@ impl Schedule {
 
                     let successor_is_direct = matches!(successor, Step::Direct(_));
                     if successor_is_direct {
-                        if fold.params.setup_contribution_mode
-                            != SetupContributionMode::Direct
-                        {
+                        if fold.params.setup_contribution_mode != SetupContributionMode::Direct {
                             return Err(AkitaError::InvalidSetup(
                                 "terminal fold must use direct setup contribution".to_string(),
                             ));
@@ -965,27 +941,6 @@ pub fn scheduled_next_level_params(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn root_schedule_inputs_use_boolean_hypercube_length() {
-        let inputs =
-            AkitaScheduleInputs::for_root(PolynomialGroupLayout::new(9, 4)).expect("root inputs");
-        assert_eq!(inputs.num_vars, 9);
-        assert_eq!(inputs.level, 0);
-        assert_eq!(inputs.current_w_len, 1 << 9);
-    }
-
-    #[test]
-    fn root_schedule_inputs_reject_empty_polynomial_group() {
-        assert!(AkitaScheduleInputs::for_root(PolynomialGroupLayout::new(9, 0)).is_err());
-    }
-
-    #[test]
-    fn root_schedule_inputs_reject_oversized_variable_count() {
-        assert!(
-            AkitaScheduleInputs::for_root(PolynomialGroupLayout::singleton(usize::MAX)).is_err()
-        );
-    }
     use crate::golomb_rice::golomb_rice_encode_vec;
     use crate::proof::{segment_typed_witness_shape_from_groups, SegmentTypedWitness};
     use crate::tail_golomb_rice_z_params;
@@ -1145,10 +1100,7 @@ mod tests {
         params
     }
 
-    fn scalar_terminal_steps(
-        current_w_len: usize,
-        params: LevelParams,
-    ) -> (FoldStep, DirectStep) {
+    fn scalar_terminal_steps(current_w_len: usize, params: LevelParams) -> (FoldStep, DirectStep) {
         let (_, witness_shape) = segment_typed_final_witness(&params, 1);
         let CleartextWitnessShape::SegmentTyped(shape) = &witness_shape else {
             panic!("expected segment-typed witness");
@@ -1209,7 +1161,10 @@ mod tests {
         .expect("scalar params");
         let (terminal_fold, direct) = scalar_terminal_steps(64, scalar.clone());
         let scalar_schedule = Schedule {
-            steps: vec![Step::Fold(terminal_fold.clone()), Step::Direct(direct.clone())],
+            steps: vec![
+                Step::Fold(terminal_fold.clone()),
+                Step::Direct(direct.clone()),
+            ],
             total_bytes: 0,
         };
         scalar_schedule

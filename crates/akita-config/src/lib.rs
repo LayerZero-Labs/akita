@@ -89,6 +89,7 @@ macro_rules! impl_multi_chunk_companion {
 
 pub mod conservative_commitment;
 pub mod generated_families;
+mod matrix_envelope;
 pub mod proof_optimized;
 pub mod recursive_commitment;
 pub mod schedule_selection;
@@ -99,12 +100,12 @@ pub mod test_support;
 mod transcript_binding;
 pub use conservative_commitment::ConservativeCommitmentConfig;
 pub use proof_optimized::{
-    matrix_envelope_for_schedule, setup_level_params_from_runtime_schedule,
-    worst_case_multi_group_opening_batch_for_shape,
+    ensure_schedule_fits_setup, matrix_envelope_for_schedule,
+    setup_level_params_from_runtime_schedule, worst_case_multi_group_opening_batch_for_shape,
 };
-pub use setup_prefix_slots::setup_prefix_slot_ids_for_capacity;
 pub use recursive_commitment::RecursiveCommitmentConfig;
 pub use schedule_selection::effective_batched_schedule;
+pub use setup_prefix_slots::setup_prefix_slot_ids_for_capacity;
 pub use transcript_binding::bind_transcript_instance_descriptor;
 
 /// Derive the `Cfg`-free [`PlannerPolicy`] the planner DP consumes from a

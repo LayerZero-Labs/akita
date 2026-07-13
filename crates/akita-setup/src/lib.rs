@@ -6,15 +6,15 @@
 
 mod recursive_prefixes;
 
-#[cfg(feature = "disk-persistence")]
-use akita_serialization::{
-    AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Validate,
-};
 use akita_config::CommitmentConfig;
 use akita_field::unreduced::HasWide;
 use akita_field::{AkitaError, CanonicalField, FieldCore, RandomSampling};
 use akita_prover::AkitaProverSetup;
 use akita_serialization::Valid;
+#[cfg(feature = "disk-persistence")]
+use akita_serialization::{
+    AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Validate,
+};
 #[cfg(any(feature = "disk-persistence", test))]
 use akita_types::AkitaExpandedSetup;
 #[cfg(feature = "disk-persistence")]
@@ -61,8 +61,10 @@ where
     if !Cfg::recursive_setup_planning() {
         return Ok(());
     }
-    let required_ids =
-        akita_config::setup_prefix_slot_ids_for_capacity::<Cfg>(max_num_vars, max_num_batched_polys)?;
+    let required_ids = akita_config::setup_prefix_slot_ids_for_capacity::<Cfg>(
+        max_num_vars,
+        max_num_batched_polys,
+    )?;
     recursive_prefixes::validate_prefix_registry_complete(&setup.prefix_slots, &required_ids)
 }
 
@@ -96,7 +98,8 @@ where
     let gen_ring_dim = setup_gen_ring_dim::<Cfg>();
 
     #[cfg(feature = "disk-persistence")]
-    let max_setup_len = Cfg::max_setup_matrix_size(max_num_vars, max_num_batched_polys)?.max_setup_len;
+    let max_setup_len =
+        Cfg::max_setup_matrix_size(max_num_vars, max_num_batched_polys)?.max_setup_len;
 
     #[cfg(feature = "disk-persistence")]
     {

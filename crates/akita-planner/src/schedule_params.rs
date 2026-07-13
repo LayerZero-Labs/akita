@@ -33,8 +33,7 @@ mod suffix_dp;
 pub use candidate::suffix_opening_layout;
 pub(crate) use candidate::{
     compute_root_direct_level_params, derive_candidate_level_params, planned_next_witness_len,
-    recursive_fold_level_params_candidate, scalar_root_fold_level_params_candidate,
-    terminal_witness_shape_for_opening_layout,
+    scalar_root_fold_level_params_candidate, terminal_witness_shape_for_opening_layout,
 };
 use suffix_dp::try_terminal_direct_suffix_cost;
 pub(crate) use suffix_dp::{derive_optimal_suffix_schedule, ScheduleMemo, SuffixCtx, SuffixState};
@@ -123,14 +122,19 @@ fn find_schedule_inner(
             "recursive setup planning requires the grouped-batch scheduler".to_string(),
         ));
     }
-    let root_inputs = AkitaScheduleInputs::for_root(key)?;
-    let witness_len = root_inputs.current_w_len;
+    let witness_len = 1usize
+        .checked_shl(key.num_vars() as u32)
+        .ok_or_else(|| AkitaError::InvalidSetup("witness too large".into()))?;
 
     let field_bits = policy.decomposition.field_bits();
 
     let root_witness_shape = CleartextWitnessShape::FieldElements(witness_len);
     let mut best_cost = direct_witness_bytes(field_bits, &root_witness_shape);
-    let fold_challenge_shape = fold_shape(root_inputs);
+    let fold_challenge_shape = fold_shape(AkitaScheduleInputs {
+        num_vars: key.num_vars(),
+        level: 0,
+        current_w_len: witness_len,
+    });
     // The level-0 fold-challenge shape and the `num_claims = num_polynomials`
     // batch factor are folded directly into the committed B/D widths, so a table
     // miss reproduces the exact root commit layout the table-hit expansion

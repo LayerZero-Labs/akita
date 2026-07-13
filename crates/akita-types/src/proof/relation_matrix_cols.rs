@@ -224,8 +224,7 @@ where
         let b_rows: Vec<&[F]> = (0..n_b)
             .map(|r| b_view.row_flat(r))
             .collect::<Result<_, _>>()?;
-        let a_range =
-            lp.a_row_range(opening_batch, group_index, relation_matrix_row_layout)?;
+        let a_range = lp.a_row_range(opening_batch, group_index, relation_matrix_row_layout)?;
         let b_range =
             lp.commitment_row_range(opening_batch, group_index, relation_matrix_row_layout)?;
         let a_row_weights = &eq_tau1[a_range];

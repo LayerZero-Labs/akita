@@ -1055,9 +1055,7 @@ impl LevelParams {
                 self.witness_chunk.num_chunks,
             )?
             .checked_mul(self.ring_dimension)
-            .ok_or_else(|| {
-                AkitaError::InvalidSetup("next witness length overflow".to_string())
-            });
+            .ok_or_else(|| AkitaError::InvalidSetup("next witness length overflow".to_string()));
         }
 
         let final_group_index = self.validate_opening_batch(opening_batch)?;
@@ -1097,9 +1095,9 @@ impl LevelParams {
             .checked_add(r_count)
             .ok_or_else(|| AkitaError::InvalidSetup("witness overflow".to_string()))?;
 
-        total.checked_mul(self.ring_dimension).ok_or_else(|| {
-            AkitaError::InvalidSetup("next witness length overflow".to_string())
-        })
+        total
+            .checked_mul(self.ring_dimension)
+            .ok_or_else(|| AkitaError::InvalidSetup("next witness length overflow".to_string()))
     }
 
     /// Row count for an explicit relation-matrix row layout.

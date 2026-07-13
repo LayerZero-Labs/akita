@@ -372,8 +372,7 @@ where
         quotient -= consistency_z_quotient;
         result[0] += quotient;
 
-        let a_range =
-            lp.a_row_range(opening_batch, group_index, relation_matrix_row_layout)?;
+        let a_range = lp.a_row_range(opening_batch, group_index, relation_matrix_row_layout)?;
         if a_range.len() != n_a {
             return Err(AkitaError::InvalidProof);
         }

@@ -90,12 +90,6 @@ the baseline planner.
   guard and the
   `adaptive_{bounded,onehot}_plan_matches_runtime_next_w_len` tests in
   `crates/akita-config/src/schedule_policy.rs`.
-- **Terminal folds are scalar.** A terminal fold consumes exactly one opening
-  group. A schedule that carries several groups into its last fold is invalid;
-  the planner and schedule validator reject it before terminal witness sizing,
-  and the verifier rejects a received grouped terminal proof as
-  `AkitaError::InvalidProof`. The canonical grouped-schedule rule lives in
-  `specs/multi-group-batching.md`.
 - **Proof type separation.** `AkitaLevelProof` is intermediate-only,
   with `TerminalLevelProof` as a sibling type. Intermediate steps
   deserialize as `AkitaProofStep::Intermediate(AkitaLevelProof)`,
@@ -114,7 +108,6 @@ the baseline planner.
 - Changing the SIS instance, security parameters, or the
   decomposition basis selection logic.
 - Changing the recursive ring-switch protocol below the terminal fold.
-- Adding a grouped terminal witness layout or grouped terminal proof variant.
 - Optimizing the search-time cost model beyond the v-rows-drop
   awareness already added; the cost model's terminal estimate now
   uses `RelationMatrixRowLayout::Terminal` sizing, but its broader structure

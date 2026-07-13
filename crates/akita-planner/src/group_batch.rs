@@ -3,17 +3,18 @@
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::{AkitaError, Prime128OffsetA7F7};
 use akita_types::sis::{
-    decomposed_s_block_ring_count, decomposed_t_ring_count,
+    compute_num_digits_full_field, decomposed_s_block_ring_count, decomposed_t_ring_count,
     decomposed_w_ring_count, fold_witness_digit_plan, min_secure_rank, num_digits_open,
     num_digits_s_commit, rounded_up_collision_inf_norm, rounded_up_role_a_inf_norm, AjtaiKeyParams,
     FoldChallengeNorms, FoldWitnessLinfCapConfig, FoldWitnessNorms, SisTableKey,
 };
 use akita_types::{
-    active_setup_field_len, extension_opening_reduction_level_bytes, level_proof_bytes,
-    padded_setup_prefix_len, AkitaScheduleInputs, AkitaScheduleLookupKey, CommitmentRingDims,
-    DecompositionParams, FoldStep, LevelParams, PolynomialGroupLayout, PrecommittedGroupParams,
-    PrecommittedLevelParams, RelationMatrixRowLayout, Schedule, SetupContributionMode, Step,
-    SETUP_OFFLOAD_D_SETUP, SETUP_OFFLOAD_MIN_PREFIX_FIELD_LEN,
+    active_setup_field_len, direct_witness_bytes, extension_opening_reduction_level_bytes,
+    level_proof_bytes, padded_setup_prefix_len, AkitaScheduleInputs, AkitaScheduleLookupKey,
+    CleartextWitnessShape, CommitmentRingDims, DecompositionParams, DirectStep, FoldStep,
+    LevelParams, PolynomialGroupLayout, PrecommittedGroupParams, PrecommittedLevelParams,
+    RelationMatrixRowLayout, Schedule, SetupContributionMode, Step, SETUP_OFFLOAD_D_SETUP,
+    SETUP_OFFLOAD_MIN_PREFIX_FIELD_LEN,
 };
 
 use crate::schedule_params::{
@@ -33,7 +34,7 @@ fn sis_key(policy: &PlannerPolicy, coeff_linf_bound: u128) -> SisTableKey {
 pub(crate) fn group_root_params_from_layout(
     layout: &PrecommittedGroupParams,
     policy: &PlannerPolicy,
-    ring_challenge_cfg: &SparseChallengeConfig,
+    ring_challenge_config: RingChallengeConfigFn<'_>,
     fold_challenge_shape: TensorChallengeShape,
     conservative_b_rank: bool,
 ) -> Result<PrecommittedLevelParams, AkitaError> {
@@ -44,6 +45,7 @@ pub(crate) fn group_root_params_from_layout(
         layout.validate_root_geometry(policy.ring_dimension)?;
     }
 
+    let ring_challenge_cfg = ring_challenge_config(policy.ring_dimension)?;
     let d = policy.ring_dimension;
     let family = policy.sis_family;
     let level_decomp = DecompositionParams {
@@ -66,7 +68,7 @@ pub(crate) fn group_root_params_from_layout(
         family,
         d,
         level_decomp,
-        ring_challenge_cfg,
+        &ring_challenge_cfg,
         fold_challenge_shape,
         true,
         policy.onehot_chunk_size,
@@ -138,14 +140,14 @@ pub(crate) fn group_root_params_from_layout(
     )?;
 
     let fold_linf_cap_config = FoldWitnessLinfCapConfig::for_fold_level(
-        ring_challenge_cfg,
+        &ring_challenge_cfg,
         fold_challenge_shape,
         d,
         width_s,
     )?;
     let challenge = FoldChallengeNorms {
-        infinity_norm: fold_challenge_shape.effective_infinity_norm(ring_challenge_cfg) as u128,
-        l1_norm: fold_challenge_shape.effective_l1_mass(ring_challenge_cfg) as u128,
+        infinity_norm: fold_challenge_shape.effective_infinity_norm(&ring_challenge_cfg) as u128,
+        l1_norm: fold_challenge_shape.effective_l1_mass(&ring_challenge_cfg) as u128,
     };
     let onehot_chunk_size = if policy.decomposition.log_commit_bound == 1 {
         policy.onehot_chunk_size
@@ -184,61 +186,26 @@ pub(crate) fn group_root_params_from_layout(
     })
 }
 
-/// Resolve a frozen conservative group as a multi-group root candidate.
-///
-/// Tiny ordinary commits can use `(m, r) = (0, 0)` even when
-/// `group.num_vars() < log2(D)`. Such a shape has no valid multi-group root
-/// geometry and is the one typed candidate-infeasibility case. Every error for
-/// a shape with matching geometry is propagated.
-pub(crate) fn group_root_params_candidate_from_layout(
-    layout: &PrecommittedGroupParams,
-    policy: &PlannerPolicy,
-    ring_challenge_cfg: &SparseChallengeConfig,
+struct MultiGroupRootCandidateCtx<'a> {
+    policy: &'a PlannerPolicy,
+    ring_challenge_cfg: &'a SparseChallengeConfig,
     fold_challenge_shape: TensorChallengeShape,
-) -> Result<Option<PrecommittedLevelParams>, AkitaError> {
-    let alpha = policy.ring_dimension.trailing_zeros() as usize;
-    let geometry_num_vars = layout
-        .m_vars
-        .checked_add(layout.r_vars)
-        .and_then(|vars| vars.checked_add(alpha))
-        .ok_or_else(|| {
-            AkitaError::InvalidSetup("precommitted group geometry overflow".to_string())
-        })?;
-    if geometry_num_vars != layout.group.num_vars() {
-        if layout.group.num_vars() < alpha && layout.m_vars == 0 && layout.r_vars == 0 {
-            return Ok(None);
-        }
-        return Err(AkitaError::InvalidSetup(format!(
-            "precommitted group geometry does not match group.num_vars: m_vars={} r_vars={} alpha={alpha} group.num_vars={}",
-            layout.m_vars,
-            layout.r_vars,
-            layout.group.num_vars()
-        )));
-    }
-    group_root_params_from_layout(
-        layout,
-        policy,
-        ring_challenge_cfg,
-        fold_challenge_shape,
-        true,
-    )
-    .map(Some)
-}
-
-pub(crate) struct MultiGroupRootCandidateCtx<'a> {
-    pub(crate) policy: &'a PlannerPolicy,
-    pub(crate) ring_challenge_cfg: &'a SparseChallengeConfig,
-    pub(crate) fold_challenge_shape: TensorChallengeShape,
-    pub(crate) precommitted_d_width: usize,
-    pub(crate) precommitted_groups: &'a [PrecommittedLevelParams],
+    precommitted_d_width: usize,
+    precommitted_groups: &'a [PrecommittedLevelParams],
 }
 
 pub(crate) fn multi_group_root_precommitted_groups(
     key: &AkitaScheduleLookupKey,
     policy: &PlannerPolicy,
-    ring_challenge_cfg: &SparseChallengeConfig,
+    ring_challenge_config: RingChallengeConfigFn<'_>,
     fold_challenge_shape: TensorChallengeShape,
 ) -> Result<(Vec<PrecommittedLevelParams>, usize), AkitaError> {
+    if key.precommitteds.is_empty() {
+        return Err(AkitaError::InvalidSetup(
+            "multi-group root params require at least one precommitted group".to_string(),
+        ));
+    }
+
     let precommitted_groups = key
         .precommitteds
         .iter()
@@ -246,7 +213,7 @@ pub(crate) fn multi_group_root_precommitted_groups(
             group_root_params_from_layout(
                 layout,
                 policy,
-                ring_challenge_cfg,
+                ring_challenge_config,
                 fold_challenge_shape,
                 true,
             )
@@ -262,7 +229,161 @@ pub(crate) fn multi_group_root_precommitted_groups(
     Ok((precommitted_groups, precommitted_d_width))
 }
 
-pub(crate) fn multi_group_root_main_level_params_candidate(
+fn checked_score_add(lhs: u128, rhs: u128, context: &'static str) -> Result<u128, AkitaError> {
+    lhs.checked_add(rhs)
+        .ok_or_else(|| AkitaError::InvalidSetup(format!("{context} overflow")))
+}
+
+fn checked_score_mul(lhs: u128, rhs: usize, context: &'static str) -> Result<u128, AkitaError> {
+    lhs.checked_mul(rhs as u128)
+        .ok_or_else(|| AkitaError::InvalidSetup(format!("{context} overflow")))
+}
+
+fn root_direct_split_cost(
+    n_a: usize,
+    num_blocks: usize,
+    block_len: usize,
+    num_digits_commit: usize,
+    num_digits_open: usize,
+    num_digits_fold: usize,
+    context: &'static str,
+) -> Result<u128, AkitaError> {
+    // Match `optimal_m_r_split`: opening `(1 + n_a) * delta_open * 2^r`
+    // plus folded witness `delta_commit * delta_fold * 2^m`.
+    let e_hat_cost = checked_score_mul(num_digits_open as u128, num_blocks, context)?;
+    let t_hat_cost = checked_score_mul(num_digits_open as u128, n_a, context)?;
+    let t_hat_cost = checked_score_mul(t_hat_cost, num_blocks, context)?;
+    let opening_cost = checked_score_add(e_hat_cost, t_hat_cost, context)?;
+
+    let z_hat_cost = checked_score_mul(num_digits_commit as u128, num_digits_fold, context)?;
+    let z_hat_cost = checked_score_mul(z_hat_cost, block_len, context)?;
+
+    checked_score_add(opening_cost, z_hat_cost, context)
+}
+
+fn multi_group_root_direct_cost_score(
+    params: &LevelParams,
+    main_num_polys: usize,
+    field_bits: u32,
+) -> Result<u128, AkitaError> {
+    let main_num_digits_fold = params.num_digits_fold(main_num_polys, field_bits)?;
+    let mut total = root_direct_split_cost(
+        params.a_key.row_len(),
+        params.num_blocks,
+        params.block_len,
+        params.num_digits_commit,
+        params.num_digits_open,
+        main_num_digits_fold,
+        "multi-group main root-direct score",
+    )?;
+
+    for group in &params.precommitted_groups {
+        let group_cost = root_direct_split_cost(
+            group.a_key.row_len(),
+            group.num_blocks,
+            group.block_len,
+            group.num_digits_commit,
+            group.num_digits_open,
+            group.num_digits_fold_one,
+            "multi-group precommitted root-direct score",
+        )?;
+        total = checked_score_add(total, group_cost, "multi-group root-direct score total")?;
+    }
+
+    Ok(total)
+}
+
+#[allow(dead_code)]
+fn multi_group_root_segment_rings(
+    num_polys: usize,
+    num_blocks: usize,
+    block_len: usize,
+    n_a: usize,
+    num_digits_commit: usize,
+    num_digits_open: usize,
+    num_digits_fold: usize,
+) -> Result<usize, AkitaError> {
+    let e_hat = num_polys
+        .checked_mul(num_blocks)
+        .and_then(|n| n.checked_mul(num_digits_open))
+        .ok_or_else(|| {
+            AkitaError::InvalidSetup("multi-group root e-hat witness overflow".to_string())
+        })?;
+    let t_hat = num_polys
+        .checked_mul(num_blocks)
+        .and_then(|n| n.checked_mul(n_a))
+        .and_then(|n| n.checked_mul(num_digits_open))
+        .ok_or_else(|| {
+            AkitaError::InvalidSetup("multi-group root t-hat witness overflow".to_string())
+        })?;
+    let z_hat = block_len
+        .checked_mul(num_digits_commit)
+        .and_then(|n| n.checked_mul(num_digits_fold))
+        .ok_or_else(|| {
+            AkitaError::InvalidSetup("multi-group root z-hat witness overflow".to_string())
+        })?;
+
+    e_hat
+        .checked_add(t_hat)
+        .and_then(|n| n.checked_add(z_hat))
+        .ok_or_else(|| AkitaError::InvalidSetup("multi-group root witness overflow".to_string()))
+}
+
+#[allow(dead_code)]
+fn multi_group_root_next_w_len(
+    field_bits: u32,
+    params: &LevelParams,
+    main_num_polys: usize,
+    layout: RelationMatrixRowLayout,
+) -> Result<usize, AkitaError> {
+    if params.precommitted_groups.is_empty() {
+        return Err(AkitaError::InvalidSetup(
+            "multi-group root witness sizing requires precommitted groups".to_string(),
+        ));
+    }
+
+    let mut total = multi_group_root_segment_rings(
+        main_num_polys,
+        params.num_blocks,
+        params.block_len,
+        params.a_key.row_len(),
+        params.num_digits_commit,
+        params.num_digits_open,
+        params.num_digits_fold(main_num_polys, field_bits)?,
+    )?;
+    for group in &params.precommitted_groups {
+        let group_rings = multi_group_root_segment_rings(
+            group.layout.group.num_polynomials(),
+            group.num_blocks,
+            group.block_len,
+            group.a_key.row_len(),
+            group.num_digits_commit,
+            group.num_digits_open,
+            group.num_digits_fold_one,
+        )?;
+        total = total.checked_add(group_rings).ok_or_else(|| {
+            AkitaError::InvalidSetup("multi-group root witness overflow".to_string())
+        })?;
+    }
+
+    let r_rows =
+        params.relation_matrix_row_count_for(params.precommitted_groups.len() + 1, layout)?;
+    let r_count = r_rows
+        .checked_mul(compute_num_digits_full_field(field_bits, params.log_basis))
+        .ok_or_else(|| {
+            AkitaError::InvalidSetup("multi-group root r-tail witness overflow".to_string())
+        })?;
+
+    let rings = total
+        .checked_add(r_count)
+        .ok_or_else(|| AkitaError::InvalidSetup("multi-group root witness overflow".to_string()))?;
+
+    rings.checked_mul(params.ring_dimension).ok_or_else(|| {
+        AkitaError::InvalidSetup("multi-group root next witness length overflow".to_string())
+    })
+}
+
+fn multi_group_root_main_level_params_candidate(
     ctx: &MultiGroupRootCandidateCtx<'_>,
     main_num_polys: usize,
     log_basis: u32,
@@ -378,6 +499,77 @@ pub(crate) fn multi_group_root_main_level_params_candidate(
     Ok(Some(params))
 }
 
+fn compute_multi_group_root_direct_level_params(
+    key: &AkitaScheduleLookupKey,
+    policy: &PlannerPolicy,
+    ring_challenge_config: RingChallengeConfigFn<'_>,
+    fold_challenge_shape: TensorChallengeShape,
+) -> Result<Option<LevelParams>, AkitaError> {
+    key.validate()?;
+    let (precommitted_groups, precommitted_d_width) = multi_group_root_precommitted_groups(
+        key,
+        policy,
+        ring_challenge_config,
+        fold_challenge_shape,
+    )?;
+
+    let ring_challenge_cfg = ring_challenge_config(policy.ring_dimension)?;
+    let main_num_polys = key.final_group.num_polynomials();
+    let main_num_vars = key.final_group.num_vars();
+    let candidate_ctx = MultiGroupRootCandidateCtx {
+        policy,
+        ring_challenge_cfg: &ring_challenge_cfg,
+        fold_challenge_shape,
+        precommitted_d_width,
+        precommitted_groups: &precommitted_groups,
+    };
+
+    let mut best: Option<(u128, LevelParams)> = None;
+    let alpha = (policy.ring_dimension as u32).trailing_zeros() as usize;
+    let candidates = if main_num_vars <= alpha {
+        vec![(0, 0)]
+    } else {
+        let reduced_vars = main_num_vars - alpha;
+        if reduced_vars <= 2 || reduced_vars >= 53 {
+            let r_vars = reduced_vars / 2;
+            vec![(reduced_vars - r_vars, r_vars)]
+        } else {
+            (1..reduced_vars)
+                .rev()
+                .map(|r_vars| (reduced_vars - r_vars, r_vars))
+                .collect()
+        }
+    };
+    let (min_log_basis, max_log_basis) = policy.basis_range;
+    for candidate_log_basis in min_log_basis..=max_log_basis {
+        for &(m_vars, r_vars) in &candidates {
+            let Some(candidate) = multi_group_root_main_level_params_candidate(
+                &candidate_ctx,
+                main_num_polys,
+                candidate_log_basis,
+                m_vars,
+                r_vars,
+            )?
+            else {
+                continue;
+            };
+            let score = multi_group_root_direct_cost_score(
+                &candidate,
+                main_num_polys,
+                policy.decomposition.field_bits(),
+            )?;
+            if best
+                .as_ref()
+                .is_none_or(|(best_score, _)| score < *best_score)
+            {
+                best = Some((score, candidate));
+            }
+        }
+    }
+
+    Ok(best.map(|(_, params)| params))
+}
+
 /// Build the phase-1 multi-group-root schedule from the full multi-group key.
 pub fn find_group_batch_schedule(
     key: &AkitaScheduleLookupKey,
@@ -411,28 +603,68 @@ pub fn find_group_batch_schedule(
     }
 
     let ring_challenge_config: RingChallengeConfigFn<'_> = &ring_challenge_config;
-    let ring_challenge_cfg = ring_challenge_config(policy.ring_dimension)?;
     let field_bits = policy.decomposition.field_bits();
     let challenge_field_bits = field_bits * policy.chal_ext_degree as u32;
-    let root_inputs = AkitaScheduleInputs::for_root(key.final_group)?;
-    let root_fold_shape = fold_challenge_shape_at_level(root_inputs);
-    let root_current_w_len = root_inputs.current_w_len;
-    let mut best: Option<(usize, Vec<Step>)> = None;
+    let direct_current_w_len = key.opening_layout()?.root_direct_witness_len()?;
+    let direct_fold_shape = fold_challenge_shape_at_level(AkitaScheduleInputs {
+        num_vars: key.final_group.num_vars(),
+        level: 0,
+        current_w_len: direct_current_w_len,
+    });
+    let mut best: Option<(usize, Vec<Step>)> = if let Some(params) =
+        compute_multi_group_root_direct_level_params(
+            key,
+            policy,
+            ring_challenge_config,
+            direct_fold_shape,
+        )? {
+        let witness_shape = CleartextWitnessShape::FieldElements(direct_current_w_len);
+        let direct_bytes = direct_witness_bytes(field_bits, &witness_shape);
+        Some((
+            direct_bytes,
+            vec![Step::Direct(DirectStep {
+                current_w_len: direct_current_w_len,
+                witness_shape,
+                direct_bytes,
+                params: Some(params),
+            })],
+        ))
+    } else {
+        None
+    };
 
+    let root_current_w_len = 1usize
+        .checked_shl(key.final_group.num_vars() as u32)
+        .ok_or_else(|| {
+            AkitaError::InvalidSetup("multi-group root-fold witness length overflow".to_string())
+        })?;
+    let fold_challenge_shape = fold_challenge_shape_at_level(AkitaScheduleInputs {
+        num_vars: key.final_group.num_vars(),
+        level: 0,
+        current_w_len: root_current_w_len,
+    });
     let alpha = (policy.ring_dimension as u32).trailing_zeros() as usize;
     let reduced_vars = key.final_group.num_vars().saturating_sub(alpha);
     if reduced_vars == 0 {
-        return Err(AkitaError::InvalidSetup(
-            "multi-group root must fold; root direct is unsupported".to_string(),
-        ));
+        let Some((total_bytes, steps)) = best else {
+            return Err(AkitaError::InvalidSetup(
+                "main multi-group root is not committable".to_string(),
+            ));
+        };
+        return Ok(Schedule { steps, total_bytes });
     }
 
-    let (precommitted_groups, precommitted_d_width) =
-        multi_group_root_precommitted_groups(key, policy, &ring_challenge_cfg, root_fold_shape)?;
+    let (precommitted_groups, precommitted_d_width) = multi_group_root_precommitted_groups(
+        key,
+        policy,
+        ring_challenge_config,
+        fold_challenge_shape,
+    )?;
+    let ring_challenge_cfg = ring_challenge_config(policy.ring_dimension)?;
     let candidate_ctx = MultiGroupRootCandidateCtx {
         policy,
         ring_challenge_cfg: &ring_challenge_cfg,
-        fold_challenge_shape: root_fold_shape,
+        fold_challenge_shape,
         precommitted_d_width,
         precommitted_groups: &precommitted_groups,
     };
@@ -489,8 +721,8 @@ pub fn find_group_batch_schedule(
             let natural_len =
                 active_setup_field_len(&candidate_params, &opening_batch, SETUP_OFFLOAD_D_SETUP)?;
             let n_prefix = padded_setup_prefix_len(natural_len);
-            let recursion_threshold_met = policy.recursive_setup_planning
-                && n_prefix > SETUP_OFFLOAD_MIN_PREFIX_FIELD_LEN;
+            let recursion_threshold_met =
+                policy.recursive_setup_planning && n_prefix > SETUP_OFFLOAD_MIN_PREFIX_FIELD_LEN;
             let child_suffix_no_prefix = derive_optimal_suffix_schedule(
                 &suffix_ctx,
                 &mut memo,
@@ -514,13 +746,9 @@ pub fn find_group_batch_schedule(
             };
 
             for suffix_fold in child_suffix_no_prefix.best_fold_per_lb.values() {
-                let child_is_terminal =
-                    matches!(suffix_fold.steps.get(1), Some(Step::Direct(_)));
+                let child_is_terminal = matches!(suffix_fold.steps.get(1), Some(Step::Direct(_)));
                 let (fold_mode, suffix_fold) = if child_is_terminal {
-                    (
-                        SetupContributionMode::Direct,
-                        suffix_fold.clone(),
-                    )
+                    (SetupContributionMode::Direct, suffix_fold.clone())
                 } else if recursion_threshold_met {
                     let prefixed_child_suffix = derive_optimal_suffix_schedule(
                         &suffix_ctx,
@@ -548,10 +776,7 @@ pub fn find_group_batch_schedule(
                         prefixed_suffix_fold.clone(),
                     )
                 } else {
-                    (
-                        SetupContributionMode::Direct,
-                        suffix_fold.clone(),
-                    )
+                    (SetupContributionMode::Direct, suffix_fold.clone())
                 };
 
                 let mut fold_candidate_params = candidate_params.clone();
@@ -707,10 +932,7 @@ mod tests {
 
         let runtime_next_w_len = root
             .params
-            .next_w_len::<Prime128OffsetA7F7>(
-                &opening_batch,
-                RelationMatrixRowLayout::WithDBlock,
-            )
+            .next_w_len::<Prime128OffsetA7F7>(&opening_batch, RelationMatrixRowLayout::WithDBlock)
             .expect("runtime next w len");
         assert_eq!(root.next_w_len, runtime_next_w_len);
 
@@ -768,11 +990,12 @@ mod tests {
         };
         let ring_cfg = ring_challenge_config(policy.ring_dimension).expect("ring challenge");
 
-        let error = group_root_params_candidate_from_layout(
+        let error = group_root_params_from_layout(
             &malformed,
             &policy,
-            &ring_cfg,
+            &|_| Ok(ring_cfg.clone()),
             TensorChallengeShape::Flat,
+            true,
         )
         .expect_err("malformed non-tiny geometry must propagate");
 
@@ -1019,10 +1242,7 @@ mod tests {
         );
         assert!(!terminal_fold.params.has_precommitted_groups());
         let predecessor = folds[folds.len() - 2];
-        if matches!(
-            schedule.steps.get(folds.len()),
-            Some(Step::Direct(_))
-        ) {
+        if matches!(schedule.steps.get(folds.len()), Some(Step::Direct(_))) {
             // The fold immediately before Direct must remain Direct-mode when
             // its child is the terminal fold.
             if folds.len() == 2 {

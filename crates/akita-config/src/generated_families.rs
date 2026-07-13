@@ -147,11 +147,11 @@ fn group_batch_keys<Cfg: CommitmentConfig>(
         if pre_num_vars < min_precommitted_num_vars {
             continue;
         }
-        for pattern in precommitted_group_patterns(main.num_polynomials()) {
-            let mut precommitteds = Vec::with_capacity(pattern.len());
+        for num_precommitted in 1..=DEFAULT_GROUP_BATCH_MAX_PRECOMMITTED_GROUPS {
+            let mut precommitteds = Vec::with_capacity(num_precommitted);
             let mut supported = true;
-            for &num_polys in &pattern {
-                let pre_key = PolynomialGroupLayout::new(pre_num_vars, num_polys);
+            for _ in 0..num_precommitted {
+                let pre_key = PolynomialGroupLayout::new(pre_num_vars, 1);
                 let params = match conservative_commit_params::<Cfg>(&pre_key) {
                     Ok(params) => params,
                     Err(_) => {
@@ -234,8 +234,8 @@ pub fn recursive_group_batch_candidates_for_capacity<Cfg: CommitmentConfig>(
         return Ok(Vec::new());
     }
 
-    let min_precommitted_num_vars = (policy_of::<Cfg>().ring_dimension.trailing_zeros() as usize)
-        .saturating_add(1);
+    let min_precommitted_num_vars =
+        (policy_of::<Cfg>().ring_dimension.trailing_zeros() as usize).saturating_add(1);
     let mut keys = Vec::new();
     // Cover every final poly count inside capacity. Catalog emission still uses
     // DEFAULT_NUM_POLYS; setup materialization must not miss sizes such as K=2
@@ -329,9 +329,10 @@ pub fn recursive_setup_schedule_keys_for_capacity(
     max_num_vars: usize,
     max_num_batched_polys: usize,
 ) -> Result<Vec<AkitaScheduleLookupKey>, AkitaError> {
-    enumerate_recursive_group_batch_keys_for_capacity::<
-        RecursiveCommitmentConfig<fp128::D64OneHot>,
-    >(max_num_vars, max_num_batched_polys)
+    enumerate_recursive_group_batch_keys_for_capacity::<RecursiveCommitmentConfig<fp128::D64OneHot>>(
+        max_num_vars,
+        max_num_batched_polys,
+    )
 }
 
 /// Recursive setup schedule keys selected for one recursive config preset.

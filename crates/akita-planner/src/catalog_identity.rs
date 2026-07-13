@@ -348,9 +348,14 @@ fn root_fold_shape_for_key(
     key: PolynomialGroupLayout,
     fold_challenge_shape_at_level: &impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
 ) -> Result<TensorChallengeShape, AkitaError> {
-    Ok(fold_challenge_shape_at_level(
-        AkitaScheduleInputs::for_root(key)?,
-    ))
+    let current_w_len = 1usize
+        .checked_shl(key.num_vars() as u32)
+        .ok_or_else(|| AkitaError::InvalidSetup("root witness length overflow".to_string()))?;
+    Ok(fold_challenge_shape_at_level(AkitaScheduleInputs {
+        num_vars: key.num_vars(),
+        level: 0,
+        current_w_len,
+    }))
 }
 
 fn root_fold_shape_for_entries(

@@ -46,8 +46,7 @@ pub fn resolve_group_batch_schedule(
 ) -> Result<Schedule, AkitaError> {
     key.validate()?;
     validate_policy_witness_chunk(policy)?;
-    let scalar_recursive_key =
-        key.precommitteds.is_empty() && policy.recursive_setup_planning;
+    let scalar_recursive_key = key.precommitteds.is_empty() && policy.recursive_setup_planning;
     if !scalar_recursive_key {
         if let Some(table) = catalog {
             validate_catalog_identity(

@@ -188,8 +188,7 @@ fn prepare_multi_group_setup_artifact_inputs<E: FieldCore>(
             .ok_or_else(|| {
                 AkitaError::InvalidSetup("multi-group B vector width overflow".to_string())
             })?;
-        let a_range =
-            lp.a_row_range(opening_batch, group_index, relation_matrix_row_layout)?;
+        let a_range = lp.a_row_range(opening_batch, group_index, relation_matrix_row_layout)?;
         let b_range =
             lp.commitment_row_range(opening_batch, group_index, relation_matrix_row_layout)?;
         if a_range.len() != n_a || b_range.len() != n_b {

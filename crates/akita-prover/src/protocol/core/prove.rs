@@ -8,7 +8,7 @@ use crate::compute::{
     RuntimeTensorBackendFor, SuffixOpeningProveBackend, SuffixTensorProveBackend,
 };
 use crate::RootTensorProjectionPoly;
-use akita_config::{effective_batched_schedule, CommitmentConfig};
+use akita_config::{effective_batched_schedule, ensure_schedule_fits_setup, CommitmentConfig};
 use akita_field::unreduced::ReduceTo;
 use akita_field::{AdditiveGroup, CanonicalField};
 use akita_types::{
@@ -145,6 +145,7 @@ where
     }
     let schedule = effective_batched_schedule::<Cfg>(&opening_batch, claims.point())?;
     validate_schedule_ring_dims(&schedule, expanded.seed())?;
+    ensure_schedule_fits_setup::<Cfg>(expanded.seed().max_setup_len, &schedule, &opening_batch)?;
     schedule.validate_structure()?;
     let root_commit_params = match schedule.steps.first() {
         Some(Step::Fold(root)) => &root.params,

@@ -96,8 +96,10 @@ where
         ));
     }
 
-    let required_ids =
-        akita_config::setup_prefix_slot_ids_for_capacity::<Cfg>(max_num_vars, max_num_batched_polys)?;
+    let required_ids = akita_config::setup_prefix_slot_ids_for_capacity::<Cfg>(
+        max_num_vars,
+        max_num_batched_polys,
+    )?;
     let backend = CpuBackend;
     let prepared = backend.prepare_setup(setup)?;
     materialize_setup_prefix_slots(setup, &backend, &prepared, &required_ids)?;

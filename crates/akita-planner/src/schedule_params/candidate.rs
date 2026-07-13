@@ -232,7 +232,8 @@ fn grouped_setup_prefix_next_witness_len(
             .ok_or_else(|| AkitaError::InvalidSetup("grouped witness overflow".to_string()))?;
     }
 
-    let r_rows = params.relation_matrix_row_count_for(params.precommitted_group_count() + 1, layout)?;
+    let r_rows =
+        params.relation_matrix_row_count_for(params.precommitted_group_count() + 1, layout)?;
     let r_count = r_rows
         .checked_mul(akita_types::sis::compute_num_digits_full_field(
             field_bits,
@@ -865,14 +866,9 @@ mod tests {
     #[test]
     fn planned_next_witness_len_rejects_multi_group_root_level_params() {
         let grouped = grouped_level_params();
-        let err = planned_next_witness_len(
-            128,
-            &grouped,
-            1,
-            RelationMatrixRowLayout::WithDBlock,
-            1,
-        )
-        .expect_err("multi-group root suffix sizing must use next_w_len");
+        let err =
+            planned_next_witness_len(128, &grouped, 1, RelationMatrixRowLayout::WithDBlock, 1)
+                .expect_err("multi-group root suffix sizing must use next_w_len");
         assert!(matches!(err, AkitaError::InvalidSetup(_)));
     }
 

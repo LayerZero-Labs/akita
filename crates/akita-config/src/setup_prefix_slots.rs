@@ -61,11 +61,8 @@ fn extract_setup_prefix_slot_ids_from_schedule(
 
         match fold.params.setup_contribution_mode {
             SetupContributionMode::Recursive => {
-                let natural_len = active_setup_field_len(
-                    &fold.params,
-                    &opening_layout,
-                    SETUP_OFFLOAD_D_SETUP,
-                )?;
+                let natural_len =
+                    active_setup_field_len(&fold.params, &opening_layout, SETUP_OFFLOAD_D_SETUP)?;
                 let n_prefix = padded_setup_prefix_len(natural_len);
 
                 let successor = schedule.steps.get(index + 1).ok_or_else(|| {
@@ -92,15 +89,11 @@ fn extract_setup_prefix_slot_ids_from_schedule(
                     ));
                 }
 
-                let slot_id = successor_fold
-                    .params
-                    .setup_prefix
-                    .as_ref()
-                    .ok_or_else(|| {
-                        AkitaError::InvalidSetup(
-                            "recursive fold successor is missing setup-prefix metadata".to_string(),
-                        )
-                    })?;
+                let slot_id = successor_fold.params.setup_prefix.as_ref().ok_or_else(|| {
+                    AkitaError::InvalidSetup(
+                        "recursive fold successor is missing setup-prefix metadata".to_string(),
+                    )
+                })?;
                 setup_prefix_slot_matches(slot_id, natural_len, n_prefix)?;
                 ids.insert(slot_id.clone());
                 incoming_setup_prefix = Some(natural_len);
@@ -138,10 +131,9 @@ pub fn setup_prefix_slot_ids_for_capacity<Cfg: CommitmentConfig>(
     }
 
     let mut ids = BTreeSet::new();
-    for key in recursive_group_batch_candidates_for_capacity::<Cfg>(
-        max_num_vars,
-        max_num_batched_polys,
-    )? {
+    for key in
+        recursive_group_batch_candidates_for_capacity::<Cfg>(max_num_vars, max_num_batched_polys)?
+    {
         let Ok(schedule) = Cfg::runtime_schedule(key.clone()) else {
             continue;
         };
