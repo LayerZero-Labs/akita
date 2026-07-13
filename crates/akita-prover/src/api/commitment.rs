@@ -790,7 +790,7 @@ where
     let schedule_key = final_group_key_from_polys::<Cfg, P>(polys, expanded, precommitteds)?;
     let schedule = Cfg::runtime_schedule(schedule_key.clone())?;
     let opening_layout = schedule_key.opening_layout()?;
-    ensure_schedule_fits_setup::<Cfg>(expanded.seed().max_setup_len, &schedule, &opening_layout)?;
+    ensure_schedule_fits_setup::<Cfg>(expanded, &schedule, &opening_layout)?;
     let params = Cfg::multi_group_root_commit_params(&schedule)?;
     validate_batched_onehot_chunk_size_for_params::<Cfg::Field, P>(polys, &params)?;
     validate_commit_level_params::<Cfg::Field>(&params, expanded)?;

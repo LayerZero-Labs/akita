@@ -347,13 +347,7 @@ impl Valid for AkitaSetupSeed {
                 "setup seed max_setup_len must be non-zero".to_string(),
             ));
         }
-        let field_elements = self.matrix_field_elements()?;
-        if field_elements > MAX_SETUP_MATRIX_FIELD_ELEMENTS {
-            return Err(SerializationError::LengthLimitExceeded {
-                len: u64::try_from(field_elements).unwrap_or(u64::MAX),
-                max: MAX_SETUP_MATRIX_FIELD_ELEMENTS,
-            });
-        }
+        self.matrix_field_elements()?;
         Ok(())
     }
 }
@@ -647,7 +641,7 @@ mod tests {
     }
 
     #[test]
-    fn setup_seed_validity_enforces_allocation_cap() {
+    fn setup_seed_validity_is_not_the_generic_decode_allocation_cap() {
         let setup_seed = AkitaSetupSeed {
             max_num_vars: 32,
             max_num_batched_polys: 1,
@@ -656,11 +650,8 @@ mod tests {
             public_matrix_seed: [7u8; 32],
         };
 
-        assert!(matches!(
-            setup_seed.check().unwrap_err(),
-            SerializationError::LengthLimitExceeded { max, .. }
-                if max == MAX_SETUP_MATRIX_FIELD_ELEMENTS
-        ));
+        setup_seed.check().unwrap();
+        assert!(setup_seed.matrix_field_elements().unwrap() > MAX_SETUP_MATRIX_FIELD_ELEMENTS);
     }
 
     #[test]
