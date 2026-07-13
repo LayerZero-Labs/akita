@@ -428,9 +428,9 @@ fn runtime_setup_guard_rejects_undersized_matrix() {
         .expect("runtime envelope")
         .max_setup_len;
 
-    super::ensure_schedule_fits_setup::<Cfg>(required, &schedule, &opening_batch)
+    super::ensure_required_setup_len(required, required, Cfg::D)
         .expect("exact setup capacity should fit");
-    let err = super::ensure_schedule_fits_setup::<Cfg>(required - 1, &schedule, &opening_batch)
+    let err = super::ensure_required_setup_len(required, required - 1, Cfg::D)
         .expect_err("undersized setup must be rejected");
     assert!(err.to_string().contains("setup provides"));
 }

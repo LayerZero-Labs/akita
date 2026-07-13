@@ -1068,8 +1068,8 @@ The planner may construct schedules for other precommitted-group counts.
 Commit, prove, and verify recompute the exact matrix envelope from the selected
 schedule and concrete opening layout.
 They reject if that envelope exceeds `max_setup_len`.
-Setup seed validation also rejects artifacts whose shared matrix would exceed
-the generic field-element allocation cap.
+Generic setup deserialization separately applies its field-element allocation
+cap before decoding matrix contents.
 
 There is no public `max_commitment_groups` contract today.
 Supporting a planner-derived schedule therefore does not imply that every

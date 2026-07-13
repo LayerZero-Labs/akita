@@ -433,11 +433,7 @@ where
     let schedule = effective_batched_schedule::<Cfg>(&opening_batch, claims.point())
         .map_err(|_| AkitaError::InvalidProof)?;
     validate_schedule_ring_dims(&schedule, setup.expanded.seed())?;
-    ensure_schedule_fits_setup::<Cfg>(
-        setup.expanded.seed().max_setup_len,
-        &schedule,
-        &opening_batch,
-    )?;
+    ensure_schedule_fits_setup::<Cfg>(setup.expanded.as_ref(), &schedule, &opening_batch)?;
     schedule
         .validate_structure()
         .map_err(|_| AkitaError::InvalidProof)?;

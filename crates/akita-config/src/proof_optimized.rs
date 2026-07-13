@@ -10,8 +10,8 @@ use crate::matrix_envelope::{
 use akita_field::AkitaError;
 use akita_field::{Ext2, FpExt4, Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59};
 use akita_types::{
-    AkitaScheduleLookupKey, LevelParams, OpeningClaimsLayout, PolynomialGroupLayout, Schedule,
-    SetupMatrixEnvelope,
+    AkitaExpandedSetup, AkitaScheduleLookupKey, LevelParams, OpeningClaimsLayout,
+    PolynomialGroupLayout, Schedule, SetupMatrixEnvelope,
 };
 use std::any::TypeId;
 use std::collections::HashMap;
@@ -267,21 +267,52 @@ where
 /// Returns [`AkitaError::InvalidSetup`] when sizing overflows or the setup's
 /// materialized shared matrix is too short for `schedule` and `layout`.
 pub fn ensure_schedule_fits_setup<Cfg>(
-    available_setup_len: usize,
+    setup: &AkitaExpandedSetup<Cfg::Field>,
     schedule: &Schedule,
     layout: &OpeningClaimsLayout,
 ) -> Result<(), AkitaError>
 where
     Cfg: CommitmentConfig,
 {
-    let required_setup_len = matrix_envelope_for_schedule::<Cfg>(schedule, layout)?.max_setup_len;
-    if required_setup_len > available_setup_len {
-        return Err(AkitaError::InvalidSetup(format!(
-            "schedule requires {required_setup_len} setup ring elements, but setup provides \
-             {available_setup_len}"
-        )));
+    for params in setup_level_params_from_runtime_schedule(&schedule.steps) {
+        let mut required_setup_len = 1;
+        accumulate_matrix_envelope_for_level(&params, &mut required_setup_len)?;
+        let available_setup_len = setup
+            .shared_matrix
+            .total_ring_elements_at_dyn(params.ring_dimension)?;
+        ensure_required_setup_len(
+            required_setup_len,
+            available_setup_len,
+            params.ring_dimension,
+        )?;
+    }
+
+    if let Some(root_params) = root_commit_params_from_schedule(schedule)? {
+        let required_setup_len = root_runtime_matrix_len_for_opening_batch(&root_params, layout)?;
+        let available_setup_len = setup
+            .shared_matrix
+            .total_ring_elements_at_dyn(root_params.ring_dimension)?;
+        ensure_required_setup_len(
+            required_setup_len,
+            available_setup_len,
+            root_params.ring_dimension,
+        )?;
     }
     Ok(())
+}
+
+fn ensure_required_setup_len(
+    required_setup_len: usize,
+    available_setup_len: usize,
+    ring_dimension: usize,
+) -> Result<(), AkitaError> {
+    if required_setup_len <= available_setup_len {
+        return Ok(());
+    }
+    Err(AkitaError::InvalidSetup(format!(
+        "schedule requires {required_setup_len} setup ring elements at D={ring_dimension}, but \
+         setup provides {available_setup_len}"
+    )))
 }
 
 fn accumulate_root_matrix_envelope_for_opening_batch(
