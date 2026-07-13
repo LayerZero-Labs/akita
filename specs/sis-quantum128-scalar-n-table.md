@@ -33,8 +33,9 @@ and ranks the generator must cover.
 A, B, D, and F do not share one forced geometry. B and D often use the current
 ring dimension or a smaller dimension. This includes dimension 32 for a 128 bit
 field. A currently uses dimension 64 or larger and may use dimensions above the
-other matrices. The generator takes the union of all required role cells. It
-deduplicates two requests only when they produce the same scalar SIS key.
+other matrices. The generator filters requests through the canonical role
+coverage, then deduplicates two requests only when they produce the same
+scalar SIS key.
 
 Policy identifier:
 
@@ -44,6 +45,29 @@ Quantum128BitADPS16
 
 The old policy identity and scalar `min_security_bits` identity are removed in
 the same cutover. Unsupported policy and table identities fail closed.
+
+### Delivered implementation parameters
+
+The implementation pinned by this specification uses ADPS16 quantum exponent
+`0.2650`, LGSA shape, coefficient `L-infinity` norm, target `128.0`, maximum
+module rank `20`, and a per-cell search cap of `6_400_000_000_000`. The exact
+modulus profiles are `Q32Offset99`, `Q64Offset59`, and `Q128OffsetA7F7`.
+
+The canonical role coverage currently has A dimensions `64, 128, 256`, B and D
+dimensions `32, 64, 128, 256`, and F dimensions `32, 64, 128, 256`. A uses the
+explicit planner bucket set
+`2, 3, 7, 15, 31, 63, 127, 255, 511, 1023, 2047, 4095, 8191, 16383,
+32767, 65535, 131071, 262143, 524287, 1048575, 2097151, 4194303, 8388607,
+16777215, 33554431, 67108863`. B, D, and F use the exact gadget anchors
+`3, 7, 15, 31, 63, 127, 255`.
+
+The generator accepts the complete rectangular CLI domain for reproducibility,
+then discards every dimension and bound pair that is not reachable from A, B,
+D, or F in the canonical coverage. The checked-in Rust files contain the
+resulting scalar union. The checked-in audit is scalar-key based, so role
+origins are reconstructed from the canonical coverage rather than repeated in
+each audit row. This keeps runtime identity role-aware while equal scalar
+cells are stored once.
 
 ## Intent
 
@@ -62,7 +86,8 @@ lookup agree on these points:
 ### Hard acceptance
 
 For a candidate scalar instance `(modulus_profile, B, n, m)`, run the infinity
-norm LGSA optimizer under the dedicated ADPS16 quantum cost model.
+norm LGSA optimizer under the dedicated ADPS16 quantum cost model with exponent
+`0.2650`.
 
 Generation may use the `local-minimum` search to find a candidate boundary. It
 must certify the accepted boundary and the first rejected successor with an
@@ -294,10 +319,11 @@ B and D use exact gadget anchors when their formulas produce
 3, 7, 15, 31, 63, 127, 255
 ```
 
-A uses the raw bounds produced across the supported planner domain. The table
-builder chooses upper buckets from those bounds. Bucket selection minimizes the
-resulting rank or proof byte increase under a fixed table budget. A fixed
-geometric ratio is not the definition of the A ladder.
+A uses the explicit planner bucket set listed in the delivered implementation
+parameters. The set is a deliberate collision-bucket contract, not an implicit
+geometric ladder and not a runtime interpolation rule. If planner workloads
+ever require a bound outside the set, the coverage and generated table must be
+updated together.
 
 F uses the bounds required by its own formula and planner domain.
 
@@ -311,9 +337,8 @@ in the same change. The table digest and catalog identity must change.
 
 ### Search caps
 
-Each scalar cell records the largest required `m_need` among its role origins.
-The generator searches beyond that demand by the configured review margin, up
-to the policy table cap:
+The current generator uses the configured policy table cap for every scalar
+cell:
 
 ```text
 DEFAULT_M_SEARCH_CAP = 6_400_000_000_000
@@ -321,7 +346,8 @@ DEFAULT_M_SEARCH_CAP = 6_400_000_000_000
 
 The cap is a generation limit, not an exact security boundary. A cap hit emits
 `ScalarCutoff::AtLeast` and a review record. The table digest includes every
-cell cap.
+cell cap. The role-cell `required_max_width` field is coverage metadata and
+does not silently raise or lower this cap.
 
 Generation must fail if a required runtime demand exceeds its cell cap.
 
@@ -356,14 +382,17 @@ Generation provenance includes:
 - estimator revision and certificate domain;
 - exact modulus values;
 - norm, shape model, exponent, and target;
-- every role origin for each scalar cell;
-- accepted and rejected boundary scores with beta and zeta witnesses;
+- the canonical role coverage from which every scalar origin is reconstructed;
+- accepted and rejected boundary status for each scalar cell;
 - monotonicity checks;
 - exact or cap hit status;
 - coefficient cell rules and role coverage;
 - search caps and review margins.
 
-The checked in table and audit artifact must have a shared digest.
+The checked in table and audit artifact must have a shared digest. The current
+compact audit does not duplicate beta and zeta witnesses or role labels on
+every scalar row; those details remain generator-side evidence and the
+certificate status is committed in the audit and digest.
 
 The digest is SHA3-256 over the fixed UTF-8 domain tag
 `akita-sis-table-digest-adps16-quantum-128bit\0`, followed in this order by the generated files
@@ -376,7 +405,8 @@ of host word size, map iteration order, and parallel generation order.
 
 - The hard gate is the ADPS16 quantum score at 128 bits.
 - A generic infinite estimate never passes.
-- Every accepted boundary has a complete certificate.
+- Every non-cap accepted boundary has a complete certificate; cap rows are
+  explicitly marked `AtLeast` and require review.
 - The estimator key contains the exact modulus, coefficient bound, scalar row
   count, and scalar column count.
 - Runtime role keys may have different dimension and bound coverage.
@@ -415,9 +445,12 @@ of host word size, map iteration order, and parallel generation order.
       the 128 bit field.
 - [x] A covers dimension 64 and every larger dimension the planner may choose.
 - [x] F has explicit coverage.
-- [x] The scalar table is the deduplicated union of required role cells.
-- [x] The generator does not create unreachable dense grid cells.
-- [x] Coefficient cells are selected per role.
+- [x] The scalar table is the deduplicated union of canonical reachable role
+      cells.
+- [x] The generator filters unreachable rectangular CLI requests before
+      estimation and does not emit them.
+- [x] Coefficient cells are selected per role from the explicit A and gadget
+      anchor sets.
 - [x] Cap hits use `ScalarCutoff::AtLeast`.
 - [x] Runtime lookup uses checked arithmetic and fails closed.
 - [x] Generated tables, audit data, schedules, book text, and operational docs
@@ -455,9 +488,10 @@ Test these cases:
 
 Runtime performs static table lookup only.
 
-Offline generation estimates one copy of each required scalar cell. Discovery
+Offline generation estimates one copy of each reachable scalar cell. Discovery
 may use the local search. Certification uses the exhaustive configured search
-at the accepted and rejected boundary.
+at the accepted and rejected boundary. The checked-in artifact is generated
+offline; runtime never invokes the estimator.
 
 ## Design notes
 

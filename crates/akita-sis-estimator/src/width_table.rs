@@ -234,13 +234,51 @@ pub fn generate_infinity_width_rows(
     for &modulus_profile in &config.profiles {
         for &d in &config.ring_dims {
             for &bound in &config.coeff_linf_bounds {
+                if !reachable_role_cell(modulus_profile, d, bound) {
+                    continue;
+                }
                 for rank in 1..=config.max_rank {
                     work.push((modulus_profile, d, rank, bound));
                 }
             }
         }
     }
+    if work.is_empty() {
+        return invalid_config(
+            "coverage",
+            "the requested dimensions and coefficient bounds contain no canonical SIS role cells",
+        );
+    }
     generate_rows_from_work(work, config, &estimator_config)
+}
+
+/// Return whether a scalar origin is reachable from at least one canonical
+/// matrix-role cell. The shared coverage declaration lives in `akita-types`;
+/// this adapter only maps the estimator's modulus enum to that declaration.
+fn reachable_role_cell(
+    modulus_profile: AkitaModulusProfileId,
+    ring_dimension: u32,
+    coeff_linf_bound: u64,
+) -> bool {
+    let profile = match modulus_profile {
+        AkitaModulusProfileId::Q32Offset99 => akita_types::sis::SisModulusProfileId::Q32Offset99,
+        AkitaModulusProfileId::Q64Offset59 => akita_types::sis::SisModulusProfileId::Q64Offset59,
+        AkitaModulusProfileId::Q128OffsetA7F7 => {
+            akita_types::sis::SisModulusProfileId::Q128OffsetA7F7
+        }
+    };
+    akita_types::sis::SIS_MATRIX_ROLES
+        .iter()
+        .copied()
+        .any(|role| {
+            akita_types::sis::ajtai_key::sis_role_cell(
+                role,
+                profile,
+                ring_dimension,
+                u128::from(coeff_linf_bound),
+            )
+            .is_some()
+        })
 }
 
 #[cfg(feature = "parallel")]
@@ -730,5 +768,29 @@ mod tests {
     #[test]
     fn csv_has_no_classical_columns() {
         assert!(!InfinityWidthRow::csv_header().contains("classical"));
+    }
+
+    #[test]
+    fn generation_filters_to_canonical_role_cells() {
+        assert!(reachable_role_cell(
+            AkitaModulusProfileId::Q128OffsetA7F7,
+            32,
+            15
+        ));
+        assert!(!reachable_role_cell(
+            AkitaModulusProfileId::Q128OffsetA7F7,
+            32,
+            2
+        ));
+        assert!(reachable_role_cell(
+            AkitaModulusProfileId::Q128OffsetA7F7,
+            64,
+            2
+        ));
+        assert!(!reachable_role_cell(
+            AkitaModulusProfileId::Q128OffsetA7F7,
+            16,
+            15
+        ));
     }
 }

@@ -30,12 +30,11 @@ enum OutputFormat {
 
 fn main() {
     let args = Args::parse_or_exit();
-    if args.format == OutputFormat::RustSplit {
-        if !is_full_infinity_width_table_config(&args.config) {
-            fatal(
-                "rust-split output requires the complete production table config; use CSV for partial comparison jobs",
-            );
-        }
+    if args.format == OutputFormat::RustSplit && !is_full_infinity_width_table_config(&args.config)
+    {
+        fatal(
+            "rust-split output requires the complete production table config; use CSV for partial comparison jobs",
+        );
     }
     let t0 = Instant::now();
     let rows = generate_infinity_width_rows(&args.config)

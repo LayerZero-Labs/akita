@@ -16,6 +16,19 @@ pub use crate::sis::{AjtaiKeyParams, FoldWitnessLinfCapConfig, SisModulusProfile
 mod precommitted;
 pub use precommitted::{LevelParamsLike, PrecommittedLevelParams};
 
+fn empty_ajtai_key(role: crate::sis::SisMatrixRole) -> AjtaiKeyParams {
+    AjtaiKeyParams::new_unchecked(
+        crate::sis::DEFAULT_SIS_SECURITY_POLICY,
+        crate::sis::SisTableDigest::CURRENT,
+        crate::sis::SisModulusProfileId::Q128OffsetA7F7,
+        role,
+        0,
+        0,
+        0,
+        0,
+    )
+}
+
 /// Per-level M-matrix row layout selector.
 ///
 /// At an intermediate fold the prover ships a fresh commitment for the next
@@ -162,36 +175,9 @@ impl LevelParams {
         Self {
             ring_dimension: 0,
             log_basis,
-            a_key: AjtaiKeyParams::new_unchecked(
-                crate::sis::DEFAULT_SIS_SECURITY_POLICY,
-                crate::sis::SisTableDigest::CURRENT,
-                crate::sis::SisModulusProfileId::Q128OffsetA7F7,
-                crate::sis::SisMatrixRole::A,
-                0,
-                0,
-                0,
-                0,
-            ),
-            b_key: AjtaiKeyParams::new_unchecked(
-                crate::sis::DEFAULT_SIS_SECURITY_POLICY,
-                crate::sis::SisTableDigest::CURRENT,
-                crate::sis::SisModulusProfileId::Q128OffsetA7F7,
-                crate::sis::SisMatrixRole::B,
-                0,
-                0,
-                0,
-                0,
-            ),
-            d_key: AjtaiKeyParams::new_unchecked(
-                crate::sis::DEFAULT_SIS_SECURITY_POLICY,
-                crate::sis::SisTableDigest::CURRENT,
-                crate::sis::SisModulusProfileId::Q128OffsetA7F7,
-                crate::sis::SisMatrixRole::D,
-                0,
-                0,
-                0,
-                0,
-            ),
+            a_key: empty_ajtai_key(crate::sis::SisMatrixRole::A),
+            b_key: empty_ajtai_key(crate::sis::SisMatrixRole::B),
+            d_key: empty_ajtai_key(crate::sis::SisMatrixRole::D),
             num_blocks: 0,
             block_len: 0,
             m_vars: 0,
