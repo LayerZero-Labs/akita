@@ -165,7 +165,7 @@ mod tests {
         let precommitted = PrecommittedGroupParams::from_params(pre, &pre_params);
         AkitaScheduleLookupKey {
             final_group: PolynomialGroupLayout::new(32, 2),
-            precommitteds: vec![precommitted.clone(), precommitted],
+            precommitteds: vec![precommitted, precommitted],
         }
     }
 
