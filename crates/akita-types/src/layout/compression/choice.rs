@@ -1,5 +1,14 @@
 use super::*;
 
+/// Frozen recomposition base `b_F = 2^4` for standalone opening-base-first F1.
+///
+/// This is the map alphabet's honest gadget base (`b_cmp`), not the level-wide
+/// range/security base (`b_range` / `max_opening_log_basis`). Spec:
+/// standalone conservative commitments freeze opening-base F1 at base 4;
+/// SIS pricing and later-opening envelopes still use the authenticated
+/// maximum later opening base.
+pub const STANDALONE_OPENING_BASE_LOG_BASIS: u32 = 4;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CompressionAlphabet {
     NegativeBinary,

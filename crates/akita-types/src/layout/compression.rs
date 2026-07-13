@@ -18,6 +18,7 @@ pub use choice::{
     compression_digit_depth, CompressionAlphabet, CompressionCatalogContext,
     CompressionChainChoice, CompressionChainSpec, CompressionChoice, CompressionFChoice,
     CompressionMapChoice, CompressionMapSpec, CompressionSourceId, FrozenCompressionChainChoice,
+    STANDALONE_OPENING_BASE_LOG_BASIS,
 };
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum CompressionCatalogPurpose {
@@ -532,7 +533,8 @@ fn compile_chain<F: CanonicalField>(
             ));
         }
         (CompressionCatalogContext::StandaloneCommitment, _)
-            if range_log_basis < lp.log_basis || range_log_basis < 4 =>
+            if range_log_basis < lp.log_basis
+                || range_log_basis < STANDALONE_OPENING_BASE_LOG_BASIS =>
         {
             return Err(AkitaError::InvalidSetup(
                 "standalone F-chain envelope must cover the commitment and minimum opening base"
@@ -640,9 +642,10 @@ fn compile_chain<F: CanonicalField>(
                 (
                     CompressionCatalogContext::StandaloneCommitment,
                     CompressionSourceId::CurrentOuter,
-                ) if log_basis != 4 => {
+                ) if log_basis != STANDALONE_OPENING_BASE_LOG_BASIS => {
                     return Err(AkitaError::InvalidSetup(
-                        "standalone commitment opening-base first map must use log_basis=4".into(),
+                        "standalone commitment opening-base first map must use frozen base 4"
+                            .into(),
                     ));
                 }
                 _ => {}

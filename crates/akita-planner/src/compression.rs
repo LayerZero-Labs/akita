@@ -7,6 +7,7 @@ use akita_types::{
     compression_digit_depth, field_bytes, protocol_dispatch_tier, slot_dims_for_tier,
     AjtaiKeyParams, CompressionAlphabet, CompressionCatalogContext, CompressionSourceId,
     LevelParams, ProtocolDispatchSlot, SetupMatrixEnvelope, ValidatedCompressionCatalog,
+    STANDALONE_OPENING_BASE_LOG_BASIS,
 };
 
 use crate::PlannerPolicy;
@@ -332,9 +333,17 @@ pub fn select_standalone_compression<F: CanonicalField>(
     // The search space is protocol-fixed, never input-sized: two first-map
     // alphabets, depths 2/3, and at most four dispatch dimensions per tier
     // today (at most 2 * (4^2 + 4^3) = 160 raw dimension chains).
+    //
+    // Opening-base F1 uses the frozen standalone recomposition base
+    // (`STANDALONE_OPENING_BASE_LOG_BASIS`), not `policy.basis_range.1`.
+    // Digit depth follows that alphabet base; SIS pricing and
+    // `max_opening_log_basis` still use the authenticated later-opening
+    // envelope `policy.basis_range.1`.
     for depth in 2..=3 {
         for first_alphabet in [
-            CompressionAlphabet::OpeningBase { log_basis: 4 },
+            CompressionAlphabet::OpeningBase {
+                log_basis: STANDALONE_OPENING_BASE_LOG_BASIS,
+            },
             CompressionAlphabet::NegativeBinary,
         ] {
             enumeration.extend_chain(
@@ -525,7 +534,9 @@ mod tests {
                 512,
                 false,
                 2,
-                CompressionAlphabet::OpeningBase { log_basis: 4 },
+                CompressionAlphabet::OpeningBase {
+                    log_basis: STANDALONE_OPENING_BASE_LOG_BASIS,
+                },
                 &[32, 32][..],
                 24
             )
@@ -561,7 +572,9 @@ mod tests {
                 256,
                 false,
                 2,
-                CompressionAlphabet::OpeningBase { log_basis: 4 },
+                CompressionAlphabet::OpeningBase {
+                    log_basis: STANDALONE_OPENING_BASE_LOG_BASIS,
+                },
                 &[32, 64][..],
                 160
             )
@@ -588,7 +601,9 @@ mod tests {
         };
         for depth in 2..=3 {
             for first_alphabet in [
-                CompressionAlphabet::OpeningBase { log_basis: 4 },
+                CompressionAlphabet::OpeningBase {
+                    log_basis: STANDALONE_OPENING_BASE_LOG_BASIS,
+                },
                 CompressionAlphabet::NegativeBinary,
             ] {
                 enumeration.extend_chain(
@@ -608,7 +623,9 @@ mod tests {
         let candidates = enumerated_candidates::<Prime128OffsetA7F7>(&policy, &lp);
         for depth in 2..=3 {
             for alphabet in [
-                CompressionAlphabet::OpeningBase { log_basis: 4 },
+                CompressionAlphabet::OpeningBase {
+                    log_basis: STANDALONE_OPENING_BASE_LOG_BASIS,
+                },
                 CompressionAlphabet::NegativeBinary,
             ] {
                 assert!(candidates.iter().any(|candidate| {
@@ -620,6 +637,59 @@ mod tests {
             .iter()
             .flat_map(|candidate| &candidate.map_ring_dimensions)
             .all(|&d| d >= 32));
+    }
+
+    #[test]
+    fn opening_base_first_map_stays_frozen_when_later_opening_envelope_is_wider() {
+        let (mut policy, mut lp) = fixture(SisModulusFamily::Q128, 64, 32);
+        policy.basis_range = (2, 6);
+        let source_bucket = rounded_up_collision_inf_norm(
+            DEFAULT_SIS_SECURITY_BITS,
+            SisModulusFamily::Q128,
+            32,
+            policy.basis_range.1,
+        )
+        .expect("wider envelope source bucket");
+        lp.b_key = AjtaiKeyParams::try_new_with_min_rank(
+            akita_types::SisTableKey {
+                min_security_bits: DEFAULT_SIS_SECURITY_BITS,
+                family: SisModulusFamily::Q128,
+                ring_dimension: 32,
+                coeff_linf_bound: source_bucket,
+            },
+            8,
+        )
+        .expect("wider envelope source key");
+        let selection = select_standalone_compression::<Prime128OffsetA7F7>(
+            &policy,
+            CompressionPlannerPolicy::default(),
+            &lp,
+            synthetic_envelope(),
+        )
+        .expect("selection under wider later-opening envelope");
+        let candidates = enumerated_candidates::<Prime128OffsetA7F7>(&policy, &lp);
+        assert!(
+            candidates.iter().any(|candidate| {
+                candidate.first_alphabet
+                    == CompressionAlphabet::OpeningBase {
+                        log_basis: STANDALONE_OPENING_BASE_LOG_BASIS,
+                    }
+            }),
+            "wider b_range must still admit frozen opening-base F1 (b_cmp=4), not retarget the alphabet"
+        );
+        assert!(matches!(
+            selection.first_alphabet(),
+            CompressionAlphabet::OpeningBase {
+                log_basis: STANDALONE_OPENING_BASE_LOG_BASIS
+            } | CompressionAlphabet::NegativeBinary
+        ));
+        assert!(!candidates.iter().any(|candidate| {
+            matches!(
+                candidate.first_alphabet,
+                CompressionAlphabet::OpeningBase { log_basis }
+                    if log_basis != STANDALONE_OPENING_BASE_LOG_BASIS
+            )
+        }));
     }
 
     #[test]

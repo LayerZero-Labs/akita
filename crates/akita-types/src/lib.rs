@@ -76,7 +76,8 @@ pub use layout::{
     PrecommittedLevelParams, RelationFamilyProvider, RelationGroupId, RelationLayout,
     RelationMatrixRowLayout, RelationRowId, RelationRowPlan, RingMatrixView, RingOpeningPoint,
     RingRole, SharedSetupMatrixView, ValidatedCompressionCatalog, MAX_FOLD_LEVELS,
-    MIN_A_ROLE_FOLD_CHALLENGE_RING_D, SUPPORTED_CHALLENGE_RING_DIMS,
+    MIN_A_ROLE_FOLD_CHALLENGE_RING_D, STANDALONE_OPENING_BASE_LOG_BASIS,
+    SUPPORTED_CHALLENGE_RING_DIMS,
 };
 pub use ntt_cache::{NttCacheKey, PreparedNttPlan};
 pub use proof::{

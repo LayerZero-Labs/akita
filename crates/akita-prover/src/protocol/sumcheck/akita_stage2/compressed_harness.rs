@@ -43,6 +43,7 @@ fn compression_chain(
     source: CompressionSourceId,
     source_key: &AjtaiKeyParams,
     alphabets: &[CompressionAlphabet],
+    max_opening_log_basis: u32,
 ) -> CompressionChainSpec {
     let mut previous = source_key.row_len() * source_key.sis_table_key().ring_dimension as usize;
     let maps = alphabets
@@ -61,16 +62,17 @@ fn compression_chain(
                     )
                 }
             };
+            // Opening-base SIS collision pricing uses b_range - 1, never b_cmp - 1.
             let bound = match alphabet {
                 CompressionAlphabet::NegativeBinary => 1,
-                CompressionAlphabet::OpeningBase { log_basis } => (1u128 << log_basis) - 1,
+                CompressionAlphabet::OpeningBase { .. } => (1u128 << max_opening_log_basis) - 1,
             };
             let key = certified_key(d, bound, previous * depth / d);
             previous = key.row_len() * d;
             CompressionMapSpec::new(key, alphabet)
         })
         .collect();
-    CompressionChainSpec::new(source, 6, maps)
+    CompressionChainSpec::new(source, max_opening_log_basis, maps)
 }
 
 struct HarnessFixture {
@@ -108,14 +110,18 @@ fn singleton_fixture() -> HarnessFixture {
                     CompressionAlphabet::NegativeBinary,
                     CompressionAlphabet::NegativeBinary,
                 ],
+                level.log_basis,
             ),
             compression_chain(
                 CompressionSourceId::Opening,
                 &level.d_key,
                 &[
-                    CompressionAlphabet::OpeningBase { log_basis: 6 },
+                    CompressionAlphabet::OpeningBase {
+                        log_basis: level.log_basis,
+                    },
                     CompressionAlphabet::NegativeBinary,
                 ],
+                level.log_basis,
             ),
         ],
     )
@@ -512,6 +518,7 @@ fn harness_rejects_catalog_invalid_chain_depth() {
         CompressionSourceId::CurrentOuter,
         &level.b_key,
         &[CompressionAlphabet::NegativeBinary],
+        level.log_basis,
     );
     assert!(
         validate_compression_catalog::<F>(
@@ -524,9 +531,12 @@ fn harness_rejects_catalog_invalid_chain_depth() {
                     CompressionSourceId::Opening,
                     &level.d_key,
                     &[
-                        CompressionAlphabet::OpeningBase { log_basis: 6 },
+                        CompressionAlphabet::OpeningBase {
+                            log_basis: level.log_basis,
+                        },
                         CompressionAlphabet::NegativeBinary,
                     ],
+                    level.log_basis,
                 ),
             ],
         )
