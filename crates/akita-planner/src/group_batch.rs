@@ -993,7 +993,7 @@ mod tests {
         let error = group_root_params_from_layout(
             &malformed,
             &policy,
-            &|_| Ok(ring_cfg.clone()),
+            &|_| Ok(ring_cfg),
             TensorChallengeShape::Flat,
             true,
         )

@@ -29,7 +29,7 @@ use std::fmt::Write as _;
 #[cfg(feature = "disk-persistence")]
 use std::fs;
 #[cfg(feature = "disk-persistence")]
-use std::io::{Read, Write};
+use std::io::Read;
 #[cfg(feature = "disk-persistence")]
 use std::path::PathBuf;
 #[cfg(feature = "disk-persistence")]
