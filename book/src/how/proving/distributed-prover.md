@@ -9,7 +9,7 @@ contract is specified in
 ## Block ownership
 
 Write the committed table as (B=2^r) blocks
-(mathbf f_iin R_q^M). The machines partition the block indices into equal
+(mathbf f \in R_q^M). The machines partition the block indices into equal
 contiguous windows
 
 \[
