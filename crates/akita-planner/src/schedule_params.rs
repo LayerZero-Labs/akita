@@ -1568,6 +1568,45 @@ mod tests {
 
     use super::*;
     use crate::compression::{BINARY_256_128, OPENING_BASE_512_256_128};
+    use crate::generated::walk::walk_generated_schedule_compression_plan;
+    use crate::generated::{
+        GeneratedFrozenCompressionChain, GeneratedLevelCompressionPlan,
+        GeneratedScheduleCompressionPlan,
+    };
+
+    fn generated_compression_plan(
+        plan: &ScheduleCompressionPlan,
+    ) -> GeneratedScheduleCompressionPlan {
+        let levels = plan
+            .levels()
+            .iter()
+            .map(|level| {
+                let precommitted_f = level
+                    .precommitted_f
+                    .iter()
+                    .map(|frozen| GeneratedFrozenCompressionChain {
+                        source_key_digest: frozen.source_key_digest,
+                        max_opening_log_basis: frozen.max_opening_log_basis,
+                        chain: frozen.chain,
+                    })
+                    .collect::<Vec<_>>()
+                    .into_boxed_slice();
+                GeneratedLevelCompressionPlan {
+                    current_f: GeneratedFrozenCompressionChain {
+                        source_key_digest: level.current_f.source_key_digest,
+                        max_opening_log_basis: level.current_f.max_opening_log_basis,
+                        chain: level.current_f.chain,
+                    },
+                    precommitted_f: Box::leak(precommitted_f),
+                    opening_h: level.opening_h,
+                }
+            })
+            .collect::<Vec<_>>()
+            .into_boxed_slice();
+        GeneratedScheduleCompressionPlan {
+            levels: Box::leak(levels),
+        }
+    }
 
     fn policy() -> PlannerPolicy {
         PlannerPolicy {
@@ -1691,5 +1730,16 @@ mod tests {
             schedule.compression.levels().len(),
             schedule.schedule.num_fold_levels()
         );
+        let emitted = crate::emit::emit_schedule_compression_plan(
+            "FIXTURE_COMPRESSION",
+            &schedule.compression,
+        )
+        .expect("emit dormant compression record");
+        assert!(emitted.contains("GeneratedScheduleCompressionPlan"));
+        assert!(emitted.contains("CompressionChainChoice::Two"));
+        let generated = generated_compression_plan(&schedule.compression);
+        let walked =
+            walk_generated_schedule_compression_plan(&generated, &schedule.schedule).unwrap();
+        assert_eq!(walked, schedule.compression);
     }
 }

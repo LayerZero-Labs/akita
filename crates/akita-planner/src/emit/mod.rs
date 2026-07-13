@@ -12,8 +12,9 @@ use std::process::Command;
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::AkitaError;
 use akita_types::{
-    AkitaScheduleInputs, AkitaScheduleLookupKey, DirectStep, FoldStep, LevelParams,
-    PolynomialGroupLayout, PrecommittedGroupParams, Schedule, Step,
+    AkitaScheduleInputs, AkitaScheduleLookupKey, CompressionAlphabet, CompressionChainChoice,
+    CompressionMapChoice, DirectStep, FoldStep, FrozenCompressionChainChoice, LevelParams,
+    PolynomialGroupLayout, PrecommittedGroupParams, Schedule, ScheduleCompressionPlan, Step,
 };
 
 use crate::catalog_identity::expected_catalog_identity;
@@ -128,6 +129,104 @@ fn emit_direct(direct: &DirectStep) -> String {
         ),
         None => "        GeneratedStep::Direct(GeneratedDirectStep { commit: None }),".to_string(),
     }
+}
+
+fn emit_compression_alphabet(alphabet: CompressionAlphabet) -> String {
+    match alphabet {
+        CompressionAlphabet::NegativeBinary => "CompressionAlphabet::NegativeBinary".into(),
+        CompressionAlphabet::OpeningBase { log_basis } => {
+            format!("CompressionAlphabet::OpeningBase {{ log_basis: {log_basis} }}")
+        }
+    }
+}
+
+fn emit_compression_map(map: CompressionMapChoice) -> String {
+    format!(
+        "CompressionMapChoice {{ ring_d: {}, alphabet: {} }}",
+        map.ring_d,
+        emit_compression_alphabet(map.alphabet)
+    )
+}
+
+fn emit_compression_chain(chain: CompressionChainChoice) -> String {
+    let maps = chain
+        .maps()
+        .iter()
+        .copied()
+        .map(emit_compression_map)
+        .collect::<Vec<_>>()
+        .join(", ");
+    match chain {
+        CompressionChainChoice::Two(_) => {
+            format!("CompressionChainChoice::Two([{maps}])")
+        }
+        CompressionChainChoice::Three(_) => {
+            format!("CompressionChainChoice::Three([{maps}])")
+        }
+    }
+}
+
+fn emit_frozen_compression_chain(chain: &FrozenCompressionChainChoice) -> String {
+    format!(
+        "GeneratedFrozenCompressionChain {{ source_key_digest: {:?}, \
+         max_opening_log_basis: {}, chain: {} }}",
+        chain.source_key_digest,
+        chain.max_opening_log_basis,
+        emit_compression_chain(chain.chain)
+    )
+}
+
+/// Emit the dormant static compression record for fixture round trips.
+///
+/// [`emit_family_module`] intentionally does not call this until the atomic
+/// generated-table cutover.
+#[allow(dead_code)] // Exercised by prep fixtures; production emission lands atomically.
+pub(crate) fn emit_schedule_compression_plan(
+    const_name: &str,
+    plan: &ScheduleCompressionPlan,
+) -> Result<String, String> {
+    let mut out = String::new();
+    for (level_index, level) in plan.levels().iter().enumerate() {
+        let precommitted = level
+            .precommitted_f
+            .iter()
+            .map(emit_frozen_compression_chain)
+            .collect::<Vec<_>>()
+            .join(", ");
+        writeln!(
+            out,
+            "static {const_name}_LEVEL_{level_index}_PRECOMMITTED: \
+             &[GeneratedFrozenCompressionChain] = &[{precommitted}];"
+        )
+        .map_err(|err| err.to_string())?;
+    }
+    writeln!(
+        out,
+        "static {const_name}_LEVELS: &[GeneratedLevelCompressionPlan] = &["
+    )
+    .map_err(|err| err.to_string())?;
+    for (level_index, level) in plan.levels().iter().enumerate() {
+        let opening_h = level
+            .opening_h
+            .map(emit_compression_chain)
+            .map_or_else(|| "None".to_string(), |chain| format!("Some({chain})"));
+        writeln!(
+            out,
+            "    GeneratedLevelCompressionPlan {{ current_f: {}, \
+             precommitted_f: {const_name}_LEVEL_{level_index}_PRECOMMITTED, \
+             opening_h: {opening_h} }},",
+            emit_frozen_compression_chain(&level.current_f)
+        )
+        .map_err(|err| err.to_string())?;
+    }
+    writeln!(out, "];").map_err(|err| err.to_string())?;
+    writeln!(
+        out,
+        "static {const_name}: GeneratedScheduleCompressionPlan = \
+         GeneratedScheduleCompressionPlan {{ levels: {const_name}_LEVELS }};"
+    )
+    .map_err(|err| err.to_string())?;
+    Ok(out)
 }
 
 fn emit_schedule_entry(out: &mut String, key_str: &str, schedule: &Schedule) -> Result<(), String> {

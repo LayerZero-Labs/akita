@@ -13,12 +13,14 @@ use akita_types::{
     direct_witness_bytes, extension_opening_reduction_level_bytes, level_proof_bytes,
     segment_typed_witness_shape, w_ring_element_count_for_chunks,
     w_ring_element_count_with_counts_for_layout_bits, AkitaScheduleInputs, AkitaScheduleLookupKey,
-    CleartextWitnessShape, DirectStep, FoldStep, FoldWirePayload, LevelParams,
-    PolynomialGroupLayout, PrecommittedLevelParams, RelationMatrixRowLayout, Schedule, Step,
+    CleartextWitnessShape, DirectStep, FoldStep, FoldWirePayload, FrozenCompressionChainChoice,
+    LevelCompressionPlan, LevelParams, PolynomialGroupLayout, PrecommittedLevelParams,
+    RelationMatrixRowLayout, Schedule, ScheduleCompressionPlan, Step,
 };
 
 use crate::generated::{
-    validate_entry_key, GeneratedFoldStep, GeneratedScheduleTableEntry, GeneratedStep,
+    validate_entry_key, GeneratedFoldStep, GeneratedScheduleCompressionPlan,
+    GeneratedScheduleTableEntry, GeneratedStep,
 };
 use crate::group_batch::{multi_group_root_next_w_len, multi_group_root_precommitted_groups};
 use crate::PlannerPolicy;
@@ -26,6 +28,39 @@ use crate::PlannerPolicy;
 pub(crate) struct GeneratedEntryWalkOutput {
     pub total_bytes: usize,
     pub schedule: Schedule,
+}
+
+/// Walk a dormant static compression record into the checked runtime owner.
+///
+/// Production generated entries do not contain this record before the atomic
+/// cutover.
+#[allow(dead_code)] // Exercised by prep fixtures; production attachment lands atomically.
+pub(crate) fn walk_generated_schedule_compression_plan(
+    generated: &GeneratedScheduleCompressionPlan,
+    schedule: &Schedule,
+) -> Result<ScheduleCompressionPlan, AkitaError> {
+    let levels = generated
+        .levels
+        .iter()
+        .map(|level| LevelCompressionPlan {
+            current_f: FrozenCompressionChainChoice {
+                source_key_digest: level.current_f.source_key_digest,
+                max_opening_log_basis: level.current_f.max_opening_log_basis,
+                chain: level.current_f.chain,
+            },
+            precommitted_f: level
+                .precommitted_f
+                .iter()
+                .map(|frozen| FrozenCompressionChainChoice {
+                    source_key_digest: frozen.source_key_digest,
+                    max_opening_log_basis: frozen.max_opening_log_basis,
+                    chain: frozen.chain,
+                })
+                .collect(),
+            opening_h: level.opening_h,
+        })
+        .collect();
+    ScheduleCompressionPlan::new(schedule, levels)
 }
 
 pub(crate) fn walk_generated_schedule_entry<F: CanonicalField>(

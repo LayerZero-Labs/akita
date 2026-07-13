@@ -41,6 +41,32 @@ pub struct GeneratedScheduleTableEntry {
     pub steps: &'static [GeneratedStep],
 }
 
+/// Static generated representation of one frozen F chain.
+///
+/// This record remains detached from [`GeneratedScheduleTableEntry`] until the
+/// atomic compressed-wire cutover, so checked-in generated tables are
+/// byte-for-byte unchanged during prep.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GeneratedFrozenCompressionChain {
+    pub source_key_digest: [u8; 32],
+    pub max_opening_log_basis: u32,
+    pub chain: akita_types::CompressionChainChoice,
+}
+
+/// Static generated representation of one fold's compression plan.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GeneratedLevelCompressionPlan {
+    pub current_f: GeneratedFrozenCompressionChain,
+    pub precommitted_f: &'static [GeneratedFrozenCompressionChain],
+    pub opening_h: Option<akita_types::CompressionChainChoice>,
+}
+
+/// Static generated representation of all fold compression plans.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GeneratedScheduleCompressionPlan {
+    pub levels: &'static [GeneratedLevelCompressionPlan],
+}
+
 impl GeneratedScheduleTableEntry {
     /// Build the runtime schedule lookup key represented by this generated row.
     pub(crate) fn to_runtime_lookup_key(self) -> akita_types::AkitaScheduleLookupKey {
