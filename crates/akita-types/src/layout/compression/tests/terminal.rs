@@ -46,18 +46,16 @@ fn terminal_fold_replay_binds_context_sources_base_and_field() {
 
     let lp = level();
     let opening = scalar_opening();
-    let choice = CompressionChoice {
-        f: CompressionFChoice {
-            current_outer: FrozenCompressionChainChoice::new(
-                &lp.b_key,
-                lp.log_basis,
-                two_choice(CompressionAlphabet::OpeningBase {
-                    log_basis: lp.log_basis,
-                }),
-            ),
-            precommitted_outer: &[],
-        },
-        opening: None,
+    let choice = LevelCompressionPlan {
+        current_f: FrozenCompressionChainChoice::new(
+            &lp.b_key,
+            lp.log_basis,
+            two_choice(CompressionAlphabet::OpeningBase {
+                log_basis: lp.log_basis,
+            }),
+        ),
+        precommitted_f: Vec::new(),
+        opening_h: None,
     };
     let catalog = choice
         .replay::<Prime128OffsetA7F7>(
@@ -66,6 +64,19 @@ fn terminal_fold_replay_binds_context_sources_base_and_field() {
         )
         .unwrap();
     let layout = catalog.terminal_relation_layout().unwrap();
+    let shape = catalog.terminal_relation_shape().unwrap();
+    let cost = layout.compression_structural_cost().unwrap();
+    assert_eq!(
+        shape.relation_padded_rows(),
+        layout.row_plan().padded_row_count()
+    );
+    assert_eq!(shape.logical_coeffs(), layout.total_coeffs());
+    assert_eq!(shape.compression_witness_coeffs(), cost.witness_coeffs());
+    assert_eq!(
+        shape.witness_field_coeffs(),
+        layout.physical_witness_field_coeff_len().unwrap()
+    );
+    assert_eq!(shape.payload_coeffs(), cost.terminal_payload_coeffs());
     let b = layout
         .row_plan()
         .family(RelationRowId::B {
@@ -106,16 +117,14 @@ fn binary_first_terminal_join_has_no_opening_base_lower_bound() {
     let mut terminal = level();
     terminal.log_basis = 2;
     let opening = scalar_opening();
-    let catalog = CompressionChoice {
-        f: CompressionFChoice {
-            current_outer: FrozenCompressionChainChoice::new(
-                &terminal.b_key,
-                4,
-                two_choice(CompressionAlphabet::NegativeBinary),
-            ),
-            precommitted_outer: &[],
-        },
-        opening: None,
+    let catalog = LevelCompressionPlan {
+        current_f: FrozenCompressionChainChoice::new(
+            &terminal.b_key,
+            4,
+            two_choice(CompressionAlphabet::NegativeBinary),
+        ),
+        precommitted_f: Vec::new(),
+        opening_h: None,
     }
     .replay::<Prime128OffsetA7F7>(
         &terminal,

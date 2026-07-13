@@ -25,16 +25,14 @@ fn frozen_for(
     FrozenCompressionChainChoice::new(source_key, max, chain(first, 32, 32))
 }
 
-fn outer<'a>(
+fn outer(
     current_outer: FrozenCompressionChainChoice,
-    precommitted_outer: &'a [FrozenCompressionChainChoice],
-) -> CompressionChoice<'a> {
-    CompressionChoice {
-        f: CompressionFChoice {
-            current_outer,
-            precommitted_outer,
-        },
-        opening: None,
+    precommitted_outer: &[FrozenCompressionChainChoice],
+) -> LevelCompressionPlan {
+    LevelCompressionPlan {
+        current_f: current_outer,
+        precommitted_f: precommitted_outer.to_vec(),
+        opening_h: None,
     }
 }
 
@@ -42,34 +40,38 @@ fn outer<'a>(
 fn f_descriptor_binds_every_free_choice_and_source_slot() {
     let current = frozen(6, CompressionAlphabet::OpeningBase { log_basis: 4 });
     let pre = frozen(5, CompressionAlphabet::NegativeBinary);
-    let base = CompressionFChoice {
-        current_outer: current,
-        precommitted_outer: &[pre],
+    let base = LevelCompressionPlan {
+        current_f: current,
+        precommitted_f: vec![pre],
+        opening_h: None,
     };
     let mutations = [
-        CompressionFChoice {
-            current_outer: FrozenCompressionChainChoice {
+        LevelCompressionPlan {
+            current_f: FrozenCompressionChainChoice {
                 max_opening_log_basis: 7,
                 ..current
             },
-            precommitted_outer: &[pre],
+            precommitted_f: vec![pre],
+            opening_h: None,
         },
-        CompressionFChoice {
-            current_outer: FrozenCompressionChainChoice {
+        LevelCompressionPlan {
+            current_f: FrozenCompressionChainChoice {
                 chain: chain(CompressionAlphabet::OpeningBase { log_basis: 4 }, 64, 32),
                 ..current
             },
-            precommitted_outer: &[pre],
+            precommitted_f: vec![pre],
+            opening_h: None,
         },
-        CompressionFChoice {
-            current_outer: FrozenCompressionChainChoice {
+        LevelCompressionPlan {
+            current_f: FrozenCompressionChainChoice {
                 chain: chain(CompressionAlphabet::NegativeBinary, 32, 32),
                 ..current
             },
-            precommitted_outer: &[pre],
+            precommitted_f: vec![pre],
+            opening_h: None,
         },
-        CompressionFChoice {
-            current_outer: FrozenCompressionChainChoice {
+        LevelCompressionPlan {
+            current_f: FrozenCompressionChainChoice {
                 chain: CompressionChainChoice::Three([
                     CompressionMapChoice {
                         ring_d: 32,
@@ -86,11 +88,13 @@ fn f_descriptor_binds_every_free_choice_and_source_slot() {
                 ]),
                 ..current
             },
-            precommitted_outer: &[pre],
+            precommitted_f: vec![pre],
+            opening_h: None,
         },
-        CompressionFChoice {
-            current_outer: pre,
-            precommitted_outer: &[current],
+        LevelCompressionPlan {
+            current_f: pre,
+            precommitted_f: vec![current],
+            opening_h: None,
         },
     ];
     for mutation in mutations {
@@ -200,12 +204,10 @@ fn context_and_slot_shape_are_exact() {
     let lp = level();
     let current = frozen(6, CompressionAlphabet::NegativeBinary);
     let opening = scalar_opening();
-    let with_h = CompressionChoice {
-        f: CompressionFChoice {
-            current_outer: current,
-            precommitted_outer: &[],
-        },
-        opening: Some(chain(CompressionAlphabet::NegativeBinary, 32, 32)),
+    let with_h = LevelCompressionPlan {
+        current_f: current,
+        precommitted_f: Vec::new(),
+        opening_h: Some(chain(CompressionAlphabet::NegativeBinary, 32, 32)),
     };
     assert!(with_h
         .replay::<Prime128OffsetA7F7>(&lp, CompressionCatalogContext::StandaloneCommitment)

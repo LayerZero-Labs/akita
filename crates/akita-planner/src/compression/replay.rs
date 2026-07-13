@@ -4,9 +4,8 @@ use akita_field::{AkitaError, CanonicalField};
 use akita_types::sis::{rounded_up_collision_inf_norm, sis_table_key_for_linf_bound};
 use akita_types::{
     AjtaiKeyParams, CompressionAlphabet, CompressionCatalogContext, CompressionChainChoice,
-    CompressionChoice, CompressionFChoice, CompressionMapChoice, CompressionSourceId,
-    FrozenCompressionChainChoice, LevelParams, ValidatedCompressionCatalog,
-    DEFAULT_SIS_SECURITY_BITS,
+    CompressionMapChoice, CompressionSourceId, FrozenCompressionChainChoice, LevelCompressionPlan,
+    LevelParams, ValidatedCompressionCatalog, DEFAULT_SIS_SECURITY_BITS,
 };
 
 use crate::PlannerPolicy;
@@ -159,17 +158,15 @@ pub(super) fn replay_compression_catalog<F: CanonicalField>(
                     freeze_f(lp, *source, *max, *chain)
                 })
                 .collect::<Result<Vec<_>, AkitaError>>()?;
-            CompressionChoice {
-                f: CompressionFChoice {
-                    current_outer: freeze_f(
-                        lp,
-                        CompressionSourceId::CurrentOuter,
-                        *current_max,
-                        *current_chain,
-                    )?,
-                    precommitted_outer: &precommitted_outer,
-                },
-                opening: Some(*opening_chain),
+            LevelCompressionPlan {
+                current_f: freeze_f(
+                    lp,
+                    CompressionSourceId::CurrentOuter,
+                    *current_max,
+                    *current_chain,
+                )?,
+                precommitted_f: precommitted_outer,
+                opening_h: Some(*opening_chain),
             }
             .replay::<F>(lp, context)
         }
@@ -179,12 +176,10 @@ pub(super) fn replay_compression_catalog<F: CanonicalField>(
                     "standalone compression replay requires exactly current outer".into(),
                 ));
             };
-            CompressionChoice {
-                f: CompressionFChoice {
-                    current_outer: freeze_f(lp, CompressionSourceId::CurrentOuter, *max, *chain)?,
-                    precommitted_outer: &[],
-                },
-                opening: None,
+            LevelCompressionPlan {
+                current_f: freeze_f(lp, CompressionSourceId::CurrentOuter, *max, *chain)?,
+                precommitted_f: Vec::new(),
+                opening_h: None,
             }
             .replay::<F>(lp, context)
         }
@@ -208,17 +203,15 @@ pub(super) fn replay_compression_catalog<F: CanonicalField>(
                     freeze_f(lp, *source, *max, *chain)
                 })
                 .collect::<Result<Vec<_>, AkitaError>>()?;
-            CompressionChoice {
-                f: CompressionFChoice {
-                    current_outer: freeze_f(
-                        lp,
-                        CompressionSourceId::CurrentOuter,
-                        *current_max,
-                        *current_chain,
-                    )?,
-                    precommitted_outer: &precommitted_outer,
-                },
-                opening: None,
+            LevelCompressionPlan {
+                current_f: freeze_f(
+                    lp,
+                    CompressionSourceId::CurrentOuter,
+                    *current_max,
+                    *current_chain,
+                )?,
+                precommitted_f: precommitted_outer,
+                opening_h: None,
             }
             .replay::<F>(lp, context)
         }

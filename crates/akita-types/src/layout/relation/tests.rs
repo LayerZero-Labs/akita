@@ -8,8 +8,8 @@ use akita_serialization::DEFAULT_MAX_SEQUENCE_LEN;
 
 use crate::layout::compression::{
     validate_compression_catalog, CompressionAlphabet, CompressionCatalogContext,
-    CompressionChainChoice, CompressionChainSpec, CompressionChoice, CompressionFChoice,
-    CompressionMapChoice, CompressionMapSpec, FrozenCompressionChainChoice,
+    CompressionChainChoice, CompressionChainSpec, CompressionMapChoice, CompressionMapSpec,
+    FrozenCompressionChainChoice, LevelCompressionPlan,
 };
 use crate::sis::{sis_table_key_for_linf_bound, AjtaiKeyParams, DEFAULT_SIS_SECURITY_BITS};
 fn level() -> (LevelParams, OpeningClaimsLayout) {
@@ -446,25 +446,23 @@ fn checked_compression_extends_rows_and_directly_augments_existing_sources() {
 fn terminal_fold_sizes_f_geometry_without_a_d_base_quotient() {
     let (mut lp, opening) = level();
     lp.b_key = certified_key(64, 63, 1);
-    let catalog = CompressionChoice {
-        f: CompressionFChoice {
-            current_outer: FrozenCompressionChainChoice::new(
-                &lp.b_key,
-                6,
-                CompressionChainChoice::Two([
-                    CompressionMapChoice {
-                        ring_d: 64,
-                        alphabet: CompressionAlphabet::OpeningBase { log_basis: 4 },
-                    },
-                    CompressionMapChoice {
-                        ring_d: 32,
-                        alphabet: CompressionAlphabet::NegativeBinary,
-                    },
-                ]),
-            ),
-            precommitted_outer: &[],
-        },
-        opening: None,
+    let catalog = LevelCompressionPlan {
+        current_f: FrozenCompressionChainChoice::new(
+            &lp.b_key,
+            6,
+            CompressionChainChoice::Two([
+                CompressionMapChoice {
+                    ring_d: 64,
+                    alphabet: CompressionAlphabet::OpeningBase { log_basis: 4 },
+                },
+                CompressionMapChoice {
+                    ring_d: 32,
+                    alphabet: CompressionAlphabet::NegativeBinary,
+                },
+            ]),
+        ),
+        precommitted_f: Vec::new(),
+        opening_h: None,
     }
     .replay::<F>(
         &lp,

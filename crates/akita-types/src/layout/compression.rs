@@ -16,8 +16,8 @@ pub(in crate::layout) mod semantics;
 mod choice;
 pub use choice::{
     compression_digit_depth, CompressionAlphabet, CompressionCatalogContext,
-    CompressionChainChoice, CompressionChainSpec, CompressionChoice, CompressionFChoice,
-    CompressionMapChoice, CompressionMapSpec, CompressionSourceId, FrozenCompressionChainChoice,
+    CompressionChainChoice, CompressionChainSpec, CompressionMapChoice, CompressionMapSpec,
+    CompressionSourceId, FrozenCompressionChainChoice, LevelCompressionPlan,
     STANDALONE_OPENING_BASE_LOG_BASIS,
 };
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -90,6 +90,47 @@ pub struct CompressionCatalogProjection {
     max_flat_setup_prefix_coeffs: usize,
     coalesced_cache_field_coeffs: usize,
     descriptor_bytes: Vec<u8>,
+}
+
+/// Canonical accounting shape of a terminal compressed relation.
+///
+/// The shape is derived from the checked terminal [`RelationLayout`]. It is a
+/// compact accounting view for planner recurrence and proof sizing; callers do
+/// not provide or serialize any of these fields independently.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CompressionTerminalRelationShape {
+    relation_padded_rows: usize,
+    logical_coeffs: usize,
+    compression_witness_coeffs: usize,
+    witness_field_coeffs: usize,
+    payload_coeffs: usize,
+}
+
+impl CompressionTerminalRelationShape {
+    #[must_use]
+    pub fn relation_padded_rows(&self) -> usize {
+        self.relation_padded_rows
+    }
+
+    #[must_use]
+    pub fn logical_coeffs(&self) -> usize {
+        self.logical_coeffs
+    }
+
+    #[must_use]
+    pub fn compression_witness_coeffs(&self) -> usize {
+        self.compression_witness_coeffs
+    }
+
+    #[must_use]
+    pub fn witness_field_coeffs(&self) -> usize {
+        self.witness_field_coeffs
+    }
+
+    #[must_use]
+    pub fn payload_coeffs(&self) -> usize {
+        self.payload_coeffs
+    }
 }
 
 impl CompressionCatalogProjection {
@@ -406,6 +447,19 @@ impl ValidatedCompressionCatalog {
                 "compression catalog is not a terminal WithoutDBlock fold".into(),
             )),
         }
+    }
+
+    /// Return the canonical terminal shape derived from the checked relation.
+    pub fn terminal_relation_shape(&self) -> Result<CompressionTerminalRelationShape, AkitaError> {
+        let layout = self.terminal_relation_layout()?;
+        let cost = layout.compression_structural_cost()?;
+        Ok(CompressionTerminalRelationShape {
+            relation_padded_rows: layout.row_plan().padded_row_count(),
+            logical_coeffs: layout.total_coeffs(),
+            compression_witness_coeffs: cost.witness_coeffs(),
+            witness_field_coeffs: layout.physical_witness_field_coeff_len()?,
+            payload_coeffs: cost.terminal_payload_coeffs(),
+        })
     }
 }
 

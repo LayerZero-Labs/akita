@@ -19,8 +19,8 @@ pub mod ring_dims;
 pub use compression::{
     compression_digit_depth, validate_compression_catalog, CompressionAlphabet,
     CompressionCatalogContext, CompressionCatalogProjection, CompressionChainChoice,
-    CompressionChainSpec, CompressionChoice, CompressionFChoice, CompressionMapChoice,
-    CompressionMapSpec, CompressionSourceId, FrozenCompressionChainChoice,
+    CompressionChainSpec, CompressionMapChoice, CompressionMapSpec, CompressionSourceId,
+    CompressionTerminalRelationShape, FrozenCompressionChainChoice, LevelCompressionPlan,
     ValidatedCompressionCatalog, STANDALONE_OPENING_BASE_LOG_BASIS,
 };
 pub use digit_math::{gadget_row_scalars, isqrt_ceil};

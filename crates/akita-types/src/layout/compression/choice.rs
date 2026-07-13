@@ -132,44 +132,29 @@ impl FrozenCompressionChainChoice {
     }
 }
 
-/// Source-assigned F choices shared by standalone creation and later use.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct CompressionFChoice<'a> {
-    pub current_outer: FrozenCompressionChainChoice,
-    pub precommitted_outer: &'a [FrozenCompressionChainChoice],
+/// Owned compression plan frozen for one level and its commitment sources.
+///
+/// The current and precommitted F chains are retained independently because
+/// each source commitment can have its own setup and payload geometry. The
+/// optional H chain is level-local and is absent for standalone and terminal
+/// plans.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LevelCompressionPlan {
+    pub current_f: FrozenCompressionChainChoice,
+    pub precommitted_f: Vec<FrozenCompressionChainChoice>,
+    pub opening_h: Option<CompressionChainChoice>,
 }
 
-impl CompressionFChoice<'_> {
+impl LevelCompressionPlan {
     pub fn descriptor_bytes(&self) -> Result<Vec<u8>, AkitaError> {
         let mut bytes = Vec::new();
-        bytes.extend_from_slice(b"AKITA-COMPRESSION-F-CHOICE-V1");
-        append_frozen_chain(&mut bytes, &self.current_outer)?;
-        crate::descriptor_bytes::push_usize(&mut bytes, self.precommitted_outer.len());
-        for chain in self.precommitted_outer {
+        bytes.extend_from_slice(b"AKITA-COMPRESSION-PLAN-V1");
+        append_frozen_chain(&mut bytes, &self.current_f)?;
+        crate::descriptor_bytes::push_usize(&mut bytes, self.precommitted_f.len());
+        for chain in &self.precommitted_f {
             append_frozen_chain(&mut bytes, chain)?;
         }
-        ensure_projection_descriptor_len(&bytes)?;
-        Ok(bytes)
-    }
-
-    pub fn descriptor_digest(&self) -> Result<[u8; 32], AkitaError> {
-        digest_bytes(self.descriptor_bytes()?)
-    }
-}
-
-/// Complete compact choice: shared F choices plus an optional level-local H.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct CompressionChoice<'a> {
-    pub f: CompressionFChoice<'a>,
-    pub opening: Option<CompressionChainChoice>,
-}
-
-impl CompressionChoice<'_> {
-    pub fn descriptor_bytes(&self) -> Result<Vec<u8>, AkitaError> {
-        let mut bytes = Vec::new();
-        bytes.extend_from_slice(b"AKITA-COMPRESSION-CHOICE-V2");
-        bytes.extend_from_slice(&self.f.descriptor_bytes()?);
-        match self.opening {
+        match self.opening_h {
             Some(opening) => {
                 bytes.push(1);
                 append_choice_chain(&mut bytes, &opening)?;
@@ -192,11 +177,11 @@ impl CompressionChoice<'_> {
         let mut sources = Vec::new();
         match context {
             CompressionCatalogContext::CoGeneratedLevel { .. } => {
-                let opening = self.opening.ok_or_else(|| {
+                let opening = self.opening_h.ok_or_else(|| {
                     AkitaError::InvalidSetup("co-generated compression choice is missing H".into())
                 })?;
-                require_precommitted_count(self.f.precommitted_outer, lp)?;
-                sources.extend(f_sources(self.f).map(|(source, frozen)| {
+                require_precommitted_count(&self.precommitted_f, lp)?;
+                sources.extend(f_sources(self).map(|(source, frozen)| {
                     (
                         source,
                         frozen.max_opening_log_basis,
@@ -207,12 +192,12 @@ impl CompressionChoice<'_> {
                 sources.push((CompressionSourceId::Opening, lp.log_basis, opening, None));
             }
             CompressionCatalogContext::StandaloneCommitment => {
-                if self.opening.is_some() || !self.f.precommitted_outer.is_empty() {
+                if self.opening_h.is_some() || !self.precommitted_f.is_empty() {
                     return Err(AkitaError::InvalidSetup(
                         "standalone compression requires exactly the current F slot".into(),
                     ));
                 }
-                let frozen = self.f.current_outer;
+                let frozen = self.current_f;
                 sources.push((
                     CompressionSourceId::CurrentOuter,
                     frozen.max_opening_log_basis,
@@ -221,13 +206,13 @@ impl CompressionChoice<'_> {
                 ));
             }
             CompressionCatalogContext::TerminalFold { .. } => {
-                if self.opening.is_some() {
+                if self.opening_h.is_some() {
                     return Err(AkitaError::InvalidSetup(
                         "terminal compression choice must not contain H".into(),
                     ));
                 }
-                require_precommitted_count(self.f.precommitted_outer, lp)?;
-                sources.extend(f_sources(self.f).map(|(source, frozen)| {
+                require_precommitted_count(&self.precommitted_f, lp)?;
+                sources.extend(f_sources(self).map(|(source, frozen)| {
                     (
                         source,
                         frozen.max_opening_log_basis,
@@ -262,10 +247,10 @@ fn require_precommitted_count(
 }
 
 fn f_sources(
-    f: CompressionFChoice<'_>,
+    plan: &LevelCompressionPlan,
 ) -> impl Iterator<Item = (CompressionSourceId, FrozenCompressionChainChoice)> + '_ {
-    std::iter::once((CompressionSourceId::CurrentOuter, f.current_outer)).chain(
-        f.precommitted_outer
+    std::iter::once((CompressionSourceId::CurrentOuter, plan.current_f)).chain(
+        plan.precommitted_f
             .iter()
             .copied()
             .enumerate()
