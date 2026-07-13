@@ -97,6 +97,7 @@ pub mod tensor_verifier;
 pub mod test_support;
 mod transcript_binding;
 pub use conservative_commitment::ConservativeCommitmentConfig;
+pub use matrix_envelope::inflate_setup_envelope_for_compression_prefix;
 pub use proof_optimized::{
     matrix_envelope_for_schedule, setup_level_params_from_runtime_schedule,
     worst_case_multi_group_opening_batch_for_shape,

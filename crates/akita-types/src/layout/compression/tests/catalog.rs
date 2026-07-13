@@ -290,6 +290,7 @@ fn schedule_projection_rejects_malformed_overflowing_compiled_map() {
         D,
     );
     let catalog = ValidatedCompressionCatalog {
+        gen_ring_dim: 64,
         chains: vec![CompiledCompressionChain {
             source: CompressionSourceId::CurrentOuter,
             max_opening_log_basis: 6,

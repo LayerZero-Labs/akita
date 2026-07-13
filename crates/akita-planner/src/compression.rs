@@ -8,12 +8,15 @@
 
 mod fold_first;
 mod replay;
+mod setup_compile;
 
 pub use fold_first::{
     fold_first_wire_payload, select_co_generated_bundle, select_terminal_bundle,
     successor_witness_field_coeffs, FoldFirstSearchStats, LevelCompressionBundle,
     MAX_FOLD_FIRST_BUNDLE_ATTEMPTS,
 };
+pub(crate) use fold_first::{iter_co_generated_bundles, iter_terminal_bundles};
+pub use setup_compile::{compile_compression_setup_artifacts, CompressionSetupArtifacts};
 
 use akita_field::{AkitaError, CanonicalField};
 use akita_types::{
@@ -462,27 +465,14 @@ impl<F: CanonicalField> Materializer<'_, F> {
     }
 }
 
-fn global_setup_objectives(
+pub(crate) fn global_setup_objectives(
     base_setup_coeffs: usize,
     gen_ring_dim: usize,
     compression_prefix_coeffs: usize,
     compression_ntt_requirements: &[(usize, usize)],
 ) -> Result<(usize, usize), AkitaError> {
-    if gen_ring_dim == 0 {
-        return Err(AkitaError::InvalidSetup(
-            "global setup generation dimension must be non-zero".into(),
-        ));
-    }
-    let compression_prefix_rings = compression_prefix_coeffs
-        .checked_div(gen_ring_dim)
-        .and_then(|rings| {
-            rings.checked_add(usize::from(
-                !compression_prefix_coeffs.is_multiple_of(gen_ring_dim),
-            ))
-        })
-        .ok_or_else(|| {
-            AkitaError::InvalidSetup("compression setup prefix ring count overflow".into())
-        })?;
+    let compression_prefix_rings =
+        akita_types::compression_prefix_rings(compression_prefix_coeffs, gen_ring_dim)?;
     let rounded_compression_prefix_coeffs = compression_prefix_rings
         .checked_mul(gen_ring_dim)
         .ok_or_else(|| {

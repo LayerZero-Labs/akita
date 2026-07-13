@@ -63,9 +63,9 @@ pub use relation_matrix_cols::compute_relation_matrix_col_evals;
 pub use ring_relation::RingRelationInstance;
 pub use scheme::{CommitmentVerifier, OpeningPoints};
 pub use setup::{
-    derive_public_matrix_flat, sample_public_matrix_seed, validate_public_matrix_matches_seed,
-    AkitaExpandedSetup, AkitaSetupSeed, AkitaVerifierSetup, PublicMatrixSeed, SetupMatrixEnvelope,
-    MAX_SETUP_MATRIX_FIELD_ELEMENTS,
+    compression_prefix_rings, derive_public_matrix_flat, sample_public_matrix_seed,
+    validate_public_matrix_matches_seed, AkitaExpandedSetup, AkitaSetupSeed, AkitaVerifierSetup,
+    PublicMatrixSeed, SetupMatrixEnvelope, MAX_SETUP_MATRIX_FIELD_ELEMENTS,
 };
 pub use setup_prefix::{
     active_setup_field_len, padded_setup_prefix_len, select_setup_prefix_slot,

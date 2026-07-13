@@ -46,7 +46,7 @@ pub use group_batch::find_group_batch_schedule;
 pub use resolve::{
     estimate_proof_bytes, resolve_group_batch_schedule, resolve_schedule, schedule_from_entry,
 };
-pub use schedule_params::{find_schedule, find_schedule_fold_first};
+pub use schedule_params::find_schedule;
 
 /// Plain-value brute-force inputs the planner DP needs.
 ///

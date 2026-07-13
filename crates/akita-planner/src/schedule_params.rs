@@ -27,7 +27,7 @@ use akita_types::{
 };
 
 use crate::compression::{
-    fold_first_wire_payload, select_co_generated_bundle, select_terminal_bundle,
+    fold_first_wire_payload, iter_co_generated_bundles, iter_terminal_bundles,
     CompressionPlannerPolicy, FoldFirstSearchStats, LevelCompressionBundle,
 };
 use crate::PlannerPolicy;
@@ -342,6 +342,33 @@ fn make_terminal_direct_step(
     })
 }
 
+/// Price a compressed fold-then-direct terminal from the checked catalog.
+///
+/// Slice 8 owns the segment-typed wire shape that names the compression span.
+/// Until then, planner scoring uses the catalog physical witness length as
+/// `FieldElements` so `direct_bytes` includes compression digits rather than
+/// the native WithoutDBlock segment layout.
+fn make_compressed_terminal_direct_step(
+    terminal_bundle: &LevelCompressionBundle,
+    field_bits: u32,
+) -> Result<DirectStep, AkitaError> {
+    let shape = terminal_bundle.catalog().terminal_relation_shape()?;
+    let witness_field_coeffs = shape.witness_field_coeffs();
+    if witness_field_coeffs != terminal_bundle.successor_witness_field_coeffs() {
+        return Err(AkitaError::InvalidSetup(
+            "compressed terminal direct witness length disagrees with successor length".into(),
+        ));
+    }
+    let witness_shape = CleartextWitnessShape::FieldElements(witness_field_coeffs);
+    let direct_bytes = direct_witness_bytes(field_bits, &witness_shape);
+    Ok(DirectStep {
+        current_w_len: witness_field_coeffs,
+        witness_shape,
+        direct_bytes,
+        params: None,
+    })
+}
+
 /// Like [`terminal_direct_suffix_cost`], but returns `None` when the fold at
 /// `terminal_fold_level` is multi-chunk. The suffix DP uses this to skip the
 /// fold-then-direct branch without aborting fold-then-fold exploration.
@@ -362,6 +389,19 @@ fn try_terminal_direct_suffix_cost(
         key,
         terminal_fold_level,
     )?;
+    Ok(Some((direct, direct_bytes)))
+}
+
+fn try_compressed_terminal_direct_suffix_cost(
+    terminal_bundle: &LevelCompressionBundle,
+    terminal_lp: &LevelParams,
+    field_bits: u32,
+) -> Result<Option<(DirectStep, usize)>, AkitaError> {
+    if terminal_lp.witness_chunk.num_chunks > 1 {
+        return Ok(None);
+    }
+    let direct = make_compressed_terminal_direct_step(terminal_bundle, field_bits)?;
+    let direct_bytes = direct.direct_bytes;
     Ok(Some((direct, direct_bytes)))
 }
 
@@ -471,7 +511,7 @@ pub(crate) fn derive_optimal_suffix_schedule<F: CanonicalField>(
         if lb < current_lb {
             continue;
         }
-        let Some((mut candidate_params, mut next_witness_len, mut next_witness_len_terminal)) =
+        let Some((candidate_params, native_next_witness_len, native_next_witness_len_terminal)) =
             derive_candidate_level_params(
                 policy,
                 ring_challenge_config,
@@ -483,51 +523,42 @@ pub(crate) fn derive_optimal_suffix_schedule<F: CanonicalField>(
             continue;
         };
 
-        let mut level_bundle = None::<LevelCompressionBundle>;
+        let mut candidate_bundles = Vec::new();
         if let Some(compression_policy) = compression {
             let opening_arity = candidate_params
                 .m_vars
                 .checked_add(candidate_params.r_vars)
                 .ok_or_else(|| AkitaError::InvalidSetup("opening arity overflow".into()))?;
-            let Ok(opening) = OpeningClaimsLayout::new(opening_arity, 1) else {
-                continue;
-            };
+            let opening = OpeningClaimsLayout::new(opening_arity, 1)?;
             let mut stats = FoldFirstSearchStats::default();
-            let Ok(co_generated) = select_co_generated_bundle::<F>(
+            // Schedule DP is intentionally ladder-only. Fold-first exhaustive
+            // search does not yet cover terminal completion honestly.
+            for bundle in iter_co_generated_bundles::<F>(
                 policy,
                 compression_policy,
                 &candidate_params,
                 &opening,
                 &mut stats,
-            ) else {
-                continue;
-            };
-            let Ok(terminal) = select_terminal_bundle::<F>(
-                policy,
-                compression_policy,
-                &candidate_params,
-                &opening,
-                &mut stats,
-            ) else {
-                continue;
-            };
-            next_witness_len = co_generated.successor_witness_field_coeffs();
-            next_witness_len_terminal = terminal.successor_witness_field_coeffs();
-            if next_witness_len >= current_witness_len {
-                continue;
+            )? {
+                let Some(bundle) = bundle? else {
+                    continue;
+                };
+                let next_witness_len = bundle.successor_witness_field_coeffs();
+                if next_witness_len < current_witness_len {
+                    // Terminal length is unused for co-generated fold-then-fold
+                    // candidates; compressed fold-then-direct uses terminal
+                    // bundles below.
+                    candidate_bundles.push((next_witness_len, next_witness_len, Some(bundle)));
+                }
             }
-            level_bundle = Some(co_generated);
+        } else {
+            candidate_bundles.push((
+                native_next_witness_len,
+                native_next_witness_len_terminal,
+                None,
+            ));
         }
 
-        let suffix = derive_optimal_suffix_schedule::<F>(
-            ctx,
-            memo,
-            level + 1,
-            next_witness_len,
-            next_witness_len_terminal,
-            lb,
-            depth + 1,
-        )?;
         let Ok(eor_bytes) = extension_opening_reduction_level_bytes(
             policy.decomposition.field_bits() * policy.chal_ext_degree as u32,
             policy.claim_ext_degree,
@@ -538,29 +569,178 @@ pub(crate) fn derive_optimal_suffix_schedule<F: CanonicalField>(
             continue;
         };
 
-        let mut best_for_this_lb: Option<(usize, Vec<Step>)> = None;
-        let try_update = |total: usize, steps: Vec<Step>, slot: &mut Option<(usize, Vec<Step>)>| {
-            if slot.as_ref().map(|(c, _)| total < *c).unwrap_or(true) {
-                *slot = Some((total, steps));
+        let mut best_for_this_lb: Option<(usize, Vec<Step>, Option<LevelCompressionBundle>)> = None;
+        for (next_witness_len, next_witness_len_terminal, level_bundle) in candidate_bundles {
+            let suffix = derive_optimal_suffix_schedule::<F>(
+                ctx,
+                memo,
+                level + 1,
+                next_witness_len,
+                next_witness_len_terminal,
+                lb,
+                depth + 1,
+            )?;
+            if suffix.is_empty() {
+                continue;
             }
-        };
 
-        // Branch A: suffix is a Direct at level+1.
-        if let Some(direct_suffix) = suffix.best_direct {
+            let try_update = |total: usize,
+                              steps: Vec<Step>,
+                              slot: &mut Option<(
+                usize,
+                Vec<Step>,
+                Option<LevelCompressionBundle>,
+            )>| {
+                if slot
+                    .as_ref()
+                    .map(|(cost, _, _)| total < *cost)
+                    .unwrap_or(true)
+                {
+                    *slot = Some((total, steps, level_bundle.clone()));
+                }
+            };
+
+            // Native fold-then-direct only. Compressed terminals are stitched
+            // from terminal F-only bundles below so WithoutDBlock never prices
+            // a co-generated H relation that is not present.
+            if compression.is_none() {
+                if let Some(direct_suffix) = suffix.best_direct {
+                    let field_bits = policy.decomposition.field_bits();
+                    if let Some((direct_step, suffix_cost)) = try_terminal_direct_suffix_cost(
+                        direct_suffix.current_w_len,
+                        &candidate_params,
+                        field_bits,
+                        key,
+                        level,
+                    )? {
+                        let level_proof_size = level_proof_bytes(
+                            field_bits,
+                            field_bits * policy.chal_ext_degree as u32,
+                            &candidate_params,
+                            None,
+                            next_witness_len_terminal,
+                            1,
+                            RelationMatrixRowLayout::WithoutDBlock,
+                        )?
+                        .checked_add(eor_bytes)
+                        .ok_or_else(|| {
+                            AkitaError::InvalidSetup("level proof byte count overflow".into())
+                        })?;
+                        let total = level_proof_size + suffix_cost;
+                        let steps = vec![
+                            Step::Fold(FoldStep {
+                                params: candidate_params.clone(),
+                                current_w_len: current_witness_len,
+                                next_w_len: next_witness_len_terminal,
+                                level_bytes: level_proof_size,
+                            }),
+                            Step::Direct(direct_step),
+                        ];
+                        try_update(total, steps, &mut best_for_this_lb);
+                    }
+                }
+            }
+
+            for suffix_fold in suffix.best_fold_per_lb.values() {
+                let wire = if compression.is_some() {
+                    let current = level_bundle.as_ref().ok_or_else(|| {
+                        AkitaError::InvalidSetup(
+                            "compressed fold candidate is missing its current bundle".into(),
+                        )
+                    })?;
+                    let successor = suffix_fold.first_fold_bundle.as_ref().ok_or_else(|| {
+                        AkitaError::InvalidSetup(
+                            "compressed fold suffix is missing its first bundle".into(),
+                        )
+                    })?;
+                    FoldWirePayload::Compressed(fold_first_wire_payload(
+                        current,
+                        successor,
+                        policy.decomposition.field_bits(),
+                    )?)
+                } else {
+                    FoldWirePayload::Native {
+                        next_level: &suffix_fold.first_fold_params,
+                        next_base_field_bits: policy.decomposition.field_bits(),
+                    }
+                };
+                let level_proof_size = level_proof_bytes(
+                    policy.decomposition.field_bits(),
+                    policy.decomposition.field_bits() * policy.chal_ext_degree as u32,
+                    &candidate_params,
+                    Some(wire),
+                    next_witness_len,
+                    1,
+                    RelationMatrixRowLayout::WithDBlock,
+                )?
+                .checked_add(eor_bytes)
+                .ok_or_else(|| {
+                    AkitaError::InvalidSetup("level proof byte count overflow".into())
+                })?;
+                let total = level_proof_size + suffix_fold.total_bytes;
+                let mut steps = Vec::with_capacity(1 + suffix_fold.steps.len());
+                steps.push(Step::Fold(FoldStep {
+                    params: candidate_params.clone(),
+                    current_w_len: current_witness_len,
+                    next_w_len: next_witness_len,
+                    level_bytes: level_proof_size,
+                }));
+                steps.extend(suffix_fold.steps.iter().cloned());
+                try_update(total, steps, &mut best_for_this_lb);
+            }
+        }
+
+        if let Some(compression_policy) = compression {
+            let opening_arity = candidate_params
+                .m_vars
+                .checked_add(candidate_params.r_vars)
+                .ok_or_else(|| AkitaError::InvalidSetup("opening arity overflow".into()))?;
+            let opening = OpeningClaimsLayout::new(opening_arity, 1)?;
+            let mut stats = FoldFirstSearchStats::default();
             let field_bits = policy.decomposition.field_bits();
-            if let Some((direct_step, suffix_cost)) = try_terminal_direct_suffix_cost(
-                direct_suffix.current_w_len,
+            for bundle in iter_terminal_bundles::<F>(
+                policy,
+                compression_policy,
                 &candidate_params,
-                field_bits,
-                key,
-                level,
+                &opening,
+                &mut stats,
             )? {
+                let Some(terminal_bundle) = bundle? else {
+                    continue;
+                };
+                let next_w_len = terminal_bundle.successor_witness_field_coeffs();
+                if next_w_len >= current_witness_len {
+                    continue;
+                }
+                let suffix = derive_optimal_suffix_schedule::<F>(
+                    ctx,
+                    memo,
+                    level + 1,
+                    next_w_len,
+                    next_w_len,
+                    lb,
+                    depth + 1,
+                )?;
+                let Some(direct_suffix) = suffix.best_direct else {
+                    continue;
+                };
+                if direct_suffix.current_w_len != next_w_len {
+                    continue;
+                }
+                let Some((direct_step, suffix_cost)) = try_compressed_terminal_direct_suffix_cost(
+                    &terminal_bundle,
+                    &candidate_params,
+                    field_bits,
+                )?
+                else {
+                    continue;
+                };
                 let level_proof_size = level_proof_bytes(
                     field_bits,
                     field_bits * policy.chal_ext_degree as u32,
                     &candidate_params,
                     None,
-                    next_witness_len_terminal,
+                    next_w_len,
                     1,
                     RelationMatrixRowLayout::WithoutDBlock,
                 )?
@@ -569,69 +749,35 @@ pub(crate) fn derive_optimal_suffix_schedule<F: CanonicalField>(
                     AkitaError::InvalidSetup("level proof byte count overflow".into())
                 })?;
                 let total = level_proof_size + suffix_cost;
-                let steps = vec![
-                    Step::Fold(FoldStep {
-                        params: candidate_params.clone(),
-                        current_w_len: current_witness_len,
-                        next_w_len: next_witness_len_terminal,
-                        level_bytes: level_proof_size,
-                    }),
-                    Step::Direct(direct_step),
-                ];
-                try_update(total, steps, &mut best_for_this_lb);
+                if best_for_this_lb
+                    .as_ref()
+                    .map(|(cost, _, _)| total < *cost)
+                    .unwrap_or(true)
+                {
+                    best_for_this_lb = Some((
+                        total,
+                        vec![
+                            Step::Fold(FoldStep {
+                                params: candidate_params.clone(),
+                                current_w_len: current_witness_len,
+                                next_w_len,
+                                level_bytes: level_proof_size,
+                            }),
+                            Step::Direct(direct_step),
+                        ],
+                        Some(terminal_bundle),
+                    ));
+                }
             }
         }
-        // Branch B: suffix is a Fold at level+1.
-        for suffix_fold in suffix.best_fold_per_lb.values() {
-            let wire = match (
-                level_bundle.as_ref(),
-                suffix_fold.first_fold_bundle.as_ref(),
-            ) {
-                (Some(current), Some(successor)) => {
-                    let Ok(compressed) = fold_first_wire_payload(
-                        current,
-                        successor,
-                        policy.decomposition.field_bits(),
-                    ) else {
-                        continue;
-                    };
-                    FoldWirePayload::Compressed(compressed)
-                }
-                _ => FoldWirePayload::Native {
-                    next_level: &suffix_fold.first_fold_params,
-                    next_base_field_bits: policy.decomposition.field_bits(),
-                },
-            };
-            let level_proof_size = level_proof_bytes(
-                policy.decomposition.field_bits(),
-                policy.decomposition.field_bits() * policy.chal_ext_degree as u32,
-                &candidate_params,
-                Some(wire),
-                next_witness_len,
-                1,
-                RelationMatrixRowLayout::WithDBlock,
-            )?
-            .checked_add(eor_bytes)
-            .ok_or_else(|| AkitaError::InvalidSetup("level proof byte count overflow".into()))?;
-            let total = level_proof_size + suffix_fold.total_bytes;
-            let mut steps = Vec::with_capacity(1 + suffix_fold.steps.len());
-            steps.push(Step::Fold(FoldStep {
-                params: candidate_params.clone(),
-                current_w_len: current_witness_len,
-                next_w_len: next_witness_len,
-                level_bytes: level_proof_size,
-            }));
-            steps.extend(suffix_fold.steps.iter().cloned());
-            try_update(total, steps, &mut best_for_this_lb);
-        }
 
-        if let Some((total_bytes, steps)) = best_for_this_lb {
+        if let Some((total_bytes, steps, first_fold_bundle)) = best_for_this_lb {
             best_fold_per_lb.insert(
                 lb,
                 FoldSuffix {
                     total_bytes,
                     first_fold_params: candidate_params,
-                    first_fold_bundle: level_bundle,
+                    first_fold_bundle,
                     steps,
                 },
             );
@@ -859,11 +1005,11 @@ pub fn find_schedule<F: CanonicalField>(
     )
 }
 
-/// Like [`find_schedule`], but solves compression inside the fold-first
-/// recurrence: co-generated F/H bundles derive successor witness lengths and
-/// parent wire pricing uses [`FoldWirePayload::Compressed`]. Generated schedule
-/// tables keep calling [`find_schedule`] until the Slice 8 cutover.
-pub fn find_schedule_fold_first<F: CanonicalField>(
+/// Internal fold-first compression search.
+///
+/// This cannot be public until `Schedule` carries compression plans in Slice 8.
+#[allow(dead_code)] // Dormant planner entry point until the Slice 8 schedule cutover.
+pub(crate) fn find_schedule_fold_first<F: CanonicalField>(
     key: PolynomialGroupLayout,
     policy: &PlannerPolicy,
     compression: &CompressionPlannerPolicy,
@@ -905,9 +1051,7 @@ fn find_schedule_inner_with_compression<F: CanonicalField>(
         .ok_or_else(|| AkitaError::InvalidSetup("witness too large".into()))?;
 
     let field_bits = policy.decomposition.field_bits();
-
     let root_witness_shape = CleartextWitnessShape::FieldElements(witness_len);
-    let mut best_cost = direct_witness_bytes(field_bits, &root_witness_shape);
     let fold_challenge_shape = fold_shape(AkitaScheduleInputs {
         num_vars: key.num_vars(),
         level: 0,
@@ -926,24 +1070,46 @@ fn find_schedule_inner_with_compression<F: CanonicalField>(
         fold_challenge_shape,
         key.num_polynomials(),
     )?;
-    let mut best_steps: Vec<Step> = vec![Step::Direct(DirectStep {
-        current_w_len: witness_len,
-        witness_shape: root_witness_shape,
-        direct_bytes: best_cost,
-        params: root_direct_commit_params,
-    })];
-    let mut memo = ScheduleMemo::new();
 
-    let ring_challenge_cfg = ring_challenge_config(policy.ring_dimension)?;
     let alpha = (policy.ring_dimension as u32).trailing_zeros() as usize;
     let reduced_vars = key.num_vars().saturating_sub(alpha);
-
     if reduced_vars == 0 {
+        if compression.is_some() {
+            return Err(AkitaError::InvalidSetup(
+                "compressed fold-first requires a foldable root; tiny roots stay native-only"
+                    .into(),
+            ));
+        }
+        let cost = direct_witness_bytes(field_bits, &root_witness_shape);
         return Ok(Schedule {
-            steps: best_steps,
-            total_bytes: best_cost,
+            steps: vec![Step::Direct(DirectStep {
+                current_w_len: witness_len,
+                witness_shape: root_witness_shape,
+                direct_bytes: cost,
+                params: root_direct_commit_params,
+            })],
+            total_bytes: cost,
         });
     }
+
+    // Under compression, do not seed the search with a native root-direct
+    // schedule. Completeness comes from compressed fold / terminal paths.
+    let (mut best_cost, mut best_steps) = if compression.is_some() {
+        (usize::MAX, Vec::new())
+    } else {
+        let cost = direct_witness_bytes(field_bits, &root_witness_shape);
+        (
+            cost,
+            vec![Step::Direct(DirectStep {
+                current_w_len: witness_len,
+                witness_shape: root_witness_shape,
+                direct_bytes: cost,
+                params: root_direct_commit_params,
+            })],
+        )
+    };
+    let mut memo = ScheduleMemo::new();
+    let ring_challenge_cfg = ring_challenge_config(policy.ring_dimension)?;
 
     let min_r_vars: usize = if reduced_vars >= 3 { 1 } else { 0 };
     let max_r_vars: usize = (reduced_vars - 1).min(usize::BITS as usize - 1);
@@ -1084,35 +1250,41 @@ fn find_schedule_inner_with_compression<F: CanonicalField>(
                     AkitaError::InvalidSetup("root next witness length overflow".into())
                 })
             };
-            let next_w_len = next_withness_len_impl(RelationMatrixRowLayout::WithDBlock)?;
-            let next_w_len_terminal =
+            let native_next_w_len = next_withness_len_impl(RelationMatrixRowLayout::WithDBlock)?;
+            let native_next_w_len_terminal =
                 next_withness_len_impl(RelationMatrixRowLayout::WithoutDBlock)?;
             let initial_witness_len_bits = witness_len
                 .checked_mul(field_bits as usize)
                 .ok_or_else(|| {
                     AkitaError::InvalidSetup("root witness bit length overflow".into())
                 })?;
-            if next_w_len
-                .checked_mul(candidate_log_basis as usize)
-                .ok_or_else(|| {
-                    AkitaError::InvalidSetup("root next witness bit length overflow".into())
-                })?
-                >= initial_witness_len_bits
-            {
-                continue;
-            }
-
-            let suffix = derive_optimal_suffix_schedule::<F>(
-                &suffix_ctx,
-                &mut memo,
-                1,
-                next_w_len,
-                next_w_len_terminal,
-                candidate_log_basis,
-                0,
-            )?;
-            if suffix.is_empty() {
-                continue;
+            let mut root_bundles = Vec::new();
+            if let Some(compression_policy) = compression {
+                let opening_arity = candidate_params
+                    .m_vars
+                    .checked_add(candidate_params.r_vars)
+                    .ok_or_else(|| {
+                        AkitaError::InvalidSetup("root opening arity overflow".into())
+                    })?;
+                let opening = OpeningClaimsLayout::new(opening_arity, key.num_polynomials())?;
+                let mut stats = FoldFirstSearchStats::default();
+                // Schedule search remains ladder-only until fold-first
+                // exhaustive search can also complete terminal suffixes.
+                for bundle in iter_co_generated_bundles::<F>(
+                    policy,
+                    compression_policy,
+                    &candidate_params,
+                    &opening,
+                    &mut stats,
+                )? {
+                    let Some(bundle) = bundle? else {
+                        continue;
+                    };
+                    let next_w_len = bundle.successor_witness_field_coeffs();
+                    root_bundles.push((next_w_len, next_w_len, Some(bundle)));
+                }
+            } else {
+                root_bundles.push((native_next_w_len, native_next_w_len_terminal, None));
             }
             let Ok(eor_bytes) = extension_opening_reduction_level_bytes(
                 policy.decomposition.field_bits() * policy.chal_ext_degree as u32,
@@ -1124,21 +1296,181 @@ fn find_schedule_inner_with_compression<F: CanonicalField>(
                 continue;
             };
 
-            // Branch A: suffix at level 1 is a Direct
-            if let Some(direct_suffix) = suffix.best_direct {
-                if let Some((direct_step, suffix_cost)) = try_terminal_direct_suffix_cost(
-                    direct_suffix.current_w_len,
-                    &candidate_params,
-                    field_bits,
-                    key,
+            for (next_w_len, next_w_len_terminal, root_bundle) in root_bundles {
+                if next_w_len
+                    .checked_mul(candidate_log_basis as usize)
+                    .ok_or_else(|| {
+                        AkitaError::InvalidSetup("root next witness bit length overflow".into())
+                    })?
+                    >= initial_witness_len_bits
+                {
+                    continue;
+                }
+
+                let suffix = derive_optimal_suffix_schedule::<F>(
+                    &suffix_ctx,
+                    &mut memo,
+                    1,
+                    next_w_len,
+                    next_w_len_terminal,
+                    candidate_log_basis,
                     0,
+                )?;
+                if suffix.is_empty() {
+                    continue;
+                }
+
+                // Native root fold-then-direct only. Compressed roots use
+                // terminal F-only bundles below.
+                if compression.is_none() {
+                    if let Some(direct_suffix) = suffix.best_direct {
+                        if let Some((direct_step, suffix_cost)) = try_terminal_direct_suffix_cost(
+                            direct_suffix.current_w_len,
+                            &candidate_params,
+                            field_bits,
+                            key,
+                            0,
+                        )? {
+                            let root_proof_size = level_proof_bytes(
+                                field_bits,
+                                field_bits * policy.chal_ext_degree as u32,
+                                &candidate_params,
+                                None,
+                                next_w_len_terminal,
+                                1,
+                                RelationMatrixRowLayout::WithoutDBlock,
+                            )?
+                            .checked_add(eor_bytes)
+                            .ok_or_else(|| {
+                                AkitaError::InvalidSetup("root proof byte count overflow".into())
+                            })?;
+                            let total = root_proof_size + suffix_cost;
+                            if total < best_cost {
+                                best_cost = total;
+                                best_steps = vec![
+                                    Step::Fold(FoldStep {
+                                        params: candidate_params.clone(),
+                                        current_w_len: witness_len,
+                                        next_w_len: next_w_len_terminal,
+                                        level_bytes: root_proof_size,
+                                    }),
+                                    Step::Direct(direct_step),
+                                ];
+                            }
+                        }
+                    }
+                }
+
+                for suffix_fold in suffix.best_fold_per_lb.values() {
+                    let wire = if compression.is_some() {
+                        let current = root_bundle.as_ref().ok_or_else(|| {
+                            AkitaError::InvalidSetup(
+                                "compressed root candidate is missing its bundle".into(),
+                            )
+                        })?;
+                        let successor =
+                            suffix_fold.first_fold_bundle.as_ref().ok_or_else(|| {
+                                AkitaError::InvalidSetup(
+                                    "compressed root suffix is missing its first bundle".into(),
+                                )
+                            })?;
+                        FoldWirePayload::Compressed(fold_first_wire_payload(
+                            current, successor, field_bits,
+                        )?)
+                    } else {
+                        FoldWirePayload::Native {
+                            next_level: &suffix_fold.first_fold_params,
+                            next_base_field_bits: field_bits,
+                        }
+                    };
+                    let root_proof_size = level_proof_bytes(
+                        field_bits,
+                        field_bits * policy.chal_ext_degree as u32,
+                        &candidate_params,
+                        Some(wire),
+                        next_w_len,
+                        1,
+                        RelationMatrixRowLayout::WithDBlock,
+                    )?
+                    .checked_add(eor_bytes)
+                    .ok_or_else(|| {
+                        AkitaError::InvalidSetup("root proof byte count overflow".into())
+                    })?;
+                    let total = root_proof_size + suffix_fold.total_bytes;
+                    if total < best_cost {
+                        best_cost = total;
+                        let mut steps = Vec::with_capacity(1 + suffix_fold.steps.len());
+                        steps.push(Step::Fold(FoldStep {
+                            params: candidate_params.clone(),
+                            current_w_len: witness_len,
+                            next_w_len,
+                            level_bytes: root_proof_size,
+                        }));
+                        steps.extend(suffix_fold.steps.iter().cloned());
+                        best_steps = steps;
+                    }
+                }
+            }
+
+            if let Some(compression_policy) = compression {
+                let opening_arity = candidate_params
+                    .m_vars
+                    .checked_add(candidate_params.r_vars)
+                    .ok_or_else(|| {
+                        AkitaError::InvalidSetup("root opening arity overflow".into())
+                    })?;
+                let opening = OpeningClaimsLayout::new(opening_arity, key.num_polynomials())?;
+                let mut stats = FoldFirstSearchStats::default();
+                for bundle in iter_terminal_bundles::<F>(
+                    policy,
+                    compression_policy,
+                    &candidate_params,
+                    &opening,
+                    &mut stats,
                 )? {
+                    let Some(terminal_bundle) = bundle? else {
+                        continue;
+                    };
+                    let next_w_len = terminal_bundle.successor_witness_field_coeffs();
+                    if next_w_len
+                        .checked_mul(candidate_log_basis as usize)
+                        .ok_or_else(|| {
+                            AkitaError::InvalidSetup("root next witness bit length overflow".into())
+                        })?
+                        >= initial_witness_len_bits
+                    {
+                        continue;
+                    }
+                    let suffix = derive_optimal_suffix_schedule::<F>(
+                        &suffix_ctx,
+                        &mut memo,
+                        1,
+                        next_w_len,
+                        next_w_len,
+                        candidate_log_basis,
+                        0,
+                    )?;
+                    let Some(direct_suffix) = suffix.best_direct else {
+                        continue;
+                    };
+                    if direct_suffix.current_w_len != next_w_len {
+                        continue;
+                    }
+                    let Some((direct_step, suffix_cost)) =
+                        try_compressed_terminal_direct_suffix_cost(
+                            &terminal_bundle,
+                            &candidate_params,
+                            field_bits,
+                        )?
+                    else {
+                        continue;
+                    };
                     let root_proof_size = level_proof_bytes(
                         field_bits,
                         field_bits * policy.chal_ext_degree as u32,
                         &candidate_params,
                         None,
-                        next_w_len_terminal,
+                        next_w_len,
                         1,
                         RelationMatrixRowLayout::WithoutDBlock,
                     )?
@@ -1153,7 +1485,7 @@ fn find_schedule_inner_with_compression<F: CanonicalField>(
                             Step::Fold(FoldStep {
                                 params: candidate_params.clone(),
                                 current_w_len: witness_len,
-                                next_w_len: next_w_len_terminal,
+                                next_w_len,
                                 level_bytes: root_proof_size,
                             }),
                             Step::Direct(direct_step),
@@ -1161,41 +1493,133 @@ fn find_schedule_inner_with_compression<F: CanonicalField>(
                     }
                 }
             }
-            // Branch B: suffix at level 1 is a Fold
-            for suffix_fold in suffix.best_fold_per_lb.values() {
-                let root_proof_size = level_proof_bytes(
-                    field_bits,
-                    field_bits * policy.chal_ext_degree as u32,
-                    &candidate_params,
-                    Some(FoldWirePayload::Native {
-                        next_level: &suffix_fold.first_fold_params,
-                        next_base_field_bits: field_bits,
-                    }),
-                    next_w_len,
-                    1,
-                    RelationMatrixRowLayout::WithDBlock,
-                )?
-                .checked_add(eor_bytes)
-                .ok_or_else(|| AkitaError::InvalidSetup("root proof byte count overflow".into()))?;
-                let total = root_proof_size + suffix_fold.total_bytes;
-                if total < best_cost {
-                    best_cost = total;
-                    let mut steps = Vec::with_capacity(1 + suffix_fold.steps.len());
-                    steps.push(Step::Fold(FoldStep {
-                        params: candidate_params.clone(),
-                        current_w_len: witness_len,
-                        next_w_len,
-                        level_bytes: root_proof_size,
-                    }));
-                    steps.extend(suffix_fold.steps.iter().cloned());
-                    best_steps = steps;
-                }
-            }
         }
+    }
+
+    if compression.is_some() && best_steps.is_empty() {
+        return Err(AkitaError::InvalidSetup(
+            "no feasible compressed fold-first schedule".into(),
+        ));
     }
 
     Ok(Schedule {
         steps: best_steps,
         total_bytes: best_cost,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use akita_challenges::SparseChallengeConfig;
+    use akita_field::Prime128OffsetA7F7;
+    use akita_types::{SisModulusFamily, DEFAULT_SIS_SECURITY_BITS};
+
+    use super::*;
+    use crate::compression::{BINARY_256_128, OPENING_BASE_512_256_128};
+
+    fn policy() -> PlannerPolicy {
+        PlannerPolicy {
+            ring_dimension: 64,
+            decomposition: DecompositionParams {
+                log_basis: 4,
+                log_commit_bound: 1,
+                log_open_bound: Some(128),
+            },
+            sis_family: SisModulusFamily::Q128,
+            min_sis_security_bits: DEFAULT_SIS_SECURITY_BITS,
+            ring_subfield_norm_bound: 1,
+            claim_ext_degree: 4,
+            chal_ext_degree: 4,
+            basis_range: (4, 4),
+            onehot_chunk_size: 1,
+            witness_chunk: ChunkedWitnessCfg::default(),
+        }
+    }
+
+    fn ring_challenge_config(_: usize) -> Result<SparseChallengeConfig, AkitaError> {
+        Ok(SparseChallengeConfig::pm1_only(1))
+    }
+
+    fn fold_shape(_: AkitaScheduleInputs) -> TensorChallengeShape {
+        TensorChallengeShape::Flat
+    }
+
+    #[test]
+    fn compressed_schedule_search_considers_ladders_after_the_first() {
+        const FIRST: &[crate::CompressionByteLadder] = &[BINARY_256_128];
+        const SECOND: &[crate::CompressionByteLadder] = &[OPENING_BASE_512_256_128];
+        const BOTH: &[crate::CompressionByteLadder] = &[BINARY_256_128, OPENING_BASE_512_256_128];
+        let policy = policy();
+        let mut witnessed_later_ladder_win = false;
+
+        for num_vars in 12..=28 {
+            let key = PolynomialGroupLayout::new(num_vars, 1);
+            let first = find_schedule_fold_first::<Prime128OffsetA7F7>(
+                key,
+                &policy,
+                &CompressionPlannerPolicy::with_ladders(128, FIRST, false),
+                ring_challenge_config,
+                fold_shape,
+            )
+            .expect("first ladder schedule");
+            let second = find_schedule_fold_first::<Prime128OffsetA7F7>(
+                key,
+                &policy,
+                &CompressionPlannerPolicy::with_ladders(128, SECOND, false),
+                ring_challenge_config,
+                fold_shape,
+            )
+            .expect("second ladder schedule");
+            if second.total_bytes >= first.total_bytes {
+                continue;
+            }
+            let both = find_schedule_fold_first::<Prime128OffsetA7F7>(
+                key,
+                &policy,
+                &CompressionPlannerPolicy::with_ladders(128, BOTH, false),
+                ring_challenge_config,
+                fold_shape,
+            )
+            .expect("combined ladder schedule");
+            assert_eq!(both.total_bytes, second.total_bytes);
+            witnessed_later_ladder_win = true;
+            break;
+        }
+
+        assert!(
+            witnessed_later_ladder_win,
+            "fixture range must contain a schedule where a later ladder wins"
+        );
+    }
+
+    #[test]
+    fn compressed_schedule_search_never_falls_back_to_root_direct() {
+        let policy = policy();
+        let key = PolynomialGroupLayout::new(16, 1);
+        let schedule = find_schedule_fold_first::<Prime128OffsetA7F7>(
+            key,
+            &policy,
+            &CompressionPlannerPolicy::with_ladders(128, &[BINARY_256_128], false),
+            ring_challenge_config,
+            fold_shape,
+        )
+        .expect("compressed schedule");
+        assert!(
+            !schedule.steps.is_empty(),
+            "compressed search should find a schedule"
+        );
+        assert!(
+            matches!(schedule.steps.first(), Some(Step::Fold(_))),
+            "compressed schedule must start with a fold, not native root-direct"
+        );
+        if let Some(Step::Direct(direct)) = schedule.steps.last() {
+            assert!(
+                matches!(
+                    direct.witness_shape,
+                    CleartextWitnessShape::FieldElements(_)
+                ),
+                "compressed terminal Direct must price catalog physical coeffs until Slice 8"
+            );
+        }
+    }
 }

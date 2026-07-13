@@ -17,11 +17,13 @@ pub mod relation;
 pub mod ring_dims;
 
 pub use compression::{
-    compression_digit_depth, validate_compression_catalog, CompressionAlphabet,
+    aggregate_catalog_projections, compression_capacity_infeasible, compression_digit_depth,
+    validate_compression_catalog, AggregatedCompressionSetup, CompressionAlphabet,
     CompressionCatalogContext, CompressionCatalogProjection, CompressionChainChoice,
-    CompressionChainSpec, CompressionMapChoice, CompressionMapSpec, CompressionSourceId,
-    CompressionTerminalRelationShape, FrozenCompressionChainChoice, LevelCompressionPlan,
-    ValidatedCompressionCatalog, STANDALONE_OPENING_BASE_LOG_BASIS,
+    CompressionChainSpec, CompressionMapChoice, CompressionMapHintShape, CompressionMapSpec,
+    CompressionSourceId, CompressionTerminalRelationShape, FrozenCompressionChainChoice,
+    LevelCompressionPlan, ValidatedCompressionCatalog, COMPRESSION_CAPACITY_INFEASIBLE_PREFIX,
+    STANDALONE_OPENING_BASE_LOG_BASIS,
 };
 pub use digit_math::{gadget_row_scalars, isqrt_ceil};
 pub use flat_matrix::{FlatMatrix, RingMatrixView};

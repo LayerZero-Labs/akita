@@ -1,3 +1,4 @@
+mod aggregation;
 mod catalog;
 mod choice;
 mod projection_consistency;

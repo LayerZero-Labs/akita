@@ -84,11 +84,9 @@ impl LevelCompressionBundle {
 pub fn successor_witness_field_coeffs(
     catalog: &ValidatedCompressionCatalog,
 ) -> Result<usize, AkitaError> {
-    let layout = match catalog.co_generated_relation_layout() {
-        Ok(layout) => layout,
-        Err(_) => catalog.terminal_relation_layout()?,
-    };
-    layout.physical_witness_field_coeff_len()
+    catalog
+        .fold_relation_layout()?
+        .physical_witness_field_coeff_len()
 }
 
 /// Parent fold wire projection: current H payload + child F payload.
@@ -232,15 +230,15 @@ fn finish_bundle<F: CanonicalField>(
     selected_ladder: Option<CompressionByteLadder>,
     maps: &[CompressionMapDescriptor],
 ) -> Result<Option<LevelCompressionBundle>, AkitaError> {
-    let Ok(catalog) = replay_compression_catalog::<F>(policy, lp, context, descriptors) else {
-        return Ok(None);
+    let catalog = match replay_compression_catalog::<F>(policy, lp, context, descriptors) {
+        Ok(catalog) => catalog,
+        Err(err) if akita_types::compression_capacity_infeasible(&err) => {
+            return Ok(None);
+        }
+        Err(err) => return Err(err),
     };
-    let Ok(projection) = catalog.project_for_schedule() else {
-        return Ok(None);
-    };
-    let Ok(successor_witness_field_coeffs) = successor_witness_field_coeffs(&catalog) else {
-        return Ok(None);
-    };
+    let projection = catalog.project_for_schedule()?;
+    let successor_witness_field_coeffs = successor_witness_field_coeffs(&catalog)?;
     let first_alphabet = maps
         .first()
         .map(|map| map.alphabet)
@@ -255,36 +253,41 @@ fn finish_bundle<F: CanonicalField>(
     }))
 }
 
-fn try_shared_maps_co_generated<F: CanonicalField>(
-    policy: &PlannerPolicy,
-    lp: &LevelParams,
-    opening: &OpeningClaimsLayout,
+#[derive(Clone, Copy)]
+struct SharedMapsContext<'a> {
+    policy: &'a PlannerPolicy,
+    lp: &'a LevelParams,
+    opening: &'a OpeningClaimsLayout,
     field_bits: u32,
     field_element_bytes: usize,
+}
+
+fn try_shared_maps_co_generated<F: CanonicalField>(
+    context: SharedMapsContext<'_>,
     maps: &[CompressionMapDescriptor],
     image_bytes: &[usize],
     selected_ladder: Option<CompressionByteLadder>,
 ) -> Result<Option<LevelCompressionBundle>, AkitaError> {
-    let outer = source_output_coeffs(lp, CompressionSourceId::CurrentOuter)?;
-    let opening_src = source_output_coeffs(lp, CompressionSourceId::Opening)?;
+    let outer = source_output_coeffs(context.lp, CompressionSourceId::CurrentOuter)?;
+    let opening_src = source_output_coeffs(context.lp, CompressionSourceId::Opening)?;
     if !chain_is_rank_one_exact(
-        policy,
-        field_bits,
-        field_element_bytes,
+        context.policy,
+        context.field_bits,
+        context.field_element_bytes,
         outer,
         maps,
         image_bytes,
     ) || !chain_is_rank_one_exact(
-        policy,
-        field_bits,
-        field_element_bytes,
+        context.policy,
+        context.field_bits,
+        context.field_element_bytes,
         opening_src,
         maps,
         image_bytes,
     ) {
         return Ok(None);
     }
-    let max_opening = policy.basis_range.1;
+    let max_opening = context.policy.basis_range.1;
     let descriptors = [
         CompressionChainDescriptor {
             source: CompressionSourceId::CurrentOuter,
@@ -298,9 +301,11 @@ fn try_shared_maps_co_generated<F: CanonicalField>(
         },
     ];
     finish_bundle::<F>(
-        policy,
-        lp,
-        CompressionCatalogContext::CoGeneratedLevel { opening },
+        context.policy,
+        context.lp,
+        CompressionCatalogContext::CoGeneratedLevel {
+            opening: context.opening,
+        },
         &descriptors,
         selected_ladder,
         maps,
@@ -308,20 +313,16 @@ fn try_shared_maps_co_generated<F: CanonicalField>(
 }
 
 fn try_shared_maps_terminal<F: CanonicalField>(
-    policy: &PlannerPolicy,
-    lp: &LevelParams,
-    opening: &OpeningClaimsLayout,
-    field_bits: u32,
-    field_element_bytes: usize,
+    context: SharedMapsContext<'_>,
     maps: &[CompressionMapDescriptor],
     image_bytes: &[usize],
     selected_ladder: Option<CompressionByteLadder>,
 ) -> Result<Option<LevelCompressionBundle>, AkitaError> {
-    let outer = source_output_coeffs(lp, CompressionSourceId::CurrentOuter)?;
+    let outer = source_output_coeffs(context.lp, CompressionSourceId::CurrentOuter)?;
     if !chain_is_rank_one_exact(
-        policy,
-        field_bits,
-        field_element_bytes,
+        context.policy,
+        context.field_bits,
+        context.field_element_bytes,
         outer,
         maps,
         image_bytes,
@@ -330,17 +331,73 @@ fn try_shared_maps_terminal<F: CanonicalField>(
     }
     let descriptors = [CompressionChainDescriptor {
         source: CompressionSourceId::CurrentOuter,
-        max_opening_log_basis: policy.basis_range.1,
+        max_opening_log_basis: context.policy.basis_range.1,
         maps: maps.to_vec(),
     }];
     finish_bundle::<F>(
-        policy,
-        lp,
-        CompressionCatalogContext::TerminalFold { opening },
+        context.policy,
+        context.lp,
+        CompressionCatalogContext::TerminalFold {
+            opening: context.opening,
+        },
         &descriptors,
         selected_ladder,
         maps,
     )
+}
+
+/// Iterate guided co-generated bundles in policy order.
+///
+/// `Ok(None)` is an expected ladder miss from size, rank-one, or dispatch
+/// constraints. Once those checks pass, replay and projection errors propagate.
+pub(crate) fn iter_co_generated_bundles<'a, F: CanonicalField + 'a>(
+    policy: &'a PlannerPolicy,
+    compression_policy: &'a CompressionPlannerPolicy,
+    lp: &'a LevelParams,
+    opening: &'a OpeningClaimsLayout,
+    stats: &'a mut FoldFirstSearchStats,
+) -> Result<impl Iterator<Item = Result<Option<LevelCompressionBundle>, AkitaError>> + 'a, AkitaError>
+{
+    validate_replay_policy::<F>(policy, lp)?;
+    let tier = protocol_dispatch_tier::<F>();
+    let dimensions = slot_dims_for_tier(tier, ProtocolDispatchSlot::Compression);
+    let field_bits = F::modulus_bits();
+    let field_element_bytes = field_bytes(field_bits);
+    let co_generated_log_basis = lp.log_basis;
+
+    Ok(compression_policy
+        .ladders()
+        .iter()
+        .copied()
+        .map(move |ladder| {
+            stats.ladders_tried = stats.ladders_tried.saturating_add(1);
+            let Some(maps) = ladder_maps(
+                policy,
+                field_bits,
+                field_element_bytes,
+                dimensions,
+                ladder,
+                co_generated_log_basis,
+            ) else {
+                return Ok(None);
+            };
+            let bundle = try_shared_maps_co_generated::<F>(
+                SharedMapsContext {
+                    policy,
+                    lp,
+                    opening,
+                    field_bits,
+                    field_element_bytes,
+                },
+                &maps,
+                ladder.image_bytes(),
+                Some(ladder),
+            )?;
+            if bundle.is_some() {
+                stats.bundles_accepted = stats.bundles_accepted.saturating_add(1);
+            }
+            Ok(bundle)
+        }))
 }
 
 /// Select a co-generated F/H bundle with one shared ladder (no Cartesian product).
@@ -351,7 +408,6 @@ pub fn select_co_generated_bundle<F: CanonicalField>(
     opening: &OpeningClaimsLayout,
     stats: &mut FoldFirstSearchStats,
 ) -> Result<LevelCompressionBundle, AkitaError> {
-    validate_replay_policy::<F>(policy, lp)?;
     let tier = protocol_dispatch_tier::<F>();
     let dimensions = slot_dims_for_tier(tier, ProtocolDispatchSlot::Compression);
     let field_bits = F::modulus_bits();
@@ -359,30 +415,13 @@ pub fn select_co_generated_bundle<F: CanonicalField>(
     // Co-generated first maps require b_cmp = b_range.
     let co_generated_log_basis = lp.log_basis;
 
-    for &ladder in compression_policy.ladders() {
-        stats.ladders_tried = stats.ladders_tried.saturating_add(1);
-        let Some(maps) = ladder_maps(
-            policy,
-            field_bits,
-            field_element_bytes,
-            dimensions,
-            ladder,
-            co_generated_log_basis,
-        ) else {
-            continue;
-        };
-        if let Some(bundle) = try_shared_maps_co_generated::<F>(
-            policy,
-            lp,
-            opening,
-            field_bits,
-            field_element_bytes,
-            &maps,
-            ladder.image_bytes(),
-            Some(ladder),
-        )? {
-            stats.bundles_accepted = stats.bundles_accepted.saturating_add(1);
-            return Ok(bundle);
+    {
+        for bundle in
+            iter_co_generated_bundles::<F>(policy, compression_policy, lp, opening, stats)?
+        {
+            if let Some(bundle) = bundle? {
+                return Ok(bundle);
+            }
         }
     }
 
@@ -422,11 +461,13 @@ pub fn select_co_generated_bundle<F: CanonicalField>(
                         bytes
                     };
                     if let Some(bundle) = try_shared_maps_co_generated::<F>(
-                        policy,
-                        lp,
-                        opening,
-                        field_bits,
-                        field_element_bytes,
+                        SharedMapsContext {
+                            policy,
+                            lp,
+                            opening,
+                            field_bits,
+                            field_element_bytes,
+                        },
                         &prefix,
                         &image_bytes,
                         None,
@@ -461,6 +502,61 @@ pub fn select_co_generated_bundle<F: CanonicalField>(
     ))
 }
 
+/// Iterate guided terminal (WithoutDBlock, F-only) bundles in policy order.
+///
+/// Semantics match [`iter_co_generated_bundles`]: `Ok(None)` is an expected
+/// ladder miss; capacity-style replay misses are also `Ok(None)`; other replay
+/// and projection errors propagate.
+pub(crate) fn iter_terminal_bundles<'a, F: CanonicalField + 'a>(
+    policy: &'a PlannerPolicy,
+    compression_policy: &'a CompressionPlannerPolicy,
+    lp: &'a LevelParams,
+    opening: &'a OpeningClaimsLayout,
+    stats: &'a mut FoldFirstSearchStats,
+) -> Result<impl Iterator<Item = Result<Option<LevelCompressionBundle>, AkitaError>> + 'a, AkitaError>
+{
+    validate_replay_policy::<F>(policy, lp)?;
+    let tier = protocol_dispatch_tier::<F>();
+    let dimensions = slot_dims_for_tier(tier, ProtocolDispatchSlot::Compression);
+    let field_bits = F::modulus_bits();
+    let field_element_bytes = field_bytes(field_bits);
+    let co_generated_log_basis = lp.log_basis;
+
+    Ok(compression_policy
+        .ladders()
+        .iter()
+        .copied()
+        .map(move |ladder| {
+            stats.ladders_tried = stats.ladders_tried.saturating_add(1);
+            let Some(maps) = ladder_maps(
+                policy,
+                field_bits,
+                field_element_bytes,
+                dimensions,
+                ladder,
+                co_generated_log_basis,
+            ) else {
+                return Ok(None);
+            };
+            let bundle = try_shared_maps_terminal::<F>(
+                SharedMapsContext {
+                    policy,
+                    lp,
+                    opening,
+                    field_bits,
+                    field_element_bytes,
+                },
+                &maps,
+                ladder.image_bytes(),
+                Some(ladder),
+            )?;
+            if bundle.is_some() {
+                stats.bundles_accepted = stats.bundles_accepted.saturating_add(1);
+            }
+            Ok(bundle)
+        }))
+}
+
 /// Select a terminal (WithoutDBlock) F-only bundle from the same ladder list.
 pub fn select_terminal_bundle<F: CanonicalField>(
     policy: &PlannerPolicy,
@@ -469,36 +565,8 @@ pub fn select_terminal_bundle<F: CanonicalField>(
     opening: &OpeningClaimsLayout,
     stats: &mut FoldFirstSearchStats,
 ) -> Result<LevelCompressionBundle, AkitaError> {
-    validate_replay_policy::<F>(policy, lp)?;
-    let tier = protocol_dispatch_tier::<F>();
-    let dimensions = slot_dims_for_tier(tier, ProtocolDispatchSlot::Compression);
-    let field_bits = F::modulus_bits();
-    let field_element_bytes = field_bytes(field_bits);
-    let co_generated_log_basis = lp.log_basis;
-
-    for &ladder in compression_policy.ladders() {
-        stats.ladders_tried = stats.ladders_tried.saturating_add(1);
-        let Some(maps) = ladder_maps(
-            policy,
-            field_bits,
-            field_element_bytes,
-            dimensions,
-            ladder,
-            co_generated_log_basis,
-        ) else {
-            continue;
-        };
-        if let Some(bundle) = try_shared_maps_terminal::<F>(
-            policy,
-            lp,
-            opening,
-            field_bits,
-            field_element_bytes,
-            &maps,
-            ladder.image_bytes(),
-            Some(ladder),
-        )? {
-            stats.bundles_accepted = stats.bundles_accepted.saturating_add(1);
+    for bundle in iter_terminal_bundles::<F>(policy, compression_policy, lp, opening, stats)? {
+        if let Some(bundle) = bundle? {
             return Ok(bundle);
         }
     }
@@ -511,7 +579,8 @@ pub fn select_terminal_bundle<F: CanonicalField>(
     }
 
     Err(AkitaError::InvalidSetup(
-        "no terminal compression bundle is covered by current dispatch and SIS tables".into(),
+        "no terminal compression byte ladder materialized; terminal exhaustive fallback is requested but not implemented"
+            .into(),
     ))
 }
 
@@ -696,6 +765,27 @@ mod tests {
         assert_eq!(bundle.selected_ladder(), Some(BINARY_256_128));
         assert_eq!(stats.ladders_tried, 2);
         assert_eq!(stats.exhaustive_map_shapes_tried, 0);
+    }
+
+    #[test]
+    fn co_generated_iterator_yields_every_materialized_ladder() {
+        let (policy, lp, opening) = fixture();
+        const TWO_MATERIALIZED: &[CompressionByteLadder] = &[BINARY_256_128, BINARY_256_128];
+        let compression = CompressionPlannerPolicy::with_ladders(128, TWO_MATERIALIZED, false);
+        let mut stats = FoldFirstSearchStats::default();
+        let bundles = iter_co_generated_bundles::<Prime128OffsetA7F7>(
+            &policy,
+            &compression,
+            &lp,
+            &opening,
+            &mut stats,
+        )
+        .expect("iterator")
+        .collect::<Result<Vec<_>, _>>()
+        .expect("validated ladders");
+        assert_eq!(bundles.iter().filter(|bundle| bundle.is_some()).count(), 2);
+        assert_eq!(stats.ladders_tried, 2);
+        assert_eq!(stats.bundles_accepted, 2);
     }
 
     #[test]

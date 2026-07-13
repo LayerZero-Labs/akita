@@ -20,6 +20,30 @@ pub use choice::{
     CompressionSourceId, FrozenCompressionChainChoice, LevelCompressionPlan,
     STANDALONE_OPENING_BASE_LOG_BASIS,
 };
+
+/// Stable prefix for compression catalog capacity misses.
+///
+/// These mean a candidate does not fit the setup/sequence envelope. Planner
+/// search treats them as ladder misses (`Ok(None)`), not corrupted catalogs.
+pub const COMPRESSION_CAPACITY_INFEASIBLE_PREFIX: &str = "compression capacity infeasible:";
+
+/// Returns true when `err` is a capacity miss tagged with
+/// [`COMPRESSION_CAPACITY_INFEASIBLE_PREFIX`].
+#[must_use]
+pub fn compression_capacity_infeasible(err: &AkitaError) -> bool {
+    matches!(
+        err,
+        AkitaError::InvalidSetup(message)
+            if message.starts_with(COMPRESSION_CAPACITY_INFEASIBLE_PREFIX)
+    )
+}
+
+fn capacity_infeasible(detail: impl Into<String>) -> AkitaError {
+    AkitaError::InvalidSetup(format!(
+        "{COMPRESSION_CAPACITY_INFEASIBLE_PREFIX} {}",
+        detail.into()
+    ))
+}
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum CompressionCatalogPurpose {
     CoGenerated {
@@ -57,19 +81,18 @@ struct CompiledCompressionChain {
 
 /// One ordered map's replay facts for prover hint sizing and preparation.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[allow(dead_code)] // Consumed by schedule replay after compression candidate generation lands.
-pub(crate) struct CompressionMapHintFacts {
-    pub(crate) source: CompressionSourceId,
-    pub(crate) map_index: usize,
-    pub(crate) alphabet: CompressionAlphabet,
-    pub(crate) native_ring_dim: usize,
-    pub(crate) rows: usize,
-    pub(crate) cols: usize,
-    pub(crate) digit_depth: usize,
-    pub(crate) input_coeffs: usize,
-    pub(crate) output_coeffs: usize,
-    pub(crate) prefix_ring_elements: usize,
-    pub(crate) is_terminal: bool,
+pub struct CompressionMapHintShape {
+    pub source: CompressionSourceId,
+    pub map_index: usize,
+    pub alphabet: CompressionAlphabet,
+    pub native_ring_dim: usize,
+    pub rows: usize,
+    pub cols: usize,
+    pub digit_depth: usize,
+    pub input_coeffs: usize,
+    pub output_coeffs: usize,
+    pub prefix_ring_elements: usize,
+    pub is_terminal: bool,
 }
 
 /// Catalog-wide replay projection derived only from checked compiled maps.
@@ -78,9 +101,10 @@ pub(crate) struct CompressionMapHintFacts {
 /// performance and hint-shape projections that would otherwise be re-derived
 /// independently by schedule replay, prepared NTT setup, and profile reporting.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[allow(dead_code)] // Consumed by schedule replay after compression candidate generation lands.
 pub struct CompressionCatalogProjection {
-    maps: Vec<CompressionMapHintFacts>,
+    /// Setup generation dimension under which this catalog was validated.
+    gen_ring_dim: usize,
+    maps: Vec<CompressionMapHintShape>,
     ntt_requirements: Vec<(usize, usize)>,
     payload_coeffs_by_source: Vec<(CompressionSourceId, usize)>,
     first_map_alphabet_by_source: Vec<(CompressionSourceId, CompressionAlphabet)>,
@@ -90,6 +114,43 @@ pub struct CompressionCatalogProjection {
     max_flat_setup_prefix_coeffs: usize,
     coalesced_cache_field_coeffs: usize,
     descriptor_bytes: Vec<u8>,
+}
+
+/// Catalog-wide compression setup facts aggregated across multiple projections.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AggregatedCompressionSetup {
+    gen_ring_dim: Option<usize>,
+    map_hints: Vec<CompressionMapHintShape>,
+    ntt_requirements: Vec<(usize, usize)>,
+    max_flat_setup_prefix_coeffs: usize,
+    coalesced_cache_field_coeffs: usize,
+}
+
+impl AggregatedCompressionSetup {
+    #[must_use]
+    pub fn gen_ring_dim(&self) -> Option<usize> {
+        self.gen_ring_dim
+    }
+
+    #[must_use]
+    pub fn map_hints(&self) -> &[CompressionMapHintShape] {
+        &self.map_hints
+    }
+
+    #[must_use]
+    pub fn ntt_requirements(&self) -> &[(usize, usize)] {
+        &self.ntt_requirements
+    }
+
+    #[must_use]
+    pub fn max_flat_setup_prefix_coeffs(&self) -> usize {
+        self.max_flat_setup_prefix_coeffs
+    }
+
+    #[must_use]
+    pub fn coalesced_cache_field_coeffs(&self) -> usize {
+        self.coalesced_cache_field_coeffs
+    }
 }
 
 /// Canonical accounting shape of a terminal compressed relation.
@@ -135,6 +196,16 @@ impl CompressionTerminalRelationShape {
 
 impl CompressionCatalogProjection {
     #[must_use]
+    pub fn gen_ring_dim(&self) -> usize {
+        self.gen_ring_dim
+    }
+
+    #[must_use]
+    pub fn map_hints(&self) -> &[CompressionMapHintShape] {
+        &self.maps
+    }
+
+    #[must_use]
     pub fn ntt_requirements(&self) -> &[(usize, usize)] {
         &self.ntt_requirements
     }
@@ -157,9 +228,80 @@ impl CompressionCatalogProjection {
     }
 
     #[must_use]
+    pub fn coalesced_cache_field_coeffs(&self) -> usize {
+        self.coalesced_cache_field_coeffs
+    }
+
+    #[must_use]
     pub fn descriptor_bytes(&self) -> &[u8] {
         &self.descriptor_bytes
     }
+}
+
+/// Aggregate checked catalog projections into one setup/hint envelope.
+///
+/// Map hints are concatenated in caller order. Per-ring NTT prefix requirements
+/// are max-coalesced by `ring_d`. Flat setup prefix and coalesced cache totals
+/// follow the same rules as a single projection, but over the merged facts.
+pub fn aggregate_catalog_projections(
+    projections: &[&CompressionCatalogProjection],
+) -> Result<AggregatedCompressionSetup, AkitaError> {
+    let mut map_hints = Vec::new();
+    let mut ntt_by_d = BTreeMap::<usize, usize>::new();
+    let mut max_flat_setup_prefix_coeffs = 0usize;
+    let mut gen_ring_dim = None;
+
+    for projection in projections {
+        match gen_ring_dim {
+            None => gen_ring_dim = Some(projection.gen_ring_dim()),
+            Some(expected) if expected == projection.gen_ring_dim() => {}
+            Some(expected) => {
+                return Err(AkitaError::InvalidSetup(format!(
+                    "aggregated compression projections disagree on gen_ring_dim: {expected} vs {}",
+                    projection.gen_ring_dim()
+                )));
+            }
+        }
+        map_hints.extend_from_slice(projection.map_hints());
+        max_flat_setup_prefix_coeffs =
+            max_flat_setup_prefix_coeffs.max(projection.max_flat_setup_prefix_coeffs());
+        for &(ring_d, prefix_ring_elements) in projection.ntt_requirements() {
+            ntt_by_d
+                .entry(ring_d)
+                .and_modify(|prefix| *prefix = (*prefix).max(prefix_ring_elements))
+                .or_insert(prefix_ring_elements);
+        }
+    }
+    if map_hints.len() > DEFAULT_MAX_SEQUENCE_LEN {
+        return Err(AkitaError::InvalidSetup(
+            "aggregated compression map count exceeds sequence cap".into(),
+        ));
+    }
+
+    let ntt_requirements = ntt_by_d.into_iter().collect::<Vec<_>>();
+    let coalesced_cache_field_coeffs =
+        ntt_requirements
+            .iter()
+            .try_fold(0usize, |total, &(ring_d, prefix_ring_elements)| {
+                let field_coeffs = ring_d.checked_mul(prefix_ring_elements).ok_or_else(|| {
+                    AkitaError::InvalidSetup(
+                        "aggregated compression coalesced cache footprint overflow".into(),
+                    )
+                })?;
+                total.checked_add(field_coeffs).ok_or_else(|| {
+                    AkitaError::InvalidSetup(
+                        "aggregated compression total coalesced cache footprint overflow".into(),
+                    )
+                })
+            })?;
+
+    Ok(AggregatedCompressionSetup {
+        gen_ring_dim,
+        map_hints,
+        ntt_requirements,
+        max_flat_setup_prefix_coeffs,
+        coalesced_cache_field_coeffs,
+    })
 }
 
 fn resolve_source_key(
@@ -184,6 +326,7 @@ fn resolve_source_key(
 #[allow(dead_code)] // Wired into schedule replay in the compression cutover slice.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ValidatedCompressionCatalog {
+    gen_ring_dim: usize,
     chains: Vec<CompiledCompressionChain>,
     purpose: CompressionCatalogPurpose,
 }
@@ -245,7 +388,7 @@ impl ValidatedCompressionCatalog {
                     .entry(native_ring_dim)
                     .and_modify(|prefix| *prefix = (*prefix).max(prefix_ring_elements))
                     .or_insert(prefix_ring_elements);
-                maps.push(CompressionMapHintFacts {
+                maps.push(CompressionMapHintShape {
                     source: chain.source,
                     map_index,
                     alphabet: map.alphabet,
@@ -357,6 +500,7 @@ impl ValidatedCompressionCatalog {
         }
 
         Ok(CompressionCatalogProjection {
+            gen_ring_dim: self.gen_ring_dim,
             maps,
             ntt_requirements,
             payload_coeffs_by_source,
@@ -449,6 +593,19 @@ impl ValidatedCompressionCatalog {
         }
     }
 
+    /// Return the canonical relation graph for either fold-level catalog purpose.
+    pub fn fold_relation_layout(
+        &self,
+    ) -> Result<&crate::layout::relation::RelationLayout, AkitaError> {
+        match &self.purpose {
+            CompressionCatalogPurpose::CoGenerated { relation_layout }
+            | CompressionCatalogPurpose::TerminalFold { relation_layout } => Ok(relation_layout),
+            CompressionCatalogPurpose::Standalone { .. } => Err(AkitaError::InvalidSetup(
+                "standalone compression catalog has no fold relation layout".into(),
+            )),
+        }
+    }
+
     /// Return the canonical terminal shape derived from the checked relation.
     pub fn terminal_relation_shape(&self) -> Result<CompressionTerminalRelationShape, AkitaError> {
         let layout = self.terminal_relation_layout()?;
@@ -464,7 +621,7 @@ impl ValidatedCompressionCatalog {
 }
 
 #[allow(dead_code)] // Reached through the dormant schedule projection.
-fn compression_map_order_key(map: &CompressionMapHintFacts) -> (u8, usize, usize) {
+fn compression_map_order_key(map: &CompressionMapHintShape) -> (u8, usize, usize) {
     let (kind, index) = compression_source_order_key(map.source);
     (kind, index, map.map_index)
 }
@@ -643,14 +800,14 @@ fn compile_chain<F: CanonicalField>(
             AkitaError::InvalidSetup("compression source setup footprint overflow".into())
         })?;
     if source_setup_coeffs > MAX_SETUP_MATRIX_FIELD_ELEMENTS {
-        return Err(AkitaError::InvalidSetup(
-            "compression source setup footprint exceeds cap".into(),
+        return Err(capacity_infeasible(
+            "compression source setup footprint exceeds setup matrix field cap",
         ));
     }
     let source_output_coeffs = checked_coeffs(source_key.row_len(), source_d, "source output")?;
     if source_output_coeffs > DEFAULT_MAX_SEQUENCE_LEN {
-        return Err(AkitaError::InvalidSetup(
-            "compression source output exceeds sequence cap".into(),
+        return Err(capacity_infeasible(
+            "compression source output exceeds sequence cap",
         ));
     }
 
@@ -769,7 +926,7 @@ fn compile_chain<F: CanonicalField>(
         })?;
         let actual_input = checked_coeffs(map.key.col_len(), d, "map input")?;
         if actual_input > DEFAULT_MAX_SEQUENCE_LEN {
-            return Err(AkitaError::InvalidSetup(format!(
+            return Err(capacity_infeasible(format!(
                 "compression map {index} input exceeds sequence cap"
             )));
         }
@@ -780,7 +937,7 @@ fn compile_chain<F: CanonicalField>(
         }
         let output_coeffs = checked_coeffs(map.key.row_len(), d, "map output")?;
         if output_coeffs > DEFAULT_MAX_SEQUENCE_LEN {
-            return Err(AkitaError::InvalidSetup(format!(
+            return Err(capacity_infeasible(format!(
                 "compression map {index} output exceeds sequence cap"
             )));
         }
@@ -793,8 +950,8 @@ fn compile_chain<F: CanonicalField>(
                 AkitaError::InvalidSetup("compression setup footprint overflow".into())
             })?;
         if setup_coeffs > MAX_SETUP_MATRIX_FIELD_ELEMENTS {
-            return Err(AkitaError::InvalidSetup(format!(
-                "compression map {index} setup footprint {setup_coeffs} exceeds {MAX_SETUP_MATRIX_FIELD_ELEMENTS}"
+            return Err(capacity_infeasible(format!(
+                "compression map {index} setup footprint {setup_coeffs} exceeds setup matrix field cap {MAX_SETUP_MATRIX_FIELD_ELEMENTS}"
             )));
         }
         maps.push(CompiledCompressionMap {
@@ -926,7 +1083,11 @@ pub fn validate_compression_catalog<F: CanonicalField>(
             field_modulus_minus_one: (-F::one()).to_canonical_u128(),
         }
     };
-    Ok(ValidatedCompressionCatalog { chains, purpose })
+    Ok(ValidatedCompressionCatalog {
+        gen_ring_dim,
+        chains,
+        purpose,
+    })
 }
 
 #[cfg(test)]
