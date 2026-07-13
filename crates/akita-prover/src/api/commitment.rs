@@ -7,7 +7,7 @@ use crate::compute::{
 };
 use crate::validation::validate_i8_setup_log_basis;
 use crate::{CommitInnerWitness, RootTensorProjectionPoly};
-use akita_config::{CommitmentConfig, ConservativeCommitmentConfig};
+use akita_config::{ensure_schedule_fits_setup, CommitmentConfig, ConservativeCommitmentConfig};
 use akita_field::parallel::*;
 use akita_field::unreduced::{HasWide, ReduceTo};
 use akita_field::{AkitaError, CanonicalField, FieldCore, FromPrimitiveInt, RandomSampling};
@@ -789,6 +789,8 @@ where
     let tensor_ctx = stack.tensor();
     let schedule_key = final_group_key_from_polys::<Cfg, P>(polys, expanded, precommitteds)?;
     let schedule = Cfg::runtime_schedule(schedule_key.clone())?;
+    let opening_layout = schedule_key.opening_layout()?;
+    ensure_schedule_fits_setup::<Cfg>(expanded.seed().max_setup_len, &schedule, &opening_layout)?;
     let params = Cfg::multi_group_root_commit_params(&schedule)?;
     validate_batched_onehot_chunk_size_for_params::<Cfg::Field, P>(polys, &params)?;
     validate_commit_level_params::<Cfg::Field>(&params, expanded)?;

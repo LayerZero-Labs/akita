@@ -6,7 +6,8 @@ use crate::proof::direct::verify_zero_fold_openings_with_opening_batch;
 use crate::protocol::validate_log_basis;
 use akita_algebra::CyclotomicRing;
 use akita_config::{
-    bind_transcript_instance_descriptor, effective_batched_schedule, CommitmentConfig,
+    bind_transcript_instance_descriptor, effective_batched_schedule, ensure_schedule_fits_setup,
+    CommitmentConfig,
 };
 use akita_field::{
     AkitaError, CanonicalField, FieldCore, FrobeniusExtField, FromPrimitiveInt, HalvingField,
@@ -432,6 +433,11 @@ where
     let schedule = effective_batched_schedule::<Cfg>(&opening_batch, claims.point())
         .map_err(|_| AkitaError::InvalidProof)?;
     validate_schedule_ring_dims(&schedule, setup.expanded.seed())?;
+    ensure_schedule_fits_setup::<Cfg>(
+        setup.expanded.seed().max_setup_len,
+        &schedule,
+        &opening_batch,
+    )?;
     schedule
         .reject_multi_group_multi_chunk("batched verify")
         .map_err(|_| AkitaError::InvalidProof)?;

@@ -147,11 +147,11 @@ fn group_batch_keys<Cfg: CommitmentConfig>(
         if pre_num_vars < min_precommitted_num_vars {
             continue;
         }
-        for pattern in precommitted_group_patterns(main.num_polynomials()) {
-            let mut precommitteds = Vec::with_capacity(pattern.len());
+        for num_precommitted in 1..=DEFAULT_GROUP_BATCH_MAX_PRECOMMITTED_GROUPS {
+            let mut precommitteds = Vec::with_capacity(num_precommitted);
             let mut supported = true;
-            for &num_polys in &pattern {
-                let pre_key = PolynomialGroupLayout::new(pre_num_vars, num_polys);
+            for _ in 0..num_precommitted {
+                let pre_key = PolynomialGroupLayout::new(pre_num_vars, 1);
                 let params = match conservative_commit_params::<Cfg>(&pre_key) {
                     Ok(params) => params,
                     Err(_) => {
@@ -175,18 +175,6 @@ fn group_batch_keys<Cfg: CommitmentConfig>(
     }
     keys.sort_by(akita_planner::runtime_schedule_key_cmp);
     Ok(keys)
-}
-
-// Keep the shipped catalog bounded to representative one- and two-group roots.
-// Other valid independent group arities continue through the runtime DP fallback.
-fn precommitted_group_patterns(main_num_polynomials: usize) -> Vec<Vec<usize>> {
-    let first_group = 1usize;
-    let second_group = (main_num_polynomials / 2).max(1);
-    let mut patterns = vec![vec![first_group]];
-    if DEFAULT_GROUP_BATCH_MAX_PRECOMMITTED_GROUPS >= 2 {
-        patterns.push(vec![first_group, second_group]);
-    }
-    patterns
 }
 
 macro_rules! family_row {

@@ -15,27 +15,6 @@ pub struct AkitaScheduleInputs {
     pub current_w_len: usize,
 }
 
-impl AkitaScheduleInputs {
-    /// Canonical level-zero policy input for a root polynomial group.
-    ///
-    /// The root witness is one field element per Boolean-hypercube entry,
-    /// independent of batch count and of a direct proof's serialized witness.
-    pub fn for_root(group: PolynomialGroupLayout) -> Result<Self, AkitaError> {
-        group.validate()?;
-        let shift = u32::try_from(group.num_vars()).map_err(|_| {
-            AkitaError::InvalidSetup("root variable count exceeds shift width".to_string())
-        })?;
-        let current_w_len = 1usize
-            .checked_shl(shift)
-            .ok_or_else(|| AkitaError::InvalidSetup("root witness length overflow".to_string()))?;
-        Ok(Self {
-            num_vars: group.num_vars(),
-            level: 0,
-            current_w_len,
-        })
-    }
-}
-
 /// Schedule facts for one fold level.
 #[derive(Debug, Clone)]
 pub struct ExecutionSchedule {
@@ -796,27 +775,6 @@ pub fn scheduled_next_level_params(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn root_schedule_inputs_use_boolean_hypercube_length() {
-        let inputs =
-            AkitaScheduleInputs::for_root(PolynomialGroupLayout::new(9, 4)).expect("root inputs");
-        assert_eq!(inputs.num_vars, 9);
-        assert_eq!(inputs.level, 0);
-        assert_eq!(inputs.current_w_len, 1 << 9);
-    }
-
-    #[test]
-    fn root_schedule_inputs_reject_empty_polynomial_group() {
-        assert!(AkitaScheduleInputs::for_root(PolynomialGroupLayout::new(9, 0)).is_err());
-    }
-
-    #[test]
-    fn root_schedule_inputs_reject_oversized_variable_count() {
-        assert!(
-            AkitaScheduleInputs::for_root(PolynomialGroupLayout::singleton(usize::MAX)).is_err()
-        );
-    }
     use crate::golomb_rice::golomb_rice_encode_vec;
     use crate::proof::{segment_typed_witness_shape, SegmentTypedWitness};
     use crate::tail_golomb_rice_z_params;

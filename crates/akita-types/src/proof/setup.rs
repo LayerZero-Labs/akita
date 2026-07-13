@@ -1,7 +1,7 @@
 //! Shared setup data shapes for Akita prover and verifier APIs.
 
 use super::setup_prefix::SetupPrefixVerifierRegistry;
-use crate::{FlatMatrix, LevelParams};
+use crate::FlatMatrix;
 #[cfg(test)]
 use akita_algebra::CyclotomicRing;
 #[allow(unused_imports)]
@@ -39,40 +39,6 @@ const SHARED_MATRIX_LABEL: &[u8] = b"shared";
 pub struct SetupMatrixEnvelope {
     /// Number of generated ring elements at the setup generation dimension.
     pub max_setup_len: usize,
-}
-
-impl SetupMatrixEnvelope {
-    /// Start an empty role-local setup envelope.
-    #[must_use]
-    pub const fn empty() -> Self {
-        Self { max_setup_len: 1 }
-    }
-
-    /// Include one checked row-by-column matrix footprint.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`akita_field::AkitaError::InvalidSetup`] when the footprint
-    /// multiplication overflows `usize`.
-    pub fn include_matrix(
-        &mut self,
-        rows: usize,
-        columns: usize,
-        role: &'static str,
-    ) -> Result<(), akita_field::AkitaError> {
-        let len = rows.checked_mul(columns).ok_or_else(|| {
-            akita_field::AkitaError::InvalidSetup(format!("{role} setup envelope overflow"))
-        })?;
-        self.max_setup_len = self.max_setup_len.max(len);
-        Ok(())
-    }
-
-    /// Include all A/B/D role footprints for one committed level.
-    pub fn include_level(&mut self, params: &LevelParams) -> Result<(), akita_field::AkitaError> {
-        self.include_matrix(params.a_key.row_len(), params.inner_width(), "A")?;
-        self.include_matrix(params.b_key.row_len(), params.outer_width(), "B")?;
-        self.include_matrix(params.d_key.row_len(), params.d_matrix_width(), "D")
-    }
 }
 
 /// Seed-only stage for deterministic setup expansion.
@@ -381,7 +347,13 @@ impl Valid for AkitaSetupSeed {
                 "setup seed max_setup_len must be non-zero".to_string(),
             ));
         }
-        self.matrix_field_elements()?;
+        let field_elements = self.matrix_field_elements()?;
+        if field_elements > MAX_SETUP_MATRIX_FIELD_ELEMENTS {
+            return Err(SerializationError::LengthLimitExceeded {
+                len: u64::try_from(field_elements).unwrap_or(u64::MAX),
+                max: MAX_SETUP_MATRIX_FIELD_ELEMENTS,
+            });
+        }
         Ok(())
     }
 }
@@ -675,7 +647,7 @@ mod tests {
     }
 
     #[test]
-    fn setup_seed_validity_is_not_the_generic_decode_allocation_cap() {
+    fn setup_seed_validity_enforces_allocation_cap() {
         let setup_seed = AkitaSetupSeed {
             max_num_vars: 32,
             max_num_batched_polys: 1,
@@ -684,8 +656,11 @@ mod tests {
             public_matrix_seed: [7u8; 32],
         };
 
-        setup_seed.check().unwrap();
-        assert!(setup_seed.matrix_field_elements().unwrap() > MAX_SETUP_MATRIX_FIELD_ELEMENTS);
+        assert!(matches!(
+            setup_seed.check().unwrap_err(),
+            SerializationError::LengthLimitExceeded { max, .. }
+                if max == MAX_SETUP_MATRIX_FIELD_ELEMENTS
+        ));
     }
 
     #[test]
