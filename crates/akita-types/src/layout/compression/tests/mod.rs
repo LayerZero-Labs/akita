@@ -1,4 +1,5 @@
 mod catalog;
+mod projection_consistency;
 mod terminal;
 use super::*;
 use akita_challenges::SparseChallengeConfig;

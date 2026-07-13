@@ -297,6 +297,80 @@ impl ValidatedCompressionCatalog {
         let mut descriptor_bytes = Vec::new();
         self.append_projection_descriptor_bytes(&mut descriptor_bytes)?;
 
+        if let CompressionCatalogPurpose::CoGenerated { relation_layout } = &self.purpose {
+            let cost = relation_layout.compression_structural_cost()?;
+            let payload_coeffs =
+                payload_coeffs_by_source
+                    .iter()
+                    .try_fold(0usize, |total, &(_, coeffs)| {
+                        total.checked_add(coeffs).ok_or_else(|| {
+                            AkitaError::InvalidSetup(
+                                "compression projected terminal payload overflow".into(),
+                            )
+                        })
+                    })?;
+            let dimension_requirements = cost
+                .dimensions()
+                .iter()
+                .map(|dimension| {
+                    (
+                        dimension.native_ring_dim(),
+                        dimension.max_setup_prefix_coeffs() / dimension.native_ring_dim(),
+                    )
+                })
+                .collect::<Vec<_>>();
+            let maps_are_canonical = maps.windows(2).all(|pair| {
+                compression_map_order_key(&pair[0]) < compression_map_order_key(&pair[1])
+            });
+            let payloads_are_canonical = payload_coeffs_by_source.windows(2).all(|pair| {
+                compression_source_order_key(pair[0].0) < compression_source_order_key(pair[1].0)
+            });
+            let payloads_match = payload_coeffs_by_source.iter().all(|&(source, coeffs)| {
+                cost.maps()
+                    .iter()
+                    .filter(|map| {
+                        map.source() == source && map.terminal_payload_coeffs() == Some(coeffs)
+                    })
+                    .count()
+                    == 1
+            });
+            let maps_match = maps.iter().all(|map| {
+                cost.maps()
+                    .iter()
+                    .filter(|relation_map| {
+                        relation_map.source() == map.source
+                            && relation_map.map() == map.map_index
+                            && relation_map.native_ring_dim() == map.native_ring_dim
+                            && relation_map.rows() == map.rows
+                            && relation_map.input_coeffs() == map.input_coeffs
+                            && relation_map.output_coeffs() == map.output_coeffs
+                            && map.rows.checked_mul(map.input_coeffs)
+                                == Some(relation_map.logical_setup_coeffs())
+                            && relation_map.terminal_payload_coeffs()
+                                == map.is_terminal.then_some(map.output_coeffs)
+                            && relation_map.is_negative_binary()
+                                == matches!(map.alphabet, CompressionAlphabet::NegativeBinary)
+                    })
+                    .count()
+                    == 1
+            });
+            if cost.map_count() != maps.len()
+                || !maps_are_canonical
+                || !payloads_are_canonical
+                || !payloads_match
+                || !maps_match
+                || cost.terminal_payload_coeffs() != payload_coeffs
+                || cost.logical_setup_coeffs() != logical_setup_coeffs
+                || cost.max_setup_prefix_coeffs() != max_flat_setup_prefix_coeffs
+                || cost.coalesced_setup_cache_coeffs() != coalesced_cache_field_coeffs
+                || dimension_requirements != ntt_requirements
+            {
+                return Err(AkitaError::InvalidSetup(
+                    "compression catalog projection disagrees with its relation providers".into(),
+                ));
+            }
+        }
+
         Ok(CompressionCatalogProjection {
             maps,
             ntt_requirements,
@@ -432,6 +506,21 @@ impl ValidatedCompressionCatalog {
             &local,
             F::modulus_bits(),
         )
+    }
+}
+
+#[allow(dead_code)] // Reached through the dormant schedule projection.
+fn compression_map_order_key(map: &CompressionMapHintFacts) -> (u8, usize, usize) {
+    let (kind, index) = compression_source_order_key(map.source);
+    (kind, index, map.map_index)
+}
+
+#[allow(dead_code)] // Reached through the dormant schedule projection.
+fn compression_source_order_key(source: CompressionSourceId) -> (u8, usize) {
+    match source {
+        CompressionSourceId::CurrentOuter => (0, 0),
+        CompressionSourceId::PrecommittedOuter { index } => (1, index),
+        CompressionSourceId::Opening => (2, 0),
     }
 }
 

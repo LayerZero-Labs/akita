@@ -39,9 +39,10 @@ pub use proof_size::{
     proof_ring_vec_bytes, sumcheck_rounds,
 };
 pub use relation::{
-    CoeffSpan, GadgetInput, RelationFamilyProvider, RelationGroupId, RelationLayout,
-    RelationRowFamily, RelationRowId, RelationRowInputs, RelationRowPlan, RelationRowRhs,
-    RelationSegment, RelationSegmentId, RowSpan, SharedSetupMatrixView,
+    CoeffSpan, CompressionDimensionCost, CompressionMapStructuralCost,
+    CompressionRelationStructuralCost, GadgetInput, RelationFamilyProvider, RelationGroupId,
+    RelationLayout, RelationRowFamily, RelationRowId, RelationRowInputs, RelationRowPlan,
+    RelationRowRhs, RelationSegment, RelationSegmentId, RowSpan, SharedSetupMatrixView,
 };
 pub use ring_dims::{
     validate_role_dims, validate_schedule_ring_dims, CommitmentRingDims, RingRole, MAX_FOLD_LEVELS,

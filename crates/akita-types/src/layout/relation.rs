@@ -46,12 +46,16 @@ pub use super::compression::CompressionSourceId;
 use super::RelationMatrixRowLayout;
 
 mod compiler;
+mod cost;
 mod provider;
 mod rows;
 #[cfg(test)]
 mod tests;
 
 use compiler::compile_relation_layout;
+pub use cost::{
+    CompressionDimensionCost, CompressionMapStructuralCost, CompressionRelationStructuralCost,
+};
 pub use provider::{RelationFamilyProvider, SharedSetupMatrixView};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -404,6 +408,19 @@ impl RelationLayout {
         id: RelationRowId,
     ) -> Result<RelationFamilyProvider<'_>, AkitaError> {
         RelationFamilyProvider::new(self, self.row_plan.family(id)?)
+    }
+
+    /// Derive compression-only structural witness/setup sizes and round-zero
+    /// sparse-scan units from this checked relation graph.
+    ///
+    /// The result is accounting data, not an executable plan. It resolves all
+    /// spans and setup views through the same providers used by protocol
+    /// execution, so mixed native dimensions cannot be flattened into the
+    /// carrier dimension by accident.
+    pub fn compression_structural_cost(
+        &self,
+    ) -> Result<CompressionRelationStructuralCost, AkitaError> {
+        CompressionRelationStructuralCost::derive(self)
     }
 
     pub fn negative_binary_support(&self) -> &[CoeffSpan] {
