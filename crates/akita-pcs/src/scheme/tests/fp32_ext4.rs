@@ -105,7 +105,14 @@ fn fp32_ext4_root_lp(m_vars: usize) -> LevelParams {
         AjtaiKeyParams::new_unchecked(DEFAULT_SIS_SECURITY_BITS, sis_family, 1, 0, bd_bucket, d);
     params.d_key =
         AjtaiKeyParams::new_unchecked(DEFAULT_SIS_SECURITY_BITS, sis_family, 1, 0, bd_bucket, d);
-    params.with_decomp(m_vars, 0, 12, 12, 0).unwrap()
+    // `with_decomp` stamps `field_bits_hint` from the unset default (128).
+    // Override with the fixture field width so relation compilation matches
+    // `F::modulus_bits()` used by `RingRelationInstance`.
+    params
+        .with_decomp(m_vars, 0, 12, 12, 0)
+        .unwrap()
+        .with_fold_linf_cap_config(akita_field::Prime32Offset99::modulus_bits(), 1)
+        .unwrap()
 }
 
 impl Fp32RingSubfieldRootFoldCfg {

@@ -84,7 +84,15 @@ where
     }
     let order = opening_batch.root_group_order()?;
     let witness_layout = instance.relation_layout().witness_layout(None)?;
-    if witness_layout.num_chunks() != lp.witness_chunk.num_chunks {
+    // Singleton layouts keep `WitnessLayout` chunks aligned with
+    // `LevelParams::witness_chunk`. Multi-group roots reject that
+    // chunked mode and instead emit one layout chunk per group.
+    let expected_layout_chunks = if opening_batch.num_groups() == 1 {
+        lp.witness_chunk.num_chunks
+    } else {
+        opening_batch.num_groups()
+    };
+    if witness_layout.num_chunks() != expected_layout_chunks {
         return Err(AkitaError::InvalidSetup(
             "relation execution parameters disagree with authenticated witness layout".into(),
         ));
