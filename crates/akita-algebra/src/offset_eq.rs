@@ -1,14 +1,16 @@
 //! Offset-EQ helpers for structured inner products.
 //!
-//! This module provides two related evaluators over the offset-shifted
+//! This module provides three related evaluators over the offset-shifted
 //! equality polynomial:
 //!
-//! 1. [`eval_offset_eq_interval`], a sparse/pruned partial multilinear binding
+//! 1. [`eq_interval_weights`], a pruned materialization of equality weights on
+//!    one contiguous global interval, without constructing the full table.
+//! 2. [`eval_offset_eq_interval`], a sparse/pruned partial multilinear binding
 //!    of a single materialized factor over the contiguous global interval
 //!    `[offset, offset + len)`. It places the values in global index
 //!    coordinates and runs the standard little-endian fold, pruning every
 //!    parent whose whole subtree lies outside the live interval.
-//! 2. A `2`-adic peel for shapes `x = u + 2^m q` via
+//! 3. A `2`-adic peel for shapes `x = u + 2^m q` via
 //!    [`summarize_pow2_block_carries`], which strips the aligned inner `2^m`
 //!    block into the two carry buckets `[A0, A1]`, leaving a small coarse outer
 //!    sum over `q` for the caller to combine with the high `eq` factor.
@@ -18,6 +20,109 @@
 //! `[A0, A1]` of [`summarize_pow2_block_carries`].
 
 use crate::{AkitaError, FieldCore};
+
+/// Materialize `eq(x_challenges, z)` only on `[offset, offset + len)`.
+///
+/// The traversal prunes the equality tree above the requested contiguous
+/// interval. It visits `O(len + x_challenges.len())` tree nodes, preserves the
+/// little-endian index convention used by [`eq_eval_at_index`], and never
+/// allocates a full equality table. The returned vector has exactly `len`
+/// entries in increasing global-index order.
+///
+/// # Errors
+///
+/// Returns [`AkitaError`] when the Boolean domain cannot be represented by
+/// `usize`, the interval endpoint overflows or exceeds that domain, or the
+/// exact output allocation cannot be reserved.
+pub fn eq_interval_weights<F: FieldCore>(
+    x_challenges: &[F],
+    offset: usize,
+    len: usize,
+) -> Result<Vec<F>, AkitaError> {
+    let shift = u32::try_from(x_challenges.len())
+        .map_err(|_| AkitaError::InvalidInput("equality domain width overflow".into()))?;
+    let domain_len = 1usize
+        .checked_shl(shift)
+        .ok_or_else(|| AkitaError::InvalidInput("equality domain width overflow".into()))?;
+    let end = offset
+        .checked_add(len)
+        .ok_or_else(|| AkitaError::InvalidInput("equality interval endpoint overflow".into()))?;
+    if end > domain_len {
+        return Err(AkitaError::InvalidSize {
+            expected: domain_len,
+            actual: end,
+        });
+    }
+    let mut out = Vec::new();
+    out.try_reserve_exact(len)
+        .map_err(|_| AkitaError::InvalidInput("equality interval allocation failed".into()))?;
+    if len == 0 {
+        return Ok(out);
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn visit<F: FieldCore>(
+        challenges: &[F],
+        bit: usize,
+        base: usize,
+        node_len: usize,
+        lo: usize,
+        hi: usize,
+        weight: F,
+        out: &mut Vec<F>,
+        work: &mut usize,
+    ) {
+        let node_end = base + node_len;
+        if node_end <= lo || base >= hi {
+            return;
+        }
+        *work += 1;
+        if bit == 0 {
+            out.push(weight);
+            return;
+        }
+        let half = node_len / 2;
+        let r = challenges[bit - 1];
+        visit(
+            challenges,
+            bit - 1,
+            base,
+            half,
+            lo,
+            hi,
+            weight * (F::one() - r),
+            out,
+            work,
+        );
+        visit(
+            challenges,
+            bit - 1,
+            base + half,
+            half,
+            lo,
+            hi,
+            weight * r,
+            out,
+            work,
+        );
+    }
+
+    let mut work = 0usize;
+    visit(
+        x_challenges,
+        x_challenges.len(),
+        0,
+        domain_len,
+        offset,
+        end,
+        F::one(),
+        &mut out,
+        &mut work,
+    );
+    debug_assert_eq!(out.len(), len);
+    debug_assert!(work <= len.saturating_mul(2).saturating_add(2 * x_challenges.len()));
+    Ok(out)
+}
 
 /// Sparse/pruned partial multilinear evaluation of a single materialized
 /// factor over the contiguous global interval `[offset, offset + factor.len())`.
@@ -237,6 +342,32 @@ mod tests {
             }
         }
         acc
+    }
+
+    #[test]
+    fn interval_weights_match_manual_products_for_aligned_and_ragged_runs() {
+        let r = [
+            F::from_u64(2),
+            F::from_u64(3),
+            F::from_u64(5),
+            F::from_u64(7),
+            F::from_u64(11),
+        ];
+        for (offset, len) in [(0, 32), (8, 8), (0, 7), (3, 19), (29, 3)] {
+            let weights = eq_interval_weights(&r, offset, len).expect("valid interval");
+            assert_eq!(weights.len(), len);
+            for (local, &weight) in weights.iter().enumerate() {
+                assert_eq!(weight, eq_eval_at_index(&r, offset + local));
+            }
+        }
+    }
+
+    #[test]
+    fn interval_weights_reject_malformed_shape_before_allocation() {
+        let r = [F::from_u64(2), F::from_u64(3), F::from_u64(5)];
+        assert!(eq_interval_weights(&r, 7, 2).is_err());
+        assert!(eq_interval_weights(&r, 1, usize::MAX).is_err());
+        assert_eq!(eq_interval_weights(&r, 8, 0).unwrap(), Vec::<F>::new());
     }
 
     fn random_vec(rng: &mut StdRng, len: usize) -> Vec<F> {

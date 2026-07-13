@@ -97,6 +97,7 @@ pub mod tensor_verifier;
 pub mod test_support;
 mod transcript_binding;
 pub use conservative_commitment::ConservativeCommitmentConfig;
+pub use matrix_envelope::inflate_setup_envelope_for_compression_prefix;
 pub use proof_optimized::{
     matrix_envelope_for_schedule, setup_level_params_from_runtime_schedule,
     worst_case_multi_group_opening_batch_for_shape,
@@ -321,7 +322,7 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     /// (invalid key dimensions, witness overflow). Never panics — this is
     /// verifier-reachable.
     fn runtime_schedule(key: AkitaScheduleLookupKey) -> Result<Schedule, AkitaError> {
-        akita_planner::resolve_group_batch_schedule(
+        akita_planner::resolve_group_batch_schedule::<Self::Field>(
             &key,
             &policy_of::<Self>(),
             Self::ring_challenge_config,

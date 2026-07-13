@@ -101,12 +101,12 @@ mod tests {
     };
     use akita_transcript::labels::{ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS};
     use akita_transcript::AkitaTranscript;
-    use akita_types::relation_claim_from_rows;
+    use akita_types::relation_claim_from_layout_extension;
     use akita_types::witness::ChunkedWitnessCfg;
     use akita_types::{
         r_decomp_levels, ring_opening_point_from_field, AkitaCommitmentHint, BasisMode, BlockOrder,
         Commitment, OpeningClaims, PointVariableSelection, PolynomialGroupClaims,
-        RelationMatrixRowLayout, RingMultiplierOpeningPoint, RingVec,
+        RelationMatrixRowLayout, RingMultiplierOpeningPoint, RingRelationInstance, RingVec,
     };
     use akita_verifier::{prepare_relation_matrix_evaluator, RingSwitchReplay};
     use rand::rngs::StdRng;
@@ -291,7 +291,12 @@ mod tests {
         let point = vec![F::zero(); NV];
 
         let setup = AkitaCommitmentScheme::<Cfg>::setup_prover(NV, 1).unwrap();
-        let prepared = CpuBackend.prepare_setup(&setup).unwrap();
+        let prepared = CpuBackend
+            .prepare_setup(
+                &setup,
+                &akita_types::PreparedNttPlan::base_envelope(setup.expanded.as_ref()).unwrap(),
+            )
+            .unwrap();
         let stack = akita_prover::UniformProverStack::uniform(
             &CpuBackend,
             &prepared,
@@ -373,15 +378,12 @@ mod tests {
 
         let alpha = F::from_u64(29);
         let alpha_evals_y = scalar_powers(alpha, D);
-        let rows = lp
-            .relation_matrix_row_count_for(1, RelationMatrixRowLayout::WithDBlock)
-            .expect("valid row count");
-        let num_i = lp
-            .relation_row_index_num_vars_for_layout(
-                RelationMatrixRowLayout::WithDBlock,
-                &opening_batch,
-            )
-            .expect("tau1 vars");
+        let rows = instance.relation_layout().row_plan().trace_row();
+        let num_i = instance
+            .relation_layout()
+            .row_plan()
+            .padded_row_count()
+            .trailing_zeros() as usize;
 
         for row in 0..rows {
             let tau1: Vec<F> = (0..num_i)
@@ -398,11 +400,9 @@ mod tests {
                 &instance,
                 alpha,
                 &alpha_evals_y,
-                lp.role_dims(),
                 &lp,
                 &tau1,
                 &[F::one()],
-                RelationMatrixRowLayout::WithDBlock,
             )
             .expect("m evals");
             let got = direct_relation_claim(
@@ -411,15 +411,18 @@ mod tests {
                 &relation_matrix_col_evals,
                 live_x_cols,
             );
-            let expected = relation_claim_from_rows::<F, D>(
-                &tau1,
-                alpha,
-                lp.a_key.row_len(),
-                instance.v_trusted::<D>().expect("v"),
+            let commitment_rows = RingVec::from_ring_elems(
                 &commitment
                     .rows()
                     .try_to_vec::<D>()
                     .expect("commitment rows"),
+            );
+            let expected = relation_claim_from_layout_extension::<F, F>(
+                instance.relation_layout().row_plan(),
+                &tau1,
+                alpha,
+                instance.v(),
+                &commitment_rows,
             )
             .expect("relation claim");
             assert_eq!(got, expected, "ring-multiplier row {row} mismatch");
@@ -447,7 +450,12 @@ mod tests {
             .collect();
 
         let setup = AkitaCommitmentScheme::<Cfg>::setup_prover(NV, 1).unwrap();
-        let prepared = CpuBackend.prepare_setup(&setup).unwrap();
+        let prepared = CpuBackend
+            .prepare_setup(
+                &setup,
+                &akita_types::PreparedNttPlan::base_envelope(setup.expanded.as_ref()).unwrap(),
+            )
+            .unwrap();
         let stack = akita_prover::UniformProverStack::uniform(
             &CpuBackend,
             &prepared,
@@ -522,15 +530,12 @@ mod tests {
 
         let alpha = F::from_u64(17);
         let alpha_evals_y = scalar_powers(alpha, D);
-        let rows = lp
-            .relation_matrix_row_count_for(1, RelationMatrixRowLayout::WithDBlock)
-            .unwrap();
-        let num_i = lp
-            .relation_row_index_num_vars_for_layout(
-                RelationMatrixRowLayout::WithDBlock,
-                &opening_batch,
-            )
-            .expect("tau1 vars");
+        let rows = instance.relation_layout().row_plan().trace_row();
+        let num_i = instance
+            .relation_layout()
+            .row_plan()
+            .padded_row_count()
+            .trailing_zeros() as usize;
 
         for row in 0..rows {
             let tau1: Vec<F> = (0..num_i)
@@ -547,11 +552,9 @@ mod tests {
                 &instance,
                 alpha,
                 &alpha_evals_y,
-                lp.role_dims(),
                 &lp,
                 &tau1,
                 &[F::one()],
-                RelationMatrixRowLayout::WithDBlock,
             )
             .expect("m evals");
             let got = direct_relation_claim(
@@ -560,15 +563,18 @@ mod tests {
                 &relation_matrix_col_evals,
                 live_x_cols,
             );
-            let expected = relation_claim_from_rows::<F, D>(
-                &tau1,
-                alpha,
-                lp.a_key.row_len(),
-                instance.v_trusted::<D>().expect("v"),
+            let commitment_rows = RingVec::from_ring_elems(
                 &commitment
                     .rows()
                     .try_to_vec::<D>()
                     .expect("commitment rows"),
+            );
+            let expected = relation_claim_from_layout_extension::<F, F>(
+                instance.relation_layout().row_plan(),
+                &tau1,
+                alpha,
+                instance.v(),
+                &commitment_rows,
             )
             .unwrap();
             assert_eq!(got, expected, "row {row} mismatch");
@@ -633,7 +639,12 @@ mod tests {
             .collect();
 
         let setup = AkitaCommitmentScheme::<Cfg>::setup_prover(NV, 1).unwrap();
-        let prepared = CpuBackend.prepare_setup(&setup).unwrap();
+        let prepared = CpuBackend
+            .prepare_setup(
+                &setup,
+                &akita_types::PreparedNttPlan::base_envelope(setup.expanded.as_ref()).unwrap(),
+            )
+            .unwrap();
         let stack = akita_prover::UniformProverStack::uniform(
             &CpuBackend,
             &prepared,
@@ -704,15 +715,12 @@ mod tests {
 
         let alpha = F::from_u64(42);
         let alpha_evals_y = scalar_powers(alpha, D);
-        let rows = level_params
-            .relation_matrix_row_count_for(1, RelationMatrixRowLayout::WithDBlock)
-            .unwrap();
-        let num_i = level_params
-            .relation_row_index_num_vars_for_layout(
-                RelationMatrixRowLayout::WithDBlock,
-                &opening_batch,
-            )
-            .expect("tau1 vars");
+        let rows = instance.relation_layout().row_plan().trace_row();
+        let num_i = instance
+            .relation_layout()
+            .row_plan()
+            .padded_row_count()
+            .trailing_zeros() as usize;
         let tau1: Vec<F> = (0..num_i)
             .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
             .collect();
@@ -722,11 +730,9 @@ mod tests {
             &instance,
             alpha,
             &alpha_evals_y,
-            level_params.role_dims(),
             &level_params,
             &tau1,
             &[F::one()],
-            RelationMatrixRowLayout::WithDBlock,
         )
         .expect("m evals (materialized)");
 
@@ -839,8 +845,21 @@ mod tests {
                 num_chunks: w,
                 num_activated_levels: 1,
             };
+            let instance_w = RingRelationInstance::new(
+                &lp_w,
+                RelationMatrixRowLayout::WithDBlock,
+                instance.group_challenges().to_vec(),
+                vec![instance.group_opening_point(0).unwrap().clone()],
+                vec![instance.group_ring_multiplier_point(0).unwrap().clone()],
+                instance.opening_batch().clone(),
+                instance.gamma().to_vec(),
+                instance.row_coefficient_rings().clone(),
+                RingVec::from_coeffs(commitment.rows().coeffs().to_vec()),
+                instance.v().clone(),
+            )
+            .expect("chunk-authenticated relation instance");
             let replay_w = RingSwitchReplay {
-                relation: &instance,
+                relation: &instance_w,
                 row_coefficients: &gamma,
                 lp: &lp_w,
             };
@@ -860,14 +879,12 @@ mod tests {
             // match the verifier's chunked row eval.
             let prover_chunked = compute_relation_matrix_col_evals::<F, F>(
                 &setup.expanded,
-                &instance,
+                &instance_w,
                 alpha,
                 &alpha_evals_y,
-                lp_w.role_dims(),
                 &lp_w,
                 &tau1,
                 &[F::one()],
-                RelationMatrixRowLayout::WithDBlock,
             )
             .expect("chunked m evals (prover)");
             assert_eq!(
@@ -910,7 +927,12 @@ mod tests {
             .collect();
 
         let setup = AkitaCommitmentScheme::<Cfg>::setup_prover(NV, 1).unwrap();
-        let prepared = CpuBackend.prepare_setup(&setup).unwrap();
+        let prepared = CpuBackend
+            .prepare_setup(
+                &setup,
+                &akita_types::PreparedNttPlan::base_envelope(setup.expanded.as_ref()).unwrap(),
+            )
+            .unwrap();
         let stack = akita_prover::UniformProverStack::uniform(
             &CpuBackend,
             &prepared,

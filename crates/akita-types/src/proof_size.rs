@@ -7,29 +7,159 @@
 //! proof (`schedule_from_entry`) lives in `akita-planner`, next to the
 //! schedule-table representation it consumes.
 
-use crate::layout::{field_bytes, proof_ring_vec_bytes, sumcheck_rounds};
-use crate::{stage1_tree_stage_shapes, LevelParams, RelationMatrixRowLayout};
+use akita_field::AkitaError;
+
+use crate::layout::{field_bytes, sumcheck_rounds};
+use crate::{
+    stage1_tree_stage_shapes, CompressionCatalogProjection, CompressionSourceId, LevelParams,
+    RelationMatrixRowLayout,
+};
 
 /// Fixed wire size of `fold_grind_nonce` on every fold level proof.
 pub const FOLD_GRIND_NONCE_BYTES: usize = 4;
 
-fn compressed_unipoly_bytes(degree: usize, elem_bytes: usize) -> usize {
-    degree * elem_bytes
+fn checked_product(lhs: usize, rhs: usize, what: &str) -> Result<usize, AkitaError> {
+    lhs.checked_mul(rhs)
+        .ok_or_else(|| AkitaError::InvalidSetup(format!("{what} byte count overflow")))
 }
 
-fn sumcheck_bytes(rounds: usize, degree: usize, elem_bytes: usize) -> usize {
-    rounds * compressed_unipoly_bytes(degree, elem_bytes)
+fn sumcheck_bytes(rounds: usize, degree: usize, elem_bytes: usize) -> Result<usize, AkitaError> {
+    checked_product(rounds, degree, "sumcheck polynomial")?
+        .checked_mul(elem_bytes)
+        .ok_or_else(|| AkitaError::InvalidSetup("sumcheck byte count overflow".into()))
 }
 
-fn stage1_proof_bytes(rounds: usize, b: usize, elem_bytes: usize) -> usize {
+fn stage1_proof_bytes(rounds: usize, b: usize, elem_bytes: usize) -> Result<usize, AkitaError> {
     stage1_tree_stage_shapes(rounds, b)
         .into_iter()
-        .map(|stage| {
-            ({ sumcheck_bytes(rounds, stage.sumcheck_proof.1, elem_bytes) })
-                + stage.child_claims * elem_bytes
+        .try_fold(0usize, |total, stage| {
+            let stage_bytes = sumcheck_bytes(rounds, stage.sumcheck_proof.1, elem_bytes)?
+                .checked_add(checked_product(
+                    stage.child_claims,
+                    elem_bytes,
+                    "stage-1 child claims",
+                )?)
+                .ok_or_else(|| {
+                    AkitaError::InvalidSetup("stage-1 stage byte count overflow".into())
+                })?;
+            total
+                .checked_add(stage_bytes)
+                .ok_or_else(|| AkitaError::InvalidSetup("stage-1 proof byte count overflow".into()))
         })
-        .sum::<usize>()
-        + elem_bytes
+        .and_then(|bytes| {
+            bytes
+                .checked_add(elem_bytes)
+                .ok_or_else(|| AkitaError::InvalidSetup("stage-1 claim byte count overflow".into()))
+        })
+}
+
+/// Checked terminal H/F geometry projected across one fold boundary.
+///
+/// H belongs to the current level's `Opening` chain. F belongs to the
+/// successor level's `CurrentOuter` chain; using the current level's F plan
+/// here would price the wrong commitment identity. Root and precommitted F
+/// payloads are outside this per-fold payload.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CompressedFoldWirePayload {
+    opening_payload_coeffs: usize,
+    next_commitment_payload_coeffs: usize,
+    next_base_field_bits: u32,
+}
+
+impl CompressedFoldWirePayload {
+    /// Project the two semantic payload identities needed by a nonterminal
+    /// fold from separately validated current and successor catalogs.
+    pub fn from_catalogs(
+        current_catalog: &CompressionCatalogProjection,
+        successor_catalog: &CompressionCatalogProjection,
+        next_base_field_bits: u32,
+    ) -> Result<Self, AkitaError> {
+        let opening_payload_coeffs = current_catalog
+            .payload_coeffs(CompressionSourceId::Opening)
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup(
+                    "current compression catalog is missing terminal H payload".into(),
+                )
+            })?;
+        let next_commitment_payload_coeffs = successor_catalog
+            .payload_coeffs(CompressionSourceId::CurrentOuter)
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup(
+                    "successor compression catalog is missing terminal F payload".into(),
+                )
+            })?;
+        Ok(Self {
+            opening_payload_coeffs,
+            next_commitment_payload_coeffs,
+            next_base_field_bits,
+        })
+    }
+}
+
+/// Wire representation of the two ring-valued payloads in a nonterminal fold.
+///
+/// The native form preserves the existing D opening response followed by the
+/// successor level's B commitment. The compressed form is accepted only as a
+/// projection of separately validated current/successor catalogs. This type is
+/// the pricing boundary only; compressed proof objects do not exist yet, so
+/// schedule replay must keep selecting `Native` until the schema and
+/// authenticated catalog identity land together.
+#[derive(Debug, Clone, Copy)]
+pub enum FoldWirePayload<'a> {
+    Native {
+        next_level: &'a LevelParams,
+        next_base_field_bits: u32,
+    },
+    Compressed(CompressedFoldWirePayload),
+}
+
+impl FoldWirePayload<'_> {
+    fn bytes(
+        self,
+        current_level: &LevelParams,
+        current_base_field_bits: u32,
+    ) -> Result<usize, AkitaError> {
+        let current_elem_bytes = field_bytes(current_base_field_bits);
+        match self {
+            Self::Native {
+                next_level,
+                next_base_field_bits,
+            } => {
+                let opening_coeffs = checked_product(
+                    current_level.d_key.row_len(),
+                    current_level.ring_dimension,
+                    "native D payload",
+                )?;
+                let next_coeffs = checked_product(
+                    next_level.b_key.row_len(),
+                    next_level.ring_dimension,
+                    "native B payload",
+                )?;
+                checked_product(opening_coeffs, current_elem_bytes, "native D payload")?
+                    .checked_add(checked_product(
+                        next_coeffs,
+                        field_bytes(next_base_field_bits),
+                        "native B payload",
+                    )?)
+                    .ok_or_else(|| {
+                        AkitaError::InvalidSetup("native fold wire byte count overflow".into())
+                    })
+            }
+            Self::Compressed(payload) => checked_product(
+                payload.opening_payload_coeffs,
+                current_elem_bytes,
+                "terminal H payload",
+            )?
+            .checked_add(checked_product(
+                payload.next_commitment_payload_coeffs,
+                field_bytes(payload.next_base_field_bits),
+                "terminal F payload",
+            )?)
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup("compressed fold wire byte count overflow".into())
+            }),
+        }
+    }
 }
 
 /// Header-stripped byte size of one folded proof level, parametrized by
@@ -50,49 +180,85 @@ fn stage1_proof_bytes(rounds: usize, b: usize, elem_bytes: usize) -> usize {
 /// planner DP. The shipped schedules and the planner score the direct-mode
 /// proof; recursive observed sizes are reported on top of that baseline.
 ///
-/// `next_lp` is required on the `Intermediate` arm (it sizes the next-level
-/// witness commitment shipped on the wire) and unused on the `Terminal` arm;
-/// terminal callers pass `None`.
+/// `wire_payload` is required on the `WithDBlock` arm and must be `None` on
+/// `WithoutDBlock`. The latter has neither a D/H response nor a successor B/F
+/// commitment.
 ///
-/// # Panics
+/// # Errors
 ///
-/// Panics if `layout == Intermediate` and `next_lp` is `None`. This helper
-/// is offline (planner / selector / profiling) and is not on the verifier
-/// path, so the no-panic boundary does not apply.
+/// Returns an error for a layout/payload mismatch, a compressed catalog
+/// missing either semantic wire source, or any byte-count overflow.
 pub fn level_proof_bytes(
     base_field_bits: u32,
     challenge_field_bits: u32,
     lp: &LevelParams,
-    next_lp: Option<&LevelParams>,
+    wire_payload: Option<FoldWirePayload<'_>>,
     next_w_len: usize,
     _num_claims: usize,
     layout: RelationMatrixRowLayout,
-) -> usize {
-    let base_elem_bytes = field_bytes(base_field_bits);
+) -> Result<usize, AkitaError> {
+    if lp.ring_dimension == 0 || !lp.ring_dimension.is_power_of_two() {
+        return Err(AkitaError::InvalidSetup(
+            "proof-size ring dimension must be a non-zero power of two".into(),
+        ));
+    }
+    if next_w_len == 0 {
+        return Err(AkitaError::InvalidSetup(
+            "proof-size successor witness length must be non-zero".into(),
+        ));
+    }
+    if !next_w_len.is_multiple_of(lp.ring_dimension) {
+        return Err(AkitaError::InvalidSetup(
+            "proof-size successor witness length must be divisible by the current ring dimension"
+                .into(),
+        ));
+    }
+    let next_ring_elems = next_w_len / lp.ring_dimension;
+    if next_ring_elems.checked_next_power_of_two().is_none() {
+        return Err(AkitaError::InvalidSetup(
+            "proof-size successor witness domain overflows its padded power of two".into(),
+        ));
+    }
     let challenge_elem_bytes = field_bytes(challenge_field_bits);
     let rounds = sumcheck_rounds(lp.ring_dimension, next_w_len);
-    let sumcheck = sumcheck_bytes(rounds, 3, challenge_elem_bytes);
+    let sumcheck = sumcheck_bytes(rounds, 3, challenge_elem_bytes)?;
     match layout {
-        RelationMatrixRowLayout::WithoutDBlock => FOLD_GRIND_NONCE_BYTES + sumcheck,
+        RelationMatrixRowLayout::WithoutDBlock => {
+            if wire_payload.is_some() {
+                return Err(AkitaError::InvalidSetup(
+                    "terminal fold must not carry a D/H or B/F wire payload".into(),
+                ));
+            }
+            FOLD_GRIND_NONCE_BYTES
+                .checked_add(sumcheck)
+                .ok_or_else(|| AkitaError::InvalidSetup("terminal fold byte count overflow".into()))
+        }
         RelationMatrixRowLayout::WithDBlock => {
-            let next_lp = next_lp
-                .expect("level_proof_bytes(WithDBlock) requires next_lp; caller must pass Some");
-            let v_bytes =
-                proof_ring_vec_bytes(lp.d_key.row_len(), lp.ring_dimension, base_elem_bytes);
-            let next_commit_bytes = proof_ring_vec_bytes(
-                next_lp.b_key.row_len(),
-                next_lp.ring_dimension,
-                base_elem_bytes,
-            );
+            let wire_bytes = wire_payload
+                .ok_or_else(|| {
+                    AkitaError::InvalidSetup(
+                        "nonterminal fold requires a D/H and B/F wire payload".into(),
+                    )
+                })?
+                .bytes(lp, base_field_bits)?;
             let next_eval_bytes = challenge_elem_bytes;
-            let b = 1usize << lp.log_basis;
-            let stage1_bytes = stage1_proof_bytes(rounds, b, challenge_elem_bytes);
-            v_bytes
-                + FOLD_GRIND_NONCE_BYTES
-                + stage1_bytes
-                + sumcheck
-                + next_commit_bytes
-                + next_eval_bytes
+            let b = 1usize
+                .checked_shl(lp.log_basis)
+                .ok_or_else(|| AkitaError::InvalidSetup("stage-1 basis size overflow".into()))?;
+            let stage1_bytes = stage1_proof_bytes(rounds, b, challenge_elem_bytes)?;
+            [
+                wire_bytes,
+                FOLD_GRIND_NONCE_BYTES,
+                stage1_bytes,
+                sumcheck,
+                next_eval_bytes,
+            ]
+            .into_iter()
+            .try_fold(0usize, |total, bytes| {
+                total.checked_add(bytes).ok_or_else(|| {
+                    AkitaError::InvalidSetup("nonterminal fold byte count overflow".into())
+                })
+            })
         }
     }
 }
@@ -129,8 +295,7 @@ pub fn stage3_setup_product_bytes(
     let rounds = setup_rounds.max(witness_rounds);
     // Claimed setup contribution + carried next-witness opening + degree-2
     // fused setup/carry sumcheck rounds.
-    2 * challenge_elem_bytes
-        + sumcheck_bytes(rounds, crate::SETUP_SUMCHECK_DEGREE, challenge_elem_bytes)
+    2 * challenge_elem_bytes + rounds * crate::SETUP_SUMCHECK_DEGREE * challenge_elem_bytes
 }
 
 #[cfg(test)]
@@ -156,6 +321,8 @@ mod tests {
         AkitaStage1StageProof, AkitaStage2Proof, CleartextWitnessProof, CleartextWitnessShape,
         RingVec, SetupSumcheckProof, SisModulusFamily, TerminalLevelProof, SETUP_SUMCHECK_DEGREE,
     };
+
+    mod compression;
 
     type F = Prime128OffsetA7F7;
 
@@ -314,11 +481,15 @@ mod tests {
                     128,
                     128,
                     &lp,
-                    Some(&next_lp),
+                    Some(FoldWirePayload::Native {
+                        next_level: &next_lp,
+                        next_base_field_bits: 128,
+                    }),
                     next_w_len,
                     1,
                     RelationMatrixRowLayout::WithDBlock,
-                ),
+                )
+                .unwrap(),
                 exact_level_proof_bytes::<F>(&lp, &next_lp, next_w_len, None).unwrap(),
                 "planned level bytes should match the serialized two-stage body at log_basis={log_basis}"
             );
@@ -389,11 +560,15 @@ mod tests {
                     128,
                     128,
                     &lp,
-                    Some(&next_lp),
+                    Some(FoldWirePayload::Native {
+                        next_level: &next_lp,
+                        next_base_field_bits: 128,
+                    }),
                     next_w_len,
                     1,
                     RelationMatrixRowLayout::WithDBlock,
-                ),
+                )
+                .unwrap(),
                 direct_bytes,
                 "direct planner bytes must exclude the stage-3 payload at log_basis={log_basis}"
             );
@@ -447,7 +622,8 @@ mod tests {
                     next_w_len,
                     num_claims,
                     RelationMatrixRowLayout::WithoutDBlock,
-                ),
+                )
+                .unwrap(),
                 serialized_without_witness,
                 "planned terminal-level bytes should match the serialized terminal body \
                  (less final_witness) at log_basis={log_basis}"

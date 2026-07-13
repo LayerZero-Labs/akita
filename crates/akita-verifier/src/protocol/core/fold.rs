@@ -231,7 +231,7 @@ pub(in crate::protocol::core) struct PreparedFoldReplay<'a, F: FieldCore, E: Fie
     /// `root_group_order`) order — the single group's rows for scalar/suffix
     /// folds, `concat_g u_g` for multi-group roots. Matches the prover's
     /// `RingRelationProver` commitment-row concatenation and
-    /// `relation_rhs_layout_for` block order.
+    /// semantic relation-plan commitment-family order.
     pub(in crate::protocol::core) commitment_rows: RingVec<F>,
     pub(in crate::protocol::core) row_coefficients: Vec<E>,
     /// Per-group ring opening points in `OpeningClaims` order.
@@ -642,18 +642,8 @@ where
             )
         }
     )?;
-    let relation_rhs_layout = relation_rhs_layout_for(
-        prepared.lp,
-        &opening_shape,
-        prepared.relation_matrix_row_layout,
-    )?;
-    let relation_rhs = assemble_relation_rhs::<F>(
-        role_dims,
-        &relation_rhs_layout,
-        &prepared.v,
-        commitment_rows,
-    )?;
     let relation_instance = RingRelationInstance::new(
+        prepared.lp,
         prepared.relation_matrix_row_layout,
         group_challenges,
         prepared.group_ring_opening_points,
@@ -661,9 +651,8 @@ where
         opening_shape.clone(),
         gamma,
         row_coefficient_rings,
-        relation_rhs,
-        prepared.v,
-        role_dims,
+        prepared.commitment_rows.clone(),
+        prepared.v.clone(),
     )?;
     relation_instance.check_v_shape_for_level(prepared.lp)?;
     let ring_switch_replay = RingSwitchReplay {
@@ -705,8 +694,7 @@ where
             }
         )?;
     let relation_claim = relation_claim_from_layout_extension::<F, E>(
-        relation_instance.role_dims(),
-        &relation_rhs_layout,
+        relation_instance.relation_layout().row_plan(),
         &rs.tau1,
         rs.alpha,
         relation_instance.v(),
@@ -715,20 +703,16 @@ where
     let stage1_replay = verify_stage1::<F, E, T>(prepared.stage1, &rs, transcript)?;
     // EvaluationTrace is the last padded relation row: weight openings by
     // `eq(tau1, EvaluationTrace_row_index)`.
-    let opening_batch = relation_instance.opening_batch();
-    let evaluation_trace_row = prepared.lp.evaluation_trace_row_index_for_layout(
-        prepared.relation_matrix_row_layout,
-        opening_batch,
-    )?;
+    let evaluation_trace_row = relation_instance.relation_layout().row_plan().trace_row();
     let evaluation_trace_weight = evaluation_trace_row_weight(evaluation_trace_row, &rs.tau1)?;
     ensure_trace_stage2_supported(<E as ExtField<F>>::EXT_DEGREE)?;
     let trace_wire = if prepared.trace_prepared_points.is_none() {
         None
     } else if prepared.trace_block_opening.is_none() {
-        let segment_layout = relation_instance.segment_layout(prepared.lp, None)?;
+        let segment_layout = relation_instance.relation_layout().witness_layout(None)?;
         let layout = trace_weight_layout_from_segment(
             prepared.lp,
-            &segment_layout,
+            segment_layout,
             rs.col_bits,
             rs.ring_bits,
             prepared.lp.num_blocks,
@@ -752,7 +736,7 @@ where
         // `num_digits_open`, and group-major e-hat offset). The layout is inert
         // for the dense path; size it against the scalar block count so
         // `trace_weight_layout_from_segment` accepts it.
-        let segment_layout = relation_instance.segment_layout(prepared.lp, None)?;
+        let segment_layout = relation_instance.relation_layout().witness_layout(None)?;
         let num_trace_blocks = relation_instance
             .opening_batch()
             .num_total_polynomials()
@@ -760,7 +744,7 @@ where
             .ok_or_else(|| AkitaError::InvalidSetup("trace block count overflow".to_string()))?;
         let layout = trace_weight_layout_from_segment(
             prepared.lp,
-            &segment_layout,
+            segment_layout,
             rs.col_bits,
             rs.ring_bits,
             num_trace_blocks,
@@ -799,7 +783,7 @@ where
             trace_basis: prepared.trace_basis,
         })
     } else {
-        let segment_layout = relation_instance.segment_layout(prepared.lp, None)?;
+        let segment_layout = relation_instance.relation_layout().witness_layout(None)?;
         let num_trace_blocks = relation_instance
             .opening_batch()
             .num_total_polynomials()
@@ -807,7 +791,7 @@ where
             .ok_or_else(|| AkitaError::InvalidSetup("trace block count overflow".to_string()))?;
         let layout = trace_weight_layout_from_segment(
             prepared.lp,
-            &segment_layout,
+            segment_layout,
             rs.col_bits,
             rs.ring_bits,
             num_trace_blocks,

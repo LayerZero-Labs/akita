@@ -15,8 +15,8 @@ pub const MAX_FOLD_LEVELS: usize = 16;
 pub const SUPPORTED_CHALLENGE_RING_DIMS: &[usize] =
     akita_challenges::PRODUCTION_FOLD_CHALLENGE_RING_DIMS;
 
-/// Ring dimensions valid for any commitment matrix role (B/D may use D=16 on fp128).
-pub const SUPPORTED_RING_DIMS: [usize; 8] = [16, 32, 64, 128, 256, 512, 1024, 2048];
+/// Protocol-wide lower bound for B/D matrix rings before field-tier dispatch.
+const MIN_BD_MATRIX_RING_D: usize = 32;
 
 /// Minimum `d_a` for sparse fold ring challenges (no sampler below this).
 pub const MIN_A_ROLE_FOLD_CHALLENGE_RING_D: usize = 64;
@@ -227,10 +227,9 @@ pub fn validate_role_dims(dims: CommitmentRingDims) -> Result<(), AkitaError> {
         (RingRole::Outer, dims.outer),
         (RingRole::Opening, dims.opening),
     ] {
-        if !SUPPORTED_RING_DIMS.contains(&d) {
+        if d < MIN_BD_MATRIX_RING_D {
             return Err(AkitaError::InvalidSetup(format!(
-                "unsupported {:?} ring dimension {d}",
-                role
+                "{role:?} matrix ring dimension {d} is below the protocol minimum {MIN_BD_MATRIX_RING_D}"
             )));
         }
     }

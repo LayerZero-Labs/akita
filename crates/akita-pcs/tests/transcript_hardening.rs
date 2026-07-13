@@ -51,7 +51,12 @@ fn event_stream_equality_small() {
         let opening = opening_from_poly::<ONEHOT_D, _>(&poly, &point, &layout);
 
         let setup = Scheme::setup_prover(num_vars, 1).unwrap();
-        let prepared = CpuBackend.prepare_setup(&setup).unwrap();
+        let prepared = CpuBackend
+            .prepare_setup(
+                &setup,
+                &akita_types::PreparedNttPlan::base_envelope(setup.expanded.as_ref()).unwrap(),
+            )
+            .unwrap();
         let stack = akita_prover::UniformProverStack::uniform(
             &CpuBackend,
             &prepared,
@@ -284,7 +289,12 @@ fn assert_terminal_tamper_rejected_at_num_vars(num_vars: usize, tamper: Terminal
         let opening = opening_from_poly::<ONEHOT_D, _>(&poly, &point, &layout);
 
         let setup = Scheme::setup_prover(num_vars, 1).unwrap();
-        let prepared = CpuBackend.prepare_setup(&setup).unwrap();
+        let prepared = CpuBackend
+            .prepare_setup(
+                &setup,
+                &akita_types::PreparedNttPlan::base_envelope(setup.expanded.as_ref()).unwrap(),
+            )
+            .unwrap();
         let stack = akita_prover::UniformProverStack::uniform(
             &CpuBackend,
             &prepared,
@@ -382,7 +392,12 @@ fn terminal_direct_witness_shape_mismatch_rejects_deserialization() {
         let point = random_point(num_vars, 0x6161);
 
         let setup = Scheme::setup_prover(num_vars, 1).unwrap();
-        let prepared = CpuBackend.prepare_setup(&setup).unwrap();
+        let prepared = CpuBackend
+            .prepare_setup(
+                &setup,
+                &akita_types::PreparedNttPlan::base_envelope(setup.expanded.as_ref()).unwrap(),
+            )
+            .unwrap();
         let stack = akita_prover::UniformProverStack::uniform(
             &CpuBackend,
             &prepared,

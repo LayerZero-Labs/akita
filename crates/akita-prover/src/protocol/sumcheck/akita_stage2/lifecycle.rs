@@ -84,6 +84,9 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
             s_claim,
             input_claim,
             split_eq: GruenSplitEq::with_initial_scalar(stage1_point, batching_coeff)?,
+            sparse_state: Stage2SparseState::empty(x_len.checked_mul(y_len).ok_or_else(|| {
+                AkitaError::InvalidInput("stage-2 sparse domain size overflow".to_string())
+            })?)?,
             alpha_compact: alpha_evals_y,
             relation_matrix_col_evals_compact: relation_matrix_col_evals,
             trace_table,
@@ -272,8 +275,22 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                 self.batching_coeff,
             )
             .expect("valid bivariate-skip state");
+            let sparse_grid = if self.sparse_state.is_empty() {
+                None
+            } else {
+                Some(
+                    self.sparse_state
+                        .two_round_grid(|index| {
+                            w_compact
+                                .get(index)
+                                .map_or(E::zero(), |&value| E::from_i64(i64::from(value)))
+                        })
+                        .expect("two-round prefix sparse grid dimensions are prevalidated"),
+                )
+            };
             self.two_round_prefix = Some(Stage2TwoRoundPrefix {
                 skip_state,
+                sparse_grid,
                 first_challenge: None,
             });
         }

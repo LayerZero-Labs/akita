@@ -1,6 +1,36 @@
 use super::*;
 
 impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
+    fn current_sparse_round_poly(&mut self) -> UniPoly<E> {
+        if self.using_two_round_prefix() {
+            let rounds_completed = self.rounds_completed;
+            let prefix = self.ensure_two_round_prefix();
+            let sparse_grid = prefix
+                .sparse_grid
+                .as_ref()
+                .expect("nonempty sparse state requires a two-round grid");
+            return if rounds_completed == 0 {
+                sparse_grid.round0_poly()
+            } else {
+                sparse_grid.round1_poly(
+                    prefix
+                        .first_challenge
+                        .expect("round 1 sparse prefix requires the round 0 challenge"),
+                )
+            };
+        }
+        match &self.w_table {
+            WTable::Compact(witness) => self.sparse_state.round_poly(|index| {
+                witness
+                    .get(index)
+                    .map_or(E::zero(), |&value| E::from_i64(i64::from(value)))
+            }),
+            WTable::Full(witness) => self
+                .sparse_state
+                .round_poly(|index| witness.get(index).copied().unwrap_or_else(E::zero)),
+        }
+    }
+
     pub(super) fn compute_current_round_poly_from_state(&mut self) -> UniPoly<E> {
         let t_scan = Instant::now();
         let use_two_round_prefix = self.using_two_round_prefix();
@@ -109,11 +139,16 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + HasOptimizedFold> Sumch
     }
 
     fn compute_round_univariate(&mut self, _round: usize, _previous_claim: E) -> UniPoly<E> {
-        if let Some(poly) = self.cached_round_poly.take() {
+        let base_poly = if let Some(poly) = self.cached_round_poly.take() {
             poly
         } else {
             self.compute_current_round_poly_from_state()
+        };
+        if self.sparse_state.is_empty() {
+            return base_poly;
         }
+        let sparse_poly = self.current_sparse_round_poly();
+        self.combine_polys(&base_poly, &sparse_poly)
     }
 
     fn ingest_challenge(&mut self, _round: usize, r: E) {
@@ -126,6 +161,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + HasOptimizedFold> Sumch
         if self.using_two_round_prefix() {
             let rounds_completed = self.rounds_completed;
             self.split_eq.bind(r);
+            self.sparse_state.bind(r);
             if rounds_completed == 0 {
                 self.ensure_two_round_prefix().first_challenge = Some(r);
             } else {
@@ -196,6 +232,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + HasOptimizedFold> Sumch
         }
 
         self.split_eq.bind(r);
+        self.sparse_state.bind(r);
         let folding_x_round = !self.in_y_round();
         let use_prefix_x_round = self.use_prefix_x_round();
         let use_prefix_y_round = self.use_prefix_y_round();

@@ -338,7 +338,7 @@ A-cyclic rows: a_row * W_A + a_col
 A-neg rows:    a_row * W_A + a_col
 ```
 
-`fused_split_eq_quotients` must not keep the same-stride invariant:
+`fused_ring_switch_relation_rows` must not keep the same-stride invariant:
 
 ```text
 &cache[i * stride .. (i + 1) * stride]
@@ -955,7 +955,7 @@ Minimum tests for the implementation branch:
 - Setup validation checks physical matrix length equals `seed.max_setup_len`.
 - Cache validation rejects smaller or physically mismatched setup artifacts.
 - A/B/D role-view helpers reject insufficient setup length.
-- `fused_split_eq_quotients` covers different D/B/A role widths.
+- `fused_ring_switch_relation_rows` covers different D/B/A role widths.
 - Direct `compute_setup_contribution` matches the old logical formula on small
   batched fixtures after converting fixtures from `r_max * max_stride` to
   packed role widths.
@@ -988,7 +988,7 @@ calls the single-RHS cyclic mat-vec once per group, zero-padding each group to
 the packed `W_B = max(num_polys_per_point) * n_a * num_blocks * depth_open`
 width.
 Single-point B avoids the extra passes by fusing into the
-`fused_split_eq_quotients` pass that already computes D and A.
+`fused_ring_switch_relation_rows` pass that already computes D and A.
 
 This single-vs-multi split is a consequence of a missing kernel, not of the
 packed B layout itself.
@@ -999,7 +999,7 @@ Because that kernel does not exist, multi-point B pays `num_points` full B
 cache traversals, and the prover forks single-point vs multi-point B in
 `compute_r_split_eq` via `use_relation_b_rows`.
 
-The clean follow-up extends `fused_split_eq_quotients` so its B branch loops
+The clean follow-up extends `fused_ring_switch_relation_rows` so its B branch loops
 over the point groups inside the existing column-tile pass, reusing each loaded
 B row across groups.
 D and A stay point-independent and unchanged.

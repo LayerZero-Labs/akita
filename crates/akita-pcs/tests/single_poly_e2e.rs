@@ -46,7 +46,12 @@ fn run_single_onehot(nv: usize) {
         let expected_opening = opening_from_poly::<ONEHOT_D, _>(&poly, &pt, &layout);
 
         let setup = AkitaCommitmentScheme::<OneHotCfg>::setup_prover(nv, 1).unwrap();
-        let prepared = CpuBackend.prepare_setup(&setup).unwrap();
+        let prepared = CpuBackend
+            .prepare_setup(
+                &setup,
+                &akita_types::PreparedNttPlan::base_envelope(setup.expanded.as_ref()).unwrap(),
+            )
+            .unwrap();
         let stack = akita_prover::UniformProverStack::uniform(
             &CpuBackend,
             &prepared,
@@ -131,7 +136,12 @@ fn run_single_dense(nv: usize) {
         let expected_opening = opening_from_poly::<DENSE_D, _>(&poly, &pt, &layout);
 
         let setup = AkitaCommitmentScheme::<DenseCfg>::setup_prover(nv, 1).unwrap();
-        let prepared = CpuBackend.prepare_setup(&setup).unwrap();
+        let prepared = CpuBackend
+            .prepare_setup(
+                &setup,
+                &akita_types::PreparedNttPlan::base_envelope(setup.expanded.as_ref()).unwrap(),
+            )
+            .unwrap();
         let stack = akita_prover::UniformProverStack::uniform(
             &CpuBackend,
             &prepared,
@@ -268,7 +278,12 @@ fn run_single_onehot_oversized_setup(setup_nv: usize, poly_nv: usize) {
         let expected_opening = opening_from_poly::<ONEHOT_D, _>(&poly, &pt, &layout);
 
         let setup = AkitaCommitmentScheme::<OneHotCfg>::setup_prover(setup_nv, 1).unwrap();
-        let prepared = CpuBackend.prepare_setup(&setup).unwrap();
+        let prepared = CpuBackend
+            .prepare_setup(
+                &setup,
+                &akita_types::PreparedNttPlan::base_envelope(setup.expanded.as_ref()).unwrap(),
+            )
+            .unwrap();
         let stack = akita_prover::UniformProverStack::uniform(
             &CpuBackend,
             &prepared,

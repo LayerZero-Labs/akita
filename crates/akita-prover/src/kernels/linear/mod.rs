@@ -26,9 +26,9 @@ mod common;
 mod crt_matvec;
 mod decompose;
 mod digits;
-mod fused_quotients;
 mod i8_matvec;
 mod ntt_matvec;
+mod ring_switch_relation_rows;
 mod single_cyclic;
 #[cfg(test)]
 mod tests;
@@ -37,6 +37,7 @@ use block_parallel::*;
 use capacity::*;
 pub(crate) use capacity::{selected_crt_i8_capacity_profile, CrtI8CapacityProfile};
 use chunked_matvec::*;
+pub(crate) use common::quotient_from_cyclic_and_negacyclic;
 use common::*;
 #[cfg(test)]
 use crt_matvec::precompute_dense_mat_ntt_with_params;
@@ -49,9 +50,6 @@ pub use decompose::{
     decompose_commit_rows_i8_into, decompose_rows_i8, decompose_rows_i8_into, try_centered_i8,
 };
 use digits::*;
-#[cfg(test)]
-pub(crate) use fused_quotients::fused_split_eq_quotients;
-pub(crate) use fused_quotients::fused_split_eq_quotients_prover_bounds;
 use i8_matvec::*;
 pub(crate) use ntt_matvec::mat_vec_mul_ntt_dense_digits_i8_trusted;
 pub use ntt_matvec::{
@@ -59,4 +57,8 @@ pub use ntt_matvec::{
     mat_vec_mul_ntt_i8, mat_vec_mul_ntt_i8_dense, mat_vec_mul_ntt_i8_dense_single_row,
     mat_vec_mul_ntt_i8_strided, mat_vec_mul_ntt_raw_i8_strided,
 };
+pub(crate) use ring_switch_relation_rows::compression_rows_with_slot;
+#[cfg(test)]
+pub(crate) use ring_switch_relation_rows::fused_ring_switch_relation_rows;
+pub(crate) use ring_switch_relation_rows::fused_ring_switch_relation_rows_prover_bounds;
 pub use single_cyclic::{mat_vec_mul_ntt_single_i8, mat_vec_mul_ntt_single_i8_cyclic};

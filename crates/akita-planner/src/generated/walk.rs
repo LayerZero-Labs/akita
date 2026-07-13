@@ -8,17 +8,19 @@
 //! transitions and proof-byte totals.
 
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
-use akita_field::AkitaError;
+use akita_field::{AkitaError, CanonicalField};
 use akita_types::{
     direct_witness_bytes, extension_opening_reduction_level_bytes, level_proof_bytes,
     segment_typed_witness_shape, w_ring_element_count_for_chunks,
     w_ring_element_count_with_counts_for_layout_bits, AkitaScheduleInputs, AkitaScheduleLookupKey,
-    CleartextWitnessShape, DirectStep, FoldStep, LevelParams, PolynomialGroupLayout,
-    PrecommittedLevelParams, RelationMatrixRowLayout, Schedule, Step,
+    CleartextWitnessShape, DirectStep, FoldStep, FoldWirePayload, FrozenCompressionChainChoice,
+    LevelCompressionPlan, LevelParams, PolynomialGroupLayout, PrecommittedLevelParams,
+    RelationMatrixRowLayout, Schedule, ScheduleCompressionPlan, Step,
 };
 
 use crate::generated::{
-    validate_entry_key, GeneratedFoldStep, GeneratedScheduleTableEntry, GeneratedStep,
+    validate_entry_key, GeneratedFoldStep, GeneratedScheduleCompressionPlan,
+    GeneratedScheduleTableEntry, GeneratedStep,
 };
 use crate::group_batch::{multi_group_root_next_w_len, multi_group_root_precommitted_groups};
 use crate::PlannerPolicy;
@@ -28,13 +30,47 @@ pub(crate) struct GeneratedEntryWalkOutput {
     pub schedule: Schedule,
 }
 
-pub(crate) fn walk_generated_schedule_entry(
+/// Walk a dormant static compression record into the checked runtime owner.
+///
+/// Production generated entries do not contain this record before the atomic
+/// cutover.
+#[allow(dead_code)] // Exercised by prep fixtures; production attachment lands atomically.
+pub(crate) fn walk_generated_schedule_compression_plan(
+    generated: &GeneratedScheduleCompressionPlan,
+    schedule: &Schedule,
+) -> Result<ScheduleCompressionPlan, AkitaError> {
+    let levels = generated
+        .levels
+        .iter()
+        .map(|level| LevelCompressionPlan {
+            current_f: FrozenCompressionChainChoice {
+                source_key_digest: level.current_f.source_key_digest,
+                max_opening_log_basis: level.current_f.max_opening_log_basis,
+                chain: level.current_f.chain,
+            },
+            precommitted_f: level
+                .precommitted_f
+                .iter()
+                .map(|frozen| FrozenCompressionChainChoice {
+                    source_key_digest: frozen.source_key_digest,
+                    max_opening_log_basis: frozen.max_opening_log_basis,
+                    chain: frozen.chain,
+                })
+                .collect(),
+            opening_h: level.opening_h,
+        })
+        .collect();
+    ScheduleCompressionPlan::new(schedule, levels)
+}
+
+pub(crate) fn walk_generated_schedule_entry<F: CanonicalField>(
     entry: &GeneratedScheduleTableEntry,
     key: &AkitaScheduleLookupKey,
     policy: &PlannerPolicy,
     ring_challenge_config: &impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
     fold_challenge_shape_at_level: &impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
 ) -> Result<GeneratedEntryWalkOutput, AkitaError> {
+    crate::schedule_params::validate_planner_field::<F>(policy)?;
     key.validate()?;
     validate_entry_key(entry, key)?;
     entry.validate()?;
@@ -161,11 +197,14 @@ fn walk_scalar_generated_schedule_entry(
                     field_bits,
                     challenge_field_bits,
                     &lp,
-                    next_lp.as_ref(),
+                    next_lp.as_ref().map(|next_level| FoldWirePayload::Native {
+                        next_level,
+                        next_base_field_bits: field_bits,
+                    }),
                     next_w_len,
                     1,
                     layout,
-                )
+                )?
                 .checked_add(extension_opening_reduction_level_bytes(
                     challenge_field_bits,
                     policy.claim_ext_degree,
@@ -418,11 +457,14 @@ fn walk_multi_group_generated_schedule_entry(
                     field_bits,
                     challenge_field_bits,
                     &lp,
-                    next_lp.as_ref(),
+                    next_lp.as_ref().map(|next_level| FoldWirePayload::Native {
+                        next_level,
+                        next_base_field_bits: field_bits,
+                    }),
                     next_w_len,
                     1,
                     layout,
-                )
+                )?
                 .checked_add(extension_opening_reduction_level_bytes(
                     challenge_field_bits,
                     extension_opening_width,

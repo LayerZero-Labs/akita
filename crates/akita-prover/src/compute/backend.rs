@@ -1,14 +1,14 @@
 use crate::compute::plans::{
-    DenseCommitRowsPlan, OneHotCommitRowsPlan, RecursiveWitnessCommitRowsPlan,
-    RingSwitchQuotientRowsPlan, RingSwitchRelationRows, RingSwitchRelationRowsPlan,
-    SparseRingCommitRowsPlan,
+    CompressionRowsOutput, CompressionRowsPlan, DenseCommitRowsPlan, OneHotCommitRowsPlan,
+    RecursiveWitnessCommitRowsPlan, RingSwitchQuotientRowsPlan, RingSwitchRelationRows,
+    RingSwitchRelationRowsPlan, SparseRingCommitRowsPlan,
 };
-use crate::kernels::crt_ntt::NttSlotCacheAny;
+use crate::kernels::crt_ntt::{NttSlotCache, NttSlotCacheAny};
 use crate::AkitaProverSetup;
 use akita_algebra::CyclotomicRing;
 use akita_field::unreduced::{HasWide, ReduceTo};
 use akita_field::{AdditiveGroup, AkitaError, CanonicalField, FieldCore, HalvingField};
-use akita_types::{dispatch_for_field, AkitaExpandedSetup, NttCacheKey};
+use akita_types::{dispatch_for_field, AkitaExpandedSetup, NttCacheKey, PreparedNttPlan};
 use std::sync::Arc;
 
 /// Shared prepared-setup contract for prover compute backends.
@@ -16,7 +16,7 @@ use std::sync::Arc;
 /// ## Runtime ring cutover (phase 1)
 ///
 /// `PreparedSetup` is keyed by [`NttCacheKey`] at runtime. [`Self::prepare_setup`]
-/// registers the minimum setup contract: one full-envelope slot at compile-time `D`.
+/// registers every slot in the checked preparation plan.
 /// [`Self::prepare_expanded`] leaves the cache empty. Commit/prove may call
 /// [`Self::ensure_ntt_slot`] lazily; building outside the setup contract emits a
 /// diagnostic warning (see warm-cache policy in `specs/runtime-ring-cutover.md`).
@@ -29,26 +29,26 @@ where
 
     /// Prepare backend state from a prover setup wrapper.
     ///
-    /// Builds the minimum NTT setup contract: one full-envelope slot at the
-    /// setup seed's `gen_ring_dim`.
+    /// Eagerly builds every slot in the checked NTT setup contract.
     fn prepare_setup(
         &self,
         setup: &AkitaProverSetup<F>,
+        plan: &PreparedNttPlan,
     ) -> Result<Self::PreparedSetup, AkitaError> {
         let ring_d = setup.gen_ring_dim();
         dispatch_for_field!(ProtocolDispatchSlot::Envelope, F, ring_d, |D| {
-            let prepared = self.prepare_expanded::<D>(setup.expanded.clone())?;
-            self.register_setup_contract_envelope_ntt::<D>(&prepared, setup.expanded.as_ref())?;
-            Ok(prepared)
+            self.prepare_expanded::<D>(setup.expanded.clone(), plan.clone())
         })
     }
 
     /// Prepare backend state from already-expanded setup data.
     ///
-    /// Returns an empty NTT cache. Prefer [`Self::prepare_setup`] for commit/prove hosts.
+    /// Materializes every slot in `plan` before returning. Prefer
+    /// [`Self::prepare_setup`] when starting from a prover setup wrapper.
     fn prepare_expanded<const D: usize>(
         &self,
         expanded: Arc<AkitaExpandedSetup<F>>,
+        plan: PreparedNttPlan,
     ) -> Result<Self::PreparedSetup, AkitaError>;
 
     /// Empty prepared state plus the full-envelope NTT slot for `D`.
@@ -60,30 +60,8 @@ where
         &self,
         expanded: Arc<AkitaExpandedSetup<F>>,
     ) -> Result<Self::PreparedSetup, AkitaError> {
-        let prepared = self.prepare_expanded::<D>(expanded.clone())?;
-        let key = NttCacheKey::from_envelope(expanded.as_ref(), D)?;
-        self.ensure_ntt_slot(&prepared, key)?;
-        Ok(prepared)
-    }
-
-    /// Register the full-envelope NTT slot at compile-time ring degree `D` on the
-    /// setup prepare contract.
-    fn register_setup_contract_envelope_ntt<const D: usize>(
-        &self,
-        prepared: &Self::PreparedSetup,
-        expanded: &AkitaExpandedSetup<F>,
-    ) -> Result<(), AkitaError> {
-        let key = NttCacheKey::from_envelope(expanded, D)?;
-        self.register_setup_contract_ntt_slot(prepared, key)
-    }
-
-    /// Build `key` as part of the setup prepare contract (no oversize warning).
-    fn register_setup_contract_ntt_slot(
-        &self,
-        prepared: &Self::PreparedSetup,
-        key: NttCacheKey,
-    ) -> Result<(), AkitaError> {
-        self.ensure_ntt_slot(prepared, key)
+        let plan = PreparedNttPlan::envelope_at(expanded.as_ref(), D)?;
+        self.prepare_expanded::<D>(expanded, plan)
     }
 
     /// Build the cache for `key` if absent.
@@ -103,6 +81,30 @@ where
         key: NttCacheKey,
         f: impl FnOnce(&NttSlotCacheAny) -> Result<R, AkitaError>,
     ) -> Result<R, AkitaError>;
+
+    /// Checked NTT preparation plan stored on this prepared context.
+    fn prepared_ntt_plan<'a>(&self, prepared: &'a Self::PreparedSetup) -> &'a PreparedNttPlan;
+
+    /// Borrow the canonical planned slot containing `(ring_d, required_prefix)`.
+    ///
+    /// Callers reach this only after their operation-specific role or compression
+    /// dimension has been validated; fallback validation checks NTT availability.
+    fn with_planned_ntt_slot<const D: usize, R>(
+        &self,
+        prepared: &Self::PreparedSetup,
+        required_prefix: usize,
+        f: impl FnOnce(&NttSlotCache<D>) -> Result<R, AkitaError>,
+    ) -> Result<R, AkitaError> {
+        let (key, planned) = self.prepared_ntt_plan(prepared).resolve_with_fallback(
+            self.prepared_expanded_setup(prepared),
+            D,
+            required_prefix,
+        )?;
+        if !planned {
+            self.ensure_ntt_slot(prepared, key)?;
+        }
+        self.with_ntt_slot(prepared, key, |slot| f(slot.as_d::<D>()?))
+    }
 
     /// Expanded setup used to prepare this backend context.
     fn prepared_expanded_setup<'a>(
@@ -141,7 +143,8 @@ where
     ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>;
 }
 
-/// Cyclic digit mat-vec operations needed by ring-switch relation code.
+/// Paired cyclic/negacyclic digit mat-vec operations shared by compression and
+/// ring-switch relation code.
 pub trait CyclicRowsComputeBackend<F>: DigitRowsComputeBackend<F>
 where
     F: FieldCore + CanonicalField,
@@ -154,6 +157,15 @@ where
         digits: &[[i8; D]],
         log_basis: u32,
     ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>;
+
+    /// Exact-shape runtime compression batch over one prepared setup prefix.
+    fn compression_rows<const D: usize>(
+        &self,
+        prepared: &Self::PreparedSetup,
+        plan: CompressionRowsPlan<'_, F, D>,
+    ) -> Result<Vec<CompressionRowsOutput<F, D>>, AkitaError>
+    where
+        F: HalvingField;
 }
 
 /// Commitment row operations for migrated root/ring commitment work.

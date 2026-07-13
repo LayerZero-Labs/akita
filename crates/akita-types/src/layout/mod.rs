@@ -7,13 +7,24 @@
 //! directly. This module retains the layout glue the replay path reaches
 //! through `CommitmentConfig`.
 
+pub mod compression;
 pub mod digit_math;
 pub mod flat_matrix;
 pub mod opening_point;
 pub mod params;
 pub mod proof_size;
+pub mod relation;
 pub mod ring_dims;
 
+pub use compression::{
+    aggregate_catalog_projections, compression_capacity_infeasible, compression_digit_depth,
+    validate_compression_catalog, AggregatedCompressionSetup, CompressionAlphabet,
+    CompressionCatalogContext, CompressionCatalogProjection, CompressionChainChoice,
+    CompressionChainSpec, CompressionMapChoice, CompressionMapHintShape, CompressionMapSpec,
+    CompressionSourceId, CompressionTerminalRelationShape, FrozenCompressionChainChoice,
+    LevelCompressionPlan, ValidatedCompressionCatalog, COMPRESSION_CAPACITY_INFEASIBLE_PREFIX,
+    STANDALONE_OPENING_BASE_LOG_BASIS,
+};
 pub use digit_math::{gadget_row_scalars, isqrt_ceil};
 pub use flat_matrix::{FlatMatrix, RingMatrixView};
 pub use opening_point::{
@@ -31,7 +42,13 @@ pub use proof_size::{
     padded_boolean_opening_vars, planned_next_w_len, planned_w_ring_element_count,
     proof_ring_vec_bytes, sumcheck_rounds,
 };
+pub use relation::{
+    CoeffSpan, CompressionDimensionCost, CompressionMapStructuralCost,
+    CompressionRelationStructuralCost, GadgetInput, RelationFamilyProvider, RelationGroupId,
+    RelationLayout, RelationRowFamily, RelationRowId, RelationRowInputs, RelationRowPlan,
+    RelationRowRhs, RelationSegment, RelationSegmentId, RowSpan, SharedSetupMatrixView,
+};
 pub use ring_dims::{
     validate_role_dims, validate_schedule_ring_dims, CommitmentRingDims, RingRole, MAX_FOLD_LEVELS,
-    MIN_A_ROLE_FOLD_CHALLENGE_RING_D, SUPPORTED_CHALLENGE_RING_DIMS, SUPPORTED_RING_DIMS,
+    MIN_A_ROLE_FOLD_CHALLENGE_RING_D, SUPPORTED_CHALLENGE_RING_DIMS,
 };

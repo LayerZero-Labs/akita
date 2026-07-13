@@ -39,6 +39,8 @@ use akita_config::proof_optimized::{fp128, fp32, fp64};
 use akita_config::tensor_verifier;
 use akita_config::CommitmentConfig;
 use akita_field::AkitaError;
+#[cfg(feature = "all-schedules")]
+use akita_types::SisModulusFamily;
 use akita_types::{
     AkitaScheduleLookupKey, DirectStep, FoldStep, PolynomialGroupLayout, Schedule, Step,
 };
@@ -50,6 +52,38 @@ use akita_planner::generated::table_entry;
 use akita_planner::{
     catalog_entries_sorted_for_lookup, schedule_from_entry, validate_generated_schedule_table,
 };
+
+#[cfg(feature = "all-schedules")]
+fn expand_for_family(
+    family: &GeneratedFamily,
+    entry: &akita_planner::generated::GeneratedScheduleTableEntry,
+    key: &AkitaScheduleLookupKey,
+) -> Result<Schedule, AkitaError> {
+    let policy = (family.policy)();
+    match policy.sis_family {
+        SisModulusFamily::Q128 => schedule_from_entry::<fp128::Field>(
+            entry,
+            key,
+            &policy,
+            family.ring_challenge_config,
+            family.fold_challenge_shape_at_level,
+        ),
+        SisModulusFamily::Q64 => schedule_from_entry::<fp64::Field>(
+            entry,
+            key,
+            &policy,
+            family.ring_challenge_config,
+            family.fold_challenge_shape_at_level,
+        ),
+        SisModulusFamily::Q32 => schedule_from_entry::<fp32::Field>(
+            entry,
+            key,
+            &policy,
+            family.ring_challenge_config,
+            family.fold_challenge_shape_at_level,
+        ),
+    }
+}
 
 #[test]
 fn group_batch_emission_matches_supported_policy_shape() {
@@ -112,7 +146,7 @@ fn prepare_family_catalog<Cfg: CommitmentConfig>(
     let catalog = Cfg::schedule_catalog().unwrap_or_else(|| {
         panic!("family {module_name} must expose schedule_catalog() under all-schedules")
     });
-    validate_generated_schedule_table(
+    validate_generated_schedule_table::<Cfg::Field>(
         &catalog,
         &policy_of::<Cfg>(),
         &Cfg::ring_challenge_config,
@@ -226,13 +260,7 @@ fn table_backed_group_batch_schedule(
     key: &AkitaScheduleLookupKey,
 ) -> Result<Schedule, AkitaError> {
     if let Some(entry) = table_entry(catalog, key) {
-        return schedule_from_entry(
-            entry,
-            key,
-            &(family.policy)(),
-            family.ring_challenge_config,
-            family.fold_challenge_shape_at_level,
-        );
+        return expand_for_family(family, entry, key);
     }
     (family.regen_group_batch)(key.clone())
 }
@@ -283,13 +311,7 @@ fn table_backed_expanded(
 ) -> Result<Schedule, akita_field::AkitaError> {
     let lookup_key = AkitaScheduleLookupKey::single(key);
     if let Some(entry) = table_entry(catalog, &lookup_key) {
-        return schedule_from_entry(
-            entry,
-            &lookup_key,
-            &(family.policy)(),
-            family.ring_challenge_config,
-            family.fold_challenge_shape_at_level,
-        );
+        return expand_for_family(family, entry, &lookup_key);
     }
     (family.regen)(key)
 }

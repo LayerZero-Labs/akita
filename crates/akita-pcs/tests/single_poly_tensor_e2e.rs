@@ -42,7 +42,12 @@ fn run_single_onehot_tensor(nv: usize) {
 
         let setup =
             AkitaCommitmentScheme::<D64OneHotTensor>::setup_prover(nv, 1).expect("setup_prover");
-        let prepared = CpuBackend.prepare_setup(&setup).expect("prepare_setup");
+        let prepared = CpuBackend
+            .prepare_setup(
+                &setup,
+                &akita_types::PreparedNttPlan::base_envelope(setup.expanded.as_ref()).unwrap(),
+            )
+            .expect("prepare_setup");
         let stack = akita_prover::UniformProverStack::uniform(
             &CpuBackend,
             &prepared,
@@ -116,7 +121,12 @@ fn run_single_dense_tensor(nv: usize) {
 
         let setup =
             AkitaCommitmentScheme::<D64OneHotTensor>::setup_prover(nv, 1).expect("setup_prover");
-        let prepared = CpuBackend.prepare_setup(&setup).expect("prepare_setup");
+        let prepared = CpuBackend
+            .prepare_setup(
+                &setup,
+                &akita_types::PreparedNttPlan::base_envelope(setup.expanded.as_ref()).unwrap(),
+            )
+            .expect("prepare_setup");
         let stack = akita_prover::UniformProverStack::uniform(
             &CpuBackend,
             &prepared,

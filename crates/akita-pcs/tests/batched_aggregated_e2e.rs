@@ -64,7 +64,12 @@ mod non_zk_aggregated_cases {
                 .collect();
 
             let setup = AkitaCommitmentScheme::<OneHotCfg>::setup_prover(nv, batch_size).unwrap();
-            let prepared = CpuBackend.prepare_setup(&setup).unwrap();
+            let prepared = CpuBackend
+                .prepare_setup(
+                    &setup,
+                    &akita_types::PreparedNttPlan::base_envelope(setup.expanded.as_ref()).unwrap(),
+                )
+                .unwrap();
             let stack = akita_prover::UniformProverStack::uniform(
                 &CpuBackend,
                 &prepared,
@@ -156,7 +161,12 @@ mod non_zk_aggregated_cases {
                 .collect();
 
             let setup = AkitaCommitmentScheme::<DenseCfg>::setup_prover(nv, batch_size).unwrap();
-            let prepared = CpuBackend.prepare_setup(&setup).unwrap();
+            let prepared = CpuBackend
+                .prepare_setup(
+                    &setup,
+                    &akita_types::PreparedNttPlan::base_envelope(setup.expanded.as_ref()).unwrap(),
+                )
+                .unwrap();
             let stack = akita_prover::UniformProverStack::uniform(
                 &CpuBackend,
                 &prepared,
@@ -280,7 +290,12 @@ fn aggregated_mixed_dense_and_onehot_under_dense_cfg() {
             .collect();
 
         let setup = AkitaCommitmentScheme::<DenseCfg>::setup_prover(NV, BATCH_SIZE).unwrap();
-        let prepared = CpuBackend.prepare_setup(&setup).unwrap();
+        let prepared = CpuBackend
+            .prepare_setup(
+                &setup,
+                &akita_types::PreparedNttPlan::base_envelope(setup.expanded.as_ref()).unwrap(),
+            )
+            .unwrap();
         let stack = akita_prover::UniformProverStack::uniform(
             &CpuBackend,
             &prepared,

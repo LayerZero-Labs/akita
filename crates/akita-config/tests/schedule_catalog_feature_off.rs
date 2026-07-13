@@ -20,7 +20,7 @@ fn schedule_catalog_none_without_feature_uses_dp() {
 
     let key = PolynomialGroupLayout::new(28, 1);
 
-    let dp = find_schedule(
+    let dp = find_schedule::<fp128::Field>(
         key,
         &policy_of::<fp128::D64OneHot>(),
         fp128::D64OneHot::ring_challenge_config,

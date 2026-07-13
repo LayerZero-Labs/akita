@@ -105,7 +105,14 @@ fn fp32_ext4_root_lp(m_vars: usize) -> LevelParams {
         AjtaiKeyParams::new_unchecked(DEFAULT_SIS_SECURITY_BITS, sis_family, 1, 0, bd_bucket, d);
     params.d_key =
         AjtaiKeyParams::new_unchecked(DEFAULT_SIS_SECURITY_BITS, sis_family, 1, 0, bd_bucket, d);
-    params.with_decomp(m_vars, 0, 12, 12, 0).unwrap()
+    // `with_decomp` stamps `field_bits_hint` from the unset default (128).
+    // Override with the fixture field width so relation compilation matches
+    // `F::modulus_bits()` used by `RingRelationInstance`.
+    params
+        .with_decomp(m_vars, 0, 12, 12, 0)
+        .unwrap()
+        .with_fold_linf_cap_config(akita_field::Prime32Offset99::modulus_bits(), 1)
+        .unwrap()
 }
 
 impl Fp32RingSubfieldRootFoldCfg {
@@ -383,7 +390,12 @@ fn fp32_ext4_root_fold_roundtrip_uses_extension_gamma() {
         });
 
     let setup = SmallScheme::setup_prover(NUM_VARS, 1).unwrap();
-    let prepared = CpuBackend.prepare_setup(&setup).unwrap();
+    let prepared = CpuBackend
+        .prepare_setup(
+            &setup,
+            &akita_types::PreparedNttPlan::base_envelope(setup.expanded.as_ref()).unwrap(),
+        )
+        .unwrap();
     let stack =
         akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
             .expect("stack");
@@ -535,7 +547,12 @@ fn fp32_ext4_outer_extension_uses_root_tensor_projection() {
         });
 
     let setup = SmallScheme::setup_prover(NUM_VARS, 2).unwrap();
-    let prepared = CpuBackend.prepare_setup(&setup).unwrap();
+    let prepared = CpuBackend
+        .prepare_setup(
+            &setup,
+            &akita_types::PreparedNttPlan::base_envelope(setup.expanded.as_ref()).unwrap(),
+        )
+        .unwrap();
     let stack =
         akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
             .expect("stack");
@@ -641,7 +658,12 @@ fn fp32_ext4_extension_rejects_tampered_reduction_partial() {
         });
 
     let setup = SmallScheme::setup_prover(NUM_VARS, 2).unwrap();
-    let prepared = CpuBackend.prepare_setup(&setup).unwrap();
+    let prepared = CpuBackend
+        .prepare_setup(
+            &setup,
+            &akita_types::PreparedNttPlan::base_envelope(setup.expanded.as_ref()).unwrap(),
+        )
+        .unwrap();
     let stack =
         akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
             .expect("stack");
@@ -730,7 +752,12 @@ fn fp32_ext4_batched_extension_uses_root_tensor_projection() {
     let opening_a = opening_at(&point_a);
 
     let setup = SmallScheme::setup_prover(NUM_VARS, 2).unwrap();
-    let prepared = CpuBackend.prepare_setup(&setup).unwrap();
+    let prepared = CpuBackend
+        .prepare_setup(
+            &setup,
+            &akita_types::PreparedNttPlan::base_envelope(setup.expanded.as_ref()).unwrap(),
+        )
+        .unwrap();
     let stack =
         akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
             .expect("stack");

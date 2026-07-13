@@ -98,7 +98,7 @@ pub fn family_keys(family: &GeneratedFamily) -> Result<Vec<PolynomialGroupLayout
 
 /// Pure DP regeneration for `Cfg` — never consults the shipped table.
 fn regen<Cfg: CommitmentConfig>(key: PolynomialGroupLayout) -> Result<Schedule, AkitaError> {
-    find_schedule(
+    find_schedule::<Cfg::Field>(
         key,
         &policy_of::<Cfg>(),
         Cfg::ring_challenge_config,
@@ -110,7 +110,7 @@ fn regen<Cfg: CommitmentConfig>(key: PolynomialGroupLayout) -> Result<Schedule, 
 fn regen_group_batch<Cfg: CommitmentConfig>(
     key: AkitaScheduleLookupKey,
 ) -> Result<Schedule, AkitaError> {
-    find_group_batch_schedule(
+    find_group_batch_schedule::<Cfg::Field>(
         &key,
         &policy_of::<Cfg>(),
         Cfg::ring_challenge_config,

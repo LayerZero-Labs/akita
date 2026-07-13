@@ -9,6 +9,8 @@
 
 pub mod batch;
 pub mod commitment;
+#[doc(hidden)]
+pub mod compressed_wire;
 pub mod relation;
 pub mod relation_matrix_cols;
 pub mod ring_relation;
@@ -57,22 +59,15 @@ pub use levels::{
     TerminalLevelProof,
 };
 pub use relation::{
-    assemble_relation_rhs, evaluation_trace_row_weight, generate_relation_rhs,
-    relation_claim_from_layout_extension, relation_claim_from_rows,
-    relation_claim_from_rows_extension, relation_rhs_coeff_len, relation_rhs_layout_for,
-    relation_rhs_row_count, RelationGroupRows, RelationRhsLayout,
+    assemble_relation_rhs, evaluation_trace_row_weight, relation_claim_from_layout_extension,
 };
 pub use relation_matrix_cols::compute_relation_matrix_col_evals;
-pub use ring_relation::{
-    multi_group_ring_relation_segment_lengths, ring_relation_segment_lengths,
-    MultiGroupRingRelationSegmentLengths, RingRelationInstance, RingRelationOpeningCounts,
-    RingRelationSegmentLengths,
-};
+pub use ring_relation::RingRelationInstance;
 pub use scheme::{CommitmentVerifier, OpeningPoints};
 pub use setup::{
-    derive_public_matrix_flat, sample_public_matrix_seed, validate_public_matrix_matches_seed,
-    AkitaExpandedSetup, AkitaSetupSeed, AkitaVerifierSetup, PublicMatrixSeed, SetupMatrixEnvelope,
-    MAX_SETUP_MATRIX_FIELD_ELEMENTS,
+    compression_prefix_rings, derive_public_matrix_flat, sample_public_matrix_seed,
+    validate_public_matrix_matches_seed, AkitaExpandedSetup, AkitaSetupSeed, AkitaVerifierSetup,
+    PublicMatrixSeed, SetupMatrixEnvelope, MAX_SETUP_MATRIX_FIELD_ELEMENTS,
 };
 pub use setup_prefix::{
     active_setup_field_len, padded_setup_prefix_len, select_setup_prefix_slot,

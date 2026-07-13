@@ -687,7 +687,13 @@ mod tests {
                 let poly = DensePoly::<TestF>::from_ring_coeffs(coeffs);
 
                 let commit_u = |setup: &AkitaProverSetup<TestF>| {
-                    let prepared = CpuBackend.prepare_setup(setup).unwrap();
+                    let prepared = CpuBackend
+                        .prepare_setup(
+                            setup,
+                            &akita_types::PreparedNttPlan::base_envelope(setup.expanded.as_ref())
+                                .unwrap(),
+                        )
+                        .unwrap();
                     let plan = CommitInnerPlan::from_level(&lp);
                     let inner = RootCommitKernel::commit_inner(
                         &CpuBackend,

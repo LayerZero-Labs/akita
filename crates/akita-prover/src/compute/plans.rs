@@ -159,6 +159,57 @@ pub struct RecursiveWitnessCommitRowsPlan<'a, const D: usize> {
     pub log_basis: u32,
 }
 
+/// Requested domain work for one exact-shape compression right-hand side.
+#[derive(Debug, Clone, Copy)]
+pub enum CompressionRowsMode<'a, F: FieldCore, const D: usize> {
+    /// Compute only the negacyclic image needed to advance a compression chain.
+    NegacyclicOnly,
+    /// Compute the negacyclic image and its cyclic-derived quotient together.
+    EagerPaired,
+    /// Compute only the cyclic image and derive the quotient from a known
+    /// negacyclic image with exactly the batch row count.
+    CyclicWithKnownNeg(&'a [CyclotomicRing<F, D>]),
+}
+
+/// One right-hand side in an exact-shape compression batch.
+#[derive(Debug, Clone, Copy)]
+pub struct CompressionRowsItem<'a, F: FieldCore, const D: usize> {
+    /// Row-major digit rings; the slice length must equal the batch column count.
+    pub digits: &'a [[i8; D]],
+    /// Authenticated maximum absolute coefficient used for both digit
+    /// validation and CRT safe-width selection. Negative binary uses `1`;
+    /// opening-base digits use `B - 1`.
+    pub digit_abs_bound: u64,
+    /// Requested domain work and output shape.
+    pub mode: CompressionRowsMode<'a, F, D>,
+}
+
+/// Exact-shape batch of compression matrix products.
+///
+/// Every item uses the same generated matrix prefix interpreted as
+/// `row_count × column_count` rings at dimension `D`. Empty batches are
+/// rejected so cache selection and output semantics remain unambiguous. The
+/// CPU backend bounds accumulator memory and transparently partitions an
+/// oversized item list, rescanning this prefix once per overflow partition.
+#[derive(Debug, Clone, Copy)]
+pub struct CompressionRowsPlan<'a, F: FieldCore, const D: usize> {
+    /// Number of output rows for every item.
+    pub row_count: usize,
+    /// Number of matrix columns and digit rings for every item.
+    pub column_count: usize,
+    /// Independently bounded right-hand sides sharing the exact matrix shape.
+    pub items: &'a [CompressionRowsItem<'a, F, D>],
+}
+
+/// Canonical output for one compression batch item.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CompressionRowsOutput<F: FieldCore, const D: usize> {
+    /// Negacyclic image when requested by the item mode.
+    pub u_neg: Option<Vec<CyclotomicRing<F, D>>>,
+    /// Cyclic-derived native quotient when requested by the item mode.
+    pub quotient: Option<Vec<CyclotomicRing<F, D>>>,
+}
+
 /// Full ring-switch relation operation input.
 pub struct RingSwitchRelationRowsPlan<'a, const D: usize> {
     /// Number of D-side cyclic rows to produce.

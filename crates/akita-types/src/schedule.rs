@@ -1,7 +1,10 @@
 //! Runtime schedule shapes shared by configs, prover, verifier, and planner.
 
-use crate::descriptor_bytes::{push_u32, push_usize};
-use crate::{CleartextWitnessShape, LevelParams, OpeningClaimsLayout, PolynomialGroupLayout};
+use crate::descriptor_bytes::{blake2b_256, push_u32, push_usize};
+use crate::{
+    CleartextWitnessShape, LevelCompressionPlan, LevelParams, OpeningClaimsLayout,
+    PolynomialGroupLayout, RelationLayout, MAX_FOLD_LEVELS,
+};
 use akita_field::{AkitaError, CanonicalField};
 
 /// Public inputs that deterministically select one level's active Akita params.
@@ -327,33 +330,23 @@ pub fn w_ring_element_count_with_counts_for_layout_bits(
     layout: crate::layout::RelationMatrixRowLayout,
 ) -> Result<usize, AkitaError> {
     lp.require_scalar_level("w_ring_element_count_with_counts_for_layout_bits")?;
-    let e_hat_count = num_polynomials
-        .checked_mul(lp.num_blocks)
-        .and_then(|n| n.checked_mul(lp.num_digits_open))
-        .ok_or_else(|| AkitaError::InvalidSetup("witness W width overflow".to_string()))?;
-    let t_hat_count = num_polynomials
-        .checked_mul(lp.num_blocks)
-        .and_then(|n| n.checked_mul(lp.a_key.row_len()))
-        .and_then(|n| n.checked_mul(lp.num_digits_open))
-        .ok_or_else(|| AkitaError::InvalidSetup("witness T width overflow".to_string()))?;
-    let num_digits_fold = lp.num_digits_fold(num_polynomials, field_bits)?;
-    let z_pre_count = num_z_segments
-        .checked_mul(lp.inner_width())
-        .and_then(|n| n.checked_mul(num_digits_fold))
-        .ok_or_else(|| AkitaError::InvalidSetup("witness Z width overflow".to_string()))?;
-    let r_rows = lp.relation_matrix_row_count_for(1, layout)?;
-    let r_count = r_rows
-        .checked_mul(crate::sis::compute_num_digits_full_field(
-            field_bits,
-            lp.log_basis,
-        ))
-        .ok_or_else(|| AkitaError::InvalidSetup("witness r-tail width overflow".to_string()))?;
-
-    e_hat_count
-        .checked_add(t_hat_count)
-        .and_then(|n| n.checked_add(z_pre_count))
-        .and_then(|n| n.checked_add(r_count))
-        .ok_or_else(|| AkitaError::InvalidSetup("witness width overflow".to_string()))
+    if num_z_segments == 0 {
+        return Err(AkitaError::InvalidSetup(
+            "witness must have a z segment".into(),
+        ));
+    }
+    let opening = OpeningClaimsLayout::new(
+        lp.m_vars
+            .checked_add(lp.r_vars)
+            .ok_or_else(|| AkitaError::InvalidSetup("opening arity overflow".into()))?,
+        num_polynomials,
+    )?;
+    let mut resolved = lp.clone();
+    resolved.witness_chunk.num_chunks = num_z_segments;
+    resolved.witness_chunk.num_activated_levels = usize::from(num_z_segments > 1);
+    RelationLayout::from_authenticated_statement(&resolved, &opening, layout, field_bits)?
+        .witness_layout(None)?
+        .ring_len()
 }
 
 /// Witness ring-element count for a chunked (multi-chunk) or single-chunk layout.
@@ -395,15 +388,6 @@ pub fn w_ring_element_count_for_chunks(
             "w_ring_element_count_for_chunks: num_chunks must be >= 1".to_string(),
         ));
     }
-    if num_chunks == 1 {
-        return w_ring_element_count_with_counts_for_layout_bits(
-            field_bits,
-            lp,
-            num_polynomials,
-            1,
-            layout,
-        );
-    }
     if !num_chunks.is_power_of_two() {
         return Err(AkitaError::InvalidSetup(
             "w_ring_element_count_for_chunks: num_chunks must be a power of two".to_string(),
@@ -415,48 +399,13 @@ pub fn w_ring_element_count_for_chunks(
             lp.num_blocks
         )));
     }
-    let overflow = || AkitaError::InvalidSetup("chunked witness width overflow".to_string());
-    let blocks_per_chunk = lp.num_blocks / num_chunks;
-    // ê / t̂: partitioned over the per-chunk block window.
-    let e_chunk = num_polynomials
-        .checked_mul(blocks_per_chunk)
-        .and_then(|n| n.checked_mul(lp.num_digits_open))
-        .ok_or_else(overflow)?;
-    let t_chunk = num_polynomials
-        .checked_mul(blocks_per_chunk)
-        .and_then(|n| n.checked_mul(lp.a_key.row_len()))
-        .and_then(|n| n.checked_mul(lp.num_digits_open))
-        .ok_or_else(overflow)?;
-    // ẑ: replicated full fold width in every chunk (not divided by num_chunks).
-    let num_digits_fold = lp.num_digits_fold(num_polynomials, field_bits)?;
-    let z_chunk = lp
-        .inner_width()
-        .checked_mul(num_digits_fold)
-        .ok_or_else(overflow)?;
-    let body = e_chunk
-        .checked_add(t_chunk)
-        .and_then(|n| n.checked_add(z_chunk))
-        .ok_or_else(overflow)?;
-    // Shared r-tail: one summed quotient (r = Σ_j r_j) for all chunks. The
-    // per-node relations stack horizontally (M = [M_0 | … | M_{num_chunks-1}]),
-    // sharing the same row blocks — concatenation adds columns, not rows — and
-    // the partial commitments u_j are summed into one u. So the quotient keeps the
-    // single-machine shape (priced with `num_commitments = 1`, UNCHANGED from the
-    // single-chunk layout); only the replicated ẑ grows. Pricing it with
-    // `num_chunks` here would over-count the tail and break the prover's
-    // `emitted == next_w_len` and the verifier's single-machine `r_len`.
-    let r_rows = lp.relation_matrix_row_count_for(1, layout)?;
-    let r_count = r_rows
-        .checked_mul(crate::sis::compute_num_digits_full_field(
-            field_bits,
-            lp.log_basis,
-        ))
-        .ok_or_else(overflow)?;
-
-    num_chunks
-        .checked_mul(body)
-        .and_then(|n| n.checked_add(r_count))
-        .ok_or_else(overflow)
+    w_ring_element_count_with_counts_for_layout_bits(
+        field_bits,
+        lp,
+        num_polynomials,
+        num_chunks,
+        layout,
+    )
 }
 
 /// Parameters for one fold level in the computed schedule.
@@ -533,6 +482,85 @@ pub struct Schedule {
     pub steps: Vec<Step>,
     /// Exact total proof bytes for the schedule.
     pub total_bytes: usize,
+}
+
+/// Compression plans compiled for every fold in one schedule.
+///
+/// This remains separate from [`Schedule`] until the atomic protocol cutover.
+/// It lets the planner, generated-record compiler, and tests carry one owned,
+/// validated plan sequence without changing production schedule descriptors or
+/// wire behavior.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ScheduleCompressionPlan {
+    levels: Vec<LevelCompressionPlan>,
+}
+
+impl ScheduleCompressionPlan {
+    /// Validate and own one compression plan per fold step.
+    pub fn new(schedule: &Schedule, levels: Vec<LevelCompressionPlan>) -> Result<Self, AkitaError> {
+        let plan = Self { levels };
+        plan.validate_for_schedule(schedule)?;
+        Ok(plan)
+    }
+
+    #[must_use]
+    pub fn levels(&self) -> &[LevelCompressionPlan] {
+        &self.levels
+    }
+
+    /// Validate plan count, precommitted F slots, and terminal H omission.
+    pub fn validate_for_schedule(&self, schedule: &Schedule) -> Result<(), AkitaError> {
+        let fold_count = schedule.num_fold_levels();
+        if fold_count > MAX_FOLD_LEVELS {
+            return Err(AkitaError::InvalidSetup(format!(
+                "compression schedule has {fold_count} fold levels, max supported is {MAX_FOLD_LEVELS}"
+            )));
+        }
+        if self.levels.len() != fold_count {
+            return Err(AkitaError::InvalidSetup(format!(
+                "compression plan count {} disagrees with schedule fold count {fold_count}",
+                self.levels.len()
+            )));
+        }
+        for (level, (fold, plan)) in schedule.fold_steps().zip(&self.levels).enumerate() {
+            if plan.precommitted_f.len() != fold.params.precommitted_groups.len() {
+                return Err(AkitaError::InvalidSetup(format!(
+                    "compression plan level {level} has {} precommitted F slots, expected {}",
+                    plan.precommitted_f.len(),
+                    fold.params.precommitted_groups.len()
+                )));
+            }
+            let is_terminal = matches!(schedule.steps.get(level + 1), Some(Step::Direct(_)));
+            if is_terminal == plan.opening_h.is_some() {
+                return Err(AkitaError::InvalidSetup(if is_terminal {
+                    format!("terminal compression plan level {level} must omit H")
+                } else {
+                    format!("nonterminal compression plan level {level} must include H")
+                }));
+            }
+        }
+        Ok(())
+    }
+
+    /// Descriptor bytes for the dormant schedule compression record.
+    ///
+    /// Production [`Schedule::append_descriptor_bytes`] intentionally does not
+    /// call this before the atomic cutover.
+    pub fn descriptor_bytes(&self) -> Result<Vec<u8>, AkitaError> {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(b"AKITA-SCHEDULE-COMPRESSION-PLAN-V1");
+        push_usize(&mut bytes, self.levels.len());
+        for level in &self.levels {
+            let level_bytes = level.descriptor_bytes()?;
+            push_usize(&mut bytes, level_bytes.len());
+            bytes.extend_from_slice(&level_bytes);
+        }
+        Ok(bytes)
+    }
+
+    pub fn descriptor_digest(&self) -> Result<[u8; 32], AkitaError> {
+        Ok(blake2b_256(&self.descriptor_bytes()?))
+    }
 }
 
 impl Schedule {
@@ -788,7 +816,8 @@ mod tests {
         direct_witness_bytes, extension_opening_reduction_proof_bytes, level_proof_bytes,
         stage1_tree_stage_shapes, sumcheck_rounds, AkitaBatchedRootProof,
         AkitaIntermediateStage2Proof, AkitaLevelProof, AkitaStage1Proof, AkitaStage1StageProof,
-        AkitaStage2Proof, CleartextWitnessProof, ExtensionOpeningReductionProof,
+        AkitaStage2Proof, CleartextWitnessProof, CompressionAlphabet, CompressionChainChoice,
+        CompressionMapChoice, ExtensionOpeningReductionProof, FrozenCompressionChainChoice,
         RelationMatrixRowLayout, RingVec, SisModulusFamily, TerminalLevelProof,
         EXTENSION_OPENING_REDUCTION_DEGREE,
     };
@@ -950,6 +979,95 @@ mod tests {
         );
     }
 
+    fn compression_chain(ring_d: u32) -> CompressionChainChoice {
+        CompressionChainChoice::Two([
+            CompressionMapChoice {
+                ring_d,
+                alphabet: CompressionAlphabet::OpeningBase { log_basis: 3 },
+            },
+            CompressionMapChoice {
+                ring_d,
+                alphabet: CompressionAlphabet::NegativeBinary,
+            },
+        ])
+    }
+
+    fn compression_level_plan(lp: &LevelParams, terminal: bool) -> LevelCompressionPlan {
+        LevelCompressionPlan {
+            current_f: FrozenCompressionChainChoice::new(&lp.b_key, 3, compression_chain(32)),
+            precommitted_f: Vec::new(),
+            opening_h: (!terminal).then(|| compression_chain(32)),
+        }
+    }
+
+    fn two_fold_schedule_for_compression_plan() -> Schedule {
+        let params = LevelParams::params_only(
+            SisModulusFamily::Q128,
+            64,
+            3,
+            1,
+            1,
+            1,
+            SparseChallengeConfig::pm1_only(1),
+        );
+        Schedule {
+            steps: vec![
+                Step::Fold(FoldStep {
+                    params: params.clone(),
+                    current_w_len: 1024,
+                    next_w_len: 512,
+                    level_bytes: 100,
+                }),
+                Step::Fold(FoldStep {
+                    params,
+                    current_w_len: 512,
+                    next_w_len: 256,
+                    level_bytes: 80,
+                }),
+                Step::Direct(DirectStep {
+                    current_w_len: 256,
+                    witness_shape: CleartextWitnessShape::FieldElements(256),
+                    direct_bytes: 4096,
+                    params: None,
+                }),
+            ],
+            total_bytes: 4276,
+        }
+    }
+
+    #[test]
+    fn dormant_schedule_compression_plan_validates_terminal_h_omission() {
+        let schedule = two_fold_schedule_for_compression_plan();
+        let levels = vec![
+            compression_level_plan(&schedule.fold_steps().next().unwrap().params, false),
+            compression_level_plan(&schedule.fold_steps().nth(1).unwrap().params, true),
+        ];
+        let plan = ScheduleCompressionPlan::new(&schedule, levels).expect("compression plan");
+        assert_eq!(plan.levels().len(), 2);
+
+        let mut malformed = plan.levels().to_vec();
+        malformed[1].opening_h = Some(compression_chain(32));
+        assert!(ScheduleCompressionPlan::new(&schedule, malformed).is_err());
+        assert!(ScheduleCompressionPlan::new(&schedule, Vec::new()).is_err());
+    }
+
+    #[test]
+    fn dormant_schedule_compression_digest_binds_level_choices() {
+        let schedule = two_fold_schedule_for_compression_plan();
+        let levels = vec![
+            compression_level_plan(&schedule.fold_steps().next().unwrap().params, false),
+            compression_level_plan(&schedule.fold_steps().nth(1).unwrap().params, true),
+        ];
+        let left = ScheduleCompressionPlan::new(&schedule, levels.clone()).unwrap();
+        let mut changed_levels = levels;
+        changed_levels[0].opening_h = Some(compression_chain(16));
+        let right = ScheduleCompressionPlan::new(&schedule, changed_levels).unwrap();
+        assert_ne!(
+            left.descriptor_digest().unwrap(),
+            right.descriptor_digest().unwrap()
+        );
+    }
+
     fn dummy_sumcheck<F: FieldCore>(rounds: usize, degree: usize) -> SumcheckProof<F> {
         SumcheckProof {
             round_polys: (0..rounds)
@@ -1051,11 +1169,15 @@ mod tests {
                     128,
                     128,
                     &lp,
-                    Some(&next_lp),
+                    Some(crate::FoldWirePayload::Native {
+                        next_level: &next_lp,
+                        next_base_field_bits: 128,
+                    }),
                     next_w_len,
                     1,
                     RelationMatrixRowLayout::WithDBlock,
-                ),
+                )
+                .unwrap(),
                 exact_level_proof_bytes::<F>(&lp, &next_lp, next_w_len).unwrap(),
                 "planned level bytes should match the serialized two-stage body at log_basis={log_basis}"
             );
@@ -1108,7 +1230,8 @@ mod tests {
                     next_w_len,
                     num_claims,
                     RelationMatrixRowLayout::WithoutDBlock,
-                ),
+                )
+                .unwrap(),
                 serialized_without_witness,
                 "planned terminal-level bytes should match the serialized terminal body \
                  (less final_witness) at log_basis={log_basis}"
@@ -1166,11 +1289,15 @@ mod tests {
                     128,
                     128,
                     &lp,
-                    Some(&next_lp),
+                    Some(crate::FoldWirePayload::Native {
+                        next_level: &next_lp,
+                        next_base_field_bits: 128,
+                    }),
                     next_w_len,
                     1,
                     RelationMatrixRowLayout::WithDBlock,
-                ),
+                )
+                .unwrap(),
                 root_proof.serialized_size(Compress::No),
                 "planned batched root bytes should match the serialized two-stage body at log_basis={log_basis}"
             );

@@ -12,6 +12,12 @@ The batched root relation (`OpeningClaimsLayout` routing polynomial groups to
 claims), the commitment/claim/fold rows, and how the level-0 root fold differs
 from a recursive fold.
 
+The implementation's canonical coefficient and row geometry is described in
+[Relation layout](./relation-layout.md). In particular, that chapter explains
+current-first multi-group ordering, optional `D`, per-family ring dimensions,
+the separate field-level trace row, witness chunk projection, and compression
+extensions that are hidden by the paper's compact `M w = h` notation.
+
 **Sources to fold in**
 
 - `crates/akita-prover/src/protocol/flow/root_fold.rs:352-544` (`prove_root`, terminal root fold).

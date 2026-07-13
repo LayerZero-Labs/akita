@@ -19,16 +19,24 @@ use akita_field::{CanonicalField, FieldCore, FromPrimitiveInt, HalvingField};
 use akita_transcript::labels::{ABSORB_PROVER_V, ABSORB_TERMINAL_E_HAT};
 use akita_transcript::Transcript;
 use akita_types::dispatch_for_field;
-use akita_types::{assemble_relation_rhs, relation_rhs_layout_for, RingVec, RingView};
-use akita_types::{gadget_row_scalars, AkitaCommitmentHint, DigitBlocks, RelationMatrixRowLayout};
+use akita_types::{
+    gadget_row_scalars, AkitaCommitmentHint, DigitBlocks, RelationGroupId, RelationLayout,
+    RelationMatrixRowLayout, RelationRowId,
+};
 use akita_types::{LevelParams, LevelParamsLike, RingRelationInstance};
 use akita_types::{RingMultiplierOpeningPoint, RingOpeningPoint};
+use akita_types::{RingVec, RingView};
 
 use super::fold_grind::{self, ProverTranscriptGrind};
 use super::ring_relation_witness::{RingRelationGroupWitness, RingRelationWitness};
 
+mod compression_witness;
 mod relation_quotient;
 
+#[cfg(test)]
+pub(crate) use compression_witness::{
+    materialize_compression_witness, CompressionWitnessMaterialization,
+};
 pub(crate) use relation_quotient::compute_multi_group_relation_quotient;
 
 fn absorb_terminal_e_folded_fields<F, T>(
@@ -351,7 +359,6 @@ fn compute_v_rows_for_layout<F, T, RB, const D: usize>(
     d_row_len: usize,
     log_basis: u32,
     e_hat: &DigitBlocks,
-    relation_matrix_row_layout: RelationMatrixRowLayout,
 ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>
 where
     F: FieldCore + CanonicalField,
@@ -360,8 +367,8 @@ where
 {
     let backend = ring_switch_ctx.backend();
     let prepared = ring_switch_ctx.prepared();
-    match relation_matrix_row_layout {
-        RelationMatrixRowLayout::WithDBlock => {
+    match d_row_len {
+        1.. => {
             let _span = tracing::info_span!(
                 "compute_relation_v",
                 e_hat_planes = e_hat.typed_planes::<D>()?.len()
@@ -377,7 +384,7 @@ where
             )?;
             Ok(v)
         }
-        RelationMatrixRowLayout::WithoutDBlock => Ok(Vec::new()),
+        0 => Ok(Vec::new()),
     }
 }
 
@@ -500,6 +507,13 @@ impl RingRelationProver {
         validate_chunked_witness_cfg(&lp)?;
         let dims = lp.role_dims();
         let opening_batch = fold_claims.opening_claims().layout()?;
+        let relation_layout = RelationLayout::from_authenticated_statement(
+            &lp,
+            &opening_batch,
+            relation_matrix_row_layout,
+            F::modulus_bits(),
+        )?;
+        let final_group = opening_batch.root_final_group_index()?;
         let polys = fold_claims.flat_polys();
         let group_sizes = opening_batch.group_sizes();
         let num_groups = fold_claims.opening_claims().num_groups();
@@ -523,10 +537,18 @@ impl RingRelationProver {
         };
         for &group_index in &commit_group_order {
             let group_commitment = fold_claims.opening_claims().group_commitment(group_index)?;
+            let group = if group_index == final_group {
+                RelationGroupId::Current
+            } else {
+                RelationGroupId::Precommitted { index: group_index }
+            };
+            let family = relation_layout
+                .row_plan()
+                .family(RelationRowId::B { group })?;
             let group_rows =
-                RingView::new(group_commitment.rows().coeffs(), dims.d_b())?.num_rings();
-            let expected_rows = lp.root_group_commitment_rows(&opening_batch, group_index)?;
-            if group_rows != expected_rows {
+                RingView::new(group_commitment.rows().coeffs(), family.native_ring_dim())?
+                    .num_rings();
+            if group_rows != family.rows().len() {
                 return Err(AkitaError::InvalidInput(
                     "batched prover received a commitment with the wrong length".to_string(),
                 ));
@@ -586,7 +608,12 @@ impl RingRelationProver {
         // Extracted level numbers for the D-role and fused-y operations below;
         // the kernels inside the dispatch arms must not read schedule types.
         let log_basis = lp.log_basis;
-        let d_row_len = lp.d_key.row_len();
+        let d_row_len = relation_layout
+            .row_plan()
+            .families()
+            .iter()
+            .find(|family| matches!(family.id(), akita_types::RelationRowId::D))
+            .map_or(0, |family| family.rows().len());
 
         // D-role operations: decompose the folded opening rows into `e_hat`
         // digits and (non-terminal layouts) compute + absorb the D-block rows
@@ -663,7 +690,6 @@ impl RingRelationProver {
                     d_row_len,
                     log_basis,
                     &e_hat,
-                    relation_matrix_row_layout,
                 )?;
                 Ok::<_, AkitaError>(RingVec::from_ring_elems(&v_typed))
             }
@@ -678,10 +704,7 @@ impl RingRelationProver {
                 .flat_map(|block| block.coeffs().iter().copied())
                 .collect(),
         );
-        if matches!(
-            relation_matrix_row_layout,
-            RelationMatrixRowLayout::WithoutDBlock
-        ) {
+        if d_row_len == 0 {
             absorb_terminal_e_folded_fields::<F, T>(transcript, &e_folded)?;
         }
         // Distributed-prover chunked layout: the grind emits one folded response
@@ -719,15 +742,8 @@ impl RingRelationProver {
         }
         let fold_grind_nonce = accepted_nonce.ok_or(AkitaError::InvalidProof)?;
 
-        // Relation rhs spans roles (consistency | [A | B | B_inner]* | D).
-        // Terminal levels drop the D-block from M entirely, so `n_d` is zero
-        // and `v` stays empty.
-        let relation_rhs_layout =
-            relation_rhs_layout_for(&lp, &opening_batch, relation_matrix_row_layout)?;
-        let relation_rhs =
-            assemble_relation_rhs::<F>(dims, &relation_rhs_layout, &v, &commitment_rows)?;
-
         let instance = RingRelationInstance::new(
+            &lp,
             relation_matrix_row_layout,
             group_challenges,
             group_opening_points,
@@ -735,9 +751,8 @@ impl RingRelationProver {
             opening_batch.clone(),
             gamma,
             row_coefficient_rings,
-            relation_rhs,
+            commitment_rows,
             v,
-            dims,
         )?;
         instance.check_v_shape_for_level(&lp)?;
         let witness = if lp.has_precommitted_groups() {

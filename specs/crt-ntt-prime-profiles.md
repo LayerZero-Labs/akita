@@ -71,7 +71,7 @@ Primary surfaces:
 - `crates/akita-prover/src/compute/cpu.rs`: `CpuPreparedSetup`, backend prepared
   setup boundary, dense/recursive/ring-switch compute operation calls.
 - `crates/akita-prover/src/kernels/linear/ntt_matvec.rs`,
-  `single_cyclic.rs`, `fused_quotients.rs`: explicit `NttSlotCache` match arms
+  `single_cyclic.rs`, `ring_switch_relation_rows.rs`: explicit `NttSlotCache` match arms
   that need Q16 and any backend-private layout hooks.
 - `crates/akita-prover/src/kernels/linear/*`: negacyclic i8, cyclic i8, fused
   split-eq, digit, block-parallel, CRT matvec drivers, and chunk width policy.
@@ -164,11 +164,11 @@ larger ring degree.
 
    where `P_crt` is the product of the **active** profile's primes.
    Balanced-digit RHS uses `rhs_abs_bound = 2^(log_basis - 1)`.
-   The fused split-eq `z_pre` leg uses
+   The fused ring-switch relation rows `z_pre` leg uses
    `rhs_abs_bound = max(z_pre_max_abs, centered_rows_abs_bound(z_pre))` as
-   implemented in `fused_split_eq_quotients_with_params`.
+   implemented in `fused_ring_switch_relation_rows_with_params`.
 4. Reduced profiles must be valid for every compute operation that uses that
-   profile: negacyclic i8 matvecs, cyclic i8 matvecs, fused split-eq quotients,
+   profile: negacyclic i8 matvecs, cyclic i8 matvecs, fused ring-switch relation rows,
    digit matvecs, block-parallel paths, dense commitment B matvecs, recursive
    witness rows, and ZK B/D rows when `zk` is enabled.
    There is no parallel “large prime” cache for quotient-only call sites.
@@ -227,7 +227,7 @@ larger ring degree.
     root for the negacyclic NTT at `D = 256`), and every i32 prime must satisfy
     the same `512 | (p - 1)`; the reused i32 primes already satisfy the stronger
     `2048 | (p - 1)`.
-    `D = 512` and `D = 1024` are removed from `SUPPORTED_RING_DIMS`, the
+    `D = 512` and `D = 1024` are removed from the
     `dispatch_ring_dim` / `dispatch_ring_dim_result` arms, the fp16/fp32
     `D512Full` / `D512OneHot` public config presets, and the generated
     family/table lists; no production path may instantiate them.
@@ -293,7 +293,7 @@ This section records whether each finding is still valid on current `main`
 | Bugbot finding | Severity | Valid on `main`? | Required for prime profiles? |
 | --- | --- | --- | --- |
 | `single_cyclic` "wrong" `safe_width` / `tile_width` args | Medium | **No** (false positive; see below) | **Regression tests only** |
-| `fused_split_eq_quotients_prover_bounds` lacks `w_hat` check | Medium | **No** (`with_params` returns `InvalidInput`) | None (optional `debug_assert!`) |
+| `fused_ring_switch_relation_rows_prover_bounds` lacks `w_hat` check | Medium | **No** (`with_params` returns `InvalidInput`) | None (optional `debug_assert!`) |
 | CRT capacity uses `q` not `floor(q/2)` | Medium | **No** (fixed before merge) | None |
 | `.expect` in raw-i8 strided `Result` path | Medium | **No** (`ok_or_else`) | None |
 | Hardcoded digit bound 32 | Low | **No** | None |
@@ -377,7 +377,7 @@ Criteria sections above, with #134 providing the chunking implementation.
       `AkitaError::InvalidSetup` for `D > 256`.
       There is no `D`-keyed width fallback (no "16-bit field with `D > 64` uses
       Q64").
-- [ ] `D = 512` / `D = 1024` are removed from `SUPPORTED_RING_DIMS`, the
+- [ ] `D = 512` / `D = 1024` are removed from the
       `dispatch_ring_dim` / `dispatch_ring_dim_result` macro arms, the fp16/fp32
       `D512Full` / `D512OneHot` public config presets, `generated_families`, and
       any generated table/drift-guard list, with `cargo test -q` and the drift
@@ -385,7 +385,7 @@ Criteria sections above, with #134 providing the chunking implementation.
       The `D512*` preset names are not kept as deprecated aliases.
 - [ ] `ProtocolCrtNttParams` and `NttSlotCache` include a `Q16` variant; all
       match arms updated in `crt_ntt.rs`, `ntt_matvec.rs`, `single_cyclic.rs`,
-      `fused_quotients.rs`, test helpers, and benches (full cutover, no
+      `ring_switch_relation_rows.rs`, test helpers, and benches (full cutover, no
       `panic!` on fp16).
 - [ ] Q32 implementation compares the reference `4 × i16` profile against the
       production `2 × i32` profile `[1073707009, 1073698817]`
@@ -426,7 +426,7 @@ Criteria sections above, with #134 providing the chunking implementation.
       for:
       - negacyclic `mat_vec_mul_ntt_single_i8`,
       - cyclic `mat_vec_mul_ntt_single_i8_cyclic`,
-      - `fused_split_eq_quotients` including the `z_pre` leg,
+      - `fused_ring_switch_relation_rows` including the `z_pre` leg,
       each compared against a scalar or wide-reference path (Q128 profile on
       `main`; repeat on reduced Q16/Q32/Q64 after prime cutover).
 - [ ] Single-row forced-chunk tests (`vec_len > max_safe_crt_accumulation_width`)
@@ -697,7 +697,7 @@ Suggested implementation slices:
    that #134 Bugbot "wrong arg order" is closed as false positive (see audit
    section and #134 comment).
 1. Lower `MAX_CRT_RING_DEGREE` to `256`; remove `D = 512` / `D = 1024` from
-   `SUPPORTED_RING_DIMS`, the dispatch macros, the fp16/fp32 `D512*` presets, and
+   the dispatch macros, the fp16/fp32 `D512*` presets, and
    `generated_families`; confirm the drift guard and `cargo test -q` stay green.
 2. Add Q16 table + tests (`512 | (p - 1)`); add reduced Q32/Q64 tables + tests;
    rename the i32 raw-prime constant off the `D1024` label.
@@ -707,7 +707,7 @@ Suggested implementation slices:
 4. Extend `ProtocolCrtNttParams` / `NttSlotCache` / `select_crt_ntt_params`
    (D-aware, `D <= 256`, no width fallback on `D`).
 5. Fix const-generic `K` throughout prover linear + setup NTT cache build,
-   including `ntt_matvec.rs`, `single_cyclic.rs`, `fused_quotients.rs`,
+   including `ntt_matvec.rs`, `single_cyclic.rs`, `ring_switch_relation_rows.rs`,
    `compute/cpu.rs`, algebra tests, and benches.
 6. Add capacity validation in `CpuBackend::prepare_expanded`, direct `D = 128`
    / `D = 256` capacity unit tests, and forced-chunk tests for cyclic/fused/

@@ -7,7 +7,7 @@
 //! schedule is regenerated with the offline DP search [`crate::find_schedule`].
 
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
-use akita_field::AkitaError;
+use akita_field::{AkitaError, CanonicalField};
 use akita_types::{AkitaScheduleInputs, AkitaScheduleLookupKey, PolynomialGroupLayout, Schedule};
 
 use crate::catalog_identity::validate_catalog_identity;
@@ -18,14 +18,14 @@ use crate::schedule_params::validate_policy_witness_chunk;
 use crate::PlannerPolicy;
 
 /// Resolve the runtime [`Schedule`] using an explicit optional catalog.
-pub fn resolve_schedule(
+pub fn resolve_schedule<F: CanonicalField>(
     key: PolynomialGroupLayout,
     policy: &PlannerPolicy,
     ring_challenge_config: impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
     fold_challenge_shape_at_level: impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
     catalog: Option<GeneratedScheduleTable>,
 ) -> Result<Schedule, AkitaError> {
-    resolve_group_batch_schedule(
+    resolve_group_batch_schedule::<F>(
         &AkitaScheduleLookupKey::single(key),
         policy,
         ring_challenge_config,
@@ -35,7 +35,7 @@ pub fn resolve_schedule(
 }
 
 /// Resolve a multi-group-root schedule without falling back to a scalar table key.
-pub fn resolve_group_batch_schedule(
+pub fn resolve_group_batch_schedule<F: CanonicalField>(
     key: &AkitaScheduleLookupKey,
     policy: &PlannerPolicy,
     ring_challenge_config: impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
@@ -52,7 +52,7 @@ pub fn resolve_group_batch_schedule(
             &fold_challenge_shape_at_level,
         )?;
         if let Some(entry) = table_entry(table, key) {
-            return schedule_from_entry(
+            return schedule_from_entry::<F>(
                 entry,
                 key,
                 policy,
@@ -61,7 +61,7 @@ pub fn resolve_group_batch_schedule(
             );
         }
     }
-    find_group_batch_schedule(
+    find_group_batch_schedule::<F>(
         key,
         policy,
         ring_challenge_config,
@@ -70,14 +70,15 @@ pub fn resolve_group_batch_schedule(
 }
 
 /// Build the runtime [`Schedule`] for a compact generated entry.
-pub fn schedule_from_entry(
+pub fn schedule_from_entry<F: CanonicalField>(
     entry: &GeneratedScheduleTableEntry,
     key: &AkitaScheduleLookupKey,
     policy: &PlannerPolicy,
     ring_challenge_config: impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
     fold_challenge_shape_at_level: impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
 ) -> Result<Schedule, AkitaError> {
-    Ok(walk_generated_schedule_entry(
+    crate::schedule_params::validate_planner_field::<F>(policy)?;
+    Ok(walk_generated_schedule_entry::<F>(
         entry,
         key,
         policy,
@@ -87,14 +88,15 @@ pub fn schedule_from_entry(
     .schedule)
 }
 
-pub fn estimate_proof_bytes(
+pub fn estimate_proof_bytes<F: CanonicalField>(
     entry: &GeneratedScheduleTableEntry,
     key: &AkitaScheduleLookupKey,
     policy: &PlannerPolicy,
     ring_challenge_config: impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
     fold_challenge_shape_at_level: impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
 ) -> Result<usize, AkitaError> {
-    Ok(walk_generated_schedule_entry(
+    crate::schedule_params::validate_planner_field::<F>(policy)?;
+    Ok(walk_generated_schedule_entry::<F>(
         entry,
         key,
         policy,
@@ -113,6 +115,7 @@ mod tests {
         GeneratedScheduleTable, GeneratedStep,
     };
     use crate::{find_group_batch_schedule, find_schedule};
+    use akita_field::{Prime128OffsetA7F7, Prime32Offset99};
     use akita_types::{
         AkitaScheduleLookupKey, ChunkedWitnessCfg, DecompositionParams, LevelParams,
         MultiChunkProfileId, PolynomialGroupLayout, PrecommittedGroupParams, SisModulusFamily,
@@ -186,11 +189,28 @@ mod tests {
     fn resolve_schedule_none_matches_find_schedule() {
         let key = PolynomialGroupLayout::new(20, 1);
         let policy = flat_policy();
-        let via_resolve = resolve_schedule(key, &policy, ring_challenge_config, fold_shape, None)
-            .expect("resolve");
+        let via_resolve = resolve_schedule::<Prime128OffsetA7F7>(
+            key,
+            &policy,
+            ring_challenge_config,
+            fold_shape,
+            None,
+        )
+        .expect("resolve");
         let via_find =
-            find_schedule(key, &policy, ring_challenge_config, fold_shape).expect("find");
+            find_schedule::<Prime128OffsetA7F7>(key, &policy, ring_challenge_config, fold_shape)
+                .expect("find");
         assert_eq!(via_resolve.total_bytes, via_find.total_bytes);
+    }
+
+    #[test]
+    fn planner_rejects_concrete_field_from_another_sis_family() {
+        let policy = flat_policy();
+        let key = PolynomialGroupLayout::new(8, 1);
+        let error =
+            find_schedule::<Prime32Offset99>(key, &policy, ring_challenge_config, fold_shape)
+                .expect_err("Q128 policy must not be planned through an fp32 field type");
+        assert!(matches!(error, akita_field::AkitaError::InvalidSetup(_)));
     }
 
     #[test]
@@ -204,7 +224,8 @@ mod tests {
         };
         let key = PolynomialGroupLayout::new(24, 1);
         let schedule =
-            find_schedule(key, &policy, ring_challenge_config, fold_shape).expect("schedule");
+            find_schedule::<Prime128OffsetA7F7>(key, &policy, ring_challenge_config, fold_shape)
+                .expect("schedule");
         let last_fold = schedule
             .steps
             .iter()
@@ -225,9 +246,15 @@ mod tests {
         let base = flat_policy();
         let mut explicit_default = flat_policy();
         explicit_default.witness_chunk = ChunkedWitnessCfg::default();
-        let a = find_schedule(key, &base, ring_challenge_config, fold_shape).expect("a");
-        let b =
-            find_schedule(key, &explicit_default, ring_challenge_config, fold_shape).expect("b");
+        let a = find_schedule::<Prime128OffsetA7F7>(key, &base, ring_challenge_config, fold_shape)
+            .expect("a");
+        let b = find_schedule::<Prime128OffsetA7F7>(
+            key,
+            &explicit_default,
+            ring_challenge_config,
+            fold_shape,
+        )
+        .expect("b");
         assert_eq!(a.total_bytes, b.total_bytes);
         assert_eq!(a.steps.len(), b.steps.len());
     }
@@ -238,8 +265,13 @@ mod tests {
         for profile in MultiChunkProfileId::ALL {
             let mut policy = flat_policy();
             policy.witness_chunk = profile.cfg();
-            let schedule = find_schedule(key, &policy, ring_challenge_config, fold_shape)
-                .unwrap_or_else(|err| panic!("profile {profile:?} must plan at nv=24: {err:?}"));
+            let schedule = find_schedule::<Prime128OffsetA7F7>(
+                key,
+                &policy,
+                ring_challenge_config,
+                fold_shape,
+            )
+            .unwrap_or_else(|err| panic!("profile {profile:?} must plan at nv=24: {err:?}"));
             let last_fold = schedule
                 .steps
                 .iter()
@@ -264,8 +296,9 @@ mod tests {
             num_activated_levels: 2,
         };
         let key = PolynomialGroupLayout::new(20, 1);
-        let err = find_schedule(key, &policy, ring_challenge_config, fold_shape)
-            .expect_err("non-power-of-two chunk count must be rejected");
+        let err =
+            find_schedule::<Prime128OffsetA7F7>(key, &policy, ring_challenge_config, fold_shape)
+                .expect_err("non-power-of-two chunk count must be rejected");
         assert!(matches!(err, AkitaError::InvalidSetup(_)));
     }
 
@@ -275,10 +308,15 @@ mod tests {
         let key = AkitaScheduleLookupKey::single(final_group);
         let policy = flat_policy();
 
-        let via_multi_group =
-            resolve_group_batch_schedule(&key, &policy, ring_challenge_config, fold_shape, None)
-                .expect("single-group resolve should delegate to scalar path");
-        let via_scalar = resolve_schedule(
+        let via_multi_group = resolve_group_batch_schedule::<Prime128OffsetA7F7>(
+            &key,
+            &policy,
+            ring_challenge_config,
+            fold_shape,
+            None,
+        )
+        .expect("single-group resolve should delegate to scalar path");
+        let via_scalar = resolve_schedule::<Prime128OffsetA7F7>(
             final_group,
             &policy,
             ring_challenge_config,
@@ -296,8 +334,14 @@ mod tests {
         let key = PolynomialGroupLayout::new(0, 1);
         let policy = flat_policy();
 
-        let err = resolve_schedule(key, &policy, ring_challenge_config, fold_shape, None)
-            .expect_err("zero-arity key must be rejected");
+        let err = resolve_schedule::<Prime128OffsetA7F7>(
+            key,
+            &policy,
+            ring_challenge_config,
+            fold_shape,
+            None,
+        )
+        .expect_err("zero-arity key must be rejected");
 
         assert!(matches!(err, AkitaError::InvalidSetup(_)));
     }
@@ -307,10 +351,11 @@ mod tests {
         let key = PolynomialGroupLayout::new(20, 1);
         let policy = flat_policy();
         let schedule =
-            find_schedule(key, &policy, ring_challenge_config, fold_shape).expect("find schedule");
+            find_schedule::<Prime128OffsetA7F7>(key, &policy, ring_challenge_config, fold_shape)
+                .expect("find schedule");
         let entry = generated_entry_from_steps(key, generated_steps_from_schedule(&schedule));
 
-        validate_generated_schedule_entry(
+        validate_generated_schedule_entry::<Prime128OffsetA7F7>(
             &entry,
             &AkitaScheduleLookupKey::single(key),
             &policy,
@@ -325,7 +370,8 @@ mod tests {
         let key = PolynomialGroupLayout::new(20, 1);
         let policy = flat_policy();
         let schedule =
-            find_schedule(key, &policy, ring_challenge_config, fold_shape).expect("find schedule");
+            find_schedule::<Prime128OffsetA7F7>(key, &policy, ring_challenge_config, fold_shape)
+                .expect("find schedule");
         let mut steps = generated_steps_from_schedule(&schedule);
         match steps
             .iter_mut()
@@ -337,7 +383,7 @@ mod tests {
         }
         let entry = generated_entry_from_steps(key, steps);
 
-        let err = validate_generated_schedule_entry(
+        let err = validate_generated_schedule_entry::<Prime128OffsetA7F7>(
             &entry,
             &AkitaScheduleLookupKey::single(key),
             &policy,
@@ -357,7 +403,8 @@ mod tests {
         let key = PolynomialGroupLayout::new(20, 1);
         let policy = flat_policy();
         let schedule =
-            find_schedule(key, &policy, ring_challenge_config, fold_shape).expect("find schedule");
+            find_schedule::<Prime128OffsetA7F7>(key, &policy, ring_challenge_config, fold_shape)
+                .expect("find schedule");
         let mut steps = generated_steps_from_schedule(&schedule);
         match steps
             .iter_mut()
@@ -369,7 +416,7 @@ mod tests {
         }
         let entry = generated_entry_from_steps(key, steps);
 
-        let err = validate_generated_schedule_entry(
+        let err = validate_generated_schedule_entry::<Prime128OffsetA7F7>(
             &entry,
             &AkitaScheduleLookupKey::single(key),
             &policy,
@@ -389,7 +436,8 @@ mod tests {
         let key = PolynomialGroupLayout::new(20, 1);
         let policy = flat_policy();
         let schedule =
-            find_schedule(key, &policy, ring_challenge_config, fold_shape).expect("find schedule");
+            find_schedule::<Prime128OffsetA7F7>(key, &policy, ring_challenge_config, fold_shape)
+                .expect("find schedule");
         let mut steps = generated_steps_from_schedule(&schedule);
         match steps
             .iter_mut()
@@ -404,7 +452,7 @@ mod tests {
         }
         let entry = generated_entry_from_steps(key, steps);
 
-        let err = validate_generated_schedule_entry(
+        let err = validate_generated_schedule_entry::<Prime128OffsetA7F7>(
             &entry,
             &AkitaScheduleLookupKey::single(key),
             &policy,
@@ -424,7 +472,8 @@ mod tests {
         let key = PolynomialGroupLayout::new(20, 1);
         let policy = flat_policy();
         let schedule =
-            find_schedule(key, &policy, ring_challenge_config, fold_shape).expect("find schedule");
+            find_schedule::<Prime128OffsetA7F7>(key, &policy, ring_challenge_config, fold_shape)
+                .expect("find schedule");
         let mut steps = generated_steps_from_schedule(&schedule);
         match steps
             .iter_mut()
@@ -442,8 +491,14 @@ mod tests {
                 .expect("identity");
         let table = GeneratedScheduleTable { entries, identity };
 
-        let err = resolve_schedule(key, &policy, ring_challenge_config, fold_shape, Some(table))
-            .expect_err("corrupt table hit must be rejected");
+        let err = resolve_schedule::<Prime128OffsetA7F7>(
+            key,
+            &policy,
+            ring_challenge_config,
+            fold_shape,
+            Some(table),
+        )
+        .expect_err("corrupt table hit must be rejected");
 
         assert!(
             matches!(err, AkitaError::InvalidSetup(ref msg) if msg.contains("d-rank mismatch")),
@@ -456,10 +511,11 @@ mod tests {
         let key = PolynomialGroupLayout::new(20, 1);
         let policy = flat_policy();
         let schedule =
-            find_schedule(key, &policy, ring_challenge_config, fold_shape).expect("find schedule");
+            find_schedule::<Prime128OffsetA7F7>(key, &policy, ring_challenge_config, fold_shape)
+                .expect("find schedule");
         let entry = generated_entry_from_steps(key, generated_steps_from_schedule(&schedule));
 
-        let validated = estimate_proof_bytes(
+        let validated = estimate_proof_bytes::<Prime128OffsetA7F7>(
             &entry,
             &AkitaScheduleLookupKey::single(key),
             &policy,
@@ -467,7 +523,7 @@ mod tests {
             fold_shape,
         )
         .expect("validate bytes");
-        let materialized = schedule_from_entry(
+        let materialized = schedule_from_entry::<Prime128OffsetA7F7>(
             &entry,
             &AkitaScheduleLookupKey::single(key),
             &policy,
@@ -484,15 +540,20 @@ mod tests {
         let policy = flat_policy();
         let pre = PrecommittedGroupParams::from_params(
             pre_key,
-            find_schedule(pre_key, &policy, ring_challenge_config, fold_shape)
-                .expect("precommit schedule")
-                .steps
-                .first()
-                .and_then(|step| match step {
-                    Step::Direct(direct) => direct.params.as_ref(),
-                    Step::Fold(fold) => Some(&fold.params),
-                })
-                .expect("commit params"),
+            find_schedule::<Prime128OffsetA7F7>(
+                pre_key,
+                &policy,
+                ring_challenge_config,
+                fold_shape,
+            )
+            .expect("precommit schedule")
+            .steps
+            .first()
+            .and_then(|step| match step {
+                Step::Direct(direct) => direct.params.as_ref(),
+                Step::Fold(fold) => Some(&fold.params),
+            })
+            .expect("commit params"),
         );
         AkitaScheduleLookupKey {
             final_group: PolynomialGroupLayout::new(20, 2),
@@ -515,12 +576,17 @@ mod tests {
     fn validate_generated_multi_group_entry_accepts_materialized_dp_schedule() {
         let key = multi_group_sample_key();
         let policy = flat_policy();
-        let schedule = find_group_batch_schedule(&key, &policy, ring_challenge_config, fold_shape)
-            .expect("multi-group schedule");
+        let schedule = find_group_batch_schedule::<Prime128OffsetA7F7>(
+            &key,
+            &policy,
+            ring_challenge_config,
+            fold_shape,
+        )
+        .expect("multi-group schedule");
         let entry =
             generated_group_entry_from_steps(&key, generated_steps_from_schedule(&schedule));
 
-        validate_generated_schedule_entry(
+        validate_generated_schedule_entry::<Prime128OffsetA7F7>(
             &entry,
             &key,
             &policy,
@@ -528,5 +594,30 @@ mod tests {
             &fold_shape,
         )
         .expect("multi-group generated entry should validate");
+    }
+
+    #[test]
+    fn generated_multi_group_entry_rejects_field_from_another_sis_family() {
+        let key = multi_group_sample_key();
+        let policy = flat_policy();
+        let schedule = find_group_batch_schedule::<Prime128OffsetA7F7>(
+            &key,
+            &policy,
+            ring_challenge_config,
+            fold_shape,
+        )
+        .expect("multi-group schedule");
+        let entry =
+            generated_group_entry_from_steps(&key, generated_steps_from_schedule(&schedule));
+
+        let error = validate_generated_schedule_entry::<Prime32Offset99>(
+            &entry,
+            &key,
+            &policy,
+            &ring_challenge_config,
+            &fold_shape,
+        )
+        .expect_err("Q128 generated group entry must reject an fp32 field type");
+        assert!(matches!(error, AkitaError::InvalidSetup(_)));
     }
 }

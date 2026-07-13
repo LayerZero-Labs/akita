@@ -103,6 +103,25 @@ impl WitnessLayout {
             AkitaError::InvalidSetup("last witness chunk is missing the r-tail offset".to_string())
         })
     }
+
+    /// Total number of physical witness ring columns.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AkitaError::InvalidSetup`] when the resolved layout lacks its
+    /// shared quotient tail or the final extent overflows.
+    pub fn ring_len(&self) -> Result<usize, AkitaError> {
+        let (layout, lengths) = self.last_chunk()?;
+        let offset = layout.offset_r.ok_or_else(|| {
+            AkitaError::InvalidSetup("last witness chunk is missing the r-tail offset".into())
+        })?;
+        let len = lengths.r_len.ok_or_else(|| {
+            AkitaError::InvalidSetup("last witness chunk is missing the r-tail length".into())
+        })?;
+        offset
+            .checked_add(len)
+            .ok_or_else(|| AkitaError::InvalidSetup("witness ring length overflow".into()))
+    }
 }
 
 /// Upper bound on [`ChunkedWitnessCfg::num_chunks`] enforced at layout validation

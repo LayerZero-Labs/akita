@@ -19,7 +19,12 @@ fn conservative_config_commit_returns_frozen_layout() {
     let polys = [debug_make_onehot_poly(&layout, 0x0bee_fcaf_9a77_0001)];
 
     let setup = RegularCommitter::setup_prover(NV, GROUP_SIZE).expect("setup");
-    let prepared = CpuBackend.prepare_setup(&setup).expect("prepared setup");
+    let prepared = CpuBackend
+        .prepare_setup(
+            &setup,
+            &akita_types::PreparedNttPlan::base_envelope(setup.expanded.as_ref()).unwrap(),
+        )
+        .expect("prepared setup");
     let stack =
         akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
             .expect("stack");
@@ -55,7 +60,12 @@ fn with_conservative_commit_stack<R>(
     ) -> R,
 ) -> R {
     let setup = RegularCommitter::setup_prover(max_num_vars, max_num_polys).expect("setup");
-    let prepared = CpuBackend.prepare_setup(&setup).expect("prepared setup");
+    let prepared = CpuBackend
+        .prepare_setup(
+            &setup,
+            &akita_types::PreparedNttPlan::base_envelope(setup.expanded.as_ref()).unwrap(),
+        )
+        .expect("prepared setup");
     let stack =
         akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
             .expect("stack");
@@ -250,7 +260,12 @@ fn commit_group_returns_frozen_conservative_layout() {
     let polys = [debug_make_onehot_poly(&layout, 0x0bee_fcaf_9a77_0001)];
 
     let setup = OneHotScheme::setup_prover(NV, GROUP_SIZE).expect("setup");
-    let prepared = CpuBackend.prepare_setup(&setup).expect("prepared setup");
+    let prepared = CpuBackend
+        .prepare_setup(
+            &setup,
+            &akita_types::PreparedNttPlan::base_envelope(setup.expanded.as_ref()).unwrap(),
+        )
+        .expect("prepared setup");
     let stack =
         akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
             .expect("stack");
@@ -289,7 +304,12 @@ fn multi_group_root_round_trip_onehot(
         }
     }
     .expect("setup");
-    let prepared = CpuBackend.prepare_setup(&setup).expect("prepared setup");
+    let prepared = CpuBackend
+        .prepare_setup(
+            &setup,
+            &akita_types::PreparedNttPlan::base_envelope(setup.expanded.as_ref()).unwrap(),
+        )
+        .expect("prepared setup");
     let stack =
         akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
             .expect("stack");
@@ -495,7 +515,12 @@ fn multi_group_root_folded_two_group_onehot_round_trips() {
     let pre_polys = [debug_make_onehot_poly(&pre_layout, 0x0bee_fcaf_9a77_8001)];
 
     let setup = ConservativeCommitter::setup_prover(FINAL_NV, TOTAL_SIZE).expect("setup");
-    let prepared = CpuBackend.prepare_setup(&setup).expect("prepared setup");
+    let prepared = CpuBackend
+        .prepare_setup(
+            &setup,
+            &akita_types::PreparedNttPlan::base_envelope(setup.expanded.as_ref()).unwrap(),
+        )
+        .expect("prepared setup");
     let stack =
         akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
             .expect("stack");
@@ -702,7 +727,12 @@ fn multi_group_root_folded_three_group_onehot_round_trips() {
     let pre_b_polys = [debug_make_onehot_poly(&pre_b_layout, 0x0bee_fcaf_9a77_6001)];
 
     let setup = ConservativeCommitter::setup_prover(FINAL_NV, TOTAL_SIZE).expect("setup");
-    let prepared = CpuBackend.prepare_setup(&setup).expect("prepared setup");
+    let prepared = CpuBackend
+        .prepare_setup(
+            &setup,
+            &akita_types::PreparedNttPlan::base_envelope(setup.expanded.as_ref()).unwrap(),
+        )
+        .expect("prepared setup");
     let stack =
         akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
             .expect("stack");
@@ -861,7 +891,12 @@ fn batched_onehot_roundtrip_matches_public_shape_context() {
         .collect();
 
     let setup = OneHotScheme::setup_prover(NV, BATCH_SIZE).unwrap();
-    let prepared = CpuBackend.prepare_setup(&setup).unwrap();
+    let prepared = CpuBackend
+        .prepare_setup(
+            &setup,
+            &akita_types::PreparedNttPlan::base_envelope(setup.expanded.as_ref()).unwrap(),
+        )
+        .unwrap();
     let stack =
         akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
             .expect("stack");

@@ -30,6 +30,7 @@ pub use backend::{
 };
 pub use compute::{
     BatchDecomposeFoldOutcome, CommitBackendFor, CommitCluster, CommitmentComputeBackend,
+    CompressionRowsItem, CompressionRowsMode, CompressionRowsOutput, CompressionRowsPlan,
     ComputeBackendSetup, CpuBackend, CpuPreparedSetup, CyclicRowsComputeBackend, DenseCommitInput,
     DenseCommitRowsPlan, DigitRowsComputeBackend, FlatBlockTable, LevelProveStacks,
     OneHotCommitBlocks, OneHotCommitRowsPlan, OpeningCluster, OpeningProveBackendFor, OperationCtx,

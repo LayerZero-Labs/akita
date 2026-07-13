@@ -4,8 +4,7 @@ use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
 use akita_transcript::Transcript;
 use akita_types::{
     AkitaCommitmentHint, Commitment, LevelParams, OpeningClaims, OpeningClaimsLayout,
-    PointVariableSelection, PolynomialGroupClaims, PolynomialGroupLayout, RelationMatrixRowLayout,
-    RingVec,
+    PointVariableSelection, PolynomialGroupClaims, PolynomialGroupLayout, RingVec,
 };
 
 /// Prover opening input: public claims plus prover-only hints and polynomials.
@@ -213,7 +212,10 @@ impl<'a, PointF: Clone, P, CommitF: FieldCore> ProverOpeningData<'a, PointF, P, 
     pub(crate) fn fold_commitment(
         &self,
         params: &LevelParams,
-    ) -> Result<RingVec<CommitF>, AkitaError> {
+    ) -> Result<RingVec<CommitF>, AkitaError>
+    where
+        CommitF: CanonicalField,
+    {
         let opening_batch = self.opening_claims.layout()?;
         if self.opening_claims.num_groups() != opening_batch.num_groups() {
             return Err(AkitaError::InvalidInput(
@@ -221,22 +223,25 @@ impl<'a, PointF: Clone, P, CommitF: FieldCore> ProverOpeningData<'a, PointF, P, 
             ));
         }
 
-        let mut group_order = (0..opening_batch.num_groups())
-            .map(|group_index| {
-                let range = params.root_commitment_row_range(
-                    &opening_batch,
-                    group_index,
-                    RelationMatrixRowLayout::WithDBlock,
-                )?;
-                Ok((range.start, range.len(), group_index))
-            })
-            .collect::<Result<Vec<_>, AkitaError>>()?;
-        group_order.sort_by_key(|(start, _, _)| *start);
-
         let mut coeffs = Vec::new();
-        for (_, expected_rows, group_index) in group_order {
+        let layout = akita_types::RelationLayout::from_authenticated_statement(
+            params,
+            &opening_batch,
+            akita_types::RelationMatrixRowLayout::WithDBlock,
+            CommitF::modulus_bits(),
+        )?;
+        let final_group = opening_batch.root_final_group_index()?;
+        for group_index in opening_batch.root_group_order()? {
+            let group = if group_index == final_group {
+                akita_types::RelationGroupId::Current
+            } else {
+                akita_types::RelationGroupId::Precommitted { index: group_index }
+            };
+            let family = layout
+                .row_plan()
+                .family(akita_types::RelationRowId::B { group })?;
             let commitment = self.opening_claims.group_commitment(group_index)?;
-            if commitment.rows().count() != expected_rows {
+            if commitment.rows().coeffs().len() != family.rows().len() * family.native_ring_dim() {
                 return Err(AkitaError::InvalidInput(
                     "fold commitment row count mismatch".to_string(),
                 ));

@@ -18,7 +18,7 @@ use akita_types::{
     direct_witness_bytes, level_proof_bytes, segment_typed_witness_shape,
     w_ring_element_count_with_counts_for_layout_bits, AjtaiKeyParams, AkitaScheduleInputs,
     AkitaScheduleLookupKey, CommitmentRingDims, DecompositionParams, DirectStep, FoldStep,
-    LevelParams, PolynomialGroupLayout, RelationMatrixRowLayout, Schedule, Step,
+    FoldWirePayload, LevelParams, PolynomialGroupLayout, RelationMatrixRowLayout, Schedule, Step,
 };
 struct MixedSuffixFoldPlan {
     params: LevelParams,
@@ -451,11 +451,14 @@ where
                 field_bits,
                 challenge_field_bits,
                 &plan.params,
-                next_lp,
+                next_lp.map(|next_level| FoldWirePayload::Native {
+                    next_level,
+                    next_base_field_bits: field_bits,
+                }),
                 plan.next_w_len,
                 1,
                 layout,
-            );
+            )?;
             mixed_folds.push(FoldStep {
                 params: plan.params.clone(),
                 current_w_len: plan.current_w_len,

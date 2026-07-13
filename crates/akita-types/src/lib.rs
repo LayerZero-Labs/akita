@@ -9,9 +9,9 @@ pub(crate) mod descriptor_bytes;
 pub mod dispatch;
 pub use dispatch::{
     field_modulus, ntt_max_ring_d, ntt_min_ring_d, ntt_ring_degree_supported_for_field,
-    ntt_ring_degree_supported_for_tier, outer_opening_min_ring_d, protocol_dispatch_tier,
-    validate_ring_dispatch, validate_role_dims_for_field, validate_role_dispatch,
-    ProtocolDispatchSlot, ProtocolRingDispatchTierId,
+    ntt_ring_degree_supported_for_tier, protocol_dispatch_tier, sis_family_for_field,
+    slot_dims_for_tier, validate_ring_dispatch, validate_role_dims_for_field,
+    validate_role_dispatch, ProtocolDispatchSlot, ProtocolRingDispatchTierId,
 };
 pub mod extension_opening_reduction;
 pub mod field_reduction;
@@ -62,17 +62,26 @@ pub use instance_descriptor::{
     FOLD_GRIND_PROBE_ORDER_TRANSCRIPT_SHUFFLE,
 };
 pub use layout::{
-    basis_weights, block_rings_at_opening, direct_witness_bytes,
+    aggregate_catalog_projections, basis_weights, block_rings_at_opening,
+    compression_capacity_infeasible, compression_digit_depth, direct_witness_bytes,
     extension_opening_reduction_level_bytes, extension_opening_reduction_proof_bytes, field_bytes,
     gadget_row_scalars, lagrange_weights, monomial_weights, packed_digits_bytes,
     padded_boolean_opening_vars, planned_next_w_len, planned_w_ring_element_count,
     proof_ring_vec_bytes, reduce_inner_opening_to_ring_element, ring_opening_point_from_field,
-    sumcheck_rounds, validate_role_dims, validate_schedule_ring_dims, BasisMode, BlockOrder,
-    CommitmentRingDims, FlatMatrix, LevelParams, LevelParamsLike, PrecommittedLevelParams,
-    RelationMatrixRowLayout, RingMatrixView, RingOpeningPoint, RingRole, MAX_FOLD_LEVELS,
-    MIN_A_ROLE_FOLD_CHALLENGE_RING_D, SUPPORTED_CHALLENGE_RING_DIMS, SUPPORTED_RING_DIMS,
+    sumcheck_rounds, validate_compression_catalog, validate_role_dims, validate_schedule_ring_dims,
+    AggregatedCompressionSetup, BasisMode, BlockOrder, CommitmentRingDims, CompressionAlphabet,
+    CompressionCatalogContext, CompressionCatalogProjection, CompressionChainChoice,
+    CompressionChainSpec, CompressionDimensionCost, CompressionMapChoice, CompressionMapHintShape,
+    CompressionMapSpec, CompressionMapStructuralCost, CompressionRelationStructuralCost,
+    CompressionSourceId, CompressionTerminalRelationShape, FlatMatrix,
+    FrozenCompressionChainChoice, LevelCompressionPlan, LevelParams, LevelParamsLike,
+    PrecommittedLevelParams, RelationFamilyProvider, RelationGroupId, RelationLayout,
+    RelationMatrixRowLayout, RelationRowId, RelationRowPlan, RingMatrixView, RingOpeningPoint,
+    RingRole, SharedSetupMatrixView, ValidatedCompressionCatalog,
+    COMPRESSION_CAPACITY_INFEASIBLE_PREFIX, MAX_FOLD_LEVELS, MIN_A_ROLE_FOLD_CHALLENGE_RING_D,
+    STANDALONE_OPENING_BASE_LOG_BASIS, SUPPORTED_CHALLENGE_RING_DIMS,
 };
-pub use ntt_cache::NttCacheKey;
+pub use ntt_cache::{NttCacheKey, PreparedNttPlan};
 pub use proof::{
     absorb_interstage_claims, combine_polys, eval_poly, linear_combination,
     range_check_eval_from_s, reorder_stage1_coords, stage1_interstage_batch_weights,
@@ -82,13 +91,11 @@ pub use proof::{
 pub use proof::{
     active_setup_field_len, append_batched_commitments_to_transcript,
     append_claim_values_to_transcript, assemble_relation_rhs, build_segment_typed_witness,
-    compute_relation_matrix_col_evals, decode_terminal_z_golomb_payload, derive_public_matrix_flat,
-    e_folded_segment_bytes, emit_witness_planes_block_inner, emit_witness_z_folded_planes_inner,
-    expand_segment_typed_to_i8_digits, folded_root_supports_opening_shape, generate_relation_rhs,
-    i8_digits_to_bytes, padded_scalar_batch_num_vars, padded_setup_prefix_len,
-    prepare_opening_point, relation_claim_from_layout_extension, relation_claim_from_rows,
-    relation_claim_from_rows_extension, relation_rhs_coeff_len, relation_rhs_layout_for,
-    relation_rhs_row_count, ring_relation_segment_lengths,
+    compression_prefix_rings, compute_relation_matrix_col_evals, decode_terminal_z_golomb_payload,
+    derive_public_matrix_flat, e_folded_segment_bytes, emit_witness_planes_block_inner,
+    emit_witness_z_folded_planes_inner, expand_segment_typed_to_i8_digits,
+    folded_root_supports_opening_shape, i8_digits_to_bytes, padded_scalar_batch_num_vars,
+    padded_setup_prefix_len, prepare_opening_point, relation_claim_from_layout_extension,
     ring_subfield_packed_extension_opening_point, root_tensor_projection_enabled,
     sample_public_matrix_seed, sample_public_row_coefficients, segment_typed_witness_shape,
     segment_typed_witness_upper_bound_bytes, segment_typed_z_payload_bytes,
@@ -108,9 +115,8 @@ pub use proof::{
     DigitBlocks, DummyProof, ExtensionOpeningReductionProof, ExtensionOpeningReductionShape,
     LevelProofShape, OpeningClaims, OpeningClaimsLayout, OpeningPoints, PointVariableSelection,
     PolynomialGroupClaims, PolynomialGroupLayout, PreparedOpeningPoint, ProverCommitmentRows,
-    PublicMatrixSeed, RelationGroupRows, RelationOnlyStage2Inputs, RelationRhsLayout,
-    RingCommitment, RingMultiplierOpeningPoint, RingRelationInstance, RingRelationOpeningCounts,
-    RingRelationSegmentLengths, RingVec, RingView, SegmentTypedWitness, SegmentTypedWitnessShape,
+    PublicMatrixSeed, RelationOnlyStage2Inputs, RingCommitment, RingMultiplierOpeningPoint,
+    RingRelationInstance, RingVec, RingView, SegmentTypedWitness, SegmentTypedWitnessShape,
     SetupMatrixEnvelope, SetupPrefixProverRegistry, SetupPrefixPublicCommitment, SetupPrefixSlot,
     SetupPrefixSlotId, SetupPrefixVerifierRegistry, SetupPrefixVerifierSlot,
     SetupProductSumcheckShape, SetupSumcheckProof, TailSegmentLayout, TerminalLevelProof,
@@ -118,7 +124,9 @@ pub use proof::{
     MAX_SETUP_MATRIX_FIELD_ELEMENTS, MULTI_GROUP_ROOT_DENSE_UNSUPPORTED,
     MULTI_GROUP_ROOT_MULTI_CHUNK_UNSUPPORTED, SETUP_OFFLOAD_D_SETUP, SETUP_SUMCHECK_DEGREE,
 };
-pub use proof_size::{level_proof_bytes, FOLD_GRIND_NONCE_BYTES};
+pub use proof_size::{
+    level_proof_bytes, CompressedFoldWirePayload, FoldWirePayload, FOLD_GRIND_NONCE_BYTES,
+};
 pub use schedule::{
     detect_field_modulus, multi_group_root_commit_params, r_decomp_levels, root_current_w_len,
     root_direct_schedule, schedule_is_root_direct, schedule_num_fold_levels,
@@ -126,7 +134,7 @@ pub use schedule::{
     w_ring_element_count_for_chunks, w_ring_element_count_with_counts_for_layout,
     w_ring_element_count_with_counts_for_layout_bits, AkitaScheduleInputs, AkitaScheduleLookupKey,
     DirectStep, ExecutionSchedule, FoldStep, PrecommittedGroupParams, Schedule,
-    ScheduleKeyPrecommitSource, Step,
+    ScheduleCompressionPlan, ScheduleKeyPrecommitSource, Step,
 };
 pub use setup_contribution::{
     ensure_setup_envelope, prepare_setup_contribution_artifact, setup_active_ring_elems_at,

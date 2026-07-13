@@ -57,7 +57,7 @@ fn check_table_miss_fallback<Cfg: CommitmentConfig>(num_vars: usize) {
     let from_runtime = Cfg::runtime_schedule(AkitaScheduleLookupKey::single(key))
         .expect("runtime_schedule must not error on a valid one-point 2-poly key");
 
-    let from_dp = find_schedule(
+    let from_dp = find_schedule::<Cfg::Field>(
         key,
         &policy_of::<Cfg>(),
         Cfg::ring_challenge_config,

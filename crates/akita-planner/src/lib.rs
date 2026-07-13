@@ -17,6 +17,7 @@ pub use akita_types::{
 };
 
 pub mod catalog_identity;
+pub mod compression;
 pub mod emit;
 pub mod generated;
 mod group_batch;
@@ -27,6 +28,15 @@ pub use akita_challenges::TensorChallengeShape;
 pub use catalog_identity::{
     expected_catalog_identity, identity_digest, key_digest, policy_digest,
     ring_challenge_config_digest, validate_catalog_identity,
+};
+pub use compression::{
+    compile_compression_setup_artifacts, compile_compression_setup_artifacts_from_bundles,
+    fold_first_wire_payload, rank_one_ring_dim_for_bytes, select_co_generated_bundle,
+    select_standalone_compression, select_terminal_bundle, successor_witness_field_coeffs,
+    CompressionByteLadder, CompressionFirstMapAlphabet, CompressionPlannerPolicy,
+    CompressionSelection, CompressionSetupArtifacts, FoldFirstSearchStats, LevelCompressionBundle,
+    BINARY_256_128, DEFAULT_COMPRESSION_BYTE_LADDERS, MAX_EXHAUSTIVE_COMPRESSION_CANDIDATES,
+    MAX_FOLD_FIRST_BUNDLE_ATTEMPTS, OPENING_BASE_1024_256_128, OPENING_BASE_512_256_128,
 };
 pub use emit::{refresh_generated_wiring, run_regen_fmt, write_family_module, EmitSpec};
 pub use generated::{

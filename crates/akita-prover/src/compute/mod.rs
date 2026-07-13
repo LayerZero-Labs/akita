@@ -53,6 +53,7 @@ pub use operation_plans::{
     RingSwitchQuotientPlan, RingSwitchRelationPlan,
 };
 pub use plans::{
+    CompressionRowsItem, CompressionRowsMode, CompressionRowsOutput, CompressionRowsPlan,
     DenseCommitInput, DenseCommitRowsPlan, FlatBlockTable, OneHotCommitBlocks,
     OneHotCommitRowsPlan, RecursiveWitnessCommitRowsPlan, RingSwitchQuotientRowsPlan,
     RingSwitchRelationRows, RingSwitchRelationRowsPlan, SparseRingCommitRowsPlan,

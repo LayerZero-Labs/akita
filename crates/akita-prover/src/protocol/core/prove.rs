@@ -295,8 +295,14 @@ where
         // against the scheduled root params under the schedule-derived ring
         // dimension via `RingView::new` (no-panic gate, mirrors the verifier's
         // commitment-length check) before interpreting it as ring rows.
-        let root_ring_dim = root_scheduled.params.role_dims().d_b();
         let opening_batch = claims.opening_claims().layout()?;
+        let relation_layout = RelationLayout::from_authenticated_statement(
+            &root_scheduled.params,
+            &opening_batch,
+            RelationMatrixRowLayout::WithDBlock,
+            Cfg::Field::modulus_bits(),
+        )?;
+        let final_group = opening_batch.root_final_group_index()?;
         let commitments = claims.commitments();
         if commitments.len() != opening_batch.num_groups() {
             return Err(AkitaError::InvalidInput(
@@ -304,11 +310,16 @@ where
             ));
         }
         for (group_index, commitment) in commitments.iter().enumerate() {
-            let expected_rows = root_scheduled
-                .params
-                .root_group_commitment_rows(&opening_batch, group_index)?;
-            let view = RingView::new(commitment.rows().coeffs(), root_ring_dim)?;
-            if view.num_rings() != expected_rows {
+            let group = if group_index == final_group {
+                RelationGroupId::Current
+            } else {
+                RelationGroupId::Precommitted { index: group_index }
+            };
+            let family = relation_layout
+                .row_plan()
+                .family(RelationRowId::B { group })?;
+            let view = RingView::new(commitment.rows().coeffs(), family.native_ring_dim())?;
+            if view.num_rings() != family.rows().len() {
                 return Err(AkitaError::InvalidInput(
                     "root commitment row count does not match scheduled root params".to_string(),
                 ));

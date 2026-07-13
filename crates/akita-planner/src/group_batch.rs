@@ -1,22 +1,24 @@
 //! Multi-group root-batch schedule planning.
 
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
-use akita_field::AkitaError;
+use akita_field::{AkitaError, CanonicalField};
 use akita_types::sis::{
-    compute_num_digits_full_field, decomposed_s_block_ring_count, decomposed_t_ring_count,
-    decomposed_w_ring_count, fold_witness_digit_plan, min_secure_rank, num_digits_open,
-    num_digits_s_commit, rounded_up_collision_inf_norm, rounded_up_role_a_inf_norm, AjtaiKeyParams,
-    FoldChallengeNorms, FoldWitnessLinfCapConfig, FoldWitnessNorms, SisTableKey,
+    decomposed_s_block_ring_count, decomposed_t_ring_count, decomposed_w_ring_count,
+    fold_witness_digit_plan, min_secure_rank, num_digits_open, num_digits_s_commit,
+    rounded_up_collision_inf_norm, rounded_up_role_a_inf_norm, AjtaiKeyParams, FoldChallengeNorms,
+    FoldWitnessLinfCapConfig, FoldWitnessNorms, SisTableKey,
 };
 use akita_types::{
     direct_witness_bytes, extension_opening_reduction_level_bytes, level_proof_bytes,
     AkitaScheduleInputs, AkitaScheduleLookupKey, CleartextWitnessShape, CommitmentRingDims,
-    DecompositionParams, DirectStep, FoldStep, LevelParams, PolynomialGroupLayout,
-    PrecommittedGroupParams, PrecommittedLevelParams, RelationMatrixRowLayout, Schedule, Step,
+    DecompositionParams, DirectStep, FoldStep, FoldWirePayload, LevelParams, OpeningClaimsLayout,
+    PolynomialGroupLayout, PrecommittedGroupParams, PrecommittedLevelParams, RelationLayout,
+    RelationMatrixRowLayout, Schedule, Step,
 };
 
 use crate::schedule_params::{
-    derive_optimal_suffix_schedule, find_schedule, RingChallengeConfigFn, ScheduleMemo, SuffixCtx,
+    derive_optimal_suffix_schedule, find_schedule, validate_planner_field, RingChallengeConfigFn,
+    ScheduleMemo, SuffixCtx,
 };
 use crate::PlannerPolicy;
 
@@ -291,41 +293,6 @@ pub(crate) fn multi_group_root_precommitted_groups(
     Ok((precommitted_groups, precommitted_d_width))
 }
 
-fn multi_group_root_segment_rings(
-    num_polys: usize,
-    num_blocks: usize,
-    block_len: usize,
-    n_a: usize,
-    num_digits_commit: usize,
-    num_digits_open: usize,
-    num_digits_fold: usize,
-) -> Result<usize, AkitaError> {
-    let e_hat = num_polys
-        .checked_mul(num_blocks)
-        .and_then(|n| n.checked_mul(num_digits_open))
-        .ok_or_else(|| {
-            AkitaError::InvalidSetup("multi-group root e-hat witness overflow".to_string())
-        })?;
-    let t_hat = num_polys
-        .checked_mul(num_blocks)
-        .and_then(|n| n.checked_mul(n_a))
-        .and_then(|n| n.checked_mul(num_digits_open))
-        .ok_or_else(|| {
-            AkitaError::InvalidSetup("multi-group root t-hat witness overflow".to_string())
-        })?;
-    let z_hat = block_len
-        .checked_mul(num_digits_commit)
-        .and_then(|n| n.checked_mul(num_digits_fold))
-        .ok_or_else(|| {
-            AkitaError::InvalidSetup("multi-group root z-hat witness overflow".to_string())
-        })?;
-
-    e_hat
-        .checked_add(t_hat)
-        .and_then(|n| n.checked_add(z_hat))
-        .ok_or_else(|| AkitaError::InvalidSetup("multi-group root witness overflow".to_string()))
-}
-
 pub(crate) fn multi_group_root_next_w_len(
     field_bits: u32,
     params: &LevelParams,
@@ -338,42 +305,24 @@ pub(crate) fn multi_group_root_next_w_len(
         ));
     }
 
-    let mut total = multi_group_root_segment_rings(
-        main_num_polys,
-        params.num_blocks,
-        params.block_len,
-        params.a_key.row_len(),
-        params.num_digits_commit,
-        params.num_digits_open,
-        params.num_digits_fold(main_num_polys, field_bits)?,
+    let precommitteds = params
+        .precommitted_groups
+        .iter()
+        .map(|group| group.layout.group)
+        .collect::<Vec<_>>();
+    let opening = OpeningClaimsLayout::from_root_groups(
+        &precommitteds,
+        PolynomialGroupLayout::new(
+            params
+                .m_vars
+                .checked_add(params.r_vars)
+                .ok_or_else(|| AkitaError::InvalidSetup("root opening arity overflow".into()))?,
+            main_num_polys,
+        ),
     )?;
-    for group in &params.precommitted_groups {
-        let group_rings = multi_group_root_segment_rings(
-            group.layout.group.num_polynomials(),
-            group.num_blocks,
-            group.block_len,
-            group.a_key.row_len(),
-            group.num_digits_commit,
-            group.num_digits_open,
-            group.num_digits_fold_one,
-        )?;
-        total = total.checked_add(group_rings).ok_or_else(|| {
-            AkitaError::InvalidSetup("multi-group root witness overflow".to_string())
-        })?;
-    }
-
-    let r_rows =
-        params.relation_matrix_row_count_for(params.precommitted_groups.len() + 1, layout)?;
-    let r_count = r_rows
-        .checked_mul(compute_num_digits_full_field(field_bits, params.log_basis))
-        .ok_or_else(|| {
-            AkitaError::InvalidSetup("multi-group root r-tail witness overflow".to_string())
-        })?;
-
-    let rings = total
-        .checked_add(r_count)
-        .ok_or_else(|| AkitaError::InvalidSetup("multi-group root witness overflow".to_string()))?;
-
+    let rings = RelationLayout::from_authenticated_statement(params, &opening, layout, field_bits)?
+        .witness_layout(None)?
+        .ring_len()?;
     rings.checked_mul(params.ring_dimension).ok_or_else(|| {
         AkitaError::InvalidSetup("multi-group root next witness length overflow".to_string())
     })
@@ -565,15 +514,16 @@ fn compute_multi_group_root_direct_level_params(
 }
 
 /// Build the phase-1 multi-group-root schedule from the full multi-group key.
-pub fn find_group_batch_schedule(
+pub fn find_group_batch_schedule<F: CanonicalField>(
     key: &AkitaScheduleLookupKey,
     policy: &PlannerPolicy,
     ring_challenge_config: impl Fn(usize) -> Result<akita_challenges::SparseChallengeConfig, AkitaError>,
     fold_challenge_shape_at_level: impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
 ) -> Result<Schedule, AkitaError> {
+    validate_planner_field::<F>(policy)?;
     key.validate()?;
     if key.precommitteds.is_empty() {
-        return find_schedule(
+        return find_schedule::<F>(
             key.final_group,
             policy,
             ring_challenge_config,
@@ -663,6 +613,7 @@ pub fn find_group_batch_schedule(
         ring_challenge_config,
         num_vars: key.final_group.num_vars(),
         key: PolynomialGroupLayout::singleton(key.final_group.num_vars()),
+        compression: None,
     };
     let mut memo = ScheduleMemo::new();
     let total_polys = key.num_polynomials()?;
@@ -713,7 +664,7 @@ pub fn find_group_batch_schedule(
                 continue;
             }
 
-            let suffix = derive_optimal_suffix_schedule(
+            let suffix = derive_optimal_suffix_schedule::<F>(
                 &suffix_ctx,
                 &mut memo,
                 1,
@@ -748,11 +699,18 @@ pub fn find_group_batch_schedule(
                     field_bits,
                     challenge_field_bits,
                     &candidate_params,
-                    Some(&suffix_fold.first_fold_params),
+                    Some(FoldWirePayload::Native {
+                        next_level: &suffix_fold.first_fold_params,
+                        next_base_field_bits: field_bits,
+                    }),
                     next_w_len,
                     1,
                     RelationMatrixRowLayout::WithDBlock,
-                ) + eor_bytes;
+                )?
+                .checked_add(eor_bytes)
+                .ok_or_else(|| {
+                    AkitaError::InvalidSetup("multi-group root byte count overflow".into())
+                })?;
                 let total = root_proof_size + suffix_fold.total_bytes;
                 if best
                     .as_ref()
@@ -784,7 +742,7 @@ pub fn find_group_batch_schedule(
 mod tests {
     use super::*;
     use crate::find_schedule;
-    use akita_field::Prime128OffsetA7F7;
+    use akita_field::{Prime128OffsetA7F7, Prime32Offset99};
     use akita_types::{
         AkitaScheduleLookupKey, DecompositionParams, PolynomialGroupLayout,
         RelationMatrixRowLayout, SisModulusFamily, DEFAULT_SIS_SECURITY_BITS,
@@ -836,8 +794,13 @@ mod tests {
         key: PolynomialGroupLayout,
         policy: &PlannerPolicy,
     ) -> PrecommittedGroupParams {
-        let schedule =
-            crate::find_schedule(key, policy, ring_challenge_config, fold_shape).expect("schedule");
+        let schedule = crate::find_schedule::<Prime128OffsetA7F7>(
+            key,
+            policy,
+            ring_challenge_config,
+            fold_shape,
+        )
+        .expect("schedule");
         let params = match schedule.steps.first().expect("schedule step") {
             Step::Fold(fold) => fold.params.clone(),
             Step::Direct(direct) => direct.params.clone().expect("root-direct params"),
@@ -884,19 +847,29 @@ mod tests {
             precommitteds: vec![precommitted_from_policy(pre_key, &policy)],
         };
         let opening_batch = key.opening_layout().expect("opening layout");
-        let schedule = find_group_batch_schedule(&key, &policy, ring_challenge_config, fold_shape)
-            .expect("multi-group schedule");
+        let schedule = find_group_batch_schedule::<Prime128OffsetA7F7>(
+            &key,
+            &policy,
+            ring_challenge_config,
+            fold_shape,
+        )
+        .expect("multi-group schedule");
         let Step::Fold(root) = schedule.steps.first().expect("multi-group root step") else {
             panic!("expected multi-group root fold");
         };
 
-        let runtime_next_w_len = root
-            .params
-            .root_next_w_len::<Prime128OffsetA7F7>(
-                &opening_batch,
-                RelationMatrixRowLayout::WithDBlock,
-            )
-            .expect("runtime next w len");
+        let runtime_next_w_len = RelationLayout::from_authenticated_statement(
+            &root.params,
+            &opening_batch,
+            RelationMatrixRowLayout::WithDBlock,
+            <Prime128OffsetA7F7 as akita_field::CanonicalField>::modulus_bits(),
+        )
+        .expect("semantic layout")
+        .witness_layout(None)
+        .expect("witness layout")
+        .ring_len()
+        .expect("runtime next w len")
+            * root.params.ring_dimension;
         assert_eq!(root.next_w_len, runtime_next_w_len);
 
         let expected_d_width = root
@@ -930,14 +903,40 @@ mod tests {
         let key = AkitaScheduleLookupKey::single(final_group);
         let policy = flat_policy();
 
-        let via_multi_group =
-            find_group_batch_schedule(&key, &policy, ring_challenge_config, fold_shape)
-                .expect("single-group multi-group key should delegate to scalar DP");
-        let via_scalar =
-            find_schedule(final_group, &policy, ring_challenge_config, fold_shape).expect("scalar");
+        let via_multi_group = find_group_batch_schedule::<Prime128OffsetA7F7>(
+            &key,
+            &policy,
+            ring_challenge_config,
+            fold_shape,
+        )
+        .expect("single-group multi-group key should delegate to scalar DP");
+        let via_scalar = find_schedule::<Prime128OffsetA7F7>(
+            final_group,
+            &policy,
+            ring_challenge_config,
+            fold_shape,
+        )
+        .expect("scalar");
 
         assert_eq!(via_multi_group.total_bytes, via_scalar.total_bytes);
         assert_eq!(via_multi_group.steps.len(), via_scalar.steps.len());
+    }
+
+    #[test]
+    fn nonempty_group_batch_rejects_concrete_field_from_another_sis_family() {
+        let policy = flat_policy();
+        let key = AkitaScheduleLookupKey {
+            final_group: PolynomialGroupLayout::new(20, 1),
+            precommitteds: vec![precommitted(1, 20)],
+        };
+        let error = find_group_batch_schedule::<Prime32Offset99>(
+            &key,
+            &policy,
+            ring_challenge_config,
+            fold_shape,
+        )
+        .expect_err("nonempty Q128 group batch must reject an fp32 field type");
+        assert!(matches!(error, AkitaError::InvalidSetup(_)));
     }
 
     #[test]
@@ -951,8 +950,13 @@ mod tests {
             precommitteds: vec![precommitted_from_policy(pre_key, &policy)],
         };
 
-        let schedule = find_group_batch_schedule(&key, &policy, ring_challenge_config, fold_shape)
-            .expect("multi-group schedule");
+        let schedule = find_group_batch_schedule::<Prime128OffsetA7F7>(
+            &key,
+            &policy,
+            ring_challenge_config,
+            fold_shape,
+        )
+        .expect("multi-group schedule");
         let params = match schedule.steps.first().expect("multi-group step") {
             Step::Direct(direct) => direct.params.as_ref().expect("multi-group root params"),
             Step::Fold(fold) => &fold.params,
@@ -971,8 +975,13 @@ mod tests {
             precommitteds: vec![precommitted_from_policy(pre_key, &policy)],
         };
 
-        let schedule = find_group_batch_schedule(&key, &policy, ring_challenge_config, fold_shape)
-            .expect("multi-group schedule");
+        let schedule = find_group_batch_schedule::<Prime128OffsetA7F7>(
+            &key,
+            &policy,
+            ring_challenge_config,
+            fold_shape,
+        )
+        .expect("multi-group schedule");
         let Step::Fold(root) = schedule.steps.first().expect("multi-group root step") else {
             panic!("expected multi-group root fold");
         };
@@ -994,8 +1003,13 @@ mod tests {
             precommitteds: vec![precommitted(1, 20)],
         };
 
-        let err = find_group_batch_schedule(&key, &policy, ring_challenge_config, fold_shape)
-            .expect_err("dense multi-group root schedules are phase-1 unsupported");
+        let err = find_group_batch_schedule::<Prime128OffsetA7F7>(
+            &key,
+            &policy,
+            ring_challenge_config,
+            fold_shape,
+        )
+        .expect_err("dense multi-group root schedules are phase-1 unsupported");
 
         assert!(matches!(err, AkitaError::InvalidSetup(_)));
     }

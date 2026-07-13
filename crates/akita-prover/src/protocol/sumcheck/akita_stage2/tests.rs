@@ -109,6 +109,37 @@ fn new_stage2_test_prover(
     .unwrap()
 }
 
+fn inject_nonempty_sparse_state(prover: &mut AkitaStage2Prover<F>) {
+    let relation = vec![
+        (0, F::from_u64(307)),
+        (3, F::from_u64(311)),
+        (17, F::from_u64(313)),
+    ];
+    let restricted_eq = vec![
+        (1, F::from_u64(317)),
+        (8, F::from_u64(331)),
+        (31, F::from_u64(337)),
+    ];
+    let witness_at = |index: usize| match &prover.w_table {
+        WTable::Compact(witness) => witness
+            .get(index)
+            .map_or(F::zero(), |&value| F::from_i64(i64::from(value))),
+        WTable::Full(witness) => witness.get(index).copied().unwrap_or_else(F::zero),
+    };
+    let mut sparse_claim = F::zero();
+    for &(index, weight) in &relation {
+        sparse_claim += weight * witness_at(index);
+    }
+    for &(index, weight) in &restricted_eq {
+        let witness = witness_at(index);
+        sparse_claim += weight * witness * (witness + F::one());
+    }
+    let domain_len = 1usize << prover.num_vars;
+    prover.sparse_state =
+        Stage2SparseState::new(domain_len, relation, restricted_eq).expect("test sparse state");
+    prover.input_claim += sparse_claim;
+}
+
 pub(super) fn new_stage2_test_prover_with_trace(
     batching_coeff: F,
     w_compact: Vec<i8>,
@@ -792,10 +823,30 @@ fn stage2_large_odd_sparse_boolean_two_round_prefix_matches_direct_path() {
 
     let mut prover_claim = prover.input_claim();
     let mut direct_claim = direct.input_claim();
+    let mut saw_two_round = false;
+    let mut saw_ordinary_full = false;
+    let mut saw_prefix_y = false;
+    let mut saw_prefix_x = false;
+    let mut saw_cached_next = false;
 
     for round in 0..(col_bits + ring_bits) {
+        saw_two_round |= prover.using_two_round_prefix();
+        saw_ordinary_full |= matches!(direct.w_table, WTable::Full(_));
+        saw_prefix_y |= direct.use_prefix_y_round();
+        saw_prefix_x |= direct.use_prefix_x_round();
         let prover_poly = prover.compute_round_univariate(round, prover_claim);
         let direct_poly = direct.compute_round_univariate(round, direct_claim);
+        if round == 0 {
+            assert!(
+                prover
+                    .two_round_prefix
+                    .as_ref()
+                    .expect("two-round prefix state")
+                    .sparse_grid
+                    .is_none(),
+                "empty sparse state must not allocate a two-round grid"
+            );
+        }
         assert_eq!(
             prover_poly, direct_poly,
             "round {round} polynomial mismatch for large odd sparse boolean witness"
@@ -806,8 +857,14 @@ fn stage2_large_odd_sparse_boolean_two_round_prefix_matches_direct_path() {
         direct_claim = direct_poly.evaluate(&challenge);
         prover.ingest_challenge(round, challenge);
         direct.ingest_challenge(round, challenge);
+        saw_cached_next |= prover.cached_round_poly.is_some() || direct.cached_round_poly.is_some();
     }
 
+    assert!(saw_two_round);
+    assert!(saw_ordinary_full);
+    assert!(saw_prefix_y);
+    assert!(saw_prefix_x);
+    assert!(saw_cached_next);
     assert_eq!(prover_claim, direct_claim);
     assert_eq!(prover.final_w_eval(), direct.final_w_eval());
 }
@@ -862,8 +919,13 @@ fn stage2_large_odd_sparse_boolean_prefix_matches_padded_reference() {
 
     let mut prefix_claim = prefix_prover.input_claim();
     let mut padded_claim = padded_prover.input_claim();
+    let mut saw_prefix_y = false;
+    let mut saw_prefix_x = false;
+    let mut saw_cached_next = false;
 
     for round in 0..(col_bits + ring_bits) {
+        saw_prefix_y |= prefix_prover.use_prefix_y_round();
+        saw_prefix_x |= prefix_prover.use_prefix_x_round();
         let prefix_poly = prefix_prover.compute_round_univariate(round, prefix_claim);
         let padded_poly = padded_prover.compute_round_univariate(round, padded_claim);
         assert_eq!(
@@ -876,14 +938,18 @@ fn stage2_large_odd_sparse_boolean_prefix_matches_padded_reference() {
         padded_claim = padded_poly.evaluate(&challenge);
         prefix_prover.ingest_challenge(round, challenge);
         padded_prover.ingest_challenge(round, challenge);
+        saw_cached_next |= prefix_prover.cached_round_poly.is_some();
     }
 
+    assert!(saw_prefix_y);
+    assert!(saw_prefix_x);
+    assert!(saw_cached_next);
     assert_eq!(prefix_claim, padded_claim);
     assert_eq!(prefix_prover.final_w_eval(), padded_prover.final_w_eval());
 }
 
 #[test]
-fn stage2_large_odd_dense_two_round_prefix_matches_direct_path() {
+fn stage2_large_odd_dense_two_round_prefix_with_sparse_state_matches_direct_path() {
     let col_bits = 16usize;
     let ring_bits = 6usize;
     let live_x_cols = 34_519usize;
@@ -925,13 +991,35 @@ fn stage2_large_odd_dense_two_round_prefix_matches_direct_path() {
         params,
     );
     direct.prefix_r_stage1 = None;
+    inject_nonempty_sparse_state(&mut prover);
+    inject_nonempty_sparse_state(&mut direct);
 
     let mut prover_claim = prover.input_claim();
     let mut direct_claim = direct.input_claim();
+    let mut saw_compact = false;
+    let mut saw_ordinary_full = false;
+    let mut saw_prefix_y = false;
+    let mut saw_prefix_x = false;
+    let mut saw_cached_next = false;
 
     for round in 0..(col_bits + ring_bits) {
+        saw_compact |= matches!(prover.w_table, WTable::Compact(_));
+        saw_ordinary_full |= matches!(direct.w_table, WTable::Full(_));
+        saw_prefix_y |= direct.use_prefix_y_round();
+        saw_prefix_x |= direct.use_prefix_x_round();
         let prover_poly = prover.compute_round_univariate(round, prover_claim);
         let direct_poly = direct.compute_round_univariate(round, direct_claim);
+        if round == 0 {
+            assert!(
+                prover
+                    .two_round_prefix
+                    .as_ref()
+                    .expect("two-round prefix state")
+                    .sparse_grid
+                    .is_some(),
+                "nonempty sparse state requires a two-round grid"
+            );
+        }
         assert_eq!(
             prover_poly.evaluate(&F::zero()) + prover_poly.evaluate(&F::one()),
             prover_claim,
@@ -952,14 +1040,20 @@ fn stage2_large_odd_dense_two_round_prefix_matches_direct_path() {
         direct_claim = direct_poly.evaluate(&challenge);
         prover.ingest_challenge(round, challenge);
         direct.ingest_challenge(round, challenge);
+        saw_cached_next |= prover.cached_round_poly.is_some() || direct.cached_round_poly.is_some();
     }
 
+    assert!(saw_compact);
+    assert!(saw_ordinary_full);
+    assert!(saw_prefix_y);
+    assert!(saw_prefix_x);
+    assert!(saw_cached_next);
     assert_eq!(prover_claim, direct_claim);
     assert_eq!(prover.final_w_eval(), direct.final_w_eval());
 }
 
 #[test]
-fn stage2_large_odd_dense_prefix_matches_padded_reference() {
+fn stage2_large_odd_dense_prefix_with_sparse_state_matches_padded_reference() {
     let col_bits = 16usize;
     let ring_bits = 6usize;
     let live_x_cols = 34_519usize;
@@ -1006,13 +1100,30 @@ fn stage2_large_odd_dense_prefix_matches_padded_reference() {
             ring_bits,
         },
     );
+    inject_nonempty_sparse_state(&mut prefix_prover);
+    inject_nonempty_sparse_state(&mut padded_prover);
 
     let mut prefix_claim = prefix_prover.input_claim();
     let mut padded_claim = padded_prover.input_claim();
+    let mut saw_prefix_y = false;
+    let mut saw_prefix_x = false;
+    let mut saw_cached_next = false;
 
     for round in 0..(col_bits + ring_bits) {
+        saw_prefix_y |= prefix_prover.use_prefix_y_round();
+        saw_prefix_x |= prefix_prover.use_prefix_x_round();
         let prefix_poly = prefix_prover.compute_round_univariate(round, prefix_claim);
         let padded_poly = padded_prover.compute_round_univariate(round, padded_claim);
+        assert_eq!(
+            prefix_poly.evaluate(&F::zero()) + prefix_poly.evaluate(&F::one()),
+            prefix_claim,
+            "sparse prefix path sumcheck invariant mismatch at round {round}"
+        );
+        assert_eq!(
+            padded_poly.evaluate(&F::zero()) + padded_poly.evaluate(&F::one()),
+            padded_claim,
+            "sparse padded path sumcheck invariant mismatch at round {round}"
+        );
         assert_eq!(
             prefix_poly, padded_poly,
             "round {round} polynomial mismatch for padded large odd dense witness"
@@ -1023,8 +1134,12 @@ fn stage2_large_odd_dense_prefix_matches_padded_reference() {
         padded_claim = padded_poly.evaluate(&challenge);
         prefix_prover.ingest_challenge(round, challenge);
         padded_prover.ingest_challenge(round, challenge);
+        saw_cached_next |= prefix_prover.cached_round_poly.is_some();
     }
 
+    assert!(saw_prefix_y);
+    assert!(saw_prefix_x);
+    assert!(saw_cached_next);
     assert_eq!(prefix_claim, padded_claim);
     assert_eq!(prefix_prover.final_w_eval(), padded_prover.final_w_eval());
 }

@@ -6,11 +6,10 @@
 //! The verifier replays the same group-major geometry with its structured
 //! `RelationMatrixEvaluator` path instead of rebuilding the dense vector.
 
-use crate::layout::CommitmentRingDims;
 use crate::proof::ring_relation::RingRelationInstance;
 use crate::{
-    gadget_row_scalars, r_decomp_levels, AkitaExpandedSetup, FpExtEncoding, LevelParams,
-    RelationMatrixRowLayout,
+    gadget_row_scalars, AkitaExpandedSetup, FpExtEncoding, LevelParams, RelationGroupId,
+    RelationRowId,
 };
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::ring::{eval_flat_ring_at_pows_fast, scalar_powers};
@@ -19,6 +18,7 @@ use akita_field::parallel::*;
 use akita_field::{
     AkitaError, CanonicalField, FieldCore, FromPrimitiveInt, LiftBase, MulBase, MulBaseUnreduced,
 };
+use akita_serialization::DEFAULT_MAX_SEQUENCE_LEN;
 
 /// Unified relation matrix column evaluation for singleton and multi-group root relations.
 ///
@@ -36,37 +36,39 @@ pub fn compute_relation_matrix_col_evals<F, E>(
     instance: &RingRelationInstance<F>,
     alpha: E,
     alpha_pows: &[E],
-    role_dims: CommitmentRingDims,
     lp: &LevelParams,
     tau1: &[E],
     gamma: &[E],
-    relation_matrix_row_layout: RelationMatrixRowLayout,
 ) -> Result<Vec<E>, AkitaError>
 where
     F: FieldCore + CanonicalField,
     E: FpExtEncoding<F> + FromPrimitiveInt + LiftBase<F> + MulBase<F> + MulBaseUnreduced<F>,
 {
     let opening_batch = instance.opening_batch();
+    let row_plan = instance.relation_layout().row_plan();
     lp.witness_chunk.validate()?;
     lp.reject_multi_group_multi_chunk("compute_relation_matrix_col_evals")?;
     lp.validate_root_opening_batch(opening_batch)?;
     if gamma.len() != opening_batch.num_total_polynomials() {
         return Err(AkitaError::InvalidProof);
     }
-    let d_a = role_dims.d_a();
-    let d_b = role_dims.d_b();
-    let d_d = role_dims.d_d();
-    if alpha_pows.len() != d_a {
+    let current_a = row_plan.family(RelationRowId::A {
+        group: RelationGroupId::Current,
+    })?;
+    let quotient_ring_dim = current_a.native_ring_dim();
+    if alpha_pows.len() != quotient_ring_dim {
         return Err(AkitaError::InvalidSize {
-            expected: d_a,
+            expected: quotient_ring_dim,
             actual: alpha_pows.len(),
         });
     }
-    let alpha_pows_a = alpha_pows;
-    let alpha_pows_b = scalar_powers(alpha, d_b);
+    let d_family = row_plan
+        .families()
+        .iter()
+        .find(|family| matches!(family.id(), RelationRowId::D));
+    let d_d = d_family.map_or(lp.role_dims().d_d(), |family| family.native_ring_dim());
     let alpha_pows_d = scalar_powers(alpha, d_d);
-    let rows =
-        lp.relation_matrix_row_count_for(opening_batch.num_groups(), relation_matrix_row_layout)?;
+    let rows = row_plan.trace_row();
     let eq_tau1 = EqPolynomial::evals(tau1)?;
     if eq_tau1.len() < rows {
         return Err(AkitaError::InvalidSize {
@@ -74,67 +76,77 @@ where
             actual: eq_tau1.len(),
         });
     }
-    let n_d_active = lp.n_d_active_for(relation_matrix_row_layout);
-    let levels = r_decomp_levels::<F>(lp.log_basis);
+    let n_d_active = d_family.map_or(0, |family| family.rows().len());
+    if d_family.is_some() && lp.d_key.row_len() != n_d_active {
+        return Err(AkitaError::InvalidSetup(
+            "relation D family disagrees with the scheduled setup rows".into(),
+        ));
+    }
     let order = opening_batch.root_group_order()?;
-    let num_chunks = lp.witness_chunk.num_chunks;
+    let witness_layout = instance.relation_layout().witness_layout(None)?;
+    // Singleton layouts keep `WitnessLayout` chunks aligned with
+    // `LevelParams::witness_chunk`. Multi-group roots reject that
+    // chunked mode and instead emit one layout chunk per group.
+    let expected_layout_chunks = if opening_batch.num_groups() == 1 {
+        lp.witness_chunk.num_chunks
+    } else {
+        opening_batch.num_groups()
+    };
+    if witness_layout.num_chunks() != expected_layout_chunks {
+        return Err(AkitaError::InvalidSetup(
+            "relation execution parameters disagree with authenticated witness layout".into(),
+        ));
+    }
+    let num_chunks = witness_layout.num_chunks();
     let use_chunked_singleton_layout = opening_batch.num_groups() == 1;
+    let levels = witness_layout
+        .last_chunk()?
+        .1
+        .r_len
+        .ok_or_else(|| AkitaError::InvalidSetup("missing relation quotient tail".into()))?
+        / rows;
     let mut group_e_offsets = vec![0usize; opening_batch.num_groups()];
     let mut e_total = 0usize;
-    let mut z_total = 0usize;
-    let mut t_total = 0usize;
-    for &group_index in &order {
-        let group_lp = lp.root_group_params(opening_batch, group_index)?;
-        let group_layout = opening_batch.group_layout(group_index)?;
+    for (order_pos, &group_index) in order.iter().enumerate() {
         group_e_offsets[group_index] = e_total;
-        let k_g = group_layout.num_polynomials();
-        let depth_fold = lp.num_digits_fold_for_params(group_lp, k_g, lp.field_bits_for_cache())?;
-        let group_z_len = group_lp
-            .block_len()
-            .checked_mul(group_lp.num_digits_commit())
-            .and_then(|n| n.checked_mul(depth_fold))
-            .ok_or_else(|| {
-                AkitaError::InvalidSetup("relation matrix z width overflow".to_string())
-            })?;
-        let group_z_cols = if use_chunked_singleton_layout {
-            group_z_len.checked_mul(num_chunks).ok_or_else(|| {
-                AkitaError::InvalidSetup("chunked relation matrix z width overflow".to_string())
-            })?
+        let e_len = if opening_batch.num_groups() == 1 {
+            witness_layout
+                .chunk_lengths
+                .iter()
+                .try_fold(0usize, |sum, lengths| sum.checked_add(lengths.e_len))
+                .ok_or_else(|| {
+                    AkitaError::InvalidSetup("relation matrix e width overflow".into())
+                })?
         } else {
-            group_z_len
+            witness_layout
+                .chunk_lengths
+                .get(order_pos)
+                .ok_or(AkitaError::InvalidProof)?
+                .e_len
         };
-        z_total = z_total.checked_add(group_z_cols).ok_or_else(|| {
-            AkitaError::InvalidSetup("relation matrix z width overflow".to_string())
-        })?;
-        let e_len = k_g
-            .checked_mul(group_lp.num_blocks())
-            .and_then(|n| n.checked_mul(group_lp.num_digits_open()))
-            .ok_or_else(|| AkitaError::InvalidSetup("multi-group e width overflow".to_string()))?;
         e_total = e_total
             .checked_add(e_len)
             .ok_or_else(|| AkitaError::InvalidSetup("multi-group e width overflow".to_string()))?;
-        t_total = t_total
-            .checked_add(
-                k_g.checked_mul(group_lp.num_blocks())
-                    .and_then(|n| n.checked_mul(group_lp.a_rows_len()))
-                    .and_then(|n| n.checked_mul(group_lp.num_digits_open()))
-                    .ok_or_else(|| {
-                        AkitaError::InvalidSetup("relation matrix t width overflow".to_string())
-                    })?,
-            )
-            .ok_or_else(|| {
-                AkitaError::InvalidSetup("relation matrix t width overflow".to_string())
-            })?;
     }
-    let r_tail_len = rows
-        .checked_mul(levels)
-        .ok_or_else(|| AkitaError::InvalidSetup("relation matrix r width overflow".to_string()))?;
-    let total_cols = z_total
-        .checked_add(e_total)
-        .and_then(|n| n.checked_add(t_total))
-        .and_then(|n| n.checked_add(r_tail_len))
-        .ok_or_else(|| AkitaError::InvalidSetup("relation matrix width overflow".to_string()))?;
-    let x_len = total_cols.next_power_of_two();
+    let e_from_layout = witness_layout
+        .chunk_lengths
+        .iter()
+        .try_fold(0usize, |sum, lengths| sum.checked_add(lengths.e_len))
+        .ok_or_else(|| AkitaError::InvalidSetup("relation matrix e width overflow".into()))?;
+    if e_total != e_from_layout {
+        return Err(AkitaError::InvalidSetup(
+            "semantic group E widths disagree with witness layout".into(),
+        ));
+    }
+    let total_cols = witness_layout.ring_len()?;
+    let x_len = total_cols
+        .checked_next_power_of_two()
+        .ok_or_else(|| AkitaError::InvalidSetup("relation matrix column domain overflow".into()))?;
+    if x_len > DEFAULT_MAX_SEQUENCE_LEN {
+        return Err(AkitaError::InvalidSetup(format!(
+            "relation matrix column domain {x_len} exceeds allocation cap {DEFAULT_MAX_SEQUENCE_LEN}"
+        )));
+    }
     let mut out = Vec::with_capacity(x_len);
 
     let d_view = setup
@@ -143,10 +155,8 @@ where
     let d_rows: Vec<&[F]> = (0..lp.d_key.row_len())
         .map(|r| d_view.row_flat(r))
         .collect::<Result<_, _>>()?;
-    let d_start = rows
-        .checked_sub(n_d_active)
-        .ok_or(AkitaError::InvalidProof)?;
-    let consistency_weight = eq_tau1[0];
+    let d_start = d_family.map_or(rows, |family| family.rows().start());
+    let consistency_weight = eq_tau1[row_plan.family(RelationRowId::Consistency)?.rows().start()];
     let alpha_pow_d = alpha_pows_d[d_d - 1] * alpha;
     let denom = alpha_pow_d + E::one();
 
@@ -162,6 +172,22 @@ where
     let mut group_segments = Vec::with_capacity(opening_batch.num_groups());
     for (group_index, e_offset) in group_e_offsets.iter().copied().enumerate() {
         let group_lp = lp.root_group_params(opening_batch, group_index)?;
+        let final_group_index = opening_batch.root_final_group_index()?;
+        let relation_group = if group_index == final_group_index {
+            RelationGroupId::Current
+        } else {
+            RelationGroupId::Precommitted { index: group_index }
+        };
+        let a_family = row_plan.family(RelationRowId::A {
+            group: relation_group,
+        })?;
+        let b_family = row_plan.family(RelationRowId::B {
+            group: relation_group,
+        })?;
+        let d_a = a_family.native_ring_dim();
+        let d_b = b_family.native_ring_dim();
+        let alpha_pows_a = scalar_powers(alpha, d_a);
+        let alpha_pows_b = scalar_powers(alpha, d_b);
         let group_layout = opening_batch.group_layout(group_index)?;
         let k_g = group_layout.num_polynomials();
         let opening_point = instance.group_opening_point(group_index)?;
@@ -192,9 +218,11 @@ where
                 challenges: sparse, ..
             } => sparse
                 .iter()
-                .map(|challenge| challenge.eval_at_pows::<F, E>(alpha_pows))
+                .map(|challenge| challenge.eval_at_pows::<F, E>(&alpha_pows_a))
                 .collect::<Result<Vec<_>, _>>()?,
-            Challenges::Tensor { factored: _ } => challenges.evals_at_pows::<F, E>(alpha_pows)?,
+            Challenges::Tensor { factored: _ } => {
+                challenges.evals_at_pows::<F, E>(&alpha_pows_a)?
+            }
         };
         let depth_open = group_lp.num_digits_open();
         let depth_commit = group_lp.num_digits_commit();
@@ -202,6 +230,11 @@ where
         let log_basis = group_lp.log_basis();
         let n_a = group_lp.a_rows_len();
         let n_b = group_lp.b_rows_len();
+        if a_family.rows().len() != n_a || b_family.rows().len() != n_b {
+            return Err(AkitaError::InvalidSetup(
+                "relation group families disagree with the scheduled setup rows".into(),
+            ));
+        }
         let inner_width = group_lp.a_col_len();
         // Hoist per-group geometry into `Copy` locals so the parallel closures
         // below capture scalars instead of the `!Sync` `&dyn LevelParamsLike`.
@@ -224,10 +257,8 @@ where
         let b_rows: Vec<&[F]> = (0..n_b)
             .map(|r| b_view.row_flat(r))
             .collect::<Result<_, _>>()?;
-        let a_range =
-            lp.root_a_row_range(opening_batch, group_index, relation_matrix_row_layout)?;
-        let b_range =
-            lp.root_commitment_row_range(opening_batch, group_index, relation_matrix_row_layout)?;
+        let a_range = a_family.rows().range();
+        let b_range = b_family.rows().range();
         let a_row_weights = &eq_tau1[a_range];
         let b_weights = &eq_tau1[b_range];
         let g_open: Vec<E> = gadget_row_scalars::<F>(depth_open, log_basis)
@@ -311,14 +342,14 @@ where
                 let block_idx = k / depth_commit;
                 let digit_idx = k % depth_commit;
                 let opening_a_eval =
-                    ring_multiplier_point.eval_a_at_dyn::<E>(block_idx, alpha_pows_a)?;
+                    ring_multiplier_point.eval_a_at_dyn::<E>(block_idx, &alpha_pows_a)?;
                 let mut acc = consistency_weight * opening_a_eval * commit_gadget[digit_idx];
                 for (a_idx, eq_i) in a_row_weights.iter().enumerate() {
                     if !eq_i.is_zero() {
                         acc += *eq_i
                             * eval_flat_ring_at_pows_fast(
                                 &setup_a_rows[a_idx][k * d_a..(k + 1) * d_a],
-                                alpha_pows_a,
+                                &alpha_pows_a,
                             );
                     }
                 }
@@ -394,6 +425,12 @@ where
         for gadget in &r_gadget {
             out.push(-(*eq_weight * denom * *gadget));
         }
+    }
+    if out.len() != total_cols {
+        return Err(AkitaError::InvalidSetup(format!(
+            "relation matrix evaluator emitted {} columns, canonical layout requires {total_cols}",
+            out.len()
+        )));
     }
     out.resize(x_len, E::zero());
     Ok(out)

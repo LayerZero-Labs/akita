@@ -6,7 +6,7 @@ use crate::FlatMatrix;
 use akita_algebra::CyclotomicRing;
 #[allow(unused_imports)]
 use akita_field::parallel::*;
-use akita_field::{FieldCore, RandomSampling};
+use akita_field::{AkitaError, FieldCore, RandomSampling};
 use akita_serialization::{
     AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
 };
@@ -39,6 +39,31 @@ const SHARED_MATRIX_LABEL: &[u8] = b"shared";
 pub struct SetupMatrixEnvelope {
     /// Number of generated ring elements at the setup generation dimension.
     pub max_setup_len: usize,
+}
+
+/// Round a flat field-coefficient prefix up to whole generation rings.
+///
+/// Compression setup sizing and envelope inflation must use this helper so
+/// both paths share one ceil-to-rings contract.
+pub fn compression_prefix_rings(
+    max_flat_prefix_coeffs: usize,
+    gen_ring_dim: usize,
+) -> Result<usize, AkitaError> {
+    if gen_ring_dim == 0 {
+        return Err(AkitaError::InvalidSetup(
+            "compression setup generation dimension must be non-zero".into(),
+        ));
+    }
+    max_flat_prefix_coeffs
+        .checked_div(gen_ring_dim)
+        .and_then(|rings| {
+            rings.checked_add(usize::from(
+                !max_flat_prefix_coeffs.is_multiple_of(gen_ring_dim),
+            ))
+        })
+        .ok_or_else(|| {
+            AkitaError::InvalidSetup("compression setup prefix ring count overflow".into())
+        })
 }
 
 /// Seed-only stage for deterministic setup expansion.

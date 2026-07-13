@@ -48,7 +48,12 @@ fn heterogeneous_delegating_clusters_batched_prove_and_verify() {
     let poly = DensePoly::<F>::from_field_evals(full_num_vars, D, &evals).unwrap();
 
     let setup = Scheme::setup_prover(full_num_vars, 1).unwrap();
-    let prepared = CpuBackend.prepare_setup(&setup).expect("prepared setup");
+    let prepared = CpuBackend
+        .prepare_setup(
+            &setup,
+            &akita_types::PreparedNttPlan::base_envelope(setup.expanded.as_ref()).unwrap(),
+        )
+        .expect("prepared setup");
 
     let commit_backend = CommitCluster;
     let opening = OpeningCluster;

@@ -123,7 +123,7 @@ pub(crate) fn conservative_commit_schedule<Cfg: CommitmentConfig>(
     let mut policy = policy_of::<Cfg>();
     policy.basis_range = (min_basis, min_basis);
     policy.decomposition.log_basis = min_basis;
-    let mut schedule = akita_planner::find_schedule(
+    let mut schedule = akita_planner::find_schedule::<Cfg::Field>(
         *key,
         &policy,
         Cfg::ring_challenge_config,

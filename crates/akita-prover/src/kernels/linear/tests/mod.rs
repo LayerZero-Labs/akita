@@ -1,6 +1,7 @@
 use super::{
-    aligned_i8_tile_width, balanced_digit_abs_bound, decompose_block_i8, fused_split_eq_quotients,
-    mat_vec_mul_crt_ntt, mat_vec_mul_crt_ntt_many, mat_vec_mul_digits_i8_block_parallel,
+    aligned_i8_tile_width, balanced_digit_abs_bound, compression_rows_with_slot,
+    decompose_block_i8, fused_ring_switch_relation_rows, mat_vec_mul_crt_ntt,
+    mat_vec_mul_crt_ntt_many, mat_vec_mul_digits_i8_block_parallel,
     mat_vec_mul_digits_i8_strided_block_parallel, mat_vec_mul_digits_i8_strided_with_params,
     mat_vec_mul_digits_i8_with_params, mat_vec_mul_i8_dense_single_row_with_params,
     mat_vec_mul_i8_dense_with_params, mat_vec_mul_i8_strided_with_params,
@@ -8,13 +9,19 @@ use super::{
     mat_vec_mul_ntt_raw_i8_strided, mat_vec_mul_ntt_single_i8_cyclic, mat_vec_mul_unchecked,
     precompute_dense_mat_ntt_with_params,
 };
-use crate::kernels::crt_ntt::{build_ntt_slot, select_crt_ntt_params, ProtocolCrtNttParams};
+use crate::compute::{CompressionRowsItem, CompressionRowsMode, CompressionRowsPlan};
+use crate::kernels::crt_ntt::{
+    build_ntt_slot, select_crt_ntt_params, NttSlotCache, ProtocolCrtNttParams,
+};
 use akita_algebra::ntt::{
     tables::{Q128_NUM_PRIMES, Q32_NUM_PRIMES, Q64_NUM_PRIMES},
     PrimeWidth,
 };
 use akita_algebra::{CrtNttParamSet, CyclotomicCrtNtt, CyclotomicRing};
-use akita_field::{CanonicalField, FieldCore, Fp64, Prime128Offset275, Prime64Offset59};
+use akita_field::{
+    CanonicalField, FieldCore, Fp64, HalvingField, Prime128Offset275, Prime32Offset99,
+    Prime64Offset59,
+};
 use akita_types::layout::FlatMatrix;
 
 fn centered_i32_ring<F: akita_field::CanonicalField, const D: usize>(
@@ -163,5 +170,5 @@ mod api;
 mod chunking;
 mod crt_dense;
 mod digit_matvec;
-mod fused;
 mod reduced_profiles;
+mod ring_switch_relation_rows;

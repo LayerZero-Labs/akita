@@ -39,7 +39,7 @@ fn layout_summary(
     max_basis: u32,
 ) -> Result<LayoutSummary, AkitaError> {
     let key = PolynomialGroupLayout::new(num_vars, 1);
-    let schedule = find_schedule(
+    let schedule = find_schedule::<<Cfg as CommitmentConfig>::Field>(
         key,
         policy,
         Cfg::ring_challenge_config,

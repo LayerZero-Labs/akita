@@ -20,7 +20,7 @@ use akita_types::DigitBlocks;
 use akita_types::RingRelationInstance;
 use akita_types::{
     r_decomp_levels, AkitaCommitmentHint, AkitaExpandedSetup, FpExtEncoding, LevelParams,
-    RelationMatrixRowLayout, RingVec,
+    RelationRowId, RingVec,
 };
 
 mod coeffs;

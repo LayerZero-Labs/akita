@@ -28,8 +28,8 @@ use akita_recursion_glue::AkitaJoltInputs;
 use akita_transcript::AkitaTranscript;
 use akita_types::{
     reduce_inner_opening_to_ring_element, ring_opening_point_from_field, BasisMode, BlockOrder,
-    PolynomialGroupClaims, LevelParams, OpeningClaimsLayout, PointVariableSelection, SetupContributionMode,
-    OpeningClaims,
+    LevelParams, OpeningClaims, OpeningClaimsLayout, PointVariableSelection, PolynomialGroupClaims,
+    PreparedNttPlan, SetupContributionMode,
 };
 use akita_verifier::batched_verify;
 use clap::{Parser, ValueEnum};
@@ -326,8 +326,10 @@ fn run() -> Result<(), String> {
         }
     }
     .map_err(|err| format!("prover setup failed: {err}"))?;
+    let ntt_plan = PreparedNttPlan::base_envelope(prover_setup.expanded.as_ref())
+        .map_err(|err| format!("NTT plan failed: {err}"))?;
     let prepared = CpuBackend
-        .prepare_setup(&prover_setup)
+        .prepare_setup(&prover_setup, &ntt_plan)
         .map_err(|err| format!("backend setup preparation failed: {err}"))?;
     let stack = akita_prover::UniformProverStack::uniform(
         &CpuBackend,
