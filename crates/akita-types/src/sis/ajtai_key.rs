@@ -393,7 +393,10 @@ mod tests {
         for (family, dimension) in [
             (SisModulusFamily::Q128, 8),
             (SisModulusFamily::Q128, 16),
+            (SisModulusFamily::Q128, 32),
+            (SisModulusFamily::Q128, 64),
             (SisModulusFamily::Q64, 16),
+            (SisModulusFamily::Q64, 32),
             (SisModulusFamily::Q32, 32),
         ] {
             let key = sis_table_key_for_linf_bound(DEFAULT_SIS_SECURITY_BITS, family, dimension, 1)

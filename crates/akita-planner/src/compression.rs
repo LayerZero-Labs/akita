@@ -484,7 +484,10 @@ mod tests {
         assert_eq!(first.first_alphabet(), second.first_alphabet());
         assert_eq!(first.map_ring_dimensions(), second.map_ring_dimensions());
         assert!(first.candidates_considered() > 0);
-        assert!(first.map_ring_dimensions().iter().all(|&d| d >= 32));
+        assert!(first
+            .map_ring_dimensions()
+            .iter()
+            .all(|&d| d.is_power_of_two()));
         first
     }
 
@@ -531,14 +534,12 @@ mod tests {
                 q128.candidates_considered()
             ),
             (
-                512,
-                false,
+                128,
+                true,
                 2,
-                CompressionAlphabet::OpeningBase {
-                    log_basis: STANDALONE_OPENING_BASE_LOG_BASIS,
-                },
-                &[32, 32][..],
-                24
+                CompressionAlphabet::NegativeBinary,
+                &[8, 8][..],
+                120
             )
         );
         assert_eq!(
@@ -551,12 +552,12 @@ mod tests {
                 q64.candidates_considered()
             ),
             (
-                256,
-                false,
+                128,
+                true,
                 2,
                 CompressionAlphabet::NegativeBinary,
-                &[32, 32][..],
-                72
+                &[16, 16][..],
+                30
             )
         );
         assert_eq!(
@@ -569,14 +570,12 @@ mod tests {
                 q32.candidates_considered()
             ),
             (
-                256,
-                false,
+                128,
+                true,
                 2,
-                CompressionAlphabet::OpeningBase {
-                    log_basis: STANDALONE_OPENING_BASE_LOG_BASIS,
-                },
-                &[32, 64][..],
-                160
+                CompressionAlphabet::NegativeBinary,
+                &[32, 32][..],
+                10
             )
         );
     }
@@ -636,7 +635,7 @@ mod tests {
         assert!(candidates
             .iter()
             .flat_map(|candidate| &candidate.map_ring_dimensions)
-            .all(|&d| d >= 32));
+            .all(|&d| d.is_power_of_two()));
     }
 
     #[test]
