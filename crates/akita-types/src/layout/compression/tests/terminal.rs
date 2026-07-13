@@ -7,7 +7,7 @@ fn opening_base_accepts_larger_canonical_bucket() {
         CompressionSourceId::CurrentOuter,
         &lp.b_key,
         &[
-            CompressionAlphabet::OpeningBase { log_basis: 4 },
+            CompressionAlphabet::OpeningBase { log_basis: 2 },
             CompressionAlphabet::NegativeBinary,
         ],
     );
@@ -133,7 +133,7 @@ fn standalone_range_envelope_prices_conservative_base() {
         CompressionSourceId::CurrentOuter,
         &lp.b_key,
         &[
-            CompressionAlphabet::OpeningBase { log_basis: 4 },
+            CompressionAlphabet::OpeningBase { log_basis: 2 },
             CompressionAlphabet::NegativeBinary,
         ],
         SisModulusFamily::Q128,

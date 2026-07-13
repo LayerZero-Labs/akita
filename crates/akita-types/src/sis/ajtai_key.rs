@@ -36,7 +36,7 @@ pub const SUPPORTED_SIS_SECURITY_BITS: &[u16] = &[DEFAULT_SIS_SECURITY_BITS];
 /// Keep in lockstep with `COEFF_LINF_BUCKETS` in
 /// `crates/akita-sis-estimator/src/width_table.rs`.
 pub const COEFF_LINF_BUCKETS: &[u128] = &[
-    2, 3, 7, 15, 31, 63, 127, 255, 511, 1023, 2047, 4095, 8191, 16383, 32767, 65535, 131_071,
+    1, 2, 3, 7, 15, 31, 63, 127, 255, 511, 1023, 2047, 4095, 8191, 16383, 32767, 65535, 131_071,
     262_143, 524_287, 1_048_575, 2_097_151, 4_194_303, 8_388_607, 16_777_215, 33_554_431,
     67_108_863,
 ];
@@ -73,10 +73,13 @@ fn supports_family_dimension(sis_family: SisModulusFamily, d: u32) -> bool {
             | (SisModulusFamily::Q32, 64)
             | (SisModulusFamily::Q32, 128)
             | (SisModulusFamily::Q32, 256)
+            | (SisModulusFamily::Q64, 16)
             | (SisModulusFamily::Q64, 32)
             | (SisModulusFamily::Q64, 64)
             | (SisModulusFamily::Q64, 128)
             | (SisModulusFamily::Q64, 256)
+            | (SisModulusFamily::Q128, 8)
+            | (SisModulusFamily::Q128, 16)
             | (SisModulusFamily::Q128, 32)
             | (SisModulusFamily::Q128, 64)
             | (SisModulusFamily::Q128, 128)
@@ -379,8 +382,28 @@ mod tests {
 
     #[test]
     fn coeff_linf_bucket_ladder_matches_main_ceiling() {
+        assert_eq!(ceil_coeff_linf_bucket(1), Some(1));
         assert_eq!(ceil_coeff_linf_bucket(1_048_574), Some(1_048_575));
         assert_eq!(ceil_coeff_linf_bucket(1_048_575), Some(1_048_575));
         assert_eq!(ceil_coeff_linf_bucket(1_048_576), Some(2_097_151));
+    }
+
+    #[test]
+    fn compression_dimensions_have_exact_bound_one_rows() {
+        for (family, dimension) in [
+            (SisModulusFamily::Q128, 8),
+            (SisModulusFamily::Q128, 16),
+            (SisModulusFamily::Q64, 16),
+            (SisModulusFamily::Q32, 32),
+        ] {
+            let key = sis_table_key_for_linf_bound(DEFAULT_SIS_SECURITY_BITS, family, dimension, 1)
+                .expect("compression dimension should have a bound-one SIS row");
+            assert_eq!(key.coeff_linf_bound, 1);
+            assert!(min_secure_rank(key, 1).is_some());
+        }
+        assert_eq!(
+            sis_table_key_for_linf_bound(DEFAULT_SIS_SECURITY_BITS, SisModulusFamily::Q32, 16, 1),
+            None
+        );
     }
 }

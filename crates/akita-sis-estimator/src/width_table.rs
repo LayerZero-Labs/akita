@@ -26,13 +26,20 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 ///
 /// Keep in lockstep with `crates/akita-types/src/sis/ajtai_key.rs`.
 pub const COEFF_LINF_BUCKETS: &[u64] = &[
-    2, 3, 7, 15, 31, 63, 127, 255, 511, 1023, 2047, 4095, 8191, 16383, 32767, 65535, 131_071,
+    1, 2, 3, 7, 15, 31, 63, 127, 255, 511, 1023, 2047, 4095, 8191, 16383, 32767, 65535, 131_071,
     262_143, 524_287, 1_048_575, 2_097_151, 4_194_303, 8_388_607, 16_777_215, 33_554_431,
     67_108_863,
 ];
 
-/// Ring dimensions covered by Akita SIS table generation.
+/// Ring dimensions covered by the existing infinity-norm table.
 pub const RING_DIMS: &[u32] = &[32, 64, 128, 256];
+
+/// Additional exact-bound-one rows required by compression dispatch.
+pub const COMPRESSION_EXTRA_DIMS: &[(AkitaModulusFamily, u32)] = &[
+    (AkitaModulusFamily::Q128, 8),
+    (AkitaModulusFamily::Q128, 16),
+    (AkitaModulusFamily::Q64, 16),
+];
 
 /// Modulus families covered by Akita SIS table generation.
 pub const FAMILIES: &[AkitaModulusFamily] = &[
@@ -231,6 +238,13 @@ pub fn generate_infinity_width_rows(
                 for rank in 1..=config.max_rank {
                     work.push((family, d, rank, coeff_linf_bound));
                 }
+            }
+        }
+    }
+    if is_full_infinity_width_table_config(config) {
+        for &(family, d) in COMPRESSION_EXTRA_DIMS {
+            for rank in 1..=config.max_rank {
+                work.push((family, d, rank, 1));
             }
         }
     }
@@ -700,9 +714,16 @@ mod tests {
 
     #[test]
     fn default_buckets_cover_planner_digit_bounds() {
+        assert!(COEFF_LINF_BUCKETS.contains(&1));
         for bound in [3, 7, 15, 31, 63] {
             assert!(COEFF_LINF_BUCKETS.contains(&bound));
         }
+    }
+
+    #[test]
+    fn infinity_defaults_cover_compression_dimensions() {
+        assert_eq!(RING_DIMS, &[32, 64, 128, 256]);
+        assert_eq!(COMPRESSION_EXTRA_DIMS.len(), 3);
     }
 
     #[test]

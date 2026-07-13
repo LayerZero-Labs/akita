@@ -198,7 +198,7 @@ fn schedule_projection_descriptor_binds_frozen_first_map_base() {
             CompressionSourceId::CurrentOuter,
             &lp.b_key,
             &[
-                CompressionAlphabet::OpeningBase { log_basis: 4 },
+                CompressionAlphabet::OpeningBase { log_basis: 2 },
                 CompressionAlphabet::NegativeBinary,
             ],
         )],
@@ -227,7 +227,7 @@ fn schedule_projection_descriptor_binds_frozen_first_map_base() {
     );
     assert!(matches!(
         opening_base.maps[0].alphabet,
-        CompressionAlphabet::OpeningBase { log_basis: 4 }
+        CompressionAlphabet::OpeningBase { log_basis: 2 }
     ));
     assert!(matches!(
         negative_binary.maps[0].alphabet,
@@ -502,7 +502,7 @@ fn accepts_depth_three_with_negative_binary_later_maps() {
         CompressionSourceId::CurrentOuter,
         &lp.b_key,
         &[
-            CompressionAlphabet::OpeningBase { log_basis: 4 },
+            CompressionAlphabet::OpeningBase { log_basis: 2 },
             CompressionAlphabet::NegativeBinary,
             CompressionAlphabet::NegativeBinary,
         ],
@@ -691,7 +691,9 @@ fn rejects_unsupported_sis_dimensions_dispatch_and_gen_divisibility() {
     }
     let mut dispatch_rejected = base.clone();
     let expected_input = lp.b_key.row_len() * D * 128;
-    dispatch_rejected.maps[0].key = key(SisModulusFamily::Q128, 128, 1, expected_input / 128);
+    // Keep this policy-negative fixture on an existing certified bucket. The
+    // rejected d=128 compression arm does not need a new exact-binary row.
+    dispatch_rejected.maps[0].key = key(SisModulusFamily::Q128, 128, 63, expected_input / 128);
     assert!(validate_compression_catalog::<Prime128OffsetA7F7>(
         &lp,
         standalone(lp.log_basis),

@@ -301,35 +301,27 @@ frontier.
 
 ### SIS-security authority and PR boundary
 
-This PR does not change the production SIS security model or generated SIS
-tables. The current checked-in 138-bit classical table remains the sole planner
-and verifier authority, and this PR generates compression schedules from the
-rows it already provides. Quantum estimates in this document are diagnostic
-exploration, not an additional acceptance floor.
+The checked-in 138-bit classical SIS table remains the sole planner and
+verifier authority. This implementation broadens its coefficient buckets to
+include the exact bound-one row and adds the compression dimensions required by
+the field-tier dispatch: q128 `d=8,16`, q64 `d=16`, and q32 `d=32`. Quantum
+estimates remain diagnostic exploration, not an additional acceptance floor.
 
-A separate security PR owns any decision to require 128-bit quantum security,
-the accuracy and versioning of the selected attack model, additional table
-coverage, and table regeneration. It must compare the complete schedule and
-performance consequences before changing production policy. That investigation
-is not a dependency of compression.
+A separate security-policy change is required before raising the quantum floor,
+changing the attack model, or changing the 138-bit classical target. Any such
+change must compare the complete schedule and performance consequences before
+changing production policy.
 
 The compression implementation uses the existing `SisTableKey` and
 `min_secure_rank` authority unchanged. A raw coefficient bound is rounded up by
-the existing `sis_table_key_for_linf_bound` authority, so a negative-binary map
-with actual bound one is certified conservatively by the shipped bound-two
-bucket. A candidate is valid only when the existing lookup covers its field
-family, dimension, rounded bucket, and width at the required rank. The planner
-must select among those candidates; it must not synthesize a rank or add a
-local security exception. This PR may regenerate schedule catalogs, but not SIS
-tables.
-
-Current SIS coverage begins at native dimension 32. The selector therefore
-intersects the compression dispatch arms with table coverage through
-`SisTableKey` lookup and `AjtaiKeyParams::try_new_with_min_rank`; dispatch arms
-8 or 16 are not candidates until the existing tables cover them. If no
-admissible chain reaches the configured payload target (including 128 bytes),
-selection returns the best admissible chain and reports that the target was
-missed.
+the canonical `sis_table_key_for_linf_bound` authority, and an actual
+bound-one negative-binary map now resolves to the exact bound-one bucket. A
+candidate is valid only when the lookup covers its field family, dimension,
+bucket, and width at the required rank. The planner must select among those
+candidates; it must not synthesize a rank or add a local security exception.
+If no admissible chain reaches the configured payload target (including 128
+bytes), selection returns the best admissible chain and reports that the target
+was missed.
 
 The search must also evaluate two-map candidates. At minimum these include an
 opening-base first map followed by the terminal map, and a negative-binary
@@ -530,7 +522,7 @@ Compression execution and certification must:
 
 1. use the existing SIS rows and canonical bound-bucketing authority; in
    particular, certify an actual bound-one negative-binary layer against the
-   existing bound-two bucket;
+   exact bound-one bucket;
 2. generate schedules only from candidates covered by those existing rows,
    even when arithmetic execution supports a smaller dimension;
 3. add a compression execution dispatch independent of A-role sparse-challenge

@@ -109,7 +109,7 @@ fn f_descriptor_binds_every_free_choice_and_source_slot() {
 fn same_f_choice_replays_identically_at_standalone_and_terminal() {
     let mut lp = level();
     lp.log_basis = 4;
-    let current = frozen(6, CompressionAlphabet::OpeningBase { log_basis: 4 });
+    let current = frozen(6, CompressionAlphabet::OpeningBase { log_basis: 2 });
     let choice = outer(current, &[]);
     let standalone = choice
         .replay::<Prime128OffsetA7F7>(&lp, CompressionCatalogContext::StandaloneCommitment)
@@ -158,7 +158,7 @@ fn independent_current_and_precommitted_envelopes_match_standalone_geometry() {
         num_digits_open: 1,
         num_digits_fold_one: 1,
     });
-    let current = frozen(6, CompressionAlphabet::OpeningBase { log_basis: 4 });
+    let current = frozen(6, CompressionAlphabet::OpeningBase { log_basis: 2 });
     let pre = frozen_for(&pre_b, 5, CompressionAlphabet::NegativeBinary);
     let opening =
         OpeningClaimsLayout::from_root_groups(&[group], PolynomialGroupLayout::new(4, 1)).unwrap();
@@ -222,7 +222,7 @@ fn context_and_slot_shape_are_exact() {
             ..current
         },
         FrozenCompressionChainChoice {
-            chain: chain(CompressionAlphabet::NegativeBinary, 8, 32),
+            chain: chain(CompressionAlphabet::NegativeBinary, 4, 32),
             ..current
         },
         FrozenCompressionChainChoice {

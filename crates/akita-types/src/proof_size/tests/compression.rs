@@ -182,6 +182,7 @@ fn projected_compression_requires_current_opening_identity() {
     let mut current = LevelParams::params_only(SisModulusFamily::Q128, 64, 4, 1, 1, 1, challenge)
         .with_decomp(1, 1, 1, 1, 0)
         .unwrap();
+    current.log_basis = 2;
     let successor = current.clone();
     current.b_key = compression_key(32, 63, 1);
     current.stamp_role_dims_from_keys();
