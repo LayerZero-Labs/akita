@@ -214,8 +214,9 @@ pub struct AkitaStage2Prover<E: FieldCore> {
     s_claim: E,
     input_claim: E,
     split_eq: GruenSplitEq<E>,
-    // Production construction is intentionally empty until the internal compressed-proof
-    // harness supplies provider weights, restricted-equality weights, and claims in slice 7.
+    // Production construction remains empty. Slice 7's cfg(test) harness
+    // (`compressed_harness`) supplies nonempty provider / binary-support weights;
+    // Slice 8 wires them into the live prove path.
     sparse_state: Stage2SparseState<E>,
 
     alpha_compact: Vec<E>,
@@ -301,5 +302,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
     }
 }
 
+#[cfg(test)]
+mod compressed_harness;
 #[cfg(test)]
 mod tests;
