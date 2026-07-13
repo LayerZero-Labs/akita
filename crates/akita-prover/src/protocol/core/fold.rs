@@ -126,7 +126,7 @@ where
     } else {
         validate_non_eor()?;
         let row_coefficients = if pad_base_evals {
-            Some(vec![E::one()])
+            Some(vec![E::one(); opening_batch.num_total_polynomials()])
         } else {
             None
         };
@@ -312,10 +312,25 @@ where
                                 "group opening point length overflow".to_string(),
                             )
                         })?;
-                    let group_protocol_point =
-                        &protocol_point[..protocol_point.len().min(target_len)];
+                    let point_vars = fold_claims.opening_claims().group_point_vars(group_index)?;
+                    if point_vars.num_vars() != target_len {
+                        return Err(AkitaError::InvalidPointDimension {
+                            expected: target_len,
+                            actual: point_vars.num_vars(),
+                        });
+                    }
+                    let group_protocol_point = point_vars
+                        .indices()
+                        .iter()
+                        .map(|&idx| {
+                            protocol_point
+                                .get(idx)
+                                .copied()
+                                .ok_or(AkitaError::InvalidProof)
+                        })
+                        .collect::<Result<Vec<_>, _>>()?;
                     let prepared_point = prepare_opening_point::<F, E, D>(
-                        group_protocol_point,
+                        &group_protocol_point,
                         basis,
                         group_lp.m_vars(),
                         group_lp.r_vars(),
@@ -392,23 +407,24 @@ where
     // `build_*_stage2_trace_table` branch on `row_coefficients.is_some()`, so a
     // split here would silently scale the trace table incorrectly. Preserve the exact
     // branch wiring and assert the two stay coupled to `pad_base_evals`.
-    let row_coefficients = if pad_base_evals {
+    let clear_recursive_trace = pad_base_evals && !level_params.has_precommitted_groups();
+    let row_coefficients = if clear_recursive_trace {
         None
     } else {
         Some(row_coefficients)
     };
-    let trace_claim_scales = if pad_base_evals {
+    let trace_claim_scales = if clear_recursive_trace {
         None
     } else {
         trace_target.trace_claim_scales
     };
     debug_assert_eq!(
-        pad_base_evals,
+        clear_recursive_trace,
         row_coefficients.is_none(),
         "suffix trace layout: row_coefficients must be cleared iff pad_base_evals"
     );
     debug_assert!(
-        !pad_base_evals || trace_claim_scales.is_none(),
+        !clear_recursive_trace || trace_claim_scales.is_none(),
         "suffix trace layout: trace_claim_scales must be cleared when pad_base_evals"
     );
     Ok(PreparedFold {
@@ -479,7 +495,7 @@ pub(in crate::protocol::core) fn prove_fold<'stack, F, E, T, C, O, TS, R, Cfg>(
     level: usize,
     scheduled: &ExecutionSchedule,
     prepared_fold: PreparedFold<F, E>,
-    setup_contribution_mode: SetupContributionMode,
+    _setup_contribution_mode: SetupContributionMode,
     is_terminal_fold: bool,
     terminal_direct_witness_shape: Option<&CleartextWitnessShape>,
 ) -> Result<FoldProveOutput<F, E>, AkitaError>
@@ -672,6 +688,7 @@ where
     let tau1 = rs.tau1.clone();
     let alpha = rs.alpha;
     let (stage2_sumcheck_proof, sumcheck_challenges, stage2_prover) = prove_stage2::<F, E, T>(
+        level,
         transcript,
         batching_coeff,
         rs,
@@ -700,7 +717,8 @@ where
         let proof_w_eval = w_eval;
         transcript.append_serde(ABSORB_STAGE2_NEXT_W_EVAL, &proof_w_eval);
         let stage3_sumcheck_proof = prove_stage3::<F, E, T>(
-            setup_contribution_mode,
+            level,
+            lp.setup_contribution_mode,
             expanded.as_ref(),
             prefix_slots,
             lp,
@@ -716,11 +734,16 @@ where
             ring_bits,
             transcript,
         )?;
-        let (stage3_sumcheck_proof, next_opening_point, next_opening) =
+        let (stage3_sumcheck_proof, next_opening_point, next_opening, setup_prefix_opening) =
             if let Some(stage3) = stage3_sumcheck_proof {
-                (Some(stage3.proof), stage3.next_w_point, stage3.next_w_eval)
+                (
+                    Some(stage3.proof),
+                    stage3.next_w_point,
+                    stage3.next_w_eval,
+                    Some((stage3.setup_prefix_point, stage3.setup_prefix_eval)),
+                )
             } else {
-                (None, sumcheck_challenges, w_eval)
+                (None, sumcheck_challenges, w_eval, None)
             };
         let stage1_proof = stage1_proof.ok_or_else(|| {
             AkitaError::InvalidInput("intermediate fold missing stage-1 proof".to_string())
@@ -761,6 +784,7 @@ where
                 log_basis: scheduled.next_params.log_basis,
                 sumcheck_challenges: next_opening_point,
                 opening: next_opening,
+                setup_prefix_opening,
             },
         })))
     }
@@ -879,6 +903,7 @@ where
 
 #[allow(clippy::too_many_arguments)]
 fn prove_stage2<F, E, T>(
+    level: usize,
     transcript: &mut T,
     batching_coeff: E,
     rs: RingSwitchOutput<E>,
@@ -908,7 +933,12 @@ where
         relation_claim,
         trace_compact.clone(),
         trace_opening_claim,
-    )?;
+    )
+    .map_err(|err| {
+        AkitaError::InvalidInput(format!(
+            "stage-2 prover initialization failed at fold level {level}: {err}"
+        ))
+    })?;
     let (stage2_sumcheck_proof, sumcheck_challenges, _) = stage2_prover
         .prove::<F, T, _>(transcript, |tr| {
             sample_ext_challenge::<F, E, T>(tr, CHALLENGE_SUMCHECK_ROUND)
@@ -918,6 +948,7 @@ where
 
 #[allow(clippy::too_many_arguments)]
 pub(in crate::protocol::core) fn prove_stage3<F, E, T>(
+    level: usize,
     setup_contribution_mode: SetupContributionMode,
     expanded: &AkitaExpandedSetup<F>,
     prefix_slots: &SetupPrefixProverRegistry<F>,
@@ -956,6 +987,7 @@ where
                 live_x_cols,
                 col_bits,
                 ring_bits,
+                level,
                 eta,
                 transcript,
             )?;
@@ -966,10 +998,13 @@ where
             Ok(Some(Stage3ProveOutput {
                 proof: SetupSumcheckProof {
                     claim: output.setup_product_claim,
+                    setup_prefix_eval: output.setup_prefix_eval,
                     next_w_eval: output.next_w_eval,
                     sumcheck: output.sumcheck,
                 },
                 next_w_point: output.next_w_point,
+                setup_prefix_point: output.setup_prefix_point,
+                setup_prefix_eval: output.setup_prefix_eval,
                 next_w_eval: output.next_w_eval,
             }))
         }

@@ -1,9 +1,9 @@
 use super::*;
-use crate::backend::RecursiveWitnessFlat;
+use crate::backend::{RecursiveFoldSource, RecursiveWitnessFlat};
 use crate::compute::{
-    CommitmentComputeBackend, ComputeBackendSetup, DigitRowsComputeBackend, LevelProveStacks,
-    ProverComputeStack, RuntimeOpeningProveBackendFor, RuntimeRingSwitchProveBackend,
-    RuntimeTensorBackendFor, SuffixOpeningProveBackend, SuffixTensorProveBackend,
+    ComputeBackendSetup, DigitRowsComputeBackend, LevelProveStacks, ProverComputeStack,
+    RuntimeOpeningProveBackendFor, RuntimeRingSwitchProveBackend, RuntimeTensorBackendFor,
+    SuffixOpeningProveBackend, SuffixTensorProveBackend,
 };
 use crate::RootTensorProjectionPoly;
 use akita_field::unreduced::ReduceTo;
@@ -27,6 +27,8 @@ pub struct SuffixProverState<F: FieldCore, E: FieldCore> {
     pub sumcheck_challenges: Vec<E>,
     /// Claimed logical opening of `logical_w` at `sumcheck_challenges`.
     pub opening: E,
+    /// Optional setup-prefix opening carried from the previous stage-3 proof.
+    pub setup_prefix_opening: Option<(Vec<E>, E)>,
 }
 
 impl<F: FieldCore, E: FieldCore> SuffixProverState<F, E> {
@@ -87,12 +89,16 @@ where
         + AkitaSerialize
         + MulBaseUnreduced<Cfg::Field>,
     T: Transcript<Cfg::Field> + ProverTranscriptGrind<Cfg::Field>,
-    C: CommitmentComputeBackend<Cfg::Field> + ComputeBackendSetup<Cfg::Field> + 'stack,
+    C: crate::compute::CommitmentComputeBackend<Cfg::Field>
+        + ComputeBackendSetup<Cfg::Field>
+        + 'stack,
     O: SuffixOpeningProveBackend<Cfg::Field>
+        + RuntimeOpeningProveBackendFor<Cfg::Field, RecursiveFoldSource<Cfg::Field>>
         + DigitRowsComputeBackend<Cfg::Field>
         + ComputeBackendSetup<Cfg::Field>
         + 'stack,
     TS: SuffixTensorProveBackend<Cfg::Field, Cfg::ExtField>
+        + RuntimeTensorBackendFor<Cfg::Field, RecursiveFoldSource<Cfg::Field>, Cfg::ExtField>
         + ComputeBackendSetup<Cfg::Field>
         + 'stack,
     R: RuntimeRingSwitchProveBackend<Cfg::Field>
@@ -145,6 +151,8 @@ where
             stack.ensure_fold_level_role_ntt(expanded.as_ref(), role_dims)?;
             prepare_suffix::<Cfg::Field, Cfg::ExtField, T, C, O, TS, R>(
                 stack,
+                expanded.as_ref(),
+                prefix_slots,
                 transcript,
                 current_state,
                 level,
@@ -217,6 +225,8 @@ where
 #[inline(never)]
 pub(in crate::protocol::core) fn prepare_suffix<F, E, T, C, O, TS, R>(
     stack: &ProverComputeStack<'_, F, C, O, TS, R>,
+    expanded: &AkitaExpandedSetup<F>,
+    prefix_slots: &SetupPrefixProverRegistry<F>,
     transcript: &mut T,
     current_state: SuffixProverState<F, E>,
     _level: usize,
@@ -243,9 +253,12 @@ where
         + AkitaSerialize
         + MulBaseUnreduced<F>,
     T: Transcript<F> + ProverTranscriptGrind<F>,
-    TS: RuntimeTensorBackendFor<F, RecursiveWitnessFlat, E>,
+    TS: RuntimeTensorBackendFor<F, RecursiveWitnessFlat, E>
+        + RuntimeTensorBackendFor<F, RecursiveFoldSource<F>, E>
+        + RuntimeTensorBackendFor<F, RootTensorProjectionPoly<F>, E>,
     O: DigitRowsComputeBackend<F>
         + RuntimeOpeningProveBackendFor<F, RecursiveWitnessFlat>
+        + RuntimeOpeningProveBackendFor<F, RecursiveFoldSource<F>>
         + RuntimeOpeningProveBackendFor<F, RootTensorProjectionPoly<F>>,
     C: ComputeBackendSetup<F>,
     R: DigitRowsComputeBackend<F>,
@@ -256,6 +269,8 @@ where
         commitment,
         hint,
         sumcheck_challenges,
+        opening,
+        setup_prefix_opening,
         ..
     } = current_state;
     let logical_w = optional_logical_w.as_ref().unwrap_or(&w);
@@ -281,31 +296,50 @@ where
 
     let alpha = role_dims.d_a().trailing_zeros() as usize;
     let needs_extension_reduction = <E as ExtField<F>>::EXT_DEGREE != 1;
-    let logical_polys = [logical_w];
-    let fold_polys = [&w];
-    let eor_opening_batch =
-        OpeningClaims::with_padded_point(opening_point, opening_point.len(), 1)?;
     let recursive_num_vars = level_params.recursive_opening_num_vars()?;
-    // §6 invariant — commitment vector length == num_rings · ring_dim. Carry the
-    // commitment as the D-free flat `Commitment<F>`; the kernel reinterprets it
-    // under `D` at the fold-entry boundary (`prove_fold` `try_to_vec::<D>`),
-    // which is the no-panic length gate.
-    let suffix_commitment = (Commitment::new(commitment), suffix_hint);
-    let fold_claims = ProverOpeningData::new_suffix(
-        opening_point,
-        recursive_num_vars,
-        &fold_polys,
-        suffix_commitment,
-    )?;
-    prepare_fold_inner::<F, E, T, _, _, C, O, TS, R>(
+    let witness_source = RecursiveFoldSource::witness(&w);
+    let logical_witness_source = RecursiveFoldSource::witness(logical_w);
+    let witness_polys = [&witness_source];
+    let setup_slot = level_params
+        .setup_prefix
+        .as_ref()
+        .map(|id| {
+            prefix_slots.get(id).ok_or_else(|| {
+                AkitaError::InvalidSetup(
+                    "planned setup-prefix slot is missing from prover setup".into(),
+                )
+            })
+        })
+        .transpose()?;
+    let setup_source_storage =
+        setup_slot.map(|slot| RecursiveFoldSource::setup_prefix(expanded, slot));
+    let setup_polys_storage = setup_source_storage.as_ref().map(|source| [source]);
+    let (fold_claims, eor_opening_batch, protocol_point) =
+        ProverOpeningData::<E, RecursiveFoldSource<F>, F>::new_recursive_suffix_fold(
+            opening_point,
+            recursive_num_vars,
+            setup_prefix_opening,
+            setup_slot,
+            setup_polys_storage.as_ref().map(|polys| &polys[..]),
+            opening,
+            &witness_polys[..],
+            (Commitment::new(commitment), suffix_hint),
+        )?;
+    let logical_polys = setup_source_storage
+        .as_ref()
+        .into_iter()
+        .chain(std::iter::once(&logical_witness_source))
+        .collect::<Vec<_>>();
+
+    prepare_fold_inner::<F, E, T, RecursiveFoldSource<F>, _, C, O, TS, R>(
         stack,
         needs_extension_reduction,
         fold_claims,
-        &logical_polys[..],
+        &logical_polys,
         &eor_opening_batch,
         true,
         transcript,
-        opening_point.to_vec(),
+        protocol_point,
         || Ok(()),
         level_params,
         alpha,

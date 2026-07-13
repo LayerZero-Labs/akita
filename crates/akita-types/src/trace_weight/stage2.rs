@@ -484,6 +484,7 @@ pub fn build_trace_claim_multi_group_root<F, E, const D: usize>(
     row_coefficients: &[E],
     claim_scales: Option<&[E]>,
     basis: BasisMode,
+    block_order: crate::BlockOrder,
     trace_coeff: E,
     trace_eval_target: E,
     live_x_cols: usize,
@@ -585,14 +586,26 @@ where
                 AkitaError::InvalidSetup("group opening point length overflow".to_string())
             })?;
         if prepared.padded_point.len() != target_len {
-            return Err(AkitaError::InvalidSize {
-                expected: target_len,
-                actual: prepared.padded_point.len(),
-            });
+            return Err(AkitaError::InvalidInput(format!(
+                "multi-group trace point width mismatch: group={group_index}, \
+                 groups={}, setup_prefix={}, block_order={block_order:?}, \
+                 ring_bits={ring_bits}, group_m={}, group_r={}, target_len={target_len}, \
+                 actual_len={}",
+                opening_batch.num_groups(),
+                lp.setup_prefix.is_some(),
+                group_lp.m_vars(),
+                group_lp.r_vars(),
+                prepared.padded_point.len()
+            )));
         }
-        let b_start = ring_bits.checked_add(group_lp.m_vars()).ok_or_else(|| {
-            AkitaError::InvalidSetup("group block opening offset overflow".to_string())
-        })?;
+        let b_start = match block_order {
+            crate::BlockOrder::ColumnMajor => ring_bits,
+            crate::BlockOrder::RowMajor => {
+                ring_bits.checked_add(group_lp.m_vars()).ok_or_else(|| {
+                    AkitaError::InvalidSetup("group block opening offset overflow".to_string())
+                })?
+            }
+        };
         let b_open = prepared.padded_point[b_start..b_start + group_lp.r_vars()].to_vec();
 
         let group_layout_for_eval = TraceWeightLayout {

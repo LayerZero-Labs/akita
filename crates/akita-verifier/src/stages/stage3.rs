@@ -120,7 +120,7 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
         witness_rounds: usize,
         eta: E,
         transcript: &mut T,
-    ) -> Result<Vec<E>, AkitaError>
+    ) -> Result<(Vec<E>, Vec<E>), AkitaError>
     where
         F: FieldCore + CanonicalField,
         E: ExtField<F> + FromPrimitiveInt + AkitaSerialize + akita_field::MulBaseUnreduced<F>,
@@ -143,6 +143,10 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
             setup_len,
             transcript,
         )?;
+        let setup_prefix_eval = next_fold_level_params
+            .setup_prefix
+            .as_ref()
+            .map(|_| proof.setup_prefix_eval);
         dispatch_for_field!(
             ProtocolDispatchSlot::Role(RingRole::Inner),
             F,
@@ -155,6 +159,7 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
                     stage2_challenges,
                     witness_rounds,
                     setup_eval_len,
+                    setup_prefix_eval,
                     eta,
                     transcript,
                 )
@@ -194,6 +199,10 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
             if let Some((slot, setup_eval_len)) = setup_prefix_selection {
                 transcript.append_serde(ABSORB_SETUP_PREFIX_SLOT, &slot.id);
                 Ok(setup_eval_len)
+            } else if next_fold_level_params.setup_prefix.is_some() {
+                Err(AkitaError::InvalidSetup(
+                    "planned setup-prefix slot is missing from verifier setup".to_string(),
+                ))
             } else {
                 Ok(setup_len)
             }
@@ -211,14 +220,16 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
         stage2_challenges: &[E],
         witness_rounds: usize,
         setup_eval_len: usize,
+        setup_prefix_eval: Option<E>,
         eta: E,
         transcript: &mut T,
-    ) -> Result<Vec<E>, AkitaError>
+    ) -> Result<(Vec<E>, Vec<E>), AkitaError>
     where
         F: FieldCore + CanonicalField,
         E: ExtField<F> + FromPrimitiveInt + AkitaSerialize + akita_field::MulBaseUnreduced<F>,
         T: Transcript<F>,
     {
+        let required = self.plan.required()?;
         let batched_rounds = self.rounds.max(witness_rounds);
         transcript.append_serde(
             ABSORB_SUMCHECK_CLAIM,
@@ -231,23 +242,26 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
             transcript,
             |tr| sample_ext_challenge::<F, E, T>(tr, CHALLENGE_SUMCHECK_ROUND),
         )?;
-        let rho_w = challenges[..witness_rounds].to_vec();
-        let rho_setup = &challenges[..self.rounds];
+        let rho_w = challenges[batched_rounds - witness_rounds..].to_vec();
+        let rho_setup = &challenges[batched_rounds - self.rounds..];
         let (rho_y, rho_setup_idx) = rho_setup.split_at(self.ring_bits);
 
         // The setup prefix itself is still evaluated by scanning the selected
         // prefix. The setup-index weight is structured, so evaluate its MLE
         // directly at `rho_setup_idx` instead of building a dense equality
         // table for that factor.
-        let eq_setup_idx = setup_idx_eq_table(self.plan.required()?, rho_setup_idx)?;
+        let eq_setup_idx = setup_idx_eq_table(required, rho_setup_idx)?;
         let eq_y = ring_eq_table::<E, D>(rho_y)?;
-        let setup_val = setup_mle_at_eq_tables::<F, E, D>(
-            &setup.expanded,
-            self.plan.required()?,
-            setup_eval_len,
-            &eq_setup_idx,
-            &eq_y,
-        )?;
+        let setup_val = match setup_prefix_eval {
+            Some(value) => value,
+            None => setup_mle_at_eq_tables::<F, E, D>(
+                &setup.expanded,
+                required,
+                setup_eval_len,
+                &eq_setup_idx,
+                &eq_y,
+            )?,
+        };
         let setup_index_weight = match &self.setup_index_weight_evaluator {
             Some(evaluator) => match evaluator.evaluate(rho_setup_idx)? {
                 Some(value) => value,
@@ -266,7 +280,7 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
                 "batched stage-3 final relation mismatch".to_string(),
             ));
         }
-        Ok(rho_w)
+        Ok((rho_w, rho_setup.to_vec()))
     }
 }
 

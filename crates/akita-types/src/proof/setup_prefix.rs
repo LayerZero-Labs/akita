@@ -754,6 +754,10 @@ impl<F: FieldCore> SetupPrefixProverRegistry<F> {
         Ok(())
     }
 
+    pub fn replace_from(&mut self, other: Self) {
+        self.slots = other.slots;
+    }
+
     pub fn iter(&self) -> impl Iterator<Item = (&SetupPrefixSlotId, &SetupPrefixSlot<F>)> {
         self.slots.iter()
     }
@@ -1051,15 +1055,17 @@ pub fn setup_prefix_level_params(
         AkitaError::InvalidSetup("setup prefix length has invalid dimension".to_string())
     })?;
     let mut prefix_params = level_params.clone();
+    let num_digits_commit = crate::sis::compute_num_digits_full_field(
+        level_params.field_bits_for_cache(),
+        level_params.log_basis,
+    );
     let mut num_blocks = 1usize;
     while num_blocks <= ring_slots {
         if ring_slots.is_multiple_of(num_blocks) {
             let block_len = ring_slots / num_blocks;
-            let inner_width = block_len
-                .checked_mul(level_params.num_digits_commit)
-                .ok_or_else(|| {
-                    AkitaError::InvalidSetup("prefix inner width overflow".to_string())
-                })?;
+            let inner_width = block_len.checked_mul(num_digits_commit).ok_or_else(|| {
+                AkitaError::InvalidSetup("prefix inner width overflow".to_string())
+            })?;
             let outer_width = num_blocks
                 .checked_mul(level_params.a_key.row_len())
                 .and_then(|n| n.checked_mul(level_params.num_digits_open))
@@ -1073,6 +1079,7 @@ pub fn setup_prefix_level_params(
                 prefix_params.m_vars = num_blocks.trailing_zeros() as usize;
                 prefix_params.block_len = block_len;
                 prefix_params.r_vars = block_len.next_power_of_two().trailing_zeros() as usize;
+                prefix_params.num_digits_commit = num_digits_commit;
                 return Ok(Some(prefix_params));
             }
         }
@@ -1221,6 +1228,21 @@ mod tests {
         .expect("sample level params")
     }
 
+    fn prefix_eligible_level_params() -> LevelParams {
+        let full_field_digits = crate::sis::compute_num_digits_full_field(128, 3);
+        LevelParams::params_only(
+            SisModulusFamily::Q32,
+            32,
+            3,
+            2,
+            3,
+            2,
+            SparseChallengeConfig::pm1_only(3),
+        )
+        .with_decomp(2, 3, full_field_digits, 2, 3)
+        .expect("prefix eligible level params")
+    }
+
     #[test]
     fn active_setup_field_len_matches_packed_role_maximum() {
         let lp = sample_level_params();
@@ -1252,7 +1274,7 @@ mod tests {
     fn select_setup_prefix_slot_uses_canonical_id_and_checks_coverage() {
         use akita_field::Prime32Offset99 as F;
 
-        let level_params = sample_level_params();
+        let level_params = prefix_eligible_level_params();
         let d_setup = 32usize;
         let natural_len = 33usize;
         let n_prefix = padded_setup_prefix_len(natural_len);

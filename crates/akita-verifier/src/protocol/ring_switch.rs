@@ -44,6 +44,8 @@ pub(crate) struct RingSwitchVerifyOutput<E: FieldCore> {
     pub alpha_evals_y: Vec<E>,
     /// Number of upper variable bits.
     pub col_bits: usize,
+    /// Number of live witness columns before power-of-two padding.
+    pub live_x_cols: usize,
     /// Number of lower variable bits.
     pub ring_bits: usize,
     /// Challenge tau0 for the stage-1 sumcheck.
@@ -60,6 +62,7 @@ struct RingSwitchVerifyCoreOutput<E: FieldCore> {
     relation_matrix_evaluator: RelationMatrixEvaluator<E>,
     alpha_evals_y: Vec<E>,
     col_bits: usize,
+    live_x_cols: usize,
     ring_bits: usize,
     tau0: Option<Vec<E>>,
     tau1: Vec<E>,
@@ -74,6 +77,7 @@ impl<E: FieldCore> RingSwitchVerifyCoreOutput<E> {
             relation_matrix_evaluator: self.relation_matrix_evaluator,
             alpha_evals_y: self.alpha_evals_y,
             col_bits: self.col_bits,
+            live_x_cols: self.live_x_cols,
             ring_bits: self.ring_bits,
             tau0,
             tau1: self.tau1,
@@ -90,6 +94,7 @@ impl<E: FieldCore> RingSwitchVerifyCoreOutput<E> {
             relation_matrix_evaluator: self.relation_matrix_evaluator,
             alpha_evals_y: self.alpha_evals_y,
             col_bits: self.col_bits,
+            live_x_cols: self.live_x_cols,
             ring_bits: self.ring_bits,
             tau0: Vec::new(),
             tau1: self.tau1,
@@ -304,6 +309,7 @@ where
         relation_matrix_evaluator,
         alpha_evals_y,
         col_bits,
+        live_x_cols: num_ring_elems,
         ring_bits,
         tau0,
         tau1,

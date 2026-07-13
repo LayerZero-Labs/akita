@@ -601,7 +601,8 @@ where
                 setup_contribution_mode,
                 None,
                 root_step.next_w_len,
-            )?;
+            )
+            .map(|_| ())?;
             Ok(())
         }
         AkitaBatchedRootProof::Fold(fold_root) => {
@@ -636,7 +637,7 @@ where
                 .stage2
                 .as_intermediate()
                 .ok_or(AkitaError::InvalidProof)?;
-            let root_challenges = verify_root::<F, E, T>(
+            let (root_challenges, setup_prefix_opening) = verify_root::<F, E, T>(
                 &proof.root,
                 setup,
                 transcript,
@@ -654,7 +655,7 @@ where
             }
             let root_next_opening = proof
                 .root
-                .fold_stage3_sumcheck_proof(setup_contribution_mode)?
+                .fold_stage3_sumcheck_proof(root_lp.setup_contribution_mode)?
                 .map_or_else(|| root_stage2.next_w_eval(), |proof| proof.next_w_eval);
 
             let current_state = SuffixVerifierState {
@@ -663,6 +664,7 @@ where
                 commitment: &root_stage2.next_w_commitment,
                 basis: BasisMode::Lagrange,
                 w_len: root_step.next_w_len,
+                setup_prefix_opening,
             };
             verify_suffix::<F, E, T>(
                 &proof.steps,

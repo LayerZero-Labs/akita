@@ -22,10 +22,10 @@ pub(super) fn verify_root<F, E, T>(
     claims: &OpeningClaims<'_, E, &Commitment<F>>,
     basis: BasisMode,
     root_lp: &LevelParams,
-    setup_contribution_mode: SetupContributionMode,
+    _setup_contribution_mode: SetupContributionMode,
     next_fold_level_params: Option<&LevelParams>,
     terminal_final_w_len: usize,
-) -> Result<Vec<E>, AkitaError>
+) -> Result<FoldVerifyOutput<E>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling + HalvingField,
     E: FpExtEncoding<F>
@@ -45,7 +45,8 @@ where
         AkitaBatchedRootProof::Terminal(_) => root_lp,
         AkitaBatchedRootProof::ZeroFold { .. } => return Err(AkitaError::InvalidProof),
     };
-    let stage3_sumcheck_proof = proof.fold_stage3_sumcheck_proof(setup_contribution_mode)?;
+    let stage3_sumcheck_proof =
+        proof.fold_stage3_sumcheck_proof(root_lp.setup_contribution_mode)?;
     let openings = claims.flat_evaluations();
     let opening_batch = claims.layout().map_err(|_| AkitaError::InvalidProof)?;
     let shared_opening_point = claims.point();
@@ -139,7 +140,7 @@ fn verify_root_inner<F, E, T>(
     basis: BasisMode,
     root_lp: &LevelParams,
     terminal_final_w_len: usize,
-) -> Result<Vec<E>, AkitaError>
+) -> Result<FoldVerifyOutput<E>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling + HalvingField,
     E: FpExtEncoding<F>
@@ -287,6 +288,7 @@ where
         trace_eval_scale: E::one(),
         trace_claim_scales,
         trace_basis: basis,
+        block_order: BlockOrder::RowMajor,
     };
     verify_fold::<F, E, T>(setup, transcript, prepared)
 }
@@ -323,7 +325,7 @@ fn verify_multi_group_root_inner<F, E, T>(
     basis: BasisMode,
     root_lp: &LevelParams,
     terminal_final_w_len: usize,
-) -> Result<Vec<E>, AkitaError>
+) -> Result<FoldVerifyOutput<E>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling + HalvingField,
     E: FpExtEncoding<F>
@@ -468,6 +470,7 @@ where
         trace_eval_scale: E::one(),
         trace_claim_scales: None,
         trace_basis: basis,
+        block_order: BlockOrder::RowMajor,
     };
     verify_fold::<F, E, T>(setup, transcript, prepared)
 }

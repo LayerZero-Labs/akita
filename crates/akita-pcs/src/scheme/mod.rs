@@ -74,25 +74,6 @@ where
         })
     }
 
-    /// Build recursive prover setup for the config's generation ring dimension.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if base setup construction or recursive setup-prefix population fails.
-    pub fn setup_prover_recursion(
-        max_num_vars: usize,
-        max_num_polys_per_commitment_group: usize,
-    ) -> Result<AkitaProverSetup<Cfg::Field>, AkitaError> {
-        let ring_d = akita_config::policy_of::<Cfg>().ring_dimension;
-        dispatch_for_field!(ProtocolDispatchSlot::Envelope, Cfg::Field, ring_d, |D| {
-            validate_ring_subfield_role::<Cfg::Field, Cfg::ExtField, D>("extension field")?;
-            akita_setup::new_prover_setup_recursion::<Cfg::Field, Cfg>(
-                max_num_vars,
-                max_num_polys_per_commitment_group,
-            )
-        })
-    }
-
     /// Derive verifier setup from prover setup.
     #[must_use]
     pub fn setup_verifier(setup: &AkitaProverSetup<Cfg::Field>) -> AkitaVerifierSetup<Cfg::Field> {

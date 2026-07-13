@@ -24,8 +24,8 @@ use crate::PlannerPolicy;
 use akita_types::sis::{
     decomposed_s_block_ring_count, decomposed_t_ring_count, decomposed_w_ring_count,
     fold_witness_digit_plan, min_secure_rank, num_digits_open, num_digits_s_commit,
-    rounded_up_collision_inf_norm, rounded_up_role_a_inf_norm, FoldChallengeNorms,
-    FoldWitnessLinfCapConfig, FoldWitnessNorms, SisTableKey,
+    num_digits_setup_prefix_commit, rounded_up_collision_inf_norm, rounded_up_role_a_inf_norm,
+    FoldChallengeNorms, FoldWitnessLinfCapConfig, FoldWitnessNorms, SisTableKey,
 };
 use akita_types::{
     AjtaiKeyParams, CommitmentRingDims, DecompositionParams, LevelParams, PolynomialGroupLayout,
@@ -88,7 +88,7 @@ impl GeneratedSetupPrefixGroup {
             log_basis,
             ..policy.decomposition
         };
-        let num_digits_commit = num_digits_s_commit(decomp, false);
+        let num_digits_commit = num_digits_setup_prefix_commit(decomp);
         let num_digits_open_val = num_digits_open(decomp);
         let no_layout = |role: &str| {
             AkitaError::InvalidSetup(format!(

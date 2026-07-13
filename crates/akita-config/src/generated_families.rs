@@ -177,6 +177,21 @@ fn group_batch_keys<Cfg: CommitmentConfig>(
     Ok(keys)
 }
 
+fn recursive_profile_group_batch_keys(
+    _family: &GeneratedFamily,
+) -> Result<Vec<AkitaScheduleLookupKey>, AkitaError> {
+    let precommitted_group = PolynomialGroupLayout::new(16, 1);
+    let precommitted_params = conservative_commit_params::<
+        RecursiveCommitmentConfig<fp128::D64OneHot>,
+    >(&precommitted_group)?;
+    let precommitted =
+        PrecommittedGroupParams::from_params(precommitted_group, &precommitted_params);
+    Ok(vec![AkitaScheduleLookupKey {
+        final_group: PolynomialGroupLayout::new(32, 2),
+        precommitteds: vec![precommitted, precommitted],
+    }])
+}
+
 macro_rules! family_row {
     (group_batch, $module:literal, $const:literal, $feat:literal, $min:expr, $max:expr, $cfg:ty) => {
         GeneratedFamily {
@@ -294,14 +309,24 @@ pub const ALL_GENERATED_FAMILIES: &[GeneratedFamily] = &[
         50,
         fp128::D64OneHot
     ),
-    family_row!(
-        "fp128_d64_onehot_recursive",
-        "FP128_D64_ONEHOT_RECURSIVE_SCHEDULES",
-        "fp128-d64-onehot-recursive",
-        1,
-        50,
-        RecursiveCommitmentConfig<fp128::D64OneHot>
-    ),
+    GeneratedFamily {
+        module_name: "fp128_d64_onehot_recursive",
+        const_name: "FP128_D64_ONEHOT_RECURSIVE_SCHEDULES",
+        schedule_feature: "fp128-d64-onehot-recursive",
+        min_num_vars: 1,
+        max_num_vars: 50,
+        num_polys: DEFAULT_NUM_POLYS,
+        regen: regen::<RecursiveCommitmentConfig<fp128::D64OneHot>>,
+        regen_group_batch: regen_group_batch::<RecursiveCommitmentConfig<fp128::D64OneHot>>,
+        emit_group_batch: true,
+        group_batch_keys: recursive_profile_group_batch_keys,
+        table_backed: table_backed::<RecursiveCommitmentConfig<fp128::D64OneHot>>,
+        policy: family_policy::<RecursiveCommitmentConfig<fp128::D64OneHot>>,
+        ring_challenge_config:
+            <RecursiveCommitmentConfig<fp128::D64OneHot> as CommitmentConfig>::ring_challenge_config,
+        fold_challenge_shape_at_level:
+            <RecursiveCommitmentConfig<fp128::D64OneHot> as CommitmentConfig>::fold_challenge_shape_at_level,
+    },
     family_row!(
         "fp128_d64_full",
         "FP128_D64_FULL_SCHEDULES",

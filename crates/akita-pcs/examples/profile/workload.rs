@@ -2,7 +2,7 @@ use crate::report::{
     emit_proof_tail_report, emit_runtime_schedule_summary, observed_stage3_setup_product_bytes,
     print_batched_proof_summary, report_crt_profile, report_setup_sizes, report_timing,
 };
-use akita_config::{CommitmentConfig, ConservativeCommitmentConfig};
+use akita_config::{CommitmentConfig, ConservativeCommitmentConfig, RecursiveCommitmentConfig};
 use akita_field::unreduced::{HasOptimizedFold, HasUnreducedOps, HasWide, ReduceTo};
 use akita_field::{
     AdditiveGroup, CanonicalBytes, CanonicalField, ExtField, FieldCore, FrobeniusExtField,
@@ -599,10 +599,12 @@ pub(crate) fn run_dense_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF
         SetupContributionMode::Direct => {
             AkitaCommitmentScheme::<Cfg>::setup_prover(RootPolyShape::<FF, D>::num_vars(&poly), 1)
         }
-        SetupContributionMode::Recursive => AkitaCommitmentScheme::<Cfg>::setup_prover_recursion(
-            RootPolyShape::<FF, D>::num_vars(&poly),
-            1,
-        ),
+        SetupContributionMode::Recursive => {
+            AkitaCommitmentScheme::<RecursiveCommitmentConfig<Cfg>>::setup_prover(
+                RootPolyShape::<FF, D>::num_vars(&poly),
+                1,
+            )
+        }
     }
     .unwrap();
     let setup_expand_secs = t0.elapsed().as_secs_f64();
@@ -693,7 +695,7 @@ pub(crate) fn run_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
     let setup = match profile_setup_contribution_mode() {
         SetupContributionMode::Direct => AkitaCommitmentScheme::<Cfg>::setup_prover(nv, 1),
         SetupContributionMode::Recursive => {
-            AkitaCommitmentScheme::<Cfg>::setup_prover_recursion(nv, 1)
+            AkitaCommitmentScheme::<RecursiveCommitmentConfig<Cfg>>::setup_prover(nv, 1)
         }
     }
     .unwrap();
@@ -788,7 +790,7 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
     let setup = match setup_contribution_mode {
         SetupContributionMode::Direct => AkitaCommitmentScheme::<Cfg>::setup_prover(nv, num_polys),
         SetupContributionMode::Recursive => {
-            AkitaCommitmentScheme::<Cfg>::setup_prover_recursion(nv, num_polys)
+            AkitaCommitmentScheme::<RecursiveCommitmentConfig<Cfg>>::setup_prover(nv, num_polys)
         }
     }
     .unwrap();
@@ -963,6 +965,8 @@ pub(crate) fn run_recursive_multi_group_onehot<FF, const D: usize, Cfg>(
         + HasOptimizedFold
         + AkitaSerialize,
 {
+    type ProofCfg<C> = RecursiveCommitmentConfig<C>;
+
     const PRE_GROUPS: usize = 2;
     const PRE_POLYS_PER_GROUP: usize = 1;
     let setup_contribution_mode = profile_setup_contribution_mode();
@@ -974,11 +978,8 @@ pub(crate) fn run_recursive_multi_group_onehot<FF, const D: usize, Cfg>(
 
     let total_polys = PRE_GROUPS * PRE_POLYS_PER_GROUP + final_num_polys;
     let t0 = Instant::now();
-    let setup = AkitaCommitmentScheme::<ConservativeCommitmentConfig<Cfg>>::setup_prover_recursion(
-        final_num_vars,
-        total_polys,
-    )
-    .unwrap();
+    let setup =
+        AkitaCommitmentScheme::<ProofCfg<Cfg>>::setup_prover(final_num_vars, total_polys).unwrap();
     let setup_expand_secs = t0.elapsed().as_secs_f64();
     let t_prepare = Instant::now();
     let prepared = CpuBackend.prepare_setup(&setup).unwrap();
@@ -1046,7 +1047,8 @@ pub(crate) fn run_recursive_multi_group_onehot<FF, const D: usize, Cfg>(
         final_group: PolynomialGroupLayout::new(final_num_vars, final_num_polys),
         precommitteds: pre_frozen,
     };
-    let schedule = Cfg::runtime_schedule(multi_group_key).expect("multi-group runtime schedule");
+    let schedule =
+        ProofCfg::<Cfg>::runtime_schedule(multi_group_key).expect("multi-group runtime schedule");
     let main_params =
         akita_types::multi_group_root_commit_params(&schedule).expect("multi-group root params");
     let final_polys = (0..final_num_polys)
@@ -1059,8 +1061,13 @@ pub(crate) fn run_recursive_multi_group_onehot<FF, const D: usize, Cfg>(
         .map(|poly| onehot_lagrange_opening::<FF, Cfg::ExtField, u8>(poly, &point))
         .collect::<Vec<_>>();
     let (final_commitment, final_hint) =
-        AkitaCommitmentScheme::<Cfg>::commit_final_group(&setup, &final_polys, &stack, pre_keys)
-            .expect("final multi-group commitment");
+        AkitaCommitmentScheme::<ProofCfg<Cfg>>::commit_final_group(
+            &setup,
+            &final_polys,
+            &stack,
+            pre_keys,
+        )
+        .expect("final multi-group commitment");
     report_timing(label, "commit", t_commit.elapsed().as_secs_f64());
 
     let pre_refs_by_group = pre_polys_by_group
@@ -1106,7 +1113,7 @@ pub(crate) fn run_recursive_multi_group_onehot<FF, const D: usize, Cfg>(
         "profile setup-contribution mode"
     );
     eprintln!("[{label}] setup_contribution_mode: {setup_contribution_mode:?}");
-    let proof = AkitaCommitmentScheme::<Cfg>::batched_prove::<_, _, _>(
+    let proof = AkitaCommitmentScheme::<ProofCfg<Cfg>>::batched_prove::<_, _, _>(
         &setup,
         ProverOpeningData::new(
             OpeningClaims::from_groups(point.clone(), prover_groups).expect("prover claims"),
@@ -1173,9 +1180,9 @@ pub(crate) fn run_recursive_multi_group_onehot<FF, const D: usize, Cfg>(
     );
 
     let t_verify = Instant::now();
-    let verifier_setup = AkitaCommitmentScheme::<Cfg>::setup_verifier(&setup);
+    let verifier_setup = AkitaCommitmentScheme::<ProofCfg<Cfg>>::setup_verifier(&setup);
     let mut verifier_transcript = AkitaTranscript::<FF>::new(b"profile");
-    match AkitaCommitmentScheme::<Cfg>::batched_verify(
+    match AkitaCommitmentScheme::<ProofCfg<Cfg>>::batched_verify(
         &proof,
         &verifier_setup,
         &mut verifier_transcript,

@@ -18,6 +18,7 @@
 
 #![allow(missing_docs)]
 
+use akita_config::RecursiveCommitmentConfig;
 use akita_prover::{ComputeBackendSetup, CpuBackend};
 
 mod common;
@@ -31,6 +32,7 @@ use akita_types::{
 use common::*;
 
 const TRANSCRIPT_DOMAIN: &[u8] = b"recursive_setup_e2e/onehot";
+type RecursiveOneHotCfg = RecursiveCommitmentConfig<OneHotCfg>;
 
 /// Number of **non-terminal** fold levels in a singleton proof. Only these
 /// levels carry the recursive setup-product sumcheck (terminal levels close out
@@ -63,14 +65,14 @@ struct OnehotProof {
 /// then round-trip the proof through serialization. Returns everything the
 /// verifier needs.
 fn prove_onehot(nv: usize, mode: SetupContributionMode) -> OnehotProof {
-    prove_onehot_with_setup_mode(nv, mode, mode)
+    prove_onehot_with_setup_mode(nv, mode, mode).expect("prove onehot")
 }
 
 fn prove_onehot_with_setup_mode(
     nv: usize,
     proof_mode: SetupContributionMode,
     setup_mode: SetupContributionMode,
-) -> OnehotProof {
+) -> Result<OnehotProof, akita_field::AkitaError> {
     let layout = OneHotCfg::get_params_for_batched_commitment(
         &akita_types::OpeningClaimsLayout::new(nv, 1).expect("singleton opening batch"),
     )
@@ -87,32 +89,51 @@ fn prove_onehot_with_setup_mode(
     let setup = match setup_mode {
         SetupContributionMode::Direct => AkitaCommitmentScheme::<OneHotCfg>::setup_prover(nv, 1),
         SetupContributionMode::Recursive => {
-            AkitaCommitmentScheme::<OneHotCfg>::setup_prover_recursion(nv, 1)
+            AkitaCommitmentScheme::<RecursiveOneHotCfg>::setup_prover(nv, 1)
         }
-    }
-    .unwrap();
-    let prepared = CpuBackend.prepare_setup(&setup).unwrap();
+    }?;
+    let prepared = CpuBackend.prepare_setup(&setup)?;
     let stack =
         akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
             .expect("stack");
-    let verifier_setup = AkitaCommitmentScheme::<OneHotCfg>::setup_verifier(&setup);
+    let verifier_setup = setup.verifier_setup().expect("verifier setup");
     let commit_input = std::slice::from_ref(&poly);
-    let (commitment, hint) =
-        AkitaCommitmentScheme::<OneHotCfg>::commit::<_, _>(&setup, commit_input, &stack)
-            .expect("commit");
+    let (commitment, hint) = match proof_mode {
+        SetupContributionMode::Direct => {
+            AkitaCommitmentScheme::<OneHotCfg>::commit::<_, _>(&setup, commit_input, &stack)?
+        }
+        SetupContributionMode::Recursive => AkitaCommitmentScheme::<RecursiveOneHotCfg>::commit::<
+            _,
+            _,
+        >(&setup, commit_input, &stack)?,
+    };
 
     let poly_refs: [&OneHotPoly<F, u8>; 1] = [&poly];
 
     let mut prover_transcript = AkitaTranscript::<F>::new(TRANSCRIPT_DOMAIN);
-    let proof = AkitaCommitmentScheme::<OneHotCfg>::batched_prove::<_, _, _>(
-        &setup,
-        prove_input(&point[..], &poly_refs[..], &commitment, hint),
-        &stack,
-        &mut prover_transcript,
-        BasisMode::Lagrange,
-        proof_mode,
-    )
-    .expect("prove");
+    let proof_result = match proof_mode {
+        SetupContributionMode::Direct => {
+            AkitaCommitmentScheme::<OneHotCfg>::batched_prove::<_, _, _>(
+                &setup,
+                prove_input(&point[..], &poly_refs[..], &commitment, hint),
+                &stack,
+                &mut prover_transcript,
+                BasisMode::Lagrange,
+                proof_mode,
+            )
+        }
+        SetupContributionMode::Recursive => {
+            AkitaCommitmentScheme::<RecursiveOneHotCfg>::batched_prove::<_, _, _>(
+                &setup,
+                prove_input(&point[..], &poly_refs[..], &commitment, hint),
+                &stack,
+                &mut prover_transcript,
+                BasisMode::Lagrange,
+                proof_mode,
+            )
+        }
+    };
+    let proof = proof_result?;
 
     let proof_shape = proof.shape();
     let mut serialized = Vec::new();
@@ -125,13 +146,13 @@ fn prove_onehot_with_setup_mode(
     )
     .expect("deserialize");
 
-    OnehotProof {
+    Ok(OnehotProof {
         proof,
         verifier_setup,
         point,
         opening,
         commitment,
-    }
+    })
 }
 
 fn verify_onehot(
@@ -140,24 +161,34 @@ fn verify_onehot(
 ) -> Result<(), akita_field::AkitaError> {
     let openings = [fixture.opening];
     let mut verifier_transcript = AkitaTranscript::<F>::new(TRANSCRIPT_DOMAIN);
-    AkitaCommitmentScheme::<OneHotCfg>::batched_verify(
-        &fixture.proof,
-        &fixture.verifier_setup,
-        &mut verifier_transcript,
-        verify_input(&fixture.point[..], &openings[..], &fixture.commitment),
-        BasisMode::Lagrange,
-        mode,
-    )
+    match mode {
+        SetupContributionMode::Direct => AkitaCommitmentScheme::<OneHotCfg>::batched_verify(
+            &fixture.proof,
+            &fixture.verifier_setup,
+            &mut verifier_transcript,
+            verify_input(&fixture.point[..], &openings[..], &fixture.commitment),
+            BasisMode::Lagrange,
+            mode,
+        ),
+        SetupContributionMode::Recursive => {
+            AkitaCommitmentScheme::<RecursiveOneHotCfg>::batched_verify(
+                &fixture.proof,
+                &fixture.verifier_setup,
+                &mut verifier_transcript,
+                verify_input(&fixture.point[..], &openings[..], &fixture.commitment),
+                BasisMode::Lagrange,
+                mode,
+            )
+        }
+    }
 }
 
 /// Recursive prove + verify round-trips, and the proof actually folds (so the
 /// setup-product sumcheck is exercised on at least one level).
 ///
-/// Snap-sized schedules at large `nv` (e.g. 20) may not admit setup-prefix
-/// repacking into the next fold's `B` geometry; recursive setup still succeeds
-/// via the inline-setup fallback exercised in
-/// [`run_recursive_missing_prefix_slots_falls_back`]. Prefix slot population
-/// for smaller arities is covered by `akita-setup::recursion` unit tests.
+/// The recursive setup must provide every setup-prefix slot selected by the
+/// recursive planner; missing planned slots are rejected by the separate
+/// negative test below.
 fn run_recursive_roundtrip(nv: usize) {
     init_rayon_pool();
     run_on_large_stack(move || {
@@ -176,27 +207,17 @@ fn run_recursive_roundtrip(nv: usize) {
     });
 }
 
-fn run_recursive_missing_prefix_slots_falls_back(nv: usize) {
+fn run_recursive_missing_prefix_slots_rejects(nv: usize) {
     init_rayon_pool();
     run_on_large_stack(move || {
-        let fixture = prove_onehot_with_setup_mode(
+        let result = prove_onehot_with_setup_mode(
             nv,
             SetupContributionMode::Recursive,
             SetupContributionMode::Direct,
         );
         assert!(
-            fixture.verifier_setup.prefix_slots.is_empty(),
-            "direct setup should not populate setup-prefix slots"
-        );
-        assert!(
-            setup_sumcheck_levels(&fixture.proof) > 0,
-            "fallback test needs a folding arity (nv={nv})"
-        );
-        let result = verify_onehot(&fixture, SetupContributionMode::Recursive);
-        assert!(
-            result.is_ok(),
-            "missing-prefix fallback failed: {:?}",
-            result.err()
+            result.is_err(),
+            "recursive proof with direct setup must reject missing prefix slots"
         );
     });
 }
@@ -231,8 +252,8 @@ fn recursive_onehot_nv20() {
 }
 
 #[test]
-fn recursive_onehot_missing_prefix_slots_falls_back_nv20() {
-    run_recursive_missing_prefix_slots_falls_back(20);
+fn recursive_onehot_missing_prefix_slots_rejects_nv20() {
+    run_recursive_missing_prefix_slots_rejects(20);
 }
 
 #[test]

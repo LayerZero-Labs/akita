@@ -14,9 +14,9 @@ use akita_field::AkitaError;
 use akita_types::layout::digit_math::optimal_m_r_split;
 use akita_types::sis::{
     decomposed_s_block_ring_count, decomposed_t_ring_count, decomposed_w_ring_count,
-    fold_witness_digit_plan, num_digits_open, num_digits_s_commit, rounded_up_collision_inf_norm,
-    rounded_up_role_a_inf_norm, AjtaiKeyParams, FoldChallengeNorms, FoldWitnessLinfCapConfig,
-    FoldWitnessNorms, SisTableKey,
+    fold_witness_digit_plan, num_digits_open, num_digits_s_commit, num_digits_setup_prefix_commit,
+    rounded_up_collision_inf_norm, rounded_up_role_a_inf_norm, AjtaiKeyParams, FoldChallengeNorms,
+    FoldWitnessLinfCapConfig, FoldWitnessNorms, SisTableKey,
 };
 use akita_types::{
     active_setup_field_len, direct_witness_bytes, extension_opening_reduction_level_bytes,
@@ -258,7 +258,7 @@ fn derive_setup_prefix_group(
         log_basis,
         ..policy.decomposition
     };
-    let num_digits_commit = num_digits_s_commit(decomp, false);
+    let num_digits_commit = num_digits_setup_prefix_commit(decomp);
     let num_digits_open_val = num_digits_open(decomp);
     let mut best: Option<(usize, PrecommittedLevelParams)> = None;
 

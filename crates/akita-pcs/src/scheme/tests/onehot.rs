@@ -284,9 +284,9 @@ fn multi_group_root_round_trip_onehot(
         akita_types::SetupContributionMode::Direct => {
             ConservativeCommitter::setup_prover(FINAL_NV, total)
         }
-        akita_types::SetupContributionMode::Recursive => {
-            ConservativeCommitter::setup_prover_recursion(FINAL_NV, total)
-        }
+        akita_types::SetupContributionMode::Recursive => crate::AkitaCommitmentScheme::<
+            akita_config::RecursiveCommitmentConfig<ConservativeOneHotCfg>,
+        >::setup_prover(FINAL_NV, total),
     }
     .expect("setup");
     let prepared = CpuBackend.prepare_setup(&setup).expect("prepared setup");

@@ -45,7 +45,10 @@ impl<Cfg: CommitmentConfig> CommitmentConfig for RecursiveCommitmentConfig<Cfg> 
         max_num_vars: usize,
         max_num_batched_polys: usize,
     ) -> Result<SetupMatrixEnvelope, AkitaError> {
-        Cfg::max_setup_matrix_size(max_num_vars, max_num_batched_polys)
+        crate::proof_optimized::proof_optimized_max_setup_matrix_size::<Self>(
+            max_num_vars,
+            max_num_batched_polys,
+        )
     }
 
     fn basis_range() -> (u32, u32) {

@@ -16,7 +16,7 @@
 #![allow(missing_docs)]
 
 use akita_config::proof_optimized::fp128;
-use akita_config::CommitmentConfig;
+use akita_config::{CommitmentConfig, RecursiveCommitmentConfig};
 use akita_field::{CanonicalField, PseudoMersenneField};
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::{
@@ -318,7 +318,7 @@ fn run() -> Result<(), String> {
     let prover_setup = match setup_contribution_mode {
         SetupContributionMode::Direct => AkitaCommitmentScheme::<Cfg>::setup_prover(nv, 1),
         SetupContributionMode::Recursive => {
-            AkitaCommitmentScheme::<Cfg>::setup_prover_recursion(nv, 1)
+            AkitaCommitmentScheme::<RecursiveCommitmentConfig<Cfg>>::setup_prover(nv, 1)
         }
     }
     .map_err(|err| format!("prover setup failed: {err}"))?;
