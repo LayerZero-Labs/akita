@@ -22,8 +22,8 @@ use akita_types::{
     direct_witness_bytes, extension_opening_reduction_level_bytes, level_proof_bytes,
     segment_typed_witness_shape, w_ring_element_count_for_chunks, AkitaScheduleInputs,
     ChunkedWitnessCfg, CleartextWitnessShape, CommitmentRingDims, DecompositionParams, DirectStep,
-    FoldStep, FoldWirePayload, LevelParams, OpeningClaimsLayout, PolynomialGroupLayout,
-    RelationMatrixRowLayout, Schedule, Step,
+    FoldStep, FoldWirePayload, LevelCompressionPlan, LevelParams, OpeningClaimsLayout,
+    PolynomialGroupLayout, RelationMatrixRowLayout, Schedule, ScheduleCompressionPlan, Step,
 };
 
 use crate::compression::{
@@ -279,7 +279,15 @@ pub(crate) struct FoldSuffix {
     pub(crate) first_fold_params: LevelParams,
     pub(crate) first_fold_bundle: Option<LevelCompressionBundle>,
     pub(crate) steps: Vec<Step>,
+    pub(crate) compression_levels: Vec<LevelCompressionPlan>,
 }
+
+type FoldCandidate = (
+    usize,
+    Vec<Step>,
+    Option<LevelCompressionBundle>,
+    Vec<LevelCompressionPlan>,
+);
 
 /// Best direct suffix at one DP state: witness length only. The terminal
 /// `DirectStep` is materialized at stitch time from the predecessor fold's
@@ -570,7 +578,7 @@ pub(crate) fn derive_optimal_suffix_schedule<F: CanonicalField>(
             continue;
         };
 
-        let mut best_for_this_lb: Option<(usize, Vec<Step>, Option<LevelCompressionBundle>)> = None;
+        let mut best_for_this_lb: Option<FoldCandidate> = None;
         for (next_witness_len, next_witness_len_terminal, level_bundle) in candidate_bundles {
             let suffix = derive_optimal_suffix_schedule::<F>(
                 ctx,
@@ -587,17 +595,14 @@ pub(crate) fn derive_optimal_suffix_schedule<F: CanonicalField>(
 
             let try_update = |total: usize,
                               steps: Vec<Step>,
-                              slot: &mut Option<(
-                usize,
-                Vec<Step>,
-                Option<LevelCompressionBundle>,
-            )>| {
+                              compression_levels: Vec<LevelCompressionPlan>,
+                              slot: &mut Option<FoldCandidate>| {
                 if slot
                     .as_ref()
-                    .map(|(cost, _, _)| total < *cost)
+                    .map(|(cost, _, _, _)| total < *cost)
                     .unwrap_or(true)
                 {
-                    *slot = Some((total, steps, level_bundle.clone()));
+                    *slot = Some((total, steps, level_bundle.clone(), compression_levels));
                 }
             };
 
@@ -637,7 +642,7 @@ pub(crate) fn derive_optimal_suffix_schedule<F: CanonicalField>(
                             }),
                             Step::Direct(direct_step),
                         ];
-                        try_update(total, steps, &mut best_for_this_lb);
+                        try_update(total, steps, Vec::new(), &mut best_for_this_lb);
                     }
                 }
             }
@@ -687,7 +692,15 @@ pub(crate) fn derive_optimal_suffix_schedule<F: CanonicalField>(
                     level_bytes: level_proof_size,
                 }));
                 steps.extend(suffix_fold.steps.iter().cloned());
-                try_update(total, steps, &mut best_for_this_lb);
+                let compression_levels = if let Some(current) = &level_bundle {
+                    let mut levels = Vec::with_capacity(1 + suffix_fold.compression_levels.len());
+                    levels.push(current.frozen_plan().clone());
+                    levels.extend(suffix_fold.compression_levels.iter().cloned());
+                    levels
+                } else {
+                    Vec::new()
+                };
+                try_update(total, steps, compression_levels, &mut best_for_this_lb);
             }
         }
 
@@ -752,7 +765,7 @@ pub(crate) fn derive_optimal_suffix_schedule<F: CanonicalField>(
                 let total = level_proof_size + suffix_cost;
                 if best_for_this_lb
                     .as_ref()
-                    .map(|(cost, _, _)| total < *cost)
+                    .map(|(cost, _, _, _)| total < *cost)
                     .unwrap_or(true)
                 {
                     best_for_this_lb = Some((
@@ -766,13 +779,15 @@ pub(crate) fn derive_optimal_suffix_schedule<F: CanonicalField>(
                             }),
                             Step::Direct(direct_step),
                         ],
-                        Some(terminal_bundle),
+                        Some(terminal_bundle.clone()),
+                        vec![terminal_bundle.frozen_plan().clone()],
                     ));
                 }
             }
         }
 
-        if let Some((total_bytes, steps, first_fold_bundle)) = best_for_this_lb {
+        if let Some((total_bytes, steps, first_fold_bundle, compression_levels)) = best_for_this_lb
+        {
             best_fold_per_lb.insert(
                 lb,
                 FoldSuffix {
@@ -780,6 +795,7 @@ pub(crate) fn derive_optimal_suffix_schedule<F: CanonicalField>(
                     first_fold_params: candidate_params,
                     first_fold_bundle,
                     steps,
+                    compression_levels,
                 },
             );
         }
@@ -997,13 +1013,21 @@ pub fn find_schedule<F: CanonicalField>(
     ring_challenge_config: impl Fn(usize) -> Result<akita_challenges::SparseChallengeConfig, AkitaError>,
     fold_challenge_shape_at_level: impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
 ) -> Result<Schedule, AkitaError> {
-    find_schedule_inner_with_compression::<F>(
+    Ok(find_schedule_inner_with_compression::<F>(
         key,
         policy,
         None,
         ring_challenge_config,
         fold_challenge_shape_at_level,
-    )
+    )?
+    .schedule)
+}
+
+/// Dormant fold-first result carrying the complete frozen compression plan.
+#[allow(dead_code)] // Consumed by generated-record prep before the atomic cutover.
+pub(crate) struct FoldFirstSchedule {
+    pub(crate) schedule: Schedule,
+    pub(crate) compression: ScheduleCompressionPlan,
 }
 
 /// Internal fold-first compression search.
@@ -1016,14 +1040,24 @@ pub(crate) fn find_schedule_fold_first<F: CanonicalField>(
     compression: &CompressionPlannerPolicy,
     ring_challenge_config: impl Fn(usize) -> Result<akita_challenges::SparseChallengeConfig, AkitaError>,
     fold_challenge_shape_at_level: impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
-) -> Result<Schedule, AkitaError> {
-    find_schedule_inner_with_compression::<F>(
+) -> Result<FoldFirstSchedule, AkitaError> {
+    let result = find_schedule_inner_with_compression::<F>(
         key,
         policy,
         Some(compression),
         ring_challenge_config,
         fold_challenge_shape_at_level,
-    )
+    )?;
+    let compression = ScheduleCompressionPlan::new(&result.schedule, result.compression_levels)?;
+    Ok(FoldFirstSchedule {
+        schedule: result.schedule,
+        compression,
+    })
+}
+
+struct ScheduleSearchResult {
+    schedule: Schedule,
+    compression_levels: Vec<LevelCompressionPlan>,
 }
 
 fn find_schedule_inner_with_compression<F: CanonicalField>(
@@ -1032,7 +1066,7 @@ fn find_schedule_inner_with_compression<F: CanonicalField>(
     compression: Option<&CompressionPlannerPolicy>,
     ring_challenge_config: impl Fn(usize) -> Result<akita_challenges::SparseChallengeConfig, AkitaError>,
     fold_challenge_shape_at_level: impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
-) -> Result<Schedule, AkitaError> {
+) -> Result<ScheduleSearchResult, AkitaError> {
     validate_planner_field::<F>(policy)?;
     let ring_challenge_config: RingChallengeConfigFn<'_> = &ring_challenge_config;
     let fold_shape: FoldShapeFn<'_> = &fold_challenge_shape_at_level;
@@ -1082,14 +1116,17 @@ fn find_schedule_inner_with_compression<F: CanonicalField>(
             ));
         }
         let cost = direct_witness_bytes(field_bits, &root_witness_shape);
-        return Ok(Schedule {
-            steps: vec![Step::Direct(DirectStep {
-                current_w_len: witness_len,
-                witness_shape: root_witness_shape,
-                direct_bytes: cost,
-                params: root_direct_commit_params,
-            })],
-            total_bytes: cost,
+        return Ok(ScheduleSearchResult {
+            schedule: Schedule {
+                steps: vec![Step::Direct(DirectStep {
+                    current_w_len: witness_len,
+                    witness_shape: root_witness_shape,
+                    direct_bytes: cost,
+                    params: root_direct_commit_params,
+                })],
+                total_bytes: cost,
+            },
+            compression_levels: Vec::new(),
         });
     }
 
@@ -1110,6 +1147,7 @@ fn find_schedule_inner_with_compression<F: CanonicalField>(
         )
     };
     let mut memo = ScheduleMemo::new();
+    let mut best_compression_levels = Vec::new();
     let ring_challenge_cfg = ring_challenge_config(policy.ring_dimension)?;
 
     let min_r_vars: usize = if reduced_vars >= 3 { 1 } else { 0 };
@@ -1409,6 +1447,15 @@ fn find_schedule_inner_with_compression<F: CanonicalField>(
                         }));
                         steps.extend(suffix_fold.steps.iter().cloned());
                         best_steps = steps;
+                        best_compression_levels = if let Some(root) = &root_bundle {
+                            let mut levels =
+                                Vec::with_capacity(1 + suffix_fold.compression_levels.len());
+                            levels.push(root.frozen_plan().clone());
+                            levels.extend(suffix_fold.compression_levels.iter().cloned());
+                            levels
+                        } else {
+                            Vec::new()
+                        };
                     }
                 }
             }
@@ -1491,6 +1538,7 @@ fn find_schedule_inner_with_compression<F: CanonicalField>(
                             }),
                             Step::Direct(direct_step),
                         ];
+                        best_compression_levels = vec![terminal_bundle.frozen_plan().clone()];
                     }
                 }
             }
@@ -1503,9 +1551,12 @@ fn find_schedule_inner_with_compression<F: CanonicalField>(
         ));
     }
 
-    Ok(Schedule {
-        steps: best_steps,
-        total_bytes: best_cost,
+    Ok(ScheduleSearchResult {
+        schedule: Schedule {
+            steps: best_steps,
+            total_bytes: best_cost,
+        },
+        compression_levels: best_compression_levels,
     })
 }
 
@@ -1571,7 +1622,7 @@ mod tests {
                 fold_shape,
             )
             .expect("second ladder schedule");
-            if second.total_bytes >= first.total_bytes {
+            if second.schedule.total_bytes >= first.schedule.total_bytes {
                 continue;
             }
             let both = find_schedule_fold_first::<Prime128OffsetA7F7>(
@@ -1582,7 +1633,21 @@ mod tests {
                 fold_shape,
             )
             .expect("combined ladder schedule");
-            assert_eq!(both.total_bytes, second.total_bytes);
+            assert_eq!(both.schedule.total_bytes, second.schedule.total_bytes);
+            assert_eq!(
+                both.compression.descriptor_digest().unwrap(),
+                find_schedule_fold_first::<Prime128OffsetA7F7>(
+                    key,
+                    &policy,
+                    &CompressionPlannerPolicy::with_ladders(128, BOTH, false),
+                    ring_challenge_config,
+                    fold_shape,
+                )
+                .unwrap()
+                .compression
+                .descriptor_digest()
+                .unwrap()
+            );
             witnessed_later_ladder_win = true;
             break;
         }
@@ -1606,14 +1671,14 @@ mod tests {
         )
         .expect("compressed schedule");
         assert!(
-            !schedule.steps.is_empty(),
+            !schedule.schedule.steps.is_empty(),
             "compressed search should find a schedule"
         );
         assert!(
-            matches!(schedule.steps.first(), Some(Step::Fold(_))),
+            matches!(schedule.schedule.steps.first(), Some(Step::Fold(_))),
             "compressed schedule must start with a fold, not native root-direct"
         );
-        if let Some(Step::Direct(direct)) = schedule.steps.last() {
+        if let Some(Step::Direct(direct)) = schedule.schedule.steps.last() {
             assert!(
                 matches!(
                     direct.witness_shape,
@@ -1622,5 +1687,9 @@ mod tests {
                 "compressed terminal Direct must price catalog physical coeffs until Slice 8"
             );
         }
+        assert_eq!(
+            schedule.compression.levels().len(),
+            schedule.schedule.num_fold_levels()
+        );
     }
 }
