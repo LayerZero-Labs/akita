@@ -71,9 +71,11 @@ fn sparse_accumulate_tensor<const D: usize>(
                 for left_idx in 0..tensor.fold_high_len() {
                     tmp.fill([0i64; D]);
                     for right_idx in 0..tensor.fold_low_len {
-                        let block_idx = claim_idx * tensor.fold_high_len() * tensor.fold_low_len
-                            + left_idx * tensor.fold_low_len
-                            + right_idx;
+                        let local_block = left_idx * tensor.fold_low_len + right_idx;
+                        if local_block >= tensor.live_folds_per_claim {
+                            break;
+                        }
+                        let block_idx = claim_idx * tensor.live_folds_per_claim + local_block;
                         let entries = blocks[block_idx];
                         let lo =
                             entries.partition_point(|e| e.pos_in_block() * num_digits < pos_start);

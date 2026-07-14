@@ -1034,6 +1034,70 @@ mod tests {
     }
 
     #[test]
+    fn sparse_ring_tensor_decompose_fold_supports_partial_final_low_row() {
+        const D: usize = 8;
+        let fold_position_count = 2;
+        let num_digits = 1;
+        let base_tensor = tensor_oracle_challenges::<D>();
+        let tensor = TensorChallengeSet {
+            fold_high: vec![
+                base_tensor.fold_high[0].clone(),
+                base_tensor.fold_high[2].clone(),
+            ],
+            fold_low: (0..2)
+                .flat_map(|claim| {
+                    (0..8).map({
+                        let base_tensor = &base_tensor;
+                        move |low| base_tensor.fold_low[claim * 2 + low % 2].clone()
+                    })
+                })
+                .collect(),
+            live_folds_per_claim: 4,
+            fold_low_len: 8,
+            num_claims: 2,
+        };
+        let polys = [
+            SparseRingPoly::<F>::from_signed_coeffs(
+                6,
+                D,
+                8,
+                vec![(0, 1, 1), (1, 3, -1), (3, 2, 1), (6, 5, -1)],
+            )
+            .unwrap(),
+            SparseRingPoly::<F>::from_signed_coeffs(
+                6,
+                D,
+                8,
+                vec![(0, 0, -1), (2, 4, 1), (5, 7, 1), (7, 2, -1)],
+            )
+            .unwrap(),
+        ];
+        let product_challenges = negacyclic_tensor_product_challenges_i8::<D>(&tensor).unwrap();
+
+        let expected = aggregate_witnesses::<F, D>(
+            &polys
+                .iter()
+                .zip(product_challenges.chunks(4))
+                .map(|(poly, challenges)| {
+                    poly.decompose_fold::<D>(challenges, fold_position_count, num_digits, 0)
+                })
+                .collect::<Vec<_>>(),
+        );
+        let poly_refs = polys.iter().collect::<Vec<_>>();
+        let got = SparseRingPoly::<F>::decompose_fold_tensor_batched::<D>(
+            &poly_refs,
+            &tensor,
+            fold_position_count,
+            num_digits,
+            0,
+        )
+        .unwrap()
+        .unwrap();
+
+        assert_eq!(got, expected);
+    }
+
+    #[test]
     fn sparse_ring_poly_caches_multiple_runtime_layouts() {
         let sparse = SparseRingPoly::<F>::from_signed_coeffs(
             8,
