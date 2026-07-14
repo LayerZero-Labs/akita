@@ -5,11 +5,11 @@
 //! use the same filter via `AKITA_SIS_INFINITY_BENCH_SET=exhaustive-ci` in
 //! `cargo bench -p akita-sis-estimator --bench infinity_optimizer`.
 
+#[cfg(feature = "parallel")]
+use akita_sis_estimator::width_table::InfinityWidthProfile;
 use akita_sis_estimator::{
     estimate, scalar_sis_from_ring, AkitaModulusProfileId, CostValue, EstimateConfig, NumericConfig,
 };
-#[cfg(feature = "parallel")]
-use akita_sis_estimator::width_table::InfinityWidthProfile;
 
 const GOLDEN_CSV: &str = include_str!("../../../scripts/sis_golden/infinity_golden.csv");
 
