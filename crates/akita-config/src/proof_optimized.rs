@@ -144,14 +144,13 @@ fn setup_envelope_scan_layouts<Cfg: CommitmentConfig>(
     for main_num_vars in 1..=max_num_vars {
         for &main_num_polys in &poly_counts {
             let main_group = PolynomialGroupLayout::new(main_num_vars, main_num_polys);
+            layouts.push(OpeningClaimsLayout::from_root_groups(&[], main_group)?);
             if supports_multi_group_root {
                 let precommitted = PolynomialGroupLayout::new(max_num_vars, 1);
                 layouts.push(OpeningClaimsLayout::from_root_groups(
                     &[precommitted, precommitted],
                     main_group,
                 )?);
-            } else {
-                layouts.push(OpeningClaimsLayout::from_root_groups(&[], main_group)?);
             }
         }
     }
