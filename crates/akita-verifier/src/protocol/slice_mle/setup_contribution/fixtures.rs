@@ -8,8 +8,8 @@ use akita_algebra::CyclotomicRing;
 use akita_field::{CanonicalField, Prime128OffsetA7F7};
 use akita_types::{
     gadget_row_scalars, AkitaExpandedSetup, AkitaSetupSeed, CommitmentRingDims, FlatMatrix,
-    OpeningBatchWitnessGroup, OpeningBatchWitnessLayout, RelationMatrixRowLayout, SemanticGroupId,
-    SetupContributionPlan, SetupContributionPlanInputs,
+    LevelParams, OpeningClaimsLayout, RelationMatrixRowLayout, SetupContributionPlan,
+    SetupContributionPlanInputs, SisModulusFamily, WitnessLayout,
 };
 
 use super::evaluate_setup_contribution_direct;
@@ -35,6 +35,7 @@ pub(crate) struct SetupContributionFixture {
     pub fold_gadget: Vec<TestField>,
 }
 
+#[derive(Clone)]
 pub(crate) struct SetupContributionShape {
     pub live_fold_count: usize,
     pub num_claims: usize,
@@ -93,7 +94,7 @@ impl SetupContributionShape {
 
     pub fn dense_non_pow2_z() -> Self {
         let mut shape = Self::root_single_point();
-        shape.fold_position_count = 12;
+        shape.fold_position_count = 16;
         shape.depth_commit = 3;
         shape.depth_fold = 2;
         shape
@@ -109,7 +110,7 @@ impl SetupContributionShape {
     pub fn e_t_offset_carry() -> Self {
         let mut shape = Self::root_single_point();
         shape.live_fold_count = 8;
-        shape.fold_position_count = 10;
+        shape.fold_position_count = 16;
         shape.depth_commit = 3;
         shape.depth_fold = 2;
         shape
@@ -124,6 +125,7 @@ impl SetupContributionShape {
 
 impl SetupContributionFixture {
     pub fn from_shape(shape: &SetupContributionShape) -> Self {
+        let mut shape = shape.clone();
         let num_points = shape.num_polys_per_group.len();
         let num_t_vectors = shape.num_polys_per_group.iter().sum();
         let total_blocks = shape.live_fold_count * shape.num_claims;
@@ -137,26 +139,30 @@ impl SetupContributionFixture {
         let n_cols_e = shape.num_claims * shape.live_fold_count * shape.depth_open;
         let n_cols_t = shape.num_polys_per_group.iter().copied().max().unwrap() * cols_per_poly_t;
 
-        let layout = OpeningBatchWitnessLayout::new(
-            vec![OpeningBatchWitnessGroup {
-                id: SemanticGroupId(0),
-                num_claims: shape.num_claims,
-                live_fold_count: shape.live_fold_count,
-                fold_position_count: shape.fold_position_count,
-                depth_open: shape.depth_open,
-                depth_commit: shape.depth_commit,
-                depth_fold: shape.depth_fold,
-                n_a: shape.n_a,
-                e_setup_col_offset: 0,
-            }],
-            vec![SemanticGroupId(0)],
-            vec![SemanticGroupId(0)],
-            1,
-            0,
-            1,
+        let lp = LevelParams::params_only(
+            SisModulusFamily::Q128,
+            TEST_RING_DIM,
+            shape.log_basis,
+            shape.n_a,
+            shape.n_b,
+            shape.n_d,
+            akita_challenges::SparseChallengeConfig::pm1_only(1),
         )
-        .expect("setup contribution fixture layout");
-        let offset_r = layout.r_range.start;
+        .with_decomp(
+            shape.fold_position_count,
+            shape.live_fold_count * shape.fold_position_count,
+            shape.depth_commit,
+            shape.depth_open,
+        )
+        .expect("setup contribution fixture params");
+        shape.depth_fold = lp
+            .num_digits_fold(shape.num_claims, lp.field_bits_for_cache())
+            .expect("setup contribution fixture fold depth");
+        let opening_batch = OpeningClaimsLayout::new(0, shape.num_claims)
+            .expect("setup contribution fixture opening batch");
+        let layout = WitnessLayout::new(&lp, &opening_batch, 1, 0, 1)
+            .expect("setup contribution fixture layout");
+        let offset_r = layout.r_range().start;
         let total_len = offset_r;
         let bits = total_len.next_power_of_two().trailing_zeros() as usize;
 
@@ -215,7 +221,7 @@ impl SetupContributionFixture {
             opening_a_evals: (0..shape.fold_position_count)
                 .map(|idx| test_scalar(501 + idx as u128))
                 .collect(),
-            group_id: SemanticGroupId(0),
+            group_id: 0,
             e_col_offset: 0,
             num_claims: shape.num_claims,
             live_fold_count: shape.live_fold_count,

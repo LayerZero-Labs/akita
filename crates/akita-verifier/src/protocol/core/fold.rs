@@ -898,18 +898,12 @@ where
         // for dense evaluation, but remains the canonical checked description
         // of one opening-digit segment. Use its first relation group rather
         // than the aggregate batch width: groups may have unequal claim counts.
-        let group_id = *trace_witness_layout
-            .relation_group_order
-            .first()
-            .ok_or_else(|| {
-                AkitaError::InvalidSetup(
-                    "multi-group trace layout has no relation group".to_string(),
-                )
-            })?;
-        let group = trace_witness_layout.group(group_id)?;
-        let num_trace_blocks = group
-            .num_claims
-            .checked_mul(group.live_fold_count)
+        let group_id = trace_witness_layout.first_group_index()?;
+        let group_lp = prepared.lp.root_group_params(opening_batch, group_id)?;
+        let num_trace_blocks = opening_batch
+            .group_layout(group_id)?
+            .num_polynomials()
+            .checked_mul(group_lp.live_fold_count())
             .ok_or_else(|| AkitaError::InvalidSetup("trace block count overflow".to_string()))?;
         let layout = trace_weight_layout_from_segment(
             prepared.lp,

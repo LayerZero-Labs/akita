@@ -4,9 +4,8 @@ use akita_algebra::eq_poly::EqPolynomial;
 use akita_field::{AkitaError, CanonicalField, FieldCore};
 
 use crate::{
-    LevelParams, OpeningBatchWitnessLayout, RingRelationInstance, SemanticGroupId,
-    SetupContributionGroupInputs, SetupContributionPlan, SetupContributionPlanInputs,
-    SetupContributionStatic,
+    LevelParams, RingRelationInstance, SetupContributionGroupInputs, SetupContributionPlan,
+    SetupContributionPlanInputs, SetupContributionStatic, WitnessLayout,
 };
 
 /// Setup-contribution planning artifact shared by direct replay and recursive
@@ -14,7 +13,7 @@ use crate::{
 #[derive(Clone)]
 pub struct SetupContributionArtifact<E: FieldCore> {
     /// Canonical semantic witness layout used by the setup weight formulas.
-    pub chunk_layout: OpeningBatchWitnessLayout,
+    pub chunk_layout: WitnessLayout,
     /// Challenge-free setup-contribution inputs with expanded tau1 row weights.
     pub inputs: SetupContributionPlanInputs<E>,
     /// Per-commitment-group setup weight descriptors.
@@ -45,10 +44,11 @@ where
     let eq_tau1: Arc<[E]> = EqPolynomial::evals_prefix(tau1, rows)?.into();
 
     let (inputs, groups, d_physical_cols, d_row_start, d_rows) = if lp.has_precommitted_groups() {
-        lp.reject_multi_group_multi_chunk("prepare_setup_contribution_artifact")?;
         lp.validate_root_opening_batch(opening_batch)?;
         let order = opening_batch.root_group_order()?;
-        if chunk_layout.ownership_units.len() != order.len() {
+        if order.iter().any(|&group_index| {
+            chunk_layout.num_shards_for_group(group_index) != lp.witness_chunk.num_chunks
+        }) {
             return Err(AkitaError::InvalidSetup(
                 "multi-group witness layout does not match root group order".to_string(),
             ));
@@ -87,7 +87,7 @@ where
                 .and_then(|n| n.checked_mul(depth_open))
                 .ok_or_else(|| AkitaError::InvalidSetup("multi-group e width overflow".into()))?;
             groups.push(SetupContributionGroupInputs {
-                group_id: SemanticGroupId(group_index),
+                group_id: group_index,
                 e_col_offset,
                 num_claims,
                 live_fold_count,

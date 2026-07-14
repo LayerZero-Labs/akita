@@ -1,6 +1,6 @@
 use akita_field::AkitaError;
 
-use crate::{OpeningBatchWitnessLayout, SemanticGroupId};
+use crate::WitnessLayout;
 
 /// Geometry of the opening-digit columns used by the stage-2 trace term.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -11,9 +11,9 @@ pub struct TraceWeightLayout {
     pub num_digits_open: usize,
     pub fold_bits: usize,
     pub log_basis: u32,
-    pub witness_layout: OpeningBatchWitnessLayout,
+    pub witness_layout: WitnessLayout,
     pub opening_source_len: usize,
-    pub group_id: SemanticGroupId,
+    pub group_id: usize,
 }
 
 impl TraceWeightLayout {
@@ -34,20 +34,32 @@ impl TraceWeightLayout {
     }
 
     pub fn opening_digit_col_index(&self, block: usize, digit: usize) -> Result<usize, AkitaError> {
-        let group = self.witness_layout.group(self.group_id)?;
         if block >= self.live_fold_count || digit >= self.num_digits_open {
             return Err(AkitaError::InvalidInput(
                 "trace opening-digit index out of range".to_string(),
             ));
         }
-        let claim = block / group.live_fold_count;
-        let global_block = block % group.live_fold_count;
+        let group_live_fold_count = self.witness_layout.group_live_fold_count(self.group_id)?;
+        let num_claims = self
+            .live_fold_count
+            .checked_div(group_live_fold_count)
+            .filter(|_| self.live_fold_count.is_multiple_of(group_live_fold_count))
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup("trace claim axis disagrees with witness layout".into())
+            })?;
+        let claim = block / group_live_fold_count;
+        let global_block = block % group_live_fold_count;
         let unit = self
             .witness_layout
-            .unit_for_block(self.group_id, global_block)?;
-        let physical_index = self
-            .witness_layout
-            .e_index(unit, claim, global_block, digit)?;
+            .unit_for_fold(self.group_id, global_block)?;
+        let physical_index = self.witness_layout.e_index(
+            unit,
+            num_claims,
+            self.num_digits_open,
+            claim,
+            global_block,
+            digit,
+        )?;
         crate::checked_opening_source_index(self.opening_source_len, physical_index)
     }
 
@@ -65,16 +77,10 @@ impl TraceWeightLayout {
     }
 
     pub(crate) fn validate_opening_digit_segment(&self) -> Result<(), AkitaError> {
-        let group = self.witness_layout.group(self.group_id)?;
+        let group_live_fold_count = self.witness_layout.group_live_fold_count(self.group_id)?;
         if self.live_fold_count == 0
-            || self.num_digits_open != group.depth_open
-            || self.live_fold_count
-                != group
-                    .num_claims
-                    .checked_mul(group.live_fold_count)
-                    .ok_or_else(|| {
-                        AkitaError::InvalidSetup("trace block count overflow".to_string())
-                    })?
+            || group_live_fold_count == 0
+            || !self.live_fold_count.is_multiple_of(group_live_fold_count)
         {
             return Err(AkitaError::InvalidSetup(
                 "trace geometry disagrees with witness layout".to_string(),

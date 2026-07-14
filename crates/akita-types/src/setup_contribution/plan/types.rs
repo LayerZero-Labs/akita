@@ -1,14 +1,13 @@
 use super::kernels::GroupSetupSegment;
 use crate::{
-    OpeningBatchWitnessLayout, RelationMatrixRowLayout, SemanticGroupId,
-    SetupContributionPlanInputs, SetupProjectionGeometry,
+    RelationMatrixRowLayout, SetupContributionPlanInputs, SetupProjectionGeometry, WitnessLayout,
 };
 use akita_field::{AkitaError, FieldCore};
 use std::sync::Arc;
 
 #[derive(Clone)]
 pub struct SetupContributionGroupInputs {
-    pub group_id: SemanticGroupId,
+    pub group_id: usize,
     pub e_col_offset: usize,
     pub num_claims: usize,
     pub live_fold_count: usize,
@@ -22,7 +21,7 @@ pub struct SetupContributionGroupInputs {
     pub t_cols_per_vector: usize,
     pub a_row_start: usize,
     pub b_row_start: usize,
-    pub layout: Arc<OpeningBatchWitnessLayout>,
+    pub layout: Arc<WitnessLayout>,
     pub opening_source_len: usize,
 }
 
@@ -42,7 +41,7 @@ impl SetupContributionGroupInputs {
     /// contributions share the same planning pipeline.
     pub fn single_group_layout<E: FieldCore>(
         inputs: &SetupContributionPlanInputs<E>,
-        layout: &OpeningBatchWitnessLayout,
+        layout: &WitnessLayout,
         opening_source_len: usize,
         fold_log_basis: u32,
     ) -> Result<SingleGroupSetupContributionLayout, AkitaError> {
@@ -77,7 +76,7 @@ impl SetupContributionGroupInputs {
             .ok_or_else(|| AkitaError::InvalidSetup("T polynomial width overflow".into()))?;
         Ok(SingleGroupSetupContributionLayout {
             group: SetupContributionGroupInputs {
-                group_id: SemanticGroupId(0),
+                group_id: 0,
                 e_col_offset: 0,
                 num_claims: inputs.num_claims,
                 live_fold_count: inputs.live_fold_count,

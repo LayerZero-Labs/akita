@@ -15,11 +15,10 @@ use akita_transcript::labels::{
 use akita_transcript::{sample_ext_challenge, Transcript};
 use akita_types::{
     eval_relation_weight_at_point, gadget_row_scalars, r_decomp_levels, validate_role_dispatch,
-    AkitaExpandedSetup, CommitmentRingDims, FpExtEncoding, LevelParams, OpeningBatchWitnessLayout,
-    RelationMatrixRowLayout, RingMultiplierOpeningPoint, RingRelationInstance, RingRole, RingVec,
-    SemanticGroupId, SetupContributionGroupInputs, SetupContributionPlan,
-    SetupContributionPlanInputs, SetupContributionStatic, TerminalWitnessTranscriptParts,
-    WitnessOwnershipUnit,
+    AkitaExpandedSetup, CommitmentRingDims, FpExtEncoding, LevelParams, RelationMatrixRowLayout,
+    RingMultiplierOpeningPoint, RingRelationInstance, RingRole, RingVec,
+    SetupContributionGroupInputs, SetupContributionPlan, SetupContributionPlanInputs,
+    SetupContributionStatic, TerminalWitnessTranscriptParts, WitnessLayout, WitnessUnitLayout,
 };
 
 use super::slice_mle::{compute_r_contribution, evaluate_setup_contribution_direct};
@@ -103,7 +102,7 @@ pub struct RelationMatrixEvaluator<F: FieldCore> {
     /// Batch-wide basis used by the shared r-tail.
     pub(crate) log_basis: u32,
     /// Canonical semantic and ownership layout for all witness columns.
-    pub(crate) layout: OpeningBatchWitnessLayout,
+    pub(crate) layout: WitnessLayout,
     /// Exact compact witness source length before Boolean suffix padding.
     pub(crate) opening_source_len: usize,
     pub(crate) setup_contribution_groups: Vec<SetupContributionGroupInputs>,
@@ -125,7 +124,7 @@ pub(crate) struct FlatRelationContext<F: FieldCore> {
 pub(crate) struct RelationMatrixGroupEvaluator<F: FieldCore> {
     pub(crate) c_alphas: PreparedChallengeEvals<F>,
     pub(crate) opening_a_evals: Vec<F>,
-    pub(crate) group_id: SemanticGroupId,
+    pub(crate) group_id: usize,
     pub(crate) e_col_offset: usize,
     pub(crate) num_claims: usize,
     pub(crate) live_fold_count: usize,
@@ -388,7 +387,7 @@ fn prepare_relation_matrix_evaluator_multi_group<F, E, const D: usize>(
     replay: &RingSwitchReplay<'_, F, E>,
     alpha: E,
     tau1: &[E],
-    layout: OpeningBatchWitnessLayout,
+    layout: WitnessLayout,
     depth_fold: usize,
     rows: usize,
 ) -> Result<RelationMatrixEvaluator<E>, AkitaError>
@@ -399,7 +398,6 @@ where
     let relation = replay.relation;
     let lp = replay.lp;
     let opening_batch = relation.opening_batch();
-    lp.reject_multi_group_multi_chunk("prepare_relation_matrix_evaluator_multi_group")?;
     lp.validate_root_opening_batch(opening_batch)?;
     validate_role_dispatch::<D>(relation.role_dims(), RingRole::Inner)?;
     if replay.row_coefficients.len() != opening_batch.num_total_polynomials() {
@@ -409,7 +407,10 @@ where
     let eq_tau1: std::sync::Arc<[E]> = EqPolynomial::evals_prefix(tau1, rows)?.into();
 
     let order = opening_batch.root_group_order()?;
-    if layout.ownership_units.len() != order.len() {
+    if order
+        .iter()
+        .any(|&group_index| layout.num_shards_for_group(group_index) != lp.witness_chunk.num_chunks)
+    {
         return Err(AkitaError::InvalidSetup(
             "multi-group witness layout does not match root group order".to_string(),
         ));
@@ -516,7 +517,7 @@ where
         groups.push(RelationMatrixGroupEvaluator {
             c_alphas,
             opening_a_evals,
-            group_id: SemanticGroupId(group_index),
+            group_id: group_index,
             e_col_offset: group_e_offsets[group_index],
             num_claims: k_g,
             live_fold_count,
@@ -644,7 +645,7 @@ fn prepare_relation_matrix_evaluator_inner<F, E, const D: usize>(
     num_polys: usize,
     gamma: &[E],
     relation_matrix_row_layout: RelationMatrixRowLayout,
-    layout: OpeningBatchWitnessLayout,
+    layout: WitnessLayout,
     opening_source_len: usize,
     opening_ring_dim: usize,
     depth_fold: usize,
@@ -711,7 +712,7 @@ where
     let group = RelationMatrixGroupEvaluator {
         c_alphas,
         opening_a_evals,
-        group_id: SemanticGroupId(0),
+        group_id: 0,
         e_col_offset: 0,
         num_claims,
         live_fold_count,
@@ -759,10 +760,11 @@ where
 
 fn reject_mixed_d_multi_chunk<const D: usize>(
     role_dims: CommitmentRingDims,
-    layout: &OpeningBatchWitnessLayout,
+    layout: &WitnessLayout,
     context: &str,
 ) -> Result<(), AkitaError> {
-    if layout.machine_chunks.len() > 1 && (role_dims.d_b() != D || role_dims.d_d() != D) {
+    if layout.units().len() > layout.num_groups() && (role_dims.d_b() != D || role_dims.d_d() != D)
+    {
         return Err(AkitaError::InvalidSetup(format!(
             "{context}: multi-chunk witness layout requires uniform ring dimensions across roles"
         )));
@@ -771,7 +773,7 @@ fn reject_mixed_d_multi_chunk<const D: usize>(
 }
 
 pub(crate) fn build_setup_contribution_groups<F: FieldCore>(
-    layout: &OpeningBatchWitnessLayout,
+    layout: &WitnessLayout,
     opening_source_len: usize,
     groups: &[RelationMatrixGroupEvaluator<F>],
 ) -> Result<Vec<SetupContributionGroupInputs>, AkitaError> {
@@ -880,7 +882,7 @@ impl<E: FieldCore> RelationMatrixEvaluator<E> {
     fn group_units(
         &self,
         group: &RelationMatrixGroupEvaluator<E>,
-    ) -> Result<Vec<&WitnessOwnershipUnit>, AkitaError> {
+    ) -> Result<Vec<&WitnessUnitLayout>, AkitaError> {
         self.layout.units_for_group(group.group_id)
     }
 
@@ -964,20 +966,22 @@ impl<E: FieldCore> RelationMatrixEvaluator<E> {
                     .get(group.a_row_start..a_row_end)
                     .ok_or(AkitaError::InvalidProof)?;
                 for unit in units {
-                    let block_end = unit
-                        .global_block_base
-                        .checked_add(unit.blocks)
-                        .ok_or_else(|| AkitaError::InvalidSetup("block window overflow".into()))?;
                     for claim in 0..group.num_claims {
-                        for global_block in unit.global_block_base..block_end {
+                        for global_block in unit.global_fold_range() {
                             let challenge = group.c_alphas.eval_at::<F>(
                                 claim,
                                 global_block,
                                 group.live_fold_count,
                             )?;
                             for (digit, &gadget) in g_open.iter().enumerate() {
-                                let e_index =
-                                    self.layout.e_index(unit, claim, global_block, digit)?;
+                                let e_index = self.layout.e_index(
+                                    unit,
+                                    group.num_claims,
+                                    group.depth_open,
+                                    claim,
+                                    global_block,
+                                    digit,
+                                )?;
                                 let e_opening_index = akita_types::checked_opening_source_index(
                                     self.opening_source_len,
                                     e_index,
@@ -990,6 +994,9 @@ impl<E: FieldCore> RelationMatrixEvaluator<E> {
                                 for (a_row, &row_weight) in a_row_weights.iter().enumerate() {
                                     let t_index = self.layout.t_index(
                                         unit,
+                                        group.num_claims,
+                                        group.n_a,
+                                        group.depth_open,
                                         claim,
                                         global_block,
                                         a_row,
@@ -1015,6 +1022,9 @@ impl<E: FieldCore> RelationMatrixEvaluator<E> {
                             for (fold_digit, &fold) in fold_gadget.iter().enumerate() {
                                 let z_index = self.layout.z_index(
                                     unit,
+                                    group.opening_a_evals.len(),
+                                    group.depth_commit,
+                                    group.depth_fold,
                                     position,
                                     commit_digit,
                                     fold_digit,

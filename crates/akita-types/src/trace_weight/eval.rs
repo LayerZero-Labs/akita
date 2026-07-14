@@ -390,8 +390,7 @@ where
         })?;
         let block_span = layout
             .witness_layout
-            .group(layout.group_id)?
-            .live_fold_count;
+            .group_live_fold_count(layout.group_id)?;
         if block_span > block_capacity {
             return Err(AkitaError::InvalidInput(
                 "trace term live fold count exceeds block-opening capacity".to_string(),

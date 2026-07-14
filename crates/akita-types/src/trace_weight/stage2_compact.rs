@@ -9,8 +9,8 @@ use super::stage2::{
 use super::TraceWeightLayout;
 use super::{eval_trace_terms_closed, TraceFieldBlockOpening, TraceRingBlockOpening, TraceTerm};
 use crate::{
-    lagrange_weights, reduce_inner_opening_to_ring_element, BasisMode, OpeningBatchWitnessGroup,
-    OpeningBatchWitnessLayout, SemanticGroupId,
+    lagrange_weights, reduce_inner_opening_to_ring_element, BasisMode, LevelParams,
+    OpeningClaimsLayout, SisModulusFamily, WitnessLayout,
 };
 use akita_algebra::CyclotomicRing;
 use akita_field::{Ext2, Prime128OffsetA7F7};
@@ -19,26 +19,20 @@ type F = Prime128OffsetA7F7;
 const D: usize = 8;
 
 fn layout() -> TraceWeightLayout {
-    let group_id = SemanticGroupId(0);
-    let witness_layout = OpeningBatchWitnessLayout::new(
-        vec![OpeningBatchWitnessGroup {
-            id: group_id,
-            num_claims: 1,
-            live_fold_count: 2,
-            fold_position_count: 1,
-            depth_open: 2,
-            depth_commit: 1,
-            depth_fold: 1,
-            n_a: 1,
-            e_setup_col_offset: 0,
-        }],
-        vec![group_id],
-        vec![group_id],
+    let group_id = 0;
+    let lp = LevelParams::params_only(
+        SisModulusFamily::Q128,
+        D,
         1,
         1,
         1,
+        1,
+        akita_challenges::SparseChallengeConfig::pm1_only(1),
     )
+    .with_decomp(1, 2, 1, 2)
     .unwrap();
+    let opening_batch = OpeningClaimsLayout::new(0, 1).unwrap();
+    let witness_layout = WitnessLayout::new(&lp, &opening_batch, 1, 1, 1).unwrap();
     let opening_source_len = witness_layout.total_len();
     TraceWeightLayout {
         ring_bits: 3,

@@ -206,20 +206,20 @@ pub(super) fn validate_group_chunk_layout(
     num_groups: usize,
 ) -> Result<(), AkitaError> {
     let units = group.layout.units_for_group(group.group_id)?;
-    if units.iter().any(|unit| unit.blocks == 0) {
+    if units.iter().any(|unit| unit.live_fold_count() == 0) {
         return Err(AkitaError::InvalidSetup(
             "malformed setup witness chunk layout".into(),
         ));
     }
     let mut next_block = 0usize;
     for unit in &units {
-        if unit.group != group.group_id || unit.global_block_base != next_block {
+        if unit.group_index() != group.group_id || unit.global_fold_start() != next_block {
             return Err(AkitaError::InvalidSetup(
                 "setup witness ownership units do not form one contiguous block tiling".into(),
             ));
         }
         next_block = next_block
-            .checked_add(unit.blocks)
+            .checked_add(unit.live_fold_count())
             .ok_or_else(|| AkitaError::InvalidSetup("setup block coverage overflow".into()))?;
     }
     if next_block != group.live_fold_count {
@@ -227,16 +227,7 @@ pub(super) fn validate_group_chunk_layout(
             "setup witness chunk windows do not tile live_fold_count".into(),
         ));
     }
-    if units.len() > 1 && num_groups != 1 {
-        // This is an intentional product-surface limit, not a verifier panic
-        // guard: multi-chunk witness layouts are currently only enabled for
-        // the singleton recursive suffix. Keep the rejection here so direct
-        // callers cannot build an ambiguous multi-chunk, multi-group setup
-        // plan before the schedule/proof boundary has learned that shape.
-        return Err(AkitaError::InvalidSetup(
-            "multi-chunk setup contribution requires exactly one commitment group".into(),
-        ));
-    }
+    let _ = num_groups;
     Ok(())
 }
 

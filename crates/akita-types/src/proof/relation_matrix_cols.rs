@@ -216,7 +216,10 @@ where
     let n_d_active = lp.n_d_active_for(relation_matrix_row_layout);
     let levels = r_decomp_levels::<F>(lp.log_basis);
     let witness_layout = instance.segment_layout(lp, None)?;
-    if witness_layout.relation_rows != rows || witness_layout.quotient_depth != levels {
+    let expected_r_len = rows.checked_mul(levels).ok_or_else(|| {
+        AkitaError::InvalidSetup("relation quotient witness width overflow".to_string())
+    })?;
+    if witness_layout.r_range().len() != expected_r_len {
         return Err(AkitaError::InvalidSetup(
             "relation matrix dimensions disagree with witness layout".to_string(),
         ));
@@ -238,18 +241,21 @@ where
             "relation role projection ratios must be powers of two".into(),
         ));
     }
-    let e_total = witness_layout
-        .groups
-        .iter()
-        .try_fold(0usize, |total, group| {
-            group
-                .num_claims
-                .checked_mul(group.live_fold_count)
-                .and_then(|n| n.checked_mul(group.depth_open))
-                .and_then(|width| width.checked_mul(d_ratio))
-                .and_then(|width| total.checked_add(width))
-                .ok_or_else(|| AkitaError::InvalidSetup("setup D width overflow".to_string()))
-        })?;
+    let mut e_total = 0usize;
+    let mut e_setup_offsets = vec![0usize; opening_batch.num_groups()];
+    for group_index in opening_batch.root_group_order()? {
+        e_setup_offsets[group_index] = e_total / d_ratio;
+        let group_lp = lp.root_group_params(opening_batch, group_index)?;
+        let num_claims = opening_batch.group_layout(group_index)?.num_polynomials();
+        let width = num_claims
+            .checked_mul(group_lp.live_fold_count())
+            .and_then(|n| n.checked_mul(group_lp.num_digits_open()))
+            .and_then(|n| n.checked_mul(d_ratio))
+            .ok_or_else(|| AkitaError::InvalidSetup("setup D width overflow".to_string()))?;
+        e_total = e_total
+            .checked_add(width)
+            .ok_or_else(|| AkitaError::InvalidSetup("setup D width overflow".to_string()))?;
+    }
     let physical_field_len = witness_layout
         .total_len()
         .checked_mul(d_a)
@@ -313,8 +319,7 @@ where
     for group_index in 0..opening_batch.num_groups() {
         let group_lp = lp.root_group_params(opening_batch, group_index)?;
         let group_layout = opening_batch.group_layout(group_index)?;
-        let group_id = crate::SemanticGroupId(group_index);
-        let witness_group = witness_layout.group(group_id)?;
+        let group_id = group_index;
         let units = witness_layout.units_for_group(group_id)?;
         let k_g = group_layout.num_polynomials();
         let opening_point = instance.group_opening_point(group_index)?;
@@ -349,9 +354,9 @@ where
                 .collect::<Result<Vec<_>, _>>()?,
             Challenges::Tensor { factored: _ } => challenges.evals_at_pows::<F, E>(alpha_pows)?,
         };
-        let depth_open = witness_group.depth_open;
-        let depth_commit = witness_group.depth_commit;
-        let depth_fold = witness_group.depth_fold;
+        let depth_open = group_lp.num_digits_open();
+        let depth_commit = group_lp.num_digits_commit();
+        let depth_fold = lp.num_digits_fold_for_params(group_lp, k_g, lp.field_bits_for_cache())?;
         let log_basis = group_lp.log_basis();
         let n_a = group_lp.a_rows_len();
         let n_b = group_lp.b_rows_len();
@@ -405,10 +410,17 @@ where
 
         for claim in 0..k_g {
             for global_block in 0..num_blocks_g {
-                let unit = witness_layout.unit_for_block(group_id, global_block)?;
+                let unit = witness_layout.unit_for_fold(group_id, global_block)?;
                 let challenge_index = claim * num_blocks_g + global_block;
                 for (digit, &opening_gadget) in g_open.iter().enumerate() {
-                    let witness_col = witness_layout.e_index(unit, claim, global_block, digit)?;
+                    let witness_col = witness_layout.e_index(
+                        unit,
+                        k_g,
+                        depth_open,
+                        claim,
+                        global_block,
+                        digit,
+                    )?;
                     for role_subcol in 0..d_ratio {
                         let logical_block = claim * num_blocks_g + global_block;
                         let d_phys_col = logical_block
@@ -417,8 +429,7 @@ where
                             .and_then(|base| base.checked_mul(depth_open))
                             .and_then(|base| base.checked_add(digit))
                             .and_then(|local| {
-                                witness_group
-                                    .e_setup_col_offset
+                                e_setup_offsets[group_index]
                                     .checked_mul(d_ratio)
                                     .and_then(|offset| offset.checked_add(local))
                             })
@@ -452,15 +463,28 @@ where
                 for a_idx in 0..n_a {
                     let a_row_weight = eq_tau1.eval_at(a_range.start + a_idx)?;
                     for (digit, &opening_gadget) in g_open.iter().enumerate() {
-                        let semantic_col = witness_layout.t_setup_col_index(
-                            group_id,
+                        let fold_claim = num_blocks_g
+                            .checked_mul(claim)
+                            .and_then(|base| base.checked_add(global_block))
+                            .ok_or(AkitaError::InvalidProof)?;
+                        let row_fold_claim = n_a
+                            .checked_mul(fold_claim)
+                            .and_then(|base| base.checked_add(a_idx))
+                            .ok_or(AkitaError::InvalidProof)?;
+                        let semantic_col = depth_open
+                            .checked_mul(row_fold_claim)
+                            .and_then(|base| base.checked_add(digit))
+                            .ok_or(AkitaError::InvalidProof)?;
+                        let witness_col = witness_layout.t_index(
+                            unit,
+                            k_g,
+                            n_a,
+                            depth_open,
                             claim,
                             global_block,
                             a_idx,
                             digit,
                         )?;
-                        let witness_col =
-                            witness_layout.t_index(unit, claim, global_block, a_idx, digit)?;
                         for role_subcol in 0..b_ratio {
                             let local_col = semantic_col
                                 .checked_mul(b_ratio)
@@ -530,8 +554,15 @@ where
                 for commit_digit in 0..depth_commit {
                     for (fold_digit, &fold) in fold_gadget.iter().enumerate() {
                         let phys_k = position * depth_commit + commit_digit;
-                        let witness_col =
-                            witness_layout.z_index(unit, position, commit_digit, fold_digit)?;
+                        let witness_col = witness_layout.z_index(
+                            unit,
+                            block_len_g,
+                            depth_commit,
+                            depth_fold,
+                            position,
+                            commit_digit,
+                            fold_digit,
+                        )?;
                         write_role_weight(
                             &mut sink,
                             opening_source_len,
@@ -575,7 +606,7 @@ where
         };
         let row_denom = row_alpha_pows[row_dim - 1] * alpha + E::one();
         for (digit, gadget) in r_gadget.iter().enumerate() {
-            let witness_col = witness_layout.r_index(row, digit)?;
+            let witness_col = witness_layout.r_index(levels, row, digit)?;
             write_role_weight(
                 &mut sink,
                 opening_source_len,

@@ -12,8 +12,8 @@ use super::build::{
 use super::trace_table::TraceTable;
 use crate::{
     dispatch_for_field, embed_ring_subfield_scalar, BasisMode, FpExtEncoding, LevelParams,
-    OpeningBatchWitnessLayout, OpeningClaimsLayout, PreparedOpeningPoint, TraceFieldBlockOpening,
-    TraceRingBlockOpening, TraceTerm, TraceWeightLayout,
+    OpeningClaimsLayout, PreparedOpeningPoint, TraceFieldBlockOpening, TraceRingBlockOpening,
+    TraceTerm, TraceWeightLayout, WitnessLayout,
 };
 
 /// Owned public trace-weight factors used by the fused stage-2 trace term.
@@ -98,7 +98,7 @@ pub fn ensure_trace_stage2_supported(extension_degree: usize) -> Result<(), Akit
 /// root folds can use a wider claim-weighted block row.
 pub fn trace_weight_layout_from_segment(
     lp: &LevelParams,
-    witness_layout: &OpeningBatchWitnessLayout,
+    witness_layout: &WitnessLayout,
     opening_source_len: usize,
     col_bits: usize,
     ring_bits: usize,
@@ -114,15 +114,9 @@ pub fn trace_weight_layout_from_segment(
             "trace-weight ring bits do not match level ring dimension".to_string(),
         ));
     }
-    let group_id = *witness_layout.relation_group_order.first().ok_or_else(|| {
-        AkitaError::InvalidSetup("trace-weight witness layout has no groups".to_string())
-    })?;
-    let group = witness_layout.group(group_id)?;
-    let expected_blocks = group
-        .num_claims
-        .checked_mul(group.live_fold_count)
-        .ok_or_else(|| AkitaError::InvalidSetup("trace block count overflow".to_string()))?;
-    if num_trace_blocks != expected_blocks {
+    let group_id = witness_layout.first_group_index()?;
+    let group_live_fold_count = witness_layout.group_live_fold_count(group_id)?;
+    if !num_trace_blocks.is_multiple_of(group_live_fold_count) {
         return Err(AkitaError::InvalidSetup(
             "trace block count disagrees with witness layout".to_string(),
         ));
@@ -503,12 +497,11 @@ where
     for (group_index, prepared) in prepared_points.iter().enumerate() {
         let group_lp = lp.root_group_params(opening_batch, group_index)?;
         let group_claims = opening_batch.group_layout(group_index)?.num_polynomials();
-        let group_id = crate::SemanticGroupId(group_index);
-        let group = layout.witness_layout.group(group_id)?;
+        let group_id = group_index;
         let live_fold_count = group_claims
             .checked_mul(group_lp.live_fold_count())
             .ok_or(AkitaError::InvalidProof)?;
-        if group.num_claims != group_claims || group.live_fold_count != group_lp.live_fold_count() {
+        if layout.witness_layout.group_live_fold_count(group_id)? != group_lp.live_fold_count() {
             return Err(AkitaError::InvalidSetup(
                 "trace group geometry disagrees with witness layout".to_string(),
             ));
@@ -618,7 +611,7 @@ where
 #[allow(clippy::too_many_arguments)]
 pub fn build_multi_group_root_stage2_trace_table<F, E>(
     ring_d: usize,
-    witness_layout: &OpeningBatchWitnessLayout,
+    witness_layout: &WitnessLayout,
     opening_source_len: usize,
     lp: &LevelParams,
     opening_batch: &OpeningClaimsLayout,
@@ -644,7 +637,7 @@ where
     }
     if prepared_points.len() != opening_batch.num_groups()
         || row_coefficients.len() != opening_batch.num_total_polynomials()
-        || witness_layout.groups.len() != opening_batch.num_groups()
+        || witness_layout.num_groups() != opening_batch.num_groups()
     {
         return Err(AkitaError::InvalidProof);
     }
@@ -667,8 +660,7 @@ where
             for (group_index, prepared) in prepared_points.iter().enumerate() {
                 let group_lp = lp.root_group_params(opening_batch, group_index)?;
                 let group_layout = opening_batch.group_layout(group_index)?;
-                let group_id = crate::SemanticGroupId(group_index);
-                let descriptor = witness_layout.group(group_id)?;
+                let group_id = group_index;
                 let inner = prepared.packed_inner_owned::<D>()?;
                 let inner_coeffs = inner.coefficients();
                 let gadget = crate::gadget_row_scalars::<F>(
@@ -690,17 +682,23 @@ where
                             .ok_or(AkitaError::InvalidProof)?;
                         let block_weight = E::lift_base(block_weight);
                         for (plane, gadget_scalar) in gadget.iter().enumerate() {
-                            if descriptor.num_claims != group_layout.num_polynomials()
-                                || descriptor.live_fold_count != group_lp.live_fold_count()
+                            if witness_layout.group_live_fold_count(group_id)?
+                                != group_lp.live_fold_count()
                             {
                                 return Err(AkitaError::InvalidSetup(
                                     "trace group geometry disagrees with witness layout"
                                         .to_string(),
                                 ));
                             }
-                            let unit = witness_layout.unit_for_block(group_id, block)?;
-                            let physical_col =
-                                witness_layout.e_index(unit, local_claim, block, plane)?;
+                            let unit = witness_layout.unit_for_fold(group_id, block)?;
+                            let physical_col = witness_layout.e_index(
+                                unit,
+                                group_layout.num_polynomials(),
+                                group_lp.num_digits_open(),
+                                local_claim,
+                                block,
+                                plane,
+                            )?;
                             let col = crate::checked_opening_source_index(
                                 opening_source_len,
                                 physical_col,

@@ -104,9 +104,9 @@ mod tests {
     use akita_types::relation_claim_from_rows;
     use akita_types::witness::ChunkedWitnessCfg;
     use akita_types::{
-        ring_opening_point_from_field, AkitaCommitmentHint, BasisMode, Commitment, OpeningClaims,
-        PointVariableSelection, PolynomialGroupClaims, RelationMatrixRowLayout,
-        RingMultiplierOpeningPoint, RingVec, SemanticGroupId,
+        r_decomp_levels, ring_opening_point_from_field, AkitaCommitmentHint, BasisMode, Commitment,
+        OpeningClaims, PointVariableSelection, PolynomialGroupClaims, RelationMatrixRowLayout,
+        RingMultiplierOpeningPoint, RingVec,
     };
     use akita_verifier::{prepare_relation_matrix_evaluator, RingSwitchReplay};
     use rand::rngs::StdRng;
@@ -759,7 +759,7 @@ mod tests {
         // Each ownership unit receives its e/t block window and one replicated z
         // segment; the r tail remains shared.
         let live_fold_count = level_params.live_fold_count;
-        let group_id = SemanticGroupId(0);
+        let group_id = 0;
         let single_layout = instance
             .segment_layout(&level_params, None)
             .expect("single-unit witness layout");
@@ -767,7 +767,26 @@ mod tests {
             .units_for_group(group_id)
             .expect("single-unit group")[0]
             .clone();
-        let group = single_layout.group(group_id).expect("single group").clone();
+        let group_params = level_params
+            .root_group_params(instance.opening_batch(), group_id)
+            .expect("single group params");
+        let num_claims = instance
+            .opening_batch()
+            .group_layout(group_id)
+            .expect("single group layout")
+            .num_polynomials();
+        let fold_position_count = group_params.fold_position_count();
+        let depth_commit = group_params.num_digits_commit();
+        let depth_open = group_params.num_digits_open();
+        let depth_fold = level_params
+            .num_digits_fold_for_params(
+                group_params,
+                num_claims,
+                level_params.field_bits_for_cache(),
+            )
+            .expect("single group fold depth");
+        let n_a = group_params.a_rows_len();
+        let quotient_depth = r_decomp_levels::<F>(level_params.log_basis);
 
         let chunk_counts: Vec<usize> = (0..)
             .map(|k| 1usize << k)
@@ -792,36 +811,63 @@ mod tests {
                 .units_for_group(group_id)
                 .expect("chunked group")
             {
-                for position in 0..group.fold_position_count {
-                    for commit_digit in 0..group.depth_commit {
-                        for fold_digit in 0..group.depth_fold {
+                for position in 0..fold_position_count {
+                    for commit_digit in 0..depth_commit {
+                        for fold_digit in 0..depth_fold {
                             let source = single_layout
-                                .z_index(&single_unit, position, commit_digit, fold_digit)
+                                .z_index(
+                                    &single_unit,
+                                    fold_position_count,
+                                    depth_commit,
+                                    depth_fold,
+                                    position,
+                                    commit_digit,
+                                    fold_digit,
+                                )
                                 .expect("single z index");
                             let target = chunk_layout
-                                .z_index(unit, position, commit_digit, fold_digit)
+                                .z_index(
+                                    unit,
+                                    fold_position_count,
+                                    depth_commit,
+                                    depth_fold,
+                                    position,
+                                    commit_digit,
+                                    fold_digit,
+                                )
                                 .expect("chunked z index");
                             chunked[target] = relation_matrix_col_evals[source];
                         }
                     }
                 }
-                let block_end = unit.global_block_base + unit.blocks;
-                for claim in 0..group.num_claims {
-                    for block in unit.global_block_base..block_end {
-                        for digit in 0..group.depth_open {
+                for claim in 0..num_claims {
+                    for block in unit.global_fold_range() {
+                        for digit in 0..depth_open {
                             let source = single_layout
-                                .e_index(&single_unit, claim, block, digit)
+                                .e_index(&single_unit, num_claims, depth_open, claim, block, digit)
                                 .expect("single e index");
                             let target = chunk_layout
-                                .e_index(unit, claim, block, digit)
+                                .e_index(unit, num_claims, depth_open, claim, block, digit)
                                 .expect("chunked e index");
                             chunked[target] = relation_matrix_col_evals[source];
-                            for a_row in 0..group.n_a {
+                            for a_row in 0..n_a {
                                 let source = single_layout
-                                    .t_index(&single_unit, claim, block, a_row, digit)
+                                    .t_index(
+                                        &single_unit,
+                                        num_claims,
+                                        n_a,
+                                        depth_open,
+                                        claim,
+                                        block,
+                                        a_row,
+                                        digit,
+                                    )
                                     .expect("single t index");
                                 let target = chunk_layout
-                                    .t_index(unit, claim, block, a_row, digit)
+                                    .t_index(
+                                        unit, num_claims, n_a, depth_open, claim, block, a_row,
+                                        digit,
+                                    )
                                     .expect("chunked t index");
                                 chunked[target] = relation_matrix_col_evals[source];
                             }
@@ -830,9 +876,13 @@ mod tests {
                 }
             }
             for row in 0..rows {
-                for digit in 0..single_layout.quotient_depth {
-                    let source = single_layout.r_index(row, digit).expect("single r index");
-                    let target = chunk_layout.r_index(row, digit).expect("chunked r index");
+                for digit in 0..quotient_depth {
+                    let source = single_layout
+                        .r_index(quotient_depth, row, digit)
+                        .expect("single r index");
+                    let target = chunk_layout
+                        .r_index(quotient_depth, row, digit)
+                        .expect("chunked r index");
                     chunked[target] = relation_matrix_col_evals[source];
                 }
             }

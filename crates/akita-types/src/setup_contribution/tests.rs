@@ -3,9 +3,8 @@ use super::weights::setup_z_col_weights;
 use super::*;
 use crate::{
     gadget_row_scalars, AkitaExpandedSetup, AkitaSetupSeed, CommitmentRingDims, FlatMatrix,
-    LevelParams, MachineChunkId, OpeningBatchWitnessGroup, OpeningBatchWitnessLayout,
-    RelationMatrixRowLayout, SemanticGroupId, SetupContributionStatic, SetupIndexWeightEvaluator,
-    WitnessOwnershipUnit,
+    LevelParams, RelationMatrixRowLayout, SetupContributionStatic, SetupIndexWeightEvaluator,
+    WitnessLayout, WitnessUnitLayout,
 };
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::offset_eq::eq_eval_at_index;
@@ -33,6 +32,46 @@ type StructuredWeightFixture = (
 
 fn test_scalar(value: u128) -> F {
     F::from_canonical_u128(value)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn test_witness_layout(
+    num_claims: usize,
+    live_fold_count: usize,
+    fold_position_count: usize,
+    depth_open: usize,
+    depth_commit: usize,
+    depth_fold: usize,
+    n_a: usize,
+    num_shards: usize,
+    relation_rows: usize,
+    quotient_depth: usize,
+) -> WitnessLayout {
+    let mut cursor = 0usize;
+    let mut global_fold_start = 0usize;
+    let base = live_fold_count / num_shards;
+    let extra = live_fold_count % num_shards;
+    let mut units = Vec::with_capacity(num_shards);
+    for shard_index in 0..num_shards {
+        let shard_live_fold_count = base + usize::from(shard_index < extra);
+        let z_len = fold_position_count * depth_commit * depth_fold;
+        let z_range = cursor..cursor + z_len;
+        let e_range = z_range.end..z_range.end + num_claims * shard_live_fold_count * depth_open;
+        let t_range =
+            e_range.end..e_range.end + num_claims * shard_live_fold_count * n_a * depth_open;
+        cursor = t_range.end;
+        units.push(WitnessUnitLayout::new_for_test(
+            0,
+            shard_index,
+            global_fold_start,
+            shard_live_fold_count,
+            z_range,
+            e_range,
+            t_range,
+        ));
+        global_fold_start += shard_live_fold_count;
+    }
+    WitnessLayout::new_for_test(units, cursor..cursor + relation_rows * quotient_depth)
 }
 
 fn finalize_test_plan(
@@ -79,7 +118,7 @@ fn prepare_single_group_plan(
     eq_low: Option<&[F]>,
     z_block_low_eq: Option<&[F]>,
     fold_gadget: &[F],
-    layout: &OpeningBatchWitnessLayout,
+    layout: &WitnessLayout,
 ) -> Result<SetupContributionPlan<F>, AkitaError> {
     prepare_single_group_plan_parts(
         inputs,
@@ -98,7 +137,7 @@ fn prepare_single_group_plan_parts(
     eq_low: Option<&[F]>,
     z_block_low_eq: Option<&[F]>,
     fold_gadget: &[F],
-    layout: &OpeningBatchWitnessLayout,
+    layout: &WitnessLayout,
 ) -> Result<SingleGroupPlanParts, AkitaError> {
     let opening_source_len = layout.total_len();
     let single_group =
@@ -138,17 +177,6 @@ fn structured_weight_fixture(
     let n_d = 2;
     let log_basis = 4;
     assert_eq!(ownership_widths.iter().sum::<usize>(), live_fold_count);
-    let group_descriptor = OpeningBatchWitnessGroup {
-        id: SemanticGroupId(0),
-        num_claims,
-        live_fold_count,
-        fold_position_count,
-        depth_open,
-        depth_commit,
-        depth_fold,
-        n_a,
-        e_setup_col_offset: 0,
-    };
     let z_len = fold_position_count * depth_commit * depth_fold;
     let mut cursor = 0usize;
     let mut global_block_base = 0usize;
@@ -163,29 +191,20 @@ fn structured_weight_fixture(
             let t_len = n_a * num_claims * depth_open * blocks;
             let t_range = e_range.end..e_range.end + t_len;
             cursor = t_range.end;
-            let unit = WitnessOwnershipUnit {
-                group: SemanticGroupId(0),
-                machine_chunk: MachineChunkId(chunk),
+            let unit = WitnessUnitLayout::new_for_test(
+                0,
+                chunk,
                 global_block_base,
                 blocks,
                 z_range,
                 e_range,
                 t_range,
-            };
+            );
             global_block_base += blocks;
             unit
         })
         .collect::<Vec<_>>();
-    let layout = OpeningBatchWitnessLayout {
-        groups: vec![group_descriptor],
-        machine_chunks: (0..ownership_widths.len()).map(MachineChunkId).collect(),
-        transcript_group_order: vec![SemanticGroupId(0)],
-        relation_group_order: vec![SemanticGroupId(0)],
-        ownership_units,
-        r_range: cursor..cursor + n_d * depth_fold,
-        relation_rows: n_d,
-        quotient_depth: depth_fold,
-    };
+    let layout = WitnessLayout::new_for_test(ownership_units, cursor..cursor + n_d * depth_fold);
     let rows = 1 + n_a + n_b + n_d;
     let tau1 = (0..3)
         .map(|idx| test_scalar(31 + idx as u128))
@@ -214,7 +233,7 @@ fn structured_weight_fixture(
     let fold_gadget = gadget_row_scalars::<F>(depth_fold, log_basis);
     let opening_source_len = layout.total_len();
     let groups = vec![SetupContributionGroupInputs {
-        group_id: SemanticGroupId(0),
+        group_id: 0,
         e_col_offset: 0,
         num_claims,
         live_fold_count,
@@ -261,28 +280,26 @@ fn structured_weight_fixture(
 }
 
 fn expected_z_setup_weights(
-    layout: &OpeningBatchWitnessLayout,
+    layout: &WitnessLayout,
     opening_source_len: usize,
-    group_id: SemanticGroupId,
+    group_id: usize,
+    fold_position_count: usize,
+    depth_commit: usize,
     fold_gadget: &[F],
     full_vec_randomness: &[F],
 ) -> Vec<F> {
-    let group = layout.group(group_id).expect("test group must exist");
-    let z_cols = group.fold_position_count * group.depth_commit;
+    let depth_fold = fold_gadget.len();
+    let z_cols = fold_position_count * depth_commit;
     (0..z_cols)
         .map(|column| {
-            let position = column / group.depth_commit;
-            let commit_digit = column % group.depth_commit;
+            let position = column / depth_commit;
+            let commit_digit = column % depth_commit;
             let mut weight = F::zero();
-            for unit in layout
-                .ownership_units
-                .iter()
-                .filter(|unit| unit.group == group_id)
-            {
-                for (fold_digit, &fold) in fold_gadget.iter().enumerate().take(group.depth_fold) {
-                    let physical = unit.z_range.start
+            for unit in layout.units_for_group(group_id).unwrap() {
+                for (fold_digit, &fold) in fold_gadget.iter().enumerate() {
+                    let physical = unit.z_range().start
                         + fold_digit
-                        + group.depth_fold * (commit_digit + group.depth_commit * position);
+                        + depth_fold * (commit_digit + depth_commit * position);
                     let opening_address =
                         crate::checked_opening_source_index(opening_source_len, physical).unwrap();
                     weight -= eq_eval_at_index(full_vec_randomness, opening_address) * fold;
@@ -493,25 +510,18 @@ fn dense_z_eq_slice_uses_relative_high_carry() {
         eq_tau1: vec![test_scalar(11), test_scalar(12)].into(),
     };
 
-    let layout = OpeningBatchWitnessLayout::new(
-        vec![OpeningBatchWitnessGroup {
-            id: SemanticGroupId(0),
-            num_claims: inputs.num_claims,
-            live_fold_count: inputs.live_fold_count,
-            fold_position_count: inputs.fold_position_count,
-            depth_open: inputs.depth_open,
-            depth_commit: inputs.depth_commit,
-            depth_fold: inputs.depth_fold,
-            n_a: inputs.n_a,
-            e_setup_col_offset: 0,
-        }],
-        vec![SemanticGroupId(0)],
-        vec![SemanticGroupId(0)],
+    let layout = test_witness_layout(
+        inputs.num_claims,
+        inputs.live_fold_count,
+        inputs.fold_position_count,
+        inputs.depth_open,
+        inputs.depth_commit,
+        inputs.depth_fold,
+        inputs.n_a,
         1,
         1,
         inputs.depth_fold,
-    )
-    .expect("layout");
+    );
     let plan = prepare_single_group_plan(
         &inputs,
         &full_vec_randomness,
@@ -525,7 +535,9 @@ fn dense_z_eq_slice_uses_relative_high_carry() {
     let expected = expected_z_setup_weights(
         &layout,
         layout.total_len(),
-        SemanticGroupId(0),
+        0,
+        fold_position_count,
+        depth_commit,
         &fold_gadget,
         &full_vec_randomness,
     );
@@ -563,25 +575,18 @@ fn setup_a_z_weights_do_not_include_commit_gadget() {
         inner_width: fold_position_count * depth_commit,
         eq_tau1: vec![test_scalar(11), test_scalar(12)].into(),
     };
-    let layout = OpeningBatchWitnessLayout::new(
-        vec![OpeningBatchWitnessGroup {
-            id: SemanticGroupId(0),
-            num_claims: inputs.num_claims,
-            live_fold_count: inputs.live_fold_count,
-            fold_position_count: inputs.fold_position_count,
-            depth_open: inputs.depth_open,
-            depth_commit: inputs.depth_commit,
-            depth_fold: inputs.depth_fold,
-            n_a: inputs.n_a,
-            e_setup_col_offset: 0,
-        }],
-        vec![SemanticGroupId(0)],
-        vec![SemanticGroupId(0)],
+    let layout = test_witness_layout(
+        inputs.num_claims,
+        inputs.live_fold_count,
+        inputs.fold_position_count,
+        inputs.depth_open,
+        inputs.depth_commit,
+        inputs.depth_fold,
+        inputs.n_a,
         1,
         1,
         inputs.depth_fold,
-    )
-    .expect("layout");
+    );
 
     let plan = prepare_single_group_plan(
         &inputs,
@@ -596,7 +601,9 @@ fn setup_a_z_weights_do_not_include_commit_gadget() {
     let expected = expected_z_setup_weights(
         &layout,
         layout.total_len(),
-        SemanticGroupId(0),
+        0,
+        fold_position_count,
+        depth_commit,
         &fold_gadget,
         &full_vec_randomness,
     );
@@ -615,29 +622,22 @@ fn setup_a_z_weights_do_not_include_commit_gadget() {
 
 #[test]
 fn z_setup_weight_oracle_uses_physical_addresses() {
-    let group_id = SemanticGroupId(0);
-    let fold_position_count = 3;
+    let group_id = 0;
+    let fold_position_count = 4;
     let depth_commit = 2;
     let depth_fold = 2;
-    let layout = OpeningBatchWitnessLayout::new(
-        vec![OpeningBatchWitnessGroup {
-            id: group_id,
-            num_claims: 1,
-            live_fold_count: 2,
-            fold_position_count,
-            depth_open: 2,
-            depth_commit,
-            depth_fold,
-            n_a: 1,
-            e_setup_col_offset: 0,
-        }],
-        vec![group_id],
-        vec![group_id],
+    let layout = test_witness_layout(
+        1,
+        2,
+        fold_position_count,
+        2,
+        depth_commit,
+        depth_fold,
+        1,
         2,
         1,
         1,
-    )
-    .unwrap();
+    );
     let opening_source_len = layout.total_len();
     let point = (0..crate::opening_domain_len(opening_source_len)
         .unwrap()
@@ -658,8 +658,15 @@ fn z_setup_weight_oracle_uses_physical_addresses() {
         &mut got,
     )
     .unwrap();
-    let expected =
-        expected_z_setup_weights(&layout, opening_source_len, group_id, &fold_gadget, &point);
+    let expected = expected_z_setup_weights(
+        &layout,
+        opening_source_len,
+        group_id,
+        fold_position_count,
+        depth_commit,
+        &fold_gadget,
+        &point,
+    );
     assert_eq!(got, expected);
     assert_eq!(
         crate::checked_opening_source_index(opening_source_len, opening_source_len - 1).unwrap(),
@@ -681,28 +688,21 @@ fn single_group_plan_supports_multi_chunk_weights() {
     let n_d = 1;
     let log_basis = 4;
     let rows = 1 + n_a + n_b + n_d;
-    let layout = OpeningBatchWitnessLayout::new(
-        vec![OpeningBatchWitnessGroup {
-            id: SemanticGroupId(0),
-            num_claims,
-            live_fold_count,
-            fold_position_count,
-            depth_open,
-            depth_commit,
-            depth_fold,
-            n_a,
-            e_setup_col_offset: 0,
-        }],
-        vec![SemanticGroupId(0)],
-        vec![SemanticGroupId(0)],
+    let layout = test_witness_layout(
+        num_claims,
+        live_fold_count,
+        fold_position_count,
+        depth_open,
+        depth_commit,
+        depth_fold,
+        n_a,
         live_fold_count / blocks_per_chunk,
         n_d,
         depth_fold,
-    )
-    .expect("layout");
+    );
     let opening_source_len = layout.total_len();
     let groups = [SetupContributionGroupInputs {
-        group_id: SemanticGroupId(0),
+        group_id: 0,
         e_col_offset: 0,
         num_claims,
         live_fold_count,

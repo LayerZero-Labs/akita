@@ -3,9 +3,9 @@
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_field::Prime128OffsetA7F7;
 use akita_types::{
-    gadget_row_scalars, CommitmentRingDims, OpeningBatchWitnessGroup, OpeningBatchWitnessLayout,
-    RelationMatrixRowLayout, SemanticGroupId, SetupContributionGroupInputs, SetupContributionPlan,
-    SetupContributionPlanInputs, SetupIndexWeightEvaluator,
+    gadget_row_scalars, r_decomp_levels, CommitmentRingDims, LevelParams, OpeningClaimsLayout,
+    RelationMatrixRowLayout, SetupContributionGroupInputs, SetupContributionPlan,
+    SetupContributionPlanInputs, SetupIndexWeightEvaluator, SisModulusFamily, WitnessLayout,
 };
 use criterion::measurement::WallTime;
 use criterion::{
@@ -45,30 +45,39 @@ fn make_case(live_fold_count: usize, blocks_per_chunk: usize) -> SetupIndexWeigh
     let num_claims = 2;
     let depth_open = 2;
     let depth_commit = 2;
-    let depth_fold = 2;
     let fold_position_count = 8;
     let n_a = 2;
     let n_b = 2;
     let n_d = 2;
     let log_basis = 4;
-    let z_range = fold_position_count * depth_commit;
-    let layout = OpeningBatchWitnessLayout::new(
-        vec![OpeningBatchWitnessGroup {
-            id: SemanticGroupId(0),
-            num_claims,
-            live_fold_count,
-            fold_position_count,
-            depth_open,
-            depth_commit,
-            depth_fold,
-            n_a,
-            e_setup_col_offset: 0,
-        }],
-        vec![SemanticGroupId(0)],
-        vec![SemanticGroupId(0)],
-        live_fold_count / blocks_per_chunk,
+    let mut level_params = LevelParams::params_only(
+        SisModulusFamily::Q128,
+        D,
+        log_basis,
+        n_a,
+        n_b,
         n_d,
-        depth_fold,
+        akita_challenges::SparseChallengeConfig::pm1_only(1),
+    )
+    .with_decomp(
+        fold_position_count,
+        live_fold_count * fold_position_count,
+        depth_commit,
+        depth_open,
+    )
+    .unwrap();
+    level_params.shard_granule = 1;
+    let depth_fold = level_params
+        .num_digits_fold(num_claims, level_params.field_bits_for_cache())
+        .unwrap();
+    let opening_batch = OpeningClaimsLayout::new(0, num_claims).unwrap();
+    let z_range = fold_position_count * depth_commit;
+    let layout = WitnessLayout::new(
+        &level_params,
+        &opening_batch,
+        live_fold_count / blocks_per_chunk,
+        1 + n_a + n_b + n_d,
+        r_decomp_levels::<F>(log_basis),
     )
     .unwrap();
 
@@ -96,7 +105,7 @@ fn make_case(live_fold_count: usize, blocks_per_chunk: usize) -> SetupIndexWeigh
     };
     let opening_source_len = layout.total_len();
     let groups = vec![SetupContributionGroupInputs {
-        group_id: SemanticGroupId(0),
+        group_id: 0,
         e_col_offset: 0,
         num_claims,
         live_fold_count,

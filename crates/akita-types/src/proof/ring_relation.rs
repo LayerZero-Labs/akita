@@ -3,7 +3,7 @@
 use super::OpeningClaimsLayout;
 use crate::layout::{CommitmentRingDims, RingRole};
 use crate::validate_role_dispatch;
-use crate::witness::{OpeningBatchWitnessGroup, OpeningBatchWitnessLayout, SemanticGroupId};
+use crate::witness::WitnessLayout;
 use crate::FpExtEncoding;
 use crate::{
     embed_ring_subfield_scalar, r_decomp_levels, LevelParams, RelationMatrixRowLayout,
@@ -27,14 +27,6 @@ pub struct RingRelationSegmentLengths {
 pub struct RingRelationOpeningCounts {
     pub num_claims: usize,
     pub num_t_vectors: usize,
-}
-
-/// Multi-group witness segment ring-column counts in segment-type-major emission order.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct MultiGroupRingRelationSegmentLengths {
-    pub z_lens: Vec<usize>,
-    pub e_lens: Vec<usize>,
-    pub t_lens: Vec<usize>,
 }
 
 /// Witness segment lengths shared by prover emission, layout offsets, and M-table sizing.
@@ -84,88 +76,6 @@ pub fn ring_relation_segment_lengths<F: FieldCore + CanonicalField>(
         z_len,
         e_len,
         t_len,
-    })
-}
-
-/// Per-group `z ‖ e ‖ t` widths for multi-group roots in final-first witness order.
-pub fn multi_group_ring_relation_segment_lengths<F: FieldCore + CanonicalField>(
-    lp: &LevelParams,
-    opening_batch: &OpeningClaimsLayout,
-) -> Result<MultiGroupRingRelationSegmentLengths, AkitaError> {
-    if !lp.has_precommitted_groups() {
-        return Err(AkitaError::InvalidSetup(
-            "multi-group ring-relation segment lengths require precommitted groups".to_string(),
-        ));
-    }
-    opening_batch.check()?;
-    let final_group_index = opening_batch.root_final_group_index()?;
-    lp.validate_root_opening_batch(opening_batch)?;
-    let field_bits = lp.field_bits_for_cache();
-    let num_groups = opening_batch.num_groups();
-    let mut z_lens = Vec::with_capacity(num_groups);
-    let mut e_lens = Vec::with_capacity(num_groups);
-    let mut t_lens = Vec::with_capacity(num_groups);
-
-    let mut push_group_lens = |num_polys: usize,
-                               live_fold_count: usize,
-                               fold_position_count: usize,
-                               n_a: usize,
-                               num_digits_commit: usize,
-                               num_digits_open: usize,
-                               num_digits_fold: usize|
-     -> Result<(), AkitaError> {
-        let e_len = num_polys
-            .checked_mul(live_fold_count)
-            .and_then(|n| n.checked_mul(num_digits_open))
-            .ok_or_else(|| {
-                AkitaError::InvalidSetup("multi-group e-hat width overflow".to_string())
-            })?;
-        let t_len = num_polys
-            .checked_mul(live_fold_count)
-            .and_then(|n| n.checked_mul(n_a))
-            .and_then(|n| n.checked_mul(num_digits_open))
-            .ok_or_else(|| {
-                AkitaError::InvalidSetup("multi-group t-hat width overflow".to_string())
-            })?;
-        let z_len = fold_position_count
-            .checked_mul(num_digits_commit)
-            .and_then(|n| n.checked_mul(num_digits_fold))
-            .ok_or_else(|| {
-                AkitaError::InvalidSetup("multi-group z-hat width overflow".to_string())
-            })?;
-        z_lens.push(z_len);
-        e_lens.push(e_len);
-        t_lens.push(t_len);
-        Ok(())
-    };
-
-    let final_group = opening_batch.group_layout(final_group_index)?;
-    push_group_lens(
-        final_group.num_polynomials(),
-        lp.live_fold_count,
-        lp.fold_position_count,
-        lp.a_key.row_len(),
-        lp.num_digits_commit,
-        lp.num_digits_open,
-        lp.num_digits_fold(final_group.num_polynomials(), field_bits)?,
-    )?;
-    for (pre_idx, pre_params) in lp.precommitted_groups.iter().enumerate() {
-        let group = opening_batch.group_layout(pre_idx)?;
-        push_group_lens(
-            group.num_polynomials(),
-            pre_params.layout.live_fold_count,
-            pre_params.layout.fold_position_count,
-            pre_params.a_key.row_len(),
-            pre_params.num_digits_commit,
-            pre_params.num_digits_open,
-            pre_params.num_digits_fold_one,
-        )?;
-    }
-
-    Ok(MultiGroupRingRelationSegmentLengths {
-        z_lens,
-        e_lens,
-        t_lens,
     })
 }
 
@@ -485,7 +395,7 @@ impl<F: FieldCore + CanonicalField> RingRelationInstance<F> {
         Ok((gamma, RingVec::from_ring_elems(&row_coefficient_rings)))
     }
 
-    /// Resolve the canonical [`OpeningBatchWitnessLayout`] for this level's witness,
+    /// Resolve the canonical [`WitnessLayout`] for this level's witness,
     /// validating shape and (when supplied) capacity at the boundary.
     ///
     /// This is the **single source of truth** for witness column offsets shared
@@ -506,7 +416,8 @@ impl<F: FieldCore + CanonicalField> RingRelationInstance<F> {
         &self,
         lp: &LevelParams,
         witness_ring_len: Option<usize>,
-    ) -> Result<OpeningBatchWitnessLayout, AkitaError> {
+    ) -> Result<WitnessLayout, AkitaError> {
+        lp.witness_chunk.validate()?;
         let num_chunks = lp.witness_chunk.num_chunks;
         let relation_rhs_layout = crate::proof::relation::relation_rhs_layout_for(
             lp,
@@ -526,40 +437,9 @@ impl<F: FieldCore + CanonicalField> RingRelationInstance<F> {
         let relation_rhs_rows =
             crate::proof::relation::relation_rhs_row_count(&relation_rhs_layout);
         let r_levels = r_decomp_levels::<F>(lp.log_basis);
-        lp.reject_multi_group_multi_chunk("segment_layout")?;
-        let transcript_group_order = (0..self.opening_batch.num_groups())
-            .map(SemanticGroupId)
-            .collect::<Vec<_>>();
-        let relation_group_order = self
-            .opening_batch
-            .root_group_order()?
-            .into_iter()
-            .map(SemanticGroupId)
-            .collect::<Vec<_>>();
-        let mut groups = Vec::with_capacity(self.opening_batch.num_groups());
-        for group_index in 0..self.opening_batch.num_groups() {
-            let params = lp.root_group_params(&self.opening_batch, group_index)?;
-            let group_layout = self.opening_batch.group_layout(group_index)?;
-            groups.push(OpeningBatchWitnessGroup {
-                id: SemanticGroupId(group_index),
-                num_claims: group_layout.num_polynomials(),
-                live_fold_count: params.live_fold_count(),
-                fold_position_count: params.fold_position_count(),
-                depth_open: params.num_digits_open(),
-                depth_commit: params.num_digits_commit(),
-                depth_fold: lp.num_digits_fold_for_params(
-                    params,
-                    group_layout.num_polynomials(),
-                    lp.field_bits_for_cache(),
-                )?,
-                n_a: params.a_rows_len(),
-                e_setup_col_offset: 0,
-            });
-        }
-        let layout = OpeningBatchWitnessLayout::new(
-            groups,
-            transcript_group_order,
-            relation_group_order,
+        let layout = WitnessLayout::new(
+            lp,
+            &self.opening_batch,
             num_chunks,
             relation_rhs_rows,
             r_levels,
@@ -580,12 +460,24 @@ impl<F: FieldCore + CanonicalField> RingRelationInstance<F> {
 mod tests {
     use super::*;
     use crate::layout::PrecommittedLevelParams;
-    use crate::PolynomialGroupLayout;
+    use crate::{
+        emit_witness_e_planes, emit_witness_r_planes, emit_witness_t_planes, emit_witness_z_planes,
+        PolynomialGroupLayout,
+    };
     use akita_challenges::{SparseChallenge, SparseChallengeConfig};
     use akita_field::Fp32;
 
     type F = Fp32<251>;
     const D: usize = 32;
+
+    fn marker(index: usize) -> [i8; 2] {
+        let value = (index % 100 + 1) as i8;
+        [value, -value]
+    }
+
+    fn flatten_markers(markers: impl IntoIterator<Item = [i8; 2]>) -> Vec<i8> {
+        markers.into_iter().flatten().collect()
+    }
 
     fn fold_challenge_config() -> SparseChallengeConfig {
         SparseChallengeConfig::pm1_only(1)
@@ -713,16 +605,19 @@ mod tests {
         let resolved = build_instance(&lp, num_claims, 4)
             .segment_layout(&lp, None)
             .expect("resolved layout");
-        assert_eq!(resolved.num_machine_chunks(), 1);
-        let unit = &resolved.ownership_units[0];
+        assert_eq!(resolved.num_shards_for_group(0), 1);
+        let unit = &resolved.units()[0];
         // Single-unit compact offsets: z first, then e, t, and the shared r tail.
-        assert_eq!(unit.z_range.start, 0);
-        assert_eq!(unit.e_range.start, lens.z_len);
-        assert_eq!(unit.t_range.start, lens.z_len + lens.e_len);
+        assert_eq!(unit.z_range().start, 0);
+        assert_eq!(unit.e_range().start, lens.z_len);
+        assert_eq!(unit.t_range().start, lens.z_len + lens.e_len);
         // The shared r tail follows the unit's compact z, e, and t ranges.
-        assert_eq!(resolved.r_range.start, lens.z_len + lens.e_len + lens.t_len);
-        assert_eq!(unit.global_block_base, 0);
-        assert_eq!(unit.blocks, lp.live_fold_count);
+        assert_eq!(
+            resolved.r_range().start,
+            lens.z_len + lens.e_len + lens.t_len
+        );
+        assert_eq!(unit.global_fold_start(), 0);
+        assert_eq!(unit.live_fold_count(), lp.live_fold_count);
     }
 
     #[test]
@@ -748,39 +643,31 @@ mod tests {
             let layout = build_instance(&lp, num_claims, 4)
                 .segment_layout(&lp, None)
                 .expect("layout");
-            assert_eq!(layout.num_machine_chunks(), w);
+            assert_eq!(layout.num_shards_for_group(0), w);
             let blocks_per_chunk = lp.live_fold_count / w;
 
             // Partitioned e/t lengths sum to the single-machine totals; z replicated.
-            let e_sum: usize = layout
-                .ownership_units
-                .iter()
-                .map(|unit| unit.e_range.len())
-                .sum();
-            let t_sum: usize = layout
-                .ownership_units
-                .iter()
-                .map(|unit| unit.t_range.len())
-                .sum();
+            let e_sum: usize = layout.units().iter().map(|unit| unit.e_range().len()).sum();
+            let t_sum: usize = layout.units().iter().map(|unit| unit.t_range().len()).sum();
             assert_eq!(e_sum, lens.e_len);
             assert_eq!(t_sum, lens.t_len);
-            for unit in &layout.ownership_units {
-                assert_eq!(unit.z_range.len(), lens.z_len);
+            for unit in layout.units() {
+                assert_eq!(unit.z_range().len(), lens.z_len);
             }
 
             // Ownership units are contiguous and z-first; the shared r tail follows all units.
             let stride = lens.z_len + lens.e_len / w + lens.t_len / w;
-            for (j, unit) in layout.ownership_units.iter().enumerate() {
+            for (j, unit) in layout.units().iter().enumerate() {
                 let base = j * stride;
-                assert_eq!(unit.z_range.start, base);
-                assert_eq!(unit.e_range.start, base + lens.z_len);
-                assert_eq!(unit.t_range.start, base + lens.z_len + lens.e_len / w);
-                assert_eq!(unit.global_block_base, j * blocks_per_chunk);
+                assert_eq!(unit.z_range().start, base);
+                assert_eq!(unit.e_range().start, base + lens.z_len);
+                assert_eq!(unit.t_range().start, base + lens.z_len + lens.e_len / w);
+                assert_eq!(unit.global_fold_start(), j * blocks_per_chunk);
             }
-            assert_eq!(layout.r_range.start, w * stride);
+            assert_eq!(layout.r_range().start, w * stride);
             // Block windows tile [0, live_fold_count).
             assert_eq!(
-                layout.ownership_units.last().unwrap().global_block_base + blocks_per_chunk,
+                layout.units().last().unwrap().global_fold_start() + blocks_per_chunk,
                 lp.live_fold_count
             );
         }
@@ -861,7 +748,7 @@ mod tests {
         .expect("same-axis relation");
 
         let layout = instance.segment_layout(&lp, None).expect("layout");
-        let unit = &layout.ownership_units[0];
+        let unit = &layout.units()[0];
         let lens = ring_relation_segment_lengths::<F>(
             &lp,
             RingRelationOpeningCounts {
@@ -871,11 +758,11 @@ mod tests {
             instance.relation_matrix_row_layout(),
         )
         .expect("segment lengths");
-        assert_eq!(layout.num_machine_chunks(), 1);
-        assert_eq!(unit.z_range.start, 0);
-        assert_eq!(unit.e_range.start, lens.z_len);
-        assert_eq!(unit.t_range.start, lens.z_len + lens.e_len);
-        assert_eq!(layout.r_range.start, lens.z_len + lens.e_len + lens.t_len);
+        assert_eq!(layout.num_shards_for_group(0), 1);
+        assert_eq!(unit.z_range().start, 0);
+        assert_eq!(unit.e_range().start, lens.z_len);
+        assert_eq!(unit.t_range().start, lens.z_len + lens.e_len);
+        assert_eq!(layout.r_range().start, lens.z_len + lens.e_len + lens.t_len);
         instance
             .check_v_shape_for_level(&lp)
             .expect("v rows match layout");
@@ -956,37 +843,28 @@ mod tests {
         let layout = instance
             .segment_layout(&lp, None)
             .expect("multi-group segment layout");
-        let segment_lens = multi_group_ring_relation_segment_lengths::<F>(&lp, &opening_batch)
-            .expect("segment lens");
-        let num_groups = segment_lens.z_lens.len();
+        let num_groups = opening_batch.num_groups();
         // Group-major: one ownership unit per group, each holding a contiguous
         // `[z_g | e_g | t_g]` stride; only the shared `r` tail follows all units.
-        assert_eq!(layout.ownership_units.len(), num_groups);
-        let z_total: usize = segment_lens.z_lens.iter().sum();
-        let e_total: usize = segment_lens.e_lens.iter().sum();
-        let t_total: usize = segment_lens.t_lens.iter().sum();
+        assert_eq!(layout.units().len(), num_groups);
         let r_len_total = relation_rhs_rows * r_decomp_levels::<F>(lp.log_basis);
 
         let mut base = 0usize;
-        for (p, unit) in layout.ownership_units.iter().enumerate() {
-            let z_g = segment_lens.z_lens[p];
-            let e_g = segment_lens.e_lens[p];
-            let t_g = segment_lens.t_lens[p];
-            assert_eq!(unit.z_range.len(), z_g);
-            assert_eq!(unit.e_range.len(), e_g);
-            assert_eq!(unit.t_range.len(), t_g);
-            assert_eq!(unit.z_range.start, base);
-            assert_eq!(unit.e_range.start, base + z_g);
-            assert_eq!(unit.t_range.start, base + z_g + e_g);
+        for (p, unit) in layout.units().iter().enumerate() {
+            let z_g = unit.z_range().len();
+            let e_g = unit.e_range().len();
+            let t_g = unit.t_range().len();
+            assert_eq!(unit.z_range().start, base);
+            assert_eq!(unit.e_range().start, base + z_g);
+            assert_eq!(unit.t_range().start, base + z_g + e_g);
             if p + 1 == num_groups {
-                assert_eq!(layout.r_range.start, base + z_g + e_g + t_g);
-                assert_eq!(layout.r_range.len(), r_len_total);
+                assert_eq!(layout.r_range().start, base + z_g + e_g + t_g);
+                assert_eq!(layout.r_range().len(), r_len_total);
             }
             base += z_g + e_g + t_g;
         }
-        assert_eq!(base, z_total + e_total + t_total);
 
-        let witness_ring_cols = z_total + e_total + t_total + r_len_total;
+        let witness_ring_cols = base + r_len_total;
         let expected_w_len = lp
             .root_next_w_len::<F>(&opening_batch, RelationMatrixRowLayout::WithDBlock)
             .expect("root next w len");
@@ -994,7 +872,7 @@ mod tests {
     }
 
     #[test]
-    fn multi_group_segment_layout_rejects_multi_chunk() {
+    fn multi_group_segment_layout_resolves_group_shard_product() {
         let (mut lp, opening_batch) = multi_group_one_three_fixture();
         lp.witness_chunk = crate::witness::ChunkedWitnessCfg {
             num_chunks: 2,
@@ -1023,12 +901,141 @@ mod tests {
             CommitmentRingDims::uniform(D),
         )
         .expect("multi-group instance");
-        let err = instance
+        let layout = instance
             .segment_layout(&lp, None)
-            .expect_err("multi-group multi-chunk must reject");
-        assert!(
-            format!("{err:?}").contains(crate::MULTI_GROUP_ROOT_MULTI_CHUNK_UNSUPPORTED),
-            "unexpected error: {err:?}"
+            .expect("multi-group multi-shard layout");
+        assert_eq!(layout.units().len(), 4);
+        assert_eq!(
+            layout
+                .units()
+                .iter()
+                .map(|unit| (unit.group_index(), unit.shard_index()))
+                .collect::<Vec<_>>(),
+            vec![(1, 0), (1, 1), (0, 0), (0, 1)]
+        );
+        for group_index in [1, 0] {
+            let units = layout.units_for_group(group_index).expect("group units");
+            assert_eq!(units[0].global_fold_range(), 0..2);
+            assert_eq!(units[1].global_fold_range(), 2..4);
+            assert_eq!(units[0].t_range().end, units[1].z_range().start);
+        }
+        assert_eq!(
+            layout.units().last().expect("last unit").t_range().end,
+            layout.r_range().start
+        );
+
+        // Independent dense emitter oracle: each physical range must contain
+        // the corresponding semantic source planes in digit-innermost order.
+        let mut emitted = vec![0i8; layout.total_len() * 2];
+        for group_index in [1, 0] {
+            let params = lp
+                .root_group_params(instance.opening_batch(), group_index)
+                .expect("group params");
+            let num_claims = instance
+                .opening_batch()
+                .group_layout(group_index)
+                .expect("group layout")
+                .num_polynomials();
+            let live_folds = params.live_fold_count();
+            let depth_open = params.num_digits_open();
+            let n_a = params.a_rows_len();
+            let e_source = (0..num_claims * live_folds * depth_open)
+                .map(|index| marker(100 * group_index + index))
+                .collect::<Vec<_>>();
+            let t_source = (0..num_claims * live_folds * n_a * depth_open)
+                .map(|index| marker(300 * group_index + index))
+                .collect::<Vec<_>>();
+            emit_witness_e_planes(
+                &mut emitted,
+                &layout,
+                group_index,
+                num_claims,
+                depth_open,
+                &e_source,
+                live_folds,
+            )
+            .expect("emit E");
+            emit_witness_t_planes(
+                &mut emitted,
+                &layout,
+                group_index,
+                num_claims,
+                n_a,
+                depth_open,
+                &t_source,
+                live_folds,
+            )
+            .expect("emit T");
+
+            let depth_fold = lp
+                .num_digits_fold_for_params(params, num_claims, lp.field_bits_for_cache())
+                .expect("fold depth");
+            for unit in layout.units_for_group(group_index).expect("units") {
+                let z_source =
+                    (0..params.fold_position_count() * params.num_digits_commit() * depth_fold)
+                        .map(|index| marker(500 * group_index + 100 * unit.shard_index() + index))
+                        .collect::<Vec<_>>();
+                emit_witness_z_planes(
+                    &mut emitted,
+                    &layout,
+                    unit,
+                    params.fold_position_count(),
+                    params.num_digits_commit(),
+                    depth_fold,
+                    &z_source,
+                )
+                .expect("emit Z");
+                let z_range = unit.z_range();
+                assert_eq!(
+                    &emitted[z_range.start * 2..z_range.end * 2],
+                    flatten_markers(z_source).as_slice()
+                );
+
+                let mut expected_e = Vec::new();
+                for claim in 0..num_claims {
+                    for fold in unit.global_fold_range() {
+                        for digit in 0..depth_open {
+                            expected_e
+                                .push(e_source[(claim * live_folds + fold) * depth_open + digit]);
+                        }
+                    }
+                }
+                let e_range = unit.e_range();
+                assert_eq!(
+                    &emitted[e_range.start * 2..e_range.end * 2],
+                    flatten_markers(expected_e).as_slice()
+                );
+
+                let mut expected_t = Vec::new();
+                for claim in 0..num_claims {
+                    for fold in unit.global_fold_range() {
+                        for a_row in 0..n_a {
+                            for digit in 0..depth_open {
+                                expected_t.push(
+                                    t_source[((claim * live_folds + fold) * n_a + a_row)
+                                        * depth_open
+                                        + digit],
+                                );
+                            }
+                        }
+                    }
+                }
+                let t_range = unit.t_range();
+                assert_eq!(
+                    &emitted[t_range.start * 2..t_range.end * 2],
+                    flatten_markers(expected_t).as_slice()
+                );
+            }
+        }
+        let quotient_depth = r_decomp_levels::<F>(lp.log_basis);
+        let r_source = (0..layout.r_range().len())
+            .map(|index| marker(900 + index))
+            .collect::<Vec<_>>();
+        emit_witness_r_planes(&mut emitted, &layout, quotient_depth, &r_source).expect("emit R");
+        let r_range = layout.r_range();
+        assert_eq!(
+            &emitted[r_range.start * 2..r_range.end * 2],
+            flatten_markers(r_source).as_slice()
         );
     }
 }

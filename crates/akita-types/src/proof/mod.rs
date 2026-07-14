@@ -27,9 +27,6 @@ mod tail_segments;
 #[cfg(test)]
 mod tests;
 mod wire;
-#[cfg(test)]
-mod witness_layout_contract;
-
 pub use crate::opening_claims::{
     sample_public_row_coefficients, should_reject_multi_group_root, OpeningClaims,
     OpeningClaimsLayout, PointVariableSelection, PolynomialGroupClaims, PolynomialGroupLayout,
@@ -66,8 +63,7 @@ pub use relation::{
 };
 pub use relation_matrix_cols::{compute_relation_weight_evals, eval_relation_weight_at_point};
 pub use ring_relation::{
-    multi_group_ring_relation_segment_lengths, ring_relation_segment_lengths,
-    MultiGroupRingRelationSegmentLengths, RingRelationInstance, RingRelationOpeningCounts,
+    ring_relation_segment_lengths, RingRelationInstance, RingRelationOpeningCounts,
     RingRelationSegmentLengths,
 };
 pub use scheme::{CommitmentVerifier, OpeningPoints};

@@ -250,10 +250,10 @@ mod tests {
     use akita_challenges::SparseChallengeConfig;
     use akita_field::Prime128OffsetA7F7;
     use akita_types::{
-        gadget_row_scalars, r_decomp_levels, LevelParams, OpeningBatchWitnessLayout,
-        OpeningClaimsLayout, RelationMatrixRowLayout, RingMultiplierOpeningPoint, RingOpeningPoint,
-        RingRelationInstance, SemanticGroupId, SetupContributionPlan, SetupContributionPlanInputs,
-        SisModulusFamily,
+        gadget_row_scalars, r_decomp_levels, LevelParams, OpeningClaimsLayout,
+        RelationMatrixRowLayout, RingMultiplierOpeningPoint, RingOpeningPoint,
+        RingRelationInstance, SetupContributionPlan, SetupContributionPlanInputs, SisModulusFamily,
+        WitnessLayout,
     };
 
     use crate::protocol::ring_switch::{
@@ -295,7 +295,7 @@ mod tests {
         lp: &LevelParams,
         relation_matrix_row_layout: RelationMatrixRowLayout,
         num_polys: usize,
-    ) -> Result<OpeningBatchWitnessLayout, AkitaError> {
+    ) -> Result<WitnessLayout, AkitaError> {
         let opening_batch = OpeningClaimsLayout::new(32, num_polys)?;
         let opening_point = RingOpeningPoint {
             position_weights: vec![F::zero(); lp.fold_position_count],
@@ -360,10 +360,10 @@ mod tests {
             num_claims,
         )
         .expect("witness segment layout");
-        let unit0 = &layout.ownership_units[0];
-        let offset_e = unit0.e_range.start;
-        let offset_t = unit0.t_range.start;
-        let offset_r = layout.r_range.start;
+        let unit0 = &layout.units()[0];
+        let offset_e = unit0.e_range().start;
+        let offset_t = unit0.t_range().start;
+        let offset_r = layout.r_range().start;
         let total_len = offset_r + rows * levels;
         let bits = total_len.next_power_of_two().trailing_zeros() as usize;
 
@@ -397,7 +397,7 @@ mod tests {
                     .collect(),
             ),
             opening_a_evals,
-            group_id: SemanticGroupId(0),
+            group_id: 0,
             e_col_offset: 0,
             num_claims,
             live_fold_count,

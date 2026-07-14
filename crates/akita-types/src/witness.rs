@@ -1,456 +1,459 @@
-//! Canonical opening-batch witness layout shared by the planner, prover, and verifier.
+//! Canonical witness ranges shared by the planner, prover, and verifier.
 //!
 //! [`ChunkedWitnessCfg`] describes the multi-chunk witness layout used by the
 //! distributed prover: how many chunks the witness is split into and for how
 //! many leading fold levels the chunked layout stays active before the schedule
 //! reverts to single-chunk sizing.
 
-use akita_field::AkitaError;
 use std::ops::Range;
 
-/// Typed semantic commitment-group axis.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct SemanticGroupId(pub usize);
+use akita_field::AkitaError;
 
-/// Typed machine ownership-chunk axis.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct MachineChunkId(pub usize);
+use crate::{LevelParams, OpeningClaimsLayout};
 
-/// Semantic dimensions for one commitment group.
+/// One physical `[z_hat | e_hat | t_hat]` group-and-shard unit.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct OpeningBatchWitnessGroup {
-    pub id: SemanticGroupId,
-    pub num_claims: usize,
-    pub live_fold_count: usize,
-    pub fold_position_count: usize,
-    pub depth_open: usize,
-    pub depth_commit: usize,
-    pub depth_fold: usize,
-    pub n_a: usize,
-    /// First D-role setup column owned by this group.
-    pub e_setup_col_offset: usize,
+pub struct WitnessUnitLayout {
+    group_index: usize,
+    shard_index: usize,
+    global_fold_start: usize,
+    live_fold_count: usize,
+    z_range: Range<usize>,
+    e_range: Range<usize>,
+    t_range: Range<usize>,
 }
 
-/// One physical `[z | e | t]` ownership stride.
+/// Canonical physical witness descriptor.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct WitnessOwnershipUnit {
-    pub group: SemanticGroupId,
-    pub machine_chunk: MachineChunkId,
-    pub global_block_base: usize,
-    pub blocks: usize,
-    pub z_range: Range<usize>,
-    pub e_range: Range<usize>,
-    pub t_range: Range<usize>,
+pub struct WitnessLayout {
+    units: Vec<WitnessUnitLayout>,
+    r_range: Range<usize>,
 }
 
-/// Canonical physical and semantic witness descriptor.
-///
-/// Ownership units are emitted in relation processing order.
-/// Each unit owns one contiguous `[z | e | t]` stride.
-/// The single shared `r` tail follows all ownership units.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct OpeningBatchWitnessLayout {
-    pub groups: Vec<OpeningBatchWitnessGroup>,
-    pub machine_chunks: Vec<MachineChunkId>,
-    pub transcript_group_order: Vec<SemanticGroupId>,
-    pub relation_group_order: Vec<SemanticGroupId>,
-    pub ownership_units: Vec<WitnessOwnershipUnit>,
-    pub r_range: Range<usize>,
-    pub relation_rows: usize,
-    pub quotient_depth: usize,
+impl WitnessUnitLayout {
+    #[cfg(test)]
+    pub(crate) fn new_for_test(
+        group_index: usize,
+        shard_index: usize,
+        global_fold_start: usize,
+        live_fold_count: usize,
+        z_range: Range<usize>,
+        e_range: Range<usize>,
+        t_range: Range<usize>,
+    ) -> Self {
+        Self {
+            group_index,
+            shard_index,
+            global_fold_start,
+            live_fold_count,
+            z_range,
+            e_range,
+            t_range,
+        }
+    }
+
+    pub fn group_index(&self) -> usize {
+        self.group_index
+    }
+
+    pub fn shard_index(&self) -> usize {
+        self.shard_index
+    }
+
+    pub fn global_fold_start(&self) -> usize {
+        self.global_fold_start
+    }
+
+    pub fn live_fold_count(&self) -> usize {
+        self.live_fold_count
+    }
+
+    pub fn global_fold_range(&self) -> Range<usize> {
+        self.global_fold_start..self.global_fold_start + self.live_fold_count
+    }
+
+    pub fn z_range(&self) -> Range<usize> {
+        self.z_range.clone()
+    }
+
+    pub fn e_range(&self) -> Range<usize> {
+        self.e_range.clone()
+    }
+
+    pub fn t_range(&self) -> Range<usize> {
+        self.t_range.clone()
+    }
 }
 
-impl OpeningBatchWitnessLayout {
-    /// Resolve the complete compact witness layout.
-    ///
-    /// Multi-group and multi-chunk are distinct axes.
-    /// Their product remains rejected until the proof protocol supports it.
+impl WitnessLayout {
+    #[cfg(test)]
+    pub(crate) fn new_for_test(units: Vec<WitnessUnitLayout>, r_range: Range<usize>) -> Self {
+        Self { units, r_range }
+    }
+
+    /// Resolve exact group-major, shard-minor witness ranges from the canonical
+    /// level parameters and opening claims layout.
     pub fn new(
-        mut groups: Vec<OpeningBatchWitnessGroup>,
-        transcript_group_order: Vec<SemanticGroupId>,
-        relation_group_order: Vec<SemanticGroupId>,
-        num_machine_chunks: usize,
+        lp: &LevelParams,
+        opening_batch: &OpeningClaimsLayout,
+        num_shards: usize,
         relation_rows: usize,
         quotient_depth: usize,
     ) -> Result<Self, AkitaError> {
-        if groups.is_empty() || num_machine_chunks == 0 || quotient_depth == 0 {
+        let num_groups = opening_batch.num_groups();
+        if num_groups == 0 || num_shards == 0 || quotient_depth == 0 {
             return Err(AkitaError::InvalidSetup(
-                "witness layout requires non-empty groups, chunks, and quotient depth".into(),
+                "witness layout requires non-empty groups, shards, and quotient depth".into(),
             ));
         }
-        if num_machine_chunks > MAX_WITNESS_CHUNKS {
+        if num_shards > MAX_WITNESS_CHUNKS {
             return Err(AkitaError::InvalidSetup(
-                "witness machine chunk count exceeds verifier cap".into(),
+                "witness shard count exceeds verifier cap".into(),
             ));
         }
-        if groups.len() > 1 && num_machine_chunks > 1 {
-            return Err(AkitaError::InvalidSetup(
-                "multi-group and multi-chunk witness product is unsupported".into(),
-            ));
-        }
-        validate_group_order(&transcript_group_order, groups.len(), "transcript")?;
-        validate_group_order(&relation_group_order, groups.len(), "relation")?;
-        for (index, group) in groups.iter().enumerate() {
-            if group.id != SemanticGroupId(index)
-                || group.num_claims == 0
-                || group.live_fold_count == 0
-                || group.fold_position_count == 0
-                || group.depth_open == 0
-                || group.depth_commit == 0
-                || group.depth_fold == 0
-                || group.n_a == 0
+        lp.validate_root_opening_batch(opening_batch)?;
+        let relation_group_order = opening_batch.root_group_order()?;
+
+        let mut units = Vec::with_capacity(
+            num_groups
+                .checked_mul(num_shards)
+                .ok_or_else(|| AkitaError::InvalidSetup("witness unit count overflow".into()))?,
+        );
+        let mut cursor = 0usize;
+        for group_index in relation_group_order {
+            let params = lp.root_group_params(opening_batch, group_index)?;
+            let group = opening_batch.group_layout(group_index)?;
+            let num_claims = group.num_polynomials();
+            let live_fold_count = params.live_fold_count();
+            let shard_granule = params.shard_granule();
+            let depth_open = params.num_digits_open();
+            let depth_commit = params.num_digits_commit();
+            let depth_fold =
+                lp.num_digits_fold_for_params(params, num_claims, lp.field_bits_for_cache())?;
+            if num_claims == 0
+                || live_fold_count == 0
+                || params.fold_position_count() == 0
+                || depth_open == 0
+                || depth_commit == 0
+                || depth_fold == 0
+                || params.a_rows_len() == 0
+                || shard_granule == 0
+                || !shard_granule.is_power_of_two()
             {
                 return Err(AkitaError::InvalidSetup(
-                    "witness semantic group has malformed dimensions".into(),
+                    "witness group has malformed dimensions".into(),
                 ));
             }
-            if groups.len() == 1 && !group.live_fold_count.is_multiple_of(num_machine_chunks) {
+            if num_shards
+                .checked_mul(shard_granule)
+                .is_none_or(|minimum| minimum > live_fold_count)
+            {
                 return Err(AkitaError::InvalidSetup(
-                    "witness machine chunks must divide the block axis".into(),
+                    "witness shards exceed the live fold granules".into(),
                 ));
             }
-        }
 
-        let mut e_setup_cursor = 0usize;
-        for &group_id in &relation_group_order {
-            let group = groups
-                .get_mut(group_id.0)
-                .ok_or_else(|| AkitaError::InvalidSetup("witness group id out of range".into()))?;
-            group.e_setup_col_offset = e_setup_cursor;
-            e_setup_cursor = e_setup_cursor
-                .checked_add(checked_mul3(
-                    group.num_claims,
-                    group.live_fold_count,
-                    group.depth_open,
-                    "witness setup E width overflow",
-                )?)
-                .ok_or_else(|| AkitaError::InvalidSetup("witness setup E width overflow".into()))?;
-        }
-
-        let machine_chunks = (0..num_machine_chunks)
-            .map(MachineChunkId)
-            .collect::<Vec<_>>();
-        let mut ownership_units = Vec::new();
-        let mut cursor = 0usize;
-        for &group_id in &relation_group_order {
-            let group = groups
-                .get(group_id.0)
-                .ok_or_else(|| AkitaError::InvalidSetup("witness group id out of range".into()))?;
-            let chunks_for_group = if groups.len() == 1 {
-                num_machine_chunks
-            } else {
-                1
-            };
-            let blocks = group.live_fold_count / chunks_for_group;
-            for chunk_index in 0..chunks_for_group {
-                let z_len = checked_mul3(
-                    group.fold_position_count,
-                    group.depth_commit,
-                    group.depth_fold,
-                    "witness Z width overflow",
-                )?;
+            let full_granules = live_fold_count / shard_granule;
+            let residual = live_fold_count % shard_granule;
+            let base_granules = full_granules / num_shards;
+            let extra_granules = full_granules % num_shards;
+            let z_len = checked_mul3(
+                params.fold_position_count(),
+                depth_commit,
+                depth_fold,
+                "witness Z width overflow",
+            )?;
+            let mut global_fold_start = 0usize;
+            for shard_index in 0..num_shards {
+                let owned_granules = base_granules + usize::from(shard_index < extra_granules);
+                let mut shard_live_fold_count =
+                    owned_granules.checked_mul(shard_granule).ok_or_else(|| {
+                        AkitaError::InvalidSetup("witness shard width overflow".into())
+                    })?;
+                if shard_index + 1 == num_shards {
+                    shard_live_fold_count =
+                        shard_live_fold_count.checked_add(residual).ok_or_else(|| {
+                            AkitaError::InvalidSetup("witness shard width overflow".into())
+                        })?;
+                }
                 let e_len = checked_mul3(
-                    group.num_claims,
-                    blocks,
-                    group.depth_open,
+                    num_claims,
+                    shard_live_fold_count,
+                    depth_open,
                     "witness E width overflow",
                 )?;
-                let t_len = group
-                    .num_claims
-                    .checked_mul(blocks)
-                    .and_then(|n| n.checked_mul(group.n_a))
-                    .and_then(|n| n.checked_mul(group.depth_open))
+                let t_len = num_claims
+                    .checked_mul(shard_live_fold_count)
+                    .and_then(|n| n.checked_mul(params.a_rows_len()))
+                    .and_then(|n| n.checked_mul(depth_open))
                     .ok_or_else(|| AkitaError::InvalidSetup("witness T width overflow".into()))?;
                 let z_range = checked_range(cursor, z_len, "witness Z range overflow")?;
                 let e_range = checked_range(z_range.end, e_len, "witness E range overflow")?;
                 let t_range = checked_range(e_range.end, t_len, "witness T range overflow")?;
                 cursor = t_range.end;
-                ownership_units.push(WitnessOwnershipUnit {
-                    group: group_id,
-                    machine_chunk: MachineChunkId(chunk_index),
-                    global_block_base: chunk_index.checked_mul(blocks).ok_or_else(|| {
-                        AkitaError::InvalidSetup("witness block base overflow".into())
-                    })?,
-                    blocks,
+                units.push(WitnessUnitLayout {
+                    group_index,
+                    shard_index,
+                    global_fold_start,
+                    live_fold_count: shard_live_fold_count,
                     z_range,
                     e_range,
                     t_range,
                 });
+                global_fold_start = global_fold_start
+                    .checked_add(shard_live_fold_count)
+                    .ok_or_else(|| {
+                        AkitaError::InvalidSetup("witness fold coverage overflow".into())
+                    })?;
+            }
+            if global_fold_start != live_fold_count {
+                return Err(AkitaError::InvalidSetup(
+                    "witness shards do not cover the live folds".into(),
+                ));
             }
         }
         let r_len = relation_rows
             .checked_mul(quotient_depth)
             .ok_or_else(|| AkitaError::InvalidSetup("witness R width overflow".into()))?;
         let r_range = checked_range(cursor, r_len, "witness R range overflow")?;
-        Ok(Self {
-            groups,
-            machine_chunks,
-            transcript_group_order,
-            relation_group_order,
-            ownership_units,
-            r_range,
-            relation_rows,
-            quotient_depth,
-        })
+        Ok(Self { units, r_range })
     }
 
-    pub fn num_machine_chunks(&self) -> usize {
-        self.machine_chunks.len()
+    pub fn units(&self) -> &[WitnessUnitLayout] {
+        &self.units
+    }
+
+    pub fn first_group_index(&self) -> Result<usize, AkitaError> {
+        self.units
+            .first()
+            .map(WitnessUnitLayout::group_index)
+            .ok_or_else(|| AkitaError::InvalidSetup("witness layout has no units".into()))
+    }
+
+    pub fn num_groups(&self) -> usize {
+        self.units
+            .iter()
+            .map(WitnessUnitLayout::group_index)
+            .max()
+            .map_or(0, |max| max + 1)
+    }
+
+    pub fn r_range(&self) -> Range<usize> {
+        self.r_range.clone()
     }
 
     pub fn total_len(&self) -> usize {
         self.r_range.end
     }
 
-    pub fn group(&self, id: SemanticGroupId) -> Result<&OpeningBatchWitnessGroup, AkitaError> {
-        self.groups
-            .get(id.0)
-            .ok_or_else(|| AkitaError::InvalidSetup("witness group id out of range".into()))
-    }
-
-    pub fn ownership_unit(
-        &self,
-        group: SemanticGroupId,
-        chunk: MachineChunkId,
-    ) -> Result<&WitnessOwnershipUnit, AkitaError> {
-        self.ownership_units
+    pub fn num_shards_for_group(&self, group_index: usize) -> usize {
+        self.units
             .iter()
-            .find(|unit| unit.group == group && unit.machine_chunk == chunk)
-            .ok_or_else(|| AkitaError::InvalidSetup("witness ownership unit is missing".into()))
+            .filter(|unit| unit.group_index == group_index)
+            .count()
     }
 
-    /// Ownership units for one semantic commitment group, in machine-chunk order.
+    pub fn group_live_fold_count(&self, group_index: usize) -> Result<usize, AkitaError> {
+        let mut total = 0usize;
+        let mut found = false;
+        for unit in self
+            .units
+            .iter()
+            .filter(|unit| unit.group_index == group_index)
+        {
+            found = true;
+            total = total
+                .checked_add(unit.live_fold_count)
+                .ok_or_else(|| AkitaError::InvalidSetup("witness fold coverage overflow".into()))?;
+        }
+        if !found {
+            return Err(AkitaError::InvalidSetup("witness group is missing".into()));
+        }
+        Ok(total)
+    }
+
+    pub fn unit(
+        &self,
+        group_index: usize,
+        shard_index: usize,
+    ) -> Result<&WitnessUnitLayout, AkitaError> {
+        self.units
+            .iter()
+            .find(|unit| unit.group_index == group_index && unit.shard_index == shard_index)
+            .ok_or_else(|| AkitaError::InvalidSetup("witness unit is missing".into()))
+    }
+
     pub fn units_for_group(
         &self,
-        group: SemanticGroupId,
-    ) -> Result<Vec<&WitnessOwnershipUnit>, AkitaError> {
-        self.group(group)?;
-        let mut units = self
-            .ownership_units
+        group_index: usize,
+    ) -> Result<Vec<&WitnessUnitLayout>, AkitaError> {
+        let units = self
+            .units
             .iter()
-            .filter(|unit| unit.group == group)
+            .filter(|unit| unit.group_index == group_index)
             .collect::<Vec<_>>();
-        units.sort_by_key(|unit| unit.machine_chunk.0);
         if units.is_empty() {
-            return Err(AkitaError::InvalidSetup(
-                "witness ownership unit is missing".into(),
-            ));
+            return Err(AkitaError::InvalidSetup("witness group is missing".into()));
         }
         Ok(units)
     }
 
-    /// Ownership unit containing `global_block` for one semantic group.
-    pub fn unit_for_block(
+    pub fn unit_for_fold(
         &self,
-        group: SemanticGroupId,
-        global_block: usize,
-    ) -> Result<&WitnessOwnershipUnit, AkitaError> {
-        let descriptor = self.group(group)?;
-        if global_block >= descriptor.live_fold_count {
-            return Err(AkitaError::InvalidInput(
-                "witness block index out of range".into(),
-            ));
-        }
-        self.ownership_units
+        group_index: usize,
+        global_fold: usize,
+    ) -> Result<&WitnessUnitLayout, AkitaError> {
+        self.units
             .iter()
-            .find(|unit| {
-                unit.group == group
-                    && unit
-                        .global_block_base
-                        .checked_add(unit.blocks)
-                        .is_some_and(|end| {
-                            global_block >= unit.global_block_base && global_block < end
-                        })
-            })
-            .ok_or_else(|| AkitaError::InvalidSetup("witness block has no ownership unit".into()))
+            .filter(|unit| unit.group_index == group_index)
+            .find(|unit| unit.global_fold_range().contains(&global_fold))
+            .ok_or_else(|| AkitaError::InvalidInput("witness fold has no owning unit".into()))
     }
 
     pub fn e_index(
         &self,
-        unit: &WitnessOwnershipUnit,
+        unit: &WitnessUnitLayout,
+        num_claims: usize,
+        depth_open: usize,
         claim: usize,
-        global_block: usize,
+        global_fold: usize,
         digit: usize,
     ) -> Result<usize, AkitaError> {
-        let group = self.group(unit.group)?;
-        let local_block = checked_owned_block(unit, global_block)?;
-        if claim >= group.num_claims || digit >= group.depth_open {
+        self.validate_unit_membership(unit)?;
+        let expected_len = checked_mul3(
+            num_claims,
+            unit.live_fold_count,
+            depth_open,
+            "witness E shape overflow",
+        )?;
+        if unit.e_range.len() != expected_len {
+            return Err(AkitaError::InvalidSetup(
+                "witness E shape disagrees with resolved range".into(),
+            ));
+        }
+        let local_fold = checked_owned_fold(unit, global_fold)?;
+        if claim >= num_claims || digit >= depth_open {
             return Err(AkitaError::InvalidInput(
                 "witness E semantic index out of range".into(),
             ));
         }
-        let block_claim = unit
-            .blocks
+        let fold_claim = unit
+            .live_fold_count
             .checked_mul(claim)
-            .and_then(|base| base.checked_add(local_block))
+            .and_then(|base| base.checked_add(local_fold))
             .ok_or_else(|| AkitaError::InvalidSetup("witness E index overflow".into()))?;
-        let local = group
-            .depth_open
-            .checked_mul(block_claim)
+        let local = depth_open
+            .checked_mul(fold_claim)
             .and_then(|base| base.checked_add(digit))
             .ok_or_else(|| AkitaError::InvalidSetup("witness E index overflow".into()))?;
         checked_range_index(&unit.e_range, local, "witness E")
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn t_index(
         &self,
-        unit: &WitnessOwnershipUnit,
+        unit: &WitnessUnitLayout,
+        num_claims: usize,
+        n_a: usize,
+        depth_open: usize,
         claim: usize,
-        global_block: usize,
+        global_fold: usize,
         a_row: usize,
         digit: usize,
     ) -> Result<usize, AkitaError> {
-        let group = self.group(unit.group)?;
-        let local_block = checked_owned_block(unit, global_block)?;
-        if claim >= group.num_claims || a_row >= group.n_a || digit >= group.depth_open {
+        self.validate_unit_membership(unit)?;
+        let expected_len = num_claims
+            .checked_mul(unit.live_fold_count)
+            .and_then(|len| len.checked_mul(n_a))
+            .and_then(|len| len.checked_mul(depth_open))
+            .ok_or_else(|| AkitaError::InvalidSetup("witness T shape overflow".into()))?;
+        if unit.t_range.len() != expected_len {
+            return Err(AkitaError::InvalidSetup(
+                "witness T shape disagrees with resolved range".into(),
+            ));
+        }
+        let local_fold = checked_owned_fold(unit, global_fold)?;
+        if claim >= num_claims || a_row >= n_a || digit >= depth_open {
             return Err(AkitaError::InvalidInput(
                 "witness T semantic index out of range".into(),
             ));
         }
-        let block_claim = local_block
-            .checked_add(
-                unit.blocks
-                    .checked_mul(claim)
-                    .ok_or_else(|| AkitaError::InvalidSetup("witness T index overflow".into()))?,
-            )
+        let fold_claim = unit
+            .live_fold_count
+            .checked_mul(claim)
+            .and_then(|base| base.checked_add(local_fold))
             .ok_or_else(|| AkitaError::InvalidSetup("witness T index overflow".into()))?;
-        let row_block_claim = group
-            .n_a
-            .checked_mul(block_claim)
+        let row_fold_claim = n_a
+            .checked_mul(fold_claim)
             .and_then(|base| base.checked_add(a_row))
             .ok_or_else(|| AkitaError::InvalidSetup("witness T index overflow".into()))?;
-        let local = group
-            .depth_open
-            .checked_mul(row_block_claim)
+        let local = depth_open
+            .checked_mul(row_fold_claim)
             .and_then(|base| base.checked_add(digit))
             .ok_or_else(|| AkitaError::InvalidSetup("witness T index overflow".into()))?;
         checked_range_index(&unit.t_range, local, "witness T")
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn z_index(
         &self,
-        unit: &WitnessOwnershipUnit,
+        unit: &WitnessUnitLayout,
+        fold_position_count: usize,
+        depth_commit: usize,
+        depth_fold: usize,
         position: usize,
         commit_digit: usize,
         fold_digit: usize,
     ) -> Result<usize, AkitaError> {
-        let group = self.group(unit.group)?;
-        if position >= group.fold_position_count
-            || commit_digit >= group.depth_commit
-            || fold_digit >= group.depth_fold
+        self.validate_unit_membership(unit)?;
+        let expected_len = checked_mul3(
+            fold_position_count,
+            depth_commit,
+            depth_fold,
+            "witness Z shape overflow",
+        )?;
+        if unit.z_range.len() != expected_len {
+            return Err(AkitaError::InvalidSetup(
+                "witness Z shape disagrees with resolved range".into(),
+            ));
+        }
+        if position >= fold_position_count
+            || commit_digit >= depth_commit
+            || fold_digit >= depth_fold
         {
             return Err(AkitaError::InvalidInput(
                 "witness Z semantic index out of range".into(),
             ));
         }
-        let position_commit = group
-            .depth_commit
+        let position_commit = depth_commit
             .checked_mul(position)
             .and_then(|base| base.checked_add(commit_digit))
             .ok_or_else(|| AkitaError::InvalidSetup("witness Z index overflow".into()))?;
-        let local = group
-            .depth_fold
+        let local = depth_fold
             .checked_mul(position_commit)
             .and_then(|base| base.checked_add(fold_digit))
             .ok_or_else(|| AkitaError::InvalidSetup("witness Z index overflow".into()))?;
         checked_range_index(&unit.z_range, local, "witness Z")
     }
 
-    /// D-role setup column in `(claim, global_block, opening_digit)` order.
-    pub fn e_setup_col_index(
+    pub fn r_index(
         &self,
-        group_id: SemanticGroupId,
-        claim: usize,
-        global_block: usize,
-        digit: usize,
+        quotient_depth: usize,
+        relation_row: usize,
+        quotient_digit: usize,
     ) -> Result<usize, AkitaError> {
-        let group = self.group(group_id)?;
-        if claim >= group.num_claims
-            || global_block >= group.live_fold_count
-            || digit >= group.depth_open
+        if quotient_depth == 0
+            || !self.r_range.len().is_multiple_of(quotient_depth)
+            || relation_row >= self.r_range.len() / quotient_depth
+            || quotient_digit >= quotient_depth
         {
-            return Err(AkitaError::InvalidInput(
-                "setup E semantic index out of range".into(),
-            ));
-        }
-        let block_claim = group
-            .live_fold_count
-            .checked_mul(claim)
-            .and_then(|base| base.checked_add(global_block))
-            .ok_or_else(|| AkitaError::InvalidSetup("setup E index overflow".into()))?;
-        group
-            .depth_open
-            .checked_mul(block_claim)
-            .and_then(|base| base.checked_add(digit))
-            .and_then(|local| group.e_setup_col_offset.checked_add(local))
-            .ok_or_else(|| AkitaError::InvalidSetup("setup E index overflow".into()))
-    }
-
-    /// B-role setup column in `(claim, global_block, A_row, opening_digit)` order.
-    pub fn t_setup_col_index(
-        &self,
-        group_id: SemanticGroupId,
-        claim: usize,
-        global_block: usize,
-        a_row: usize,
-        digit: usize,
-    ) -> Result<usize, AkitaError> {
-        let group = self.group(group_id)?;
-        if claim >= group.num_claims
-            || global_block >= group.live_fold_count
-            || a_row >= group.n_a
-            || digit >= group.depth_open
-        {
-            return Err(AkitaError::InvalidInput(
-                "setup T semantic index out of range".into(),
-            ));
-        }
-        let block_claim = group
-            .live_fold_count
-            .checked_mul(claim)
-            .and_then(|base| base.checked_add(global_block))
-            .ok_or_else(|| AkitaError::InvalidSetup("setup T index overflow".into()))?;
-        group
-            .n_a
-            .checked_mul(block_claim)
-            .and_then(|base| base.checked_add(a_row))
-            .and_then(|base| group.depth_open.checked_mul(base))
-            .and_then(|base| base.checked_add(digit))
-            .ok_or_else(|| AkitaError::InvalidSetup("setup T index overflow".into()))
-    }
-
-    /// A-role setup column in `(position, commitment_digit)` order.
-    pub fn z_setup_col_index(
-        &self,
-        group_id: SemanticGroupId,
-        position: usize,
-        commit_digit: usize,
-    ) -> Result<usize, AkitaError> {
-        let group = self.group(group_id)?;
-        if position >= group.fold_position_count || commit_digit >= group.depth_commit {
-            return Err(AkitaError::InvalidInput(
-                "setup Z semantic index out of range".into(),
-            ));
-        }
-        group
-            .depth_commit
-            .checked_mul(position)
-            .and_then(|base| base.checked_add(commit_digit))
-            .ok_or_else(|| AkitaError::InvalidSetup("setup Z index overflow".into()))
-    }
-
-    pub fn r_index(&self, relation_row: usize, quotient_digit: usize) -> Result<usize, AkitaError> {
-        if relation_row >= self.relation_rows || quotient_digit >= self.quotient_depth {
             return Err(AkitaError::InvalidInput(
                 "witness R semantic index out of range".into(),
             ));
         }
-        let local = quotient_digit
-            .checked_add(
-                self.quotient_depth
-                    .checked_mul(relation_row)
-                    .ok_or_else(|| AkitaError::InvalidSetup("witness R index overflow".into()))?,
-            )
+        let local = quotient_depth
+            .checked_mul(relation_row)
+            .and_then(|base| base.checked_add(quotient_digit))
             .ok_or_else(|| AkitaError::InvalidSetup("witness R index overflow".into()))?;
         checked_range_index(&self.r_range, local, "witness R")
     }
@@ -458,33 +461,15 @@ impl OpeningBatchWitnessLayout {
     pub fn r_offset(&self) -> usize {
         self.r_range.start
     }
-}
 
-fn validate_group_order(
-    order: &[SemanticGroupId],
-    num_groups: usize,
-    name: &str,
-) -> Result<(), AkitaError> {
-    if order.len() != num_groups {
-        return Err(AkitaError::InvalidSetup(format!(
-            "witness {name} group order has the wrong length"
-        )));
-    }
-    let mut seen = vec![false; num_groups];
-    for &id in order {
-        let Some(slot) = seen.get_mut(id.0) else {
-            return Err(AkitaError::InvalidSetup(format!(
-                "witness {name} group id out of range"
-            )));
-        };
-        if *slot {
-            return Err(AkitaError::InvalidSetup(format!(
-                "witness {name} group order contains a duplicate"
-            )));
+    fn validate_unit_membership(&self, unit: &WitnessUnitLayout) -> Result<(), AkitaError> {
+        if !self.units.contains(unit) {
+            return Err(AkitaError::InvalidInput(
+                "witness unit does not belong to this layout".into(),
+            ));
         }
-        *slot = true;
+        Ok(())
     }
-    Ok(())
 }
 
 fn checked_range(start: usize, len: usize, context: &str) -> Result<Range<usize>, AkitaError> {
@@ -505,22 +490,19 @@ fn checked_range_index(
         .ok_or_else(|| AkitaError::InvalidSetup(format!("{name} index overflow")))?;
     if index >= range.end {
         return Err(AkitaError::InvalidInput(format!(
-            "{name} semantic index exceeds its ownership range"
+            "{name} semantic index exceeds its unit range"
         )));
     }
     Ok(index)
 }
 
-fn checked_owned_block(
-    unit: &WitnessOwnershipUnit,
-    global_block: usize,
-) -> Result<usize, AkitaError> {
-    let local = global_block
-        .checked_sub(unit.global_block_base)
-        .ok_or_else(|| AkitaError::InvalidInput("witness block is not owned by unit".into()))?;
-    if local >= unit.blocks {
+fn checked_owned_fold(unit: &WitnessUnitLayout, global_fold: usize) -> Result<usize, AkitaError> {
+    let local = global_fold
+        .checked_sub(unit.global_fold_start)
+        .ok_or_else(|| AkitaError::InvalidInput("witness fold is not owned by unit".into()))?;
+    if local >= unit.live_fold_count {
         return Err(AkitaError::InvalidInput(
-            "witness block is not owned by unit".into(),
+            "witness fold is not owned by unit".into(),
         ));
     }
     Ok(local)
@@ -728,6 +710,7 @@ impl ChunkedWitnessCfg {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::SisModulusFamily;
 
     #[test]
     fn default_is_single_chunk() {
@@ -760,85 +743,87 @@ mod tests {
         }
     }
 
-    fn test_group() -> OpeningBatchWitnessGroup {
-        OpeningBatchWitnessGroup {
-            id: SemanticGroupId(0),
-            num_claims: 2,
-            live_fold_count: 4,
-            fold_position_count: 3,
-            depth_open: 2,
-            depth_commit: 2,
-            depth_fold: 2,
-            n_a: 2,
-            e_setup_col_offset: 0,
-        }
+    fn test_layout(num_shards: usize) -> (LevelParams, OpeningClaimsLayout, WitnessLayout) {
+        let mut lp = LevelParams::params_only(
+            SisModulusFamily::Q32,
+            32,
+            2,
+            1,
+            1,
+            1,
+            akita_challenges::SparseChallengeConfig::pm1_only(1),
+        )
+        .with_decomp(4, 25, 2, 2)
+        .expect("test params");
+        lp.shard_granule = 2;
+        let opening_batch = OpeningClaimsLayout::new(0, 2).expect("opening batch");
+        let layout =
+            WitnessLayout::new(&lp, &opening_batch, num_shards, 3, 2).expect("witness layout");
+        (lp, opening_batch, layout)
     }
 
     #[test]
-    fn layout_indexing_matches_compact_semantics() {
-        let layout = OpeningBatchWitnessLayout::new(
-            vec![test_group()],
-            vec![SemanticGroupId(0)],
-            vec![SemanticGroupId(0)],
-            1,
-            3,
-            2,
-        )
-        .expect("layout");
-        let unit = layout
-            .ownership_unit(SemanticGroupId(0), MachineChunkId(0))
-            .expect("unit");
+    fn layout_indexing_matches_digit_innermost_semantics() {
+        let (lp, opening_batch, layout) = test_layout(2);
+        let unit = layout.unit(0, 1).expect("unit");
+        let depth_fold = lp
+            .num_digits_fold(2, lp.field_bits_for_cache())
+            .expect("fold depth");
+        assert_eq!(unit.global_fold_range(), 4..7);
         assert_eq!(
-            layout.e_index(unit, 1, 2, 1).expect("e"),
-            unit.e_range.start + 1 + 2 * (2 + unit.blocks)
+            layout.e_index(unit, 2, 2, 1, 6, 1).expect("e"),
+            unit.e_range().start + 1 + 2 * (2 + 3)
         );
         assert_eq!(
-            layout.t_index(unit, 0, 3, 1, 1).expect("t"),
-            unit.t_range.start + 1 + 2 * (1 + 2 * 3)
+            layout.t_index(unit, 2, 1, 2, 0, 5, 0, 1).expect("t"),
+            unit.t_range().start + 1 + 2
         );
         assert_eq!(
-            layout.z_index(unit, 1, 1, 0).expect("z"),
-            unit.z_range.start + 2 * (1 + 2)
-        );
-        assert_eq!(layout.r_index(2, 1).expect("r"), layout.r_range.start + 5);
-        assert_eq!(
-            layout
-                .e_setup_col_index(SemanticGroupId(0), 1, 2, 1)
-                .expect("setup e"),
-            1 + 2 * (2 + 4)
+            layout.z_index(unit, 4, 2, depth_fold, 1, 1, 0).expect("z"),
+            unit.z_range().start + depth_fold * (1 + 2)
         );
         assert_eq!(
-            layout
-                .t_setup_col_index(SemanticGroupId(0), 1, 2, 1, 1)
-                .expect("setup t"),
-            1 + 2 * (1 + 2 * (2 + 4))
+            layout.r_index(2, 2, 1).expect("r"),
+            layout.r_range().start + 5
         );
-        assert_eq!(
-            layout
-                .z_setup_col_index(SemanticGroupId(0), 1, 1)
-                .expect("setup z"),
-            3
-        );
+        assert_eq!(opening_batch.num_total_polynomials(), 2);
+    }
+
+    #[test]
+    fn granule_aligned_shards_are_exact_and_contiguous() {
+        let (_, _, layout) = test_layout(2);
+        let units = layout.units_for_group(0).expect("units");
+        assert_eq!(units.len(), 2);
+        assert_eq!(units[0].global_fold_range(), 0..4);
+        assert_eq!(units[1].global_fold_range(), 4..7);
+        assert_eq!(units[0].t_range().end, units[1].z_range().start);
+        assert_eq!(units[1].t_range().end, layout.r_range().start);
+        assert_eq!(layout.group_live_fold_count(0).expect("fold count"), 7);
     }
 
     #[test]
     fn layout_rejects_out_of_range_semantic_indices() {
-        let layout = OpeningBatchWitnessLayout::new(
-            vec![test_group()],
-            vec![SemanticGroupId(0)],
-            vec![SemanticGroupId(0)],
-            1,
-            1,
-            1,
-        )
-        .expect("layout");
-        let unit = layout
-            .ownership_unit(SemanticGroupId(0), MachineChunkId(0))
-            .expect("unit");
-        assert!(layout.e_index(unit, 2, 0, 0).is_err());
-        assert!(layout.t_index(unit, 0, 0, 2, 0).is_err());
-        assert!(layout.z_index(unit, 3, 0, 0).is_err());
-        assert!(layout.r_index(1, 0).is_err());
+        let (lp, _, layout) = test_layout(2);
+        let unit = layout.unit(0, 0).expect("unit");
+        let depth_fold = lp
+            .num_digits_fold(2, lp.field_bits_for_cache())
+            .expect("fold depth");
+        assert!(layout.e_index(unit, 2, 2, 2, 0, 0).is_err());
+        assert!(layout.t_index(unit, 2, 1, 2, 0, 0, 1, 0).is_err());
+        assert!(layout.z_index(unit, 4, 2, depth_fold, 4, 0, 0).is_err());
+        assert!(layout.r_index(2, 3, 0).is_err());
+    }
+
+    #[test]
+    fn layout_rejects_mismatched_shapes_and_foreign_units() {
+        let (_, _, layout) = test_layout(2);
+        let unit = layout.unit(0, 0).expect("unit");
+        assert!(layout.e_index(unit, 1, 2, 0, 0, 0).is_err());
+        assert!(layout.t_index(unit, 2, 2, 2, 0, 0, 0, 0).is_err());
+        assert!(layout.z_index(unit, 1, 1, 1, 0, 0, 0).is_err());
+
+        let foreign = WitnessUnitLayout::new_for_test(0, 0, 0, 1, 0..1, 1..2, 2..3);
+        assert!(layout.e_index(&foreign, 1, 1, 0, 0, 0).is_err());
     }
 
     #[test]

@@ -7,8 +7,8 @@ use crate::validation::validate_i8_setup_log_basis;
 use akita_algebra::CyclotomicRing;
 use akita_serialization::AkitaSerialize;
 use akita_types::{
-    dispatch_for_field, emit_witness_t_planes, emit_witness_z_planes, LevelParamsLike,
-    OpeningBatchWitnessLayout, RingRole, SemanticGroupId, MULTI_GROUP_ROOT_MULTI_CHUNK_UNSUPPORTED,
+    dispatch_for_field, emit_witness_t_planes, emit_witness_z_planes, LevelParamsLike, RingRole,
+    WitnessLayout,
 };
 
 /// Prover-side ring artifacts retained for segment-typed terminal encoding.
@@ -196,8 +196,8 @@ fn typed_z_folded_centered_per_chunk<const D: usize>(
 /// Emit one group's physical Z, E, and T planes through the canonical layout.
 fn emit_group_witness_segments<F: CanonicalField, const D: usize>(
     out: &mut [i8],
-    layout: &OpeningBatchWitnessLayout,
-    group_id: SemanticGroupId,
+    layout: &WitnessLayout,
+    group_id: usize,
     group: &PreparedRingSwitchGroup<'_, F, D>,
     root_lp: &LevelParams,
     num_claims: usize,
@@ -217,12 +217,22 @@ fn emit_group_witness_segments<F: CanonicalField, const D: usize>(
     for (unit, z_centered) in units.into_iter().zip(&group.z_folded_centered_per_chunk) {
         let z_planes =
             decompose_z_folded_planes(z_centered, num_digits_fold, group.params.log_basis())?;
-        emit_witness_z_planes::<D>(out, layout, unit, &z_planes)?;
+        emit_witness_z_planes::<D>(
+            out,
+            layout,
+            unit,
+            group.params.fold_position_count(),
+            group.params.num_digits_commit(),
+            num_digits_fold,
+            &z_planes,
+        )?;
     }
     emit_group_e_planes_padded::<D>(
         out,
         layout,
         group_id,
+        num_claims,
+        group.params.num_digits_open(),
         &group.e_hat,
         group.params.live_fold_count(),
     )?;
@@ -230,6 +240,9 @@ fn emit_group_witness_segments<F: CanonicalField, const D: usize>(
         out,
         layout,
         group_id,
+        num_claims,
+        group.params.a_rows_len(),
+        group.params.num_digits_open(),
         group.t_hat.typed_planes::<D>()?,
         group.params.live_fold_count(),
     )?;
@@ -238,22 +251,22 @@ fn emit_group_witness_segments<F: CanonicalField, const D: usize>(
 
 fn emit_group_e_planes_padded<const D_A: usize>(
     out: &mut [i8],
-    layout: &OpeningBatchWitnessLayout,
-    group_id: SemanticGroupId,
+    layout: &WitnessLayout,
+    group_id: usize,
+    num_claims: usize,
+    depth_open: usize,
     e_hat: &DigitBlocks,
     source_num_blocks: usize,
 ) -> Result<(), AkitaError> {
-    let group = layout.group(group_id)?;
     if e_hat.digit_stride() > D_A || !D_A.is_multiple_of(e_hat.digit_stride()) {
         return Err(AkitaError::InvalidSize {
             expected: D_A,
             actual: e_hat.digit_stride(),
         });
     }
-    let expected = group
-        .num_claims
+    let expected = num_claims
         .checked_mul(source_num_blocks)
-        .and_then(|n| n.checked_mul(group.depth_open))
+        .and_then(|n| n.checked_mul(depth_open))
         .ok_or_else(|| AkitaError::InvalidSetup("witness E source length overflow".into()))?;
     let expected_digits = expected
         .checked_mul(D_A)
@@ -265,25 +278,25 @@ fn emit_group_e_planes_padded<const D_A: usize>(
         });
     }
     let role_ratio = D_A / e_hat.digit_stride();
-    if e_hat.block_count() != group.num_claims * source_num_blocks * role_ratio {
+    if e_hat.block_count() != num_claims * source_num_blocks * role_ratio {
         return Err(AkitaError::InvalidProof);
     }
     for unit in layout.units_for_group(group_id)? {
-        for claim in 0..group.num_claims {
-            for global_block in unit.global_block_base..unit.global_block_base + unit.blocks {
-                for digit in 0..group.depth_open {
+        for claim in 0..num_claims {
+            for global_block in unit.global_fold_range() {
+                for digit in 0..depth_open {
                     let logical_block = claim * source_num_blocks + global_block;
                     let mut plane = [0i8; D_A];
                     for role_subcol in 0..role_ratio {
                         let source_block = logical_block * role_ratio + role_subcol;
-                        let source = source_block * group.depth_open + digit;
+                        let source = source_block * depth_open + digit;
                         let source_plane = e_hat.plane(source).ok_or(AkitaError::InvalidProof)?;
                         let start = role_subcol * e_hat.digit_stride();
                         plane[start..start + e_hat.digit_stride()].copy_from_slice(source_plane);
                     }
                     write_padded_plane::<D_A>(
                         out,
-                        layout.e_index(unit, claim, global_block, digit)?,
+                        layout.e_index(unit, num_claims, depth_open, claim, global_block, digit)?,
                         &plane,
                     )?;
                 }
@@ -398,15 +411,6 @@ where
                     z_folded_centered_per_chunk,
                 });
             }
-            let has_multi_chunk_witness = lp.witness_chunk.num_chunks > 1
-                || owned
-                    .iter()
-                    .any(|group| group.z_folded_centered_per_chunk.len() > 1);
-            if is_multi_group && has_multi_chunk_witness {
-                return Err(AkitaError::InvalidSetup(
-                    MULTI_GROUP_ROOT_MULTI_CHUNK_UNSUPPORTED.to_string(),
-                ));
-            }
             // Only the singleton suffix retains terminal artifacts; multi-group folds
             // are never terminal.
             if is_multi_group && retain_terminal_artifacts {
@@ -459,7 +463,7 @@ where
                 emit_group_witness_segments::<F, D>(
                     &mut out,
                     &witness_layout,
-                    SemanticGroupId(group_index),
+                    group_index,
                     &owned[group_index],
                     lp,
                     group_layout.num_polynomials(),
@@ -552,12 +556,17 @@ fn decompose_z_folded_planes<const D: usize>(
 
 fn emit_r_rows_padded<F: CanonicalField, const D_A: usize>(
     out: &mut [i8],
-    layout: &OpeningBatchWitnessLayout,
+    layout: &WitnessLayout,
     r: &RelationQuotientOutput<F>,
     levels: usize,
     log_basis: u32,
 ) -> Result<(), AkitaError> {
-    if r.rows().len() != layout.relation_rows || levels != layout.quotient_depth {
+    let expected_len = r
+        .rows()
+        .len()
+        .checked_mul(levels)
+        .ok_or_else(|| AkitaError::InvalidSetup("R witness width overflow".to_string()))?;
+    if layout.r_range().len() != expected_len {
         return Err(AkitaError::InvalidProof);
     }
     let q = (-F::one()).to_canonical_u128() + 1;
@@ -579,7 +588,11 @@ fn emit_r_rows_padded<F: CanonicalField, const D_A: usize>(
         for digit in 0..levels {
             let start = digit * row.ring_dim();
             let end = start + row.ring_dim();
-            write_padded_plane::<D_A>(out, layout.r_index(row_index, digit)?, &digits[start..end])?;
+            write_padded_plane::<D_A>(
+                out,
+                layout.r_index(levels, row_index, digit)?,
+                &digits[start..end],
+            )?;
         }
     }
     Ok(())

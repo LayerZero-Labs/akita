@@ -974,35 +974,6 @@ impl LevelParams {
         Ok(start..end)
     }
 
-    fn root_segment_rings(
-        num_polys: usize,
-        live_fold_count: usize,
-        fold_position_count: usize,
-        n_a: usize,
-        num_digits_commit: usize,
-        num_digits_open: usize,
-        num_digits_fold: usize,
-    ) -> Result<usize, AkitaError> {
-        let e_hat = num_polys
-            .checked_mul(live_fold_count)
-            .and_then(|n| n.checked_mul(num_digits_open))
-            .ok_or_else(|| AkitaError::InvalidSetup("root e-hat witness overflow".to_string()))?;
-        let t_hat = num_polys
-            .checked_mul(live_fold_count)
-            .and_then(|n| n.checked_mul(n_a))
-            .and_then(|n| n.checked_mul(num_digits_open))
-            .ok_or_else(|| AkitaError::InvalidSetup("root t-hat witness overflow".to_string()))?;
-        let z_hat = fold_position_count
-            .checked_mul(num_digits_commit)
-            .and_then(|n| n.checked_mul(num_digits_fold))
-            .ok_or_else(|| AkitaError::InvalidSetup("root z-hat witness overflow".to_string()))?;
-
-        e_hat
-            .checked_add(t_hat)
-            .and_then(|n| n.checked_add(z_hat))
-            .ok_or_else(|| AkitaError::InvalidSetup("root witness segment overflow".to_string()))
-    }
-
     /// Root next-witness length in field elements for scalar or multi-group roots.
     pub fn root_next_w_len<F: CanonicalField>(
         &self,
@@ -1010,67 +981,23 @@ impl LevelParams {
         layout: RelationMatrixRowLayout,
     ) -> Result<usize, AkitaError> {
         opening_batch.check()?;
-        let modulus = crate::schedule::detect_field_modulus::<F>();
-        let field_bits = 128 - (modulus.saturating_sub(1)).leading_zeros();
-        if !self.has_precommitted_groups() {
-            if opening_batch.num_groups() != 1 {
-                return Err(AkitaError::InvalidSetup(
-                    "scalar root params require a single opening group".to_string(),
-                ));
-            }
-            return crate::schedule::w_ring_element_count_for_chunks(
-                field_bits,
-                self,
-                opening_batch.num_total_polynomials(),
-                layout,
-                self.witness_chunk.num_chunks,
-            )?
+        self.witness_chunk.validate()?;
+        self.validate_root_opening_batch(opening_batch)?;
+        let relation_rows =
+            self.relation_matrix_row_count_for(opening_batch.num_groups(), layout)?;
+        let witness_layout = crate::WitnessLayout::new(
+            self,
+            opening_batch,
+            self.witness_chunk.num_chunks,
+            relation_rows,
+            crate::r_decomp_levels::<F>(self.log_basis),
+        )?;
+        witness_layout
+            .total_len()
             .checked_mul(self.ring_dimension)
             .ok_or_else(|| {
                 AkitaError::InvalidSetup("root next witness length overflow".to_string())
-            });
-        }
-
-        let final_group_index = self.validate_root_opening_batch(opening_batch)?;
-        let final_group = opening_batch.group_layout(final_group_index)?;
-        let mut total = Self::root_segment_rings(
-            final_group.num_polynomials(),
-            self.live_fold_count,
-            self.fold_position_count,
-            self.a_key.row_len(),
-            self.num_digits_commit,
-            self.num_digits_open,
-            self.num_digits_fold(final_group.num_polynomials(), field_bits)?,
-        )?;
-        for group in &self.precommitted_groups {
-            let group_rings = Self::root_segment_rings(
-                group.layout.group.num_polynomials(),
-                group.layout.live_fold_count,
-                group.layout.fold_position_count,
-                group.a_key.row_len(),
-                group.num_digits_commit,
-                group.num_digits_open,
-                group.num_digits_fold_one,
-            )?;
-            total = total
-                .checked_add(group_rings)
-                .ok_or_else(|| AkitaError::InvalidSetup("root witness overflow".to_string()))?;
-        }
-
-        let r_rows = self.relation_matrix_row_count_for(opening_batch.num_groups(), layout)?;
-        let r_count = r_rows
-            .checked_mul(crate::sis::compute_num_digits_full_field(
-                field_bits,
-                self.log_basis,
-            ))
-            .ok_or_else(|| AkitaError::InvalidSetup("root r-tail witness overflow".to_string()))?;
-        total = total
-            .checked_add(r_count)
-            .ok_or_else(|| AkitaError::InvalidSetup("root witness overflow".to_string()))?;
-
-        total.checked_mul(self.ring_dimension).ok_or_else(|| {
-            AkitaError::InvalidSetup("root next witness length overflow".to_string())
-        })
+            })
     }
 
     /// Row count for an explicit relation-matrix row layout.

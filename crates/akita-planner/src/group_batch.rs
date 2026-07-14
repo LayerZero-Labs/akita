@@ -11,8 +11,9 @@ use akita_types::sis::{
 use akita_types::{
     direct_witness_bytes, extension_opening_reduction_level_bytes, level_proof_bytes,
     AkitaScheduleInputs, AkitaScheduleLookupKey, CleartextWitnessShape, CommitmentRingDims,
-    DecompositionParams, DirectStep, FoldStep, LevelParams, PolynomialGroupLayout,
-    PrecommittedGroupParams, PrecommittedLevelParams, RelationMatrixRowLayout, Schedule, Step,
+    DecompositionParams, DirectStep, FoldStep, LevelParams, OpeningClaimsLayout,
+    PolynomialGroupLayout, PrecommittedGroupParams, PrecommittedLevelParams,
+    RelationMatrixRowLayout, Schedule, Step, WitnessLayout,
 };
 
 use crate::schedule_params::{
@@ -288,41 +289,6 @@ pub(crate) fn multi_group_root_precommitted_groups(
     Ok((precommitted_groups, precommitted_d_width))
 }
 
-fn multi_group_root_segment_rings(
-    num_polys: usize,
-    live_fold_count: usize,
-    fold_position_count: usize,
-    n_a: usize,
-    num_digits_commit: usize,
-    num_digits_open: usize,
-    num_digits_fold: usize,
-) -> Result<usize, AkitaError> {
-    let e_hat = num_polys
-        .checked_mul(live_fold_count)
-        .and_then(|n| n.checked_mul(num_digits_open))
-        .ok_or_else(|| {
-            AkitaError::InvalidSetup("multi-group root e-hat witness overflow".to_string())
-        })?;
-    let t_hat = num_polys
-        .checked_mul(live_fold_count)
-        .and_then(|n| n.checked_mul(n_a))
-        .and_then(|n| n.checked_mul(num_digits_open))
-        .ok_or_else(|| {
-            AkitaError::InvalidSetup("multi-group root t-hat witness overflow".to_string())
-        })?;
-    let z_hat = fold_position_count
-        .checked_mul(num_digits_commit)
-        .and_then(|n| n.checked_mul(num_digits_fold))
-        .ok_or_else(|| {
-            AkitaError::InvalidSetup("multi-group root z-hat witness overflow".to_string())
-        })?;
-
-    e_hat
-        .checked_add(t_hat)
-        .and_then(|n| n.checked_add(z_hat))
-        .ok_or_else(|| AkitaError::InvalidSetup("multi-group root witness overflow".to_string()))
-}
-
 pub(crate) fn multi_group_root_next_w_len(
     field_bits: u32,
     params: &LevelParams,
@@ -335,45 +301,34 @@ pub(crate) fn multi_group_root_next_w_len(
         ));
     }
 
-    let mut total = multi_group_root_segment_rings(
-        main_num_polys,
-        params.live_fold_count,
-        params.fold_position_count,
-        params.a_key.row_len(),
-        params.num_digits_commit,
-        params.num_digits_open,
-        params.num_digits_fold(main_num_polys, field_bits)?,
+    params.witness_chunk.validate()?;
+    let precommitted_layouts = params
+        .precommitted_groups
+        .iter()
+        .map(|group| group.layout.group)
+        .collect::<Vec<_>>();
+    let final_num_vars = precommitted_layouts
+        .first()
+        .map_or(0, |group| group.num_vars());
+    let opening_batch = OpeningClaimsLayout::from_root_groups(
+        &precommitted_layouts,
+        PolynomialGroupLayout::new(final_num_vars, main_num_polys),
     )?;
-    for group in &params.precommitted_groups {
-        let group_rings = multi_group_root_segment_rings(
-            group.layout.group.num_polynomials(),
-            group.layout.live_fold_count,
-            group.layout.fold_position_count,
-            group.a_key.row_len(),
-            group.num_digits_commit,
-            group.num_digits_open,
-            group.num_digits_fold_one,
-        )?;
-        total = total.checked_add(group_rings).ok_or_else(|| {
-            AkitaError::InvalidSetup("multi-group root witness overflow".to_string())
-        })?;
-    }
-
     let r_rows =
         params.relation_matrix_row_count_for(params.precommitted_groups.len() + 1, layout)?;
-    let r_count = r_rows
-        .checked_mul(compute_num_digits_full_field(field_bits, params.log_basis))
+    let witness_layout = WitnessLayout::new(
+        params,
+        &opening_batch,
+        params.witness_chunk.num_chunks,
+        r_rows,
+        compute_num_digits_full_field(field_bits, params.log_basis),
+    )?;
+    witness_layout
+        .total_len()
+        .checked_mul(params.ring_dimension)
         .ok_or_else(|| {
-            AkitaError::InvalidSetup("multi-group root r-tail witness overflow".to_string())
-        })?;
-
-    let rings = total
-        .checked_add(r_count)
-        .ok_or_else(|| AkitaError::InvalidSetup("multi-group root witness overflow".to_string()))?;
-
-    rings.checked_mul(params.ring_dimension).ok_or_else(|| {
-        AkitaError::InvalidSetup("multi-group root next witness length overflow".to_string())
-    })
+            AkitaError::InvalidSetup("multi-group root next witness length overflow".to_string())
+        })
 }
 
 fn multi_group_root_main_level_params_candidate(

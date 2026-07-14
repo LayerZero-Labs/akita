@@ -464,9 +464,8 @@ pub fn setup_active_ring_elems_at<F: FieldCore, E: FieldCore>(
 mod tests {
     use super::*;
     use crate::{
-        gadget_row_scalars, OpeningBatchWitnessGroup, OpeningBatchWitnessLayout,
-        RelationMatrixRowLayout, SemanticGroupId, SetupContributionGroupInputs,
-        SetupContributionPlan,
+        gadget_row_scalars, RelationMatrixRowLayout, SetupContributionGroupInputs,
+        SetupContributionPlan, WitnessLayout, WitnessUnitLayout,
     };
     use akita_field::Prime128OffsetA7F7;
 
@@ -476,35 +475,28 @@ mod tests {
         F::from_canonical_u128(value)
     }
 
-    fn single_chunk_layout_from_inputs(
-        inputs: &SetupContributionPlanInputs<F>,
-    ) -> OpeningBatchWitnessLayout {
-        OpeningBatchWitnessLayout::new(
-            vec![OpeningBatchWitnessGroup {
-                id: SemanticGroupId(0),
-                num_claims: inputs.num_claims,
-                live_fold_count: inputs.live_fold_count,
-                fold_position_count: inputs.fold_position_count,
-                depth_open: inputs.depth_open,
-                depth_commit: inputs.depth_commit,
-                depth_fold: inputs.depth_fold,
-                n_a: inputs.n_a,
-                e_setup_col_offset: 0,
-            }],
-            vec![SemanticGroupId(0)],
-            vec![SemanticGroupId(0)],
-            1,
-            1,
-            inputs.depth_fold.max(1),
-        )
-        .expect("single chunk test layout")
+    fn single_chunk_layout_from_inputs(inputs: &SetupContributionPlanInputs<F>) -> WitnessLayout {
+        let z_len = inputs.fold_position_count * inputs.depth_commit * inputs.depth_fold;
+        let e_len = inputs.num_claims * inputs.live_fold_count * inputs.depth_open;
+        let t_len = e_len * inputs.n_a;
+        let unit = WitnessUnitLayout::new_for_test(
+            0,
+            0,
+            0,
+            inputs.live_fold_count,
+            0..z_len,
+            z_len..z_len + e_len,
+            z_len + e_len..z_len + e_len + t_len,
+        );
+        let cursor = z_len + e_len + t_len;
+        WitnessLayout::new_for_test(vec![unit], cursor..cursor + inputs.depth_fold.max(1))
     }
 
     fn prepare_single_group_plan(
         inputs: &SetupContributionPlanInputs<F>,
         full_vec_randomness: &[F],
         fold_gadget: &[F],
-        layout: &OpeningBatchWitnessLayout,
+        layout: &WitnessLayout,
     ) -> Result<SetupContributionPlan<F>, AkitaError> {
         let opening_source_len = layout.total_len();
         let single_group = SetupContributionGroupInputs::single_group_layout(

@@ -7,8 +7,8 @@ use super::{
 };
 use crate::{
     fold_rings_at_opening, lagrange_weights, recover_ring_subfield_inner_product,
-    reduce_inner_opening_to_ring_element, BasisMode, OpeningBatchWitnessGroup,
-    OpeningBatchWitnessLayout, SemanticGroupId,
+    reduce_inner_opening_to_ring_element, BasisMode, LevelParams, OpeningClaimsLayout,
+    SisModulusFamily, WitnessLayout,
 };
 use akita_algebra::CyclotomicRing;
 use akita_field::{Prime128OffsetA7F7, RandomSampling};
@@ -28,26 +28,20 @@ fn trace_layout(
     log_basis: u32,
     num_chunks: usize,
 ) -> TraceWeightLayout {
-    let group_id = SemanticGroupId(0);
-    let witness_layout = OpeningBatchWitnessLayout::new(
-        vec![OpeningBatchWitnessGroup {
-            id: group_id,
-            num_claims,
-            live_fold_count: num_blocks_per_claim,
-            fold_position_count: 1,
-            depth_open: num_digits_open,
-            depth_commit: 1,
-            depth_fold: 1,
-            n_a: 1,
-            e_setup_col_offset: 0,
-        }],
-        vec![group_id],
-        vec![group_id],
-        num_chunks,
+    let group_id = 0;
+    let lp = LevelParams::params_only(
+        SisModulusFamily::Q128,
+        1usize << ring_bits,
         1,
         1,
+        1,
+        1,
+        akita_challenges::SparseChallengeConfig::pm1_only(1),
     )
+    .with_decomp(1, num_blocks_per_claim, 1, num_digits_open)
     .unwrap();
+    let opening_batch = OpeningClaimsLayout::new(0, num_claims).unwrap();
+    let witness_layout = WitnessLayout::new(&lp, &opening_batch, num_chunks, 1, 1).unwrap();
     let opening_source_len = witness_layout.total_len();
     let required_col_bits = witness_layout
         .total_len()
@@ -678,9 +672,8 @@ mod closed_terms {
             block_rings.truncate(
                 layout
                     .witness_layout
-                    .group(layout.group_id)
-                    .unwrap()
-                    .live_fold_count,
+                    .group_live_fold_count(layout.group_id)
+                    .unwrap(),
             );
             let table = build_trace_weight_table_ring_block_weights::<Fk, E4, D8>(
                 &layout,
