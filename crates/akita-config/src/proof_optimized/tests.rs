@@ -462,8 +462,7 @@ fn runtime_setup_guard_rejects_undersized_matrix() {
 
 #[test]
 fn setup_matrix_scan_uses_one_shared_opening_point() {
-    let opening_batch =
-        worst_case_multi_group_opening_batch_for_shape(30, 4).expect("valid opening batch");
+    let opening_batch = OpeningClaimsLayout::new(30, 4).expect("valid opening batch");
     assert_eq!(opening_batch.num_total_polynomials(), 4);
 }
 

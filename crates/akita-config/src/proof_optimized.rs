@@ -4,9 +4,7 @@
 //! [`akita_types`] SIS primitives and generated schedule tables.
 
 use super::CommitmentConfig;
-use crate::matrix_envelope::{
-    accumulate_matrix_envelope_for_level, inflate_envelope_for_setup_prefix_slot,
-};
+use crate::matrix_envelope::accumulate_matrix_envelope_for_level;
 use akita_field::AkitaError;
 use akita_field::{Ext2, FpExt4, Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59};
 use akita_types::{
@@ -115,35 +113,13 @@ fn proof_optimized_max_setup_matrix_size_uncached<Cfg: CommitmentConfig>(
         ));
     }
 
-    let layouts = setup_envelope_scan_layouts(max_num_vars, max_num_batched_polys)?;
+    let layouts = setup_envelope_scan_layouts::<Cfg>(max_num_vars, max_num_batched_polys)?;
     let mut saw_supported_shape = false;
     let mut envelope = SetupMatrixEnvelope { max_setup_len: 1 };
     for layout in &layouts {
         if let Ok(Some(entry_envelope)) = setup_matrix_envelope_for_shape::<Cfg>(layout) {
             saw_supported_shape = true;
             envelope.max_setup_len = envelope.max_setup_len.max(entry_envelope.max_setup_len);
-        }
-    }
-
-    // Recursive setups also cover selected supported multi-group keys and their
-    // exact setup-prefix slot footprints. The representative scan above uses
-    // near-capacity precommits only and does not size those selected slots.
-    if Cfg::recursive_setup_planning() {
-        for key in crate::generated_families::recursive_group_batch_candidates_for_capacity::<Cfg>(
-            max_num_vars,
-            max_num_batched_polys,
-        )? {
-            let layout = key.opening_layout()?;
-            if let Some(entry_envelope) = setup_matrix_envelope_for_shape::<Cfg>(&layout)? {
-                saw_supported_shape = true;
-                envelope.max_setup_len = envelope.max_setup_len.max(entry_envelope.max_setup_len);
-            }
-        }
-        for slot_id in crate::setup_prefix_slots::setup_prefix_slot_ids_for_capacity::<Cfg>(
-            max_num_vars,
-            max_num_batched_polys,
-        )? {
-            inflate_envelope_for_setup_prefix_slot(&mut envelope, &slot_id)?;
         }
     }
 
@@ -156,62 +132,30 @@ fn proof_optimized_max_setup_matrix_size_uncached<Cfg: CommitmentConfig>(
     Ok(envelope)
 }
 
-fn setup_envelope_scan_layouts(
+fn setup_envelope_scan_layouts<Cfg: CommitmentConfig>(
     max_num_vars: usize,
     max_num_batched_polys: usize,
 ) -> Result<Vec<OpeningClaimsLayout>, AkitaError> {
     let poly_counts: Vec<_> = (1..=max_num_batched_polys).collect();
     let mut layouts = Vec::new();
+    let supports_multi_group_root = Cfg::decomposition().log_commit_bound == 1
+        && !Cfg::chunked_witness_cfg().uses_multi_chunk();
+
     for main_num_vars in 1..=max_num_vars {
-        let precommitted_num_vars = setup_envelope_precommitted_num_vars(max_num_vars);
         for &main_num_polys in &poly_counts {
             let main_group = PolynomialGroupLayout::new(main_num_vars, main_num_polys);
-            push_root_batch_layout(&mut layouts, &[], main_group)?;
-
-            for &pre_num_vars in &precommitted_num_vars {
-                let precommitted = [PolynomialGroupLayout::new(pre_num_vars, 1)];
-                push_root_batch_layout(&mut layouts, &precommitted, main_group)?;
-            }
-            for (index, &first_pre_num_vars) in precommitted_num_vars.iter().enumerate() {
-                for &second_pre_num_vars in &precommitted_num_vars[index..] {
-                    let precommitteds = [
-                        PolynomialGroupLayout::new(first_pre_num_vars, 1),
-                        PolynomialGroupLayout::new(second_pre_num_vars, 1),
-                    ];
-                    push_root_batch_layout(&mut layouts, &precommitteds, main_group)?;
-                }
+            if supports_multi_group_root {
+                let precommitted = PolynomialGroupLayout::new(max_num_vars, 1);
+                layouts.push(OpeningClaimsLayout::from_root_groups(
+                    &[precommitted, precommitted],
+                    main_group,
+                )?);
+            } else {
+                layouts.push(OpeningClaimsLayout::from_root_groups(&[], main_group)?);
             }
         }
     }
     Ok(layouts)
-}
-
-fn setup_envelope_precommitted_num_vars(max_num_vars: usize) -> Vec<usize> {
-    if max_num_vars > 1 {
-        vec![max_num_vars - 1, max_num_vars]
-    } else {
-        vec![max_num_vars]
-    }
-}
-
-fn push_root_batch_layout(
-    layouts: &mut Vec<OpeningClaimsLayout>,
-    precommitteds: &[PolynomialGroupLayout],
-    main_group: PolynomialGroupLayout,
-) -> Result<(), AkitaError> {
-    layouts.push(OpeningClaimsLayout::from_root_groups(
-        precommitteds,
-        main_group,
-    )?);
-    Ok(())
-}
-
-/// Worst-case opening batch for a `(num_vars, num_polynomials)` shape.
-pub fn worst_case_multi_group_opening_batch_for_shape(
-    num_vars: usize,
-    num_polynomials: usize,
-) -> Result<OpeningClaimsLayout, AkitaError> {
-    OpeningClaimsLayout::new(num_vars, num_polynomials)
 }
 
 fn setup_matrix_envelope_for_shape<Cfg: CommitmentConfig>(
