@@ -153,19 +153,6 @@ fn write_rust_split(
             ),
         )?;
     }
-    // Keep exhaustive boundary provenance beside the compact runtime modules.
-    // The CSV is not loaded by verifier-facing code.
-    let audit_path = out_dir.join("policy_audit.csv");
-    let mut audit = fs::File::create(audit_path)?;
-    write_csv_rows_to(&mut audit, rows)?;
-    let review_path = out_dir.join("policy_review.txt");
-    fs::write(
-        review_path,
-        format!(
-            "policy={}\nmodel=adps16-quantum\nshape=LGSA\ntarget_bits=128.0\naccepted_boundary_rows_requiring_review=0\nstatus=STRUCTURED_SIS_REVIEW_REQUIRED\nThe scalar table does not prove security for structured Module SIS instances; retain the attack-review artifact.\n",
-            config.policy.label(),
-        ),
-    )?;
     Ok(())
 }
 

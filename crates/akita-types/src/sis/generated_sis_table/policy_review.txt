@@ -1,7 +1,0 @@
-policy=Quantum128BitADPS16
-model=adps16-quantum
-shape=LGSA
-target_bits=128.0
-accepted_boundary_rows_requiring_review=0
-status=STRUCTURED_SIS_REVIEW_REQUIRED
-The scalar table does not prove security for structured Module SIS instances; retain the attack-review artifact.

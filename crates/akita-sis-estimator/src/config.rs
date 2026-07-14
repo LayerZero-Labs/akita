@@ -13,8 +13,6 @@ pub enum ReductionCostModel {
         /// Cost mode.
         mode: Adps16Mode,
     },
-    /// Reserved BCSS23 idealized quantum-sieving model for offline comparison.
-    Bcss23Idealized,
     /// Becker-Ducas-Gama-Laarhoven 2016 model.
     Bdgl16,
     /// MATZOV model.
@@ -337,7 +335,6 @@ mod tests {
             ReductionCostModel::Adps16 {
                 mode: Adps16Mode::Paranoid,
             },
-            ReductionCostModel::Bcss23Idealized,
             ReductionCostModel::Bdgl16,
             ReductionCostModel::Matzov {
                 nearest_neighbor: NearestNeighborModel::Classical,
@@ -363,7 +360,7 @@ mod tests {
             SearchMode::ProvenPruned,
         ];
 
-        assert_eq!(reduction_models.len(), 8);
+        assert_eq!(reduction_models.len(), 7);
         assert_eq!(shape_models.len(), 5);
         assert_eq!(search_modes.len(), 4);
     }

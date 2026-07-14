@@ -58,8 +58,8 @@ implementation acceptance criteria live in
 - `crates/akita-types/src/sis/mod.rs`, `ajtai_key.rs`, `generated_sis_table/`, `norm_bound.rs`.
 - Paper §2.2 `def:msis`, §3.12 `sec:batched-soundness` ("MSIS targets", "Two norm models").
 - `docs/security-posture.md`, `specs/sis-quantum128-scalar-n-table.md`.
-- `crates/akita-types/src/sis/generated_sis_table/policy_audit.csv` (certificates
-  and generation provenance).
+- `scripts/sis_golden/infinity_width_table.csv` (generation provenance for the
+  infinity-width golden grid).
 
 ## Norm bounds and weak binding
 

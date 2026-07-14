@@ -33,8 +33,8 @@ pub use ajtai_key::{
     ceil_coeff_linf_bucket, ceil_supported_linf_bound, min_secure_rank,
     sis_table_key_for_linf_bound, AjtaiKeyParams, ScalarCutoff, SisMatrixRole, SisModulusProfileId,
     SisRoleCell, SisSecurityPolicyId, SisTableDigest, SisTableKey, A_ROLE_RING_DIMS,
-    BD_ROLE_RING_DIMS, COEFF_LINF_BUCKETS, DEFAULT_SIS_SECURITY_POLICY, F_ROLE_RING_DIMS,
-    GADGET_COEFF_LINF_ANCHORS, SIS_MATRIX_ROLES, SUPPORTED_SIS_SECURITY_POLICIES,
+    BD_ROLE_RING_DIMS, COEFF_LINF_BUCKETS, DEFAULT_SIS_SECURITY_POLICY, GADGET_COEFF_LINF_ANCHORS,
+    SIS_MATRIX_ROLES, SUPPORTED_SIS_SECURITY_POLICIES,
 };
 pub use decomposition_digits::{
     balanced_digit_abs_max, compute_num_digits_full_field, decomposed_s_block_ring_count,

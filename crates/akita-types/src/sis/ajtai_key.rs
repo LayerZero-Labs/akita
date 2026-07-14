@@ -46,8 +46,6 @@ pub enum SisMatrixRole {
     B,
     /// Opening digit matrix.
     D,
-    /// Optional tiered commitment matrix.
-    F,
 }
 
 impl SisMatrixRole {
@@ -57,7 +55,6 @@ impl SisMatrixRole {
             Self::A => 1,
             Self::B => 2,
             Self::D => 3,
-            Self::F => 4,
         }
     }
 
@@ -67,7 +64,6 @@ impl SisMatrixRole {
             Self::A => "A",
             Self::B => "B",
             Self::D => "D",
-            Self::F => "F",
         }
     }
 }
@@ -203,17 +199,9 @@ pub const A_ROLE_RING_DIMS: &[u32] = &[64, 128, 256];
 /// Current planner ring dimensions for B and D, including the Q128 d=32 case.
 pub const BD_ROLE_RING_DIMS: &[u32] = &[32, 64, 128, 256];
 
-/// Explicit F-role dimensions. F shares the gadget anchor set but remains a
-/// separate role so future tiered commitments cannot silently alias B or D.
-pub const F_ROLE_RING_DIMS: &[u32] = &[32, 64, 128, 256];
-
-/// Explicit production roles, including the reserved tiered F matrix.
-pub const SIS_MATRIX_ROLES: &[SisMatrixRole] = &[
-    SisMatrixRole::A,
-    SisMatrixRole::B,
-    SisMatrixRole::D,
-    SisMatrixRole::F,
-];
+/// Production matrix roles with checked-in coverage.
+pub const SIS_MATRIX_ROLES: &[SisMatrixRole] =
+    &[SisMatrixRole::A, SisMatrixRole::B, SisMatrixRole::D];
 
 /// Return whether the exact role cell is part of the canonical coverage.
 ///
@@ -228,14 +216,7 @@ pub fn sis_role_cell(
 ) -> Option<SisRoleCell> {
     let (dims, bounds) = match role {
         SisMatrixRole::A => (A_ROLE_RING_DIMS, COEFF_LINF_BUCKETS),
-        SisMatrixRole::B | SisMatrixRole::D | SisMatrixRole::F => {
-            let dims = if role == SisMatrixRole::F {
-                F_ROLE_RING_DIMS
-            } else {
-                BD_ROLE_RING_DIMS
-            };
-            (dims, GADGET_COEFF_LINF_ANCHORS)
-        }
+        SisMatrixRole::B | SisMatrixRole::D => (BD_ROLE_RING_DIMS, GADGET_COEFF_LINF_ANCHORS),
     };
     if !dims.contains(&ring_dimension) || !bounds.contains(&coeff_linf_bound) {
         return None;
@@ -296,10 +277,6 @@ pub fn ceil_supported_linf_bound(
     let bucket = match role {
         SisMatrixRole::A => ceil_coeff_linf_bucket(linf)?,
         SisMatrixRole::B | SisMatrixRole::D => GADGET_COEFF_LINF_ANCHORS
-            .iter()
-            .copied()
-            .find(|&candidate| linf <= candidate)?,
-        SisMatrixRole::F => GADGET_COEFF_LINF_ANCHORS
             .iter()
             .copied()
             .find(|&candidate| linf <= candidate)?,

@@ -1,15 +1,11 @@
 //! Reduction cost models.
 
 pub mod adps16;
-pub mod bcss23;
 pub mod bdgl16;
 pub mod delta;
 pub mod short_vectors;
 
 pub use adps16::{adps16_log2_cost, adps16_short_vectors, log2_to_cost_value};
-pub use bcss23::{
-    bcss23_idealized_log2_cost, bcss23_idealized_short_vectors, BCSS23_IDEALIZED_EXPONENT,
-};
 pub use bdgl16::{bdgl16_log2_cost, bdgl16_short_vectors};
 pub use delta::{beta, delta};
 pub use short_vectors::ShortVectors;
@@ -22,9 +18,7 @@ use crate::{
 /// Validate that the configured reduction model is implemented on the infinity path.
 pub fn validate_infinity_reduction(model: ReductionCostModel) -> Result<()> {
     match model {
-        ReductionCostModel::Adps16 { .. }
-        | ReductionCostModel::Bcss23Idealized
-        | ReductionCostModel::Bdgl16 => Ok(()),
+        ReductionCostModel::Adps16 { .. } | ReductionCostModel::Bdgl16 => Ok(()),
         ReductionCostModel::Matzov { .. } => Err(EstimatorError::Unsupported {
             feature: "red_cost_model::Matzov",
         }),
@@ -44,9 +38,6 @@ pub fn validate_euclidean_reduction(model: ReductionCostModel) -> Result<()> {
         ReductionCostModel::Bdgl16 => Ok(()),
         ReductionCostModel::Adps16 { .. } => Err(EstimatorError::Unsupported {
             feature: "euclidean red_cost_model::ADPS16",
-        }),
-        ReductionCostModel::Bcss23Idealized => Err(EstimatorError::Unsupported {
-            feature: "euclidean red_cost_model::BCSS23 idealized",
         }),
         ReductionCostModel::Matzov { .. } => Err(EstimatorError::Unsupported {
             feature: "euclidean red_cost_model::Matzov",
@@ -72,10 +63,6 @@ pub fn log2_bkz_cost(
             let _ = effective_dimension;
             adps16_log2_cost(beta, mode)
         }
-        ReductionCostModel::Bcss23Idealized => {
-            let _ = effective_dimension;
-            bcss23_idealized_log2_cost(beta)
-        }
         ReductionCostModel::Bdgl16 => bdgl16_log2_cost(beta, effective_dimension),
         ReductionCostModel::Matzov { .. }
         | ReductionCostModel::Gj21 { .. }
@@ -94,10 +81,6 @@ pub fn short_vectors_for(
         ReductionCostModel::Adps16 { mode } => {
             let dimension = u32::try_from(effective_dimension).unwrap_or(u32::MAX);
             adps16_short_vectors(beta, dimension, mode)
-        }
-        ReductionCostModel::Bcss23Idealized => {
-            let _ = effective_dimension;
-            bcss23_idealized_short_vectors(beta)
         }
         ReductionCostModel::Bdgl16 => bdgl16_short_vectors(beta, effective_dimension),
         ReductionCostModel::Matzov { .. }
