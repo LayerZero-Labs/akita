@@ -11,8 +11,8 @@ pub struct SetupContributionGroupInputs {
     pub group_id: SemanticGroupId,
     pub e_col_offset: usize,
     pub num_claims: usize,
-    pub num_blocks: usize,
-    pub block_len: usize,
+    pub live_fold_count: usize,
+    pub fold_position_count: usize,
     pub depth_open: usize,
     pub depth_commit: usize,
     pub depth_fold: usize,
@@ -63,7 +63,7 @@ impl SetupContributionGroupInputs {
             .checked_add(inputs.n_b)
             .ok_or_else(|| AkitaError::InvalidSetup("D row start overflow".into()))?;
         let b_per_claim_e = inputs
-            .num_blocks
+            .live_fold_count
             .checked_mul(inputs.depth_open)
             .ok_or_else(|| AkitaError::InvalidSetup("e-hat claim width overflow".into()))?;
         let d_physical_cols = inputs
@@ -73,15 +73,15 @@ impl SetupContributionGroupInputs {
         let t_cols_per_vector = inputs
             .n_a
             .checked_mul(inputs.depth_open)
-            .and_then(|width| width.checked_mul(inputs.num_blocks))
+            .and_then(|width| width.checked_mul(inputs.live_fold_count))
             .ok_or_else(|| AkitaError::InvalidSetup("T polynomial width overflow".into()))?;
         Ok(SingleGroupSetupContributionLayout {
             group: SetupContributionGroupInputs {
                 group_id: SemanticGroupId(0),
                 e_col_offset: 0,
                 num_claims: inputs.num_claims,
-                num_blocks: inputs.num_blocks,
-                block_len: inputs.block_len,
+                live_fold_count: inputs.live_fold_count,
+                fold_position_count: inputs.fold_position_count,
                 depth_open: inputs.depth_open,
                 depth_commit: inputs.depth_commit,
                 depth_fold: inputs.depth_fold,

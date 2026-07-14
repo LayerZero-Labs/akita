@@ -89,7 +89,7 @@ where
     T: Transcript<F>,
 {
     let d_a = lp.role_dims().d_a();
-    let opening_layout = OpeningBlockLayout::new(lp.num_blocks, lp.block_len)?;
+    let opening_layout = OpeningBlockLayout::new(lp.live_fold_count, lp.fold_position_count)?;
     dispatch_for_field!(ProtocolDispatchSlot::Role(RingRole::Inner), F, d_a, |D| {
         verify_fold_eor_kernel::<F, E, T, D>(
             extension_opening_reduction,
@@ -471,7 +471,7 @@ where
                 )?;
                 if destination_ring_dim != D {
                     let public = trace_public_weights_root_terms::<F, E, D>(
-                        lp.num_blocks,
+                        lp.live_fold_count,
                         &opening_batch,
                         &prepared_point,
                         &row_coefficients,
@@ -871,7 +871,7 @@ where
             trace_opening_layout,
             trace_col_bits,
             trace_ring_bits,
-            prepared.lp.num_blocks,
+            prepared.lp.live_fold_count,
         )?;
         let prepared_point = prepared
             .trace_prepared_points
@@ -888,7 +888,7 @@ where
             trace_eval_scale: prepared.trace_eval_scale,
         })
     } else if prepared.lp.has_precommitted_groups() {
-        // Grouped root: dense trace-weight table (per-group `num_blocks`,
+        // Grouped root: dense trace-weight table (per-group `live_fold_count`,
         // `num_digits_open`, and group-major e-hat offset). The layout is inert
         // for dense evaluation, but remains the canonical checked description
         // of one opening-digit segment. Use its first relation group rather
@@ -904,7 +904,7 @@ where
         let group = trace_witness_layout.group(group_id)?;
         let num_trace_blocks = group
             .num_claims
-            .checked_mul(group.num_blocks)
+            .checked_mul(group.live_fold_count)
             .ok_or_else(|| AkitaError::InvalidSetup("trace block count overflow".to_string()))?;
         let layout = trace_weight_layout_from_segment(
             prepared.lp,
@@ -916,7 +916,7 @@ where
         )?;
         // Stage 2 is evaluated over the virtual opening domain. The physical
         // witness has no entries for the per-block structural zeros, so its
-        // width is not the dense table width once `block_len` is non-power of
+        // width is not the dense table width once `fold_position_count` is non-power of
         // two. `next_opening_layout` is the canonical source of that virtual
         // width; the ring-switch replay must agree on its column-bit count.
         let live_x_cols = trace_x_cols;
@@ -941,7 +941,7 @@ where
         let num_trace_blocks = relation_instance
             .opening_batch()
             .num_total_polynomials()
-            .checked_mul(prepared.lp.num_blocks)
+            .checked_mul(prepared.lp.live_fold_count)
             .ok_or_else(|| AkitaError::InvalidSetup("trace block count overflow".to_string()))?;
         let layout = trace_weight_layout_from_segment(
             prepared.lp,

@@ -224,14 +224,14 @@ fn emit_group_witness_segments<F: CanonicalField, const D: usize>(
         layout,
         group_id,
         &group.e_hat,
-        group.params.num_blocks(),
+        group.params.live_fold_count(),
     )?;
     emit_witness_t_planes::<D>(
         out,
         layout,
         group_id,
         group.t_hat.typed_planes::<D>()?,
-        group.params.num_blocks(),
+        group.params.live_fold_count(),
     )?;
     Ok(())
 }

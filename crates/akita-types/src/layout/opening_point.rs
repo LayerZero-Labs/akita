@@ -36,7 +36,7 @@ pub enum BasisMode {
 ///
 /// Contains the two exact factors of the virtual block opening:
 /// - `a`: position weights of length `position_stride`.
-/// - `b`: block weights of length `num_blocks`.
+/// - `b`: block weights of length `live_fold_count`.
 ///
 /// These are raw field scalars, not ring elements — they originate from
 /// basis weight evaluations (Lagrange or monomial) and are always constant
@@ -123,7 +123,7 @@ fn basis_weight_len(num_vars: usize) -> Result<usize, AkitaError> {
 /// Convert the outer portion of a field opening point into ring-native vectors.
 ///
 /// The first `log2(position_stride)` coordinates select a virtual position,
-/// and the remaining `log2(num_blocks)` coordinates select a block. Physical
+/// and the remaining `log2(live_fold_count)` coordinates select a block. Physical
 /// coefficients remain compact while the opening MLE inserts structural zeros
 /// after each live block.
 ///
@@ -136,7 +136,7 @@ pub fn ring_opening_point_from_field<F: FieldCore>(
     basis: BasisMode,
 ) -> Result<RingOpeningPoint<F>, AkitaError> {
     let position_bits = layout.position_stride().trailing_zeros() as usize;
-    let block_bits = layout.num_blocks().trailing_zeros() as usize;
+    let block_bits = layout.live_fold_count().trailing_zeros() as usize;
     let expected_len = position_bits
         .checked_add(block_bits)
         .ok_or_else(|| AkitaError::InvalidSetup("opening point length overflow".to_string()))?;

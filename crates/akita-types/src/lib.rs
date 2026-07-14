@@ -31,6 +31,7 @@ pub mod trace_weight;
 pub mod transcript;
 pub mod witness;
 
+pub use akita_challenges::TensorChallengeShape;
 pub use config::{DecompositionParams, SetupContributionMode};
 pub use extension_opening_reduction::{
     check_extension_opening_reduction_output, checked_table_len,

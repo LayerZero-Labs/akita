@@ -1,3 +1,4 @@
+use akita_challenges::TensorChallengeShape;
 use akita_field::AkitaError;
 
 use crate::descriptor_bytes::push_usize;
@@ -18,10 +19,6 @@ pub struct PrecommittedLevelParams {
     pub a_key: AjtaiKeyParams,
     /// Outer commitment matrix (B) used by this group.
     pub b_key: AjtaiKeyParams,
-    /// Number of committed blocks (`2^r_vars`) for this group.
-    pub num_blocks: usize,
-    /// Number of ring elements per block (`2^m_vars`) for this group.
-    pub block_len: usize,
     /// Gadget decomposition depth for committed coefficients.
     pub num_digits_commit: usize,
     /// Gadget decomposition depth for opening-side values.
@@ -46,7 +43,7 @@ impl PrecommittedLevelParams {
     /// Width contribution to the shared D matrix (`w_hat_g` segment).
     pub fn d_segment_width(&self) -> Result<usize, AkitaError> {
         self.num_digits_open
-            .checked_mul(self.num_blocks)
+            .checked_mul(self.layout.live_fold_count)
             .and_then(|width| width.checked_mul(self.layout.group.num_polynomials()))
             .ok_or_else(|| AkitaError::InvalidSetup("group D segment width overflow".to_string()))
     }
@@ -62,8 +59,6 @@ impl PrecommittedLevelParams {
         self.layout.append_descriptor_bytes(bytes);
         self.a_key.append_descriptor_bytes(bytes);
         self.b_key.append_descriptor_bytes(bytes);
-        push_usize(bytes, self.num_blocks);
-        push_usize(bytes, self.block_len);
         push_usize(bytes, self.num_digits_commit);
         push_usize(bytes, self.num_digits_open);
         push_usize(bytes, self.num_digits_fold_one);
@@ -78,10 +73,13 @@ pub trait LevelParamsLike {
     fn a_rows_len(&self) -> usize;
     fn a_col_len(&self) -> usize;
     fn b_rows_len(&self) -> usize;
-    fn num_blocks(&self) -> usize;
-    fn block_len(&self) -> usize;
-    fn m_vars(&self) -> usize;
-    fn r_vars(&self) -> usize;
+    fn source_ring_len_per_claim(&self) -> usize;
+    fn fold_position_count(&self) -> usize;
+    fn live_fold_count(&self) -> usize;
+    fn shard_granule(&self) -> usize;
+    fn fold_challenge_shape(&self) -> TensorChallengeShape;
+    fn position_bits(&self) -> usize;
+    fn fold_bits(&self) -> usize;
     fn num_digits_commit(&self) -> usize;
     fn num_digits_open(&self) -> usize;
     fn num_digits_fold_one(&self) -> usize;
@@ -101,20 +99,32 @@ impl LevelParamsLike for LevelParams {
         self.b_key.row_len()
     }
 
-    fn num_blocks(&self) -> usize {
-        self.num_blocks
+    fn source_ring_len_per_claim(&self) -> usize {
+        self.source_ring_len_per_claim
     }
 
-    fn block_len(&self) -> usize {
-        self.block_len
+    fn fold_position_count(&self) -> usize {
+        self.fold_position_count
     }
 
-    fn m_vars(&self) -> usize {
-        self.m_vars
+    fn live_fold_count(&self) -> usize {
+        self.live_fold_count
     }
 
-    fn r_vars(&self) -> usize {
-        self.r_vars
+    fn shard_granule(&self) -> usize {
+        self.shard_granule
+    }
+
+    fn fold_challenge_shape(&self) -> TensorChallengeShape {
+        self.fold_challenge_shape
+    }
+
+    fn position_bits(&self) -> usize {
+        self.position_bits()
+    }
+
+    fn fold_bits(&self) -> usize {
+        self.fold_bits()
     }
 
     fn num_digits_commit(&self) -> usize {
@@ -147,20 +157,35 @@ impl LevelParamsLike for PrecommittedLevelParams {
         self.b_key.row_len()
     }
 
-    fn num_blocks(&self) -> usize {
-        self.num_blocks
+    fn source_ring_len_per_claim(&self) -> usize {
+        self.layout.source_ring_len_per_claim
     }
 
-    fn block_len(&self) -> usize {
-        self.block_len
+    fn fold_position_count(&self) -> usize {
+        self.layout.fold_position_count
     }
 
-    fn m_vars(&self) -> usize {
-        self.layout.m_vars
+    fn live_fold_count(&self) -> usize {
+        self.layout.live_fold_count
     }
 
-    fn r_vars(&self) -> usize {
-        self.layout.r_vars
+    fn shard_granule(&self) -> usize {
+        self.layout.shard_granule
+    }
+
+    fn fold_challenge_shape(&self) -> TensorChallengeShape {
+        self.layout.fold_challenge_shape
+    }
+
+    fn position_bits(&self) -> usize {
+        self.layout.fold_position_count.trailing_zeros() as usize
+    }
+
+    fn fold_bits(&self) -> usize {
+        self.layout
+            .live_fold_count
+            .checked_next_power_of_two()
+            .map_or(0, |capacity| capacity.trailing_zeros() as usize)
     }
 
     fn num_digits_commit(&self) -> usize {

@@ -44,10 +44,10 @@ pub(crate) fn validate_fold_grind_nonce(
 /// This mirrors the prover's multi-group [`RingRelationProver`] live sampling: the
 /// D-block `v = D · concat_g(ê_g)` is absorbed a single time (it spans every
 /// group; the terminal layout drops the D-block so the absorb is skipped on
-/// both sides), then each group samples with its own `num_blocks`/`K_g` under
+/// both sides), then each group samples with its own `live_fold_count`/`K_g` under
 /// the shared root `fold_challenge_config`/`fold_challenge_shape` and the shared
 /// accepted grind nonce. A scalar batch (`num_groups == 1`) samples a single
-/// `Challenges` set with `lp.num_blocks`/`num_total_polynomials`.
+/// `Challenges` set with `lp.live_fold_count`/`num_total_polynomials`.
 ///
 /// # Errors
 ///
@@ -81,7 +81,7 @@ where
         group_challenges.push(
             LiveFoldDraw::<F, T>::new(transcript).draw_folding_challenges(
                 challenge_ring_d,
-                group_lp.num_blocks(),
+                group_lp.live_fold_count(),
                 k_g,
                 &lp.fold_challenge_config,
                 &lp.fold_challenge_shape,
@@ -304,7 +304,7 @@ mod fold_grind_nonce_tests {
             3,
             fold_challenge_config,
         )
-        .with_decomp(4, 2, 2, 2, 0)
+        .with_decomp(16, 64, 2, 2)
         .expect("level params")
         .with_fold_challenge_shape(fold_shape)
         .expect("fold challenge shape")
@@ -314,7 +314,7 @@ mod fold_grind_nonce_tests {
     fn worst_case_beta_only_rejects_nonzero_nonce() {
         let lp = sample_level_params(
             SparseChallengeConfig::pm1_only(31),
-            TensorChallengeShape::Tensor,
+            TensorChallengeShape::Tensor { fold_low_len: 2 },
         );
         let contract = lp
             .fold_witness_grind_contract(1, FoldLinfProtocolBinding::CURRENT.max_grind_attempts)
@@ -356,7 +356,7 @@ mod fold_grind_nonce_tests {
                 count_pm1: 30,
                 count_pm2: 12,
             },
-            TensorChallengeShape::Tensor,
+            TensorChallengeShape::Tensor { fold_low_len: 2 },
         );
         let contract = lp
             .fold_witness_grind_contract(1, FoldLinfProtocolBinding::CURRENT.max_grind_attempts)

@@ -86,7 +86,7 @@ where
     F: FieldCore + CanonicalField,
 {
     validate_log_basis(params.log_basis())?;
-    if params.num_blocks() == 0 || params.block_len() == 0 {
+    if params.live_fold_count() == 0 || params.fold_position_count() == 0 {
         return Err(AkitaError::InvalidSetup(
             "direct witness layout requires non-zero block geometry".to_string(),
         ));
@@ -100,8 +100,8 @@ where
         .checked_shl(u32::try_from(num_vars).map_err(|_| AkitaError::InvalidProof)?)
         .ok_or(AkitaError::InvalidProof)?;
     let direct_capacity = params
-        .num_blocks()
-        .checked_mul(params.block_len())
+        .live_fold_count()
+        .checked_mul(params.fold_position_count())
         .ok_or_else(|| AkitaError::InvalidSetup("direct witness capacity overflow".to_string()))?;
     if expected_witness_len.div_ceil(ring_d) > direct_capacity {
         return Err(AkitaError::InvalidSetup(
@@ -111,14 +111,14 @@ where
     let a_row_len = params.a_rows_len();
     let b_row_len = params.b_rows_len();
     let a_required_cols = params
-        .block_len()
+        .fold_position_count()
         .checked_mul(params.num_digits_commit())
         .ok_or_else(|| AkitaError::InvalidSetup("direct A width overflow".to_string()))?;
     let a_required = a_row_len
         .checked_mul(a_required_cols)
         .ok_or_else(|| AkitaError::InvalidSetup("direct A footprint overflow".to_string()))?;
     let per_witness_outer_cols = params
-        .num_blocks()
+        .live_fold_count()
         .checked_mul(a_row_len)
         .and_then(|cols| cols.checked_mul(params.num_digits_open()))
         .ok_or_else(|| AkitaError::InvalidSetup("direct B width overflow".to_string()))?;
@@ -222,7 +222,7 @@ where
         .ring_view::<D>(a_row_len, params.a_col_len())?;
     let a_rows: Vec<_> = a_matrix.rows().collect();
     let out_capacity = params
-        .num_blocks()
+        .live_fold_count()
         .checked_mul(a_row_len)
         .and_then(|len| len.checked_mul(params.num_digits_open()))
         .ok_or_else(|| {
@@ -230,13 +230,15 @@ where
         })?;
     let mut out = Vec::with_capacity(out_capacity);
 
-    for block_idx in 0..params.num_blocks() {
-        let start = block_idx.checked_mul(params.block_len()).ok_or_else(|| {
-            AkitaError::InvalidSetup("direct witness block offset overflow".to_string())
-        })?;
+    for block_idx in 0..params.live_fold_count() {
+        let start = block_idx
+            .checked_mul(params.fold_position_count())
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup("direct witness block offset overflow".to_string())
+            })?;
         let block = if start < witness_rings.len() {
             let end = start
-                .checked_add(params.block_len())
+                .checked_add(params.fold_position_count())
                 .ok_or_else(|| {
                     AkitaError::InvalidSetup("direct witness block end overflow".to_string())
                 })?
@@ -718,7 +720,7 @@ mod tests {
             1,
             fold_challenge_config(),
         )
-        .with_decomp(1, 0, 2, 1, 0)
+        .with_decomp(2, 2, 2, 1)
         .expect("valid direct layout");
         let setup_seed = setup_seed(3);
         let witnesses = vec![CleartextWitnessProof::FieldElements(RingVec::from_coeffs(
@@ -746,7 +748,7 @@ mod tests {
             1,
             fold_challenge_config(),
         )
-        .with_decomp(1, 0, 2, 1, 0)
+        .with_decomp(2, 2, 2, 1)
         .expect("valid direct layout");
         params.b_key = AjtaiKeyParams::new_unchecked(
             DEFAULT_SIS_SECURITY_BITS,

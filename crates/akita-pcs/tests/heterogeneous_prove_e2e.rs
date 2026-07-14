@@ -41,7 +41,7 @@ fn heterogeneous_delegating_clusters_batched_prove_and_verify() {
     let opening_batch = OpeningClaimsLayout::new(NUM_VARS, 1).expect("opening batch");
     let layout = Cfg::get_params_for_batched_commitment(&opening_batch).expect("layout");
     let alpha = D.trailing_zeros() as usize;
-    let full_num_vars = layout.m_vars + layout.r_vars + alpha;
+    let full_num_vars = layout.position_bits() + layout.fold_bits() + alpha;
 
     let len = 1usize << full_num_vars;
     let evals: Vec<F> = (0..len).map(|i| F::from_u64(i as u64)).collect();

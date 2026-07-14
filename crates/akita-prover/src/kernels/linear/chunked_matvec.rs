@@ -7,7 +7,7 @@ pub(super) fn base_tile_width<W: PrimeWidth, const K: usize, const D: usize>() -
 }
 
 /// Shared one-shot/chunked driver for block-shaped CRT matvecs that produce
-/// `num_blocks` groups of `n_a` ring rows.
+/// `live_fold_count` groups of `n_a` ring rows.
 ///
 /// When `inner_width <= safe_width` the whole accumulation fits a single CRT
 /// lift, so columns are tiled at `tile_width` for cache locality and Rayon
@@ -18,7 +18,7 @@ pub(super) fn base_tile_width<W: PrimeWidth, const K: usize, const D: usize>() -
 /// kernel-specific piece.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn drive_block_chunked_matvec<F, W, const K: usize, const D: usize, Acc>(
-    num_blocks: usize,
+    live_fold_count: usize,
     n_a: usize,
     inner_width: usize,
     safe_width: usize,
@@ -36,7 +36,7 @@ where
         let num_tiles = inner_width.div_ceil(tile_width);
         let final_accs: Vec<Vec<CyclotomicCrtNtt<W, K, D>>> = cfg_fold_reduce!(
             0..num_tiles,
-            || vec![vec![CyclotomicCrtNtt::<W, K, D>::zero(); n_a]; num_blocks],
+            || vec![vec![CyclotomicCrtNtt::<W, K, D>::zero(); n_a]; live_fold_count],
             |mut accs: Vec<Vec<CyclotomicCrtNtt<W, K, D>>>, tile_idx| {
                 let tile_start = tile_idx * tile_width;
                 let tile_end = (tile_start + tile_width).min(inner_width);
@@ -44,7 +44,7 @@ where
                 accs
             },
             |mut a: Vec<Vec<CyclotomicCrtNtt<W, K, D>>>, b| {
-                for block_idx in 0..num_blocks {
+                for block_idx in 0..live_fold_count {
                     for row in 0..n_a {
                         add_ntt_into(&mut a[block_idx][row], &b[block_idx][row], params);
                     }
@@ -66,11 +66,11 @@ where
     let num_chunks = inner_width.div_ceil(chunk_width);
     cfg_fold_reduce!(
         0..num_chunks,
-        || vec![vec![CyclotomicRing::<F, D>::zero(); n_a]; num_blocks],
+        || vec![vec![CyclotomicRing::<F, D>::zero(); n_a]; live_fold_count],
         |mut out: Vec<Vec<CyclotomicRing<F, D>>>, chunk_idx| {
             let tile_start = chunk_idx * chunk_width;
             let tile_end = (tile_start + chunk_width).min(inner_width);
-            let mut accs = vec![vec![CyclotomicCrtNtt::<W, K, D>::zero(); n_a]; num_blocks];
+            let mut accs = vec![vec![CyclotomicCrtNtt::<W, K, D>::zero(); n_a]; live_fold_count];
             accumulate(&mut accs, tile_start, tile_end);
             for (out_block, acc_block) in out.iter_mut().zip(accs) {
                 for (dst, acc) in out_block.iter_mut().zip(acc_block) {

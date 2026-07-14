@@ -235,13 +235,13 @@ mod tests {
     }
 
     fn nonconstant_ring_multiplier_point<F, const D: usize>(
-        block_len: usize,
-        num_blocks: usize,
+        fold_position_count: usize,
+        live_fold_count: usize,
     ) -> RingMultiplierOpeningPoint<F>
     where
         F: FieldCore + FromPrimitiveInt,
     {
-        let a = (0..block_len)
+        let a = (0..fold_position_count)
             .map(|idx| {
                 CyclotomicRing::<F, D>::from_coefficients(from_fn(|k| {
                     if k % 17 == idx % 17 {
@@ -252,7 +252,7 @@ mod tests {
                 }))
             })
             .collect();
-        let b = (0..num_blocks)
+        let b = (0..live_fold_count)
             .map(|idx| {
                 CyclotomicRing::<F, D>::from_coefficients(from_fn(|k| {
                     if k % 19 == idx % 19 {
@@ -303,12 +303,12 @@ mod tests {
         let outer_point = &point[alpha_bits..];
         let ring_opening_point = ring_opening_point_from_field(
             outer_point,
-            OpeningBlockLayout::new(lp.num_blocks, lp.block_len).unwrap(),
+            OpeningBlockLayout::new(lp.live_fold_count, lp.fold_position_count).unwrap(),
             BasisMode::Lagrange,
         )
         .expect("ring opening point");
         let ring_multiplier_point =
-            nonconstant_ring_multiplier_point::<F, D>(lp.block_len, lp.num_blocks);
+            nonconstant_ring_multiplier_point::<F, D>(lp.fold_position_count, lp.live_fold_count);
         let opening = OpeningFoldKernel::<DenseView<'_, F, D>, F, D>::evaluate_and_fold(
             &CpuBackend,
             None,
@@ -322,7 +322,7 @@ mod tests {
                     .a_rings_trusted::<D>()
                     .expect("nonconstant test point has ring a weights")
                     .expect("ring a weights"),
-                block_len: lp.block_len,
+                fold_position_count: lp.fold_position_count,
             },
         )
         .expect("evaluate_and_fold_ring");
@@ -456,7 +456,7 @@ mod tests {
         let outer_point = &point[alpha_bits..];
         let ring_opening_point = ring_opening_point_from_field(
             outer_point,
-            OpeningBlockLayout::new(lp.num_blocks, lp.block_len).unwrap(),
+            OpeningBlockLayout::new(lp.live_fold_count, lp.fold_position_count).unwrap(),
             BasisMode::Lagrange,
         )
         .expect("ring opening point");
@@ -468,7 +468,7 @@ mod tests {
             OpeningFoldPlan::Base {
                 eval_outer_scalars: &ring_opening_point.b,
                 fold_scalars: &ring_opening_point.a,
-                block_len: lp.block_len,
+                fold_position_count: lp.fold_position_count,
             },
         )
         .expect("evaluate_and_fold");
@@ -639,7 +639,11 @@ mod tests {
         let outer_point = &point[alpha_bits..];
         let ring_opening_point = ring_opening_point_from_field(
             outer_point,
-            OpeningBlockLayout::new(level_params.num_blocks, level_params.block_len).unwrap(),
+            OpeningBlockLayout::new(
+                level_params.live_fold_count,
+                level_params.fold_position_count,
+            )
+            .unwrap(),
             BasisMode::Lagrange,
         )
         .expect("ring opening point");
@@ -651,7 +655,7 @@ mod tests {
             OpeningFoldPlan::Base {
                 eval_outer_scalars: &ring_opening_point.b,
                 fold_scalars: &ring_opening_point.a,
-                block_len: level_params.block_len,
+                fold_position_count: level_params.fold_position_count,
             },
         )
         .expect("evaluate_and_fold");
@@ -752,12 +756,12 @@ mod tests {
             "RelationMatrixEvaluator::eval_at_point must match materialized multilinear_eval"
         );
 
-        // ----- Chunked layout ground truth (W ∈ powers of two | num_blocks) --
+        // ----- Chunked layout ground truth (W ∈ powers of two | live_fold_count) --
         // The chunked relation's column-MLE has the same per-cell values as the
         // single-unit vector, repositioned by the canonical witness descriptor.
         // Each ownership unit receives its e/t block window and one replicated z
         // segment; the r tail remains shared.
-        let num_blocks = level_params.num_blocks;
+        let live_fold_count = level_params.live_fold_count;
         let group_id = SemanticGroupId(0);
         let single_layout = instance
             .segment_layout(&level_params, None)
@@ -770,12 +774,12 @@ mod tests {
 
         let chunk_counts: Vec<usize> = (0..)
             .map(|k| 1usize << k)
-            .take_while(|&w| w <= num_blocks)
-            .filter(|&w| num_blocks % w == 0)
+            .take_while(|&w| w <= live_fold_count)
+            .filter(|&w| live_fold_count % w == 0)
             .collect();
         assert!(
             chunk_counts.iter().any(|&w| w > 1),
-            "fixture must have num_blocks > 1 to exercise chunking (num_blocks={num_blocks})"
+            "fixture must have live_fold_count > 1 to exercise chunking (live_fold_count={live_fold_count})"
         );
         for w in chunk_counts.into_iter().filter(|&w| w > 1) {
             let mut lp_w = level_params.clone();
@@ -791,7 +795,7 @@ mod tests {
                 .units_for_group(group_id)
                 .expect("chunked group")
             {
-                for position in 0..group.block_len {
+                for position in 0..group.fold_position_count {
                     for commit_digit in 0..group.depth_commit {
                         for fold_digit in 0..group.depth_fold {
                             let source = single_layout
@@ -941,7 +945,11 @@ mod tests {
         let outer_point = &point[alpha_bits..];
         let ring_opening_point = ring_opening_point_from_field(
             outer_point,
-            OpeningBlockLayout::new(level_params.num_blocks, level_params.block_len).unwrap(),
+            OpeningBlockLayout::new(
+                level_params.live_fold_count,
+                level_params.fold_position_count,
+            )
+            .unwrap(),
             BasisMode::Lagrange,
         )
         .expect("ring opening point");
@@ -953,7 +961,7 @@ mod tests {
             OpeningFoldPlan::Base {
                 eval_outer_scalars: &ring_opening_point.b,
                 fold_scalars: &ring_opening_point.a,
-                block_len: level_params.block_len,
+                fold_position_count: level_params.fold_position_count,
             },
         )
         .expect("evaluate_and_fold");

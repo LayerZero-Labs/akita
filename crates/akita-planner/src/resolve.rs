@@ -150,8 +150,8 @@ mod tests {
         GeneratedFoldStep {
             ring_d: lp.ring_dimension as u32,
             log_basis: lp.log_basis,
-            m_vars: lp.m_vars as u32,
-            r_vars: lp.r_vars as u32,
+            position_bits: lp.position_bits() as u32,
+            fold_bits: lp.fold_bits() as u32,
             n_a: lp.a_key.row_len() as u32,
             n_b: lp.b_key.row_len() as u32,
             n_d: lp.d_key.row_len() as u32,

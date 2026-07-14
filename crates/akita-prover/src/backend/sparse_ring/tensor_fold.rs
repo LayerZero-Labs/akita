@@ -12,7 +12,7 @@ use akita_field::{AkitaError, CanonicalField, FieldCore, FromPrimitiveInt};
 pub(super) fn decompose_fold_batched_tensor_sparse<F, const D: usize>(
     polys: &[&SparseRingPoly<F>],
     tensor: &TensorChallengeSet,
-    block_len: usize,
+    fold_position_count: usize,
     num_digits: usize,
 ) -> Result<DecomposeFoldWitness<F>, AkitaError>
 where
@@ -20,11 +20,11 @@ where
 {
     let cached_blocks = polys
         .iter()
-        .map(|poly| poly.blocks_for(D, block_len))
+        .map(|poly| poly.blocks_for(D, fold_position_count))
         .collect::<Result<Vec<_>, _>>()?;
     let mut flat_blocks = Vec::new();
     for blocks in &cached_blocks {
-        flat_blocks.extend((0..blocks.num_blocks()).map(|idx| blocks.block(idx)));
+        flat_blocks.extend((0..blocks.live_fold_count()).map(|idx| blocks.block(idx)));
     }
     let expected_blocks = tensor.total_blocks()?;
     if flat_blocks.len() != expected_blocks {
@@ -34,7 +34,7 @@ where
         });
     }
     validate_tensor_blocks::<D>(tensor, expected_blocks)?;
-    let inner_width = block_len.checked_mul(num_digits).ok_or_else(|| {
+    let inner_width = fold_position_count.checked_mul(num_digits).ok_or_else(|| {
         AkitaError::InvalidSetup("sparse tensor fold inner width overflow".to_string())
     })?;
     let accum_i64 = sparse_accumulate_tensor::<D>(&flat_blocks, tensor, inner_width, num_digits)?;
@@ -68,11 +68,11 @@ fn sparse_accumulate_tensor<const D: usize>(
             let mut rotated = vec![[0i64; D]; D];
 
             for claim_idx in 0..tensor.num_claims {
-                for left_idx in 0..tensor.left_len {
+                for left_idx in 0..tensor.fold_high_len() {
                     tmp.fill([0i64; D]);
-                    for right_idx in 0..tensor.right_len {
-                        let block_idx = claim_idx * tensor.left_len * tensor.right_len
-                            + left_idx * tensor.right_len
+                    for right_idx in 0..tensor.fold_low_len {
+                        let block_idx = claim_idx * tensor.fold_high_len() * tensor.fold_low_len
+                            + left_idx * tensor.fold_low_len
                             + right_idx;
                         let entries = blocks[block_idx];
                         let lo =
@@ -82,7 +82,7 @@ fn sparse_accumulate_tensor<const D: usize>(
                         if lo >= hi {
                             continue;
                         }
-                        let right = &tensor.right[claim_idx * tensor.right_len + right_idx];
+                        let right = &tensor.fold_low[claim_idx * tensor.fold_low_len + right_idx];
                         fill_rotated_sparse_challenge_i64::<D>(&mut rotated, right);
                         for entry in &entries[lo..hi] {
                             let local_pos = entry.pos_in_block() * num_digits - pos_start;
@@ -94,7 +94,7 @@ fn sparse_accumulate_tensor<const D: usize>(
                             }
                         }
                     }
-                    let left = &tensor.left[claim_idx * tensor.left_len + left_idx];
+                    let left = &tensor.fold_high[claim_idx * tensor.fold_high_len() + left_idx];
                     for (src, dst) in tmp.iter().zip(acc.iter_mut()) {
                         sparse_i64_mul_acc_i64::<D>(src, left, dst);
                     }

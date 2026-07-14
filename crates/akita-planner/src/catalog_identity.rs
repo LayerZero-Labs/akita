@@ -74,10 +74,13 @@ pub fn identity_digest(identity: &GeneratedScheduleCatalogIdentity) -> [u8; 32] 
     h.write_u64(identity.witness_chunk.num_chunks as u64);
     h.write_u64(identity.witness_chunk.num_activated_levels as u64);
 
-    h.write_u64(match identity.root_fold_shape {
-        TensorChallengeShape::Flat => 0,
-        TensorChallengeShape::Tensor => 1,
-    });
+    match identity.root_fold_shape {
+        TensorChallengeShape::Flat => h.write_u64(0),
+        TensorChallengeShape::Tensor { fold_low_len } => {
+            h.write_u64(1);
+            h.write_u64(fold_low_len as u64);
+        }
+    }
     h.write_u64(identity.ring_dimensions.len() as u64);
     for &d in identity.ring_dimensions {
         h.write_u64(d as u64);
@@ -432,8 +435,17 @@ fn write_generated_schedule_key(h: &mut Fnv64, key: PolynomialGroupLayout) {
 
 fn write_generated_precommitted_group_key(h: &mut Fnv64, key: &PrecommittedGroupParams) {
     write_generated_schedule_key(h, key.group);
-    h.write_u64(key.m_vars as u64);
-    h.write_u64(key.r_vars as u64);
+    h.write_u64(key.source_ring_len_per_claim as u64);
+    h.write_u64(key.fold_position_count as u64);
+    h.write_u64(key.live_fold_count as u64);
+    h.write_u64(key.shard_granule as u64);
+    match key.fold_challenge_shape {
+        TensorChallengeShape::Flat => h.write_u64(0),
+        TensorChallengeShape::Tensor { fold_low_len } => {
+            h.write_u64(1);
+            h.write_u64(fold_low_len as u64);
+        }
+    }
     h.write_u64(u64::from(key.log_basis));
     h.write_u64(key.n_a as u64);
     h.write_u64(key.conservative_n_b as u64);
@@ -541,8 +553,11 @@ mod tests {
     fn sample_group_batch_entry() -> GeneratedScheduleTableEntry {
         static PRECOMMITTED: [PrecommittedGroupParams; 1] = [PrecommittedGroupParams {
             group: PolynomialGroupLayout::new(8, 1),
-            m_vars: 1,
-            r_vars: 0,
+            source_ring_len_per_claim: 2,
+            fold_position_count: 2,
+            live_fold_count: 1,
+            shard_granule: 1,
+            fold_challenge_shape: TensorChallengeShape::Flat,
             log_basis: 2,
             n_a: 1,
             conservative_n_b: 1,
@@ -596,7 +611,7 @@ mod tests {
         };
         validate_catalog_identity(&catalog, &policy, sample_ring_challenge_config, flat_fold)
             .expect("prime cache");
-        let tensor_fold = |_: AkitaScheduleInputs| TensorChallengeShape::Tensor;
+        let tensor_fold = |_: AkitaScheduleInputs| TensorChallengeShape::Tensor { fold_low_len: 2 };
         let err =
             validate_catalog_identity(&catalog, &policy, sample_ring_challenge_config, tensor_fold)
                 .expect_err("cached path must reject fold-shape hook drift");
@@ -746,7 +761,7 @@ mod tests {
         let entries = Box::leak(Box::new([sample_entry(), second]));
         let fold_shape = |inputs: AkitaScheduleInputs| {
             if inputs.num_vars == second.final_group.num_vars() {
-                TensorChallengeShape::Tensor
+                TensorChallengeShape::Tensor { fold_low_len: 2 }
             } else {
                 TensorChallengeShape::Flat
             }

@@ -46,16 +46,16 @@ where
 #[test]
 fn map_onehot_k_gt_d() {
     // K=16, D=4, T=2 chunks => 32 field elements => 8 ring elements
-    // block_len=4 => 2 blocks of 4 ring elements each.
+    // fold_position_count=4 => 2 blocks of 4 ring elements each.
     let k = 16;
     let d = 4;
     let indices: Vec<Option<usize>> = vec![Some(3), Some(10)];
-    let num_blocks = 2;
+    let live_fold_count = 2;
     let blocks =
-        FlatBlocks::<SingleChunkEntry>::from_indices(k, &indices, 4, d, num_blocks).unwrap();
+        FlatBlocks::<SingleChunkEntry>::from_indices(k, &indices, 4, d, live_fold_count).unwrap();
 
-    assert_eq!(blocks.num_blocks(), 2);
-    let total_entries: usize = (0..blocks.num_blocks())
+    assert_eq!(blocks.live_fold_count(), 2);
+    let total_entries: usize = (0..blocks.live_fold_count())
         .map(|i| blocks.block(i).len())
         .sum();
     assert_eq!(total_entries, 2, "T=2 nonzero ring elements");
@@ -74,16 +74,16 @@ fn map_onehot_k_gt_d() {
 #[test]
 fn map_onehot_k_eq_d() {
     // K=4, D=4, T=4 chunks => 16 field elements => 4 ring elements
-    // block_len=2 => 2 blocks of 2 ring elements each.
+    // fold_position_count=2 => 2 blocks of 2 ring elements each.
     let k = 4;
     let d = 4;
     let indices: Vec<Option<usize>> = vec![Some(0), Some(2), Some(3), Some(1)];
-    let num_blocks = 2;
+    let live_fold_count = 2;
     let blocks =
-        FlatBlocks::<SingleChunkEntry>::from_indices(k, &indices, 2, d, num_blocks).unwrap();
+        FlatBlocks::<SingleChunkEntry>::from_indices(k, &indices, 2, d, live_fold_count).unwrap();
 
-    assert_eq!(blocks.num_blocks(), 2);
-    let total_entries: usize = (0..blocks.num_blocks())
+    assert_eq!(blocks.live_fold_count(), 2);
+    let total_entries: usize = (0..blocks.live_fold_count())
         .map(|i| blocks.block(i).len())
         .sum();
     assert_eq!(total_entries, 4, "K=D => every ring element is nonzero");
@@ -106,7 +106,7 @@ fn map_onehot_k_eq_d() {
 #[test]
 fn map_onehot_k_lt_d() {
     // K=4, D=8, T=8 chunks => 32 field elements => 4 ring elements
-    // block_len=2 => 2 blocks of 2 ring elements each.
+    // fold_position_count=2 => 2 blocks of 2 ring elements each.
     let k = 4;
     let d = 8;
     let indices: Vec<Option<usize>> = vec![
@@ -119,12 +119,12 @@ fn map_onehot_k_lt_d() {
         Some(3),
         Some(3),
     ];
-    let num_blocks = 2;
+    let live_fold_count = 2;
     let blocks =
-        FlatBlocks::<MultiChunkEntry>::from_indices(k, &indices, 2, d, num_blocks).unwrap();
+        FlatBlocks::<MultiChunkEntry>::from_indices(k, &indices, 2, d, live_fold_count).unwrap();
 
-    assert_eq!(blocks.num_blocks(), 2);
-    let total_entries: usize = (0..blocks.num_blocks())
+    assert_eq!(blocks.live_fold_count(), 2);
+    let total_entries: usize = (0..blocks.live_fold_count())
         .map(|i| blocks.block(i).len())
         .sum();
     assert_eq!(total_entries, 4, "D>K => all ring elements nonzero");
@@ -201,8 +201,8 @@ fn onehot_poly_caches_multiple_runtime_layouts() {
     let d32_blocks = poly.blocks_for(32, 4).unwrap();
     let d64_blocks = poly.blocks_for(64, 2).unwrap();
 
-    assert_eq!(d32_blocks.num_blocks(), 2);
-    assert_eq!(d64_blocks.num_blocks(), 2);
+    assert_eq!(d32_blocks.live_fold_count(), 2);
+    assert_eq!(d64_blocks.live_fold_count(), 2);
     assert_eq!(poly.block_cache.lock().unwrap().len(), 2);
 }
 
@@ -607,11 +607,11 @@ fn wide_matches_reference() {
 
     let mut rng = StdRng::seed_from_u64(0xdead_beef);
     let n_a = 3;
-    let block_len = 4;
+    let fold_position_count = 4;
     let num_digits = 5;
     let a_matrix: Vec<Vec<CyclotomicRing<F, D>>> = (0..n_a)
         .map(|_| {
-            (0..block_len * num_digits)
+            (0..fold_position_count * num_digits)
                 .map(|_| CyclotomicRing::random(&mut rng))
                 .collect()
         })
@@ -627,7 +627,9 @@ fn wide_matches_reference() {
         .flat_map(|row| row.iter().copied())
         .collect();
     let a_flat = FlatMatrix::from_ring_slice(&a_flat_elems);
-    let a_view = a_flat.ring_view::<D>(n_a, block_len * num_digits).unwrap();
+    let a_view = a_flat
+        .ring_view::<D>(n_a, fold_position_count * num_digits)
+        .unwrap();
     let ref_result = inner_ajtai_multi_chunk_t_only(&a_matrix, &entries, num_digits);
     let wide_result = inner_ajtai_wide_onehot(&a_view, &entries, num_digits);
 
@@ -644,11 +646,11 @@ fn wide_matches_reference_fp128() {
 
     let mut rng = StdRng::seed_from_u64(0xcafe_1234);
     let n_a = 2;
-    let block_len = 2;
+    let fold_position_count = 2;
     let num_digits = 3;
     let a_matrix: Vec<Vec<CyclotomicRing<F, D>>> = (0..n_a)
         .map(|_| {
-            (0..block_len * num_digits)
+            (0..fold_position_count * num_digits)
                 .map(|_| CyclotomicRing::random(&mut rng))
                 .collect()
         })
@@ -664,7 +666,9 @@ fn wide_matches_reference_fp128() {
         .flat_map(|row| row.iter().copied())
         .collect();
     let a_flat = FlatMatrix::from_ring_slice(&a_flat_elems);
-    let a_view = a_flat.ring_view::<D>(n_a, block_len * num_digits).unwrap();
+    let a_view = a_flat
+        .ring_view::<D>(n_a, fold_position_count * num_digits)
+        .unwrap();
     let ref_result = inner_ajtai_multi_chunk_t_only(&a_matrix, &entries, num_digits);
     let wide_result = inner_ajtai_wide_onehot(&a_view, &entries, num_digits);
 
@@ -684,26 +688,26 @@ fn single_chunk_onehot_large_block_uses_safe_accumulator_path() {
     type F = Prime24Offset3;
     const D: usize = 64;
 
-    let block_len = MAX_WIDE_SHIFT_ACCUMULATIONS + 1;
+    let fold_position_count = MAX_WIDE_SHIFT_ACCUMULATIONS + 1;
     let max_coeff = F::from_canonical_u128_reduced((1u128 << 24) - 4);
     let dense_ring = CyclotomicRing::from_coefficients([max_coeff; D]);
-    let a_matrix = [vec![dense_ring; block_len]];
-    let bucket: Vec<SingleChunkEntry> = (0..block_len)
+    let a_matrix = [vec![dense_ring; fold_position_count]];
+    let bucket: Vec<SingleChunkEntry> = (0..fold_position_count)
         .map(|pos| SingleChunkEntry::new(pos as u32, (pos % D) as u16))
         .collect();
     let single_chunk_blocks = super::test_helpers::from_buckets(vec![bucket.clone()]);
 
     let a_flat = FlatMatrix::from_ring_slice(&a_matrix[0]);
-    let a_view = a_flat.ring_view::<D>(1, block_len).unwrap();
+    let a_view = a_flat.ring_view::<D>(1, fold_position_count).unwrap();
 
-    let single_chunk_views: Vec<&[SingleChunkEntry]> = (0..single_chunk_blocks.num_blocks())
+    let single_chunk_views: Vec<&[SingleChunkEntry]> = (0..single_chunk_blocks.live_fold_count())
         .map(|i| single_chunk_blocks.block(i))
         .collect();
     let got = column_sweep_ajtai_onehot::<SingleChunkEntry, F, D>(
         &a_view,
         &single_chunk_views,
         1,
-        block_len,
+        fold_position_count,
         1,
     );
     let expected = inner_ajtai_wide_single_chunk_tiled::<F, D>(&a_view, &bucket, 1);
@@ -724,24 +728,24 @@ fn multi_chunk_onehot_large_block_uses_safe_accumulator_path() {
 
     let n_a = 1;
     let num_digits_commit = 1;
-    let block_len = num_entries;
+    let fold_position_count = num_entries;
 
     let max_coeff = F::from_canonical_u128_reduced((1u128 << 24) - 4);
     let dense_ring = CyclotomicRing::from_coefficients([max_coeff; D]);
-    let a_matrix = [vec![dense_ring; block_len * num_digits_commit]];
+    let a_matrix = [vec![dense_ring; fold_position_count * num_digits_commit]];
 
     let nonzero_coeffs: Vec<u16> = (0..coeffs_per_entry as u16).collect();
-    let bucket: Vec<MultiChunkEntry> = (0..block_len)
+    let bucket: Vec<MultiChunkEntry> = (0..fold_position_count)
         .map(|pos| MultiChunkEntry::new(pos as u32, nonzero_coeffs.clone()))
         .collect();
     let multi_chunk_blocks = super::test_helpers::from_buckets(vec![bucket.clone()]);
 
     let a_flat = FlatMatrix::from_ring_slice(&a_matrix[0]);
     let a_view = a_flat
-        .ring_view::<D>(n_a, block_len * num_digits_commit)
+        .ring_view::<D>(n_a, fold_position_count * num_digits_commit)
         .unwrap();
 
-    let views: Vec<&[MultiChunkEntry]> = (0..multi_chunk_blocks.num_blocks())
+    let views: Vec<&[MultiChunkEntry]> = (0..multi_chunk_blocks.live_fold_count())
         .map(|i| multi_chunk_blocks.block(i))
         .collect();
 
@@ -749,7 +753,7 @@ fn multi_chunk_onehot_large_block_uses_safe_accumulator_path() {
         &a_view,
         &views,
         n_a,
-        block_len * num_digits_commit,
+        fold_position_count * num_digits_commit,
         num_digits_commit,
     );
     let reference = inner_ajtai_multi_chunk_t_only::<F, D>(&a_matrix, &bucket, num_digits_commit);
@@ -776,7 +780,7 @@ fn multi_chunk_onehot_single_entry_overflow_splits_coeffs() {
     let coeffs = vec![0u16; MAX_WIDE_SHIFT_ACCUMULATIONS + 1];
     let bucket = vec![MultiChunkEntry::new(0, coeffs)];
     let multi_chunk_blocks = super::test_helpers::from_buckets(vec![bucket.clone()]);
-    let views: Vec<&[MultiChunkEntry]> = (0..multi_chunk_blocks.num_blocks())
+    let views: Vec<&[MultiChunkEntry]> = (0..multi_chunk_blocks.live_fold_count())
         .map(|i| multi_chunk_blocks.block(i))
         .collect();
 
@@ -800,7 +804,7 @@ fn batched_single_chunk_onehot_decompose_fold_matches_individual_aggregation() {
     type F = Prime24Offset3;
     const D: usize = 64;
 
-    let block_len = 64;
+    let fold_position_count = 64;
     let mut indices0 = vec![None; 128];
     indices0[0] = Some(1usize);
     indices0[17] = Some(5usize);
@@ -812,8 +816,8 @@ fn batched_single_chunk_onehot_decompose_fold_matches_individual_aggregation() {
     indices1[64] = Some(19usize);
     indices1[100] = Some(21usize);
     let polys = [
-        OneHotPoly::<F>::new(block_len, D, indices0).unwrap(),
-        OneHotPoly::<F>::new(block_len, D, indices1).unwrap(),
+        OneHotPoly::<F>::new(fold_position_count, D, indices0).unwrap(),
+        OneHotPoly::<F>::new(fold_position_count, D, indices1).unwrap(),
     ];
     let challenges = vec![
         SparseChallenge {
@@ -839,14 +843,19 @@ fn batched_single_chunk_onehot_decompose_fold_matches_individual_aggregation() {
             .iter()
             .zip(challenges.chunks(2))
             .map(|(poly, poly_challenges)| {
-                poly.decompose_fold::<D>(poly_challenges, block_len, 1, 0)
+                poly.decompose_fold::<D>(poly_challenges, fold_position_count, 1, 0)
             })
             .collect::<Vec<_>>(),
     );
     let poly_refs: Vec<&OneHotPoly<F>> = polys.iter().collect();
-    let got =
-        OneHotPoly::<F>::decompose_fold_batched::<D>(&poly_refs, &challenges, block_len, 1, 0)
-            .expect("onehot batched path should apply");
+    let got = OneHotPoly::<F>::decompose_fold_batched::<D>(
+        &poly_refs,
+        &challenges,
+        fold_position_count,
+        1,
+        0,
+    )
+    .expect("onehot batched path should apply");
 
     assert_eq!(got, expected);
 }
@@ -856,7 +865,7 @@ fn single_chunk_onehot_tensor_decompose_fold_matches_negacyclic_product_referenc
     type F = Prime24Offset3;
     const D: usize = 8;
 
-    let block_len = 2;
+    let fold_position_count = 2;
     let num_digits = 1;
     let tensor = tensor_oracle_challenges::<D>();
     let polys = [
@@ -898,13 +907,17 @@ fn single_chunk_onehot_tensor_decompose_fold_matches_negacyclic_product_referenc
             .iter()
             .zip(product_challenges.chunks(4))
             .map(|(poly, challenges)| {
-                poly.decompose_fold::<D>(challenges, block_len, num_digits, 0)
+                poly.decompose_fold::<D>(challenges, fold_position_count, num_digits, 0)
             })
             .collect::<Vec<_>>(),
     );
     let poly_refs = polys.iter().collect::<Vec<_>>();
     let got = OneHotPoly::<F>::decompose_fold_tensor_batched::<D>(
-        &poly_refs, &tensor, block_len, num_digits, 0,
+        &poly_refs,
+        &tensor,
+        fold_position_count,
+        num_digits,
+        0,
     )
     .unwrap()
     .unwrap();
@@ -917,7 +930,7 @@ fn multi_chunk_onehot_tensor_decompose_fold_matches_negacyclic_product_reference
     type F = Prime24Offset3;
     const D: usize = 8;
 
-    let block_len = 2;
+    let fold_position_count = 2;
     let num_digits = 1;
     let tensor = tensor_oracle_challenges::<D>();
     let polys = [
@@ -975,13 +988,17 @@ fn multi_chunk_onehot_tensor_decompose_fold_matches_negacyclic_product_reference
             .iter()
             .zip(product_challenges.chunks(4))
             .map(|(poly, challenges)| {
-                poly.decompose_fold::<D>(challenges, block_len, num_digits, 0)
+                poly.decompose_fold::<D>(challenges, fold_position_count, num_digits, 0)
             })
             .collect::<Vec<_>>(),
     );
     let poly_refs = polys.iter().collect::<Vec<_>>();
     let got = OneHotPoly::<F>::decompose_fold_tensor_batched::<D>(
-        &poly_refs, &tensor, block_len, num_digits, 0,
+        &poly_refs,
+        &tensor,
+        fold_position_count,
+        num_digits,
+        0,
     )
     .unwrap()
     .unwrap();
@@ -996,12 +1013,13 @@ fn single_chunk_onehot_evaluate_and_fold_matches_factorized_eval() {
 
     let poly =
         OneHotPoly::<F>::new(64, D, vec![Some(1usize), None, Some(9usize), Some(17usize)]).unwrap();
-    let block_len = 2usize;
+    let fold_position_count = 2usize;
     let fold_scalars = vec![F::from_u64(3), F::from_u64(5)];
     let eval_outer_scalars = vec![F::from_u64(7), F::from_u64(11)];
 
-    let (eval, folded) = poly.evaluate_and_fold::<D>(&eval_outer_scalars, &fold_scalars, block_len);
-    let expected_folded = poly.fold_blocks::<D>(&fold_scalars, block_len);
+    let (eval, folded) =
+        poly.evaluate_and_fold::<D>(&eval_outer_scalars, &fold_scalars, fold_position_count);
+    let expected_folded = poly.fold_blocks::<D>(&fold_scalars, fold_position_count);
     assert_eq!(folded, expected_folded);
 
     let full_scalars: Vec<F> = eval_outer_scalars
@@ -1020,7 +1038,7 @@ fn single_chunk_onehot_ring_fold_matches_dense_materialization() {
     let poly =
         OneHotPoly::<F>::new(16, D, vec![Some(1usize), None, Some(13usize), Some(7usize)]).unwrap();
     let dense = materialize_onehot_as_dense::<F, D, _>(&poly);
-    let block_len = 4usize;
+    let fold_position_count = 4usize;
     let fold_scalars = vec![
         test_ring_scalar::<F, D>(10),
         test_ring_scalar::<F, D>(40),
@@ -1029,8 +1047,8 @@ fn single_chunk_onehot_ring_fold_matches_dense_materialization() {
     ];
 
     assert_eq!(
-        poly.fold_blocks_ring(&fold_scalars, block_len),
-        dense.fold_blocks_ring(&fold_scalars, block_len)
+        poly.fold_blocks_ring(&fold_scalars, fold_position_count),
+        dense.fold_blocks_ring(&fold_scalars, fold_position_count)
     );
 }
 
@@ -1054,12 +1072,13 @@ fn multi_chunk_onehot_evaluate_and_fold_matches_factorized_eval() {
         ],
     )
     .unwrap();
-    let block_len = 2usize;
+    let fold_position_count = 2usize;
     let fold_scalars = vec![F::from_u64(2), F::from_u64(4)];
     let eval_outer_scalars = vec![F::from_u64(3), F::from_u64(5)];
 
-    let (eval, folded) = poly.evaluate_and_fold::<D>(&eval_outer_scalars, &fold_scalars, block_len);
-    let expected_folded = poly.fold_blocks::<D>(&fold_scalars, block_len);
+    let (eval, folded) =
+        poly.evaluate_and_fold::<D>(&eval_outer_scalars, &fold_scalars, fold_position_count);
+    let expected_folded = poly.fold_blocks::<D>(&fold_scalars, fold_position_count);
     assert_eq!(folded, expected_folded);
 
     let full_scalars: Vec<F> = eval_outer_scalars
@@ -1099,11 +1118,11 @@ fn multi_chunk_onehot_ring_fold_matches_dense_materialization() {
     )
     .unwrap();
     let dense = materialize_onehot_as_dense::<F, D, _>(&poly);
-    let block_len = 2usize;
+    let fold_position_count = 2usize;
     let fold_scalars = vec![test_ring_scalar::<F, D>(7), test_ring_scalar::<F, D>(80)];
 
     assert_eq!(
-        poly.fold_blocks_ring(&fold_scalars, block_len),
-        dense.fold_blocks_ring(&fold_scalars, block_len)
+        poly.fold_blocks_ring(&fold_scalars, fold_position_count),
+        dense.fold_blocks_ring(&fold_scalars, fold_position_count)
     );
 }

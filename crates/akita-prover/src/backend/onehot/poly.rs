@@ -8,9 +8,9 @@ type TensorRootCache<F> = Arc<Mutex<HashMap<LayoutCacheKey, Arc<SparseRingPoly<F
 /// per chunk of size `onehot_k`.
 ///
 /// The polynomial is stored layout-agnostically as the flat list of hot
-/// indices supplied at construction. Each op takes `block_len` at call time
-/// and the per-block bucketing is materialized lazily per `(ring_d, block_len)`.
-/// That mirrors how [`DensePoly`](crate::DensePoly) accepts `block_len` per op
+/// indices supplied at construction. Each op takes `fold_position_count` at call time
+/// and the per-block bucketing is materialized lazily per `(ring_d, fold_position_count)`.
+/// That mirrors how [`DensePoly`](crate::DensePoly) accepts `fold_position_count` per op
 /// and keeps `OneHotPoly` free of the commit-layout parameters it used to bake
 /// in at construction.
 ///
@@ -29,7 +29,7 @@ pub struct OneHotPoly<F: FieldCore, I: OneHotIndex = usize> {
     /// Ring-element count at the CONSTRUCTION dimension; metadata, not
     /// authority — kernels validate at their own dimension.
     pub(crate) total_ring_elems: usize,
-    /// Cached per-block layouts keyed by `(ring_d, block_len)`.
+    /// Cached per-block layouts keyed by `(ring_d, fold_position_count)`.
     pub(crate) block_cache: OneHotBlockCache,
     /// Cached tensor-projected sparse root polynomials keyed by `(ring_d, width)`.
     pub(crate) tensor_root_cache: TensorRootCache<F>,
@@ -47,7 +47,7 @@ impl<F: FieldCore, I: OneHotIndex> OneHotPoly<F, I> {
     /// dimension at entry.
     ///
     /// The commit-layout split (how blocks are tiled within the polynomial)
-    /// is no longer baked in at construction. Each op receives `block_len`
+    /// is no longer baked in at construction. Each op receives `fold_position_count`
     /// from the caller and the per-block representation is materialized on
     /// demand.
     ///
@@ -160,13 +160,13 @@ impl<F: FieldCore, I: OneHotIndex> OneHotPoly<F, I> {
     }
 
     /// Return cached per-block storage, building it on first call for the
-    /// requested `(ring_d, block_len)` view.
+    /// requested `(ring_d, fold_position_count)` view.
     pub(super) fn blocks_for(
         &self,
         ring_d: usize,
-        block_len: usize,
+        fold_position_count: usize,
     ) -> Result<Arc<OneHotBlocks>, AkitaError> {
-        let key = (ring_d, block_len);
+        let key = (ring_d, fold_position_count);
         if let Some(blocks) = self
             .block_cache
             .lock()
@@ -176,10 +176,10 @@ impl<F: FieldCore, I: OneHotIndex> OneHotPoly<F, I> {
             return Ok(Arc::clone(blocks));
         }
         // Slow path: build blocks and install them. Validate `ring_d` and
-        // `block_len` *before* building so the error path is cheap.
-        if block_len == 0 || !block_len.is_power_of_two() {
+        // `fold_position_count` *before* building so the error path is cheap.
+        if fold_position_count == 0 || !fold_position_count.is_power_of_two() {
             return Err(AkitaError::InvalidInput(format!(
-                "block_len={block_len} must be a nonzero power of two"
+                "fold_position_count={fold_position_count} must be a nonzero power of two"
             )));
         }
         let ring_elems_at_d = 1usize
@@ -187,10 +187,10 @@ impl<F: FieldCore, I: OneHotIndex> OneHotPoly<F, I> {
             .ok_or_else(|| AkitaError::InvalidInput("onehot arity overflow".to_string()))?
             .checked_div(ring_d)
             .ok_or_else(|| AkitaError::InvalidInput("ring_d must be nonzero".to_string()))?;
-        if !ring_elems_at_d.is_multiple_of(block_len) {
+        if !ring_elems_at_d.is_multiple_of(fold_position_count) {
             return Err(AkitaError::InvalidSize {
                 expected: ring_elems_at_d,
-                actual: block_len,
+                actual: fold_position_count,
             });
         }
         // Kernel-entry view validation: the layout invariants `OneHotPoly::new`
@@ -204,8 +204,9 @@ impl<F: FieldCore, I: OneHotIndex> OneHotPoly<F, I> {
         }
         let built = {
             let _span =
-                tracing::debug_span!("OneHotPoly::build_blocks", ring_d, block_len).entered();
-            self.build_blocks_inner(ring_d, block_len, ring_elems_at_d)?
+                tracing::debug_span!("OneHotPoly::build_blocks", ring_d, fold_position_count)
+                    .entered();
+            self.build_blocks_inner(ring_d, fold_position_count, ring_elems_at_d)?
         };
         let mut cache = self
             .block_cache
@@ -260,10 +261,10 @@ impl<F: FieldCore, I: OneHotIndex> OneHotPoly<F, I> {
         let onehot_k = self.onehot_k;
         let head_mask = width - 1;
         let inner_len = low_eq.len();
-        let num_blocks = high_eq.len();
+        let live_fold_count = high_eq.len();
         let zero = E::zero();
         debug_assert_eq!(inner_len, 1usize << inner_bits);
-        debug_assert_eq!(self.indices.len(), num_blocks * inner_len);
+        debug_assert_eq!(self.indices.len(), live_fold_count * inner_len);
 
         // Partition the outer blocks into contiguous ranges so the heavy
         // scatter is parallel; each range accumulates an independent per-`raw`
@@ -273,10 +274,10 @@ impl<F: FieldCore, I: OneHotIndex> OneHotPoly<F, I> {
         let target_ranges = rayon::current_num_threads().max(1) * 4;
         #[cfg(not(feature = "parallel"))]
         let target_ranges = 1usize;
-        let range_len = num_blocks.div_ceil(target_ranges.max(1)).max(1);
-        let ranges = (0..num_blocks)
+        let range_len = live_fold_count.div_ceil(target_ranges.max(1)).max(1);
+        let ranges = (0..live_fold_count)
             .step_by(range_len)
-            .map(|start| (start, (start + range_len).min(num_blocks)))
+            .map(|start| (start, (start + range_len).min(live_fold_count)))
             .collect::<Vec<_>>();
 
         let partial_buckets = cfg_into_iter!(ranges)
@@ -517,18 +518,18 @@ impl<F: FieldCore, I: OneHotIndex> OneHotPoly<F, I> {
     pub(super) fn build_blocks_inner(
         &self,
         ring_d: usize,
-        block_len: usize,
+        fold_position_count: usize,
         ring_elems_at_d: usize,
     ) -> Result<OneHotBlocks, AkitaError> {
-        // `blocks_for` has already validated that `block_len` is a nonzero
-        // power of two, that `ring_elems_at_d % block_len == 0`, and that
+        // `blocks_for` has already validated that `fold_position_count` is a nonzero
+        // power of two, that `ring_elems_at_d % fold_position_count == 0`, and that
         // K and `ring_d` are nicely matched; `OneHotPoly::new` has validated
         // that every per-chunk index is in range. Here we only need to
-        // compute `num_blocks` for the flat-layout offsets array and check
-        // that `block_len` and `ring_d` fit in the packed entry field widths.
-        if u32::try_from(block_len).is_err() {
+        // compute `live_fold_count` for the flat-layout offsets array and check
+        // that `fold_position_count` and `ring_d` fit in the packed entry field widths.
+        if u32::try_from(fold_position_count).is_err() {
             return Err(AkitaError::InvalidInput(format!(
-                "block_len={block_len} exceeds u32::MAX and cannot be packed into an entry"
+                "fold_position_count={fold_position_count} exceeds u32::MAX and cannot be packed into an entry"
             )));
         }
         // Coefficient indices inside a ring element are `< ring_d` and get
@@ -540,7 +541,7 @@ impl<F: FieldCore, I: OneHotIndex> OneHotPoly<F, I> {
                 "D={ring_d} exceeds 65536 and cannot be packed into SingleChunkEntry::coeff_idx / MultiChunkEntry::nonzero_coeffs (both `u16`)"
             )));
         }
-        let num_blocks = ring_elems_at_d / block_len;
+        let live_fold_count = ring_elems_at_d / fold_position_count;
 
         // The single-chunk (one-hot-chunk-per-ring-element) layout
         // applies when K >= D && D | K; otherwise fall back to the
@@ -550,9 +551,9 @@ impl<F: FieldCore, I: OneHotIndex> OneHotPoly<F, I> {
                 FlatBlocks::<SingleChunkEntry>::from_indices(
                     self.onehot_k,
                     &self.indices,
-                    block_len,
+                    fold_position_count,
                     ring_d,
-                    num_blocks,
+                    live_fold_count,
                 )?,
             ))
         } else {
@@ -560,9 +561,9 @@ impl<F: FieldCore, I: OneHotIndex> OneHotPoly<F, I> {
                 FlatBlocks::<MultiChunkEntry>::from_indices(
                     self.onehot_k,
                     &self.indices,
-                    block_len,
+                    fold_position_count,
                     ring_d,
-                    num_blocks,
+                    live_fold_count,
                 )?,
             ))
         }

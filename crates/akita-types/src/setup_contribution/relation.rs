@@ -59,14 +59,14 @@ where
             let group_lp = lp.root_group_params(opening_batch, group_index)?;
             let group_layout = opening_batch.group_layout(group_index)?;
             let num_claims = group_layout.num_polynomials();
-            let num_blocks = group_lp.num_blocks();
+            let live_fold_count = group_lp.live_fold_count();
             let depth_open = group_lp.num_digits_open();
             let depth_commit = group_lp.num_digits_commit();
             let n_a = group_lp.a_rows_len();
             let n_b = group_lp.b_rows_len();
             let t_cols_per_vector = n_a
                 .checked_mul(depth_open)
-                .and_then(|n| n.checked_mul(num_blocks))
+                .and_then(|n| n.checked_mul(live_fold_count))
                 .ok_or_else(|| {
                     AkitaError::InvalidSetup("multi-group B vector width overflow".into())
                 })?;
@@ -83,15 +83,15 @@ where
                 ));
             }
             let e_len = num_claims
-                .checked_mul(num_blocks)
+                .checked_mul(live_fold_count)
                 .and_then(|n| n.checked_mul(depth_open))
                 .ok_or_else(|| AkitaError::InvalidSetup("multi-group e width overflow".into()))?;
             groups.push(SetupContributionGroupInputs {
                 group_id: SemanticGroupId(group_index),
                 e_col_offset,
                 num_claims,
-                num_blocks,
-                block_len: group_lp.block_len(),
+                live_fold_count,
+                fold_position_count: group_lp.fold_position_count(),
                 depth_open,
                 depth_commit,
                 depth_fold: lp.num_digits_fold_for_params(
@@ -106,8 +106,10 @@ where
                 a_row_start: a_range.start,
                 b_row_start: b_range.start,
                 layout: Arc::new(chunk_layout.clone()),
-                opening_layout: opening_layout_override
-                    .unwrap_or(OpeningBlockLayout::new(num_blocks, group_lp.block_len())?),
+                opening_layout: opening_layout_override.unwrap_or(OpeningBlockLayout::new(
+                    live_fold_count,
+                    group_lp.fold_position_count(),
+                )?),
             });
             e_col_offset = e_col_offset
                 .checked_add(e_len)
@@ -123,8 +125,8 @@ where
             num_polys_per_group: opening_batch.group_sizes(),
             num_t_vectors: opening_batch.num_total_polynomials(),
             num_claims: opening_batch.num_total_polynomials(),
-            num_blocks: lp.num_blocks,
-            block_len: lp.block_len,
+            live_fold_count: lp.live_fold_count,
+            fold_position_count: lp.fold_position_count,
             depth_open: lp.num_digits_open,
             depth_commit: lp.num_digits_commit,
             depth_fold,
@@ -145,8 +147,10 @@ where
         let single = SetupContributionGroupInputs::single_group_layout(
             &inputs,
             &chunk_layout,
-            opening_layout_override
-                .unwrap_or(OpeningBlockLayout::new(lp.num_blocks, lp.block_len)?),
+            opening_layout_override.unwrap_or(OpeningBlockLayout::new(
+                lp.live_fold_count,
+                lp.fold_position_count,
+            )?),
             lp.log_basis,
         )?;
         (

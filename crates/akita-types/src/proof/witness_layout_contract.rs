@@ -18,12 +18,12 @@ fn oracle_unit_base(layout: &OpeningBatchWitnessLayout, target: &WitnessOwnershi
         } else {
             1
         };
-        let blocks = group.num_blocks / chunks;
+        let blocks = group.live_fold_count / chunks;
         for chunk in 0..chunks {
             if group_id == target.group && chunk == target.machine_chunk.0 {
                 return cursor;
             }
-            cursor += group.block_len * group.depth_commit * group.depth_fold;
+            cursor += group.fold_position_count * group.depth_commit * group.depth_fold;
             cursor += group.num_claims * blocks * group.depth_open;
             cursor += group.num_claims * blocks * group.n_a * group.depth_open;
         }
@@ -40,7 +40,7 @@ fn oracle_e(
 ) -> usize {
     let group = &layout.groups[unit.group.0];
     oracle_unit_base(layout, unit)
-        + group.block_len * group.depth_commit * group.depth_fold
+        + group.fold_position_count * group.depth_commit * group.depth_fold
         + digit
         + group.depth_open * ((block - unit.global_block_base) + unit.blocks * claim)
 }
@@ -55,7 +55,7 @@ fn oracle_t(
 ) -> usize {
     let group = &layout.groups[unit.group.0];
     oracle_unit_base(layout, unit)
-        + group.block_len * group.depth_commit * group.depth_fold
+        + group.fold_position_count * group.depth_commit * group.depth_fold
         + group.num_claims * unit.blocks * group.depth_open
         + digit
         + group.depth_open
@@ -81,12 +81,12 @@ fn oracle_r(layout: &OpeningBatchWitnessLayout, row: usize, digit: usize) -> usi
         + layout.quotient_depth * row
 }
 
-fn group(id: usize, num_blocks: usize) -> OpeningBatchWitnessGroup {
+fn group(id: usize, live_fold_count: usize) -> OpeningBatchWitnessGroup {
     OpeningBatchWitnessGroup {
         id: SemanticGroupId(id),
         num_claims: 2,
-        num_blocks,
-        block_len: 3,
+        live_fold_count,
+        fold_position_count: 3,
         depth_open: 2,
         depth_commit: 2,
         depth_fold: 2,
@@ -103,7 +103,7 @@ fn check_layout(layout: OpeningBatchWitnessLayout) {
     let mut emitted = vec![0i8; layout.total_len() * D];
     for descriptor in &layout.groups {
         let group_id = descriptor.id;
-        let e_len = descriptor.num_claims * descriptor.num_blocks * descriptor.depth_open;
+        let e_len = descriptor.num_claims * descriptor.live_fold_count * descriptor.depth_open;
         let e_source = (0..e_len).map(marker).collect::<Vec<_>>();
         let t_len = e_len * descriptor.n_a;
         let t_source = (0..t_len)
@@ -114,7 +114,7 @@ fn check_layout(layout: OpeningBatchWitnessLayout) {
             &layout,
             group_id,
             &e_source,
-            descriptor.num_blocks,
+            descriptor.live_fold_count,
         )
         .unwrap();
         emit_witness_t_planes(
@@ -122,11 +122,12 @@ fn check_layout(layout: OpeningBatchWitnessLayout) {
             &layout,
             group_id,
             &t_source,
-            descriptor.num_blocks,
+            descriptor.live_fold_count,
         )
         .unwrap();
         for unit in layout.units_for_group(group_id).unwrap() {
-            let z_len = descriptor.block_len * descriptor.depth_commit * descriptor.depth_fold;
+            let z_len =
+                descriptor.fold_position_count * descriptor.depth_commit * descriptor.depth_fold;
             let z_source = (0..z_len)
                 .map(|index| marker(index + e_len + t_len + unit.machine_chunk.0))
                 .collect::<Vec<_>>();
@@ -138,7 +139,7 @@ fn check_layout(layout: OpeningBatchWitnessLayout) {
             let e_index = layout.e_index(unit, claim, block, digit).unwrap();
             assert_eq!(e_index, oracle_e(&layout, unit, claim, block, digit));
             let e_source_index =
-                (claim * descriptor.num_blocks + block) * descriptor.depth_open + digit;
+                (claim * descriptor.live_fold_count + block) * descriptor.depth_open + digit;
             assert_eq!(
                 &emitted[e_index * D..(e_index + 1) * D],
                 &e_source[e_source_index]
@@ -147,10 +148,11 @@ fn check_layout(layout: OpeningBatchWitnessLayout) {
             let a_row = 1;
             let t_index = layout.t_index(unit, claim, block, a_row, digit).unwrap();
             assert_eq!(t_index, oracle_t(&layout, unit, claim, block, a_row, digit));
-            let t_source_index =
-                (claim * descriptor.num_blocks + block) * descriptor.n_a * descriptor.depth_open
-                    + a_row * descriptor.depth_open
-                    + digit;
+            let t_source_index = (claim * descriptor.live_fold_count + block)
+                * descriptor.n_a
+                * descriptor.depth_open
+                + a_row * descriptor.depth_open
+                + digit;
             assert_eq!(
                 &emitted[t_index * D..(t_index + 1) * D],
                 &t_source[t_source_index]
@@ -184,20 +186,20 @@ fn check_layout(layout: OpeningBatchWitnessLayout) {
     let trace = TraceWeightLayout {
         ring_bits: 1,
         col_bits: opening_layout.opening_len().trailing_zeros() as usize,
-        num_blocks: descriptor.num_claims * descriptor.num_blocks,
+        live_fold_count: descriptor.num_claims * descriptor.live_fold_count,
         num_digits_open: descriptor.depth_open,
-        r_vars: descriptor.num_blocks.trailing_zeros() as usize,
+        fold_bits: descriptor.live_fold_count.trailing_zeros() as usize,
         log_basis: 3,
         witness_layout: layout.clone(),
         opening_layout,
         group_id,
     };
-    let logical_block = descriptor.num_blocks + descriptor.num_blocks - 1;
+    let logical_block = descriptor.live_fold_count + descriptor.live_fold_count - 1;
     let trace_index = trace.opening_digit_col_index(logical_block, 1).unwrap();
     let unit = layout
-        .unit_for_block(group_id, descriptor.num_blocks - 1)
+        .unit_for_block(group_id, descriptor.live_fold_count - 1)
         .unwrap();
-    let physical_trace_index = oracle_e(&layout, unit, 1, descriptor.num_blocks - 1, 1);
+    let physical_trace_index = oracle_e(&layout, unit, 1, descriptor.live_fold_count - 1, 1);
     assert_eq!(
         trace_index,
         opening_layout
@@ -216,10 +218,10 @@ fn check_layout(layout: OpeningBatchWitnessLayout) {
     );
     for physical_index in [
         layout
-            .e_index(unit, 1, descriptor.num_blocks - 1, 1)
+            .e_index(unit, 1, descriptor.live_fold_count - 1, 1)
             .unwrap(),
         layout
-            .t_index(unit, 1, descriptor.num_blocks - 1, 1, 1)
+            .t_index(unit, 1, descriptor.live_fold_count - 1, 1, 1)
             .unwrap(),
         layout.z_index(unit, 2, 1, 1).unwrap(),
         layout.r_index(2, 1).unwrap(),
@@ -264,23 +266,28 @@ fn canonical_witness_addresses_match_emitters_relation_columns_and_trace() {
 
 #[test]
 fn opening_block_layout_domain_identities_hold() {
-    for num_blocks in [1, 2, 8] {
-        for block_len in [3, 1184, 6660] {
-            let layout = OpeningBlockLayout::new(num_blocks, block_len).unwrap();
-            assert_eq!(layout.position_stride(), block_len.next_power_of_two());
+    for live_fold_count in [1, 2, 8] {
+        for fold_position_count in [3, 1184, 6660] {
+            let layout = OpeningBlockLayout::new(live_fold_count, fold_position_count).unwrap();
             assert_eq!(
-                (num_blocks * block_len).next_power_of_two(),
+                layout.position_stride(),
+                fold_position_count.next_power_of_two()
+            );
+            assert_eq!(
+                (live_fold_count * fold_position_count).next_power_of_two(),
                 layout.opening_len()
             );
             assert_eq!(
                 layout
-                    .physical_index(num_blocks - 1, block_len - 1)
+                    .physical_index(live_fold_count - 1, fold_position_count - 1)
                     .unwrap(),
-                num_blocks * block_len - 1
+                live_fold_count * fold_position_count - 1
             );
             assert_eq!(
-                layout.opening_index(num_blocks - 1, block_len - 1).unwrap(),
-                (num_blocks - 1) * layout.position_stride() + block_len - 1
+                layout
+                    .opening_index(live_fold_count - 1, fold_position_count - 1)
+                    .unwrap(),
+                (live_fold_count - 1) * layout.position_stride() + fold_position_count - 1
             );
         }
     }
@@ -321,8 +328,8 @@ fn virtual_opening_factors_and_compact_address_does_not() {
         .fold(F::zero(), |sum, (index, coefficient)| {
             sum + *coefficient * eq_eval_at_index(&point, index)
         });
-    let factored_eval = (0..layout.num_blocks()).fold(F::zero(), |sum, block| {
-        let inner = (0..layout.block_len()).fold(F::zero(), |inner, position| {
+    let factored_eval = (0..layout.live_fold_count()).fold(F::zero(), |sum, block| {
+        let inner = (0..layout.fold_position_count()).fold(F::zero(), |inner, position| {
             inner
                 + coefficients[layout.physical_index(block, position).unwrap()]
                     * position_weights[position]

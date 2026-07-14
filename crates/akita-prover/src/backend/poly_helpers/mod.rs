@@ -591,7 +591,7 @@ mod tests {
     fn partitioned_full_challenge_accumulate_matches_generic_sparse_path() {
         type F = Fp64<4294967197>;
         const D: usize = 32;
-        let block_len = 3;
+        let fold_position_count = 3;
         let num_digits = 4;
         let coeffs: Vec<_> = (0..6)
             .map(|idx| {
@@ -644,16 +644,16 @@ mod tests {
         let fused = balanced_ring_decompose_fold_partitioned::<F, D>(
             &coeffs,
             &challenges,
-            block_len,
+            fold_position_count,
             num_digits,
             &params,
         );
 
-        let mut generic = vec![[0i32; D]; block_len * num_digits];
+        let mut generic = vec![[0i32; D]; fold_position_count * num_digits];
         let mut digit_buf = vec![[0i8; D]; num_digits];
         for (block_idx, challenge) in challenges.iter().enumerate() {
-            let block_start = block_idx * block_len;
-            for local_idx in 0..block_len {
+            let block_start = block_idx * fold_position_count;
+            for local_idx in 0..fold_position_count {
                 let ring = &coeffs[block_start + local_idx];
                 decompose_ring_interleaved::<F, D>(ring, &mut digit_buf, num_digits, &params);
                 let base = local_idx * num_digits;
@@ -670,7 +670,7 @@ mod tests {
     fn partitioned_high_density_d32_challenge_uses_rotated_path() {
         type F = Fp64<4294967197>;
         const D: usize = 32;
-        let block_len = 3;
+        let fold_position_count = 3;
         let num_digits = 4;
         let coeffs: Vec<_> = (0..6)
             .map(|idx| {
@@ -715,16 +715,16 @@ mod tests {
         let mixed = balanced_ring_decompose_fold_partitioned::<F, D>(
             &coeffs,
             &challenges,
-            block_len,
+            fold_position_count,
             num_digits,
             &params,
         );
 
-        let mut generic = vec![[0i32; D]; block_len * num_digits];
+        let mut generic = vec![[0i32; D]; fold_position_count * num_digits];
         let mut digit_buf = vec![[0i8; D]; num_digits];
         for (block_idx, challenge) in challenges.iter().enumerate() {
-            let block_start = block_idx * block_len;
-            for local_idx in 0..block_len {
+            let block_start = block_idx * fold_position_count;
+            for local_idx in 0..fold_position_count {
                 let ring = &coeffs[block_start + local_idx];
                 decompose_ring_interleaved::<F, D>(ring, &mut digit_buf, num_digits, &params);
                 let base = local_idx * num_digits;
@@ -741,7 +741,7 @@ mod tests {
     fn partitioned_high_density_d64_challenge_uses_rotated_path() {
         type F = Fp64<4294967197>;
         const D: usize = 64;
-        let block_len = 2;
+        let fold_position_count = 2;
         let num_digits = 3;
         let coeffs: Vec<_> = (0..4)
             .map(|idx| {
@@ -787,16 +787,16 @@ mod tests {
         let mixed = balanced_ring_decompose_fold_partitioned::<F, D>(
             &coeffs,
             &challenges,
-            block_len,
+            fold_position_count,
             num_digits,
             &params,
         );
 
-        let mut generic = vec![[0i32; D]; block_len * num_digits];
+        let mut generic = vec![[0i32; D]; fold_position_count * num_digits];
         let mut digit_buf = vec![[0i8; D]; num_digits];
         for (block_idx, challenge) in challenges.iter().enumerate() {
-            let block_start = block_idx * block_len;
-            for local_idx in 0..block_len {
+            let block_start = block_idx * fold_position_count;
+            for local_idx in 0..fold_position_count {
                 let ring = &coeffs[block_start + local_idx];
                 decompose_ring_interleaved::<F, D>(ring, &mut digit_buf, num_digits, &params);
                 let base = local_idx * num_digits;

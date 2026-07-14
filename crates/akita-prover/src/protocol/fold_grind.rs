@@ -162,9 +162,9 @@ fn fold_grind_probe_order_absorb_buf(
     buf.extend_from_slice(akita_types::sis::FOLD_GRIND_PROBE_ORDER_ABSORB);
     buf.extend_from_slice(&(root_lp.ring_dimension as u64).to_le_bytes());
     buf.extend_from_slice(&params.log_basis().to_le_bytes());
-    buf.extend_from_slice(&(params.m_vars() as u64).to_le_bytes());
-    buf.extend_from_slice(&(params.r_vars() as u64).to_le_bytes());
-    buf.extend_from_slice(&(params.num_blocks() as u64).to_le_bytes());
+    buf.extend_from_slice(&(params.position_bits() as u64).to_le_bytes());
+    buf.extend_from_slice(&(params.fold_bits() as u64).to_le_bytes());
+    buf.extend_from_slice(&(params.live_fold_count() as u64).to_le_bytes());
     buf.extend_from_slice(&num_claims.to_le_bytes());
     buf
 }
@@ -196,7 +196,7 @@ where
         + for<'a> OpeningFoldKernel<P::OpeningView<'a>, F, D>,
 {
     let num_chunks = root_lp.witness_chunk.num_chunks;
-    let blocks_per_chunk = params.num_blocks() / num_chunks.max(1);
+    let blocks_per_chunk = params.live_fold_count() / num_chunks.max(1);
     if num_chunks <= 1 {
         let witness = build_point_decompose_fold_witness::<F, P, B, D>(
             backend,
@@ -263,7 +263,7 @@ where
     for &nonce in probe_nonces {
         let challenges = PreviewFoldDraw::new(transcript).draw_folding_challenges(
             ring_d,
-            params.num_blocks(),
+            params.live_fold_count(),
             num_claims,
             &root_lp.fold_challenge_config,
             &root_lp.fold_challenge_shape,
@@ -296,7 +296,7 @@ where
             .collect();
         let challenges = LiveFoldDraw::<F, T>::new(transcript).draw_folding_challenges(
             ring_d,
-            params.num_blocks(),
+            params.live_fold_count(),
             num_claims,
             &root_lp.fold_challenge_config,
             &root_lp.fold_challenge_shape,
@@ -351,7 +351,7 @@ where
     );
     let witness_norms = root_lp.fold_witness_norms_for_params(params);
     let num_claims_digit_plan = akita_types::sis::fold_witness_digit_plan(
-        params.r_vars(),
+        params.fold_bits(),
         num_claims,
         root_lp.field_bits_for_cache(),
         params.log_basis(),
@@ -376,7 +376,7 @@ where
         num_claims_digit_plan
     } else {
         akita_types::sis::fold_witness_digit_plan(
-            params.r_vars(),
+            params.fold_bits(),
             sizing_claims,
             root_lp.field_bits_for_cache(),
             params.log_basis(),

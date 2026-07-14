@@ -75,13 +75,13 @@ where
     FF: CanonicalField + FromPrimitiveInt,
 {
     let total_field = layout
-        .num_blocks
-        .checked_mul(layout.block_len)
+        .live_fold_count
+        .checked_mul(layout.fold_position_count)
         .and_then(|n| n.checked_mul(D))
         .expect("onehot total field size overflow");
     let num_vars = layout
-        .m_vars
-        .checked_add(layout.r_vars)
+        .position_bits()
+        .checked_add(layout.fold_bits())
         .and_then(|n| n.checked_add(D.trailing_zeros() as usize))
         .expect("onehot variable count overflow");
     assert_eq!(total_field, 1usize << num_vars);
@@ -370,7 +370,7 @@ where
     CpuBackend: OpeningFoldKernel<P::OpeningView<'a>, FF, D>,
 {
     let alpha_bits = D.trailing_zeros() as usize;
-    let target_num_vars = alpha_bits + layout.m_vars + layout.r_vars;
+    let target_num_vars = alpha_bits + layout.position_bits() + layout.fold_bits();
     assert!(
         point.len() <= target_num_vars,
         "opening point length {} exceeds target root arity {}",
@@ -384,7 +384,7 @@ where
     let reduced_point = &padded_point[alpha_bits..];
     let ring_opening_point = ring_opening_point_from_field(
         reduced_point,
-        OpeningBlockLayout::new(layout.num_blocks, layout.block_len)
+        OpeningBlockLayout::new(layout.live_fold_count, layout.fold_position_count)
             .expect("valid opening block layout"),
         basis,
     )
@@ -397,7 +397,7 @@ where
         OpeningFoldPlan::Base {
             eval_outer_scalars: &ring_opening_point.b,
             fold_scalars: &ring_opening_point.a,
-            block_len: layout.block_len,
+            fold_position_count: layout.fold_position_count,
         },
     )
     .expect("evaluate_and_fold");
@@ -662,7 +662,7 @@ pub(crate) fn run_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
         + AkitaSerialize,
 {
     let mut rng = StdRng::seed_from_u64(0xbeef_cafe);
-    let total_field = (layout.num_blocks * layout.block_len)
+    let total_field = (layout.live_fold_count * layout.fold_position_count)
         .checked_mul(D)
         .expect("total field size overflow");
     let onehot_k = onehot_k_for_num_vars(nv);

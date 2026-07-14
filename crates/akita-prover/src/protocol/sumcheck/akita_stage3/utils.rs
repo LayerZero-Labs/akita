@@ -3,13 +3,13 @@ use akita_field::parallel::*;
 use akita_field::{FieldCore, FromPrimitiveInt};
 
 pub(super) fn product_claim<E: FieldCore>(table: &[E], left_factor: &[E], right_factor: &[E]) -> E {
-    let right_len = right_factor.len();
+    let fold_low_len = right_factor.len();
     cfg_fold_reduce!(
         0..left_factor.len(),
         E::zero,
         |mut acc, left_idx| {
             let left_weight = left_factor[left_idx];
-            let row = &table[left_idx * right_len..(left_idx + 1) * right_len];
+            let row = &table[left_idx * fold_low_len..(left_idx + 1) * fold_low_len];
             for (&value, &right_weight) in row.iter().zip(right_factor.iter()) {
                 acc += value * left_weight * right_weight;
             }
@@ -25,14 +25,14 @@ pub(super) fn product_claim_from_m_compact<E: FieldCore + FromPrimitiveInt>(
     left_factor: &[E],
     right_factor: &[E],
 ) -> E {
-    let right_len = right_factor.len();
-    debug_assert_eq!(padded_len, left_factor.len() * right_len);
+    let fold_low_len = right_factor.len();
+    debug_assert_eq!(padded_len, left_factor.len() * fold_low_len);
     cfg_fold_reduce!(
         0..left_factor.len(),
         E::zero,
         |mut acc, left_idx| {
             let left_weight = left_factor[left_idx];
-            let row_base = left_idx * right_len;
+            let row_base = left_idx * fold_low_len;
             for (right_idx, &right_weight) in right_factor.iter().enumerate() {
                 let Some(&digit) = digits.get(row_base + right_idx) else {
                     continue;
@@ -54,14 +54,14 @@ pub(super) fn product_claim_from_m_compact_eq<E: FieldCore + FromPrimitiveInt>(
     scale: E,
     right_factor: &[E],
 ) -> E {
-    let right_len = right_factor.len();
-    let left_len = padded_len / right_len;
+    let fold_low_len = right_factor.len();
+    let fold_high_len = padded_len / fold_low_len;
     cfg_fold_reduce!(
-        0..left_len,
+        0..fold_high_len,
         E::zero,
         |mut acc, left_idx| {
             let left_weight = scale * eq_eval_at_index(point, left_idx);
-            let row_base = left_idx * right_len;
+            let row_base = left_idx * fold_low_len;
             for (right_idx, &right_weight) in right_factor.iter().enumerate() {
                 let Some(&digit) = digits.get(row_base + right_idx) else {
                     continue;
@@ -82,14 +82,14 @@ pub(super) fn product_claim_eq<E: FieldCore>(
     scale: E,
     right_factor: &[E],
 ) -> E {
-    let right_len = right_factor.len();
-    let left_len = table.len() / right_len;
+    let fold_low_len = right_factor.len();
+    let fold_high_len = table.len() / fold_low_len;
     cfg_fold_reduce!(
-        0..left_len,
+        0..fold_high_len,
         E::zero,
         |mut acc, left_idx| {
             let left_weight = scale * eq_eval_at_index(point, left_idx);
-            let row = &table[left_idx * right_len..(left_idx + 1) * right_len];
+            let row = &table[left_idx * fold_low_len..(left_idx + 1) * fold_low_len];
             for (&value, &right_weight) in row.iter().zip(right_factor.iter()) {
                 acc += value * left_weight * right_weight;
             }
@@ -111,14 +111,14 @@ pub(super) fn accumulate_right_round<E: FieldCore>(
     left_factor: &[E],
     right_factor: &[E],
 ) -> (E, E, E) {
-    let right_len = right_factor.len();
-    let half = right_len / 2;
+    let fold_low_len = right_factor.len();
+    let half = fold_low_len / 2;
     cfg_fold_reduce!(
         0..left_factor.len(),
         || (E::zero(), E::zero(), E::zero()),
         |(mut constant, mut linear, mut quadratic), left_idx| {
             let left_weight = left_factor[left_idx];
-            let row_base = left_idx * right_len;
+            let row_base = left_idx * fold_low_len;
             for pair_idx in 0..half {
                 let s0 = table[row_base + 2 * pair_idx];
                 let s1 = table[row_base + 2 * pair_idx + 1];
@@ -142,15 +142,15 @@ pub(super) fn accumulate_right_round_compact<E: FieldCore + FromPrimitiveInt>(
     left_factor: &[E],
     right_factor: &[E],
 ) -> (E, E, E) {
-    let right_len = right_factor.len();
-    let half = right_len / 2;
-    debug_assert_eq!(padded_len, left_factor.len() * right_len);
+    let fold_low_len = right_factor.len();
+    let half = fold_low_len / 2;
+    debug_assert_eq!(padded_len, left_factor.len() * fold_low_len);
     cfg_fold_reduce!(
         0..left_factor.len(),
         || (E::zero(), E::zero(), E::zero()),
         |(mut constant, mut linear, mut quadratic), left_idx| {
             let left_weight = left_factor[left_idx];
-            let row_base = left_idx * right_len;
+            let row_base = left_idx * fold_low_len;
             for pair_idx in 0..half {
                 let s0 = compact_value_at::<E>(digits, row_base + 2 * pair_idx);
                 let s1 = compact_value_at::<E>(digits, row_base + 2 * pair_idx + 1);
@@ -329,14 +329,14 @@ pub(super) fn fold_factor_in_place<E: FieldCore>(factor: &mut Vec<E>, r: E) {
 }
 
 pub(super) fn fold_right_round<E: FieldCore>(table: &mut Vec<E>, right_factor: &mut Vec<E>, r: E) {
-    let right_len = right_factor.len();
-    let half = right_len / 2;
-    let left_len = table.len() / right_len;
-    let mut folded = vec![E::zero(); left_len * half];
+    let fold_low_len = right_factor.len();
+    let half = fold_low_len / 2;
+    let fold_high_len = table.len() / fold_low_len;
+    let mut folded = vec![E::zero(); fold_high_len * half];
     cfg_chunks_mut!(&mut folded, half)
         .enumerate()
         .for_each(|(left_idx, row)| {
-            let row_base = left_idx * right_len;
+            let row_base = left_idx * fold_low_len;
             for pair_idx in 0..half {
                 row[pair_idx] = fold_pair(
                     table[row_base + 2 * pair_idx],
@@ -355,14 +355,14 @@ pub(super) fn fold_compact_right_round<E: FieldCore + FromPrimitiveInt>(
     right_factor: &mut Vec<E>,
     r: E,
 ) -> Vec<E> {
-    let right_len = right_factor.len();
-    let half = right_len / 2;
-    let left_len = padded_len / right_len;
-    let mut folded = vec![E::zero(); left_len * half];
+    let fold_low_len = right_factor.len();
+    let half = fold_low_len / 2;
+    let fold_high_len = padded_len / fold_low_len;
+    let mut folded = vec![E::zero(); fold_high_len * half];
     cfg_chunks_mut!(&mut folded, half)
         .enumerate()
         .for_each(|(left_idx, row)| {
-            let row_base = left_idx * right_len;
+            let row_base = left_idx * fold_low_len;
             for (pair_idx, slot) in row.iter_mut().enumerate() {
                 *slot = fold_pair(
                     compact_value_at::<E>(digits, row_base + 2 * pair_idx),
@@ -385,8 +385,8 @@ pub(super) fn fold_compact_right_two_rounds<E: FieldCore + FromPrimitiveInt>(
     let folded_right_len = right_factor.len();
     let original_right_len = folded_right_len * 2;
     let half = folded_right_len / 2;
-    let left_len = padded_len / original_right_len;
-    let mut folded = vec![E::zero(); left_len * half];
+    let fold_high_len = padded_len / original_right_len;
+    let mut folded = vec![E::zero(); fold_high_len * half];
     cfg_chunks_mut!(&mut folded, half)
         .enumerate()
         .for_each(|(left_idx, row)| {

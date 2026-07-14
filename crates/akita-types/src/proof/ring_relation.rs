@@ -43,10 +43,10 @@ pub fn ring_relation_segment_lengths<F: FieldCore + CanonicalField>(
     opening_counts: RingRelationOpeningCounts,
     _relation_matrix_row_layout: RelationMatrixRowLayout,
 ) -> Result<RingRelationSegmentLengths, AkitaError> {
-    let num_blocks = lp.num_blocks;
-    if num_blocks == 0 || !num_blocks.is_power_of_two() {
+    let live_fold_count = lp.live_fold_count;
+    if live_fold_count == 0 || !live_fold_count.is_power_of_two() {
         return Err(AkitaError::InvalidSetup(
-            "num_blocks must be a non-zero power of two".to_string(),
+            "live_fold_count must be a non-zero power of two".to_string(),
         ));
     }
     let depth_open = lp.num_digits_open;
@@ -61,10 +61,10 @@ pub fn ring_relation_segment_lengths<F: FieldCore + CanonicalField>(
             "prepared ring-switch layout has zero width".to_string(),
         ));
     }
-    let total_blocks = num_blocks
+    let total_blocks = live_fold_count
         .checked_mul(num_claims)
         .ok_or_else(|| AkitaError::InvalidSetup("total block count overflow".to_string()))?;
-    let t_total_blocks = num_blocks
+    let t_total_blocks = live_fold_count
         .checked_mul(num_t_vectors)
         .ok_or_else(|| AkitaError::InvalidSetup("T block count overflow".to_string()))?;
 
@@ -77,7 +77,7 @@ pub fn ring_relation_segment_lengths<F: FieldCore + CanonicalField>(
         .ok_or_else(|| AkitaError::InvalidSetup("T segment length overflow".to_string()))?;
     let z_len = depth_fold
         .checked_mul(depth_commit)
-        .and_then(|len| len.checked_mul(lp.block_len))
+        .and_then(|len| len.checked_mul(lp.fold_position_count))
         .ok_or_else(|| AkitaError::InvalidSetup("Z segment length overflow".to_string()))?;
 
     Ok(RingRelationSegmentLengths {
@@ -107,27 +107,27 @@ pub fn multi_group_ring_relation_segment_lengths<F: FieldCore + CanonicalField>(
     let mut t_lens = Vec::with_capacity(num_groups);
 
     let mut push_group_lens = |num_polys: usize,
-                               num_blocks: usize,
-                               block_len: usize,
+                               live_fold_count: usize,
+                               fold_position_count: usize,
                                n_a: usize,
                                num_digits_commit: usize,
                                num_digits_open: usize,
                                num_digits_fold: usize|
      -> Result<(), AkitaError> {
         let e_len = num_polys
-            .checked_mul(num_blocks)
+            .checked_mul(live_fold_count)
             .and_then(|n| n.checked_mul(num_digits_open))
             .ok_or_else(|| {
                 AkitaError::InvalidSetup("multi-group e-hat width overflow".to_string())
             })?;
         let t_len = num_polys
-            .checked_mul(num_blocks)
+            .checked_mul(live_fold_count)
             .and_then(|n| n.checked_mul(n_a))
             .and_then(|n| n.checked_mul(num_digits_open))
             .ok_or_else(|| {
                 AkitaError::InvalidSetup("multi-group t-hat width overflow".to_string())
             })?;
-        let z_len = block_len
+        let z_len = fold_position_count
             .checked_mul(num_digits_commit)
             .and_then(|n| n.checked_mul(num_digits_fold))
             .ok_or_else(|| {
@@ -142,8 +142,8 @@ pub fn multi_group_ring_relation_segment_lengths<F: FieldCore + CanonicalField>(
     let final_group = opening_batch.group_layout(final_group_index)?;
     push_group_lens(
         final_group.num_polynomials(),
-        lp.num_blocks,
-        lp.block_len,
+        lp.live_fold_count,
+        lp.fold_position_count,
         lp.a_key.row_len(),
         lp.num_digits_commit,
         lp.num_digits_open,
@@ -153,8 +153,8 @@ pub fn multi_group_ring_relation_segment_lengths<F: FieldCore + CanonicalField>(
         let group = opening_batch.group_layout(pre_idx)?;
         push_group_lens(
             group.num_polynomials(),
-            pre_params.num_blocks,
-            pre_params.block_len,
+            pre_params.layout.live_fold_count,
+            pre_params.layout.fold_position_count,
             pre_params.a_key.row_len(),
             pre_params.num_digits_commit,
             pre_params.num_digits_open,
@@ -543,8 +543,8 @@ impl<F: FieldCore + CanonicalField> RingRelationInstance<F> {
             groups.push(OpeningBatchWitnessGroup {
                 id: SemanticGroupId(group_index),
                 num_claims: group_layout.num_polynomials(),
-                num_blocks: params.num_blocks(),
-                block_len: params.block_len(),
+                live_fold_count: params.live_fold_count(),
+                fold_position_count: params.fold_position_count(),
                 depth_open: params.num_digits_open(),
                 depth_commit: params.num_digits_commit(),
                 depth_fold: lp.num_digits_fold_for_params(
@@ -593,8 +593,8 @@ mod tests {
 
     fn opening_point(lp: &LevelParams) -> RingOpeningPoint<F> {
         RingOpeningPoint {
-            a: vec![F::zero(); lp.block_len],
-            b: vec![F::zero(); lp.num_blocks],
+            a: vec![F::zero(); lp.fold_position_count],
+            b: vec![F::zero(); lp.live_fold_count],
         }
     }
 
@@ -608,12 +608,12 @@ mod tests {
             1,
             fold_challenge_config(),
         )
-        .with_decomp(2, 1, 1, 2, 0)
+        .with_decomp(4, 8, 1, 2)
         .expect("test params")
     }
 
     fn test_challenges(lp: &LevelParams, num_claims: usize) -> Challenges {
-        let total = lp.num_blocks * num_claims;
+        let total = lp.live_fold_count * num_claims;
         Challenges::from_sparse(
             vec![
                 SparseChallenge {
@@ -622,7 +622,7 @@ mod tests {
                 };
                 total
             ],
-            lp.num_blocks,
+            lp.live_fold_count,
             num_claims,
         )
         .expect("challenges")
@@ -654,8 +654,8 @@ mod tests {
         );
     }
 
-    fn chunk_test_level_params(r_vars: usize) -> LevelParams {
-        // num_blocks = 2^r_vars, block_len = 2^m_vars, single-tier.
+    fn chunk_test_level_params(fold_bits: usize) -> LevelParams {
+        // live_fold_count = 2^fold_bits, fold_position_count = 2^position_bits, single-tier.
         LevelParams::params_only(
             crate::SisModulusFamily::Q32,
             D,
@@ -665,7 +665,7 @@ mod tests {
             1,
             fold_challenge_config(),
         )
-        .with_decomp(2, r_vars, 1, 2, 0)
+        .with_decomp(4, 1usize << (2 + fold_bits), 1, 2)
         .expect("test params")
     }
 
@@ -722,14 +722,14 @@ mod tests {
         // The shared r tail follows the unit's compact z, e, and t ranges.
         assert_eq!(resolved.r_range.start, lens.z_len + lens.e_len + lens.t_len);
         assert_eq!(unit.global_block_base, 0);
-        assert_eq!(unit.blocks, lp.num_blocks);
+        assert_eq!(unit.blocks, lp.live_fold_count);
     }
 
     #[test]
     fn resolve_multi_chunk_offsets_contiguous_and_cover_blocks() {
         let num_claims = 2;
         for w in [1usize, 2, 4, 8] {
-            let mut lp = chunk_test_level_params(3); // num_blocks = 8
+            let mut lp = chunk_test_level_params(3); // live_fold_count = 8
             if w > 1 {
                 lp.witness_chunk = crate::witness::ChunkedWitnessCfg {
                     num_chunks: w,
@@ -749,7 +749,7 @@ mod tests {
                 .segment_layout(&lp, None)
                 .expect("layout");
             assert_eq!(layout.num_machine_chunks(), w);
-            let blocks_per_chunk = lp.num_blocks / w;
+            let blocks_per_chunk = lp.live_fold_count / w;
 
             // Partitioned e/t lengths sum to the single-machine totals; z replicated.
             let e_sum: usize = layout
@@ -778,10 +778,10 @@ mod tests {
                 assert_eq!(unit.global_block_base, j * blocks_per_chunk);
             }
             assert_eq!(layout.r_range.start, w * stride);
-            // Block windows tile [0, num_blocks).
+            // Block windows tile [0, live_fold_count).
             assert_eq!(
                 layout.ownership_units.last().unwrap().global_block_base + blocks_per_chunk,
-                lp.num_blocks
+                lp.live_fold_count
             );
         }
     }
@@ -799,7 +799,7 @@ mod tests {
             .segment_layout(&lp, None)
             .is_err());
 
-        // num_chunks = 16 exceeds num_blocks = 8.
+        // num_chunks = 16 exceeds live_fold_count = 8.
         let mut lp = chunk_test_level_params(3);
         lp.witness_chunk = crate::witness::ChunkedWitnessCfg {
             num_chunks: 16,
@@ -892,7 +892,7 @@ mod tests {
             3,
             fold_challenge_config(),
         )
-        .with_decomp(2, 2, 2, 2, 0)
+        .with_decomp(4, 16, 2, 2)
         .expect("multi-group main params");
         let precommit_lp = LevelParams::params_only(
             crate::SisModulusFamily::Q128,
@@ -903,7 +903,7 @@ mod tests {
             3,
             fold_challenge_config(),
         )
-        .with_decomp(2, 2, 2, 2, 0)
+        .with_decomp(4, 16, 2, 2)
         .expect("multi-group precommit params");
         let precommit = PrecommittedLevelParams {
             layout: PrecommittedGroupParams::from_params(
@@ -912,8 +912,6 @@ mod tests {
             ),
             a_key: precommit_lp.a_key.clone(),
             b_key: precommit_lp.b_key.clone(),
-            num_blocks: precommit_lp.num_blocks,
-            block_len: precommit_lp.block_len,
             num_digits_commit: precommit_lp.num_digits_commit,
             num_digits_open: precommit_lp.num_digits_open,
             num_digits_fold_one: precommit_lp.num_digits_fold_one,

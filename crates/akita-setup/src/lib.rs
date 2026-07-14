@@ -682,7 +682,7 @@ mod tests {
                         .expect("singleton opening batch"),
                 )
                 .unwrap();
-                let num_coeffs = lp.num_blocks * lp.block_len;
+                let num_coeffs = lp.live_fold_count * lp.fold_position_count;
                 let coeffs = vec![CyclotomicRing::<TestF, TEST_D>::zero(); num_coeffs];
                 let poly = DensePoly::<TestF>::from_ring_coeffs(coeffs);
 

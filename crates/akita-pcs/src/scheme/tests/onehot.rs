@@ -12,7 +12,7 @@ fn conservative_config_commit_returns_frozen_layout() {
     let opening_batch = OpeningClaimsLayout::new(NV, GROUP_SIZE).expect("opening batch");
     let layout = ConservativeOneHotCfg::get_params_for_batched_commitment(&opening_batch)
         .expect("conservative commit layout");
-    let total_field = (layout.num_blocks * layout.block_len)
+    let total_field = (layout.live_fold_count * layout.fold_position_count)
         .checked_mul(ONEHOT_D)
         .expect("total field size overflow");
     assert_eq!(total_field % BENCH_ONEHOT_K, 0);
@@ -28,8 +28,11 @@ fn conservative_config_commit_returns_frozen_layout() {
     let frozen_layout = akita_types::PrecommittedGroupParams::from_params(key, &layout);
 
     assert_eq!(frozen_layout.group, key);
-    assert_eq!(frozen_layout.m_vars, layout.m_vars);
-    assert_eq!(frozen_layout.r_vars, layout.r_vars);
+    assert_eq!(
+        frozen_layout.fold_position_count,
+        layout.fold_position_count
+    );
+    assert_eq!(frozen_layout.live_fold_count, layout.live_fold_count);
     assert_eq!(
         frozen_layout.log_basis,
         ConservativeOneHotCfg::basis_range().0
@@ -243,7 +246,7 @@ fn commit_group_returns_frozen_conservative_layout() {
         akita_types::OpeningClaimsLayout::new(NV, GROUP_SIZE).expect("opening batch");
     let layout =
         OneHotCfg::get_params_for_batched_commitment(&opening_batch).expect("group commit layout");
-    let total_field = (layout.num_blocks * layout.block_len)
+    let total_field = (layout.live_fold_count * layout.fold_position_count)
         .checked_mul(ONEHOT_D)
         .expect("total field size overflow");
     assert_eq!(total_field % BENCH_ONEHOT_K, 0);
@@ -258,8 +261,11 @@ fn commit_group_returns_frozen_conservative_layout() {
         OneHotScheme::commit_group::<_, _>(&setup, &polys, &stack).expect("commit group");
 
     assert_eq!(frozen_layout.group, key);
-    assert_eq!(frozen_layout.m_vars, layout.m_vars);
-    assert_eq!(frozen_layout.r_vars, layout.r_vars);
+    assert_eq!(
+        frozen_layout.fold_position_count,
+        layout.fold_position_count
+    );
+    assert_eq!(frozen_layout.live_fold_count, layout.live_fold_count);
     assert_eq!(frozen_layout.log_basis, layout.log_basis);
     assert_eq!(frozen_layout.n_a, layout.a_key.row_len());
     assert_eq!(frozen_layout.conservative_n_b, layout.b_key.row_len());
@@ -844,7 +850,7 @@ fn batched_onehot_roundtrip_matches_public_shape_context() {
     const BATCH_SIZE: usize = 2;
 
     let layout = akita_batched_root_layout::<OneHotCfg>(NV, BATCH_SIZE).expect("layout");
-    let total_field = (layout.num_blocks * layout.block_len)
+    let total_field = (layout.live_fold_count * layout.fold_position_count)
         .checked_mul(ONEHOT_D)
         .expect("total field size overflow");
     let total_chunks = total_field / BENCH_ONEHOT_K;

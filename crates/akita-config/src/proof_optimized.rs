@@ -304,7 +304,7 @@ fn root_runtime_matrix_len_for_opening_batch(
     let num_claims = layout.num_total_polynomials();
     let max_group_poly_count = layout.num_total_polynomials();
     let d_width = lp
-        .num_blocks
+        .live_fold_count
         .checked_mul(num_claims)
         .and_then(|n| n.checked_mul(lp.num_digits_open))
         .ok_or_else(|| AkitaError::InvalidSetup("batched D setup width overflow".to_string()))?;
@@ -312,7 +312,7 @@ fn root_runtime_matrix_len_for_opening_batch(
         .a_key
         .row_len()
         .checked_mul(lp.num_digits_open)
-        .and_then(|n| n.checked_mul(lp.num_blocks))
+        .and_then(|n| n.checked_mul(lp.live_fold_count))
         .ok_or_else(|| {
             AkitaError::InvalidSetup("batched B setup vector width overflow".to_string())
         })?;

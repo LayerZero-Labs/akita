@@ -32,7 +32,7 @@ fn run_single_onehot(nv: usize) {
             &akita_types::OpeningClaimsLayout::new(nv, 1).expect("singleton opening batch"),
         )
         .expect("layout");
-        let total_field = layout.num_blocks * layout.block_len * ONEHOT_D;
+        let total_field = layout.live_fold_count * layout.fold_position_count * ONEHOT_D;
         assert_eq!(total_field, 1usize << nv);
         let total_chunks = total_field / ONEHOT_K;
 
@@ -254,7 +254,7 @@ fn run_single_onehot_oversized_setup(setup_nv: usize, poly_nv: usize) {
             &akita_types::OpeningClaimsLayout::new(poly_nv, 1).expect("singleton opening batch"),
         )
         .expect("layout");
-        let total_field = layout.num_blocks * layout.block_len * ONEHOT_D;
+        let total_field = layout.live_fold_count * layout.fold_position_count * ONEHOT_D;
         assert_eq!(total_field, 1usize << poly_nv);
         let total_chunks = total_field / ONEHOT_K;
 

@@ -40,11 +40,11 @@ pub mod fp128 {
 
         /// Tensor at the root level (`level == 0`), flat at every recursive
         /// level. The schedule materializer reads this hook *before* deriving
-        /// the fold digit count and the `(m_vars, r_vars)` split, so the root
+        /// the fold digit count and the `(position_bits, fold_bits)` split, so the root
         /// step's `LevelParams` are dimensioned for `omega^2`.
         fn fold_challenge_shape_at_level(inputs: AkitaScheduleInputs) -> TensorChallengeShape {
             if inputs.level == 0 {
-                TensorChallengeShape::Tensor
+                TensorChallengeShape::Tensor { fold_low_len: 2 }
             } else {
                 TensorChallengeShape::Flat
             }

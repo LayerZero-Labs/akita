@@ -2,7 +2,7 @@
 
 use crate::sampler::{SignedSparseScratch, XofCursor, MAX_STACK_RING_DIM};
 use crate::{
-    tensor_left_digest, tensor_split, ChallengeLabels, ChallengeShape, Challenges, SparseChallenge,
+    fold_high_digest, ChallengeLabels, ChallengeShape, Challenges, SparseChallenge,
     SparseChallengeConfig, TensorChallenges,
 };
 use akita_field::{AkitaError, CanonicalField, FieldCore};
@@ -42,7 +42,7 @@ pub trait FoldDraw {
     fn draw_folding_challenges(
         &mut self,
         ring_d: usize,
-        num_blocks: usize,
+        live_fold_count: usize,
         num_claims: usize,
         cfg: &SparseChallengeConfig,
         shape: &ChallengeShape,
@@ -60,37 +60,43 @@ pub trait FoldDraw {
 
         match shape {
             ChallengeShape::Flat => {
-                let total = challenge_count(num_blocks, num_claims, "sparse")?;
+                let total = challenge_count(live_fold_count, num_claims, "sparse")?;
                 let challenges =
                     self.draw_sparse_challenges(labels.flat, ring_d, total, cfg, grind_nonce);
-                Challenges::from_sparse(challenges, num_blocks, num_claims)
+                Challenges::from_sparse(challenges, live_fold_count, num_claims)
             }
-            ChallengeShape::Tensor => {
-                let (left_len, right_len) = tensor_split(num_blocks)?;
-                let left_total = challenge_count(left_len, num_claims, "tensor-left")?;
-                let right_total = challenge_count(right_len, num_claims, "tensor-right")?;
-                let left = self.draw_sparse_challenges(
-                    labels.tensor_left,
+            ChallengeShape::Tensor { fold_low_len } => {
+                if live_fold_count == 0 || !fold_low_len.is_power_of_two() {
+                    return Err(AkitaError::InvalidInput(
+                        "tensor challenges require positive live folds and a power-of-two low length"
+                            .to_string(),
+                    ));
+                }
+                let fold_high_len = live_fold_count.div_ceil(*fold_low_len);
+                let high_total = challenge_count(fold_high_len, num_claims, "fold-high")?;
+                let low_total = challenge_count(*fold_low_len, num_claims, "fold-low")?;
+                let fold_high = self.draw_sparse_challenges(
+                    labels.fold_high,
                     ring_d,
-                    left_total,
+                    high_total,
                     cfg,
                     grind_nonce,
                 );
-                let left_digest = tensor_left_digest(&left, left_len, num_claims, ring_d)?;
-                self.absorb(&left_digest);
-                let right = self.draw_sparse_challenges(
-                    labels.tensor_right,
+                let high_digest = fold_high_digest(&fold_high, fold_high_len, num_claims, ring_d)?;
+                self.absorb(&high_digest);
+                let fold_low = self.draw_sparse_challenges(
+                    labels.fold_low,
                     ring_d,
-                    right_total,
+                    low_total,
                     cfg,
                     grind_nonce,
                 );
                 Challenges::from_tensor_dyn(
                     TensorChallenges {
-                        left,
-                        right,
-                        left_len,
-                        right_len,
+                        fold_high,
+                        fold_low,
+                        live_folds_per_claim: live_fold_count,
+                        fold_low_len: *fold_low_len,
                         num_claims,
                     },
                     ring_d,

@@ -10,7 +10,6 @@ use akita_field::{AkitaError, CanonicalField};
 use crate::descriptor_bytes::{push_u128, push_u32, push_usize};
 use crate::layout::ring_dims::CommitmentRingDims;
 use crate::opening_claims::OpeningClaimsLayout;
-use crate::OpeningBlockLayout;
 
 pub use crate::sis::{AjtaiKeyParams, FoldWitnessLinfCapConfig, SisModulusFamily};
 
@@ -55,15 +54,14 @@ pub struct LevelParams {
     pub b_key: AjtaiKeyParams,
     /// Prover matrix (D): `row_len = n_d`, `col_len = d_matrix_width`.
     pub d_key: AjtaiKeyParams,
-    /// Number of committed blocks (`2^r_vars`).
-    pub num_blocks: usize,
-    /// Number of ring elements per block. Equals `2^m_vars` at the root level
-    /// but may differ at recursive levels (`ceil(num_ring / num_blocks)`).
-    pub block_len: usize,
-    /// Virtual-position variable count (log₂ `position_stride`).
-    pub m_vars: usize,
-    /// Block-select variable count (log₂ `num_blocks`).
-    pub r_vars: usize,
+    /// Exact live source ring elements per claim (`N`).
+    pub source_ring_len_per_claim: usize,
+    /// Power-of-two positions in one fold slice (`L`).
+    pub fold_position_count: usize,
+    /// Exact number of live fold slices (`F = ceil(N / L)`).
+    pub live_fold_count: usize,
+    /// Power-of-two ownership granule used to partition live folds into shards.
+    pub shard_granule: usize,
     pub fold_challenge_config: SparseChallengeConfig,
     /// Shape of the stage-1 fold-round challenge vector at this level.
     ///
@@ -163,10 +161,10 @@ impl LevelParams {
             a_key: AjtaiKeyParams::default(),
             b_key: AjtaiKeyParams::default(),
             d_key: AjtaiKeyParams::default(),
-            num_blocks: 0,
-            block_len: 0,
-            m_vars: 0,
-            r_vars: 0,
+            source_ring_len_per_claim: 0,
+            fold_position_count: 0,
+            live_fold_count: 0,
+            shard_granule: 0,
             fold_challenge_config: SparseChallengeConfig {
                 count_pm1: 0,
                 count_pm2: 0,
@@ -227,10 +225,10 @@ impl LevelParams {
                 0,
                 ring_dimension,
             ),
-            num_blocks: 0,
-            block_len: 0,
-            m_vars: 0,
-            r_vars: 0,
+            source_ring_len_per_claim: 0,
+            fold_position_count: 0,
+            live_fold_count: 0,
+            shard_granule: 0,
             fold_challenge_config,
             fold_challenge_shape: TensorChallengeShape::Flat,
             num_digits_commit: 0,
@@ -330,14 +328,14 @@ impl LevelParams {
         (self.inner_width() as u128).saturating_mul(self.ring_dimension as u128)
     }
 
-    /// Fold block count `num_claims · 2^r_vars` used in the tail-bound formula.
+    /// Fold block count `num_claims · 2^fold_bits` used in the tail-bound formula.
     ///
     /// # Errors
     ///
     /// Returns [`AkitaError::InvalidSetup`] when the product overflows `u128`.
     pub fn num_fold_blocks(&self, num_claims: usize) -> Result<u128, AkitaError> {
         (num_claims as u128)
-            .checked_mul(self.num_blocks as u128)
+            .checked_mul(self.live_fold_count as u128)
             .ok_or_else(|| AkitaError::InvalidSetup("num_fold_blocks overflows u128".to_string()))
     }
 
@@ -387,7 +385,7 @@ impl LevelParams {
         );
         let witness = self.fold_witness_norms();
         let (num_digits_fold_one, _) = crate::sis::fold_witness_digit_plan(
-            self.r_vars,
+            self.fold_bits(),
             1,
             field_bits,
             self.log_basis,
@@ -399,7 +397,7 @@ impl LevelParams {
         if root_num_claims > 1 {
             self.cached_num_digits_fold_claims = root_num_claims;
             let (cached_value, _) = crate::sis::fold_witness_digit_plan(
-                self.r_vars,
+                self.fold_bits(),
                 root_num_claims,
                 field_bits,
                 self.log_basis,
@@ -423,7 +421,7 @@ impl LevelParams {
     /// Propagates [`crate::sis::fold_witness_digit_plan`] setup errors.
     pub fn fold_witness_linf_cap_for_claims(&self, num_claims: usize) -> Result<u128, AkitaError> {
         let (_delta_fold, inf_norm_bound) = crate::sis::fold_witness_digit_plan(
-            self.r_vars,
+            self.fold_bits(),
             num_claims,
             self.field_bits_for_cache(),
             self.log_basis,
@@ -464,9 +462,10 @@ impl LevelParams {
         buf.extend_from_slice(crate::sis::FOLD_GRIND_PROBE_ORDER_ABSORB);
         buf.extend_from_slice(&(self.ring_dimension as u64).to_le_bytes());
         buf.extend_from_slice(&self.log_basis.to_le_bytes());
-        buf.extend_from_slice(&(self.m_vars as u64).to_le_bytes());
-        buf.extend_from_slice(&(self.r_vars as u64).to_le_bytes());
-        buf.extend_from_slice(&(self.num_blocks as u64).to_le_bytes());
+        buf.extend_from_slice(&(self.source_ring_len_per_claim as u64).to_le_bytes());
+        buf.extend_from_slice(&(self.fold_position_count as u64).to_le_bytes());
+        buf.extend_from_slice(&(self.live_fold_count as u64).to_le_bytes());
+        buf.extend_from_slice(&(self.shard_granule as u64).to_le_bytes());
         buf.extend_from_slice(&num_claims.to_le_bytes());
         buf
     }
@@ -486,20 +485,25 @@ impl LevelParams {
         }
         let witness_linf = self.fold_witness_norms().infinity_norm();
         let witness_linf_sq = witness_linf.saturating_mul(witness_linf);
-        crate::sis::rademacher_proxy_variance(self.r_vars, num_claims, witness_linf_sq, &cap_config)
+        crate::sis::rademacher_proxy_variance(
+            self.fold_bits(),
+            num_claims,
+            witness_linf_sq,
+            &cap_config,
+        )
     }
 
     /// Gadget decomposition depth for the folded witness (δ_fold / τ).
     ///
     /// Delegates to [`crate::sis::fold_witness_digit_plan`], which derives
-    /// `β = num_claims · 2^r_vars · min(||c||_inf·||s||_1, ||c||_1·||s||_inf)`
+    /// `β = num_claims · 2^fold_bits · min(||c||_inf·||s||_1, ||c||_1·||s||_inf)`
     /// from this level's fold challenge and witness norms, then applies
     /// `min(β_inf, t*)` under tail-bound-with-grind policies.
     ///
     /// # Errors
     ///
     /// Propagates [`crate::sis::fold_witness_digit_plan`]'s rejection of a
-    /// degenerate fold bound (`r_vars >= 127` or `β` overflow).
+    /// degenerate fold bound (`fold_bits >= 127` or `β` overflow).
     #[inline]
     pub fn num_digits_fold(&self, num_claims: usize, field_bits: u32) -> Result<usize, AkitaError> {
         if num_claims == 1 {
@@ -515,7 +519,7 @@ impl LevelParams {
             self.fold_challenge_shape,
         );
         let (decomposed_fold_digits, _) = crate::sis::fold_witness_digit_plan(
-            self.r_vars,
+            self.fold_bits(),
             num_claims,
             field_bits,
             self.log_basis,
@@ -541,7 +545,7 @@ impl LevelParams {
             self.fold_challenge_shape,
         );
         let (decomposed_fold_digits, _) = crate::sis::fold_witness_digit_plan(
-            params.r_vars(),
+            params.fold_bits(),
             num_claims,
             field_bits,
             params.log_basis(),
@@ -573,16 +577,54 @@ impl LevelParams {
         self.with_fold_linf_cap_config(field_bits, root_num_claims)
     }
 
-    /// Block-select variable count (the `r_vars` of the legacy layout).
+    /// Number of Boolean coordinates in the fold-capacity domain.
     #[inline]
-    pub fn log_num_blocks(&self) -> usize {
-        self.r_vars
+    pub fn fold_bits(&self) -> usize {
+        self.live_fold_count
+            .checked_next_power_of_two()
+            .map_or(0, |capacity| capacity.trailing_zeros() as usize)
     }
 
-    /// Per-block variable count (the `m_vars` of the legacy layout).
+    /// Number of Boolean coordinates in one fold-position slice.
     #[inline]
-    pub fn log_block_len(&self) -> usize {
-        self.m_vars
+    pub fn position_bits(&self) -> usize {
+        self.fold_position_count.trailing_zeros() as usize
+    }
+
+    /// Boolean fold capacity (`next_power_of_two(F)`).
+    #[inline]
+    pub fn fold_capacity(&self) -> Result<usize, AkitaError> {
+        self.live_fold_count
+            .checked_next_power_of_two()
+            .ok_or_else(|| AkitaError::InvalidSetup("fold capacity overflows usize".to_string()))
+    }
+
+    /// Validate the exact source/fold geometry before it reaches allocation.
+    pub fn validate_fold_geometry(&self) -> Result<(), AkitaError> {
+        if self.source_ring_len_per_claim == 0
+            || self.fold_position_count == 0
+            || !self.fold_position_count.is_power_of_two()
+            || self.live_fold_count == 0
+            || self.shard_granule == 0
+            || !self.shard_granule.is_power_of_two()
+        {
+            return Err(AkitaError::InvalidSetup(
+                "invalid digit-innermost fold geometry".to_string(),
+            ));
+        }
+        let expected = self
+            .source_ring_len_per_claim
+            .div_ceil(self.fold_position_count);
+        if self.live_fold_count != expected {
+            return Err(AkitaError::InvalidSetup(format!(
+                "live_fold_count={} does not equal ceil(source_ring_len_per_claim={} / fold_position_count={})={expected}",
+                self.live_fold_count,
+                self.source_ring_len_per_claim,
+                self.fold_position_count,
+            )));
+        }
+        self.fold_capacity()?;
+        Ok(())
     }
 
     /// Width of inner matrix A (column count of the A-key).
@@ -591,18 +633,14 @@ impl LevelParams {
         self.a_key.col_len()
     }
 
-    /// Total ring elements in the committed witness at this level (`num_blocks * block_len`).
+    /// Exact live source ring elements in one claim.
     ///
     /// # Errors
     ///
     /// Returns [`AkitaError::InvalidSetup`] on overflow.
     pub fn n_ring_elems(&self) -> Result<usize, AkitaError> {
-        self.num_blocks.checked_mul(self.block_len).ok_or_else(|| {
-            AkitaError::InvalidSetup(format!(
-                "num_blocks={} * block_len={} overflows usize",
-                self.num_blocks, self.block_len,
-            ))
-        })
+        self.validate_fold_geometry()?;
+        Ok(self.source_ring_len_per_claim)
     }
 
     /// Total flat field-element count (`n_ring_elems * d_a`).
@@ -630,10 +668,10 @@ impl LevelParams {
         self.a_key.append_descriptor_bytes(bytes);
         self.b_key.append_descriptor_bytes(bytes);
         self.d_key.append_descriptor_bytes(bytes);
-        push_usize(bytes, self.num_blocks);
-        push_usize(bytes, self.block_len);
-        push_usize(bytes, self.m_vars);
-        push_usize(bytes, self.r_vars);
+        push_usize(bytes, self.source_ring_len_per_claim);
+        push_usize(bytes, self.fold_position_count);
+        push_usize(bytes, self.live_fold_count);
+        push_usize(bytes, self.shard_granule);
         append_sparse_challenge_descriptor_bytes(bytes, &self.fold_challenge_config);
         append_tensor_challenge_shape_descriptor_bytes(bytes, self.fold_challenge_shape);
         append_fold_linf_policy_descriptor_bytes(bytes, self.fold_witness_linf_cap_policy());
@@ -672,23 +710,23 @@ impl LevelParams {
     /// Total outer variable count (`log_num_blocks + log_block_len`).
     #[inline]
     pub fn outer_vars(&self) -> usize {
-        self.log_num_blocks() + self.log_block_len()
+        self.fold_bits() + self.position_bits()
     }
 
     /// Logical opening-point variable count for recursive fold levels.
     ///
-    /// Matches [`crate::prepare_opening_point`]: virtual block/position
-    /// coordinates from [`OpeningBlockLayout`] plus the inner `log2(d_a)`
-    /// bits.
+    /// Uses the direct `[position bits | fold bits]` source split plus the
+    /// inner `log2(d_a)` coordinates.
     ///
     /// # Errors
     ///
     /// Returns an error if the summed dimension overflows `usize`.
     pub fn recursive_opening_num_vars(&self) -> Result<usize, AkitaError> {
         let alpha_bits = self.d_a().trailing_zeros() as usize;
-        let opening_layout = OpeningBlockLayout::new(self.num_blocks, self.block_len)?;
-        let outer_bits = (opening_layout.position_stride().trailing_zeros() as usize)
-            .checked_add(opening_layout.num_blocks().trailing_zeros() as usize)
+        self.validate_fold_geometry()?;
+        let outer_bits = self
+            .position_bits()
+            .checked_add(self.fold_bits())
             .ok_or_else(|| {
                 AkitaError::InvalidSetup("recursive opening outer variable overflow".to_string())
             })?;
@@ -933,23 +971,23 @@ impl LevelParams {
 
     fn root_segment_rings(
         num_polys: usize,
-        num_blocks: usize,
-        block_len: usize,
+        live_fold_count: usize,
+        fold_position_count: usize,
         n_a: usize,
         num_digits_commit: usize,
         num_digits_open: usize,
         num_digits_fold: usize,
     ) -> Result<usize, AkitaError> {
         let e_hat = num_polys
-            .checked_mul(num_blocks)
+            .checked_mul(live_fold_count)
             .and_then(|n| n.checked_mul(num_digits_open))
             .ok_or_else(|| AkitaError::InvalidSetup("root e-hat witness overflow".to_string()))?;
         let t_hat = num_polys
-            .checked_mul(num_blocks)
+            .checked_mul(live_fold_count)
             .and_then(|n| n.checked_mul(n_a))
             .and_then(|n| n.checked_mul(num_digits_open))
             .ok_or_else(|| AkitaError::InvalidSetup("root t-hat witness overflow".to_string()))?;
-        let z_hat = block_len
+        let z_hat = fold_position_count
             .checked_mul(num_digits_commit)
             .and_then(|n| n.checked_mul(num_digits_fold))
             .ok_or_else(|| AkitaError::InvalidSetup("root z-hat witness overflow".to_string()))?;
@@ -992,8 +1030,8 @@ impl LevelParams {
         let final_group = opening_batch.group_layout(final_group_index)?;
         let mut total = Self::root_segment_rings(
             final_group.num_polynomials(),
-            self.num_blocks,
-            self.block_len,
+            self.live_fold_count,
+            self.fold_position_count,
             self.a_key.row_len(),
             self.num_digits_commit,
             self.num_digits_open,
@@ -1002,8 +1040,8 @@ impl LevelParams {
         for group in &self.precommitted_groups {
             let group_rings = Self::root_segment_rings(
                 group.layout.group.num_polynomials(),
-                group.num_blocks,
-                group.block_len,
+                group.layout.live_fold_count,
+                group.layout.fold_position_count,
                 group.a_key.row_len(),
                 group.num_digits_commit,
                 group.num_digits_open,
@@ -1094,48 +1132,47 @@ impl LevelParams {
         Ok(padded.trailing_zeros() as usize)
     }
 
-    /// Fill in the layout-derived fields from explicit decomposition parameters.
+    /// Fill in layout-derived fields from exact digit-innermost geometry.
     ///
     /// Takes a params-only `LevelParams` (with zeroed layout fields) and
-    /// computes block geometry, matrix column counts, and commit/open digit
-    /// depths.
-    ///
-    /// When `num_ring > 0` (recursive levels), `block_len` is set to
-    /// `ceil(num_ring / num_blocks)` instead of `2^m_vars`, giving tight
-    /// z_folded_rings sizing. Pass `0` for root-level layouts.
+    /// `fold_position_count` is the power-of-two `L` and
+    /// `source_ring_len_per_claim` is the exact live `N`. The exact live fold
+    /// count `F` is derived as `ceil(N / L)`.
     ///
     /// # Errors
     ///
     /// Returns an error when parameters are invalid or derived widths overflow.
     pub fn with_decomp(
         &self,
-        m_vars: usize,
-        r_vars: usize,
+        fold_position_count: usize,
+        source_ring_len_per_claim: usize,
         num_digits_commit: usize,
         num_digits_open: usize,
-        num_ring: usize,
     ) -> Result<Self, AkitaError> {
-        let num_blocks = 1usize
-            .checked_shl(r_vars as u32)
-            .ok_or_else(|| AkitaError::InvalidSetup("2^r_vars does not fit usize".to_string()))?;
-        let block_len = if num_ring > 0 {
-            num_ring.div_ceil(num_blocks)
-        } else {
-            1usize.checked_shl(m_vars as u32).ok_or_else(|| {
-                AkitaError::InvalidSetup("2^m_vars does not fit usize".to_string())
-            })?
-        };
-        let inner_width = block_len
+        if source_ring_len_per_claim == 0
+            || fold_position_count == 0
+            || !fold_position_count.is_power_of_two()
+        {
+            return Err(AkitaError::InvalidSetup(
+                "with_decomp requires positive N and power-of-two L".to_string(),
+            ));
+        }
+        let live_fold_count = source_ring_len_per_claim.div_ceil(fold_position_count);
+        live_fold_count
+            .checked_next_power_of_two()
+            .ok_or_else(|| AkitaError::InvalidSetup("fold capacity overflows usize".to_string()))?;
+        let shard_granule = 1;
+        let inner_width = fold_position_count
             .checked_mul(num_digits_commit)
             .ok_or_else(|| AkitaError::InvalidSetup("inner width overflow".to_string()))?;
         let outer_width = self
             .a_key
             .row_len()
             .checked_mul(num_digits_open)
-            .and_then(|x| x.checked_mul(num_blocks))
+            .and_then(|x| x.checked_mul(live_fold_count))
             .ok_or_else(|| AkitaError::InvalidSetup("outer width overflow".to_string()))?;
         let d_matrix_width = num_digits_open
-            .checked_mul(num_blocks)
+            .checked_mul(live_fold_count)
             .ok_or_else(|| AkitaError::InvalidSetup("D-matrix width overflow".to_string()))?;
         let d = self.ring_dimension;
         let rebuilt = Self {
@@ -1165,10 +1202,10 @@ impl LevelParams {
                 self.d_key.coeff_linf_bound(),
                 d,
             ),
-            num_blocks,
-            block_len,
-            m_vars,
-            r_vars,
+            source_ring_len_per_claim,
+            fold_position_count,
+            live_fold_count,
+            shard_granule,
             fold_challenge_config: self.fold_challenge_config,
             fold_challenge_shape: self.fold_challenge_shape,
             num_digits_commit,
@@ -1193,8 +1230,8 @@ impl LevelParams {
     /// from `self` but replaces all layout-derived fields with those
     /// from `other`.
     ///
-    /// "Layout-derived fields" are `col_len`, `num_blocks`, `block_len`,
-    /// `m_vars`, `r_vars`, and the commit/open digit counts. The audited
+    /// "Layout-derived fields" are `col_len`, `live_fold_count`, `fold_position_count`,
+    /// `position_bits`, `fold_bits`, and the commit/open digit counts. The audited
     /// coefficient-L∞ SIS bucket is not a layout field: it is the bucket the
     /// rank (`row_len`) was sized against, so it is preserved from `self`,
     /// matching the placement of `row_len` and `sis_family`. Pulling the
@@ -1231,10 +1268,10 @@ impl LevelParams {
                 self.d_key.coeff_linf_bound(),
                 d,
             ),
-            num_blocks: other.num_blocks,
-            block_len: other.block_len,
-            m_vars: other.m_vars,
-            r_vars: other.r_vars,
+            source_ring_len_per_claim: other.source_ring_len_per_claim,
+            fold_position_count: other.fold_position_count,
+            live_fold_count: other.live_fold_count,
+            shard_granule: other.shard_granule,
             fold_challenge_config: self.fold_challenge_config,
             fold_challenge_shape: other.fold_challenge_shape,
             num_digits_commit: other.num_digits_commit,
@@ -1278,7 +1315,10 @@ fn append_tensor_challenge_shape_descriptor_bytes(
 ) {
     match shape {
         TensorChallengeShape::Flat => bytes.push(0),
-        TensorChallengeShape::Tensor => bytes.push(1),
+        TensorChallengeShape::Tensor { fold_low_len } => {
+            bytes.push(1);
+            push_usize(bytes, fold_low_len);
+        }
     }
 }
 
@@ -1300,7 +1340,7 @@ mod tests {
     }
 
     fn sample_layout_lp() -> LevelParams {
-        sample_params_only().with_decomp(4, 2, 2, 2, 0).unwrap()
+        sample_params_only().with_decomp(16, 64, 2, 2).unwrap()
     }
 
     fn laid_out_sample_lp() -> LevelParams {
@@ -1331,8 +1371,6 @@ mod tests {
                 precommit_lp.b_key.coeff_linf_bound(),
                 precommit_lp.ring_dimension,
             ),
-            num_blocks: precommit_lp.num_blocks,
-            block_len: precommit_lp.block_len,
             num_digits_commit: precommit_lp.num_digits_commit,
             num_digits_open: precommit_lp.num_digits_open,
             num_digits_fold_one: precommit_lp.num_digits_fold_one,
@@ -1341,6 +1379,22 @@ mod tests {
         grouped.precommitted_groups = vec![precommit];
         let batch = OpeningClaimsLayout::from_group_sizes(4, &[1, 1]).expect("layout");
         (grouped, batch)
+    }
+
+    #[test]
+    fn with_decomp_derives_exact_live_fold_geometry() {
+        let lp = sample_params_only().with_decomp(8, 17, 2, 2).unwrap();
+
+        assert_eq!(lp.source_ring_len_per_claim, 17);
+        assert_eq!(lp.fold_position_count, 8);
+        assert_eq!(lp.live_fold_count, 3);
+        assert_eq!(lp.shard_granule, 1);
+        assert_eq!(lp.position_bits(), 3);
+        assert_eq!(lp.fold_bits(), 2);
+        assert_eq!(lp.fold_capacity().unwrap(), 4);
+        assert_eq!(lp.n_ring_elems().unwrap(), 17);
+
+        assert!(sample_params_only().with_decomp(3, 17, 2, 2).is_err());
     }
 
     #[test]
@@ -1355,8 +1409,8 @@ mod tests {
         assert_eq!(lp.a_key.row_len(), 2);
         assert_eq!(lp.b_key.row_len(), 4);
         assert_eq!(lp.d_key.row_len(), 3);
-        assert_eq!(lp.num_blocks, layout_lp.num_blocks);
-        assert_eq!(lp.block_len, layout_lp.block_len);
+        assert_eq!(lp.live_fold_count, layout_lp.live_fold_count);
+        assert_eq!(lp.fold_position_count, layout_lp.fold_position_count);
         assert_eq!(lp.challenge_l1_mass(), 3);
         assert_eq!(lp.num_digits_commit, layout_lp.num_digits_commit);
         assert_eq!(lp.num_digits_open, layout_lp.num_digits_open);
@@ -1390,9 +1444,12 @@ mod tests {
         let layout_lp = sample_layout_lp();
         let lp = sample_params_only().with_layout(&layout_lp, 128).unwrap();
 
-        assert_eq!(lp.log_num_blocks(), layout_lp.r_vars);
-        assert_eq!(lp.log_block_len(), layout_lp.m_vars);
-        assert_eq!(lp.outer_vars(), layout_lp.m_vars + layout_lp.r_vars);
+        assert_eq!(lp.fold_bits(), layout_lp.fold_bits());
+        assert_eq!(lp.position_bits(), layout_lp.position_bits());
+        assert_eq!(
+            lp.outer_vars(),
+            layout_lp.position_bits() + layout_lp.fold_bits()
+        );
     }
 
     #[test]

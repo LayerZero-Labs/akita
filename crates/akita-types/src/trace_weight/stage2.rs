@@ -59,7 +59,7 @@ pub struct TraceClaim<F: FieldCore, E: FieldCore, const D: usize> {
     /// When present the stage-2 verifier evaluates its multilinear extension at
     /// the witness point instead of the closed-form [`Self::trace_terms`]. This
     /// is the multi-group-root counterpart of the succinct per-claim terms: multi-group
-    /// roots decompose each group with per-group `num_blocks`/`num_digits_open`
+    /// roots decompose each group with per-group `live_fold_count`/`num_digits_open`
     /// and a group-major e-hat offset, which the closed form cannot express.
     pub dense_evals: Option<Vec<E>>,
     /// Optional closed-form batches with independent layouts.
@@ -94,7 +94,7 @@ pub fn ensure_trace_stage2_supported(extension_degree: usize) -> Result<(), Akit
 /// Derive the trace-weight layout for the `e_hat` digit segment.
 ///
 /// `num_trace_blocks` is the logical number of folded opening blocks addressed
-/// by the trace term. Recursive singleton folds use `lp.num_blocks`; batched
+/// by the trace term. Recursive singleton folds use `lp.live_fold_count`; batched
 /// root folds can use a wider claim-weighted block row.
 pub fn trace_weight_layout_from_segment(
     lp: &LevelParams,
@@ -120,20 +120,20 @@ pub fn trace_weight_layout_from_segment(
     let group = witness_layout.group(group_id)?;
     let expected_blocks = group
         .num_claims
-        .checked_mul(group.num_blocks)
+        .checked_mul(group.live_fold_count)
         .ok_or_else(|| AkitaError::InvalidSetup("trace block count overflow".to_string()))?;
     if num_trace_blocks != expected_blocks {
         return Err(AkitaError::InvalidSetup(
             "trace block count disagrees with witness layout".to_string(),
         ));
     }
-    let r_vars = num_trace_blocks.next_power_of_two().trailing_zeros() as usize;
+    let fold_bits = num_trace_blocks.next_power_of_two().trailing_zeros() as usize;
     let layout = TraceWeightLayout {
         ring_bits,
         col_bits,
-        num_blocks: num_trace_blocks,
+        live_fold_count: num_trace_blocks,
         num_digits_open: lp.num_digits_open,
-        r_vars,
+        fold_bits,
         log_basis: lp.log_basis,
         witness_layout: witness_layout.clone(),
         opening_layout,
@@ -207,9 +207,9 @@ where
 }
 
 struct RootTraceClaimInputs<'a, F: FieldCore, E: FieldCore> {
-    /// M-matrix block count per claim (`LevelParams::num_blocks`, extracted by
+    /// M-matrix block count per claim (`LevelParams::live_fold_count`, extracted by
     /// the caller — trace-weight construction must not read schedule types).
-    num_blocks: usize,
+    live_fold_count: usize,
     opening_batch: &'a OpeningClaimsLayout,
     prepared_point: &'a PreparedOpeningPoint<F, E>,
     row_coefficients: &'a [E],
@@ -253,7 +253,7 @@ fn collect_root_trace_claim_items<'a, F: FieldCore, E: FieldCore>(
             .and_then(|scales| scales.get(claim_idx).copied())
             .unwrap_or_else(E::one);
         let block_offset = claim_idx
-            .checked_mul(inputs.num_blocks)
+            .checked_mul(inputs.live_fold_count)
             .ok_or_else(|| AkitaError::InvalidSetup("trace block offset overflow".to_string()))?;
         items.push(RootTraceClaimItem {
             prepared: inputs.prepared_point,
@@ -267,7 +267,7 @@ fn collect_root_trace_claim_items<'a, F: FieldCore, E: FieldCore>(
 /// Build public trace weights for a root opening_batch, optionally scaling each
 /// claim term by an extra public factor such as the EOR final tensor factor.
 pub fn trace_public_weights_root_terms<F, E, const D: usize>(
-    num_blocks: usize,
+    live_fold_count: usize,
     opening_batch: &OpeningClaimsLayout,
     prepared_point: &PreparedOpeningPoint<F, E>,
     row_coefficients: &[E],
@@ -278,7 +278,7 @@ where
     E: FpExtEncoding<F> + ExtField<F> + FieldCore + FromPrimitiveInt,
 {
     let inputs = RootTraceClaimInputs {
-        num_blocks,
+        live_fold_count,
         opening_batch,
         prepared_point,
         row_coefficients,
@@ -367,7 +367,7 @@ pub fn root_trace_block_opening<X: FieldCore>(
     alpha_bits: usize,
 ) -> Result<Vec<X>, AkitaError> {
     let position_bits = opening_layout.position_stride().trailing_zeros() as usize;
-    let block_bits = opening_layout.num_blocks().trailing_zeros() as usize;
+    let block_bits = opening_layout.live_fold_count().trailing_zeros() as usize;
     let target = position_bits
         .checked_add(block_bits)
         .and_then(|n| n.checked_add(alpha_bits))
@@ -406,7 +406,7 @@ where
     E: FpExtEncoding<F> + ExtField<F> + FieldCore + FromPrimitiveInt,
 {
     let inputs = RootTraceClaimInputs {
-        num_blocks: lp.num_blocks,
+        live_fold_count: lp.live_fold_count,
         opening_batch,
         prepared_point,
         row_coefficients,
@@ -500,24 +500,24 @@ where
         let group_claims = opening_batch.group_layout(group_index)?.num_polynomials();
         let group_id = crate::SemanticGroupId(group_index);
         let group = layout.witness_layout.group(group_id)?;
-        let num_blocks = group_claims
-            .checked_mul(group_lp.num_blocks())
+        let live_fold_count = group_claims
+            .checked_mul(group_lp.live_fold_count())
             .ok_or(AkitaError::InvalidProof)?;
-        if group.num_claims != group_claims || group.num_blocks != group_lp.num_blocks() {
+        if group.num_claims != group_claims || group.live_fold_count != group_lp.live_fold_count() {
             return Err(AkitaError::InvalidSetup(
                 "trace group geometry disagrees with witness layout".to_string(),
             ));
         }
         let group_opening_layout =
-            OpeningBlockLayout::new(group_lp.num_blocks(), group_lp.block_len())?;
+            OpeningBlockLayout::new(group_lp.live_fold_count(), group_lp.fold_position_count())?;
         let b_open =
             root_trace_block_opening(&prepared.padded_point, group_opening_layout, alpha_bits)?;
         let group_layout = TraceWeightLayout {
             ring_bits: layout.ring_bits,
             col_bits: layout.col_bits,
-            num_blocks,
+            live_fold_count,
             num_digits_open: group_lp.num_digits_open(),
-            r_vars: num_blocks.next_power_of_two().trailing_zeros() as usize,
+            fold_bits: live_fold_count.next_power_of_two().trailing_zeros() as usize,
             log_basis: group_lp.log_basis(),
             witness_layout: layout.witness_layout.clone(),
             opening_layout: layout.opening_layout,
@@ -532,7 +532,7 @@ where
                 .and_then(|scales| scales.get(claim_idx).copied())
                 .unwrap_or_else(E::one);
             terms.push(TraceTerm {
-                block_offset: local_claim * group_lp.num_blocks(),
+                block_offset: local_claim * group_lp.live_fold_count(),
                 b_open: b_open.clone(),
                 basis,
                 packed_inner_point,
@@ -674,7 +674,7 @@ where
                         .and_then(|scales| scales.get(claim_idx).copied())
                         .unwrap_or_else(E::one);
                     let coefficient = output_scale * row_coefficients[claim_idx] * scale;
-                    for block in 0..group_lp.num_blocks() {
+                    for block in 0..group_lp.live_fold_count() {
                         let block_weight = prepared
                             .ring_opening_point
                             .b
@@ -684,7 +684,7 @@ where
                         let block_weight = E::lift_base(block_weight);
                         for (plane, gadget_scalar) in gadget.iter().enumerate() {
                             if descriptor.num_claims != group_layout.num_polynomials()
-                                || descriptor.num_blocks != group_lp.num_blocks()
+                                || descriptor.live_fold_count != group_lp.live_fold_count()
                             {
                                 return Err(AkitaError::InvalidSetup(
                                     "trace group geometry disagrees with witness layout"
@@ -738,8 +738,8 @@ where
     E: FpExtEncoding<F> + ExtField<F> + FieldCore + FromPrimitiveInt,
 {
     let outer_len = lp
-        .m_vars
-        .checked_add(lp.r_vars)
+        .position_bits()
+        .checked_add(lp.fold_bits())
         .ok_or_else(|| AkitaError::InvalidSetup("opening point length overflow".to_string()))?;
     let alpha_bits = prepared
         .padded_point
@@ -747,10 +747,10 @@ where
         .checked_sub(outer_len)
         .ok_or(AkitaError::InvalidProof)?;
     let block_start = alpha_bits
-        .checked_add(lp.m_vars)
+        .checked_add(lp.position_bits())
         .ok_or_else(|| AkitaError::InvalidSetup("block opening offset overflow".to_string()))?;
     let block_end = block_start
-        .checked_add(lp.r_vars)
+        .checked_add(lp.fold_bits())
         .ok_or_else(|| AkitaError::InvalidSetup("block opening end overflow".to_string()))?;
     let b_open = prepared
         .padded_point

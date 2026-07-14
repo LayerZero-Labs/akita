@@ -613,16 +613,16 @@ fn validate_fold_geometry(
             "generated schedule policy ring dimension must be a nonzero power of two".to_string(),
         ));
     }
-    let r_vars = step.r_vars as usize;
-    let m_vars = step.m_vars as usize;
-    let num_blocks = 1usize.checked_shl(step.r_vars).ok_or_else(|| {
-        AkitaError::InvalidSetup("generated schedule 2^r_vars overflows usize".to_string())
+    let fold_bits = step.fold_bits as usize;
+    let position_bits = step.position_bits as usize;
+    let live_fold_count = 1usize.checked_shl(step.fold_bits).ok_or_else(|| {
+        AkitaError::InvalidSetup("generated schedule 2^fold_bits overflows usize".to_string())
     })?;
-    let block_len = 1usize.checked_shl(step.m_vars).ok_or_else(|| {
-        AkitaError::InvalidSetup("generated schedule 2^m_vars overflows usize".to_string())
+    let fold_position_count = 1usize.checked_shl(step.position_bits).ok_or_else(|| {
+        AkitaError::InvalidSetup("generated schedule 2^position_bits overflows usize".to_string())
     })?;
-    let ring_capacity = num_blocks
-        .checked_mul(block_len)
+    let ring_capacity = live_fold_count
+        .checked_mul(fold_position_count)
         .and_then(|n| n.checked_mul(policy.ring_dimension))
         .ok_or_else(|| AkitaError::InvalidSetup("generated root capacity overflow".to_string()))?;
 
@@ -633,8 +633,8 @@ fn validate_fold_geometry(
             )));
         }
         let alpha = policy.ring_dimension.trailing_zeros() as usize;
-        if m_vars
-            .checked_add(r_vars)
+        if position_bits
+            .checked_add(fold_bits)
             .and_then(|n| n.checked_add(alpha))
             .is_none_or(|bits| bits < key.num_vars())
         {
@@ -658,9 +658,9 @@ fn validate_fold_geometry(
         })?
         .max(1)
         .trailing_zeros() as usize;
-    if m_vars.checked_add(r_vars) != Some(reduced_vars) {
+    if position_bits.checked_add(fold_bits) != Some(reduced_vars) {
         return Err(AkitaError::InvalidSetup(format!(
-            "generated recursive geometry mismatch at level {fold_level}: m_vars={m_vars}, r_vars={r_vars}, reduced_vars={reduced_vars}"
+            "generated recursive geometry mismatch at level {fold_level}: position_bits={position_bits}, fold_bits={fold_bits}, reduced_vars={reduced_vars}"
         )));
     }
     Ok(())
@@ -673,15 +673,9 @@ fn validate_expanded_level_params(
     fold_level: usize,
     num_claims: usize,
 ) -> Result<LevelParams, AkitaError> {
-    let expected_num_blocks = 1usize.checked_shl(step.r_vars).ok_or_else(|| {
-        AkitaError::InvalidSetup("generated schedule 2^r_vars overflows usize".to_string())
-    })?;
-    if lp.num_blocks != expected_num_blocks {
-        return Err(AkitaError::InvalidSetup(
-            "expanded generated level has mismatched num_blocks".to_string(),
-        ));
-    }
-    if lp.m_vars != step.m_vars as usize || lp.r_vars != step.r_vars as usize {
+    if lp.position_bits() != step.position_bits as usize
+        || lp.fold_bits() != step.fold_bits as usize
+    {
         return Err(AkitaError::InvalidSetup(
             "expanded generated level has mismatched block geometry".to_string(),
         ));

@@ -143,7 +143,7 @@ impl<E: FieldCore> SetupIndexWeightEvaluator<E> {
         }
         let active_cols = checked_mul3(
             group.num_claims,
-            group.num_blocks,
+            group.live_fold_count,
             group.depth_open,
             "setup D active width overflow",
         )?;
@@ -292,7 +292,7 @@ impl<E: FieldCore> SetupIndexWeightEvaluator<E> {
             return Ok(E::zero());
         }
         let z_cols = group
-            .block_len
+            .fold_position_count
             .checked_mul(group.depth_commit)
             .ok_or_else(|| AkitaError::InvalidSetup("setup A width overflow".into()))?;
         let units = group.layout.units_for_group(group.group_id)?;
@@ -376,8 +376,8 @@ fn projected_setup_offset<E: FieldCore>(
 fn validate_group_layout(group: &SetupContributionGroupInputs) -> Result<(), AkitaError> {
     let descriptor = group.layout.group(group.group_id)?;
     if descriptor.num_claims != group.num_claims
-        || descriptor.num_blocks != group.num_blocks
-        || descriptor.block_len != group.block_len
+        || descriptor.live_fold_count != group.live_fold_count
+        || descriptor.fold_position_count != group.fold_position_count
         || descriptor.depth_open != group.depth_open
         || descriptor.depth_commit != group.depth_commit
         || descriptor.depth_fold != group.depth_fold

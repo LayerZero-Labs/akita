@@ -210,7 +210,7 @@ pub fn terminal_witness_segment_layout(
         ));
     }
     let e_hat_ring_count = num_w_vectors
-        .checked_mul(lp.num_blocks)
+        .checked_mul(lp.live_fold_count)
         .and_then(|n| n.checked_mul(lp.num_digits_open))
         .ok_or_else(|| AkitaError::InvalidSetup("terminal e_hat width overflow".to_string()))?;
     let num_digits_fold = lp.num_digits_fold(num_w_vectors, field_bits)?;
@@ -231,7 +231,7 @@ mod tests {
     use crate::SisModulusFamily;
     use akita_challenges::SparseChallengeConfig;
 
-    fn segment_test_params(m_vars: usize, r_vars: usize) -> LevelParams {
+    fn segment_test_params(position_bits: usize, fold_bits: usize) -> LevelParams {
         LevelParams::params_only(
             SisModulusFamily::Q128,
             8,
@@ -241,7 +241,12 @@ mod tests {
             2,
             SparseChallengeConfig::pm1_only(3),
         )
-        .with_decomp(m_vars, r_vars, 2, 3, 0)
+        .with_decomp(
+            1usize << position_bits,
+            1usize << (position_bits + fold_bits),
+            2,
+            3,
+        )
         .expect("segment test params")
     }
 
@@ -256,7 +261,7 @@ mod tests {
         );
         assert_eq!(
             layout.e_hat_digit_count,
-            5 * lp.num_blocks * lp.num_digits_open * lp.ring_dimension
+            5 * lp.live_fold_count * lp.num_digits_open * lp.ring_dimension
         );
     }
 

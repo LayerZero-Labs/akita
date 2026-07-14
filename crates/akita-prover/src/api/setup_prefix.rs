@@ -19,7 +19,7 @@ use akita_types::{
 ///
 /// The witness is the coefficient form of `S^flat[0..natural_len]`,
 /// zero-padded to `n_prefix`. The caller must supply `level_params` whose inner
-/// witness shape satisfies `num_blocks * block_len == n_prefix / D`.
+/// witness shape satisfies `live_fold_count * fold_position_count == n_prefix / D`.
 ///
 /// # Errors
 ///
@@ -52,8 +52,8 @@ where
     }
     let padded_ring_slots = n_prefix / D;
     let witness_ring_slots = level_params
-        .num_blocks
-        .checked_mul(level_params.block_len)
+        .live_fold_count
+        .checked_mul(level_params.fold_position_count)
         .ok_or_else(|| {
             AkitaError::InvalidSetup("setup prefix witness shape overflow".to_string())
         })?;
@@ -78,8 +78,11 @@ where
 
     let ring_elems =
         extract_setup_prefix_ring_elems::<F, D>(expanded, padded_ring_slots, natural_len)?;
-    let block_slices =
-        setup_prefix_block_slices(&ring_elems, level_params.num_blocks, level_params.block_len)?;
+    let block_slices = setup_prefix_block_slices(
+        &ring_elems,
+        level_params.live_fold_count,
+        level_params.fold_position_count,
+    )?;
 
     let recomposed_inner_rows = backend.dense_commit_rows(
         prepared,
@@ -131,7 +134,7 @@ where
         })?;
 
     let b_input_len = commit_inner_flat_digit_count(
-        level_params.num_blocks,
+        level_params.live_fold_count,
         level_params.a_key.row_len(),
         level_params.num_digits_open,
     )?;
@@ -204,26 +207,26 @@ where
 
 fn setup_prefix_block_slices<F, const D: usize>(
     ring_elems: &[CyclotomicRing<F, D>],
-    num_blocks: usize,
-    block_len: usize,
+    live_fold_count: usize,
+    fold_position_count: usize,
 ) -> Result<Vec<&[CyclotomicRing<F, D>]>, AkitaError>
 where
     F: FieldCore,
 {
-    if num_blocks
-        .checked_mul(block_len)
+    if live_fold_count
+        .checked_mul(fold_position_count)
         .is_none_or(|witness| witness != ring_elems.len())
     {
         return Err(AkitaError::InvalidSetup(
             "setup prefix ring elements do not match witness block layout".to_string(),
         ));
     }
-    Ok((0..num_blocks)
+    Ok((0..live_fold_count)
         .map(|block_idx| {
             let start = block_idx
-                .checked_mul(block_len)
+                .checked_mul(fold_position_count)
                 .expect("block index fits after witness length check");
-            &ring_elems[start..start + block_len]
+            &ring_elems[start..start + fold_position_count]
         })
         .collect())
 }
@@ -250,7 +253,7 @@ mod tests {
             2,
             SparseChallengeConfig::pm1_only(3),
         )
-        .with_decomp(2, 3, 2, 2, 3)
+        .with_decomp(4, 3, 2, 2)
         .expect("level params")
     }
 
@@ -261,7 +264,7 @@ mod tests {
                 .row_len()
                 .checked_mul(
                     level_params
-                        .num_blocks
+                        .live_fold_count
                         .checked_mul(level_params.a_key.row_len())
                         .and_then(|n| n.checked_mul(level_params.num_digits_open))
                         .expect("b input shape"),
@@ -315,8 +318,8 @@ mod tests {
         let level_params = prefix_level_params(D);
         let opening_batch = OpeningClaimsLayout::new(4, 1).expect("opening_batch");
         let witness_ring_slots = level_params
-            .num_blocks
-            .checked_mul(level_params.block_len)
+            .live_fold_count
+            .checked_mul(level_params.fold_position_count)
             .expect("witness shape");
         let n_prefix = witness_ring_slots.checked_mul(D).expect("prefix length");
         let natural_len = active_setup_field_len(&level_params, &opening_batch)

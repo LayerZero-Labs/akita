@@ -36,7 +36,7 @@ fn evaluate_poly_at_multiplier_point<F, Q, B, const D: usize>(
     prepared: Option<&B::PreparedSetup>,
     poly: &Q,
     point: &RingMultiplierOpeningPoint<F>,
-    block_len: usize,
+    fold_position_count: usize,
 ) -> Result<(CyclotomicRing<F, D>, Vec<CyclotomicRing<F, D>>), AkitaError>
 where
     F: FieldCore + CanonicalField,
@@ -47,14 +47,14 @@ where
         OpeningFoldPlan::Base {
             eval_outer_scalars: &base_point.b,
             fold_scalars: &base_point.a,
-            block_len,
+            fold_position_count,
         }
     } else {
         let (b, a) = multiplier_ring_weights(point)?;
         OpeningFoldPlan::Ring {
             eval_outer_scalars: b,
             fold_scalars: a,
-            block_len,
+            fold_position_count,
         }
     };
     let OpeningFoldOutput { eval, folded } =
@@ -67,7 +67,7 @@ pub(in crate::protocol::core) fn evaluate_claims_at_prepared_point<F, E, Q, B, c
     prepared: Option<&B::PreparedSetup>,
     polys: &[&Q],
     prepared_point: &PreparedOpeningPoint<F, E>,
-    block_len: usize,
+    fold_position_count: usize,
 ) -> Result<FoldedClaimEvals<F, D>, AkitaError>
 where
     F: FieldCore + CanonicalField,
@@ -84,7 +84,7 @@ where
             prepared,
             *poly,
             &prepared_point.ring_multiplier_point,
-            block_len,
+            fold_position_count,
         )?;
         folded_rings.push(folded_ring);
         folded_blocks.push(folded_block);
@@ -231,12 +231,12 @@ where
 
 /// Build the root stage-2 trace table (operation adapter).
 ///
-/// `ring_d` / `num_blocks` are extracted level numbers; `layout` was derived by
+/// `ring_d` / `live_fold_count` are extracted level numbers; `layout` was derived by
 /// the caller from the level geometry.
 #[allow(clippy::too_many_arguments)]
 pub(in crate::protocol::core) fn build_root_stage2_trace_table<F, E>(
     ring_d: usize,
-    num_blocks: usize,
+    live_fold_count: usize,
     layout: &akita_types::TraceWeightLayout,
     opening_batch: &OpeningClaimsLayout,
     prepared_point: &PreparedOpeningPoint<F, E>,
@@ -255,7 +255,7 @@ where
         ring_d,
         |D| {
             let public_weights = trace_public_weights_root_terms::<F, E, D>(
-                num_blocks,
+                live_fold_count,
                 opening_batch,
                 prepared_point,
                 row_coefficients,

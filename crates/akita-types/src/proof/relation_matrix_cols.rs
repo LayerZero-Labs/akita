@@ -243,7 +243,7 @@ where
         .try_fold(0usize, |total, group| {
             group
                 .num_claims
-                .checked_mul(group.num_blocks)
+                .checked_mul(group.live_fold_count)
                 .and_then(|n| n.checked_mul(group.depth_open))
                 .and_then(|width| width.checked_mul(d_ratio))
                 .and_then(|width| total.checked_add(width))
@@ -324,23 +324,23 @@ where
         let ring_multiplier_point = instance.group_ring_multiplier_point(group_index)?;
         let challenges = &instance.group_challenges()[group_index];
         let group_opening_layout =
-            OpeningBlockLayout::new(group_lp.num_blocks(), group_lp.block_len())?;
+            OpeningBlockLayout::new(group_lp.live_fold_count(), group_lp.fold_position_count())?;
         if opening_point.a.len() != group_opening_layout.position_stride()
-            || opening_point.b.len() != group_lp.num_blocks()
+            || opening_point.b.len() != group_lp.live_fold_count()
         {
             return Err(AkitaError::InvalidInput(
                 "relation matrix col eval opening-point layout mismatch".to_string(),
             ));
         }
         if ring_multiplier_point.a_len() != group_opening_layout.position_stride()
-            || ring_multiplier_point.b_len() != group_lp.num_blocks()
+            || ring_multiplier_point.b_len() != group_lp.live_fold_count()
         {
             return Err(AkitaError::InvalidInput(
                 "relation matrix col eval multiplier layout mismatch".to_string(),
             ));
         }
         let total_blocks = k_g
-            .checked_mul(group_lp.num_blocks())
+            .checked_mul(group_lp.live_fold_count())
             .ok_or(AkitaError::InvalidProof)?;
         if challenges.logical_len() != total_blocks {
             return Err(AkitaError::InvalidProof);
@@ -363,8 +363,8 @@ where
         let inner_width = group_lp.a_col_len();
         // Hoist per-group geometry into `Copy` locals so the parallel closures
         // below capture scalars instead of the `!Sync` `&dyn LevelParamsLike`.
-        let num_blocks_g = group_lp.num_blocks();
-        let block_len_g = group_lp.block_len();
+        let num_blocks_g = group_lp.live_fold_count();
+        let block_len_g = group_lp.fold_position_count();
         let semantic_t_cols_per_vector = n_a
             .checked_mul(depth_open)
             .and_then(|len| len.checked_mul(num_blocks_g))

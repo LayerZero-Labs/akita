@@ -306,8 +306,8 @@ fn setup_matrix_envelope_covers_multi_group_batch_schedules() {
 
 fn expected_runtime_root_setup_len(lp: &LevelParams, opening_batch: &OpeningClaimsLayout) -> usize {
     let max_group_poly_count = opening_batch.num_total_polynomials();
-    let d_width = lp.num_blocks * opening_batch.num_total_polynomials() * lp.num_digits_open;
-    let t_cols_per_vector = lp.a_key.row_len() * lp.num_digits_open * lp.num_blocks;
+    let d_width = lp.live_fold_count * opening_batch.num_total_polynomials() * lp.num_digits_open;
+    let t_cols_per_vector = lp.a_key.row_len() * lp.num_digits_open * lp.live_fold_count;
     let b_width = max_group_poly_count * t_cols_per_vector;
     (lp.d_key.row_len() * d_width).max(lp.b_key.row_len() * b_width)
 }
@@ -407,8 +407,7 @@ fn proof_optimized_setup_includes_precommitted_multi_group_root_catalog_entries(
         .entries
         .iter()
         .find(|entry| {
-            entry.final_group.num_vars() == 16
-                && entry.final_group.num_polynomials() == 1
+            entry.final_group.num_polynomials() == 1
                 && entry.precommitteds.len() == 2
                 && entry
                     .precommitteds
@@ -423,8 +422,9 @@ fn proof_optimized_setup_includes_precommitted_multi_group_root_catalog_entries(
     let entry_envelope =
         super::matrix_envelope_for_schedule::<Cfg>(&schedule, &layout).expect("entry envelope");
 
-    let setup_envelope = super::proof_optimized_max_setup_matrix_size::<Cfg>(16, 1)
-        .expect("setup envelope should include precommitted multi-group-root catalog entries");
+    let setup_envelope =
+        super::proof_optimized_max_setup_matrix_size::<Cfg>(entry.final_group.num_vars(), 1)
+            .expect("setup envelope should include precommitted multi-group-root catalog entries");
 
     assert!(
         setup_envelope.max_setup_len >= entry_envelope.max_setup_len,
@@ -689,8 +689,8 @@ fn assert_generated_batched_roots_are_scaled<Cfg: CommitmentConfig>(table: Gener
         checked_folded_entry = true;
         let root_lp = &root.params;
         let singleton_outer_width =
-            root_lp.a_key.row_len() * root_lp.num_digits_open * root_lp.num_blocks;
-        let singleton_d_width = root_lp.num_digits_open * root_lp.num_blocks;
+            root_lp.a_key.row_len() * root_lp.num_digits_open * root_lp.live_fold_count;
+        let singleton_d_width = root_lp.num_digits_open * root_lp.live_fold_count;
         assert_eq!(
             root_lp.outer_width(),
             singleton_outer_width * entry.final_group.num_polynomials(),
@@ -808,7 +808,7 @@ fn batched_onehot_4x30_plan_keeps_terminal_witness_bounded() {
 }
 
 #[test]
-fn tight_block_len_is_no_larger_than_pow2() {
+fn power_of_two_positions_cover_exact_source() {
     for num_vars in [14, 20, 30] {
         let schedule = fp128::D64Full::runtime_schedule(AkitaScheduleLookupKey::single(
             PolynomialGroupLayout::singleton(num_vars),
@@ -816,20 +816,21 @@ fn tight_block_len_is_no_larger_than_pow2() {
         .expect("planner should succeed");
         for (level_idx, fold) in schedule.fold_steps().enumerate() {
             let lp = &fold.params;
-            let pow2_block = 1usize << lp.m_vars;
+            let pow2_block = 1usize << lp.position_bits();
             assert!(
-                lp.block_len <= pow2_block,
-                "block_len {} should be <= 2^m_vars {} at level {level_idx} (num_vars={num_vars})",
-                lp.block_len,
+                lp.fold_position_count <= pow2_block,
+                "fold_position_count {} should be <= 2^position_bits {} at level {level_idx} (num_vars={num_vars})",
+                lp.fold_position_count,
                 pow2_block,
             );
             if level_idx > 0 {
                 let num_ring = fold.current_w_len / lp.ring_dimension;
-                let expected_tight = num_ring.div_ceil(lp.num_blocks);
+                let expected_position_count =
+                    num_ring.div_ceil(lp.live_fold_count).next_power_of_two();
                 assert_eq!(
-                    lp.block_len, expected_tight,
-                    "recursive level {level_idx} should use tight block_len = ceil({num_ring} / {})",
-                    lp.num_blocks
+                    lp.fold_position_count, expected_position_count,
+                    "recursive level {level_idx} should use the least power-of-two fold position count covering ceil({num_ring} / {})",
+                    lp.live_fold_count
                 );
             }
         }

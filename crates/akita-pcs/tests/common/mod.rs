@@ -120,7 +120,7 @@ where
     CpuBackend: OpeningFoldKernel<P::OpeningView<'a>, F, D>,
 {
     let alpha_bits = D.trailing_zeros() as usize;
-    let target_num_vars = alpha_bits + layout.m_vars + layout.r_vars;
+    let target_num_vars = alpha_bits + layout.position_bits() + layout.fold_bits();
     assert!(
         point.len() <= target_num_vars,
         "opening point length {} exceeds target root arity {}",
@@ -134,7 +134,7 @@ where
     let reduced_point = &padded_point[alpha_bits..];
     let ring_opening_point = ring_opening_point_from_field(
         reduced_point,
-        OpeningBlockLayout::new(layout.num_blocks, layout.block_len).unwrap(),
+        OpeningBlockLayout::new(layout.live_fold_count, layout.fold_position_count).unwrap(),
         basis_mode,
     )
     .expect("opening point shape should match layout");
@@ -146,7 +146,7 @@ where
         OpeningFoldPlan::Base {
             eval_outer_scalars: &ring_opening_point.b,
             fold_scalars: &ring_opening_point.a,
-            block_len: layout.block_len,
+            fold_position_count: layout.fold_position_count,
         },
     )
     .expect("evaluate_and_fold");
@@ -157,9 +157,9 @@ where
 }
 
 pub(super) fn make_onehot_poly(layout: &LevelParams, seed: u64) -> OneHotPoly<F, u8> {
-    // `2^nv = (num_blocks · block_len) · D` field elements, grouped into
+    // `2^nv = (live_fold_count · fold_position_count) · D` field elements, grouped into
     // `2^nv / K` one-hot chunks of size `K`.
-    let total_field = layout.num_blocks * layout.block_len * ONEHOT_D;
+    let total_field = layout.live_fold_count * layout.fold_position_count * ONEHOT_D;
     let total_chunks = total_field / ONEHOT_K;
     let mut rng = StdRng::seed_from_u64(seed);
     let indices: Vec<Option<u8>> = (0..total_chunks)

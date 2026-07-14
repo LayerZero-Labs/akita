@@ -39,7 +39,7 @@ pub struct CommitInnerPlan {
     /// Number of A rows to produce.
     pub n_a: usize,
     /// Root block length in ring elements.
-    pub block_len: usize,
+    pub fold_position_count: usize,
     /// Number of balanced digits used for the A-side commit.
     pub num_digits_commit: usize,
     /// Number of balanced digits used when opening (recomposition width).
@@ -53,7 +53,7 @@ impl CommitInnerPlan {
     pub fn from_level(params: &LevelParams) -> Self {
         Self {
             n_a: params.a_key.row_len(),
-            block_len: params.block_len,
+            fold_position_count: params.fold_position_count,
             num_digits_commit: params.num_digits_commit,
             num_digits_open: params.num_digits_open,
             log_basis: params.log_basis,
@@ -75,7 +75,7 @@ pub enum OpeningFoldPlan<'a, F: FieldCore, const D: usize> {
         /// Per-block fold scalars.
         fold_scalars: &'a [F],
         /// Block length in ring elements.
-        block_len: usize,
+        fold_position_count: usize,
     },
     /// Ring multiplier point: ring-element fold weights.
     Ring {
@@ -84,7 +84,7 @@ pub enum OpeningFoldPlan<'a, F: FieldCore, const D: usize> {
         /// Per-block fold ring multipliers.
         fold_scalars: &'a [CyclotomicRing<F, D>],
         /// Block length in ring elements.
-        block_len: usize,
+        fold_position_count: usize,
     },
 }
 
@@ -103,7 +103,7 @@ pub struct DecomposeFoldPlan<'a> {
     /// Sparse fold challenges, outermost first.
     pub challenges: &'a [SparseChallenge],
     /// Block length in ring elements.
-    pub block_len: usize,
+    pub fold_position_count: usize,
     /// Number of balanced digits.
     pub num_digits: usize,
     /// Logarithm of the gadget basis.
@@ -122,7 +122,7 @@ pub enum DecomposeFoldBatchPlan<'a> {
         /// Sparse fold challenges, outermost first.
         challenges: &'a [SparseChallenge],
         /// Block length in ring elements.
-        block_len: usize,
+        fold_position_count: usize,
         /// Number of balanced digits.
         num_digits: usize,
         /// Logarithm of the gadget basis.
@@ -133,7 +133,7 @@ pub enum DecomposeFoldBatchPlan<'a> {
         /// Tensor-structured fold challenges.
         tensor: &'a TensorChallenges,
         /// Block length in ring elements.
-        block_len: usize,
+        fold_position_count: usize,
         /// Number of balanced digits.
         num_digits: usize,
         /// Logarithm of the gadget basis.

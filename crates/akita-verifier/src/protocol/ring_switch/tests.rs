@@ -34,7 +34,7 @@ fn ring_switch_prepare_rejects_zero_num_blocks() {
         RelationMatrixRowLayout::WithDBlock,
         1,
     ) {
-        Ok(_) => panic!("zero num_blocks should be rejected"),
+        Ok(_) => panic!("zero live_fold_count should be rejected"),
         Err(err) => err,
     };
     assert!(matches!(err, AkitaError::InvalidSetup(_)));

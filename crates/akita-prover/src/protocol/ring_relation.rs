@@ -225,7 +225,7 @@ where
                 batch_view,
                 DecomposeFoldBatchPlan::Sparse {
                     challenges: &point_challenges,
-                    block_len: params.block_len(),
+                    fold_position_count: params.fold_position_count(),
                     num_digits: params.num_digits_commit(),
                     log_basis: params.log_basis(),
                 },
@@ -242,7 +242,7 @@ where
                                 poly.opening_view()?,
                                 DecomposeFoldPlan {
                                     challenges: poly_challenges,
-                                    block_len: params.block_len(),
+                                    fold_position_count: params.fold_position_count(),
                                     num_digits: params.num_digits_commit(),
                                     log_basis: params.log_basis(),
                                 },
@@ -273,7 +273,7 @@ where
                 batch_view,
                 DecomposeFoldBatchPlan::Tensor {
                     tensor: &point_factored,
-                    block_len: params.block_len(),
+                    fold_position_count: params.fold_position_count(),
                     num_digits: params.num_digits_commit(),
                     log_basis: params.log_basis(),
                 },
@@ -389,12 +389,12 @@ pub(crate) fn validate_chunked_witness_cfg(lp: &LevelParams) -> Result<(), Akita
     lp.reject_multi_group_multi_chunk("chunked witness")?;
     let w = lp.witness_chunk.num_chunks;
     if w > 1 {
-        if !lp.num_blocks.is_multiple_of(w) {
+        if !lp.live_fold_count.is_multiple_of(w) {
             return Err(AkitaError::InvalidSetup(
-                "witness chunk count must divide num_blocks".to_string(),
+                "witness chunk count must divide live_fold_count".to_string(),
             ));
         }
-        if !(lp.num_blocks / w).is_power_of_two() {
+        if !(lp.live_fold_count / w).is_power_of_two() {
             return Err(AkitaError::InvalidSetup(
                 "witness chunk block window must be a power of two".to_string(),
             ));
@@ -542,17 +542,19 @@ impl RingRelationProver {
             let group_lp = lp.root_group_params(&opening_batch, group_index)?;
             let opening_point = &group_opening_points[group_index];
             let ring_multiplier_point = &group_ring_multiplier_points[group_index];
-            let group_opening_layout =
-                OpeningBlockLayout::new(group_lp.num_blocks(), group_lp.block_len())?;
+            let group_opening_layout = OpeningBlockLayout::new(
+                group_lp.live_fold_count(),
+                group_lp.fold_position_count(),
+            )?;
             if opening_point.a.len() != group_opening_layout.position_stride()
-                || opening_point.b.len() != group_lp.num_blocks()
+                || opening_point.b.len() != group_lp.live_fold_count()
             {
                 return Err(AkitaError::InvalidInput(
                     "batched prover opening-point layout mismatch".to_string(),
                 ));
             }
             if ring_multiplier_point.a_len() != group_opening_layout.position_stride()
-                || ring_multiplier_point.b_len() != group_lp.num_blocks()
+                || ring_multiplier_point.b_len() != group_lp.live_fold_count()
             {
                 return Err(AkitaError::InvalidInput(
                     "batched prover ring-multiplier opening-point layout mismatch".to_string(),

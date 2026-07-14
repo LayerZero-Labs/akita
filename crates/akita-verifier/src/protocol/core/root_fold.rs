@@ -151,7 +151,8 @@ where
 {
     let role_dims = root_lp.role_dims();
     let d_a = role_dims.d_a();
-    let root_opening_layout = OpeningBlockLayout::new(root_lp.num_blocks, root_lp.block_len)?;
+    let root_opening_layout =
+        OpeningBlockLayout::new(root_lp.live_fold_count, root_lp.fold_position_count)?;
     let v_storage = match proof {
         AkitaBatchedRootProof::Fold(fold) => fold.v.clone(),
         AkitaBatchedRootProof::Terminal(_) => RingVec::from_coeffs(Vec::new()),
@@ -288,8 +289,8 @@ where
             .then_some(next_fold_level_params.role_dims().d_a()),
         next_opening_layout: if matches!(proof, AkitaBatchedRootProof::Fold(_)) {
             OpeningBlockLayout::new(
-                next_fold_level_params.num_blocks,
-                next_fold_level_params.block_len,
+                next_fold_level_params.live_fold_count,
+                next_fold_level_params.fold_position_count,
             )?
         } else {
             if !w_len.is_multiple_of(d_a) {
@@ -373,13 +374,14 @@ where
     for group_index in 0..opening_batch.num_groups() {
         let group_lp = root_lp.root_group_params(opening_batch, group_index)?;
         let target_len = alpha_bits
-            .checked_add(group_lp.m_vars())
-            .and_then(|n| n.checked_add(group_lp.r_vars()))
+            .checked_add(group_lp.position_bits())
+            .and_then(|n| n.checked_add(group_lp.fold_bits()))
             .ok_or_else(|| {
                 AkitaError::InvalidSetup("group opening point length overflow".to_string())
             })?;
         let group_point = &shared_opening_point[..shared_opening_point.len().min(target_len)];
-        let opening_layout = OpeningBlockLayout::new(group_lp.num_blocks(), group_lp.block_len())?;
+        let opening_layout =
+            OpeningBlockLayout::new(group_lp.live_fold_count(), group_lp.fold_position_count())?;
         let prepared =
             dispatch_for_field!(ProtocolDispatchSlot::Role(RingRole::Inner), F, d_a, |D| {
                 prepare_opening_point::<F, E, D>(group_point, basis, opening_layout, alpha_bits)
@@ -420,7 +422,7 @@ where
     // trace-weight table that multi-group roots evaluate.
     let trace_block_opening = root_trace_block_opening::<E>(
         shared_opening_point,
-        OpeningBlockLayout::new(root_lp.num_blocks, root_lp.block_len)?,
+        OpeningBlockLayout::new(root_lp.live_fold_count, root_lp.fold_position_count)?,
         alpha_bits,
     )?;
 
@@ -450,8 +452,8 @@ where
         next_ring_dim: Some(next_fold_level_params.role_dims().d_b()),
         next_witness_ring_dim: Some(next_fold_level_params.role_dims().d_a()),
         next_opening_layout: OpeningBlockLayout::new(
-            next_fold_level_params.num_blocks,
-            next_fold_level_params.block_len,
+            next_fold_level_params.live_fold_count,
+            next_fold_level_params.fold_position_count,
         )?,
         terminal_replay: None,
         stage3: stage3_sumcheck_proof.map(|proof| (proof, next_fold_level_params)),

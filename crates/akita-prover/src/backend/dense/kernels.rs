@@ -43,17 +43,21 @@ where
             OpeningFoldPlan::Base {
                 eval_outer_scalars,
                 fold_scalars,
-                block_len,
-            } => source
-                .poly
-                .evaluate_and_fold::<D>(eval_outer_scalars, fold_scalars, block_len),
+                fold_position_count,
+            } => source.poly.evaluate_and_fold::<D>(
+                eval_outer_scalars,
+                fold_scalars,
+                fold_position_count,
+            ),
             OpeningFoldPlan::Ring {
                 eval_outer_scalars,
                 fold_scalars,
-                block_len,
-            } => source
-                .poly
-                .evaluate_and_fold_ring(eval_outer_scalars, fold_scalars, block_len),
+                fold_position_count,
+            } => source.poly.evaluate_and_fold_ring(
+                eval_outer_scalars,
+                fold_scalars,
+                fold_position_count,
+            ),
         };
         Ok(OpeningFoldOutput { eval, folded })
     }
@@ -66,7 +70,7 @@ where
     ) -> Result<DecomposeFoldWitness<F>, AkitaError> {
         Ok(source.poly.decompose_fold::<D>(
             plan.challenges,
-            plan.block_len,
+            plan.fold_position_count,
             plan.num_digits,
             plan.log_basis,
         ))
@@ -87,13 +91,13 @@ where
             DecomposeFoldBatchPlan::Sparse { .. } => Ok(BatchDecomposeFoldOutcome::FallbackPerPoly),
             DecomposeFoldBatchPlan::Tensor {
                 tensor,
-                block_len,
+                fold_position_count,
                 num_digits,
                 log_basis,
             } => match DensePoly::decompose_fold_tensor_batched::<D>(
                 source.polys,
                 tensor,
-                block_len,
+                fold_position_count,
                 num_digits,
                 log_basis,
             )? {

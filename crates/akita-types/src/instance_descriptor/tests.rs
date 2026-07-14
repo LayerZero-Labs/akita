@@ -15,7 +15,7 @@ fn sample_level_params() -> LevelParams {
         2,
         SparseChallengeConfig::pm1_only(3),
     )
-    .with_decomp(2, 3, 2, 2, 0)
+    .with_decomp(4, 32, 2, 2)
     .expect("sample level params")
 }
 
@@ -133,7 +133,7 @@ fn effective_schedule_digest_binds_tail_bound_with_grind_policy() {
             count_pm2: 12,
         },
     )
-    .with_decomp(4, 2, 2, 2, 0)
+    .with_decomp(16, 64, 2, 2)
     .expect("certified params");
     let worst_case_only = LevelParams::params_only(
         SisModulusFamily::Q128,
@@ -144,7 +144,7 @@ fn effective_schedule_digest_binds_tail_bound_with_grind_policy() {
         3,
         SparseChallengeConfig::pm1_only(31),
     )
-    .with_decomp(4, 2, 2, 2, 0)
+    .with_decomp(16, 64, 2, 2)
     .expect("worst-case-only params");
     assert_eq!(
         certified.fold_witness_linf_cap_policy(),
@@ -184,7 +184,7 @@ fn effective_schedule_digest_binds_tail_bound_with_grind_policy() {
 fn effective_schedule_digest_binds_shape_aware_challenge_l2_sq_max() {
     let flat = sample_level_params();
     let mut tensor = sample_level_params();
-    tensor.fold_challenge_shape = TensorChallengeShape::Tensor;
+    tensor.fold_challenge_shape = TensorChallengeShape::Tensor { fold_low_len: 2 };
     assert_ne!(flat.challenge_l2_sq_max(), tensor.challenge_l2_sq_max());
 
     let schedule_flat = Schedule {
@@ -215,7 +215,7 @@ fn effective_schedule_digest_binds_shape_aware_challenge_l2_sq_max() {
 #[test]
 fn effective_schedule_digest_binds_fold_linf_policy() {
     let mut tensor_params = sample_level_params();
-    tensor_params.fold_challenge_shape = TensorChallengeShape::Tensor;
+    tensor_params.fold_challenge_shape = TensorChallengeShape::Tensor { fold_low_len: 2 };
 
     let schedule_flat = Schedule {
         steps: vec![Step::Fold(FoldStep {
@@ -394,7 +394,7 @@ fn effective_schedule_digest_binds_root_direct_commit_params() {
     // This is the binding the dropped `SetupSection::level_params_digest`
     // used to provide; it now lives in the per-proof schedule digest.
     let mut other_params = sample_level_params();
-    other_params.num_blocks += 1;
+    other_params.live_fold_count += 1;
 
     let schedule_a = Schedule {
         steps: vec![Step::Direct(crate::DirectStep {

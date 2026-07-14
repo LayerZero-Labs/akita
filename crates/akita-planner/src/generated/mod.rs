@@ -4,8 +4,8 @@
 pub struct GeneratedFoldStep {
     pub ring_d: u32,
     pub log_basis: u32,
-    pub m_vars: u32,
-    pub r_vars: u32,
+    pub position_bits: u32,
+    pub fold_bits: u32,
     pub n_a: u32,
     /// Stored first-tier `B` rank.
     pub n_b: u32,
@@ -193,12 +193,34 @@ fn precommitted_groups_cmp(
 
 fn precommitted_group_sort_key(
     key: &akita_types::PrecommittedGroupParams,
-) -> (usize, usize, usize, usize, u32, usize, usize) {
+) -> (
+    usize,
+    usize,
+    usize,
+    usize,
+    usize,
+    usize,
+    u8,
+    usize,
+    u32,
+    usize,
+    usize,
+) {
     (
         key.group.num_vars(),
         key.group.num_polynomials(),
-        key.m_vars,
-        key.r_vars,
+        key.source_ring_len_per_claim,
+        key.fold_position_count,
+        key.live_fold_count,
+        key.shard_granule,
+        match key.fold_challenge_shape {
+            akita_challenges::TensorChallengeShape::Flat => 0,
+            akita_challenges::TensorChallengeShape::Tensor { .. } => 1,
+        },
+        match key.fold_challenge_shape {
+            akita_challenges::TensorChallengeShape::Flat => 0,
+            akita_challenges::TensorChallengeShape::Tensor { fold_low_len } => fold_low_len,
+        },
         key.log_basis,
         key.n_a,
         key.conservative_n_b,
@@ -223,8 +245,11 @@ fn precommitted_group_key_eq(
     layout: &akita_types::PrecommittedGroupParams,
 ) -> bool {
     generated.group == layout.group
-        && generated.m_vars == layout.m_vars
-        && generated.r_vars == layout.r_vars
+        && generated.source_ring_len_per_claim == layout.source_ring_len_per_claim
+        && generated.fold_position_count == layout.fold_position_count
+        && generated.live_fold_count == layout.live_fold_count
+        && generated.shard_granule == layout.shard_granule
+        && generated.fold_challenge_shape == layout.fold_challenge_shape
         && generated.log_basis == layout.log_basis
         && generated.n_a == layout.n_a
         && generated.conservative_n_b == layout.conservative_n_b

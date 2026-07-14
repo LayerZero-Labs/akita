@@ -2,7 +2,7 @@
 //! [`LevelParams`].
 //!
 //! The planner stores only the brute-forced parameters
-//! (`ring_d, log_basis, m_vars, r_vars, n_a, n_b, n_d`) in
+//! (`ring_d, log_basis, position_bits, fold_bits, n_a, n_b, n_d`) in
 //! [`GeneratedFoldStep`]; every other `LevelParams` component is a
 //! deterministic function of those plus the config-fixed policy inputs.
 //! [`GeneratedFoldStep::expand_to_level_params`] is the single place that
@@ -58,7 +58,7 @@ impl GeneratedFoldStep {
     /// selects the level-local decomposition (root inherits the config
     /// decomposition; recursive levels collapse `log_commit_bound` to the
     /// level's own `log_basis`). `current_w_len` is the witness length in
-    /// field elements entering this level, used to size `block_len`.
+    /// field elements entering this level, used to size `fold_position_count`.
     ///
     /// `num_claims` is the batch factor folded directly into the outer (B)
     /// and prover (D) matrix widths — the root commits `num_claims`
@@ -107,20 +107,37 @@ impl GeneratedFoldStep {
         let sis_family = policy.sis_family;
         let min_security_bits = policy.min_sis_security_bits;
 
-        // Block geometry: the root spans `2^m_vars` ring elements per block;
-        // recursive levels pack `ceil(num_ring / num_blocks)` instead.
-        let m_vars = self.m_vars as usize;
-        let r_vars = self.r_vars as usize;
-        let num_blocks = 1usize.checked_shl(r_vars as u32).ok_or_else(|| {
-            AkitaError::InvalidSetup("generated schedule 2^r_vars overflows usize".to_string())
+        // Digit-innermost geometry keeps `L = 2^position_bits` at every level
+        // and derives the exact live `F = ceil(N / L)`.
+        let position_bits = self.position_bits as usize;
+        let fold_bits = self.fold_bits as usize;
+        let fold_position_count = 1usize.checked_shl(position_bits as u32).ok_or_else(|| {
+            AkitaError::InvalidSetup(
+                "generated schedule 2^position_bits overflows usize".to_string(),
+            )
         })?;
-        let block_len = if is_root {
-            1usize.checked_shl(m_vars as u32).ok_or_else(|| {
-                AkitaError::InvalidSetup("generated schedule 2^m_vars overflows usize".to_string())
-            })?
+        let source_ring_len_per_claim = if is_root {
+            let fold_capacity = 1usize.checked_shl(fold_bits as u32).ok_or_else(|| {
+                AkitaError::InvalidSetup(
+                    "generated schedule fold capacity overflows usize".to_string(),
+                )
+            })?;
+            fold_position_count
+                .checked_mul(fold_capacity)
+                .ok_or_else(|| {
+                    AkitaError::InvalidSetup(
+                        "generated root source length overflows usize".to_string(),
+                    )
+                })?
         } else {
-            (current_w_len / ring_d).div_ceil(num_blocks)
+            if !current_w_len.is_multiple_of(ring_d) {
+                return Err(AkitaError::InvalidSetup(
+                    "recursive witness length is not divisible by the ring dimension".to_string(),
+                ));
+            }
+            current_w_len / ring_d
         };
+        let live_fold_count = source_ring_len_per_claim.div_ceil(fold_position_count);
 
         // Per-role rounded-up collision buckets + committed widths, via the
         // `akita_types::sis` primitives. The B/D widths carry the `num_claims`
@@ -141,7 +158,7 @@ impl GeneratedFoldStep {
         let num_digits_commit = num_digits_s_commit(decomp, is_root);
         let num_digits_open_val = num_digits_open(decomp);
 
-        let inner_width = decomposed_s_block_ring_count(block_len, num_digits_commit)
+        let inner_width = decomposed_s_block_ring_count(fold_position_count, num_digits_commit)
             .ok_or_else(|| no_layout("A"))?;
         let a_bucket = rounded_up_role_a_inf_norm(
             min_security_bits,
@@ -153,7 +170,7 @@ impl GeneratedFoldStep {
             is_root,
             policy.onehot_chunk_size,
             policy.ring_subfield_norm_bound,
-            r_vars,
+            fold_bits,
             num_claims,
             inner_width as u64,
         )
@@ -176,7 +193,7 @@ impl GeneratedFoldStep {
         let outer_width = decomposed_t_ring_count(
             self.n_a as usize,
             num_digits_open_val,
-            num_blocks,
+            live_fold_count,
             num_claims,
         )
         .ok_or_else(|| no_layout("B"))?;
@@ -184,8 +201,9 @@ impl GeneratedFoldStep {
         let d_bucket =
             rounded_up_collision_inf_norm(min_security_bits, sis_family, ring_d, log_basis)
                 .ok_or_else(|| no_layout("D"))?;
-        let d_matrix_width = decomposed_w_ring_count(num_digits_open_val, num_blocks, num_claims)
-            .ok_or_else(|| no_layout("D"))?;
+        let d_matrix_width =
+            decomposed_w_ring_count(num_digits_open_val, live_fold_count, num_claims)
+                .ok_or_else(|| no_layout("D"))?;
 
         let num_digits_open = num_digits_open_val;
 
@@ -251,10 +269,10 @@ impl GeneratedFoldStep {
                 d_bucket,
                 ring_d,
             )?,
-            num_blocks,
-            block_len,
-            m_vars,
-            r_vars,
+            source_ring_len_per_claim,
+            live_fold_count,
+            fold_position_count,
+            shard_granule: 1,
             fold_challenge_config: ring_challenge_cfg,
             fold_challenge_shape: fold_shape,
             num_digits_commit,
@@ -311,16 +329,16 @@ impl GeneratedFoldStep {
         let log_basis = self.log_basis;
         let sis_family = policy.sis_family;
         let min_security_bits = policy.min_sis_security_bits;
-        let m_vars = self.m_vars as usize;
-        let r_vars = self.r_vars as usize;
-        let num_blocks = 1usize.checked_shl(r_vars as u32).ok_or_else(|| {
+        let position_bits = self.position_bits as usize;
+        let fold_bits = self.fold_bits as usize;
+        let live_fold_count = 1usize.checked_shl(fold_bits as u32).ok_or_else(|| {
             AkitaError::InvalidSetup(
-                "generated multi-group root 2^r_vars overflows usize".to_string(),
+                "generated multi-group root 2^fold_bits overflows usize".to_string(),
             )
         })?;
-        let block_len = 1usize.checked_shl(m_vars as u32).ok_or_else(|| {
+        let fold_position_count = 1usize.checked_shl(position_bits as u32).ok_or_else(|| {
             AkitaError::InvalidSetup(
-                "generated multi-group root 2^m_vars overflows usize".to_string(),
+                "generated multi-group root 2^position_bits overflows usize".to_string(),
             )
         })?;
 
@@ -338,7 +356,7 @@ impl GeneratedFoldStep {
         let num_digits_commit = num_digits_s_commit(decomp, true);
         let num_digits_open_val = num_digits_open(decomp);
 
-        let inner_width = decomposed_s_block_ring_count(block_len, num_digits_commit)
+        let inner_width = decomposed_s_block_ring_count(fold_position_count, num_digits_commit)
             .ok_or_else(|| no_layout("A"))?;
         let a_bucket = rounded_up_role_a_inf_norm(
             min_security_bits,
@@ -350,7 +368,7 @@ impl GeneratedFoldStep {
             true,
             policy.onehot_chunk_size,
             policy.ring_subfield_norm_bound,
-            r_vars,
+            fold_bits,
             main_num_polys,
             inner_width as u64,
         )
@@ -373,13 +391,14 @@ impl GeneratedFoldStep {
         let outer_width = decomposed_t_ring_count(
             self.n_a as usize,
             num_digits_open_val,
-            num_blocks,
+            live_fold_count,
             main_num_polys,
         )
         .ok_or_else(|| no_layout("B"))?;
 
-        let main_d_width = decomposed_w_ring_count(num_digits_open_val, num_blocks, main_num_polys)
-            .ok_or_else(|| no_layout("D"))?;
+        let main_d_width =
+            decomposed_w_ring_count(num_digits_open_val, live_fold_count, main_num_polys)
+                .ok_or_else(|| no_layout("D"))?;
         let d_matrix_width = main_d_width
             .checked_add(precommitted_d_width)
             .ok_or_else(|| {
@@ -422,10 +441,14 @@ impl GeneratedFoldStep {
                 d_bucket,
                 ring_d,
             )?,
-            num_blocks,
-            block_len,
-            m_vars,
-            r_vars,
+            source_ring_len_per_claim: live_fold_count
+                .checked_mul(fold_position_count)
+                .ok_or_else(|| {
+                    AkitaError::InvalidSetup("generated root source length overflow".to_string())
+                })?,
+            live_fold_count,
+            fold_position_count,
+            shard_granule: 1,
             fold_challenge_config: ring_challenge_cfg,
             fold_challenge_shape: fold_shape,
             num_digits_commit,

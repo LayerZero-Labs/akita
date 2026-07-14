@@ -615,11 +615,16 @@ mod fp128_policy_tests {
         let opening_batch = OpeningClaimsLayout::new(20, 1).expect("singleton opening batch");
         let schedule =
             SmallCfg::get_params_for_prove(&opening_batch).expect("small-field schedule");
-        let Some(akita_types::Step::Fold(root)) = schedule.steps.first() else {
-            panic!("small-field schedule should start with a root fold");
+        let root_params = match schedule.steps.first() {
+            Some(akita_types::Step::Fold(root)) => &root.params,
+            Some(akita_types::Step::Direct(root)) => root
+                .params
+                .as_ref()
+                .expect("root-direct schedule should carry commitment params"),
+            None => panic!("small-field schedule should not be empty"),
         };
         assert!(
-            root.params.a_key.coeff_linf_bound() >= root.params.b_key.coeff_linf_bound() * 2,
+            root_params.a_key.coeff_linf_bound() >= root_params.b_key.coeff_linf_bound() * 2,
             "A-role L-infinity bound should include the psi norm bound"
         );
     }

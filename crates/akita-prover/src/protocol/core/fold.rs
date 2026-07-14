@@ -307,8 +307,8 @@ where
                             ))
                         })?;
                     let target_len = alpha_bits
-                        .checked_add(group_lp.m_vars())
-                        .and_then(|n| n.checked_add(group_lp.r_vars()))
+                        .checked_add(group_lp.position_bits())
+                        .and_then(|n| n.checked_add(group_lp.fold_bits()))
                         .ok_or_else(|| {
                             AkitaError::InvalidSetup(
                                 "group opening point length overflow".to_string(),
@@ -316,8 +316,10 @@ where
                         })?;
                     let group_protocol_point =
                         &protocol_point[..protocol_point.len().min(target_len)];
-                    let opening_layout =
-                        OpeningBlockLayout::new(group_lp.num_blocks(), group_lp.block_len())?;
+                    let opening_layout = OpeningBlockLayout::new(
+                        group_lp.live_fold_count(),
+                        group_lp.fold_position_count(),
+                    )?;
                     let prepared_point = prepare_opening_point::<F, E, D>(
                         group_protocol_point,
                         basis,
@@ -340,7 +342,7 @@ where
                             Some(opening.prepared()),
                             group_polys,
                             &prepared_point,
-                            group_lp.block_len(),
+                            group_lp.fold_position_count(),
                         )
                         .map_err(|err| {
                             AkitaError::InvalidInput(format!(
@@ -593,8 +595,8 @@ where
         OpeningBlockLayout::new(1, logical_w.len() / ring_d)?
     } else {
         OpeningBlockLayout::new(
-            scheduled.next_params.num_blocks,
-            scheduled.next_params.block_len,
+            scheduled.next_params.live_fold_count,
+            scheduled.next_params.fold_position_count,
         )?
     };
     let rs = ring_switch_finalize::<F, E, T>(
@@ -677,7 +679,7 @@ where
                 .instance
                 .opening_batch()
                 .num_total_polynomials()
-                .checked_mul(lp.num_blocks)
+                .checked_mul(lp.live_fold_count)
                 .ok_or_else(|| {
                     AkitaError::InvalidSetup("trace block count overflow".to_string())
                 })?;
@@ -691,7 +693,7 @@ where
             )?;
             Some(build_root_stage2_trace_table::<F, E>(
                 ring_d,
-                lp.num_blocks,
+                lp.live_fold_count,
                 &layout,
                 prepared_fold.instance.opening_batch(),
                 prepared_fold
@@ -716,7 +718,7 @@ where
             trace_opening_layout,
             trace_col_bits,
             trace_ring_bits,
-            lp.num_blocks,
+            lp.live_fold_count,
         )?;
         Some(build_recursive_stage2_trace_table::<F, E>(
             ring_d,

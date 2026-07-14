@@ -124,7 +124,7 @@ fn prepare_single_group_plan_parts(
 }
 
 fn structured_weight_fixture(
-    num_blocks: usize,
+    live_fold_count: usize,
     ownership_widths: &[usize],
     role_dims: CommitmentRingDims,
 ) -> StructuredWeightFixture {
@@ -132,24 +132,24 @@ fn structured_weight_fixture(
     let depth_open = 2;
     let depth_commit = 2;
     let depth_fold = 2;
-    let block_len = 8;
+    let fold_position_count = 8;
     let n_a = 2;
     let n_b = 2;
     let n_d = 2;
     let log_basis = 4;
-    assert_eq!(ownership_widths.iter().sum::<usize>(), num_blocks);
+    assert_eq!(ownership_widths.iter().sum::<usize>(), live_fold_count);
     let group_descriptor = OpeningBatchWitnessGroup {
         id: SemanticGroupId(0),
         num_claims,
-        num_blocks,
-        block_len,
+        live_fold_count,
+        fold_position_count,
         depth_open,
         depth_commit,
         depth_fold,
         n_a,
         e_setup_col_offset: 0,
     };
-    let z_len = block_len * depth_commit * depth_fold;
+    let z_len = fold_position_count * depth_commit * depth_fold;
     let mut cursor = 0usize;
     let mut global_block_base = 0usize;
     let ownership_units = ownership_widths
@@ -200,12 +200,12 @@ fn structured_weight_fixture(
         num_polys_per_group: vec![num_claims],
         num_t_vectors: num_claims,
         num_claims,
-        num_blocks,
-        block_len,
+        live_fold_count,
+        fold_position_count,
         depth_open,
         depth_commit,
         depth_fold,
-        inner_width: block_len * depth_commit,
+        inner_width: fold_position_count * depth_commit,
         eq_tau1: EqPolynomial::evals(&tau1).unwrap().into(),
     };
     let full_vec_randomness = (0..18)
@@ -217,15 +217,15 @@ fn structured_weight_fixture(
         group_id: SemanticGroupId(0),
         e_col_offset: 0,
         num_claims,
-        num_blocks,
-        block_len,
+        live_fold_count,
+        fold_position_count,
         depth_open,
         depth_commit,
         depth_fold,
         log_basis,
         n_a,
         n_b,
-        t_cols_per_vector: n_a * depth_open * num_blocks,
+        t_cols_per_vector: n_a * depth_open * live_fold_count,
         a_row_start: 1,
         b_row_start: 1 + n_a,
         layout: std::sync::Arc::new(layout),
@@ -236,7 +236,7 @@ fn structured_weight_fixture(
         &groups,
         rows - n_d,
         n_d,
-        num_claims * num_blocks * depth_open,
+        num_claims * live_fold_count * depth_open,
     )
     .unwrap();
     let plan = SetupContributionPlan::finish_plan::<F>(
@@ -268,7 +268,7 @@ fn expected_z_setup_weights(
     full_vec_randomness: &[F],
 ) -> Vec<F> {
     let group = layout.group(group_id).expect("test group must exist");
-    let z_cols = group.block_len * group.depth_commit;
+    let z_cols = group.fold_position_count * group.depth_commit;
     (0..z_cols)
         .map(|column| {
             let position = column / group.depth_commit;
@@ -283,8 +283,8 @@ fn expected_z_setup_weights(
                     let physical = unit.z_range.start
                         + fold_digit
                         + group.depth_fold * (commit_digit + group.depth_commit * position);
-                    let physical_block = physical / opening_layout.block_len();
-                    let physical_position = physical % opening_layout.block_len();
+                    let physical_block = physical / opening_layout.fold_position_count();
+                    let physical_position = physical % opening_layout.fold_position_count();
                     let virtual_address =
                         physical_block * opening_layout.position_stride() + physical_position;
                     weight -= eq_eval_at_index(full_vec_randomness, virtual_address) * fold;
@@ -468,7 +468,7 @@ fn setup_index_weight_evaluator_applies_mixed_role_projection_lanes() {
 
 #[test]
 fn dense_z_eq_slice_uses_relative_high_carry() {
-    let block_len = 12;
+    let fold_position_count = 12;
     let depth_commit = 3;
     let depth_fold = 2;
     let num_points = 1;
@@ -486,12 +486,12 @@ fn dense_z_eq_slice_uses_relative_high_carry() {
         num_polys_per_group: vec![0],
         num_t_vectors: 0,
         num_claims: 1,
-        num_blocks: 4,
-        block_len,
+        live_fold_count: 4,
+        fold_position_count,
         depth_open: 16,
         depth_commit,
         depth_fold,
-        inner_width: block_len * depth_commit,
+        inner_width: fold_position_count * depth_commit,
         eq_tau1: vec![test_scalar(11), test_scalar(12)].into(),
     };
 
@@ -499,8 +499,8 @@ fn dense_z_eq_slice_uses_relative_high_carry() {
         vec![OpeningBatchWitnessGroup {
             id: SemanticGroupId(0),
             num_claims: inputs.num_claims,
-            num_blocks: inputs.num_blocks,
-            block_len: inputs.block_len,
+            live_fold_count: inputs.live_fold_count,
+            fold_position_count: inputs.fold_position_count,
             depth_open: inputs.depth_open,
             depth_commit: inputs.depth_commit,
             depth_fold: inputs.depth_fold,
@@ -537,7 +537,7 @@ fn dense_z_eq_slice_uses_relative_high_carry() {
 
 #[test]
 fn setup_a_z_weights_do_not_include_commit_gadget() {
-    let block_len = 8;
+    let fold_position_count = 8;
     let depth_commit = 3;
     let depth_fold = 2;
     let num_points = 1;
@@ -557,20 +557,20 @@ fn setup_a_z_weights_do_not_include_commit_gadget() {
         num_polys_per_group: vec![0],
         num_t_vectors: 0,
         num_claims: 1,
-        num_blocks: 4,
-        block_len,
+        live_fold_count: 4,
+        fold_position_count,
         depth_open: 16,
         depth_commit,
         depth_fold,
-        inner_width: block_len * depth_commit,
+        inner_width: fold_position_count * depth_commit,
         eq_tau1: vec![test_scalar(11), test_scalar(12)].into(),
     };
     let layout = OpeningBatchWitnessLayout::new(
         vec![OpeningBatchWitnessGroup {
             id: SemanticGroupId(0),
             num_claims: inputs.num_claims,
-            num_blocks: inputs.num_blocks,
-            block_len: inputs.block_len,
+            live_fold_count: inputs.live_fold_count,
+            fold_position_count: inputs.fold_position_count,
             depth_open: inputs.depth_open,
             depth_commit: inputs.depth_commit,
             depth_fold: inputs.depth_fold,
@@ -618,15 +618,15 @@ fn setup_a_z_weights_do_not_include_commit_gadget() {
 #[test]
 fn z_setup_weight_oracle_covers_multi_block_virtual_gaps() {
     let group_id = SemanticGroupId(0);
-    let block_len = 3;
+    let fold_position_count = 3;
     let depth_commit = 2;
     let depth_fold = 2;
     let layout = OpeningBatchWitnessLayout::new(
         vec![OpeningBatchWitnessGroup {
             id: group_id,
             num_claims: 1,
-            num_blocks: 2,
-            block_len,
+            live_fold_count: 2,
+            fold_position_count,
             depth_open: 2,
             depth_commit,
             depth_fold,
@@ -640,25 +640,25 @@ fn z_setup_weight_oracle_covers_multi_block_virtual_gaps() {
         1,
     )
     .unwrap();
-    let num_blocks = [8usize, 4, 2]
+    let live_fold_count = [8usize, 4, 2]
         .into_iter()
         .find(|&blocks| {
             let physical_block_len = layout.total_len().div_ceil(blocks);
             physical_block_len != 0 && !physical_block_len.is_power_of_two()
         })
         .expect("test layout admits a gapped partition");
-    let physical_block_len = layout.total_len().div_ceil(num_blocks);
-    let opening_layout = OpeningBlockLayout::new(num_blocks, physical_block_len).unwrap();
+    let physical_block_len = layout.total_len().div_ceil(live_fold_count);
+    let opening_layout = OpeningBlockLayout::new(live_fold_count, physical_block_len).unwrap();
     let point = (0..opening_layout.opening_len().trailing_zeros() as usize)
         .map(|index| test_scalar(1201 + index as u128))
         .collect::<Vec<_>>();
     let fold_gadget = gadget_row_scalars::<F>(depth_fold, 4);
-    let mut got = vec![F::zero(); block_len * depth_commit];
+    let mut got = vec![F::zero(); fold_position_count * depth_commit];
     setup_z_col_weights(
         &layout,
         opening_layout,
         group_id,
-        block_len,
+        fold_position_count,
         depth_commit,
         depth_fold,
         &point,
@@ -670,7 +670,7 @@ fn z_setup_weight_oracle_covers_multi_block_virtual_gaps() {
         expected_z_setup_weights(&layout, opening_layout, group_id, &fold_gadget, &point);
     assert_eq!(got, expected);
     assert!(layout.ownership_units.iter().any(|unit| {
-        (0..block_len).any(|position| {
+        (0..fold_position_count).any(|position| {
             (0..depth_commit).any(|commit_digit| {
                 (0..depth_fold).any(|fold_digit| {
                     let physical = unit.z_range.start
@@ -688,13 +688,13 @@ fn z_setup_weight_oracle_covers_multi_block_virtual_gaps() {
 
 #[test]
 fn single_group_plan_supports_multi_chunk_weights() {
-    let num_blocks = 4;
+    let live_fold_count = 4;
     let blocks_per_chunk = 2;
     let num_claims = 3;
     let depth_open = 2;
     let depth_commit = 2;
     let depth_fold = 2;
-    let block_len = 4;
+    let fold_position_count = 4;
     let n_a = 2;
     let n_b = 2;
     let n_d = 1;
@@ -704,8 +704,8 @@ fn single_group_plan_supports_multi_chunk_weights() {
         vec![OpeningBatchWitnessGroup {
             id: SemanticGroupId(0),
             num_claims,
-            num_blocks,
-            block_len,
+            live_fold_count,
+            fold_position_count,
             depth_open,
             depth_commit,
             depth_fold,
@@ -714,7 +714,7 @@ fn single_group_plan_supports_multi_chunk_weights() {
         }],
         vec![SemanticGroupId(0)],
         vec![SemanticGroupId(0)],
-        num_blocks / blocks_per_chunk,
+        live_fold_count / blocks_per_chunk,
         n_d,
         depth_fold,
     )
@@ -724,15 +724,15 @@ fn single_group_plan_supports_multi_chunk_weights() {
         group_id: SemanticGroupId(0),
         e_col_offset: 0,
         num_claims,
-        num_blocks,
-        block_len,
+        live_fold_count,
+        fold_position_count,
         depth_open,
         depth_commit,
         depth_fold,
         log_basis,
         n_a,
         n_b,
-        t_cols_per_vector: n_a * depth_open * num_blocks,
+        t_cols_per_vector: n_a * depth_open * live_fold_count,
         a_row_start: 1,
         b_row_start: 1 + n_a,
         layout: std::sync::Arc::new(layout),
@@ -748,12 +748,12 @@ fn single_group_plan_supports_multi_chunk_weights() {
         num_polys_per_group: vec![num_claims],
         num_t_vectors: num_claims,
         num_claims,
-        num_blocks,
-        block_len,
+        live_fold_count,
+        fold_position_count,
         depth_open,
         depth_commit,
         depth_fold,
-        inner_width: block_len * depth_commit,
+        inner_width: fold_position_count * depth_commit,
         eq_tau1: (0..rows.next_power_of_two())
             .map(|idx| test_scalar(11 + idx as u128))
             .collect(),
@@ -767,7 +767,7 @@ fn single_group_plan_supports_multi_chunk_weights() {
         &groups,
         rows - n_d,
         n_d,
-        num_claims * num_blocks * depth_open,
+        num_claims * live_fold_count * depth_open,
     )
     .unwrap();
     let plan = SetupContributionPlan::finish_plan::<F>(
@@ -1236,8 +1236,8 @@ fn from_level_params_rejects_non_pow2_num_blocks() {
     let mut lp = LevelParams::log_basis_stub(3);
     lp.ring_dimension = 64;
     lp.role_dims = crate::CommitmentRingDims::uniform(64);
-    lp.num_blocks = 3;
-    lp.block_len = 8;
+    lp.live_fold_count = 3;
+    lp.fold_position_count = 8;
     lp.num_digits_commit = 2;
     lp.num_digits_open = 3;
     assert!(SetupContributionPlanInputs::<F>::from_level_params(

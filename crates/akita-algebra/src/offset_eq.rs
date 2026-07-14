@@ -269,8 +269,8 @@ pub fn eval_compact_pair_eq<F: FieldCore>(
     let mut work = 0usize;
     let mut acc = F::zero();
     for block_bits in (0..=highest_bit).rev() {
-        let block_len = 1usize << block_bits;
-        if live_len & block_len == 0 {
+        let fold_position_count = 1usize << block_bits;
+        if live_len & fold_position_count == 0 {
             continue;
         }
         acc += eval_compact_pair_pow2_block(
@@ -284,7 +284,7 @@ pub fn eval_compact_pair_eq<F: FieldCore>(
             block_bits,
             &mut work,
         )?;
-        block_base = block_base.checked_add(block_len).ok_or_else(|| {
+        block_base = block_base.checked_add(fold_position_count).ok_or_else(|| {
             AkitaError::InvalidInput("compact-pair block coverage overflow".into())
         })?;
     }

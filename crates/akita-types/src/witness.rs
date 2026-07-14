@@ -11,8 +11,8 @@ use std::ops::Range;
 /// Checked block geometry for compact storage and its zero-padded opening MLE.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct OpeningBlockLayout {
-    num_blocks: usize,
-    block_len: usize,
+    live_fold_count: usize,
+    fold_position_count: usize,
     position_stride: usize,
     physical_len: usize,
     opening_len: usize,
@@ -25,20 +25,20 @@ impl OpeningBlockLayout {
     ///
     /// Returns an error unless the block count is a non-zero power of two and
     /// all derived lengths fit in `usize`.
-    pub fn new(num_blocks: usize, block_len: usize) -> Result<Self, AkitaError> {
-        if !num_blocks.is_power_of_two() || block_len == 0 {
+    pub fn new(live_fold_count: usize, fold_position_count: usize) -> Result<Self, AkitaError> {
+        if !live_fold_count.is_power_of_two() || fold_position_count == 0 {
             return Err(AkitaError::InvalidSetup(
                 "opening block layout requires power-of-two blocks and non-zero block length"
                     .into(),
             ));
         }
-        let position_stride = block_len
+        let position_stride = fold_position_count
             .checked_next_power_of_two()
             .ok_or_else(|| AkitaError::InvalidSetup("opening position stride overflow".into()))?;
-        let physical_len = num_blocks
-            .checked_mul(block_len)
+        let physical_len = live_fold_count
+            .checked_mul(fold_position_count)
             .ok_or_else(|| AkitaError::InvalidSetup("physical opening length overflow".into()))?;
-        let opening_len = num_blocks
+        let opening_len = live_fold_count
             .checked_mul(position_stride)
             .ok_or_else(|| AkitaError::InvalidSetup("virtual opening length overflow".into()))?;
         if physical_len.checked_next_power_of_two() != Some(opening_len) {
@@ -47,20 +47,20 @@ impl OpeningBlockLayout {
             ));
         }
         Ok(Self {
-            num_blocks,
-            block_len,
+            live_fold_count,
+            fold_position_count,
             position_stride,
             physical_len,
             opening_len,
         })
     }
 
-    pub fn num_blocks(self) -> usize {
-        self.num_blocks
+    pub fn live_fold_count(self) -> usize {
+        self.live_fold_count
     }
 
-    pub fn block_len(self) -> usize {
-        self.block_len
+    pub fn fold_position_count(self) -> usize {
+        self.fold_position_count
     }
 
     pub fn position_stride(self) -> usize {
@@ -75,19 +75,19 @@ impl OpeningBlockLayout {
         self.opening_len
     }
 
-    /// Compact physical address `block * block_len + position`.
+    /// Compact physical address `block * fold_position_count + position`.
     ///
     /// # Errors
     ///
     /// Returns an error when either coordinate is out of range.
     pub fn physical_index(self, block: usize, position: usize) -> Result<usize, AkitaError> {
-        if block >= self.num_blocks || position >= self.block_len {
+        if block >= self.live_fold_count || position >= self.fold_position_count {
             return Err(AkitaError::InvalidInput(
                 "physical opening coordinate out of range".into(),
             ));
         }
         block
-            .checked_mul(self.block_len)
+            .checked_mul(self.fold_position_count)
             .and_then(|base| base.checked_add(position))
             .ok_or_else(|| AkitaError::InvalidSetup("physical opening address overflow".into()))
     }
@@ -98,7 +98,7 @@ impl OpeningBlockLayout {
     ///
     /// Returns an error when either live coordinate is out of range.
     pub fn opening_index(self, block: usize, position: usize) -> Result<usize, AkitaError> {
-        if block >= self.num_blocks || position >= self.block_len {
+        if block >= self.live_fold_count || position >= self.fold_position_count {
             return Err(AkitaError::InvalidInput(
                 "virtual opening coordinate out of range".into(),
             ));
@@ -121,8 +121,8 @@ impl OpeningBlockLayout {
             ));
         }
         self.opening_index(
-            physical_index / self.block_len,
-            physical_index % self.block_len,
+            physical_index / self.fold_position_count,
+            physical_index % self.fold_position_count,
         )
     }
 }
@@ -140,8 +140,8 @@ pub struct MachineChunkId(pub usize);
 pub struct OpeningBatchWitnessGroup {
     pub id: SemanticGroupId,
     pub num_claims: usize,
-    pub num_blocks: usize,
-    pub block_len: usize,
+    pub live_fold_count: usize,
+    pub fold_position_count: usize,
     pub depth_open: usize,
     pub depth_commit: usize,
     pub depth_fold: usize,
@@ -212,8 +212,8 @@ impl OpeningBatchWitnessLayout {
         for (index, group) in groups.iter().enumerate() {
             if group.id != SemanticGroupId(index)
                 || group.num_claims == 0
-                || group.num_blocks == 0
-                || group.block_len == 0
+                || group.live_fold_count == 0
+                || group.fold_position_count == 0
                 || group.depth_open == 0
                 || group.depth_commit == 0
                 || group.depth_fold == 0
@@ -223,7 +223,7 @@ impl OpeningBatchWitnessLayout {
                     "witness semantic group has malformed dimensions".into(),
                 ));
             }
-            if groups.len() == 1 && !group.num_blocks.is_multiple_of(num_machine_chunks) {
+            if groups.len() == 1 && !group.live_fold_count.is_multiple_of(num_machine_chunks) {
                 return Err(AkitaError::InvalidSetup(
                     "witness machine chunks must divide the block axis".into(),
                 ));
@@ -239,7 +239,7 @@ impl OpeningBatchWitnessLayout {
             e_setup_cursor = e_setup_cursor
                 .checked_add(checked_mul3(
                     group.num_claims,
-                    group.num_blocks,
+                    group.live_fold_count,
                     group.depth_open,
                     "witness setup E width overflow",
                 )?)
@@ -260,10 +260,10 @@ impl OpeningBatchWitnessLayout {
             } else {
                 1
             };
-            let blocks = group.num_blocks / chunks_for_group;
+            let blocks = group.live_fold_count / chunks_for_group;
             for chunk_index in 0..chunks_for_group {
                 let z_len = checked_mul3(
-                    group.block_len,
+                    group.fold_position_count,
                     group.depth_commit,
                     group.depth_fold,
                     "witness Z width overflow",
@@ -365,7 +365,7 @@ impl OpeningBatchWitnessLayout {
         global_block: usize,
     ) -> Result<&WitnessOwnershipUnit, AkitaError> {
         let descriptor = self.group(group)?;
-        if global_block >= descriptor.num_blocks {
+        if global_block >= descriptor.live_fold_count {
             return Err(AkitaError::InvalidInput(
                 "witness block index out of range".into(),
             ));
@@ -454,7 +454,7 @@ impl OpeningBatchWitnessLayout {
         fold_digit: usize,
     ) -> Result<usize, AkitaError> {
         let group = self.group(unit.group)?;
-        if position >= group.block_len
+        if position >= group.fold_position_count
             || commit_digit >= group.depth_commit
             || fold_digit >= group.depth_fold
         {
@@ -485,7 +485,7 @@ impl OpeningBatchWitnessLayout {
     ) -> Result<usize, AkitaError> {
         let group = self.group(group_id)?;
         if claim >= group.num_claims
-            || global_block >= group.num_blocks
+            || global_block >= group.live_fold_count
             || digit >= group.depth_open
         {
             return Err(AkitaError::InvalidInput(
@@ -493,7 +493,7 @@ impl OpeningBatchWitnessLayout {
             ));
         }
         let block_claim = group
-            .num_blocks
+            .live_fold_count
             .checked_mul(claim)
             .and_then(|base| base.checked_add(global_block))
             .ok_or_else(|| AkitaError::InvalidSetup("setup E index overflow".into()))?;
@@ -516,7 +516,7 @@ impl OpeningBatchWitnessLayout {
     ) -> Result<usize, AkitaError> {
         let group = self.group(group_id)?;
         if claim >= group.num_claims
-            || global_block >= group.num_blocks
+            || global_block >= group.live_fold_count
             || a_row >= group.n_a
             || digit >= group.depth_open
         {
@@ -525,7 +525,7 @@ impl OpeningBatchWitnessLayout {
             ));
         }
         let block_claim = group
-            .num_blocks
+            .live_fold_count
             .checked_mul(claim)
             .and_then(|base| base.checked_add(global_block))
             .ok_or_else(|| AkitaError::InvalidSetup("setup T index overflow".into()))?;
@@ -546,7 +546,7 @@ impl OpeningBatchWitnessLayout {
         commit_digit: usize,
     ) -> Result<usize, AkitaError> {
         let group = self.group(group_id)?;
-        if position >= group.block_len || commit_digit >= group.depth_commit {
+        if position >= group.fold_position_count || commit_digit >= group.depth_commit {
             return Err(AkitaError::InvalidInput(
                 "setup Z semantic index out of range".into(),
             ));
@@ -883,8 +883,8 @@ mod tests {
         OpeningBatchWitnessGroup {
             id: SemanticGroupId(0),
             num_claims: 2,
-            num_blocks: 4,
-            block_len: 3,
+            live_fold_count: 4,
+            fold_position_count: 3,
             depth_open: 2,
             depth_commit: 2,
             depth_fold: 2,

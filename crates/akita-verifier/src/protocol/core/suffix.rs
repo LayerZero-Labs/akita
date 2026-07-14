@@ -181,8 +181,8 @@ where
             OpeningBlockLayout::new(1, w_len / d_a)?
         } else {
             OpeningBlockLayout::new(
-                scheduled.next_params.num_blocks,
-                scheduled.next_params.block_len,
+                scheduled.next_params.live_fold_count,
+                scheduled.next_params.fold_position_count,
             )?
         },
         terminal_replay,

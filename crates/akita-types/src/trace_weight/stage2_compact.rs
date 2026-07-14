@@ -24,8 +24,8 @@ fn layout() -> TraceWeightLayout {
         vec![OpeningBatchWitnessGroup {
             id: group_id,
             num_claims: 1,
-            num_blocks: 2,
-            block_len: 1,
+            live_fold_count: 2,
+            fold_position_count: 1,
             depth_open: 2,
             depth_commit: 1,
             depth_fold: 1,
@@ -43,9 +43,9 @@ fn layout() -> TraceWeightLayout {
     TraceWeightLayout {
         ring_bits: 3,
         col_bits: 4,
-        num_blocks: 2,
+        live_fold_count: 2,
         num_digits_open: 2,
-        r_vars: 1,
+        fold_bits: 1,
         log_basis: 3,
         witness_layout,
         opening_layout,

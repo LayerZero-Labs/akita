@@ -142,7 +142,7 @@ fn prove_onehot_with_setup_mode(
         &akita_types::OpeningClaimsLayout::new(nv, 1).expect("singleton opening batch"),
     )
     .expect("layout");
-    let total_ring = layout.num_blocks * layout.block_len;
+    let total_ring = layout.live_fold_count * layout.fold_position_count;
     // `total_ring` ring elements of degree D cover `2^nv` field elements,
     // independent of the one-hot chunk size K.
     assert_eq!(total_ring * ONEHOT_D, 1usize << nv);

@@ -104,15 +104,17 @@ fn derive_candidate_level_params(
 
     let mut best: Option<(LevelParams, usize, usize)> = None;
     for r in (1..reduced_vars).rev() {
-        let Some(num_blocks) = 1usize.checked_shl(r as u32) else {
+        let position_bits = reduced_vars - r;
+        let Some(fold_position_count) = 1usize.checked_shl(position_bits as u32) else {
             continue;
         };
-        // Multi-chunk levels require an equal block window per chunk; skip splits
-        // that do not divide evenly (not fixed up later).
-        if num_chunks > 1 && !num_blocks.is_multiple_of(num_chunks) {
+        let live_fold_count = num_ring_elems.div_ceil(fold_position_count);
+        if live_fold_count < num_chunks {
             continue;
         }
-        let block_len = num_ring_elems.div_ceil(num_blocks);
+        let fold_bits = live_fold_count
+            .checked_next_power_of_two()
+            .map_or(0, |capacity| capacity.trailing_zeros() as usize);
 
         // Recursive levels commit a dense balanced-digit witness (`is_root =
         // false`, flat fold). Compose the three SIS-secure keys from the
@@ -125,7 +127,7 @@ fn derive_candidate_level_params(
         };
         let delta_commit = num_digits_s_commit(decomp, false);
         let delta_open = num_digits_open(decomp);
-        let Some(width_s) = decomposed_s_block_ring_count(block_len, delta_commit) else {
+        let Some(width_s) = decomposed_s_block_ring_count(fold_position_count, delta_commit) else {
             continue;
         };
         let Some(norm_s) = rounded_up_role_a_inf_norm(
@@ -138,7 +140,7 @@ fn derive_candidate_level_params(
             false,
             policy.onehot_chunk_size,
             policy.ring_subfield_norm_bound,
-            r,
+            fold_bits,
             1,
             width_s as u64,
         ) else {
@@ -154,7 +156,7 @@ fn derive_candidate_level_params(
         else {
             continue;
         };
-        let Some(width_t) = decomposed_t_ring_count(n_a, delta_open, num_blocks, 1) else {
+        let Some(width_t) = decomposed_t_ring_count(n_a, delta_open, live_fold_count, 1) else {
             continue;
         };
         let Ok(b_key) = AjtaiKeyParams::try_new_with_min_rank(sis_key(policy, norm_t), width_t)
@@ -166,7 +168,7 @@ fn derive_candidate_level_params(
         else {
             continue;
         };
-        let Some(width_w) = decomposed_w_ring_count(delta_open, num_blocks, 1) else {
+        let Some(width_w) = decomposed_w_ring_count(delta_open, live_fold_count, 1) else {
             continue;
         };
         let Ok(d_key) = AjtaiKeyParams::try_new_with_min_rank(sis_key(policy, norm_w), width_w)
@@ -180,10 +182,10 @@ fn derive_candidate_level_params(
             a_key,
             b_key,
             d_key,
-            num_blocks,
-            block_len,
-            m_vars: reduced_vars - r,
-            r_vars: r,
+            source_ring_len_per_claim: num_ring_elems,
+            live_fold_count,
+            fold_position_count,
+            shard_granule: 1,
             fold_challenge_config: ring_challenge_cfg,
             fold_challenge_shape: TensorChallengeShape::Flat,
             num_digits_commit: delta_commit,
@@ -580,7 +582,7 @@ pub(crate) fn derive_optimal_suffix_schedule(
 /// - `a_collision` — the audited A-role SIS bucket (`2·β` base norm scaled
 ///   by the stage-1 infinity norm and the ring-subfield embedding norm).
 /// - `bd_collision = 2^lb − 1` — the B/D digit-range bucket.
-/// - `(m_vars, r_vars)` — `optimal_m_r_split` for a normal root, or `(0, 0)`
+/// - `(position_bits, fold_bits)` — `optimal_m_r_split` for a normal root, or `(0, 0)`
 ///   for a tiny root that fits inside one padded ring element.
 /// - `(n_a, n_b, n_d)` — the tight SIS-floor ranks for the resulting
 ///   inner / outer / D-matrix widths.
@@ -625,7 +627,7 @@ fn compute_root_direct_level_params(
     // optimizer recomputes the fold-priced A collision per `r` internally
     // (it grows with the fold arity `num_claims · 2^r`), so it needs the
     // batch factor and ring-subfield norm, not a single pre-baked bucket.
-    let (m_vars, r_vars) = if num_vars > alpha {
+    let (position_bits, fold_bits) = if num_vars > alpha {
         // The `(m, r)` split is scored against the flat L1 mass (the root fold
         // shape disambiguates the committed table, not the split search).
         let fold_challenge = akita_types::sis::FoldChallengeNorms::new(
@@ -636,7 +638,7 @@ fn compute_root_direct_level_params(
         // `nonzeros = ceil(D/K)`); dense roots use the balanced-digit norms.
         let is_onehot = decomp.log_commit_bound == 1;
         let fold_witness = FoldWitnessNorms::new(log_basis, d, policy.onehot_chunk_size, is_onehot);
-        let (m_vars, r_vars, _scoring_n_a) = optimal_m_r_split(
+        let (position_bits, fold_bits, _scoring_n_a) = optimal_m_r_split(
             policy.min_sis_security_bits,
             sis_family,
             d as u32,
@@ -651,15 +653,15 @@ fn compute_root_direct_level_params(
             num_vars - alpha,
             0,
         );
-        (m_vars, r_vars)
+        (position_bits, fold_bits)
     } else {
         (0, 0)
     };
 
-    let Some(num_blocks) = 1usize.checked_shl(r_vars as u32) else {
+    let Some(live_fold_count) = 1usize.checked_shl(fold_bits as u32) else {
         return Ok(None);
     };
-    let Some(block_len) = 1usize.checked_shl(m_vars as u32) else {
+    let Some(fold_position_count) = 1usize.checked_shl(position_bits as u32) else {
         return Ok(None);
     };
 
@@ -667,7 +669,7 @@ fn compute_root_direct_level_params(
     // norm -> width -> tight SIS-secure rank -> key. `t_vectors = num_claims`
     // folds the batched-root scaling into the B/D widths (the root commits
     // `num_claims` polynomials) — no separate per-claim-then-scale pass.
-    let Some(width_s) = decomposed_s_block_ring_count(block_len, depth_commit) else {
+    let Some(width_s) = decomposed_s_block_ring_count(fold_position_count, depth_commit) else {
         return Ok(None);
     };
     let Some(norm_s) = rounded_up_role_a_inf_norm(
@@ -680,7 +682,7 @@ fn compute_root_direct_level_params(
         true,
         policy.onehot_chunk_size,
         policy.ring_subfield_norm_bound,
-        r_vars,
+        fold_bits,
         num_claims,
         width_s as u64,
     ) else {
@@ -695,7 +697,8 @@ fn compute_root_direct_level_params(
     else {
         return Ok(None);
     };
-    let Some(width_t) = decomposed_t_ring_count(n_a, depth_open, num_blocks, num_claims) else {
+    let Some(width_t) = decomposed_t_ring_count(n_a, depth_open, live_fold_count, num_claims)
+    else {
         return Ok(None);
     };
     let Ok(b_key) = AjtaiKeyParams::try_new_with_min_rank(sis_key(policy, norm_t), width_t) else {
@@ -706,7 +709,7 @@ fn compute_root_direct_level_params(
     else {
         return Ok(None);
     };
-    let Some(width_w) = decomposed_w_ring_count(depth_open, num_blocks, num_claims) else {
+    let Some(width_w) = decomposed_w_ring_count(depth_open, live_fold_count, num_claims) else {
         return Ok(None);
     };
     let Ok(d_key) = AjtaiKeyParams::try_new_with_min_rank(sis_key(policy, norm_w), width_w) else {
@@ -728,10 +731,10 @@ fn compute_root_direct_level_params(
         a_key,
         b_key,
         d_key,
-        num_blocks,
-        block_len,
-        m_vars,
-        r_vars,
+        source_ring_len_per_claim: live_fold_count * fold_position_count,
+        live_fold_count,
+        fold_position_count,
+        shard_granule: 1,
         fold_challenge_config: ring_challenge_cfg,
         fold_challenge_shape,
         num_digits_commit: depth_commit,
@@ -865,17 +868,17 @@ fn find_schedule_inner(
         let num_digits_commit = num_digits_s_commit(level_decomp, true);
         let num_digits_open = num_digits_open(level_decomp);
 
-        for r_vars in (min_r_vars..=max_r_vars).rev() {
-            let Some(num_blocks) = 1usize.checked_shl(r_vars as u32) else {
+        for fold_bits in (min_r_vars..=max_r_vars).rev() {
+            let Some(live_fold_count) = 1usize.checked_shl(fold_bits as u32) else {
                 continue;
             };
             // Multi-chunk root candidates require an equal block window per chunk.
-            if root_num_chunks > 1 && !num_blocks.is_multiple_of(root_num_chunks) {
+            if root_num_chunks > 1 && !live_fold_count.is_multiple_of(root_num_chunks) {
                 continue;
             }
-            let m_vars = reduced_vars - r_vars;
+            let position_bits = reduced_vars - fold_bits;
 
-            let Some(block_len) = 1usize.checked_shl(m_vars as u32) else {
+            let Some(fold_position_count) = 1usize.checked_shl(position_bits as u32) else {
                 continue;
             };
 
@@ -883,7 +886,9 @@ fn find_schedule_inner(
             // primitives: norm -> width -> tight rank -> key.
             let family = policy.sis_family;
             let d = policy.ring_dimension;
-            let Some(width_s) = decomposed_s_block_ring_count(block_len, num_digits_commit) else {
+            let Some(width_s) =
+                decomposed_s_block_ring_count(fold_position_count, num_digits_commit)
+            else {
                 continue;
             };
             let Some(norm_s) = rounded_up_role_a_inf_norm(
@@ -896,7 +901,7 @@ fn find_schedule_inner(
                 true,
                 policy.onehot_chunk_size,
                 policy.ring_subfield_norm_bound,
-                r_vars,
+                fold_bits,
                 key.num_polynomials(),
                 width_s as u64,
             ) else {
@@ -915,9 +920,12 @@ fn find_schedule_inner(
             ) else {
                 continue;
             };
-            let Some(width_t) =
-                decomposed_t_ring_count(n_a, num_digits_open, num_blocks, key.num_polynomials())
-            else {
+            let Some(width_t) = decomposed_t_ring_count(
+                n_a,
+                num_digits_open,
+                live_fold_count,
+                key.num_polynomials(),
+            ) else {
                 continue;
             };
             let Ok(b_key) = AjtaiKeyParams::try_new_with_min_rank(sis_key(policy, norm_t), width_t)
@@ -933,7 +941,7 @@ fn find_schedule_inner(
                 continue;
             };
             let Some(width_w) =
-                decomposed_w_ring_count(num_digits_open, num_blocks, key.num_polynomials())
+                decomposed_w_ring_count(num_digits_open, live_fold_count, key.num_polynomials())
             else {
                 continue;
             };
@@ -953,10 +961,10 @@ fn find_schedule_inner(
                 a_key,
                 b_key,
                 d_key,
-                num_blocks,
-                block_len,
-                m_vars,
-                r_vars,
+                source_ring_len_per_claim: live_fold_count * fold_position_count,
+                live_fold_count,
+                fold_position_count,
+                shard_granule: 1,
                 fold_challenge_config: ring_challenge_cfg,
                 fold_challenge_shape,
                 num_digits_commit,

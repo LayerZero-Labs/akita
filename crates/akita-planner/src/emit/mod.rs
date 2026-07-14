@@ -49,8 +49,8 @@ fn fold_step_from_params(p: &LevelParams) -> GeneratedFoldStep {
     GeneratedFoldStep {
         ring_d: p.ring_dimension as u32,
         log_basis: p.log_basis,
-        m_vars: p.log_block_len() as u32,
-        r_vars: p.log_num_blocks() as u32,
+        position_bits: p.position_bits() as u32,
+        fold_bits: p.fold_bits() as u32,
         n_a: p.a_key.row_len() as u32,
         n_b: p.b_key.row_len() as u32,
         n_d: p.d_key.row_len() as u32,
@@ -79,11 +79,15 @@ fn emit_key(key: PolynomialGroupLayout) -> String {
 }
 
 fn emit_precommitted_group_key(layout: &PrecommittedGroupParams) -> String {
+    let challenge_shape = emit_root_fold_shape(layout.fold_challenge_shape);
     format!(
-        "PrecommittedGroupParams {{ group: {}, m_vars: {}, r_vars: {}, log_basis: {}, n_a: {}, conservative_n_b: {} }}",
+        "PrecommittedGroupParams {{ group: {}, source_ring_len_per_claim: {}, fold_position_count: {}, live_fold_count: {}, shard_granule: {}, fold_challenge_shape: {}, log_basis: {}, n_a: {}, conservative_n_b: {} }}",
         emit_key(layout.group),
-        layout.m_vars,
-        layout.r_vars,
+        layout.source_ring_len_per_claim,
+        layout.fold_position_count,
+        layout.live_fold_count,
+        layout.shard_granule,
+        challenge_shape,
         layout.log_basis,
         layout.n_a,
         layout.conservative_n_b,
@@ -108,8 +112,14 @@ fn emit_fold_struct(p: &LevelParams) -> String {
     let fold = fold_step_from_params(p);
     format!(
         "GeneratedFoldStep {{ \
-         ring_d: {}, log_basis: {}, m_vars: {}, r_vars: {}, n_a: {}, n_b: {}, n_d: {} }}",
-        fold.ring_d, fold.log_basis, fold.m_vars, fold.r_vars, fold.n_a, fold.n_b, fold.n_d,
+         ring_d: {}, log_basis: {}, position_bits: {}, fold_bits: {}, n_a: {}, n_b: {}, n_d: {} }}",
+        fold.ring_d,
+        fold.log_basis,
+        fold.position_bits,
+        fold.fold_bits,
+        fold.n_a,
+        fold.n_b,
+        fold.n_d,
     )
 }
 
@@ -172,10 +182,12 @@ fn emit_sis_family(family: SisModulusFamily) -> &'static str {
     }
 }
 
-fn emit_root_fold_shape(shape: TensorChallengeShape) -> &'static str {
+fn emit_root_fold_shape(shape: TensorChallengeShape) -> String {
     match shape {
-        TensorChallengeShape::Flat => "TensorChallengeShape::Flat",
-        TensorChallengeShape::Tensor => "TensorChallengeShape::Tensor",
+        TensorChallengeShape::Flat => "TensorChallengeShape::Flat".to_string(),
+        TensorChallengeShape::Tensor { fold_low_len } => {
+            format!("TensorChallengeShape::Tensor {{ fold_low_len: {fold_low_len} }}")
+        }
     }
 }
 

@@ -1,6 +1,6 @@
 //! Setup-product sumcheck for a dense table against two disjoint factors.
 //!
-//! The table is laid out as `left * right_len + right`. The right factor is
+//! The table is laid out as `left * fold_low_len + right`. The right factor is
 //! bound first, then the left factor. This matches setup products of the form
 //! `S(i, y) * setup_index_weight(i) * alpha(y)` without materializing the full
 //! `setup_index_weight(i) * alpha(y)` table.
@@ -105,8 +105,8 @@ impl<E: FieldCore + FromPrimitiveInt> AkitaStage3Prover<E> {
         let setup_product_claim = setup_term.input_claim();
         let witness_digits = Arc::<[i8]>::from(logical_w);
         let opening_layout = OpeningBlockLayout::new(
-            next_fold_level_params.num_blocks,
-            next_fold_level_params.block_len,
+            next_fold_level_params.live_fold_count,
+            next_fold_level_params.fold_position_count,
         )?;
         let witness_term = build_witness_carry_term::<E>(
             Arc::clone(&witness_digits),
@@ -444,8 +444,8 @@ where
     E: FpExtEncoding<F> + FromPrimitiveInt + LiftBase<F>,
 {
     let opening_layout = OpeningBlockLayout::new(
-        next_fold_level_params.num_blocks,
-        next_fold_level_params.block_len,
+        next_fold_level_params.live_fold_count,
+        next_fold_level_params.fold_position_count,
     )?;
     let setup_artifact = prepare_setup_contribution_artifact::<F, E>(
         relation,

@@ -41,7 +41,7 @@ fn ring_fold_matches_dense_multiplication_reference() {
 #[test]
 fn dense_tensor_decompose_fold_matches_negacyclic_product_reference() {
     const D: usize = 16;
-    let block_len = 2;
+    let fold_position_count = 2;
     let num_digits = 2;
     let log_basis = 3;
     let tensor = tensor_oracle_challenges::<D>();
@@ -56,13 +56,17 @@ fn dense_tensor_decompose_fold_matches_negacyclic_product_reference() {
             .iter()
             .zip(product_challenges.chunks(4))
             .map(|(poly, challenges)| {
-                poly.decompose_fold::<D>(challenges, block_len, num_digits, log_basis)
+                poly.decompose_fold::<D>(challenges, fold_position_count, num_digits, log_basis)
             })
             .collect::<Vec<_>>(),
     );
     let poly_refs = polys.iter().collect::<Vec<_>>();
     let got = DensePoly::<F>::decompose_fold_tensor_batched::<D>(
-        &poly_refs, &tensor, block_len, num_digits, log_basis,
+        &poly_refs,
+        &tensor,
+        fold_position_count,
+        num_digits,
+        log_basis,
     )
     .unwrap()
     .unwrap();

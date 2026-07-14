@@ -124,31 +124,31 @@ impl SparseRingBlocks {
         coeffs: &[SparseRingCoeff],
         ring_d: usize,
         total_ring_elems: usize,
-        block_len: usize,
+        fold_position_count: usize,
     ) -> Result<Self, AkitaError> {
         if ring_d == 0 {
             return Err(AkitaError::InvalidInput(
                 "ring_d must be nonzero".to_string(),
             ));
         }
-        if block_len == 0 || !block_len.is_power_of_two() {
+        if fold_position_count == 0 || !fold_position_count.is_power_of_two() {
             return Err(AkitaError::InvalidInput(format!(
-                "block_len={block_len} must be a nonzero power of two"
+                "fold_position_count={fold_position_count} must be a nonzero power of two"
             )));
         }
-        if !total_ring_elems.is_multiple_of(block_len) {
+        if !total_ring_elems.is_multiple_of(fold_position_count) {
             return Err(AkitaError::InvalidSize {
                 expected: total_ring_elems,
-                actual: block_len,
+                actual: fold_position_count,
             });
         }
-        if u32::try_from(block_len).is_err() {
+        if u32::try_from(fold_position_count).is_err() {
             return Err(AkitaError::InvalidInput(format!(
-                "block_len={block_len} exceeds u32::MAX"
+                "fold_position_count={fold_position_count} exceeds u32::MAX"
             )));
         }
-        let num_blocks = total_ring_elems / block_len;
-        let mut offsets = Vec::with_capacity(num_blocks + 1);
+        let live_fold_count = total_ring_elems / fold_position_count;
+        let mut offsets = Vec::with_capacity(live_fold_count + 1);
         let mut entries = Vec::with_capacity(coeffs.len());
         offsets.push(0);
         let mut current_block = 0usize;
@@ -167,18 +167,18 @@ impl SparseRingBlocks {
                     "sparse coefficient index exceeds u16 block-entry capacity".to_string(),
                 )
             })?;
-            let block_idx = ring_idx / block_len;
+            let block_idx = ring_idx / fold_position_count;
             while current_block < block_idx {
                 offsets.push(entries.len() as u32);
                 current_block += 1;
             }
             entries.push(SparseRingBlockEntry {
-                pos_in_block: (ring_idx % block_len) as u32,
+                pos_in_block: (ring_idx % fold_position_count) as u32,
                 coeff_idx,
                 value: coeff.value,
             });
         }
-        while current_block < num_blocks {
+        while current_block < live_fold_count {
             offsets.push(entries.len() as u32);
             current_block += 1;
         }
@@ -186,7 +186,7 @@ impl SparseRingBlocks {
     }
 
     #[inline]
-    pub(crate) fn num_blocks(&self) -> usize {
+    pub(crate) fn live_fold_count(&self) -> usize {
         self.offsets.len() - 1
     }
 
@@ -215,7 +215,7 @@ pub struct SparseRingPoly<F: FieldCore> {
     /// authority — kernels validate at their own dimension.
     total_ring_elems: usize,
     coeffs: Vec<SparseRingCoeff>,
-    /// Cached per-block layouts keyed by `(ring_d, block_len)`.
+    /// Cached per-block layouts keyed by `(ring_d, fold_position_count)`.
     block_cache: SparseBlockCache,
     _marker: core::marker::PhantomData<F>,
 }
@@ -363,9 +363,9 @@ impl<F: FieldCore> SparseRingPoly<F> {
     fn blocks_for(
         &self,
         ring_d: usize,
-        block_len: usize,
+        fold_position_count: usize,
     ) -> Result<Arc<SparseRingBlocks>, AkitaError> {
-        let key = (ring_d, block_len);
+        let key = (ring_d, fold_position_count);
         if let Some(blocks) = self
             .block_cache
             .lock()
@@ -379,8 +379,12 @@ impl<F: FieldCore> SparseRingPoly<F> {
             .ok_or_else(|| AkitaError::InvalidInput("sparse arity overflow".to_string()))?
             .checked_div(ring_d)
             .ok_or_else(|| AkitaError::InvalidInput("ring_d must be nonzero".to_string()))?;
-        let built =
-            SparseRingBlocks::from_coeffs(&self.coeffs, ring_d, ring_elems_at_d, block_len)?;
+        let built = SparseRingBlocks::from_coeffs(
+            &self.coeffs,
+            ring_d,
+            ring_elems_at_d,
+            fold_position_count,
+        )?;
         let mut cache = self
             .block_cache
             .lock()
@@ -440,26 +444,30 @@ where
     pub(crate) fn fold_blocks<const D: usize>(
         &self,
         scalars: &[F],
-        block_len: usize,
+        fold_position_count: usize,
     ) -> Vec<CyclotomicRing<F, D>> {
         let blocks = self
-            .blocks_for(D, block_len)
-            .expect("SparseRingPoly::fold_blocks: invalid block_len");
-        cfg_into_iter!(0..blocks.num_blocks())
-            .map(|block_idx| fold_sparse_block(blocks.block(block_idx), scalars, block_len))
+            .blocks_for(D, fold_position_count)
+            .expect("SparseRingPoly::fold_blocks: invalid fold_position_count");
+        cfg_into_iter!(0..blocks.live_fold_count())
+            .map(|block_idx| {
+                fold_sparse_block(blocks.block(block_idx), scalars, fold_position_count)
+            })
             .collect()
     }
 
     pub(crate) fn fold_blocks_ring<const D: usize>(
         &self,
         scalars: &[CyclotomicRing<F, D>],
-        block_len: usize,
+        fold_position_count: usize,
     ) -> Vec<CyclotomicRing<F, D>> {
         let blocks = self
-            .blocks_for(D, block_len)
-            .expect("SparseRingPoly::fold_blocks_ring: invalid block_len");
-        cfg_into_iter!(0..blocks.num_blocks())
-            .map(|block_idx| fold_sparse_block_ring(blocks.block(block_idx), scalars, block_len))
+            .blocks_for(D, fold_position_count)
+            .expect("SparseRingPoly::fold_blocks_ring: invalid fold_position_count");
+        cfg_into_iter!(0..blocks.live_fold_count())
+            .map(|block_idx| {
+                fold_sparse_block_ring(blocks.block(block_idx), scalars, fold_position_count)
+            })
             .collect()
     }
 
@@ -467,9 +475,9 @@ where
         &self,
         eval_outer_scalars: &[F],
         fold_scalars: &[F],
-        block_len: usize,
+        fold_position_count: usize,
     ) -> (CyclotomicRing<F, D>, Vec<CyclotomicRing<F, D>>) {
-        let folded = self.fold_blocks::<D>(fold_scalars, block_len);
+        let folded = self.fold_blocks::<D>(fold_scalars, fold_position_count);
         let eval = folded
             .iter()
             .zip(eval_outer_scalars.iter())
@@ -483,9 +491,9 @@ where
         &self,
         eval_outer_scalars: &[CyclotomicRing<F, D>],
         fold_scalars: &[CyclotomicRing<F, D>],
-        block_len: usize,
+        fold_position_count: usize,
     ) -> (CyclotomicRing<F, D>, Vec<CyclotomicRing<F, D>>) {
-        let folded = self.fold_blocks_ring::<D>(fold_scalars, block_len);
+        let folded = self.fold_blocks_ring::<D>(fold_scalars, fold_position_count);
         let mut eval = CyclotomicRing::<F, D>::zero();
         for (f_i, s_i) in folded.iter().zip(eval_outer_scalars.iter()) {
             f_i.mul_accumulate_sparse_rhs_into(s_i, &mut eval);
@@ -497,17 +505,22 @@ where
     pub(crate) fn decompose_fold<const D: usize>(
         &self,
         challenges: &[SparseChallenge],
-        block_len: usize,
+        fold_position_count: usize,
         num_digits: usize,
         _log_basis: u32,
     ) -> DecomposeFoldWitness<F> {
         let blocks = self
-            .blocks_for(D, block_len)
-            .expect("SparseRingPoly::decompose_fold: invalid block_len");
-        let num_blocks = challenges.len().min(blocks.num_blocks());
-        let inner_width = block_len * num_digits;
-        let coeff_accum =
-            sparse_accumulate::<D>(&blocks, challenges, num_blocks, inner_width, num_digits);
+            .blocks_for(D, fold_position_count)
+            .expect("SparseRingPoly::decompose_fold: invalid fold_position_count");
+        let live_fold_count = challenges.len().min(blocks.live_fold_count());
+        let inner_width = fold_position_count * num_digits;
+        let coeff_accum = sparse_accumulate::<D>(
+            &blocks,
+            challenges,
+            live_fold_count,
+            inner_width,
+            num_digits,
+        );
         let modulus = (-F::one()).to_canonical_u128() + 1;
         build_decompose_fold_witness::<F, D>(coeff_accum, modulus)
     }
@@ -516,14 +529,16 @@ where
     pub(crate) fn decompose_fold_tensor_batched<const D: usize>(
         polys: &[&Self],
         tensor: &TensorChallengeSet,
-        block_len: usize,
+        fold_position_count: usize,
         num_digits: usize,
         _log_basis: u32,
     ) -> Result<Option<DecomposeFoldWitness<F>>, AkitaError> {
         Ok(Some(tensor_fold::decompose_fold_batched_tensor_sparse::<
             F,
             D,
-        >(polys, tensor, block_len, num_digits)?))
+        >(
+            polys, tensor, fold_position_count, num_digits
+        )?))
     }
 
     #[tracing::instrument(skip_all, name = "SparseRingPoly::commit_inner")]
@@ -540,7 +555,7 @@ where
             backend,
             prepared,
             plan.n_a,
-            plan.block_len,
+            plan.fold_position_count,
             plan.num_digits_commit,
         )?;
         let decomposed_inner_rows =
@@ -627,18 +642,18 @@ where
         backend: &B,
         prepared: &B::PreparedSetup,
         n_a: usize,
-        block_len: usize,
+        fold_position_count: usize,
         num_digits_commit: usize,
     ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError>
     where
         B: CommitmentComputeBackend<F>,
     {
-        let blocks = self.blocks_for(D, block_len)?;
+        let blocks = self.blocks_for(D, fold_position_count)?;
         backend.sparse_ring_commit_rows(
             prepared,
             SparseRingCommitRowsPlan {
                 n_a,
-                block_len,
+                fold_position_count,
                 num_digits_commit,
                 blocks: blocks.table(),
             },
@@ -649,7 +664,7 @@ where
 fn fold_sparse_block<F, const D: usize>(
     entries: &[SparseRingBlockEntry],
     scalars: &[F],
-    block_len: usize,
+    fold_position_count: usize,
 ) -> CyclotomicRing<F, D>
 where
     F: FieldCore + FromPrimitiveInt,
@@ -657,7 +672,7 @@ where
     let mut coeffs = [F::zero(); D];
     for entry in entries {
         let pos = entry.pos_in_block();
-        if pos < scalars.len() && pos < block_len {
+        if pos < scalars.len() && pos < fold_position_count {
             coeffs[entry.coeff_idx()] += scalars[pos] * F::from_i8(entry.value);
         }
     }
@@ -667,7 +682,7 @@ where
 fn fold_sparse_block_ring<F, const D: usize>(
     entries: &[SparseRingBlockEntry],
     scalars: &[CyclotomicRing<F, D>],
-    block_len: usize,
+    fold_position_count: usize,
 ) -> CyclotomicRing<F, D>
 where
     F: FieldCore + FromPrimitiveInt,
@@ -675,7 +690,7 @@ where
     let mut acc = CyclotomicRing::<F, D>::zero();
     for entry in entries {
         let pos = entry.pos_in_block();
-        if pos < scalars.len() && pos < block_len {
+        if pos < scalars.len() && pos < fold_position_count {
             match entry.value {
                 1 => scalars[pos].shift_accumulate_into(&mut acc, entry.coeff_idx()),
                 -1 => scalars[pos].shift_sub_into(&mut acc, entry.coeff_idx()),
@@ -693,7 +708,7 @@ where
 fn sparse_accumulate<const D: usize>(
     blocks: &SparseRingBlocks,
     challenges: &[SparseChallenge],
-    num_blocks: usize,
+    live_fold_count: usize,
     inner_width: usize,
     num_digits: usize,
 ) -> Vec<[i32; D]> {
@@ -714,7 +729,7 @@ fn sparse_accumulate<const D: usize>(
             let mut acc = vec![[0i32; D]; pos_end - pos_start];
             let mut rotated = vec![[0i16; D]; D];
 
-            for (block_idx, challenge) in challenges.iter().enumerate().take(num_blocks) {
+            for (block_idx, challenge) in challenges.iter().enumerate().take(live_fold_count) {
                 let entries = blocks.block(block_idx);
                 let lo = entries.partition_point(|e| e.pos_in_block() * num_digits < pos_start);
                 let hi = entries.partition_point(|e| e.pos_in_block() * num_digits < pos_end);
@@ -762,29 +777,29 @@ pub(crate) fn column_sweep_sparse<F, const D: usize>(
     a_rows: &[&[CyclotomicRing<F, D>]],
     blocks: &[&[SparseRingBlockEntry]],
     n_a: usize,
-    block_len: usize,
+    fold_position_count: usize,
     num_digits_commit: usize,
 ) -> Vec<Vec<CyclotomicRing<F, D>>>
 where
     F: FieldCore + CanonicalField + HasWide,
     F::Wide: AdditiveGroup + From<F> + ReduceTo<F>,
 {
-    let num_blocks = blocks.len();
+    let live_fold_count = blocks.len();
     let accum_bytes = n_a * D * std::mem::size_of::<F::Wide>();
     let block_tile = L2_TILE_BUDGET
         .checked_div(accum_bytes)
-        .map_or(num_blocks, |tile| tile.max(1));
+        .map_or(live_fold_count, |tile| tile.max(1));
 
     #[cfg(feature = "parallel")]
-    let num_threads = rayon::current_num_threads().min(num_blocks).max(1);
+    let num_threads = rayon::current_num_threads().min(live_fold_count).max(1);
     #[cfg(not(feature = "parallel"))]
     let num_threads = 1;
-    let blocks_per_thread = num_blocks.div_ceil(num_threads);
+    let blocks_per_thread = live_fold_count.div_ceil(num_threads);
 
     let thread_results: Vec<Vec<Vec<CyclotomicRing<F, D>>>> = cfg_into_iter!(0..num_threads)
         .map(|tid| {
             let block_start = tid * blocks_per_thread;
-            let block_end = (block_start + blocks_per_thread).min(num_blocks);
+            let block_end = (block_start + blocks_per_thread).min(live_fold_count);
             if block_start >= block_end {
                 return Vec::new();
             }
@@ -810,22 +825,22 @@ where
                     .sum::<usize>();
                 // Dense tiles are cheaper to bucket by block position than to
                 // comparison-sort by A-column.
-                if entry_count >= block_len {
+                if entry_count >= fold_position_count {
                     pos_offsets.clear();
-                    pos_offsets.resize(block_len + 1, 0);
+                    pos_offsets.resize(fold_position_count + 1, 0);
                     for block_entries in tile_blocks {
                         for entry in *block_entries {
                             pos_offsets[entry.pos_in_block() + 1] += 1;
                         }
                     }
-                    for pos in 1..=block_len {
+                    for pos in 1..=fold_position_count {
                         pos_offsets[pos] += pos_offsets[pos - 1];
                     }
 
                     pos_entries.clear();
                     pos_entries.resize(entry_count, (0, 0, 0));
                     pos_cursor.clear();
-                    pos_cursor.extend_from_slice(&pos_offsets[..block_len]);
+                    pos_cursor.extend_from_slice(&pos_offsets[..fold_position_count]);
                     for (local_b, block_entries) in tile_blocks.iter().enumerate() {
                         for entry in *block_entries {
                             let pos = entry.pos_in_block();
@@ -836,7 +851,7 @@ where
                     }
 
                     for (a_idx, a_row) in a_rows.iter().take(n_a).enumerate() {
-                        for pos in 0..block_len {
+                        for pos in 0..fold_position_count {
                             let start = pos_offsets[pos];
                             let end = pos_offsets[pos + 1];
                             if start == end {
@@ -895,7 +910,7 @@ where
         })
         .collect();
 
-    let mut out = Vec::with_capacity(num_blocks);
+    let mut out = Vec::with_capacity(live_fold_count);
     for thread_blocks in thread_results {
         out.extend(thread_blocks);
     }
@@ -942,7 +957,7 @@ mod tests {
     #[test]
     fn sparse_ring_tensor_decompose_fold_matches_negacyclic_product_reference() {
         const D: usize = 8;
-        let block_len = 2;
+        let fold_position_count = 2;
         let num_digits = 1;
         let tensor = tensor_oracle_challenges::<D>();
         let polys = [
@@ -968,13 +983,17 @@ mod tests {
                 .iter()
                 .zip(product_challenges.chunks(4))
                 .map(|(poly, challenges)| {
-                    poly.decompose_fold::<D>(challenges, block_len, num_digits, 0)
+                    poly.decompose_fold::<D>(challenges, fold_position_count, num_digits, 0)
                 })
                 .collect::<Vec<_>>(),
         );
         let poly_refs = polys.iter().collect::<Vec<_>>();
         let got = SparseRingPoly::<F>::decompose_fold_tensor_batched::<D>(
-            &poly_refs, &tensor, block_len, num_digits, 0,
+            &poly_refs,
+            &tensor,
+            fold_position_count,
+            num_digits,
+            0,
         )
         .unwrap()
         .unwrap();
@@ -995,8 +1014,8 @@ mod tests {
         let d32_blocks = sparse.blocks_for(32, 4).unwrap();
         let d64_blocks = sparse.blocks_for(64, 2).unwrap();
 
-        assert_eq!(d32_blocks.num_blocks(), 2);
-        assert_eq!(d64_blocks.num_blocks(), 2);
+        assert_eq!(d32_blocks.live_fold_count(), 2);
+        assert_eq!(d64_blocks.live_fold_count(), 2);
         assert_eq!(sparse.block_cache.lock().unwrap().len(), 2);
     }
 

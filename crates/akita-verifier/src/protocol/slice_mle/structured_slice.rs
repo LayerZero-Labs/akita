@@ -286,7 +286,7 @@ mod tests {
             2,
             SparseChallengeConfig::pm1_only(1),
         )
-        .with_decomp(2, 3, 1, 26, 512 * 8)
+        .with_decomp(4, 512 * 8, 1, 26)
         .expect("structured slice fixture lp")
     }
 
@@ -297,14 +297,14 @@ mod tests {
     ) -> Result<OpeningBatchWitnessLayout, AkitaError> {
         let opening_batch = OpeningClaimsLayout::new(32, num_polys)?;
         let opening_point = RingOpeningPoint {
-            a: vec![F::zero(); lp.block_len],
-            b: vec![F::zero(); lp.num_blocks],
+            a: vec![F::zero(); lp.fold_position_count],
+            b: vec![F::zero(); lp.live_fold_count],
         };
         let ring_multiplier_point = RingMultiplierOpeningPoint::from_base(&opening_point);
         let num_claims = opening_batch.num_total_polynomials();
         let challenges = akita_challenges::Challenges::Sparse {
             challenges: Vec::new(),
-            num_blocks_per_claim: lp.num_blocks,
+            num_blocks_per_claim: lp.live_fold_count,
             num_claims,
         };
         let v = vec![CyclotomicRing::<F, D>::zero(); lp.d_key.row_len()];
@@ -336,8 +336,8 @@ mod tests {
     fn fixture() -> StructuredFixture {
         // `nv = 32` in `fp128_d32_onehot.rs` includes repeated compact
         // recursive levels with this real D=32 shape.
-        let num_blocks = 8usize;
-        let block_len = 512usize;
+        let live_fold_count = 8usize;
+        let fold_position_count = 512usize;
         let log_basis = 5u32;
         let depth_open = 26usize;
         let depth_commit = 1usize;
@@ -347,9 +347,9 @@ mod tests {
         let n_d = 2usize;
         let num_claims = 3usize;
         let num_points = 1usize;
-        let total_blocks = num_blocks * num_claims;
+        let total_blocks = live_fold_count * num_claims;
         let rows = 1 + n_a + n_b * num_points + n_d;
-        let inner_width = block_len * depth_commit;
+        let inner_width = fold_position_count * depth_commit;
 
         let levels = r_decomp_levels::<F>(log_basis);
         let lp = fixture_lp();
@@ -366,7 +366,9 @@ mod tests {
         let total_len = offset_r + rows * levels;
         let bits = total_len.next_power_of_two().trailing_zeros() as usize;
 
-        let opening_a_evals = (0..block_len).map(|idx| f(1_000 + idx as u128)).collect();
+        let opening_a_evals = (0..fold_position_count)
+            .map(|idx| f(1_000 + idx as u128))
+            .collect();
         let setup_contribution_inputs = SetupContributionPlanInputs {
             relation_matrix_row_layout: RelationMatrixRowLayout::WithDBlock,
             rows,
@@ -377,8 +379,8 @@ mod tests {
             num_polys_per_group: vec![num_claims],
             num_t_vectors: num_claims,
             num_claims,
-            num_blocks,
-            block_len,
+            live_fold_count,
+            fold_position_count,
             depth_open,
             depth_commit,
             depth_fold,
@@ -397,15 +399,15 @@ mod tests {
             group_id: SemanticGroupId(0),
             e_col_offset: 0,
             num_claims,
-            num_blocks,
-            block_len,
+            live_fold_count,
+            fold_position_count,
             depth_open,
             depth_commit,
             depth_fold,
             log_basis,
             n_a,
             n_b,
-            t_cols_per_vector: n_a * depth_open * num_blocks,
+            t_cols_per_vector: n_a * depth_open * live_fold_count,
             a_row_start: 1,
             b_row_start: 1 + n_a,
         }];
@@ -457,20 +459,20 @@ mod tests {
         let fx = fixture();
         let p = &fx.prepared;
         let g = &p.groups[0];
-        let total_blocks = g.num_blocks * g.num_claims;
+        let total_blocks = g.live_fold_count * g.num_claims;
         let e_len = g.depth_open * total_blocks;
         let eq = eq_evals(fx.offset_e + e_len, &fx.full_vec_randomness);
-        let offset_low_bits = g.num_blocks.trailing_zeros() as usize;
+        let offset_low_bits = g.live_fold_count.trailing_zeros() as usize;
         let eq_low = EqPolynomial::evals(&fx.full_vec_randomness[..offset_low_bits]).unwrap();
-        let block_offset_low = fx.offset_e & (g.num_blocks - 1);
+        let block_offset_low = fx.offset_e & (g.live_fold_count - 1);
 
         let challenge_block_summaries: Vec<[F; 2]> = (0..g.num_claims)
             .map(|claim_idx| {
-                let start = claim_idx * g.num_blocks;
+                let start = claim_idx * g.live_fold_count;
                 summarize_pow2_block_carries(
                     &eq_low,
                     block_offset_low,
-                    &g.c_alphas.as_flat().unwrap()[start..(start + g.num_blocks)],
+                    &g.c_alphas.as_flat().unwrap()[start..(start + g.live_fold_count)],
                 )
             })
             .collect::<Result<_, _>>()
@@ -505,20 +507,20 @@ mod tests {
         let fx = fixture();
         let p = &fx.prepared;
         let g = &p.groups[0];
-        let total_blocks = g.num_blocks * g.num_claims;
+        let total_blocks = g.live_fold_count * g.num_claims;
         let t_len = g.depth_open * g.n_a * total_blocks;
         let eq = eq_evals(fx.offset_t + t_len, &fx.full_vec_randomness);
-        let offset_low_bits = g.num_blocks.trailing_zeros() as usize;
+        let offset_low_bits = g.live_fold_count.trailing_zeros() as usize;
         let eq_low = EqPolynomial::evals(&fx.full_vec_randomness[..offset_low_bits]).unwrap();
-        let block_offset_low = fx.offset_t & (g.num_blocks - 1);
+        let block_offset_low = fx.offset_t & (g.live_fold_count - 1);
 
         let challenge_block_summaries: Vec<[F; 2]> = (0..g.num_claims)
             .map(|claim_idx| {
-                let start = claim_idx * g.num_blocks;
+                let start = claim_idx * g.live_fold_count;
                 summarize_pow2_block_carries(
                     &eq_low,
                     block_offset_low,
-                    &g.c_alphas.as_flat().unwrap()[start..(start + g.num_blocks)],
+                    &g.c_alphas.as_flat().unwrap()[start..(start + g.live_fold_count)],
                 )
             })
             .collect::<Result<_, _>>()

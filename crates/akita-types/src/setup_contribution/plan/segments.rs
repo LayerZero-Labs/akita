@@ -222,9 +222,9 @@ pub(super) fn validate_group_chunk_layout(
             .checked_add(unit.blocks)
             .ok_or_else(|| AkitaError::InvalidSetup("setup block coverage overflow".into()))?;
     }
-    if next_block != group.num_blocks {
+    if next_block != group.live_fold_count {
         return Err(AkitaError::InvalidSetup(
-            "setup witness chunk windows do not tile num_blocks".into(),
+            "setup witness chunk windows do not tile live_fold_count".into(),
         ));
     }
     if units.len() > 1 && num_groups != 1 {

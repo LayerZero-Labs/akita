@@ -4,7 +4,7 @@ use akita_field::{AkitaError, FieldCore};
 
 pub(crate) fn tensor_oracle_challenges<const D: usize>() -> TensorChallenges {
     TensorChallenges {
-        left: vec![
+        fold_high: vec![
             SparseChallenge {
                 positions: vec![0],
                 coeffs: vec![1],
@@ -22,7 +22,7 @@ pub(crate) fn tensor_oracle_challenges<const D: usize>() -> TensorChallenges {
                 coeffs: vec![1],
             },
         ],
-        right: vec![
+        fold_low: vec![
             SparseChallenge {
                 positions: vec![1],
                 coeffs: vec![1],
@@ -40,8 +40,8 @@ pub(crate) fn tensor_oracle_challenges<const D: usize>() -> TensorChallenges {
                 coeffs: vec![1],
             },
         ],
-        left_len: 2,
-        right_len: 2,
+        live_folds_per_claim: 4,
+        fold_low_len: 2,
         num_claims: 2,
     }
 }

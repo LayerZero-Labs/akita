@@ -2,7 +2,7 @@ use super::*;
 
 /// Accumulates one-hot decompose-fold rows in compressed position order.
 ///
-/// The returned vector has `block_len` rows. Callers expand each row across
+/// The returned vector has `fold_position_count` rows. Callers expand each row across
 /// `num_digits` later, inserting zero rows for higher digit planes.
 ///
 /// `blocks` is a slice-of-slices view over per-block entries. Both
@@ -12,8 +12,8 @@ use super::*;
 pub(super) fn onehot_accumulate<E, const D: usize>(
     blocks: &[&[E]],
     challenges: &[SparseChallenge],
-    num_blocks: usize,
-    block_len: usize,
+    live_fold_count: usize,
+    fold_position_count: usize,
 ) -> Vec<[i32; D]>
 where
     E: OneHotEntry,
@@ -23,21 +23,21 @@ where
     #[cfg(not(feature = "parallel"))]
     let num_threads = 1;
 
-    let actual_threads = num_threads.min(block_len).max(1);
-    let pos_chunk = block_len.div_ceil(actual_threads);
+    let actual_threads = num_threads.min(fold_position_count).max(1);
+    let pos_chunk = fold_position_count.div_ceil(actual_threads);
 
     let chunks: Vec<Vec<[i32; D]>> = cfg_into_iter!(0..actual_threads)
         .map(|tid| {
             let pos_start = tid * pos_chunk;
-            if pos_start >= block_len {
+            if pos_start >= fold_position_count {
                 return Vec::new();
             }
-            let pos_end = (pos_start + pos_chunk).min(block_len);
+            let pos_end = (pos_start + pos_chunk).min(fold_position_count);
             let len = pos_end - pos_start;
             let mut acc = vec![[0i32; D]; len];
             let mut rotated = vec![[0i16; D]; D];
 
-            for (block_idx, challenge) in challenges.iter().enumerate().take(num_blocks) {
+            for (block_idx, challenge) in challenges.iter().enumerate().take(live_fold_count) {
                 let entries = blocks[block_idx];
                 let lo = entries.partition_point(|entry| entry.pos_in_block() < pos_start);
                 let hi = entries.partition_point(|entry| entry.pos_in_block() < pos_end);
@@ -73,7 +73,7 @@ pub(super) fn onehot_accumulate_tensor<E, const D: usize>(
     blocks: &[&[E]],
     tensor: &TensorChallengeSet,
     _num_blocks: usize,
-    block_len: usize,
+    fold_position_count: usize,
 ) -> Result<Vec<[i64; D]>, AkitaError>
 where
     E: OneHotEntry,
@@ -83,27 +83,27 @@ where
     #[cfg(not(feature = "parallel"))]
     let num_threads = 1;
 
-    let actual_threads = num_threads.min(block_len).max(1);
-    let pos_chunk = block_len.div_ceil(actual_threads);
+    let actual_threads = num_threads.min(fold_position_count).max(1);
+    let pos_chunk = fold_position_count.div_ceil(actual_threads);
 
     let chunks: Vec<Vec<[i64; D]>> = cfg_into_iter!(0..actual_threads)
         .map(|tid| {
             let pos_start = tid * pos_chunk;
-            if pos_start >= block_len {
+            if pos_start >= fold_position_count {
                 return Ok(Vec::new());
             }
-            let pos_end = (pos_start + pos_chunk).min(block_len);
+            let pos_end = (pos_start + pos_chunk).min(fold_position_count);
             let len = pos_end - pos_start;
             let mut acc = vec![[0i64; D]; len];
             let mut tmp = vec![[0i64; D]; len];
             let mut rotated = vec![[0i64; D]; D];
 
             for claim_idx in 0..tensor.num_claims {
-                for left_idx in 0..tensor.left_len {
+                for left_idx in 0..tensor.fold_high_len() {
                     tmp.fill([0i64; D]);
-                    for right_idx in 0..tensor.right_len {
-                        let block_idx = claim_idx * tensor.left_len * tensor.right_len
-                            + left_idx * tensor.right_len
+                    for right_idx in 0..tensor.fold_low_len {
+                        let block_idx = claim_idx * tensor.fold_high_len() * tensor.fold_low_len
+                            + left_idx * tensor.fold_low_len
                             + right_idx;
                         let entries = blocks[block_idx];
                         let lo = entries.partition_point(|entry| entry.pos_in_block() < pos_start);
@@ -112,7 +112,7 @@ where
                             continue;
                         }
 
-                        let right = &tensor.right[claim_idx * tensor.right_len + right_idx];
+                        let right = &tensor.fold_low[claim_idx * tensor.fold_low_len + right_idx];
                         fill_rotated_sparse_challenge_i64::<D>(&mut rotated, right);
 
                         for entry in &entries[lo..hi] {
@@ -125,7 +125,7 @@ where
                             }
                         }
                     }
-                    let left = &tensor.left[claim_idx * tensor.left_len + left_idx];
+                    let left = &tensor.fold_high[claim_idx * tensor.fold_high_len() + left_idx];
                     for (src, dst) in tmp.iter().zip(acc.iter_mut()) {
                         sparse_i64_mul_acc_i64::<D>(src, left, dst);
                     }

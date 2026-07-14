@@ -10,7 +10,7 @@ use crate::proof::{
     setup::{AkitaSetupSeed, MAX_SETUP_MATRIX_FIELD_ELEMENTS},
     AkitaCommitmentHint, RingVec,
 };
-use crate::{LevelParams, OpeningBlockLayout, OpeningClaimsLayout};
+use crate::{LevelParams, OpeningClaimsLayout};
 use akita_field::{AkitaError, FieldCore};
 use akita_serialization::{
     AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
@@ -726,18 +726,18 @@ fn active_setup_role_widths(
 ) -> Result<(usize, usize, usize), AkitaError> {
     level_params.require_scalar_level("active_setup_role_widths")?;
     let w_a = level_params
-        .block_len
+        .fold_position_count
         .checked_mul(level_params.num_digits_commit)
         .ok_or_else(|| AkitaError::InvalidSetup("A setup width overflow".to_string()))?;
     let num_claims = opening_batch.num_total_polynomials();
     let max_group_poly_count = opening_batch.num_total_polynomials();
     let w_d = num_claims
-        .checked_mul(level_params.num_blocks)
+        .checked_mul(level_params.live_fold_count)
         .and_then(|n| n.checked_mul(level_params.num_digits_open))
         .ok_or_else(|| AkitaError::InvalidSetup("D setup width overflow".to_string()))?;
     let w_b = max_group_poly_count
         .checked_mul(level_params.a_key.row_len())
-        .and_then(|n| n.checked_mul(level_params.num_blocks))
+        .and_then(|n| n.checked_mul(level_params.live_fold_count))
         .and_then(|n| n.checked_mul(level_params.num_digits_open))
         .ok_or_else(|| AkitaError::InvalidSetup("B setup width overflow".to_string()))?;
     Ok((w_a, w_b, w_d))
@@ -796,16 +796,16 @@ pub fn setup_prefix_level_params(
         AkitaError::InvalidSetup("setup prefix length has invalid dimension".to_string())
     })?;
     let mut prefix_params = level_params.clone();
-    let mut num_blocks = 1usize;
-    while num_blocks <= ring_slots {
-        if ring_slots.is_multiple_of(num_blocks) {
-            let block_len = ring_slots / num_blocks;
-            let inner_width = block_len
+    let mut fold_position_count = 1usize;
+    while fold_position_count <= ring_slots.max(1) {
+        if fold_position_count.is_power_of_two() {
+            let live_fold_count = ring_slots.div_ceil(fold_position_count);
+            let inner_width = fold_position_count
                 .checked_mul(level_params.num_digits_commit)
                 .ok_or_else(|| {
                     AkitaError::InvalidSetup("prefix inner width overflow".to_string())
                 })?;
-            let outer_width = num_blocks
+            let outer_width = live_fold_count
                 .checked_mul(level_params.a_key.row_len())
                 .and_then(|n| n.checked_mul(level_params.num_digits_open))
                 .ok_or_else(|| {
@@ -814,17 +814,17 @@ pub fn setup_prefix_level_params(
             if inner_width <= level_params.a_key.col_len()
                 && outer_width <= level_params.b_key.col_len()
             {
-                let opening_layout = OpeningBlockLayout::new(num_blocks, block_len)?;
-                prefix_params.num_blocks = num_blocks;
-                prefix_params.m_vars = opening_layout.position_stride().trailing_zeros() as usize;
-                prefix_params.block_len = block_len;
-                prefix_params.r_vars = opening_layout.num_blocks().trailing_zeros() as usize;
+                prefix_params.source_ring_len_per_claim = ring_slots;
+                prefix_params.live_fold_count = live_fold_count;
+                prefix_params.fold_position_count = fold_position_count;
+                prefix_params.shard_granule = 1;
+                prefix_params.validate_fold_geometry()?;
                 return Ok(Some(prefix_params));
             }
         }
-        num_blocks = num_blocks
-            .checked_mul(2)
-            .ok_or_else(|| AkitaError::InvalidSetup("prefix block count overflow".to_string()))?;
+        fold_position_count = fold_position_count.checked_mul(2).ok_or_else(|| {
+            AkitaError::InvalidSetup("prefix position count overflow".to_string())
+        })?;
     }
     Ok(None)
 }
@@ -932,7 +932,7 @@ mod tests {
             2,
             SparseChallengeConfig::pm1_only(3),
         )
-        .with_decomp(2, 3, 2, 2, 3)
+        .with_decomp(4, 3, 2, 2)
         .expect("sample level params")
     }
 

@@ -37,7 +37,7 @@ pub use fold_draw::{FoldDraw, LiveFoldDraw, PreviewFoldDraw};
 pub use grind_probe::grind_probe_permutation;
 pub use sampler::sample_sparse_challenges;
 pub use tensor::{
-    fold_sparse_challenge_sample_count, tensor_left_digest, tensor_split,
-    witness_fold_challenge_labels, ChallengeLabels, ChallengeShape,
-    ChallengeShape as TensorChallengeShape, Challenges, TensorChallenges,
+    fold_high_digest, fold_sparse_challenge_sample_count, witness_fold_challenge_labels,
+    ChallengeLabels, ChallengeShape, ChallengeShape as TensorChallengeShape, Challenges,
+    TensorChallenges,
 };

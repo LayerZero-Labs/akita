@@ -450,7 +450,7 @@ where
     E: FpExtEncoding<F>,
 {
     let position_bits = layout.position_stride().trailing_zeros() as usize;
-    let block_bits = layout.num_blocks().trailing_zeros() as usize;
+    let block_bits = layout.live_fold_count().trailing_zeros() as usize;
     let expected_len = position_bits
         .checked_add(block_bits)
         .ok_or_else(|| AkitaError::InvalidSetup("opening point length overflow".to_string()))?;
@@ -648,7 +648,7 @@ where
 {
     let _span = tracing::info_span!("ring_opening_point").entered();
     let outer_bits = (layout.position_stride().trailing_zeros() as usize)
-        .checked_add(layout.num_blocks().trailing_zeros() as usize)
+        .checked_add(layout.live_fold_count().trailing_zeros() as usize)
         .ok_or_else(|| AkitaError::InvalidSetup("opening point length overflow".to_string()))?;
     let target_num_vars = outer_bits
         .checked_add(alpha_bits)
@@ -804,8 +804,8 @@ where
         return false;
     }
     let target_num_vars = match lp
-        .m_vars
-        .checked_add(lp.r_vars)
+        .position_bits()
+        .checked_add(lp.fold_bits())
         .and_then(|n| n.checked_add(alpha_bits))
     {
         Some(value) => value,
@@ -863,7 +863,7 @@ mod tests {
             1,
             SparseChallengeConfig::pm1_only(1),
         )
-        .with_decomp(0, 0, 1, 1, 32)
+        .with_decomp(1, 32, 1, 1)
         .unwrap()
     }
 
