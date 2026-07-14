@@ -3,7 +3,9 @@ use std::ptr::NonNull;
 
 use akita_algebra::ring::cyclotomic::decompose_centering_threshold;
 use akita_algebra::CyclotomicRing;
-use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, MulBaseUnreduced};
+use akita_field::{
+    AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, MulBaseUnreduced,
+};
 use akita_types::{
     AkitaExpandedSetup, CleartextWitnessProof, FpExtEncoding, RingVec, SetupPrefixSlot,
 };
@@ -11,7 +13,7 @@ use akita_types::{
 use crate::backend::poly_helpers::{
     balanced_ring_decompose_fold_partitioned, build_decompose_fold_witness, DecomposeParams,
 };
-use crate::backend::{RecursiveWitnessFlat, SuffixWitnessView};
+use crate::backend::{RecursiveWitnessFlat, SuffixWitnessBatchView, SuffixWitnessView};
 use crate::compute::{
     BatchDecomposeFoldOutcome, CpuBackend, DecomposeFoldBatchPlan, DecomposeFoldPlan,
     DirectRootWitnessSource, OpeningBatchKernel, OpeningFoldKernel, OpeningFoldOutput,
@@ -356,78 +358,128 @@ where
     }
 }
 
+fn setup_prefix_extension_tensor_unsupported<T>() -> Result<T, AkitaError> {
+    Err(AkitaError::InvalidSetup(
+        "setup-prefix grouped suffix does not support extension tensor projection".to_string(),
+    ))
+}
+
+fn recursive_fold_batch_witnesses<'a, F: FieldCore, const D: usize>(
+    source: RecursiveFoldBatchView<'a, F, D>,
+) -> Result<Vec<&'a RecursiveWitnessFlat>, AkitaError> {
+    let mut witnesses = Vec::with_capacity(source.polys.len());
+    for poly in source.polys {
+        match poly {
+            RecursiveFoldSource::Witness(witness) => witnesses.push(unsafe { witness.as_ref() }),
+            RecursiveFoldSource::SetupPrefix { .. } => {
+                return setup_prefix_extension_tensor_unsupported();
+            }
+        }
+    }
+    Ok(witnesses)
+}
+
 impl<F, E, const D: usize> TensorProjectionKernel<RecursiveFoldView<'_, F, D>, F, E, D>
     for CpuBackend
 where
-    F: FieldCore + CanonicalField,
+    F: FieldCore + CanonicalField + FromPrimitiveInt,
     E: ExtField<F>,
 {
     fn column_partials(
         &self,
-        _prepared: Option<&Self::PreparedSetup>,
-        _source: RecursiveFoldView<'_, F, D>,
-        _logical_point: &[E],
+        prepared: Option<&Self::PreparedSetup>,
+        source: RecursiveFoldView<'_, F, D>,
+        logical_point: &[E],
     ) -> Result<Vec<E>, AkitaError>
     where
         E: MulBaseUnreduced<F>,
     {
-        Err(AkitaError::InvalidSetup(
-            "setup-prefix grouped suffix does not support extension tensor projection".to_string(),
-        ))
+        match source {
+            RecursiveFoldView::SetupPrefix { .. } => setup_prefix_extension_tensor_unsupported(),
+            RecursiveFoldView::Witness(view) => <CpuBackend as TensorProjectionKernel<
+                SuffixWitnessView<'_, F, D>,
+                F,
+                E,
+                D,
+            >>::column_partials(
+                self, prepared, view, logical_point
+            ),
+        }
     }
 
     fn packed_witness(
         &self,
-        _prepared: Option<&Self::PreparedSetup>,
-        _source: RecursiveFoldView<'_, F, D>,
+        prepared: Option<&Self::PreparedSetup>,
+        source: RecursiveFoldView<'_, F, D>,
     ) -> Result<TensorPackedWitness<E>, AkitaError> {
-        Err(AkitaError::InvalidSetup(
-            "setup-prefix grouped suffix does not support extension tensor packing".to_string(),
-        ))
+        match source {
+            RecursiveFoldView::SetupPrefix { .. } => Err(AkitaError::InvalidSetup(
+                "setup-prefix grouped suffix does not support extension tensor packing".to_string(),
+            )),
+            RecursiveFoldView::Witness(view) => {
+                <CpuBackend as TensorProjectionKernel<SuffixWitnessView<'_, F, D>, F, E, D>>::packed_witness(
+                    self, prepared, view,
+                )
+            }
+        }
     }
 
     fn root_projection(
         &self,
-        _prepared: Option<&Self::PreparedSetup>,
-        _source: RecursiveFoldView<'_, F, D>,
+        prepared: Option<&Self::PreparedSetup>,
+        source: RecursiveFoldView<'_, F, D>,
     ) -> Result<RootTensorProjectionPoly<F>, AkitaError>
     where
         E: FpExtEncoding<F>,
     {
-        Err(AkitaError::InvalidSetup(
-            "setup-prefix grouped suffix does not support extension tensor projection".to_string(),
-        ))
+        match source {
+            RecursiveFoldView::SetupPrefix { .. } => setup_prefix_extension_tensor_unsupported(),
+            RecursiveFoldView::Witness(view) => <CpuBackend as TensorProjectionKernel<
+                SuffixWitnessView<'_, F, D>,
+                F,
+                E,
+                D,
+            >>::root_projection(
+                self, prepared, view
+            ),
+        }
     }
 }
 
 impl<F, E, const D: usize> TensorProjectionBatchKernel<RecursiveFoldBatchView<'_, F, D>, F, E, D>
     for CpuBackend
 where
-    F: FieldCore + CanonicalField,
+    F: FieldCore + CanonicalField + FromPrimitiveInt,
     E: ExtField<F>,
 {
     fn column_partials_batch(
         &self,
-        _prepared: Option<&Self::PreparedSetup>,
-        _source: RecursiveFoldBatchView<'_, F, D>,
-        _logical_point: &[E],
+        prepared: Option<&Self::PreparedSetup>,
+        source: RecursiveFoldBatchView<'_, F, D>,
+        logical_point: &[E],
     ) -> Result<Vec<Vec<E>>, AkitaError>
     where
         E: MulBaseUnreduced<F>,
     {
-        Err(AkitaError::InvalidSetup(
-            "setup-prefix grouped suffix does not support extension tensor projection".to_string(),
-        ))
+        let witnesses = recursive_fold_batch_witnesses(source)?;
+        let batch =
+            <RecursiveWitnessFlat as RootTensorSource<F, D>>::tensor_batch(&witnesses)?;
+        <CpuBackend as TensorProjectionBatchKernel<SuffixWitnessBatchView<'_, F, D>, F, E, D>>::column_partials_batch(
+            self, prepared, batch, logical_point,
+        )
     }
 
     fn sparse_linear_combination(
         &self,
-        _prepared: Option<&Self::PreparedSetup>,
-        _source: RecursiveFoldBatchView<'_, F, D>,
-        _coeffs: &[E],
+        prepared: Option<&Self::PreparedSetup>,
+        source: RecursiveFoldBatchView<'_, F, D>,
+        coeffs: &[E],
     ) -> Result<Option<SparseExtensionOpeningWitness<E>>, AkitaError> {
-        Err(AkitaError::InvalidSetup(
-            "setup-prefix grouped suffix does not support extension tensor projection".to_string(),
-        ))
+        let witnesses = recursive_fold_batch_witnesses(source)?;
+        let batch =
+            <RecursiveWitnessFlat as RootTensorSource<F, D>>::tensor_batch(&witnesses)?;
+        <CpuBackend as TensorProjectionBatchKernel<SuffixWitnessBatchView<'_, F, D>, F, E, D>>::sparse_linear_combination(
+            self, prepared, batch, coeffs,
+        )
     }
 }
