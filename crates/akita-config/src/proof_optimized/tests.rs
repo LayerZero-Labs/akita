@@ -23,33 +23,38 @@ const MAX_I8_LOG_BASIS: u32 = 6;
 #[cfg(feature = "schedules-default")]
 const RAW_I8_RHS_MAX_ABS: u64 = 128;
 #[test]
-fn setup_level_params_from_runtime_schedule_excludes_terminal_direct() {
+fn setup_level_params_from_schedule_excludes_terminal_direct() {
     // Terminal-direct steps ship the cleartext witness without
     // committing, so they have no `LevelParams` of their own and
     // must not contribute to the FS-bound `setup_levels`. Only
     // the preceding Fold steps (which do commit) appear.
     use akita_challenges::SparseChallengeConfig;
-    use akita_types::{CleartextWitnessShape, DirectStep, FoldStep, SisModulusFamily, Step};
+    use akita_types::{
+        CleartextWitnessShape, DirectStep, FoldStep, Schedule, SisModulusFamily, Step,
+    };
 
     let sparse = SparseChallengeConfig::pm1_only(1);
     let fold_lp = LevelParams::params_only(SisModulusFamily::Q128, 64, 3, 1, 1, 1, sparse);
 
-    let steps = vec![
-        Step::Fold(FoldStep {
-            params: fold_lp.clone(),
-            current_w_len: 1 << 8,
-            next_w_len: 1 << 4,
-            level_bytes: 0,
-        }),
-        Step::Direct(DirectStep {
-            current_w_len: 1 << 4,
-            witness_shape: CleartextWitnessShape::FieldElements(16),
-            direct_bytes: 0,
-            params: None,
-        }),
-    ];
+    let schedule = Schedule {
+        steps: vec![
+            Step::Fold(FoldStep {
+                params: fold_lp.clone(),
+                current_w_len: 1 << 8,
+                next_w_len: 1 << 4,
+                level_bytes: 0,
+            }),
+            Step::Direct(DirectStep {
+                current_w_len: 1 << 4,
+                witness_shape: CleartextWitnessShape::FieldElements(16),
+                direct_bytes: 0,
+                params: None,
+            }),
+        ],
+        total_bytes: 0,
+    };
 
-    let setup_levels = setup_level_params_from_runtime_schedule(&steps);
+    let setup_levels = setup_level_params_from_schedule(&schedule);
     assert_eq!(
         setup_levels,
         vec![fold_lp],
@@ -60,7 +65,7 @@ fn setup_level_params_from_runtime_schedule_excludes_terminal_direct() {
 #[test]
 fn uncommittable_root_direct_schedule_yields_empty_setup_levels_and_loud_get_params_error() {
     // Documents the deliberate asymmetry between
-    // `setup_level_params_from_runtime_schedule` (silently skips
+    // `setup_level_params_from_schedule` (silently skips
     // root-direct schedules with `params: None`) and
     // `Cfg::get_params_for_batched_commitment` (rejects the same
     // schedule with a documented `InvalidSetup` message). The
@@ -79,7 +84,7 @@ fn uncommittable_root_direct_schedule_yields_empty_setup_levels_and_loud_get_par
         total_bytes: 0,
     };
 
-    let bound = setup_level_params_from_runtime_schedule(&uncommittable.steps);
+    let bound = setup_level_params_from_schedule(&uncommittable);
     assert!(
         bound.is_empty(),
         "uncommittable root-direct schedule must produce no setup levels; \
@@ -134,6 +139,12 @@ fn uncommittable_root_direct_schedule_yields_empty_setup_levels_and_loud_get_par
                 })],
                 total_bytes: 0,
             })
+        }
+
+        fn get_params_for_prove(layout: &OpeningClaimsLayout) -> Result<Schedule, AkitaError> {
+            Self::runtime_schedule(
+                crate::proof_optimized::proof_optimized_schedule_key::<Self>(layout)?,
+            )
         }
     }
 
@@ -199,6 +210,12 @@ fn setup_matrix_envelope_does_not_add_conservative_layout() {
                 total_bytes: 0,
             })
         }
+
+        fn get_params_for_prove(layout: &OpeningClaimsLayout) -> Result<Schedule, AkitaError> {
+            Self::runtime_schedule(
+                crate::proof_optimized::proof_optimized_schedule_key::<Self>(layout)?,
+            )
+        }
     }
 
     let opening_batch = OpeningClaimsLayout::new(8, 1).expect("singleton opening batch");
@@ -248,7 +265,7 @@ fn fallback_root_direct_schedule_binds_real_opening_batch_commit_params() {
         real_params.clone(),
     )
     .expect("fallback root-direct schedule");
-    let bound_levels = setup_level_params_from_runtime_schedule(&real_schedule.steps);
+    let bound_levels = setup_level_params_from_schedule(&real_schedule);
     assert_eq!(
         bound_levels,
         vec![real_params],
@@ -390,7 +407,9 @@ fn setup_matrix_envelope_covers_batched_runtime_root_widths() {
         .expect("batched root schedule should carry commit params");
     let required = expected_runtime_root_setup_len(&root_params, &opening_batch);
 
-    let runtime_envelope = matrix_envelope_for_schedule::<Cfg>(&schedule, &opening_batch).unwrap();
+    let runtime_envelope = setup_matrix_envelope_for_shape::<Cfg>(&opening_batch)
+        .expect("runtime setup envelope")
+        .expect("batched root schedule should be supported");
     assert!(runtime_envelope.max_setup_len >= required);
 
     let setup_envelope = proof_optimized_max_setup_matrix_size::<Cfg>(30, 4)
@@ -415,17 +434,23 @@ fn setup_matrix_envelope_covers_single_point_batch_root_widths() {
     .expect("synthetic direct schedule");
     let required = expected_runtime_root_setup_len(&root_params, &opening_batch);
 
-    let runtime_envelope = matrix_envelope_for_schedule::<Cfg>(&schedule, &opening_batch).unwrap();
-    assert!(runtime_envelope.max_setup_len >= required);
+    let mut max_setup_len = 1;
+    super::accumulate_root_matrix_envelope_for_opening_batch(
+        &schedule,
+        &opening_batch,
+        &mut max_setup_len,
+    )
+    .expect("synthetic direct schedule envelope");
+    assert!(max_setup_len >= required);
 }
 
 #[test]
 fn runtime_setup_guard_rejects_undersized_matrix() {
     type Cfg = fp128::D128Full;
     let opening_batch = OpeningClaimsLayout::new(30, 4).expect("supported opening batch");
-    let schedule = Cfg::get_params_for_prove(&opening_batch).expect("runtime schedule");
-    let required = matrix_envelope_for_schedule::<Cfg>(&schedule, &opening_batch)
-        .expect("runtime envelope")
+    let required = setup_matrix_envelope_for_shape::<Cfg>(&opening_batch)
+        .expect("runtime setup envelope")
+        .expect("runtime schedule should be supported")
         .max_setup_len;
 
     super::ensure_required_setup_len(required, required, Cfg::D)
@@ -443,61 +468,19 @@ fn setup_matrix_scan_uses_one_shared_opening_point() {
 }
 
 #[test]
-fn setup_envelope_poly_counts_match_shipped_table_keys() {
-    assert_eq!(super::setup_envelope_poly_counts(1), vec![1]);
-    assert_eq!(super::setup_envelope_poly_counts(2), vec![1, 2]);
-    assert_eq!(super::setup_envelope_poly_counts(4), vec![1, 4]);
-}
-
-#[test]
-#[cfg(feature = "schedules-fp128-d64-onehot")]
-fn proof_optimized_setup_includes_precommitted_multi_group_root_catalog_entries() {
-    type Cfg = fp128::D64OneHot;
-
-    let catalog = Cfg::schedule_catalog().expect("D64 one-hot catalog");
-    let entry = catalog
-        .entries
-        .iter()
-        .find(|entry| {
-            entry.final_group.num_vars() == 16
-                && entry.final_group.num_polynomials() == 1
-                && entry.precommitteds.len() == 2
-                && entry
-                    .precommitteds
-                    .iter()
-                    .all(|group| group.group.num_vars() == 8 && group.group.num_polynomials() == 1)
-        })
-        .expect("generated two-precommit multi-group-root entry");
-    let key = super::runtime_key_from_generated_entry(entry);
-    let schedule =
-        Cfg::runtime_schedule(key.clone()).expect("precommitted multi-group-root schedule");
-    let layout = key.opening_layout().expect("multi-group layout");
-    let entry_envelope =
-        super::matrix_envelope_for_schedule::<Cfg>(&schedule, &layout).expect("entry envelope");
-
-    let setup_envelope = super::proof_optimized_max_setup_matrix_size::<Cfg>(16, 1)
-        .expect("setup envelope should include precommitted multi-group-root catalog entries");
-
-    assert!(
-        setup_envelope.max_setup_len >= entry_envelope.max_setup_len,
-        "setup envelope must cover generated precommitted multi-group-root catalog footprints"
-    );
-}
-
-#[test]
 fn proof_optimized_setup_includes_arbitrary_precommit_group_sizes() {
     type Cfg = fp128::D64OneHot;
 
     let layout = OpeningClaimsLayout::from_root_groups(
-        &[PolynomialGroupLayout::new(8, 1)],
-        PolynomialGroupLayout::new(7, 1),
+        &[PolynomialGroupLayout::new(12, 1)],
+        PolynomialGroupLayout::new(11, 1),
     )
     .expect("larger precommitted group layout");
     let runtime = setup_matrix_envelope_for_shape::<Cfg>(&layout)
         .expect("runtime setup envelope")
         .expect("larger precommitted group should be schedulable");
     let setup_envelope =
-        super::proof_optimized_max_setup_matrix_size::<Cfg>(8, 1).expect("setup envelope");
+        super::proof_optimized_max_setup_matrix_size::<Cfg>(12, 1).expect("setup envelope");
 
     assert!(
         setup_envelope.max_setup_len >= runtime.max_setup_len,
@@ -514,7 +497,7 @@ fn grouped_root_runtime_setup_uses_per_group_roles_and_summed_d_width() {
         PolynomialGroupLayout::new(20, 1),
     )
     .expect("grouped root layout");
-    let key = crate::opening_schedule_key::<Cfg>(&layout).expect("grouped root key");
+    let key = super::proof_optimized_schedule_key::<Cfg>(&layout).expect("grouped root key");
     let schedule = Cfg::runtime_schedule(key).expect("grouped root schedule");
     let root_params = root_commit_params_from_schedule(&schedule)
         .expect("root params lookup")
@@ -541,6 +524,202 @@ fn grouped_root_runtime_setup_uses_per_group_roles_and_summed_d_width() {
         root_params.d_key.col_len(),
         expected_d_width,
         "multi-group root D columns are final plus all precommitted segments"
+    );
+}
+
+#[test]
+fn recursive_setup_envelope_counts_setup_prefix_d_segment() {
+    use akita_types::{
+        active_setup_field_len, padded_setup_prefix_len, segment_typed_witness_shape_from_groups,
+        setup_prefix_precommitted_params, setup_prefix_slot_id, AjtaiKeyParams,
+        CleartextWitnessShape, DecompositionParams, DirectStep, FoldStep, LevelParamsLike,
+        SETUP_OFFLOAD_D_SETUP,
+    };
+
+    fn scalar_level_params() -> LevelParams {
+        LevelParams::params_only(
+            akita_types::SisModulusFamily::Q128,
+            SETUP_OFFLOAD_D_SETUP,
+            3,
+            2,
+            2,
+            2,
+            SparseChallengeConfig::pm1_only(3),
+        )
+        .with_decomp(2, 2, 2, 2, 0)
+        .expect("scalar params")
+    }
+
+    fn terminal_direct_step(params: &LevelParams) -> DirectStep {
+        let witness_shape = segment_typed_witness_shape_from_groups(
+            params,
+            128,
+            [(params as &dyn LevelParamsLike, 1, 1, 1)],
+            1,
+        )
+        .expect("segment-typed witness shape");
+        let CleartextWitnessShape::SegmentTyped(shape) = &witness_shape else {
+            panic!("expected segment-typed witness");
+        };
+        DirectStep {
+            current_w_len: shape.layout.logical_num_elems,
+            witness_shape,
+            direct_bytes: 0,
+            params: None,
+        }
+    }
+
+    fn add_setup_prefix_d_width(params: &mut LevelParams) {
+        let prefix_d_width = params
+            .setup_prefix
+            .as_ref()
+            .expect("setup prefix")
+            .commitment_params
+            .d_segment_width()
+            .expect("setup-prefix D width");
+        let d_width = params
+            .d_key
+            .col_len()
+            .checked_add(prefix_d_width)
+            .expect("D width");
+        params.d_key = AjtaiKeyParams::new_unchecked(
+            params.d_key.min_security_bits(),
+            params.d_key.sis_family(),
+            params.d_key.row_len(),
+            d_width,
+            params.d_key.coeff_linf_bound(),
+            params.ring_dimension,
+        );
+    }
+
+    fn recursive_schedule(layout: &OpeningClaimsLayout) -> Schedule {
+        let mut root = scalar_level_params();
+        root.setup_contribution_mode = SetupContributionMode::Recursive;
+
+        let natural_len =
+            active_setup_field_len(&root, layout, SETUP_OFFLOAD_D_SETUP).expect("natural len");
+        let n_prefix = padded_setup_prefix_len(natural_len);
+        let mut successor = scalar_level_params();
+        successor.setup_prefix = Some(setup_prefix_slot_id(
+            SETUP_OFFLOAD_D_SETUP,
+            natural_len,
+            setup_prefix_precommitted_params(&root, n_prefix).expect("prefix params"),
+        ));
+        add_setup_prefix_d_width(&mut successor);
+
+        let terminal_params = scalar_level_params();
+        let direct = terminal_direct_step(&terminal_params);
+        let terminal_current_w_len = 64;
+        Schedule {
+            steps: vec![
+                Step::Fold(FoldStep {
+                    params: root,
+                    current_w_len: 256,
+                    next_w_len: 128,
+                    level_bytes: 0,
+                }),
+                Step::Fold(FoldStep {
+                    params: successor,
+                    current_w_len: 128,
+                    next_w_len: terminal_current_w_len,
+                    level_bytes: 0,
+                }),
+                Step::Fold(FoldStep {
+                    params: terminal_params,
+                    current_w_len: terminal_current_w_len,
+                    next_w_len: direct.current_w_len,
+                    level_bytes: 0,
+                }),
+                Step::Direct(direct),
+            ],
+            total_bytes: 0,
+        }
+    }
+
+    #[derive(Clone)]
+    struct SyntheticRecursiveCfg;
+    impl CommitmentConfig for SyntheticRecursiveCfg {
+        type Field = akita_field::Prime128OffsetA7F7;
+        type ExtField = akita_field::Prime128OffsetA7F7;
+        const D: usize = SETUP_OFFLOAD_D_SETUP;
+
+        fn decomposition() -> DecompositionParams {
+            DecompositionParams {
+                log_basis: 3,
+                log_commit_bound: 128,
+                log_open_bound: None,
+            }
+        }
+
+        fn ring_challenge_config(_d: usize) -> Result<SparseChallengeConfig, AkitaError> {
+            Ok(SparseChallengeConfig::pm1_only(3))
+        }
+
+        fn sis_modulus_family() -> akita_types::SisModulusFamily {
+            akita_types::SisModulusFamily::Q128
+        }
+
+        fn max_setup_matrix_size(
+            _max_num_vars: usize,
+            _max_num_batched_polys: usize,
+        ) -> Result<SetupMatrixEnvelope, AkitaError> {
+            Ok(SetupMatrixEnvelope { max_setup_len: 1 })
+        }
+
+        fn basis_range() -> (u32, u32) {
+            (3, 3)
+        }
+
+        fn recursive_setup_planning() -> bool {
+            true
+        }
+
+        fn get_params_for_prove(layout: &OpeningClaimsLayout) -> Result<Schedule, AkitaError> {
+            Ok(recursive_schedule(layout))
+        }
+    }
+
+    let layout = OpeningClaimsLayout::new(8, 1).expect("recursive opening layout");
+    let schedule =
+        SyntheticRecursiveCfg::get_params_for_prove(&layout).expect("synthetic recursive schedule");
+    schedule
+        .validate_structure()
+        .expect("synthetic recursive schedule is valid");
+    let envelope = setup_matrix_envelope_for_shape::<SyntheticRecursiveCfg>(&layout)
+        .expect("setup envelope")
+        .expect("recursive schedule should be supported");
+
+    let mut saw_setup_prefix = false;
+    for fold in schedule.fold_steps() {
+        let Some(slot) = &fold.params.setup_prefix else {
+            continue;
+        };
+        saw_setup_prefix = true;
+        let prefix_d_width = slot
+            .commitment_params
+            .d_segment_width()
+            .expect("setup-prefix D segment width");
+        assert!(
+            fold.params.d_matrix_width() >= prefix_d_width,
+            "consuming fold D width must include setup-prefix e_hat columns"
+        );
+        let fold_d_len = fold.params.d_key.row_len() * fold.params.d_matrix_width();
+        assert!(
+            envelope.max_setup_len >= fold_d_len,
+            "matrix envelope must cover the consuming fold's shared D matrix"
+        );
+        let mut slot_envelope = akita_types::SetupMatrixEnvelope { max_setup_len: 1 };
+        crate::matrix_envelope::inflate_envelope_for_setup_prefix_slot(&mut slot_envelope, slot)
+            .expect("setup-prefix slot envelope");
+        assert!(
+            envelope.max_setup_len >= slot_envelope.max_setup_len,
+            "matrix envelope must cover setup-prefix storage and A/B matrices"
+        );
+    }
+
+    assert!(
+        saw_setup_prefix,
+        "fixture must exercise a setup-prefix fold"
     );
 }
 
@@ -705,7 +884,7 @@ fn assert_every_table_entry_has_crt_i8_capacity<Cfg: CommitmentConfig>(
             Cfg::fold_challenge_shape_at_level,
         )
         .expect("shipped entry should materialize");
-        let levels = setup_level_params_from_runtime_schedule(&schedule.steps);
+        let levels = setup_level_params_from_schedule(&schedule);
         for level in &levels {
             assert_level_has_crt_i8_capacity::<Cfg>(key, level);
         }

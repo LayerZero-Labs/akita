@@ -4,8 +4,8 @@ use crate::CommitmentConfig;
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::AkitaError;
 use akita_types::{
-    AkitaScheduleInputs, ChunkedWitnessCfg, DecompositionParams, SetupMatrixEnvelope,
-    SisModulusFamily, SETUP_OFFLOAD_D_SETUP,
+    AkitaScheduleInputs, AkitaScheduleLookupKey, ChunkedWitnessCfg, DecompositionParams,
+    OpeningClaimsLayout, Schedule, SetupMatrixEnvelope, SisModulusFamily, SETUP_OFFLOAD_D_SETUP,
 };
 #[cfg(feature = "schedules-fp128-d64-onehot-recursive")]
 use std::any::TypeId;
@@ -101,4 +101,30 @@ impl<Cfg: CommitmentConfig> CommitmentConfig for RecursiveCommitmentConfig<Cfg> 
             Self::schedule_catalog(),
         )
     }
+
+    fn get_params_for_prove(layout: &OpeningClaimsLayout) -> Result<Schedule, AkitaError> {
+        Self::runtime_schedule(recursive_schedule_key::<Cfg>(layout)?)
+    }
+}
+
+fn recursive_schedule_key<Cfg: CommitmentConfig>(
+    layout: &OpeningClaimsLayout,
+) -> Result<AkitaScheduleLookupKey, AkitaError> {
+    layout.check()?;
+    let final_group = layout.root_final_group_layout()?;
+    if layout.num_groups() == 1 {
+        return Ok(AkitaScheduleLookupKey::single(final_group));
+    }
+    let precommitteds = layout
+        .root_precommitted_group_layouts()?
+        .iter()
+        .copied()
+        .map(crate::conservative_commitment::conservative_precommitted_group_params::<Cfg>)
+        .collect::<Result<Vec<_>, _>>()?;
+    let key = AkitaScheduleLookupKey {
+        final_group,
+        precommitteds,
+    };
+    key.validate()?;
+    Ok(key)
 }

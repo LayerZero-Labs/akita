@@ -288,6 +288,8 @@ where
         return Err(AkitaError::InvalidProof);
     }
     let row_coefficients = vec![E::one(); opening_batch.num_total_polynomials()];
+    let requires_extension_reduction =
+        <E as ExtField<F>>::EXT_DEGREE != 1 && lp.setup_prefix.is_none();
     let FoldEorReplay {
         prepared_points,
         reduction_challenges: _,
@@ -302,7 +304,7 @@ where
         current_state.basis,
         lp,
         block_order,
-        true,
+        requires_extension_reduction,
         transcript,
     )?;
     if proof.extension_opening_reduction().is_some() && opening_batch.num_groups() != 1 {

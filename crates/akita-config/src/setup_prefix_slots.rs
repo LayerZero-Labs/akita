@@ -37,7 +37,7 @@ fn setup_prefix_slot_matches(
     Ok(())
 }
 
-fn extract_setup_prefix_slot_ids_from_schedule(
+pub(crate) fn extract_setup_prefix_slot_ids_from_schedule(
     schedule: &Schedule,
     root_layout: &akita_types::OpeningClaimsLayout,
 ) -> Result<Vec<SetupPrefixSlotId>, AkitaError> {
@@ -148,9 +148,7 @@ pub fn setup_prefix_slot_ids_for_capacity<Cfg: CommitmentConfig>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::generated_families::{
-        recursive_group_batch_candidates_for_capacity, recursive_setup_schedule_keys_for_capacity,
-    };
+    use crate::generated_families::recursive_group_batch_candidates_for_capacity;
     use crate::proof_optimized::fp128;
     use crate::RecursiveCommitmentConfig;
     use akita_types::{AkitaScheduleLookupKey, PolynomialGroupLayout, PrecommittedGroupParams};
@@ -167,17 +165,6 @@ mod tests {
             final_group: PolynomialGroupLayout::new(32, 2),
             precommitteds: vec![precommitted, precommitted],
         }
-    }
-
-    #[test]
-    fn recursive_key_enumeration_excludes_scalar_keys_and_is_capacity_wide() {
-        // Cheap grid: proves multi-key coverage without the recursive catalog feature.
-        let keys = recursive_setup_schedule_keys_for_capacity(20, 2).expect("keys");
-        assert!(
-            keys.len() > 1,
-            "setup enumeration must cover representative recursive keys, not a single profile row"
-        );
-        assert!(keys.iter().all(|key| !key.precommitteds.is_empty()));
     }
 
     #[test]

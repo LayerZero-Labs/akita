@@ -12,8 +12,8 @@ use akita_types::sis::{
 };
 use akita_types::{
     AjtaiKeyParams, AkitaScheduleInputs, AkitaScheduleLookupKey, DecompositionParams, LevelParams,
-    OpeningClaimsLayout, PolynomialGroupLayout, Schedule, SetupMatrixEnvelope, SisModulusFamily,
-    Step,
+    OpeningClaimsLayout, PolynomialGroupLayout, PrecommittedGroupParams, Schedule,
+    SetupMatrixEnvelope, SisModulusFamily, Step,
 };
 use std::marker::PhantomData;
 
@@ -71,17 +71,38 @@ impl<Cfg: CommitmentConfig> CommitmentConfig for ConservativeCommitmentConfig<Cf
         false
     }
 
-    fn get_params_for_prove(opening_batch: &OpeningClaimsLayout) -> Result<Schedule, AkitaError> {
-        let key = opening_batch.root_final_group_layout()?;
-        conservative_commit_schedule::<Cfg>(&key)
+    fn get_params_for_prove(_opening_batch: &OpeningClaimsLayout) -> Result<Schedule, AkitaError> {
+        Err(AkitaError::InvalidSetup(
+            "ConservativeCommitmentConfig is only for precommit layouts; proving must use the regular config"
+                .to_string(),
+        ))
     }
 
     fn get_params_for_batched_commitment(
         opening_batch: &OpeningClaimsLayout,
     ) -> Result<LevelParams, AkitaError> {
-        let schedule = Self::get_params_for_prove(opening_batch)?;
-        Ok(root_commit_params(&schedule, "conservative commit schedule")?.clone())
+        opening_batch.check()?;
+        if opening_batch.num_groups() != 1 {
+            return Err(AkitaError::InvalidSetup(
+                "ConservativeCommitmentConfig only commits standalone precommitted groups"
+                    .to_string(),
+            ));
+        }
+        let key = opening_batch.root_final_group_layout()?;
+        conservative_commit_params::<Cfg>(&key)
     }
+}
+
+pub(crate) fn conservative_precommitted_group_params<Cfg: CommitmentConfig>(
+    group: PolynomialGroupLayout,
+) -> Result<PrecommittedGroupParams, AkitaError> {
+    group.validate()?;
+    let singleton = OpeningClaimsLayout::new(group.num_vars(), group.num_polynomials())?;
+    let params =
+        <ConservativeCommitmentConfig<Cfg> as CommitmentConfig>::get_params_for_batched_commitment(
+            &singleton,
+        )?;
+    Ok(PrecommittedGroupParams::from_params(group, &params))
 }
 
 pub(crate) fn conservative_commit_params<Cfg: CommitmentConfig>(

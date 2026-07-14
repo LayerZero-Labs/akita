@@ -142,6 +142,9 @@ fn family_catalog(
             prepare_family_catalog::<fp128::D128OneHot>(family.module_name, keys)
         }
         "fp128_d64_onehot" => prepare_family_catalog::<fp128::D64OneHot>(family.module_name, keys),
+        "fp128_d64_onehot_recursive" => prepare_family_catalog::<
+            akita_config::RecursiveCommitmentConfig<fp128::D64OneHot>,
+        >(family.module_name, keys),
         "fp128_d64_full" => prepare_family_catalog::<fp128::D64Full>(family.module_name, keys),
         "fp128_d64_onehot_tensor" => prepare_family_catalog::<
             tensor_verifier::fp128::D64OneHotTensor,
@@ -200,6 +203,9 @@ fn assert_family_group_batch_table_hit(family: &GeneratedFamily, keys: &[AkitaSc
         "fp128_d64_onehot" => {
             assert_group_batch_table_hits::<fp128::D64OneHot>(family.module_name, keys)
         }
+        "fp128_d64_onehot_recursive" => assert_group_batch_table_hits::<
+            akita_config::RecursiveCommitmentConfig<fp128::D64OneHot>,
+        >(family.module_name, keys),
         "fp128_d64_full" => {
             assert_group_batch_table_hits::<fp128::D64Full>(family.module_name, keys)
         }
@@ -266,6 +272,9 @@ fn resolve_family_group_batch_schedule(
         "fp128_d128_full" => table_backed_group_batch_schedule::<fp128::D128Full>(key),
         "fp128_d128_onehot" => table_backed_group_batch_schedule::<fp128::D128OneHot>(key),
         "fp128_d64_onehot" => table_backed_group_batch_schedule::<fp128::D64OneHot>(key),
+        "fp128_d64_onehot_recursive" => table_backed_group_batch_schedule::<
+            akita_config::RecursiveCommitmentConfig<fp128::D64OneHot>,
+        >(key),
         "fp128_d64_full" => table_backed_group_batch_schedule::<fp128::D64Full>(key),
         "fp128_d64_onehot_tensor" => {
             table_backed_group_batch_schedule::<tensor_verifier::fp128::D64OneHotTensor>(key)

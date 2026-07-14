@@ -404,19 +404,17 @@ fn deserialize_cached_setup<
             "cached setup seed capacity does not match cache key".to_string(),
         ));
     }
-    if !Cfg::recursive_setup_planning() {
-        let expected_envelope =
-            Cfg::max_setup_matrix_size(expected_max_num_vars, expected_max_num_batched_polys)
-                .map_err(|err| {
-                    SerializationError::InvalidData(format!(
-                        "cached setup expected shape failed: {err}"
-                    ))
-                })?;
-        if seed.max_setup_len != expected_envelope.max_setup_len {
-            return Err(SerializationError::InvalidData(
-                "cached setup seed matrix shape does not match cache key".to_string(),
-            ));
-        }
+    let expected_envelope = Cfg::max_setup_matrix_size(
+        expected_max_num_vars,
+        expected_max_num_batched_polys,
+    )
+    .map_err(|err| {
+        SerializationError::InvalidData(format!("cached setup expected shape failed: {err}"))
+    })?;
+    if seed.max_setup_len != expected_envelope.max_setup_len {
+        return Err(SerializationError::InvalidData(
+            "cached setup seed matrix shape does not match cache key".to_string(),
+        ));
     }
     let shared_matrix = FlatMatrix::<F>::deserialize_with_expected_shape(
         &mut *reader,

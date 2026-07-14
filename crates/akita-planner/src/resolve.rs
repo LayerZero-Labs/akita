@@ -56,15 +56,20 @@ pub fn resolve_group_batch_schedule(
                 &fold_challenge_shape_at_level,
             )?;
             if let Some(entry) = table_entry(table, key) {
-                let schedule = schedule_from_entry(
+                match schedule_from_entry(
                     entry,
                     key,
                     policy,
-                    ring_challenge_config,
-                    fold_challenge_shape_at_level,
-                )?;
-                schedule.validate_structure()?;
-                return Ok(schedule);
+                    &ring_challenge_config,
+                    &fold_challenge_shape_at_level,
+                ) {
+                    Ok(schedule) => {
+                        schedule.validate_structure()?;
+                        return Ok(schedule);
+                    }
+                    Err(err) if unsupported_grouped_table_hit_error(&err) => {}
+                    Err(err) => return Err(err),
+                }
             }
         }
     }
@@ -88,6 +93,13 @@ pub fn resolve_group_batch_schedule(
     )?;
     schedule.validate_structure()?;
     Ok(schedule)
+}
+
+fn unsupported_grouped_table_hit_error(err: &AkitaError) -> bool {
+    let msg = err.to_string();
+    msg.contains("root direct step must be scalar")
+        || msg.contains("grouped terminal fold must be followed by another fold")
+        || msg.contains("terminal fold must be scalar")
 }
 
 /// Build the runtime [`Schedule`] for a compact generated entry.
@@ -558,5 +570,47 @@ mod tests {
             &fold_shape,
         )
         .expect("multi-group generated entry should validate");
+    }
+
+    #[test]
+    fn resolve_group_batch_schedule_falls_back_on_stale_grouped_terminal_table_hit() {
+        let key = multi_group_sample_key();
+        let policy = flat_policy();
+        let regenerated =
+            find_group_batch_schedule(&key, &policy, ring_challenge_config, fold_shape)
+                .expect("multi-group schedule");
+        let root = regenerated
+            .steps
+            .first()
+            .and_then(|step| match step {
+                Step::Fold(fold) => Some(generated_fold_step(&fold.params)),
+                Step::Direct(_) => None,
+            })
+            .expect("multi-group root fold");
+        let entry = generated_group_entry_from_steps(
+            &key,
+            vec![
+                GeneratedStep::Fold(root),
+                GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
+            ],
+        );
+        let entries: &'static [GeneratedScheduleTableEntry] =
+            Box::leak(vec![entry].into_boxed_slice());
+        let identity =
+            expected_catalog_identity("test", &policy, entries, ring_challenge_config, fold_shape)
+                .expect("identity");
+        let table = GeneratedScheduleTable { entries, identity };
+
+        let resolved = resolve_group_batch_schedule(
+            &key,
+            &policy,
+            ring_challenge_config,
+            fold_shape,
+            Some(table),
+        )
+        .expect("stale grouped-terminal table hit should fall back to DP");
+
+        assert_eq!(resolved.total_bytes, regenerated.total_bytes);
+        assert_eq!(resolved.steps.len(), regenerated.steps.len());
     }
 }

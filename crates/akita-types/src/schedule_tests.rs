@@ -860,25 +860,13 @@ fn planned_root_extension_reduction_bytes_match_payload() {
 }
 
 #[test]
-fn from_layout_accepts_scalar_layout() {
+fn single_key_accepts_scalar_layout() {
     let layout = OpeningClaimsLayout::new(4, 2).expect("scalar layout");
-    let key = AkitaScheduleLookupKey::from_layout::<NoPrecommitSource>(&layout)
-        .expect("scalar layout lookup");
+    let key =
+        AkitaScheduleLookupKey::single(layout.root_final_group_layout().expect("final group"));
     assert_eq!(key.final_group, PolynomialGroupLayout::new(4, 2));
     assert!(key.precommitteds.is_empty());
     assert_eq!(key.num_commitment_groups(), 1);
-}
-
-struct NoPrecommitSource;
-
-impl ScheduleKeyPrecommitSource for NoPrecommitSource {
-    fn precommitted_group_params(
-        _group: PolynomialGroupLayout,
-    ) -> Result<PrecommittedGroupParams, AkitaError> {
-        Err(AkitaError::InvalidSetup(
-            "NoPrecommitSource is only valid for scalar layouts".to_string(),
-        ))
-    }
 }
 
 #[test]
@@ -954,8 +942,25 @@ fn group_batch_key_allows_mixed_polynomial_counts() {
 
     multi_group_key
         .validate()
-        .expect("unequal K_g is allowed for a supported precommitted dimension");
+        .expect("final group K may differ from singleton precommitted K");
     assert_eq!(multi_group_key.num_commitment_groups(), 2);
+}
+
+#[test]
+fn precommitted_group_params_reject_multi_polynomial_group() {
+    let layout = PrecommittedGroupParams {
+        group: PolynomialGroupLayout::new(20, 2),
+        m_vars: 4,
+        r_vars: 2,
+        log_basis: 2,
+        n_a: 3,
+        conservative_n_b: 4,
+    };
+
+    let err = layout
+        .validate()
+        .expect_err("precommitted groups must be singleton-polynomial");
+    assert!(matches!(err, AkitaError::InvalidSetup(_)));
 }
 
 #[test]

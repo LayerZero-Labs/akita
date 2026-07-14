@@ -886,13 +886,13 @@ mod tests {
     }
 
     #[test]
-    fn multi_group_root_direct_witness_len_sums_mixed_polynomial_counts() {
+    fn multi_group_root_direct_witness_len_sums_singleton_precommitted_groups() {
         let key = AkitaScheduleLookupKey {
             final_group: PolynomialGroupLayout::new(20, 3),
-            precommitteds: vec![precommitted(1, 20), precommitted(2, 20)],
+            precommitteds: vec![precommitted(1, 20), precommitted(1, 20)],
         };
 
-        let expected_len = 3 * (1usize << 20) + (1usize << 20) + 2 * (1usize << 20);
+        let expected_len = 3 * (1usize << 20) + (1usize << 20) + (1usize << 20);
         assert_eq!(
             key.opening_layout()
                 .expect("layout")
@@ -952,8 +952,16 @@ mod tests {
     }
 
     #[test]
-    fn multi_group_fold_sizing_matches_runtime_for_one_three() {
-        assert_multi_group_fold_sizing_matches_runtime(1, 3);
+    fn find_group_batch_schedule_rejects_multi_polynomial_precommitted_group() {
+        let policy = flat_policy();
+        let key = AkitaScheduleLookupKey {
+            final_group: PolynomialGroupLayout::new(40, 1),
+            precommitteds: vec![precommitted(3, 20)],
+        };
+
+        let err = find_group_batch_schedule(&key, &policy, ring_challenge_config, fold_shape)
+            .expect_err("multi-polynomial precommitted groups are not supported");
+        assert!(matches!(err, AkitaError::InvalidSetup(_)));
     }
 
     #[test]

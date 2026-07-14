@@ -130,8 +130,7 @@ pub use schedule::{
     schedule_root_fold_step, schedule_terminal_direct_witness_shape, scheduled_next_level_params,
     w_ring_element_count_for_chunks, w_ring_element_count_with_counts_for_layout,
     w_ring_element_count_with_counts_for_layout_bits, AkitaScheduleInputs, AkitaScheduleLookupKey,
-    DirectStep, ExecutionSchedule, FoldStep, PrecommittedGroupParams, Schedule,
-    ScheduleKeyPrecommitSource, Step,
+    DirectStep, ExecutionSchedule, FoldStep, PrecommittedGroupParams, Schedule, Step,
 };
 pub use setup_contribution::{
     ensure_setup_envelope, prepare_setup_contribution_artifact, setup_active_ring_elems_at,

@@ -5,6 +5,7 @@ use super::{
     GeneratedScheduleCatalogIdentity, GeneratedScheduleTableEntry, GeneratedStep,
     PolynomialGroupLayout, PrecommittedGroupParams, SisModulusFamily, TensorChallengeShape,
 };
+
 #[rustfmt::skip]
 pub(crate) static FP128_D64_ONEHOT_TENSOR_SCHEDULES: &[GeneratedScheduleTableEntry] = &[
     GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(1, 1), precommitteds: &[], steps: &[

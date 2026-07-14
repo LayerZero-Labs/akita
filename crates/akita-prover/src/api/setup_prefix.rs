@@ -228,8 +228,8 @@ mod tests {
     use akita_challenges::SparseChallengeConfig;
     use akita_field::Prime128Offset275 as F;
     use akita_types::{
-        active_setup_field_len, setup_prefix_precommitted_params, LevelParams, OpeningClaimsLayout,
-        SetupMatrixEnvelope, SisModulusFamily,
+        active_setup_field_len, padded_setup_prefix_len, setup_prefix_precommitted_params,
+        LevelParams, OpeningClaimsLayout, SetupMatrixEnvelope, SisModulusFamily,
     };
 
     fn prefix_level_params(ring_dimension: usize) -> LevelParams {
@@ -304,18 +304,15 @@ mod tests {
     }
 
     fn assert_commit_setup_prefix_populates_singleton_slot<const D: usize>() {
-        let level_params = prefix_level_params(D);
+        let mut level_params = prefix_level_params(D);
         let opening_batch = OpeningClaimsLayout::new(4, 1).expect("opening_batch");
-        let witness_ring_slots = level_params
-            .num_blocks
-            .checked_mul(level_params.block_len)
-            .expect("witness shape");
-        let n_prefix = witness_ring_slots.checked_mul(D).expect("prefix length");
         let natural_len =
             active_setup_field_len(&level_params, &opening_batch, D).expect("natural len");
-        if natural_len > n_prefix {
-            panic!("test fixture natural_len must fit padded prefix domain");
-        }
+        let n_prefix = padded_setup_prefix_len(natural_len);
+        level_params.num_blocks = 1;
+        level_params.block_len = n_prefix.checked_div(D).expect("prefix ring slots");
+        level_params.m_vars = 0;
+        level_params.r_vars = level_params.block_len.trailing_zeros() as usize;
         let mut setup = test_setup::<D>(&level_params, n_prefix);
         let backend = CpuBackend;
         let prepared = backend.prepare_setup(&setup).expect("prepared setup");

@@ -113,40 +113,48 @@ fn group_batch_schedule_preserves_precommitted_order() {
     const PRE_NV: usize = 8;
     const FINAL_NV: usize = PRE_NV * 2;
     const PRE_A_SIZE: usize = 1;
-    const PRE_B_SIZE: usize = 2;
+    const PRE_B_SIZE: usize = 1;
+    const PRE_C_SIZE: usize = 1;
     const MAIN_SIZE: usize = 4;
 
     let pre_a_key = akita_types::PolynomialGroupLayout::new(PRE_NV, PRE_A_SIZE);
     let pre_b_key = akita_types::PolynomialGroupLayout::new(PRE_NV, PRE_B_SIZE);
+    let pre_c_key = akita_types::PolynomialGroupLayout::new(PRE_NV, PRE_C_SIZE);
     let pre_a_opening_batch =
         OpeningClaimsLayout::new(PRE_NV, PRE_A_SIZE).expect("precommit A batch");
     let pre_b_opening_batch =
         OpeningClaimsLayout::new(PRE_NV, PRE_B_SIZE).expect("precommit B batch");
+    let pre_c_opening_batch =
+        OpeningClaimsLayout::new(PRE_NV, PRE_C_SIZE).expect("precommit C batch");
     let pre_a_layout =
         ConservativeOneHotCfg::get_params_for_batched_commitment(&pre_a_opening_batch)
             .expect("precommit A layout");
     let pre_b_layout =
         ConservativeOneHotCfg::get_params_for_batched_commitment(&pre_b_opening_batch)
             .expect("precommit B layout");
+    let pre_c_layout =
+        ConservativeOneHotCfg::get_params_for_batched_commitment(&pre_c_opening_batch)
+            .expect("precommit C layout");
     let pre_a_polys = [debug_make_onehot_poly(&pre_a_layout, 0x0bee_fcaf_9a77_3001)];
-    let pre_b_polys = [
-        debug_make_onehot_poly(&pre_b_layout, 0x0bee_fcaf_9a77_4001),
-        debug_make_onehot_poly(&pre_b_layout, 0x0bee_fcaf_9a77_4002),
-    ];
+    let pre_b_polys = [debug_make_onehot_poly(&pre_b_layout, 0x0bee_fcaf_9a77_4001)];
+    let pre_c_polys = [debug_make_onehot_poly(&pre_c_layout, 0x0bee_fcaf_9a77_4002)];
 
     with_conservative_commit_stack(
         FINAL_NV,
-        PRE_A_SIZE + PRE_B_SIZE + MAIN_SIZE,
+        PRE_A_SIZE + PRE_B_SIZE + PRE_C_SIZE + MAIN_SIZE,
         |setup, stack| {
             ConservativeCommitter::commit(setup, &pre_a_polys, stack).expect("precommit A");
             ConservativeCommitter::commit(setup, &pre_b_polys, stack).expect("precommit B");
+            ConservativeCommitter::commit(setup, &pre_c_polys, stack).expect("precommit C");
             let pre_a_frozen =
                 akita_types::PrecommittedGroupParams::from_params(pre_a_key, &pre_a_layout);
             let pre_b_frozen =
                 akita_types::PrecommittedGroupParams::from_params(pre_b_key, &pre_b_layout);
+            let pre_c_frozen =
+                akita_types::PrecommittedGroupParams::from_params(pre_c_key, &pre_c_layout);
             let multi_group_key = akita_types::AkitaScheduleLookupKey {
                 final_group: akita_types::PolynomialGroupLayout::new(FINAL_NV, MAIN_SIZE),
-                precommitteds: vec![pre_a_frozen, pre_b_frozen],
+                precommitteds: vec![pre_a_frozen, pre_b_frozen, pre_c_frozen],
             };
 
             let schedule = OneHotCfg::runtime_schedule(multi_group_key.clone())
@@ -155,17 +163,18 @@ fn group_batch_schedule_preserves_precommitted_order() {
             let main_params = akita_types::multi_group_root_commit_params(&schedule)
                 .expect("main multi-group commit params");
 
-            assert_eq!(multi_group_key.num_commitment_groups(), 3);
+            assert_eq!(multi_group_key.num_commitment_groups(), 4);
             assert_eq!(
                 multi_group_key
                     .num_polynomials()
                     .expect("multi-group polynomial count"),
-                PRE_A_SIZE + PRE_B_SIZE + MAIN_SIZE
+                PRE_A_SIZE + PRE_B_SIZE + PRE_C_SIZE + MAIN_SIZE
             );
             assert_eq!(main_params, *root);
-            assert_eq!(root.precommitted_groups.len(), 2);
+            assert_eq!(root.precommitted_groups.len(), 3);
             assert_eq!(root.precommitted_groups[0].layout, pre_a_frozen);
             assert_eq!(root.precommitted_groups[1].layout, pre_b_frozen);
+            assert_eq!(root.precommitted_groups[2].layout, pre_c_frozen);
         },
     );
 }
@@ -474,7 +483,7 @@ fn multi_group_root_folded_unequal_one_three_round_trips() {
 
 #[test]
 fn multi_group_root_folded_unequal_two_one_round_trips() {
-    multi_group_root_round_trip_onehot(&[2], 1, akita_types::SetupContributionMode::Direct);
+    multi_group_root_round_trip_onehot(&[1, 1], 1, akita_types::SetupContributionMode::Direct);
 }
 
 #[test]
@@ -509,16 +518,6 @@ fn multi_group_root_folded_two_group_onehot_round_trips() {
         final_group: akita_types::PolynomialGroupLayout::new(FINAL_NV, FINAL_SIZE),
         precommitteds: vec![pre_frozen],
     };
-    let multi_group_opening_layout = OpeningClaimsLayout::from_groups(vec![
-        akita_types::PolynomialGroupLayout::new(PRE_NV, PRE_SIZE),
-        akita_types::PolynomialGroupLayout::new(FINAL_NV, FINAL_SIZE),
-    ])
-    .expect("multi-group opening layout");
-    assert_eq!(
-        akita_config::opening_schedule_key::<OneHotCfg>(&multi_group_opening_layout)
-            .expect("opening schedule key"),
-        multi_group_key
-    );
     let multi_group_schedule =
         OneHotCfg::runtime_schedule(multi_group_key).expect("multi-group runtime schedule");
     let final_layout = multi_group_root_params(&multi_group_schedule);

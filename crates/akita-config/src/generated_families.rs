@@ -23,7 +23,10 @@ use akita_types::{
 
 use crate::conservative_commitment::conservative_commit_params;
 use crate::proof_optimized::{fp128, fp32, fp64};
-use crate::{policy_of, tensor_verifier, CommitmentConfig, RecursiveCommitmentConfig};
+use crate::{
+    policy_of, tensor_verifier, CommitmentConfig, ConservativeCommitmentConfig,
+    RecursiveCommitmentConfig,
+};
 
 /// Default batched opening sizes emitted for every Akita shipped family.
 pub const DEFAULT_NUM_POLYS: &[usize] = &[1, 4];
@@ -98,24 +101,28 @@ pub fn family_keys(family: &GeneratedFamily) -> Result<Vec<PolynomialGroupLayout
 
 /// Pure DP regeneration for `Cfg` — never consults the shipped table.
 fn regen<Cfg: CommitmentConfig>(key: PolynomialGroupLayout) -> Result<Schedule, AkitaError> {
-    find_group_batch_schedule(
+    let schedule = find_group_batch_schedule(
         &AkitaScheduleLookupKey::single(key),
         &policy_of::<Cfg>(),
         Cfg::ring_challenge_config,
         Cfg::fold_challenge_shape_at_level,
-    )
+    )?;
+    schedule.validate_structure()?;
+    Ok(schedule)
 }
 
 /// Pure multi-group DP regeneration for `Cfg` — never consults the shipped table.
 fn regen_group_batch<Cfg: CommitmentConfig>(
     key: AkitaScheduleLookupKey,
 ) -> Result<Schedule, AkitaError> {
-    find_group_batch_schedule(
+    let schedule = find_group_batch_schedule(
         &key,
         &policy_of::<Cfg>(),
         Cfg::ring_challenge_config,
         Cfg::fold_challenge_shape_at_level,
-    )
+    )?;
+    schedule.validate_structure()?;
+    Ok(schedule)
 }
 
 /// Table-backed resolution for `Cfg` — table hit when present, otherwise
@@ -177,24 +184,12 @@ fn group_batch_keys<Cfg: CommitmentConfig>(
     Ok(keys)
 }
 
-// Keep the shipped catalog bounded to representative one- and two-group roots.
-// Other valid independent group arities continue through the runtime DP fallback.
-fn precommitted_group_patterns(main_num_polynomials: usize) -> Vec<Vec<usize>> {
-    let first_group = 1usize;
-    let second_group = (main_num_polynomials / 2).max(1);
-    let mut patterns = vec![vec![first_group]];
-    if DEFAULT_GROUP_BATCH_MAX_PRECOMMITTED_GROUPS >= 2 {
-        patterns.push(vec![first_group, second_group]);
-    }
-    patterns
-}
-
 fn recursive_profile_group_batch_keys(
     _family: &GeneratedFamily,
 ) -> Result<Vec<AkitaScheduleLookupKey>, AkitaError> {
     let precommitted_group = PolynomialGroupLayout::new(16, 1);
     let precommitted_params = conservative_commit_params::<
-        RecursiveCommitmentConfig<fp128::D64OneHot>,
+        ConservativeCommitmentConfig<fp128::D64OneHot>,
     >(&precommitted_group)?;
     let precommitted =
         PrecommittedGroupParams::from_params(precommitted_group, &precommitted_params);
@@ -237,9 +232,9 @@ pub fn recursive_group_batch_candidates_for_capacity<Cfg: CommitmentConfig>(
     let min_precommitted_num_vars =
         (policy_of::<Cfg>().ring_dimension.trailing_zeros() as usize).saturating_add(1);
     let mut keys = Vec::new();
-    // Cover every final poly count inside capacity. Catalog emission still uses
-    // DEFAULT_NUM_POLYS; setup materialization must not miss sizes such as K=2
-    // that the recursive profiling key uses.
+    // Cover every final poly count inside capacity. Precommitted groups are
+    // singleton-polynomial only; capacity is enforced on total polynomial count
+    // below.
     for final_num_polynomials in 1..=max_num_batched_polys {
         for final_num_vars in 1..=max_num_vars {
             let main = PolynomialGroupLayout::new(final_num_vars, final_num_polynomials);
@@ -247,11 +242,11 @@ pub fn recursive_group_batch_candidates_for_capacity<Cfg: CommitmentConfig>(
             if pre_num_vars < min_precommitted_num_vars {
                 continue;
             }
-            for pattern in precommitted_group_patterns(final_num_polynomials) {
-                let mut precommitteds = Vec::with_capacity(pattern.len());
+            for num_precommitted in 1..=DEFAULT_GROUP_BATCH_MAX_PRECOMMITTED_GROUPS {
+                let mut precommitteds = Vec::with_capacity(num_precommitted);
                 let mut supported = true;
-                for &num_polys in &pattern {
-                    let pre_key = PolynomialGroupLayout::new(pre_num_vars, num_polys);
+                for _ in 0..num_precommitted {
+                    let pre_key = PolynomialGroupLayout::new(pre_num_vars, 1);
                     match conservative_commit_params::<Cfg>(&pre_key) {
                         Ok(params) => {
                             precommitteds
@@ -278,69 +273,6 @@ pub fn recursive_group_batch_candidates_for_capacity<Cfg: CommitmentConfig>(
     }
     keys.sort_by(akita_planner::runtime_schedule_key_cmp);
     Ok(keys)
-}
-
-/// Representative multi-group recursive keys inside `capacity`, discovered by DP.
-///
-/// Catalog shipping may keep a smaller profile set (`recursive_profile_group_batch_keys`).
-/// Setup-prefix materialization covers capacity-feasible representative patterns
-/// (final poly counts `1..=max_num_batched_polys`) independent of whether a
-/// recursive schedule catalog feature is enabled.
-fn enumerate_recursive_group_batch_keys_for_capacity<Cfg: CommitmentConfig>(
-    max_num_vars: usize,
-    max_num_batched_polys: usize,
-) -> Result<Vec<AkitaScheduleLookupKey>, AkitaError> {
-    let mut keys = Vec::new();
-    for candidate in
-        recursive_group_batch_candidates_for_capacity::<Cfg>(max_num_vars, max_num_batched_polys)?
-    {
-        if regen_group_batch::<Cfg>(candidate.clone()).is_ok() {
-            keys.push(candidate);
-        }
-    }
-    Ok(keys)
-}
-
-/// Genuine multi-group recursive schedule keys supported for setup-prefix
-/// materialization within the declared capacity bounds.
-///
-/// For catalog-backed families this still reads the family's emitted group-batch
-/// key set. Prefer [`recursive_setup_schedule_keys_for_cfg`] for setup construction.
-pub fn setup_supported_recursive_keys_for_family(
-    family: &GeneratedFamily,
-    max_num_vars: usize,
-    max_num_batched_polys: usize,
-) -> Result<Vec<AkitaScheduleLookupKey>, AkitaError> {
-    if !family.emit_group_batch {
-        return Ok(Vec::new());
-    }
-    let mut keys = Vec::new();
-    for key in (family.group_batch_keys)(family)? {
-        if key_within_setup_capacity(&key, max_num_vars, max_num_batched_polys)? {
-            keys.push(key);
-        }
-    }
-    keys.sort_by(akita_planner::runtime_schedule_key_cmp);
-    Ok(keys)
-}
-
-/// Canonical recursive setup schedule keys for the shipped recursive family.
-pub fn recursive_setup_schedule_keys_for_capacity(
-    max_num_vars: usize,
-    max_num_batched_polys: usize,
-) -> Result<Vec<AkitaScheduleLookupKey>, AkitaError> {
-    enumerate_recursive_group_batch_keys_for_capacity::<RecursiveCommitmentConfig<fp128::D64OneHot>>(
-        max_num_vars,
-        max_num_batched_polys,
-    )
-}
-
-/// Recursive setup schedule keys selected for one recursive config preset.
-pub fn recursive_setup_schedule_keys_for_cfg<Cfg: CommitmentConfig>(
-    max_num_vars: usize,
-    max_num_batched_polys: usize,
-) -> Result<Vec<AkitaScheduleLookupKey>, AkitaError> {
-    enumerate_recursive_group_batch_keys_for_capacity::<Cfg>(max_num_vars, max_num_batched_polys)
 }
 
 macro_rules! family_row {

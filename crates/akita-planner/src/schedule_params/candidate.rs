@@ -477,6 +477,20 @@ pub(crate) fn derive_candidate_level_params(
         let mut candidate_params = candidate_params;
         candidate_params.setup_prefix = setup_prefix.clone();
         candidate_params.setup_contribution_mode = SetupContributionMode::Direct;
+        if let Some(prefix) = &candidate_params.setup_prefix {
+            let prefix_d_width = prefix.commitment_params.d_segment_width()?;
+            let total_d_width = candidate_params
+                .d_key
+                .col_len()
+                .checked_add(prefix_d_width)
+                .ok_or_else(|| {
+                    AkitaError::InvalidSetup("setup-prefix shared D width overflow".to_string())
+                })?;
+            candidate_params.d_key = AjtaiKeyParams::try_new_with_min_rank(
+                candidate_params.d_key.sis_table_key(),
+                total_d_width,
+            )?;
+        }
         let next_witness_len = planned_next_witness_len(
             policy.decomposition.field_bits(),
             &candidate_params,

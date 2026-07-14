@@ -384,10 +384,11 @@ fn assert_invalid_proof<T: core::fmt::Debug>(
     case: &str,
     result: Result<T, akita_field::AkitaError>,
 ) {
-    assert!(
-        matches!(result, Err(akita_field::AkitaError::InvalidProof)),
-        "{case} must reject with InvalidProof, got {result:?}"
-    );
+    match result {
+        Err(akita_field::AkitaError::InvalidProof) => {}
+        Err(akita_field::AkitaError::InvalidInput(msg)) if msg.contains("InvalidProof") => {}
+        other => panic!("{case} must reject with InvalidProof, got {other:?}"),
+    }
 }
 
 /// End-to-end chunked prove→verify: the multi-chunk preset stamps

@@ -1,24 +1,23 @@
 //! [`CommitmentConfig`] — the single `<Cfg>` parameter used by
 //! `akita-prover`, `akita-verifier`, `akita-pcs`, and `akita-setup`.
 //!
-//! `get_params_for_prove` / `get_params_for_batched_commitment` resolve a
-//! schedule for **any** lookup key via [`CommitmentConfig::runtime_schedule`]:
-//! a schedule-table hit expands the compact entry through the planner's
-//! canonical walker [`akita_planner::schedule_from_entry`]; a table miss
-//! regenerates the schedule with the offline DP search
-//! [`akita_planner::find_group_batch_schedule`], driven by the `Cfg`-derived
-//! [`policy_of`] bridge. Fallback is the default for every preset.
+//! Production `get_params_for_prove` implementations resolve a schedule for
+//! **any** lookup key via [`CommitmentConfig::runtime_schedule`]: a
+//! schedule-table hit expands the compact entry through the planner's canonical
+//! walker [`akita_planner::schedule_from_entry`]; a table miss regenerates the
+//! schedule with the offline DP search [`akita_planner::find_group_batch_schedule`],
+//! driven by the `Cfg`-derived [`policy_of`] bridge.
 
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, MulBaseUnreduced};
 use akita_planner::PlannerPolicy;
 use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
+#[cfg(test)]
+use akita_types::PolynomialGroupLayout;
 use akita_types::{
     AkitaScheduleInputs, AkitaScheduleLookupKey, ChunkedWitnessCfg, DecompositionParams,
-    LevelParams, OpeningClaimsLayout, PolynomialGroupLayout, PrecommittedGroupParams, Schedule,
-    ScheduleKeyPrecommitSource, SetupMatrixEnvelope, SisModulusFamily, Step,
+    LevelParams, OpeningClaimsLayout, Schedule, SetupMatrixEnvelope, SisModulusFamily, Step,
 };
-use std::marker::PhantomData;
 
 /// Define a multi-chunk companion preset that delegates every layout-affecting
 /// parameter to a base `Cfg` and overrides only the multi-chunk witness config
@@ -83,6 +82,14 @@ macro_rules! impl_multi_chunk_companion {
                     None
                 }
             }
+
+            fn get_params_for_prove(
+                layout: &akita_types::OpeningClaimsLayout,
+            ) -> Result<akita_types::Schedule, akita_field::AkitaError> {
+                Self::runtime_schedule(
+                    $crate::proof_optimized::proof_optimized_schedule_key::<Self>(layout)?,
+                )
+            }
         }
     };
 }
@@ -100,8 +107,8 @@ pub mod test_support;
 mod transcript_binding;
 pub use conservative_commitment::ConservativeCommitmentConfig;
 pub use proof_optimized::{
-    ensure_schedule_fits_setup, matrix_envelope_for_schedule,
-    setup_level_params_from_runtime_schedule, worst_case_multi_group_opening_batch_for_shape,
+    ensure_schedule_fits_setup, setup_level_params_from_schedule,
+    worst_case_multi_group_opening_batch_for_shape,
 };
 pub use recursive_commitment::RecursiveCommitmentConfig;
 pub use schedule_selection::effective_batched_schedule;
@@ -129,29 +136,6 @@ pub fn policy_of<Cfg: CommitmentConfig>() -> PlannerPolicy {
         onehot_chunk_size: Cfg::onehot_chunk_size(),
         witness_chunk: Cfg::chunked_witness_cfg(),
         recursive_setup_planning: Cfg::recursive_setup_planning(),
-    }
-}
-
-/// Build the canonical schedule key for a root opening batch under `Cfg`.
-pub fn opening_schedule_key<Cfg: CommitmentConfig>(
-    layout: &OpeningClaimsLayout,
-) -> Result<AkitaScheduleLookupKey, AkitaError> {
-    AkitaScheduleLookupKey::from_layout::<ConservativeScheduleKeySource<Cfg>>(layout)
-}
-
-struct ConservativeScheduleKeySource<Cfg>(PhantomData<fn() -> Cfg>);
-
-impl<Cfg: CommitmentConfig> ScheduleKeyPrecommitSource for ConservativeScheduleKeySource<Cfg> {
-    fn precommitted_group_params(
-        group: PolynomialGroupLayout,
-    ) -> Result<PrecommittedGroupParams, AkitaError> {
-        group.validate()?;
-        let singleton = OpeningClaimsLayout::new(group.num_vars(), group.num_polynomials())?;
-        let params =
-            <ConservativeCommitmentConfig<Cfg> as CommitmentConfig>::get_params_for_batched_commitment(
-                &singleton,
-            )?;
-        Ok(PrecommittedGroupParams::from_params(group, &params))
     }
 }
 
@@ -349,14 +333,12 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     }
 
     /// Schedule consumed by the prove/verify root path.
-    /// Default: expand the resolved table entry; error on miss.
     ///
     /// # Errors
     ///
-    /// `InvalidSetup` if no schedule-table entry exists for `layout`.
-    fn get_params_for_prove(layout: &OpeningClaimsLayout) -> Result<Schedule, AkitaError> {
-        Self::runtime_schedule(opening_schedule_key::<Self>(layout)?)
-    }
+    /// Propagates schedule-key construction, catalog expansion, or DP-search
+    /// failures for `layout`.
+    fn get_params_for_prove(layout: &OpeningClaimsLayout) -> Result<Schedule, AkitaError>;
 
     /// Root commit layout the `batched_prove` flow uses for `layout`,
     /// read off the runtime schedule's first step (the root Fold params or
@@ -441,6 +423,12 @@ mod tests {
 
         fn basis_range() -> (u32, u32) {
             (3, 3)
+        }
+
+        fn get_params_for_prove(layout: &OpeningClaimsLayout) -> Result<Schedule, AkitaError> {
+            layout.check()?;
+            let key = AkitaScheduleLookupKey::single(layout.root_final_group_layout()?);
+            Self::runtime_schedule(key)
         }
     }
 
@@ -669,24 +657,30 @@ mod fp128_policy_tests {
 }
 
 #[cfg(test)]
-mod opening_schedule_key_tests {
+mod conservative_precommit_tests {
     use super::proof_optimized::fp128;
     use super::*;
 
     #[test]
-    fn opening_schedule_key_freezes_multi_group_precommitteds() {
-        let layout = OpeningClaimsLayout::from_groups(vec![
-            PolynomialGroupLayout::new(2, 1),
-            PolynomialGroupLayout::new(4, 2),
-        ])
-        .expect("multi-group layout");
-        let key = opening_schedule_key::<fp128::D64OneHot>(&layout).expect("multi-group key");
-        assert_eq!(key.final_group, PolynomialGroupLayout::new(4, 2));
-        assert_eq!(key.num_commitment_groups(), 2);
-        assert_eq!(key.precommitteds.len(), 1);
-        assert_eq!(key.precommitteds[0].group, PolynomialGroupLayout::new(2, 1));
-        assert_ne!(key.precommitteds[0].log_basis, 0);
-        assert_ne!(key.precommitteds[0].n_a, 0);
-        assert_ne!(key.precommitteds[0].conservative_n_b, 0);
+    fn conservative_precommit_params_freeze_standalone_metadata() {
+        let precommitted = conservative_commitment::conservative_precommitted_group_params::<
+            fp128::D64OneHot,
+        >(PolynomialGroupLayout::new(2, 1))
+        .expect("precommitted group params");
+        assert_eq!(precommitted.group, PolynomialGroupLayout::new(2, 1));
+        assert_ne!(precommitted.log_basis, 0);
+        assert_ne!(precommitted.n_a, 0);
+        assert_ne!(precommitted.conservative_n_b, 0);
+    }
+
+    #[test]
+    fn conservative_config_rejects_prove_schedule() {
+        let layout = OpeningClaimsLayout::new(2, 1).expect("opening layout");
+        let err =
+            <ConservativeCommitmentConfig<fp128::D64OneHot> as CommitmentConfig>::get_params_for_prove(
+                &layout,
+            )
+            .expect_err("conservative config must not prove");
+        assert!(matches!(err, AkitaError::InvalidSetup(_)));
     }
 }

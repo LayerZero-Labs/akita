@@ -295,7 +295,8 @@ where
     commitment.append_flat_to_transcript::<T>(ABSORB_COMMITMENT, commit_d, transcript)?;
 
     let alpha = role_dims.d_a().trailing_zeros() as usize;
-    let needs_extension_reduction = <E as ExtField<F>>::EXT_DEGREE != 1;
+    let needs_extension_reduction =
+        <E as ExtField<F>>::EXT_DEGREE != 1 && level_params.setup_prefix.is_none();
     let recursive_num_vars = level_params.recursive_opening_num_vars()?;
     let witness_source = RecursiveFoldSource::witness(&w);
     let logical_witness_source = RecursiveFoldSource::witness(logical_w);
