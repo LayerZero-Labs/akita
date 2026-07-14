@@ -276,16 +276,9 @@ fn push_unique_schedule_key(
     keys: &mut Vec<AkitaScheduleLookupKey>,
     candidate: AkitaScheduleLookupKey,
 ) {
-    let already_present = keys.iter().any(|existing| {
-        existing.final_group == candidate.final_group
-            && existing.precommitteds.len() == candidate.precommitteds.len()
-            && existing
-                .precommitteds
-                .iter()
-                .zip(candidate.precommitteds.iter())
-                .all(|(left, right)| left.group == right.group)
-    });
-    if !already_present {
+    // Full-key equality: same group shapes with different frozen precommit
+    // metadata (log_basis / n_a / conservative_n_b) stay distinct.
+    if !keys.contains(&candidate) {
         keys.push(candidate);
     }
 }

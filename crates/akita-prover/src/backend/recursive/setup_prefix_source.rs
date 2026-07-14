@@ -416,11 +416,12 @@ where
             RecursiveFoldView::SetupPrefix { .. } => Err(AkitaError::InvalidSetup(
                 "setup-prefix grouped suffix does not support extension tensor packing".to_string(),
             )),
-            RecursiveFoldView::Witness(view) => {
-                <CpuBackend as TensorProjectionKernel<SuffixWitnessView<'_, F, D>, F, E, D>>::packed_witness(
-                    self, prepared, view,
-                )
-            }
+            RecursiveFoldView::Witness(view) => <CpuBackend as TensorProjectionKernel<
+                SuffixWitnessView<'_, F, D>,
+                F,
+                E,
+                D,
+            >>::packed_witness(self, prepared, view),
         }
     }
 
@@ -462,8 +463,7 @@ where
         E: MulBaseUnreduced<F>,
     {
         let witnesses = recursive_fold_batch_witnesses(source)?;
-        let batch =
-            <RecursiveWitnessFlat as RootTensorSource<F, D>>::tensor_batch(&witnesses)?;
+        let batch = <RecursiveWitnessFlat as RootTensorSource<F, D>>::tensor_batch(&witnesses)?;
         <CpuBackend as TensorProjectionBatchKernel<SuffixWitnessBatchView<'_, F, D>, F, E, D>>::column_partials_batch(
             self, prepared, batch, logical_point,
         )
@@ -476,8 +476,7 @@ where
         coeffs: &[E],
     ) -> Result<Option<SparseExtensionOpeningWitness<E>>, AkitaError> {
         let witnesses = recursive_fold_batch_witnesses(source)?;
-        let batch =
-            <RecursiveWitnessFlat as RootTensorSource<F, D>>::tensor_batch(&witnesses)?;
+        let batch = <RecursiveWitnessFlat as RootTensorSource<F, D>>::tensor_batch(&witnesses)?;
         <CpuBackend as TensorProjectionBatchKernel<SuffixWitnessBatchView<'_, F, D>, F, E, D>>::sparse_linear_combination(
             self, prepared, batch, coeffs,
         )
