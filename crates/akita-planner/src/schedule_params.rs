@@ -447,11 +447,11 @@ pub(crate) fn derive_optimal_suffix_schedule(
     let (configured_min_log_basis, max_log_basis) = policy.basis_range;
     let min_log_basis = configured_min_log_basis
         .max(policy.decomposition.log_basis)
-        .max(
-            (policy.decomposition.field_bits() < 128)
-                .then_some(5)
-                .unwrap_or(0),
-        );
+        .max(if policy.decomposition.field_bits() < 128 {
+            5
+        } else {
+            0
+        });
     for lb in min_log_basis..=max_log_basis {
         if lb < current_lb {
             continue;
@@ -855,11 +855,11 @@ fn find_schedule_inner(
     let (configured_min_log_basis, max_log_basis) = policy.basis_range;
     let min_log_basis = configured_min_log_basis
         .max(policy.decomposition.log_basis)
-        .max(
-            (policy.decomposition.field_bits() < 128)
-                .then_some(5)
-                .unwrap_or(0),
-        );
+        .max(if policy.decomposition.field_bits() < 128 {
+            5
+        } else {
+            0
+        });
     for candidate_log_basis in min_log_basis..=max_log_basis {
         let level_decomp = DecompositionParams {
             log_basis: candidate_log_basis,

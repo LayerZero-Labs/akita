@@ -745,10 +745,10 @@ def extract_summary(
                 "n_d": int(kvs["n_d"]),
                 "challenge_l1_mass": int(kvs["challenge_l1_mass"]),
                 "log_basis": int(kvs["log_basis"]),
-                "m_vars": int(kvs["m_vars"]),
-                "r_vars": int(kvs["r_vars"]),
-                "num_blocks": int(kvs["num_blocks"]),
-                "block_len": int(kvs["block_len"]),
+                "position_bits": int(kvs["position_bits"]),
+                "fold_bits": int(kvs["fold_bits"]),
+                "fold_position_count": int(kvs["fold_position_count"]),
+                "live_fold_count": int(kvs["live_fold_count"]),
                 "delta_commit": int(kvs["delta_commit"]),
                 "delta_open": int(kvs["delta_open"]),
                 "delta_fold": int(kvs["delta_fold"]),
@@ -1537,15 +1537,17 @@ def render_planned_levels(levels: list[dict[str, object]]) -> None:
     print("<summary>Per-level parameters</summary>")
     print()
     print(
-        "| L | Config | D | nA | nB | nD | lb | l1 | m | r | "
+        "| L | Config | D | nA | nB | nD | lb | l1 | position bits | fold bits | positions | live folds | "
         "δcommit | δopen | δfold | next w (ring) | next w (field) | planned bytes |"
     )
-    print("| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |")
+    print("| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |")
     for level in levels:
         print(
             f"| L{level['level']} | `D{level['d']}-na{level['n_a']}` | "
             f"{level['d']} | {level['n_a']} | {level['n_b']} | {level['n_d']} | "
-            f"{level['log_basis']} | {level['challenge_l1_mass']} | {level['m_vars']} | {level['r_vars']} | "
+            f"{level['log_basis']} | {level['challenge_l1_mass']} | "
+            f"{level['position_bits']} | {level['fold_bits']} | "
+            f"{level['fold_position_count']} | {level['live_fold_count']} | "
             f"{level['delta_commit']} | {level['delta_open']} | {level['delta_fold']} | "
             f"{fmt_count(float(level['next_w_ring']))} | {fmt_count(float(level['next_w_len']))} | "
             f"{fmt_bytes(float(level['level_bytes']))} B |"

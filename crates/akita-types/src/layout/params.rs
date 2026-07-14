@@ -13,7 +13,12 @@ use crate::opening_claims::OpeningClaimsLayout;
 
 pub use crate::sis::{AjtaiKeyParams, FoldWitnessLinfCapConfig, SisModulusFamily};
 
+mod descriptor;
 mod precommitted;
+use descriptor::{
+    append_fold_linf_policy_descriptor_bytes, append_sparse_challenge_descriptor_bytes,
+    append_tensor_challenge_shape_descriptor_bytes,
+};
 pub use precommitted::{LevelParamsLike, PrecommittedLevelParams};
 
 /// Per-level M-matrix row layout selector.
@@ -1289,36 +1294,6 @@ impl LevelParams {
             role_dims: other.role_dims,
         }
         .with_fold_linf_cap_config(field_bits, 0)
-    }
-}
-
-fn append_sparse_challenge_descriptor_bytes(bytes: &mut Vec<u8>, config: &SparseChallengeConfig) {
-    bytes.push(0);
-    push_usize(bytes, config.count_pm1);
-    push_usize(bytes, config.count_pm2);
-}
-
-fn append_fold_linf_policy_descriptor_bytes(
-    bytes: &mut Vec<u8>,
-    policy: crate::sis::FoldWitnessLinfCapPolicy,
-) {
-    bytes.push(match policy {
-        crate::sis::FoldWitnessLinfCapPolicy::TailBoundWithGrind => 0,
-        crate::sis::FoldWitnessLinfCapPolicy::WorstCaseBetaOnly => 1,
-        crate::sis::FoldWitnessLinfCapPolicy::TensorTailBoundWithGrind => 2,
-    });
-}
-
-fn append_tensor_challenge_shape_descriptor_bytes(
-    bytes: &mut Vec<u8>,
-    shape: TensorChallengeShape,
-) {
-    match shape {
-        TensorChallengeShape::Flat => bytes.push(0),
-        TensorChallengeShape::Tensor { fold_low_len } => {
-            bytes.push(1);
-            push_usize(bytes, fold_low_len);
-        }
     }
 }
 

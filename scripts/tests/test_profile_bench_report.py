@@ -96,6 +96,42 @@ class ProfileBenchReportTests(unittest.TestCase):
         self.assertEqual(summary["z_rice_low_bits_cap"], 12)
         self.assertAlmostEqual(summary["z_bits_per_coord_golomb"], 12.5)
 
+    def test_planned_fold_level_parses_physical_geometry(self) -> None:
+        from scripts.profile_bench_report import extract_summary
+
+        log = (
+            'INFO planned fold level label=onehot_fp128_d64 level=0 d=64 n_a=2 n_b=3 n_d=4 '
+            'challenge_l1_mass=8 log_basis=5 position_bits=7 fold_bits=3 '
+            'live_fold_count=6 fold_position_count=128 delta_commit=4 delta_open=5 '
+            'delta_fold=6 current_w_len=1024 next_w_ring=32 next_w_len=2048 level_bytes=4096\n'
+        )
+
+        summary = extract_summary(log, mode="onehot_fp128_d64", num_vars=24, num_polys=1)
+
+        self.assertEqual(
+            summary["planned_levels"][0],
+            {
+                "level": 0,
+                "d": 64,
+                "n_a": 2,
+                "n_b": 3,
+                "n_d": 4,
+                "challenge_l1_mass": 8,
+                "log_basis": 5,
+                "position_bits": 7,
+                "fold_bits": 3,
+                "fold_position_count": 128,
+                "live_fold_count": 6,
+                "delta_commit": 4,
+                "delta_open": 5,
+                "delta_fold": 6,
+                "current_w_len": 1024,
+                "next_w_ring": 32,
+                "next_w_len": 2048,
+                "level_bytes": 4096,
+            },
+        )
+
     def test_configured_cases_treats_setup_mode_as_case_dimension(self) -> None:
         from scripts.profile_bench_report import configured_cases
 
