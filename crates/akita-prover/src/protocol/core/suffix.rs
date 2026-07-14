@@ -10,6 +10,7 @@ use akita_field::unreduced::ReduceTo;
 use akita_field::AdditiveGroup;
 use akita_types::schedule_terminal_direct_witness_shape;
 use akita_types::terminal_golomb_grind_tail_t_vectors;
+use std::sync::Arc;
 
 /// Prover state carried between suffix fold levels.
 pub struct SuffixProverState<F: FieldCore, E: FieldCore> {
@@ -151,7 +152,7 @@ where
             stack.ensure_fold_level_role_ntt(expanded.as_ref(), role_dims)?;
             prepare_suffix::<Cfg::Field, Cfg::ExtField, T, C, O, TS, R>(
                 stack,
-                expanded.as_ref(),
+                expanded,
                 prefix_slots,
                 transcript,
                 current_state,
@@ -225,7 +226,7 @@ where
 #[inline(never)]
 pub(in crate::protocol::core) fn prepare_suffix<F, E, T, C, O, TS, R>(
     stack: &ProverComputeStack<'_, F, C, O, TS, R>,
-    expanded: &AkitaExpandedSetup<F>,
+    expanded: &Arc<AkitaExpandedSetup<F>>,
     prefix_slots: &SetupPrefixProverRegistry<F>,
     transcript: &mut T,
     current_state: SuffixProverState<F, E>,
@@ -273,7 +274,10 @@ where
         setup_prefix_opening,
         ..
     } = current_state;
-    let logical_w = optional_logical_w.as_ref().unwrap_or(&w);
+    let witness = Arc::new(w);
+    let logical_witness = optional_logical_w
+        .map(Arc::new)
+        .unwrap_or_else(|| Arc::clone(&witness));
     let role_dims = level_params.role_dims();
     let commit_d = role_dims.d_b();
     if !commitment.can_decode_vec(commit_d) {
@@ -298,8 +302,8 @@ where
     let needs_extension_reduction =
         <E as ExtField<F>>::EXT_DEGREE != 1 && level_params.setup_prefix.is_none();
     let recursive_num_vars = level_params.recursive_opening_num_vars()?;
-    let witness_source = RecursiveFoldSource::witness(&w);
-    let logical_witness_source = RecursiveFoldSource::witness(logical_w);
+    let witness_source = RecursiveFoldSource::witness(Arc::clone(&witness));
+    let logical_witness_source = RecursiveFoldSource::witness(logical_witness);
     let witness_polys = [&witness_source];
     let setup_slot = level_params
         .setup_prefix
@@ -312,11 +316,12 @@ where
             })
         })
         .transpose()?;
-    let setup_source_storage =
-        setup_slot.map(|slot| RecursiveFoldSource::setup_prefix(expanded, slot));
+    let setup_source_storage = setup_slot.map(|slot| {
+        RecursiveFoldSource::setup_prefix(Arc::clone(expanded), Arc::new(slot.clone()))
+    });
     let setup_polys_storage = setup_source_storage.as_ref().map(|source| [source]);
     let (fold_claims, eor_opening_batch, protocol_point) =
-        ProverOpeningData::<E, RecursiveFoldSource<F>, F>::new_recursive_suffix_fold(
+        ProverOpeningData::new_recursive_suffix_fold(
             opening_point,
             recursive_num_vars,
             setup_prefix_opening,
@@ -332,7 +337,7 @@ where
         .chain(std::iter::once(&logical_witness_source))
         .collect::<Vec<_>>();
 
-    prepare_fold_inner::<F, E, T, RecursiveFoldSource<F>, _, C, O, TS, R>(
+    prepare_fold_inner::<F, E, T, _, _, C, O, TS, R>(
         stack,
         needs_extension_reduction,
         fold_claims,

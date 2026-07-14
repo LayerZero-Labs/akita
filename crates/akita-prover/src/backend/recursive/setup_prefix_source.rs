@@ -1,5 +1,5 @@
 use std::array::from_fn;
-use std::ptr::NonNull;
+use std::sync::Arc;
 
 use akita_algebra::ring::cyclotomic::decompose_centering_threshold;
 use akita_algebra::CyclotomicRing;
@@ -24,34 +24,25 @@ use crate::protocol::extension_opening_reduction::SparseExtensionOpeningWitness;
 use crate::RootTensorProjectionPoly;
 
 #[doc(hidden)]
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub enum RecursiveFoldSource<F: FieldCore> {
     SetupPrefix {
-        expanded: NonNull<AkitaExpandedSetup<F>>,
-        slot: NonNull<SetupPrefixSlot<F>>,
+        expanded: Arc<AkitaExpandedSetup<F>>,
+        slot: Arc<SetupPrefixSlot<F>>,
     },
-    Witness(NonNull<RecursiveWitnessFlat>),
+    Witness(Arc<RecursiveWitnessFlat>),
 }
-
-// The enum stores immutable pointers created from live references in the suffix
-// prover immediately before the opening kernels run. The pointed-to setup,
-// prefix slot, and witness objects are not mutated through this source.
-unsafe impl<F: FieldCore> Send for RecursiveFoldSource<F> {}
-unsafe impl<F: FieldCore> Sync for RecursiveFoldSource<F> {}
 
 impl<F: FieldCore> RecursiveFoldSource<F> {
     pub(crate) fn setup_prefix(
-        expanded: &AkitaExpandedSetup<F>,
-        slot: &SetupPrefixSlot<F>,
+        expanded: Arc<AkitaExpandedSetup<F>>,
+        slot: Arc<SetupPrefixSlot<F>>,
     ) -> Self {
-        Self::SetupPrefix {
-            expanded: NonNull::from(expanded),
-            slot: NonNull::from(slot),
-        }
+        Self::SetupPrefix { expanded, slot }
     }
 
-    pub(crate) fn witness(witness: &RecursiveWitnessFlat) -> Self {
-        Self::Witness(NonNull::from(witness))
+    pub(crate) fn witness(witness: Arc<RecursiveWitnessFlat>) -> Self {
+        Self::Witness(witness)
     }
 }
 
@@ -74,21 +65,17 @@ pub struct RecursiveFoldBatchView<'a, F: FieldCore, const D: usize> {
 impl<F: FieldCore> RootPolyMeta<F> for RecursiveFoldSource<F> {
     fn num_ring_elems(&self) -> usize {
         match self {
-            Self::SetupPrefix { slot, .. } => unsafe { slot.as_ref() }.id.n_prefix().unwrap_or(1),
-            Self::Witness(witness) => {
-                RootPolyMeta::<F>::num_ring_elems(unsafe { witness.as_ref() })
-            }
+            Self::SetupPrefix { slot, .. } => slot.id.n_prefix().unwrap_or(1),
+            Self::Witness(witness) => RootPolyMeta::<F>::num_ring_elems(witness.as_ref()),
         }
     }
 
     fn num_vars(&self) -> usize {
         match self {
-            Self::SetupPrefix { slot, .. } => unsafe { slot.as_ref() }
-                .id
-                .n_prefix()
-                .unwrap_or(1)
-                .trailing_zeros() as usize,
-            Self::Witness(witness) => RootPolyMeta::<F>::num_vars(unsafe { witness.as_ref() }),
+            Self::SetupPrefix { slot, .. } => {
+                slot.id.n_prefix().unwrap_or(1).trailing_zeros() as usize
+            }
+            Self::Witness(witness) => RootPolyMeta::<F>::num_vars(witness.as_ref()),
         }
     }
 }
@@ -96,12 +83,8 @@ impl<F: FieldCore> RootPolyMeta<F> for RecursiveFoldSource<F> {
 impl<F: FieldCore, const D: usize> RootPolyShape<F, D> for RecursiveFoldSource<F> {
     fn num_ring_elems(&self) -> usize {
         match self {
-            Self::SetupPrefix { slot, .. } => {
-                unsafe { slot.as_ref() }.id.n_prefix().map_or(1, |n| n / D)
-            }
-            Self::Witness(witness) => {
-                RootPolyShape::<F, D>::num_ring_elems(unsafe { witness.as_ref() })
-            }
+            Self::SetupPrefix { slot, .. } => slot.id.n_prefix().map_or(1, |n| n / D),
+            Self::Witness(witness) => RootPolyShape::<F, D>::num_ring_elems(witness.as_ref()),
         }
     }
 
@@ -124,12 +107,12 @@ impl<F: FieldCore, const D: usize> RootOpeningSource<F, D> for RecursiveFoldSour
     fn opening_view(&self) -> Result<Self::OpeningView<'_>, AkitaError> {
         match self {
             Self::SetupPrefix { expanded, slot } => Ok(RecursiveFoldView::SetupPrefix {
-                expanded: unsafe { expanded.as_ref() },
-                slot: unsafe { slot.as_ref() },
+                expanded: expanded.as_ref(),
+                slot: slot.as_ref(),
             }),
-            Self::Witness(witness) => Ok(RecursiveFoldView::Witness(
-                unsafe { witness.as_ref() }.view::<F, D>()?,
-            )),
+            Self::Witness(witness) => {
+                Ok(RecursiveFoldView::Witness(witness.as_ref().view::<F, D>()?))
+            }
         }
     }
 
@@ -164,13 +147,10 @@ impl<F: FieldCore + CanonicalField, const D: usize> DirectRootWitnessSource<F, D
     fn direct_root_witness(&self) -> Result<CleartextWitnessProof<F>, AkitaError> {
         match self {
             Self::SetupPrefix { expanded, slot } => Ok(CleartextWitnessProof::FieldElements(
-                RingVec::from_coeffs(setup_prefix_field_evals(
-                    unsafe { expanded.as_ref() },
-                    unsafe { slot.as_ref() },
-                )?),
+                RingVec::from_coeffs(setup_prefix_field_evals(expanded.as_ref(), slot.as_ref())?),
             )),
             Self::Witness(witness) => {
-                DirectRootWitnessSource::<F, D>::direct_root_witness(unsafe { witness.as_ref() })
+                DirectRootWitnessSource::<F, D>::direct_root_witness(witness.as_ref())
             }
         }
     }
@@ -370,7 +350,7 @@ fn recursive_fold_batch_witnesses<'a, F: FieldCore, const D: usize>(
     let mut witnesses = Vec::with_capacity(source.polys.len());
     for poly in source.polys {
         match poly {
-            RecursiveFoldSource::Witness(witness) => witnesses.push(unsafe { witness.as_ref() }),
+            RecursiveFoldSource::Witness(witness) => witnesses.push(witness.as_ref()),
             RecursiveFoldSource::SetupPrefix { .. } => {
                 return setup_prefix_extension_tensor_unsupported();
             }
