@@ -2,7 +2,9 @@
 
 The witness layout determines how we view and index the witness, and therefore
 how the relations we plan to prove and verify must be structured. This chapter
-proposes two witness layouts and compares their prover and verifier costs.
+proposes two witness layouts and compares their prover and verifier costs. It
+then considers a third approach that keeps the original relation but proves its
+structured matrix evaluation with an auxiliary sum-check.
 
 ## Assumptions
 
@@ -135,7 +137,7 @@ introduces several challenges.
 1. **Decomposition must be materialized.** When a thread decomposes a block, its
    output digits belong to memory locations separated by $B C$. Unlike Proposal
    2, the thread cannot simply decompose a ring element and consume all its
-   adjacent digits on the fly. The prover must retain a decomposed-witness
+   digits on the fly. The prover must retain a decomposed-witness
    buffer. In the simple memory model where both the original witness and its
    decomposed representation remain resident, this results in roughly twice the
    witness memory usage.
@@ -267,9 +269,77 @@ This has several practical consequences:
    recursive aggregation. In that setting, the extra matrix-evaluation work can
    translate into a noticeable increase in RISC-V cycles.
 
+## Proposal 3: prove the structured matrix evaluation
+
+The third proposal keeps the original relation and its relation sum-check
+unchanged. In particular, it does not split the relation into separate
+challenge, gadget, and witness claims. Instead, it adds an auxiliary sum-check
+whose purpose is to prove the structured relation-matrix evaluation that the
+verifier would otherwise compute directly.
+
+Let $j\in[0,\delta)$ be the digit index, $c\in[0,C)$ the claim index, and
+$b\in[0,B)$ the block index. Write $\mathsf{dig}[j]$ for the gadget weight of
+digit $j$; for the usual gadget vector, $\mathsf{dig}[j]=g^j$. The local flat
+index depends on the selected witness layout:
+
+$$
+\begin{aligned}
+  i_1(j,c,b) &= b+B(c+Cj)
+    &&\text{for Proposal 1},\\
+  i_2(j,c,b) &= j+\delta(b+Bc)
+    &&\text{for Proposal 2}.
+\end{aligned}
+$$
+
+If the witness segment begins at column $\mathsf{offset}$, its global column is
+$\mathsf{offset}+i_\ell(j,c,b)$ for layout $\ell\in\{1,2\}$. At the random
+column point $r$ produced by the original relation sum-check, define
+
+$$
+\begin{aligned}
+Q_\ell(r)
+  = \sum_{j=0}^{\delta-1}
+    \sum_{c=0}^{C-1}
+    \sum_{b=0}^{B-1}
+      &\mathsf{challenge}[c][b]\,
+       \mathsf{dig}[j] \\
+      &{}\cdot
+       \operatorname{eq}\bigl(
+         \mathsf{offset}+i_\ell(j,c,b),r
+       \bigr).
+\end{aligned}
+$$
+
+This is exactly the structured challenge-and-digit contribution of the
+relation matrix at $r$. The prover claims a value $q=Q_\ell(r)$, and the
+original relation sum-check uses $q$ in its terminal check instead of requiring
+the verifier to compute this matrix contribution directly. The auxiliary
+sum-check proves that the claimed $q$ equals the sum above.
+
+### Batching with the original relation sum-check
+
+The original relation claim and the auxiliary matrix-evaluation claim are
+transcript-batched with a random coefficient. This binds the value $q$ used by
+the original terminal check to the value proved by the auxiliary sum-check, so
+the prover cannot choose them independently.
+
+There is an important ordering constraint: the auxiliary claim depends on $r$,
+and $r$ is only known after the original relation sum-check has sampled its
+round challenges. Therefore, the auxiliary claim cannot naively share the same
+rounds as the original sum-check from the beginning. The protocol first fixes
+$r$, then proves $Q_\ell(r)$, and batches the resulting verification
+obligations at the terminal-claim level.
+
+The original relation, witness layout, and relation sum-check polynomial remain
+unchanged. The added prover work is the auxiliary sum-check; the intended
+benefit is that the verifier no longer performs the full direct structured
+matrix evaluation.
+
 ## Current design status
 
 No design is selected in this discussion yet. Proposal 1 prioritizes the
 existing verifier evaluation strategy. Proposal 2 prioritizes GPU-local
 execution, on-the-fly decomposition, and a future streaming prover, at the cost
-of a slower verifier under the current relation sum-check.
+of a slower verifier under the current relation sum-check. Proposal 3 keeps
+that relation unchanged and adds an auxiliary proof of its structured matrix
+evaluation; its final-point evaluator remains to be specified.
