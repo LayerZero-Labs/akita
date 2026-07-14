@@ -307,16 +307,7 @@ where
         .ok_or(AkitaError::InvalidProof)?;
     let consistency_weight = eq_tau1.eval_at(0)?;
 
-    let mut gamma_offset = 0usize;
-    let mut gamma_offsets = vec![0usize; opening_batch.num_groups()];
-    for (group_index, offset) in gamma_offsets.iter_mut().enumerate() {
-        *offset = gamma_offset;
-        gamma_offset = gamma_offset
-            .checked_add(opening_batch.group_layout(group_index)?.num_polynomials())
-            .ok_or(AkitaError::InvalidProof)?;
-    }
-
-    for group_index in 0..opening_batch.num_groups() {
+    for (group_index, &e_setup_offset) in e_setup_offsets.iter().enumerate() {
         let group_lp = lp.root_group_params(opening_batch, group_index)?;
         let group_layout = opening_batch.group_layout(group_index)?;
         let group_id = group_index;
@@ -429,7 +420,7 @@ where
                             .and_then(|base| base.checked_mul(depth_open))
                             .and_then(|base| base.checked_add(digit))
                             .and_then(|local| {
-                                e_setup_offsets[group_index]
+                                e_setup_offset
                                     .checked_mul(d_ratio)
                                     .and_then(|offset| offset.checked_add(local))
                             })

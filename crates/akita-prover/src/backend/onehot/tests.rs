@@ -5,6 +5,7 @@ use crate::backend::test_support::{
 };
 use crate::compute::RootPolyMeta;
 use crate::DensePoly;
+use akita_challenges::TensorChallenges;
 use akita_field::RandomSampling;
 use akita_field::{Fp64, FpExt4, Prime128Offset275, Prime24Offset3, Prime32Offset99};
 use akita_types::FlatMatrix;
@@ -868,6 +869,88 @@ fn single_chunk_onehot_tensor_decompose_fold_matches_negacyclic_product_referenc
     let fold_position_count = 2;
     let num_digits = 1;
     let tensor = tensor_oracle_challenges::<D>();
+    let polys = [
+        OneHotPoly::<F, usize>::new(
+            8,
+            D,
+            vec![
+                Some(1usize),
+                None,
+                Some(3usize),
+                Some(7usize),
+                None,
+                Some(2usize),
+                Some(6usize),
+                None,
+            ],
+        )
+        .unwrap(),
+        OneHotPoly::<F, usize>::new(
+            8,
+            D,
+            vec![
+                None,
+                Some(0usize),
+                Some(5usize),
+                None,
+                Some(4usize),
+                Some(7usize),
+                None,
+                Some(1usize),
+            ],
+        )
+        .unwrap(),
+    ];
+    let product_challenges = negacyclic_tensor_product_challenges_i8::<D>(&tensor).unwrap();
+
+    let expected = aggregate_witnesses::<F, D>(
+        &polys
+            .iter()
+            .zip(product_challenges.chunks(4))
+            .map(|(poly, challenges)| {
+                poly.decompose_fold::<D>(challenges, fold_position_count, num_digits, 0)
+            })
+            .collect::<Vec<_>>(),
+    );
+    let poly_refs = polys.iter().collect::<Vec<_>>();
+    let got = OneHotPoly::<F>::decompose_fold_tensor_batched::<D>(
+        &poly_refs,
+        &tensor,
+        fold_position_count,
+        num_digits,
+        0,
+    )
+    .unwrap()
+    .unwrap();
+
+    assert_eq!(got, expected);
+}
+
+#[test]
+fn single_chunk_onehot_tensor_decompose_fold_supports_partial_final_low_row() {
+    type F = Prime24Offset3;
+    const D: usize = 8;
+
+    let fold_position_count = 2;
+    let num_digits = 1;
+    let base_tensor = tensor_oracle_challenges::<D>();
+    let tensor = TensorChallenges {
+        fold_high: vec![
+            base_tensor.fold_high[0].clone(),
+            base_tensor.fold_high[2].clone(),
+        ],
+        fold_low: (0..2)
+            .flat_map(|claim| {
+                (0..8).map({
+                    let base_tensor = &base_tensor;
+                    move |low| base_tensor.fold_low[claim * 2 + low % 2].clone()
+                })
+            })
+            .collect(),
+        live_folds_per_claim: 4,
+        fold_low_len: 8,
+        num_claims: 2,
+    };
     let polys = [
         OneHotPoly::<F, usize>::new(
             8,

@@ -196,7 +196,6 @@ where
         + for<'a> OpeningFoldKernel<P::OpeningView<'a>, F, D>,
 {
     let num_chunks = root_lp.witness_chunk.num_chunks;
-    let blocks_per_chunk = params.live_fold_count() / num_chunks.max(1);
     if num_chunks <= 1 {
         let witness = build_point_decompose_fold_witness::<F, P, B, D>(
             backend,
@@ -210,9 +209,12 @@ where
         return Ok((witness, per_chunk));
     }
 
-    let windows = (0..num_chunks)
-        .map(|chunk| {
-            let windowed = window_sparse_challenges(challenges, chunk, blocks_per_chunk)?;
+    let shard_fold_ranges =
+        akita_types::WitnessLayout::resolve_shard_fold_ranges(params, num_chunks)?;
+    let windows = shard_fold_ranges
+        .into_iter()
+        .map(|fold_range| {
+            let windowed = window_sparse_challenges(challenges, fold_range)?;
             build_point_decompose_fold_witness::<F, P, B, D>(
                 backend,
                 prepared,

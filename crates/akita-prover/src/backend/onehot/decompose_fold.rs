@@ -168,11 +168,7 @@ impl<F: FieldCore, I: OneHotIndex> OneHotPoly<F, I> {
         let first_blocks = first
             .blocks_for(D, fold_position_count)
             .expect("OneHotPoly::decompose_fold_batched_tensor_onehot: invalid fold_position_count for first polynomial");
-        let expected_blocks = tensor
-            .fold_high_len()
-            .checked_mul(tensor.fold_low_len)
-            .and_then(|blocks| blocks.checked_mul(tensor.num_claims))
-            .ok_or_else(|| AkitaError::InvalidSetup("tensor challenge count overflow".into()))?;
+        let expected_blocks = tensor.total_blocks()?;
         validate_tensor_blocks::<D>(tensor, expected_blocks)?;
         let modulus = (-F::one()).to_canonical_u128() + 1;
 

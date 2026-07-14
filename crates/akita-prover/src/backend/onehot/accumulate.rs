@@ -72,12 +72,25 @@ where
 pub(super) fn onehot_accumulate_tensor<E, const D: usize>(
     blocks: &[&[E]],
     tensor: &TensorChallengeSet,
-    _num_blocks: usize,
+    num_blocks: usize,
     fold_position_count: usize,
 ) -> Result<Vec<[i64; D]>, AkitaError>
 where
     E: OneHotEntry,
 {
+    let tensor_blocks = tensor.total_blocks()?;
+    if tensor_blocks != num_blocks {
+        return Err(AkitaError::InvalidSize {
+            expected: num_blocks,
+            actual: tensor_blocks,
+        });
+    }
+    if blocks.len() != num_blocks {
+        return Err(AkitaError::InvalidSize {
+            expected: num_blocks,
+            actual: blocks.len(),
+        });
+    }
     #[cfg(feature = "parallel")]
     let num_threads = rayon::current_num_threads();
     #[cfg(not(feature = "parallel"))]
@@ -102,9 +115,11 @@ where
                 for left_idx in 0..tensor.fold_high_len() {
                     tmp.fill([0i64; D]);
                     for right_idx in 0..tensor.fold_low_len {
-                        let block_idx = claim_idx * tensor.fold_high_len() * tensor.fold_low_len
-                            + left_idx * tensor.fold_low_len
-                            + right_idx;
+                        let local_block = left_idx * tensor.fold_low_len + right_idx;
+                        if local_block >= tensor.live_folds_per_claim {
+                            break;
+                        }
+                        let block_idx = claim_idx * tensor.live_folds_per_claim + local_block;
                         let entries = blocks[block_idx];
                         let lo = entries.partition_point(|entry| entry.pos_in_block() < pos_start);
                         let hi = entries.partition_point(|entry| entry.pos_in_block() < pos_end);

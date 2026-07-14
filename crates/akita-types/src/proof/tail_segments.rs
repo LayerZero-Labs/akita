@@ -1145,6 +1145,7 @@ pub fn emit_witness_e_planes<const D: usize>(
 }
 
 /// Emit one group's T planes at canonical witness addresses.
+#[allow(clippy::too_many_arguments)]
 pub fn emit_witness_t_planes<const D: usize>(
     out: &mut [i8],
     layout: &WitnessLayout,

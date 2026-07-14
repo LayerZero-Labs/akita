@@ -386,26 +386,15 @@ where
 /// verifier layout resolution.
 pub(crate) fn validate_chunked_witness_cfg(lp: &LevelParams) -> Result<(), AkitaError> {
     lp.witness_chunk.validate()?;
-    lp.reject_multi_group_multi_chunk("chunked witness")?;
-    let w = lp.witness_chunk.num_chunks;
-    if w > 1 {
-        if !lp.live_fold_count.is_multiple_of(w) {
-            return Err(AkitaError::InvalidSetup(
-                "witness chunk count must divide live_fold_count".to_string(),
-            ));
-        }
-    }
-    Ok(())
+    lp.reject_multi_group_multi_chunk("chunked witness")
 }
 
-/// Restrict sparse fold challenges to one chunk's global block window
-/// `[chunk·blocks_per_chunk, (chunk+1)·blocks_per_chunk)`, zeroing all other
-/// blocks. Folding under these yields the partial response `z_i = Σ_{j∈I_i}
-/// c_j s_j`.
+/// Restrict sparse fold challenges to one shard's exact global fold range,
+/// zeroing all other folds. Folding under these yields the partial response
+/// `z_i = Σ_{j∈I_i} c_j s_j`.
 pub(super) fn window_sparse_challenges(
     challenges: &Challenges,
-    chunk: usize,
-    blocks_per_chunk: usize,
+    fold_range: std::ops::Range<usize>,
 ) -> Result<Challenges, AkitaError> {
     match challenges {
         Challenges::Sparse {
@@ -413,14 +402,12 @@ pub(super) fn window_sparse_challenges(
             num_blocks_per_claim,
             num_claims,
         } => {
-            let lo = chunk * blocks_per_chunk;
-            let hi = lo + blocks_per_chunk;
             let windowed: Vec<SparseChallenge> = sparse
                 .iter()
                 .enumerate()
                 .map(|(idx, ch)| {
                     let block = idx % num_blocks_per_claim;
-                    if (lo..hi).contains(&block) {
+                    if fold_range.contains(&block) {
                         ch.clone()
                     } else {
                         SparseChallenge {

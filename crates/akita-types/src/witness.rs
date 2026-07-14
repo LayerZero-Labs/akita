@@ -124,58 +124,32 @@ impl WitnessLayout {
             let params = lp.root_group_params(opening_batch, group_index)?;
             let group = opening_batch.group_layout(group_index)?;
             let num_claims = group.num_polynomials();
-            let live_fold_count = params.live_fold_count();
-            let shard_granule = params.shard_granule();
             let depth_open = params.num_digits_open();
             let depth_commit = params.num_digits_commit();
             let depth_fold =
                 lp.num_digits_fold_for_params(params, num_claims, lp.field_bits_for_cache())?;
             if num_claims == 0
-                || live_fold_count == 0
+                || params.live_fold_count() == 0
                 || params.fold_position_count() == 0
                 || depth_open == 0
                 || depth_commit == 0
                 || depth_fold == 0
                 || params.a_rows_len() == 0
-                || shard_granule == 0
-                || !shard_granule.is_power_of_two()
             {
                 return Err(AkitaError::InvalidSetup(
                     "witness group has malformed dimensions".into(),
                 ));
             }
-            if num_shards
-                .checked_mul(shard_granule)
-                .is_none_or(|minimum| minimum > live_fold_count)
-            {
-                return Err(AkitaError::InvalidSetup(
-                    "witness shards exceed the live fold granules".into(),
-                ));
-            }
-
-            let full_granules = live_fold_count / shard_granule;
-            let residual = live_fold_count % shard_granule;
-            let base_granules = full_granules / num_shards;
-            let extra_granules = full_granules % num_shards;
+            let shard_fold_ranges = Self::resolve_shard_fold_ranges(params, num_shards)?;
             let z_len = checked_mul3(
                 params.fold_position_count(),
                 depth_commit,
                 depth_fold,
                 "witness Z width overflow",
             )?;
-            let mut global_fold_start = 0usize;
-            for shard_index in 0..num_shards {
-                let owned_granules = base_granules + usize::from(shard_index < extra_granules);
-                let mut shard_live_fold_count =
-                    owned_granules.checked_mul(shard_granule).ok_or_else(|| {
-                        AkitaError::InvalidSetup("witness shard width overflow".into())
-                    })?;
-                if shard_index + 1 == num_shards {
-                    shard_live_fold_count =
-                        shard_live_fold_count.checked_add(residual).ok_or_else(|| {
-                            AkitaError::InvalidSetup("witness shard width overflow".into())
-                        })?;
-                }
+            for (shard_index, global_fold_range) in shard_fold_ranges.into_iter().enumerate() {
+                let global_fold_start = global_fold_range.start;
+                let shard_live_fold_count = global_fold_range.len();
                 let e_len = checked_mul3(
                     num_claims,
                     shard_live_fold_count,
@@ -200,16 +174,6 @@ impl WitnessLayout {
                     e_range,
                     t_range,
                 });
-                global_fold_start = global_fold_start
-                    .checked_add(shard_live_fold_count)
-                    .ok_or_else(|| {
-                        AkitaError::InvalidSetup("witness fold coverage overflow".into())
-                    })?;
-            }
-            if global_fold_start != live_fold_count {
-                return Err(AkitaError::InvalidSetup(
-                    "witness shards do not cover the live folds".into(),
-                ));
             }
         }
         let r_len = relation_rows
@@ -217,6 +181,60 @@ impl WitnessLayout {
             .ok_or_else(|| AkitaError::InvalidSetup("witness R width overflow".into()))?;
         let r_range = checked_range(cursor, r_len, "witness R range overflow")?;
         Ok(Self { units, r_range })
+    }
+
+    /// Resolve the exact contiguous fold ranges owned by each shard.
+    pub fn resolve_shard_fold_ranges(
+        params: &(impl crate::LevelParamsLike + ?Sized),
+        num_shards: usize,
+    ) -> Result<Vec<Range<usize>>, AkitaError> {
+        let live_fold_count = params.live_fold_count();
+        let shard_granule = params.shard_granule();
+        if num_shards == 0
+            || num_shards > MAX_WITNESS_CHUNKS
+            || live_fold_count == 0
+            || shard_granule == 0
+            || !shard_granule.is_power_of_two()
+        {
+            return Err(AkitaError::InvalidSetup(
+                "witness shard geometry is malformed".into(),
+            ));
+        }
+        if num_shards
+            .checked_mul(shard_granule)
+            .is_none_or(|minimum| minimum > live_fold_count)
+        {
+            return Err(AkitaError::InvalidSetup(
+                "witness shards exceed the live fold granules".into(),
+            ));
+        }
+
+        let full_granules = live_fold_count / shard_granule;
+        let residual = live_fold_count % shard_granule;
+        let base_granules = full_granules / num_shards;
+        let extra_granules = full_granules % num_shards;
+        let mut ranges = Vec::with_capacity(num_shards);
+        let mut start = 0usize;
+        for shard_index in 0..num_shards {
+            let owned_granules = base_granules + usize::from(shard_index < extra_granules);
+            let mut count = owned_granules
+                .checked_mul(shard_granule)
+                .ok_or_else(|| AkitaError::InvalidSetup("witness shard width overflow".into()))?;
+            if shard_index + 1 == num_shards {
+                count = count.checked_add(residual).ok_or_else(|| {
+                    AkitaError::InvalidSetup("witness shard width overflow".into())
+                })?;
+            }
+            let range = checked_range(start, count, "witness shard range overflow")?;
+            start = range.end;
+            ranges.push(range);
+        }
+        if start != live_fold_count {
+            return Err(AkitaError::InvalidSetup(
+                "witness shards do not cover the live folds".into(),
+            ));
+        }
+        Ok(ranges)
     }
 
     pub fn units(&self) -> &[WitnessUnitLayout] {
