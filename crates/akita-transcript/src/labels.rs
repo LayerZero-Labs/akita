@@ -63,23 +63,24 @@ pub const ABSORB_PROVER_V: &[u8] = b"ak/a/v";
 pub const CHALLENGE_WITNESS_FOLD: &[u8] = b"ak/c/wf";
 /// Challenge label for the high factor `α` in a tensor-shaped fold round.
 ///
-/// Tensor folds sample `√N` left and `√N` right sparse challenges per claim and
-/// use `c_{p,q} = α_p · β_q`. This prefixes the absorb buffer for the **left**
-/// draw batch (under [`ABSORB_SPARSE_CHALLENGE`]). After the left challenges are
-/// expanded, [`ABSORB_FOLD_HIGH`] commits a digest of the left vector
-/// before the right batch is drawn.
+/// Tensor folds sample fold-high and fold-low sparse challenges per claim and
+/// use `c_{p,q} = α_p · β_q`. This prefixes the absorb buffer for the
+/// **fold-high** draw batch (under [`ABSORB_SPARSE_CHALLENGE`]). After the
+/// fold-high challenges are expanded, [`ABSORB_FOLD_HIGH`] commits their digest
+/// before the fold-low batch is drawn.
 pub const CHALLENGE_FOLD_HIGH: &[u8] = b"ak/c/wfh";
 /// Digest of the sampled high tensor factor, appended between high and low draws.
 ///
-/// Canonical hash of the left sparse-challenge vector (`fold_high_digest`).
-/// Prevents choosing the right factor `β` adaptively after seeing `α`. This is
-/// a real transcript append (positional sponge); it is not the challenges themselves.
+/// Canonical hash of the fold-high sparse-challenge vector (`fold_high_digest`).
+/// Prevents choosing the fold-low factor `β` adaptively after seeing `α`. This
+/// is a real transcript append (positional sponge); it is not the challenges
+/// themselves.
 pub const ABSORB_FOLD_HIGH: &[u8] = b"ak/a/wfh";
 /// Challenge label for the low factor `β` in a tensor-shaped fold round.
 ///
-/// Prefixes the absorb buffer for the **right** draw batch (under
+/// Prefixes the absorb buffer for the **fold-low** draw batch (under
 /// [`ABSORB_SPARSE_CHALLENGE`]), after [`ABSORB_FOLD_HIGH`]. There is no
-/// symmetric digest absorb for the right vector.
+/// symmetric digest absorb for the fold-low vector.
 pub const CHALLENGE_FOLD_LOW: &[u8] = b"ak/c/wfl";
 
 /// Absorb field-element evaluation claims for γ-batching.

@@ -112,10 +112,10 @@ where
             let mut rotated = vec![[0i64; D]; D];
 
             for claim_idx in 0..tensor.num_claims {
-                for left_idx in 0..tensor.fold_high_len() {
+                for high_idx in 0..tensor.fold_high_len() {
                     tmp.fill([0i64; D]);
-                    for right_idx in 0..tensor.fold_low_len {
-                        let local_block = left_idx * tensor.fold_low_len + right_idx;
+                    for low_idx in 0..tensor.fold_low_len {
+                        let local_block = high_idx * tensor.fold_low_len + low_idx;
                         if local_block >= tensor.live_folds_per_claim {
                             break;
                         }
@@ -127,8 +127,8 @@ where
                             continue;
                         }
 
-                        let right = &tensor.fold_low[claim_idx * tensor.fold_low_len + right_idx];
-                        fill_rotated_sparse_challenge_i64::<D>(&mut rotated, right);
+                        let fold_low = &tensor.fold_low[claim_idx * tensor.fold_low_len + low_idx];
+                        fill_rotated_sparse_challenge_i64::<D>(&mut rotated, fold_low);
 
                         for entry in &entries[lo..hi] {
                             let dst = &mut tmp[entry.pos_in_block() - pos_start];
@@ -140,9 +140,10 @@ where
                             }
                         }
                     }
-                    let left = &tensor.fold_high[claim_idx * tensor.fold_high_len() + left_idx];
+                    let fold_high =
+                        &tensor.fold_high[claim_idx * tensor.fold_high_len() + high_idx];
                     for (src, dst) in tmp.iter().zip(acc.iter_mut()) {
-                        sparse_i64_mul_acc_i64::<D>(src, left, dst);
+                        sparse_i64_mul_acc_i64::<D>(src, fold_high, dst);
                     }
                 }
             }

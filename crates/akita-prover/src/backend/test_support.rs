@@ -97,27 +97,27 @@ pub(crate) fn negacyclic_tensor_product_challenges_i8<const D: usize>(
     let total_blocks = tensor.total_blocks()?;
     (0..total_blocks)
         .map(|block_idx| {
-            let (_, _, left, right) = tensor.factors_for_logical_block(block_idx)?;
-            sparse_tensor_product_i8::<D>(left, right)
+            let (_, _, fold_high, fold_low) = tensor.factors_for_logical_block(block_idx)?;
+            sparse_tensor_product_i8::<D>(fold_high, fold_low)
         })
         .collect()
 }
 
 fn sparse_tensor_product_i8<const D: usize>(
-    left: &SparseChallenge,
-    right: &SparseChallenge,
+    fold_high: &SparseChallenge,
+    fold_low: &SparseChallenge,
 ) -> Result<SparseChallenge, AkitaError> {
     let mut coeffs = [0i16; D];
-    for (&left_pos, &left_coeff) in left.positions.iter().zip(left.coeffs.iter()) {
-        for (&right_pos, &right_coeff) in right.positions.iter().zip(right.coeffs.iter()) {
-            let degree = left_pos as usize + right_pos as usize;
+    for (&high_pos, &high_coeff) in fold_high.positions.iter().zip(fold_high.coeffs.iter()) {
+        for (&low_pos, &low_coeff) in fold_low.positions.iter().zip(fold_low.coeffs.iter()) {
+            let degree = high_pos as usize + low_pos as usize;
             let (pos, sign) = if degree < D {
                 (degree, 1i16)
             } else {
                 (degree - D, -1i16)
             };
-            let term = i16::from(left_coeff)
-                .checked_mul(i16::from(right_coeff))
+            let term = i16::from(high_coeff)
+                .checked_mul(i16::from(low_coeff))
                 .and_then(|term| term.checked_mul(sign))
                 .ok_or_else(|| {
                     AkitaError::InvalidInput("tensor reference coefficient overflow".to_string())

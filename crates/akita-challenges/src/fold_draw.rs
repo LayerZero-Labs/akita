@@ -13,9 +13,9 @@ use std::marker::PhantomData;
 const SPARSE_CHALLENGE_SEED_LEN: usize = 32;
 
 pub trait FoldDraw {
-    fn absorb(&mut self, payload: &[u8]);
+    fn absorb(&mut self, label: &[u8], payload: &[u8]);
 
-    fn absorb_and_squeeze(&mut self, payload: &[u8]) -> Vec<u8>;
+    fn absorb_and_squeeze(&mut self, label: &[u8], payload: &[u8]) -> Vec<u8>;
 
     fn draw_sparse_challenges(
         &mut self,
@@ -33,7 +33,7 @@ pub trait FoldDraw {
         absorb_buf.extend_from_slice(&domain_sep);
         absorb_buf.extend_from_slice(&grind_nonce.to_le_bytes());
 
-        let seed = self.absorb_and_squeeze(&absorb_buf);
+        let seed = self.absorb_and_squeeze(ABSORB_SPARSE_CHALLENGE, &absorb_buf);
         let mut cursor = XofCursor::from_seed(&seed);
         SignedSparseScratch::sample_challenges(&mut cursor, ring_d, n, cfg)
     }
@@ -83,7 +83,7 @@ pub trait FoldDraw {
                     grind_nonce,
                 );
                 let high_digest = fold_high_digest(&fold_high, fold_high_len, num_claims, ring_d)?;
-                self.absorb(&high_digest);
+                self.absorb(labels.fold_high_digest, &high_digest);
                 let fold_low = self.draw_sparse_challenges(
                     labels.fold_low,
                     ring_d,
@@ -123,12 +123,12 @@ impl<'a> PreviewFoldDraw<'a> {
 }
 
 impl FoldDraw for PreviewFoldDraw<'_> {
-    fn absorb(&mut self, payload: &[u8]) {
+    fn absorb(&mut self, _label: &[u8], payload: &[u8]) {
         self.absorbs.push(payload.to_vec());
         self.squeeze_lens.push(0);
     }
 
-    fn absorb_and_squeeze(&mut self, payload: &[u8]) -> Vec<u8> {
+    fn absorb_and_squeeze(&mut self, _label: &[u8], payload: &[u8]) -> Vec<u8> {
         self.absorbs.push(payload.to_vec());
         self.squeeze_lens.push(SPARSE_CHALLENGE_SEED_LEN);
         let absorbs = self.absorbs.iter().map(Vec::as_slice).collect::<Vec<_>>();
@@ -156,13 +156,12 @@ where
     F: FieldCore + CanonicalField,
     T: Transcript<F>,
 {
-    fn absorb(&mut self, payload: &[u8]) {
-        self.transcript
-            .append_bytes(ABSORB_SPARSE_CHALLENGE, payload);
+    fn absorb(&mut self, label: &[u8], payload: &[u8]) {
+        self.transcript.append_bytes(label, payload);
     }
 
-    fn absorb_and_squeeze(&mut self, payload: &[u8]) -> Vec<u8> {
-        self.absorb(payload);
+    fn absorb_and_squeeze(&mut self, label: &[u8], payload: &[u8]) -> Vec<u8> {
+        self.absorb(label, payload);
         self.transcript
             .challenge_bytes(CHALLENGE_SPARSE_CHALLENGE, SPARSE_CHALLENGE_SEED_LEN)
     }

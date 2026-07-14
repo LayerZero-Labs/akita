@@ -123,11 +123,11 @@ fn accumulate_cached_digit_planes_tensor<const D: usize>(
                 .enumerate()
                 .take(tensor.num_claims)
             {
-                for left_idx in 0..tensor.fold_high_len() {
+                for high_idx in 0..tensor.fold_high_len() {
                     tmp.fill([0i64; D]);
-                    for right_idx in 0..tensor.fold_low_len {
-                        let local_block_idx = left_idx * tensor.fold_low_len + right_idx;
-                        let right = &tensor.fold_low[claim_idx * tensor.fold_low_len + right_idx];
+                    for low_idx in 0..tensor.fold_low_len {
+                        let local_block_idx = high_idx * tensor.fold_low_len + low_idx;
+                        let fold_low = &tensor.fold_low[claim_idx * tensor.fold_low_len + low_idx];
 
                         for elem_idx in elem_start..elem_end {
                             let ring_idx = local_block_idx * fold_position_count + elem_idx;
@@ -143,15 +143,16 @@ fn accumulate_cached_digit_planes_tensor<const D: usize>(
                                 };
                                 sparse_i8_mul_acc_i64::<D>(
                                     digit_plane,
-                                    right,
+                                    fold_low,
                                     &mut tmp[out_base + digit_idx],
                                 );
                             }
                         }
                     }
-                    let left = &tensor.fold_high[claim_idx * tensor.fold_high_len() + left_idx];
+                    let fold_high =
+                        &tensor.fold_high[claim_idx * tensor.fold_high_len() + high_idx];
                     for (src, dst) in tmp.iter().zip(acc.iter_mut()) {
-                        sparse_i64_mul_acc_i64::<D>(src, left, dst);
+                        sparse_i64_mul_acc_i64::<D>(src, fold_high, dst);
                     }
                 }
             }
@@ -202,11 +203,11 @@ fn balanced_ring_decompose_fold_tensor_partitioned<F: CanonicalField, const D: u
             let mut digit_buf = vec![[0i8; D]; num_digits];
 
             for (claim_idx, coeffs) in poly_coeffs.iter().enumerate().take(tensor.num_claims) {
-                for left_idx in 0..tensor.fold_high_len() {
+                for high_idx in 0..tensor.fold_high_len() {
                     tmp.fill([0i64; D]);
-                    for right_idx in 0..tensor.fold_low_len {
-                        let local_block_idx = left_idx * tensor.fold_low_len + right_idx;
-                        let right = &tensor.fold_low[claim_idx * tensor.fold_low_len + right_idx];
+                    for low_idx in 0..tensor.fold_low_len {
+                        let local_block_idx = high_idx * tensor.fold_low_len + low_idx;
+                        let fold_low = &tensor.fold_low[claim_idx * tensor.fold_low_len + low_idx];
                         let coeff_start = local_block_idx * fold_position_count + elem_start;
                         if coeff_start >= coeffs.len() {
                             continue;
@@ -225,15 +226,16 @@ fn balanced_ring_decompose_fold_tensor_partitioned<F: CanonicalField, const D: u
                             for digit_idx in 0..num_digits {
                                 sparse_i8_mul_acc_i64::<D>(
                                     &digit_buf[digit_idx],
-                                    right,
+                                    fold_low,
                                     &mut tmp[base + digit_idx],
                                 );
                             }
                         }
                     }
-                    let left = &tensor.fold_high[claim_idx * tensor.fold_high_len() + left_idx];
+                    let fold_high =
+                        &tensor.fold_high[claim_idx * tensor.fold_high_len() + high_idx];
                     for (src, dst) in tmp.iter().zip(acc.iter_mut()) {
-                        sparse_i64_mul_acc_i64::<D>(src, left, dst);
+                        sparse_i64_mul_acc_i64::<D>(src, fold_high, dst);
                     }
                 }
             }

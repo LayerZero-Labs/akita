@@ -182,7 +182,7 @@ pub fn rademacher_proxy_variance_tensor_challenges(
         grind_target_accept_num,
         grind_target_accept_den,
     )?;
-    let left_inner = fold_witness_linf_tensor_inner_ln(
+    let high_inner = fold_witness_linf_tensor_inner_ln(
         num_fold_coeffs,
         num_claims,
         fold_high_len,
@@ -190,7 +190,7 @@ pub fn rademacher_proxy_variance_tensor_challenges(
         grind_target_accept_num,
         grind_target_accept_den,
     )?;
-    let right_inner = fold_witness_linf_tensor_inner_ln(
+    let low_inner = fold_witness_linf_tensor_inner_ln(
         num_fold_coeffs,
         num_claims,
         fold_low_len,
@@ -198,7 +198,7 @@ pub fn rademacher_proxy_variance_tensor_challenges(
         grind_target_accept_num,
         grind_target_accept_den,
     )?;
-    let lambda_inner = left_inner.min(right_inner);
+    let lambda_inner = high_inner.min(low_inner);
     4u128
         .checked_mul(num_claims)
         .and_then(|v| v.checked_mul(fold_high_len))

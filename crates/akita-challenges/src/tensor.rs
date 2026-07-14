@@ -3,7 +3,7 @@
 //! For protocols that sample a length-`live_fold_count` sparse-challenge vector per
 //! claim, the tensor variant samples two factor vectors of length
 //! `√live_fold_count` and presents the logical fold challenge at block `(p, q)` as
-//! the negacyclic tensor product `left[p] · right[q]`. This shrinks transcript
+//! the negacyclic tensor product `fold_high[p] · fold_low[q]`. This shrinks transcript
 //! challenge sampling from `O(live_fold_count)` to `O(√live_fold_count)` per claim
 //! while leaving the downstream fold semantics unchanged through structured
 //! evaluation and factor-aware prover kernels.
@@ -15,7 +15,7 @@
 //! [`ChallengeShape`] is only the flat-vs-tensor selector,
 //! [`ChallengeLabels`] is the transcript metadata for one sampling round,
 //! [`FoldingChallenges`] is the sampled runtime container, and
-//! [`TensorChallenges`] is the factored tensor state whose left/right lengths
+//! [`TensorChallenges`] is the factored tensor state whose fold-high/fold-low lengths
 //! are part of the invariant.
 
 use crate::{SparseChallenge, SparseChallengeConfig};
@@ -135,7 +135,7 @@ pub enum Challenges {
     },
     /// Tensor-factored challenges.
     Tensor {
-        /// Factored left/right sparse challenges (one factor pair per claim).
+        /// Factored fold-high/fold-low sparse challenges.
         factored: TensorChallenges,
     },
 }
@@ -143,18 +143,18 @@ pub enum Challenges {
 /// Transcript labels consumed by [`crate::FoldDraw::draw_folding_challenges`].
 ///
 /// Bundling them in a struct keeps the call sites self-describing and prevents
-/// accidental left/right swaps. Callers pick label byte strings appropriate
+/// accidental fold-high/fold-low swaps. Callers pick label byte strings appropriate
 /// for their protocol stage.
 #[derive(Debug, Clone, Copy)]
 pub struct ChallengeLabels<'a> {
     /// Label used for the flat shape's single sampling step.
     pub flat: &'a [u8],
-    /// Label used for sampling the tensor shape's left factor.
+    /// Label used for sampling the tensor shape's fold-high factor.
     pub fold_high: &'a [u8],
-    /// Label under which the canonical digest of the sampled left factor is
-    /// absorbed back into the transcript before sampling the right factor.
+    /// Label under which the canonical digest of the sampled fold-high factor is
+    /// absorbed back into the transcript before sampling the fold-low factor.
     pub fold_high_digest: &'a [u8],
-    /// Label used for sampling the tensor shape's right factor.
+    /// Label used for sampling the tensor shape's fold-low factor.
     pub fold_low: &'a [u8],
 }
 
@@ -199,8 +199,7 @@ impl Challenges {
         })
     }
 
-    /// Construct tensor challenges from factored left/right vectors,
-    /// eagerly materializing the per-block product cache.
+    /// Construct tensor challenges from factored fold-high/fold-low vectors.
     ///
     /// # Errors
     ///
@@ -367,7 +366,7 @@ impl TensorChallenges {
     ///
     /// # Errors
     ///
-    /// Returns an error if left/right vector lengths do not match
+    /// Returns an error if fold-high/fold-low vector lengths do not match
     /// `num_claims * len`, dimensions are not powers of two, the total block
     /// count overflows, or any sparse factor is malformed for ring dimension
     /// `D`.
@@ -521,13 +520,13 @@ impl TensorChallenges {
     /// Evaluate one weighted tensor aggregate exactly at a ring-switch point.
     ///
     /// This is the factored aggregate API. Unlike
-    /// [`Self::evals_at_pows`], it consumes separable left/right weights and
+    /// [`Self::evals_at_pows`], it consumes separable fold-high/fold-low weights and
     /// returns a single aggregate for one claim.
     ///
     /// Computes
     ///
     /// ```text
-    /// Σ_{p,q} u[p] · v[q] · eval(reduce(L_p · R_q), α)
+    /// Σ_{p,q : p · Q + q < F} u[p] · v[q] · eval(reduce(H_p · L_q), α)
     /// ```
     ///
     /// without materializing every reduced tensor product. The negacyclic
@@ -588,13 +587,13 @@ impl TensorChallenges {
 
         // Build the weighted dense factors in E directly so the product
         // evaluation never materializes a length-O(fold_high_len · fold_low_len) buffer.
-        let mut left_bar = [E::zero(); D];
-        let mut right_bar = [E::zero(); D];
+        let mut high_bar = [E::zero(); D];
+        let mut low_bar = [E::zero(); D];
 
         for (p, &weight) in u_weights.iter().enumerate() {
             if !weight.is_zero() {
                 accumulate_sparse_scaled::<F, E, D>(
-                    &mut left_bar,
+                    &mut high_bar,
                     &self.fold_high[high_start + p],
                     weight,
                 )?;
@@ -603,51 +602,76 @@ impl TensorChallenges {
         for (q, &weight) in v_weights.iter().enumerate() {
             if !weight.is_zero() {
                 accumulate_sparse_scaled::<F, E, D>(
-                    &mut right_bar,
+                    &mut low_bar,
                     &self.fold_low[low_start + q],
                     weight,
                 )?;
             }
         }
 
-        let product_eval =
-            eval_dense_at_pows(&left_bar, alpha_pows) * eval_dense_at_pows(&right_bar, alpha_pows);
-        let mut quotient_eval = E::zero();
-        for (i, &left_coeff) in left_bar.iter().enumerate() {
-            if left_coeff.is_zero() {
-                continue;
-            }
-            for (j, &right_coeff) in right_bar.iter().enumerate() {
-                if right_coeff.is_zero() {
-                    continue;
-                }
-                if i + j >= D {
-                    quotient_eval += left_coeff * right_coeff * alpha_pows[i + j - D];
-                }
-            }
+        let aggregate = eval_dense_negacyclic_product_at_pows(
+            &high_bar,
+            &low_bar,
+            alpha_pows,
+            alpha_pow_d_plus_one,
+        );
+
+        let final_low_len = self.live_folds_per_claim % self.fold_low_len;
+        if final_low_len == 0 {
+            return Ok(aggregate);
         }
 
-        Ok(product_eval - alpha_pow_d_plus_one * quotient_eval)
+        // The full factored product includes the padded suffix of the final
+        // high row. Subtract that single separable rectangle to retain exactly
+        // the live prefix without expanding one product per fold.
+        let final_high_idx = fold_high_len - 1;
+        let mut final_high_bar = [E::zero(); D];
+        let final_high_weight = u_weights[final_high_idx];
+        if !final_high_weight.is_zero() {
+            accumulate_sparse_scaled::<F, E, D>(
+                &mut final_high_bar,
+                &self.fold_high[high_start + final_high_idx],
+                final_high_weight,
+            )?;
+        }
+        let mut padded_low_bar = [E::zero(); D];
+        for (q, &weight) in v_weights.iter().enumerate().skip(final_low_len) {
+            if !weight.is_zero() {
+                accumulate_sparse_scaled::<F, E, D>(
+                    &mut padded_low_bar,
+                    &self.fold_low[low_start + q],
+                    weight,
+                )?;
+            }
+        }
+        let padded_suffix = eval_dense_negacyclic_product_at_pows(
+            &final_high_bar,
+            &padded_low_bar,
+            alpha_pows,
+            alpha_pow_d_plus_one,
+        );
+
+        Ok(aggregate - padded_suffix)
     }
 
     fn validate_lengths(&self) -> Result<(), AkitaError> {
-        let expected_left = self
+        let expected_high = self
             .num_claims
             .checked_mul(self.fold_high_len())
             .ok_or_else(|| AkitaError::InvalidSetup("fold-high count overflow".to_string()))?;
-        if self.fold_high.len() != expected_left {
+        if self.fold_high.len() != expected_high {
             return Err(AkitaError::InvalidSize {
-                expected: expected_left,
+                expected: expected_high,
                 actual: self.fold_high.len(),
             });
         }
-        let expected_right = self
+        let expected_low = self
             .num_claims
             .checked_mul(self.fold_low_len)
             .ok_or_else(|| AkitaError::InvalidSetup("fold-low count overflow".to_string()))?;
-        if self.fold_low.len() != expected_right {
+        if self.fold_low.len() != expected_low {
             return Err(AkitaError::InvalidSize {
-                expected: expected_right,
+                expected: expected_low,
                 actual: self.fold_low.len(),
             });
         }
@@ -656,11 +680,11 @@ impl TensorChallenges {
 }
 
 // Helper for `TensorChallenges::evals_at_pows`. This computes only the
-// negacyclic wrap correction for one left/right pair; the caller combines it
-// with `eval(left) * eval(right)` to produce one logical block evaluation.
+// negacyclic wrap correction for one fold-high/fold-low pair; the caller combines it
+// with `eval(high) * eval(low)` to produce one logical block evaluation.
 fn tensor_product_quotient_eval<F, E>(
-    left: &SparseChallenge,
-    right: &SparseChallenge,
+    high: &SparseChallenge,
+    low: &SparseChallenge,
     alpha_pows: &[E],
 ) -> Result<E, AkitaError>
 where
@@ -668,16 +692,16 @@ where
     E: FieldCore + MulBase<F>,
 {
     let ring_d = alpha_pows.len();
-    left.validate_dyn(ring_d)?;
-    right.validate_dyn(ring_d)?;
+    high.validate_dyn(ring_d)?;
+    low.validate_dyn(ring_d)?;
     let mut quotient_eval = E::zero();
-    for (&left_pos, &left_coeff) in left.positions.iter().zip(left.coeffs.iter()) {
-        let left_idx = left_pos as usize;
-        for (&right_pos, &right_coeff) in right.positions.iter().zip(right.coeffs.iter()) {
-            let right_idx = right_pos as usize;
-            let degree = left_idx + right_idx;
+    for (&high_pos, &high_coeff) in high.positions.iter().zip(high.coeffs.iter()) {
+        let high_idx = high_pos as usize;
+        for (&low_pos, &low_coeff) in low.positions.iter().zip(low.coeffs.iter()) {
+            let low_idx = low_pos as usize;
+            let degree = high_idx + low_idx;
             if degree >= ring_d {
-                let term = i64::from(left_coeff) * i64::from(right_coeff);
+                let term = i64::from(high_coeff) * i64::from(low_coeff);
                 quotient_eval += alpha_pows[degree - ring_d].mul_base(F::from_i64(term));
             }
         }
@@ -686,7 +710,7 @@ where
 }
 
 // Helpers for `eval_factored_aggregate_at_pows`, which evaluates one weighted
-// claim aggregate directly from the left/right tensor factors.
+// claim aggregate directly from the fold-high/fold-low tensor factors.
 fn accumulate_sparse_scaled<F, E, const D: usize>(
     out: &mut [E],
     challenge: &SparseChallenge,
@@ -718,6 +742,28 @@ fn eval_dense_at_pows<E: FieldCore>(coeffs: &[E], alpha_pows: &[E]) -> E {
         .fold(E::zero(), |acc, (&coeff, &power)| acc + coeff * power)
 }
 
+fn eval_dense_negacyclic_product_at_pows<E: FieldCore, const D: usize>(
+    high: &[E; D],
+    low: &[E; D],
+    alpha_pows: &[E],
+    alpha_pow_d_plus_one: E,
+) -> E {
+    let product_eval = eval_dense_at_pows(high, alpha_pows) * eval_dense_at_pows(low, alpha_pows);
+    let mut quotient_eval = E::zero();
+    for (i, &high_coeff) in high.iter().enumerate() {
+        if high_coeff.is_zero() {
+            continue;
+        }
+        for (j, &low_coeff) in low.iter().enumerate() {
+            if low_coeff.is_zero() || i + j < D {
+                continue;
+            }
+            quotient_eval += high_coeff * low_coeff * alpha_pows[i + j - D];
+        }
+    }
+    product_eval - alpha_pow_d_plus_one * quotient_eval
+}
+
 /// Total sparse challenges drawn in one fold round.
 ///
 /// Flat: `live_fold_count · num_claims`.
@@ -745,12 +791,12 @@ pub fn fold_sparse_challenge_sample_count(
 /// Compute the canonical digest absorbed between fold-high and fold-low
 /// challenge sampling.
 ///
-/// Binding the right vector's transcript challenge to the exact left vector
-/// blocks any adaptive ground-out attempt on the right factor.
+/// Binding the fold-low vector's transcript challenge to the exact fold-high vector
+/// blocks any adaptive ground-out attempt on the fold-low factor.
 ///
 /// # Errors
 ///
-/// Returns an error if the tensor-left vector length is inconsistent with the
+/// Returns an error if the fold-high vector length is inconsistent with the
 /// supplied shape or if any sparse challenge violates structural invariants.
 pub fn fold_high_digest(
     fold_high: &[SparseChallenge],
@@ -760,7 +806,7 @@ pub fn fold_high_digest(
 ) -> Result<[u8; 32], AkitaError> {
     let expected = fold_high_len
         .checked_mul(num_claims)
-        .ok_or_else(|| AkitaError::InvalidSetup("tensor-left digest count overflow".to_string()))?;
+        .ok_or_else(|| AkitaError::InvalidSetup("fold-high digest count overflow".to_string()))?;
     if fold_high.len() != expected {
         return Err(AkitaError::InvalidSize {
             expected,

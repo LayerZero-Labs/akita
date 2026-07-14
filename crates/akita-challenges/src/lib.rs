@@ -14,8 +14,8 @@
 //! - [`ChallengeShape`] / [`Challenges`] — tensor-aware folding
 //!   challenge selection and sampled challenge containers.
 //! - [`TensorChallenges`] — the tensor-only factored representation used when
-//!   a folding round samples left/right challenge vectors instead of one flat
-//!   vector.
+//!   a folding round samples fold-high/fold-low challenge vectors instead of
+//!   one flat vector.
 //!
 //! Sampling uses the signed-sparse path in a private `sampler` submodule. The
 //! SHAKE256-backed XOF cursor is crate-internal and not part of the public API.
