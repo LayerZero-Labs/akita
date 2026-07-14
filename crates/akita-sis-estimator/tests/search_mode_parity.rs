@@ -6,9 +6,10 @@
 //! `cargo bench -p akita-sis-estimator --bench infinity_optimizer`.
 
 use akita_sis_estimator::{
-    estimate, scalar_sis_from_ring, width_table::InfinityWidthProfile, AkitaModulusProfileId,
-    CostValue, EstimateConfig, NumericConfig,
+    estimate, scalar_sis_from_ring, AkitaModulusProfileId, CostValue, EstimateConfig, NumericConfig,
 };
+#[cfg(feature = "parallel")]
+use akita_sis_estimator::width_table::InfinityWidthProfile;
 
 const GOLDEN_CSV: &str = include_str!("../../../scripts/sis_golden/infinity_golden.csv");
 
