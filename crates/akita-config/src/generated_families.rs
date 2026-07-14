@@ -187,6 +187,10 @@ fn group_batch_keys<Cfg: CommitmentConfig>(
 fn recursive_profile_group_batch_keys(
     _family: &GeneratedFamily,
 ) -> Result<Vec<AkitaScheduleLookupKey>, AkitaError> {
+    recursive_d64_onehot_profile_keys()
+}
+
+fn recursive_d64_onehot_profile_keys() -> Result<Vec<AkitaScheduleLookupKey>, AkitaError> {
     let precommitted_group = PolynomialGroupLayout::new(16, 1);
     let precommitted_params = conservative_commit_params::<
         ConservativeCommitmentConfig<fp128::D64OneHot>,
@@ -213,9 +217,16 @@ fn key_within_setup_capacity(
     Ok(key.num_polynomials()? <= max_num_batched_polys)
 }
 
-/// Build representative multi-group recursive key candidates inside `capacity`.
+/// Selected multi-group recursive keys for setup-prefix capacity work.
 ///
-/// Does not run the planner; callers resolve or regenerate each candidate.
+/// Returns the bounded supported set: generated-catalog multi-group rows under
+/// capacity, plus the explicit recursive profiling key(s). This is intentionally
+/// not a dense `1..=max_nv` grid. Setup envelope inflation and exact prefix-slot
+/// materialization both walk this set; other recursive shapes remain planner-
+/// constructible but are admitted only when their slots already fit the
+/// materialized artifact (`ensure_schedule_fits_setup` / missing-slot reject).
+///
+/// Does not run the planner; callers resolve each selected key.
 pub fn recursive_group_batch_candidates_for_capacity<Cfg: CommitmentConfig>(
     max_num_vars: usize,
     max_num_batched_polys: usize,
@@ -229,50 +240,54 @@ pub fn recursive_group_batch_candidates_for_capacity<Cfg: CommitmentConfig>(
         return Ok(Vec::new());
     }
 
-    let min_precommitted_num_vars =
-        (policy_of::<Cfg>().ring_dimension.trailing_zeros() as usize).saturating_add(1);
     let mut keys = Vec::new();
-    // Cover every final poly count inside capacity. Precommitted groups are
-    // singleton-polynomial only; capacity is enforced on total polynomial count
-    // below.
-    for final_num_polynomials in 1..=max_num_batched_polys {
-        for final_num_vars in 1..=max_num_vars {
-            let main = PolynomialGroupLayout::new(final_num_vars, final_num_polynomials);
-            let pre_num_vars = final_num_vars / 2;
-            if pre_num_vars < min_precommitted_num_vars {
+    if let Some(catalog) = Cfg::schedule_catalog() {
+        for entry in catalog.entries {
+            if entry.precommitteds.is_empty() {
                 continue;
             }
-            for num_precommitted in 1..=DEFAULT_GROUP_BATCH_MAX_PRECOMMITTED_GROUPS {
-                let mut precommitteds = Vec::with_capacity(num_precommitted);
-                let mut supported = true;
-                for _ in 0..num_precommitted {
-                    let pre_key = PolynomialGroupLayout::new(pre_num_vars, 1);
-                    match conservative_commit_params::<Cfg>(&pre_key) {
-                        Ok(params) => {
-                            precommitteds
-                                .push(PrecommittedGroupParams::from_params(pre_key, &params));
-                        }
-                        Err(_) => {
-                            supported = false;
-                            break;
-                        }
-                    }
-                }
-                if !supported {
-                    continue;
-                }
-                let candidate = AkitaScheduleLookupKey {
-                    final_group: main,
-                    precommitteds,
-                };
-                if key_within_setup_capacity(&candidate, max_num_vars, max_num_batched_polys)? {
-                    keys.push(candidate);
-                }
+            let candidate = AkitaScheduleLookupKey {
+                final_group: entry.final_group,
+                precommitteds: entry.precommitteds.to_vec(),
+            };
+            if key_within_setup_capacity(&candidate, max_num_vars, max_num_batched_polys)? {
+                push_unique_schedule_key(&mut keys, candidate);
             }
         }
     }
+
+    // Explicit profiling keys stay selected even when the recursive catalog
+    // feature is off or the table has not been regenerated yet.
+    if std::any::TypeId::of::<Cfg>()
+        == std::any::TypeId::of::<RecursiveCommitmentConfig<fp128::D64OneHot>>()
+    {
+        for candidate in recursive_d64_onehot_profile_keys()? {
+            if key_within_setup_capacity(&candidate, max_num_vars, max_num_batched_polys)? {
+                push_unique_schedule_key(&mut keys, candidate);
+            }
+        }
+    }
+
     keys.sort_by(akita_planner::runtime_schedule_key_cmp);
     Ok(keys)
+}
+
+fn push_unique_schedule_key(
+    keys: &mut Vec<AkitaScheduleLookupKey>,
+    candidate: AkitaScheduleLookupKey,
+) {
+    let already_present = keys.iter().any(|existing| {
+        existing.final_group == candidate.final_group
+            && existing.precommitteds.len() == candidate.precommitteds.len()
+            && existing
+                .precommitteds
+                .iter()
+                .zip(candidate.precommitteds.iter())
+                .all(|(left, right)| left.group == right.group)
+    });
+    if !already_present {
+        keys.push(candidate);
+    }
 }
 
 macro_rules! family_row {

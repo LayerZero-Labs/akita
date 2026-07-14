@@ -119,7 +119,11 @@ pub(crate) fn extract_setup_prefix_slot_ids_from_schedule(
     Ok(ids.into_iter().collect())
 }
 
-/// Enumerate every exact setup-prefix slot required by supported recursive schedules.
+/// Enumerate every exact setup-prefix slot required by selected recursive schedules.
+///
+/// Selected keys are the bounded catalog/profile set from
+/// [`crate::generated_families::recursive_group_batch_candidates_for_capacity`],
+/// not a dense capacity grid.
 pub fn setup_prefix_slot_ids_for_capacity<Cfg: CommitmentConfig>(
     max_num_vars: usize,
     max_num_batched_polys: usize,
@@ -183,8 +187,37 @@ mod tests {
                         .zip(profile.precommitteds.iter())
                         .all(|(a, b)| a.group == b.group)
             }),
-            "capacity candidate grid must include the profiling recursive key"
+            "capacity selected-key set must include the profiling recursive key"
         );
+        assert!(
+            candidates.len() <= 4,
+            "selected recursive capacity keys must stay bounded, got {}",
+            candidates.len()
+        );
+    }
+
+    #[test]
+    fn selected_recursive_keys_yield_exact_prefix_slots() {
+        use crate::matrix_envelope::inflate_envelope_for_setup_prefix_slot;
+        use akita_types::SetupMatrixEnvelope;
+
+        let slots = setup_prefix_slot_ids_for_capacity::<SetupCfg>(32, 4).expect("slots");
+        assert!(
+            !slots.is_empty(),
+            "selected recursive keys must require prefix slots"
+        );
+        assert!(
+            slots.len() <= 8,
+            "selected recursive prefix slots must stay bounded, got {}",
+            slots.len()
+        );
+
+        let mut slot_envelope = SetupMatrixEnvelope { max_setup_len: 1 };
+        for slot in &slots {
+            inflate_envelope_for_setup_prefix_slot(&mut slot_envelope, slot).expect("inflate");
+            assert!(slot.n_prefix().expect("n_prefix") >= slot.natural_len);
+        }
+        assert!(slot_envelope.max_setup_len > 1);
     }
 
     #[test]

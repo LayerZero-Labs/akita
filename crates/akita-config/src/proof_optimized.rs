@@ -4,12 +4,14 @@
 //! [`akita_types`] SIS primitives and generated schedule tables.
 
 use super::CommitmentConfig;
-use crate::matrix_envelope::accumulate_matrix_envelope_for_level;
+use crate::matrix_envelope::{
+    accumulate_matrix_envelope_for_level, inflate_envelope_for_setup_prefix_slot,
+};
 use akita_field::AkitaError;
 use akita_field::{Ext2, FpExt4, Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59};
 use akita_types::{
     AkitaExpandedSetup, AkitaScheduleLookupKey, LevelParams, OpeningClaimsLayout,
-    PolynomialGroupLayout, Schedule, SetupContributionMode, SetupMatrixEnvelope, Step,
+    PolynomialGroupLayout, Schedule, SetupMatrixEnvelope,
 };
 use std::any::TypeId;
 use std::collections::HashMap;
@@ -114,25 +116,44 @@ fn proof_optimized_max_setup_matrix_size_uncached<Cfg: CommitmentConfig>(
     }
 
     let layouts = setup_envelope_scan_layouts(max_num_vars, max_num_batched_polys)?;
-    let max_setup_len = layouts
-        .iter()
-        .filter_map(
-            |layout| match setup_matrix_envelope_for_shape::<Cfg>(layout) {
-                Ok(Some(entry_envelope)) => Some(entry_envelope.max_setup_len),
-                Ok(None) | Err(_) => None,
-            },
-        )
-        .max();
+    let mut saw_supported_shape = false;
+    let mut envelope = SetupMatrixEnvelope { max_setup_len: 1 };
+    for layout in &layouts {
+        if let Ok(Some(entry_envelope)) = setup_matrix_envelope_for_shape::<Cfg>(layout) {
+            saw_supported_shape = true;
+            envelope.max_setup_len = envelope.max_setup_len.max(entry_envelope.max_setup_len);
+        }
+    }
 
-    let Some(max_setup_len) = max_setup_len else {
+    // Recursive setups also cover selected supported multi-group keys and their
+    // exact setup-prefix slot footprints. The representative scan above uses
+    // near-capacity precommits only and does not size those selected slots.
+    if Cfg::recursive_setup_planning() {
+        for key in crate::generated_families::recursive_group_batch_candidates_for_capacity::<Cfg>(
+            max_num_vars,
+            max_num_batched_polys,
+        )? {
+            let layout = key.opening_layout()?;
+            if let Some(entry_envelope) = setup_matrix_envelope_for_shape::<Cfg>(&layout)? {
+                saw_supported_shape = true;
+                envelope.max_setup_len = envelope.max_setup_len.max(entry_envelope.max_setup_len);
+            }
+        }
+        for slot_id in crate::setup_prefix_slots::setup_prefix_slot_ids_for_capacity::<Cfg>(
+            max_num_vars,
+            max_num_batched_polys,
+        )? {
+            inflate_envelope_for_setup_prefix_slot(&mut envelope, &slot_id)?;
+        }
+    }
+
+    if !saw_supported_shape {
         return Err(AkitaError::InvalidSetup(format!(
             "setup matrix sizing found no generated schedules for max_num_vars={max_num_vars}"
         )));
-    };
+    }
 
-    Ok(SetupMatrixEnvelope {
-        max_setup_len: max_setup_len.max(1),
-    })
+    Ok(envelope)
 }
 
 fn setup_envelope_scan_layouts(
@@ -241,33 +262,34 @@ pub fn setup_level_params_from_schedule(schedule: &Schedule) -> Vec<LevelParams>
 pub fn ensure_schedule_fits_setup<Cfg>(
     setup: &AkitaExpandedSetup<Cfg::Field>,
     schedule: &Schedule,
-    _layout: &OpeningClaimsLayout,
+    layout: &OpeningClaimsLayout,
 ) -> Result<(), AkitaError>
 where
     Cfg: CommitmentConfig,
 {
-    for step in &schedule.steps {
-        let params = match step {
-            Step::Fold(fold)
-                if fold.params.setup_contribution_mode == SetupContributionMode::Direct =>
-            {
-                Some(&fold.params)
-            }
-            Step::Fold(_) => None,
-            Step::Direct(direct) => direct.params.as_ref(),
-        };
-        if let Some(params) = params {
-            let mut required_setup_len = 1;
-            accumulate_matrix_envelope_for_level(params, &mut required_setup_len)?;
-            let available_setup_len = setup
-                .shared_matrix
-                .total_ring_elements_at_dyn(params.ring_dimension)?;
-            ensure_required_setup_len(
-                required_setup_len,
-                available_setup_len,
-                params.ring_dimension,
-            )?;
-        }
+    for params in setup_level_params_from_schedule(schedule) {
+        let mut required_setup_len = 1;
+        accumulate_matrix_envelope_for_level(&params, &mut required_setup_len)?;
+        let available_setup_len = setup
+            .shared_matrix
+            .total_ring_elements_at_dyn(params.ring_dimension)?;
+        ensure_required_setup_len(
+            required_setup_len,
+            available_setup_len,
+            params.ring_dimension,
+        )?;
+    }
+
+    if let Some(root_params) = root_commit_params_from_schedule(schedule)? {
+        let required_setup_len = root_runtime_matrix_len_for_opening_batch(&root_params, layout)?;
+        let available_setup_len = setup
+            .shared_matrix
+            .total_ring_elements_at_dyn(root_params.ring_dimension)?;
+        ensure_required_setup_len(
+            required_setup_len,
+            available_setup_len,
+            root_params.ring_dimension,
+        )?;
     }
     Ok(())
 }
@@ -300,7 +322,6 @@ fn accumulate_root_matrix_envelope_for_opening_batch(
     Ok(())
 }
 
-#[cfg(test)]
 fn root_runtime_matrix_len_for_opening_batch(
     lp: &LevelParams,
     layout: &OpeningClaimsLayout,
@@ -335,7 +356,6 @@ fn root_runtime_matrix_len_for_opening_batch(
     root_setup_len(lp.d_key.row_len(), d_width, max_a_len, max_b_len)
 }
 
-#[cfg(test)]
 fn group_setup_footprint(
     a_rows: usize,
     a_width: usize,
@@ -368,7 +388,6 @@ fn group_setup_footprint(
     Ok((a_len, b_len, d_width))
 }
 
-#[cfg(test)]
 fn root_setup_len(
     d_rows: usize,
     d_width: usize,
@@ -381,7 +400,6 @@ fn root_setup_len(
     Ok(d_len.max(max_a_len).max(max_b_len))
 }
 
-#[cfg(test)]
 fn root_commit_params_from_schedule(
     schedule: &Schedule,
 ) -> Result<Option<LevelParams>, AkitaError> {

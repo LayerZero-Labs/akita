@@ -533,7 +533,7 @@ fn recursive_setup_envelope_counts_setup_prefix_d_segment() {
         active_setup_field_len, padded_setup_prefix_len, segment_typed_witness_shape_from_groups,
         setup_prefix_precommitted_params, setup_prefix_slot_id, AjtaiKeyParams,
         CleartextWitnessShape, DecompositionParams, DirectStep, FoldStep, LevelParamsLike,
-        SETUP_OFFLOAD_D_SETUP,
+        SetupContributionMode, Step, SETUP_OFFLOAD_D_SETUP,
     };
 
     fn scalar_level_params() -> LevelParams {
