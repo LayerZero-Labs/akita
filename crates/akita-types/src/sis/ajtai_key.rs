@@ -9,7 +9,7 @@
 
 use akita_field::AkitaError;
 
-use super::generated_sis_table::sis_scalar_cutoff as generated_sis_scalar_cutoff;
+use super::generated_sis_table::sis_max_widths as generated_sis_max_widths;
 use crate::descriptor_bytes::{push_u128, push_usize, sis_modulus_profile_tag};
 
 /// Digest of the generated scalar table and its coverage certificate.
@@ -282,13 +282,7 @@ pub fn ceil_supported_linf_bound(
             .find(|&candidate| linf <= candidate)?,
     };
     sis_role_cell(role, sis_modulus_profile, d, bucket)?;
-    sis_scalar_cutoff(
-        table_digest,
-        policy,
-        sis_modulus_profile,
-        bucket,
-        u64::from(d),
-    )?;
+    sis_max_widths(policy, table_digest, sis_modulus_profile, d, bucket)?;
     Some(bucket)
 }
 
@@ -317,7 +311,7 @@ pub fn sis_table_key_for_linf_bound(
     })
 }
 
-/// Certified scalar cutoff stored by the generated artifact.
+/// Certified scalar cutoff kind retained for offline CSV / audit tooling.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum ScalarCutoff {
     /// The accepted value and its immediate successor were certified.
@@ -335,17 +329,17 @@ impl ScalarCutoff {
     }
 }
 
-fn sis_scalar_cutoff(
-    table_digest: SisTableDigest,
+fn sis_max_widths(
     policy: SisSecurityPolicyId,
+    table_digest: SisTableDigest,
     modulus_profile: SisModulusProfileId,
+    d: u32,
     coeff_linf_bound: u128,
-    n: u64,
-) -> Option<ScalarCutoff> {
+) -> Option<&'static [u64]> {
     if table_digest != SisTableDigest::CURRENT || policy != DEFAULT_SIS_SECURITY_POLICY {
         return None;
     }
-    generated_sis_scalar_cutoff(policy, modulus_profile, coeff_linf_bound, n)
+    generated_sis_max_widths(policy, modulus_profile, d, coeff_linf_bound)
 }
 
 /// Minimum generated SIS-secure module rank that supports `width` ring columns
@@ -353,31 +347,23 @@ fn sis_scalar_cutoff(
 ///
 /// Returns `None` when no generated SIS-floor row covers the configuration.
 pub fn min_secure_rank(key: SisTableKey, width: u64) -> Option<usize> {
-    let role_cell = sis_role_cell(
+    let _role_cell = sis_role_cell(
         key.role,
         key.modulus_profile,
         key.ring_dimension,
         key.coeff_linf_bound,
     )?;
-    let d = u64::from(key.ring_dimension);
-    if d == 0 {
-        return None;
-    }
-    let m_need = width.checked_mul(d)?;
-    let mut rank = 1u32;
-    while rank <= role_cell.max_module_rank {
-        let n = u64::from(rank).checked_mul(d)?;
-        let cutoff = sis_scalar_cutoff(
-            key.table_digest,
-            key.policy,
-            key.modulus_profile,
-            key.coeff_linf_bound,
-            n,
-        )?;
-        if m_need <= cutoff.value() {
-            return Some(rank as usize);
+    let widths = sis_max_widths(
+        key.policy,
+        key.table_digest,
+        key.modulus_profile,
+        key.ring_dimension,
+        key.coeff_linf_bound,
+    )?;
+    for (i, &max_w) in widths.iter().enumerate() {
+        if width <= max_w {
+            return Some(i + 1);
         }
-        rank = rank.checked_add(1)?;
     }
     None
 }
@@ -485,6 +471,11 @@ impl AjtaiKeyParams {
     /// covers `(key, col_len)`, or when [`try_new`](Self::try_new) rejects the
     /// resulting tuple.
     pub fn try_new_with_min_rank(key: SisTableKey, col_len: usize) -> Result<Self, AkitaError> {
+        if col_len == 0 {
+            return Err(AkitaError::InvalidSetup(
+                "AjtaiKeyParams: col_len = 0".to_string(),
+            ));
+        }
         let row_len = min_secure_rank(key, col_len as u64).ok_or_else(|| {
             AkitaError::InvalidSetup(format!(
                 "AjtaiKeyParams: no audited SIS rank for \
@@ -495,16 +486,11 @@ impl AjtaiKeyParams {
                 key.coeff_linf_bound
             ))
         })?;
-        Self::try_new(
-            key.policy,
-            key.table_digest,
-            key.modulus_profile,
-            key.role,
+        Ok(Self {
             row_len,
             col_len,
-            key.coeff_linf_bound,
-            key.ring_dimension as usize,
-        )
+            sis_table_key: key,
+        })
     }
 
     /// Create a new `AjtaiKeyParams` without enforcing SIS security.
@@ -611,19 +597,19 @@ mod tests {
     #[test]
     fn floor_slices_have_family_specific_rank_caps() {
         let bucket = 15;
-        if generated_sis_scalar_cutoff(
+        if generated_sis_max_widths(
             DEFAULT_SIS_SECURITY_POLICY,
             SisModulusProfileId::Q32Offset99,
-            bucket,
             32,
+            bucket,
         )
         .is_some()
         {
-            assert!(generated_sis_scalar_cutoff(
+            assert!(generated_sis_max_widths(
                 DEFAULT_SIS_SECURITY_POLICY,
                 SisModulusProfileId::Q32Offset99,
-                bucket,
                 32,
+                bucket,
             )
             .is_some());
         }

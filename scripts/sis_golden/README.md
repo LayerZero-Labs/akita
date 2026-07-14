@@ -229,7 +229,8 @@ The production `rust-split` mode requires the complete production keyspace.
 Partial jobs must use CSV output. Rows with `hit_cap=true` are lower bounds, not
 tight cutoffs. Full `rust-split` generation writes only the compact runtime
 modules under `crates/akita-types/src/sis/generated_sis_table/` (`q32.rs`,
-`q64.rs`, `q128.rs`, and `mod.rs`). Offline CSV provenance stays in
+`q64.rs`, `q128.rs`, and `mod.rs`). Those modules store the Module-SIS
+projection `(d, B) -> widths[rank]`; offline CSV provenance stays in
 `scripts/sis_golden/` via `--format csv`.
 
 The checked-in policy table may use `--profile local-minimum` for candidate

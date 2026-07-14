@@ -385,33 +385,55 @@ pub fn validate_infinity_width_rows(rows: &[InfinityWidthRow]) -> Result<()> {
     validate_bound_monotonicity(rows)
 }
 
-/// Convert ring-origin rows to scalar `(B, n)` match arms with typed cutoffs.
+/// Convert ring-origin rows to runtime `(d, B) -> widths[rank]` match arms.
+///
+/// Scalar certification still groups by `(B, n)` and takes the min `m`. The
+/// emitted runtime table projects those cutoffs onto each reachable ring
+/// dimension as `width[r - 1] = cutoff_m(B, n = r * d) / d`.
 pub fn rust_table_arms(
     rows: &[InfinityWidthRow],
-    _max_rank: u32,
+    max_rank: u32,
 ) -> BTreeMap<AkitaModulusProfileId, Vec<String>> {
-    let mut grouped = BTreeMap::<(AkitaModulusProfileId, u64, u64), (u64, bool)>::new();
+    let mut scalar = BTreeMap::<(AkitaModulusProfileId, u64, u64), u64>::new();
+    let mut pairs = BTreeSet::<(AkitaModulusProfileId, u32, u64)>::new();
     for row in rows {
         let n = u64::from(row.d) * u64::from(row.rank);
-        let key = (row.modulus_profile, row.coeff_linf_bound, n);
         let scalar_m = row.max_width.checked_mul(u64::from(row.d)).unwrap_or(0);
-        grouped
-            .entry(key)
-            .and_modify(|(current_m, current_at_least)| {
-                if scalar_m < *current_m {
-                    *current_m = scalar_m;
-                    *current_at_least = row.hit_cap;
+        scalar
+            .entry((row.modulus_profile, row.coeff_linf_bound, n))
+            .and_modify(|current| {
+                if scalar_m < *current {
+                    *current = scalar_m;
                 }
             })
-            .or_insert((scalar_m, row.hit_cap));
+            .or_insert(scalar_m);
+        pairs.insert((row.modulus_profile, row.d, row.coeff_linf_bound));
     }
     let mut arms = BTreeMap::<AkitaModulusProfileId, Vec<String>>::new();
-    for ((profile, bound, n), (scalar_m, hit_cap)) in grouped {
-        let cutoff = if hit_cap { "AtLeast" } else { "Exact" };
-        arms.entry(profile).or_default().push(format!(
-            "({}, {}) => Some(ScalarCutoff::{cutoff}({scalar_m})),",
-            bound, n
-        ));
+    for (profile, d, bound) in pairs {
+        let mut widths = Vec::with_capacity(max_rank as usize);
+        let mut complete = true;
+        for rank in 1..=max_rank {
+            let n = u64::from(d) * u64::from(rank);
+            match scalar.get(&(profile, bound, n)) {
+                Some(&scalar_m) => widths.push(scalar_m / u64::from(d)),
+                None => {
+                    complete = false;
+                    break;
+                }
+            }
+        }
+        if !complete {
+            continue;
+        }
+        let body = widths
+            .iter()
+            .map(|width| width.to_string())
+            .collect::<Vec<_>>()
+            .join(", ");
+        arms.entry(profile)
+            .or_default()
+            .push(format!("({d}, {bound}) => Some(&[{body}]),"));
     }
     arms
 }

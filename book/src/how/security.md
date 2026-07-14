@@ -9,14 +9,17 @@ model. Keep the marketing claim separate from audited reality. See
 
 ## SIS / MSIS and Ajtai sizing
 
-Production Ajtai key sizing uses generated scalar Module-SIS width tables keyed
-by the SIS policy, exact modulus profile, coefficient-`L∞` bound, and
-scalar dimension:
+Production Ajtai key sizing uses generated Module-SIS width tables. The
+generator certifies scalar cutoffs `(B, n) -> max m` under
+`Quantum128BitADPS16`, and the checked-in runtime artifact stores the
+Module-SIS projection:
 
 ```text
-(sis_security_policy, modulus_profile, coeff_linf_bound, n = rank * d)
-    -> certified scalar cutoff
+(sis_security_policy, modulus_profile, d, coeff_linf_bound)
+    -> max secure ring widths by module rank
 ```
+
+where `width[r - 1] = cutoff_m(B, n = r * d) / d`.
 
 The shipped policy is `Quantum128BitADPS16`. It accepts a row only when the
 exhaustive ADPS16 quantum certificate reports a finite score or a classified
