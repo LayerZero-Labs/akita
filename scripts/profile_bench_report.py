@@ -737,6 +737,22 @@ def extract_summary(
             summary["extension_root_direct_fallback"] = True
         elif "planned fold level" in line and kvs.get("label") == mode:
             level = int(kvs["level"])
+            # Benchmark runs parse both the PR binary and its merge-base binary.
+            # Normalize the pre-cutover geometry names used by the merge base.
+            position_bits = int(
+                kvs["position_bits"] if "position_bits" in kvs else kvs["m_vars"]
+            )
+            fold_bits = int(kvs["fold_bits"] if "fold_bits" in kvs else kvs["r_vars"])
+            fold_position_count = int(
+                kvs["fold_position_count"]
+                if "fold_position_count" in kvs
+                else kvs["block_len"]
+            )
+            live_fold_count = int(
+                kvs["live_fold_count"]
+                if "live_fold_count" in kvs
+                else kvs["num_blocks"]
+            )
             planned_levels[level] = {
                 "level": level,
                 "d": int(kvs["d"]),
@@ -745,10 +761,10 @@ def extract_summary(
                 "n_d": int(kvs["n_d"]),
                 "challenge_l1_mass": int(kvs["challenge_l1_mass"]),
                 "log_basis": int(kvs["log_basis"]),
-                "position_bits": int(kvs["position_bits"]),
-                "fold_bits": int(kvs["fold_bits"]),
-                "fold_position_count": int(kvs["fold_position_count"]),
-                "live_fold_count": int(kvs["live_fold_count"]),
+                "position_bits": position_bits,
+                "fold_bits": fold_bits,
+                "fold_position_count": fold_position_count,
+                "live_fold_count": live_fold_count,
                 "delta_commit": int(kvs["delta_commit"]),
                 "delta_open": int(kvs["delta_open"]),
                 "delta_fold": int(kvs["delta_fold"]),
