@@ -1,6 +1,6 @@
 use akita_algebra::CyclotomicRing;
 use akita_challenges::{SparseChallenge, TensorChallenges};
-use akita_field::FieldCore;
+use akita_field::{AkitaError, FieldCore};
 use akita_types::LevelParams;
 
 // ===========================================================================
@@ -71,21 +71,70 @@ pub enum OpeningFoldPlan<'a, F: FieldCore, const D: usize> {
     /// Base multiplier point: scalar fold weights.
     Base {
         /// Outer evaluation scalars applied to the folded blocks.
-        eval_outer_scalars: &'a [F],
+        fold_weights: &'a [F],
         /// Per-block fold scalars.
-        fold_scalars: &'a [F],
+        position_weights: &'a [F],
         /// Block length in ring elements.
         fold_position_count: usize,
     },
     /// Ring multiplier point: ring-element fold weights.
     Ring {
         /// Outer evaluation ring multipliers applied to the folded blocks.
-        eval_outer_scalars: &'a [CyclotomicRing<F, D>],
+        fold_weights: &'a [CyclotomicRing<F, D>],
         /// Per-block fold ring multipliers.
-        fold_scalars: &'a [CyclotomicRing<F, D>],
+        position_weights: &'a [CyclotomicRing<F, D>],
         /// Block length in ring elements.
         fold_position_count: usize,
     },
+}
+
+impl<F: FieldCore, const D: usize> OpeningFoldPlan<'_, F, D> {
+    pub(crate) fn fold_position_count(self) -> usize {
+        match self {
+            Self::Base {
+                fold_position_count,
+                ..
+            }
+            | Self::Ring {
+                fold_position_count,
+                ..
+            } => fold_position_count,
+        }
+    }
+
+    /// Validate exact position and live-fold weight lengths at a kernel boundary.
+    pub(crate) fn validate(self, live_fold_count: usize) -> Result<(), AkitaError> {
+        let (fold_len, position_len, fold_position_count) = match self {
+            Self::Base {
+                fold_weights,
+                position_weights,
+                fold_position_count,
+            } => (
+                fold_weights.len(),
+                position_weights.len(),
+                fold_position_count,
+            ),
+            Self::Ring {
+                fold_weights,
+                position_weights,
+                fold_position_count,
+            } => (
+                fold_weights.len(),
+                position_weights.len(),
+                fold_position_count,
+            ),
+        };
+        if !fold_position_count.is_power_of_two()
+            || live_fold_count == 0
+            || position_len != fold_position_count
+            || fold_len != live_fold_count
+        {
+            return Err(AkitaError::InvalidInput(
+                "opening fold weights do not match exact L/F geometry".to_string(),
+            ));
+        }
+        Ok(())
+    }
 }
 
 /// Fused evaluate-and-fold output.

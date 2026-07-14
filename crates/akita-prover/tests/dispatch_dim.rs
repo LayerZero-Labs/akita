@@ -63,8 +63,10 @@ fn make_fold_step(
         fold_challenge_config,
     );
     params.role_dims = akita_types::CommitmentRingDims::uniform(ring_dimension);
+    params.source_ring_len_per_claim = live_fold_count * fold_position_count;
     params.live_fold_count = live_fold_count;
     params.fold_position_count = fold_position_count;
+    params.shard_granule = 1;
     params.num_digits_commit = 2;
     params.num_digits_open = 2;
     params.stamp_role_dims_from_keys();

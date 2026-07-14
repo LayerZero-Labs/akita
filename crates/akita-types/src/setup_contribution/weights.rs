@@ -2,12 +2,12 @@ use akita_algebra::offset_eq::eq_eval_at_index;
 use akita_field::parallel::*;
 use akita_field::{AkitaError, FieldCore, MulBase};
 
-use crate::{OpeningBatchWitnessLayout, OpeningBlockLayout, SemanticGroupId};
+use crate::{OpeningBatchWitnessLayout, SemanticGroupId};
 
 /// Canonical D-role column weights in `(claim, block, opening_digit)` order.
 pub(crate) fn setup_e_col_weights<E: FieldCore>(
     layout: &OpeningBatchWitnessLayout,
-    opening_layout: OpeningBlockLayout,
+    opening_source_len: usize,
     group_id: SemanticGroupId,
     live_fold_count: usize,
     num_claims: usize,
@@ -28,7 +28,8 @@ pub(crate) fn setup_e_col_weights<E: FieldCore>(
             let claim = block_claim / live_fold_count;
             let unit = layout.unit_for_block(group_id, block)?;
             let witness_index = layout.e_index(unit, claim, block, digit)?;
-            let opening_index = opening_layout.opening_index_for_physical(witness_index)?;
+            let opening_index =
+                crate::checked_opening_source_index(opening_source_len, witness_index)?;
             Ok(eq_eval_at_index(full_vec_randomness, opening_index))
         })
         .collect()
@@ -38,7 +39,7 @@ pub(crate) fn setup_e_col_weights<E: FieldCore>(
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn setup_t_col_weights<E: FieldCore>(
     layout: &OpeningBatchWitnessLayout,
-    opening_layout: OpeningBlockLayout,
+    opening_source_len: usize,
     group_id: SemanticGroupId,
     live_fold_count: usize,
     depth_open: usize,
@@ -79,7 +80,8 @@ pub(crate) fn setup_t_col_weights<E: FieldCore>(
                 .ok_or_else(|| AkitaError::InvalidSetup("setup B claim index overflow".into()))?;
             let unit = layout.unit_for_block(group_id, block)?;
             let witness_index = layout.t_index(unit, claim, block, a_row, digit)?;
-            let opening_index = opening_layout.opening_index_for_physical(witness_index)?;
+            let opening_index =
+                crate::checked_opening_source_index(opening_source_len, witness_index)?;
             Ok(eq_eval_at_index(full_vec_randomness, opening_index))
         })
         .collect()
@@ -89,7 +91,7 @@ pub(crate) fn setup_t_col_weights<E: FieldCore>(
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn setup_z_col_weights<F, E>(
     layout: &OpeningBatchWitnessLayout,
-    opening_layout: OpeningBlockLayout,
+    opening_source_len: usize,
     group_id: SemanticGroupId,
     fold_position_count: usize,
     depth_commit: usize,
@@ -126,7 +128,8 @@ where
             for unit in &units {
                 for (fold_digit, &fold) in fold_gadget.iter().enumerate().take(depth_fold) {
                     let witness_index = layout.z_index(unit, position, commit_digit, fold_digit)?;
-                    let opening_index = opening_layout.opening_index_for_physical(witness_index)?;
+                    let opening_index =
+                        crate::checked_opening_source_index(opening_source_len, witness_index)?;
                     weight -= eq_eval_at_index(full_vec_randomness, opening_index).mul_base(fold);
                 }
             }

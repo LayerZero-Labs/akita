@@ -19,12 +19,17 @@ fn ring<const D: usize>(offset: u64) -> CyclotomicRing<F, D> {
 #[test]
 fn ring_fold_matches_dense_multiplication_reference() {
     const D: usize = 8;
-    let coeffs = (0..4).map(|idx| ring::<D>(10 * idx)).collect::<Vec<_>>();
+    let coeffs = (0..2).map(|idx| ring::<D>(10 * idx)).collect::<Vec<_>>();
     let poly = DensePoly::<F>::from_ring_coeffs(coeffs.clone());
-    let scalars = vec![ring::<D>(100), ring::<D>(200)];
-    let got = poly.fold_blocks_ring(&scalars, 2);
+    let scalars = vec![
+        ring::<D>(100),
+        ring::<D>(200),
+        ring::<D>(300),
+        ring::<D>(400),
+    ];
+    let got = poly.fold_blocks_ring(&scalars, 4);
     let expected = coeffs
-        .chunks(2)
+        .chunks(4)
         .map(|block| {
             block
                 .iter()

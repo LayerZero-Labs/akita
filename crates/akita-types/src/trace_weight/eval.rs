@@ -222,8 +222,9 @@ where
 ///   every block multiplier.
 /// - `basis`: the opening basis that fixes those per-bit weights.
 /// - `packed_inner_point`: the ψ-packed inner opening over `F`.
-/// - `block_offset`: where this claim's `2^{r_pc}` blocks start inside the
-///   (possibly claim-batched) block row.
+/// - `block_offset`: where this claim's exact live fold run starts inside the
+///   (possibly claim-batched) block row. `b_open` addresses the enclosing
+///   power-of-two capacity; the layout supplies the exact live run length.
 /// - `coefficient`: the public scalar applied to this term (per-claim row
 ///   weight times any end-of-round tensor factor), in `E`.
 ///
@@ -384,9 +385,18 @@ where
                 "trace term block-opening width exceeds column dimension".to_string(),
             ));
         }
-        let block_span = 1usize.checked_shl(r_pc as u32).ok_or_else(|| {
+        let block_capacity = 1usize.checked_shl(r_pc as u32).ok_or_else(|| {
             AkitaError::InvalidInput("trace term block span overflow".to_string())
         })?;
+        let block_span = layout
+            .witness_layout
+            .group(layout.group_id)?
+            .live_fold_count;
+        if block_span > block_capacity {
+            return Err(AkitaError::InvalidInput(
+                "trace term live fold count exceeds block-opening capacity".to_string(),
+            ));
+        }
         layout.validate_trace_term_block_range(term.block_offset, block_span)?;
 
         // `V = Σ_plane gadget[plane] · Σ_j eq(col, e_index(j, plane)) · coords(b_j)`.

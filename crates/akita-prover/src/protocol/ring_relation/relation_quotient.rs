@@ -263,10 +263,10 @@ where
     let mut reduced = CyclotomicRing::<F, D>::zero();
 
     {
-        if ring_multiplier_point.a_len() < fold_position_count {
+        if ring_multiplier_point.position_len() < fold_position_count {
             return Err(AkitaError::InvalidInput(format!(
                 "ring-multiplier a length mismatch: actual={} expected_at_least={fold_position_count}",
-                ring_multiplier_point.a_len()
+                ring_multiplier_point.position_len()
             )));
         }
         for block_idx in 0..fold_position_count {
@@ -275,12 +275,12 @@ where
                 let z_idx = block_idx * depth_commit + digit_idx;
                 z_block += centered_i32_ring::<F, D>(&z_folded_centered[z_idx]).scale(&g);
             }
-            if let Some(scalar) = ring_multiplier_point.a_constant_coeff(block_idx) {
+            if let Some(scalar) = ring_multiplier_point.position_constant_coeff(block_idx) {
                 add_cyclic_scalar_ring_product::<F, D>(&mut cyclic, scalar, &z_block);
                 reduced += z_block.scale(&scalar);
             } else {
                 let a_rings = ring_multiplier_point
-                    .a_rings_trusted::<D>()?
+                    .position_rings_trusted::<D>()?
                     .ok_or(AkitaError::InvalidProof)?;
                 let multiplier = a_rings.get(block_idx).ok_or(AkitaError::InvalidProof)?;
                 add_cyclic_ring_product::<F, D>(&mut cyclic, multiplier, &z_block);

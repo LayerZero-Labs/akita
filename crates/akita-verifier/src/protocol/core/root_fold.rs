@@ -151,8 +151,6 @@ where
 {
     let role_dims = root_lp.role_dims();
     let d_a = role_dims.d_a();
-    let root_opening_layout =
-        OpeningBlockLayout::new(root_lp.live_fold_count, root_lp.fold_position_count)?;
     let v_storage = match proof {
         AkitaBatchedRootProof::Fold(fold) => fold.v.clone(),
         AkitaBatchedRootProof::Terminal(_) => RingVec::from_coeffs(Vec::new()),
@@ -165,7 +163,8 @@ where
                 prepare_opening_point::<F, E, D>(
                     shared_opening_point,
                     basis,
-                    root_opening_layout,
+                    root_lp.fold_position_count,
+                    root_lp.live_fold_count,
                     d_a.trailing_zeros() as usize,
                 )
             })?;
@@ -202,13 +201,15 @@ where
             })?;
         root_trace_block_opening::<E>(
             &protocol_point,
-            root_opening_layout,
+            root_lp.fold_position_count,
+            root_lp.live_fold_count,
             d_a.trailing_zeros() as usize,
         )?
     } else {
         root_trace_block_opening::<E>(
             shared_opening_point,
-            root_opening_layout,
+            root_lp.fold_position_count,
+            root_lp.live_fold_count,
             d_a.trailing_zeros() as usize,
         )?
     };
@@ -269,6 +270,14 @@ where
     // Scalar root: the sole commitment's rows are the whole M-row commitment
     // block.
     let commitment_rows = RingVec::from_coeffs(commitment.coeffs().to_vec());
+    let next_witness_ring_dim = if matches!(proof, AkitaBatchedRootProof::Fold(_)) {
+        next_fold_level_params.role_dims().d_a()
+    } else {
+        d_a
+    };
+    if !w_len.is_multiple_of(next_witness_ring_dim) {
+        return Err(AkitaError::InvalidProof);
+    }
     let prepared = PreparedFoldReplay {
         lp: root_lp,
         relation_matrix_row_layout,
@@ -286,18 +295,8 @@ where
         next_ring_dim: matches!(proof, AkitaBatchedRootProof::Fold(_))
             .then_some(next_fold_level_params.role_dims().d_b()),
         next_witness_ring_dim: matches!(proof, AkitaBatchedRootProof::Fold(_))
-            .then_some(next_fold_level_params.role_dims().d_a()),
-        next_opening_layout: if matches!(proof, AkitaBatchedRootProof::Fold(_)) {
-            OpeningBlockLayout::new(
-                next_fold_level_params.live_fold_count,
-                next_fold_level_params.fold_position_count,
-            )?
-        } else {
-            if !w_len.is_multiple_of(d_a) {
-                return Err(AkitaError::InvalidProof);
-            }
-            OpeningBlockLayout::new(1, w_len / d_a)?
-        },
+            .then_some(next_witness_ring_dim),
+        next_opening_source_len: w_len / next_witness_ring_dim,
         terminal_replay,
         stage3: stage3_sumcheck_proof.map(|proof| (proof, next_fold_level_params)),
         trace_prepared_points: Some(vec![prepared_point.clone()]),
@@ -380,11 +379,15 @@ where
                 AkitaError::InvalidSetup("group opening point length overflow".to_string())
             })?;
         let group_point = &shared_opening_point[..shared_opening_point.len().min(target_len)];
-        let opening_layout =
-            OpeningBlockLayout::new(group_lp.live_fold_count(), group_lp.fold_position_count())?;
         let prepared =
             dispatch_for_field!(ProtocolDispatchSlot::Role(RingRole::Inner), F, d_a, |D| {
-                prepare_opening_point::<F, E, D>(group_point, basis, opening_layout, alpha_bits)
+                prepare_opening_point::<F, E, D>(
+                    group_point,
+                    basis,
+                    group_lp.fold_position_count(),
+                    group_lp.live_fold_count(),
+                    alpha_bits,
+                )
             })?;
         for pt in &prepared.padded_point {
             append_ext_field::<F, E, T>(transcript, ABSORB_EVALUATION_CLAIMS, pt);
@@ -422,7 +425,8 @@ where
     // trace-weight table that multi-group roots evaluate.
     let trace_block_opening = root_trace_block_opening::<E>(
         shared_opening_point,
-        OpeningBlockLayout::new(root_lp.live_fold_count, root_lp.fold_position_count)?,
+        root_lp.fold_position_count,
+        root_lp.live_fold_count,
         alpha_bits,
     )?;
 
@@ -435,6 +439,10 @@ where
         .map(|prepared| prepared.ring_multiplier_point.clone())
         .collect::<Vec<_>>();
 
+    let next_witness_ring_dim = next_fold_level_params.role_dims().d_a();
+    if !w_len.is_multiple_of(next_witness_ring_dim) {
+        return Err(AkitaError::InvalidProof);
+    }
     let prepared = PreparedFoldReplay {
         lp: root_lp,
         relation_matrix_row_layout,
@@ -451,10 +459,7 @@ where
         next_w_commitment,
         next_ring_dim: Some(next_fold_level_params.role_dims().d_b()),
         next_witness_ring_dim: Some(next_fold_level_params.role_dims().d_a()),
-        next_opening_layout: OpeningBlockLayout::new(
-            next_fold_level_params.live_fold_count,
-            next_fold_level_params.fold_position_count,
-        )?,
+        next_opening_source_len: w_len / next_witness_ring_dim,
         terminal_replay: None,
         stage3: stage3_sumcheck_proof.map(|proof| (proof, next_fold_level_params)),
         trace_prepared_points: Some(prepared_points),

@@ -415,14 +415,14 @@ pub fn build_decompose_fold_witness<F: CanonicalField, const D: usize>(
 /// Fused base-field fold + evaluation shared by backends that do not specialize it.
 pub(crate) fn fused_evaluate_and_fold_base<F, const D: usize>(
     folded: Vec<CyclotomicRing<F, D>>,
-    eval_outer_scalars: &[F],
+    fold_weights: &[F],
 ) -> (CyclotomicRing<F, D>, Vec<CyclotomicRing<F, D>>)
 where
     F: CanonicalField,
 {
     let eval = folded
         .iter()
-        .zip(eval_outer_scalars.iter())
+        .zip(fold_weights.iter())
         .fold(CyclotomicRing::<F, D>::zero(), |acc, (f_i, s_i)| {
             acc + f_i.scale(s_i)
         });
@@ -432,14 +432,14 @@ where
 /// Fused ring-multiplier fold + evaluation shared by backends that do not specialize it.
 pub(crate) fn fused_evaluate_and_fold_ring<F, const D: usize>(
     folded: Vec<CyclotomicRing<F, D>>,
-    eval_outer_scalars: &[CyclotomicRing<F, D>],
+    fold_weights: &[CyclotomicRing<F, D>],
 ) -> (CyclotomicRing<F, D>, Vec<CyclotomicRing<F, D>>)
 where
     F: FieldCore,
 {
     let eval = folded
         .iter()
-        .zip(eval_outer_scalars.iter())
+        .zip(fold_weights.iter())
         .fold(CyclotomicRing::<F, D>::zero(), |acc, (f_i, s_i)| {
             acc + (*f_i * *s_i)
         });

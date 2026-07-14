@@ -114,7 +114,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                     let _span = tracing::info_span!("setup_prepare_e_weights").entered();
                     setup_e_col_weights::<E>(
                         &group.layout,
-                        group.opening_layout,
+                        group.opening_source_len,
                         group.group_id,
                         group.live_fold_count,
                         group.num_claims,
@@ -126,7 +126,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                     let _span = tracing::info_span!("setup_prepare_t_weights").entered();
                     setup_t_col_weights::<E>(
                         &group.layout,
-                        group.opening_layout,
+                        group.opening_source_len,
                         group.group_id,
                         group.live_fold_count,
                         group.depth_open,
@@ -161,7 +161,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                     let _span = tracing::info_span!("setup_prepare_z_weights").entered();
                     setup_z_col_weights::<F, E>(
                         &group.layout,
-                        group.opening_layout,
+                        group.opening_source_len,
                         group.group_id,
                         group.fold_position_count,
                         group.depth_commit,

@@ -226,9 +226,10 @@ where
             let physical_index = offset_r
                 .checked_add(row_idx * levels + level_idx)
                 .ok_or(AkitaError::InvalidProof)?;
-            let opening_index = prepared
-                .opening_layout
-                .opening_index_for_physical(physical_index)?;
+            let opening_index = akita_types::checked_opening_source_index(
+                prepared.opening_source_len,
+                physical_index,
+            )?;
             contribution -= eq_eval_at_index(full_vec_randomness, opening_index)
                 * prepared.setup_contribution_inputs.eq_tau1[row_idx]
                 * E::lift_base(gadget)
@@ -250,9 +251,9 @@ mod tests {
     use akita_field::Prime128OffsetA7F7;
     use akita_types::{
         gadget_row_scalars, r_decomp_levels, LevelParams, OpeningBatchWitnessLayout,
-        OpeningBlockLayout, OpeningClaimsLayout, RelationMatrixRowLayout,
-        RingMultiplierOpeningPoint, RingOpeningPoint, RingRelationInstance, SemanticGroupId,
-        SetupContributionPlan, SetupContributionPlanInputs, SisModulusFamily,
+        OpeningClaimsLayout, RelationMatrixRowLayout, RingMultiplierOpeningPoint, RingOpeningPoint,
+        RingRelationInstance, SemanticGroupId, SetupContributionPlan, SetupContributionPlanInputs,
+        SisModulusFamily,
     };
 
     use crate::protocol::ring_switch::{
@@ -286,7 +287,7 @@ mod tests {
             2,
             SparseChallengeConfig::pm1_only(1),
         )
-        .with_decomp(4, 512 * 8, 1, 26)
+        .with_decomp(512, 512 * 8, 1, 26)
         .expect("structured slice fixture lp")
     }
 
@@ -297,8 +298,8 @@ mod tests {
     ) -> Result<OpeningBatchWitnessLayout, AkitaError> {
         let opening_batch = OpeningClaimsLayout::new(32, num_polys)?;
         let opening_point = RingOpeningPoint {
-            a: vec![F::zero(); lp.fold_position_count],
-            b: vec![F::zero(); lp.live_fold_count],
+            position_weights: vec![F::zero(); lp.fold_position_count],
+            fold_weights: vec![F::zero(); lp.live_fold_count],
         };
         let ring_multiplier_point = RingMultiplierOpeningPoint::from_base(&opening_point);
         let num_claims = opening_batch.num_total_polynomials();
@@ -411,9 +412,9 @@ mod tests {
             a_row_start: 1,
             b_row_start: 1 + n_a,
         }];
-        let opening_layout = OpeningBlockLayout::new(1, layout.total_len()).unwrap();
+        let opening_source_len = layout.total_len();
         let setup_contribution_groups =
-            build_setup_contribution_groups(&layout, opening_layout, &groups).unwrap();
+            build_setup_contribution_groups(&layout, opening_source_len, &groups).unwrap();
         let setup_contribution_static = SetupContributionPlan::prepare_static(
             &setup_contribution_inputs,
             &setup_contribution_groups,
@@ -427,7 +428,7 @@ mod tests {
             groups,
             log_basis,
             layout,
-            opening_layout,
+            opening_source_len,
             setup_contribution_groups,
             setup_contribution_inputs,
             setup_contribution_static,

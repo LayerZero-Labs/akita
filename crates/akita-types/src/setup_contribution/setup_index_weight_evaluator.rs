@@ -198,9 +198,10 @@ impl<E: FieldCore> SetupIndexWeightEvaluator<E> {
                                 witness_index.checked_add(index).ok_or_else(|| {
                                     AkitaError::InvalidSetup("witness D address overflow".into())
                                 })?;
-                            let opening_address = group
-                                .opening_layout
-                                .opening_index_for_physical(physical_address)?;
+                            let opening_address = crate::checked_opening_source_index(
+                                group.opening_source_len,
+                                physical_address,
+                            )?;
                             pair += eq_eval_at_index(rho_setup_idx, setup_address)
                                 * eq_eval_at_index(&self.x_challenges, opening_address);
                         }
@@ -269,9 +270,10 @@ impl<E: FieldCore> SetupIndexWeightEvaluator<E> {
                                 witness_index.checked_add(index).ok_or_else(|| {
                                     AkitaError::InvalidSetup("witness B address overflow".into())
                                 })?;
-                            let opening_address = group
-                                .opening_layout
-                                .opening_index_for_physical(physical_address)?;
+                            let opening_address = crate::checked_opening_source_index(
+                                group.opening_source_len,
+                                physical_address,
+                            )?;
                             pair += eq_eval_at_index(rho_setup_idx, setup_address)
                                 * eq_eval_at_index(&self.x_challenges, opening_address);
                         }
@@ -329,9 +331,10 @@ impl<E: FieldCore> SetupIndexWeightEvaluator<E> {
                                 witness_index.checked_add(witness_delta).ok_or_else(|| {
                                     AkitaError::InvalidSetup("witness A address overflow".into())
                                 })?;
-                            let opening_address = group
-                                .opening_layout
-                                .opening_index_for_physical(physical_address)?;
+                            let opening_address = crate::checked_opening_source_index(
+                                group.opening_source_len,
+                                physical_address,
+                            )?;
                             pair += eq_eval_at_index(rho_setup_idx, setup_address)
                                 * eq_eval_at_index(&self.x_challenges, opening_address);
                         }

@@ -12,8 +12,8 @@ use super::build::{
 use super::trace_table::TraceTable;
 use crate::{
     dispatch_for_field, embed_ring_subfield_scalar, BasisMode, FpExtEncoding, LevelParams,
-    OpeningBatchWitnessLayout, OpeningBlockLayout, OpeningClaimsLayout, PreparedOpeningPoint,
-    TraceFieldBlockOpening, TraceRingBlockOpening, TraceTerm, TraceWeightLayout,
+    OpeningBatchWitnessLayout, OpeningClaimsLayout, PreparedOpeningPoint, TraceFieldBlockOpening,
+    TraceRingBlockOpening, TraceTerm, TraceWeightLayout,
 };
 
 /// Owned public trace-weight factors used by the fused stage-2 trace term.
@@ -99,7 +99,7 @@ pub fn ensure_trace_stage2_supported(extension_degree: usize) -> Result<(), Akit
 pub fn trace_weight_layout_from_segment(
     lp: &LevelParams,
     witness_layout: &OpeningBatchWitnessLayout,
-    opening_layout: OpeningBlockLayout,
+    opening_source_len: usize,
     col_bits: usize,
     ring_bits: usize,
     num_trace_blocks: usize,
@@ -136,7 +136,7 @@ pub fn trace_weight_layout_from_segment(
         fold_bits,
         log_basis: lp.log_basis,
         witness_layout: witness_layout.clone(),
-        opening_layout,
+        opening_source_len,
         group_id,
     };
     layout.validate_opening_digit_segment()?;
@@ -291,7 +291,7 @@ where
             terms.push(TraceFieldBlockOpening {
                 block_offset: item.block_offset,
                 block_weights: scaled_base_weights(
-                    &item.prepared.ring_opening_point.b,
+                    &item.prepared.ring_opening_point.fold_weights,
                     item.scaled_coefficient,
                 )?,
                 inner_opening_ring: item.prepared.packed_inner_owned::<D>()?,
@@ -305,7 +305,7 @@ where
                 let block_rings = item
                     .prepared
                     .ring_multiplier_point
-                    .b_rings_trusted::<D>()?
+                    .fold_rings_trusted::<D>()?
                     .ok_or_else(|| {
                         AkitaError::InvalidInput(
                             "extension trace opening point is missing ring block weights"
@@ -336,13 +336,13 @@ where
     if E::EXT_DEGREE == 1 {
         trace_public_weights_field_terms(&[TraceFieldBlockOpening {
             block_offset: 0,
-            block_weights: scaled_base_weights(&prepared.ring_opening_point.b, scale)?,
+            block_weights: scaled_base_weights(&prepared.ring_opening_point.fold_weights, scale)?,
             inner_opening_ring: prepared.packed_inner_owned::<D>()?,
         }])
     } else {
         let block_rings = prepared
             .ring_multiplier_point
-            .b_rings_trusted::<D>()?
+            .fold_rings_trusted::<D>()?
             .ok_or_else(|| {
                 AkitaError::InvalidInput(
                     "extension trace opening point is missing ring block weights".to_string(),
@@ -356,20 +356,25 @@ where
     }
 }
 
-/// Slice the block-axis opening `b_open` out of a root opening point.
-///
-/// After padding `opening_point` to the virtual opening layout plus
-/// `alpha_bits` coordinates, the outer coordinates are `padded[alpha_bits..]`
-/// and the block coordinates follow the virtual-position coordinates.
+/// Slice the fold-axis opening out of a root opening point.
 pub fn root_trace_block_opening<X: FieldCore>(
     opening_point: &[X],
-    opening_layout: OpeningBlockLayout,
+    fold_position_count: usize,
+    live_fold_count: usize,
     alpha_bits: usize,
 ) -> Result<Vec<X>, AkitaError> {
-    let position_bits = opening_layout.position_stride().trailing_zeros() as usize;
-    let block_bits = opening_layout.live_fold_count().trailing_zeros() as usize;
+    if !fold_position_count.is_power_of_two() || live_fold_count == 0 {
+        return Err(AkitaError::InvalidSetup(
+            "trace opening requires power-of-two L and positive F".to_string(),
+        ));
+    }
+    let position_bits = fold_position_count.trailing_zeros() as usize;
+    let fold_bits = live_fold_count
+        .checked_next_power_of_two()
+        .ok_or_else(|| AkitaError::InvalidSetup("fold capacity overflow".to_string()))?
+        .trailing_zeros() as usize;
     let target = position_bits
-        .checked_add(block_bits)
+        .checked_add(fold_bits)
         .and_then(|n| n.checked_add(alpha_bits))
         .ok_or_else(|| AkitaError::InvalidSetup("opening point length overflow".to_string()))?;
     if opening_point.len() > target {
@@ -381,7 +386,7 @@ pub fn root_trace_block_opening<X: FieldCore>(
     let mut padded = opening_point.to_vec();
     padded.resize(target, X::zero());
     let start = alpha_bits + position_bits;
-    Ok(padded[start..start + block_bits].to_vec())
+    Ok(padded[start..start + fold_bits].to_vec())
 }
 
 /// Build the verifier's short closed-form trace terms for a root opening_batch.
@@ -483,7 +488,7 @@ where
 {
     if prepared_points.len() != opening_batch.num_groups()
         || row_coefficients.len() != opening_batch.num_total_polynomials()
-        || live_x_cols != layout.opening_layout.opening_len()
+        || live_x_cols != crate::opening_domain_len(layout.opening_source_len)?
     {
         return Err(AkitaError::InvalidProof);
     }
@@ -508,10 +513,12 @@ where
                 "trace group geometry disagrees with witness layout".to_string(),
             ));
         }
-        let group_opening_layout =
-            OpeningBlockLayout::new(group_lp.live_fold_count(), group_lp.fold_position_count())?;
-        let b_open =
-            root_trace_block_opening(&prepared.padded_point, group_opening_layout, alpha_bits)?;
+        let b_open = root_trace_block_opening(
+            &prepared.padded_point,
+            group_lp.fold_position_count(),
+            group_lp.live_fold_count(),
+            alpha_bits,
+        )?;
         let group_layout = TraceWeightLayout {
             ring_bits: layout.ring_bits,
             col_bits: layout.col_bits,
@@ -520,7 +527,7 @@ where
             fold_bits: live_fold_count.next_power_of_two().trailing_zeros() as usize,
             log_basis: group_lp.log_basis(),
             witness_layout: layout.witness_layout.clone(),
-            opening_layout: layout.opening_layout,
+            opening_source_len: layout.opening_source_len,
             group_id,
         };
         group_layout.validate_opening_digit_segment()?;
@@ -612,7 +619,7 @@ where
 pub fn build_multi_group_root_stage2_trace_table<F, E>(
     ring_d: usize,
     witness_layout: &OpeningBatchWitnessLayout,
-    opening_layout: OpeningBlockLayout,
+    opening_source_len: usize,
     lp: &LevelParams,
     opening_batch: &OpeningClaimsLayout,
     prepared_points: &[PreparedOpeningPoint<F, E>],
@@ -630,8 +637,8 @@ where
             "multi-group root trace table currently requires degree-one openings".to_string(),
         ));
     }
-    if live_x_cols != opening_layout.opening_len()
-        || witness_layout.total_len() > opening_layout.physical_len()
+    if live_x_cols != crate::opening_domain_len(opening_source_len)?
+        || witness_layout.total_len() > opening_source_len
     {
         return Err(AkitaError::InvalidProof);
     }
@@ -677,7 +684,7 @@ where
                     for block in 0..group_lp.live_fold_count() {
                         let block_weight = prepared
                             .ring_opening_point
-                            .b
+                            .fold_weights
                             .get(block)
                             .copied()
                             .ok_or(AkitaError::InvalidProof)?;
@@ -694,7 +701,10 @@ where
                             let unit = witness_layout.unit_for_block(group_id, block)?;
                             let physical_col =
                                 witness_layout.e_index(unit, local_claim, block, plane)?;
-                            let col = opening_layout.opening_index_for_physical(physical_col)?;
+                            let col = crate::checked_opening_source_index(
+                                opening_source_len,
+                                physical_col,
+                            )?;
                             if col >= live_x_cols {
                                 continue;
                             }
@@ -726,7 +736,7 @@ where
 }
 
 /// Build the verifier's short closed-form trace term for a recursive singleton
-/// fold. The block-axis opening follows the virtual-position coordinates.
+/// fold. The fold-axis opening follows the physical digit-innermost order.
 pub fn trace_terms_recursive<F, E, const D: usize>(
     prepared: &PreparedOpeningPoint<F, E>,
     lp: &LevelParams,

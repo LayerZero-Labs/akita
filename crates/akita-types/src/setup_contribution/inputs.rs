@@ -47,9 +47,9 @@ impl<E: FieldCore> SetupContributionPlanInputs<E> {
         let num_groups = num_polys_per_group.len().max(1);
         let depth_commit = lp.num_digits_commit;
         let depth_open = lp.num_digits_open;
-        if lp.live_fold_count == 0 || !lp.live_fold_count.is_power_of_two() {
+        if lp.live_fold_count == 0 {
             return Err(AkitaError::InvalidSetup(
-                "live_fold_count must be a non-zero power of two".into(),
+                "live_fold_count must be positive".into(),
             ));
         }
         if lp.fold_position_count == 0 || depth_commit == 0 || depth_open == 0 || depth_fold == 0 {

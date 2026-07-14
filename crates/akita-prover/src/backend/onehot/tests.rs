@@ -1014,17 +1014,17 @@ fn single_chunk_onehot_evaluate_and_fold_matches_factorized_eval() {
     let poly =
         OneHotPoly::<F>::new(64, D, vec![Some(1usize), None, Some(9usize), Some(17usize)]).unwrap();
     let fold_position_count = 2usize;
-    let fold_scalars = vec![F::from_u64(3), F::from_u64(5)];
-    let eval_outer_scalars = vec![F::from_u64(7), F::from_u64(11)];
+    let position_weights = vec![F::from_u64(3), F::from_u64(5)];
+    let fold_weights = vec![F::from_u64(7), F::from_u64(11)];
 
     let (eval, folded) =
-        poly.evaluate_and_fold::<D>(&eval_outer_scalars, &fold_scalars, fold_position_count);
-    let expected_folded = poly.fold_blocks::<D>(&fold_scalars, fold_position_count);
+        poly.evaluate_and_fold::<D>(&fold_weights, &position_weights, fold_position_count);
+    let expected_folded = poly.fold_blocks::<D>(&position_weights, fold_position_count);
     assert_eq!(folded, expected_folded);
 
-    let full_scalars: Vec<F> = eval_outer_scalars
+    let full_scalars: Vec<F> = fold_weights
         .iter()
-        .flat_map(|outer| fold_scalars.iter().map(move |inner| *outer * *inner))
+        .flat_map(|outer| position_weights.iter().map(move |inner| *outer * *inner))
         .collect();
     let expected_eval = super::test_helpers::evaluate_ring_onehot::<F, D, _>(&poly, &full_scalars);
     assert_eq!(eval, expected_eval);
@@ -1039,7 +1039,7 @@ fn single_chunk_onehot_ring_fold_matches_dense_materialization() {
         OneHotPoly::<F>::new(16, D, vec![Some(1usize), None, Some(13usize), Some(7usize)]).unwrap();
     let dense = materialize_onehot_as_dense::<F, D, _>(&poly);
     let fold_position_count = 4usize;
-    let fold_scalars = vec![
+    let position_weights = vec![
         test_ring_scalar::<F, D>(10),
         test_ring_scalar::<F, D>(40),
         test_ring_scalar::<F, D>(90),
@@ -1047,8 +1047,27 @@ fn single_chunk_onehot_ring_fold_matches_dense_materialization() {
     ];
 
     assert_eq!(
-        poly.fold_blocks_ring(&fold_scalars, fold_position_count),
-        dense.fold_blocks_ring(&fold_scalars, fold_position_count)
+        poly.fold_blocks_ring(&position_weights, fold_position_count),
+        dense.fold_blocks_ring(&position_weights, fold_position_count)
+    );
+}
+
+#[test]
+fn onehot_ring_fold_matches_dense_for_partial_final_slice() {
+    type F = Prime24Offset3;
+    const D: usize = 8;
+
+    let poly =
+        OneHotPoly::<F>::new(16, D, vec![Some(1usize), None, Some(13usize), Some(7usize)]).unwrap();
+    let dense = materialize_onehot_as_dense::<F, D, _>(&poly);
+    let fold_position_count = 16usize;
+    let position_weights = (0..fold_position_count)
+        .map(|index| test_ring_scalar::<F, D>(10 + index as u64))
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        poly.fold_blocks_ring(&position_weights, fold_position_count),
+        dense.fold_blocks_ring(&position_weights, fold_position_count)
     );
 }
 
@@ -1073,17 +1092,17 @@ fn multi_chunk_onehot_evaluate_and_fold_matches_factorized_eval() {
     )
     .unwrap();
     let fold_position_count = 2usize;
-    let fold_scalars = vec![F::from_u64(2), F::from_u64(4)];
-    let eval_outer_scalars = vec![F::from_u64(3), F::from_u64(5)];
+    let position_weights = vec![F::from_u64(2), F::from_u64(4)];
+    let fold_weights = vec![F::from_u64(3), F::from_u64(5)];
 
     let (eval, folded) =
-        poly.evaluate_and_fold::<D>(&eval_outer_scalars, &fold_scalars, fold_position_count);
-    let expected_folded = poly.fold_blocks::<D>(&fold_scalars, fold_position_count);
+        poly.evaluate_and_fold::<D>(&fold_weights, &position_weights, fold_position_count);
+    let expected_folded = poly.fold_blocks::<D>(&position_weights, fold_position_count);
     assert_eq!(folded, expected_folded);
 
-    let full_scalars: Vec<F> = eval_outer_scalars
+    let full_scalars: Vec<F> = fold_weights
         .iter()
-        .flat_map(|outer| fold_scalars.iter().map(move |inner| *outer * *inner))
+        .flat_map(|outer| position_weights.iter().map(move |inner| *outer * *inner))
         .collect();
     let expected_eval = super::test_helpers::evaluate_ring_onehot::<F, D, _>(&poly, &full_scalars);
     assert_eq!(eval, expected_eval);
@@ -1119,10 +1138,10 @@ fn multi_chunk_onehot_ring_fold_matches_dense_materialization() {
     .unwrap();
     let dense = materialize_onehot_as_dense::<F, D, _>(&poly);
     let fold_position_count = 2usize;
-    let fold_scalars = vec![test_ring_scalar::<F, D>(7), test_ring_scalar::<F, D>(80)];
+    let position_weights = vec![test_ring_scalar::<F, D>(7), test_ring_scalar::<F, D>(80)];
 
     assert_eq!(
-        poly.fold_blocks_ring(&fold_scalars, fold_position_count),
-        dense.fold_blocks_ring(&fold_scalars, fold_position_count)
+        poly.fold_blocks_ring(&position_weights, fold_position_count),
+        dense.fold_blocks_ring(&position_weights, fold_position_count)
     );
 }

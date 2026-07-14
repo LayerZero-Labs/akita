@@ -22,9 +22,8 @@ use akita_types::{
     lagrange_weights, reduce_inner_opening_to_ring_element, ring_opening_point_from_field,
     schedule_terminal_direct_witness_shape, AkitaBatchedProof, AkitaCommitmentHint, BasisMode,
     CleartextWitnessProof, CleartextWitnessShape, Commitment, FpExtEncoding, LevelParams,
-    OpeningBlockLayout, OpeningClaims, OpeningClaimsLayout, PointVariableSelection,
-    PolynomialGroupClaims, PolynomialGroupLayout, PrecommittedGroupParams, Schedule,
-    SetupContributionMode, Step,
+    OpeningClaims, OpeningClaimsLayout, PointVariableSelection, PolynomialGroupClaims,
+    PolynomialGroupLayout, PrecommittedGroupParams, Schedule, SetupContributionMode, Step,
 };
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
@@ -384,8 +383,8 @@ where
     let reduced_point = &padded_point[alpha_bits..];
     let ring_opening_point = ring_opening_point_from_field(
         reduced_point,
-        OpeningBlockLayout::new(layout.live_fold_count, layout.fold_position_count)
-            .expect("valid opening block layout"),
+        layout.fold_position_count,
+        layout.live_fold_count,
         basis,
     )
     .expect("opening point shape should match layout");
@@ -395,8 +394,8 @@ where
         None,
         poly.opening_view().expect("opening view"),
         OpeningFoldPlan::Base {
-            eval_outer_scalars: &ring_opening_point.b,
-            fold_scalars: &ring_opening_point.a,
+            fold_weights: &ring_opening_point.fold_weights,
+            position_weights: &ring_opening_point.position_weights,
             fold_position_count: layout.fold_position_count,
         },
     )

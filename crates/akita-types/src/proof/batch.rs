@@ -1,10 +1,10 @@
 //! Shared batching and root-opening helper types.
 
 use crate::{
-    basis_weights, dispatch_for_field, embed_ring_subfield_scalar, embed_ring_subfield_vector,
-    reduce_inner_opening_to_ring_element, ring_opening_point_from_field, AkitaExpandedSetup,
-    BasisMode, Commitment, FpExtEncoding, LevelParams, OpeningBlockLayout, RingOpeningPoint,
-    RingVec,
+    basis_weights, basis_weights_prefix, dispatch_for_field, embed_ring_subfield_scalar,
+    embed_ring_subfield_vector, reduce_inner_opening_to_ring_element,
+    ring_opening_point_from_field, AkitaExpandedSetup, BasisMode, Commitment, FpExtEncoding,
+    LevelParams, RingOpeningPoint, RingVec,
 };
 use akita_algebra::{
     ring::{eval_flat_ring_at_pows_fast, eval_ring_at_pows_fast},
@@ -97,18 +97,18 @@ impl<F: FieldCore, E: FieldCore> PreparedOpeningPoint<F, E> {
 /// Ring-level opening point whose outer weights act by ring multiplication.
 ///
 /// Ring dimension is stored at runtime on the [`Self::Ring`] variant; hot paths
-/// inside `dispatch_ring_dim` borrow typed rows via [`Self::a_rings_trusted`] and
-/// [`Self::b_rings_trusted`].
+/// inside `dispatch_ring_dim` borrow typed rows via
+/// [`Self::position_rings_trusted`] and [`Self::fold_rings_trusted`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RingMultiplierOpeningPoint<F: FieldCore> {
     /// Degree-one openings, where multipliers are ordinary base scalars.
     Base(RingOpeningPoint<F>),
     /// True ring multipliers used by extension-valued openings.
     Ring {
-        /// Evaluation vector of length `2^m`, embedded in `R_F`.
-        a: RingVec<F>,
-        /// Block-select vector of length `2^r`, embedded in `R_F`.
-        b: RingVec<F>,
+        /// Position-weight vector embedded in `R_F`.
+        position_weights: RingVec<F>,
+        /// Exact live fold-weight prefix embedded in `R_F`.
+        fold_weights: RingVec<F>,
     },
 }
 
@@ -120,12 +120,12 @@ impl<F: FieldCore> RingMultiplierOpeningPoint<F> {
 
     /// Build a true ring-multiplier opening point from typed kernel output.
     pub fn from_ring<const D: usize>(
-        a: Vec<CyclotomicRing<F, D>>,
-        b: Vec<CyclotomicRing<F, D>>,
+        position_weights: Vec<CyclotomicRing<F, D>>,
+        fold_weights: Vec<CyclotomicRing<F, D>>,
     ) -> Self {
         Self::Ring {
-            a: RingVec::from_ring_elems(&a),
-            b: RingVec::from_ring_elems(&b),
+            position_weights: RingVec::from_ring_elems(&position_weights),
+            fold_weights: RingVec::from_ring_elems(&fold_weights),
         }
     }
 
@@ -133,7 +133,9 @@ impl<F: FieldCore> RingMultiplierOpeningPoint<F> {
     pub fn ring_dim(&self) -> usize {
         match self {
             Self::Base(_) => 0,
-            Self::Ring { a, .. } => a.ring_dim(),
+            Self::Ring {
+                position_weights, ..
+            } => position_weights.ring_dim(),
         }
     }
 
@@ -143,23 +145,26 @@ impl<F: FieldCore> RingMultiplierOpeningPoint<F> {
     pub fn ensure_ring_dim<const D: usize>(&self) -> Result<(), AkitaError> {
         match self {
             Self::Base(_) => Ok(()),
-            Self::Ring { a, b } => {
-                if a.ring_dim() != 0 && a.ring_dim() != D {
+            Self::Ring {
+                position_weights,
+                fold_weights,
+            } => {
+                if position_weights.ring_dim() != 0 && position_weights.ring_dim() != D {
                     return Err(AkitaError::InvalidInput(format!(
                         "ring multiplier a ring_d={} does not match requested D={D}",
-                        a.ring_dim()
+                        position_weights.ring_dim()
                     )));
                 }
-                if b.ring_dim() != 0 && b.ring_dim() != D {
+                if fold_weights.ring_dim() != 0 && fold_weights.ring_dim() != D {
                     return Err(AkitaError::InvalidInput(format!(
                         "ring multiplier b ring_d={} does not match requested D={D}",
-                        b.ring_dim()
+                        fold_weights.ring_dim()
                     )));
                 }
-                if !a.can_decode_vec(D) || !b.can_decode_vec(D) {
+                if !position_weights.can_decode_vec(D) || !fold_weights.can_decode_vec(D) {
                     return Err(AkitaError::InvalidSize {
                         expected: D,
-                        actual: a.coeff_len(),
+                        actual: position_weights.coeff_len(),
                     });
                 }
                 Ok(())
@@ -176,44 +181,48 @@ impl<F: FieldCore> RingMultiplierOpeningPoint<F> {
     }
 
     /// Borrow the ring-valued evaluation vector after [`Self::ensure_ring_dim`].
-    pub fn a_rings_trusted<const D: usize>(
+    pub fn position_rings_trusted<const D: usize>(
         &self,
     ) -> Result<Option<&[CyclotomicRing<F, D>]>, AkitaError> {
         match self {
             Self::Base(_) => Ok(None),
-            Self::Ring { a, .. } => {
+            Self::Ring {
+                position_weights, ..
+            } => {
                 self.ensure_ring_dim::<D>()?;
-                Ok(Some(a.as_ring_slice::<D>()?))
+                Ok(Some(position_weights.as_ring_slice::<D>()?))
             }
         }
     }
 
     /// Borrow the ring-valued block vector after [`Self::ensure_ring_dim`].
-    pub fn b_rings_trusted<const D: usize>(
+    pub fn fold_rings_trusted<const D: usize>(
         &self,
     ) -> Result<Option<&[CyclotomicRing<F, D>]>, AkitaError> {
         match self {
             Self::Base(_) => Ok(None),
-            Self::Ring { b, .. } => {
+            Self::Ring { fold_weights, .. } => {
                 self.ensure_ring_dim::<D>()?;
-                Ok(Some(b.as_ring_slice::<D>()?))
+                Ok(Some(fold_weights.as_ring_slice::<D>()?))
             }
         }
     }
 
     /// Length of the evaluation vector.
-    pub fn a_len(&self) -> usize {
+    pub fn position_len(&self) -> usize {
         match self {
-            Self::Base(point) => point.a.len(),
-            Self::Ring { a, .. } => a.count(),
+            Self::Base(point) => point.position_weights.len(),
+            Self::Ring {
+                position_weights, ..
+            } => position_weights.count(),
         }
     }
 
     /// Length of the block-select vector.
-    pub fn b_len(&self) -> usize {
+    pub fn fold_len(&self) -> usize {
         match self {
-            Self::Base(point) => point.b.len(),
-            Self::Ring { b, .. } => b.count(),
+            Self::Base(point) => point.fold_weights.len(),
+            Self::Ring { fold_weights, .. } => fold_weights.count(),
         }
     }
 
@@ -221,11 +230,14 @@ impl<F: FieldCore> RingMultiplierOpeningPoint<F> {
     pub fn is_constant(&self) -> bool {
         match self {
             Self::Base(_) => true,
-            Self::Ring { a, b } => {
-                let ring_dim = a.ring_dim();
+            Self::Ring {
+                position_weights,
+                fold_weights,
+            } => {
+                let ring_dim = position_weights.ring_dim();
                 ring_dim != 0
-                    && flat_rings_are_constant(a.coeffs(), ring_dim)
-                    && flat_rings_are_constant(b.coeffs(), ring_dim)
+                    && flat_rings_are_constant(position_weights.coeffs(), ring_dim)
+                    && flat_rings_are_constant(fold_weights.coeffs(), ring_dim)
             }
         }
     }
@@ -235,7 +247,7 @@ impl<F: FieldCore> RingMultiplierOpeningPoint<F> {
     /// # Errors
     ///
     /// Returns an invalid proof error if `idx` is out of range.
-    pub fn eval_a_at<const D: usize, E>(
+    pub fn eval_position_at<const D: usize, E>(
         &self,
         idx: usize,
         alpha_pows: &[E],
@@ -245,12 +257,14 @@ impl<F: FieldCore> RingMultiplierOpeningPoint<F> {
     {
         match self {
             Self::Base(point) => point
-                .a
+                .position_weights
                 .get(idx)
                 .copied()
                 .map(E::lift_base)
                 .ok_or(AkitaError::InvalidProof),
-            Self::Ring { a, .. } => a
+            Self::Ring {
+                position_weights, ..
+            } => position_weights
                 .as_ring_slice::<D>()?
                 .get(idx)
                 .map(|value| eval_ring_at_pows_fast(value, alpha_pows))
@@ -267,7 +281,7 @@ impl<F: FieldCore> RingMultiplierOpeningPoint<F> {
     ///
     /// Returns an invalid proof error if `idx` is out of range or if a ring
     /// multiplier is evaluated without an embedded coefficient.
-    pub fn eval_b_with_coefficient<const D: usize, E>(
+    pub fn eval_fold_with_coefficient<const D: usize, E>(
         &self,
         idx: usize,
         coefficient: E,
@@ -279,14 +293,14 @@ impl<F: FieldCore> RingMultiplierOpeningPoint<F> {
     {
         match self {
             Self::Base(point) => point
-                .b
+                .fold_weights
                 .get(idx)
                 .copied()
                 .map(|value| coefficient.mul_base(value))
                 .ok_or(AkitaError::InvalidProof),
-            Self::Ring { b, .. } => {
+            Self::Ring { fold_weights, .. } => {
                 let coefficient_ring = coefficient_ring.ok_or(AkitaError::InvalidProof)?;
-                let value = b
+                let value = fold_weights
                     .as_ring_slice::<D>()?
                     .get(idx)
                     .ok_or(AkitaError::InvalidProof)?;
@@ -298,7 +312,7 @@ impl<F: FieldCore> RingMultiplierOpeningPoint<F> {
         }
     }
 
-    /// Runtime-dimension form of [`Self::eval_a_at`]: the ring dimension is
+    /// Runtime-dimension form of [`Self::eval_position_at`]: the ring dimension is
     /// `alpha_pows.len()` and ring multipliers are read as flat coefficient
     /// chunks.
     ///
@@ -306,23 +320,26 @@ impl<F: FieldCore> RingMultiplierOpeningPoint<F> {
     ///
     /// Returns an invalid proof error if `idx` is out of range or the stored
     /// multiplier data does not chunk at the supplied dimension.
-    pub fn eval_a_at_dyn<E>(&self, idx: usize, alpha_pows: &[E]) -> Result<E, AkitaError>
+    pub fn eval_position_at_dyn<E>(&self, idx: usize, alpha_pows: &[E]) -> Result<E, AkitaError>
     where
         E: ExtField<F> + MulBaseUnreduced<F>,
     {
         match self {
             Self::Base(point) => point
-                .a
+                .position_weights
                 .get(idx)
                 .copied()
                 .map(E::lift_base)
                 .ok_or(AkitaError::InvalidProof),
-            Self::Ring { a, .. } => {
+            Self::Ring {
+                position_weights, ..
+            } => {
                 let ring_d = alpha_pows.len();
-                if ring_d == 0 || !a.coeffs().len().is_multiple_of(ring_d) {
+                if ring_d == 0 || !position_weights.coeffs().len().is_multiple_of(ring_d) {
                     return Err(AkitaError::InvalidProof);
                 }
-                a.coeffs()
+                position_weights
+                    .coeffs()
                     .chunks_exact(ring_d)
                     .nth(idx)
                     .map(|chunk| eval_flat_ring_at_pows_fast(chunk, alpha_pows))
@@ -331,7 +348,7 @@ impl<F: FieldCore> RingMultiplierOpeningPoint<F> {
         }
     }
 
-    /// Runtime-dimension form of [`Self::eval_b_with_coefficient`].
+    /// Runtime-dimension form of [`Self::eval_fold_with_coefficient`].
     ///
     /// The ring dimension is `alpha_pows.len()`. Ring multipliers require the
     /// caller to provide `coefficient` embedded as flat ring-subfield
@@ -343,7 +360,7 @@ impl<F: FieldCore> RingMultiplierOpeningPoint<F> {
     /// Returns an invalid proof error if `idx` is out of range, a ring
     /// multiplier is evaluated without an embedded coefficient, or shapes do
     /// not match the supplied dimension.
-    pub fn eval_b_with_coefficient_dyn<E>(
+    pub fn eval_fold_with_coefficient_dyn<E>(
         &self,
         idx: usize,
         coefficient: E,
@@ -356,21 +373,21 @@ impl<F: FieldCore> RingMultiplierOpeningPoint<F> {
     {
         match self {
             Self::Base(point) => point
-                .b
+                .fold_weights
                 .get(idx)
                 .copied()
                 .map(|value| coefficient.mul_base(value))
                 .ok_or(AkitaError::InvalidProof),
-            Self::Ring { b, .. } => {
+            Self::Ring { fold_weights, .. } => {
                 let ring_d = alpha_pows.len();
                 let coefficient_ring = coefficient_ring.ok_or(AkitaError::InvalidProof)?;
                 if coefficient_ring.len() != ring_d {
                     return Err(AkitaError::InvalidProof);
                 }
-                if ring_d == 0 || !b.coeffs().len().is_multiple_of(ring_d) {
+                if ring_d == 0 || !fold_weights.coeffs().len().is_multiple_of(ring_d) {
                     return Err(AkitaError::InvalidProof);
                 }
-                let value = b
+                let value = fold_weights
                     .coeffs()
                     .chunks_exact(ring_d)
                     .nth(idx)
@@ -398,30 +415,32 @@ impl<F: FieldCore> RingMultiplierOpeningPoint<F> {
     }
 
     /// Constant coefficient of `a[idx]`, if it is known to be constant.
-    pub fn a_constant_coeff(&self, idx: usize) -> Option<F> {
+    pub fn position_constant_coeff(&self, idx: usize) -> Option<F> {
         match self {
-            Self::Base(point) => point.a.get(idx).copied(),
-            Self::Ring { a, .. } => {
-                let ring_dim = a.ring_dim();
+            Self::Base(point) => point.position_weights.get(idx).copied(),
+            Self::Ring {
+                position_weights, ..
+            } => {
+                let ring_dim = position_weights.ring_dim();
                 if ring_dim == 0 {
                     return None;
                 }
-                let chunk = a.coeffs().chunks_exact(ring_dim).nth(idx)?;
+                let chunk = position_weights.coeffs().chunks_exact(ring_dim).nth(idx)?;
                 flat_ring_is_constant(chunk, ring_dim).then(|| chunk[0])
             }
         }
     }
 
     /// Constant coefficient of `b[idx]`, if it is known to be constant.
-    pub fn b_constant_coeff(&self, idx: usize) -> Option<F> {
+    pub fn fold_constant_coeff(&self, idx: usize) -> Option<F> {
         match self {
-            Self::Base(point) => point.b.get(idx).copied(),
-            Self::Ring { b, .. } => {
-                let ring_dim = b.ring_dim();
+            Self::Base(point) => point.fold_weights.get(idx).copied(),
+            Self::Ring { fold_weights, .. } => {
+                let ring_dim = fold_weights.ring_dim();
                 if ring_dim == 0 {
                     return None;
                 }
-                let chunk = b.coeffs().chunks_exact(ring_dim).nth(idx)?;
+                let chunk = fold_weights.coeffs().chunks_exact(ring_dim).nth(idx)?;
                 flat_ring_is_constant(chunk, ring_dim).then(|| chunk[0])
             }
         }
@@ -442,17 +461,26 @@ fn flat_rings_are_constant<F: FieldCore>(coeffs: &[F], ring_dim: usize) -> bool 
 
 fn ring_multiplier_opening_point_from_ext<F, E, const D: usize>(
     opening_point: &[E],
-    layout: OpeningBlockLayout,
+    fold_position_count: usize,
+    live_fold_count: usize,
     basis: BasisMode,
 ) -> Result<RingMultiplierOpeningPoint<F>, AkitaError>
 where
     F: FieldCore + akita_field::FromPrimitiveInt,
     E: FpExtEncoding<F>,
 {
-    let position_bits = layout.position_stride().trailing_zeros() as usize;
-    let block_bits = layout.live_fold_count().trailing_zeros() as usize;
+    if !fold_position_count.is_power_of_two() || live_fold_count == 0 {
+        return Err(AkitaError::InvalidSetup(
+            "opening geometry requires power-of-two L and positive F".to_string(),
+        ));
+    }
+    let position_bits = fold_position_count.trailing_zeros() as usize;
+    let fold_capacity = live_fold_count
+        .checked_next_power_of_two()
+        .ok_or_else(|| AkitaError::InvalidSetup("fold capacity overflow".to_string()))?;
+    let fold_bits = fold_capacity.trailing_zeros() as usize;
     let expected_len = position_bits
-        .checked_add(block_bits)
+        .checked_add(fold_bits)
         .ok_or_else(|| AkitaError::InvalidSetup("opening point length overflow".to_string()))?;
     if opening_point.len() != expected_len {
         return Err(AkitaError::InvalidPointDimension {
@@ -461,20 +489,24 @@ where
         });
     }
 
-    let a_weights = basis_weights(&opening_point[..position_bits], basis)?;
-    let b_weights = basis_weights(&opening_point[position_bits..], basis)?;
+    let position_weights = basis_weights(&opening_point[..position_bits], basis)?;
+    let fold_weights =
+        basis_weights_prefix(&opening_point[position_bits..], basis, live_fold_count)?;
     let error = AkitaError::InvalidInput(
         "opening point does not encode in the ring-subfield basis".to_string(),
     );
-    let a = a_weights
+    let position_weights = position_weights
         .into_iter()
         .map(|weight| embed_ring_subfield_scalar::<F, E, D>(weight, error.clone()))
         .collect::<Result<Vec<_>, _>>()?;
-    let b = b_weights
+    let fold_weights = fold_weights
         .into_iter()
         .map(|weight| embed_ring_subfield_scalar::<F, E, D>(weight, error.clone()))
         .collect::<Result<Vec<_>, _>>()?;
-    Ok(RingMultiplierOpeningPoint::from_ring(a, b))
+    Ok(RingMultiplierOpeningPoint::from_ring(
+        position_weights,
+        fold_weights,
+    ))
 }
 
 /// Absorb public claim-field evaluations into the base-field transcript.
@@ -639,7 +671,8 @@ where
 pub fn prepare_opening_point<F, E, const D: usize>(
     opening_point: &[E],
     basis: BasisMode,
-    layout: OpeningBlockLayout,
+    fold_position_count: usize,
+    live_fold_count: usize,
     alpha_bits: usize,
 ) -> Result<PreparedOpeningPoint<F, E>, AkitaError>
 where
@@ -647,8 +680,16 @@ where
     E: FpExtEncoding<F>,
 {
     let _span = tracing::info_span!("ring_opening_point").entered();
-    let outer_bits = (layout.position_stride().trailing_zeros() as usize)
-        .checked_add(layout.live_fold_count().trailing_zeros() as usize)
+    if !fold_position_count.is_power_of_two() || live_fold_count == 0 {
+        return Err(AkitaError::InvalidSetup(
+            "opening geometry requires power-of-two L and positive F".to_string(),
+        ));
+    }
+    let fold_capacity = live_fold_count
+        .checked_next_power_of_two()
+        .ok_or_else(|| AkitaError::InvalidSetup("fold capacity overflow".to_string()))?;
+    let outer_bits = (fold_position_count.trailing_zeros() as usize)
+        .checked_add(fold_capacity.trailing_zeros() as usize)
         .ok_or_else(|| AkitaError::InvalidSetup("opening point length overflow".to_string()))?;
     let target_num_vars = outer_bits
         .checked_add(alpha_bits)
@@ -675,7 +716,12 @@ where
             .collect::<Result<Vec<_>, _>>()?;
         let inner_point = &base_point[..alpha_bits];
         let outer_point = &base_point[alpha_bits..];
-        let ring_opening_point = ring_opening_point_from_field::<F>(outer_point, layout, basis)?;
+        let ring_opening_point = ring_opening_point_from_field::<F>(
+            outer_point,
+            fold_position_count,
+            live_fold_count,
+            basis,
+        )?;
         let ring_multiplier_point = RingMultiplierOpeningPoint::from_base(&ring_opening_point);
         let packed_inner_point = reduce_inner_opening_to_ring_element::<F, D>(inner_point, basis)?;
         return Ok(PreparedOpeningPoint::from_parts::<D>(
@@ -710,10 +756,18 @@ where
         ),
     )?;
     let outer_point = &padded_point[alpha_bits..];
-    let ring_multiplier_point =
-        ring_multiplier_opening_point_from_ext::<F, E, D>(outer_point, layout, basis)?;
-    let ring_opening_point =
-        ring_opening_point_from_field::<F>(&vec![F::zero(); outer_point.len()], layout, basis)?;
+    let ring_multiplier_point = ring_multiplier_opening_point_from_ext::<F, E, D>(
+        outer_point,
+        fold_position_count,
+        live_fold_count,
+        basis,
+    )?;
+    let ring_opening_point = ring_opening_point_from_field::<F>(
+        &vec![F::zero(); outer_point.len()],
+        fold_position_count,
+        live_fold_count,
+        basis,
+    )?;
 
     Ok(PreparedOpeningPoint::from_parts::<D>(
         padded_point,
@@ -871,15 +925,27 @@ mod tests {
     fn recursive_extension_opening_preparation_uses_ring_subfield_boundary() {
         let point = [E::lift_base(F::from_u64(3)), E::lift_base(F::from_u64(5))];
 
-        let prepared = prepare_opening_point::<F, E, 32>(
-            &point,
-            BasisMode::Lagrange,
-            OpeningBlockLayout::new(1, 1).unwrap(),
-            5,
-        )
-        .expect("packed-inner recursive extension point should prepare");
+        let prepared = prepare_opening_point::<F, E, 32>(&point, BasisMode::Lagrange, 1, 1, 5)
+            .expect("packed-inner recursive extension point should prepare");
 
         assert_eq!(prepared.padded_point.len(), 5);
+    }
+
+    #[test]
+    fn extension_opening_preparation_keeps_exact_live_fold_prefix() {
+        let mut point = vec![E::zero(); 9];
+        point[0] = E::lift_base(F::from_u64(3));
+        point[1] = E::lift_base(F::from_u64(5));
+        point[2] = E::lift_base(F::from_u64(7));
+        point[5] = E::lift_base(F::from_u64(11));
+        point[6] = E::lift_base(F::from_u64(13));
+        point[7] = E::lift_base(F::from_u64(17));
+        point[8] = E::lift_base(F::from_u64(19));
+
+        let prepared = prepare_opening_point::<F, E, 32>(&point, BasisMode::Lagrange, 4, 3, 5)
+            .expect("extension opening point should retain exact F");
+        assert_eq!(prepared.ring_multiplier_point.position_len(), 4);
+        assert_eq!(prepared.ring_multiplier_point.fold_len(), 3);
     }
 
     #[test]

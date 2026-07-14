@@ -1,7 +1,7 @@
 use crate::{
     emit_witness_e_planes, emit_witness_r_planes, emit_witness_t_planes, emit_witness_z_planes,
-    OpeningBatchWitnessGroup, OpeningBatchWitnessLayout, OpeningBlockLayout, SemanticGroupId,
-    TraceWeightLayout, WitnessOwnershipUnit,
+    OpeningBatchWitnessGroup, OpeningBatchWitnessLayout, SemanticGroupId, TraceWeightLayout,
+    WitnessOwnershipUnit,
 };
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::offset_eq::eq_eval_at_index;
@@ -181,17 +181,17 @@ fn check_layout(layout: OpeningBatchWitnessLayout) {
 
     let group_id = layout.relation_group_order[0];
     let descriptor = layout.group(group_id).unwrap();
-    let opening_layout =
-        OpeningBlockLayout::new(8, layout.total_len().div_ceil(8)).expect("opening layout");
+    let opening_source_len = layout.total_len();
+    let opening_domain_len = crate::opening_domain_len(opening_source_len).unwrap();
     let trace = TraceWeightLayout {
         ring_bits: 1,
-        col_bits: opening_layout.opening_len().trailing_zeros() as usize,
+        col_bits: opening_domain_len.trailing_zeros() as usize,
         live_fold_count: descriptor.num_claims * descriptor.live_fold_count,
         num_digits_open: descriptor.depth_open,
         fold_bits: descriptor.live_fold_count.trailing_zeros() as usize,
         log_basis: 3,
         witness_layout: layout.clone(),
-        opening_layout,
+        opening_source_len,
         group_id,
     };
     let logical_block = descriptor.live_fold_count + descriptor.live_fold_count - 1;
@@ -202,14 +202,12 @@ fn check_layout(layout: OpeningBatchWitnessLayout) {
     let physical_trace_index = oracle_e(&layout, unit, 1, descriptor.live_fold_count - 1, 1);
     assert_eq!(
         trace_index,
-        opening_layout
-            .opening_index_for_physical(physical_trace_index)
-            .unwrap()
+        crate::checked_opening_source_index(opening_source_len, physical_trace_index).unwrap()
     );
 
-    let mut dense_relation_columns = vec![0u8; opening_layout.opening_len()];
+    let mut dense_relation_columns = vec![0u8; opening_domain_len];
     for index in 0..layout.total_len() {
-        let opening_index = opening_layout.opening_index_for_physical(index).unwrap();
+        let opening_index = crate::checked_opening_source_index(opening_source_len, index).unwrap();
         dense_relation_columns[opening_index] = (index % 251) as u8;
     }
     assert_eq!(
@@ -226,9 +224,8 @@ fn check_layout(layout: OpeningBatchWitnessLayout) {
         layout.z_index(unit, 2, 1, 1).unwrap(),
         layout.r_index(2, 1).unwrap(),
     ] {
-        let opening_index = opening_layout
-            .opening_index_for_physical(physical_index)
-            .unwrap();
+        let opening_index =
+            crate::checked_opening_source_index(opening_source_len, physical_index).unwrap();
         assert_eq!(
             dense_relation_columns[opening_index],
             (physical_index % 251) as u8
@@ -265,50 +262,30 @@ fn canonical_witness_addresses_match_emitters_relation_columns_and_trace() {
 }
 
 #[test]
-fn opening_block_layout_domain_identities_hold() {
-    for live_fold_count in [1, 2, 8] {
-        for fold_position_count in [3, 1184, 6660] {
-            let layout = OpeningBlockLayout::new(live_fold_count, fold_position_count).unwrap();
-            assert_eq!(
-                layout.position_stride(),
-                fold_position_count.next_power_of_two()
-            );
-            assert_eq!(
-                (live_fold_count * fold_position_count).next_power_of_two(),
-                layout.opening_len()
-            );
-            assert_eq!(
-                layout
-                    .physical_index(live_fold_count - 1, fold_position_count - 1)
-                    .unwrap(),
-                live_fold_count * fold_position_count - 1
-            );
-            assert_eq!(
-                layout
-                    .opening_index(live_fold_count - 1, fold_position_count - 1)
-                    .unwrap(),
-                (live_fold_count - 1) * layout.position_stride() + fold_position_count - 1
-            );
-        }
+fn physical_opening_domain_uses_identity_addresses() {
+    for source_len in [3usize, 1184, 6660] {
+        assert_eq!(
+            crate::opening_domain_len(source_len).unwrap(),
+            source_len.next_power_of_two()
+        );
+        assert_eq!(
+            crate::checked_opening_source_index(source_len, source_len - 1).unwrap(),
+            source_len - 1
+        );
+        assert!(crate::checked_opening_source_index(source_len, source_len).is_err());
     }
 }
 
 #[test]
-fn virtual_opening_factors_and_compact_address_does_not() {
+fn physical_opening_factors_with_partial_final_fold() {
     type F = Prime128OffsetA7F7;
 
-    let layout = OpeningBlockLayout::new(2, 3).unwrap();
+    let source_len = 6usize;
+    let fold_position_count = 4usize;
+    let live_fold_count = source_len.div_ceil(fold_position_count);
     let point = [F::from_u64(2), F::from_u64(3), F::from_u64(5)];
     let position_weights = EqPolynomial::evals(&point[..2]).unwrap();
-    let block_weights = EqPolynomial::evals(&point[2..]).unwrap();
-    let block = 1;
-    let position = 0;
-    let physical_index = layout.physical_index(block, position).unwrap();
-    let opening_index = layout.opening_index(block, position).unwrap();
-    let factored = position_weights[position] * block_weights[block];
-
-    assert_eq!(eq_eval_at_index(&point, opening_index), factored);
-    assert_ne!(eq_eval_at_index(&point, physical_index), factored);
+    let fold_weights = EqPolynomial::evals_prefix(&point[2..], live_fold_count).unwrap();
 
     let coefficients = [
         F::from_u64(7),
@@ -318,9 +295,10 @@ fn virtual_opening_factors_and_compact_address_does_not() {
         F::from_u64(19),
         F::from_u64(23),
     ];
-    let mut dense = vec![F::zero(); layout.opening_len()];
+    let mut dense = vec![F::zero(); crate::opening_domain_len(source_len).unwrap()];
     for (physical_index, coefficient) in coefficients.iter().copied().enumerate() {
-        dense[layout.opening_index_for_physical(physical_index).unwrap()] = coefficient;
+        dense[crate::checked_opening_source_index(source_len, physical_index).unwrap()] =
+            coefficient;
     }
     let dense_eval = dense
         .iter()
@@ -328,13 +306,13 @@ fn virtual_opening_factors_and_compact_address_does_not() {
         .fold(F::zero(), |sum, (index, coefficient)| {
             sum + *coefficient * eq_eval_at_index(&point, index)
         });
-    let factored_eval = (0..layout.live_fold_count()).fold(F::zero(), |sum, block| {
-        let inner = (0..layout.fold_position_count()).fold(F::zero(), |inner, position| {
-            inner
-                + coefficients[layout.physical_index(block, position).unwrap()]
-                    * position_weights[position]
+    let factored_eval = (0..live_fold_count).fold(F::zero(), |sum, fold| {
+        let start = fold * fold_position_count;
+        let end = (start + fold_position_count).min(source_len);
+        let inner = (start..end).fold(F::zero(), |inner, source| {
+            inner + coefficients[source] * position_weights[source - start]
         });
-        sum + block_weights[block] * inner
+        sum + fold_weights[fold] * inner
     });
     assert_eq!(dense_eval, factored_eval);
 }

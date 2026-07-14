@@ -104,9 +104,9 @@ mod tests {
     use akita_types::relation_claim_from_rows;
     use akita_types::witness::ChunkedWitnessCfg;
     use akita_types::{
-        ring_opening_point_from_field, AkitaCommitmentHint, BasisMode, Commitment,
-        OpeningBlockLayout, OpeningClaims, PointVariableSelection, PolynomialGroupClaims,
-        RelationMatrixRowLayout, RingMultiplierOpeningPoint, RingVec, SemanticGroupId,
+        ring_opening_point_from_field, AkitaCommitmentHint, BasisMode, Commitment, OpeningClaims,
+        PointVariableSelection, PolynomialGroupClaims, RelationMatrixRowLayout,
+        RingMultiplierOpeningPoint, RingVec, SemanticGroupId,
     };
     use akita_verifier::{prepare_relation_matrix_evaluator, RingSwitchReplay};
     use rand::rngs::StdRng;
@@ -303,7 +303,8 @@ mod tests {
         let outer_point = &point[alpha_bits..];
         let ring_opening_point = ring_opening_point_from_field(
             outer_point,
-            OpeningBlockLayout::new(lp.live_fold_count, lp.fold_position_count).unwrap(),
+            lp.fold_position_count,
+            lp.live_fold_count,
             BasisMode::Lagrange,
         )
         .expect("ring opening point");
@@ -314,12 +315,12 @@ mod tests {
             None,
             poly.opening_view().expect("opening view"),
             OpeningFoldPlan::Ring {
-                eval_outer_scalars: ring_multiplier_point
-                    .b_rings_trusted::<D>()
+                fold_weights: ring_multiplier_point
+                    .fold_rings_trusted::<D>()
                     .expect("nonconstant test point has ring b weights")
                     .expect("ring b weights"),
-                fold_scalars: ring_multiplier_point
-                    .a_rings_trusted::<D>()
+                position_weights: ring_multiplier_point
+                    .position_rings_trusted::<D>()
                     .expect("nonconstant test point has ring a weights")
                     .expect("ring a weights"),
                 fold_position_count: lp.fold_position_count,
@@ -359,10 +360,9 @@ mod tests {
         let build_output =
             ring_switch_build_w::<F, CpuBackend>(&instance, witness, &op_ctx, &lp, false)
                 .expect("ring-switch witness");
-        let opening_layout =
-            OpeningBlockLayout::new(1, build_output.w.len() / D).expect("opening layout");
+        let opening_source_len = build_output.w.len() / D;
         let (w_compact, _col_bits, _ring_bits) =
-            build_w_evals_compact(build_output.w.as_i8_digits(), D, 1, opening_layout)
+            build_w_evals_compact(build_output.w.as_i8_digits(), D, 1, opening_source_len)
                 .expect("compact witness");
 
         let alpha = F::from_u64(29);
@@ -397,7 +397,7 @@ mod tests {
                 &tau1,
                 &[F::one()],
                 RelationMatrixRowLayout::WithDBlock,
-                opening_layout,
+                opening_source_len,
                 D,
             )
             .expect("m evals");
@@ -456,7 +456,8 @@ mod tests {
         let outer_point = &point[alpha_bits..];
         let ring_opening_point = ring_opening_point_from_field(
             outer_point,
-            OpeningBlockLayout::new(lp.live_fold_count, lp.fold_position_count).unwrap(),
+            lp.fold_position_count,
+            lp.live_fold_count,
             BasisMode::Lagrange,
         )
         .expect("ring opening point");
@@ -466,8 +467,8 @@ mod tests {
             None,
             poly.opening_view().expect("opening view"),
             OpeningFoldPlan::Base {
-                eval_outer_scalars: &ring_opening_point.b,
-                fold_scalars: &ring_opening_point.a,
+                fold_weights: &ring_opening_point.fold_weights,
+                position_weights: &ring_opening_point.position_weights,
                 fold_position_count: lp.fold_position_count,
             },
         )
@@ -505,10 +506,9 @@ mod tests {
         let build_output =
             ring_switch_build_w::<F, CpuBackend>(&instance, witness, &op_ctx, &lp, false)
                 .expect("ring-switch witness");
-        let opening_layout =
-            OpeningBlockLayout::new(1, build_output.w.len() / D).expect("opening layout");
+        let opening_source_len = build_output.w.len() / D;
         let (w_compact, _col_bits, _ring_bits) =
-            build_w_evals_compact(build_output.w.as_i8_digits(), D, 1, opening_layout)
+            build_w_evals_compact(build_output.w.as_i8_digits(), D, 1, opening_source_len)
                 .expect("compact witness");
 
         let alpha = F::from_u64(17);
@@ -543,7 +543,7 @@ mod tests {
                 &tau1,
                 &[F::one()],
                 RelationMatrixRowLayout::WithDBlock,
-                opening_layout,
+                opening_source_len,
                 D,
             )
             .expect("m evals");
@@ -639,11 +639,8 @@ mod tests {
         let outer_point = &point[alpha_bits..];
         let ring_opening_point = ring_opening_point_from_field(
             outer_point,
-            OpeningBlockLayout::new(
-                level_params.live_fold_count,
-                level_params.fold_position_count,
-            )
-            .unwrap(),
+            level_params.fold_position_count,
+            level_params.live_fold_count,
             BasisMode::Lagrange,
         )
         .expect("ring opening point");
@@ -653,8 +650,8 @@ mod tests {
             None,
             poly.opening_view().expect("opening view"),
             OpeningFoldPlan::Base {
-                eval_outer_scalars: &ring_opening_point.b,
-                fold_scalars: &ring_opening_point.a,
+                fold_weights: &ring_opening_point.fold_weights,
+                position_weights: &ring_opening_point.position_weights,
                 fold_position_count: level_params.fold_position_count,
             },
         )
@@ -707,7 +704,7 @@ mod tests {
             .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
             .collect();
         let witness_layout = instance.segment_layout(&level_params, None).unwrap();
-        let opening_layout = OpeningBlockLayout::new(1, witness_layout.total_len()).unwrap();
+        let opening_source_len = witness_layout.total_len();
 
         let relation_weight_evals = compute_relation_weight_evals::<F, F>(
             &setup.expanded,
@@ -719,7 +716,7 @@ mod tests {
             &tau1,
             &[F::one()],
             RelationMatrixRowLayout::WithDBlock,
-            opening_layout,
+            opening_source_len,
             D,
         )
         .expect("relation weight evals (materialized)");
@@ -741,7 +738,7 @@ mod tests {
             relation: &instance,
             row_coefficients: &gamma,
             lp: &level_params,
-            opening_layout,
+            opening_source_len,
             opening_ring_dim: D,
         };
         let prepared = prepare_relation_matrix_evaluator::<F, F, D>(&replay, alpha, &tau1, None)
@@ -840,7 +837,7 @@ mod tests {
                 }
             }
             let x_len_w = chunked.len();
-            let opening_layout_w = OpeningBlockLayout::new(1, chunk_layout.total_len()).unwrap();
+            let opening_source_len_w = chunk_layout.total_len();
 
             let x_challenges_w: Vec<F> = (0..x_len_w.trailing_zeros() as usize)
                 .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
@@ -852,7 +849,7 @@ mod tests {
                 relation: &instance,
                 row_coefficients: &gamma,
                 lp: &lp_w,
-                opening_layout: opening_layout_w,
+                opening_source_len: opening_source_len_w,
                 opening_ring_dim: D,
             };
             let prepared_w =
@@ -879,7 +876,7 @@ mod tests {
                 &tau1,
                 &[F::one()],
                 RelationMatrixRowLayout::WithDBlock,
-                opening_layout_w,
+                opening_source_len_w,
                 D,
             )
             .expect("chunked relation weight evals (prover)");
@@ -945,11 +942,8 @@ mod tests {
         let outer_point = &point[alpha_bits..];
         let ring_opening_point = ring_opening_point_from_field(
             outer_point,
-            OpeningBlockLayout::new(
-                level_params.live_fold_count,
-                level_params.fold_position_count,
-            )
-            .unwrap(),
+            level_params.fold_position_count,
+            level_params.live_fold_count,
             BasisMode::Lagrange,
         )
         .expect("ring opening point");
@@ -959,8 +953,8 @@ mod tests {
             None,
             poly.opening_view().expect("opening view"),
             OpeningFoldPlan::Base {
-                eval_outer_scalars: &ring_opening_point.b,
-                fold_scalars: &ring_opening_point.a,
+                fold_weights: &ring_opening_point.fold_weights,
+                position_weights: &ring_opening_point.position_weights,
                 fold_position_count: level_params.fold_position_count,
             },
         )

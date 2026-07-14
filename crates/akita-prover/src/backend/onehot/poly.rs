@@ -182,17 +182,15 @@ impl<F: FieldCore, I: OneHotIndex> OneHotPoly<F, I> {
                 "fold_position_count={fold_position_count} must be a nonzero power of two"
             )));
         }
-        let ring_elems_at_d = 1usize
+        let field_len = 1usize
             .checked_shl(self.num_vars as u32)
-            .ok_or_else(|| AkitaError::InvalidInput("onehot arity overflow".to_string()))?
-            .checked_div(ring_d)
-            .ok_or_else(|| AkitaError::InvalidInput("ring_d must be nonzero".to_string()))?;
-        if !ring_elems_at_d.is_multiple_of(fold_position_count) {
-            return Err(AkitaError::InvalidSize {
-                expected: ring_elems_at_d,
-                actual: fold_position_count,
-            });
+            .ok_or_else(|| AkitaError::InvalidInput("onehot arity overflow".to_string()))?;
+        if ring_d == 0 {
+            return Err(AkitaError::InvalidInput(
+                "ring_d must be nonzero".to_string(),
+            ));
         }
+        let ring_elems_at_d = field_len.div_ceil(ring_d);
         // Kernel-entry view validation: the layout invariants `OneHotPoly::new`
         // pinned at the construction dimension must also hold at the view
         // dimension the blocks are built for.
@@ -522,7 +520,7 @@ impl<F: FieldCore, I: OneHotIndex> OneHotPoly<F, I> {
         ring_elems_at_d: usize,
     ) -> Result<OneHotBlocks, AkitaError> {
         // `blocks_for` has already validated that `fold_position_count` is a nonzero
-        // power of two, that `ring_elems_at_d % fold_position_count == 0`, and that
+        // power of two and that
         // K and `ring_d` are nicely matched; `OneHotPoly::new` has validated
         // that every per-chunk index is in range. Here we only need to
         // compute `live_fold_count` for the flat-layout offsets array and check
@@ -541,7 +539,7 @@ impl<F: FieldCore, I: OneHotIndex> OneHotPoly<F, I> {
                 "D={ring_d} exceeds 65536 and cannot be packed into SingleChunkEntry::coeff_idx / MultiChunkEntry::nonzero_coeffs (both `u16`)"
             )));
         }
-        let live_fold_count = ring_elems_at_d / fold_position_count;
+        let live_fold_count = ring_elems_at_d.div_ceil(fold_position_count);
 
         // The single-chunk (one-hot-chunk-per-ring-element) layout
         // applies when K >= D && D | K; otherwise fall back to the

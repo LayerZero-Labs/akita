@@ -198,7 +198,7 @@ impl FlatBlocks<SingleChunkEntry> {
     /// Like [`FlatBlocks::<MultiChunkEntry>::from_indices`],
     /// this constructor assumes its caller has already validated the
     /// structural preconditions: `K >= D && D | K`, `fold_position_count` is a
-    /// power of two that tiles the ring-element count, `fold_position_count <=
+    /// power of two, `fold_position_count <=
     /// u32::MAX` and `D <= 65536`, and every `Some(idx)` entry in
     /// `indices` is in `[0, onehot_k)`. In production the sole caller is
     /// [`OneHotPoly::build_blocks_inner`].

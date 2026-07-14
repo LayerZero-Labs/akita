@@ -17,7 +17,7 @@ use akita_types::CleartextWitnessShape;
 fn trace_layout_for_instance<F: FieldCore + CanonicalField>(
     lp: &LevelParams,
     instance: &RingRelationInstance<F>,
-    opening_layout: OpeningBlockLayout,
+    opening_source_len: usize,
     col_bits: usize,
     ring_bits: usize,
     num_trace_blocks: usize,
@@ -26,7 +26,7 @@ fn trace_layout_for_instance<F: FieldCore + CanonicalField>(
     trace_weight_layout_from_segment(
         lp,
         &witness_layout,
-        opening_layout,
+        opening_source_len,
         col_bits,
         ring_bits,
         num_trace_blocks,
@@ -316,14 +316,11 @@ where
                         })?;
                     let group_protocol_point =
                         &protocol_point[..protocol_point.len().min(target_len)];
-                    let opening_layout = OpeningBlockLayout::new(
-                        group_lp.live_fold_count(),
-                        group_lp.fold_position_count(),
-                    )?;
                     let prepared_point = prepare_opening_point::<F, E, D>(
                         group_protocol_point,
                         basis,
-                        opening_layout,
+                        group_lp.fold_position_count(),
+                        group_lp.live_fold_count(),
                         alpha_bits,
                     )
                     .map_err(|err| {
@@ -588,29 +585,23 @@ where
     } else {
         RelationMatrixRowLayout::WithDBlock
     };
-    let next_opening_layout = if is_terminal_fold {
-        if !logical_w.len().is_multiple_of(ring_d) {
-            return Err(AkitaError::InvalidProof);
-        }
-        OpeningBlockLayout::new(1, logical_w.len() / ring_d)?
+    let next_opening_ring_dim = if is_terminal_fold {
+        ring_d
     } else {
-        OpeningBlockLayout::new(
-            scheduled.next_params.live_fold_count,
-            scheduled.next_params.fold_position_count,
-        )?
+        scheduled.next_params.d_a()
     };
+    if !logical_w.len().is_multiple_of(next_opening_ring_dim) {
+        return Err(AkitaError::InvalidProof);
+    }
+    let next_opening_source_len = logical_w.len() / next_opening_ring_dim;
     let rs = ring_switch_finalize::<F, E, T>(
         &prepared_fold.instance,
         expanded.as_ref(),
         transcript,
         &logical_w,
         lp,
-        next_opening_layout,
-        if is_terminal_fold {
-            ring_d
-        } else {
-            scheduled.next_params.d_a()
-        },
+        next_opening_source_len,
+        next_opening_ring_dim,
         prepared_fold.row_coefficients.as_deref(),
         relation_matrix_row_layout,
     )
@@ -650,8 +641,8 @@ where
     let trace_opening_claim = evaluation_trace_weight * prepared_fold.trace_eval_target;
     ensure_trace_stage2_supported(E::EXT_DEGREE)?;
     let trace_witness_layout = prepared_fold.instance.segment_layout(lp, None)?;
-    let trace_opening_layout = OpeningBlockLayout::new(1, trace_witness_layout.total_len())?;
-    let trace_x_cols = trace_opening_layout.opening_len();
+    let trace_opening_source_len = trace_witness_layout.total_len();
+    let trace_x_cols = akita_types::opening_domain_len(trace_opening_source_len)?;
     let trace_col_bits = trace_x_cols.trailing_zeros() as usize;
     let trace_ring_bits = ring_d.trailing_zeros() as usize;
     let trace_compact = if let Some(row_coefficients) = prepared_fold.row_coefficients.as_ref() {
@@ -662,7 +653,7 @@ where
             >(
                 ring_d,
                 &trace_witness_layout,
-                trace_opening_layout,
+                trace_opening_source_len,
                 lp,
                 prepared_fold.instance.opening_batch(),
                 prepared_fold
@@ -686,7 +677,7 @@ where
             let layout = trace_layout_for_instance(
                 lp,
                 &prepared_fold.instance,
-                trace_opening_layout,
+                trace_opening_source_len,
                 trace_col_bits,
                 trace_ring_bits,
                 num_trace_blocks,
@@ -715,7 +706,7 @@ where
         let layout = trace_layout_for_instance(
             lp,
             &prepared_fold.instance,
-            trace_opening_layout,
+            trace_opening_source_len,
             trace_col_bits,
             trace_ring_bits,
             lp.live_fold_count,
@@ -734,14 +725,10 @@ where
     .map(|table| {
         remap_trace_table(
             table,
-            trace_opening_layout,
+            trace_opening_source_len,
             ring_d,
-            next_opening_layout,
-            if is_terminal_fold {
-                ring_d
-            } else {
-                scheduled.next_params.d_a()
-            },
+            next_opening_source_len,
+            next_opening_ring_dim,
             logical_w.len(),
         )
     })
@@ -948,18 +935,16 @@ where
 
 fn remap_trace_table<E: FieldCore>(
     table: TraceTable<E>,
-    source_layout: OpeningBlockLayout,
+    source_len: usize,
     source_ring_dim: usize,
-    destination_layout: OpeningBlockLayout,
+    destination_len: usize,
     destination_ring_dim: usize,
     physical_field_len: usize,
 ) -> Result<TraceTable<E>, AkitaError> {
-    let source_capacity = source_layout
-        .physical_len()
+    let source_capacity = source_len
         .checked_mul(source_ring_dim)
         .ok_or_else(|| AkitaError::InvalidSetup("trace source capacity overflow".into()))?;
-    let destination_capacity = destination_layout
-        .physical_len()
+    let destination_capacity = destination_len
         .checked_mul(destination_ring_dim)
         .ok_or_else(|| AkitaError::InvalidSetup("trace destination capacity overflow".into()))?;
     if physical_field_len > source_capacity
@@ -969,17 +954,22 @@ fn remap_trace_table<E: FieldCore>(
     {
         return Err(AkitaError::InvalidProof);
     }
-    let source = table.materialize_dense(source_layout.opening_len(), source_ring_dim);
-    let destination_len = destination_layout
-        .opening_len()
+    let source = table.materialize_dense(
+        akita_types::opening_domain_len(source_len)?,
+        source_ring_dim,
+    );
+    let destination_table_len = akita_types::opening_domain_len(destination_len)?
         .checked_mul(destination_ring_dim)
         .ok_or_else(|| AkitaError::InvalidSetup("trace destination length overflow".into()))?;
-    let mut destination = vec![E::zero(); destination_len];
+    let mut destination = vec![E::zero(); destination_table_len];
     for physical in 0..physical_field_len {
-        let source_col = source_layout.opening_index_for_physical(physical / source_ring_dim)?;
+        let source_col =
+            akita_types::checked_opening_source_index(source_len, physical / source_ring_dim)?;
         let source_index = source_col * source_ring_dim + physical % source_ring_dim;
-        let destination_col =
-            destination_layout.opening_index_for_physical(physical / destination_ring_dim)?;
+        let destination_col = akita_types::checked_opening_source_index(
+            destination_len,
+            physical / destination_ring_dim,
+        )?;
         let destination_index =
             destination_col * destination_ring_dim + physical % destination_ring_dim;
         destination[destination_index] = source[source_index];

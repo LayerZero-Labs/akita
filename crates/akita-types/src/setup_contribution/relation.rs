@@ -4,9 +4,9 @@ use akita_algebra::eq_poly::EqPolynomial;
 use akita_field::{AkitaError, CanonicalField, FieldCore};
 
 use crate::{
-    LevelParams, OpeningBatchWitnessLayout, OpeningBlockLayout, RingRelationInstance,
-    SemanticGroupId, SetupContributionGroupInputs, SetupContributionPlan,
-    SetupContributionPlanInputs, SetupContributionStatic,
+    LevelParams, OpeningBatchWitnessLayout, RingRelationInstance, SemanticGroupId,
+    SetupContributionGroupInputs, SetupContributionPlan, SetupContributionPlanInputs,
+    SetupContributionStatic,
 };
 
 /// Setup-contribution planning artifact shared by direct replay and recursive
@@ -29,7 +29,7 @@ pub fn prepare_setup_contribution_artifact<F, E>(
     lp: &LevelParams,
     tau1: &[E],
     witness_ring_len: Option<usize>,
-    opening_layout_override: Option<OpeningBlockLayout>,
+    opening_layout_override: Option<usize>,
 ) -> Result<SetupContributionArtifact<E>, AkitaError>
 where
     F: FieldCore + CanonicalField,
@@ -106,10 +106,7 @@ where
                 a_row_start: a_range.start,
                 b_row_start: b_range.start,
                 layout: Arc::new(chunk_layout.clone()),
-                opening_layout: opening_layout_override.unwrap_or(OpeningBlockLayout::new(
-                    live_fold_count,
-                    group_lp.fold_position_count(),
-                )?),
+                opening_source_len: opening_layout_override.unwrap_or(chunk_layout.total_len()),
             });
             e_col_offset = e_col_offset
                 .checked_add(e_len)
@@ -147,10 +144,7 @@ where
         let single = SetupContributionGroupInputs::single_group_layout(
             &inputs,
             &chunk_layout,
-            opening_layout_override.unwrap_or(OpeningBlockLayout::new(
-                lp.live_fold_count,
-                lp.fold_position_count,
-            )?),
+            opening_layout_override.unwrap_or(chunk_layout.total_len()),
             lp.log_basis,
         )?;
         (

@@ -4,8 +4,8 @@ use akita_algebra::eq_poly::EqPolynomial;
 use akita_field::Prime128OffsetA7F7;
 use akita_types::{
     gadget_row_scalars, CommitmentRingDims, OpeningBatchWitnessGroup, OpeningBatchWitnessLayout,
-    OpeningBlockLayout, RelationMatrixRowLayout, SemanticGroupId, SetupContributionGroupInputs,
-    SetupContributionPlan, SetupContributionPlanInputs, SetupIndexWeightEvaluator,
+    RelationMatrixRowLayout, SemanticGroupId, SetupContributionGroupInputs, SetupContributionPlan,
+    SetupContributionPlanInputs, SetupIndexWeightEvaluator,
 };
 use criterion::measurement::WallTime;
 use criterion::{
@@ -94,7 +94,7 @@ fn make_case(live_fold_count: usize, blocks_per_chunk: usize) -> SetupIndexWeigh
         inner_width: z_range,
         eq_tau1: EqPolynomial::evals(&tau1).unwrap().into(),
     };
-    let opening_layout = OpeningBlockLayout::new(1, layout.total_len()).unwrap();
+    let opening_source_len = layout.total_len();
     let groups = vec![SetupContributionGroupInputs {
         group_id: SemanticGroupId(0),
         e_col_offset: 0,
@@ -111,7 +111,7 @@ fn make_case(live_fold_count: usize, blocks_per_chunk: usize) -> SetupIndexWeigh
         a_row_start: 1,
         b_row_start: 1 + n_a,
         layout: std::sync::Arc::new(layout),
-        opening_layout,
+        opening_source_len,
     }];
     let static_plan = SetupContributionPlan::prepare_static(
         &inputs,

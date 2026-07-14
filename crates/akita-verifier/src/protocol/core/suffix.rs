@@ -156,6 +156,14 @@ where
     // Suffix folds are singleton (`G == 1`); the sole commitment's rows are the
     // whole M-row commitment block.
     let commitment_rows = RingVec::from_coeffs(current_state.commitment.coeffs().to_vec());
+    let next_opening_ring_dim = if scheduled.is_terminal {
+        lp.role_dims().d_a()
+    } else {
+        scheduled.next_params.role_dims().d_a()
+    };
+    if !w_len.is_multiple_of(next_opening_ring_dim) {
+        return Err(AkitaError::InvalidProof);
+    }
     Ok(PreparedFoldReplay {
         lp,
         relation_matrix_row_layout,
@@ -173,18 +181,7 @@ where
         next_ring_dim: (!scheduled.is_terminal).then_some(scheduled.next_params.role_dims().d_b()),
         next_witness_ring_dim: (!scheduled.is_terminal)
             .then_some(scheduled.next_params.role_dims().d_a()),
-        next_opening_layout: if scheduled.is_terminal {
-            let d_a = lp.role_dims().d_a();
-            if !w_len.is_multiple_of(d_a) {
-                return Err(AkitaError::InvalidProof);
-            }
-            OpeningBlockLayout::new(1, w_len / d_a)?
-        } else {
-            OpeningBlockLayout::new(
-                scheduled.next_params.live_fold_count,
-                scheduled.next_params.fold_position_count,
-            )?
-        },
+        next_opening_source_len: w_len / next_opening_ring_dim,
         terminal_replay,
         stage3,
         trace_prepared_points: Some(vec![prepared_point.clone()]),

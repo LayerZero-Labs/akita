@@ -202,7 +202,7 @@ where
 
 /// Build the full Boolean trace-weight table for ring (`K > 1`) block weights.
 ///
-/// `block_rings` should come from [`crate::block_rings_at_opening`].
+/// `block_rings` should come from [`crate::fold_rings_at_opening`].
 pub fn build_trace_weight_table_ring_block_weights<F, E, const D: usize>(
     layout: &TraceWeightLayout,
     block_rings: &[CyclotomicRing<F, D>],

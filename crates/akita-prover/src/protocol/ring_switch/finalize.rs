@@ -24,7 +24,7 @@ pub fn ring_switch_finalize<F, E, T>(
     transcript: &mut T,
     w: &RecursiveWitnessFlat,
     lp: &LevelParams,
-    opening_layout: OpeningBlockLayout,
+    opening_source_len: usize,
     opening_ring_dim: usize,
     gamma: Option<&[E]>,
     relation_matrix_row_layout: RelationMatrixRowLayout,
@@ -53,8 +53,7 @@ where
 
         let opening_batch = instance.opening_batch();
 
-        let opening_capacity = opening_layout
-            .physical_len()
+        let opening_capacity = opening_source_len
             .checked_mul(opening_ring_dim)
             .ok_or_else(|| AkitaError::InvalidSetup("opening capacity overflow".into()))?;
         if opening_ring_dim == 0
@@ -79,8 +78,7 @@ where
                 actual: semantic_ring_elems,
             });
         }
-        let opening_x_cols = opening_layout
-            .opening_len()
+        let opening_x_cols = akita_types::opening_domain_len(opening_source_len)?
             .checked_mul(opening_ring_dim)
             .ok_or_else(|| AkitaError::InvalidSetup("stage-2 domain overflow".into()))?;
         let col_bits = opening_x_cols.trailing_zeros() as usize;
@@ -118,11 +116,11 @@ where
                     &tau1,
                     gamma,
                     relation_matrix_row_layout,
-                    opening_layout,
+                    opening_source_len,
                     opening_ring_dim,
                 )
             },
-            || build_w_evals_compact(w.as_i8_digits(), opening_ring_dim, 1, opening_layout),
+            || build_w_evals_compact(w.as_i8_digits(), opening_ring_dim, 1, opening_source_len),
         );
         #[cfg(not(feature = "parallel"))]
         let (relation_weight_evals_result, w_result) = {
@@ -136,11 +134,11 @@ where
                 &tau1,
                 gamma,
                 relation_matrix_row_layout,
-                opening_layout,
+                opening_source_len,
                 opening_ring_dim,
             );
             let w_compact =
-                build_w_evals_compact(w.as_i8_digits(), opening_ring_dim, 1, opening_layout);
+                build_w_evals_compact(w.as_i8_digits(), opening_ring_dim, 1, opening_source_len);
             (relation_weight_evals, w_compact)
         };
 
@@ -148,9 +146,7 @@ where
             AkitaError::InvalidInput(format!("relation-weight materialization failed: {err:?}"))
         })?;
         let (w_evals_compact, _, _) = w_result.map_err(|err| {
-            AkitaError::InvalidInput(format!(
-                "witness virtual-layout materialization failed: {err:?}"
-            ))
+            AkitaError::InvalidInput(format!("witness opening materialization failed: {err:?}"))
         })?;
 
         Ok(RingSwitchOutput {

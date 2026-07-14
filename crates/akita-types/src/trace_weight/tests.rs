@@ -6,9 +6,9 @@ use super::{
     TraceWeightLayout,
 };
 use crate::{
-    block_rings_at_opening, lagrange_weights, recover_ring_subfield_inner_product,
+    fold_rings_at_opening, lagrange_weights, recover_ring_subfield_inner_product,
     reduce_inner_opening_to_ring_element, BasisMode, OpeningBatchWitnessGroup,
-    OpeningBatchWitnessLayout, OpeningBlockLayout, SemanticGroupId,
+    OpeningBatchWitnessLayout, SemanticGroupId,
 };
 use akita_algebra::CyclotomicRing;
 use akita_field::{Prime128OffsetA7F7, RandomSampling};
@@ -48,7 +48,7 @@ fn trace_layout(
         1,
     )
     .unwrap();
-    let opening_layout = OpeningBlockLayout::new(1, witness_layout.total_len()).unwrap();
+    let opening_source_len = witness_layout.total_len();
     let required_col_bits = witness_layout
         .total_len()
         .next_power_of_two()
@@ -63,7 +63,7 @@ fn trace_layout(
             .trailing_zeros() as usize,
         log_basis,
         witness_layout,
-        opening_layout,
+        opening_source_len,
         group_id,
     }
 }
@@ -373,7 +373,8 @@ mod ring_block_weights {
             let packed_inner = packed_inner_point::<F, E, D>(
                 &trace_inner_open[..trace_inner_open_len::<F, E, D>()],
             );
-            let block_rings = block_rings_at_opening::<F, E, D>(&b_open).unwrap();
+            let block_rings =
+                fold_rings_at_opening::<F, E, D>(&b_open, 1usize << b_open.len()).unwrap();
             let table = build_trace_weight_table_ring_block_weights::<F, E, D>(
                 &layout,
                 &block_rings,
@@ -424,7 +425,8 @@ mod ring_block_weights {
             let packed_inner = packed_inner_point::<F, E, D>(
                 &trace_inner_open[..trace_inner_open_len::<F, E, D>()],
             );
-            let block_rings = block_rings_at_opening::<F, E, D>(&b_open).unwrap();
+            let block_rings =
+                fold_rings_at_opening::<F, E, D>(&b_open, 1usize << b_open.len()).unwrap();
             let table = build_trace_weight_table_ring_block_weights::<F, E, D>(
                 &layout,
                 &block_rings,
@@ -469,9 +471,11 @@ mod ring_block_weights {
             let packed_0 = packed_inner_point::<F4, E4, 8>(&inner_0);
             let packed_1 = packed_inner_point::<F4, E4, 8>(&inner_1);
             let block_rings_0 =
-                block_rings_at_opening::<F4, E4, 8>(&random_extension_point(&mut rng, 1)).unwrap();
+                fold_rings_at_opening::<F4, E4, 8>(&random_extension_point(&mut rng, 1), 2)
+                    .unwrap();
             let block_rings_1 =
-                block_rings_at_opening::<F4, E4, 8>(&random_extension_point(&mut rng, 1)).unwrap();
+                fold_rings_at_opening::<F4, E4, 8>(&random_extension_point(&mut rng, 1), 2)
+                    .unwrap();
             let terms = vec![
                 TraceRingBlockOpening {
                     block_offset: 0,
@@ -615,7 +619,8 @@ mod closed_terms {
             let trace_inner_open = ext_point::<E>(&mut rng, trace_inner_len::<E, D>());
             let inner = packed_inner::<E, D>(&trace_inner_open);
             let b_open = ext_point::<E>(&mut rng, layout.fold_bits);
-            let block_rings = block_rings_at_opening::<Fk, E, D>(&b_open).unwrap();
+            let block_rings =
+                fold_rings_at_opening::<Fk, E, D>(&b_open, 1usize << b_open.len()).unwrap();
             let table = build_trace_weight_table_ring_block_weights::<Fk, E, D>(
                 layout,
                 &block_rings,
@@ -657,6 +662,51 @@ mod closed_terms {
     #[test]
     fn closed_terms_match_dense_k4() {
         run_single_ring::<E4, 8>(0x5EED_0004, &ring_layout::<8>());
+    }
+
+    #[test]
+    fn closed_terms_match_dense_k4_partial_final_fold_slice() {
+        const D8: usize = 8;
+        let layout = trace_layout(3, 4, 1, 3, 2, LB, 1);
+        let mut rng = StdRng::seed_from_u64(0x5EED_0003);
+        for _ in 0..8 {
+            let trace_inner_open = ext_point::<E4>(&mut rng, trace_inner_len::<E4, D8>());
+            let inner = packed_inner::<E4, D8>(&trace_inner_open);
+            let b_open = ext_point::<E4>(&mut rng, layout.fold_bits);
+            let mut block_rings =
+                fold_rings_at_opening::<Fk, E4, D8>(&b_open, 1usize << b_open.len()).unwrap();
+            block_rings.truncate(
+                layout
+                    .witness_layout
+                    .group(layout.group_id)
+                    .unwrap()
+                    .live_fold_count,
+            );
+            let table = build_trace_weight_table_ring_block_weights::<Fk, E4, D8>(
+                &layout,
+                &block_rings,
+                &inner,
+            )
+            .unwrap();
+            let ring_point = ext_point::<E4>(&mut rng, layout.ring_bits);
+            let col_point = ext_point::<E4>(&mut rng, layout.col_bits);
+            let dense = trace_weight_mle_eval(&layout, &table, &col_point, &ring_point).unwrap();
+            let term = TraceTerm {
+                block_offset: 0,
+                b_open,
+                basis: BasisMode::Lagrange,
+                packed_inner_point: inner,
+                coefficient: E4::one(),
+            };
+            let closed = eval_trace_terms_closed::<Fk, E4, D8>(
+                &layout,
+                &ring_point,
+                &col_point,
+                std::slice::from_ref(&term),
+            )
+            .unwrap();
+            assert_eq!(dense, closed);
+        }
     }
 
     #[test]
@@ -758,7 +808,8 @@ mod closed_terms {
                 let trace_inner_open = ext_point::<E4>(&mut rng, trace_inner_len::<E4, D8>());
                 let inner = packed_inner::<E4, D8>(&trace_inner_open);
                 let b_open = ext_point::<E4>(&mut rng, 1);
-                let block_rings = block_rings_at_opening::<Fk, E4, D8>(&b_open).unwrap();
+                let block_rings =
+                    fold_rings_at_opening::<Fk, E4, D8>(&b_open, 1usize << b_open.len()).unwrap();
                 dense_terms.push(TraceRingBlockOpening {
                     block_offset: claim * 2,
                     block_rings,
@@ -855,7 +906,8 @@ mod closed_terms {
                 let trace_inner_open = ext_point::<E4>(&mut rng, trace_inner_len::<E4, D8>());
                 let inner = packed_inner::<E4, D8>(&trace_inner_open);
                 let b_open = ext_point::<E4>(&mut rng, num_blocks_global.trailing_zeros() as usize);
-                let block_rings = block_rings_at_opening::<Fk, E4, D8>(&b_open).unwrap();
+                let block_rings =
+                    fold_rings_at_opening::<Fk, E4, D8>(&b_open, 1usize << b_open.len()).unwrap();
                 dense_terms.push(TraceRingBlockOpening {
                     block_offset: claim * num_blocks_global,
                     block_rings,

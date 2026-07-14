@@ -347,12 +347,12 @@ mod tests {
         let prepared_point = PreparedOpeningPoint::from_parts::<D>(
             Vec::new(),
             RingOpeningPoint {
-                a: vec![TestF::one()],
-                b: vec![TestF::one()],
+                position_weights: vec![TestF::one()],
+                fold_weights: vec![TestF::one()],
             },
             RingMultiplierOpeningPoint::from_base(&RingOpeningPoint {
-                a: vec![TestF::one()],
-                b: vec![TestF::one()],
+                position_weights: vec![TestF::one()],
+                fold_weights: vec![TestF::one()],
             }),
             CyclotomicRing::<TestF, D>::zero(),
         );
@@ -385,6 +385,9 @@ mod tests {
             Err(err) => err,
         };
 
-        assert!(matches!(err, AkitaError::InvalidProof));
+        assert!(
+            matches!(err, AkitaError::InvalidProof),
+            "unexpected error: {err:?}"
+        );
     }
 }

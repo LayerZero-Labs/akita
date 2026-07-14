@@ -44,9 +44,9 @@ pub fn ring_relation_segment_lengths<F: FieldCore + CanonicalField>(
     _relation_matrix_row_layout: RelationMatrixRowLayout,
 ) -> Result<RingRelationSegmentLengths, AkitaError> {
     let live_fold_count = lp.live_fold_count;
-    if live_fold_count == 0 || !live_fold_count.is_power_of_two() {
+    if live_fold_count == 0 {
         return Err(AkitaError::InvalidSetup(
-            "live_fold_count must be a non-zero power of two".to_string(),
+            "live_fold_count must be positive".to_string(),
         ));
     }
     let depth_open = lp.num_digits_open;
@@ -226,12 +226,12 @@ impl<F: FieldCore + CanonicalField> RingRelationInstance<F> {
                 )));
             }
             let num_blocks_g = challenges.num_blocks_per_claim();
-            if group_opening_points[g].b.len() != num_blocks_g {
+            if group_opening_points[g].fold_weights.len() != num_blocks_g {
                 return Err(AkitaError::InvalidInput(format!(
                     "ring relation group {g} opening point block count does not match challenges"
                 )));
             }
-            if group_ring_multiplier_points[g].b_len() != num_blocks_g {
+            if group_ring_multiplier_points[g].fold_len() != num_blocks_g {
                 return Err(AkitaError::InvalidInput(format!(
                     "ring relation group {g} ring multiplier block count does not match challenges"
                 )));
@@ -593,8 +593,8 @@ mod tests {
 
     fn opening_point(lp: &LevelParams) -> RingOpeningPoint<F> {
         RingOpeningPoint {
-            a: vec![F::zero(); lp.fold_position_count],
-            b: vec![F::zero(); lp.live_fold_count],
+            position_weights: vec![F::zero(); lp.fold_position_count],
+            fold_weights: vec![F::zero(); lp.live_fold_count],
         }
     }
 

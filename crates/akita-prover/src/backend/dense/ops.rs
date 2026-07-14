@@ -78,25 +78,25 @@ where
 
     pub(crate) fn evaluate_and_fold<const D: usize>(
         &self,
-        eval_outer_scalars: &[F],
-        fold_scalars: &[F],
+        fold_weights: &[F],
+        position_weights: &[F],
         fold_position_count: usize,
     ) -> (CyclotomicRing<F, D>, Vec<CyclotomicRing<F, D>>) {
         crate::backend::poly_helpers::fused_evaluate_and_fold_base(
-            self.fold_blocks::<D>(fold_scalars, fold_position_count),
-            eval_outer_scalars,
+            self.fold_blocks::<D>(position_weights, fold_position_count),
+            fold_weights,
         )
     }
 
     pub(crate) fn evaluate_and_fold_ring<const D: usize>(
         &self,
-        eval_outer_scalars: &[CyclotomicRing<F, D>],
-        fold_scalars: &[CyclotomicRing<F, D>],
+        fold_weights: &[CyclotomicRing<F, D>],
+        position_weights: &[CyclotomicRing<F, D>],
         fold_position_count: usize,
     ) -> (CyclotomicRing<F, D>, Vec<CyclotomicRing<F, D>>) {
         crate::backend::poly_helpers::fused_evaluate_and_fold_ring(
-            self.fold_blocks_ring::<D>(fold_scalars, fold_position_count),
-            eval_outer_scalars,
+            self.fold_blocks_ring::<D>(position_weights, fold_position_count),
+            fold_weights,
         )
     }
 

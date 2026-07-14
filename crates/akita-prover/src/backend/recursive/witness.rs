@@ -20,7 +20,7 @@ use crate::compute::{CommitInnerPlan, CommitmentComputeBackend, RecursiveWitness
 use crate::kernels::linear::decompose_commit_blocks_into;
 use akita_types::{
     tensor_column_partials_from_base_evals, tensor_packed_witness_evals, CleartextWitnessProof,
-    FpExtEncoding, OpeningBlockLayout,
+    FpExtEncoding,
 };
 use std::marker::PhantomData;
 
@@ -276,15 +276,18 @@ where
 
     pub(crate) fn evaluate_and_fold(
         &self,
-        eval_outer_scalars: &[F],
-        fold_scalars: &[F],
+        fold_weights: &[F],
+        position_weights: &[F],
         fold_position_count: usize,
     ) -> (CyclotomicRing<F, D>, Vec<CyclotomicRing<F, D>>) {
         let live_fold_count = self.num_blocks_for_block_len(fold_position_count);
         let folded = cfg_into_iter!(0..live_fold_count)
             .map(|block_idx| {
                 let mut acc = [F::zero(); D];
-                for (col_idx, &scalar) in fold_scalars.iter().take(fold_position_count).enumerate()
+                for (col_idx, &scalar) in position_weights
+                    .iter()
+                    .take(fold_position_count)
+                    .enumerate()
                 {
                     let Some(ring) = self.block_elem(block_idx, col_idx, fold_position_count)
                     else {
@@ -301,7 +304,7 @@ where
             .collect::<Vec<_>>();
         let eval = folded
             .iter()
-            .zip(eval_outer_scalars.iter())
+            .zip(fold_weights.iter())
             .fold(CyclotomicRing::<F, D>::zero(), |acc, (f_i, s_i)| {
                 acc + f_i.scale(s_i)
             });
@@ -310,15 +313,19 @@ where
 
     pub(crate) fn evaluate_and_fold_ring(
         &self,
-        eval_outer_scalars: &[CyclotomicRing<F, D>],
-        fold_scalars: &[CyclotomicRing<F, D>],
+        fold_weights: &[CyclotomicRing<F, D>],
+        position_weights: &[CyclotomicRing<F, D>],
         fold_position_count: usize,
     ) -> (CyclotomicRing<F, D>, Vec<CyclotomicRing<F, D>>) {
         let live_fold_count = self.num_blocks_for_block_len(fold_position_count);
         let folded = cfg_into_iter!(0..live_fold_count)
             .map(|block_idx| {
                 let mut acc = CyclotomicRing::<F, D>::zero();
-                for (col_idx, scalar) in fold_scalars.iter().take(fold_position_count).enumerate() {
+                for (col_idx, scalar) in position_weights
+                    .iter()
+                    .take(fold_position_count)
+                    .enumerate()
+                {
                     let Some(digits) = self.block_elem(block_idx, col_idx, fold_position_count)
                     else {
                         break;
@@ -333,7 +340,7 @@ where
             .collect::<Vec<_>>();
         let eval = folded
             .iter()
-            .zip(eval_outer_scalars.iter())
+            .zip(fold_weights.iter())
             .fold(CyclotomicRing::<F, D>::zero(), |acc, (f_i, s_i)| {
                 acc + (*f_i * *s_i)
             });
@@ -555,39 +562,25 @@ where
         source: SuffixWitnessView<'_, F, D>,
         plan: OpeningFoldPlan<'_, F, D>,
     ) -> Result<OpeningFoldOutput<F, D>, AkitaError> {
+        let fold_position_count = plan.fold_position_count();
+        if fold_position_count == 0 {
+            return Err(AkitaError::InvalidInput(
+                "fold position count must be positive".to_string(),
+            ));
+        }
+        let live_fold_count = source.num_blocks_for_block_len(fold_position_count);
+        plan.validate(live_fold_count)?;
         let (eval, folded) = match plan {
             OpeningFoldPlan::Base {
-                eval_outer_scalars,
-                fold_scalars,
+                fold_weights,
+                position_weights,
                 fold_position_count,
-            } => {
-                let layout = OpeningBlockLayout::new(
-                    source.num_blocks_for_block_len(fold_position_count),
-                    fold_position_count,
-                )?;
-                if eval_outer_scalars.len() != layout.live_fold_count()
-                    || fold_scalars.len() != layout.position_stride()
-                {
-                    return Err(AkitaError::InvalidProof);
-                }
-                source.evaluate_and_fold(eval_outer_scalars, fold_scalars, fold_position_count)
-            }
+            } => source.evaluate_and_fold(fold_weights, position_weights, fold_position_count),
             OpeningFoldPlan::Ring {
-                eval_outer_scalars,
-                fold_scalars,
+                fold_weights,
+                position_weights,
                 fold_position_count,
-            } => {
-                let layout = OpeningBlockLayout::new(
-                    source.num_blocks_for_block_len(fold_position_count),
-                    fold_position_count,
-                )?;
-                if eval_outer_scalars.len() != layout.live_fold_count()
-                    || fold_scalars.len() != layout.position_stride()
-                {
-                    return Err(AkitaError::InvalidProof);
-                }
-                source.evaluate_and_fold_ring(eval_outer_scalars, fold_scalars, fold_position_count)
-            }
+            } => source.evaluate_and_fold_ring(fold_weights, position_weights, fold_position_count),
         };
         Ok(OpeningFoldOutput { eval, folded })
     }
@@ -826,48 +819,53 @@ mod tests {
     }
 
     #[test]
-    fn fused_evaluation_uses_layout_block_stride() {
+    fn fused_evaluation_uses_physical_order_with_partial_final_fold() {
         const D: usize = 4;
         let digits = (0..24).map(|idx| idx as i8 - 12).collect();
         let w = RecursiveWitnessFlat::from_i8_digits(digits);
         let view = w.view::<F, D>().expect("view");
-        let fold_position_count = 3;
-        let eval_outer_scalars = vec![F::from_u64(2), F::from_u64(5)];
-        let fold_scalars = vec![F::from_u64(7), F::from_u64(11), F::from_u64(13)];
+        let fold_position_count = 4;
+        let fold_weights = vec![F::from_u64(2), F::from_u64(5)];
+        let position_weights = vec![
+            F::from_u64(7),
+            F::from_u64(11),
+            F::from_u64(13),
+            F::from_u64(17),
+        ];
 
-        let expected_folded = view.fold_blocks(&fold_scalars, fold_position_count);
+        let expected_folded = view.fold_blocks(&position_weights, fold_position_count);
         let expected_eval = expected_folded
             .iter()
-            .zip(eval_outer_scalars.iter())
+            .zip(fold_weights.iter())
             .fold(CyclotomicRing::<F, D>::zero(), |acc, (f_i, s_i)| {
                 acc + f_i.scale(s_i)
             });
         let (eval, folded) =
-            view.evaluate_and_fold(&eval_outer_scalars, &fold_scalars, fold_position_count);
+            view.evaluate_and_fold(&fold_weights, &position_weights, fold_position_count);
 
         assert_eq!(folded, expected_folded);
         assert_eq!(eval, expected_eval);
     }
 
     #[test]
-    fn fused_ring_evaluation_uses_layout_block_stride() {
+    fn fused_ring_evaluation_uses_physical_order_with_partial_final_fold() {
         const D: usize = 4;
         let digits = (0..24).map(|idx| idx as i8 - 12).collect();
         let w = RecursiveWitnessFlat::from_i8_digits(digits);
         let view = w.view::<F, D>().expect("view");
-        let fold_position_count = 3;
-        let eval_outer_scalars = vec![ring::<D>(2), ring::<D>(5)];
-        let fold_scalars = vec![ring::<D>(7), ring::<D>(11), ring::<D>(13)];
+        let fold_position_count = 4;
+        let fold_weights = vec![ring::<D>(2), ring::<D>(5)];
+        let position_weights = vec![ring::<D>(7), ring::<D>(11), ring::<D>(13), ring::<D>(17)];
 
-        let expected_folded = view.fold_blocks_ring(&fold_scalars, fold_position_count);
+        let expected_folded = view.fold_blocks_ring(&position_weights, fold_position_count);
         let expected_eval = expected_folded
             .iter()
-            .zip(eval_outer_scalars.iter())
+            .zip(fold_weights.iter())
             .fold(CyclotomicRing::<F, D>::zero(), |acc, (f_i, s_i)| {
                 acc + (*f_i * *s_i)
             });
         let (eval, folded) =
-            view.evaluate_and_fold_ring(&eval_outer_scalars, &fold_scalars, fold_position_count);
+            view.evaluate_and_fold_ring(&fold_weights, &position_weights, fold_position_count);
 
         assert_eq!(folded, expected_folded);
         assert_eq!(eval, expected_eval);

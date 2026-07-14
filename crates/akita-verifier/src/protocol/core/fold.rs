@@ -89,7 +89,6 @@ where
     T: Transcript<F>,
 {
     let d_a = lp.role_dims().d_a();
-    let opening_layout = OpeningBlockLayout::new(lp.live_fold_count, lp.fold_position_count)?;
     dispatch_for_field!(ProtocolDispatchSlot::Role(RingRole::Inner), F, d_a, |D| {
         verify_fold_eor_kernel::<F, E, T, D>(
             extension_opening_reduction,
@@ -98,7 +97,8 @@ where
             row_coefficients,
             opening_batch,
             basis,
-            opening_layout,
+            lp.fold_position_count,
+            lp.live_fold_count,
             d_a.trailing_zeros() as usize,
             requires_reduction,
             transcript,
@@ -114,7 +114,8 @@ fn verify_fold_eor_kernel<F, E, T, const D: usize>(
     row_coefficients: &[E],
     opening_batch: &OpeningClaimsLayout,
     basis: BasisMode,
-    opening_layout: OpeningBlockLayout,
+    fold_position_count: usize,
+    live_fold_count: usize,
     alpha_bits: usize,
     requires_reduction: bool,
     transcript: &mut T,
@@ -189,14 +190,20 @@ where
     let prepared_points = if let Some(rho) = &reduction_check {
         let protocol_point =
             ring_subfield_packed_extension_opening_point::<F, E, D>(rho.len(), rho)?;
-        let prepared =
-            prepare_opening_point::<F, E, D>(&protocol_point, basis, opening_layout, alpha_bits)?;
+        let prepared = prepare_opening_point::<F, E, D>(
+            &protocol_point,
+            basis,
+            fold_position_count,
+            live_fold_count,
+            alpha_bits,
+        )?;
         vec![prepared]
     } else {
         vec![prepare_opening_point::<F, E, D>(
             challenge_point,
             basis,
-            opening_layout,
+            fold_position_count,
+            live_fold_count,
             alpha_bits,
         )?]
     };
@@ -237,7 +244,7 @@ pub(in crate::protocol::core) struct PreparedFoldReplay<'a, F: FieldCore, E: Fie
     pub(in crate::protocol::core) next_ring_dim: Option<usize>,
     /// A-role dimension used to lay out the next logical witness opening.
     pub(in crate::protocol::core) next_witness_ring_dim: Option<usize>,
-    pub(in crate::protocol::core) next_opening_layout: OpeningBlockLayout,
+    pub(in crate::protocol::core) next_opening_source_len: usize,
     pub(in crate::protocol::core) terminal_replay: Option<TerminalWitnessTranscriptParts>,
     pub(in crate::protocol::core) stage3: Option<(&'a SetupSumcheckProof<E>, &'a LevelParams)>,
     /// Per-group prepared opening points in `OpeningClaims` order (one element
@@ -323,7 +330,7 @@ fn verify_stage2<F, E, T>(
     relation_claim: E,
     lp: &LevelParams,
     num_segments: usize,
-    destination_opening_layout: OpeningBlockLayout,
+    destination_source_len: usize,
     destination_ring_dim: usize,
     trace: Option<TraceWireAtRoleA<'_, F, E>>,
 ) -> Result<Vec<E>, AkitaError>
@@ -354,7 +361,7 @@ where
             trace
                 .map(|wire| {
                     wire.into_claim::<D>(
-                        destination_opening_layout,
+                        destination_source_len,
                         destination_ring_dim,
                         physical_w_len,
                     )
@@ -407,7 +414,7 @@ where
 {
     fn into_claim<const D: usize>(
         self,
-        destination_layout: OpeningBlockLayout,
+        destination_source_len: usize,
         destination_ring_dim: usize,
         physical_field_len: usize,
     ) -> Result<TraceClaim<F, E, D>, AkitaError> {
@@ -430,7 +437,7 @@ where
                         &prepared_point,
                         trace_eval_scale,
                     )?;
-                    let live_x_cols = layout.opening_layout.opening_len();
+                    let live_x_cols = akita_types::opening_domain_len(layout.opening_source_len)?;
                     Some(
                         build_trace_table_scaled(&layout, &public, live_x_cols, E::one())?
                             .materialize_dense(live_x_cols, D),
@@ -477,7 +484,8 @@ where
                         &row_coefficients,
                         trace_claim_scales.as_deref(),
                     )?;
-                    let live_x_cols = claim.layout.opening_layout.opening_len();
+                    let live_x_cols =
+                        akita_types::opening_domain_len(claim.layout.opening_source_len)?;
                     claim.dense_evals = Some(
                         build_trace_table_scaled(&claim.layout, &public, live_x_cols, E::one())?
                             .materialize_dense(live_x_cols, D),
@@ -514,7 +522,7 @@ where
                         build_multi_group_root_stage2_trace_table::<F, E>(
                             D,
                             &claim.layout.witness_layout,
-                            claim.layout.opening_layout,
+                            claim.layout.opening_source_len,
                             lp,
                             &opening_batch,
                             &prepared_points,
@@ -530,11 +538,11 @@ where
             }
         }?;
         if destination_ring_dim == D {
-            remap_trace_claim_structured(&mut claim, destination_layout, physical_field_len)?;
+            remap_trace_claim_structured(&mut claim, destination_source_len, physical_field_len)?;
         } else {
             remap_trace_claim_dense(
                 &mut claim,
-                destination_layout,
+                destination_source_len,
                 destination_ring_dim,
                 physical_field_len,
             )?;
@@ -545,25 +553,25 @@ where
 
 fn remap_trace_claim_structured<F, E, const D: usize>(
     claim: &mut TraceClaim<F, E, D>,
-    destination_layout: OpeningBlockLayout,
+    destination_source_len: usize,
     physical_field_len: usize,
 ) -> Result<(), AkitaError>
 where
     F: FieldCore,
     E: FieldCore,
 {
-    let destination_capacity = destination_layout
-        .physical_len()
+    let destination_capacity = destination_source_len
         .checked_mul(D)
         .ok_or(AkitaError::InvalidProof)?;
     if physical_field_len > destination_capacity || claim.dense_evals.is_some() {
         return Err(AkitaError::InvalidProof);
     }
-    let col_bits = destination_layout.opening_len().trailing_zeros() as usize;
-    claim.layout.opening_layout = destination_layout;
+    let col_bits =
+        akita_types::opening_domain_len(destination_source_len)?.trailing_zeros() as usize;
+    claim.layout.opening_source_len = destination_source_len;
     claim.layout.col_bits = col_bits;
     for batch in &mut claim.trace_term_batches {
-        batch.layout.opening_layout = destination_layout;
+        batch.layout.opening_source_len = destination_source_len;
         batch.layout.col_bits = col_bits;
     }
     Ok(())
@@ -571,7 +579,7 @@ where
 
 fn remap_trace_claim_dense<F, E, const D: usize>(
     claim: &mut TraceClaim<F, E, D>,
-    destination_layout: OpeningBlockLayout,
+    destination_source_len: usize,
     destination_ring_dim: usize,
     physical_field_len: usize,
 ) -> Result<(), AkitaError>
@@ -579,14 +587,10 @@ where
     F: FieldCore,
     E: FieldCore,
 {
-    let source_layout = claim.layout.opening_layout;
+    let source_len = claim.layout.opening_source_len;
     let source = claim.dense_evals.take().ok_or(AkitaError::InvalidProof)?;
-    let source_capacity = source_layout
-        .physical_len()
-        .checked_mul(D)
-        .ok_or(AkitaError::InvalidProof)?;
-    let destination_capacity = destination_layout
-        .physical_len()
+    let source_capacity = source_len.checked_mul(D).ok_or(AkitaError::InvalidProof)?;
+    let destination_capacity = destination_source_len
         .checked_mul(destination_ring_dim)
         .ok_or(AkitaError::InvalidProof)?;
     if destination_ring_dim == 0
@@ -595,16 +599,17 @@ where
     {
         return Err(AkitaError::InvalidProof);
     }
-    let destination_len = destination_layout
-        .opening_len()
+    let destination_len = akita_types::opening_domain_len(destination_source_len)?
         .checked_mul(destination_ring_dim)
         .ok_or(AkitaError::InvalidProof)?;
     let mut destination = vec![E::zero(); destination_len];
     for physical in 0..physical_field_len {
-        let source_col = source_layout.opening_index_for_physical(physical / D)?;
+        let source_col = akita_types::checked_opening_source_index(source_len, physical / D)?;
         let source_index = source_col * D + physical % D;
-        let destination_col =
-            destination_layout.opening_index_for_physical(physical / destination_ring_dim)?;
+        let destination_col = akita_types::checked_opening_source_index(
+            destination_source_len,
+            physical / destination_ring_dim,
+        )?;
         let destination_index =
             destination_col * destination_ring_dim + physical % destination_ring_dim;
         destination[destination_index] =
@@ -803,7 +808,7 @@ where
         relation: &relation_instance,
         row_coefficients: &prepared.row_coefficients,
         lp: prepared.lp,
-        opening_layout: prepared.next_opening_layout,
+        opening_source_len: prepared.next_opening_source_len,
         opening_ring_dim: prepared.next_witness_ring_dim.unwrap_or(role_dims.d_a()),
     };
     let d_a = role_dims.d_a();
@@ -858,8 +863,8 @@ where
     let evaluation_trace_weight = evaluation_trace_row_weight(evaluation_trace_row, &rs.tau1)?;
     ensure_trace_stage2_supported(<E as ExtField<F>>::EXT_DEGREE)?;
     let trace_witness_layout = relation_instance.segment_layout(prepared.lp, None)?;
-    let trace_opening_layout = OpeningBlockLayout::new(1, trace_witness_layout.total_len())?;
-    let trace_x_cols = trace_opening_layout.opening_len();
+    let trace_opening_source_len = trace_witness_layout.total_len();
+    let trace_x_cols = akita_types::opening_domain_len(trace_opening_source_len)?;
     let trace_col_bits = trace_x_cols.trailing_zeros() as usize;
     let trace_ring_bits = d_a.trailing_zeros() as usize;
     let trace_wire = if prepared.trace_prepared_points.is_none() {
@@ -868,7 +873,7 @@ where
         let layout = trace_weight_layout_from_segment(
             prepared.lp,
             &trace_witness_layout,
-            trace_opening_layout,
+            trace_opening_source_len,
             trace_col_bits,
             trace_ring_bits,
             prepared.lp.live_fold_count,
@@ -909,16 +914,13 @@ where
         let layout = trace_weight_layout_from_segment(
             prepared.lp,
             &trace_witness_layout,
-            trace_opening_layout,
+            trace_opening_source_len,
             trace_col_bits,
             trace_ring_bits,
             num_trace_blocks,
         )?;
-        // Stage 2 is evaluated over the virtual opening domain. The physical
-        // witness has no entries for the per-block structural zeros, so its
-        // width is not the dense table width once `fold_position_count` is non-power of
-        // two. `next_opening_layout` is the canonical source of that virtual
-        // width; the ring-switch replay must agree on its column-bit count.
+        // Stage 2 is evaluated over the Boolean capacity of the exact physical
+        // witness source; the unused suffix is zero.
         let live_x_cols = trace_x_cols;
         let prepared_points = prepared
             .trace_prepared_points
@@ -946,7 +948,7 @@ where
         let layout = trace_weight_layout_from_segment(
             prepared.lp,
             &trace_witness_layout,
-            trace_opening_layout,
+            trace_opening_source_len,
             trace_col_bits,
             trace_ring_bits,
             num_trace_blocks,
@@ -984,7 +986,7 @@ where
         relation_claim,
         prepared.lp,
         num_groups,
-        prepared.next_opening_layout,
+        prepared.next_opening_source_len,
         prepared.next_witness_ring_dim.unwrap_or(role_dims.d_a()),
         trace_wire,
     )?;

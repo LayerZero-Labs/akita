@@ -8,8 +8,8 @@ use akita_algebra::CyclotomicRing;
 use akita_field::{CanonicalField, Prime128OffsetA7F7};
 use akita_types::{
     gadget_row_scalars, AkitaExpandedSetup, AkitaSetupSeed, CommitmentRingDims, FlatMatrix,
-    OpeningBatchWitnessGroup, OpeningBatchWitnessLayout, OpeningBlockLayout,
-    RelationMatrixRowLayout, SemanticGroupId, SetupContributionPlan, SetupContributionPlanInputs,
+    OpeningBatchWitnessGroup, OpeningBatchWitnessLayout, RelationMatrixRowLayout, SemanticGroupId,
+    SetupContributionPlan, SetupContributionPlanInputs,
 };
 
 use super::evaluate_setup_contribution_direct;
@@ -230,9 +230,9 @@ impl SetupContributionFixture {
             a_row_start: 1,
             b_row_start: 1 + shape.n_a,
         }];
-        let opening_layout = OpeningBlockLayout::new(1, layout.total_len()).unwrap();
+        let opening_source_len = layout.total_len();
         let setup_contribution_groups =
-            build_setup_contribution_groups(&layout, opening_layout, &groups).unwrap();
+            build_setup_contribution_groups(&layout, opening_source_len, &groups).unwrap();
         let setup_contribution_static = SetupContributionPlan::prepare_static(
             &setup_contribution_inputs,
             &setup_contribution_groups,
@@ -246,7 +246,7 @@ impl SetupContributionFixture {
             groups,
             log_basis: shape.log_basis,
             layout,
-            opening_layout,
+            opening_source_len,
             setup_contribution_groups,
             setup_contribution_inputs,
             setup_contribution_static,

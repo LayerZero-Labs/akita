@@ -1,7 +1,7 @@
 //! Shared singleton and multi-group relation matrix column evaluation.
 //!
 //! [`compute_relation_weight_evals`] materializes the tau1-weighted relation
-//! polynomial on the next witness's virtual field-coefficient domain.
+//! polynomial on the next witness's Boolean field-coefficient domain.
 //! The verifier replays the same group-major geometry with its structured
 //! `RelationMatrixEvaluator` path instead of rebuilding the dense vector.
 
@@ -9,7 +9,7 @@ use crate::layout::CommitmentRingDims;
 use crate::proof::ring_relation::RingRelationInstance;
 use crate::{
     gadget_row_scalars, r_decomp_levels, AkitaExpandedSetup, FpExtEncoding, LevelParams,
-    OpeningBlockLayout, RelationMatrixRowLayout,
+    RelationMatrixRowLayout,
 };
 use akita_algebra::eq_poly::SplitEqEvals;
 use akita_algebra::ring::{eval_flat_ring_at_pows_fast, scalar_powers};
@@ -22,7 +22,7 @@ use akita_field::{
 #[allow(clippy::too_many_arguments)]
 fn write_role_weight<E: FieldCore, S>(
     sink: &mut S,
-    opening_layout: OpeningBlockLayout,
+    opening_source_len: usize,
     opening_ring_dim: usize,
     witness_ring_dim: usize,
     witness_col: usize,
@@ -52,7 +52,7 @@ where
     for (coefficient, &alpha_power) in alpha_pows.iter().enumerate() {
         write_coefficient_weight(
             sink,
-            opening_layout,
+            opening_source_len,
             opening_ring_dim,
             physical_base + coefficient,
             column_weight * alpha_power,
@@ -63,7 +63,7 @@ where
 
 fn write_coefficient_weight<E: FieldCore, S>(
     sink: &mut S,
-    opening_layout: OpeningBlockLayout,
+    opening_source_len: usize,
     opening_ring_dim: usize,
     physical: usize,
     weight: E,
@@ -71,7 +71,8 @@ fn write_coefficient_weight<E: FieldCore, S>(
 where
     S: FnMut(usize, E) -> Result<(), AkitaError>,
 {
-    let opening_col = opening_layout.opening_index_for_physical(physical / opening_ring_dim)?;
+    let opening_col =
+        crate::checked_opening_source_index(opening_source_len, physical / opening_ring_dim)?;
     let opening_index = opening_col
         .checked_mul(opening_ring_dim)
         .and_then(|base| base.checked_add(physical % opening_ring_dim))
@@ -100,7 +101,7 @@ pub fn compute_relation_weight_evals<F, E>(
     tau1: &[E],
     gamma: &[E],
     relation_matrix_row_layout: RelationMatrixRowLayout,
-    opening_layout: OpeningBlockLayout,
+    opening_source_len: usize,
     opening_ring_dim: usize,
 ) -> Result<Vec<E>, AkitaError>
 where
@@ -117,7 +118,7 @@ where
         tau1,
         gamma,
         relation_matrix_row_layout,
-        opening_layout,
+        opening_source_len,
         opening_ring_dim,
         None,
     )?
@@ -128,7 +129,7 @@ where
 ///
 /// This visits the same canonical nonzero weights as
 /// [`compute_relation_weight_evals`] without allocating or scanning the padded
-/// virtual table.
+/// Boolean suffix.
 #[allow(clippy::too_many_arguments)]
 pub fn eval_relation_weight_at_point<F, E>(
     setup: &AkitaExpandedSetup<F>,
@@ -140,7 +141,7 @@ pub fn eval_relation_weight_at_point<F, E>(
     tau1: &[E],
     gamma: &[E],
     relation_matrix_row_layout: RelationMatrixRowLayout,
-    opening_layout: OpeningBlockLayout,
+    opening_source_len: usize,
     opening_ring_dim: usize,
     point: &[E],
 ) -> Result<E, AkitaError>
@@ -158,7 +159,7 @@ where
         tau1,
         gamma,
         relation_matrix_row_layout,
-        opening_layout,
+        opening_source_len,
         opening_ring_dim,
         Some(point),
     )?
@@ -176,7 +177,7 @@ fn compute_relation_weight_evals_inner<F, E>(
     tau1: &[E],
     gamma: &[E],
     relation_matrix_row_layout: RelationMatrixRowLayout,
-    opening_layout: OpeningBlockLayout,
+    opening_source_len: usize,
     opening_ring_dim: usize,
     point: Option<&[E]>,
 ) -> Result<(Vec<E>, E), AkitaError>
@@ -253,8 +254,7 @@ where
         .total_len()
         .checked_mul(d_a)
         .ok_or_else(|| AkitaError::InvalidSetup("relation weight length overflow".into()))?;
-    let expected_field_len = opening_layout
-        .physical_len()
+    let expected_field_len = opening_source_len
         .checked_mul(opening_ring_dim)
         .ok_or_else(|| AkitaError::InvalidSetup("opening field length overflow".into()))?;
     if physical_field_len > expected_field_len {
@@ -263,15 +263,12 @@ where
             actual: physical_field_len,
         });
     }
-    let virtual_field_len = opening_layout
-        .opening_len()
+    let opening_field_len = crate::opening_domain_len(opening_source_len)?
         .checked_mul(opening_ring_dim)
-        .ok_or_else(|| {
-            AkitaError::InvalidSetup("virtual relation weight length overflow".into())
-        })?;
+        .ok_or_else(|| AkitaError::InvalidSetup("relation weight length overflow".into()))?;
     if let Some(point) = point {
-        let expected_bits = virtual_field_len.trailing_zeros() as usize;
-        if !virtual_field_len.is_power_of_two() || point.len() != expected_bits {
+        let expected_bits = opening_field_len.trailing_zeros() as usize;
+        if !opening_field_len.is_power_of_two() || point.len() != expected_bits {
             return Err(AkitaError::InvalidSize {
                 expected: expected_bits,
                 actual: point.len(),
@@ -281,7 +278,7 @@ where
     let mut out = if point.is_some() {
         Vec::new()
     } else {
-        vec![E::zero(); virtual_field_len]
+        vec![E::zero(); opening_field_len]
     };
     let mut evaluation = E::zero();
     let mut sink = |index: usize, weight: E| -> Result<(), AkitaError> {
@@ -323,17 +320,15 @@ where
         let opening_point = instance.group_opening_point(group_index)?;
         let ring_multiplier_point = instance.group_ring_multiplier_point(group_index)?;
         let challenges = &instance.group_challenges()[group_index];
-        let group_opening_layout =
-            OpeningBlockLayout::new(group_lp.live_fold_count(), group_lp.fold_position_count())?;
-        if opening_point.a.len() != group_opening_layout.position_stride()
-            || opening_point.b.len() != group_lp.live_fold_count()
+        if opening_point.position_weights.len() != group_lp.fold_position_count()
+            || opening_point.fold_weights.len() != group_lp.live_fold_count()
         {
             return Err(AkitaError::InvalidInput(
                 "relation matrix col eval opening-point layout mismatch".to_string(),
             ));
         }
-        if ring_multiplier_point.a_len() != group_opening_layout.position_stride()
-            || ring_multiplier_point.b_len() != group_lp.live_fold_count()
+        if ring_multiplier_point.position_len() != group_lp.fold_position_count()
+            || ring_multiplier_point.fold_len() != group_lp.live_fold_count()
         {
             return Err(AkitaError::InvalidInput(
                 "relation matrix col eval multiplier layout mismatch".to_string(),
@@ -445,7 +440,7 @@ where
                         for coefficient in 0..d_d {
                             write_coefficient_weight(
                                 &mut sink,
-                                opening_layout,
+                                opening_source_len,
                                 opening_ring_dim,
                                 physical_base + coefficient,
                                 consistency_acc * alpha_pows_a[role_subcol * d_d + coefficient]
@@ -487,7 +482,7 @@ where
                             for coefficient in 0..d_b {
                                 write_coefficient_weight(
                                     &mut sink,
-                                    opening_layout,
+                                    opening_source_len,
                                     opening_ring_dim,
                                     physical_base + coefficient,
                                     a_acc * alpha_pows_a[role_subcol * d_b + coefficient]
@@ -515,7 +510,7 @@ where
                 let block_idx = k / depth_commit;
                 let digit_idx = k % depth_commit;
                 let opening_a_eval =
-                    ring_multiplier_point.eval_a_at_dyn::<E>(block_idx, alpha_pows_a)?;
+                    ring_multiplier_point.eval_position_at_dyn::<E>(block_idx, alpha_pows_a)?;
                 let mut acc = consistency_weight * opening_a_eval * commit_gadget[digit_idx];
                 for (a_idx, a_row) in setup_a_rows.iter().take(n_a).enumerate() {
                     let eq_i = eq_tau1.eval_at(a_range.start + a_idx)?;
@@ -539,7 +534,7 @@ where
                             witness_layout.z_index(unit, position, commit_digit, fold_digit)?;
                         write_role_weight(
                             &mut sink,
-                            opening_layout,
+                            opening_source_len,
                             opening_ring_dim,
                             d_a,
                             witness_col,
@@ -583,7 +578,7 @@ where
             let witness_col = witness_layout.r_index(row, digit)?;
             write_role_weight(
                 &mut sink,
-                opening_layout,
+                opening_source_len,
                 opening_ring_dim,
                 d_a,
                 witness_col,

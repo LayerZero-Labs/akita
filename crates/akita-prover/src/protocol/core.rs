@@ -47,10 +47,10 @@ use akita_types::{
     trace_weight_layout_from_segment, AkitaBatchedProof, AkitaBatchedRootProof,
     AkitaCommitmentHint, AkitaExpandedSetup, AkitaIntermediateStage2Proof, AkitaLevelProof,
     AkitaStage1Proof, AkitaStage2Proof, BasisMode, CleartextWitnessProof, Commitment,
-    ExecutionSchedule, ExtensionOpeningReductionProof, LevelParams, OpeningBlockLayout,
-    OpeningClaims, OpeningClaimsLayout, PreparedOpeningPoint, RelationMatrixRowLayout,
-    RingMultiplierOpeningPoint, RingVec, RingView, Schedule, SetupContributionMode,
-    SetupPrefixProverRegistry, SetupSumcheckProof, Step, TerminalLevelProof, TraceTable,
+    ExecutionSchedule, ExtensionOpeningReductionProof, LevelParams, OpeningClaims,
+    OpeningClaimsLayout, PreparedOpeningPoint, RelationMatrixRowLayout, RingMultiplierOpeningPoint,
+    RingVec, RingView, Schedule, SetupContributionMode, SetupPrefixProverRegistry,
+    SetupSumcheckProof, Step, TerminalLevelProof, TraceTable,
 };
 use std::sync::Arc;
 

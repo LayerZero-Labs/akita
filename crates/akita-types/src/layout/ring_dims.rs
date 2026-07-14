@@ -274,8 +274,10 @@ mod tests {
             1,
             fold_challenge_config_for_ring_dim(ring_dimension),
         );
+        params.source_ring_len_per_claim = live_fold_count * fold_position_count;
         params.live_fold_count = live_fold_count;
         params.fold_position_count = fold_position_count;
+        params.shard_granule = 1;
         params.num_digits_commit = 2;
         params.num_digits_open = 2;
         params.stamp_role_dims_from_keys();

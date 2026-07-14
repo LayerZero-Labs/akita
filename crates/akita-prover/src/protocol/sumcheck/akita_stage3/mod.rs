@@ -18,9 +18,9 @@ use akita_sumcheck::{SumcheckInstanceProver, SumcheckInstanceProverExt, Sumcheck
 use akita_transcript::{labels::ABSORB_SETUP_PREFIX_SLOT, Transcript};
 use akita_types::{
     ensure_setup_envelope, prepare_setup_contribution_artifact, select_setup_prefix_slot,
-    shared_setup_fold_gadget, AkitaExpandedSetup, FpExtEncoding, LevelParams, OpeningBlockLayout,
-    RingRelationInstance, SetupContributionPlan, SetupPrefixProverRegistry,
-    SetupProjectionGeometry, SETUP_OFFLOAD_D_SETUP, SETUP_SUMCHECK_DEGREE,
+    shared_setup_fold_gadget, AkitaExpandedSetup, FpExtEncoding, LevelParams, RingRelationInstance,
+    SetupContributionPlan, SetupPrefixProverRegistry, SetupProjectionGeometry,
+    SETUP_OFFLOAD_D_SETUP, SETUP_SUMCHECK_DEGREE,
 };
 use product_table::FactoredProductTerm;
 use std::sync::Arc;
@@ -104,13 +104,16 @@ impl<E: FieldCore + FromPrimitiveInt> AkitaStage3Prover<E> {
         )?;
         let setup_product_claim = setup_term.input_claim();
         let witness_digits = Arc::<[i8]>::from(logical_w);
-        let opening_layout = OpeningBlockLayout::new(
-            next_fold_level_params.live_fold_count,
-            next_fold_level_params.fold_position_count,
-        )?;
+        if !witness_digits
+            .len()
+            .is_multiple_of(next_fold_level_params.d_a())
+        {
+            return Err(AkitaError::InvalidProof);
+        }
+        let opening_source_len = witness_digits.len() / next_fold_level_params.d_a();
         let witness_term = build_witness_carry_term::<E>(
             Arc::clone(&witness_digits),
-            opening_layout,
+            opening_source_len,
             next_fold_level_params.d_a(),
             live_x_cols,
             col_bits,
@@ -261,14 +264,8 @@ where
     E: FpExtEncoding<F> + FromPrimitiveInt + LiftBase<F> + AkitaSerialize,
     T: Transcript<F>,
 {
-    let (geometry, mut setup_index_weight, alpha_pows) = prepare_setup_sumcheck_terms::<F, E>(
-        lp,
-        next_fold_level_params,
-        relation,
-        tau1,
-        alpha,
-        x_challenges,
-    )?;
+    let (geometry, mut setup_index_weight, alpha_pows) =
+        prepare_setup_sumcheck_terms::<F, E>(lp, relation, tau1, alpha, x_challenges)?;
 
     let required = geometry.required();
     let ring_d = geometry.base_ring_dim();
@@ -341,7 +338,7 @@ where
 #[allow(clippy::too_many_arguments)]
 fn build_witness_carry_term<E>(
     logical_w: Arc<[i8]>,
-    opening_layout: OpeningBlockLayout,
+    opening_source_len: usize,
     opening_ring_dim: usize,
     live_x_cols: usize,
     col_bits: usize,
@@ -367,13 +364,12 @@ where
     let x_len = 1usize
         .checked_shl(u32::try_from(col_bits).map_err(|_| AkitaError::InvalidProof)?)
         .ok_or(AkitaError::InvalidProof)?;
-    let physical_capacity = opening_layout
-        .physical_len()
+    let physical_capacity = opening_source_len
         .checked_mul(opening_ring_dim)
         .ok_or(AkitaError::InvalidProof)?;
     if ring_bits != 0
         || live_x_cols != x_len
-        || opening_layout.physical_len() == 0
+        || opening_source_len == 0
         || opening_ring_dim == 0
         || !logical_w.len().is_multiple_of(opening_ring_dim)
         || logical_w.len() > physical_capacity
@@ -383,8 +379,7 @@ where
             actual: live_x_cols,
         });
     }
-    let expected_x_len = opening_layout
-        .opening_len()
+    let expected_x_len = akita_types::opening_domain_len(opening_source_len)?
         .checked_mul(opening_ring_dim)
         .ok_or(AkitaError::InvalidProof)?;
     if expected_x_len != x_len {
@@ -400,7 +395,8 @@ where
     let mut opening_table = vec![0i8; table_len];
     let live_physical_cols = logical_w.len() / opening_ring_dim;
     for physical_index in 0..live_physical_cols {
-        let opening_index = opening_layout.opening_index_for_physical(physical_index)?;
+        let opening_index =
+            akita_types::checked_opening_source_index(opening_source_len, physical_index)?;
         let src_start = physical_index * opening_ring_dim;
         let dst_start = opening_index * opening_ring_dim;
         opening_table[dst_start..dst_start + opening_ring_dim]
@@ -433,7 +429,6 @@ where
 /// evaluation.
 fn prepare_setup_sumcheck_terms<F, E>(
     lp: &LevelParams,
-    next_fold_level_params: &LevelParams,
     relation: &RingRelationInstance<F>,
     tau1: &[E],
     alpha: E,
@@ -443,17 +438,8 @@ where
     F: FieldCore + CanonicalField,
     E: FpExtEncoding<F> + FromPrimitiveInt + LiftBase<F>,
 {
-    let opening_layout = OpeningBlockLayout::new(
-        next_fold_level_params.live_fold_count,
-        next_fold_level_params.fold_position_count,
-    )?;
-    let setup_artifact = prepare_setup_contribution_artifact::<F, E>(
-        relation,
-        lp,
-        tau1,
-        None,
-        Some(opening_layout),
-    )?;
+    let setup_artifact =
+        prepare_setup_contribution_artifact::<F, E>(relation, lp, tau1, None, None)?;
     let fold_gadget = shared_setup_fold_gadget::<F>(&setup_artifact.groups);
     let plan = SetupContributionPlan::finish_plan::<F>(
         &setup_artifact.static_plan,

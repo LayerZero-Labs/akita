@@ -16,7 +16,7 @@ use akita_types::{
     lagrange_weights, monomial_weights, reduce_inner_opening_to_ring_element,
     ring_opening_point_from_field,
 };
-use akita_types::{scheduled_next_level_params, LevelParams, OpeningBlockLayout};
+use akita_types::{scheduled_next_level_params, LevelParams};
 use akita_types::{
     AkitaBatchedProofShape, AkitaProofStepShape, LevelProofShape, RingVec, TerminalLevelProofShape,
 };
@@ -377,7 +377,8 @@ where
     let reduced_point = &point[alpha_bits..];
     let ring_opening_point = ring_opening_point_from_field(
         reduced_point,
-        OpeningBlockLayout::new(layout.live_fold_count, layout.fold_position_count).unwrap(),
+        layout.fold_position_count,
+        layout.live_fold_count,
         BasisMode::Lagrange,
     )
     .expect("opening point shape should match layout");
@@ -387,8 +388,8 @@ where
         None,
         poly.opening_view().expect("opening view"),
         OpeningFoldPlan::Base {
-            eval_outer_scalars: &ring_opening_point.b,
-            fold_scalars: &ring_opening_point.a,
+            fold_weights: &ring_opening_point.fold_weights,
+            position_weights: &ring_opening_point.position_weights,
             fold_position_count: layout.fold_position_count,
         },
     )

@@ -10,7 +10,7 @@ use super::TraceWeightLayout;
 use super::{eval_trace_terms_closed, TraceFieldBlockOpening, TraceRingBlockOpening, TraceTerm};
 use crate::{
     lagrange_weights, reduce_inner_opening_to_ring_element, BasisMode, OpeningBatchWitnessGroup,
-    OpeningBatchWitnessLayout, OpeningBlockLayout, SemanticGroupId,
+    OpeningBatchWitnessLayout, SemanticGroupId,
 };
 use akita_algebra::CyclotomicRing;
 use akita_field::{Ext2, Prime128OffsetA7F7};
@@ -39,7 +39,7 @@ fn layout() -> TraceWeightLayout {
         1,
     )
     .unwrap();
-    let opening_layout = OpeningBlockLayout::new(1, witness_layout.total_len()).unwrap();
+    let opening_source_len = witness_layout.total_len();
     TraceWeightLayout {
         ring_bits: 3,
         col_bits: 4,
@@ -48,7 +48,7 @@ fn layout() -> TraceWeightLayout {
         fold_bits: 1,
         log_basis: 3,
         witness_layout,
-        opening_layout,
+        opening_source_len,
         group_id,
     }
 }

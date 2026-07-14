@@ -1,6 +1,6 @@
 use super::kernels::GroupSetupSegment;
 use crate::{
-    OpeningBatchWitnessLayout, OpeningBlockLayout, RelationMatrixRowLayout, SemanticGroupId,
+    OpeningBatchWitnessLayout, RelationMatrixRowLayout, SemanticGroupId,
     SetupContributionPlanInputs, SetupProjectionGeometry,
 };
 use akita_field::{AkitaError, FieldCore};
@@ -23,7 +23,7 @@ pub struct SetupContributionGroupInputs {
     pub a_row_start: usize,
     pub b_row_start: usize,
     pub layout: Arc<OpeningBatchWitnessLayout>,
-    pub opening_layout: OpeningBlockLayout,
+    pub opening_source_len: usize,
 }
 
 pub struct SingleGroupSetupContributionLayout {
@@ -43,7 +43,7 @@ impl SetupContributionGroupInputs {
     pub fn single_group_layout<E: FieldCore>(
         inputs: &SetupContributionPlanInputs<E>,
         layout: &OpeningBatchWitnessLayout,
-        opening_layout: OpeningBlockLayout,
+        opening_source_len: usize,
         fold_log_basis: u32,
     ) -> Result<SingleGroupSetupContributionLayout, AkitaError> {
         if inputs.num_groups != 1 || inputs.num_polys_per_group.len() != 1 {
@@ -92,7 +92,7 @@ impl SetupContributionGroupInputs {
                 a_row_start,
                 b_row_start,
                 layout: Arc::new(layout.clone()),
-                opening_layout,
+                opening_source_len,
             },
             d_row_start,
             d_rows,

@@ -335,7 +335,7 @@ mod tests {
     type F = Fp32<251>;
 
     #[test]
-    fn ring_dense_fold_x_preserves_column_major_layout() {
+    fn ring_dense_fold_x_preserves_x_outer_layout() {
         let dense = (0..12).map(F::from_u64).collect();
         let mut table = TraceTable::ring_dense(dense);
         let r = F::from_u64(3);

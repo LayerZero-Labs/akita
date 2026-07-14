@@ -20,7 +20,7 @@ use akita_types::DigitBlocks;
 use akita_types::RingRelationInstance;
 use akita_types::{
     r_decomp_levels, AkitaCommitmentHint, AkitaExpandedSetup, FpExtEncoding, LevelParams,
-    OpeningBlockLayout, RelationMatrixRowLayout, RingVec,
+    RelationMatrixRowLayout, RingVec,
 };
 
 mod coeffs;
@@ -42,9 +42,9 @@ pub use finalize::ring_switch_finalize;
 pub struct RingSwitchOutput<E: FieldCore> {
     /// Compact evaluation table of w, stored as x-outer/y-inner slices.
     pub w_evals_compact: Vec<i8>,
-    /// Virtual x width, including structural zero columns between compact blocks.
+    /// Boolean x capacity, including only the zero suffix after the physical source.
     pub opening_x_cols: usize,
-    /// Tau1-weighted relation table over the full virtual coefficient domain.
+    /// Tau1-weighted relation table over the full Boolean coefficient domain.
     pub relation_weight_evals: Vec<E>,
     /// Number of upper variable bits.
     pub col_bits: usize,

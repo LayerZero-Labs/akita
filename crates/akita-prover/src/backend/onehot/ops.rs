@@ -60,7 +60,7 @@ where
     I: OneHotIndex,
 {
     fn num_ring_elems(&self) -> usize {
-        (1usize << self.num_vars) / D
+        (1usize << self.num_vars).div_ceil(D)
     }
 
     fn num_vars(&self) -> usize {
@@ -173,23 +173,25 @@ where
         source: OneHotView<'_, F, D, I>,
         plan: OpeningFoldPlan<'_, F, D>,
     ) -> Result<OpeningFoldOutput<F, D>, AkitaError> {
+        let blocks = source.poly.blocks_for(D, plan.fold_position_count())?;
+        plan.validate(blocks.live_fold_count())?;
         let (eval, folded) = match plan {
             OpeningFoldPlan::Base {
-                eval_outer_scalars,
-                fold_scalars,
+                fold_weights,
+                position_weights,
                 fold_position_count,
             } => source.poly.evaluate_and_fold::<D>(
-                eval_outer_scalars,
-                fold_scalars,
+                fold_weights,
+                position_weights,
                 fold_position_count,
             ),
             OpeningFoldPlan::Ring {
-                eval_outer_scalars,
-                fold_scalars,
+                fold_weights,
+                position_weights,
                 fold_position_count,
             } => source.poly.evaluate_and_fold_ring::<D>(
-                eval_outer_scalars,
-                fold_scalars,
+                fold_weights,
+                position_weights,
                 fold_position_count,
             ),
         };
@@ -372,25 +374,25 @@ where
 
     pub(crate) fn evaluate_and_fold<const D: usize>(
         &self,
-        eval_outer_scalars: &[F],
-        fold_scalars: &[F],
+        fold_weights: &[F],
+        position_weights: &[F],
         fold_position_count: usize,
     ) -> (CyclotomicRing<F, D>, Vec<CyclotomicRing<F, D>>) {
         crate::backend::poly_helpers::fused_evaluate_and_fold_base(
-            self.fold_blocks::<D>(fold_scalars, fold_position_count),
-            eval_outer_scalars,
+            self.fold_blocks::<D>(position_weights, fold_position_count),
+            fold_weights,
         )
     }
 
     pub(crate) fn evaluate_and_fold_ring<const D: usize>(
         &self,
-        eval_outer_scalars: &[CyclotomicRing<F, D>],
-        fold_scalars: &[CyclotomicRing<F, D>],
+        fold_weights: &[CyclotomicRing<F, D>],
+        position_weights: &[CyclotomicRing<F, D>],
         fold_position_count: usize,
     ) -> (CyclotomicRing<F, D>, Vec<CyclotomicRing<F, D>>) {
         crate::backend::poly_helpers::fused_evaluate_and_fold_ring(
-            self.fold_blocks_ring::<D>(fold_scalars, fold_position_count),
-            eval_outer_scalars,
+            self.fold_blocks_ring::<D>(position_weights, fold_position_count),
+            fold_weights,
         )
     }
 

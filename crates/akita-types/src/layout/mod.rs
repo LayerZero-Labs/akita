@@ -17,9 +17,9 @@ pub mod ring_dims;
 pub use digit_math::{gadget_row_scalars, isqrt_ceil};
 pub use flat_matrix::{FlatMatrix, RingMatrixView};
 pub use opening_point::{
-    basis_weights, block_rings_at_opening, lagrange_weights, monomial_weights,
-    reduce_inner_opening_to_ring_element, ring_opening_point_from_field, BasisMode,
-    RingOpeningPoint,
+    basis_weights, basis_weights_prefix, checked_opening_source_index, fold_rings_at_opening,
+    lagrange_weights, monomial_weights, opening_domain_len, reduce_inner_opening_to_ring_element,
+    ring_opening_point_from_field, BasisMode, RingOpeningPoint,
 };
 pub use params::{
     AjtaiKeyParams, LevelParams, LevelParamsLike, PrecommittedLevelParams, RelationMatrixRowLayout,

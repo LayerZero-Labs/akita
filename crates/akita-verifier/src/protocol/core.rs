@@ -39,10 +39,10 @@ use akita_types::{
     w_ring_element_count_with_counts_for_layout, AkitaBatchedRootProof, AkitaLevelProof,
     AkitaStage1Proof, AkitaStage2Proof, AkitaVerifierSetup, BasisMode, CleartextWitnessProof,
     ExecutionSchedule, ExtensionOpeningReductionProof, FoldLinfProtocolBinding, FpExtEncoding,
-    LevelParams, OpeningBlockLayout, OpeningClaims, OpeningClaimsLayout, PreparedOpeningPoint,
-    RelationMatrixRowLayout, RelationOnlyStage2Inputs, RingMultiplierOpeningPoint,
-    RingOpeningPoint, RingRelationInstance, RingVec, Schedule, SetupContributionMode,
-    SetupSumcheckProof, TerminalWitnessSegmentLayout, TerminalWitnessTranscriptParts, TraceClaim,
+    LevelParams, OpeningClaims, OpeningClaimsLayout, PreparedOpeningPoint, RelationMatrixRowLayout,
+    RelationOnlyStage2Inputs, RingMultiplierOpeningPoint, RingOpeningPoint, RingRelationInstance,
+    RingVec, Schedule, SetupContributionMode, SetupSumcheckProof, TerminalWitnessSegmentLayout,
+    TerminalWitnessTranscriptParts, TraceClaim,
 };
 use akita_types::{
     tensor_opening_split, tensor_reduction_claim_from_rows, tensor_row_partials_from_columns,

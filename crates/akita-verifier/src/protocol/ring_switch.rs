@@ -16,8 +16,8 @@ use akita_transcript::{sample_ext_challenge, Transcript};
 use akita_types::{
     eval_relation_weight_at_point, gadget_row_scalars, r_decomp_levels, validate_role_dispatch,
     AkitaExpandedSetup, CommitmentRingDims, FpExtEncoding, LevelParams, OpeningBatchWitnessLayout,
-    OpeningBlockLayout, RelationMatrixRowLayout, RingMultiplierOpeningPoint, RingRelationInstance,
-    RingRole, RingVec, SemanticGroupId, SetupContributionGroupInputs, SetupContributionPlan,
+    RelationMatrixRowLayout, RingMultiplierOpeningPoint, RingRelationInstance, RingRole, RingVec,
+    SemanticGroupId, SetupContributionGroupInputs, SetupContributionPlan,
     SetupContributionPlanInputs, SetupContributionStatic, TerminalWitnessTranscriptParts,
     WitnessOwnershipUnit,
 };
@@ -104,8 +104,8 @@ pub struct RelationMatrixEvaluator<F: FieldCore> {
     pub(crate) log_basis: u32,
     /// Canonical semantic and ownership layout for all witness columns.
     pub(crate) layout: OpeningBatchWitnessLayout,
-    /// Canonical mapping from compact witness columns to opening MLE columns.
-    pub(crate) opening_layout: OpeningBlockLayout,
+    /// Exact compact witness source length before Boolean suffix padding.
+    pub(crate) opening_source_len: usize,
     pub(crate) setup_contribution_groups: Vec<SetupContributionGroupInputs>,
     pub(crate) setup_contribution_inputs: SetupContributionPlanInputs<F>,
     pub(crate) setup_contribution_static: SetupContributionStatic<F>,
@@ -147,7 +147,7 @@ pub struct RingSwitchReplay<'a, F: FieldCore, E> {
     pub relation: &'a RingRelationInstance<F>,
     pub row_coefficients: &'a [E],
     pub lp: &'a LevelParams,
-    pub opening_layout: OpeningBlockLayout,
+    pub opening_source_len: usize,
     pub opening_ring_dim: usize,
 }
 
@@ -253,17 +253,15 @@ where
     // single group at `lp`'s geometry, byte-identical to the historical check.
     for group_index in 0..opening_batch.num_groups() {
         let group_lp = lp.root_group_params(opening_batch, group_index)?;
-        let group_opening_layout =
-            OpeningBlockLayout::new(group_lp.live_fold_count(), group_lp.fold_position_count())?;
         let opening_point = relation.group_opening_point(group_index)?;
-        if opening_point.a.len() != group_opening_layout.position_stride()
-            || opening_point.b.len() != group_opening_layout.live_fold_count()
+        if opening_point.position_weights.len() != group_lp.fold_position_count()
+            || opening_point.fold_weights.len() != group_lp.live_fold_count()
         {
             return Err(AkitaError::InvalidProof);
         }
         let multiplier_point = relation.group_ring_multiplier_point(group_index)?;
-        if multiplier_point.a_len() != group_opening_layout.position_stride()
-            || multiplier_point.b_len() != group_opening_layout.live_fold_count()
+        if multiplier_point.position_len() != group_lp.fold_position_count()
+            || multiplier_point.fold_len() != group_lp.live_fold_count()
         {
             return Err(AkitaError::InvalidProof);
         }
@@ -273,8 +271,7 @@ where
     }
 
     let opening_capacity = replay
-        .opening_layout
-        .physical_len()
+        .opening_source_len
         .checked_mul(replay.opening_ring_dim)
         .ok_or(AkitaError::InvalidProof)?;
     if w_len == 0
@@ -288,12 +285,10 @@ where
     }
     let num_ring_elems = w_len / D;
     let opening_ring_dim = replay.opening_ring_dim;
-    let virtual_field_len = replay
-        .opening_layout
-        .opening_len()
+    let opening_field_len = akita_types::opening_domain_len(replay.opening_source_len)?
         .checked_mul(opening_ring_dim)
         .ok_or(AkitaError::InvalidProof)?;
-    let col_bits = virtual_field_len.trailing_zeros() as usize;
+    let col_bits = opening_field_len.trailing_zeros() as usize;
     let ring_bits = 0;
     let num_sc_vars = col_bits + ring_bits;
     let num_i =
@@ -350,7 +345,7 @@ where
     let relation = replay.relation;
     let lp = replay.lp;
     let layout = relation.segment_layout(lp, witness_ring_len)?;
-    if layout.total_len() > replay.opening_layout.physical_len() {
+    if layout.total_len() > replay.opening_source_len {
         return Err(AkitaError::InvalidProof);
     }
     reject_mixed_d_multi_chunk::<D>(lp.role_dims(), &layout, "prepare_relation_matrix_evaluator")?;
@@ -381,7 +376,7 @@ where
         replay.row_coefficients,
         relation.relation_matrix_row_layout(),
         layout,
-        replay.opening_layout,
+        replay.opening_source_len,
         replay.opening_ring_dim,
         depth_fold,
         rows,
@@ -465,15 +460,14 @@ where
         }
 
         let opening_point = relation.group_opening_point(group_index)?;
-        let group_opening_layout = OpeningBlockLayout::new(live_fold_count, fold_position_count)?;
-        if opening_point.a.len() != group_opening_layout.position_stride()
-            || opening_point.b.len() != group_opening_layout.live_fold_count()
+        if opening_point.position_weights.len() != fold_position_count
+            || opening_point.fold_weights.len() != live_fold_count
         {
             return Err(AkitaError::InvalidProof);
         }
         let ring_multiplier_point = relation.group_ring_multiplier_point(group_index)?;
-        if ring_multiplier_point.a_len() != group_opening_layout.position_stride()
-            || ring_multiplier_point.b_len() != group_opening_layout.live_fold_count()
+        if ring_multiplier_point.position_len() != fold_position_count
+            || ring_multiplier_point.fold_len() != live_fold_count
         {
             return Err(AkitaError::InvalidProof);
         }
@@ -494,7 +488,7 @@ where
         let c_alphas =
             prepare_challenge_evals::<F, E, D>(challenges, &alpha_pows_a, k_g, live_fold_count)?;
         let opening_a_evals = (0..fold_position_count)
-            .map(|idx| ring_multiplier_point.eval_a_at_dyn::<E>(idx, &alpha_pows_a))
+            .map(|idx| ring_multiplier_point.eval_position_at_dyn::<E>(idx, &alpha_pows_a))
             .collect::<Result<Vec<_>, _>>()?;
 
         let t_cols_per_vector = n_a
@@ -563,7 +557,7 @@ where
     };
 
     let setup_contribution_groups =
-        build_setup_contribution_groups(&layout, replay.opening_layout, &groups)?;
+        build_setup_contribution_groups(&layout, replay.opening_source_len, &groups)?;
     let setup_contribution_static = SetupContributionPlan::prepare_static(
         &setup_contribution_inputs,
         &setup_contribution_groups,
@@ -577,7 +571,7 @@ where
         groups,
         log_basis: lp.log_basis,
         layout,
-        opening_layout: replay.opening_layout,
+        opening_source_len: replay.opening_source_len,
         setup_contribution_groups,
         setup_contribution_inputs,
         setup_contribution_static,
@@ -651,7 +645,7 @@ fn prepare_relation_matrix_evaluator_inner<F, E, const D: usize>(
     gamma: &[E],
     relation_matrix_row_layout: RelationMatrixRowLayout,
     layout: OpeningBatchWitnessLayout,
-    opening_layout: OpeningBlockLayout,
+    opening_source_len: usize,
     opening_ring_dim: usize,
     depth_fold: usize,
     rows: usize,
@@ -699,7 +693,7 @@ where
         lp.live_fold_count,
     )?;
     let opening_a_evals = (0..fold_position_count)
-        .map(|idx| ring_multiplier_point.eval_a_at::<D, E>(idx, &alpha_pows))
+        .map(|idx| ring_multiplier_point.eval_position_at::<D, E>(idx, &alpha_pows))
         .collect::<Result<Vec<_>, _>>()?;
     let n_b = lp.b_key.row_len();
     let t_cols_per_vector = n_a
@@ -735,7 +729,7 @@ where
 
     let groups = vec![group];
     let setup_contribution_groups =
-        build_setup_contribution_groups(&layout, opening_layout, &groups)?;
+        build_setup_contribution_groups(&layout, opening_source_len, &groups)?;
     let setup_contribution_static = SetupContributionPlan::prepare_static(
         &setup_contribution_inputs,
         &setup_contribution_groups,
@@ -749,7 +743,7 @@ where
         groups,
         log_basis,
         layout,
-        opening_layout,
+        opening_source_len,
         setup_contribution_groups,
         setup_contribution_inputs,
         setup_contribution_static,
@@ -778,7 +772,7 @@ fn reject_mixed_d_multi_chunk<const D: usize>(
 
 pub(crate) fn build_setup_contribution_groups<F: FieldCore>(
     layout: &OpeningBatchWitnessLayout,
-    opening_layout: OpeningBlockLayout,
+    opening_source_len: usize,
     groups: &[RelationMatrixGroupEvaluator<F>],
 ) -> Result<Vec<SetupContributionGroupInputs>, AkitaError> {
     groups
@@ -800,7 +794,7 @@ pub(crate) fn build_setup_contribution_groups<F: FieldCore>(
                 a_row_start: group.a_row_start,
                 b_row_start: group.b_row_start,
                 layout: std::sync::Arc::new(layout.clone()),
-                opening_layout,
+                opening_source_len,
             })
         })
         .collect()
@@ -841,7 +835,7 @@ where
 
 impl<E: FieldCore> RelationMatrixEvaluator<E> {
     /// Evaluate the canonical relation weights directly in the flattened
-    /// opening domain, without materializing its padded virtual table.
+    /// opening domain, without materializing its padded Boolean suffix.
     pub fn eval_flat_at_point<F, const D: usize>(
         &self,
         point: &[E],
@@ -854,7 +848,7 @@ impl<E: FieldCore> RelationMatrixEvaluator<E> {
         E: FpExtEncoding<F> + FromPrimitiveInt + MulBase<F> + MulBaseUnreduced<F>,
     {
         let context = self.flat_context.as_ref().ok_or(AkitaError::InvalidProof)?;
-        if context.opening_ring_dim == D {
+        if context.opening_ring_dim == D && self.role_dims == CommitmentRingDims::uniform(D) {
             let coefficient_bits = D.trailing_zeros() as usize;
             if point.len() < coefficient_bits {
                 return Err(AkitaError::InvalidProof);
@@ -877,7 +871,7 @@ impl<E: FieldCore> RelationMatrixEvaluator<E> {
             &context.tau1,
             &context.row_coefficients,
             context.relation_matrix_row_layout,
-            self.opening_layout,
+            self.opening_source_len,
             context.opening_ring_dim,
             point,
         )
@@ -984,8 +978,10 @@ impl<E: FieldCore> RelationMatrixEvaluator<E> {
                             for (digit, &gadget) in g_open.iter().enumerate() {
                                 let e_index =
                                     self.layout.e_index(unit, claim, global_block, digit)?;
-                                let e_opening_index =
-                                    self.opening_layout.opening_index_for_physical(e_index)?;
+                                let e_opening_index = akita_types::checked_opening_source_index(
+                                    self.opening_source_len,
+                                    e_index,
+                                )?;
                                 e_structured_contribution +=
                                     eq_eval_at_index(x_challenges, e_opening_index)
                                         * consistency_weight
@@ -1000,7 +996,10 @@ impl<E: FieldCore> RelationMatrixEvaluator<E> {
                                         digit,
                                     )?;
                                     let t_opening_index =
-                                        self.opening_layout.opening_index_for_physical(t_index)?;
+                                        akita_types::checked_opening_source_index(
+                                            self.opening_source_len,
+                                            t_index,
+                                        )?;
                                     t_structured_contribution +=
                                         eq_eval_at_index(x_challenges, t_opening_index)
                                             * row_weight
@@ -1020,8 +1019,10 @@ impl<E: FieldCore> RelationMatrixEvaluator<E> {
                                     commit_digit,
                                     fold_digit,
                                 )?;
-                                let z_opening_index =
-                                    self.opening_layout.opening_index_for_physical(z_index)?;
+                                let z_opening_index = akita_types::checked_opening_source_index(
+                                    self.opening_source_len,
+                                    z_index,
+                                )?;
                                 z_weight -= eq_eval_at_index(x_challenges, z_opening_index)
                                     * E::lift_base(fold);
                             }

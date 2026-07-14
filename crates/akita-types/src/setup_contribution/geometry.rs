@@ -7,13 +7,10 @@
 use akita_algebra::offset_eq::MAX_COMPACT_STRIDE_TERMS;
 use akita_field::{AkitaError, FieldCore};
 
+use super::SetupContributionPlanInputs;
 use crate::layout::{validate_role_dims, CommitmentRingDims, RelationMatrixRowLayout};
 use crate::proof::AkitaExpandedSetup;
 use crate::schedule::Schedule;
-#[cfg(test)]
-use crate::OpeningBlockLayout;
-
-use super::SetupContributionPlanInputs;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct SetupProjectionGroupGeometry {
@@ -303,9 +300,9 @@ pub fn setup_required_for_inputs<E: FieldCore>(
     inputs: &SetupContributionPlanInputs<E>,
     role_dims: CommitmentRingDims,
 ) -> Result<usize, AkitaError> {
-    if inputs.live_fold_count == 0 || !inputs.live_fold_count.is_power_of_two() {
+    if inputs.live_fold_count == 0 {
         return Err(AkitaError::InvalidSetup(
-            "live_fold_count must be a non-zero power of two".into(),
+            "live_fold_count must be positive".into(),
         ));
     }
     if inputs.fold_position_count == 0
@@ -509,9 +506,13 @@ mod tests {
         fold_gadget: &[F],
         layout: &OpeningBatchWitnessLayout,
     ) -> Result<SetupContributionPlan<F>, AkitaError> {
-        let opening_layout = OpeningBlockLayout::new(1, layout.total_len())?;
-        let single_group =
-            SetupContributionGroupInputs::single_group_layout(inputs, layout, opening_layout, 0)?;
+        let opening_source_len = layout.total_len();
+        let single_group = SetupContributionGroupInputs::single_group_layout(
+            inputs,
+            layout,
+            opening_source_len,
+            0,
+        )?;
         let groups = std::slice::from_ref(&single_group.group);
         let static_plan = SetupContributionPlan::prepare_static(
             inputs,
@@ -655,7 +656,7 @@ mod tests {
     }
 
     #[test]
-    fn setup_required_for_inputs_rejects_non_pow2_num_blocks() {
+    fn setup_required_for_inputs_accepts_exact_non_pow2_fold_count() {
         let inputs = SetupContributionPlanInputs::<F> {
             relation_matrix_row_layout: RelationMatrixRowLayout::WithDBlock,
             rows: 8,
@@ -674,9 +675,7 @@ mod tests {
             inner_width: 32,
             eq_tau1: vec![].into(),
         };
-        let err = setup_required_for_inputs(&inputs, CommitmentRingDims::uniform(64))
-            .expect_err("non-pow2 blocks");
-        assert!(matches!(err, AkitaError::InvalidSetup(_)));
+        assert!(setup_required_for_inputs(&inputs, CommitmentRingDims::uniform(64)).is_ok());
     }
 
     #[test]

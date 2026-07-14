@@ -136,18 +136,12 @@ impl SparseRingBlocks {
                 "fold_position_count={fold_position_count} must be a nonzero power of two"
             )));
         }
-        if !total_ring_elems.is_multiple_of(fold_position_count) {
-            return Err(AkitaError::InvalidSize {
-                expected: total_ring_elems,
-                actual: fold_position_count,
-            });
-        }
         if u32::try_from(fold_position_count).is_err() {
             return Err(AkitaError::InvalidInput(format!(
                 "fold_position_count={fold_position_count} exceeds u32::MAX"
             )));
         }
-        let live_fold_count = total_ring_elems / fold_position_count;
+        let live_fold_count = total_ring_elems.div_ceil(fold_position_count);
         let mut offsets = Vec::with_capacity(live_fold_count + 1);
         let mut entries = Vec::with_capacity(coeffs.len());
         offsets.push(0);
@@ -322,11 +316,15 @@ impl<F: FieldCore> SparseRingPoly<F> {
         mut packed: Vec<SparseRingCoeff>,
         already_sorted: bool,
     ) -> Result<Self, AkitaError> {
-        let expected_ring_elems = 1usize
+        let field_len = 1usize
             .checked_shl(num_vars as u32)
-            .ok_or_else(|| AkitaError::InvalidInput("sparse arity overflow".to_string()))?
-            .checked_div(ring_d)
-            .ok_or_else(|| AkitaError::InvalidInput("ring_d must be nonzero".to_string()))?;
+            .ok_or_else(|| AkitaError::InvalidInput("sparse arity overflow".to_string()))?;
+        if ring_d == 0 {
+            return Err(AkitaError::InvalidInput(
+                "ring_d must be nonzero".to_string(),
+            ));
+        }
+        let expected_ring_elems = field_len.div_ceil(ring_d);
         if expected_ring_elems != total_ring_elems {
             return Err(AkitaError::InvalidSize {
                 expected: expected_ring_elems,
@@ -374,11 +372,15 @@ impl<F: FieldCore> SparseRingPoly<F> {
         {
             return Ok(Arc::clone(blocks));
         }
-        let ring_elems_at_d = 1usize
+        let field_len = 1usize
             .checked_shl(self.num_vars as u32)
-            .ok_or_else(|| AkitaError::InvalidInput("sparse arity overflow".to_string()))?
-            .checked_div(ring_d)
-            .ok_or_else(|| AkitaError::InvalidInput("ring_d must be nonzero".to_string()))?;
+            .ok_or_else(|| AkitaError::InvalidInput("sparse arity overflow".to_string()))?;
+        if ring_d == 0 {
+            return Err(AkitaError::InvalidInput(
+                "ring_d must be nonzero".to_string(),
+            ));
+        }
+        let ring_elems_at_d = field_len.div_ceil(ring_d);
         let built = SparseRingBlocks::from_coeffs(
             &self.coeffs,
             ring_d,
@@ -473,14 +475,14 @@ where
 
     pub(crate) fn evaluate_and_fold<const D: usize>(
         &self,
-        eval_outer_scalars: &[F],
-        fold_scalars: &[F],
+        fold_weights: &[F],
+        position_weights: &[F],
         fold_position_count: usize,
     ) -> (CyclotomicRing<F, D>, Vec<CyclotomicRing<F, D>>) {
-        let folded = self.fold_blocks::<D>(fold_scalars, fold_position_count);
+        let folded = self.fold_blocks::<D>(position_weights, fold_position_count);
         let eval = folded
             .iter()
-            .zip(eval_outer_scalars.iter())
+            .zip(fold_weights.iter())
             .fold(CyclotomicRing::<F, D>::zero(), |acc, (f_i, s_i)| {
                 acc + f_i.scale(s_i)
             });
@@ -489,13 +491,13 @@ where
 
     pub(crate) fn evaluate_and_fold_ring<const D: usize>(
         &self,
-        eval_outer_scalars: &[CyclotomicRing<F, D>],
-        fold_scalars: &[CyclotomicRing<F, D>],
+        fold_weights: &[CyclotomicRing<F, D>],
+        position_weights: &[CyclotomicRing<F, D>],
         fold_position_count: usize,
     ) -> (CyclotomicRing<F, D>, Vec<CyclotomicRing<F, D>>) {
-        let folded = self.fold_blocks_ring::<D>(fold_scalars, fold_position_count);
+        let folded = self.fold_blocks_ring::<D>(position_weights, fold_position_count);
         let mut eval = CyclotomicRing::<F, D>::zero();
-        for (f_i, s_i) in folded.iter().zip(eval_outer_scalars.iter()) {
+        for (f_i, s_i) in folded.iter().zip(fold_weights.iter()) {
             f_i.mul_accumulate_sparse_rhs_into(s_i, &mut eval);
         }
         (eval, folded)
@@ -951,6 +953,36 @@ mod tests {
         assert_eq!(
             sparse.fold_blocks_ring::<D>(&scalars, 2),
             dense.fold_blocks_ring::<D>(&scalars, 2)
+        );
+    }
+
+    #[test]
+    fn sparse_ring_fold_matches_dense_for_partial_final_slice() {
+        const D: usize = 8;
+        let sparse = SparseRingPoly::<F>::from_signed_coeffs(
+            5,
+            D,
+            4,
+            vec![(0, 1, 1), (1, 3, -1), (3, 2, 1)],
+        )
+        .unwrap();
+        let mut dense_coeffs = vec![CyclotomicRing::<F, D>::zero(); 4];
+        dense_coeffs[0].coeffs[1] += F::one();
+        dense_coeffs[1].coeffs[3] -= F::one();
+        dense_coeffs[3].coeffs[2] += F::one();
+        let dense = DensePoly::from_ring_coeffs(dense_coeffs);
+        let fold_position_count = 8usize;
+        let position_weights = (0..fold_position_count)
+            .map(|idx| {
+                CyclotomicRing::from_coefficients(std::array::from_fn(|k| {
+                    F::from_u64(10 + idx as u64 * 10 + k as u64)
+                }))
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            sparse.fold_blocks_ring::<D>(&position_weights, fold_position_count),
+            dense.fold_blocks_ring::<D>(&position_weights, fold_position_count)
         );
     }
 

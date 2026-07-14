@@ -4,8 +4,8 @@ use super::*;
 use crate::{
     gadget_row_scalars, AkitaExpandedSetup, AkitaSetupSeed, CommitmentRingDims, FlatMatrix,
     LevelParams, MachineChunkId, OpeningBatchWitnessGroup, OpeningBatchWitnessLayout,
-    OpeningBlockLayout, RelationMatrixRowLayout, SemanticGroupId, SetupContributionStatic,
-    SetupIndexWeightEvaluator, WitnessOwnershipUnit,
+    RelationMatrixRowLayout, SemanticGroupId, SetupContributionStatic, SetupIndexWeightEvaluator,
+    WitnessOwnershipUnit,
 };
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::offset_eq::eq_eval_at_index;
@@ -100,9 +100,9 @@ fn prepare_single_group_plan_parts(
     fold_gadget: &[F],
     layout: &OpeningBatchWitnessLayout,
 ) -> Result<SingleGroupPlanParts, AkitaError> {
-    let opening_layout = OpeningBlockLayout::new(1, layout.total_len())?;
+    let opening_source_len = layout.total_len();
     let single_group =
-        SetupContributionGroupInputs::single_group_layout(inputs, layout, opening_layout, 0)?;
+        SetupContributionGroupInputs::single_group_layout(inputs, layout, opening_source_len, 0)?;
     let groups = vec![single_group.group];
     let static_plan = SetupContributionPlan::prepare_static(
         inputs,
@@ -212,7 +212,7 @@ fn structured_weight_fixture(
         .map(|idx| test_scalar(101 + idx as u128))
         .collect::<Vec<_>>();
     let fold_gadget = gadget_row_scalars::<F>(depth_fold, log_basis);
-    let opening_layout = OpeningBlockLayout::new(8, layout.total_len().div_ceil(8)).unwrap();
+    let opening_source_len = layout.total_len();
     let groups = vec![SetupContributionGroupInputs {
         group_id: SemanticGroupId(0),
         e_col_offset: 0,
@@ -229,7 +229,7 @@ fn structured_weight_fixture(
         a_row_start: 1,
         b_row_start: 1 + n_a,
         layout: std::sync::Arc::new(layout),
-        opening_layout,
+        opening_source_len,
     }];
     let static_plan = SetupContributionPlan::prepare_static(
         &inputs,
@@ -262,7 +262,7 @@ fn structured_weight_fixture(
 
 fn expected_z_setup_weights(
     layout: &OpeningBatchWitnessLayout,
-    opening_layout: OpeningBlockLayout,
+    opening_source_len: usize,
     group_id: SemanticGroupId,
     fold_gadget: &[F],
     full_vec_randomness: &[F],
@@ -283,11 +283,9 @@ fn expected_z_setup_weights(
                     let physical = unit.z_range.start
                         + fold_digit
                         + group.depth_fold * (commit_digit + group.depth_commit * position);
-                    let physical_block = physical / opening_layout.fold_position_count();
-                    let physical_position = physical % opening_layout.fold_position_count();
-                    let virtual_address =
-                        physical_block * opening_layout.position_stride() + physical_position;
-                    weight -= eq_eval_at_index(full_vec_randomness, virtual_address) * fold;
+                    let opening_address =
+                        crate::checked_opening_source_index(opening_source_len, physical).unwrap();
+                    weight -= eq_eval_at_index(full_vec_randomness, opening_address) * fold;
                 }
             }
             weight
@@ -526,7 +524,7 @@ fn dense_z_eq_slice_uses_relative_high_carry() {
 
     let expected = expected_z_setup_weights(
         &layout,
-        OpeningBlockLayout::new(1, layout.total_len()).unwrap(),
+        layout.total_len(),
         SemanticGroupId(0),
         &fold_gadget,
         &full_vec_randomness,
@@ -597,7 +595,7 @@ fn setup_a_z_weights_do_not_include_commit_gadget() {
 
     let expected = expected_z_setup_weights(
         &layout,
-        OpeningBlockLayout::new(1, layout.total_len()).unwrap(),
+        layout.total_len(),
         SemanticGroupId(0),
         &fold_gadget,
         &full_vec_randomness,
@@ -616,7 +614,7 @@ fn setup_a_z_weights_do_not_include_commit_gadget() {
 }
 
 #[test]
-fn z_setup_weight_oracle_covers_multi_block_virtual_gaps() {
+fn z_setup_weight_oracle_uses_physical_addresses() {
     let group_id = SemanticGroupId(0);
     let fold_position_count = 3;
     let depth_commit = 2;
@@ -640,23 +638,17 @@ fn z_setup_weight_oracle_covers_multi_block_virtual_gaps() {
         1,
     )
     .unwrap();
-    let live_fold_count = [8usize, 4, 2]
-        .into_iter()
-        .find(|&blocks| {
-            let physical_block_len = layout.total_len().div_ceil(blocks);
-            physical_block_len != 0 && !physical_block_len.is_power_of_two()
-        })
-        .expect("test layout admits a gapped partition");
-    let physical_block_len = layout.total_len().div_ceil(live_fold_count);
-    let opening_layout = OpeningBlockLayout::new(live_fold_count, physical_block_len).unwrap();
-    let point = (0..opening_layout.opening_len().trailing_zeros() as usize)
+    let opening_source_len = layout.total_len();
+    let point = (0..crate::opening_domain_len(opening_source_len)
+        .unwrap()
+        .trailing_zeros() as usize)
         .map(|index| test_scalar(1201 + index as u128))
         .collect::<Vec<_>>();
     let fold_gadget = gadget_row_scalars::<F>(depth_fold, 4);
     let mut got = vec![F::zero(); fold_position_count * depth_commit];
     setup_z_col_weights(
         &layout,
-        opening_layout,
+        opening_source_len,
         group_id,
         fold_position_count,
         depth_commit,
@@ -667,23 +659,12 @@ fn z_setup_weight_oracle_covers_multi_block_virtual_gaps() {
     )
     .unwrap();
     let expected =
-        expected_z_setup_weights(&layout, opening_layout, group_id, &fold_gadget, &point);
+        expected_z_setup_weights(&layout, opening_source_len, group_id, &fold_gadget, &point);
     assert_eq!(got, expected);
-    assert!(layout.ownership_units.iter().any(|unit| {
-        (0..fold_position_count).any(|position| {
-            (0..depth_commit).any(|commit_digit| {
-                (0..depth_fold).any(|fold_digit| {
-                    let physical = unit.z_range.start
-                        + fold_digit
-                        + depth_fold * (commit_digit + depth_commit * position);
-                    let virtual_address = (physical / physical_block_len)
-                        * opening_layout.position_stride()
-                        + physical % physical_block_len;
-                    physical != virtual_address
-                })
-            })
-        })
-    }));
+    assert_eq!(
+        crate::checked_opening_source_index(opening_source_len, opening_source_len - 1).unwrap(),
+        opening_source_len - 1
+    );
 }
 
 #[test]
@@ -719,7 +700,7 @@ fn single_group_plan_supports_multi_chunk_weights() {
         depth_fold,
     )
     .expect("layout");
-    let opening_layout = OpeningBlockLayout::new(1, layout.total_len()).unwrap();
+    let opening_source_len = layout.total_len();
     let groups = [SetupContributionGroupInputs {
         group_id: SemanticGroupId(0),
         e_col_offset: 0,
@@ -736,7 +717,7 @@ fn single_group_plan_supports_multi_chunk_weights() {
         a_row_start: 1,
         b_row_start: 1 + n_a,
         layout: std::sync::Arc::new(layout),
-        opening_layout,
+        opening_source_len,
     }];
     let inputs = SetupContributionPlanInputs {
         relation_matrix_row_layout: RelationMatrixRowLayout::WithDBlock,
@@ -1232,7 +1213,7 @@ fn multi_group_packed_direct_matches_row_fallback_with_mismatched_t_cols() {
 }
 
 #[test]
-fn from_level_params_rejects_non_pow2_num_blocks() {
+fn from_level_params_accepts_exact_non_pow2_fold_count() {
     let mut lp = LevelParams::log_basis_stub(3);
     lp.ring_dimension = 64;
     lp.role_dims = crate::CommitmentRingDims::uniform(64);
@@ -1240,11 +1221,21 @@ fn from_level_params_rejects_non_pow2_num_blocks() {
     lp.fold_position_count = 8;
     lp.num_digits_commit = 2;
     lp.num_digits_open = 3;
+    lp.a_key = crate::AjtaiKeyParams {
+        row_len: 1,
+        col_len: 16,
+        ..Default::default()
+    };
+    lp.b_key = crate::AjtaiKeyParams {
+        row_len: 1,
+        col_len: 18,
+        ..Default::default()
+    };
     assert!(SetupContributionPlanInputs::<F>::from_level_params(
         &lp,
         &[2],
         RelationMatrixRowLayout::WithoutDBlock,
         2,
     )
-    .is_err());
+    .is_ok());
 }

@@ -21,7 +21,7 @@ use akita_transcript::Transcript;
 use akita_types::dispatch_for_field;
 use akita_types::{assemble_relation_rhs, relation_rhs_layout_for, RingVec, RingView};
 use akita_types::{gadget_row_scalars, AkitaCommitmentHint, DigitBlocks, RelationMatrixRowLayout};
-use akita_types::{LevelParams, LevelParamsLike, OpeningBlockLayout, RingRelationInstance};
+use akita_types::{LevelParams, LevelParamsLike, RingRelationInstance};
 use akita_types::{RingMultiplierOpeningPoint, RingOpeningPoint};
 
 use super::fold_grind::{self, ProverTranscriptGrind};
@@ -394,11 +394,6 @@ pub(crate) fn validate_chunked_witness_cfg(lp: &LevelParams) -> Result<(), Akita
                 "witness chunk count must divide live_fold_count".to_string(),
             ));
         }
-        if !(lp.live_fold_count / w).is_power_of_two() {
-            return Err(AkitaError::InvalidSetup(
-                "witness chunk block window must be a power of two".to_string(),
-            ));
-        }
     }
     Ok(())
 }
@@ -542,19 +537,15 @@ impl RingRelationProver {
             let group_lp = lp.root_group_params(&opening_batch, group_index)?;
             let opening_point = &group_opening_points[group_index];
             let ring_multiplier_point = &group_ring_multiplier_points[group_index];
-            let group_opening_layout = OpeningBlockLayout::new(
-                group_lp.live_fold_count(),
-                group_lp.fold_position_count(),
-            )?;
-            if opening_point.a.len() != group_opening_layout.position_stride()
-                || opening_point.b.len() != group_lp.live_fold_count()
+            if opening_point.position_weights.len() != group_lp.fold_position_count()
+                || opening_point.fold_weights.len() != group_lp.live_fold_count()
             {
                 return Err(AkitaError::InvalidInput(
                     "batched prover opening-point layout mismatch".to_string(),
                 ));
             }
-            if ring_multiplier_point.a_len() != group_opening_layout.position_stride()
-                || ring_multiplier_point.b_len() != group_lp.live_fold_count()
+            if ring_multiplier_point.position_len() != group_lp.fold_position_count()
+                || ring_multiplier_point.fold_len() != group_lp.live_fold_count()
             {
                 return Err(AkitaError::InvalidInput(
                     "batched prover ring-multiplier opening-point layout mismatch".to_string(),

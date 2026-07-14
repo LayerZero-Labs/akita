@@ -11,8 +11,7 @@ pub(super) use akita_prover::ProverOpeningData;
 pub(super) use akita_types::LevelParams;
 pub(super) use akita_types::{
     reduce_inner_opening_to_ring_element, ring_opening_point_from_field, AkitaCommitmentHint,
-    BasisMode, Commitment, OpeningBlockLayout, OpeningClaims, PointVariableSelection,
-    PolynomialGroupClaims,
+    BasisMode, Commitment, OpeningClaims, PointVariableSelection, PolynomialGroupClaims,
 };
 pub(super) use rand::rngs::StdRng;
 pub(super) use rand::{Rng, SeedableRng};
@@ -134,7 +133,8 @@ where
     let reduced_point = &padded_point[alpha_bits..];
     let ring_opening_point = ring_opening_point_from_field(
         reduced_point,
-        OpeningBlockLayout::new(layout.live_fold_count, layout.fold_position_count).unwrap(),
+        layout.fold_position_count,
+        layout.live_fold_count,
         basis_mode,
     )
     .expect("opening point shape should match layout");
@@ -144,8 +144,8 @@ where
         None,
         poly.opening_view().expect("opening view"),
         OpeningFoldPlan::Base {
-            eval_outer_scalars: &ring_opening_point.b,
-            fold_scalars: &ring_opening_point.a,
+            fold_weights: &ring_opening_point.fold_weights,
+            position_weights: &ring_opening_point.position_weights,
             fold_position_count: layout.fold_position_count,
         },
     )

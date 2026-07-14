@@ -18,17 +18,17 @@ pub(in crate::protocol::core) struct TraceTarget<E: FieldCore> {
     pub(in crate::protocol::core) trace_scale: E,
 }
 
-/// Extract the typed `b`/`a` ring-weight slices from a ring multiplier point.
+/// Extract the typed fold/position ring-weight slices from a multiplier point.
 pub(in crate::protocol::core) fn multiplier_ring_weights<F: FieldCore, const D: usize>(
     point: &RingMultiplierOpeningPoint<F>,
 ) -> Result<MultiplierWeightSlices<'_, F, D>, AkitaError> {
-    let b = point.b_rings_trusted::<D>()?.ok_or_else(|| {
-        AkitaError::InvalidInput("ring multiplier must carry ring b weights".to_string())
+    let fold_weights = point.fold_rings_trusted::<D>()?.ok_or_else(|| {
+        AkitaError::InvalidInput("ring multiplier must carry fold weights".to_string())
     })?;
-    let a = point.a_rings_trusted::<D>()?.ok_or_else(|| {
-        AkitaError::InvalidInput("ring multiplier must carry ring a weights".to_string())
+    let position_weights = point.position_rings_trusted::<D>()?.ok_or_else(|| {
+        AkitaError::InvalidInput("ring multiplier must carry position weights".to_string())
     })?;
-    Ok((b, a))
+    Ok((fold_weights, position_weights))
 }
 
 fn evaluate_poly_at_multiplier_point<F, Q, B, const D: usize>(
@@ -45,15 +45,15 @@ where
 {
     let plan = if let Some(base_point) = point.as_base() {
         OpeningFoldPlan::Base {
-            eval_outer_scalars: &base_point.b,
-            fold_scalars: &base_point.a,
+            fold_weights: &base_point.fold_weights,
+            position_weights: &base_point.position_weights,
             fold_position_count,
         }
     } else {
-        let (b, a) = multiplier_ring_weights(point)?;
+        let (fold_weights, position_weights) = multiplier_ring_weights(point)?;
         OpeningFoldPlan::Ring {
-            eval_outer_scalars: b,
-            fold_scalars: a,
+            fold_weights,
+            position_weights,
             fold_position_count,
         }
     };
@@ -177,12 +177,7 @@ where
                     reduction.final_claim,
                     ordinary_trace_eval_target,
                     reduction.final_factor,
-                )
-                .map_err(|err| {
-                    AkitaError::InvalidInput(format!(
-                        "extension trace reduction check failed: {err:?}"
-                    ))
-                })?;
+                )?;
                 Ok(reduction.final_claim)
             })?;
     let trace_claim_scales = reduction

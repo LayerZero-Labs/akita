@@ -1,6 +1,6 @@
 use akita_field::AkitaError;
 
-use crate::{OpeningBatchWitnessLayout, OpeningBlockLayout, SemanticGroupId};
+use crate::{OpeningBatchWitnessLayout, SemanticGroupId};
 
 /// Geometry of the opening-digit columns used by the stage-2 trace term.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -12,7 +12,7 @@ pub struct TraceWeightLayout {
     pub fold_bits: usize,
     pub log_basis: u32,
     pub witness_layout: OpeningBatchWitnessLayout,
-    pub opening_layout: OpeningBlockLayout,
+    pub opening_source_len: usize,
     pub group_id: SemanticGroupId,
 }
 
@@ -48,8 +48,7 @@ impl TraceWeightLayout {
         let physical_index = self
             .witness_layout
             .e_index(unit, claim, global_block, digit)?;
-        self.opening_layout
-            .opening_index_for_physical(physical_index)
+        crate::checked_opening_source_index(self.opening_source_len, physical_index)
     }
 
     pub fn witness_index(&self, col: usize, ring_coord: usize) -> usize {
