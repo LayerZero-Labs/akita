@@ -6,7 +6,8 @@
 //! `cargo bench -p akita-sis-estimator --bench infinity_optimizer`.
 
 use akita_sis_estimator::{
-    estimate, scalar_sis_from_ring, AkitaModulusProfileId, CostValue, EstimateConfig, NumericConfig,
+    estimate, scalar_sis_from_ring, width_table::InfinityWidthProfile, AkitaModulusProfileId,
+    CostValue, EstimateConfig, NumericConfig,
 };
 
 const GOLDEN_CSV: &str = include_str!("../../../scripts/sis_golden/infinity_golden.csv");
@@ -84,13 +85,7 @@ fn exhaustive_config() -> EstimateConfig {
 
 #[cfg(feature = "parallel")]
 fn parallel_exhaustive_config() -> EstimateConfig {
-    EstimateConfig {
-        optimizer: akita_sis_estimator::OptimizerConfig::OptimizeZeta {
-            beta: akita_sis_estimator::SearchMode::ExhaustiveParallel,
-            zeta: akita_sis_estimator::SearchMode::ExhaustiveParallel,
-        },
-        ..EstimateConfig::default()
-    }
+    InfinityWidthProfile::ExhaustiveParallel.config()
 }
 
 #[test]
