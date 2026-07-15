@@ -18,7 +18,7 @@ fn conservative_config_commit_returns_frozen_layout() {
     assert_eq!(total_field % BENCH_ONEHOT_K, 0);
     let polys = [debug_make_onehot_poly(&layout, 0x0bee_fcaf_9a77_0001)];
 
-    let setup = RegularCommitter::setup_prover(NV, GROUP_SIZE).expect("setup");
+    let setup = ConservativeCommitter::setup_prover(NV, GROUP_SIZE).expect("setup");
     let prepared = CpuBackend.prepare_setup(&setup).expect("prepared setup");
     let stack =
         akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
@@ -57,7 +57,7 @@ fn with_conservative_commit_stack<R>(
         &akita_prover::UniformProverStack<'_, OneHotF, CpuBackend>,
     ) -> R,
 ) -> R {
-    let setup = RegularCommitter::setup_prover(max_num_vars, max_num_polys).expect("setup");
+    let setup = ConservativeCommitter::setup_prover(max_num_vars, max_num_polys).expect("setup");
     let prepared = CpuBackend.prepare_setup(&setup).expect("prepared setup");
     let stack =
         akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
