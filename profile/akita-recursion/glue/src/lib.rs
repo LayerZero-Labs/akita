@@ -520,7 +520,8 @@ mod tests {
     use akita_types::{
         derive_public_matrix_flat, sample_public_matrix_seed, setup_prefix_slot_id, AjtaiKeyParams,
         PolynomialGroupLayout, PrecommittedGroupParams, PrecommittedLevelParams, RingVec,
-        SetupPrefixPublicCommitment, SetupPrefixVerifierSlot, SisModulusFamily,
+        SetupPrefixPublicCommitment, SetupPrefixVerifierSlot, SisMatrixRole,
+        SisModulusProfileId, SisTableDigest, DEFAULT_SIS_SECURITY_POLICY,
     };
 
     type TestF = Prime128Offset275;
@@ -546,16 +547,20 @@ mod tests {
                 conservative_n_b: 1,
             },
             a_key: AjtaiKeyParams::new_unchecked(
-                akita_types::DEFAULT_SIS_SECURITY_BITS,
-                SisModulusFamily::Q128,
+                DEFAULT_SIS_SECURITY_POLICY,
+                SisTableDigest::CURRENT,
+                SisModulusProfileId::Q128OffsetA7F7,
+                SisMatrixRole::A,
                 1,
                 1,
                 1,
                 TEST_D,
             ),
             b_key: AjtaiKeyParams::new_unchecked(
-                akita_types::DEFAULT_SIS_SECURITY_BITS,
-                SisModulusFamily::Q128,
+                DEFAULT_SIS_SECURITY_POLICY,
+                SisTableDigest::CURRENT,
+                SisModulusProfileId::Q128OffsetA7F7,
+                SisMatrixRole::B,
                 1,
                 1,
                 1,

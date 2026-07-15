@@ -228,9 +228,8 @@ mod tests {
     use akita_challenges::SparseChallengeConfig;
     use akita_field::Prime128Offset275 as F;
     use akita_types::{
-        active_setup_field_len, digest_level_params, padded_setup_prefix_len,
-        setup_prefix_precommitted_params, setup_seed_digest, LevelParams, OpeningClaimsLayout,
-        SetupMatrixEnvelope, SisModulusProfileId,
+        active_setup_field_len, padded_setup_prefix_len, setup_prefix_precommitted_params,
+        LevelParams, OpeningClaimsLayout, SetupMatrixEnvelope, SisModulusProfileId,
     };
 
     fn prefix_level_params(ring_dimension: usize) -> LevelParams {

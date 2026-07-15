@@ -7,7 +7,7 @@
 use akita_config::proof_optimized::fp128;
 use akita_config::{policy_of, CommitmentConfig};
 use akita_field::AkitaError;
-use akita_planner::{find_group_batch_schedule, find_schedule, PlannerPolicy};
+use akita_planner::{find_group_batch_schedule, PlannerPolicy};
 use akita_types::sis::{
     min_secure_rank, rounded_up_collision_inf_norm, SisMatrixRole, SisTableDigest, SisTableKey,
 };
