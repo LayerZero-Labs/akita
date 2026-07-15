@@ -8,6 +8,23 @@ use crate::protocol::ring_switch::PreparedRingSwitchGroup;
 use crate::validation::validate_i8_setup_log_basis;
 use akita_types::{CommitmentRingDims, LevelParams, RelationMatrixRowLayout, RingVec};
 
+#[inline]
+fn accumulate_small_signed<F: FieldCore + FromPrimitiveInt>(dst: &mut F, value: F, coeff: i64) {
+    match coeff {
+        1 => *dst += value,
+        -1 => *dst -= value,
+        2 => {
+            *dst += value;
+            *dst += value;
+        }
+        -2 => {
+            *dst -= value;
+            *dst -= value;
+        }
+        _ => *dst += value * F::from_i64(coeff),
+    }
+}
+
 /// Add only the high-half quotient contribution of `challenge * ring`.
 ///
 /// Skips the first `D - pos` coefficients per challenge term that cannot
@@ -20,10 +37,9 @@ fn add_sparse_ring_product_high_half<F: FieldCore + CanonicalField, const D: usi
 ) {
     let rc = ring.coefficients();
     for (&pos, &coeff) in challenge.positions.iter().zip(challenge.coeffs.iter()) {
-        let c = F::from_i64(coeff as i64);
         let p = pos as usize;
         for s in (D - p)..D {
-            quotient[p + s - D] += c * rc[s];
+            accumulate_small_signed(&mut quotient[p + s - D], rc[s], i64::from(coeff));
         }
     }
 }
@@ -45,9 +61,8 @@ fn add_tensor_ring_product_high_half<F: FieldCore + CanonicalField, const D: usi
                 (degree - D, -1i64)
             };
             let coeff = sign * i64::from(high_coeff) * i64::from(low_coeff);
-            let c = F::from_i64(coeff);
             for s in (D - pos)..D {
-                quotient[pos + s - D] += c * rc[s];
+                accumulate_small_signed(&mut quotient[pos + s - D], rc[s], coeff);
             }
         }
     }

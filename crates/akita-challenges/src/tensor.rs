@@ -18,6 +18,7 @@
 //! [`TensorChallenges`] is the factored tensor state whose fold-high/fold-low lengths
 //! are part of the invariant.
 
+use crate::challenge::accumulate_small_signed;
 use crate::{SparseChallenge, SparseChallengeConfig};
 use akita_field::{AkitaError, FieldCore, FromPrimitiveInt, MulBase};
 use akita_transcript::labels;
@@ -128,8 +129,8 @@ pub enum Challenges {
     Sparse {
         /// Per-(claim, block) sparse challenges.
         challenges: Vec<SparseChallenge>,
-        /// Number of (claim, block) entries packed into one claim.
-        num_blocks_per_claim: usize,
+        /// Exact number of live folds packed into one claim.
+        live_folds_per_claim: usize,
         /// Number of claims represented by this vector.
         num_claims: usize,
     },
@@ -177,13 +178,13 @@ impl Challenges {
     /// # Errors
     ///
     /// Returns an error if `challenges.len()` does not match
-    /// `num_blocks_per_claim * num_claims`.
+    /// `live_folds_per_claim * num_claims`.
     pub fn from_sparse(
         challenges: Vec<SparseChallenge>,
-        num_blocks_per_claim: usize,
+        live_folds_per_claim: usize,
         num_claims: usize,
     ) -> Result<Self, AkitaError> {
-        let expected = num_blocks_per_claim
+        let expected = live_folds_per_claim
             .checked_mul(num_claims)
             .ok_or_else(|| AkitaError::InvalidSetup("challenge count overflow".to_string()))?;
         if challenges.len() != expected {
@@ -194,7 +195,7 @@ impl Challenges {
         }
         Ok(Self::Sparse {
             challenges,
-            num_blocks_per_claim,
+            live_folds_per_claim,
             num_claims,
         })
     }
@@ -243,9 +244,9 @@ impl Challenges {
     pub fn num_blocks_per_claim(&self) -> usize {
         match self {
             Self::Sparse {
-                num_blocks_per_claim,
+                live_folds_per_claim,
                 ..
-            } => *num_blocks_per_claim,
+            } => *live_folds_per_claim,
             Self::Tensor { factored, .. } => factored.live_folds_per_claim,
         }
     }
@@ -312,7 +313,7 @@ impl Challenges {
 
     /// Slice this challenge set down to the subset whose claim indices
     /// appear in `claim_indices`, returning a fresh `Challenges` of length
-    /// `claim_indices.len() * num_blocks_per_claim`.
+    /// `claim_indices.len() * live_folds_per_claim`.
     ///
     /// Used by `RingRelationProver::new` to chunk the global challenge
     /// vector by opening point before handing each chunk to the poly
@@ -329,17 +330,17 @@ impl Challenges {
         match self {
             Self::Sparse {
                 challenges,
-                num_blocks_per_claim,
+                live_folds_per_claim,
                 ..
             } => {
-                let mut selected = Vec::with_capacity(claim_indices.len() * num_blocks_per_claim);
+                let mut selected = Vec::with_capacity(claim_indices.len() * live_folds_per_claim);
                 for &claim_idx in claim_indices {
                     let start = claim_idx
-                        .checked_mul(*num_blocks_per_claim)
+                        .checked_mul(*live_folds_per_claim)
                         .ok_or_else(|| {
                             AkitaError::InvalidSetup("challenge offset overflow".to_string())
                         })?;
-                    let end = start.checked_add(*num_blocks_per_claim).ok_or_else(|| {
+                    let end = start.checked_add(*live_folds_per_claim).ok_or_else(|| {
                         AkitaError::InvalidSetup("challenge offset overflow".to_string())
                     })?;
                     selected.extend_from_slice(challenges.get(start..end).ok_or(
@@ -349,7 +350,7 @@ impl Challenges {
                         },
                     )?);
                 }
-                Self::from_sparse(selected, *num_blocks_per_claim, claim_indices.len())
+                Self::from_sparse(selected, *live_folds_per_claim, claim_indices.len())
             }
             Self::Tensor { factored, .. } => {
                 factored.validate_lengths()?;
@@ -790,7 +791,11 @@ where
             let degree = high_idx + low_idx;
             if degree >= ring_d {
                 let term = i64::from(high_coeff) * i64::from(low_coeff);
-                quotient_eval += alpha_pows[degree - ring_d].mul_base(F::from_i64(term));
+                accumulate_small_signed::<F, E>(
+                    &mut quotient_eval,
+                    alpha_pows[degree - ring_d],
+                    term,
+                );
             }
         }
     }
@@ -818,7 +823,7 @@ where
 
     for (&pos, &coeff) in challenge.positions.iter().zip(challenge.coeffs.iter()) {
         let idx = pos as usize;
-        out[idx] += scale.mul_base(F::from_i64(coeff as i64));
+        accumulate_small_signed::<F, E>(&mut out[idx], scale, i64::from(coeff));
     }
     Ok(())
 }

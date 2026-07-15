@@ -242,6 +242,7 @@ fn sample_fold_decompose_witness_at_dim<F, P, B, T, const D: usize>(
     polys: &[&P],
     root_lp: &LevelParams,
     params: &(impl LevelParamsLike + ?Sized),
+    group_index: usize,
     num_claims: usize,
     tail_t_vectors: Option<usize>,
     contract: &FoldWitnessGrindContract,
@@ -265,10 +266,11 @@ where
     for &nonce in probe_nonces {
         let challenges = PreviewFoldDraw::new(transcript).draw_folding_challenges(
             ring_d,
+            group_index,
             params.live_fold_count(),
             num_claims,
             &root_lp.fold_challenge_config,
-            &root_lp.fold_challenge_shape,
+            &params.fold_challenge_shape(),
             labels,
             nonce,
         )?;
@@ -298,10 +300,11 @@ where
             .collect();
         let challenges = LiveFoldDraw::<F, T>::new(transcript).draw_folding_challenges(
             ring_d,
+            group_index,
             params.live_fold_count(),
             num_claims,
             &root_lp.fold_challenge_config,
-            &root_lp.fold_challenge_shape,
+            &params.fold_challenge_shape(),
             labels,
             nonce,
         )?;
@@ -331,6 +334,7 @@ pub(crate) fn sample_fold_decompose_witness<F, P, B, T>(
     polys: &[&P],
     root_lp: &LevelParams,
     params: &(impl LevelParamsLike + ?Sized),
+    group_index: usize,
     num_claims: usize,
     tail_t_vectors: Option<usize>,
 ) -> Result<(DecomposeFoldWitness<F>, Vec<Vec<Vec<i32>>>, Challenges, u32), AkitaError>
@@ -349,8 +353,9 @@ where
     let binding = FoldLinfProtocolBinding::CURRENT;
     let challenge = akita_types::sis::FoldChallengeNorms::new(
         &root_lp.fold_challenge_config,
-        root_lp.fold_challenge_shape,
+        params.fold_challenge_shape(),
     );
+    let cap_config = root_lp.fold_witness_linf_cap_config_for_params(params)?;
     let witness_norms = root_lp.fold_witness_norms_for_params(params);
     let num_claims_digit_plan = akita_types::sis::fold_witness_digit_plan(
         params.fold_bits(),
@@ -359,9 +364,9 @@ where
         params.log_basis(),
         challenge,
         witness_norms,
-        &root_lp.fold_linf_cap_config,
+        &cap_config,
     )?;
-    let policy = root_lp.fold_witness_linf_cap_policy();
+    let policy = cap_config.policy;
     let max_nonce_exclusive = match policy {
         FoldWitnessLinfCapPolicy::WorstCaseBetaOnly => 1,
         FoldWitnessLinfCapPolicy::TailBoundWithGrind
@@ -384,7 +389,7 @@ where
             params.log_basis(),
             challenge,
             witness_norms,
-            &root_lp.fold_linf_cap_config,
+            &cap_config,
         )?
     };
     let (delta_fold, witness_linf_cap) = digit_plan;
@@ -405,6 +410,7 @@ where
                 polys,
                 root_lp,
                 params,
+                group_index,
                 num_claims,
                 tail_t_vectors,
                 &contract,

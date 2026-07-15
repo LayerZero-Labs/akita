@@ -11,6 +11,51 @@ use akita_transcript::{FoldChallengeSeedPreview, Transcript};
 use std::marker::PhantomData;
 
 const SPARSE_CHALLENGE_SEED_LEN: usize = 32;
+const FOLD_CHALLENGE_ROUND_DOMAIN: &[u8] = b"akita/fold-challenge-round/v1";
+
+/// Build the canonical transcript prefix for one group-local fold draw.
+///
+/// The prefix binds the group index, exact live fold count, claim count, and
+/// tensor shape before the sparse challenge seed is squeezed.
+///
+/// # Errors
+///
+/// Returns an error if a platform-sized count does not fit the canonical u64
+/// encoding.
+pub fn fold_challenge_sample_label(
+    base_label: &[u8],
+    group_index: usize,
+    live_fold_count: usize,
+    num_claims: usize,
+    shape: ChallengeShape,
+) -> Result<Vec<u8>, AkitaError> {
+    let group_index = u64::try_from(group_index)
+        .map_err(|_| AkitaError::InvalidSetup("fold group index exceeds u64".to_string()))?;
+    let live_fold_count = u64::try_from(live_fold_count)
+        .map_err(|_| AkitaError::InvalidSetup("live fold count exceeds u64".to_string()))?;
+    let num_claims = u64::try_from(num_claims)
+        .map_err(|_| AkitaError::InvalidSetup("fold claim count exceeds u64".to_string()))?;
+    let mut label = Vec::with_capacity(FOLD_CHALLENGE_ROUND_DOMAIN.len() + base_label.len() + 33);
+    label.extend_from_slice(FOLD_CHALLENGE_ROUND_DOMAIN);
+    label.extend_from_slice(&group_index.to_le_bytes());
+    label.extend_from_slice(&live_fold_count.to_le_bytes());
+    label.extend_from_slice(&num_claims.to_le_bytes());
+    match shape {
+        ChallengeShape::Flat => {
+            label.push(0);
+            label.extend_from_slice(&0u64.to_le_bytes());
+        }
+        ChallengeShape::Tensor { fold_low_len } => {
+            let fold_low_len = u64::try_from(fold_low_len).map_err(|_| {
+                AkitaError::InvalidSetup("tensor fold-low length exceeds u64".to_string())
+            })?;
+            label.push(1);
+            label.extend_from_slice(&fold_low_len.to_le_bytes());
+        }
+    }
+    label.extend_from_slice(base_label);
+    Ok(label)
+}
 
 pub trait FoldDraw {
     fn absorb(&mut self, label: &[u8], payload: &[u8]);
@@ -42,6 +87,7 @@ pub trait FoldDraw {
     fn draw_folding_challenges(
         &mut self,
         ring_d: usize,
+        group_index: usize,
         live_fold_count: usize,
         num_claims: usize,
         cfg: &SparseChallengeConfig,
@@ -57,12 +103,24 @@ pub trait FoldDraw {
         cfg.validate_dyn(ring_d).map_err(|e| {
             AkitaError::InvalidInput(format!("invalid sparse challenge config: {e}"))
         })?;
+        if live_fold_count == 0 || num_claims == 0 {
+            return Err(AkitaError::InvalidInput(
+                "fold challenges require positive live folds and claims".to_string(),
+            ));
+        }
 
         match shape {
             ChallengeShape::Flat => {
                 let total = challenge_count(live_fold_count, num_claims, "sparse")?;
+                let sample_label = fold_challenge_sample_label(
+                    labels.flat,
+                    group_index,
+                    live_fold_count,
+                    num_claims,
+                    *shape,
+                )?;
                 let challenges =
-                    self.draw_sparse_challenges(labels.flat, ring_d, total, cfg, grind_nonce);
+                    self.draw_sparse_challenges(&sample_label, ring_d, total, cfg, grind_nonce);
                 Challenges::from_sparse(challenges, live_fold_count, num_claims)
             }
             ChallengeShape::Tensor { fold_low_len } => {
@@ -75,22 +133,26 @@ pub trait FoldDraw {
                 let fold_high_len = live_fold_count.div_ceil(*fold_low_len);
                 let high_total = challenge_count(fold_high_len, num_claims, "fold-high")?;
                 let low_total = challenge_count(*fold_low_len, num_claims, "fold-low")?;
-                let fold_high = self.draw_sparse_challenges(
+                let high_label = fold_challenge_sample_label(
                     labels.fold_high,
-                    ring_d,
-                    high_total,
-                    cfg,
-                    grind_nonce,
-                );
+                    group_index,
+                    live_fold_count,
+                    num_claims,
+                    *shape,
+                )?;
+                let fold_high =
+                    self.draw_sparse_challenges(&high_label, ring_d, high_total, cfg, grind_nonce);
                 let high_digest = fold_high_digest(&fold_high, fold_high_len, num_claims, ring_d)?;
                 self.absorb(labels.fold_high_digest, &high_digest);
-                let fold_low = self.draw_sparse_challenges(
+                let low_label = fold_challenge_sample_label(
                     labels.fold_low,
-                    ring_d,
-                    low_total,
-                    cfg,
-                    grind_nonce,
-                );
+                    group_index,
+                    live_fold_count,
+                    num_claims,
+                    *shape,
+                )?;
+                let fold_low =
+                    self.draw_sparse_challenges(&low_label, ring_d, low_total, cfg, grind_nonce);
                 Challenges::from_tensor_dyn(
                     TensorChallenges {
                         fold_high,

@@ -33,7 +33,7 @@ pub use config::{
     SparseChallengeConfig, D64_PRODUCTION_PM1_COUNT, D64_PRODUCTION_PM2_COUNT,
     MIN_FOLD_CHALLENGE_ENTROPY_BITS, PRODUCTION_FOLD_CHALLENGE_RING_DIMS,
 };
-pub use fold_draw::{FoldDraw, LiveFoldDraw, PreviewFoldDraw};
+pub use fold_draw::{fold_challenge_sample_label, FoldDraw, LiveFoldDraw, PreviewFoldDraw};
 pub use grind_probe::grind_probe_permutation;
 pub use sampler::sample_sparse_challenges;
 pub use tensor::{

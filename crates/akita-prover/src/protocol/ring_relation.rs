@@ -197,18 +197,18 @@ where
     match challenges {
         Challenges::Sparse {
             challenges: sparse,
-            num_blocks_per_claim,
+            live_folds_per_claim,
             ..
         } => {
             let mut point_challenges =
-                Vec::with_capacity(point_indices.len() * *num_blocks_per_claim);
+                Vec::with_capacity(point_indices.len() * *live_folds_per_claim);
             for &claim_idx in point_indices {
                 let start = claim_idx
-                    .checked_mul(*num_blocks_per_claim)
+                    .checked_mul(*live_folds_per_claim)
                     .ok_or_else(|| {
                         AkitaError::InvalidSetup("batched challenge offset overflow".to_string())
                     })?;
-                let end = start.checked_add(*num_blocks_per_claim).ok_or_else(|| {
+                let end = start.checked_add(*live_folds_per_claim).ok_or_else(|| {
                     AkitaError::InvalidSetup("batched challenge offset overflow".to_string())
                 })?;
                 point_challenges.extend_from_slice(sparse.get(start..end).ok_or(
@@ -234,7 +234,7 @@ where
                 BatchDecomposeFoldOutcome::FallbackPerPoly => {
                     let witnesses: Vec<DecomposeFoldWitness<F>> = point_polys
                         .iter()
-                        .zip(point_challenges.chunks(*num_blocks_per_claim))
+                        .zip(point_challenges.chunks(*live_folds_per_claim))
                         .map(|(poly, poly_challenges)| -> Result<_, AkitaError> {
                             OpeningFoldKernel::decompose_fold(
                                 backend,
@@ -399,14 +399,14 @@ pub(super) fn window_sparse_challenges(
     match challenges {
         Challenges::Sparse {
             challenges: sparse,
-            num_blocks_per_claim,
+            live_folds_per_claim,
             num_claims,
         } => {
             let windowed: Vec<SparseChallenge> = sparse
                 .iter()
                 .enumerate()
                 .map(|(idx, ch)| {
-                    let block = idx % num_blocks_per_claim;
+                    let block = idx % live_folds_per_claim;
                     if fold_range.contains(&block) {
                         ch.clone()
                     } else {
@@ -417,7 +417,7 @@ pub(super) fn window_sparse_challenges(
                     }
                 })
                 .collect();
-            Challenges::from_sparse(windowed, *num_blocks_per_claim, *num_claims)
+            Challenges::from_sparse(windowed, *live_folds_per_claim, *num_claims)
         }
         Challenges::Tensor { .. } => Err(AkitaError::InvalidSetup(
             "chunked fold response requires sparse fold challenges".to_string(),
@@ -687,6 +687,7 @@ impl RingRelationProver {
                     group_polys,
                     &lp,
                     group_lp,
+                    group_index,
                     group_polys.len(),
                     terminal_tail_t_vectors,
                 )

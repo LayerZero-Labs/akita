@@ -305,7 +305,7 @@ mod tests {
         let num_claims = opening_batch.num_total_polynomials();
         let challenges = akita_challenges::Challenges::Sparse {
             challenges: Vec::new(),
-            num_blocks_per_claim: lp.live_fold_count,
+            live_folds_per_claim: lp.live_fold_count,
             num_claims,
         };
         let v = vec![CyclotomicRing::<F, D>::zero(); lp.d_key.row_len()];

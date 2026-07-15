@@ -1,9 +1,9 @@
 #![allow(missing_docs)]
 
 use akita_challenges::{
-    fold_high_digest, sample_sparse_challenges, ChallengeLabels, ChallengeShape, Challenges,
-    FoldDraw, LiveFoldDraw, PreviewFoldDraw, SparseChallenge, SparseChallengeConfig,
-    TensorChallenges,
+    fold_challenge_sample_label, fold_high_digest, sample_sparse_challenges, ChallengeLabels,
+    ChallengeShape, Challenges, FoldDraw, LiveFoldDraw, PreviewFoldDraw, SparseChallenge,
+    SparseChallengeConfig, TensorChallenges,
 };
 use akita_field::{CanonicalField, FieldCore, Fp64};
 use akita_transcript::labels::{
@@ -304,6 +304,7 @@ fn tensor_sampling_uses_two_vectors() {
     let challenges = LiveFoldDraw::<F, _>::new(&mut transcript)
         .draw_folding_challenges(
             TD,
+            0,
             8,
             2,
             &cfg,
@@ -336,6 +337,7 @@ fn tensor_sampling_keeps_only_the_exact_live_fold_prefix() {
     let challenges = LiveFoldDraw::<F, _>::new(&mut transcript)
         .draw_folding_challenges(
             TD,
+            0,
             5,
             2,
             &cfg,
@@ -371,6 +373,35 @@ fn tensor_sampling_keeps_only_the_exact_live_fold_prefix() {
     assert!(factored
         .eval_logical_at_pows::<F, F>(0, &[F::one()])
         .is_err());
+}
+
+#[test]
+fn fold_sampling_binds_group_index_and_group_local_shape() {
+    const TD: usize = 8;
+    let cfg = SparseChallengeConfig::pm1_only(2);
+    let draw = |group_index, shape| {
+        let mut transcript = AkitaTranscript::<F>::new(DOMAIN_AKITA_PROTOCOL);
+        transcript.append_field(b"seed", &F::from_u64(0x4242));
+        LiveFoldDraw::<F, _>::new(&mut transcript)
+            .draw_folding_challenges(
+                TD,
+                group_index,
+                5,
+                1,
+                &cfg,
+                &shape,
+                fold_challenge_labels(),
+                0,
+            )
+            .unwrap()
+    };
+
+    let flat_group_zero = draw(0, ChallengeShape::Flat);
+    let flat_group_one = draw(1, ChallengeShape::Flat);
+    let tensor_group_zero = draw(0, ChallengeShape::Tensor { fold_low_len: 4 });
+
+    assert_ne!(flat_group_zero, flat_group_one);
+    assert_ne!(flat_group_zero, tensor_group_zero);
 }
 
 #[test]
@@ -416,6 +447,7 @@ fn tensor_sampling_absorbs_fold_high_digest_before_fold_low() {
     let sampled = LiveFoldDraw::<F, _>::new(&mut sampled_transcript)
         .draw_folding_challenges(
             TD,
+            0,
             8,
             2,
             &cfg,
@@ -433,9 +465,11 @@ fn tensor_sampling_absorbs_fold_high_digest_before_fold_low() {
 
     let mut manual_transcript = AkitaTranscript::<F>::new(DOMAIN_AKITA_PROTOCOL);
     manual_transcript.append_field(b"seed", &F::from_u64(0x5151));
+    let shape = ChallengeShape::Tensor { fold_low_len: 4 };
+    let high_label = fold_challenge_sample_label(CHALLENGE_FOLD_HIGH, 0, 8, 2, shape).unwrap();
     let fold_high = sample_sparse_challenges::<F, _>(
         &mut manual_transcript,
-        CHALLENGE_FOLD_HIGH,
+        &high_label,
         TD,
         sampled.fold_high.len(),
         &cfg,
@@ -445,9 +479,10 @@ fn tensor_sampling_absorbs_fold_high_digest_before_fold_low() {
     let high_digest =
         fold_high_digest(&fold_high, sampled.fold_high_len(), sampled.num_claims, TD).unwrap();
     manual_transcript.append_bytes(ABSORB_FOLD_HIGH, &high_digest);
+    let low_label = fold_challenge_sample_label(CHALLENGE_FOLD_LOW, 0, 8, 2, shape).unwrap();
     let fold_low = sample_sparse_challenges::<F, _>(
         &mut manual_transcript,
-        CHALLENGE_FOLD_LOW,
+        &low_label,
         TD,
         sampled.fold_low.len(),
         &cfg,
@@ -460,7 +495,7 @@ fn tensor_sampling_absorbs_fold_high_digest_before_fold_low() {
     nodigest_transcript.append_field(b"seed", &F::from_u64(0x5151));
     let _nodigest_high = sample_sparse_challenges::<F, _>(
         &mut nodigest_transcript,
-        CHALLENGE_FOLD_HIGH,
+        &high_label,
         TD,
         sampled.fold_high.len(),
         &cfg,
@@ -469,7 +504,7 @@ fn tensor_sampling_absorbs_fold_high_digest_before_fold_low() {
     .unwrap();
     let nodigest_low = sample_sparse_challenges::<F, _>(
         &mut nodigest_transcript,
-        CHALLENGE_FOLD_LOW,
+        &low_label,
         TD,
         sampled.fold_low.len(),
         &cfg,
@@ -499,6 +534,7 @@ fn tensor_sampling_uses_fold_high_digest_label() {
 
     draw.draw_folding_challenges(
         TD,
+        0,
         5,
         1,
         &cfg,
@@ -528,6 +564,7 @@ fn tensor_preview_matches_live_sample_without_advancing_transcript() {
     let previewed = PreviewFoldDraw::new(&transcript)
         .draw_folding_challenges(
             TD,
+            0,
             8,
             2,
             &cfg,
@@ -539,6 +576,7 @@ fn tensor_preview_matches_live_sample_without_advancing_transcript() {
     let live = LiveFoldDraw::<F, _>::new(&mut transcript)
         .draw_folding_challenges(
             TD,
+            0,
             8,
             2,
             &cfg,
@@ -573,6 +611,7 @@ fn tensor_lazy_evals_match_ring_product_reference() {
     let challenges = LiveFoldDraw::<F, _>::new(&mut transcript)
         .draw_folding_challenges(
             TD,
+            0,
             8,
             1,
             &cfg,

@@ -360,6 +360,22 @@ impl LevelParams {
         self.fold_linf_cap_config
     }
 
+    /// Derive the shape-dependent fold-linf cap config for one root group.
+    ///
+    /// The sparse family and ring dimension are root-wide protocol choices;
+    /// the challenge shape and A width belong to the selected group.
+    pub fn fold_witness_linf_cap_config_for_params(
+        &self,
+        params: &(impl LevelParamsLike + ?Sized),
+    ) -> Result<crate::sis::FoldWitnessLinfCapConfig, AkitaError> {
+        crate::sis::FoldWitnessLinfCapConfig::for_fold_level(
+            &self.fold_challenge_config,
+            params.fold_challenge_shape(),
+            self.ring_dimension,
+            params.a_col_len(),
+        )
+    }
+
     /// Field bit width for fold digit sizing and cached `δ_fold` values (`128` when unset).
     #[inline]
     pub fn field_bits_for_cache(&self) -> u32 {
@@ -547,8 +563,9 @@ impl LevelParams {
         }
         let challenge = crate::sis::FoldChallengeNorms::new(
             &self.fold_challenge_config,
-            self.fold_challenge_shape,
+            params.fold_challenge_shape(),
         );
+        let cap_config = self.fold_witness_linf_cap_config_for_params(params)?;
         let (decomposed_fold_digits, _) = crate::sis::fold_witness_digit_plan(
             params.fold_bits(),
             num_claims,
@@ -556,7 +573,7 @@ impl LevelParams {
             params.log_basis(),
             challenge,
             self.fold_witness_norms_for_params(params),
-            &self.fold_linf_cap_config,
+            &cap_config,
         )?;
         Ok(decomposed_fold_digits)
     }
@@ -1297,6 +1314,25 @@ mod tests {
         assert_eq!(lp.n_ring_elems().unwrap(), 17);
 
         assert!(sample_params_only().with_decomp(3, 17, 2, 2).is_err());
+    }
+
+    #[test]
+    fn root_group_fold_linf_config_uses_group_local_tensor_shape() {
+        let (mut lp, batch) = sample_multi_group_root_params();
+        lp.precommitted_groups[0].layout.fold_challenge_shape =
+            TensorChallengeShape::Tensor { fold_low_len: 2 };
+
+        let precommitted = lp.root_group_params(&batch, 0).unwrap();
+        let final_group = lp.root_group_params(&batch, 1).unwrap();
+        let precommitted_config = lp
+            .fold_witness_linf_cap_config_for_params(precommitted)
+            .unwrap();
+        let final_config = lp
+            .fold_witness_linf_cap_config_for_params(final_group)
+            .unwrap();
+
+        assert_eq!(precommitted_config.tensor_fold_low_len, 2);
+        assert_eq!(final_config.tensor_fold_low_len, 0);
     }
 
     #[test]
