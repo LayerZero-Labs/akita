@@ -268,3 +268,27 @@ pub fn mat_vec_mul_ntt_raw_i8_strided<F: FieldCore + CanonicalField, const D: us
         fold_position_count
     )
 }
+
+/// Fold-major (block) direct-signed-i8 variant for recursive witnesses.
+///
+/// The block/column layout and output shape match
+/// [`mat_vec_mul_ntt_digits_i8`], but this path does not assume the rows are
+/// balanced gadget digits: it is the `num_digits_commit = 1` commit path for a
+/// recursive witness whose extension-field tensor base-lift packing can push
+/// coefficients past the balanced range. Coefficients too large for the CRT
+/// lift are rejected as `AkitaError` rather than panicking.
+#[tracing::instrument(skip_all, name = "mat_vec_mul_ntt_raw_digits_i8")]
+pub fn mat_vec_mul_ntt_raw_digits_i8<F: FieldCore + CanonicalField, const D: usize>(
+    slot: &NttSlotCache<D>,
+    num_rows: usize,
+    num_cols: usize,
+    blocks: &[&[[i8; D]]],
+) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError> {
+    dispatch_slot!(
+        slot,
+        num_rows,
+        num_cols,
+        mat_vec_mul_raw_digits_i8_with_params,
+        blocks
+    )
+}

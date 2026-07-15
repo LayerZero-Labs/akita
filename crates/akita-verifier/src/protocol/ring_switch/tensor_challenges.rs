@@ -71,36 +71,34 @@ impl<F: FieldCore> PreparedChallengeEvals<F> {
                         "tensor challenge factors do not match witness blocks".into(),
                     ));
                 }
-                let high_len = challenges.fold_high_len();
-                let high_start = claim.checked_mul(high_len).ok_or_else(|| {
-                    AkitaError::InvalidSetup("tensor high factor offset overflow".into())
+                // The affine kernel multiplies its two outer factors as a bare
+                // product `high[i / Q] · low[i % Q]`. That separable shape cannot
+                // represent the negacyclic wrap correction
+                // `− (alpha^D + 1) · quotient(H_h, L_q)` that the reduced
+                // tensor-product fold challenge carries, so feeding the raw
+                // fold-high/fold-low evaluations would drop the wrap term and
+                // disagree with the prover (which uses the wrap-corrected
+                // reduced product). Materialize the per-fold wrap-corrected
+                // logical evaluations here and return them in the same
+                // single-high-factor shape as the flat branch, so the kernel
+                // computes `1 · low[f]` and matches the prover exactly.
+                let low_len = live_fold_count.checked_next_power_of_two().ok_or_else(|| {
+                    AkitaError::InvalidSetup("tensor challenge factor length overflow".into())
                 })?;
-                let high_end = high_start.checked_add(high_len).ok_or_else(|| {
-                    AkitaError::InvalidSetup("tensor high factor end overflow".into())
+                let base = claim.checked_mul(live_fold_count).ok_or_else(|| {
+                    AkitaError::InvalidSetup("tensor challenge factor offset overflow".into())
                 })?;
-                let low_start = claim.checked_mul(challenges.fold_low_len).ok_or_else(|| {
-                    AkitaError::InvalidSetup("tensor low factor offset overflow".into())
-                })?;
-                let low_end = low_start
-                    .checked_add(challenges.fold_low_len)
-                    .ok_or_else(|| {
-                        AkitaError::InvalidSetup("tensor low factor end overflow".into())
+                let mut low = vec![F::zero(); low_len];
+                for (fold, slot) in low.iter_mut().take(live_fold_count).enumerate() {
+                    let block_idx = base.checked_add(fold).ok_or_else(|| {
+                        AkitaError::InvalidSetup("tensor challenge block index overflow".into())
                     })?;
-                let high = challenges
-                    .fold_high
-                    .get(high_start..high_end)
-                    .ok_or(AkitaError::InvalidProof)?
-                    .iter()
-                    .map(|challenge| challenge.eval_at_pows::<Base, F>(alpha_pows))
-                    .collect::<Result<Vec<_>, _>>()?;
-                let low = challenges
-                    .fold_low
-                    .get(low_start..low_end)
-                    .ok_or(AkitaError::InvalidProof)?
-                    .iter()
-                    .map(|challenge| challenge.eval_at_pows::<Base, F>(alpha_pows))
-                    .collect::<Result<Vec<_>, _>>()?;
-                Ok(PreparedAffineFactors { high, low })
+                    *slot = challenges.eval_logical_at_pows::<Base, F>(block_idx, alpha_pows)?;
+                }
+                Ok(PreparedAffineFactors {
+                    high: vec![F::one()],
+                    low,
+                })
             }
         }
     }

@@ -292,6 +292,89 @@ pub(super) fn mat_vec_mul_raw_i8_strided_with_params<
     ))
 }
 
+/// Fold-major (block) raw signed-i8 ring mat-vec for `num_digits_commit == 1`.
+///
+/// Mirrors [`mat_vec_mul_digits_i8_with_params`] exactly in block/column layout
+/// and output shape, but treats each `[i8; D]` as a raw signed ring-coefficient
+/// vector rather than a balanced gadget digit: it lifts with
+/// `from_i8_with_params` (valid for any `i8`) instead of a balanced-digit LUT,
+/// and sizes the CRT chunk width from the data-derived coefficient bound. This
+/// is the commit path for a recursive witness whose extension-field tensor
+/// base-lift packing (`pack_tensor_base_lift_i8_digits`) sums gadget digits and
+/// can push coefficients past the balanced range `[-2^(log_basis-1),
+/// 2^(log_basis-1))`. Degree-one fields keep the faster balanced-digit kernel.
+pub(super) fn mat_vec_mul_raw_digits_i8_with_params<
+    F: FieldCore + CanonicalField,
+    W: PrimeWidth,
+    const K: usize,
+    const D: usize,
+>(
+    ntt_mat: &[&[CyclotomicCrtNtt<W, K, D>]],
+    blocks: &[&[[i8; D]]],
+    params: &CrtNttParamSet<W, K, D>,
+) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError> {
+    let live_fold_count = blocks.len();
+    if live_fold_count == 0 {
+        return Ok(vec![]);
+    }
+    let n_a = ntt_mat.len();
+    let mat_width = ntt_mat.first().map_or(0, |row| row.len());
+    let max_data_width = blocks.iter().map(|b| b.len()).max().unwrap_or(0);
+    let inner_width = mat_width.min(max_data_width);
+    if inner_width == 0 || n_a == 0 {
+        return Ok(vec![
+            vec![CyclotomicRing::<F, D>::zero(); n_a];
+            live_fold_count
+        ]);
+    }
+    // Read the raw signed-i8 bound directly from the witness. It can in
+    // principle be large enough that even a single CRT term cannot lift
+    // exactly; reject that at this checked boundary rather than panicking.
+    let rhs_bound = blocks
+        .iter()
+        .flat_map(|block| block.iter().take(inner_width))
+        .flat_map(|row| row.iter())
+        .map(|&coeff| u64::from(coeff.unsigned_abs()))
+        .max()
+        .unwrap_or(0);
+    let safe_width = safe_crt_chunk_width::<F, W, K, D>(params, inner_width, rhs_bound)
+        .ok_or_else(|| {
+            AkitaError::InvalidInput(
+                "raw i8 recursive-witness coefficients exceed the CRT lift range for these parameters"
+                    .to_string(),
+            )
+        })?;
+    Ok(drive_block_chunked_matvec(
+        live_fold_count,
+        n_a,
+        inner_width,
+        safe_width,
+        base_tile_width::<W, K, D>(),
+        safe_width,
+        params,
+        |accs, start, end| {
+            for block_idx in 0..live_fold_count {
+                let block = blocks[block_idx];
+                if start >= block.len() {
+                    continue;
+                }
+                let block_tile_end = end.min(block.len());
+                let tile = &block[start..block_tile_end];
+                for (i, coeff) in tile.iter().enumerate() {
+                    if is_zero_plane(coeff) {
+                        continue;
+                    }
+                    let col = start + i;
+                    let ntt_d = CyclotomicCrtNtt::from_i8_with_params(coeff, params);
+                    for (acc, mat_row) in accs[block_idx].iter_mut().zip(ntt_mat.iter()) {
+                        accumulate_pointwise_product_into(acc, &mat_row[col], &ntt_d, params);
+                    }
+                }
+            }
+        },
+    ))
+}
+
 fn strided_i8_abs_bound<const D: usize>(
     coeffs: &[[i8; D]],
     live_fold_count: usize,

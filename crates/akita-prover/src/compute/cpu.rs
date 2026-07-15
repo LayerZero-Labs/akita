@@ -11,10 +11,11 @@ use crate::compute::plans::{
 };
 use crate::kernels::crt_ntt::{build_ntt_slot, NttCacheMap, NttSlotCache};
 use crate::kernels::linear::{
-    fused_split_eq_quotients_prover_bounds, mat_vec_mul_ntt_dense_digits_i8_trusted,
-    mat_vec_mul_ntt_digits_i8, mat_vec_mul_ntt_i8, mat_vec_mul_ntt_i8_dense,
-    mat_vec_mul_ntt_i8_dense_single_row, mat_vec_mul_ntt_single_i8,
-    mat_vec_mul_ntt_single_i8_cyclic, selected_crt_i8_capacity_profile, CrtI8CapacityProfile,
+    digit_blocks_are_balanced, fused_split_eq_quotients_prover_bounds,
+    mat_vec_mul_ntt_dense_digits_i8_trusted, mat_vec_mul_ntt_digits_i8, mat_vec_mul_ntt_i8,
+    mat_vec_mul_ntt_i8_dense, mat_vec_mul_ntt_i8_dense_single_row, mat_vec_mul_ntt_raw_digits_i8,
+    mat_vec_mul_ntt_single_i8, mat_vec_mul_ntt_single_i8_cyclic, selected_crt_i8_capacity_profile,
+    CrtI8CapacityProfile,
 };
 use akita_algebra::CyclotomicRing;
 use akita_field::unreduced::{HasWide, ReduceTo};
@@ -465,9 +466,21 @@ where
                 .coeffs
                 .chunks(plan.fold_position_count)
                 .collect::<Vec<_>>();
-            prepared.with_shared_ntt::<D, _>(|ntt| {
-                mat_vec_mul_ntt_digits_i8(ntt, plan.n_rows, row_width, &blocks, plan.log_basis)
-            })
+            // The `num_digits_commit == 1` recursive witness is a raw signed-i8
+            // coefficient stream. Degree-one fields yield balanced gadget digits
+            // (fast predecomposed-digit kernel), but extension-field tensor
+            // base-lift packing sums gadget digits and can push coefficients
+            // past the balanced range; those must commit through the general
+            // raw ring mat-vec instead of the balanced-digit LUT kernel.
+            if digit_blocks_are_balanced(&blocks, row_width, plan.log_basis) {
+                prepared.with_shared_ntt::<D, _>(|ntt| {
+                    mat_vec_mul_ntt_digits_i8(ntt, plan.n_rows, row_width, &blocks, plan.log_basis)
+                })
+            } else {
+                prepared.with_shared_ntt::<D, _>(|ntt| {
+                    mat_vec_mul_ntt_raw_digits_i8(ntt, plan.n_rows, row_width, &blocks)
+                })
+            }
         } else {
             let ring_elems: Vec<CyclotomicRing<F, D>> = plan
                 .coeffs
