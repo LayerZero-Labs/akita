@@ -1012,6 +1012,7 @@ mod tests {
     #[test]
     fn multi_group_root_schedule_searches_policy_basis_range() {
         let mut policy = flat_policy();
+        policy.decomposition.log_open_bound = Some(128);
         policy.decomposition.log_basis = 3;
         policy.basis_range = (4, 4);
         let pre_key = PolynomialGroupLayout::new(20, 1);
@@ -1040,6 +1041,7 @@ mod tests {
         assert_eq!(frozen.log_basis, 3);
 
         let mut root_policy = precommit_policy;
+        root_policy.decomposition.log_open_bound = Some(128);
         root_policy.decomposition.log_basis = 2;
         root_policy.basis_range = (2, 2);
         let key = AkitaScheduleLookupKey {
@@ -1069,6 +1071,7 @@ mod tests {
     #[test]
     fn multi_group_schedule_can_start_with_fold() {
         let mut policy = flat_policy();
+        policy.decomposition.log_open_bound = Some(128);
         policy.basis_range = (4, 4);
         let pre_key = PolynomialGroupLayout::new(20, 1);
         let key = AkitaScheduleLookupKey {
@@ -1093,6 +1096,7 @@ mod tests {
     #[test]
     fn recursive_policy_marks_threshold_multi_group_root() {
         let mut policy = flat_policy();
+        policy.decomposition.log_open_bound = Some(128);
         policy.basis_range = (4, 4);
         policy.recursive_setup_planning = true;
         let pre_key = PolynomialGroupLayout::new(20, 1);
@@ -1169,7 +1173,7 @@ mod tests {
     }
 
     #[test]
-    fn multi_group_schedule_allows_precommitted_group_larger_than_final_group() {
+    fn multi_group_schedule_rejects_precommitted_group_larger_than_half_final() {
         let mut policy = flat_policy();
         policy.decomposition.log_open_bound = Some(128);
         policy.basis_range = (4, 4);
@@ -1179,13 +1183,9 @@ mod tests {
             precommitteds: vec![precommitted_from_policy(pre_key, &policy)],
         };
 
-        let schedule = find_group_batch_schedule(&key, &policy, ring_challenge_config, fold_shape)
-            .expect("multi-group schedule should allow larger precommitted groups");
-        let Step::Fold(root) = schedule.steps.first().expect("multi-group root step") else {
-            panic!("expected multi-group root fold");
-        };
-
-        assert_eq!(root.params.precommitted_groups[0].layout.group, pre_key);
+        let err = find_group_batch_schedule(&key, &policy, ring_challenge_config, fold_shape)
+            .expect_err("precommitted num_vars above half the final group must be rejected");
+        assert!(matches!(err, AkitaError::InvalidInput(_)));
     }
 
     #[test]
@@ -1240,7 +1240,8 @@ mod tests {
         policy.basis_range = (4, 4);
         policy.recursive_setup_planning = true;
         policy.decomposition.log_open_bound = Some(128);
-        let pre_key = PolynomialGroupLayout::new(20, 1);
+        policy.decomposition.log_open_bound = Some(128);
+        let pre_key = PolynomialGroupLayout::new(12, 1);
         let key = AkitaScheduleLookupKey {
             final_group: PolynomialGroupLayout::new(24, 1),
             precommitteds: vec![precommitted_from_policy(pre_key, &policy)],
