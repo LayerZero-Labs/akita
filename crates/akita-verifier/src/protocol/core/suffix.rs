@@ -1,5 +1,5 @@
 use super::*;
-use akita_types::{OpeningClaimsLayout, RingView};
+use akita_types::{BatchedStage3Geometry, OpeningClaimsLayout, RingView};
 
 /// Verifier state carried between suffix fold levels.
 pub(super) struct SuffixVerifierState<'a, F: FieldCore, E: FieldCore> {
@@ -15,60 +15,6 @@ pub(super) struct SuffixVerifierState<'a, F: FieldCore, E: FieldCore> {
     pub w_len: usize,
     /// Optional setup-prefix opening carried from the previous stage-3 proof.
     pub setup_prefix_opening: Option<SetupPrefixOpening<E>>,
-}
-
-fn setup_prefix_column_major_indices(
-    setup_prefix_point_len: usize,
-    setup_prefix_id: &akita_types::SetupPrefixSlotId,
-    offset: usize,
-    shared_point_len: usize,
-) -> Result<PointVariableSelection, AkitaError> {
-    let ring_bits = setup_prefix_id.d_setup.trailing_zeros() as usize;
-    let params = &setup_prefix_id.commitment_params;
-    let expected = ring_bits
-        .checked_add(params.layout.r_vars)
-        .and_then(|n| n.checked_add(params.layout.m_vars))
-        .ok_or_else(|| AkitaError::InvalidSetup("setup-prefix point length overflow".into()))?;
-    if setup_prefix_point_len != expected {
-        return Err(AkitaError::InvalidInput(format!(
-            "setup-prefix point width mismatch: expected={expected}, \
-             actual={setup_prefix_point_len}, ring_bits={ring_bits}, \
-             m_vars={}, r_vars={}, natural_len={}",
-            params.layout.m_vars, params.layout.r_vars, setup_prefix_id.natural_len,
-        )));
-    }
-    let mut indices = Vec::with_capacity(expected);
-    indices.extend(offset..offset + ring_bits);
-    indices.extend(
-        offset + ring_bits + params.layout.m_vars
-            ..offset + ring_bits + params.layout.m_vars + params.layout.r_vars,
-    );
-    indices.extend(offset + ring_bits..offset + ring_bits + params.layout.m_vars);
-    PointVariableSelection::new(indices, shared_point_len)
-}
-
-fn shared_stage3_point<E: FieldCore>(
-    setup_prefix_point: &[E],
-    witness_point: &[E],
-) -> Result<(Vec<E>, usize), AkitaError> {
-    if setup_prefix_point.len() >= witness_point.len() {
-        if &setup_prefix_point[setup_prefix_point.len() - witness_point.len()..] != witness_point {
-            return Err(AkitaError::InvalidInput(
-                "stage-3 suffix opening points are inconsistent".to_string(),
-            ));
-        }
-        Ok((setup_prefix_point.to_vec(), 0))
-    } else {
-        if &witness_point[witness_point.len() - setup_prefix_point.len()..] != setup_prefix_point {
-            return Err(AkitaError::InvalidInput(
-                "stage-3 suffix opening points are inconsistent".to_string(),
-            ));
-        }
-        Ok((
-            witness_point.to_vec(),
-            witness_point.len() - setup_prefix_point.len(),
-        ))
-    }
 }
 
 fn prepare_suffix_group_points<F, E>(
@@ -242,9 +188,11 @@ where
         lp.setup_prefix.as_ref(),
     ) {
         (Some((setup_prefix_point, setup_prefix_eval)), Some(setup_prefix_id)) => {
-            let (shared_point, setup_offset) =
-                shared_stage3_point(setup_prefix_point, current_state.opening_point.as_slice())?;
-            let setup_point_vars = setup_prefix_column_major_indices(
+            let (shared_point, setup_offset) = BatchedStage3Geometry::shared_suffix_point(
+                setup_prefix_point,
+                current_state.opening_point.as_slice(),
+            )?;
+            let setup_point_vars = BatchedStage3Geometry::setup_prefix_column_major_point_vars(
                 setup_prefix_point.len(),
                 setup_prefix_id,
                 setup_offset,

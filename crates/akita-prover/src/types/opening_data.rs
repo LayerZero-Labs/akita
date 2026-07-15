@@ -4,9 +4,9 @@ use crate::compute::RootPolyMeta;
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
 use akita_transcript::Transcript;
 use akita_types::{
-    AkitaCommitmentHint, Commitment, LevelParams, OpeningClaims, OpeningClaimsLayout,
-    PointVariableSelection, PolynomialGroupClaims, PolynomialGroupLayout, RelationMatrixRowLayout,
-    RingVec, SetupPrefixSlot,
+    AkitaCommitmentHint, BatchedStage3Geometry, Commitment, LevelParams, OpeningClaims,
+    OpeningClaimsLayout, PointVariableSelection, PolynomialGroupClaims, PolynomialGroupLayout,
+    RelationMatrixRowLayout, RingVec, SetupPrefixSlot,
 };
 
 /// Prover opening input: public claims plus prover-only hints and polynomials.
@@ -294,62 +294,6 @@ where
     PointF: FieldCore,
     CommitF: FieldCore,
 {
-    fn setup_prefix_column_major_indices(
-        setup_prefix_point_len: usize,
-        setup_slot: &SetupPrefixSlot<CommitF>,
-        offset: usize,
-        shared_point_len: usize,
-    ) -> Result<PointVariableSelection, AkitaError> {
-        let ring_bits = setup_slot.id.d_setup.trailing_zeros() as usize;
-        let params = &setup_slot.id.commitment_params;
-        let expected = ring_bits
-            .checked_add(params.layout.r_vars)
-            .and_then(|n| n.checked_add(params.layout.m_vars))
-            .ok_or_else(|| AkitaError::InvalidSetup("setup-prefix point length overflow".into()))?;
-        if setup_prefix_point_len != expected {
-            return Err(AkitaError::InvalidPointDimension {
-                expected,
-                actual: setup_prefix_point_len,
-            });
-        }
-        let mut indices = Vec::with_capacity(expected);
-        indices.extend(offset..offset + ring_bits);
-        indices.extend(
-            offset + ring_bits + params.layout.m_vars
-                ..offset + ring_bits + params.layout.m_vars + params.layout.r_vars,
-        );
-        indices.extend(offset + ring_bits..offset + ring_bits + params.layout.m_vars);
-        PointVariableSelection::new(indices, shared_point_len)
-    }
-
-    fn shared_stage3_point(
-        setup_prefix_point: &[PointF],
-        witness_point: &[PointF],
-    ) -> Result<(Vec<PointF>, usize), AkitaError> {
-        if setup_prefix_point.len() >= witness_point.len() {
-            if &setup_prefix_point[setup_prefix_point.len() - witness_point.len()..]
-                != witness_point
-            {
-                return Err(AkitaError::InvalidInput(
-                    "stage-3 suffix opening points are inconsistent".to_string(),
-                ));
-            }
-            Ok((setup_prefix_point.to_vec(), 0))
-        } else {
-            if &witness_point[witness_point.len() - setup_prefix_point.len()..]
-                != setup_prefix_point
-            {
-                return Err(AkitaError::InvalidInput(
-                    "stage-3 suffix opening points are inconsistent".to_string(),
-                ));
-            }
-            Ok((
-                witness_point.to_vec(),
-                witness_point.len() - setup_prefix_point.len(),
-            ))
-        }
-    }
-
     pub(crate) fn recursive_suffix_eor_claims(
         shared_point: Vec<PointF>,
         setup_prefix_point_vars: Option<PointVariableSelection>,
@@ -408,10 +352,10 @@ where
                 Some(setup_polys),
             ) => {
                 let (shared_point, setup_offset) =
-                    Self::shared_stage3_point(&setup_prefix_point, opening_point)?;
-                let setup_point_vars = Self::setup_prefix_column_major_indices(
+                    BatchedStage3Geometry::shared_suffix_point(&setup_prefix_point, opening_point)?;
+                let setup_point_vars = BatchedStage3Geometry::setup_prefix_column_major_point_vars(
                     setup_prefix_point.len(),
-                    setup_slot,
+                    &setup_slot.id,
                     setup_offset,
                     shared_point.len(),
                 )?;

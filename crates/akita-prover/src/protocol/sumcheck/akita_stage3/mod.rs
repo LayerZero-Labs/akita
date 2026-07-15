@@ -18,9 +18,9 @@ use akita_sumcheck::{SumcheckInstanceProver, SumcheckInstanceProverExt, Sumcheck
 use akita_transcript::{labels::ABSORB_SETUP_PREFIX_SLOT, Transcript};
 use akita_types::{
     ensure_setup_envelope, prepare_setup_contribution_artifact, select_setup_prefix_slot,
-    shared_setup_fold_gadget, stage3_offload_natural_field_len, AkitaExpandedSetup, FpExtEncoding,
-    LevelParams, RingRelationInstance, SetupContributionPlan, SetupPrefixProverRegistry,
-    SETUP_OFFLOAD_D_SETUP, SETUP_SUMCHECK_DEGREE,
+    shared_setup_fold_gadget, stage3_offload_natural_field_len, AkitaExpandedSetup,
+    BatchedStage3Geometry, FpExtEncoding, LevelParams, RingRelationInstance, SetupContributionPlan,
+    SetupPrefixProverRegistry, SETUP_OFFLOAD_D_SETUP, SETUP_SUMCHECK_DEGREE,
 };
 use product_table::FactoredProductTerm;
 use std::sync::Arc;
@@ -57,7 +57,7 @@ pub struct AkitaStage3Prover<E: FieldCore> {
     setup: BatchedStage3Term<E>,
     witness: BatchedStage3Term<E>,
     eta: E,
-    total_rounds: usize,
+    geometry: BatchedStage3Geometry,
     setup_product_claim: E,
     pending_round: Option<PendingRound<E>>,
 }
@@ -118,7 +118,7 @@ impl<E: FieldCore + FromPrimitiveInt> AkitaStage3Prover<E> {
         )?;
         let setup_rounds = setup_term.num_rounds();
         let witness_rounds = witness_term.num_rounds();
-        let total_rounds = setup_rounds.max(witness_rounds);
+        let geometry = BatchedStage3Geometry::new(witness_rounds, setup_rounds)?;
         Ok(Self {
             setup: BatchedStage3Term {
                 current_claim: setup_term.input_claim(),
@@ -131,7 +131,7 @@ impl<E: FieldCore + FromPrimitiveInt> AkitaStage3Prover<E> {
                 term: witness_term,
             },
             eta,
-            total_rounds,
+            geometry,
             setup_product_claim,
             pending_round: None,
         })
@@ -154,10 +154,8 @@ impl<E: FieldCore + FromPrimitiveInt> AkitaStage3Prover<E> {
                 transcript,
                 sample_round,
             )?;
-        let next_w_point =
-            batched_point[batched_point.len() - self.witness.native_rounds..].to_vec();
-        let setup_prefix_point =
-            batched_point[batched_point.len() - self.setup.native_rounds..].to_vec();
+        let next_w_point = self.geometry.witness_point(&batched_point)?;
+        let setup_prefix_point = self.geometry.setup_point(&batched_point)?;
         let setup_prefix_eval = self.setup.term.folded_table_value()?;
         let next_w_eval = self.witness.term.folded_table_value()?;
         Ok(AkitaStage3ProverOutput {
@@ -213,7 +211,7 @@ impl<E: FieldCore + FromPrimitiveInt> AkitaStage3Prover<E> {
 
 impl<E: FieldCore + FromPrimitiveInt> SumcheckInstanceProver<E> for AkitaStage3Prover<E> {
     fn num_rounds(&self) -> usize {
-        self.total_rounds
+        self.geometry.batched_rounds()
     }
 
     fn degree_bound(&self) -> usize {
@@ -225,8 +223,9 @@ impl<E: FieldCore + FromPrimitiveInt> SumcheckInstanceProver<E> for AkitaStage3P
     }
 
     fn compute_round_univariate(&mut self, round: usize, _previous_claim: E) -> UniPoly<E> {
-        let setup_poly = Self::term_round_poly(&mut self.setup, self.total_rounds, round);
-        let witness_poly = Self::term_round_poly(&mut self.witness, self.total_rounds, round);
+        let total_rounds = self.geometry.batched_rounds();
+        let setup_poly = Self::term_round_poly(&mut self.setup, total_rounds, round);
+        let witness_poly = Self::term_round_poly(&mut self.witness, total_rounds, round);
         let combined = self.combine_polys(&setup_poly, &witness_poly);
         self.pending_round = Some(PendingRound {
             setup_poly,
@@ -242,13 +241,14 @@ impl<E: FieldCore + FromPrimitiveInt> SumcheckInstanceProver<E> for AkitaStage3P
             .expect("batched stage-3 challenge ingested before round polynomial");
         self.setup.current_claim = pending.setup_poly.evaluate(&r_round);
         self.witness.current_claim = pending.witness_poly.evaluate(&r_round);
-        let setup_inactive_rounds = self.total_rounds - self.setup.native_rounds;
+        let total_rounds = self.geometry.batched_rounds();
+        let setup_inactive_rounds = total_rounds - self.setup.native_rounds;
         if round >= setup_inactive_rounds {
             self.setup
                 .term
                 .ingest_challenge(round - setup_inactive_rounds, r_round);
         }
-        let witness_inactive_rounds = self.total_rounds - self.witness.native_rounds;
+        let witness_inactive_rounds = total_rounds - self.witness.native_rounds;
         if round >= witness_inactive_rounds {
             self.witness
                 .term
