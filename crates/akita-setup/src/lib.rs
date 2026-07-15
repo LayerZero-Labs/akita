@@ -553,7 +553,8 @@ mod tests {
                 use akita_types::{
                     setup_prefix_slot_id, AjtaiKeyParams, AkitaCommitmentHint, DigitBlocks,
                     PolynomialGroupLayout, PrecommittedGroupParams, PrecommittedLevelParams,
-                    RingVec, SetupPrefixPublicCommitment, SetupPrefixSlot, SisModulusFamily,
+                    RingVec, SetupPrefixPublicCommitment, SetupPrefixSlot, SisMatrixRole,
+                    SisModulusProfileId, SisTableDigest, DEFAULT_SIS_SECURITY_POLICY,
                 };
 
                 const MAX_VARS: usize = 13;
@@ -571,16 +572,20 @@ mod tests {
                         conservative_n_b: 1,
                     },
                     a_key: AjtaiKeyParams::new_unchecked(
-                        akita_types::DEFAULT_SIS_SECURITY_BITS,
-                        SisModulusFamily::Q128,
+                        DEFAULT_SIS_SECURITY_POLICY,
+                        SisTableDigest::CURRENT,
+                        SisModulusProfileId::Q128OffsetA7F7,
+                        SisMatrixRole::A,
                         1,
                         1,
                         1,
                         TEST_D,
                     ),
                     b_key: AjtaiKeyParams::new_unchecked(
-                        akita_types::DEFAULT_SIS_SECURITY_BITS,
-                        SisModulusFamily::Q128,
+                        DEFAULT_SIS_SECURITY_POLICY,
+                        SisTableDigest::CURRENT,
+                        SisModulusProfileId::Q128OffsetA7F7,
+                        SisMatrixRole::B,
                         1,
                         1,
                         1,

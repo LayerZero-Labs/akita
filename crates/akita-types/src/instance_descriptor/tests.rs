@@ -7,7 +7,7 @@ use akita_field::{Prime32Offset99, Prime64Offset59};
 
 fn sample_level_params() -> LevelParams {
     LevelParams::params_only(
-        SisModulusFamily::Q32,
+        SisModulusProfileId::Q32Offset99,
         64,
         3,
         2,
@@ -47,7 +47,7 @@ fn sample_descriptor() -> AkitaInstanceDescriptor {
                 log_commit_bound: 32,
                 log_open_bound: Some(32),
             },
-            sis_modulus_family: SisModulusFamily::Q32,
+            sis_modulus_profile: SisModulusProfileId::Q32Offset99,
             setup_seed_digest: [1; 32],
             protocol_features: ProtocolFeatureSet::current(),
             fold_linf: FoldLinfProtocolBinding::CURRENT,
@@ -58,8 +58,8 @@ fn sample_descriptor() -> AkitaInstanceDescriptor {
 }
 
 #[test]
-fn rejects_removed_q16_sis_family_tag() {
-    let err = decode_sis_family(std::io::Cursor::new([3u8]), Compress::No, Validate::Yes)
+fn rejects_removed_q16_sis_modulus_profile_tag() {
+    let err = decode_sis_modulus_profile(std::io::Cursor::new([3u8]), Compress::No, Validate::Yes)
         .expect_err("historical Q16 tag 3 must be rejected");
     assert!(matches!(err, SerializationError::InvalidData(_)));
 }
@@ -98,9 +98,9 @@ fn fold_linf_descriptor_canonical_digest_pinned() {
         (
             229,
             [
-                0x53, 0x37, 0xcc, 0x81, 0xb0, 0xb4, 0x12, 0xd4, 0x4b, 0x5f, 0x8b, 0xd0, 0x06, 0xca,
-                0xee, 0xcf, 0xe7, 0xf2, 0x6f, 0xb5, 0x8f, 0xc5, 0x7e, 0xfa, 0xf3, 0x83, 0x83, 0x78,
-                0xfa, 0x45, 0x38, 0x32,
+                0xd4, 0x6d, 0x75, 0xa1, 0xeb, 0xa4, 0x3c, 0xe6, 0x32, 0xcd, 0x84, 0xe0, 0x72, 0xbe,
+                0x92, 0x87, 0xd4, 0xff, 0x2c, 0x9e, 0xae, 0x18, 0xe3, 0x84, 0xe9, 0x95, 0x78, 0xbf,
+                0xd0, 0xf7, 0x47, 0xd8,
             ]
         ),
         "update pinned digest when descriptor setup-section bindings change"
@@ -122,7 +122,7 @@ fn fold_linf_binding_is_part_of_setup_section() {
 #[test]
 fn effective_schedule_digest_binds_tail_bound_with_grind_policy() {
     let certified = LevelParams::params_only(
-        SisModulusFamily::Q128,
+        SisModulusProfileId::Q128OffsetA7F7,
         64,
         3,
         2,
@@ -136,7 +136,7 @@ fn effective_schedule_digest_binds_tail_bound_with_grind_policy() {
     .with_decomp(4, 2, 2, 2, 0)
     .expect("certified params");
     let worst_case_only = LevelParams::params_only(
-        SisModulusFamily::Q128,
+        SisModulusProfileId::Q128OffsetA7F7,
         64,
         3,
         2,
@@ -349,7 +349,7 @@ fn setup_seed_digest_matches_setup_section() {
             log_commit_bound: 32,
             log_open_bound: Some(32),
         },
-        SisModulusFamily::Q32,
+        SisModulusProfileId::Q32Offset99,
         &seed,
     )
     .expect("direct setup section");

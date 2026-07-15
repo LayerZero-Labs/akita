@@ -1,7 +1,7 @@
 use super::*;
 use akita_challenges::SparseChallengeConfig;
 use akita_field::Fp32;
-use akita_types::{RelationMatrixRowLayout, SetupContributionPlanInputs, SisModulusFamily};
+use akita_types::{RelationMatrixRowLayout, SetupContributionPlanInputs, SisModulusProfileId};
 
 type F = Fp32<251>;
 const D: usize = 32;
@@ -19,7 +19,7 @@ fn ring_switch_prepare_rejects_invalid_log_basis() {
 #[test]
 fn ring_switch_prepare_rejects_zero_num_blocks() {
     let lp = LevelParams::params_only(
-        SisModulusFamily::Q32,
+        SisModulusProfileId::Q32Offset99,
         D,
         2,
         1,

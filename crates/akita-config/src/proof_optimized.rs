@@ -424,7 +424,7 @@ macro_rules! impl_proof_optimized_preset {
                 $crate::proof_optimized::proof_optimized_ring_challenge_config(d)
             }
 
-            fn sis_modulus_family() -> akita_types::SisModulusFamily {
+            fn sis_modulus_profile() -> akita_types::SisModulusProfileId {
                 $family
             }
 
@@ -484,7 +484,7 @@ macro_rules! impl_proof_optimized_preset {
                 $crate::proof_optimized::proof_optimized_ring_challenge_config(d)
             }
 
-            fn sis_modulus_family() -> akita_types::SisModulusFamily {
+            fn sis_modulus_profile() -> akita_types::SisModulusProfileId {
                 $family
             }
 

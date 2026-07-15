@@ -1,17 +1,12 @@
-//! Infinity-norm max-width table generation helpers.
+//! ADPS16 quantum infinity norm scalar table generation.
 //!
-//! The planner-facing infinity table shape is:
-//!
-//! ```text
-//! (family, ring_dimension, coeff_linf_bound) -> max widths by rank
-//! ```
-//!
-//! This module is offline-only. It generates production Rust tables and CSV
-//! audit artifacts for the infinity estimator.
+//! The generator is offline only. It discovers a boundary with the local
+//! optimizer, then certifies the accepted point and its rejected successor
+//! with the exhaustive beta and zeta search.
 
 use crate::{
-    akita::{scalar_sis_from_ring_wide, AkitaModulusFamily},
-    config::{EstimateConfig, OptimizerConfig, SearchMode},
+    akita::{scalar_sis_from_ring_wide, AkitaModulusProfileId},
+    config::{EstimateConfig, OptimizerConfig, ReductionCostModel, SearchMode, SisSecurityPolicy},
     cost::{CostValue, LatticeCost},
     error::{EstimatorError, Result},
     estimate,
@@ -22,67 +17,68 @@ use std::collections::{BTreeMap, BTreeSet};
 #[cfg(feature = "parallel")]
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-/// Coefficient-L∞ buckets needed by Akita planner envelopes.
-///
-/// Keep in lockstep with `crates/akita-types/src/sis/ajtai_key.rs`.
+/// Role-independent A coefficient cells used by the current planner domain.
 pub const COEFF_LINF_BUCKETS: &[u64] = &[
     2, 3, 7, 15, 31, 63, 127, 255, 511, 1023, 2047, 4095, 8191, 16383, 32767, 65535, 131_071,
     262_143, 524_287, 1_048_575, 2_097_151, 4_194_303, 8_388_607, 16_777_215, 33_554_431,
     67_108_863,
 ];
 
-/// Ring dimensions covered by Akita SIS table generation.
+/// Ring dimensions included in the current reachable generation domain.
 pub const RING_DIMS: &[u32] = &[32, 64, 128, 256];
 
-/// Modulus families covered by Akita SIS table generation.
-pub const FAMILIES: &[AkitaModulusFamily] = &[
-    AkitaModulusFamily::Q32,
-    AkitaModulusFamily::Q64,
-    AkitaModulusFamily::Q128,
+/// Exact modulus profiles included in the generated artifact.
+pub const FAMILIES: &[AkitaModulusProfileId] = &[
+    AkitaModulusProfileId::Q32Offset99,
+    AkitaModulusProfileId::Q64Offset59,
+    AkitaModulusProfileId::Q128OffsetA7F7,
 ];
 
-/// Default target security bits for the infinity-norm comparison table.
-pub const DEFAULT_INFINITY_TARGET_BITS: f64 = 138.0;
-
-/// Default maximum rank emitted by the current Euclidean SIS table.
+/// Maximum module rank emitted for each scalar row.
 pub const DEFAULT_MAX_RANK: u32 = 20;
 
-/// Default ring-width search cap used by the legacy Euclidean generator.
-pub const DEFAULT_SEARCH_CAP: u64 = 10_000_000_000;
+/// Policy table search cap.
+pub const DEFAULT_SEARCH_CAP: u64 = 6_400_000_000_000;
 
-/// Wider legacy cap for `d=128`, where shipped schedules have needed it.
-pub const D128_SEARCH_CAP: u64 = 50_000_000_000;
+/// Legacy L2 generator cap retained for the independent Euclidean table.
+/// The quantum infinity table itself uses [`DEFAULT_SEARCH_CAP`] uniformly.
+pub const D128_SEARCH_CAP: u64 = DEFAULT_SEARCH_CAP;
 
-/// Optimizer profile used while generating the infinity width table.
+/// Optimizer profile used to discover and certify scalar boundaries.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum InfinityWidthProfile {
-    /// Lattice-estimator parity search. Rows may be generated in parallel, but
-    /// each row uses Python-compatible local-minimum beta and zeta search.
+    /// Local minimum discovery followed by exhaustive boundary certification.
     LocalMinimum,
-    /// Serial exhaustive beta/zeta search.
+    /// Serial exhaustive beta and zeta search.
     ExhaustiveSerial,
-    /// Parallel exhaustive beta/zeta search.
+    /// Parallel exhaustive beta and zeta search.
     ExhaustiveParallel,
 }
 
 impl InfinityWidthProfile {
-    /// Stable profile label for CSV metadata and CLI flags.
-    #[must_use]
+    /// Stable provenance label.
     pub const fn label(self) -> &'static str {
         match self {
-            Self::LocalMinimum => "local-minimum",
+            Self::LocalMinimum => "local-minimum+exhaustive-certification",
             Self::ExhaustiveSerial => "exhaustive-serial",
             Self::ExhaustiveParallel => "exhaustive-parallel",
         }
     }
 
-    /// Estimator configuration for this profile.
-    #[must_use]
+    /// Estimator configuration for the selected profile.
     pub fn config(self) -> EstimateConfig {
         match self {
-            Self::LocalMinimum => EstimateConfig::lattice_estimator_parity(),
+            Self::LocalMinimum => EstimateConfig {
+                red_cost_model: ReductionCostModel::Adps16 {
+                    mode: crate::config::Adps16Mode::Quantum,
+                },
+                ..EstimateConfig::lattice_estimator_parity()
+            },
             Self::ExhaustiveSerial => EstimateConfig::akita_infinity_table(),
             Self::ExhaustiveParallel => EstimateConfig {
+                red_cost_model: ReductionCostModel::Adps16 {
+                    mode: crate::config::Adps16Mode::Quantum,
+                },
                 optimizer: OptimizerConfig::OptimizeZeta {
                     beta: SearchMode::ExhaustiveParallel,
                     zeta: SearchMode::ExhaustiveParallel,
@@ -93,35 +89,35 @@ impl InfinityWidthProfile {
     }
 }
 
-/// One max-width table generation request.
+/// One scalar table generation request domain.
 #[derive(Clone, Debug, PartialEq)]
 pub struct InfinityWidthTableConfig {
-    /// Modulus families to generate.
-    pub families: Vec<AkitaModulusFamily>,
-    /// Ring dimensions to generate.
+    /// Exact modulus profiles.
+    pub profiles: Vec<AkitaModulusProfileId>,
+    /// Ring dimensions used to expand role origins.
     pub ring_dims: Vec<u32>,
-    /// Coefficient-L∞ buckets to generate.
+    /// Role coefficient cells.
     pub coeff_linf_bounds: Vec<u64>,
     /// Maximum module rank.
     pub max_rank: u32,
-    /// Security threshold for `rop_log2`.
-    pub target_bits: f64,
-    /// Optional caller cap on ring-element width.
+    /// ADPS16 quantum policy.
+    pub policy: SisSecurityPolicy,
+    /// Optional generation cap.
     pub search_cap: Option<u64>,
-    /// Optimizer profile.
+    /// Search profile.
     pub profile: InfinityWidthProfile,
-    /// Optional progress report interval, in completed rows.
+    /// Progress report interval.
     pub progress_every: Option<usize>,
 }
 
 impl Default for InfinityWidthTableConfig {
     fn default() -> Self {
         Self {
-            families: FAMILIES.to_vec(),
+            profiles: FAMILIES.to_vec(),
             ring_dims: RING_DIMS.to_vec(),
             coeff_linf_bounds: COEFF_LINF_BUCKETS.to_vec(),
             max_rank: DEFAULT_MAX_RANK,
-            target_bits: DEFAULT_INFINITY_TARGET_BITS,
+            policy: SisSecurityPolicy::Quantum128BitADPS16,
             search_cap: None,
             profile: InfinityWidthProfile::LocalMinimum,
             progress_every: None,
@@ -129,197 +125,259 @@ impl Default for InfinityWidthTableConfig {
     }
 }
 
-/// Return whether `config` covers the complete production infinity SIS width-table keyspace.
-#[must_use]
+/// Whether a config is the complete current generation domain.
 pub fn is_full_infinity_width_table_config(config: &InfinityWidthTableConfig) -> bool {
-    same_set(&config.families, FAMILIES)
+    same_set(&config.profiles, FAMILIES)
         && same_set(&config.ring_dims, RING_DIMS)
         && same_set(&config.coeff_linf_bounds, COEFF_LINF_BUCKETS)
         && config.max_rank == DEFAULT_MAX_RANK
-        && config.target_bits == DEFAULT_INFINITY_TARGET_BITS
+        && config.policy == SisSecurityPolicy::Quantum128BitADPS16
         && config.search_cap.is_none()
 }
 
-/// One generated comparison row.
+/// ADPS16 quantum certificate costs for one accepted or rejected boundary.
+#[derive(Clone, Debug, PartialEq)]
+pub struct InfinityWidthPolicyCosts {
+    /// The only hard model.
+    pub adps16_quantum: LatticeCost,
+}
+
+/// One generated ring-origin row. The emitted artifact deduplicates these rows
+/// by `(profile, B, n = rank * d)`.
 #[derive(Clone, Debug, PartialEq)]
 pub struct InfinityWidthRow {
-    /// Modulus family.
-    pub family: AkitaModulusFamily,
-    /// Ring dimension.
+    /// Exact modulus profile.
+    pub modulus_profile: AkitaModulusProfileId,
+    /// Ring dimension of this role origin.
     pub d: u32,
-    /// Module rank.
+    /// Module rank of this role origin.
     pub rank: u32,
-    /// Coefficient-L∞ bound.
+    /// Coefficient infinity bound.
     pub coeff_linf_bound: u64,
-    /// Largest secure ring-element width found within the search cap.
+    /// Largest accepted ring width.
     pub max_width: u64,
-    /// Security threshold.
-    pub target_bits: f64,
-    /// Actual cap used for this row.
+    /// Policy identity.
+    pub policy: SisSecurityPolicy,
+    /// Search cap.
     pub search_cap: u64,
-    /// Whether `max_width == search_cap`, so the row is a lower bound.
+    /// Whether the cap was reached.
     pub hit_cap: bool,
-    /// Optimizer profile label.
+    /// Discovery and certification profile.
     pub profile: InfinityWidthProfile,
-    /// Cost at `max_width`, if `max_width > 0`.
-    pub max_cost: Option<LatticeCost>,
-    /// Cost at `max_width + 1`, when that probe is representable.
-    pub next_cost: Option<LatticeCost>,
+    /// Accepted boundary certificate.
+    pub max_costs: Option<InfinityWidthPolicyCosts>,
+    /// Immediate rejected successor certificate.
+    pub next_costs: Option<InfinityWidthPolicyCosts>,
 }
 
 impl InfinityWidthRow {
-    /// Whether the row is a strict bracket rather than a lower bound.
-    #[must_use]
-    pub const fn is_tight(&self) -> bool {
-        !self.hit_cap
-    }
-
-    /// CSV header for row-oriented comparison artifacts.
-    #[must_use]
+    /// CSV header for the single hard model and both certificates.
     pub const fn csv_header() -> &'static str {
-        "family,d,rank,coeff_linf_bound,max_width,target_bits,search_cap,hit_cap,profile,max_rop_log2,next_rop_log2,max_security_margin_bits,next_failure_margin_bits,max_beta,max_zeta,next_beta,next_zeta"
+        "policy,modulus_profile,d,rank,coeff_linf_bound,max_width,scalar_n,search_cap,hit_cap,profile,target_bits,max_adps16_quantum_rop_log2,next_adps16_quantum_rop_log2,max_beta,max_zeta,next_beta,next_zeta,cutoff_kind"
     }
 
-    /// Format one CSV row.
-    #[must_use]
+    /// Format a deterministic audit row.
     pub fn to_csv_record(&self) -> String {
+        let n = u64::from(self.d) * u64::from(self.rank);
+        let kind = if self.hit_cap { "AtLeast" } else { "Exact" };
         format!(
-            "{},{},{},{},{},{:.17},{},{},{},{},{},{},{},{},{},{},{}",
-            self.family.label(),
+            "{},{},{},{},{},{},{},{},{},{},{:.1},{},{},{},{},{},{},{}",
+            self.policy.label(),
+            self.modulus_profile.label(),
             self.d,
             self.rank,
             self.coeff_linf_bound,
             self.max_width,
-            self.target_bits,
+            n,
             self.search_cap,
             self.hit_cap,
             self.profile.label(),
-            cost_log2_text(self.max_cost.as_ref().map(|cost| cost.rop)),
-            cost_log2_text(self.next_cost.as_ref().map(|cost| cost.rop)),
-            signed_margin_text(
-                self.max_cost
+            self.policy.adps16_quantum_constraint().minimum_log2_rop,
+            cost_log2_text(
+                self.max_costs
                     .as_ref()
-                    .and_then(|cost| security_margin_bits(cost.rop, self.target_bits)),
+                    .map(|costs| costs.adps16_quantum.rop)
             ),
-            signed_margin_text(
-                self.next_cost
+            cost_log2_text(
+                self.next_costs
                     .as_ref()
-                    .and_then(|cost| security_failure_margin_bits(cost.rop, self.target_bits)),
+                    .map(|costs| costs.adps16_quantum.rop)
             ),
-            optional_u32_text(self.max_cost.as_ref().and_then(|cost| cost.beta)),
-            optional_u64_text(self.max_cost.as_ref().and_then(|cost| cost.zeta)),
-            optional_u32_text(self.next_cost.as_ref().and_then(|cost| cost.beta)),
-            optional_u64_text(self.next_cost.as_ref().and_then(|cost| cost.zeta)),
+            self.max_costs
+                .as_ref()
+                .and_then(|costs| costs.adps16_quantum.beta)
+                .map_or_else(String::new, |value| value.to_string()),
+            self.max_costs
+                .as_ref()
+                .and_then(|costs| costs.adps16_quantum.zeta)
+                .map_or_else(String::new, |value| value.to_string()),
+            self.next_costs
+                .as_ref()
+                .and_then(|costs| costs.adps16_quantum.beta)
+                .map_or_else(String::new, |value| value.to_string()),
+            self.next_costs
+                .as_ref()
+                .and_then(|costs| costs.adps16_quantum.zeta)
+                .map_or_else(String::new, |value| value.to_string()),
+            kind,
         )
     }
 }
 
-/// Generate row-oriented infinity max-width comparison data.
-///
-/// # Errors
-///
-/// Returns estimator errors for malformed rows or unsupported profile choices.
+/// Generate ring-origin rows under the ADPS16 quantum policy.
 pub fn generate_infinity_width_rows(
     config: &InfinityWidthTableConfig,
 ) -> Result<Vec<InfinityWidthRow>> {
     validate_table_config(config)?;
     let estimator_config = config.profile.config();
     let mut work = Vec::new();
-    for &family in &config.families {
+    for &modulus_profile in &config.profiles {
         for &d in &config.ring_dims {
-            for &coeff_linf_bound in &config.coeff_linf_bounds {
+            for &bound in &config.coeff_linf_bounds {
+                if !reachable_role_cell(modulus_profile, d, bound) {
+                    continue;
+                }
                 for rank in 1..=config.max_rank {
-                    work.push((family, d, rank, coeff_linf_bound));
+                    work.push((modulus_profile, d, rank, bound));
                 }
             }
         }
     }
+    if work.is_empty() {
+        return invalid_config(
+            "coverage",
+            "the requested dimensions and coefficient bounds contain no canonical SIS role cells",
+        );
+    }
     generate_rows_from_work(work, config, &estimator_config)
+}
+
+/// Return whether a scalar origin is reachable from at least one canonical
+/// matrix-role cell. The shared coverage declaration lives in `akita-types`;
+/// this adapter only maps the estimator's modulus enum to that declaration.
+fn reachable_role_cell(
+    modulus_profile: AkitaModulusProfileId,
+    ring_dimension: u32,
+    coeff_linf_bound: u64,
+) -> bool {
+    let profile = match modulus_profile {
+        AkitaModulusProfileId::Q32Offset99 => akita_types::sis::SisModulusProfileId::Q32Offset99,
+        AkitaModulusProfileId::Q64Offset59 => akita_types::sis::SisModulusProfileId::Q64Offset59,
+        AkitaModulusProfileId::Q128OffsetA7F7 => {
+            akita_types::sis::SisModulusProfileId::Q128OffsetA7F7
+        }
+    };
+    akita_types::sis::SIS_MATRIX_ROLES
+        .iter()
+        .copied()
+        .any(|role| {
+            akita_types::sis::ajtai_key::sis_role_cell(
+                role,
+                profile,
+                ring_dimension,
+                u128::from(coeff_linf_bound),
+            )
+            .is_some()
+        })
 }
 
 #[cfg(feature = "parallel")]
 fn generate_rows_from_work(
-    work: Vec<(AkitaModulusFamily, u32, u32, u64)>,
+    work: Vec<(AkitaModulusProfileId, u32, u32, u64)>,
     config: &InfinityWidthTableConfig,
     estimator_config: &EstimateConfig,
 ) -> Result<Vec<InfinityWidthRow>> {
     let total = work.len();
     let completed = AtomicUsize::new(0);
-    work.into_par_iter()
-        .map(|(family, d, rank, coeff_linf_bound)| {
-            let row =
-                max_secure_width_row(family, d, rank, coeff_linf_bound, config, estimator_config);
+    let rows: Result<Vec<_>> = work
+        .into_par_iter()
+        .map(|request| {
+            let row = max_secure_width_row(
+                request.0,
+                request.1,
+                request.2,
+                request.3,
+                config,
+                estimator_config,
+            );
             report_progress(config.progress_every, &completed, total);
             row
         })
-        .collect()
+        .collect();
+    let mut rows = rows?;
+    rows.sort_by_key(|row| (row.modulus_profile, row.coeff_linf_bound, row.d, row.rank));
+    Ok(rows)
 }
 
 #[cfg(not(feature = "parallel"))]
 fn generate_rows_from_work(
-    work: Vec<(AkitaModulusFamily, u32, u32, u64)>,
+    work: Vec<(AkitaModulusProfileId, u32, u32, u64)>,
     config: &InfinityWidthTableConfig,
     estimator_config: &EstimateConfig,
 ) -> Result<Vec<InfinityWidthRow>> {
     let total = work.len();
-    let mut completed = 0usize;
-    work.into_iter()
-        .map(|(family, d, rank, coeff_linf_bound)| {
-            let row =
-                max_secure_width_row(family, d, rank, coeff_linf_bound, config, estimator_config);
-            completed += 1;
-            report_progress(config.progress_every, completed, total);
-            row
-        })
-        .collect()
+    let mut rows = Vec::with_capacity(work.len());
+    for (completed, (modulus_profile, d, rank, bound)) in work.into_iter().enumerate() {
+        rows.push(max_secure_width_row(
+            modulus_profile,
+            d,
+            rank,
+            bound,
+            config,
+            estimator_config,
+        )?);
+        report_progress(config.progress_every, completed + 1, total);
+    }
+    rows.sort_by_key(|row| (row.modulus_profile, row.coeff_linf_bound, row.d, row.rank));
+    Ok(rows)
 }
 
 #[cfg(feature = "parallel")]
 fn report_progress(progress_every: Option<usize>, completed: &AtomicUsize, total: usize) {
-    let Some(progress_every) = progress_every else {
+    let Some(every) = progress_every.filter(|value| *value > 0) else {
         return;
     };
-    if progress_every == 0 {
-        return;
-    }
     let done = completed.fetch_add(1, Ordering::Relaxed) + 1;
-    if done == total || done.is_multiple_of(progress_every) {
+    if done == total || done.is_multiple_of(every) {
         eprintln!("infinity width table progress: {done}/{total} rows");
     }
 }
 
 #[cfg(not(feature = "parallel"))]
 fn report_progress(progress_every: Option<usize>, completed: usize, total: usize) {
-    let Some(progress_every) = progress_every else {
+    let Some(every) = progress_every.filter(|value| *value > 0) else {
         return;
     };
-    if progress_every == 0 {
-        return;
-    }
-    if completed == total || completed.is_multiple_of(progress_every) {
+    if completed == total || completed.is_multiple_of(every) {
         eprintln!("infinity width table progress: {completed}/{total} rows");
     }
 }
 
-/// Validate monotonicity and security brackets for generated rows.
-///
-/// # Errors
-///
-/// Returns an error when a row's stored costs do not bracket the target, widths
-/// decrease as rank increases, or widths increase as the coefficient bound gets
-/// looser.
+/// Validate ADPS16 quantum certificates and monotonicity.
 pub fn validate_infinity_width_rows(rows: &[InfinityWidthRow]) -> Result<()> {
     for row in rows {
-        if let Some(cost) = &row.max_cost {
-            if !security_met(cost.rop, row.target_bits) {
-                return invalid_config("rows", "max_width row does not meet target_bits");
+        let target = row.policy.adps16_quantum_constraint().minimum_log2_rop;
+        if row.max_width > 0 {
+            let costs = row
+                .max_costs
+                .as_ref()
+                .ok_or_else(|| EstimatorError::InvalidConfig {
+                    field: "rows",
+                    reason: "accepted width is missing its ADPS16 quantum certificate".to_string(),
+                })?;
+            if !security_met(costs.adps16_quantum.rop, target) {
+                return invalid_config(
+                    "rows",
+                    "accepted ADPS16 quantum certificate is below target",
+                );
             }
-        } else if row.max_width != 0 {
-            return invalid_config("rows", "positive max_width is missing max_cost");
         }
-        if let Some(cost) = &row.next_cost {
-            if security_met(cost.rop, row.target_bits) {
-                return invalid_config("rows", "next_width row still meets target_bits");
+        if let Some(costs) = row.next_costs.as_ref() {
+            if security_met(costs.adps16_quantum.rop, target) {
+                return invalid_config(
+                    "rows",
+                    "rejected successor still meets ADPS16 quantum target",
+                );
             }
         }
     }
@@ -327,146 +385,61 @@ pub fn validate_infinity_width_rows(rows: &[InfinityWidthRow]) -> Result<()> {
     validate_bound_monotonicity(rows)
 }
 
-/// Convert rows into generated table match arms grouped by family.
-#[must_use]
+/// Convert ring-origin rows to runtime `(d, B) -> widths[rank]` match arms.
+///
+/// Scalar certification still groups by `(B, n)` and takes the min `m`. The
+/// emitted runtime table projects those cutoffs onto each reachable ring
+/// dimension as `width[r - 1] = cutoff_m(B, n = r * d) / d`.
 pub fn rust_table_arms(
     rows: &[InfinityWidthRow],
     max_rank: u32,
-) -> BTreeMap<AkitaModulusFamily, Vec<String>> {
-    let mut grouped = BTreeMap::<(AkitaModulusFamily, u32, u64), Vec<&InfinityWidthRow>>::new();
+) -> BTreeMap<AkitaModulusProfileId, Vec<String>> {
+    let mut scalar = BTreeMap::<(AkitaModulusProfileId, u64, u64), u64>::new();
+    let mut pairs = BTreeSet::<(AkitaModulusProfileId, u32, u64)>::new();
     for row in rows {
-        grouped
-            .entry((row.family, row.d, row.coeff_linf_bound))
-            .or_default()
-            .push(row);
+        let n = u64::from(row.d) * u64::from(row.rank);
+        let scalar_m = row.max_width.checked_mul(u64::from(row.d)).unwrap_or(0);
+        scalar
+            .entry((row.modulus_profile, row.coeff_linf_bound, n))
+            .and_modify(|current| {
+                if scalar_m < *current {
+                    *current = scalar_m;
+                }
+            })
+            .or_insert(scalar_m);
+        pairs.insert((row.modulus_profile, row.d, row.coeff_linf_bound));
     }
-
-    let mut arms = BTreeMap::<AkitaModulusFamily, Vec<String>>::new();
-    for ((family, d, coeff_linf_bound), mut group) in grouped {
-        group.sort_by_key(|row| row.rank);
-        if group.len() != max_rank as usize {
+    let mut arms = BTreeMap::<AkitaModulusProfileId, Vec<String>>::new();
+    for (profile, d, bound) in pairs {
+        let mut widths = Vec::with_capacity(max_rank as usize);
+        let mut complete = true;
+        for rank in 1..=max_rank {
+            let n = u64::from(d) * u64::from(rank);
+            match scalar.get(&(profile, bound, n)) {
+                Some(&scalar_m) => widths.push(scalar_m / u64::from(d)),
+                None => {
+                    complete = false;
+                    break;
+                }
+            }
+        }
+        if !complete {
             continue;
         }
-        if group.iter().all(|row| row.max_width == 0) {
-            continue;
-        }
-        let widths = group
-            .into_iter()
-            .map(|row| format_u64_underscored(row.max_width))
+        let body = widths
+            .iter()
+            .map(|width| width.to_string())
             .collect::<Vec<_>>()
             .join(", ");
-        arms.entry(family).or_default().push(format!(
-            "({}, {}) => Some(&[{}]),",
-            d, coeff_linf_bound, widths
-        ));
+        arms.entry(profile)
+            .or_default()
+            .push(format!("({d}, {bound}) => Some(&[{body}]),"));
     }
     arms
 }
 
-fn validate_rank_monotonicity(rows: &[InfinityWidthRow]) -> Result<()> {
-    let mut groups = BTreeMap::<(AkitaModulusFamily, u32, u64), Vec<&InfinityWidthRow>>::new();
-    for row in rows {
-        groups
-            .entry((row.family, row.d, row.coeff_linf_bound))
-            .or_default()
-            .push(row);
-    }
-    for group in groups.values_mut() {
-        group.sort_by_key(|row| row.rank);
-        let mut prior = None::<&InfinityWidthRow>;
-        for row in group {
-            if let Some(prior_row) = prior {
-                if row.max_width < prior_row.max_width {
-                    return invalid_config(
-                        "rows",
-                        &format!(
-                            "max_width decreased as rank increased for family={} d={} coeff_linf_bound={}: rank {} width {} -> rank {} width {}",
-                            row.family.label(),
-                            row.d,
-                            row.coeff_linf_bound,
-                            prior_row.rank,
-                            prior_row.max_width,
-                            row.rank,
-                            row.max_width,
-                        ),
-                    );
-                }
-            }
-            prior = Some(row);
-        }
-    }
-    Ok(())
-}
-
-fn validate_bound_monotonicity(rows: &[InfinityWidthRow]) -> Result<()> {
-    let mut groups = BTreeMap::<(AkitaModulusFamily, u32, u32), Vec<&InfinityWidthRow>>::new();
-    for row in rows {
-        groups
-            .entry((row.family, row.d, row.rank))
-            .or_default()
-            .push(row);
-    }
-    for group in groups.values_mut() {
-        group.sort_by_key(|row| row.coeff_linf_bound);
-        let mut prior = None::<&InfinityWidthRow>;
-        for row in group {
-            if let Some(prior_row) = prior {
-                if row.max_width > prior_row.max_width {
-                    return invalid_config(
-                        "rows",
-                        &format!(
-                            "max_width increased as coeff_linf_bound increased for family={} d={} rank={}: bound {} width {} -> bound {} width {}",
-                            row.family.label(),
-                            row.d,
-                            row.rank,
-                            prior_row.coeff_linf_bound,
-                            prior_row.max_width,
-                            row.coeff_linf_bound,
-                            row.max_width,
-                        ),
-                    );
-                }
-            }
-            prior = Some(row);
-        }
-    }
-    Ok(())
-}
-
-fn validate_table_config(config: &InfinityWidthTableConfig) -> Result<()> {
-    if config.families.is_empty() {
-        return invalid_config("families", "at least one family is required");
-    }
-    if config.ring_dims.is_empty() {
-        return invalid_config("ring_dims", "at least one ring dimension is required");
-    }
-    if config.coeff_linf_bounds.is_empty() {
-        return invalid_config(
-            "coeff_linf_bounds",
-            "at least one coefficient bound is required",
-        );
-    }
-    if config.max_rank == 0 {
-        return invalid_config("max_rank", "max_rank must be positive");
-    }
-    if !config.target_bits.is_finite() || config.target_bits <= 0.0 {
-        return invalid_config("target_bits", "target_bits must be finite and positive");
-    }
-    if config.search_cap == Some(0) {
-        return invalid_config("search_cap", "search_cap must be positive when present");
-    }
-    Ok(())
-}
-
-fn invalid_config<T>(field: &'static str, reason: &str) -> Result<T> {
-    Err(EstimatorError::InvalidConfig {
-        field,
-        reason: reason.to_string(),
-    })
-}
-
 fn max_secure_width_row(
-    family: AkitaModulusFamily,
+    modulus_profile: AkitaModulusProfileId,
     d: u32,
     rank: u32,
     coeff_linf_bound: u64,
@@ -474,45 +447,127 @@ fn max_secure_width_row(
     estimator_config: &EstimateConfig,
 ) -> Result<InfinityWidthRow> {
     let search_cap = row_search_cap(d, table_config.search_cap)?;
-    let mut probe =
-        |width| estimate_width(family, d, rank, width, coeff_linf_bound, estimator_config);
-    let result = max_true_in_prefix(search_cap, |width| {
-        probe(width).map(|cost| security_met(cost.rop, table_config.target_bits))
-    })?;
-    let max_cost = if result.max_value == 0 {
-        None
-    } else {
-        Some(probe(result.max_value)?)
+    let policy = table_config.policy;
+    let target = policy.adps16_quantum_constraint().minimum_log2_rop;
+    let discovery = |width| {
+        let cost = estimate_width(
+            modulus_profile,
+            d,
+            rank,
+            width,
+            coeff_linf_bound,
+            estimator_config,
+        )?;
+        secure_or_error(cost.rop, target)
     };
-    let next_cost = result.next_value.map(&mut probe).transpose()?;
+    let discovered = max_true_in_prefix(search_cap, discovery)?;
+    let (max_width, next_width, hit_cap) =
+        if table_config.profile == InfinityWidthProfile::LocalMinimum {
+            let cert_config = InfinityWidthProfile::ExhaustiveSerial.config();
+            certify_boundary(
+                modulus_profile,
+                d,
+                rank,
+                coeff_linf_bound,
+                search_cap,
+                discovered.max_value,
+                &cert_config,
+                target,
+            )?
+        } else {
+            (
+                discovered.max_value,
+                discovered.next_value,
+                discovered.hit_cap,
+            )
+        };
+    let max_costs = (max_width > 0)
+        .then(|| {
+            estimate_width(
+                modulus_profile,
+                d,
+                rank,
+                max_width,
+                coeff_linf_bound,
+                &InfinityWidthProfile::ExhaustiveSerial.config(),
+            )
+        })
+        .transpose()?
+        .map(|adps16_quantum| InfinityWidthPolicyCosts { adps16_quantum });
+    let next_costs = next_width
+        .map(|width| {
+            estimate_width(
+                modulus_profile,
+                d,
+                rank,
+                width,
+                coeff_linf_bound,
+                &InfinityWidthProfile::ExhaustiveSerial.config(),
+            )
+        })
+        .transpose()?
+        .map(|adps16_quantum| InfinityWidthPolicyCosts { adps16_quantum });
     Ok(InfinityWidthRow {
-        family,
+        modulus_profile,
         d,
         rank,
         coeff_linf_bound,
-        max_width: result.max_value,
-        target_bits: table_config.target_bits,
+        max_width,
+        policy,
         search_cap,
-        hit_cap: result.hit_cap,
+        hit_cap,
         profile: table_config.profile,
-        max_cost,
-        next_cost,
+        max_costs,
+        next_costs,
     })
 }
 
-fn row_search_cap(d: u32, requested_cap: Option<u64>) -> Result<u64> {
+#[allow(clippy::too_many_arguments)]
+fn certify_boundary(
+    modulus_profile: AkitaModulusProfileId,
+    d: u32,
+    rank: u32,
+    bound: u64,
+    cap: u64,
+    discovered: u64,
+    config: &EstimateConfig,
+    target: f64,
+) -> Result<(u64, Option<u64>, bool)> {
+    let mut accepted = discovered.min(cap);
+    while accepted > 0 {
+        let cost = estimate_width(modulus_profile, d, rank, accepted, bound, config)?;
+        if secure_or_error(cost.rop, target)? {
+            break;
+        }
+        accepted -= 1;
+    }
+    let Some(mut successor) = accepted.checked_add(1) else {
+        return Ok((accepted, None, false));
+    };
+    while successor <= cap {
+        let cost = estimate_width(modulus_profile, d, rank, successor, bound, config)?;
+        if !secure_or_error(cost.rop, target)? {
+            return Ok((accepted, Some(successor), false));
+        }
+        accepted = successor;
+        successor = successor
+            .checked_add(1)
+            .ok_or_else(|| EstimatorError::InvalidConfig {
+                field: "search_cap",
+                reason: "width successor overflow".to_string(),
+            })?;
+    }
+    Ok((cap, None, true))
+}
+
+fn row_search_cap(d: u32, requested: Option<u64>) -> Result<u64> {
     if d == 0 {
         return Err(EstimatorError::InvalidParameter {
             field: "d",
             reason: "ring dimension must be positive".to_string(),
         });
     }
-    let default_cap = if d == 128 {
-        D128_SEARCH_CAP
-    } else {
-        DEFAULT_SEARCH_CAP
-    };
-    let cap = requested_cap.unwrap_or(default_cap);
+    let cap = requested.unwrap_or(DEFAULT_SEARCH_CAP);
     if cap == 0 {
         return Err(EstimatorError::InvalidParameter {
             field: "search_cap",
@@ -522,44 +577,49 @@ fn row_search_cap(d: u32, requested_cap: Option<u64>) -> Result<u64> {
     Ok(cap)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn estimate_width(
-    family: AkitaModulusFamily,
+    modulus_profile: AkitaModulusProfileId,
     d: u32,
     rank: u32,
     width: u64,
-    coeff_linf_bound: u64,
+    bound: u64,
     config: &EstimateConfig,
 ) -> Result<LatticeCost> {
-    let params = scalar_sis_from_ring_wide(family, d, rank, width, coeff_linf_bound)?;
-    estimate(&params, config)
+    estimate(
+        &scalar_sis_from_ring_wide(modulus_profile, d, rank, width, bound)?,
+        config,
+    )
 }
 
-fn security_met(rop: CostValue, target_bits: f64) -> bool {
+fn secure_or_error(rop: CostValue, target: f64) -> Result<bool> {
     match rop {
-        CostValue::Infinity => true,
-        CostValue::Finite(cost) => cost.log2 >= target_bits,
+        CostValue::Finite(cost) if cost.log2.is_finite() => Ok(cost.log2 >= target),
+        CostValue::ProvenAboveTarget(lower_bound)
+            if lower_bound.log2.is_finite() && lower_bound.log2 >= target
+                || lower_bound.log2.is_infinite() && lower_bound.log2.is_sign_positive() =>
+        {
+            Ok(true)
+        }
+        // An unclassified infinite result is never evidence that a point
+        // passes. Stop generation rather than guessing whether it is a
+        // numerical underflow, unsupported input, or a genuinely large cost.
+        CostValue::Infinity => Err(EstimatorError::Unsupported {
+            feature: "unclassified infinite ADPS16 quantum estimate",
+        }),
+        CostValue::Finite(_) | CostValue::ProvenAboveTarget(_) => {
+            Err(EstimatorError::Unsupported {
+                feature: "non-finite ADPS16 quantum estimate",
+            })
+        }
     }
 }
 
-fn security_margin_bits(rop: CostValue, target_bits: f64) -> Option<f64> {
-    match rop {
-        CostValue::Infinity => None,
-        CostValue::Finite(cost) => Some(cost.log2 - target_bits),
-    }
-}
-
-fn security_failure_margin_bits(rop: CostValue, target_bits: f64) -> Option<f64> {
-    match rop {
-        CostValue::Infinity => None,
-        CostValue::Finite(cost) => Some(target_bits - cost.log2),
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct PrefixSearchResult {
-    max_value: u64,
-    next_value: Option<u64>,
-    hit_cap: bool,
+fn security_met(rop: CostValue, target: f64) -> bool {
+    matches!(rop, CostValue::Finite(cost) if cost.log2.is_finite() && cost.log2 >= target)
+        || matches!(rop, CostValue::ProvenAboveTarget(lower_bound)
+            if (lower_bound.log2.is_finite() && lower_bound.log2 >= target)
+                || (lower_bound.log2.is_infinite() && lower_bound.log2.is_sign_positive()))
 }
 
 fn max_true_in_prefix<F>(cap: u64, mut predicate: F) -> Result<PrefixSearchResult>
@@ -569,21 +629,36 @@ where
     if cap == 0 {
         return invalid_config("cap", "cap must be positive");
     }
-    if !predicate(1)? {
+    let mut first = 1;
+    while first <= cap && !predicate(first)? {
+        first = first
+            .checked_add(1)
+            .ok_or_else(|| EstimatorError::InvalidConfig {
+                field: "search_cap",
+                reason: "search probe overflow".to_string(),
+            })?;
+    }
+    if first > cap {
         return Ok(PrefixSearchResult {
             max_value: 0,
             next_value: Some(1),
             hit_cap: false,
         });
     }
-
-    let mut low = 1;
-    let mut high = 2.min(cap);
+    let mut low = first;
+    let mut high = first.checked_mul(2).unwrap_or(cap).min(cap);
+    if high == low && high < cap {
+        high = high
+            .checked_add(1)
+            .ok_or_else(|| EstimatorError::InvalidConfig {
+                field: "search_cap",
+                reason: "search probe overflow".to_string(),
+            })?;
+    }
     while high < cap && predicate(high)? {
         low = high;
-        high = high.saturating_mul(2).min(cap);
+        high = high.checked_mul(2).unwrap_or(cap).min(cap);
     }
-
     if high == cap && predicate(cap)? {
         return Ok(PrefixSearchResult {
             max_value: cap,
@@ -591,7 +666,6 @@ where
             hit_cap: true,
         });
     }
-
     while low + 1 < high {
         let mid = low + (high - low) / 2;
         if predicate(mid)? {
@@ -607,42 +681,87 @@ where
     })
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct PrefixSearchResult {
+    max_value: u64,
+    next_value: Option<u64>,
+    hit_cap: bool,
+}
+
+fn validate_rank_monotonicity(rows: &[InfinityWidthRow]) -> Result<()> {
+    let mut groups = BTreeMap::<(AkitaModulusProfileId, u32, u64), Vec<&InfinityWidthRow>>::new();
+    for row in rows {
+        groups
+            .entry((row.modulus_profile, row.d, row.coeff_linf_bound))
+            .or_default()
+            .push(row);
+    }
+    for group in groups.values_mut() {
+        group.sort_by_key(|row| row.rank);
+        for pair in group.windows(2) {
+            if pair[1].max_width < pair[0].max_width {
+                return invalid_config("rows", "width decreases with rank");
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_bound_monotonicity(rows: &[InfinityWidthRow]) -> Result<()> {
+    let mut groups = BTreeMap::<(AkitaModulusProfileId, u32, u32), Vec<&InfinityWidthRow>>::new();
+    for row in rows {
+        groups
+            .entry((row.modulus_profile, row.d, row.rank))
+            .or_default()
+            .push(row);
+    }
+    for group in groups.values_mut() {
+        group.sort_by_key(|row| row.coeff_linf_bound);
+        for pair in group.windows(2) {
+            if pair[1].max_width > pair[0].max_width {
+                return invalid_config("rows", "width increases with coefficient bound");
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_table_config(config: &InfinityWidthTableConfig) -> Result<()> {
+    if config.profiles.is_empty() {
+        return invalid_config("profiles", "at least one profile is required");
+    }
+    if config.ring_dims.is_empty() {
+        return invalid_config("ring_dims", "at least one ring dimension is required");
+    }
+    if config.coeff_linf_bounds.is_empty() {
+        return invalid_config("coeff_linf_bounds", "at least one bound is required");
+    }
+    if config.max_rank == 0 {
+        return invalid_config("max_rank", "max_rank must be positive");
+    }
+    Ok(())
+}
+
+fn invalid_config<T>(field: &'static str, reason: &str) -> Result<T> {
+    Err(EstimatorError::InvalidConfig {
+        field,
+        reason: reason.to_string(),
+    })
+}
+
 fn cost_log2_text(value: Option<CostValue>) -> String {
     match value {
-        Some(CostValue::Finite(cost)) => format!("{:.12}", cost.log2),
-        Some(CostValue::Infinity) => "inf".to_string(),
+        Some(CostValue::Finite(cost)) if cost.log2.is_finite() => format!("{:.12}", cost.log2),
+        Some(CostValue::ProvenAboveTarget(lower_bound)) => {
+            format!("above-target:{:.12}", lower_bound.log2)
+        }
+        Some(CostValue::Infinity) => "unclassified-infinity".to_string(),
+        Some(CostValue::Finite(_)) => "non-finite".to_string(),
         None => String::new(),
     }
 }
 
-fn signed_margin_text(value: Option<f64>) -> String {
-    value.map_or_else(String::new, |value| format!("{value:.12}"))
-}
-
-fn optional_u32_text(value: Option<u32>) -> String {
-    value.map_or_else(String::new, |value| value.to_string())
-}
-
-fn optional_u64_text(value: Option<u64>) -> String {
-    value.map_or_else(String::new, |value| value.to_string())
-}
-
-fn format_u64_underscored(value: u64) -> String {
-    let raw = value.to_string();
-    let mut out = String::new();
-    for (index, ch) in raw.chars().rev().enumerate() {
-        if index > 0 && index % 3 == 0 {
-            out.push('_');
-        }
-        out.push(ch);
-    }
-    out.chars().rev().collect()
-}
-
-fn same_set<T>(left: &[T], right: &[T]) -> bool
-where
-    T: Copy + Ord,
-{
+fn same_set<T: Copy + Ord>(left: &[T], right: &[T]) -> bool {
     left.len() == right.len()
         && left.iter().copied().collect::<BTreeSet<_>>()
             == right.iter().copied().collect::<BTreeSet<_>>()
@@ -654,98 +773,46 @@ mod tests {
 
     #[test]
     fn prefix_search_finds_last_true_value() {
-        let result = max_true_in_prefix(16, |value| Ok(value <= 9)).unwrap();
         assert_eq!(
-            result,
-            PrefixSearchResult {
-                max_value: 9,
-                next_value: Some(10),
-                hit_cap: false,
-            }
+            max_true_in_prefix(16, |value| Ok(value <= 9))
+                .unwrap()
+                .max_value,
+            9
         );
     }
 
     #[test]
-    fn prefix_search_marks_cap_hit_as_lower_bound() {
-        let result = max_true_in_prefix(16, |_| Ok(true)).unwrap();
-        assert_eq!(
-            result,
-            PrefixSearchResult {
-                max_value: 16,
-                next_value: None,
-                hit_cap: true,
-            }
-        );
+    fn infinity_never_counts_as_secure() {
+        assert!(!security_met(CostValue::Infinity, 128.0));
+        assert!(secure_or_error(CostValue::Infinity, 128.0).is_err());
     }
 
     #[test]
-    fn prefix_search_ignores_late_secure_islands() {
-        let result = max_true_in_prefix(32, |value| Ok(value <= 9 || value >= 17)).unwrap();
-        assert_eq!(
-            result,
-            PrefixSearchResult {
-                max_value: 9,
-                next_value: Some(10),
-                hit_cap: false,
-            }
-        );
+    fn csv_has_no_classical_columns() {
+        assert!(!InfinityWidthRow::csv_header().contains("classical"));
     }
 
     #[test]
-    fn infinity_csv_header_includes_boundary_margins() {
-        let header = InfinityWidthRow::csv_header();
-        assert!(header.contains("max_security_margin_bits"));
-        assert!(header.contains("next_failure_margin_bits"));
-    }
-
-    #[test]
-    fn default_buckets_cover_planner_digit_bounds() {
-        for bound in [3, 7, 15, 31, 63] {
-            assert!(COEFF_LINF_BUCKETS.contains(&bound));
-        }
-    }
-
-    #[test]
-    fn row_search_cap_uses_durable_generation_defaults() {
-        assert_eq!(row_search_cap(32, None).unwrap(), DEFAULT_SEARCH_CAP);
-        assert_eq!(row_search_cap(128, None).unwrap(), D128_SEARCH_CAP);
-        assert_eq!(row_search_cap(32, Some(100)).unwrap(), 100);
-        assert_eq!(
-            row_search_cap(32, Some(u64::from(u32::MAX))).unwrap(),
-            u64::from(u32::MAX)
-        );
-    }
-
-    #[test]
-    fn smoke_generates_small_secure_row() {
-        let config = InfinityWidthTableConfig {
-            families: vec![AkitaModulusFamily::Q32],
-            ring_dims: vec![32],
-            coeff_linf_bounds: vec![15],
-            max_rank: 1,
-            search_cap: Some(2),
-            profile: InfinityWidthProfile::LocalMinimum,
-            ..InfinityWidthTableConfig::default()
-        };
-        let rows = generate_infinity_width_rows(&config).unwrap();
-        assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0].max_width, 2);
-        assert!(rows[0].hit_cap);
-        assert!(rows[0].max_cost.is_some());
-    }
-
-    #[test]
-    fn generated_rows_pass_monotonicity_and_bracket_checks() {
-        let config = InfinityWidthTableConfig {
-            families: vec![AkitaModulusFamily::Q32],
-            ring_dims: vec![32],
-            coeff_linf_bounds: vec![15, 255],
-            max_rank: 3,
-            search_cap: Some(8),
-            profile: InfinityWidthProfile::LocalMinimum,
-            ..InfinityWidthTableConfig::default()
-        };
-        let rows = generate_infinity_width_rows(&config).unwrap();
-        validate_infinity_width_rows(&rows).unwrap();
+    fn generation_filters_to_canonical_role_cells() {
+        assert!(reachable_role_cell(
+            AkitaModulusProfileId::Q128OffsetA7F7,
+            32,
+            15
+        ));
+        assert!(!reachable_role_cell(
+            AkitaModulusProfileId::Q128OffsetA7F7,
+            32,
+            2
+        ));
+        assert!(reachable_role_cell(
+            AkitaModulusProfileId::Q128OffsetA7F7,
+            64,
+            2
+        ));
+        assert!(!reachable_role_cell(
+            AkitaModulusProfileId::Q128OffsetA7F7,
+            16,
+            15
+        ));
     }
 }

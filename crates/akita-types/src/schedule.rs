@@ -176,6 +176,15 @@ impl PrecommittedGroupParams {
     }
 }
 
+/// Freezes conservative root-commit metadata for each precommitted group when
+/// building a schedule lookup key from an opening layout.
+pub trait ScheduleKeyPrecommitSource {
+    /// Resolve frozen standalone-commit params for one precommitted group.
+    fn precommitted_group_params(
+        group: PolynomialGroupLayout,
+    ) -> Result<PrecommittedGroupParams, AkitaError>;
+}
+
 /// Canonical runtime schedule lookup key.
 ///
 /// Scalar same-point openings use an empty `precommitteds` vector and store the
@@ -196,6 +205,33 @@ impl AkitaScheduleLookupKey {
             final_group,
             precommitteds: Vec::new(),
         }
+    }
+
+    /// Build the canonical schedule lookup key for `layout`.
+    ///
+    /// Scalar layouts leave `precommitteds` empty. Grouped layouts freeze each
+    /// earlier group through `S` (production uses the conservative commit
+    /// adapter wired by `akita-config`'s `opening_schedule_key`).
+    pub fn from_layout<S: ScheduleKeyPrecommitSource>(
+        layout: &OpeningClaimsLayout,
+    ) -> Result<Self, AkitaError> {
+        layout.check()?;
+        let precommitteds = if layout.num_groups() == 1 {
+            Vec::new()
+        } else {
+            layout
+                .root_precommitted_group_layouts()?
+                .iter()
+                .copied()
+                .map(S::precommitted_group_params)
+                .collect::<Result<Vec<_>, _>>()?
+        };
+        let key = Self {
+            final_group: layout.root_final_group_layout()?,
+            precommitteds,
+        };
+        key.validate()?;
+        Ok(key)
     }
 
     /// Build a multi-group opening layout from this schedule lookup key.

@@ -3,7 +3,7 @@ use crate::PolynomialGroupLayout;
 
 fn sample_params_only() -> LevelParams {
     LevelParams::params_only(
-        SisModulusFamily::Q128,
+        SisModulusProfileId::Q128OffsetA7F7,
         64,
         3,
         2,
@@ -38,8 +38,10 @@ fn sample_multi_group_root_params() -> (LevelParams, OpeningClaimsLayout) {
         ),
         a_key: precommit_lp.a_key.clone(),
         b_key: AjtaiKeyParams::new_unchecked(
-            precommit_lp.b_key.min_security_bits(),
-            precommit_lp.b_key.sis_family(),
+            precommit_lp.b_key.security_policy(),
+            precommit_lp.b_key.sis_table_key().table_digest,
+            precommit_lp.b_key.sis_modulus_profile(),
+            precommit_lp.b_key.sis_table_key().role,
             5,
             precommit_lp.b_key.col_len(),
             precommit_lp.b_key.coeff_linf_bound(),

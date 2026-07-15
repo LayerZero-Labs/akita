@@ -1,28 +1,35 @@
 use super::*;
 use crate::proof::relation::{relation_rhs_layout_for, relation_rhs_row_count};
+use crate::sis::SisMatrixRole;
 
 #[test]
 fn eight_quotient_rows_adds_one_tau1_var_for_evaluation_trace() {
     let mut lp = laid_out_sample_lp();
     lp.a_key = AjtaiKeyParams::new_unchecked(
-        lp.a_key.min_security_bits(),
-        lp.a_key.sis_family(),
+        lp.a_key.security_policy(),
+        lp.a_key.sis_table_key().table_digest,
+        lp.a_key.sis_modulus_profile(),
+        SisMatrixRole::A,
         2,
         lp.a_key.col_len(),
         lp.a_key.coeff_linf_bound(),
         lp.ring_dimension,
     );
     lp.b_key = AjtaiKeyParams::new_unchecked(
-        lp.b_key.min_security_bits(),
-        lp.b_key.sis_family(),
+        lp.b_key.security_policy(),
+        lp.b_key.sis_table_key().table_digest,
+        lp.b_key.sis_modulus_profile(),
+        SisMatrixRole::B,
         3,
         lp.b_key.col_len(),
         lp.b_key.coeff_linf_bound(),
         lp.ring_dimension,
     );
     lp.d_key = AjtaiKeyParams::new_unchecked(
-        lp.d_key.min_security_bits(),
-        lp.d_key.sis_family(),
+        lp.d_key.security_policy(),
+        lp.d_key.sis_table_key().table_digest,
+        lp.d_key.sis_modulus_profile(),
+        SisMatrixRole::D,
         2,
         lp.d_key.col_len(),
         lp.d_key.coeff_linf_bound(),

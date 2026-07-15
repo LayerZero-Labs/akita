@@ -16,7 +16,7 @@ use akita_schedules::{
     fp64_d256_onehot_table,
 };
 #[cfg(feature = "schedules-default")]
-use akita_types::SisModulusFamily;
+use akita_types::SisModulusProfileId;
 
 #[cfg(feature = "schedules-default")]
 const MAX_I8_LOG_BASIS: u32 = 6;
@@ -30,11 +30,12 @@ fn setup_level_params_from_schedule_excludes_terminal_direct() {
     // the preceding Fold steps (which do commit) appear.
     use akita_challenges::SparseChallengeConfig;
     use akita_types::{
-        CleartextWitnessShape, DirectStep, FoldStep, Schedule, SisModulusFamily, Step,
+        CleartextWitnessShape, DirectStep, FoldStep, Schedule, SisModulusProfileId, Step,
     };
 
     let sparse = SparseChallengeConfig::pm1_only(1);
-    let fold_lp = LevelParams::params_only(SisModulusFamily::Q128, 64, 3, 1, 1, 1, sparse);
+    let fold_lp =
+        LevelParams::params_only(SisModulusProfileId::Q128OffsetA7F7, 64, 3, 1, 1, 1, sparse);
 
     let schedule = Schedule {
         steps: vec![
@@ -115,8 +116,8 @@ fn uncommittable_root_direct_schedule_yields_empty_setup_levels_and_loud_get_par
         ) -> Result<akita_challenges::SparseChallengeConfig, AkitaError> {
             Ok(akita_challenges::SparseChallengeConfig::pm1_only(1))
         }
-        fn sis_modulus_family() -> akita_types::SisModulusFamily {
-            akita_types::SisModulusFamily::Q32
+        fn sis_modulus_profile() -> akita_types::SisModulusProfileId {
+            akita_types::SisModulusProfileId::Q32Offset99
         }
         fn max_setup_matrix_size(
             _max_num_vars: usize,
@@ -184,8 +185,8 @@ fn setup_matrix_envelope_does_not_add_conservative_layout() {
             Ok(akita_challenges::SparseChallengeConfig::pm1_only(1))
         }
 
-        fn sis_modulus_family() -> akita_types::SisModulusFamily {
-            akita_types::SisModulusFamily::Q32
+        fn sis_modulus_profile() -> akita_types::SisModulusProfileId {
+            akita_types::SisModulusProfileId::Q32Offset99
         }
 
         fn max_setup_matrix_size(
@@ -537,7 +538,7 @@ fn recursive_setup_envelope_counts_setup_prefix_d_segment() {
 
     fn scalar_level_params() -> LevelParams {
         LevelParams::params_only(
-            akita_types::SisModulusFamily::Q128,
+            akita_types::SisModulusProfileId::Q128OffsetA7F7,
             SETUP_OFFLOAD_D_SETUP,
             3,
             2,
@@ -582,8 +583,10 @@ fn recursive_setup_envelope_counts_setup_prefix_d_segment() {
             .checked_add(prefix_d_width)
             .expect("D width");
         params.d_key = AjtaiKeyParams::new_unchecked(
-            params.d_key.min_security_bits(),
-            params.d_key.sis_family(),
+            params.d_key.security_policy(),
+            params.d_key.sis_table_key().table_digest,
+            params.d_key.sis_modulus_profile(),
+            params.d_key.sis_table_key().role,
             params.d_key.row_len(),
             d_width,
             params.d_key.coeff_linf_bound(),
@@ -654,8 +657,8 @@ fn recursive_setup_envelope_counts_setup_prefix_d_segment() {
             Ok(SparseChallengeConfig::pm1_only(3))
         }
 
-        fn sis_modulus_family() -> akita_types::SisModulusFamily {
-            akita_types::SisModulusFamily::Q128
+        fn sis_modulus_profile() -> akita_types::SisModulusProfileId {
+            akita_types::SisModulusProfileId::Q128OffsetA7F7
         }
 
         fn max_setup_matrix_size(
@@ -723,18 +726,18 @@ fn recursive_setup_envelope_counts_setup_prefix_d_segment() {
 }
 
 #[test]
-fn presets_select_expected_sis_modulus_family() {
+fn presets_select_expected_sis_modulus_profile() {
     assert_eq!(
-        <fp128::D64Full as CommitmentConfig>::sis_modulus_family(),
-        akita_types::SisModulusFamily::Q128
+        <fp128::D64Full as CommitmentConfig>::sis_modulus_profile(),
+        akita_types::SisModulusProfileId::Q128OffsetA7F7
     );
     assert_eq!(
-        <fp32::D64Full as CommitmentConfig>::sis_modulus_family(),
-        akita_types::SisModulusFamily::Q32
+        <fp32::D64Full as CommitmentConfig>::sis_modulus_profile(),
+        akita_types::SisModulusProfileId::Q32Offset99
     );
     assert_eq!(
-        <fp64::D64Full as CommitmentConfig>::sis_modulus_family(),
-        akita_types::SisModulusFamily::Q64
+        <fp64::D64Full as CommitmentConfig>::sis_modulus_profile(),
+        akita_types::SisModulusProfileId::Q64Offset59
     );
 }
 
@@ -803,9 +806,9 @@ fn assert_every_table_entry_materializes<Cfg: CommitmentConfig>(table: Generated
 
 #[cfg(feature = "schedules-default")]
 fn crt_product_for_small_field_cfg<Cfg: CommitmentConfig>() -> (&'static str, u128) {
-    match Cfg::sis_modulus_family() {
-        SisModulusFamily::Q32 => ("Q32/2xi32", 1_152_837_945_367_908_353),
-        SisModulusFamily::Q64 => ("Q64/3xi32", 1_237_793_655_097_897_487_951_597_569),
+    match Cfg::sis_modulus_profile() {
+        SisModulusProfileId::Q32Offset99 => ("Q32/2xi32", 1_152_837_945_367_908_353),
+        SisModulusProfileId::Q64Offset59 => ("Q64/3xi32", 1_237_793_655_097_897_487_951_597_569),
         family => panic!("small-field capacity test does not cover {family:?}"),
     }
 }

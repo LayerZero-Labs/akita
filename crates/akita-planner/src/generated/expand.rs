@@ -32,6 +32,22 @@ use akita_types::{
     PrecommittedGroupParams, PrecommittedLevelParams, SetupContributionMode,
 };
 
+fn sis_key(
+    policy: &PlannerPolicy,
+    role: akita_types::SisMatrixRole,
+    ring_dimension: u32,
+    coeff_linf_bound: u128,
+) -> SisTableKey {
+    SisTableKey {
+        policy: policy.sis_security_policy,
+        table_digest: policy.sis_table_digest,
+        modulus_profile: policy.sis_modulus_profile,
+        role,
+        ring_dimension,
+        coeff_linf_bound,
+    }
+}
+
 fn require_exact_rank(
     role: &str,
     key: SisTableKey,
@@ -41,8 +57,11 @@ fn require_exact_rank(
     let expected = min_secure_rank(key, width as u64).ok_or_else(|| {
         AkitaError::InvalidSetup(format!(
             "no audited {role}-role rank for generated schedule \
-             (min_security_bits={}, family={:?}, d={}, coeff_linf_bound={}, width={width})",
-            key.min_security_bits, key.family, key.ring_dimension, key.coeff_linf_bound
+             (policy={}, profile={:?}, d={}, coeff_linf_bound={}, width={width})",
+            key.policy.name(),
+            key.modulus_profile,
+            key.ring_dimension,
+            key.coeff_linf_bound
         ))
     })?;
     if stored_rank != expected {
@@ -62,8 +81,8 @@ impl GeneratedSetupPrefixGroup {
         log_basis: u32,
     ) -> Result<PrecommittedLevelParams, AkitaError> {
         let d = policy.ring_dimension;
-        let family = policy.sis_family;
-        let min_security_bits = policy.min_sis_security_bits;
+        let sis_modulus_profile = policy.sis_modulus_profile;
+        let sis_policy = policy.sis_security_policy;
         let m_vars = self.m_vars as usize;
         let r_vars = self.r_vars as usize;
         let num_blocks = 1usize.checked_shl(r_vars as u32).ok_or_else(|| {
@@ -93,14 +112,14 @@ impl GeneratedSetupPrefixGroup {
         let no_layout = |role: &str| {
             AkitaError::InvalidSetup(format!(
                 "no audited setup-prefix {role}-role layout for generated schedule \
-                 (family={family:?}, d={d}, log_basis={log_basis})"
+                 (profile={sis_modulus_profile:?}, d={d}, log_basis={log_basis})"
             ))
         };
         let inner_width = decomposed_s_block_ring_count(block_len, num_digits_commit)
             .ok_or_else(|| no_layout("A"))?;
         let a_bucket = rounded_up_role_a_inf_norm(
-            min_security_bits,
-            family,
+            sis_policy,
+            sis_modulus_profile,
             d,
             decomp,
             ring_challenge_cfg,
@@ -115,42 +134,42 @@ impl GeneratedSetupPrefixGroup {
         .ok_or_else(|| no_layout("A"))?;
         require_exact_rank(
             "setup-prefix a",
-            SisTableKey {
-                min_security_bits,
-                family,
-                ring_dimension: d as u32,
-                coeff_linf_bound: a_bucket,
-            },
+            sis_key(policy, akita_types::SisMatrixRole::A, d as u32, a_bucket),
             inner_width,
             self.n_a as usize,
         )?;
-        let b_bucket = rounded_up_collision_inf_norm(min_security_bits, family, d, log_basis)
-            .ok_or_else(|| no_layout("B"))?;
+        let b_bucket = rounded_up_collision_inf_norm(
+            sis_policy,
+            sis_modulus_profile,
+            akita_types::SisMatrixRole::B,
+            d,
+            log_basis,
+        )
+        .ok_or_else(|| no_layout("B"))?;
         let outer_width =
             decomposed_t_ring_count(self.n_a as usize, num_digits_open_val, num_blocks, 1)
                 .ok_or_else(|| no_layout("B"))?;
         require_exact_rank(
             "setup-prefix b",
-            SisTableKey {
-                min_security_bits,
-                family,
-                ring_dimension: d as u32,
-                coeff_linf_bound: b_bucket,
-            },
+            sis_key(policy, akita_types::SisMatrixRole::B, d as u32, b_bucket),
             outer_width,
             self.n_b as usize,
         )?;
         let a_key = AjtaiKeyParams::try_new(
-            min_security_bits,
-            family,
+            sis_policy,
+            policy.sis_table_digest,
+            sis_modulus_profile,
+            akita_types::SisMatrixRole::A,
             self.n_a as usize,
             inner_width,
             a_bucket,
             d,
         )?;
         let b_key = AjtaiKeyParams::try_new(
-            min_security_bits,
-            family,
+            sis_policy,
+            policy.sis_table_digest,
+            sis_modulus_profile,
+            akita_types::SisMatrixRole::B,
             self.n_b as usize,
             outer_width,
             b_bucket,
@@ -266,8 +285,8 @@ impl GeneratedFoldStep {
         }
         let is_root = fold_level == 0;
         let log_basis = self.log_basis;
-        let sis_family = policy.sis_family;
-        let min_security_bits = policy.min_sis_security_bits;
+        let sis_modulus_profile = policy.sis_modulus_profile;
+        let sis_policy = policy.sis_security_policy;
 
         // Block geometry: the root spans `2^m_vars` ring elements per block;
         // recursive levels pack `ceil(num_ring / num_blocks)` instead.
@@ -292,7 +311,7 @@ impl GeneratedFoldStep {
         let no_layout = |role: &str| {
             AkitaError::InvalidSetup(format!(
                 "no audited {role}-role layout for generated schedule \
-                 (family={sis_family:?}, d={ring_d}, log_basis={log_basis})"
+                 (profile={sis_modulus_profile:?}, d={ring_d}, log_basis={log_basis})"
             ))
         };
         let decomp = DecompositionParams {
@@ -306,8 +325,8 @@ impl GeneratedFoldStep {
         let inner_width = decomposed_s_block_ring_count(block_len, num_digits_commit)
             .ok_or_else(|| no_layout("A"))?;
         let a_bucket = rounded_up_role_a_inf_norm(
-            min_security_bits,
-            sis_family,
+            sis_policy,
+            sis_modulus_profile,
             ring_d,
             decomp,
             &ring_challenge_cfg,
@@ -322,19 +341,24 @@ impl GeneratedFoldStep {
         .ok_or_else(|| no_layout("A"))?;
         require_exact_rank(
             "a",
-            SisTableKey {
-                min_security_bits,
-                family: sis_family,
-                ring_dimension: ring_d as u32,
-                coeff_linf_bound: a_bucket,
-            },
+            sis_key(
+                policy,
+                akita_types::SisMatrixRole::A,
+                ring_d as u32,
+                a_bucket,
+            ),
             inner_width,
             self.n_a as usize,
         )?;
 
-        let b_bucket =
-            rounded_up_collision_inf_norm(min_security_bits, sis_family, ring_d, log_basis)
-                .ok_or_else(|| no_layout("B"))?;
+        let b_bucket = rounded_up_collision_inf_norm(
+            sis_policy,
+            sis_modulus_profile,
+            akita_types::SisMatrixRole::B,
+            ring_d,
+            log_basis,
+        )
+        .ok_or_else(|| no_layout("B"))?;
         let outer_width = decomposed_t_ring_count(
             self.n_a as usize,
             num_digits_open_val,
@@ -343,9 +367,14 @@ impl GeneratedFoldStep {
         )
         .ok_or_else(|| no_layout("B"))?;
 
-        let d_bucket =
-            rounded_up_collision_inf_norm(min_security_bits, sis_family, ring_d, log_basis)
-                .ok_or_else(|| no_layout("D"))?;
+        let d_bucket = rounded_up_collision_inf_norm(
+            sis_policy,
+            sis_modulus_profile,
+            akita_types::SisMatrixRole::D,
+            ring_d,
+            log_basis,
+        )
+        .ok_or_else(|| no_layout("D"))?;
         let main_d_width = decomposed_w_ring_count(num_digits_open_val, num_blocks, num_claims)
             .ok_or_else(|| no_layout("D"))?;
         let setup_prefix = if let Some(group) = setup_prefix_group {
@@ -396,23 +425,23 @@ impl GeneratedFoldStep {
         // Size the committed B matrix at the full outer width.
         require_exact_rank(
             "b",
-            SisTableKey {
-                min_security_bits,
-                family: sis_family,
-                ring_dimension: ring_d as u32,
-                coeff_linf_bound: b_bucket,
-            },
+            sis_key(
+                policy,
+                akita_types::SisMatrixRole::B,
+                ring_d as u32,
+                b_bucket,
+            ),
             outer_width,
             self.n_b as usize,
         )?;
         require_exact_rank(
             "d",
-            SisTableKey {
-                min_security_bits,
-                family: sis_family,
-                ring_dimension: ring_d as u32,
-                coeff_linf_bound: d_bucket,
-            },
+            sis_key(
+                policy,
+                akita_types::SisMatrixRole::D,
+                ring_d as u32,
+                d_bucket,
+            ),
             d_matrix_width,
             self.n_d as usize,
         )?;
@@ -424,24 +453,30 @@ impl GeneratedFoldStep {
             ring_dimension: ring_d,
             log_basis,
             a_key: AjtaiKeyParams::try_new(
-                min_security_bits,
-                sis_family,
+                sis_policy,
+                policy.sis_table_digest,
+                sis_modulus_profile,
+                akita_types::SisMatrixRole::A,
                 self.n_a as usize,
                 inner_width,
                 a_bucket,
                 ring_d,
             )?,
             b_key: AjtaiKeyParams::try_new(
-                min_security_bits,
-                sis_family,
+                sis_policy,
+                policy.sis_table_digest,
+                sis_modulus_profile,
+                akita_types::SisMatrixRole::B,
                 self.n_b as usize,
                 outer_width,
                 b_bucket,
                 ring_d,
             )?,
             d_key: AjtaiKeyParams::try_new(
-                min_security_bits,
-                sis_family,
+                sis_policy,
+                policy.sis_table_digest,
+                sis_modulus_profile,
+                akita_types::SisMatrixRole::D,
                 self.n_d as usize,
                 d_matrix_width,
                 d_bucket,
@@ -529,8 +564,8 @@ impl GeneratedFoldStep {
         }
 
         let log_basis = self.log_basis;
-        let sis_family = policy.sis_family;
-        let min_security_bits = policy.min_sis_security_bits;
+        let sis_modulus_profile = policy.sis_modulus_profile;
+        let sis_policy = policy.sis_security_policy;
         let m_vars = self.m_vars as usize;
         let r_vars = self.r_vars as usize;
         let num_blocks = 1usize.checked_shl(r_vars as u32).ok_or_else(|| {
@@ -547,7 +582,7 @@ impl GeneratedFoldStep {
         let no_layout = |role: &str| {
             AkitaError::InvalidSetup(format!(
                 "no audited {role}-role layout for generated multi-group root \
-                 (family={sis_family:?}, d={ring_d}, log_basis={log_basis})"
+                 (profile={sis_modulus_profile:?}, d={ring_d}, log_basis={log_basis})"
             ))
         };
         let decomp = DecompositionParams {
@@ -561,8 +596,8 @@ impl GeneratedFoldStep {
         let inner_width = decomposed_s_block_ring_count(block_len, num_digits_commit)
             .ok_or_else(|| no_layout("A"))?;
         let a_bucket = rounded_up_role_a_inf_norm(
-            min_security_bits,
-            sis_family,
+            sis_policy,
+            sis_modulus_profile,
             ring_d,
             decomp,
             &ring_challenge_cfg,
@@ -577,19 +612,24 @@ impl GeneratedFoldStep {
         .ok_or_else(|| no_layout("A"))?;
         require_exact_rank(
             "a",
-            SisTableKey {
-                min_security_bits,
-                family: sis_family,
-                ring_dimension: ring_d as u32,
-                coeff_linf_bound: a_bucket,
-            },
+            sis_key(
+                policy,
+                akita_types::SisMatrixRole::A,
+                ring_d as u32,
+                a_bucket,
+            ),
             inner_width,
             self.n_a as usize,
         )?;
 
-        let b_bucket =
-            rounded_up_collision_inf_norm(min_security_bits, sis_family, ring_d, log_basis)
-                .ok_or_else(|| no_layout("B"))?;
+        let b_bucket = rounded_up_collision_inf_norm(
+            sis_policy,
+            sis_modulus_profile,
+            akita_types::SisMatrixRole::B,
+            ring_d,
+            log_basis,
+        )
+        .ok_or_else(|| no_layout("B"))?;
         let outer_width = decomposed_t_ring_count(
             self.n_a as usize,
             num_digits_open_val,
@@ -605,9 +645,14 @@ impl GeneratedFoldStep {
             .ok_or_else(|| {
                 AkitaError::InvalidSetup("generated multi-group D width overflow".into())
             })?;
-        let d_bucket =
-            rounded_up_collision_inf_norm(min_security_bits, sis_family, ring_d, log_basis)
-                .ok_or_else(|| no_layout("D"))?;
+        let d_bucket = rounded_up_collision_inf_norm(
+            sis_policy,
+            sis_modulus_profile,
+            akita_types::SisMatrixRole::D,
+            ring_d,
+            log_basis,
+        )
+        .ok_or_else(|| no_layout("D"))?;
 
         let onehot_chunk_size = if policy.decomposition.log_commit_bound == 1 {
             policy.onehot_chunk_size
@@ -619,24 +664,30 @@ impl GeneratedFoldStep {
             ring_dimension: ring_d,
             log_basis,
             a_key: AjtaiKeyParams::try_new(
-                min_security_bits,
-                sis_family,
+                sis_policy,
+                policy.sis_table_digest,
+                sis_modulus_profile,
+                akita_types::SisMatrixRole::A,
                 self.n_a as usize,
                 inner_width,
                 a_bucket,
                 ring_d,
             )?,
             b_key: AjtaiKeyParams::try_new(
-                min_security_bits,
-                sis_family,
+                sis_policy,
+                policy.sis_table_digest,
+                sis_modulus_profile,
+                akita_types::SisMatrixRole::B,
                 self.n_b as usize,
                 outer_width,
                 b_bucket,
                 ring_d,
             )?,
             d_key: AjtaiKeyParams::try_new(
-                min_security_bits,
-                sis_family,
+                sis_policy,
+                policy.sis_table_digest,
+                sis_modulus_profile,
+                akita_types::SisMatrixRole::D,
                 self.n_d as usize,
                 d_matrix_width,
                 d_bucket,

@@ -7,52 +7,52 @@ use crate::{
     params::{akita_q128, akita_q32, akita_q64, Bound, SisNorm, SisParameters},
 };
 
-/// Supported Akita modulus families for golden and table generation.
+/// Supported Akita exact modulus profiles for golden and table generation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum AkitaModulusFamily {
+pub enum AkitaModulusProfileId {
     /// `2^32 - 99`.
-    Q32,
+    Q32Offset99,
     /// `2^64 - 59`.
-    Q64,
+    Q64Offset59,
     /// `2^128 - (2^32 - 22537)`.
-    Q128,
+    Q128OffsetA7F7,
 }
 
-impl AkitaModulusFamily {
-    /// Parse a family label such as `"q32"`.
+impl AkitaModulusProfileId {
+    /// Parse a profile label such as `"q32"`.
     ///
     /// # Errors
     ///
     /// Returns an error when the label is unknown.
     pub fn parse(label: &str) -> Result<Self> {
         match label {
-            "q32" => Ok(Self::Q32),
-            "q64" => Ok(Self::Q64),
-            "q128" => Ok(Self::Q128),
+            "q32" | "Q32Offset99" => Ok(Self::Q32Offset99),
+            "q64" | "Q64Offset59" => Ok(Self::Q64Offset59),
+            "q128" | "Q128OffsetA7F7" => Ok(Self::Q128OffsetA7F7),
             _ => Err(EstimatorError::InvalidParameter {
-                field: "family",
-                reason: format!("unknown Akita modulus family {label:?}"),
+                field: "modulus_profile",
+                reason: format!("unknown Akita modulus profile {label:?}"),
             }),
         }
     }
 
-    /// Return the representative modulus for this family.
+    /// Return the exact modulus for this profile.
     #[must_use]
     pub fn modulus(self) -> BigUint {
         match self {
-            Self::Q32 => akita_q32(),
-            Self::Q64 => akita_q64(),
-            Self::Q128 => akita_q128(),
+            Self::Q32Offset99 => akita_q32(),
+            Self::Q64Offset59 => akita_q64(),
+            Self::Q128OffsetA7F7 => akita_q128(),
         }
     }
 
-    /// Return the stable lowercase table label for this family.
+    /// Return the stable lowercase table label for this profile.
     #[must_use]
     pub const fn label(self) -> &'static str {
         match self {
-            Self::Q32 => "q32",
-            Self::Q64 => "q64",
-            Self::Q128 => "q128",
+            Self::Q32Offset99 => "q32",
+            Self::Q64Offset59 => "q64",
+            Self::Q128OffsetA7F7 => "q128",
         }
     }
 }
@@ -66,7 +66,7 @@ impl AkitaModulusFamily {
 ///
 /// Returns validation errors when any dimension is zero.
 pub fn scalar_sis_from_ring(
-    family: AkitaModulusFamily,
+    family: AkitaModulusProfileId,
     ring_dimension: u32,
     rank: u32,
     width: u32,
@@ -91,7 +91,7 @@ pub fn scalar_sis_from_ring(
 /// Returns validation errors when any dimension is zero or the scalar row count
 /// overflows `u32`.
 pub fn scalar_sis_from_ring_wide(
-    family: AkitaModulusFamily,
+    family: AkitaModulusProfileId,
     ring_dimension: u32,
     rank: u32,
     width: u64,
@@ -137,7 +137,7 @@ pub fn scalar_sis_from_ring_wide(
 /// Returns validation errors when any dimension is zero or a scalar dimension
 /// overflows.
 pub fn scalar_sis_from_ring_euclidean(
-    family: AkitaModulusFamily,
+    family: AkitaModulusProfileId,
     ring_dimension: u32,
     rank: u32,
     width: u64,
@@ -178,7 +178,8 @@ mod tests {
 
     #[test]
     fn scalar_mapping_matches_golden_convention() {
-        let params = scalar_sis_from_ring(AkitaModulusFamily::Q32, 32, 1, 2, 15).unwrap();
+        let params =
+            scalar_sis_from_ring(AkitaModulusProfileId::Q32Offset99, 32, 1, 2, 15).unwrap();
         assert_eq!(params.n, 32);
         assert_eq!(params.m, Some(64));
         assert_eq!(params.length_bound, Bound::from_u64(15));
@@ -187,7 +188,8 @@ mod tests {
     #[test]
     fn euclidean_scalar_mapping_uses_exact_l2_bound() {
         let params =
-            scalar_sis_from_ring_euclidean(AkitaModulusFamily::Q32, 32, 1, 2, 128).unwrap();
+            scalar_sis_from_ring_euclidean(AkitaModulusProfileId::Q32Offset99, 32, 1, 2, 128)
+                .unwrap();
         assert_eq!(params.n, 32);
         assert_eq!(params.m, Some(64));
         assert_eq!(

@@ -187,12 +187,31 @@ mod tests {
     use super::*;
     use crate::{
         AjtaiKeyParams, PolynomialGroupLayout, PrecommittedGroupParams, PrecommittedLevelParams,
-        SisModulusFamily,
+        SisModulusProfileId,
     };
     use akita_field::Prime32Offset99 as F;
 
     fn test_prefix_id() -> SetupPrefixSlotId {
-        let key = AjtaiKeyParams::new_unchecked(128, SisModulusFamily::Q32, 1, 1, 1, 32);
+        let a_key = AjtaiKeyParams::new_unchecked(
+            crate::sis::DEFAULT_SIS_SECURITY_POLICY,
+            crate::sis::SisTableDigest::CURRENT,
+            SisModulusProfileId::Q32Offset99,
+            crate::sis::SisMatrixRole::A,
+            1,
+            1,
+            1,
+            32,
+        );
+        let b_key = AjtaiKeyParams::new_unchecked(
+            crate::sis::DEFAULT_SIS_SECURITY_POLICY,
+            crate::sis::SisTableDigest::CURRENT,
+            SisModulusProfileId::Q32Offset99,
+            crate::sis::SisMatrixRole::B,
+            1,
+            1,
+            1,
+            32,
+        );
         SetupPrefixSlotId {
             d_setup: 32,
             natural_len: 1,
@@ -205,8 +224,8 @@ mod tests {
                     n_a: 1,
                     conservative_n_b: 1,
                 },
-                a_key: key.clone(),
-                b_key: key,
+                a_key,
+                b_key,
                 num_blocks: 1,
                 block_len: 1,
                 num_digits_commit: 1,

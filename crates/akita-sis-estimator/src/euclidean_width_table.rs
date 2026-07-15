@@ -1,7 +1,7 @@
 //! Euclidean L2 max-width table generation helpers.
 
 use crate::{
-    akita::{scalar_sis_from_ring_euclidean, AkitaModulusFamily},
+    akita::{scalar_sis_from_ring_euclidean, AkitaModulusProfileId},
     config::EstimateConfig,
     cost::{CostValue, EstimateTag, LatticeCost, LogCost},
     error::{EstimatorError, Result},
@@ -25,17 +25,17 @@ pub const COEFF_LINF_BUCKETS: &[u64] = &[
     67_108_863,
 ];
 /// Modulus families covered by Akita SIS table generation.
-pub const FAMILIES: &[AkitaModulusFamily] = &[
-    AkitaModulusFamily::Q32,
-    AkitaModulusFamily::Q64,
-    AkitaModulusFamily::Q128,
+pub const FAMILIES: &[AkitaModulusProfileId] = &[
+    AkitaModulusProfileId::Q32Offset99,
+    AkitaModulusProfileId::Q64Offset59,
+    AkitaModulusProfileId::Q128OffsetA7F7,
 ];
 
 /// One Euclidean max-width generation request.
 #[derive(Clone, Debug, PartialEq)]
 pub struct EuclideanWidthTableConfig {
     /// Modulus families to generate.
-    pub families: Vec<AkitaModulusFamily>,
+    pub families: Vec<AkitaModulusProfileId>,
     /// Ring dimensions to generate.
     pub ring_dims: Vec<u32>,
     /// Squared L2 collision keys to generate.
@@ -76,7 +76,7 @@ pub fn is_full_euclidean_width_table_config(config: &EuclideanWidthTableConfig) 
 #[derive(Clone, Debug, PartialEq)]
 pub struct EuclideanWidthRow {
     /// Modulus family.
-    pub family: AkitaModulusFamily,
+    pub family: AkitaModulusProfileId,
     /// Ring dimension.
     pub d: u32,
     /// Module rank.
@@ -185,7 +185,7 @@ pub fn generate_euclidean_width_rows(
 
 #[cfg(feature = "parallel")]
 fn generate_rows_from_work(
-    work: Vec<(AkitaModulusFamily, u32, u32, u128)>,
+    work: Vec<(AkitaModulusProfileId, u32, u32, u128)>,
     config: &EuclideanWidthTableConfig,
     estimator_config: &EstimateConfig,
 ) -> Result<Vec<EuclideanWidthRow>> {
@@ -198,7 +198,7 @@ fn generate_rows_from_work(
 
 #[cfg(not(feature = "parallel"))]
 fn generate_rows_from_work(
-    work: Vec<(AkitaModulusFamily, u32, u32, u128)>,
+    work: Vec<(AkitaModulusProfileId, u32, u32, u128)>,
     config: &EuclideanWidthTableConfig,
     estimator_config: &EstimateConfig,
 ) -> Result<Vec<EuclideanWidthRow>> {
@@ -233,8 +233,9 @@ pub fn validate_euclidean_width_rows(rows: &[EuclideanWidthRow]) -> Result<()> {
 pub fn rust_table_arms(
     rows: &[EuclideanWidthRow],
     max_rank: u32,
-) -> BTreeMap<AkitaModulusFamily, Vec<String>> {
-    let mut grouped = BTreeMap::<(AkitaModulusFamily, u32, u128), Vec<&EuclideanWidthRow>>::new();
+) -> BTreeMap<AkitaModulusProfileId, Vec<String>> {
+    let mut grouped =
+        BTreeMap::<(AkitaModulusProfileId, u32, u128), Vec<&EuclideanWidthRow>>::new();
     for row in rows {
         grouped
             .entry((row.family, row.d, row.collision_l2_sq))
@@ -242,7 +243,7 @@ pub fn rust_table_arms(
             .push(row);
     }
 
-    let mut arms = BTreeMap::<AkitaModulusFamily, Vec<String>>::new();
+    let mut arms = BTreeMap::<AkitaModulusProfileId, Vec<String>>::new();
     for ((family, d, collision), mut group) in grouped {
         group.sort_by_key(|row| row.rank);
         if group.len() != max_rank as usize {
@@ -264,7 +265,7 @@ pub fn rust_table_arms(
 }
 
 fn validate_rank_monotonicity(rows: &[EuclideanWidthRow]) -> Result<()> {
-    let mut groups = BTreeMap::<(AkitaModulusFamily, u32, u128), Vec<&EuclideanWidthRow>>::new();
+    let mut groups = BTreeMap::<(AkitaModulusProfileId, u32, u128), Vec<&EuclideanWidthRow>>::new();
     for row in rows {
         groups
             .entry((row.family, row.d, row.collision_l2_sq))
@@ -316,7 +317,7 @@ fn invalid_config<T>(field: &'static str, reason: &str) -> Result<T> {
 }
 
 fn max_secure_width_row(
-    family: AkitaModulusFamily,
+    family: AkitaModulusProfileId,
     d: u32,
     rank: u32,
     collision_l2_sq: u128,
@@ -372,7 +373,7 @@ fn row_search_cap(d: u32, requested_cap: Option<u64>) -> Result<u64> {
 }
 
 fn estimate_width(
-    family: AkitaModulusFamily,
+    family: AkitaModulusProfileId,
     d: u32,
     rank: u32,
     width: u64,
@@ -409,6 +410,7 @@ fn trivially_easy_cost() -> LatticeCost {
 fn security_met(rop: CostValue, target_bits: f64) -> bool {
     match rop {
         CostValue::Infinity => true,
+        CostValue::ProvenAboveTarget(lower_bound) => lower_bound.log2 >= target_bits,
         CostValue::Finite(cost) => cost.log2 >= target_bits,
     }
 }
@@ -464,6 +466,9 @@ where
 fn cost_log2_text(value: Option<CostValue>) -> String {
     match value {
         Some(CostValue::Finite(cost)) => format!("{:.12}", cost.log2),
+        Some(CostValue::ProvenAboveTarget(lower_bound)) => {
+            format!("above-target:{:.12}", lower_bound.log2)
+        }
         Some(CostValue::Infinity) => "inf".to_string(),
         None => String::new(),
     }
@@ -509,7 +514,7 @@ mod tests {
     #[test]
     fn smoke_generates_euclidean_row() {
         let config = EuclideanWidthTableConfig {
-            families: vec![AkitaModulusFamily::Q32],
+            families: vec![AkitaModulusProfileId::Q32Offset99],
             ring_dims: vec![32],
             collision_l2_sq: vec![128],
             max_rank: 1,
@@ -528,7 +533,7 @@ mod tests {
         ));
         assert!(!is_full_euclidean_width_table_config(
             &EuclideanWidthTableConfig {
-                families: vec![AkitaModulusFamily::Q32],
+                families: vec![AkitaModulusProfileId::Q32Offset99],
                 ..EuclideanWidthTableConfig::default()
             }
         ));

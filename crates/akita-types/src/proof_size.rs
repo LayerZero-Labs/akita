@@ -154,7 +154,8 @@ mod tests {
     use crate::{
         direct_witness_bytes, AkitaIntermediateStage2Proof, AkitaLevelProof, AkitaStage1Proof,
         AkitaStage1StageProof, AkitaStage2Proof, CleartextWitnessProof, CleartextWitnessShape,
-        RingVec, SetupSumcheckProof, SisModulusFamily, TerminalLevelProof, SETUP_SUMCHECK_DEGREE,
+        RingVec, SetupSumcheckProof, SisModulusProfileId, TerminalLevelProof,
+        SETUP_SUMCHECK_DEGREE,
     };
 
     type F = Prime128OffsetA7F7;
@@ -300,13 +301,20 @@ mod tests {
     fn planned_level_bytes_match_two_stage_payload_at_all_bases() {
         const D: usize = 64;
         let fold_challenge_config = SparseChallengeConfig::pm1_only(3);
-        let next_lp =
-            LevelParams::params_only(SisModulusFamily::Q128, D, 2, 2, 3, 2, fold_challenge_config);
+        let next_lp = LevelParams::params_only(
+            SisModulusProfileId::Q128OffsetA7F7,
+            D,
+            2,
+            2,
+            3,
+            2,
+            fold_challenge_config,
+        );
         let next_w_len = D * 8;
 
         for log_basis in 2..=6 {
             let lp = LevelParams::params_only(
-                SisModulusFamily::Q128,
+                SisModulusProfileId::Q128OffsetA7F7,
                 D,
                 log_basis,
                 2,
@@ -367,15 +375,22 @@ mod tests {
         // `stage3_setup_product_bytes`, with no other field affected.
         const D: usize = 64;
         let fold_challenge_config = SparseChallengeConfig::pm1_only(3);
-        let next_lp =
-            LevelParams::params_only(SisModulusFamily::Q128, D, 2, 2, 3, 2, fold_challenge_config);
+        let next_lp = LevelParams::params_only(
+            SisModulusProfileId::Q128OffsetA7F7,
+            D,
+            2,
+            2,
+            3,
+            2,
+            fold_challenge_config,
+        );
         let next_w_len = D * 8;
         // 100 is not a power of two, so the verifier pads lambda to 128.
         let setup_ring_len = 100usize;
 
         for log_basis in 2..=6 {
             let lp = LevelParams::params_only(
-                SisModulusFamily::Q128,
+                SisModulusProfileId::Q128OffsetA7F7,
                 D,
                 log_basis,
                 2,
@@ -422,7 +437,7 @@ mod tests {
 
         for log_basis in 2..=6 {
             let lp = LevelParams::params_only(
-                SisModulusFamily::Q128,
+                SisModulusProfileId::Q128OffsetA7F7,
                 D,
                 log_basis,
                 2,

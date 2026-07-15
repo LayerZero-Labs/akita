@@ -247,7 +247,7 @@ mod tests {
     use super::*;
     use crate::layout::LevelParams;
     use crate::schedule::{DirectStep, FoldStep, Schedule, Step};
-    use crate::sis::SisModulusFamily;
+    use crate::sis::SisModulusProfileId;
     use crate::CleartextWitnessShape;
     use akita_challenges::SparseChallengeConfig;
     use akita_field::AkitaError;
@@ -266,7 +266,7 @@ mod tests {
         block_len: usize,
     ) -> LevelParams {
         let mut params = LevelParams::params_only(
-            SisModulusFamily::Q128,
+            SisModulusProfileId::Q128OffsetA7F7,
             ring_dimension,
             3,
             1,
@@ -477,8 +477,8 @@ mod tests {
 
     #[test]
     fn accepts_nested_per_role_dims_with_matching_keys() {
-        use crate::layout::{AjtaiKeyParams, SisModulusFamily};
-        use crate::sis::DEFAULT_SIS_SECURITY_BITS;
+        use crate::layout::{AjtaiKeyParams, SisModulusProfileId};
+        use crate::sis::DEFAULT_SIS_SECURITY_POLICY;
 
         let mut params = LevelParams::log_basis_stub(3);
         params.ring_dimension = 256;
@@ -488,24 +488,30 @@ mod tests {
         params.num_digits_open = 2;
         params.fold_challenge_config = fold_challenge_config_for_ring_dim(params.ring_dimension);
         params.a_key = AjtaiKeyParams::new_unchecked(
-            DEFAULT_SIS_SECURITY_BITS,
-            SisModulusFamily::Q128,
+            DEFAULT_SIS_SECURITY_POLICY,
+            crate::sis::SisTableDigest::CURRENT,
+            SisModulusProfileId::Q128OffsetA7F7,
+            crate::sis::SisMatrixRole::A,
             1,
             16,
             0,
             256,
         );
         params.b_key = AjtaiKeyParams::new_unchecked(
-            DEFAULT_SIS_SECURITY_BITS,
-            SisModulusFamily::Q128,
+            DEFAULT_SIS_SECURITY_POLICY,
+            crate::sis::SisTableDigest::CURRENT,
+            SisModulusProfileId::Q128OffsetA7F7,
+            crate::sis::SisMatrixRole::B,
             1,
             16,
             0,
             128,
         );
         params.d_key = AjtaiKeyParams::new_unchecked(
-            DEFAULT_SIS_SECURITY_BITS,
-            SisModulusFamily::Q128,
+            DEFAULT_SIS_SECURITY_POLICY,
+            crate::sis::SisTableDigest::CURRENT,
+            SisModulusProfileId::Q128OffsetA7F7,
+            crate::sis::SisMatrixRole::D,
             1,
             16,
             0,
@@ -536,8 +542,8 @@ mod tests {
 
     #[test]
     fn accepts_nested_role_dims_with_opening_at_d32() {
-        use crate::layout::{AjtaiKeyParams, SisModulusFamily};
-        use crate::sis::DEFAULT_SIS_SECURITY_BITS;
+        use crate::layout::{AjtaiKeyParams, SisModulusProfileId};
+        use crate::sis::DEFAULT_SIS_SECURITY_POLICY;
 
         let mut params = LevelParams::log_basis_stub(3);
         params.ring_dimension = 128;
@@ -547,24 +553,30 @@ mod tests {
         params.num_digits_open = 2;
         params.fold_challenge_config = fold_challenge_config_for_ring_dim(params.ring_dimension);
         params.a_key = AjtaiKeyParams::new_unchecked(
-            DEFAULT_SIS_SECURITY_BITS,
-            SisModulusFamily::Q128,
+            DEFAULT_SIS_SECURITY_POLICY,
+            crate::sis::SisTableDigest::CURRENT,
+            SisModulusProfileId::Q128OffsetA7F7,
+            crate::sis::SisMatrixRole::A,
             1,
             16,
             0,
             128,
         );
         params.b_key = AjtaiKeyParams::new_unchecked(
-            DEFAULT_SIS_SECURITY_BITS,
-            SisModulusFamily::Q128,
+            DEFAULT_SIS_SECURITY_POLICY,
+            crate::sis::SisTableDigest::CURRENT,
+            SisModulusProfileId::Q128OffsetA7F7,
+            crate::sis::SisMatrixRole::B,
             1,
             16,
             0,
             64,
         );
         params.d_key = AjtaiKeyParams::new_unchecked(
-            DEFAULT_SIS_SECURITY_BITS,
-            SisModulusFamily::Q128,
+            DEFAULT_SIS_SECURITY_POLICY,
+            crate::sis::SisTableDigest::CURRENT,
+            SisModulusProfileId::Q128OffsetA7F7,
+            crate::sis::SisMatrixRole::D,
             1,
             16,
             0,

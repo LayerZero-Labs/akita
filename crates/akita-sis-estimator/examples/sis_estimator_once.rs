@@ -1,6 +1,6 @@
 use akita_sis_estimator::{
-    cost_infinity, cost_zeta, estimate, scalar_sis_from_ring, AkitaModulusFamily, Bound, CostValue,
-    EstimateConfig, OptimizerConfig, SearchMode, SisNorm, SisParameters,
+    cost_infinity, cost_zeta, estimate, scalar_sis_from_ring, AkitaModulusProfileId, Bound,
+    CostValue, EstimateConfig, OptimizerConfig, SearchMode, SisNorm, SisParameters,
 };
 use std::{
     env,
@@ -27,7 +27,7 @@ enum Profile {
 struct Args {
     mode: Mode,
     profile: Profile,
-    family: AkitaModulusFamily,
+    family: AkitaModulusProfileId,
     raw_n: Option<u32>,
     raw_m: Option<u64>,
     d: u32,
@@ -120,7 +120,7 @@ impl Args {
         let mut parsed = Self {
             mode: Mode::Estimate,
             profile: Profile::LocalMinimum,
-            family: AkitaModulusFamily::Q32,
+            family: AkitaModulusProfileId::Q32Offset99,
             raw_n: None,
             raw_m: None,
             d: 0,
@@ -143,7 +143,7 @@ impl Args {
                         "--mode" => parsed.mode = parse_mode(&value),
                         "--profile" => parsed.profile = parse_profile(&value),
                         "--family" => {
-                            parsed.family = AkitaModulusFamily::parse(&value)
+                            parsed.family = AkitaModulusProfileId::parse(&value)
                                 .unwrap_or_else(|error| fatal(&format!("{error}")));
                         }
                         "--n" => parsed.raw_n = Some(parse(&value, "--n")),
@@ -265,6 +265,9 @@ where
 fn log2_text(value: CostValue) -> String {
     match value {
         CostValue::Finite(cost) => format!("{:.12}", cost.log2),
+        CostValue::ProvenAboveTarget(lower_bound) => {
+            format!("above-target:{:.12}", lower_bound.log2)
+        }
         CostValue::Infinity => "inf".to_string(),
     }
 }

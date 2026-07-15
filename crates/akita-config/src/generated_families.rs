@@ -148,8 +148,18 @@ fn group_batch_keys<Cfg: CommitmentConfig>(
     let min_precommitted_num_vars = family
         .min_num_vars
         .max(policy_of::<Cfg>().ring_dimension.trailing_zeros() as usize + 1);
+    let mut mains = family_keys(family)?;
+    // Scalar table emission uses `DEFAULT_NUM_POLYS = [1, 4]`, but the recursive
+    // multi-group profile opens a 2-polynomial final group. Enumerate that main
+    // shape here so regen keeps the catalog hit (PR #292 hand-inserted one row;
+    // a full table regen otherwise drops it and forces DP fallback).
+    if !family.num_polys.contains(&2) {
+        for nv in family.min_num_vars..=family.max_num_vars {
+            mains.push(PolynomialGroupLayout::new(nv, 2));
+        }
+    }
     let mut keys = Vec::new();
-    for main in family_keys(family)? {
+    for main in mains {
         let pre_num_vars = main.num_vars() / 2;
         if pre_num_vars < min_precommitted_num_vars {
             continue;

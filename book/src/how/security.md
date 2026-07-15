@@ -9,28 +9,33 @@ model. Keep the marketing claim separate from audited reality. See
 
 ## SIS / MSIS and Ajtai sizing
 
-Production Ajtai key sizing uses generated Module-SIS width tables keyed by the
-minimum security floor, modulus family, ring dimension, and coefficient-`L∞`
-bound:
+Production Ajtai key sizing uses generated Module-SIS width tables. The
+generator certifies scalar cutoffs `(B, n) -> max m` under
+`Quantum128BitADPS16`, and the checked-in runtime artifact stores the
+Module-SIS projection:
 
 ```text
-(min_security_bits, family, ring_dimension, coeff_linf_bound)
-    -> max secure width by module rank
+(sis_security_policy, modulus_profile, d, coeff_linf_bound)
+    -> max secure ring widths by module rank
 ```
 
-The first shipped production floor is 138 bits. A lookup for any other floor
-returns `None` until a matching table is generated and checked in.
+where `width[r - 1] = cutoff_m(B, n = r * d) / d`.
 
-The checked-in 138-bit table was generated with the `local-minimum` optimizer
-profile. That profile uses Python-compatible local beta and zeta search inside
-each table row. Parallel generation parallelizes rows; it does not make one
-row's optimizer exhaustive.
+The shipped policy is `Quantum128BitADPS16`. It accepts a row only when the
+exhaustive ADPS16 quantum certificate reports a finite score or a classified
+above-target lower bound of at least 128 bits. A lookup for an unsupported
+policy, exact modulus profile, role, or scalar cell fails closed.
 
-CSV table-generation artifacts include `max_security_margin_bits` and
-`next_failure_margin_bits` so review can see how close each binary-searched
-width boundary is to the target floor. Narrow margins are not verifier-visible
-state, but they are sensitive provenance and should be audited before treating a
-new table as a durable security floor.
+The checked-in policy table may use `local-minimum` only to discover a candidate
+boundary. Every emitted boundary and its immediate rejected successor are
+certified by exhaustive search over the configured beta and zeta domain.
+Parallel generation parallelizes independent rows and does not change the
+certificate domain or output ordering.
+
+CSV table-generation artifacts include the certified accepted and rejected
+successor witnesses, cutoff kind, cap provenance, and role provenance. These
+are audit inputs, not verifier-visible state, and are committed separately from
+the runtime table digest.
 
 The planner derives role bounds as coefficient-`L∞` values because those are the
 values enforced by the protocol. It does not convert production role bounds
@@ -41,11 +46,23 @@ The production lookup is table-only. Verifier-reachable code must reject a
 missing table row or unsupported floor with `AkitaError`; it must not run the
 estimator at verification time.
 
+### Quantum policy
+
+The production rule is the ADPS16 quantum LGSA model with a 128-bit target. It
+is an attack-cost model, not a physical resource estimate or an unqualified
+post-quantum security proof.
+
+The complete decision, assumptions, claim language, certificates, and
+implementation acceptance criteria live in
+[`specs/sis-quantum128-scalar-n-table.md`](../../../specs/sis-quantum128-scalar-n-table.md).
+
 **Sources to fold in**
 
-- `crates/akita-types/src/sis/mod.rs`, `ajtai_key.rs`, `generated_sis_table.rs`, `norm_bound.rs`.
+- `crates/akita-types/src/sis/mod.rs`, `ajtai_key.rs`, `generated_sis_table/`, `norm_bound.rs`.
 - Paper §2.2 `def:msis`, §3.12 `sec:batched-soundness` ("MSIS targets", "Two norm models").
-- `docs/security-posture.md`, `specs/sis-linf-table-cutover.md`.
+- `docs/security-posture.md`, `specs/sis-quantum128-scalar-n-table.md`.
+- `scripts/sis_golden/infinity_width_table.csv` (generation provenance for the
+  infinity-width golden grid).
 
 ## Norm bounds and weak binding
 

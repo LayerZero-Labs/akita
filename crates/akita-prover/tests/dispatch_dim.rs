@@ -20,7 +20,7 @@ use akita_config::CommitmentConfig;
 use akita_field::AkitaError;
 use akita_types::{
     validate_schedule_ring_dims, AkitaScheduleLookupKey, AkitaSetupSeed, CleartextWitnessShape,
-    DirectStep, FoldStep, LevelParams, Schedule, SisModulusFamily, Step,
+    DirectStep, FoldStep, LevelParams, Schedule, SisModulusProfileId, Step,
 };
 
 // ---------------------------------------------------------------------------
@@ -50,7 +50,7 @@ fn make_fold_step(ring_dimension: usize, num_blocks: usize, block_len: usize) ->
     let fold_challenge_config = SparseChallengeConfig::production_for_ring_dim(ring_dimension)
         .unwrap_or_else(|| SparseChallengeConfig::pm1_only(ring_dimension.max(31)));
     let mut params = LevelParams::params_only(
-        SisModulusFamily::Q128,
+        SisModulusProfileId::Q128OffsetA7F7,
         ring_dimension,
         3,
         1,
@@ -203,30 +203,36 @@ fn ring_dim_plan_accepts_mixed_d_schedule_all_divide_gen_ring_dim() {
 /// Nested per-role dims: B/D may use D=32 while d_a >= 64.
 #[test]
 fn ring_dim_plan_accepts_nested_opening_d32() {
-    use akita_types::sis::DEFAULT_SIS_SECURITY_BITS;
-    use akita_types::{AjtaiKeyParams, SisModulusFamily};
+    use akita_types::sis::DEFAULT_SIS_SECURITY_POLICY;
+    use akita_types::{AjtaiKeyParams, SisMatrixRole, SisModulusProfileId, SisTableDigest};
 
     let mut step = make_fold_step(128, 4, 8);
     step.params.ring_dimension = 128;
     step.params.a_key = AjtaiKeyParams::new_unchecked(
-        DEFAULT_SIS_SECURITY_BITS,
-        SisModulusFamily::Q128,
+        DEFAULT_SIS_SECURITY_POLICY,
+        SisTableDigest::CURRENT,
+        SisModulusProfileId::Q128OffsetA7F7,
+        SisMatrixRole::A,
         1,
         16,
         0,
         128,
     );
     step.params.b_key = AjtaiKeyParams::new_unchecked(
-        DEFAULT_SIS_SECURITY_BITS,
-        SisModulusFamily::Q128,
+        DEFAULT_SIS_SECURITY_POLICY,
+        SisTableDigest::CURRENT,
+        SisModulusProfileId::Q128OffsetA7F7,
+        SisMatrixRole::B,
         1,
         16,
         0,
         64,
     );
     step.params.d_key = AjtaiKeyParams::new_unchecked(
-        DEFAULT_SIS_SECURITY_BITS,
-        SisModulusFamily::Q128,
+        DEFAULT_SIS_SECURITY_POLICY,
+        SisTableDigest::CURRENT,
+        SisModulusProfileId::Q128OffsetA7F7,
+        SisMatrixRole::D,
         1,
         16,
         0,

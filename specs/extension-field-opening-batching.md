@@ -40,7 +40,7 @@ Several concrete pieces have landed in this PR:
   across prover and verifier, including the all-features `zk` path.
 - The profile example has been split into modules, and small-field profile
   modes now cover explicit fp32/fp64 dense and one-hot candidate dimensions.
-- SIS floors are now selected by `SisModulusFamily::{Q32,Q64,Q128}` and the
+- SIS floors are now selected by `SisModulusProfileId::{Q32,Q64,Q128}` and the
   generated registry covers the larger small-field D ladders.
 - Sparse challenge sampling has stack-backed tiers through D=512; supported
   larger-D profiles no longer route through a heap-backed fallback.
@@ -1039,7 +1039,7 @@ fields can under-size ranks and overstate binding security.
 Introduce an explicit SIS modulus-family policy:
 
 ```rust
-pub enum SisModulusFamily {
+pub enum SisModulusProfileId {
     Q32,
     Q64,
     Q128,
@@ -1073,7 +1073,7 @@ The family names are security-table names, not CRT implementation details:
 
 Implementation requirements:
 
-- [x] Add a config hook such as `CommitmentConfig::sis_modulus_family()` and mirror
+- [x] Add a config hook such as `CommitmentConfig::sis_modulus_profile()` and mirror
   it through `PlannerConfig`.
 - [x] Change SIS lookup APIs from:
 
@@ -1243,7 +1243,7 @@ Cost model requirements:
 
 - Ring, digit, SIS, commitment, and setup material are priced in base-field
   bytes.
-- SIS ranks are selected from the active `SisModulusFamily`, not from a global
+- SIS ranks are selected from the active `SisModulusProfileId`, not from a global
   fp128 table.
 - SIS A-role collision bounds include the `psi` ring-subfield embedding norm
   bound. For `K=1`, `psi` is coefficient packing and the factor is `1`; for

@@ -13,10 +13,23 @@ use crate::layout::ring_dims::CommitmentRingDims;
 use crate::opening_claims::OpeningClaimsLayout;
 use crate::proof::SetupPrefixSlotId;
 
-pub use crate::sis::{AjtaiKeyParams, FoldWitnessLinfCapConfig, SisModulusFamily};
+pub use crate::sis::{AjtaiKeyParams, FoldWitnessLinfCapConfig, SisModulusProfileId};
 
 mod precommitted;
 pub use precommitted::{LevelParamsLike, PrecommittedLevelParams};
+
+fn empty_ajtai_key(role: crate::sis::SisMatrixRole) -> AjtaiKeyParams {
+    AjtaiKeyParams::new_unchecked(
+        crate::sis::DEFAULT_SIS_SECURITY_POLICY,
+        crate::sis::SisTableDigest::CURRENT,
+        crate::sis::SisModulusProfileId::Q128OffsetA7F7,
+        role,
+        0,
+        0,
+        0,
+        0,
+    )
+}
 
 /// Per-level M-matrix row layout selector.
 ///
@@ -168,9 +181,9 @@ impl LevelParams {
         Self {
             ring_dimension: 0,
             log_basis,
-            a_key: AjtaiKeyParams::default(),
-            b_key: AjtaiKeyParams::default(),
-            d_key: AjtaiKeyParams::default(),
+            a_key: empty_ajtai_key(crate::sis::SisMatrixRole::A),
+            b_key: empty_ajtai_key(crate::sis::SisMatrixRole::B),
+            d_key: empty_ajtai_key(crate::sis::SisMatrixRole::D),
             num_blocks: 0,
             block_len: 0,
             m_vars: 0,
@@ -202,7 +215,7 @@ impl LevelParams {
     /// are populated. Column counts, block geometry, and digit depths are
     /// zeroed. Call `with_layout` to fill them from a derived layout.
     pub fn params_only(
-        sis_family: SisModulusFamily,
+        sis_modulus_profile: SisModulusProfileId,
         ring_dimension: usize,
         log_basis: u32,
         n_a: usize,
@@ -214,24 +227,30 @@ impl LevelParams {
             ring_dimension,
             log_basis,
             a_key: AjtaiKeyParams::new_unchecked(
-                crate::sis::DEFAULT_SIS_SECURITY_BITS,
-                sis_family,
+                crate::sis::DEFAULT_SIS_SECURITY_POLICY,
+                crate::sis::SisTableDigest::CURRENT,
+                sis_modulus_profile,
+                crate::sis::SisMatrixRole::A,
                 n_a,
                 0,
                 0,
                 ring_dimension,
             ),
             b_key: AjtaiKeyParams::new_unchecked(
-                crate::sis::DEFAULT_SIS_SECURITY_BITS,
-                sis_family,
+                crate::sis::DEFAULT_SIS_SECURITY_POLICY,
+                crate::sis::SisTableDigest::CURRENT,
+                sis_modulus_profile,
+                crate::sis::SisMatrixRole::B,
                 n_b,
                 0,
                 0,
                 ring_dimension,
             ),
             d_key: AjtaiKeyParams::new_unchecked(
-                crate::sis::DEFAULT_SIS_SECURITY_BITS,
-                sis_family,
+                crate::sis::DEFAULT_SIS_SECURITY_POLICY,
+                crate::sis::SisTableDigest::CURRENT,
+                sis_modulus_profile,
+                crate::sis::SisMatrixRole::D,
                 n_d,
                 0,
                 0,
@@ -1212,24 +1231,30 @@ impl LevelParams {
             ring_dimension: d,
             log_basis: self.log_basis,
             a_key: AjtaiKeyParams::new_unchecked(
-                self.a_key.min_security_bits(),
-                self.a_key.sis_family(),
+                self.a_key.security_policy(),
+                self.a_key.sis_table_key().table_digest,
+                self.a_key.sis_modulus_profile(),
+                self.a_key.sis_table_key().role,
                 self.a_key.row_len,
                 inner_width,
                 self.a_key.coeff_linf_bound(),
                 d,
             ),
             b_key: AjtaiKeyParams::new_unchecked(
-                self.b_key.min_security_bits(),
-                self.b_key.sis_family(),
+                self.b_key.security_policy(),
+                self.b_key.sis_table_key().table_digest,
+                self.b_key.sis_modulus_profile(),
+                self.b_key.sis_table_key().role,
                 self.b_key.row_len,
                 outer_width,
                 self.b_key.coeff_linf_bound(),
                 d,
             ),
             d_key: AjtaiKeyParams::new_unchecked(
-                self.d_key.min_security_bits(),
-                self.d_key.sis_family(),
+                self.d_key.security_policy(),
+                self.d_key.sis_table_key().table_digest,
+                self.d_key.sis_modulus_profile(),
+                self.d_key.sis_table_key().role,
                 self.d_key.row_len,
                 d_matrix_width,
                 self.d_key.coeff_linf_bound(),
@@ -1269,7 +1294,7 @@ impl LevelParams {
     /// `m_vars`, `r_vars`, and the commit/open digit counts. The audited
     /// coefficient-L∞ SIS bucket is not a layout field: it is the bucket the
     /// rank (`row_len`) was sized against, so it is preserved from `self`,
-    /// matching the placement of `row_len` and `sis_family`. Pulling the
+    /// matching the placement of `row_len` and `sis_modulus_profile`. Pulling the
     /// bucket from `other` would lose the audited value when the layout
     /// argument was constructed via [`LevelParams::params_only`] or threaded
     /// through [`Self::with_decomp`], and would let the SIS audit at
@@ -1280,24 +1305,30 @@ impl LevelParams {
             ring_dimension: d,
             log_basis: other.log_basis,
             a_key: AjtaiKeyParams::new_unchecked(
-                self.a_key.min_security_bits(),
-                self.a_key.sis_family(),
+                self.a_key.security_policy(),
+                self.a_key.sis_table_key().table_digest,
+                self.a_key.sis_modulus_profile(),
+                self.a_key.sis_table_key().role,
                 self.a_key.row_len,
                 other.a_key.col_len,
                 self.a_key.coeff_linf_bound(),
                 d,
             ),
             b_key: AjtaiKeyParams::new_unchecked(
-                self.b_key.min_security_bits(),
-                self.b_key.sis_family(),
+                self.b_key.security_policy(),
+                self.b_key.sis_table_key().table_digest,
+                self.b_key.sis_modulus_profile(),
+                self.b_key.sis_table_key().role,
                 self.b_key.row_len,
                 other.b_key.col_len,
                 self.b_key.coeff_linf_bound(),
                 d,
             ),
             d_key: AjtaiKeyParams::new_unchecked(
-                self.d_key.min_security_bits(),
-                self.d_key.sis_family(),
+                self.d_key.security_policy(),
+                self.d_key.sis_table_key().table_digest,
+                self.d_key.sis_modulus_profile(),
+                self.d_key.sis_table_key().role,
                 self.d_key.row_len,
                 other.d_key.col_len,
                 self.d_key.coeff_linf_bound(),

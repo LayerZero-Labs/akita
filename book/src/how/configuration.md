@@ -9,7 +9,7 @@ selects (or searches for) the schedule and prices its proof size.
 ## CommitmentConfig and presets
 
 The single user-facing trait that defines every per-config policy hook (algebra,
-SIS family, decomposition, layout, schedule, transcript bind, prove params), and
+exact SIS profile, decomposition, layout, schedule, transcript bind, prove params), and
 the `fp32` / `fp64` / `fp128` preset families built on it.
 
 **Sources to fold in**

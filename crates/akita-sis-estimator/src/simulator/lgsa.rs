@@ -103,17 +103,24 @@ pub fn lgsa_summary(
     let log_q = log2_biguint(q);
     let log_vol = (d as f64 - identity_vectors as f64) * log_q;
     let step = 2.0 * delta(beta).log2();
-    let mut profile_log_vol = 0.0_f64;
-    let mut log_vec_len = 0.0_f64;
-    let mut num_gsa_vec = 0_u64;
-    while num_gsa_vec < d {
-        log_vec_len += step;
-        profile_log_vol += log_vec_len;
+    // The loop in the dense reference implementation sums the arithmetic
+    // progression `step * k` until it exceeds `log_vol`. Solve the quadratic
+    // directly, then correct the rounded candidate by at most a few steps.
+    // This keeps the compact path genuinely compact when `m` is very large.
+    let mut num_gsa_vec = if log_vol <= 0.0 {
+        1
+    } else {
+        (((1.0 + 8.0 * log_vol / step).sqrt() - 1.0) / 2.0).floor() as u64
+    };
+    num_gsa_vec = num_gsa_vec.clamp(1, d);
+    let profile_sum = |count: u64| step * count as f64 * (count as f64 + 1.0) / 2.0;
+    while num_gsa_vec < d && profile_sum(num_gsa_vec) <= log_vol {
         num_gsa_vec += 1;
-        if profile_log_vol > log_vol {
-            break;
-        }
     }
+    while num_gsa_vec > 1 && profile_sum(num_gsa_vec - 1) > log_vol {
+        num_gsa_vec -= 1;
+    }
+    let profile_log_vol = profile_sum(num_gsa_vec);
 
     let shift = if num_gsa_vec > 0 {
         (profile_log_vol - log_vol) / num_gsa_vec as f64
@@ -138,9 +145,12 @@ pub fn lgsa_summary(
     };
     let unit_threshold = (1.0_f64 + 1e-8).log2();
     let positive_count = if step > 0.0 {
-        (1..=num_gsa_vec)
-            .filter(|k| *k as f64 * step - shift > unit_threshold)
-            .count() as u64
+        let first_positive = ((unit_threshold + shift) / step).floor() as u64 + 1;
+        if first_positive > num_gsa_vec {
+            0
+        } else {
+            num_gsa_vec - first_positive + 1
+        }
     } else {
         0
     };

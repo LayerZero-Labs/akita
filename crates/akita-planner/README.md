@@ -35,8 +35,8 @@ multiplicity is always `1`; multi-group roots derive those counts from
 
 `policy: PlannerPolicy` is the `Cfg`-free projection of a preset:
 
-- Ring dimension and SIS modulus family.
-- Minimum SIS security floor in bits.
+- The exact SIS modulus profile and table digest.
+- The scalar SIS policy identifier.
 - Decomposition parameters, including the basis search range.
 - Claim and challenge extension degrees.
 - Ring-subfield norm bound.
@@ -124,17 +124,20 @@ For each level candidate, the planner derives the SIS layout in the same order:
 3. Compute the coefficient-`L∞` bucket for each role.
 4. Compute the decomposed matrix width for each role.
 5. Ask the SIS floor table for the minimum secure rank.
-6. Build `AjtaiKeyParams` with the audited rank, width, coefficient-`L∞` bucket, SIS family, ring dimension, and security floor.
+6. Build `AjtaiKeyParams` with the audited rank, width, coefficient-`L∞` bucket, exact SIS profile, ring dimension, and security floor.
 
-Production SIS lookups use `SisTableKey`:
+Production SIS lookups use explicit role cells and the scalar `SisTableKey`:
 
 ```text
-(min_security_bits, sis_family, ring_dimension, coeff_linf_bound)
+(sis_security_policy, table_digest, sis_modulus_profile, role,
+ ring_dimension, coeff_linf_bound)
 ```
 
-Only the 138-bit floor is generated today. The floor is part of `PlannerPolicy`,
-catalog identity, generated table expansion, and descriptor bytes, so a schedule
-generated for one SIS floor cannot be silently reused under another floor.
+The shipped policy is `Quantum128BitADPS16`: a single ADPS16 quantum LGSA rule
+at a 128-bit target. The policy, table digest, exact profile, and role are part
+of planner inputs, catalog identity, generated table expansion, and descriptor
+bytes, so a schedule generated for one table cannot be silently reused under
+another table or role.
 
 The searched parameters are therefore small: mostly `log_basis` and the fold split. The matrix dimensions are consequences of those choices and of the fixed policy inputs.
 

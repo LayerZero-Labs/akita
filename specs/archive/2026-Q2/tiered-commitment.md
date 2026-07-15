@@ -399,7 +399,7 @@ pub struct D64OneHotTiered;
 
 impl_proof_optimized_preset!(
     D64OneHotTiered, Field, Field,
-    akita_types::SisModulusFamily::Q128, 64, 128, 1, 256,
+    akita_types::SisModulusProfileId::Q128OffsetA7F7, 64, 128, 1, 256,
     /* tiered = */ true
 );
 ```

@@ -9,14 +9,16 @@
 //! driven by the `Cfg`-derived [`policy_of`] bridge.
 
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
-use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, MulBaseUnreduced};
+use akita_field::{
+    AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, MulBaseUnreduced,
+};
 use akita_planner::PlannerPolicy;
 use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
 #[cfg(test)]
 use akita_types::PolynomialGroupLayout;
 use akita_types::{
     AkitaScheduleInputs, AkitaScheduleLookupKey, ChunkedWitnessCfg, DecompositionParams,
-    LevelParams, OpeningClaimsLayout, Schedule, SetupMatrixEnvelope, SisModulusFamily, Step,
+    LevelParams, OpeningClaimsLayout, Schedule, SetupMatrixEnvelope, SisModulusProfileId, Step,
 };
 
 /// Define a multi-chunk companion preset that delegates every layout-affecting
@@ -48,8 +50,8 @@ macro_rules! impl_multi_chunk_companion {
             ) -> akita_challenges::TensorChallengeShape {
                 <$base as $crate::CommitmentConfig>::fold_challenge_shape_at_level(inputs)
             }
-            fn sis_modulus_family() -> akita_types::SisModulusFamily {
-                <$base as $crate::CommitmentConfig>::sis_modulus_family()
+            fn sis_modulus_profile() -> akita_types::SisModulusProfileId {
+                <$base as $crate::CommitmentConfig>::sis_modulus_profile()
             }
             fn ring_subfield_embedding_norm_bound() -> u32 {
                 <$base as $crate::CommitmentConfig>::ring_subfield_embedding_norm_bound()
@@ -118,14 +120,25 @@ pub use transcript_binding::bind_transcript_instance_descriptor;
 /// This is the single bridge between a [`CommitmentConfig`] preset and
 /// [`akita_planner::find_group_batch_schedule`]: every brute-force input is *derived*
 /// from the `Cfg` impl, so the `Cfg` impl stays the one source of truth for
-/// each preset's `(D, decomposition, sis_family, …)`. Never hand-write a
+/// each preset's `(D, decomposition, sis_modulus_profile, …)`. Never hand-write a
 /// `PlannerPolicy` literal per preset.
+/// Build the canonical schedule key for a root opening batch under `Cfg`.
+///
+/// Scalar layouts yield an empty `precommitteds` vector. Multi-group layouts
+/// freeze each earlier group through the conservative commit adapter.
+pub fn opening_schedule_key<Cfg: CommitmentConfig>(
+    layout: &OpeningClaimsLayout,
+) -> Result<AkitaScheduleLookupKey, AkitaError> {
+    proof_optimized::proof_optimized_schedule_key::<Cfg>(layout)
+}
+
 pub fn policy_of<Cfg: CommitmentConfig>() -> PlannerPolicy {
     PlannerPolicy {
         ring_dimension: Cfg::D,
         decomposition: Cfg::decomposition(),
-        sis_family: Cfg::sis_modulus_family(),
-        min_sis_security_bits: akita_types::DEFAULT_SIS_SECURITY_BITS,
+        sis_modulus_profile: Cfg::sis_modulus_profile(),
+        sis_security_policy: akita_types::DEFAULT_SIS_SECURITY_POLICY,
+        sis_table_digest: akita_types::sis::SisTableDigest::CURRENT,
         ring_subfield_norm_bound: Cfg::ring_subfield_embedding_norm_bound(),
         claim_ext_degree: Cfg::EXT_DEGREE,
         chal_ext_degree: Cfg::EXT_DEGREE,
@@ -213,8 +226,26 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
         TensorChallengeShape::Flat
     }
 
-    /// SIS modulus family used by security-floor lookups.
-    fn sis_modulus_family() -> SisModulusFamily;
+    /// Exact SIS modulus profile used by security-floor lookups.
+    fn sis_modulus_profile() -> SisModulusProfileId;
+
+    /// Prove that the concrete base field has exactly the modulus named by
+    /// the SIS profile. Runtime callers use this before table lookup so a
+    /// synthetic or miswired field cannot silently inherit a nearby profile.
+    fn validate_sis_modulus_profile() -> Result<(), AkitaError> {
+        let modulus = (-Self::Field::from_u64(1))
+            .to_canonical_u128()
+            .checked_add(1)
+            .ok_or_else(|| AkitaError::InvalidSetup("SIS field modulus overflow".to_string()))?;
+        if Self::sis_modulus_profile().matches_modulus(modulus) {
+            Ok(())
+        } else {
+            Err(AkitaError::InvalidSetup(format!(
+                "SIS modulus profile {:?} does not match field modulus {modulus}",
+                Self::sis_modulus_profile()
+            )))
+        }
+    }
 
     /// Infinity-norm expansion introduced when claim-field coordinates are
     /// embedded into the ring subfield via `psi`.
@@ -315,6 +346,7 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     /// (invalid key dimensions, witness overflow). Never panics — this is
     /// verifier-reachable.
     fn runtime_schedule(key: AkitaScheduleLookupKey) -> Result<Schedule, AkitaError> {
+        Self::validate_sis_modulus_profile()?;
         akita_planner::resolve_group_batch_schedule(
             &key,
             &policy_of::<Self>(),
@@ -407,8 +439,8 @@ mod tests {
             Ok(SparseChallengeConfig::pm1_only(1))
         }
 
-        fn sis_modulus_family() -> SisModulusFamily {
-            SisModulusFamily::Q32
+        fn sis_modulus_profile() -> SisModulusProfileId {
+            SisModulusProfileId::Q32Offset99
         }
 
         fn max_setup_matrix_size(

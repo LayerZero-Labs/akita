@@ -1,5 +1,5 @@
 use super::*;
-use crate::SisModulusFamily;
+use crate::SisModulusProfileId;
 use akita_challenges::SparseChallengeConfig;
 use akita_field::CanonicalField;
 use akita_field::Prime128OffsetA7F7;
@@ -8,7 +8,7 @@ type F = Prime128OffsetA7F7;
 
 fn test_lp() -> LevelParams {
     LevelParams::params_only(
-        SisModulusFamily::Q128,
+        SisModulusProfileId::Q128OffsetA7F7,
         8,
         3,
         2,

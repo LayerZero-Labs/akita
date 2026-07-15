@@ -4,9 +4,11 @@ pub use akita_planner::generated::{
     GeneratedDirectStep, GeneratedFoldStep, GeneratedFoldStepWithSetupMetadata,
     GeneratedScheduleCatalogIdentity, GeneratedScheduleTable, GeneratedScheduleTableEntry,
     GeneratedSetupPrefixGroup, GeneratedStep, PolynomialGroupLayout, PrecommittedGroupParams,
-    SetupContributionMode, SisModulusFamily,
+    SetupContributionMode, SisModulusProfileId, SisTableDigest,
 };
-pub use akita_planner::{ChunkedWitnessCfg, DecompositionParams, TensorChallengeShape};
+pub use akita_planner::{
+    ChunkedWitnessCfg, DecompositionParams, SisSecurityPolicyId, TensorChallengeShape,
+};
 
 // @generated schedule module wiring begin
 #[cfg(feature = "fp128-d128-full")]

@@ -4,7 +4,7 @@ use akita_sis_estimator::{
         validate_infinity_width_rows, InfinityWidthProfile, InfinityWidthRow,
         InfinityWidthTableConfig,
     },
-    AkitaModulusFamily,
+    AkitaModulusProfileId,
 };
 use std::{
     env, fs,
@@ -30,14 +30,11 @@ enum OutputFormat {
 
 fn main() {
     let args = Args::parse_or_exit();
-    if args.format == OutputFormat::RustSplit {
-        if !is_full_infinity_width_table_config(&args.config) {
-            fatal(
-                "rust-split output requires the complete production table config; use CSV for partial comparison jobs",
-            );
-        }
-        min_security_bits(&args.config)
-            .unwrap_or_else(|| fatal("--format rust-split requires integer --target-bits"));
+    if args.format == OutputFormat::RustSplit && !is_full_infinity_width_table_config(&args.config)
+    {
+        fatal(
+            "rust-split output requires the complete production table config; use CSV for partial comparison jobs",
+        );
     }
     let t0 = Instant::now();
     let rows = generate_infinity_width_rows(&args.config)
@@ -77,13 +74,12 @@ impl Args {
                     match arg.as_str() {
                         "--output" => output = Some(PathBuf::from(value)),
                         "--format" => format = parse_format(&value),
-                        "--families" => config.families = parse_families(&value),
+                        "--profiles" => config.profiles = parse_profiles(&value),
                         "--dims" => config.ring_dims = parse_csv(&value, "--dims"),
                         "--bounds" => {
                             config.coeff_linf_bounds = parse_csv(&value, "--bounds");
                         }
                         "--max-rank" => config.max_rank = parse(&value, "--max-rank"),
-                        "--target-bits" => config.target_bits = parse(&value, "--target-bits"),
                         "--search-cap" => config.search_cap = Some(parse(&value, "--search-cap")),
                         "--progress-every" => {
                             config.progress_every = Some(parse(&value, "--progress-every"));
@@ -137,46 +133,50 @@ fn write_rust_split(
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../akita-types/src/sis/generated_sis_table");
     let out_dir = output.unwrap_or(default_out_dir.as_path());
     fs::create_dir_all(out_dir)?;
-    let min_security_bits =
-        min_security_bits(config).expect("rust-split caller validates integer target bits");
     fs::write(
         out_dir.join("mod.rs"),
-        rust_mod_source(min_security_bits, config.profile),
+        rust_mod_source(config.policy, config.profile),
     )?;
     let arms = rust_table_arms(rows, config.max_rank);
-    for family in [
-        AkitaModulusFamily::Q32,
-        AkitaModulusFamily::Q64,
-        AkitaModulusFamily::Q128,
+    for modulus_profile in [
+        AkitaModulusProfileId::Q32Offset99,
+        AkitaModulusProfileId::Q64Offset59,
+        AkitaModulusProfileId::Q128OffsetA7F7,
     ] {
         fs::write(
-            out_dir.join(format!("{}.rs", family.label())),
-            rust_family_source(
-                family,
+            out_dir.join(format!("{}.rs", modulus_profile.label())),
+            rust_modulus_profile_source(
+                modulus_profile,
+                config.policy,
                 config.profile,
-                arms.get(&family).map(Vec::as_slice).unwrap_or(&[]),
+                arms.get(&modulus_profile).map(Vec::as_slice).unwrap_or(&[]),
             ),
         )?;
     }
     Ok(())
 }
 
-fn rust_mod_source(min_security_bits: u16, profile: InfinityWidthProfile) -> String {
+fn rust_mod_source(
+    policy: akita_sis_estimator::SisSecurityPolicy,
+    profile: InfinityWidthProfile,
+) -> String {
     format!(
-        "{}mod q128;\nmod q32;\nmod q64;\n\nuse super::SisModulusFamily;\n\n/// Generated SIS max-width table: for each `(security_floor, family, d, coeff_linf_bound)` the\n/// maximum secure ring-element width per module rank (`widths[rank - 1]`).\n#[rustfmt::skip]\npub(crate) fn sis_max_widths(\n    min_security_bits: u16,\n    family: SisModulusFamily,\n    d: u32,\n    coeff_linf_bound: u128,\n) -> Option<&'static [u64]> {{\n    if min_security_bits != {min_security_bits} {{\n        return None;\n    }}\n    match family {{\n        SisModulusFamily::Q32 => q32::sis_max_widths(d, coeff_linf_bound),\n        SisModulusFamily::Q64 => q64::sis_max_widths(d, coeff_linf_bound),\n        SisModulusFamily::Q128 => q128::sis_max_widths(d, coeff_linf_bound),\n    }}\n}}\n",
-        table_header(profile),
+        "{}mod q128;\nmod q32;\nmod q64;\n\nuse super::{{SisModulusProfileId, SisSecurityPolicyId}};\n\n/// Generated SIS max-width table for the named security policy.\n///\n/// Runtime keys are `(d, coeff_linf_bound) -> widths[rank - 1]`, projected from\n/// scalar cutoffs as `width = cutoff_m(B, n = rank * d) / d`.\n#[rustfmt::skip]\npub(crate) fn sis_max_widths(\n    policy: SisSecurityPolicyId,\n    modulus_profile: SisModulusProfileId,\n    d: u32,\n    coeff_linf_bound: u128,\n) -> Option<&'static [u64]> {{\n    if policy != SisSecurityPolicyId::{} {{\n        return None;\n    }}\n    match modulus_profile {{\n        SisModulusProfileId::Q32Offset99 => q32::sis_max_widths(d, coeff_linf_bound),\n        SisModulusProfileId::Q64Offset59 => q64::sis_max_widths(d, coeff_linf_bound),\n        SisModulusProfileId::Q128OffsetA7F7 => q128::sis_max_widths(d, coeff_linf_bound),\n    }}\n}}\n",
+        table_header(policy, profile),
+        policy.label(),
     )
 }
 
-fn rust_family_source(
-    family: AkitaModulusFamily,
+fn rust_modulus_profile_source(
+    modulus_profile: AkitaModulusProfileId,
+    policy: akita_sis_estimator::SisSecurityPolicy,
     profile: InfinityWidthProfile,
     arms: &[String],
 ) -> String {
     let mut source = format!(
-        "{}// Family: {}\n\n#[rustfmt::skip]\npub(super) fn sis_max_widths(d: u32, coeff_linf_bound: u128) -> Option<&'static [u64]> {{\n    match (d, coeff_linf_bound) {{\n",
-        table_header(profile),
-        family.label().to_uppercase()
+        "{}// Profile: {}\n\n#[rustfmt::skip]\npub(super) fn sis_max_widths(d: u32, coeff_linf_bound: u128) -> Option<&'static [u64]> {{\n    match (d, coeff_linf_bound) {{\n",
+        table_header(policy, profile),
+        modulus_profile.label()
     );
     for arm in arms {
         source.push_str("        ");
@@ -187,30 +187,23 @@ fn rust_family_source(
     source
 }
 
-fn table_header(profile: InfinityWidthProfile) -> String {
+fn table_header(
+    policy: akita_sis_estimator::SisSecurityPolicy,
+    profile: InfinityWidthProfile,
+) -> String {
     format!(
-        "// AUTO-GENERATED by crates/akita-sis-estimator/examples/infinity_width_table.rs -- do not edit by hand.\n//\n// SIS width thresholds for L-infinity security (ADPS16/LGSA, infinity norm).\n// Rust estimator path: akita-sis-estimator::width_table.\n// Keys are coefficient-L-infinity buckets.\n// Optimizer profile: {}.\n// Local-minimum uses Python-compatible local beta/zeta search inside each row;\n// `--features parallel` parallelizes rows, not the local search itself.\n\n",
+        "// AUTO-GENERATED by crates/akita-sis-estimator/examples/infinity_width_table.rs -- do not edit by hand.\n//\n// SIS max-width tables for {}.\n// Sole hard gate: ADPS16 quantum LGSA model >= 128 bits.\n// Every accepted cutoff and immediate rejected successor is exhaustively certified.\n// Shape and norm: LGSA, coefficient L-infinity.\n// Rust estimator path: akita-sis-estimator::width_table.\n// Runtime keys are (d, coefficient-L-infinity bound) -> widths by module rank.\n// Values are projected from scalar cutoffs: width[r-1] = cutoff_m(B, n=r*d) / d.\n// Optimizer profile: {}.\n\n",
+        policy.label(),
         profile.label()
     )
 }
 
-fn min_security_bits(config: &InfinityWidthTableConfig) -> Option<u16> {
-    if config.target_bits.fract() == 0.0
-        && config.target_bits >= 0.0
-        && config.target_bits <= f64::from(u16::MAX)
-    {
-        Some(config.target_bits as u16)
-    } else {
-        None
-    }
-}
-
-fn parse_families(raw: &str) -> Vec<AkitaModulusFamily> {
+fn parse_profiles(raw: &str) -> Vec<AkitaModulusProfileId> {
     raw.split(',')
         .filter(|value| !value.trim().is_empty())
         .map(|value| {
-            AkitaModulusFamily::parse(value.trim())
-                .unwrap_or_else(|error| fatal(&format!("invalid --families entry: {error}")))
+            AkitaModulusProfileId::parse(value.trim())
+                .unwrap_or_else(|error| fatal(&format!("invalid --profiles entry: {error}")))
         })
         .collect()
 }
@@ -267,7 +260,7 @@ where
 
 fn usage(code: i32) -> ! {
     eprintln!(
-        "usage: infinity_width_table [--output PATH] [--format csv|rust-split] [--families q32,q64,q128] [--dims 32,64,128,256] [--bounds B1,B2] [--max-rank N] [--target-bits BITS] [--search-cap N] [--profile local-minimum|exhaustive-serial|exhaustive-parallel] [--progress-every N] [--skip-validation]"
+        "usage: infinity_width_table [--output PATH] [--format csv|rust-split] [--profiles q32,q64,q128] [--dims 32,64,128,256] [--bounds B1,B2] [--max-rank N] [--search-cap N] [--profile local-minimum|exhaustive-serial|exhaustive-parallel] [--progress-every N] [--skip-validation]"
     );
     process::exit(code);
 }

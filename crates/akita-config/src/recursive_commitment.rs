@@ -5,7 +5,7 @@ use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::AkitaError;
 use akita_types::{
     AkitaScheduleInputs, AkitaScheduleLookupKey, ChunkedWitnessCfg, DecompositionParams,
-    OpeningClaimsLayout, Schedule, SetupMatrixEnvelope, SisModulusFamily, SETUP_OFFLOAD_D_SETUP,
+    OpeningClaimsLayout, Schedule, SetupMatrixEnvelope, SisModulusProfileId, SETUP_OFFLOAD_D_SETUP,
 };
 #[cfg(feature = "schedules-fp128-d64-onehot-recursive")]
 use std::any::TypeId;
@@ -33,8 +33,8 @@ impl<Cfg: CommitmentConfig> CommitmentConfig for RecursiveCommitmentConfig<Cfg> 
         Cfg::fold_challenge_shape_at_level(inputs)
     }
 
-    fn sis_modulus_family() -> SisModulusFamily {
-        Cfg::sis_modulus_family()
+    fn sis_modulus_profile() -> SisModulusProfileId {
+        Cfg::sis_modulus_profile()
     }
 
     fn ring_subfield_embedding_norm_bound() -> u32 {

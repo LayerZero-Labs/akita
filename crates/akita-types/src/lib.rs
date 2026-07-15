@@ -131,7 +131,8 @@ pub use schedule::{
     schedule_root_fold_step, schedule_terminal_direct_witness_shape, scheduled_next_level_params,
     w_ring_element_count_for_chunks, w_ring_element_count_with_counts_for_layout,
     w_ring_element_count_with_counts_for_layout_bits, AkitaScheduleInputs, AkitaScheduleLookupKey,
-    DirectStep, ExecutionSchedule, FoldStep, PrecommittedGroupParams, Schedule, Step,
+    DirectStep, ExecutionSchedule, FoldStep, PrecommittedGroupParams, Schedule,
+    ScheduleKeyPrecommitSource, Step,
 };
 pub use setup_contribution::{
     ensure_setup_envelope, prepare_setup_contribution_artifact, setup_active_ring_elems_at,
@@ -140,7 +141,10 @@ pub use setup_contribution::{
     SetupContributionPlan, SetupContributionPlanInputs, SetupContributionStatic,
     SetupIndexWeightEvaluator,
 };
-pub use sis::{AjtaiKeyParams, SisModulusFamily, SisTableKey, DEFAULT_SIS_SECURITY_BITS};
+pub use sis::{
+    AjtaiKeyParams, ScalarCutoff, SisMatrixRole, SisModulusProfileId, SisRoleCell,
+    SisSecurityPolicyId, SisTableDigest, SisTableKey, DEFAULT_SIS_SECURITY_POLICY,
+};
 pub use stage3_geometry::BatchedStage3Geometry;
 pub use tail_golomb_rice_low_bits::{
     cap_rice_low_bits, wire_rice_low_bits, wire_rice_low_bits_from_rule, WIRE_RICE_LOW_BITS_DELTA,

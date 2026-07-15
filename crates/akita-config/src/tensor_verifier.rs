@@ -9,7 +9,8 @@ pub mod fp128 {
     use akita_challenges::TensorChallengeShape;
     use akita_field::Prime128OffsetA7F7;
     use akita_types::{
-        AkitaScheduleInputs, DecompositionParams, OpeningClaimsLayout, Schedule, SisModulusFamily,
+        AkitaScheduleInputs, DecompositionParams, OpeningClaimsLayout, Schedule,
+        SisModulusProfileId,
     };
 
     /// Base field for the fp128 tensor-verifier presets.
@@ -52,8 +53,8 @@ pub mod fp128 {
             }
         }
 
-        fn sis_modulus_family() -> SisModulusFamily {
-            SisModulusFamily::Q128
+        fn sis_modulus_profile() -> SisModulusProfileId {
+            SisModulusProfileId::Q128OffsetA7F7
         }
 
         fn max_setup_matrix_size(

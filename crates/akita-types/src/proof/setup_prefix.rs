@@ -5,10 +5,12 @@
 //! commitment domains. It does not run a setup product sumcheck or change proof
 //! semantics.
 
+use crate::descriptor_bytes::sis_modulus_profile_tag;
 use crate::proof::{setup::MAX_SETUP_MATRIX_FIELD_ELEMENTS, AkitaCommitmentHint, RingVec};
+use crate::sis::{SisMatrixRole, SisModulusProfileId, SisSecurityPolicyId, SisTableDigest};
 use crate::{
     AjtaiKeyParams, LevelParams, OpeningClaimsLayout, PolynomialGroupLayout,
-    PrecommittedGroupParams, PrecommittedLevelParams, SisModulusFamily,
+    PrecommittedGroupParams, PrecommittedLevelParams,
 };
 use akita_field::{AkitaError, FieldCore};
 use akita_serialization::{
@@ -136,43 +138,104 @@ impl Valid for SetupPrefixSlotId {
     }
 }
 
-fn serialize_sis_family<W: Write>(
-    family: SisModulusFamily,
+fn serialize_sis_modulus_profile<W: Write>(
+    profile: SisModulusProfileId,
     mut writer: W,
 ) -> Result<(), SerializationError> {
-    let tag = match family {
-        SisModulusFamily::Q32 => 0u8,
-        SisModulusFamily::Q64 => 1u8,
-        SisModulusFamily::Q128 => 2u8,
-    };
-    writer.write_all(&[tag])?;
+    writer.write_all(&[sis_modulus_profile_tag(profile)])?;
     Ok(())
 }
 
-fn deserialize_sis_family<R: Read>(mut reader: R) -> Result<SisModulusFamily, SerializationError> {
+fn deserialize_sis_modulus_profile<R: Read>(
+    mut reader: R,
+) -> Result<SisModulusProfileId, SerializationError> {
     let mut tag = [0u8; 1];
     reader.read_exact(&mut tag)?;
     match tag[0] {
-        0 => Ok(SisModulusFamily::Q32),
-        1 => Ok(SisModulusFamily::Q64),
-        2 => Ok(SisModulusFamily::Q128),
+        0 => Ok(SisModulusProfileId::Q32Offset99),
+        1 => Ok(SisModulusProfileId::Q64Offset59),
+        2 => Ok(SisModulusProfileId::Q128OffsetA7F7),
         _ => Err(SerializationError::InvalidData(
-            "invalid SIS modulus family tag".to_string(),
+            "invalid SIS modulus profile tag".to_string(),
         )),
     }
 }
 
+fn serialize_sis_security_policy<W: Write>(
+    policy: SisSecurityPolicyId,
+    mut writer: W,
+) -> Result<(), SerializationError> {
+    writer.write_all(&[policy.tag()])?;
+    Ok(())
+}
+
+fn deserialize_sis_security_policy<R: Read>(
+    mut reader: R,
+) -> Result<SisSecurityPolicyId, SerializationError> {
+    let mut tag = [0u8; 1];
+    reader.read_exact(&mut tag)?;
+    match tag[0] {
+        1 => Ok(SisSecurityPolicyId::Quantum128BitADPS16),
+        _ => Err(SerializationError::InvalidData(
+            "invalid SIS security policy tag".to_string(),
+        )),
+    }
+}
+
+fn serialize_sis_matrix_role<W: Write>(
+    role: SisMatrixRole,
+    mut writer: W,
+) -> Result<(), SerializationError> {
+    writer.write_all(&[role.tag()])?;
+    Ok(())
+}
+
+fn deserialize_sis_matrix_role<R: Read>(
+    mut reader: R,
+) -> Result<SisMatrixRole, SerializationError> {
+    let mut tag = [0u8; 1];
+    reader.read_exact(&mut tag)?;
+    match tag[0] {
+        1 => Ok(SisMatrixRole::A),
+        2 => Ok(SisMatrixRole::B),
+        3 => Ok(SisMatrixRole::D),
+        _ => Err(SerializationError::InvalidData(
+            "invalid SIS matrix role tag".to_string(),
+        )),
+    }
+}
+
+fn serialize_sis_table_digest<W: Write>(
+    digest: SisTableDigest,
+    mut writer: W,
+) -> Result<(), SerializationError> {
+    writer.write_all(&digest.0)?;
+    Ok(())
+}
+
+fn deserialize_sis_table_digest<R: Read>(
+    mut reader: R,
+) -> Result<SisTableDigest, SerializationError> {
+    let mut bytes = [0u8; 32];
+    reader.read_exact(&mut bytes)?;
+    Ok(SisTableDigest(bytes))
+}
+
+/// Wire layout mirrors [`AjtaiKeyParams::append_descriptor_bytes`]:
+/// profile tag, policy tag, role tag, table digest, ring dim, row, col, linf.
 fn serialize_ajtai_key<W: Write>(
     key: &AjtaiKeyParams,
     mut writer: W,
     compress: Compress,
 ) -> Result<(), SerializationError> {
+    let table_key = key.sis_table_key();
+    serialize_sis_modulus_profile(key.sis_modulus_profile(), &mut writer)?;
+    serialize_sis_security_policy(key.security_policy(), &mut writer)?;
+    serialize_sis_matrix_role(table_key.role, &mut writer)?;
+    serialize_sis_table_digest(table_key.table_digest, &mut writer)?;
+    (table_key.ring_dimension as usize).serialize_with_mode(&mut writer, compress)?;
     key.row_len().serialize_with_mode(&mut writer, compress)?;
     key.col_len().serialize_with_mode(&mut writer, compress)?;
-    key.min_security_bits()
-        .serialize_with_mode(&mut writer, compress)?;
-    serialize_sis_family(key.sis_family(), &mut writer)?;
-    (key.sis_table_key().ring_dimension as usize).serialize_with_mode(&mut writer, compress)?;
     key.coeff_linf_bound()
         .serialize_with_mode(&mut writer, compress)?;
     Ok(())
@@ -183,20 +246,35 @@ fn deserialize_ajtai_key<R: Read>(
     compress: Compress,
     validate: Validate,
 ) -> Result<AjtaiKeyParams, SerializationError> {
+    let sis_modulus_profile = deserialize_sis_modulus_profile(&mut reader)?;
+    let policy = deserialize_sis_security_policy(&mut reader)?;
+    let role = deserialize_sis_matrix_role(&mut reader)?;
+    let table_digest = deserialize_sis_table_digest(&mut reader)?;
+    let ring_dimension = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
     let row_len = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
     let col_len = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
-    let min_security_bits = u16::deserialize_with_mode(&mut reader, compress, validate, &())?;
-    let family = deserialize_sis_family(&mut reader)?;
-    let ring_dimension = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
     let coeff_linf_bound = u128::deserialize_with_mode(&mut reader, compress, validate, &())?;
     Ok(AjtaiKeyParams::new_unchecked(
-        min_security_bits,
-        family,
+        policy,
+        table_digest,
+        sis_modulus_profile,
+        role,
         row_len,
         col_len,
         coeff_linf_bound,
         ring_dimension,
     ))
+}
+
+fn ajtai_key_serialized_size(key: &AjtaiKeyParams, compress: Compress) -> usize {
+    1 // profile tag
+        + 1 // policy tag
+        + 1 // role tag
+        + 32 // table digest
+        + (key.sis_table_key().ring_dimension as usize).serialized_size(compress)
+        + key.row_len().serialized_size(compress)
+        + key.col_len().serialized_size(compress)
+        + key.coeff_linf_bound().serialized_size(compress)
 }
 
 fn serialize_precommitted_level_params<W: Write>(
@@ -307,18 +385,8 @@ fn precommitted_level_params_serialized_size(
         + params.layout.log_basis.serialized_size(compress)
         + params.layout.n_a.serialized_size(compress)
         + params.layout.conservative_n_b.serialized_size(compress)
-        + params.a_key.row_len().serialized_size(compress)
-        + params.a_key.col_len().serialized_size(compress)
-        + params.a_key.min_security_bits().serialized_size(compress)
-        + 1
-        + (params.a_key.sis_table_key().ring_dimension as usize).serialized_size(compress)
-        + params.a_key.coeff_linf_bound().serialized_size(compress)
-        + params.b_key.row_len().serialized_size(compress)
-        + params.b_key.col_len().serialized_size(compress)
-        + params.b_key.min_security_bits().serialized_size(compress)
-        + 1
-        + (params.b_key.sis_table_key().ring_dimension as usize).serialized_size(compress)
-        + params.b_key.coeff_linf_bound().serialized_size(compress)
+        + ajtai_key_serialized_size(&params.a_key, compress)
+        + ajtai_key_serialized_size(&params.b_key, compress)
         + params.num_blocks.serialized_size(compress)
         + params.block_len.serialized_size(compress)
         + params.num_digits_commit.serialized_size(compress)
@@ -1161,12 +1229,12 @@ fn read_limited_usize<R: Read>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{LevelParams, OpeningClaimsLayout, SisModulusFamily};
+    use crate::{LevelParams, OpeningClaimsLayout, SisModulusProfileId};
     use akita_challenges::SparseChallengeConfig;
 
     fn sample_level_params() -> LevelParams {
         LevelParams::params_only(
-            SisModulusFamily::Q32,
+            SisModulusProfileId::Q32Offset99,
             32,
             3,
             2,
@@ -1181,7 +1249,7 @@ mod tests {
     fn prefix_eligible_level_params() -> LevelParams {
         let full_field_digits = crate::sis::compute_num_digits_full_field(128, 3);
         LevelParams::params_only(
-            SisModulusFamily::Q32,
+            SisModulusProfileId::Q32Offset99,
             32,
             3,
             2,

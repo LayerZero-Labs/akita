@@ -13,6 +13,10 @@ The active design frontier (keep as live specs): `setup-layout-repack`,
 `akita-field-refactor`, `akita-compute-backend-metal` (Metal tail),
 `crt-ntt-prime-profiles`, `transcript-immediate-fixes`.
 
+The approved SIS security-policy frontier is
+`sis-quantum128-scalar-n-table`: a scalar, role-driven table using one ADPS16
+quantum LGSA policy at a 128-bit target.
+
 ## Sources to fold in
 
 - `specs/PRUNING.md` (process + classification), `specs/archive/README.md`

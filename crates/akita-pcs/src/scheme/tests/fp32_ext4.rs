@@ -24,16 +24,20 @@ fn scale_batched_root_layout_unchecked(
         .ok_or_else(|| AkitaError::InvalidSetup("batched D width overflow".to_string()))?;
     let mut scaled = root_lp.clone();
     scaled.b_key = akita_types::AjtaiKeyParams::new_unchecked(
-        scaled.b_key.min_security_bits(),
-        scaled.b_key.sis_family(),
+        scaled.b_key.security_policy(),
+        scaled.b_key.sis_table_key().table_digest,
+        scaled.b_key.sis_modulus_profile(),
+        akita_types::SisMatrixRole::B,
         scaled.b_key.row_len(),
         b_col_len,
         scaled.b_key.coeff_linf_bound(),
         d,
     );
     scaled.d_key = akita_types::AjtaiKeyParams::new_unchecked(
-        scaled.d_key.min_security_bits(),
-        scaled.d_key.sis_family(),
+        scaled.d_key.security_policy(),
+        scaled.d_key.sis_table_key().table_digest,
+        scaled.d_key.sis_modulus_profile(),
+        akita_types::SisMatrixRole::D,
         scaled.d_key.row_len(),
         d_col_len,
         scaled.d_key.coeff_linf_bound(),
@@ -122,8 +126,8 @@ struct Fp32RingSubfieldOuterFallbackCfg;
 /// `0` `params_only` default. The fixture scales batched B/D widths
 /// via [`scale_batched_root_layout_unchecked`] because it is synthetic.
 fn fp32_ext4_root_lp(m_vars: usize) -> LevelParams {
-    use akita_types::{AjtaiKeyParams, DEFAULT_SIS_SECURITY_BITS};
-    let sis_family = akita_types::SisModulusFamily::Q32;
+    use akita_types::{AjtaiKeyParams, DEFAULT_SIS_SECURITY_POLICY};
+    let sis_modulus_profile = akita_types::SisModulusProfileId::Q32Offset99;
     // fp32 inner dispatch starts at D=64; fixtures pin uniform D=64.
     // `ring_subfield = 2` below is `FpExt4`'s embedding norm bound (a claim-field
     // property), not `D / d`, so the collision buckets are independent of this dimension.
@@ -136,13 +140,37 @@ fn fp32_ext4_root_lp(m_vars: usize) -> LevelParams {
     // coefficient bucket `15`. Buckets are pinned synthetically via `new_unchecked`.
     let a_bucket: u128 = 15;
     let bd_bucket: u128 = 7;
-    let mut params = LevelParams::params_only(sis_family, d, 3, 1, 1, 1, stage1);
-    params.a_key =
-        AjtaiKeyParams::new_unchecked(DEFAULT_SIS_SECURITY_BITS, sis_family, 1, 0, a_bucket, d);
-    params.b_key =
-        AjtaiKeyParams::new_unchecked(DEFAULT_SIS_SECURITY_BITS, sis_family, 1, 0, bd_bucket, d);
-    params.d_key =
-        AjtaiKeyParams::new_unchecked(DEFAULT_SIS_SECURITY_BITS, sis_family, 1, 0, bd_bucket, d);
+    let mut params = LevelParams::params_only(sis_modulus_profile, d, 3, 1, 1, 1, stage1);
+    params.a_key = AjtaiKeyParams::new_unchecked(
+        DEFAULT_SIS_SECURITY_POLICY,
+        akita_types::SisTableDigest::CURRENT,
+        sis_modulus_profile,
+        akita_types::SisMatrixRole::A,
+        1,
+        0,
+        a_bucket,
+        d,
+    );
+    params.b_key = AjtaiKeyParams::new_unchecked(
+        DEFAULT_SIS_SECURITY_POLICY,
+        akita_types::SisTableDigest::CURRENT,
+        sis_modulus_profile,
+        akita_types::SisMatrixRole::B,
+        1,
+        0,
+        bd_bucket,
+        d,
+    );
+    params.d_key = AjtaiKeyParams::new_unchecked(
+        DEFAULT_SIS_SECURITY_POLICY,
+        akita_types::SisTableDigest::CURRENT,
+        sis_modulus_profile,
+        akita_types::SisMatrixRole::D,
+        1,
+        0,
+        bd_bucket,
+        d,
+    );
     params.with_decomp(m_vars, 0, 12, 12, 0).unwrap()
 }
 
@@ -220,8 +248,8 @@ impl CommitmentConfig for Fp32RingSubfieldRootFoldCfg {
         })
     }
 
-    fn sis_modulus_family() -> akita_types::SisModulusFamily {
-        akita_types::SisModulusFamily::Q32
+    fn sis_modulus_profile() -> akita_types::SisModulusProfileId {
+        akita_types::SisModulusProfileId::Q32Offset99
     }
 
     fn max_setup_matrix_size(
@@ -314,8 +342,8 @@ impl CommitmentConfig for Fp32RingSubfieldOuterFallbackCfg {
         })
     }
 
-    fn sis_modulus_family() -> akita_types::SisModulusFamily {
-        akita_types::SisModulusFamily::Q32
+    fn sis_modulus_profile() -> akita_types::SisModulusProfileId {
+        akita_types::SisModulusProfileId::Q32Offset99
     }
 
     fn max_setup_matrix_size(

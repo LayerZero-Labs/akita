@@ -85,7 +85,7 @@ mod tests {
     use akita_field::{ExtField, Fp32, FpExt4};
     use akita_types::{
         AkitaScheduleLookupKey, CleartextWitnessShape, DirectStep, FoldStep, LevelParams,
-        PolynomialGroupLayout, SetupMatrixEnvelope, SisModulusFamily, Step,
+        PolynomialGroupLayout, SetupMatrixEnvelope, SisModulusProfileId, Step,
     };
 
     type Base = Fp32<251>;
@@ -96,7 +96,7 @@ mod tests {
 
     fn multi_group_extension_params() -> Result<LevelParams, AkitaError> {
         Ok(LevelParams::params_only(
-            SisModulusFamily::Q32,
+            SisModulusProfileId::Q32Offset99,
             GroupedExtensionCfg::D,
             3,
             1,
@@ -124,8 +124,8 @@ mod tests {
             Ok(SparseChallengeConfig::pm1_only(1))
         }
 
-        fn sis_modulus_family() -> SisModulusFamily {
-            SisModulusFamily::Q32
+        fn sis_modulus_profile() -> SisModulusProfileId {
+            SisModulusProfileId::Q32Offset99
         }
 
         fn max_setup_matrix_size(
@@ -217,8 +217,8 @@ mod tests {
             Ok(SparseChallengeConfig::pm1_only(1))
         }
 
-        fn sis_modulus_family() -> SisModulusFamily {
-            SisModulusFamily::Q32
+        fn sis_modulus_profile() -> SisModulusProfileId {
+            SisModulusProfileId::Q32Offset99
         }
 
         fn max_setup_matrix_size(
@@ -234,7 +234,7 @@ mod tests {
 
         fn runtime_schedule(_key: AkitaScheduleLookupKey) -> Result<Schedule, AkitaError> {
             let params = LevelParams::params_only(
-                SisModulusFamily::Q32,
+                SisModulusProfileId::Q32Offset99,
                 Self::D,
                 3,
                 1,
@@ -263,7 +263,7 @@ mod tests {
             _layout: &OpeningClaimsLayout,
         ) -> Result<LevelParams, AkitaError> {
             Ok(LevelParams::params_only(
-                SisModulusFamily::Q32,
+                SisModulusProfileId::Q32Offset99,
                 Self::D,
                 3,
                 1,

@@ -435,14 +435,16 @@ fn cost_leq(lhs: &LatticeCost, rhs: &LatticeCost) -> bool {
 
 fn cost_order(value: CostValue) -> f64 {
     match value {
-        CostValue::Finite(cost) => cost.log2,
+        CostValue::Finite(cost) | CostValue::ProvenAboveTarget(cost) => cost.log2,
         CostValue::Infinity => f64::INFINITY,
     }
 }
 
 fn sage_sanity_check(mut cost: LatticeCost) -> LatticeCost {
-    if cost_order(cost.rop) > SAGE_SANITY_MAX_LOG2 {
-        cost.rop = CostValue::Infinity;
+    if let CostValue::Finite(value) = cost.rop {
+        if value.log2 > SAGE_SANITY_MAX_LOG2 {
+            cost.rop = CostValue::ProvenAboveTarget(value);
+        }
     }
     cost
 }

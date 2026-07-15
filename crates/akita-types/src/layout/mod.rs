@@ -23,7 +23,7 @@ pub use opening_point::{
 };
 pub use params::{
     AjtaiKeyParams, LevelParams, LevelParamsLike, PrecommittedLevelParams, RelationMatrixRowLayout,
-    SisModulusFamily,
+    SisModulusProfileId,
 };
 pub use proof_size::{
     direct_witness_bytes, extension_opening_reduction_level_bytes,

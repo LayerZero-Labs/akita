@@ -1,9 +1,15 @@
 use super::*;
 
-fn sis_key(policy: &PlannerPolicy, coeff_linf_bound: u128) -> SisTableKey {
+fn sis_key(
+    policy: &PlannerPolicy,
+    role: akita_types::SisMatrixRole,
+    coeff_linf_bound: u128,
+) -> SisTableKey {
     SisTableKey {
-        min_security_bits: policy.min_sis_security_bits,
-        family: policy.sis_family,
+        policy: policy.sis_security_policy,
+        table_digest: policy.sis_table_digest,
+        modulus_profile: policy.sis_modulus_profile,
+        role,
         ring_dimension: policy.ring_dimension as u32,
         coeff_linf_bound,
     }
@@ -42,8 +48,8 @@ pub(crate) fn recursive_fold_level_params_candidate(
         return Ok(None);
     };
     let Some(norm_s) = rounded_up_role_a_inf_norm(
-        policy.min_sis_security_bits,
-        policy.sis_family,
+        policy.sis_security_policy,
+        policy.sis_modulus_profile,
         policy.ring_dimension,
         decomp,
         ring_challenge_cfg,
@@ -57,12 +63,16 @@ pub(crate) fn recursive_fold_level_params_candidate(
     ) else {
         return Ok(None);
     };
-    let Ok(a_key) = AjtaiKeyParams::try_new_with_min_rank(sis_key(policy, norm_s), width_s) else {
+    let Ok(a_key) = AjtaiKeyParams::try_new_with_min_rank(
+        sis_key(policy, akita_types::SisMatrixRole::A, norm_s),
+        width_s,
+    ) else {
         return Ok(None);
     };
     let Some(norm_t) = rounded_up_collision_inf_norm(
-        policy.min_sis_security_bits,
-        policy.sis_family,
+        policy.sis_security_policy,
+        policy.sis_modulus_profile,
+        akita_types::SisMatrixRole::B,
         policy.ring_dimension,
         log_basis,
     ) else {
@@ -71,13 +81,28 @@ pub(crate) fn recursive_fold_level_params_candidate(
     let Some(width_t) = decomposed_t_ring_count(a_key.row_len(), delta_open, num_blocks, 1) else {
         return Ok(None);
     };
-    let Ok(b_key) = AjtaiKeyParams::try_new_with_min_rank(sis_key(policy, norm_t), width_t) else {
+    let Ok(b_key) = AjtaiKeyParams::try_new_with_min_rank(
+        sis_key(policy, akita_types::SisMatrixRole::B, norm_t),
+        width_t,
+    ) else {
+        return Ok(None);
+    };
+    let Some(norm_w) = rounded_up_collision_inf_norm(
+        policy.sis_security_policy,
+        policy.sis_modulus_profile,
+        akita_types::SisMatrixRole::D,
+        policy.ring_dimension,
+        log_basis,
+    ) else {
         return Ok(None);
     };
     let Some(width_w) = decomposed_w_ring_count(delta_open, num_blocks, 1) else {
         return Ok(None);
     };
-    let Ok(d_key) = AjtaiKeyParams::try_new_with_min_rank(sis_key(policy, norm_t), width_w) else {
+    let Ok(d_key) = AjtaiKeyParams::try_new_with_min_rank(
+        sis_key(policy, akita_types::SisMatrixRole::D, norm_w),
+        width_w,
+    ) else {
         return Ok(None);
     };
     let mut params = LevelParams {
@@ -300,7 +325,7 @@ fn derive_setup_prefix_group(
     let ring_slots = n_prefix / policy.ring_dimension;
     let reduced_vars = checked_power_of_two_vars(ring_slots, "setup prefix ring slots")?;
     let prefix_num_vars = checked_power_of_two_vars(n_prefix, "setup prefix field length")?;
-    let family = policy.sis_family;
+    let family = policy.sis_modulus_profile;
     let d = policy.ring_dimension;
     let decomp = DecompositionParams {
         log_basis,
@@ -322,7 +347,7 @@ fn derive_setup_prefix_group(
             continue;
         };
         let Some(norm_s) = rounded_up_role_a_inf_norm(
-            policy.min_sis_security_bits,
+            policy.sis_security_policy,
             family,
             d,
             decomp,
@@ -337,13 +362,19 @@ fn derive_setup_prefix_group(
         ) else {
             continue;
         };
-        let Ok(a_key) = AjtaiKeyParams::try_new_with_min_rank(sis_key(policy, norm_s), width_s)
-        else {
+        let Ok(a_key) = AjtaiKeyParams::try_new_with_min_rank(
+            sis_key(policy, akita_types::SisMatrixRole::A, norm_s),
+            width_s,
+        ) else {
             continue;
         };
-        let Some(norm_t) =
-            rounded_up_collision_inf_norm(policy.min_sis_security_bits, family, d, log_basis)
-        else {
+        let Some(norm_t) = rounded_up_collision_inf_norm(
+            policy.sis_security_policy,
+            family,
+            akita_types::SisMatrixRole::B,
+            d,
+            log_basis,
+        ) else {
             continue;
         };
         let Some(width_t) =
@@ -351,8 +382,10 @@ fn derive_setup_prefix_group(
         else {
             continue;
         };
-        let Ok(b_key) = AjtaiKeyParams::try_new_with_min_rank(sis_key(policy, norm_t), width_t)
-        else {
+        let Ok(b_key) = AjtaiKeyParams::try_new_with_min_rank(
+            sis_key(policy, akita_types::SisMatrixRole::B, norm_t),
+            width_t,
+        ) else {
             continue;
         };
         let fold_linf_cap_config =
@@ -569,7 +602,7 @@ pub(crate) fn compute_root_direct_level_params(
     num_claims: usize,
 ) -> Result<Option<LevelParams>, AkitaError> {
     let d = policy.ring_dimension;
-    let sis_family = policy.sis_family;
+    let sis_modulus_profile = policy.sis_modulus_profile;
     let decomp = policy.decomposition;
     let alpha = (d as u32).trailing_zeros() as usize;
 
@@ -599,8 +632,8 @@ pub(crate) fn compute_root_direct_level_params(
         let is_onehot = decomp.log_commit_bound == 1;
         let fold_witness = FoldWitnessNorms::new(log_basis, d, policy.onehot_chunk_size, is_onehot);
         let (m_vars, r_vars, _scoring_n_a) = optimal_m_r_split(
-            policy.min_sis_security_bits,
-            sis_family,
+            policy.sis_security_policy,
+            sis_modulus_profile,
             d as u32,
             num_claims,
             policy.ring_subfield_norm_bound,
@@ -633,8 +666,8 @@ pub(crate) fn compute_root_direct_level_params(
         return Ok(None);
     };
     let Some(norm_s) = rounded_up_role_a_inf_norm(
-        policy.min_sis_security_bits,
-        sis_family,
+        policy.sis_security_policy,
+        sis_modulus_profile,
         d,
         level_decomp,
         ring_challenge_cfg,
@@ -648,30 +681,47 @@ pub(crate) fn compute_root_direct_level_params(
     ) else {
         return Ok(None);
     };
-    let Ok(a_key) = AjtaiKeyParams::try_new_with_min_rank(sis_key(policy, norm_s), width_s) else {
+    let Ok(a_key) = AjtaiKeyParams::try_new_with_min_rank(
+        sis_key(policy, akita_types::SisMatrixRole::A, norm_s),
+        width_s,
+    ) else {
         return Ok(None);
     };
     let n_a = a_key.row_len();
-    let Some(norm_t) =
-        rounded_up_collision_inf_norm(policy.min_sis_security_bits, sis_family, d, log_basis)
-    else {
+    let Some(norm_t) = rounded_up_collision_inf_norm(
+        policy.sis_security_policy,
+        sis_modulus_profile,
+        akita_types::SisMatrixRole::B,
+        d,
+        log_basis,
+    ) else {
         return Ok(None);
     };
     let Some(width_t) = decomposed_t_ring_count(n_a, depth_open, num_blocks, num_claims) else {
         return Ok(None);
     };
-    let Ok(b_key) = AjtaiKeyParams::try_new_with_min_rank(sis_key(policy, norm_t), width_t) else {
+    let Ok(b_key) = AjtaiKeyParams::try_new_with_min_rank(
+        sis_key(policy, akita_types::SisMatrixRole::B, norm_t),
+        width_t,
+    ) else {
         return Ok(None);
     };
-    let Some(norm_w) =
-        rounded_up_collision_inf_norm(policy.min_sis_security_bits, sis_family, d, log_basis)
-    else {
+    let Some(norm_w) = rounded_up_collision_inf_norm(
+        policy.sis_security_policy,
+        sis_modulus_profile,
+        akita_types::SisMatrixRole::D,
+        d,
+        log_basis,
+    ) else {
         return Ok(None);
     };
     let Some(width_w) = decomposed_w_ring_count(depth_open, num_blocks, num_claims) else {
         return Ok(None);
     };
-    let Ok(d_key) = AjtaiKeyParams::try_new_with_min_rank(sis_key(policy, norm_w), width_w) else {
+    let Ok(d_key) = AjtaiKeyParams::try_new_with_min_rank(
+        sis_key(policy, akita_types::SisMatrixRole::D, norm_w),
+        width_w,
+    ) else {
         return Ok(None);
     };
 
@@ -755,8 +805,8 @@ pub(crate) fn scalar_root_fold_level_params_candidate(
         return Ok(None);
     };
     let Some(norm_s) = rounded_up_role_a_inf_norm(
-        policy.min_sis_security_bits,
-        policy.sis_family,
+        policy.sis_security_policy,
+        policy.sis_modulus_profile,
         policy.ring_dimension,
         level_decomp,
         ring_challenge_cfg,
@@ -770,12 +820,16 @@ pub(crate) fn scalar_root_fold_level_params_candidate(
     ) else {
         return Ok(None);
     };
-    let Ok(a_key) = AjtaiKeyParams::try_new_with_min_rank(sis_key(policy, norm_s), width_s) else {
+    let Ok(a_key) = AjtaiKeyParams::try_new_with_min_rank(
+        sis_key(policy, akita_types::SisMatrixRole::A, norm_s),
+        width_s,
+    ) else {
         return Ok(None);
     };
     let Some(norm_t) = rounded_up_collision_inf_norm(
-        policy.min_sis_security_bits,
-        policy.sis_family,
+        policy.sis_security_policy,
+        policy.sis_modulus_profile,
+        akita_types::SisMatrixRole::B,
         policy.ring_dimension,
         log_basis,
     ) else {
@@ -786,13 +840,28 @@ pub(crate) fn scalar_root_fold_level_params_candidate(
     else {
         return Ok(None);
     };
-    let Ok(b_key) = AjtaiKeyParams::try_new_with_min_rank(sis_key(policy, norm_t), width_t) else {
+    let Ok(b_key) = AjtaiKeyParams::try_new_with_min_rank(
+        sis_key(policy, akita_types::SisMatrixRole::B, norm_t),
+        width_t,
+    ) else {
+        return Ok(None);
+    };
+    let Some(norm_w) = rounded_up_collision_inf_norm(
+        policy.sis_security_policy,
+        policy.sis_modulus_profile,
+        akita_types::SisMatrixRole::D,
+        policy.ring_dimension,
+        log_basis,
+    ) else {
         return Ok(None);
     };
     let Some(width_w) = decomposed_w_ring_count(num_digits_open, num_blocks, num_claims) else {
         return Ok(None);
     };
-    let Ok(d_key) = AjtaiKeyParams::try_new_with_min_rank(sis_key(policy, norm_t), width_w) else {
+    let Ok(d_key) = AjtaiKeyParams::try_new_with_min_rank(
+        sis_key(policy, akita_types::SisMatrixRole::D, norm_w),
+        width_w,
+    ) else {
         return Ok(None);
     };
     let onehot_chunk_size = if policy.decomposition.log_commit_bound == 1 {
@@ -835,12 +904,12 @@ pub(crate) fn scalar_root_fold_level_params_candidate(
 mod tests {
     use super::*;
     use akita_challenges::SparseChallengeConfig;
-    use akita_types::{PolynomialGroupLayout, SisModulusFamily};
+    use akita_types::{PolynomialGroupLayout, SisModulusProfileId};
 
     fn grouped_level_params() -> LevelParams {
         let fold_challenge_config = SparseChallengeConfig::pm1_only(3);
         let mut params = LevelParams::params_only(
-            SisModulusFamily::Q128,
+            SisModulusProfileId::Q128OffsetA7F7,
             64,
             3,
             2,
@@ -851,7 +920,7 @@ mod tests {
         .with_decomp(2, 2, 2, 2, 0)
         .expect("grouped params");
         let precommitted = LevelParams::params_only(
-            SisModulusFamily::Q128,
+            SisModulusProfileId::Q128OffsetA7F7,
             64,
             3,
             2,

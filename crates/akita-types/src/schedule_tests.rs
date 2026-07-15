@@ -7,7 +7,7 @@ use crate::{
     stage1_tree_stage_shapes, sumcheck_rounds, AkitaBatchedRootProof, AkitaIntermediateStage2Proof,
     AkitaLevelProof, AkitaStage1Proof, AkitaStage1StageProof, AkitaStage2Proof,
     CleartextWitnessProof, ExtensionOpeningReductionProof, RelationMatrixRowLayout, RingVec,
-    SisModulusFamily, TerminalLevelProof, EXTENSION_OPENING_REDUCTION_DEGREE,
+    SisModulusProfileId, TerminalLevelProof, EXTENSION_OPENING_REDUCTION_DEGREE,
 };
 use akita_algebra::CyclotomicRing;
 use akita_challenges::SparseChallengeConfig;
@@ -23,9 +23,17 @@ fn chunked_witness_count_matches_chunk_layout_arithmetic() {
     const D: usize = 64;
     let fold_challenge_config = SparseChallengeConfig::pm1_only(3);
     // num_blocks = 2^3 = 8, divisible by {1, 2, 4, 8}.
-    let lp = LevelParams::params_only(SisModulusFamily::Q128, D, 3, 2, 2, 2, fold_challenge_config)
-        .with_decomp(2, 3, 2, 2, 0)
-        .unwrap();
+    let lp = LevelParams::params_only(
+        SisModulusProfileId::Q128OffsetA7F7,
+        D,
+        3,
+        2,
+        2,
+        2,
+        fold_challenge_config,
+    )
+    .with_decomp(2, 3, 2, 2, 0)
+    .unwrap();
     let field_bits = 128u32;
     let num_poly = 3usize;
 
@@ -62,9 +70,17 @@ fn chunked_witness_count_rejects_invalid_chunk_counts() {
     const D: usize = 64;
     let fold_challenge_config = SparseChallengeConfig::pm1_only(3);
     // num_blocks = 2^3 = 8.
-    let lp = LevelParams::params_only(SisModulusFamily::Q128, D, 3, 2, 2, 2, fold_challenge_config)
-        .with_decomp(2, 3, 2, 2, 0)
-        .unwrap();
+    let lp = LevelParams::params_only(
+        SisModulusProfileId::Q128OffsetA7F7,
+        D,
+        3,
+        2,
+        2,
+        2,
+        fold_challenge_config,
+    )
+    .with_decomp(2, 3, 2, 2, 0)
+    .unwrap();
     // Non-power-of-two chunk count.
     assert!(matches!(
         w_ring_element_count_for_chunks(128, &lp, 1, RelationMatrixRowLayout::WithDBlock, 6),
@@ -116,7 +132,7 @@ fn segment_typed_final_witness(
 fn grouped_level_params() -> LevelParams {
     let fold_challenge_config = SparseChallengeConfig::pm1_only(3);
     let mut params = LevelParams::params_only(
-        SisModulusFamily::Q128,
+        SisModulusProfileId::Q128OffsetA7F7,
         64,
         3,
         2,
@@ -127,7 +143,7 @@ fn grouped_level_params() -> LevelParams {
     .with_decomp(2, 2, 2, 2, 0)
     .expect("grouped params");
     let precommitted = LevelParams::params_only(
-        SisModulusFamily::Q128,
+        SisModulusProfileId::Q128OffsetA7F7,
         64,
         3,
         2,
@@ -178,7 +194,7 @@ fn scalar_terminal_steps(current_w_len: usize, params: LevelParams) -> (FoldStep
 #[test]
 fn root_direct_schedule_uses_field_element_payload() {
     let dummy_commit_params = LevelParams::params_only(
-        crate::SisModulusFamily::Q128,
+        crate::SisModulusProfileId::Q128OffsetA7F7,
         64,
         3,
         1,
@@ -202,7 +218,7 @@ fn root_direct_schedule_uses_field_element_payload() {
 #[test]
 fn schedule_structure_accepts_scalar_and_nonterminal_grouped_shapes() {
     let scalar = LevelParams::params_only(
-        SisModulusFamily::Q128,
+        SisModulusProfileId::Q128OffsetA7F7,
         64,
         3,
         2,
@@ -287,7 +303,7 @@ fn schedule_structure_rejects_grouped_direct_and_terminal_fold() {
     assert!(grouped_direct.validate_structure().is_err());
 
     let scalar = LevelParams::params_only(
-        SisModulusFamily::Q128,
+        SisModulusProfileId::Q128OffsetA7F7,
         64,
         3,
         2,
@@ -318,7 +334,7 @@ fn schedule_structure_rejects_grouped_direct_and_terminal_fold() {
 #[test]
 fn schedule_structure_rejects_discontinuous_witness_lengths() {
     let scalar = LevelParams::params_only(
-        SisModulusFamily::Q128,
+        SisModulusProfileId::Q128OffsetA7F7,
         64,
         3,
         2,
@@ -346,7 +362,7 @@ fn schedule_structure_rejects_grouped_multi_chunk() {
         num_activated_levels: 1,
     };
     let scalar = LevelParams::params_only(
-        SisModulusFamily::Q128,
+        SisModulusProfileId::Q128OffsetA7F7,
         64,
         3,
         2,
@@ -376,7 +392,7 @@ fn schedule_structure_rejects_grouped_multi_chunk() {
 
 fn scalar_level_params() -> LevelParams {
     LevelParams::params_only(
-        SisModulusFamily::Q128,
+        SisModulusProfileId::Q128OffsetA7F7,
         64,
         3,
         2,
@@ -391,7 +407,7 @@ fn scalar_level_params() -> LevelParams {
 fn setup_prefix_only_params() -> LevelParams {
     let fold_challenge_config = SparseChallengeConfig::pm1_only(3);
     let precommitted = LevelParams::params_only(
-        SisModulusFamily::Q128,
+        SisModulusProfileId::Q128OffsetA7F7,
         64,
         3,
         2,
@@ -589,7 +605,7 @@ fn root_direct_schedule_uses_multi_group_witness_len() {
     assert_eq!(witness_len, 4 + 16 + 16);
 
     let dummy_commit_params = LevelParams::params_only(
-        crate::SisModulusFamily::Q128,
+        crate::SisModulusProfileId::Q128OffsetA7F7,
         64,
         3,
         1,
@@ -685,13 +701,20 @@ fn exact_level_proof_bytes<F: FieldCore + CanonicalField + AkitaSerialize>(
 fn planned_level_bytes_match_two_stage_payload_at_all_bases() {
     const D: usize = 64;
     let fold_challenge_config = SparseChallengeConfig::pm1_only(3);
-    let next_lp =
-        LevelParams::params_only(SisModulusFamily::Q128, D, 2, 2, 3, 2, fold_challenge_config);
+    let next_lp = LevelParams::params_only(
+        SisModulusProfileId::Q128OffsetA7F7,
+        D,
+        2,
+        2,
+        3,
+        2,
+        fold_challenge_config,
+    );
     let next_w_len = D * 8;
 
     for log_basis in 2..=6 {
         let lp = LevelParams::params_only(
-            SisModulusFamily::Q128,
+            SisModulusProfileId::Q128OffsetA7F7,
             D,
             log_basis,
             2,
@@ -726,7 +749,7 @@ fn planned_terminal_level_bytes_match_terminal_payload_at_all_bases() {
 
     for log_basis in 2..=6 {
         let lp = LevelParams::params_only(
-            SisModulusFamily::Q128,
+            SisModulusProfileId::Q128OffsetA7F7,
             D,
             log_basis,
             2,
@@ -782,13 +805,20 @@ fn planned_terminal_level_bytes_match_terminal_payload_at_all_bases() {
 fn planned_batched_root_bytes_match_two_stage_payload_at_all_bases() {
     const D: usize = 64;
     let fold_challenge_config = SparseChallengeConfig::pm1_only(3);
-    let next_lp =
-        LevelParams::params_only(SisModulusFamily::Q128, D, 2, 2, 3, 2, fold_challenge_config);
+    let next_lp = LevelParams::params_only(
+        SisModulusProfileId::Q128OffsetA7F7,
+        D,
+        2,
+        2,
+        3,
+        2,
+        fold_challenge_config,
+    );
     let next_w_len = D * 8;
 
     for log_basis in 2..=6 {
         let lp = LevelParams::params_only(
-            SisModulusFamily::Q128,
+            SisModulusProfileId::Q128OffsetA7F7,
             D,
             log_basis,
             2,
