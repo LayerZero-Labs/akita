@@ -227,9 +227,34 @@ mod tests {
         }
     }
 
+    fn mutate_first_generated_fold_step(
+        steps: &mut [GeneratedStep],
+        mutate: impl FnOnce(&mut GeneratedFoldStep),
+    ) {
+        for step in steps.iter_mut() {
+            match step {
+                GeneratedStep::Fold(fold) => {
+                    mutate(fold);
+                    return;
+                }
+                GeneratedStep::FoldWithSetupMetadata(fold) => {
+                    mutate(&mut fold.fold);
+                    return;
+                }
+                GeneratedStep::Direct(direct) => {
+                    if let Some(commit) = direct.commit.as_mut() {
+                        mutate(commit);
+                        return;
+                    }
+                }
+            }
+        }
+        panic!("schedule should contain a fold or root-direct commit");
+    }
+
     #[test]
     fn resolve_schedule_none_matches_key_planner() {
-        let key = PolynomialGroupLayout::new(20, 1);
+        let key = PolynomialGroupLayout::new(30, 1);
         let policy = flat_policy();
         let via_resolve = resolve_schedule(key, &policy, ring_challenge_config, fold_shape, None)
             .expect("resolve");
@@ -305,7 +330,7 @@ mod tests {
             num_chunks: 6,
             num_activated_levels: 2,
         };
-        let key = PolynomialGroupLayout::new(20, 1);
+        let key = PolynomialGroupLayout::new(30, 1);
         let err = find_single_schedule(key, &policy)
             .expect_err("non-power-of-two chunk count must be rejected");
         assert!(matches!(err, AkitaError::InvalidSetup(_)));
@@ -346,7 +371,7 @@ mod tests {
 
     #[test]
     fn validate_generated_entry_accepts_materialized_dp_schedule() {
-        let key = PolynomialGroupLayout::new(20, 1);
+        let key = PolynomialGroupLayout::new(30, 1);
         let policy = flat_policy();
         let schedule = find_single_schedule(key, &policy).expect("find schedule");
         let entry = generated_entry_from_steps(key, generated_steps_from_schedule(&schedule));
@@ -363,19 +388,11 @@ mod tests {
 
     #[test]
     fn validate_generated_entry_rejects_overstated_b_rank() {
-        let key = PolynomialGroupLayout::new(20, 1);
+        let key = PolynomialGroupLayout::new(30, 1);
         let policy = flat_policy();
         let schedule = find_single_schedule(key, &policy).expect("find schedule");
         let mut steps = generated_steps_from_schedule(&schedule);
-        match steps
-            .iter_mut()
-            .find(|step| matches!(step, GeneratedStep::Fold(_)))
-            .expect("schedule should contain a fold")
-        {
-            GeneratedStep::Fold(fold) => fold.n_b += 1,
-            GeneratedStep::FoldWithSetupMetadata(fold) => fold.fold.n_b += 1,
-            GeneratedStep::Direct(_) => unreachable!("find guaranteed a fold"),
-        }
+        mutate_first_generated_fold_step(&mut steps, |fold| fold.n_b += 1);
         let entry = generated_entry_from_steps(key, steps);
 
         let err = validate_generated_schedule_entry(
@@ -395,19 +412,11 @@ mod tests {
 
     #[test]
     fn validate_generated_entry_rejects_overstated_a_rank() {
-        let key = PolynomialGroupLayout::new(20, 1);
+        let key = PolynomialGroupLayout::new(30, 1);
         let policy = flat_policy();
         let schedule = find_single_schedule(key, &policy).expect("find schedule");
         let mut steps = generated_steps_from_schedule(&schedule);
-        match steps
-            .iter_mut()
-            .find(|step| matches!(step, GeneratedStep::Fold(_)))
-            .expect("schedule should contain a fold")
-        {
-            GeneratedStep::Fold(fold) => fold.n_a += 1,
-            GeneratedStep::FoldWithSetupMetadata(fold) => fold.fold.n_a += 1,
-            GeneratedStep::Direct(_) => unreachable!("find guaranteed a fold"),
-        }
+        mutate_first_generated_fold_step(&mut steps, |fold| fold.n_a += 1);
         let entry = generated_entry_from_steps(key, steps);
 
         let err = validate_generated_schedule_entry(
@@ -427,25 +436,14 @@ mod tests {
 
     #[test]
     fn validate_generated_entry_rejects_understated_a_rank() {
-        let key = PolynomialGroupLayout::new(20, 1);
+        let key = PolynomialGroupLayout::new(30, 1);
         let policy = flat_policy();
         let schedule = find_single_schedule(key, &policy).expect("find schedule");
         let mut steps = generated_steps_from_schedule(&schedule);
-        match steps
-            .iter_mut()
-            .find(|step| matches!(step, GeneratedStep::Fold(_)))
-            .expect("schedule should contain a fold")
-        {
-            GeneratedStep::Fold(fold) => {
-                assert!(fold.n_a > 1, "test needs n_a > 1 to understate rank");
-                fold.n_a -= 1;
-            }
-            GeneratedStep::FoldWithSetupMetadata(fold) => {
-                assert!(fold.fold.n_a > 1, "test needs n_a > 1 to understate rank");
-                fold.fold.n_a -= 1;
-            }
-            GeneratedStep::Direct(_) => unreachable!("find guaranteed a fold"),
-        }
+        mutate_first_generated_fold_step(&mut steps, |fold| {
+            assert!(fold.n_a > 1, "test needs n_a > 1 to understate rank");
+            fold.n_a -= 1;
+        });
         let entry = generated_entry_from_steps(key, steps);
 
         let err = validate_generated_schedule_entry(
@@ -465,19 +463,11 @@ mod tests {
 
     #[test]
     fn resolve_schedule_rejects_corrupt_table_hit() {
-        let key = PolynomialGroupLayout::new(20, 1);
+        let key = PolynomialGroupLayout::new(30, 1);
         let policy = flat_policy();
         let schedule = find_single_schedule(key, &policy).expect("find schedule");
         let mut steps = generated_steps_from_schedule(&schedule);
-        match steps
-            .iter_mut()
-            .find(|step| matches!(step, GeneratedStep::Fold(_)))
-            .expect("schedule should contain a fold")
-        {
-            GeneratedStep::Fold(fold) => fold.n_d += 1,
-            GeneratedStep::FoldWithSetupMetadata(fold) => fold.fold.n_d += 1,
-            GeneratedStep::Direct(_) => unreachable!("find guaranteed a fold"),
-        }
+        mutate_first_generated_fold_step(&mut steps, |fold| fold.n_d += 1);
         let entry = generated_entry_from_steps(key, steps);
         let entries: &'static [GeneratedScheduleTableEntry] =
             Box::leak(vec![entry].into_boxed_slice());
@@ -497,7 +487,7 @@ mod tests {
 
     #[test]
     fn walk_validate_matches_materialize_total_bytes() {
-        let key = PolynomialGroupLayout::new(20, 1);
+        let key = PolynomialGroupLayout::new(30, 1);
         let policy = flat_policy();
         let schedule = find_single_schedule(key, &policy).expect("find schedule");
         let entry = generated_entry_from_steps(key, generated_steps_from_schedule(&schedule));

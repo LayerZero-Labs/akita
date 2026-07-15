@@ -44,8 +44,8 @@ fn scalar_group_layout(
 #[test]
 fn recompose_and_split_digits_round_trip() {
     let digits = vec![-2i8, 1, 0];
-    let value = recompose_balanced_i8_digits(&digits, 3);
-    let back = balanced_digits_from_i64(value, digits.len(), 3);
+    let value = test_support::recompose_balanced_i8_digits(&digits, 3);
+    let back = test_support::balanced_digits_from_i64(value, digits.len(), 3);
     assert_eq!(back, digits);
 }
 
@@ -79,7 +79,7 @@ fn segment_typed_wire_round_trip_with_scheduled_z_budget() {
     );
     let (rice_low_bits, zigzag_w_z) = tail_golomb_rice_z_params(&lp, 1).unwrap();
     let centered = [[-3i32, 0, 1, 2, -1, 4, 0, 0]; 2];
-    let z_payload = encode_z_segment_from_centered(
+    let z_payload = test_support::encode_z_segment_from_centered(
         &centered,
         1,
         lp.num_digits_commit,
@@ -179,3 +179,6 @@ fn expand_segment_typed_rejects_inadmissible_z_payload() {
     };
     assert!(expand_segment_typed_to_i8_digits::<8, F>(&witness, &lp, 1).is_err());
 }
+
+#[path = "test_support.rs"]
+mod test_support;

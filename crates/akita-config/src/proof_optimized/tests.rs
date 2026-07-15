@@ -470,19 +470,19 @@ fn proof_optimized_setup_includes_arbitrary_precommit_group_sizes() {
     type Cfg = fp128::D64OneHot;
 
     let layout = OpeningClaimsLayout::from_root_groups(
-        &[PolynomialGroupLayout::new(12, 1)],
-        PolynomialGroupLayout::new(11, 1),
+        &[PolynomialGroupLayout::new(10, 1)],
+        PolynomialGroupLayout::new(20, 1),
     )
-    .expect("larger precommitted group layout");
+    .expect("max precommitted group layout");
     let runtime = setup_matrix_envelope_for_shape::<Cfg>(&layout)
         .expect("runtime setup envelope")
-        .expect("larger precommitted group should be schedulable");
+        .expect("max precommitted group should be schedulable");
     let setup_envelope =
-        super::proof_optimized_max_setup_matrix_size::<Cfg>(12, 1).expect("setup envelope");
+        super::proof_optimized_max_setup_matrix_size::<Cfg>(20, 1).expect("setup envelope");
 
     assert!(
         setup_envelope.max_setup_len >= runtime.max_setup_len,
-        "setup envelope must cover precommitted groups that are larger than the final group"
+        "setup envelope must cover multi-group roots at the precommitted num_vars ceiling"
     );
 }
 
@@ -491,8 +491,8 @@ fn grouped_root_runtime_setup_uses_per_group_roles_and_summed_d_width() {
     type Cfg = fp128::D64OneHot;
 
     let layout = OpeningClaimsLayout::from_root_groups(
-        &[PolynomialGroupLayout::new(24, 1)],
-        PolynomialGroupLayout::new(20, 1),
+        &[PolynomialGroupLayout::new(10, 1)],
+        PolynomialGroupLayout::new(24, 1),
     )
     .expect("grouped root layout");
     let key = super::proof_optimized_schedule_key::<Cfg>(&layout).expect("grouped root key");
@@ -535,16 +535,17 @@ fn recursive_setup_envelope_counts_setup_prefix_d_segment() {
     };
 
     fn scalar_level_params() -> LevelParams {
+        let full_field_digits = akita_types::sis::compute_num_digits_full_field(128, 2);
         LevelParams::params_only(
-            akita_types::SisModulusProfileId::Q128OffsetA7F7,
+            akita_types::SisModulusProfileId::Q32Offset99,
             SETUP_OFFLOAD_D_SETUP,
+            2,
+            2,
             3,
-            2,
-            2,
             2,
             SparseChallengeConfig::pm1_only(3),
         )
-        .with_decomp(2, 2, 2, 2)
+        .with_decomp(2, 3, full_field_digits, 2)
         .expect("scalar params")
     }
 
@@ -596,7 +597,7 @@ fn recursive_setup_envelope_counts_setup_prefix_d_segment() {
         let mut root = scalar_level_params();
         root.setup_contribution_mode = SetupContributionMode::Recursive;
 
-        let natural_len = active_setup_field_len(&root, layout).expect("natural len");
+        let natural_len = 129usize;
         let n_prefix = padded_setup_prefix_len(natural_len);
         let mut successor = scalar_level_params();
         successor.setup_prefix = Some(setup_prefix_slot_id(
@@ -678,7 +679,7 @@ fn recursive_setup_envelope_counts_setup_prefix_d_segment() {
         }
     }
 
-    let layout = OpeningClaimsLayout::new(8, 1).expect("recursive opening layout");
+    let layout = OpeningClaimsLayout::new(5, 1).expect("recursive opening layout");
     let schedule =
         SyntheticRecursiveCfg::get_params_for_prove(&layout).expect("synthetic recursive schedule");
     schedule

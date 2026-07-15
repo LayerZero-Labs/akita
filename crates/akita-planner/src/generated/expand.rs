@@ -275,6 +275,32 @@ impl GeneratedFoldStep {
             num_claims,
             None,
             SetupContributionMode::Direct,
+            None,
+        )
+    }
+
+    /// Expand a root-direct commit payload (`GeneratedDirectStep::commit`).
+    ///
+    /// Root-direct commits ship the raw polynomial unchunked, matching
+    /// [`crate::schedule_params::candidate::compute_root_direct_level_params`].
+    pub fn expand_to_root_direct_commit_params(
+        &self,
+        policy: &PlannerPolicy,
+        ring_challenge_config: impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
+        current_w_len: usize,
+        fold_shape: TensorChallengeShape,
+        num_claims: usize,
+    ) -> Result<LevelParams, AkitaError> {
+        self.expand_to_level_params_with_setup(
+            policy,
+            ring_challenge_config,
+            0,
+            current_w_len,
+            fold_shape,
+            num_claims,
+            None,
+            SetupContributionMode::Direct,
+            Some(1),
         )
     }
 
@@ -289,6 +315,7 @@ impl GeneratedFoldStep {
         num_claims: usize,
         setup_prefix_group: Option<GeneratedSetupPrefixGroup>,
         setup_contribution_mode: SetupContributionMode,
+        shard_chunks_override: Option<usize>,
     ) -> Result<LevelParams, AkitaError> {
         let ring_d = self.ring_d as usize;
         if ring_d == 0 || ring_d != policy.ring_dimension {
@@ -334,11 +361,9 @@ impl GeneratedFoldStep {
         };
         let live_fold_count = source_ring_len_per_claim.div_ceil(fold_position_count);
         let fold_shape = optimize_fold_challenge_shape(fold_shape, live_fold_count)?;
-        let shard_granule = optimize_shard_granule(
-            live_fold_count,
-            policy.chunks_at_level(fold_level),
-            fold_shape,
-        )?;
+        let num_chunks =
+            shard_chunks_override.unwrap_or_else(|| policy.chunks_at_level(fold_level));
+        let shard_granule = optimize_shard_granule(live_fold_count, num_chunks, fold_shape)?;
 
         // Per-role rounded-up collision buckets + committed widths, via the
         // `akita_types::sis` primitives. The B/D widths carry the `num_claims`
@@ -788,6 +813,7 @@ impl GeneratedFoldStepWithSetupMetadata {
             num_claims,
             self.setup_prefix_group,
             self.setup_contribution_mode,
+            None,
         )
     }
 

@@ -217,16 +217,27 @@ fn walk_scalar_generated_schedule_entry(
                 let (witness_shape, direct_current_w_len, params) = if fold_level == 0 {
                     let params = direct
                         .commit
+                        .as_ref()
                         .map(|commit| {
-                            let commit_step = GeneratedStep::Fold(commit);
-                            expand_validated_fold_level(
-                                &commit_step,
-                                key,
+                            validate_fold_geometry(commit, key, policy, 0, expected_root_w_len)?;
+                            validate_log_basis(commit.log_basis, policy)?;
+                            let fold_shape = fold_challenge_shape_at_level(AkitaScheduleInputs {
+                                num_vars: key.num_vars(),
+                                level: 0,
+                                current_w_len: expected_root_w_len,
+                            });
+                            let lp = commit.expand_to_root_direct_commit_params(
                                 policy,
                                 ring_challenge_config,
-                                fold_challenge_shape_at_level,
-                                0,
                                 expected_root_w_len,
+                                fold_shape,
+                                key.num_polynomials(),
+                            )?;
+                            validate_expanded_level_params(
+                                &lp,
+                                commit,
+                                policy,
+                                0,
                                 key.num_polynomials(),
                             )
                         })
