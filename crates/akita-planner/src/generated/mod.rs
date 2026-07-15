@@ -1,6 +1,15 @@
 #![allow(missing_docs)]
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GeneratedSetupPrefixGroup {
+    pub natural_len: u32,
+    pub m_vars: u32,
+    pub r_vars: u32,
+    pub n_a: u32,
+    pub n_b: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GeneratedFoldStep {
     pub ring_d: u32,
     pub log_basis: u32,
@@ -10,6 +19,13 @@ pub struct GeneratedFoldStep {
     /// Stored first-tier `B` rank.
     pub n_b: u32,
     pub n_d: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GeneratedFoldStepWithSetupMetadata {
+    pub fold: GeneratedFoldStep,
+    pub setup_prefix_group: Option<GeneratedSetupPrefixGroup>,
+    pub setup_contribution_mode: akita_types::SetupContributionMode,
 }
 
 /// Terminal direct-send step in a generated schedule.
@@ -31,7 +47,26 @@ pub struct GeneratedDirectStep {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GeneratedStep {
     Fold(GeneratedFoldStep),
+    FoldWithSetupMetadata(GeneratedFoldStepWithSetupMetadata),
     Direct(GeneratedDirectStep),
+}
+
+impl GeneratedStep {
+    pub fn fold_step(&self) -> Option<&GeneratedFoldStep> {
+        match self {
+            Self::Fold(step) => Some(step),
+            Self::FoldWithSetupMetadata(step) => Some(&step.fold),
+            Self::Direct(_) => None,
+        }
+    }
+
+    pub fn fold_step_mut(&mut self) -> Option<&mut GeneratedFoldStep> {
+        match self {
+            Self::Fold(step) => Some(step),
+            Self::FoldWithSetupMetadata(step) => Some(&mut step.fold),
+            Self::Direct(_) => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -67,6 +102,7 @@ pub struct GeneratedScheduleCatalogIdentity {
     /// never aliases a single-chunk table (and vice versa), even when row keys
     /// match. `ChunkedWitnessCfg::default()` for single-chunk tables.
     pub witness_chunk: akita_types::ChunkedWitnessCfg,
+    pub recursive_setup_planning: bool,
 
     pub root_fold_shape: akita_challenges::TensorChallengeShape,
     pub ring_dimensions: &'static [usize],
@@ -85,7 +121,7 @@ pub mod expand;
 pub mod validate;
 pub(crate) mod walk;
 pub use akita_types::SisModulusFamily;
-pub use akita_types::{PolynomialGroupLayout, PrecommittedGroupParams};
+pub use akita_types::{PolynomialGroupLayout, PrecommittedGroupParams, SetupContributionMode};
 pub use validate::{validate_generated_schedule_entry, validate_generated_schedule_table};
 
 /// Returns true when `entries` are ordered for [`table_entry`] binary search.

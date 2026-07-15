@@ -6,7 +6,9 @@ use super::kernels::{
     OpeningBatchKernel, OpeningFoldKernel, RingSwitchQuotientKernel, RingSwitchRelationKernel,
     RootCommitKernel, TensorProjectionBatchKernel, TensorProjectionKernel,
 };
-use crate::backend::{RecursiveWitnessFlat, RingSwitchQuotientView, RingSwitchRelationView};
+use crate::backend::{
+    RecursiveFoldSource, RecursiveWitnessFlat, RingSwitchQuotientView, RingSwitchRelationView,
+};
 use crate::RootTensorProjectionPoly;
 use akita_field::unreduced::{HasWide, ReduceTo};
 use akita_field::RandomSampling;
@@ -848,6 +850,10 @@ pub trait RuntimeRecursiveWitnessProveBackend<F, E>:
     + ProveFlowBackendFor<F, RecursiveWitnessFlat, E, 64>
     + ProveFlowBackendFor<F, RecursiveWitnessFlat, E, 128>
     + ProveFlowBackendFor<F, RecursiveWitnessFlat, E, 256>
+    + ProveFlowBackendFor<F, RecursiveFoldSource<F>, E, 32>
+    + ProveFlowBackendFor<F, RecursiveFoldSource<F>, E, 64>
+    + ProveFlowBackendFor<F, RecursiveFoldSource<F>, E, 128>
+    + ProveFlowBackendFor<F, RecursiveFoldSource<F>, E, 256>
 where
     F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + RandomSampling + 'static,
     <F as HasWide>::Wide: From<F> + ReduceTo<F>,
@@ -863,7 +869,11 @@ where
     B: ProveFlowBackendFor<F, RecursiveWitnessFlat, E, 32>
         + ProveFlowBackendFor<F, RecursiveWitnessFlat, E, 64>
         + ProveFlowBackendFor<F, RecursiveWitnessFlat, E, 128>
-        + ProveFlowBackendFor<F, RecursiveWitnessFlat, E, 256>,
+        + ProveFlowBackendFor<F, RecursiveWitnessFlat, E, 256>
+        + ProveFlowBackendFor<F, RecursiveFoldSource<F>, E, 32>
+        + ProveFlowBackendFor<F, RecursiveFoldSource<F>, E, 64>
+        + ProveFlowBackendFor<F, RecursiveFoldSource<F>, E, 128>
+        + ProveFlowBackendFor<F, RecursiveFoldSource<F>, E, 256>,
 {
 }
 
@@ -925,9 +935,13 @@ where
     C: ComputeBackendSetup<F> + CommitmentComputeBackend<F>,
     O: ComputeBackendSetup<F>
         + RuntimeOpeningProveBackendFor<F, P>
+        + RuntimeOpeningProveBackendFor<F, RecursiveFoldSource<F>>
         + SuffixOpeningProveBackend<F>
         + DigitRowsComputeBackend<F>,
-    TS: ComputeBackendSetup<F> + RuntimeTensorBackendFor<F, P, E> + SuffixTensorProveBackend<F, E>,
+    TS: ComputeBackendSetup<F>
+        + RuntimeTensorBackendFor<F, P, E>
+        + RuntimeTensorBackendFor<F, RecursiveFoldSource<F>, E>
+        + SuffixTensorProveBackend<F, E>,
     R: ComputeBackendSetup<F> + RuntimeRingSwitchProveBackend<F> + DigitRowsComputeBackend<F>,
 {
 }

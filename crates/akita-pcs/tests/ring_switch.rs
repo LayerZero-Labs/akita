@@ -984,11 +984,12 @@ mod tests {
             .terminal_artifacts
             .expect("terminal artifacts retained");
         artifacts.ensure_ring_dim::<D>().expect("ring dim");
+        let group = artifacts.groups.first().expect("single terminal group");
         let segment = build_segment_typed_witness::<F>(
             artifacts.ring_dim(),
-            &artifacts.e_folded,
-            &artifacts.recomposed_inner_rows,
-            artifacts.z_folded_centered_flat(),
+            &group.e_folded,
+            &group.recomposed_inner_rows,
+            group.z_folded_centered_flat(),
             &artifacts.r,
             &level_params,
             1,

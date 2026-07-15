@@ -51,6 +51,7 @@ pub fn policy_digest(policy: &PlannerPolicy) -> [u8; 32] {
     h.write_u64(u64::from(policy.basis_range.0));
     h.write_u64(u64::from(policy.basis_range.1));
     h.write_u64(policy.onehot_chunk_size as u64);
+    h.write_u64(u64::from(policy.recursive_setup_planning));
     let digest = h.finish();
     out[..8].copy_from_slice(&digest.to_le_bytes());
     out
@@ -73,6 +74,7 @@ pub fn identity_digest(identity: &GeneratedScheduleCatalogIdentity) -> [u8; 32] 
     h.write_u64(identity.onehot_chunk_size as u64);
     h.write_u64(identity.witness_chunk.num_chunks as u64);
     h.write_u64(identity.witness_chunk.num_activated_levels as u64);
+    h.write_u64(u64::from(identity.recursive_setup_planning));
 
     h.write_u64(match identity.root_fold_shape {
         TensorChallengeShape::Flat => 0,
@@ -117,6 +119,7 @@ struct CatalogIdentityExpectation {
     basis_range: (u32, u32),
     onehot_chunk_size: usize,
     witness_chunk: akita_types::ChunkedWitnessCfg,
+    recursive_setup_planning: bool,
 
     root_fold_shape: TensorChallengeShape,
     ring_dimensions: Vec<usize>,
@@ -140,6 +143,7 @@ impl CatalogIdentityExpectation {
             basis_range: identity.basis_range,
             onehot_chunk_size: identity.onehot_chunk_size,
             witness_chunk: identity.witness_chunk,
+            recursive_setup_planning: identity.recursive_setup_planning,
 
             root_fold_shape: identity.root_fold_shape,
             ring_dimensions: identity.ring_dimensions.to_vec(),
@@ -177,6 +181,7 @@ fn catalog_identity_expectation(
         basis_range: policy.basis_range,
         onehot_chunk_size: policy.onehot_chunk_size,
         witness_chunk: policy.witness_chunk,
+        recursive_setup_planning: policy.recursive_setup_planning,
 
         root_fold_shape,
         ring_dimensions,
@@ -214,6 +219,7 @@ pub fn expected_catalog_identity(
         basis_range: expected.basis_range,
         onehot_chunk_size: expected.onehot_chunk_size,
         witness_chunk: expected.witness_chunk,
+        recursive_setup_planning: expected.recursive_setup_planning,
 
         root_fold_shape: expected.root_fold_shape,
         ring_dimensions: intern_ring_dimensions(expected.ring_dimensions),
@@ -386,6 +392,7 @@ fn collect_step_ring_dimensions(steps: &[GeneratedStep], dims: &mut Vec<usize>) 
     for step in steps {
         match step {
             GeneratedStep::Fold(f) => push_unique(dims, f.ring_d as usize),
+            GeneratedStep::FoldWithSetupMetadata(f) => push_unique(dims, f.fold.ring_d as usize),
             GeneratedStep::Direct(GeneratedDirectStep { commit: Some(c) }) => {
                 push_unique(dims, c.ring_d as usize);
             }
@@ -523,6 +530,7 @@ mod tests {
             basis_range: (3, 4),
             onehot_chunk_size: 1,
             witness_chunk: akita_types::ChunkedWitnessCfg::default(),
+            recursive_setup_planning: false,
         }
     }
 

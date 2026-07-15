@@ -1,6 +1,6 @@
 use super::*;
 use crate::RecursiveWitnessFlat;
-use akita_config::{opening_schedule_key, proof_optimized::fp128::D64OneHot};
+use akita_config::{proof_optimized::fp128::D64OneHot, CommitmentConfig};
 use akita_field::{Fp32, FpExt2, NegOneNr};
 use akita_transcript::AkitaTranscript;
 use akita_types::{
@@ -52,16 +52,19 @@ fn recursive_extension_opening_reduction_pads_to_opening_cube() {
 }
 
 #[test]
-fn schedule_key_from_layout_includes_entire_batch() {
+fn proof_schedule_from_layout_includes_entire_batch() {
     let batch = OpeningClaimsLayout::from_groups(vec![
-        PolynomialGroupLayout::new(2, 1),
-        PolynomialGroupLayout::new(4, 2),
+        PolynomialGroupLayout::new(16, 1),
+        PolynomialGroupLayout::new(32, 2),
     ])
     .expect("multi-group shape");
     assert_eq!(batch.num_groups(), 2);
-    let key = opening_schedule_key::<D64OneHot>(&batch).expect("multi-group schedule key");
-    assert_eq!(key.final_group, PolynomialGroupLayout::new(4, 2));
-    assert_eq!(key.num_commitment_groups(), 2);
-    assert_eq!(key.precommitteds.len(), 1);
-    assert_eq!(key.precommitteds[0].group, PolynomialGroupLayout::new(2, 1));
+    let schedule = D64OneHot::get_params_for_prove(&batch).expect("multi-group schedule");
+    let root_params =
+        akita_types::multi_group_root_commit_params(&schedule).expect("multi-group root params");
+    assert_eq!(root_params.precommitted_groups.len(), 1);
+    assert_eq!(
+        root_params.precommitted_groups[0].layout.group,
+        PolynomialGroupLayout::new(16, 1)
+    );
 }

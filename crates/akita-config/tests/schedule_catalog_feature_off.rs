@@ -4,7 +4,7 @@
 
 use akita_config::proof_optimized::fp128;
 use akita_config::{policy_of, CommitmentConfig};
-use akita_planner::find_schedule;
+use akita_planner::find_group_batch_schedule;
 use akita_types::{AkitaScheduleLookupKey, PolynomialGroupLayout};
 
 #[test]
@@ -20,8 +20,8 @@ fn schedule_catalog_none_without_feature_uses_dp() {
 
     let key = PolynomialGroupLayout::new(28, 1);
 
-    let dp = find_schedule(
-        key,
+    let dp = find_group_batch_schedule(
+        &AkitaScheduleLookupKey::single(key),
         &policy_of::<fp128::D64OneHot>(),
         fp128::D64OneHot::ring_challenge_config,
         fp128::D64OneHot::fold_challenge_shape_at_level,

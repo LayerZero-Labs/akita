@@ -32,20 +32,20 @@ fn multi_group_row_offsets_match_a_before_b_layout() {
     let final_group = batch.root_final_group_index().expect("final group");
 
     assert_eq!(
-        lp.root_a_row_range(&batch, final_group, layout).unwrap(),
+        lp.a_row_range(&batch, final_group, layout).unwrap(),
         1..1 + n_a_final
     );
     assert_eq!(
-        lp.root_commitment_row_range(&batch, final_group, layout)
+        lp.commitment_row_range(&batch, final_group, layout)
             .unwrap(),
         1 + n_a_final..1 + n_a_final + n_b_final
     );
     assert_eq!(
-        lp.root_a_row_range(&batch, 0, layout).unwrap(),
+        lp.a_row_range(&batch, 0, layout).unwrap(),
         1 + n_a_final + n_b_final..1 + n_a_final + n_b_final + n_a_pre
     );
     assert_eq!(
-        lp.root_commitment_row_range(&batch, 0, layout).unwrap(),
+        lp.commitment_row_range(&batch, 0, layout).unwrap(),
         1 + n_a_final + n_b_final + n_a_pre..1 + n_a_final + n_b_final + n_a_pre + n_b_pre
     );
 }

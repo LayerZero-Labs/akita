@@ -75,7 +75,7 @@ where
     let labels = witness_fold_challenge_labels();
     let mut group_challenges = Vec::with_capacity(opening_batch.num_groups());
     for group_index in 0..opening_batch.num_groups() {
-        let group_lp = lp.root_group_params(opening_batch, group_index)?;
+        let group_lp = lp.group_params(opening_batch, group_index)?;
         let k_g = opening_batch.group_layout(group_index)?.num_polynomials();
         group_challenges.push(
             LiveFoldDraw::<F, T>::new(transcript).draw_folding_challenges(

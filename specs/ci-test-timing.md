@@ -168,7 +168,7 @@ cargo nextest run --profile ci --cargo-profile ci-test \
 `test-all-schedules-drift` is separate from the timing artifact:
 
 ```bash
-cargo test -p akita-config --features all-schedules generated_schedule_tables_match_find_schedule
+cargo test -p akita-config --features all-schedules generated_schedule_tables_match_key_planner
 cargo test -p akita-config --no-default-features --test schedule_catalog_feature_off
 cargo test -p akita-config --features schedules-fp128-d64-onehot,schedules-fp128-d64-full --test schedule_catalog_miswire
 ```
@@ -203,11 +203,11 @@ job failed or if the timing merge/render itself failed.
       "missing_junit": false,
       "tests": [
         {
-          "id": "generated_tables::generated_schedule_tables_match_find_schedule",
+          "id": "generated_tables::generated_schedule_tables_match_key_planner",
           "package": "",
           "crate": "",
           "binary": "generated_tables",
-          "test": "generated_schedule_tables_match_find_schedule",
+          "test": "generated_schedule_tables_match_key_planner",
           "classname": "generated_tables",
           "duration_s": 491.2,
           "status": "passed"

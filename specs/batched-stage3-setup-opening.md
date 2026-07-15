@@ -153,6 +153,14 @@ The setup prefix/product is opened at `rho_setup`.
 - **Recursive suffix state changes only in recursive setup mode.** In
   `SetupContributionMode::Direct`, the next suffix state remains the stage-2
   opening point and claim.
+- **The consumer is nonterminal.** Recursive Stage 3 may create a setup-prefix
+  opening only when the successor fold can consume that prefix and still produce
+  another committed witness. Direct steps and terminal folds consume exactly one
+  group, as required by `specs/multi-group-batching.md`.
+- **No missing-slot fallback.** Recursive mode requires the exact setup-prefix
+  slot selected by the schedule. Setup construction returns `InvalidSetup` when
+  it is absent; proving may not replace the offloaded opening with a direct setup
+  evaluation.
 - **Prover/verifier transcript symmetry.** Both sides absorb the stage-2
   next-witness opening, sample `eta`, replay batched stage-3 rounds, absorb the
   stage-3 `W(rho_w)` opening under `ABSORB_STAGE3_NEXT_W_EVAL`, and derive the
@@ -189,6 +197,10 @@ The setup prefix/product is opened at `rho_setup`.
       `ABSORB_STAGE3_NEXT_W_EVAL` before deriving any next-suffix challenges.
 - [ ] Direct setup mode remains byte-for-byte compatible unless proof-shape
       metadata explicitly changes.
+- [ ] Recursive mode is rejected when its successor would consume the setup
+      prefix in a terminal fold.
+- [ ] A missing or mismatched required setup-prefix slot rejects without direct
+      evaluation fallback.
 - [ ] Tampering with either the carried witness opening, the setup claim, or a
       batched stage-3 round polynomial is rejected.
 - [ ] Tests cover both `w_vars < setup_vars` and `w_vars > setup_vars`.
@@ -231,7 +243,8 @@ Expected effects:
 
 #### Prover Flow
 
-For a non-terminal fold in `SetupContributionMode::Recursive`:
+For a non-terminal fold in `SetupContributionMode::Recursive` whose successor is
+also nonterminal:
 
 1. Run stage 1 as today.
 2. Run stage 2 as today to obtain `r2 = (r_y, r_x)` and `w2 = W(r2)`.
@@ -256,7 +269,8 @@ relation through `eq(r2, rho_w)`.
 
 #### Verifier Flow
 
-For a non-terminal fold in `SetupContributionMode::Recursive`:
+For a non-terminal fold in `SetupContributionMode::Recursive` whose successor is
+also nonterminal:
 
 1. Verify stage 1 and stage 2 as today, obtaining `r2`.
 2. Absorb the stage-2 next-witness claim.
@@ -365,6 +379,8 @@ Risks to resolve before implementation:
 
 - `specs/setup-product-sumcheck.md`
 - `specs/setup-prefix-ladder.md`
+- `specs/setup-offloading-planner.md` — planner-owned per-fold offload
+  selection and successor two-group scheduling.
 - `crates/akita-prover/src/protocol/core/fold.rs`
 - `crates/akita-prover/src/protocol/sumcheck/setup_sumcheck.rs`
 - `crates/akita-verifier/src/stages/stage3.rs`

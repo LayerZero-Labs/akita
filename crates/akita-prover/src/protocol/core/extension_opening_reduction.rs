@@ -252,12 +252,7 @@ where
     }
     let proof_partials = partials.clone();
     let row_coefficients = if pad_base_evals {
-        if num_claims != 1 {
-            return Err(AkitaError::InvalidInput(
-                "recursive extension-opening reduction expects a single claim".to_string(),
-            ));
-        }
-        vec![E::one()]
+        vec![E::one(); num_claims]
     } else {
         let transcript_openings = openings.as_slice();
         append_claim_values_to_transcript::<F, E, T>(transcript_openings, transcript);

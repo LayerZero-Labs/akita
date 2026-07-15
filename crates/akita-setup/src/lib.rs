@@ -4,9 +4,7 @@
 //! by setup-prefix slots. Caches written before setup-prefix persistence will
 //! fail to deserialize and should be regenerated.
 
-mod recursion;
-
-pub use recursion::new_prover_setup_recursion;
+mod recursive_prefixes;
 
 use akita_config::CommitmentConfig;
 use akita_field::unreduced::HasWide;
@@ -36,6 +34,7 @@ use std::io::Read;
 use std::path::PathBuf;
 #[cfg(feature = "disk-persistence")]
 use std::sync::Arc;
+
 /// The setup-time generation ring dimension for config `Cfg`.
 ///
 /// Per the cutover decision, `gen_ring_dim` is the **max `ring_dimension` across
@@ -47,6 +46,26 @@ use std::sync::Arc;
 /// catalog would set this to the maximum dimension its levels use.
 fn setup_gen_ring_dim<Cfg: CommitmentConfig>() -> usize {
     akita_config::policy_of::<Cfg>().ring_dimension
+}
+
+#[cfg(feature = "disk-persistence")]
+fn validate_loaded_prefix_registry<F, Cfg>(
+    setup: &AkitaProverSetup<F>,
+    max_num_vars: usize,
+    max_num_batched_polys: usize,
+) -> Result<(), AkitaError>
+where
+    F: FieldCore,
+    Cfg: CommitmentConfig<Field = F>,
+{
+    if !Cfg::recursive_setup_planning() {
+        return Ok(());
+    }
+    let required_ids = akita_config::setup_prefix_slot_ids_for_capacity::<Cfg>(
+        max_num_vars,
+        max_num_batched_polys,
+    )?;
+    recursive_prefixes::validate_prefix_registry_complete(&setup.prefix_slots, &required_ids)
 }
 
 /// Construct prover setup from a root commitment config.
@@ -77,19 +96,23 @@ where
         ));
     }
     let gen_ring_dim = setup_gen_ring_dim::<Cfg>();
-    let setup_envelope = Cfg::max_setup_matrix_size(max_num_vars, max_num_batched_polys)?;
+
     #[cfg(feature = "disk-persistence")]
-    let max_setup_len = setup_envelope.max_setup_len;
+    let max_setup_len =
+        Cfg::max_setup_matrix_size(max_num_vars, max_num_batched_polys)?.max_setup_len;
 
     #[cfg(feature = "disk-persistence")]
     {
         match load_prover_setup::<F, Cfg>(max_num_vars, max_num_batched_polys) {
             Ok(setup) => {
-                // A cached setup is acceptable only if its physical backing
-                // covers the packed setup envelope for the current request.
                 let cached_total = setup.expanded.shared_matrix().total_ring_elements();
                 let cached_shape_covers_request = cached_total >= max_setup_len;
                 if cached_shape_covers_request {
+                    validate_loaded_prefix_registry::<F, Cfg>(
+                        &setup,
+                        max_num_vars,
+                        max_num_batched_polys,
+                    )?;
                     tracing::info!("Loaded setup from disk; backend preparation is explicit");
                     return Ok(setup);
                 }
@@ -98,13 +121,13 @@ where
                 {
                     let _ = fs::remove_file(&storage_path);
                     tracing::warn!(
-                            "Rejected cached setup from {}: have total={cached_total}, need total>={max_setup_len}; regenerating",
-                            storage_path.display()
-                        );
+                        "Rejected cached setup from {}: have total={cached_total}, need total>={max_setup_len}; regenerating",
+                        storage_path.display()
+                    );
                 } else {
                     tracing::warn!(
-                            "Rejected cached setup: have total={cached_total}, need total>={max_setup_len}; regenerating"
-                        );
+                        "Rejected cached setup: have total={cached_total}, need total>={max_setup_len}; regenerating"
+                    );
                 }
             }
             Err(e) => {
@@ -123,11 +146,19 @@ where
         }
     }
 
-    let setup = AkitaProverSetup::generate_with_capacity(
+    let setup_envelope = Cfg::max_setup_matrix_size(max_num_vars, max_num_batched_polys)?;
+
+    let mut setup = AkitaProverSetup::generate_with_capacity(
         max_num_vars,
         max_num_batched_polys,
         gen_ring_dim,
         setup_envelope,
+    )?;
+
+    recursive_prefixes::populate_required_setup_prefix_slots::<F, Cfg>(
+        &mut setup,
+        max_num_vars,
+        max_num_batched_polys,
     )?;
 
     #[cfg(feature = "disk-persistence")]
@@ -520,8 +551,9 @@ mod tests {
         fn prefix_slots_roundtrip_through_setup_cache() {
             with_test_cache_dir("prefix-slots", || {
                 use akita_types::{
-                    setup_seed_digest, AkitaCommitmentHint, DigitBlocks, RingVec,
-                    SetupPrefixPublicCommitment, SetupPrefixSlot, SetupPrefixSlotId,
+                    setup_prefix_slot_id, AjtaiKeyParams, AkitaCommitmentHint, DigitBlocks,
+                    PolynomialGroupLayout, PrecommittedGroupParams, PrecommittedLevelParams,
+                    RingVec, SetupPrefixPublicCommitment, SetupPrefixSlot, SisModulusFamily,
                 };
 
                 const MAX_VARS: usize = 13;
@@ -529,13 +561,38 @@ mod tests {
                 cleanup_setup_file_shape(MAX_VARS, 1);
 
                 let mut setup = new_prover_setup::<TestF, Cfg>(MAX_VARS, 1).unwrap();
-                let id = SetupPrefixSlotId {
-                    setup_seed_digest: setup_seed_digest(setup.expanded.seed()).unwrap(),
-                    d_setup: TEST_D,
-                    natural_len: 1,
-                    n_prefix: TEST_D,
-                    level_params_digest: [9u8; 32],
+                let commitment_params = PrecommittedLevelParams {
+                    layout: PrecommittedGroupParams {
+                        group: PolynomialGroupLayout::singleton(TEST_D.trailing_zeros() as usize),
+                        m_vars: 0,
+                        r_vars: 0,
+                        log_basis: 1,
+                        n_a: 1,
+                        conservative_n_b: 1,
+                    },
+                    a_key: AjtaiKeyParams::new_unchecked(
+                        akita_types::DEFAULT_SIS_SECURITY_BITS,
+                        SisModulusFamily::Q128,
+                        1,
+                        1,
+                        1,
+                        TEST_D,
+                    ),
+                    b_key: AjtaiKeyParams::new_unchecked(
+                        akita_types::DEFAULT_SIS_SECURITY_BITS,
+                        SisModulusFamily::Q128,
+                        1,
+                        1,
+                        1,
+                        TEST_D,
+                    ),
+                    num_blocks: 1,
+                    block_len: 1,
+                    num_digits_commit: 1,
+                    num_digits_open: 1,
+                    num_digits_fold_one: 1,
                 };
+                let id = setup_prefix_slot_id(TEST_D, 1, commitment_params);
                 // One block of zero planes at the setup ring dimension.
                 let decomposed = DigitBlocks::empty(TEST_D);
                 let hint = AkitaCommitmentHint::singleton(decomposed);

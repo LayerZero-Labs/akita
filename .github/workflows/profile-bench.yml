@@ -104,6 +104,7 @@ jobs:
         run: |
           group_dir="$RUNNER_TEMP/bench/${{ matrix.group.name }}"
           echo "AKITA_BENCH_GROUP_DIR=$group_dir" >> "$GITHUB_ENV"
+          echo "LOCALAPPDATA=$group_dir/setup-cache" >> "$GITHUB_ENV"
           # pr/ holds the PR-side summary, base/ the merge-base side; both go
           # into one per-group handoff artifact for the report job.
           echo "AKITA_BENCH_ARTIFACT_DIR=$group_dir/pr" >> "$GITHUB_ENV"
@@ -184,15 +185,21 @@ jobs:
 
       - name: Build merge-base profile binary
         if: github.event_name == 'pull_request' && env.AKITA_BENCH_BASELINE_MODES_OK == '1'
+        env:
+          AKITA_BENCH_GROUP_CASES: ${{ matrix.group.cases }}
         run: |
           git worktree add "$RUNNER_TEMP/bench-base" "$AKITA_BENCH_MERGE_BASE_SHA"
           mkdir -p "$RUNNER_TEMP/bench-bins"
+          features="parallel,profile-ci"
+          if grep -q ':recursive' <<< "$AKITA_BENCH_GROUP_CASES"; then
+            features="$features,disk-persistence"
+          fi
           (
             cd "$RUNNER_TEMP/bench-base" &&
             if python3 scripts/cargo_feature_exists.py akita-pcs profile-ci; then
               CARGO_TARGET_DIR="$RUNNER_TEMP/bench-base-target" \
                 cargo build --release --quiet --example profile \
-                  --no-default-features --features parallel,profile-ci
+                  --no-default-features --features "$features"
             else
               CARGO_TARGET_DIR="$RUNNER_TEMP/bench-base-target" \
                 cargo build --release --quiet --example profile
@@ -220,9 +227,15 @@ jobs:
             "${case_args[@]}"
 
       - name: Build profile binary
+        env:
+          AKITA_BENCH_GROUP_CASES: ${{ matrix.group.cases }}
         run: |
+          features="parallel,profile-ci"
+          if grep -q ':recursive' <<< "$AKITA_BENCH_GROUP_CASES"; then
+            features="$features,disk-persistence"
+          fi
           cargo build --release --quiet --example profile \
-            --no-default-features --features parallel,profile-ci
+            --no-default-features --features "$features"
 
       - name: Verify profile-ci linkage isolation
         run: ./scripts/check_profile_ci_linkage.sh target/release/examples/profile

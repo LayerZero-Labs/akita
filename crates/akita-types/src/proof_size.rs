@@ -127,9 +127,9 @@ pub fn stage3_setup_product_bytes(
     let setup_rounds = ring_bits + lambda_bits;
     let witness_rounds = sumcheck_rounds(ring_dimension, next_w_len);
     let rounds = setup_rounds.max(witness_rounds);
-    // Claimed setup contribution + carried next-witness opening + degree-2
-    // fused setup/carry sumcheck rounds.
-    2 * challenge_elem_bytes
+    // Claimed setup contribution + carried setup-prefix opening + carried
+    // next-witness opening + degree-2 fused setup/carry sumcheck rounds.
+    3 * challenge_elem_bytes
         + sumcheck_bytes(rounds, crate::SETUP_SUMCHECK_DEGREE, challenge_elem_bytes)
 }
 
@@ -149,7 +149,7 @@ mod tests {
     use akita_sumcheck::{CompressedUniPoly, EqFactoredSumcheckProof, SumcheckProof};
 
     use crate::golomb_rice::golomb_rice_encode_vec;
-    use crate::proof::{segment_typed_witness_shape, SegmentTypedWitness};
+    use crate::proof::{segment_typed_witness_shape_from_groups, SegmentTypedWitness};
     use crate::tail_golomb_rice_z_params;
     use crate::{
         direct_witness_bytes, AkitaIntermediateStage2Proof, AkitaLevelProof, AkitaStage1Proof,
@@ -164,22 +164,28 @@ mod tests {
         num_claims: usize,
     ) -> (CleartextWitnessProof<F>, CleartextWitnessShape) {
         let field_bits = F::modulus_bits();
-        let shape = segment_typed_witness_shape(lp, field_bits, num_claims, num_claims, 1, 1)
-            .expect("segment-typed witness shape");
+        let shape = segment_typed_witness_shape_from_groups(
+            lp,
+            field_bits,
+            [(lp as &dyn crate::LevelParamsLike, num_claims, num_claims, 1)],
+            1,
+        )
+        .expect("segment-typed witness shape");
         let CleartextWitnessShape::SegmentTyped(ref segment_shape) = shape else {
             panic!("expected segment-typed witness shape");
         };
-        let layout = segment_shape.layout;
+        let layout = segment_shape.layout.clone();
+        let group = layout.groups[0];
         let (rice_low_bits, zigzag_w) =
             tail_golomb_rice_z_params(lp, num_claims).expect("golomb z params");
         let z_payload =
-            golomb_rice_encode_vec(&vec![0i64; layout.z_coords], rice_low_bits, zigzag_w)
+            golomb_rice_encode_vec(&vec![0i64; group.z_coords], rice_low_bits, zigzag_w)
                 .expect("encode zero z segment");
         let witness = SegmentTypedWitness {
-            layout,
-            z_payload,
-            e_fields: RingVec::from_coeffs(vec![F::zero(); layout.e_field_elems]),
-            t_fields: RingVec::from_coeffs(vec![F::zero(); layout.t_field_elems]),
+            layout: layout.clone(),
+            z_payloads: vec![z_payload],
+            e_fields: RingVec::from_coeffs(vec![F::zero(); group.e_field_elems]),
+            t_fields: RingVec::from_coeffs(vec![F::zero(); group.t_field_elems]),
             r_fields: RingVec::from_coeffs(vec![F::zero(); layout.r_field_elems]),
         };
         (CleartextWitnessProof::SegmentTyped(witness), shape)
@@ -238,6 +244,7 @@ mod tests {
         let rounds = setup_rounds.max(witness_rounds);
         SetupSumcheckProof {
             claim: F::zero(),
+            setup_prefix_eval: F::zero(),
             next_w_eval: F::zero(),
             sumcheck: akita_sumcheck::SumcheckProof {
                 round_polys: (0..rounds)
@@ -338,6 +345,7 @@ mod tests {
                 for &next_w_len in &[d, d * 8, d * 256] {
                     let proof = dummy_stage3_proof::<F>(d, setup_ring_len, next_w_len);
                     let serialized = proof.claim.serialized_size(Compress::No)
+                        + proof.setup_prefix_eval.serialized_size(Compress::No)
                         + proof.next_w_eval.serialized_size(Compress::No)
                         + proof.sumcheck.serialized_size(Compress::No);
                     assert_eq!(

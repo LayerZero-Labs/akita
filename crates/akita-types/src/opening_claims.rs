@@ -60,6 +60,19 @@ impl PointVariableSelection {
         })
     }
 
+    /// Select the last `num_vars` coordinates of the shared point.
+    pub fn suffix(num_vars: usize, point_len: usize) -> Result<Self, AkitaError> {
+        if num_vars > point_len {
+            return Err(AkitaError::InvalidPointDimension {
+                expected: point_len,
+                actual: num_vars,
+            });
+        }
+        Ok(Self {
+            indices: (point_len - num_vars..point_len).collect(),
+        })
+    }
+
     /// Selected point-coordinate indices, in evaluation order.
     pub fn indices(&self) -> &[usize] {
         &self.indices
@@ -72,6 +85,13 @@ impl PointVariableSelection {
 
     fn is_prefix(&self) -> bool {
         self.indices.iter().copied().eq(0..self.indices.len())
+    }
+
+    fn is_suffix(&self, point_len: usize) -> bool {
+        self.indices
+            .iter()
+            .copied()
+            .eq(point_len - self.indices.len()..point_len)
     }
 
     fn check(&self, point_len: usize) -> Result<(), AkitaError> {
@@ -444,8 +464,35 @@ impl<'a, F: Clone, C> OpeningClaims<'a, F, C> {
         Ok(claims)
     }
 
+    /// Build public claims while allowing non-prefix/non-suffix point routing.
+    ///
+    /// This is intended for internal recursive proof plumbing where a folded
+    /// challenge vector is already transcript-bound and one group needs a
+    /// different coordinate order. External public claims should use
+    /// [`Self::from_groups`].
+    #[doc(hidden)]
+    pub fn from_groups_allow_custom_routing(
+        point: impl Into<OpeningPoints<'a, F>>,
+        groups: Vec<PolynomialGroupClaims<'a, F, C>>,
+    ) -> Result<Self, AkitaError> {
+        let claims = Self {
+            point: point.into(),
+            groups,
+        };
+        claims.check_with_custom_routing()?;
+        Ok(claims)
+    }
+
     /// Validate internal routing/count consistency.
     pub fn check(&self) -> Result<(), AkitaError> {
+        self.check_inner(false)
+    }
+
+    fn check_with_custom_routing(&self) -> Result<(), AkitaError> {
+        self.check_inner(true)
+    }
+
+    fn check_inner(&self, allow_custom_routing: bool) -> Result<(), AkitaError> {
         if self.groups.is_empty() || self.checked_num_total_polynomials()? == 0 {
             return Err(AkitaError::InvalidProof);
         }
@@ -456,7 +503,10 @@ impl<'a, F: Clone, C> OpeningClaims<'a, F, C> {
                 return Err(AkitaError::InvalidProof);
             }
             group.point_vars.check(point_len)?;
-            if !group.point_vars.is_prefix() {
+            if !allow_custom_routing
+                && !group.point_vars.is_prefix()
+                && !group.point_vars.is_suffix(point_len)
+            {
                 return Err(AkitaError::InvalidInput(
                     "custom point-variable routing is not supported by instance descriptors"
                         .to_string(),
@@ -558,7 +608,7 @@ impl<'a, F: Clone, C> OpeningClaims<'a, F, C> {
 
     /// Structural view for setup, planner, and config code.
     pub fn layout(&self) -> Result<OpeningClaimsLayout, AkitaError> {
-        self.check()?;
+        self.check_with_custom_routing()?;
         OpeningClaimsLayout::from_groups(
             self.groups
                 .iter()

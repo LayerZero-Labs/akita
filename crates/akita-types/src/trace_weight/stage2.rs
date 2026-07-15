@@ -484,6 +484,7 @@ pub fn build_trace_claim_multi_group_root<F, E, const D: usize>(
     row_coefficients: &[E],
     claim_scales: Option<&[E]>,
     basis: BasisMode,
+    block_order: crate::BlockOrder,
     trace_coeff: E,
     trace_eval_target: E,
     live_x_cols: usize,
@@ -513,7 +514,7 @@ where
     let mut e_offsets = vec![0usize; opening_batch.num_groups()];
     let mut base = 0usize;
     for &group_index in &order {
-        let group_lp = lp.root_group_params(opening_batch, group_index)?;
+        let group_lp = lp.group_params(opening_batch, group_index)?;
         let group_layout = opening_batch.group_layout(group_index)?;
         let depth_fold = lp.num_digits_fold_for_params(
             group_lp,
@@ -549,7 +550,7 @@ where
     let mut batches = Vec::with_capacity(opening_batch.num_groups());
     let mut claim_offset = 0usize;
     for group_index in 0..opening_batch.num_groups() {
-        let group_lp = lp.root_group_params(opening_batch, group_index)?;
+        let group_lp = lp.group_params(opening_batch, group_index)?;
         let group_layout = opening_batch.group_layout(group_index)?;
         let prepared = &prepared_points[group_index];
         let num_group_blocks = group_lp.num_blocks();
@@ -585,14 +586,26 @@ where
                 AkitaError::InvalidSetup("group opening point length overflow".to_string())
             })?;
         if prepared.padded_point.len() != target_len {
-            return Err(AkitaError::InvalidSize {
-                expected: target_len,
-                actual: prepared.padded_point.len(),
-            });
+            return Err(AkitaError::InvalidInput(format!(
+                "multi-group trace point width mismatch: group={group_index}, \
+                 groups={}, setup_prefix={}, block_order={block_order:?}, \
+                 ring_bits={ring_bits}, group_m={}, group_r={}, target_len={target_len}, \
+                 actual_len={}",
+                opening_batch.num_groups(),
+                lp.setup_prefix.is_some(),
+                group_lp.m_vars(),
+                group_lp.r_vars(),
+                prepared.padded_point.len()
+            )));
         }
-        let b_start = ring_bits.checked_add(group_lp.m_vars()).ok_or_else(|| {
-            AkitaError::InvalidSetup("group block opening offset overflow".to_string())
-        })?;
+        let b_start = match block_order {
+            crate::BlockOrder::ColumnMajor => ring_bits,
+            crate::BlockOrder::RowMajor => {
+                ring_bits.checked_add(group_lp.m_vars()).ok_or_else(|| {
+                    AkitaError::InvalidSetup("group block opening offset overflow".to_string())
+                })?
+            }
+        };
         let b_open = prepared.padded_point[b_start..b_start + group_lp.r_vars()].to_vec();
 
         let group_layout_for_eval = TraceWeightLayout {
@@ -737,7 +750,7 @@ where
             let mut e_offsets = vec![0usize; opening_batch.num_groups()];
             let mut base = 0usize;
             for &group_index in &order {
-                let group_lp = lp.root_group_params(opening_batch, group_index)?;
+                let group_lp = lp.group_params(opening_batch, group_index)?;
                 let group_layout = opening_batch.group_layout(group_index)?;
                 let depth_fold = lp.num_digits_fold_for_params(
                     group_lp,
@@ -777,7 +790,7 @@ where
             let mut table = vec![E::zero(); table_len];
             let mut claim_offset = 0usize;
             for group_index in 0..opening_batch.num_groups() {
-                let group_lp = lp.root_group_params(opening_batch, group_index)?;
+                let group_lp = lp.group_params(opening_batch, group_index)?;
                 let group_layout = opening_batch.group_layout(group_index)?;
                 let prepared = &prepared_points[group_index];
                 let inner = prepared.packed_inner_owned::<D>()?;

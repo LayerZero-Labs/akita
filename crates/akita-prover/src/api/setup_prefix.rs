@@ -11,8 +11,8 @@ use akita_algebra::CyclotomicRing;
 use akita_field::parallel::*;
 use akita_field::{AkitaError, CanonicalField, FieldCore, RandomSampling};
 use akita_types::{
-    setup_prefix_slot_id, AkitaCommitmentHint, AkitaExpandedSetup, DigitBlocks, LevelParams,
-    RingVec, SetupPrefixPublicCommitment, SetupPrefixSlot,
+    setup_prefix_slot_id, AkitaCommitmentHint, AkitaExpandedSetup, DigitBlocks,
+    PrecommittedLevelParams, RingVec, SetupPrefixPublicCommitment, SetupPrefixSlot,
 };
 
 /// Commit one padded flat prefix of the shared setup matrix.
@@ -30,9 +30,7 @@ pub fn commit_setup_prefix<F, const D: usize, B>(
     expanded: &AkitaExpandedSetup<F>,
     backend: &B,
     prepared: &B::PreparedSetup,
-    level_params: &LevelParams,
-    level_params_digest: [u8; 32],
-    setup_seed_digest: [u8; 32],
+    level_params: &PrecommittedLevelParams,
     n_prefix: usize,
     natural_len: usize,
 ) -> Result<SetupPrefixSlot<F>, AkitaError>
@@ -88,7 +86,7 @@ where
             input: DenseCommitInput::CoeffBlocks {
                 block_slices,
                 num_digits_commit: level_params.num_digits_commit,
-                log_basis: level_params.log_basis,
+                log_basis: level_params.layout.log_basis,
             },
         },
     )?;
@@ -112,7 +110,7 @@ where
                 rows,
                 dst,
                 level_params.num_digits_open,
-                level_params.log_basis,
+                level_params.layout.log_basis,
             );
             Ok(())
         })?;
@@ -125,7 +123,7 @@ where
                 rows,
                 dst,
                 level_params.num_digits_open,
-                level_params.log_basis,
+                level_params.layout.log_basis,
             );
             Ok(())
         })?;
@@ -143,7 +141,7 @@ where
         prepared,
         level_params.b_key.row_len(),
         &b_input_digits,
-        level_params.log_basis,
+        level_params.layout.log_basis,
     )?;
     if u.len() != level_params.b_key.row_len() {
         return Err(AkitaError::InvalidSetup(format!(
@@ -159,13 +157,7 @@ where
     // downstream (S5 re-home), not cached on the slot.
     let _ = &recomposed_inner_rows;
     let hint = AkitaCommitmentHint::singleton(decomposed_inner_rows);
-    let id = setup_prefix_slot_id(
-        setup_seed_digest,
-        D,
-        natural_len,
-        n_prefix,
-        level_params_digest,
-    );
+    let id = setup_prefix_slot_id(D, natural_len, level_params.clone());
     Ok(SetupPrefixSlot {
         id,
         natural_len,
@@ -236,8 +228,8 @@ mod tests {
     use akita_challenges::SparseChallengeConfig;
     use akita_field::Prime128Offset275 as F;
     use akita_types::{
-        active_setup_field_len, digest_level_params, setup_seed_digest, OpeningClaimsLayout,
-        SetupMatrixEnvelope, SisModulusFamily,
+        active_setup_field_len, padded_setup_prefix_len, setup_prefix_precommitted_params,
+        LevelParams, OpeningClaimsLayout, SetupMatrixEnvelope, SisModulusFamily,
     };
 
     fn prefix_level_params(ring_dimension: usize) -> LevelParams {
@@ -312,27 +304,25 @@ mod tests {
     }
 
     fn assert_commit_setup_prefix_populates_singleton_slot<const D: usize>() {
-        let level_params = prefix_level_params(D);
+        let mut level_params = prefix_level_params(D);
         let opening_batch = OpeningClaimsLayout::new(4, 1).expect("opening_batch");
-        let witness_ring_slots = level_params
-            .num_blocks
-            .checked_mul(level_params.block_len)
-            .expect("witness shape");
-        let n_prefix = witness_ring_slots.checked_mul(D).expect("prefix length");
-        let natural_len = active_setup_field_len(&level_params, &opening_batch, D)
-            .expect("natural len")
-            .min(n_prefix);
+        let natural_len =
+            active_setup_field_len(&level_params, &opening_batch, D).expect("natural len");
+        let n_prefix = padded_setup_prefix_len(natural_len);
+        level_params.num_blocks = 1;
+        level_params.block_len = n_prefix.checked_div(D).expect("prefix ring slots");
+        level_params.m_vars = 0;
+        level_params.r_vars = level_params.block_len.trailing_zeros() as usize;
         let mut setup = test_setup::<D>(&level_params, n_prefix);
         let backend = CpuBackend;
         let prepared = backend.prepare_setup(&setup).expect("prepared setup");
-        let seed_digest = setup_seed_digest(setup.expanded.seed()).expect("digest");
+        let prefix_params =
+            setup_prefix_precommitted_params(&level_params, n_prefix).expect("prefix params");
         let slot = commit_setup_prefix::<F, D, _>(
             &setup.expanded,
             &backend,
             &prepared,
-            &level_params,
-            digest_level_params(std::slice::from_ref(&level_params)),
-            seed_digest,
+            &prefix_params,
             n_prefix,
             natural_len,
         )
