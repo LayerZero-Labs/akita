@@ -11,9 +11,7 @@ pub(crate) enum PreparedChallengeEvals<F: FieldCore> {
     Flat(Vec<F>),
     Tensor {
         challenges: TensorChallengeSet,
-        #[cfg_attr(not(test), allow(dead_code))]
         alpha_pows: Vec<F>,
-        exact_evals: Vec<F>,
     },
 }
 
@@ -55,8 +53,7 @@ impl<F: FieldCore> PreparedChallengeEvals<F> {
                 .ok_or(AkitaError::InvalidProof),
             Self::Tensor {
                 challenges,
-                exact_evals,
-                ..
+                alpha_pows,
             } => {
                 if claim >= challenges.num_claims
                     || challenges.live_folds_per_claim != live_fold_count
@@ -66,17 +63,13 @@ impl<F: FieldCore> PreparedChallengeEvals<F> {
                         "tensor challenge shape does not match witness blocks".into(),
                     ));
                 }
-                exact_evals
-                    .get(
-                        claim
-                            .checked_mul(live_fold_count)
-                            .and_then(|base| base.checked_add(block))
-                            .ok_or_else(|| {
-                                AkitaError::InvalidSetup("tensor challenge index overflow".into())
-                            })?,
-                    )
-                    .copied()
-                    .ok_or(AkitaError::InvalidProof)
+                let logical_index = claim
+                    .checked_mul(live_fold_count)
+                    .and_then(|base| base.checked_add(block))
+                    .ok_or_else(|| {
+                        AkitaError::InvalidSetup("tensor challenge index overflow".into())
+                    })?;
+                challenges.eval_logical_at_pows::<Base, F>(logical_index, alpha_pows)
             }
         }
     }
@@ -357,8 +350,18 @@ mod tests {
         let factored = PreparedChallengeEvals::Tensor {
             challenges: set,
             alpha_pows,
-            exact_evals: flat.as_flat().unwrap().to_vec(),
         };
+
+        for claim in 0..num_claims {
+            for block in 0..live_fold_count {
+                assert_eq!(
+                    factored
+                        .eval_at::<F>(claim, block, live_fold_count)
+                        .unwrap(),
+                    flat.eval_at::<F>(claim, block, live_fold_count).unwrap()
+                );
+            }
+        }
 
         let x_low_cases = [
             vec![F::from_u64(2), F::from_u64(3), F::zero(), F::one()],

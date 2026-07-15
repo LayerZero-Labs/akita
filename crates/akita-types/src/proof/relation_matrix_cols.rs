@@ -13,7 +13,6 @@ use crate::{
 };
 use akita_algebra::eq_poly::SplitEqEvals;
 use akita_algebra::ring::{eval_flat_ring_at_pows_fast, scalar_powers};
-use akita_challenges::Challenges;
 use akita_field::parallel::*;
 use akita_field::{
     AkitaError, CanonicalField, FieldCore, FromPrimitiveInt, LiftBase, MulBase, MulBaseUnreduced,
@@ -336,15 +335,6 @@ where
         if challenges.logical_len() != total_blocks {
             return Err(AkitaError::InvalidProof);
         }
-        let c_alphas = match challenges {
-            Challenges::Sparse {
-                challenges: sparse, ..
-            } => sparse
-                .iter()
-                .map(|challenge| challenge.eval_at_pows::<F, E>(alpha_pows))
-                .collect::<Result<Vec<_>, _>>()?,
-            Challenges::Tensor { factored: _ } => challenges.evals_at_pows::<F, E>(alpha_pows)?,
-        };
         let depth_open = group_lp.num_digits_open();
         let depth_commit = group_lp.num_digits_commit();
         let depth_fold = lp.num_digits_fold_for_params(group_lp, k_g, lp.field_bits_for_cache())?;
@@ -402,7 +392,14 @@ where
         for claim in 0..k_g {
             for global_block in 0..num_blocks_g {
                 let unit = witness_layout.unit_for_fold(group_id, global_block)?;
-                let challenge_index = claim * num_blocks_g + global_block;
+                let challenge_index = claim
+                    .checked_mul(num_blocks_g)
+                    .and_then(|base| base.checked_add(global_block))
+                    .ok_or_else(|| {
+                        AkitaError::InvalidSetup("relation challenge index overflow".into())
+                    })?;
+                let challenge_alpha =
+                    challenges.eval_logical_at_pows::<F, E>(challenge_index, alpha_pows)?;
                 for (digit, &opening_gadget) in g_open.iter().enumerate() {
                     let witness_col = witness_layout.e_index(
                         unit,
@@ -425,8 +422,7 @@ where
                                     .and_then(|offset| offset.checked_add(local))
                             })
                             .ok_or(AkitaError::InvalidProof)?;
-                        let consistency_acc =
-                            consistency_weight * c_alphas[challenge_index] * opening_gadget;
+                        let consistency_acc = consistency_weight * challenge_alpha * opening_gadget;
                         let mut setup_acc = E::zero();
                         for (di, d_row) in d_rows.iter().take(n_d_active).enumerate() {
                             let eq_i = eq_tau1.eval_at(d_start + di)?;
@@ -481,7 +477,7 @@ where
                                 .checked_mul(b_ratio)
                                 .and_then(|base| base.checked_add(role_subcol))
                                 .ok_or(AkitaError::InvalidProof)?;
-                            let a_acc = a_row_weight * c_alphas[challenge_index] * opening_gadget;
+                            let a_acc = a_row_weight * challenge_alpha * opening_gadget;
                             let mut b_acc = E::zero();
                             for (row_idx, b_row) in b_rows.iter().take(n_b).enumerate() {
                                 let eq_i = eq_tau1.eval_at(b_range.start + row_idx)?;

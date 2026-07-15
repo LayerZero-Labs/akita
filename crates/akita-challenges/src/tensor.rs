@@ -250,13 +250,47 @@ impl Challenges {
         }
     }
 
-    /// Evaluate every logical challenge at the precomputed `alpha`-powers,
-    /// in claim-major flat order. This is the boundary used by the prover's
-    /// dense `compute_relation_matrix_col_evals` path.
+    /// Evaluate one logical challenge at the precomputed `alpha`-powers.
     ///
-    /// For the sparse variant this is the canonical per-block evaluation
-    /// loop; for the tensor variant it uses the factored aggregate
-    /// formulation that avoids materializing every logical block.
+    /// Tensor challenges remain factored and evaluate only the requested
+    /// fold-high/fold-low pair.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `logical_index` is out of range, `alpha_pows` is
+    /// malformed, or the selected sparse challenges are invalid.
+    pub fn eval_logical_at_pows<F, E>(
+        &self,
+        logical_index: usize,
+        alpha_pows: &[E],
+    ) -> Result<E, AkitaError>
+    where
+        F: FieldCore + FromPrimitiveInt,
+        E: FieldCore + MulBase<F>,
+    {
+        match self {
+            Self::Sparse { challenges, .. } => challenges
+                .get(logical_index)
+                .ok_or_else(|| {
+                    AkitaError::InvalidInput(format!(
+                        "challenge index {logical_index} out of range for {} challenges",
+                        challenges.len()
+                    ))
+                })?
+                .eval_at_pows::<F, E>(alpha_pows),
+            Self::Tensor { factored } => {
+                factored.eval_logical_at_pows::<F, E>(logical_index, alpha_pows)
+            }
+        }
+    }
+
+    /// Evaluate every logical challenge at the precomputed `alpha`-powers,
+    /// in claim-major flat order.
+    ///
+    /// This bulk compatibility API returns one field element per logical
+    /// challenge. Runtime paths that need one entry should use
+    /// [`Self::eval_logical_at_pows`] to avoid materializing the full tensor
+    /// product vector.
     ///
     /// # Errors
     ///
@@ -464,6 +498,41 @@ impl TensorChallenges {
         Ok((claim_idx, local_idx, high, low))
     }
 
+    /// Evaluate one reduced tensor product in claim-major logical block order.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `block_idx`, the tensor shape, `alpha_pows`, or the
+    /// selected sparse factors are invalid.
+    pub fn eval_logical_at_pows<F, E>(
+        &self,
+        block_idx: usize,
+        alpha_pows: &[E],
+    ) -> Result<E, AkitaError>
+    where
+        F: FieldCore + FromPrimitiveInt,
+        E: FieldCore + MulBase<F>,
+    {
+        let ring_d = alpha_pows.len();
+        if ring_d < 2 {
+            return Err(AkitaError::InvalidInput(
+                "tensor evaluation requires D >= 2".to_string(),
+            ));
+        }
+        let (_, _, high, low) = self.factors_for_logical_block(block_idx)?;
+        let high_eval = high.eval_at_pows::<F, E>(alpha_pows)?;
+        let low_eval = low.eval_at_pows::<F, E>(alpha_pows)?;
+        let alpha_pow_d_plus_one = alpha_pows[ring_d - 1] * alpha_pows[1] + E::one();
+        reduced_tensor_product_eval_at_pows::<F, E>(
+            high,
+            low,
+            high_eval,
+            low_eval,
+            alpha_pows,
+            alpha_pow_d_plus_one,
+        )
+    }
+
     /// Evaluate reduced tensor products in logical block order.
     ///
     /// This mirrors [`Challenges::evals_at_pows`] for the tensor payload:
@@ -509,9 +578,14 @@ impl TensorChallenges {
             for local_idx in 0..self.live_folds_per_claim {
                 let h = local_idx / self.fold_low_len;
                 let q = local_idx % self.fold_low_len;
-                let quotient_eval =
-                    tensor_product_quotient_eval::<F, E>(&high[h], &low[q], alpha_pows)?;
-                out.push(high_evals[h] * low_evals[q] - alpha_pow_d_plus_one * quotient_eval);
+                out.push(reduced_tensor_product_eval_at_pows::<F, E>(
+                    &high[h],
+                    &low[q],
+                    high_evals[h],
+                    low_evals[q],
+                    alpha_pows,
+                    alpha_pow_d_plus_one,
+                )?);
             }
         }
         Ok(out)
@@ -679,9 +753,23 @@ impl TensorChallenges {
     }
 }
 
-// Helper for `TensorChallenges::evals_at_pows`. This computes only the
-// negacyclic wrap correction for one fold-high/fold-low pair; the caller combines it
-// with `eval(high) * eval(low)` to produce one logical block evaluation.
+fn reduced_tensor_product_eval_at_pows<F, E>(
+    high: &SparseChallenge,
+    low: &SparseChallenge,
+    high_eval: E,
+    low_eval: E,
+    alpha_pows: &[E],
+    alpha_pow_d_plus_one: E,
+) -> Result<E, AkitaError>
+where
+    F: FieldCore + FromPrimitiveInt,
+    E: FieldCore + MulBase<F>,
+{
+    let quotient_eval = tensor_product_quotient_eval::<F, E>(high, low, alpha_pows)?;
+    Ok(high_eval * low_eval - alpha_pow_d_plus_one * quotient_eval)
+}
+
+// Compute only the negacyclic wrap correction for one fold-high/fold-low pair.
 fn tensor_product_quotient_eval<F, E>(
     high: &SparseChallenge,
     low: &SparseChallenge,

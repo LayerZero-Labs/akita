@@ -355,10 +355,22 @@ fn tensor_sampling_keeps_only_the_exact_live_fold_prefix() {
     assert_eq!(factored.total_blocks().unwrap(), 10);
 
     let alpha_pows = scalar_powers::<F, TD>(F::from_u64(13));
-    assert_eq!(
-        factored.evals_at_pows::<F, F>(&alpha_pows).unwrap().len(),
-        10
-    );
+    let bulk = factored.evals_at_pows::<F, F>(&alpha_pows).unwrap();
+    assert_eq!(bulk.len(), 10);
+    for (logical_index, &expected) in bulk.iter().enumerate() {
+        assert_eq!(
+            factored
+                .eval_logical_at_pows::<F, F>(logical_index, &alpha_pows)
+                .unwrap(),
+            expected
+        );
+    }
+    assert!(factored
+        .eval_logical_at_pows::<F, F>(bulk.len(), &alpha_pows)
+        .is_err());
+    assert!(factored
+        .eval_logical_at_pows::<F, F>(0, &[F::one()])
+        .is_err());
 }
 
 #[test]
@@ -443,7 +455,7 @@ fn tensor_sampling_absorbs_fold_high_digest_before_fold_low() {
     )
     .unwrap();
 
-    // The fold-low factor must be sampled after absorbing the fold-high digest.
+    // The right factor must be sampled after absorbing the left digest.
     let mut nodigest_transcript = AkitaTranscript::<F>::new(DOMAIN_AKITA_PROTOCOL);
     nodigest_transcript.append_field(b"seed", &F::from_u64(0x5151));
     let _nodigest_high = sample_sparse_challenges::<F, _>(
@@ -571,7 +583,7 @@ fn tensor_lazy_evals_match_ring_product_reference() {
         .unwrap();
 
     let alpha_pows = scalar_powers::<F, TD>(F::from_u64(5));
-    let lazy = challenges.evals_at_pows::<F, F>(&alpha_pows).unwrap();
+    let bulk = challenges.evals_at_pows::<F, F>(&alpha_pows).unwrap();
     let Challenges::Tensor { factored } = &challenges else {
         panic!("expected tensor challenges");
     };
@@ -583,7 +595,13 @@ fn tensor_lazy_evals_match_ring_product_reference() {
         })
         .collect::<Vec<_>>();
 
-    assert_eq!(lazy, expected);
+    let singular = (0..challenges.logical_len())
+        .map(|logical_index| challenges.eval_logical_at_pows::<F, F>(logical_index, &alpha_pows))
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+
+    assert_eq!(bulk, expected);
+    assert_eq!(singular, expected);
 }
 
 #[test]

@@ -625,11 +625,9 @@ where
                     actual: blocks_per_claim,
                 });
             }
-            let exact_evals = factored.evals_at_pows::<F, E>(alpha_pows)?;
             Ok(PreparedChallengeEvals::Tensor {
                 challenges: factored.clone(),
                 alpha_pows: alpha_pows.to_vec(),
-                exact_evals,
             })
         }
     }
