@@ -267,11 +267,12 @@ mod tests {
         // Chunked leading levels are allowed when the planner can route through a
         // single-chunk fold before the terminal-direct tail.
         let mut policy = flat_policy();
+        policy.decomposition.log_open_bound = Some(128);
         policy.witness_chunk = ChunkedWitnessCfg {
             num_chunks: 8,
             num_activated_levels: 2,
         };
-        let key = PolynomialGroupLayout::new(24, 1);
+        let key = PolynomialGroupLayout::new(30, 1);
         let schedule = find_single_schedule(key, &policy).expect("schedule");
         let last_fold = schedule
             .steps
@@ -301,12 +302,13 @@ mod tests {
 
     #[test]
     fn all_multi_chunk_profiles_use_single_chunk_terminal() {
-        let key = PolynomialGroupLayout::new(24, 1);
+        let key = PolynomialGroupLayout::new(30, 1);
         for profile in MultiChunkProfileId::ALL {
             let mut policy = flat_policy();
+            policy.decomposition.log_open_bound = Some(128);
             policy.witness_chunk = profile.cfg();
             let schedule = find_single_schedule(key, &policy)
-                .unwrap_or_else(|err| panic!("profile {profile:?} must plan at nv=24: {err:?}"));
+                .unwrap_or_else(|err| panic!("profile {profile:?} must plan at nv=30: {err:?}"));
             let last_fold = schedule
                 .steps
                 .iter()
@@ -566,7 +568,8 @@ mod tests {
     #[test]
     fn resolve_group_batch_schedule_falls_back_on_stale_grouped_terminal_table_hit() {
         let key = multi_group_sample_key();
-        let policy = flat_policy();
+        let mut policy = flat_policy();
+        policy.decomposition.log_open_bound = Some(128);
         let regenerated =
             find_group_batch_schedule(&key, &policy, ring_challenge_config, fold_shape)
                 .expect("multi-group schedule");
