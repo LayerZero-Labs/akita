@@ -213,15 +213,13 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     /// `InvalidSetup` if `d` is not supported.
     fn ring_challenge_config(d: usize) -> Result<SparseChallengeConfig, AkitaError>;
 
-    /// Stage-1 fold-round challenge shape at one schedule level.
+    /// Stage-1 fold-round challenge policy at one schedule level.
     ///
-    /// The default `TensorChallengeShape::Flat` matches every shipped flat
-    /// preset and is the only shape used by recursive (`level >= 1`) folds in
-    /// the current planner. Tensor-shaped verifier presets (e.g.
-    /// `tensor_verifier::fp128::D64OneHotTensor`) override this hook to return
-    /// `TensorChallengeShape::Tensor` for `inputs.level == 0` so generated
-    /// schedule-table materialization stamps the table-backed root layout with
-    /// the tensor L1 mass `omega^2` instead of the flat `omega`.
+    /// `Flat` requests independent fold coefficients. `Tensor { .. }` enables
+    /// tensor pricing; the planner independently enumerates the power-of-two
+    /// low-factor width and stamps the resolved shape into the schedule. The
+    /// value returned in `fold_low_len` is therefore a policy marker, not a
+    /// fixed layout width. Recursive levels remain flat unless a preset opts in.
     fn fold_challenge_shape_at_level(_inputs: AkitaScheduleInputs) -> TensorChallengeShape {
         TensorChallengeShape::Flat
     }

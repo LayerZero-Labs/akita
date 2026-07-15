@@ -51,17 +51,12 @@ fn multi_group_row_offsets_match_a_before_b_layout() {
 }
 
 #[test]
-fn multi_group_root_rejects_multi_chunk_witness_layout() {
-    let (mut lp, _) = sample_multi_group_root_params();
+fn multi_group_root_accepts_multi_chunk_witness_layout() {
+    let (mut lp, batch) = sample_multi_group_root_params();
     lp.witness_chunk = crate::witness::ChunkedWitnessCfg {
         num_chunks: 2,
         num_activated_levels: 1,
     };
-    let err = lp
-        .reject_multi_group_multi_chunk("test")
-        .expect_err("multi-group multi-chunk must reject");
-    assert!(
-        format!("{err:?}").contains(crate::MULTI_GROUP_ROOT_MULTI_CHUNK_UNSUPPORTED),
-        "unexpected error: {err:?}"
-    );
+    lp.evaluation_trace_row_index_for_layout(RelationMatrixRowLayout::WithDBlock, &batch)
+        .expect("canonical product layout supports grouped shards");
 }

@@ -119,8 +119,8 @@ pub use proof::{
     SetupPrefixVerifierRegistry, SetupPrefixVerifierSlot, SetupProductSumcheckShape,
     SetupSumcheckProof, TailSegmentGroupLayout, TailSegmentLayout, TerminalLevelProof,
     TerminalLevelProofShape, TerminalWitnessTranscriptParts, MAX_SETUP_MATRIX_FIELD_ELEMENTS,
-    MULTI_GROUP_ROOT_DENSE_UNSUPPORTED, MULTI_GROUP_ROOT_MULTI_CHUNK_UNSUPPORTED,
-    SETUP_OFFLOAD_D_SETUP, SETUP_OFFLOAD_MIN_PREFIX_FIELD_LEN, SETUP_SUMCHECK_DEGREE,
+    MULTI_GROUP_ROOT_DENSE_UNSUPPORTED, SETUP_OFFLOAD_D_SETUP, SETUP_OFFLOAD_MIN_PREFIX_FIELD_LEN,
+    SETUP_SUMCHECK_DEGREE,
 };
 pub use proof_size::{level_proof_bytes, FOLD_GRIND_NONCE_BYTES};
 pub use schedule::{

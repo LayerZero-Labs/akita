@@ -573,8 +573,6 @@ impl Schedule {
         for (index, step) in self.steps.iter().enumerate() {
             match step {
                 Step::Fold(fold) => {
-                    fold.params
-                        .reject_multi_group_multi_chunk("schedule validation")?;
                     if fold.current_w_len == 0 || fold.next_w_len == 0 {
                         return Err(AkitaError::InvalidSetup(
                             "fold witness lengths must be nonzero".to_string(),

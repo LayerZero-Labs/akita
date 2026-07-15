@@ -366,14 +366,9 @@ fn walk_multi_group_generated_schedule_entry(
                 } else {
                     fold_challenge_shape_at_level(inputs)
                 };
-                let lp = if fold_level == 0 {
+                let mut lp = if fold_level == 0 {
                     let (precommitted_groups, precommitted_d_width) =
-                        multi_group_root_precommitted_groups(
-                            key,
-                            policy,
-                            ring_challenge_config,
-                            fold_shape,
-                        )?;
+                        multi_group_root_precommitted_groups(key, policy, ring_challenge_config)?;
                     validate_expanded_precommitted_groups(key, &precommitted_groups)?;
                     expand_multi_group_root_fold_step(
                         step,
@@ -396,6 +391,7 @@ fn walk_multi_group_generated_schedule_entry(
                     )?
                 };
 
+                lp.witness_chunk = policy.witness_chunk_for_level(fold_level);
                 if is_terminal && lp.has_precommitted_groups() {
                     return Err(AkitaError::InvalidSetup(
                         "grouped terminal fold must be followed by another fold".to_string(),
@@ -439,7 +435,7 @@ fn walk_multi_group_generated_schedule_entry(
                         level: fold_level + 1,
                         current_w_len: len,
                     };
-                    let next_lp = expand_fold_step(
+                    let mut next_lp = expand_fold_step(
                         next,
                         policy,
                         ring_challenge_config,
@@ -448,6 +444,7 @@ fn walk_multi_group_generated_schedule_entry(
                         fold_challenge_shape_at_level(next_inputs),
                         1,
                     )?;
+                    next_lp.witness_chunk = policy.witness_chunk_for_level(fold_level + 1);
                     (len, Some(next_lp), RelationMatrixRowLayout::WithDBlock)
                 };
 
@@ -502,7 +499,6 @@ fn walk_multi_group_generated_schedule_entry(
                                     key,
                                     policy,
                                     ring_challenge_config,
-                                    fold_shape,
                                 )?;
                             validate_expanded_precommitted_groups(key, &precommitted_groups)?;
                             Some(commit.expand_to_multi_group_root_level_params(

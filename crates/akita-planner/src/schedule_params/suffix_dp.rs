@@ -159,6 +159,8 @@ pub(crate) type ScheduleMemo = HashMap<(usize, usize, usize, u32, usize), Suffix
 pub(crate) struct SuffixCtx<'a> {
     pub(crate) policy: &'a PlannerPolicy,
     pub(crate) ring_challenge_cfg: &'a akita_challenges::SparseChallengeConfig,
+    pub(crate) fold_challenge_shape_at_level:
+        &'a dyn Fn(akita_types::AkitaScheduleInputs) -> akita_challenges::TensorChallengeShape,
     pub(crate) num_vars: usize,
     pub(crate) key: PolynomialGroupLayout,
 }
@@ -210,6 +212,7 @@ pub(crate) fn derive_optimal_suffix_schedule(
     let SuffixCtx {
         policy,
         ring_challenge_cfg,
+        fold_challenge_shape_at_level,
         num_vars,
         key,
     } = *ctx;
@@ -221,6 +224,11 @@ pub(crate) fn derive_optimal_suffix_schedule(
         incoming_setup_prefix,
     } = state;
     let memo_key = state.memo_key();
+    let requested_fold_shape = fold_challenge_shape_at_level(akita_types::AkitaScheduleInputs {
+        num_vars,
+        level,
+        current_w_len: current_witness_len,
+    });
     if depth <= MAX_RECURSION_DEPTH {
         if let Some(cached) = memo.get(&memo_key) {
             return Ok(cached.clone());
@@ -236,6 +244,7 @@ pub(crate) fn derive_optimal_suffix_schedule(
         current_lb,
         level,
         None,
+        requested_fold_shape,
     )?
     .is_some()
     {
@@ -276,6 +285,7 @@ pub(crate) fn derive_optimal_suffix_schedule(
                 lb,
                 level,
                 incoming_setup_prefix,
+                requested_fold_shape,
             )?
         else {
             continue;

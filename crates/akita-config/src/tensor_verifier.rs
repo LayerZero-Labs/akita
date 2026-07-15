@@ -41,10 +41,9 @@ pub mod fp128 {
             crate::proof_optimized::proof_optimized_ring_challenge_config(d)
         }
 
-        /// Tensor at the root level (`level == 0`), flat at every recursive
-        /// level. The schedule materializer reads this hook *before* deriving
-        /// the fold digit count and the `(position_bits, fold_bits)` split, so the root
-        /// step's `LevelParams` are dimensioned for `omega^2`.
+        /// Enable tensor pricing at the root (`level == 0`) and stay flat at
+        /// recursive levels. The planner resolves the actual low-factor width;
+        /// the `2` here is only the non-flat policy marker.
         fn fold_challenge_shape_at_level(inputs: AkitaScheduleInputs) -> TensorChallengeShape {
             if inputs.level == 0 {
                 TensorChallengeShape::Tensor { fold_low_len: 2 }

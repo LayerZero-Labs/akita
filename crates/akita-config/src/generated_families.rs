@@ -244,7 +244,6 @@ pub fn recursive_group_batch_candidates_for_capacity<Cfg: CommitmentConfig>(
     if !Cfg::recursive_setup_planning()
         || Cfg::decomposition().log_commit_bound != 1
         || Cfg::D != akita_types::SETUP_OFFLOAD_D_SETUP
-        || Cfg::chunked_witness_cfg().uses_multi_chunk()
         || max_num_batched_polys == 0
     {
         return Ok(Vec::new());

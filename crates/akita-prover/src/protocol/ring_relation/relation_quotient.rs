@@ -327,7 +327,6 @@ where
         + RingSwitchProveBackend<F, 16>
         + RingSwitchProveBackend<F, D>,
 {
-    lp.reject_multi_group_multi_chunk("multi-group relation quotient")?;
     lp.validate_opening_batch(opening_batch)?;
     if groups.len() != opening_batch.num_groups()
         || group_ring_multiplier_points.len() != opening_batch.num_groups()

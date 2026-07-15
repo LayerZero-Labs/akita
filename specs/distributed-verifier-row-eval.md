@@ -5,14 +5,21 @@
 | ------------- | ---------------------------------- |
 | Author(s)     | Omid; Freya                               |
 | Created       | 2026-06-19                         |
-| Status        | proposed                           |
+| Status        | superseded                         |
 | PR            |                                    |
 | Supersedes    |                                    |
-| Superseded-by |                                    |
+| Superseded-by | digit-innermost-layout.md          |
 | Book-chapter  | how/verifying/matrix_evaluation.md |
 
 
 ## Summary
+
+> **Superseded (2026-07-15).** PR #296 closed without landing. Its proposed
+> `ChunkedWitnessCfg`-owned layout and copied chunk geometry must not be revived.
+> [`digit-innermost-layout.md`](digit-innermost-layout.md) now owns coefficient
+> order, group-and-shard ranges, and structured verifier evaluation through one
+> canonical `WitnessLayout`. Future distributed process placement should consume
+> those ranges rather than introduce another layout type.
 
 During the relation-check sum-check, the verifier evaluates the
 multilinear extension of the relation matrix `M`,

@@ -18,6 +18,7 @@ fn sis_key(
 /// split. Setup certification uses the maximum current length in each
 /// `ceil(log2(ring_elems))` bucket, which dominates every shorter member for
 /// the same split.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn recursive_fold_level_params_candidate(
     policy: &PlannerPolicy,
     ring_challenge_cfg: &akita_challenges::SparseChallengeConfig,
@@ -26,6 +27,7 @@ pub(crate) fn recursive_fold_level_params_candidate(
     log_basis: u32,
     fold_level: usize,
     fold_capacity_bits: usize,
+    requested_fold_shape: TensorChallengeShape,
 ) -> Result<Option<LevelParams>, AkitaError> {
     if reduced_vars <= 2
         || reduced_vars >= 53
@@ -44,6 +46,9 @@ pub(crate) fn recursive_fold_level_params_candidate(
     if live_fold_count < num_chunks {
         return Ok(None);
     }
+    let fold_challenge_shape =
+        optimize_fold_challenge_shape(requested_fold_shape, live_fold_count)?;
+    let shard_granule = optimize_shard_granule(live_fold_count, num_chunks, fold_challenge_shape)?;
     let fold_bits = live_fold_count
         .checked_next_power_of_two()
         .ok_or_else(|| {
@@ -65,7 +70,7 @@ pub(crate) fn recursive_fold_level_params_candidate(
         policy.ring_dimension,
         decomp,
         ring_challenge_cfg,
-        TensorChallengeShape::Flat,
+        fold_challenge_shape,
         false,
         policy.onehot_chunk_size,
         policy.ring_subfield_norm_bound,
@@ -127,9 +132,9 @@ pub(crate) fn recursive_fold_level_params_candidate(
         source_ring_len_per_claim: num_ring_elems,
         fold_position_count,
         live_fold_count,
-        shard_granule: 1,
+        shard_granule,
         fold_challenge_config: *ring_challenge_cfg,
-        fold_challenge_shape: TensorChallengeShape::Flat,
+        fold_challenge_shape,
         num_digits_commit: delta_commit,
         num_digits_open: delta_open,
         onehot_chunk_size: 0,
@@ -185,9 +190,11 @@ pub fn suffix_opening_layout(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn grouped_segment_rings(
     num_polys: usize,
     live_fold_count: usize,
+    num_shards: usize,
     fold_position_count: usize,
     n_a: usize,
     num_digits_commit: usize,
@@ -206,6 +213,7 @@ fn grouped_segment_rings(
     let z_hat = fold_position_count
         .checked_mul(num_digits_commit)
         .and_then(|n| n.checked_mul(num_digits_fold))
+        .and_then(|n| n.checked_mul(num_shards))
         .ok_or_else(|| AkitaError::InvalidSetup("group z-hat witness overflow".to_string()))?;
 
     e_hat
@@ -227,12 +235,13 @@ pub(crate) fn planned_next_witness_len(
         ));
     }
     if params.setup_prefix.is_some() {
-        if num_chunks > 1 {
-            return Err(AkitaError::InvalidSetup(
-                "setup-prefix grouped suffixes do not support multi-chunk witnesses".to_string(),
-            ));
-        }
-        return grouped_setup_prefix_next_witness_len(field_bits, params, final_num_polys, layout);
+        return grouped_setup_prefix_next_witness_len(
+            field_bits,
+            params,
+            final_num_polys,
+            layout,
+            num_chunks,
+        );
     }
 
     w_ring_element_count_for_chunks(field_bits, params, final_num_polys, layout, num_chunks)?
@@ -245,10 +254,12 @@ fn grouped_setup_prefix_next_witness_len(
     params: &LevelParams,
     final_num_polys: usize,
     layout: RelationMatrixRowLayout,
+    num_shards: usize,
 ) -> Result<usize, AkitaError> {
     let mut total = grouped_segment_rings(
         final_num_polys,
         params.live_fold_count,
+        num_shards,
         params.fold_position_count,
         params.a_key.row_len(),
         params.num_digits_commit,
@@ -259,6 +270,7 @@ fn grouped_setup_prefix_next_witness_len(
         let group_rings = grouped_segment_rings(
             group.layout.group.num_polynomials(),
             group.layout.live_fold_count,
+            num_shards,
             group.layout.fold_position_count,
             group.a_key.row_len(),
             group.num_digits_commit,
@@ -316,9 +328,10 @@ pub(crate) fn terminal_witness_shape_for_opening_layout(
 fn derive_setup_prefix_group(
     policy: &PlannerPolicy,
     ring_challenge_cfg: &SparseChallengeConfig,
-    fold_shape: TensorChallengeShape,
+    requested_fold_shape: TensorChallengeShape,
     log_basis: u32,
     n_prefix: usize,
+    num_shards: usize,
 ) -> Result<Option<PrecommittedLevelParams>, AkitaError> {
     if policy.ring_dimension != SETUP_OFFLOAD_D_SETUP {
         return Err(AkitaError::InvalidSetup(
@@ -346,7 +359,7 @@ fn derive_setup_prefix_group(
     };
     let num_digits_commit = num_digits_setup_prefix_commit(decomp);
     let num_digits_open_val = num_digits_open(decomp);
-    let mut best: Option<(usize, PrecommittedLevelParams)> = None;
+    let mut best: Option<(LayoutCandidateScore, PrecommittedLevelParams)> = None;
 
     for fold_bits in (0..=reduced_vars).rev() {
         let Some(live_fold_count) = 1usize.checked_shl(fold_bits as u32) else {
@@ -356,6 +369,11 @@ fn derive_setup_prefix_group(
         let Some(fold_position_count) = 1usize.checked_shl(position_bits as u32) else {
             continue;
         };
+        let fold_shape = optimize_fold_challenge_shape(requested_fold_shape, live_fold_count)?;
+        if live_fold_count < num_shards {
+            continue;
+        }
+        let shard_granule = optimize_shard_granule(live_fold_count, num_shards, fold_shape)?;
         let Some(width_s) = decomposed_s_block_ring_count(fold_position_count, num_digits_commit)
         else {
             continue;
@@ -422,7 +440,7 @@ fn derive_setup_prefix_group(
             source_ring_len_per_claim: ring_slots,
             fold_position_count,
             live_fold_count,
-            shard_granule: 1,
+            shard_granule,
             fold_challenge_shape: fold_shape,
             log_basis,
             n_a: a_key.row_len(),
@@ -436,14 +454,22 @@ fn derive_setup_prefix_group(
             num_digits_open: num_digits_open_val,
             num_digits_fold_one,
         };
-        let score = grouped_segment_rings(
+        let physical_width = grouped_segment_rings(
             1,
             live_fold_count,
+            num_shards,
             fold_position_count,
             params.a_key.row_len(),
             num_digits_commit,
             num_digits_open_val,
             num_digits_fold_one,
+        )?;
+        let score = layout_candidate_score(
+            physical_width,
+            live_fold_count,
+            num_shards,
+            shard_granule,
+            fold_shape,
         )?;
         if best
             .as_ref()
@@ -468,6 +494,7 @@ pub(crate) fn derive_candidate_level_params(
     log_basis: u32,
     fold_level: usize,
     incoming_setup_prefix: Option<usize>,
+    requested_fold_shape: TensorChallengeShape,
 ) -> Result<Option<(LevelParams, usize, usize)>, AkitaError> {
     // Chunk count of the witness this level commits/produces (sized below as
     // `next_witness_len`). Equal for the metadata field and the width pricing so
@@ -477,7 +504,11 @@ pub(crate) fn derive_candidate_level_params(
         return Ok(None);
     }
     let num_ring_elems = current_witness_len / policy.ring_dimension;
-    let reduced_vars = num_ring_elems.next_power_of_two().max(1).trailing_zeros() as usize;
+    let reduced_vars = num_ring_elems
+        .checked_next_power_of_two()
+        .ok_or_else(|| AkitaError::InvalidSetup("recursive witness capacity overflow".to_string()))?
+        .max(1)
+        .trailing_zeros() as usize;
 
     if reduced_vars <= 2 || reduced_vars >= 53 {
         return Err(AkitaError::InvalidSetup(format!(
@@ -492,9 +523,10 @@ pub(crate) fn derive_candidate_level_params(
             let Some(group) = derive_setup_prefix_group(
                 policy,
                 ring_challenge_cfg,
-                TensorChallengeShape::Flat,
+                requested_fold_shape,
                 log_basis,
                 n_prefix,
+                num_chunks,
             )?
             else {
                 return Ok(None);
@@ -508,7 +540,7 @@ pub(crate) fn derive_candidate_level_params(
         None => None,
     };
 
-    let mut best: Option<(LevelParams, usize, usize)> = None;
+    let mut best: Option<(LayoutCandidateScore, LevelParams, usize, usize)> = None;
     for r in (1..reduced_vars).rev() {
         let Some(candidate_params) = recursive_fold_level_params_candidate(
             policy,
@@ -518,6 +550,7 @@ pub(crate) fn derive_candidate_level_params(
             log_basis,
             fold_level,
             r,
+            requested_fold_shape,
         )?
         else {
             continue;
@@ -554,8 +587,19 @@ pub(crate) fn derive_candidate_level_params(
             num_chunks,
         )?;
 
-        if best.as_ref().is_none_or(|(_, c, _)| next_witness_len < *c) {
+        let score = layout_candidate_score(
+            next_witness_len,
+            candidate_params.live_fold_count,
+            num_chunks,
+            candidate_params.shard_granule,
+            candidate_params.fold_challenge_shape,
+        )?;
+        if best
+            .as_ref()
+            .is_none_or(|(best_score, _, _, _)| score < *best_score)
+        {
             best = Some((
+                score,
                 candidate_params,
                 next_witness_len,
                 next_witness_len_terminal,
@@ -563,7 +607,7 @@ pub(crate) fn derive_candidate_level_params(
         }
     }
 
-    let Some((candidate_params, next_witness_len, next_witness_len_terminal)) = best else {
+    let Some((_, candidate_params, next_witness_len, next_witness_len_terminal)) = best else {
         return Ok(None);
     };
 
@@ -613,7 +657,7 @@ pub(crate) fn compute_root_direct_level_params(
     ring_challenge_cfg: &akita_challenges::SparseChallengeConfig,
     num_vars: usize,
     log_basis: u32,
-    fold_challenge_shape: TensorChallengeShape,
+    requested_fold_shape: TensorChallengeShape,
     num_claims: usize,
 ) -> Result<Option<LevelParams>, AkitaError> {
     let d = policy.ring_dimension;
@@ -675,6 +719,8 @@ pub(crate) fn compute_root_direct_level_params(
     let Some(source_ring_len_per_claim) = live_fold_count.checked_mul(fold_position_count) else {
         return Ok(None);
     };
+    let fold_challenge_shape =
+        optimize_fold_challenge_shape(requested_fold_shape, live_fold_count)?;
 
     // The A/B/D keys, composed from the `akita_types::sis` primitives:
     // norm -> width -> tight SIS-secure rank -> key. `t_vectors = num_claims`
@@ -796,7 +842,7 @@ pub(crate) fn scalar_root_fold_level_params_candidate(
     num_claims: usize,
     log_basis: u32,
     fold_bits: usize,
-    fold_challenge_shape: TensorChallengeShape,
+    requested_fold_shape: TensorChallengeShape,
 ) -> Result<Option<LevelParams>, AkitaError> {
     let alpha = (policy.ring_dimension as u32).trailing_zeros() as usize;
     let reduced_vars = num_vars.saturating_sub(alpha);
@@ -807,9 +853,13 @@ pub(crate) fn scalar_root_fold_level_params_candidate(
         AkitaError::InvalidSetup("root candidate live fold count overflow".to_string())
     })?;
     let root_num_chunks = policy.chunks_at_level(0);
-    if root_num_chunks > 1 && !live_fold_count.is_multiple_of(root_num_chunks) {
+    if live_fold_count < root_num_chunks {
         return Ok(None);
     }
+    let fold_challenge_shape =
+        optimize_fold_challenge_shape(requested_fold_shape, live_fold_count)?;
+    let shard_granule =
+        optimize_shard_granule(live_fold_count, root_num_chunks, fold_challenge_shape)?;
     let position_bits = reduced_vars - fold_bits;
     let fold_position_count = 1usize.checked_shl(position_bits as u32).ok_or_else(|| {
         AkitaError::InvalidSetup("root candidate position count overflow".to_string())
@@ -905,7 +955,7 @@ pub(crate) fn scalar_root_fold_level_params_candidate(
         source_ring_len_per_claim,
         fold_position_count,
         live_fold_count,
-        shard_granule: 1,
+        shard_granule,
         fold_challenge_config: *ring_challenge_cfg,
         fold_challenge_shape,
         num_digits_commit,

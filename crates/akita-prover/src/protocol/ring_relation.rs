@@ -385,8 +385,7 @@ where
 /// contract), before any witness math. Mirrors the planner entry guard and the
 /// verifier layout resolution.
 pub(crate) fn validate_chunked_witness_cfg(lp: &LevelParams) -> Result<(), AkitaError> {
-    lp.witness_chunk.validate()?;
-    lp.reject_multi_group_multi_chunk("chunked witness")
+    lp.witness_chunk.validate()
 }
 
 /// Restrict sparse fold challenges to one shard's exact global fold range,

@@ -186,7 +186,6 @@ where
 {
     let opening_batch = instance.opening_batch();
     lp.witness_chunk.validate()?;
-    lp.reject_multi_group_multi_chunk("compute_relation_weight_evals")?;
     lp.validate_opening_batch(opening_batch)?;
     if gamma.len() != opening_batch.num_total_polynomials() {
         return Err(AkitaError::InvalidProof);

@@ -503,7 +503,7 @@ pub(crate) static FP128_D64_FULL_MULTI_CHUNK_SCHEDULES: &[GeneratedScheduleTable
     GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(35, 4), precommitteds: &[], steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, position_bits: 14, fold_bits: 15, n_a: 8, n_b: 2, n_d: 2 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, position_bits: 15, fold_bits: 12, n_a: 6, n_b: 2, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, position_bits: 13, fold_bits: 8, n_a: 5, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, position_bits: 14, fold_bits: 7, n_a: 5, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 5, position_bits: 11, fold_bits: 6, n_a: 6, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 5, position_bits: 10, fold_bits: 4, n_a: 6, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 6, position_bits: 10, fold_bits: 3, n_a: 5, n_b: 1, n_d: 1 }),
@@ -536,7 +536,7 @@ pub(crate) static FP128_D64_FULL_MULTI_CHUNK_SCHEDULES: &[GeneratedScheduleTable
     GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(37, 1), precommitteds: &[], steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, position_bits: 14, fold_bits: 17, n_a: 8, n_b: 2, n_d: 2 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, position_bits: 15, fold_bits: 12, n_a: 6, n_b: 2, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, position_bits: 13, fold_bits: 8, n_a: 5, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 3, position_bits: 14, fold_bits: 7, n_a: 5, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 5, position_bits: 11, fold_bits: 6, n_a: 6, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 5, position_bits: 10, fold_bits: 4, n_a: 6, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 64, log_basis: 6, position_bits: 10, fold_bits: 3, n_a: 5, n_b: 1, n_d: 1 }),

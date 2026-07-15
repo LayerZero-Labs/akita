@@ -138,8 +138,7 @@ fn setup_envelope_scan_layouts<Cfg: CommitmentConfig>(
 ) -> Result<Vec<OpeningClaimsLayout>, AkitaError> {
     let poly_counts: Vec<_> = (1..=max_num_batched_polys).collect();
     let mut layouts = Vec::new();
-    let supports_multi_group_root = Cfg::decomposition().log_commit_bound == 1
-        && !Cfg::chunked_witness_cfg().uses_multi_chunk();
+    let supports_multi_group_root = Cfg::decomposition().log_commit_bound == 1;
 
     for main_num_vars in 1..=max_num_vars {
         for &main_num_polys in &poly_counts {

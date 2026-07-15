@@ -1,30 +1,31 @@
 # Recursion and proof shape
 
-> **Status:** stub. Part of the initial Akita Book scaffold.
-
-How folds chain into a recursion, where the recursion terminates, and what the
-serialized proof looks like as a result.
+Akita uses the same digit-innermost source and witness geometry at every level.
+A nonterminal fold emits one recursive witness commitment. A direct fold emits
+no successor setup claim, and the terminal fold is scalar and direct.
 
 ## Intermediate vs terminal levels
 
-What distinguishes an intermediate fold level from the terminal level (witness
-size reduction, the D-block treatment, the tight recursive witness layout), and
-the Fiat-Shamir soundness lesson from the terminal-fold cutover.
+For each group, source elements use `source = fold * L + position`, where `L`
+is a power of two and `F = ceil(N / L)` is exact. A partial final fold slice
+stays tight. Recursive witness construction consumes canonical
+`WitnessLayout` units and emits the next source in that same order; it does not
+transpose through a column-major intermediate.
 
-**Sources to fold in**
+A grouped root fold is nonterminal. Its successor contains exactly one witness
+group and one setup-prefix group. Setup-prefix materialization consumes the same
+canonical ranges as witness emission. At a terminal step, the single group is
+consumed through the scalar direct path, including a scalar `F = 1` handoff.
 
-- `crates/akita-types/src/layout/params.rs:26-33` (`RelationMatrixRowLayout`).
-- `crates/akita-prover/src/protocol/flow/recursive.rs`, `flow/inputs.rs` (`batched_prove`).
-- Paper §3.6 `sec:akita-minor-opts` (terminal fold, tight recursive witness layout), §3.8 ("Witness size reduction and termination").
-- `specs/terminal-fold-cutover.md` (Fiat-Shamir soundness lesson).
+The transcript binds the schedule and exact group geometry before challenges
+that depend on them. Changing a terminal or recursive handoff is therefore a
+protocol change, not a serialization-only change.
 
 ## Proof anatomy
 
-The serialized structure: `AkitaBatchedProof` / `AkitaBatchedRootProof` /
-`AkitaLevelProof` / `AkitaProofStep`, the `BlockOrder` root-vs-recursive split,
-and where singleton openings sit as the 1×1 special case.
-
-**Sources to fold in**
-
-- `crates/akita-types/src/proof/levels.rs:749-853`, `proof/batch.rs`, `proof/opening_batch.rs`.
-- `crates/akita-types/src/sis/decomposition_digits.rs` (`decomp_depths`).
+The serialized structure is rooted at `AkitaBatchedProof` and
+`AkitaBatchedRootProof`, followed by `AkitaLevelProof` / `AkitaProofStep`
+records for the suffix. Each level's descriptors bind the resolved `L`, exact
+`F`, shard granule `S`, challenge shape, and decomposition parameters.
+Singleton openings and terminal folds are ordinary one-group, one-shard cases;
+there is no alternate block order.

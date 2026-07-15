@@ -18,8 +18,8 @@ use akita_types::{
 };
 
 use crate::schedule_params::{
-    derive_optimal_suffix_schedule, find_schedule, RingChallengeConfigFn, ScheduleMemo, SuffixCtx,
-    SuffixState,
+    derive_optimal_suffix_schedule, find_schedule, optimize_fold_challenge_shape,
+    optimize_shard_granule, RingChallengeConfigFn, ScheduleMemo, SuffixCtx, SuffixState,
 };
 use crate::PlannerPolicy;
 
@@ -41,7 +41,6 @@ pub(crate) fn group_root_params_from_layout(
     layout: &PrecommittedGroupParams,
     policy: &PlannerPolicy,
     ring_challenge_config: RingChallengeConfigFn<'_>,
-    fold_challenge_shape: TensorChallengeShape,
     conservative_b_rank: bool,
 ) -> Result<PrecommittedLevelParams, AkitaError> {
     if conservative_b_rank {
@@ -62,6 +61,7 @@ pub(crate) fn group_root_params_from_layout(
     let num_digits_open = num_digits_open(level_decomp);
     let live_fold_count = layout.live_fold_count;
     let fold_position_count = layout.fold_position_count;
+    let fold_challenge_shape = layout.fold_challenge_shape;
     let fold_bits = live_fold_count
         .checked_next_power_of_two()
         .ok_or_else(|| AkitaError::InvalidSetup("multi-group fold capacity overflow".into()))?
@@ -207,7 +207,7 @@ pub(crate) fn group_root_params_from_layout(
 struct MultiGroupRootCandidateCtx<'a> {
     policy: &'a PlannerPolicy,
     ring_challenge_cfg: &'a SparseChallengeConfig,
-    fold_challenge_shape: TensorChallengeShape,
+    requested_fold_shape: TensorChallengeShape,
     precommitted_d_width: usize,
     precommitted_groups: &'a [PrecommittedLevelParams],
 }
@@ -216,7 +216,6 @@ pub(crate) fn multi_group_root_precommitted_groups(
     key: &AkitaScheduleLookupKey,
     policy: &PlannerPolicy,
     ring_challenge_config: RingChallengeConfigFn<'_>,
-    fold_challenge_shape: TensorChallengeShape,
 ) -> Result<(Vec<PrecommittedLevelParams>, usize), AkitaError> {
     if key.precommitteds.is_empty() {
         return Err(AkitaError::InvalidSetup(
@@ -227,15 +226,7 @@ pub(crate) fn multi_group_root_precommitted_groups(
     let precommitted_groups = key
         .precommitteds
         .iter()
-        .map(|layout| {
-            group_root_params_from_layout(
-                layout,
-                policy,
-                ring_challenge_config,
-                fold_challenge_shape,
-                true,
-            )
-        })
+        .map(|layout| group_root_params_from_layout(layout, policy, ring_challenge_config, true))
         .collect::<Result<Vec<_>, _>>()?;
     let mut precommitted_d_width = 0usize;
     for group in &precommitted_groups {
@@ -359,6 +350,8 @@ fn multi_group_root_main_level_params_candidate(
     let Some(source_ring_len_per_claim) = live_fold_count.checked_mul(fold_position_count) else {
         return Ok(None);
     };
+    let fold_challenge_shape =
+        optimize_fold_challenge_shape(ctx.requested_fold_shape, live_fold_count)?;
 
     let Some(width_s) = decomposed_s_block_ring_count(fold_position_count, num_digits_commit)
     else {
@@ -370,7 +363,7 @@ fn multi_group_root_main_level_params_candidate(
         d,
         level_decomp,
         ctx.ring_challenge_cfg,
-        ctx.fold_challenge_shape,
+        fold_challenge_shape,
         true,
         policy.onehot_chunk_size,
         policy.ring_subfield_norm_bound,
@@ -450,7 +443,7 @@ fn multi_group_root_main_level_params_candidate(
         live_fold_count,
         shard_granule: 1,
         fold_challenge_config: *ctx.ring_challenge_cfg,
-        fold_challenge_shape: ctx.fold_challenge_shape,
+        fold_challenge_shape,
         num_digits_commit,
         num_digits_open,
         onehot_chunk_size,
@@ -480,12 +473,8 @@ fn compute_multi_group_root_direct_level_params(
     fold_challenge_shape: TensorChallengeShape,
 ) -> Result<Option<LevelParams>, AkitaError> {
     key.validate()?;
-    let (precommitted_groups, precommitted_d_width) = multi_group_root_precommitted_groups(
-        key,
-        policy,
-        ring_challenge_config,
-        fold_challenge_shape,
-    )?;
+    let (precommitted_groups, precommitted_d_width) =
+        multi_group_root_precommitted_groups(key, policy, ring_challenge_config)?;
 
     let ring_challenge_cfg = ring_challenge_config(policy.ring_dimension)?;
     let main_num_polys = key.final_group.num_polynomials();
@@ -493,7 +482,7 @@ fn compute_multi_group_root_direct_level_params(
     let candidate_ctx = MultiGroupRootCandidateCtx {
         policy,
         ring_challenge_cfg: &ring_challenge_cfg,
-        fold_challenge_shape,
+        requested_fold_shape: fold_challenge_shape,
         precommitted_d_width,
         precommitted_groups: &precommitted_groups,
     };
@@ -570,13 +559,8 @@ pub fn find_group_batch_schedule(
                 .to_string(),
         ));
     }
-    if policy.witness_chunk.uses_multi_chunk() {
-        return Err(AkitaError::InvalidSetup(
-            akita_types::MULTI_GROUP_ROOT_MULTI_CHUNK_UNSUPPORTED.to_string(),
-        ));
-    }
-
     let ring_challenge_config: RingChallengeConfigFn<'_> = &ring_challenge_config;
+    let fold_shape_at_level = &fold_challenge_shape_at_level;
     let field_bits = policy.decomposition.field_bits();
     let challenge_field_bits = field_bits * policy.chal_ext_degree as u32;
     let direct_current_w_len = key.opening_layout()?.root_direct_witness_len()?;
@@ -628,23 +612,20 @@ pub fn find_group_batch_schedule(
         return Ok(Schedule { steps, total_bytes });
     }
 
-    let (precommitted_groups, precommitted_d_width) = multi_group_root_precommitted_groups(
-        key,
-        policy,
-        ring_challenge_config,
-        fold_challenge_shape,
-    )?;
+    let (precommitted_groups, precommitted_d_width) =
+        multi_group_root_precommitted_groups(key, policy, ring_challenge_config)?;
     let ring_challenge_cfg = ring_challenge_config(policy.ring_dimension)?;
     let candidate_ctx = MultiGroupRootCandidateCtx {
         policy,
         ring_challenge_cfg: &ring_challenge_cfg,
-        fold_challenge_shape,
+        requested_fold_shape: fold_challenge_shape,
         precommitted_d_width,
         precommitted_groups: &precommitted_groups,
     };
     let suffix_ctx = SuffixCtx {
         policy,
         ring_challenge_cfg: &ring_challenge_cfg,
+        fold_challenge_shape_at_level: fold_shape_at_level,
         num_vars: key.final_group.num_vars(),
         key: PolynomialGroupLayout::singleton(key.final_group.num_vars()),
     };
@@ -670,7 +651,7 @@ pub fn find_group_batch_schedule(
     for candidate_log_basis in min_log_basis..=max_log_basis {
         for fold_bits in (min_r_vars..=max_r_vars).rev() {
             let position_bits = reduced_vars - fold_bits;
-            let Some(candidate_params) = multi_group_root_main_level_params_candidate(
+            let Some(mut candidate_params) = multi_group_root_main_level_params_candidate(
                 &candidate_ctx,
                 key.final_group.num_polynomials(),
                 candidate_log_basis,
@@ -680,6 +661,23 @@ pub fn find_group_batch_schedule(
             else {
                 continue;
             };
+            let root_num_shards = policy.chunks_at_level(0);
+            if candidate_params.precommitted_groups.iter().any(|group| {
+                group.layout.live_fold_count < root_num_shards
+                    || group
+                        .layout
+                        .shard_granule
+                        .checked_mul(root_num_shards)
+                        .is_none_or(|required| required > group.layout.live_fold_count)
+            }) {
+                continue;
+            }
+            candidate_params.witness_chunk = policy.witness_chunk_for_level(0);
+            candidate_params.shard_granule = optimize_shard_granule(
+                candidate_params.live_fold_count,
+                root_num_shards,
+                candidate_params.fold_challenge_shape,
+            )?;
             let opening_batch = key.opening_layout()?;
             let next_w_len = multi_group_root_next_w_len(
                 field_bits,
@@ -988,14 +986,8 @@ mod tests {
         };
         let ring_cfg = ring_challenge_config(policy.ring_dimension).expect("ring challenge");
 
-        let error = group_root_params_from_layout(
-            &malformed,
-            &policy,
-            &|_| Ok(ring_cfg),
-            TensorChallengeShape::Flat,
-            true,
-        )
-        .expect_err("malformed non-tiny geometry must propagate");
+        let error = group_root_params_from_layout(&malformed, &policy, &|_| Ok(ring_cfg), true)
+            .expect_err("malformed non-tiny geometry must propagate");
 
         assert!(error.to_string().contains("geometry does not match"));
     }
@@ -1221,6 +1213,7 @@ mod tests {
         let ctx = SuffixCtx {
             policy: &policy,
             ring_challenge_cfg: &ring_cfg,
+            fold_challenge_shape_at_level: &fold_shape,
             num_vars: key.num_vars(),
             key,
         };

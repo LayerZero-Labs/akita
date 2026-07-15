@@ -291,7 +291,7 @@ fn fallback_root_direct_schedule_binds_real_opening_batch_commit_params() {
 }
 
 #[test]
-fn multi_group_multi_chunk_schedule_rejects_at_effective_schedule_boundary() {
+fn multi_group_multi_chunk_schedule_resolves_at_effective_schedule_boundary() {
     type Cfg = fp128::D64OneHotMultiChunkW2R2;
     let opening_batch = OpeningClaimsLayout::from_groups(vec![
         PolynomialGroupLayout::new(8, 1),
@@ -300,13 +300,11 @@ fn multi_group_multi_chunk_schedule_rejects_at_effective_schedule_boundary() {
     .expect("multi-group opening batch");
     let point = vec![fp128::Field::zero(); opening_batch.max_num_vars()];
 
-    let err = crate::effective_batched_schedule::<Cfg>(&opening_batch, &point)
-        .expect_err("multi-group multi-chunk schedule must reject");
-
-    assert!(
-        err.to_string().contains("multi-chunk witness layout"),
-        "unexpected error: {err}"
-    );
+    let schedule = crate::effective_batched_schedule::<Cfg>(&opening_batch, &point)
+        .expect("canonical group-by-shard layout must resolve");
+    schedule
+        .validate_structure()
+        .expect("resolved grouped shard schedule must validate");
 }
 
 #[test]

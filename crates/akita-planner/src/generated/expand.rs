@@ -20,6 +20,7 @@ use crate::generated::{
     GeneratedDirectStep, GeneratedFoldStep, GeneratedFoldStepWithSetupMetadata,
     GeneratedScheduleTableEntry, GeneratedSetupPrefixGroup, GeneratedStep,
 };
+use crate::schedule_params::{optimize_fold_challenge_shape, optimize_shard_granule};
 use crate::PlannerPolicy;
 use akita_types::sis::{
     decomposed_s_block_ring_count, decomposed_t_ring_count, decomposed_w_ring_count,
@@ -87,6 +88,7 @@ impl GeneratedSetupPrefixGroup {
         let fold_position_count = self.fold_position_count as usize;
         let live_fold_count = self.live_fold_count as usize;
         let shard_granule = self.shard_granule as usize;
+        let fold_shape = optimize_fold_challenge_shape(fold_shape, live_fold_count)?;
         let n_prefix = source_ring_len_per_claim.checked_mul(d).ok_or_else(|| {
             AkitaError::InvalidSetup("generated setup-prefix length overflow".into())
         })?;
@@ -331,6 +333,12 @@ impl GeneratedFoldStep {
             current_w_len / ring_d
         };
         let live_fold_count = source_ring_len_per_claim.div_ceil(fold_position_count);
+        let fold_shape = optimize_fold_challenge_shape(fold_shape, live_fold_count)?;
+        let shard_granule = optimize_shard_granule(
+            live_fold_count,
+            policy.chunks_at_level(fold_level),
+            fold_shape,
+        )?;
 
         // Per-role rounded-up collision buckets + committed widths, via the
         // `akita_types::sis` primitives. The B/D widths carry the `num_claims`
@@ -515,7 +523,7 @@ impl GeneratedFoldStep {
             source_ring_len_per_claim,
             live_fold_count,
             fold_position_count,
-            shard_granule: 1,
+            shard_granule,
             fold_challenge_config: ring_challenge_cfg,
             fold_challenge_shape: fold_shape,
             num_digits_commit,
@@ -608,6 +616,9 @@ impl GeneratedFoldStep {
                 "generated multi-group root 2^position_bits overflows usize".to_string(),
             )
         })?;
+        let fold_shape = optimize_fold_challenge_shape(fold_shape, live_fold_count)?;
+        let shard_granule =
+            optimize_shard_granule(live_fold_count, policy.chunks_at_level(0), fold_shape)?;
 
         let no_layout = |role: &str| {
             AkitaError::InvalidSetup(format!(
@@ -732,7 +743,7 @@ impl GeneratedFoldStep {
                 })?,
             live_fold_count,
             fold_position_count,
-            shard_granule: 1,
+            shard_granule,
             fold_challenge_config: ring_challenge_cfg,
             fold_challenge_shape: fold_shape,
             num_digits_commit,

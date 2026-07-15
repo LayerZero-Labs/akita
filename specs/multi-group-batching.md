@@ -5,12 +5,18 @@
 | --------- | ---------------------------------- |
 | Author(s) |                                    |
 | Created   | 2026-06-17                         |
-| Status    | folded multi-group roots implemented; chunking guarded |
+| Status    | implemented; layout portions superseded by digit-innermost geometry |
 | PR        |                                    |
 | Book      | configuration chapter              |
 
 
 ## Summary
+
+> **Layout supersession (2026-07-15).** The group semantics in this record
+> remain useful, but its chunking restrictions and duplicated witness-range
+> formulas are superseded by [`digit-innermost-layout.md`](digit-innermost-layout.md).
+> Multi-group and multi-shard witnesses now use the canonical product
+> `WitnessLayout`, with one shared quotient tail.
 
 Akita currently supports batching several polynomials inside one commitment
 object. This spec defines the first production model for batching several

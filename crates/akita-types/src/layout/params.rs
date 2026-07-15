@@ -348,17 +348,6 @@ impl LevelParams {
         Ok(())
     }
 
-    /// Reject multi-group-root params combined with multi-chunk witness layout.
-    pub fn reject_multi_group_multi_chunk(&self, context: &str) -> Result<(), AkitaError> {
-        if self.has_precommitted_groups() && self.witness_chunk.num_chunks > 1 {
-            return Err(AkitaError::InvalidSetup(format!(
-                "{context}: {}",
-                crate::MULTI_GROUP_ROOT_MULTI_CHUNK_UNSUPPORTED
-            )));
-        }
-        Ok(())
-    }
-
     /// Worst-case L1 mass of the fold-round challenge.
     #[inline]
     pub fn challenge_l1_mass(&self) -> usize {
@@ -1211,9 +1200,6 @@ impl LevelParams {
     ) -> Result<usize, AkitaError> {
         opening_batch.check()?;
         if self.has_precommitted_groups() {
-            self.reject_multi_group_multi_chunk(
-                "LevelParams::evaluation_trace_row_index_for_layout",
-            )?;
             self.validate_opening_batch(opening_batch)?;
         } else {
             self.require_scalar_level("LevelParams::evaluation_trace_row_index_for_layout")?;

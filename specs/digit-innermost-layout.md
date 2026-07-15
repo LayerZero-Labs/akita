@@ -9,7 +9,7 @@
 | PR | #294 |
 | Supersedes | Root and recursive layout decisions in `setup-layout-repack.md`, `protocol-core-eor-consolidation.md`, and `distributed-verifier-row-eval.md` |
 | Superseded by | |
-| Book chapter | |
+| Book chapter | how/proving/opening-points-layout.md; how/verifying/matrix_evaluation.md |
 
 This spec follows the lifecycle in [`PRUNING.md`](PRUNING.md). It replaces the first version of this file. That version used a power of two fold block count, a compact position count, and a second virtual opening address. This version reverses those choices.
 
@@ -41,38 +41,24 @@ For distributed proving, each group divides its exact live fold prefix into cont
 
 ## Current state
 
-### Current main branch
-
-The current `main` branch still has these properties.
-
-* `BlockOrder::RowMajor` is used at the root.
-* `BlockOrder::ColumnMajor` is used at recursive levels.
-* `num_blocks` is a power of two.
-* Recursive `block_len` may be a tight non power of two value.
-* Multi chunk layouts require equal power of two block windows.
-* `WitnessLayout` stores offsets and lengths in parallel vectors.
-* `TraceChunkLayout` copies the same chunk geometry again.
-* Tensor challenge factors are called left and right, and both lengths multiply to the full power of two block count.
-* The tensor choice is stored on the top level `LevelParams`, so precommitted groups cannot choose it independently.
-* Multi group plus multi chunk is rejected.
-
 ### PR #294 implementation status
 
-Slices 1 through 3 are complete. They establish the final parameter geometry, the physical opening and fold order, and the canonical witness ranges.
+Slices 1 through 8 are implemented on the PR branch. Root and recursive paths
+share exact `N`, power-of-two `L`, exact live `F`, digit-innermost source order,
+and canonical group-by-shard witness ranges. Tensor factors remain sparse and
+factored, partial final rows are live, and group-local challenge geometry is
+transcript-bound. Setup, relation, trace, recursive, and terminal consumers use
+the same range authority.
 
-Slice 4 is in progress. The branch stores exact live tensor prefixes, supports a partial final tensor row, and keeps tensor challenges in factored sparse form. Challenge sampling binds the group index and group local shape. Security sizing uses each group local shape and A width. Small signed sparse coefficients use add, subtract, and double fast paths.
+The planner independently enumerates fold position choices, shard granules, and
+tensor low-factor widths. It prices exact physical witness width, compact
+structured verifier work, and shard imbalance. Generated schedules have been
+regenerated from those rules. Multi-group plus multi-shard is no longer rejected.
 
-One root grind nonce satisfies every group. The prover derives one batch contract and one probe order from the ordered group geometry. It previews each candidate across every group and changes the live transcript only after every group accepts. The verifier validates the same batch contract before replay.
-
-Public tensor evaluation boundaries now call the full shape validator. A zero or non-power-of-two tensor low length returns `AkitaError` before indexing, division, or modulo.
-
-The following work remains before Slice 4 is complete.
-
-* Fix the D128 root proving failure where a predecomposed digit row exceeds the scheduled `log_basis` range.
-
-The current challenge evaluator no longer stores one product evaluation for every live fold. Some verifier paths still visit every live fold and recompute factor evaluations. Slice 6 owns the succinct carry and trace evaluator that removes this remaining work. The current allocation change is not the final performance result.
-
-The failing multi group terminal root tests assert a schedule shape that current `main` now rejects. They must be replaced with tests for grouped nonterminal folds and scalar direct or terminal folds. They are not an accepted later slice target.
+The full historical verification matrix in this record remains a release/CI
+obligation. The implementation-slice checkpoint uses formatting, warnings-denied
+workspace clippy, workspace test-target build, documentation guardrails, focused
+regressions added by the slices, and independent review.
 
 ### Integration with current `main`
 
@@ -83,7 +69,7 @@ PR #301 landed on `main` after this branch diverged. It makes setup prefix slots
 * A terminal fold is scalar and direct.
 * A recursive successor contains exactly one witness group and one setup prefix group.
 
-This spec does not reopen that topology. Its canonical group and shard ranges apply to group bearing nonterminal folds. Direct and terminal consumers use the same range authority for their single witness group. The merge must keep the new setup prefix ownership from `main`, port the digit innermost address and exact live count rules into it, and delete the old `akita-setup/src/recursion.rs` path.
+This spec does not reopen that topology. Its canonical group and shard ranges apply to group bearing nonterminal folds. Direct and terminal consumers use the same range authority for their single witness group. The branch keeps the setup prefix ownership from PR #301, applies the digit innermost address and exact live count rules to it, and deletes the old setup recursion path.
 
 ### Coordination with distributed prover work
 
@@ -964,9 +950,8 @@ crates/akita-planner
 crates/akita-config
 crates/akita-schedules
 book/src/how/recursion.md
-book/src/how/proving/opening-points-block-order.md
+book/src/how/proving/opening-points-layout.md
 book/src/how/verifying/matrix_evaluation.md
-docs/block-order.md
 specs/multi-group-batching.md
 specs/distributed-verifier-row-eval.md
 ```
@@ -976,9 +961,9 @@ Steps:
 1. Enumerate `L`, `S`, and `Q` independently.
 2. Price exact physical widths, structured verifier work, and shard imbalance.
 3. Regenerate every affected schedule table.
-4. Delete `docs/block-order.md` and replace the book page with the final geometry.
+4. Delete the old block-order note and replace the book page with the final geometry.
 5. Mark superseded layout sections in older live specs.
-6. Rebase PR #296 onto the canonical ownership geometry and remove its conflicting layout types.
+6. Record PR #296 as closed and superseded; require future distributed work to consume the canonical ownership geometry instead of its conflicting layout types.
 7. Run the full verification list and record performance changes.
 
 ## References
