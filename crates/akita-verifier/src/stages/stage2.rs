@@ -9,7 +9,7 @@ use akita_field::{
 use akita_sumcheck::{multilinear_eval, SumcheckInstanceVerifier};
 use akita_types::{
     dispatch_for_field, eval_dense_trace_table, eval_trace_terms_closed, AkitaExpandedSetup,
-    CleartextWitnessProof, FpExtEncoding, TraceClaim,
+    CleartextWitnessProof, FpExtEncoding, OpeningClaimsLayout, TraceClaim,
 };
 use std::borrow::Cow;
 use std::marker::PhantomData;
@@ -125,6 +125,7 @@ pub(crate) fn stage2_cleartext_oracle<'a, F, E>(
     physical_w_len: usize,
     lp: &akita_types::LevelParams,
     num_segments: usize,
+    opening_batch: &OpeningClaimsLayout,
 ) -> Result<Stage2WitnessOracle<'a, F, E>, AkitaError>
 where
     F: FieldCore + CanonicalField + HalvingField,
@@ -135,7 +136,43 @@ where
         CleartextWitnessProof::SegmentTyped(_) => {
             let digits =
                 dispatch_for_field!(ProtocolDispatchSlot::Role(RingRole::Inner), F, d_a, |D| {
-                    witness.logical_i8_digits::<D>(lp, num_segments)
+                    if !lp.precommitted_groups.is_empty() {
+                        return Err(AkitaError::InvalidProof);
+                    }
+                    if lp.setup_prefix.is_some() {
+                        let order = opening_batch.root_group_order()?;
+                        let mut groups = Vec::with_capacity(order.len());
+                        for &group_index in &order {
+                            let params = lp.group_params(opening_batch, group_index)?;
+                            let layout_index = groups.len();
+                            witness
+                                .as_segment_typed()
+                                .ok_or(AkitaError::InvalidProof)?
+                                .layout
+                                .groups
+                                .get(layout_index)
+                                .ok_or(AkitaError::InvalidProof)?;
+                            let (num_w_vectors, num_t_vectors, num_z_segments) =
+                                akita_types::tail_segment_multiplicities_from_layout_for_params(
+                                    params,
+                                    lp.ring_dimension,
+                                    &witness
+                                        .as_segment_typed()
+                                        .ok_or(AkitaError::InvalidProof)?
+                                        .layout,
+                                    layout_index,
+                                )?;
+                            groups.push((params, num_w_vectors, num_t_vectors, num_z_segments));
+                        }
+                        akita_types::expand_segment_typed_to_i8_digits_for_groups::<D, F>(
+                            witness.as_segment_typed().ok_or(AkitaError::InvalidProof)?,
+                            lp,
+                            groups,
+                            F::modulus_bits(),
+                        )
+                    } else {
+                        witness.logical_i8_digits::<D>(lp, num_segments)
+                    }
                 })?;
             if digits.len() != physical_w_len {
                 return Err(AkitaError::InvalidProof);

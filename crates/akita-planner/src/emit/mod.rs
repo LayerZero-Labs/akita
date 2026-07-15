@@ -12,14 +12,15 @@ use std::process::Command;
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::AkitaError;
 use akita_types::{
-    AkitaScheduleInputs, AkitaScheduleLookupKey, DirectStep, FoldStep, LevelParams,
-    PolynomialGroupLayout, PrecommittedGroupParams, Schedule, Step,
+    AkitaScheduleInputs, AkitaScheduleLookupKey, DirectStep, LevelParams, PolynomialGroupLayout,
+    PrecommittedGroupParams, Schedule, SetupContributionMode, Step,
 };
 
 use crate::catalog_identity::expected_catalog_identity;
 use crate::generated::{
-    GeneratedDirectStep, GeneratedFoldStep, GeneratedScheduleCatalogIdentity,
-    GeneratedScheduleTableEntry, GeneratedStep,
+    GeneratedDirectStep, GeneratedFoldStep, GeneratedFoldStepWithSetupMetadata,
+    GeneratedScheduleCatalogIdentity, GeneratedScheduleTableEntry, GeneratedSetupPrefixGroup,
+    GeneratedStep,
 };
 use crate::PlannerPolicy;
 
@@ -57,12 +58,51 @@ fn fold_step_from_params(p: &LevelParams) -> GeneratedFoldStep {
     }
 }
 
-fn schedule_to_generated_steps(schedule: &Schedule) -> Vec<GeneratedStep> {
+fn setup_prefix_group_from_params(
+    p: &LevelParams,
+    include_setup_prefix_group: bool,
+) -> Option<GeneratedSetupPrefixGroup> {
+    include_setup_prefix_group
+        .then_some(p.setup_prefix.as_ref())
+        .flatten()
+        .map(|setup_prefix| {
+            let group = &setup_prefix.commitment_params;
+            GeneratedSetupPrefixGroup {
+                natural_len: setup_prefix.natural_len as u32,
+                m_vars: group.layout.m_vars as u32,
+                r_vars: group.layout.r_vars as u32,
+                n_a: group.a_key.row_len() as u32,
+                n_b: group.b_key.row_len() as u32,
+            }
+        })
+}
+
+fn schedule_to_generated_steps(
+    _key: &AkitaScheduleLookupKey,
+    schedule: &Schedule,
+) -> Vec<GeneratedStep> {
     schedule
         .steps
         .iter()
-        .map(|step| match step {
-            Step::Fold(fold) => GeneratedStep::Fold(fold_step_from_params(&fold.params)),
+        .enumerate()
+        .map(|(idx, step)| match step {
+            Step::Fold(fold) => {
+                let include_setup_prefix_group = idx > 0 && fold.params.setup_prefix.is_some();
+                let setup_prefix_group =
+                    setup_prefix_group_from_params(&fold.params, include_setup_prefix_group);
+                let fold_step = fold_step_from_params(&fold.params);
+                if setup_prefix_group.is_some()
+                    || fold.params.setup_contribution_mode != SetupContributionMode::Direct
+                {
+                    GeneratedStep::FoldWithSetupMetadata(GeneratedFoldStepWithSetupMetadata {
+                        fold: fold_step,
+                        setup_prefix_group,
+                        setup_contribution_mode: fold.params.setup_contribution_mode,
+                    })
+                } else {
+                    GeneratedStep::Fold(fold_step)
+                }
+            }
             Step::Direct(direct) => GeneratedStep::Direct(GeneratedDirectStep {
                 commit: direct.params.as_ref().map(fold_step_from_params),
             }),
@@ -104,7 +144,7 @@ fn emit_entry_fields(key: &AkitaScheduleLookupKey) -> String {
     )
 }
 
-fn emit_fold_struct(p: &LevelParams) -> String {
+fn emit_compact_fold_struct(p: &LevelParams) -> String {
     let fold = fold_step_from_params(p);
     format!(
         "GeneratedFoldStep {{ \
@@ -113,10 +153,35 @@ fn emit_fold_struct(p: &LevelParams) -> String {
     )
 }
 
-fn emit_fold(step: &FoldStep) -> String {
+fn emit_setup_contribution_mode(mode: SetupContributionMode) -> &'static str {
+    match mode {
+        SetupContributionMode::Direct => "SetupContributionMode::Direct",
+        SetupContributionMode::Recursive => "SetupContributionMode::Recursive",
+    }
+}
+
+fn emit_setup_prefix_group(group: Option<GeneratedSetupPrefixGroup>) -> String {
+    match group {
+        Some(group) => format!(
+            "Some(GeneratedSetupPrefixGroup {{ natural_len: {}, m_vars: {}, r_vars: {}, n_a: {}, n_b: {} }})",
+            group.natural_len, group.m_vars, group.r_vars, group.n_a, group.n_b
+        ),
+        None => "None".to_string(),
+    }
+}
+
+fn emit_fold_step(p: &LevelParams, include_setup_prefix_group: bool) -> String {
+    let setup_prefix_group = setup_prefix_group_from_params(p, include_setup_prefix_group);
+    if setup_prefix_group.is_none() && p.setup_contribution_mode == SetupContributionMode::Direct {
+        return format!("GeneratedStep::Fold({})", emit_compact_fold_struct(p));
+    }
+
     format!(
-        "        GeneratedStep::Fold({}),",
-        emit_fold_struct(&step.params)
+        "GeneratedStep::FoldWithSetupMetadata(GeneratedFoldStepWithSetupMetadata {{ fold: {}, \
+         setup_prefix_group: {}, setup_contribution_mode: {} }})",
+        emit_compact_fold_struct(p),
+        emit_setup_prefix_group(setup_prefix_group),
+        emit_setup_contribution_mode(p.setup_contribution_mode),
     )
 }
 
@@ -124,23 +189,34 @@ fn emit_direct(direct: &DirectStep) -> String {
     match &direct.params {
         Some(commit) => format!(
             "        GeneratedStep::Direct(GeneratedDirectStep {{ commit: Some({}) }}),",
-            emit_fold_struct(commit)
+            emit_compact_fold_struct(commit)
         ),
         None => "        GeneratedStep::Direct(GeneratedDirectStep { commit: None }),".to_string(),
     }
 }
 
-fn emit_schedule_entry(out: &mut String, key_str: &str, schedule: &Schedule) -> Result<(), String> {
+fn emit_schedule_entry(
+    out: &mut String,
+    _key: &AkitaScheduleLookupKey,
+    key_str: &str,
+    schedule: &Schedule,
+) -> Result<(), String> {
     writeln!(
         out,
         "    GeneratedScheduleTableEntry {{ {key_str}, steps: &[",
     )
     .map_err(|e| e.to_string())?;
 
-    for step in &schedule.steps {
+    for (idx, step) in schedule.steps.iter().enumerate() {
         match step {
             Step::Fold(fold) => {
-                writeln!(out, "{}", emit_fold(fold)).map_err(|e| e.to_string())?;
+                let include_setup_prefix_group = idx > 0 && fold.params.setup_prefix.is_some();
+                writeln!(
+                    out,
+                    "        {},",
+                    emit_fold_step(&fold.params, include_setup_prefix_group)
+                )
+                .map_err(|e| e.to_string())?;
             }
             Step::Direct(direct) => {
                 writeln!(out, "{}", emit_direct(direct)).map_err(|e| e.to_string())?;
@@ -217,6 +293,7 @@ fn emit_identity_const(identity: &GeneratedScheduleCatalogIdentity) -> String {
             "    basis_range: ({basis_min}, {basis_max}),\n",
             "    onehot_chunk_size: {onehot_chunk_size},\n",
             "    witness_chunk: {witness_chunk},\n",
+            "    recursive_setup_planning: {recursive_setup_planning},\n",
             "    root_fold_shape: {root_fold_shape},\n",
             "    ring_dimensions: CATALOG_RING_DIMENSIONS,\n",
             "    ring_challenge_config_digest: {ring_challenge_config_digest},\n",
@@ -238,6 +315,7 @@ fn emit_identity_const(identity: &GeneratedScheduleCatalogIdentity) -> String {
         basis_max = identity.basis_range.1,
         onehot_chunk_size = identity.onehot_chunk_size,
         witness_chunk = emit_witness_chunk(identity.witness_chunk),
+        recursive_setup_planning = identity.recursive_setup_planning,
         root_fold_shape = emit_root_fold_shape(identity.root_fold_shape),
         ring_challenge_config_digest = identity.ring_challenge_config_digest,
         key_count = identity.key_count,
@@ -272,20 +350,48 @@ fn materialized_entries(
     Ok(entries)
 }
 
+fn schedule_uses_fold_with_setup(schedule: &Schedule) -> bool {
+    schedule.steps.iter().enumerate().any(|(idx, step)| {
+        let Step::Fold(fold) = step else {
+            return false;
+        };
+        let include_setup_prefix_group = idx > 0 && fold.params.setup_prefix.is_some();
+        include_setup_prefix_group
+            || fold.params.setup_contribution_mode != SetupContributionMode::Direct
+    })
+}
+
 /// Emit one family module (entries + embedded catalog identity).
 pub fn emit_family_module(spec: &EmitSpec) -> Result<String, String> {
+    let materialized = materialized_entries(spec)?;
+    let uses_fold_with_setup = materialized
+        .iter()
+        .any(|(_, schedule)| schedule_uses_fold_with_setup(schedule));
+
     let mut out = String::new();
     let const_name = output_const_name(spec);
     writeln!(out, "// Generated by `{}`", spec.generator_command).map_err(|e| e.to_string())?;
     writeln!(out, "#[allow(unused_imports)]").map_err(|e| e.to_string())?;
-    writeln!(
-        out,
-        "use super::{{\n    ChunkedWitnessCfg, GeneratedDirectStep, GeneratedFoldStep, \
-         GeneratedScheduleCatalogIdentity, PolynomialGroupLayout, PrecommittedGroupParams, \
-         GeneratedScheduleTableEntry, GeneratedStep, DecompositionParams, SisModulusProfileId, \
-         SisSecurityPolicyId, SisTableDigest, TensorChallengeShape,\n}};"
-    )
-    .map_err(|e| e.to_string())?;
+    if uses_fold_with_setup {
+        writeln!(
+            out,
+            "use super::{{\n    ChunkedWitnessCfg, DecompositionParams, GeneratedDirectStep, GeneratedFoldStep, \
+             GeneratedFoldStepWithSetupMetadata, GeneratedScheduleCatalogIdentity, \
+             GeneratedScheduleTableEntry, GeneratedSetupPrefixGroup, GeneratedStep, \
+             PolynomialGroupLayout, PrecommittedGroupParams, SetupContributionMode, \
+             SisModulusProfileId, SisSecurityPolicyId, SisTableDigest, TensorChallengeShape,\n}};"
+        )
+        .map_err(|e| e.to_string())?;
+    } else {
+        writeln!(
+            out,
+            "use super::{{\n    ChunkedWitnessCfg, DecompositionParams, GeneratedDirectStep, GeneratedFoldStep, \
+             GeneratedScheduleCatalogIdentity, GeneratedScheduleTableEntry, GeneratedStep, \
+             PolynomialGroupLayout, PrecommittedGroupParams, SisModulusProfileId, \
+             SisSecurityPolicyId, SisTableDigest, TensorChallengeShape,\n}};"
+        )
+        .map_err(|e| e.to_string())?;
+    }
     writeln!(out).map_err(|e| e.to_string())?;
 
     let mut memory_entries: Vec<GeneratedScheduleTableEntry> = Vec::new();
@@ -298,10 +404,10 @@ pub fn emit_family_module(spec: &EmitSpec) -> Result<String, String> {
     )
     .map_err(|e| e.to_string())?;
 
-    for (key, schedule) in materialized_entries(spec)? {
+    for (key, schedule) in materialized {
         let key_str = emit_entry_fields(&key);
-        emit_schedule_entry(&mut out, &key_str, &schedule)?;
-        let steps = schedule_to_generated_steps(&schedule);
+        emit_schedule_entry(&mut out, &key, &key_str, &schedule)?;
+        let steps = schedule_to_generated_steps(&key, &schedule);
         let steps_ref = Box::leak(steps.into_boxed_slice());
         leaked_steps.push(steps_ref);
         memory_entries.push(GeneratedScheduleTableEntry {

@@ -4,7 +4,7 @@
 //!
 //! - **Table-miss fallback:** `Cfg::runtime_schedule` returns `Some` for a
 //!   key that no shipped table contains, and the schedule it returns is
-//!   exactly what the pure DP `akita_planner::find_schedule` produces from
+//!   exactly what the pure DP `akita_planner::find_group_batch_schedule` produces from
 //!   the `Cfg`-derived policy.
 //! - **Policy-bridge parity:** `policy_of::<Cfg>()` reproduces the values
 //!   the DP reads off the `Cfg` impl (invariant 4, single source of truth).
@@ -15,7 +15,7 @@
 
 use akita_config::proof_optimized::{fp128, fp32};
 use akita_config::{policy_of, CommitmentConfig};
-use akita_planner::{find_schedule, PlannerPolicy};
+use akita_planner::{find_group_batch_schedule, PlannerPolicy};
 use akita_types::{AkitaScheduleLookupKey, PolynomialGroupLayout};
 
 /// A one-point 2-poly key that no shipped table carries (shipped tables only
@@ -57,8 +57,8 @@ fn check_table_miss_fallback<Cfg: CommitmentConfig>(num_vars: usize) {
     let from_runtime = Cfg::runtime_schedule(AkitaScheduleLookupKey::single(key))
         .expect("runtime_schedule must not error on a valid one-point 2-poly key");
 
-    let from_dp = find_schedule(
-        key,
+    let from_dp = find_group_batch_schedule(
+        &AkitaScheduleLookupKey::single(key),
         &policy_of::<Cfg>(),
         Cfg::ring_challenge_config,
         Cfg::fold_challenge_shape_at_level,
@@ -89,6 +89,7 @@ fn assert_policy_matches_cfg<Cfg: CommitmentConfig>() {
         basis_range: Cfg::basis_range(),
         onehot_chunk_size: Cfg::onehot_chunk_size(),
         witness_chunk: Cfg::chunked_witness_cfg(),
+        recursive_setup_planning: Cfg::recursive_setup_planning(),
     };
     assert_eq!(
         policy, expected,

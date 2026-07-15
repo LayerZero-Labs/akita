@@ -6,7 +6,9 @@
 //! level needs without round-tripping through the proof-oriented flat adapters.
 
 mod hint;
+mod setup_prefix_source;
 mod witness;
 
 pub use hint::RecursiveCommitmentHintCache;
+pub use setup_prefix_source::RecursiveFoldSource;
 pub use witness::{RecursiveWitnessFlat, SuffixWitnessBatchView, SuffixWitnessView};

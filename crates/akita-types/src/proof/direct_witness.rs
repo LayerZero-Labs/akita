@@ -1,9 +1,9 @@
 use super::*;
 use crate::proof::tail_segments::{
-    expand_segment_typed_to_i8_digits, segment_typed_z_payload_bytes, tail_segment_layout,
-    SegmentTypedWitness, SegmentTypedWitnessShape,
+    expand_segment_typed_to_i8_digits, tail_segment_layout_from_groups, SegmentTypedWitness,
+    SegmentTypedWitnessShape,
 };
-use crate::LevelParams;
+use crate::{LevelParams, LevelParamsLike};
 
 /// Terminal direct witness payload.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -40,8 +40,7 @@ impl<F: FieldCore> CleartextWitnessProof<F> {
             }
             Self::SegmentTyped(witness) => {
                 CleartextWitnessShape::SegmentTyped(SegmentTypedWitnessShape {
-                    layout: witness.layout,
-                    z_payload_bytes: witness.z_payload.len(),
+                    layout: witness.layout.clone(),
                 })
             }
         }
@@ -116,45 +115,22 @@ impl CleartextWitnessShape {
         match (self, realized) {
             (
                 Self::SegmentTyped(scheduled),
-                Self::SegmentTyped(SegmentTypedWitnessShape {
-                    layout,
-                    z_payload_bytes,
-                }),
-            ) => layout == &scheduled.layout && *z_payload_bytes <= scheduled.z_payload_bytes,
+                Self::SegmentTyped(SegmentTypedWitnessShape { layout }),
+            ) => scheduled.layout.admits_realized(layout),
             (scheduled, other) => scheduled == other,
         }
     }
 }
 
-/// Build the segment-typed terminal witness shape from public schedule data.
-///
-/// `e`, `t`, and `r` are raw field segments; only `z` is Golomb-Rice coded.
-///
-/// # Errors
-///
-/// Propagates [`tail_segment_layout`] and [`segment_typed_z_payload_bytes`] errors.
-pub fn segment_typed_witness_shape(
+pub fn segment_typed_witness_shape_from_groups<'a>(
     terminal_lp: &LevelParams,
     field_bits: u32,
-    num_w_vectors: usize,
-    num_t_vectors: usize,
-    num_z_segments: usize,
+    groups: impl IntoIterator<Item = (&'a dyn LevelParamsLike, usize, usize, usize)>,
     num_segments: usize,
 ) -> Result<CleartextWitnessShape, AkitaError> {
-    let layout = tail_segment_layout(
-        terminal_lp,
-        num_w_vectors,
-        num_t_vectors,
-        num_z_segments,
-        num_segments,
-        field_bits,
-    )?;
-    let z_payload_bytes = segment_typed_z_payload_bytes(terminal_lp, &layout, num_t_vectors)?;
+    let layout = tail_segment_layout_from_groups(terminal_lp, groups, num_segments, field_bits)?;
     Ok(CleartextWitnessShape::SegmentTyped(
-        SegmentTypedWitnessShape {
-            layout,
-            z_payload_bytes,
-        },
+        SegmentTypedWitnessShape { layout },
     ))
 }
 

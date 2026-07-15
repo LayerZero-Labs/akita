@@ -1,7 +1,7 @@
 //! Offline schedule planner for the Akita polynomial commitment scheme.
 //!
-//! This crate is a **pure, `Cfg`-free DP library**. The single entry point
-//! is [`find_schedule`], which runs an exhaustive dynamic program to
+//! This crate is a **pure, `Cfg`-free DP library**. The DP entry point
+//! is [`find_group_batch_schedule`], which runs an exhaustive dynamic program to
 //! minimize proof size for a schedule lookup key. Every per-preset input is
 //! carried by the plain-value [`PlannerPolicy`] plus a `ring_challenge_config` /
 //! `fold_challenge_shape_at_level` closure pair, so the planner names no `CommitmentConfig`
@@ -38,7 +38,7 @@ pub use group_batch::find_group_batch_schedule;
 pub use resolve::{
     estimate_proof_bytes, resolve_group_batch_schedule, resolve_schedule, schedule_from_entry,
 };
-pub use schedule_params::find_schedule;
+pub use schedule_params::{find_schedule, suffix_opening_layout};
 
 /// Plain-value brute-force inputs the planner DP needs.
 ///
@@ -80,6 +80,11 @@ pub struct PlannerPolicy {
     /// a single-chunk table. `ChunkedWitnessCfg::default()` (single chunk) leaves
     /// every schedule byte-identical to the historical layout.
     pub witness_chunk: ChunkedWitnessCfg,
+    /// Whether the DP is allowed to plan recursive setup offloading edges.
+    ///
+    /// Ordinary configs keep this false and emit direct-only schedules. The
+    /// recursion config adapter sets it true and gets a separate catalog identity.
+    pub recursive_setup_planning: bool,
 }
 
 impl PlannerPolicy {

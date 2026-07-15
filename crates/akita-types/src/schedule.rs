@@ -1,5 +1,6 @@
 //! Runtime schedule shapes shared by configs, prover, verifier, and planner.
 
+use crate::config::SetupContributionMode;
 use crate::descriptor_bytes::{push_u32, push_usize};
 use crate::{CleartextWitnessShape, LevelParams, OpeningClaimsLayout, PolynomialGroupLayout};
 use akita_field::{AkitaError, CanonicalField};
@@ -112,6 +113,12 @@ impl PrecommittedGroupParams {
     /// Validate that this layout is a well-formed standalone commitment group.
     pub fn validate(&self) -> Result<(), AkitaError> {
         self.group.validate()?;
+        if self.group.num_polynomials() != 1 {
+            return Err(AkitaError::InvalidSetup(format!(
+                "precommitted groups must contain exactly one polynomial, got {}",
+                self.group.num_polynomials()
+            )));
+        }
         if self.n_a == 0 || self.conservative_n_b == 0 {
             return Err(AkitaError::InvalidSetup(
                 "commitment group layout requires nonzero A rows and conservative B rows"
@@ -268,12 +275,6 @@ impl AkitaScheduleLookupKey {
         }
         for layout in &self.precommitteds {
             layout.group.validate()?;
-            if layout.group.num_vars() > self.final_group.num_vars() / 2 {
-                return Err(AkitaError::InvalidInput(
-                    "multi-group root requires precommitted groups to have at most half the final num_vars"
-                        .to_string(),
-                ));
-            }
             layout.validate()?;
         }
         Ok(())
@@ -549,11 +550,171 @@ impl Schedule {
         self.fold_steps().count()
     }
 
-    /// Reject any fold level that combines precommitted groups with multi-chunk
-    /// witness layout.
-    pub fn reject_multi_group_multi_chunk(&self, context: &str) -> Result<(), AkitaError> {
-        for fold in self.fold_steps() {
-            fold.params.reject_multi_group_multi_chunk(context)?;
+    /// Validate protocol-level schedule topology before any witness is interpreted.
+    ///
+    /// This boundary owns stable step adjacency and grouped-fold shape. Planner
+    /// eligibility, setup-slot identity, and proof-object validation remain at
+    /// their respective boundaries.
+    pub fn validate_structure(&self) -> Result<(), AkitaError> {
+        if self.steps.is_empty() {
+            return Err(AkitaError::InvalidSetup(
+                "schedule must contain at least one step".to_string(),
+            ));
+        }
+
+        let last_index = self.steps.len() - 1;
+        for (index, step) in self.steps.iter().enumerate() {
+            match step {
+                Step::Fold(fold) => {
+                    fold.params
+                        .reject_multi_group_multi_chunk("schedule validation")?;
+                    if fold.current_w_len == 0 || fold.next_w_len == 0 {
+                        return Err(AkitaError::InvalidSetup(
+                            "fold witness lengths must be nonzero".to_string(),
+                        ));
+                    }
+
+                    let Some(successor) = self.steps.get(index + 1) else {
+                        return Err(AkitaError::InvalidSetup(
+                            "schedule must end with a direct step".to_string(),
+                        ));
+                    };
+                    let successor_w_len = match successor {
+                        Step::Fold(next_fold) => next_fold.current_w_len,
+                        Step::Direct(direct) => direct.current_w_len,
+                    };
+                    if fold.next_w_len != successor_w_len {
+                        return Err(AkitaError::InvalidSetup(format!(
+                            "schedule witness length mismatch between steps {index} and {}",
+                            index + 1
+                        )));
+                    }
+                    if fold.params.has_precommitted_groups() && !matches!(successor, Step::Fold(_))
+                    {
+                        return Err(AkitaError::InvalidSetup(
+                            "grouped fold must be followed by another fold".to_string(),
+                        ));
+                    }
+
+                    if index == 0 && fold.params.setup_prefix.is_some() {
+                        return Err(AkitaError::InvalidSetup(
+                            "root fold must not carry an incoming setup prefix".to_string(),
+                        ));
+                    }
+
+                    let successor_is_direct = matches!(successor, Step::Direct(_));
+                    if successor_is_direct {
+                        if fold.params.setup_contribution_mode != SetupContributionMode::Direct {
+                            return Err(AkitaError::InvalidSetup(
+                                "terminal fold must use direct setup contribution".to_string(),
+                            ));
+                        }
+                        if fold.params.has_precommitted_groups() {
+                            return Err(AkitaError::InvalidSetup(
+                                "terminal fold must be scalar".to_string(),
+                            ));
+                        }
+                    }
+
+                    if let Step::Fold(successor_fold) = successor {
+                        let successor_carries_setup_prefix_only =
+                            successor_fold.params.setup_prefix.is_some()
+                                && successor_fold.params.precommitted_groups.is_empty()
+                                && successor_fold.params.precommitted_group_count() == 1;
+
+                        match fold.params.setup_contribution_mode {
+                            SetupContributionMode::Recursive => {
+                                if successor_fold.params.setup_prefix.is_none() {
+                                    return Err(AkitaError::InvalidSetup(
+                                        "recursive fold successor must carry a setup prefix"
+                                            .to_string(),
+                                    ));
+                                }
+                                if !successor_fold.params.precommitted_groups.is_empty()
+                                    || successor_fold.params.precommitted_group_count() != 1
+                                {
+                                    return Err(AkitaError::InvalidSetup(
+                                        "recursive fold successor must carry only the setup prefix group"
+                                            .to_string(),
+                                    ));
+                                }
+                            }
+                            SetupContributionMode::Direct => {
+                                if successor_fold.params.setup_prefix.is_some() {
+                                    return Err(AkitaError::InvalidSetup(
+                                        "direct fold must not forward a setup prefix".to_string(),
+                                    ));
+                                }
+                            }
+                        }
+
+                        if successor_carries_setup_prefix_only
+                            && fold.params.setup_contribution_mode
+                                != SetupContributionMode::Recursive
+                        {
+                            return Err(AkitaError::InvalidSetup(
+                                "setup-prefix successor requires a recursive predecessor"
+                                    .to_string(),
+                            ));
+                        }
+                    }
+                }
+                Step::Direct(direct) => {
+                    if index != last_index {
+                        return Err(AkitaError::InvalidSetup(
+                            "direct step must be the final schedule step".to_string(),
+                        ));
+                    }
+                    if direct.current_w_len == 0 {
+                        return Err(AkitaError::InvalidSetup(
+                            "direct witness length must be nonzero".to_string(),
+                        ));
+                    }
+
+                    if index == 0 {
+                        let CleartextWitnessShape::FieldElements(witness_len) =
+                            &direct.witness_shape
+                        else {
+                            return Err(AkitaError::InvalidSetup(
+                                "root direct step requires a field-element witness".to_string(),
+                            ));
+                        };
+                        if *witness_len != direct.current_w_len {
+                            return Err(AkitaError::InvalidSetup(
+                                "root direct witness shape does not match current witness length"
+                                    .to_string(),
+                            ));
+                        }
+                        if direct
+                            .params
+                            .as_ref()
+                            .is_some_and(LevelParams::has_precommitted_groups)
+                        {
+                            return Err(AkitaError::InvalidSetup(
+                                "root direct step must be scalar".to_string(),
+                            ));
+                        }
+                    } else {
+                        let CleartextWitnessShape::SegmentTyped(shape) = &direct.witness_shape
+                        else {
+                            return Err(AkitaError::InvalidSetup(
+                                "terminal direct step requires a segment-typed witness".to_string(),
+                            ));
+                        };
+                        if shape.layout.logical_num_elems != direct.current_w_len {
+                            return Err(AkitaError::InvalidSetup(
+                                "terminal direct witness shape does not match current witness length"
+                                    .to_string(),
+                            ));
+                        }
+                        if direct.params.is_some() {
+                            return Err(AkitaError::InvalidSetup(
+                                "terminal direct step must not carry commitment params".to_string(),
+                            ));
+                        }
+                    }
+                }
+            }
         }
         Ok(())
     }
@@ -656,15 +817,15 @@ pub fn root_current_w_len(lp: &LevelParams) -> usize {
 
 /// Build the root-direct schedule for roots that do not admit a fold step.
 ///
-/// `current_w_len` is the flattened witness length in field elements (for a
-/// singleton group, `2^num_vars`; for multi-group batches, the per-group hypercube
-/// sizes summed over polynomials). `commit_params` carries the root commit
+/// `current_w_len` is the flattened witness length in field elements for a
+/// single scalar group (`2^num_vars`). `commit_params` carries the root commit
 /// layout that `Cfg::get_params_for_batched_commitment` returns for this
-/// schedule shape.
+/// schedule shape and must itself be scalar.
 ///
 /// # Errors
 ///
-/// Returns an error if `current_w_len` is zero.
+/// Returns an error if `current_w_len` is zero or `commit_params` carries
+/// precommitted groups.
 pub fn root_direct_schedule(
     current_w_len: usize,
     commit_params: LevelParams,
@@ -672,6 +833,11 @@ pub fn root_direct_schedule(
     if current_w_len == 0 {
         return Err(AkitaError::InvalidSetup(
             "root-direct witness length is zero".to_string(),
+        ));
+    }
+    if commit_params.has_precommitted_groups() {
+        return Err(AkitaError::InvalidSetup(
+            "root direct step must be scalar".to_string(),
         ));
     }
     Ok(Schedule {
@@ -779,573 +945,5 @@ pub fn scheduled_next_level_params(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::golomb_rice::golomb_rice_encode_vec;
-    use crate::proof::{segment_typed_witness_shape, SegmentTypedWitness};
-    use crate::tail_golomb_rice_z_params;
-    use crate::{
-        direct_witness_bytes, extension_opening_reduction_proof_bytes, level_proof_bytes,
-        stage1_tree_stage_shapes, sumcheck_rounds, AkitaBatchedRootProof,
-        AkitaIntermediateStage2Proof, AkitaLevelProof, AkitaStage1Proof, AkitaStage1StageProof,
-        AkitaStage2Proof, CleartextWitnessProof, ExtensionOpeningReductionProof,
-        RelationMatrixRowLayout, RingVec, SisModulusProfileId, TerminalLevelProof,
-        EXTENSION_OPENING_REDUCTION_DEGREE,
-    };
-    use akita_algebra::CyclotomicRing;
-    use akita_challenges::SparseChallengeConfig;
-    use akita_field::{AkitaError, CanonicalField, FieldCore, Prime128OffsetA7F7};
-    use akita_serialization::{AkitaSerialize, Compress};
-    use akita_sumcheck::EqFactoredUniPoly;
-    use akita_sumcheck::{CompressedUniPoly, EqFactoredSumcheckProof, SumcheckProof};
-
-    type F = Prime128OffsetA7F7;
-
-    #[test]
-    fn chunked_witness_count_matches_chunk_layout_arithmetic() {
-        const D: usize = 64;
-        let fold_challenge_config = SparseChallengeConfig::pm1_only(3);
-        // num_blocks = 2^3 = 8, divisible by {1, 2, 4, 8}.
-        let lp = LevelParams::params_only(
-            SisModulusProfileId::Q128OffsetA7F7,
-            D,
-            3,
-            2,
-            2,
-            2,
-            fold_challenge_config,
-        )
-        .with_decomp(2, 3, 2, 2, 0)
-        .unwrap();
-        let field_bits = 128u32;
-        let num_poly = 3usize;
-
-        for layout in [
-            RelationMatrixRowLayout::WithDBlock,
-            RelationMatrixRowLayout::WithoutDBlock,
-        ] {
-            let single = w_ring_element_count_with_counts_for_layout_bits(
-                field_bits, &lp, num_poly, 1, layout,
-            )
-            .unwrap();
-            // num_chunks = 1 must be byte-identical to the single-chunk delegate.
-            assert_eq!(
-                w_ring_element_count_for_chunks(field_bits, &lp, num_poly, layout, 1).unwrap(),
-                single
-            );
-
-            let z_pre = lp.inner_width() * lp.num_digits_fold(num_poly, field_bits).unwrap();
-            for num_chunks in [2usize, 4, 8] {
-                let chunked =
-                    w_ring_element_count_for_chunks(field_bits, &lp, num_poly, layout, num_chunks)
-                        .unwrap();
-                // ê/t̂ totals are unchanged (partitioned), and the shared r-tail is
-                // a single summed quotient that keeps the single-machine row count
-                // (num_commitments = 1). So the ONLY growth is the replicated ẑ:
-                // (num_chunks - 1) full-width copies.
-                assert_eq!(chunked, single + (num_chunks - 1) * z_pre);
-                assert!(chunked > single, "chunked layout must grow vs single chunk");
-            }
-        }
-    }
-
-    #[test]
-    fn chunked_witness_count_rejects_invalid_chunk_counts() {
-        const D: usize = 64;
-        let fold_challenge_config = SparseChallengeConfig::pm1_only(3);
-        // num_blocks = 2^3 = 8.
-        let lp = LevelParams::params_only(
-            SisModulusProfileId::Q128OffsetA7F7,
-            D,
-            3,
-            2,
-            2,
-            2,
-            fold_challenge_config,
-        )
-        .with_decomp(2, 3, 2, 2, 0)
-        .unwrap();
-        // Non-power-of-two chunk count.
-        assert!(matches!(
-            w_ring_element_count_for_chunks(128, &lp, 1, RelationMatrixRowLayout::WithDBlock, 6),
-            Err(AkitaError::InvalidSetup(_))
-        ));
-        // num_chunks does not divide num_blocks (8 % 16 != 0).
-        assert!(matches!(
-            w_ring_element_count_for_chunks(128, &lp, 1, RelationMatrixRowLayout::WithDBlock, 16),
-            Err(AkitaError::InvalidSetup(_))
-        ));
-        // Zero chunks.
-        assert!(matches!(
-            w_ring_element_count_for_chunks(128, &lp, 1, RelationMatrixRowLayout::WithDBlock, 0),
-            Err(AkitaError::InvalidSetup(_))
-        ));
-    }
-
-    fn segment_typed_final_witness(
-        lp: &LevelParams,
-        num_claims: usize,
-    ) -> (CleartextWitnessProof<F>, CleartextWitnessShape) {
-        let field_bits = F::modulus_bits();
-        let shape = segment_typed_witness_shape(lp, field_bits, num_claims, num_claims, 1, 1)
-            .expect("segment-typed witness shape");
-        let CleartextWitnessShape::SegmentTyped(ref segment_shape) = shape else {
-            panic!("expected segment-typed witness shape");
-        };
-        let layout = segment_shape.layout;
-        let (rice_low_bits, zigzag_w) =
-            tail_golomb_rice_z_params(lp, num_claims).expect("golomb z params");
-        let z_payload =
-            golomb_rice_encode_vec(&vec![0i64; layout.z_coords], rice_low_bits, zigzag_w)
-                .expect("encode zero z segment");
-        let witness = SegmentTypedWitness {
-            layout,
-            z_payload,
-            e_fields: RingVec::from_coeffs(vec![F::zero(); layout.e_field_elems]),
-            t_fields: RingVec::from_coeffs(vec![F::zero(); layout.t_field_elems]),
-            r_fields: RingVec::from_coeffs(vec![F::zero(); layout.r_field_elems]),
-        };
-        (CleartextWitnessProof::SegmentTyped(witness), shape)
-    }
-
-    #[test]
-    fn root_direct_schedule_uses_field_element_payload() {
-        let dummy_commit_params = LevelParams::params_only(
-            crate::SisModulusProfileId::Q128OffsetA7F7,
-            64,
-            3,
-            1,
-            1,
-            1,
-            akita_challenges::SparseChallengeConfig::pm1_only(1),
-        );
-        let schedule =
-            root_direct_schedule(8, dummy_commit_params.clone()).expect("root-direct schedule");
-        assert_eq!(schedule.total_bytes, 0);
-
-        let [Step::Direct(step)] = schedule.steps.as_slice() else {
-            panic!("root-direct schedule should contain one direct step");
-        };
-        assert_eq!(step.current_w_len, 8);
-        assert_eq!(step.witness_shape, CleartextWitnessShape::FieldElements(8));
-        assert_eq!(step.direct_bytes, 0);
-        assert_eq!(step.params.as_ref(), Some(&dummy_commit_params));
-    }
-
-    #[test]
-    fn root_direct_schedule_uses_multi_group_witness_len() {
-        let layout = OpeningClaimsLayout::from_groups(vec![
-            PolynomialGroupLayout::new(2, 1),
-            PolynomialGroupLayout::new(3, 2),
-            PolynomialGroupLayout::new(4, 1),
-        ])
-        .expect("multi-group layout");
-        let witness_len = layout.root_direct_witness_len().expect("witness len");
-        assert_eq!(witness_len, 4 + 16 + 16);
-
-        let dummy_commit_params = LevelParams::params_only(
-            crate::SisModulusProfileId::Q128OffsetA7F7,
-            64,
-            3,
-            1,
-            1,
-            1,
-            akita_challenges::SparseChallengeConfig::pm1_only(3),
-        );
-        let schedule =
-            root_direct_schedule(witness_len, dummy_commit_params).expect("root-direct schedule");
-        let [Step::Direct(step)] = schedule.steps.as_slice() else {
-            panic!("root-direct schedule should contain one direct step");
-        };
-        assert_eq!(step.current_w_len, witness_len);
-        assert_eq!(
-            step.witness_shape,
-            CleartextWitnessShape::FieldElements(witness_len)
-        );
-    }
-
-    fn dummy_sumcheck<F: FieldCore>(rounds: usize, degree: usize) -> SumcheckProof<F> {
-        SumcheckProof {
-            round_polys: (0..rounds)
-                .map(|_| CompressedUniPoly {
-                    coeffs_except_linear_term: vec![F::zero(); degree],
-                })
-                .collect(),
-        }
-    }
-
-    fn dummy_eq_factored_sumcheck<F: FieldCore>(
-        rounds: usize,
-        degree: usize,
-    ) -> EqFactoredSumcheckProof<F> {
-        EqFactoredSumcheckProof {
-            round_polys: (0..rounds)
-                .map(|_| EqFactoredUniPoly {
-                    coeffs_except_linear_term: vec![
-                        F::zero();
-                        EqFactoredUniPoly::<F>::stored_coeff_count_for_degree(degree)
-                    ],
-                })
-                .collect(),
-        }
-    }
-
-    fn dummy_stage1_proof<F: FieldCore>(rounds: usize, b: usize) -> AkitaStage1Proof<F> {
-        AkitaStage1Proof {
-            stages: stage1_tree_stage_shapes(rounds, b)
-                .into_iter()
-                .map(|shape| AkitaStage1StageProof {
-                    sumcheck_proof: dummy_eq_factored_sumcheck(rounds, shape.sumcheck_proof.1),
-                    child_claims: vec![F::zero(); shape.child_claims],
-                })
-                .collect(),
-            s_claim: F::zero(),
-        }
-    }
-
-    fn exact_level_proof_bytes<F: FieldCore + CanonicalField + AkitaSerialize>(
-        lp: &LevelParams,
-        next_lp: &LevelParams,
-        next_w_len: usize,
-    ) -> Result<usize, AkitaError> {
-        let current_coeffs = lp
-            .d_key
-            .row_len()
-            .checked_mul(lp.ring_dimension)
-            .ok_or_else(|| {
-                AkitaError::InvalidSetup("recursive proof sizing overflow".to_string())
-            })?;
-        let next_commit_coeffs = next_lp
-            .b_key
-            .row_len()
-            .checked_mul(next_lp.ring_dimension)
-            .ok_or_else(|| {
-                AkitaError::InvalidSetup("recursive proof sizing overflow".to_string())
-            })?;
-        let rounds = sumcheck_rounds(lp.ring_dimension, next_w_len);
-        let b = 1usize << lp.log_basis;
-
-        let proof = AkitaLevelProof::Intermediate {
-            extension_opening_reduction: None,
-            v: RingVec::from_coeffs(vec![F::zero(); current_coeffs]),
-            fold_grind_nonce: 0,
-            stage1: dummy_stage1_proof(rounds, b),
-            stage2: AkitaStage2Proof::Intermediate(AkitaIntermediateStage2Proof {
-                sumcheck_proof: dummy_sumcheck(rounds, 3),
-                next_w_commitment: RingVec::from_coeffs(vec![F::zero(); next_commit_coeffs]),
-                next_w_eval: F::zero(),
-            }),
-            stage3_sumcheck_proof: None,
-        };
-        Ok(proof.serialized_size(Compress::No))
-    }
-
-    #[test]
-    fn planned_level_bytes_match_two_stage_payload_at_all_bases() {
-        const D: usize = 64;
-        let fold_challenge_config = SparseChallengeConfig::pm1_only(3);
-        let next_lp = LevelParams::params_only(
-            SisModulusProfileId::Q128OffsetA7F7,
-            D,
-            2,
-            2,
-            3,
-            2,
-            fold_challenge_config,
-        );
-        let next_w_len = D * 8;
-
-        for log_basis in 2..=6 {
-            let lp = LevelParams::params_only(
-                SisModulusProfileId::Q128OffsetA7F7,
-                D,
-                log_basis,
-                2,
-                2,
-                2,
-                fold_challenge_config,
-            )
-            .with_decomp(0, 0, 1, 1, 0)
-            .unwrap();
-            assert_eq!(
-                level_proof_bytes(
-                    128,
-                    128,
-                    &lp,
-                    Some(&next_lp),
-                    next_w_len,
-                    1,
-                    RelationMatrixRowLayout::WithDBlock,
-                ),
-                exact_level_proof_bytes::<F>(&lp, &next_lp, next_w_len).unwrap(),
-                "planned level bytes should match the serialized two-stage body at log_basis={log_basis}"
-            );
-        }
-    }
-
-    #[test]
-    fn planned_terminal_level_bytes_match_terminal_payload_at_all_bases() {
-        const D: usize = 64;
-        let fold_challenge_config = SparseChallengeConfig::pm1_only(3);
-        let next_w_len = D * 8;
-        let num_claims = 3;
-
-        for log_basis in 2..=6 {
-            let lp = LevelParams::params_only(
-                SisModulusProfileId::Q128OffsetA7F7,
-                D,
-                log_basis,
-                2,
-                2,
-                2,
-                fold_challenge_config,
-            )
-            .with_decomp(0, 0, 1, 1, 0)
-            .unwrap();
-            let rounds = sumcheck_rounds(D, next_w_len);
-
-            let (final_witness, witness_shape) = segment_typed_final_witness(&lp, num_claims);
-            let final_witness_bytes_runtime = final_witness.serialized_size(Compress::No);
-            let terminal_proof = TerminalLevelProof::<F, F>::new_with_extension_opening_reduction(
-                None,
-                dummy_sumcheck(rounds, 3),
-                final_witness,
-                0,
-            );
-
-            // The planner accounts for the final witness separately
-            // (`direct_witness_bytes` on the terminal direct step). Subtract
-            // it from the serialized terminal level to compare against
-            // `terminal_level_proof_bytes`.
-            let serialized_without_witness =
-                terminal_proof.serialized_size(Compress::No) - final_witness_bytes_runtime;
-
-            assert_eq!(
-                level_proof_bytes(
-                    128,
-                    128,
-                    &lp,
-                    None,
-                    next_w_len,
-                    num_claims,
-                    RelationMatrixRowLayout::WithoutDBlock,
-                ),
-                serialized_without_witness,
-                "planned terminal-level bytes should match the serialized terminal body \
-                 (less final_witness) at log_basis={log_basis}"
-            );
-
-            let scheduled_bytes = direct_witness_bytes(128, &witness_shape);
-            assert!(
-                scheduled_bytes >= final_witness_bytes_runtime,
-                "scheduled direct witness budget must cover serialized segment-typed witness \
-                 at log_basis={log_basis}"
-            );
-        }
-    }
-
-    #[test]
-    fn planned_batched_root_bytes_match_two_stage_payload_at_all_bases() {
-        const D: usize = 64;
-        let fold_challenge_config = SparseChallengeConfig::pm1_only(3);
-        let next_lp = LevelParams::params_only(
-            SisModulusProfileId::Q128OffsetA7F7,
-            D,
-            2,
-            2,
-            3,
-            2,
-            fold_challenge_config,
-        );
-        let next_w_len = D * 8;
-
-        for log_basis in 2..=6 {
-            let lp = LevelParams::params_only(
-                SisModulusProfileId::Q128OffsetA7F7,
-                D,
-                log_basis,
-                2,
-                2,
-                2,
-                fold_challenge_config,
-            )
-            .with_decomp(0, 0, 1, 1, 0)
-            .unwrap();
-            let rounds = sumcheck_rounds(D, next_w_len);
-            let b = 1usize << log_basis;
-            let next_commitment = RingVec::from_ring_elems(&vec![
-                CyclotomicRing::<F, D>::zero();
-                next_lp.b_key.row_len()
-            ])
-            .into_compact();
-            let level_proof =
-                AkitaLevelProof::new_two_stage_many_with_extension_opening_reduction::<D>(
-                    None,
-                    vec![CyclotomicRing::<F, D>::zero(); lp.d_key.row_len()],
-                    dummy_stage1_proof(rounds, b),
-                    dummy_sumcheck(rounds, 3),
-                    next_commitment,
-                    F::zero(),
-                );
-            let root_proof = AkitaBatchedRootProof::new(level_proof);
-
-            assert_eq!(
-                level_proof_bytes(
-                    128,
-                    128,
-                    &lp,
-                    Some(&next_lp),
-                    next_w_len,
-                    1,
-                    RelationMatrixRowLayout::WithDBlock,
-                ),
-                root_proof.serialized_size(Compress::No),
-                "planned batched root bytes should match the serialized two-stage body at log_basis={log_basis}"
-            );
-        }
-    }
-
-    #[test]
-    fn planned_root_extension_reduction_bytes_match_payload() {
-        let extension_width = 4usize;
-        let num_claims = 3usize;
-        let opening_vars = 12usize;
-        let partials = extension_width.saturating_mul(num_claims);
-        let reduction = ExtensionOpeningReductionProof {
-            partials: vec![F::zero(); partials],
-            sumcheck: dummy_sumcheck(
-                opening_vars - extension_width.trailing_zeros() as usize,
-                EXTENSION_OPENING_REDUCTION_DEGREE,
-            ),
-        };
-        let sumcheck_bytes = reduction.sumcheck.serialized_size(Compress::No);
-
-        assert_eq!(
-            extension_opening_reduction_proof_bytes(128, partials, opening_vars, extension_width)
-                .unwrap(),
-            reduction
-                .partials
-                .iter()
-                .map(|partial| partial.serialized_size(Compress::No))
-                .sum::<usize>()
-                + sumcheck_bytes,
-            "planned root EOR bytes should match the headerless serialized payload"
-        );
-    }
-
-    #[test]
-    fn from_layout_accepts_scalar_layout() {
-        let layout = OpeningClaimsLayout::new(4, 2).expect("scalar layout");
-        let key = AkitaScheduleLookupKey::from_layout::<NoPrecommitSource>(&layout)
-            .expect("scalar layout lookup");
-        assert_eq!(key.final_group, PolynomialGroupLayout::new(4, 2));
-        assert!(key.precommitteds.is_empty());
-        assert_eq!(key.num_commitment_groups(), 1);
-    }
-
-    struct NoPrecommitSource;
-
-    impl ScheduleKeyPrecommitSource for NoPrecommitSource {
-        fn precommitted_group_params(
-            _group: PolynomialGroupLayout,
-        ) -> Result<PrecommittedGroupParams, AkitaError> {
-            Err(AkitaError::InvalidSetup(
-                "NoPrecommitSource is only valid for scalar layouts".to_string(),
-            ))
-        }
-    }
-
-    #[test]
-    fn validate_rejects_zero_dimensions() {
-        assert!(
-            AkitaScheduleLookupKey::single(PolynomialGroupLayout::new(0, 1))
-                .validate()
-                .is_err()
-        );
-        assert!(
-            AkitaScheduleLookupKey::single(PolynomialGroupLayout::new(20, 0))
-                .validate()
-                .is_err()
-        );
-        assert!(
-            AkitaScheduleLookupKey::single(PolynomialGroupLayout::new(20, 4))
-                .validate()
-                .is_ok()
-        );
-    }
-
-    #[test]
-    fn group_batch_key_rejects_precommitted_num_vars_above_main() {
-        let multi_group_key = AkitaScheduleLookupKey {
-            final_group: PolynomialGroupLayout::new(20, 3),
-            precommitteds: vec![PrecommittedGroupParams {
-                group: PolynomialGroupLayout::new(24, 1),
-                m_vars: 4,
-                r_vars: 2,
-                log_basis: 2,
-                n_a: 3,
-                conservative_n_b: 4,
-            }],
-        };
-
-        let err = multi_group_key
-            .validate()
-            .expect_err("precommitted groups above the main num_vars must be rejected");
-        assert!(matches!(err, AkitaError::InvalidInput(_)));
-    }
-
-    #[test]
-    fn group_batch_key_rejects_precommitted_num_vars_above_half_main() {
-        let multi_group_key = AkitaScheduleLookupKey {
-            final_group: PolynomialGroupLayout::new(20, 3),
-            precommitteds: vec![PrecommittedGroupParams {
-                group: PolynomialGroupLayout::new(12, 1),
-                m_vars: 4,
-                r_vars: 2,
-                log_basis: 2,
-                n_a: 3,
-                conservative_n_b: 4,
-            }],
-        };
-
-        multi_group_key
-            .validate()
-            .expect_err("precommitted groups above half the main key must be rejected");
-    }
-
-    #[test]
-    fn group_batch_key_allows_mixed_polynomial_counts() {
-        let multi_group_key = AkitaScheduleLookupKey {
-            final_group: PolynomialGroupLayout::new(20, 3),
-            precommitteds: vec![PrecommittedGroupParams {
-                group: PolynomialGroupLayout::new(10, 1),
-                m_vars: 12,
-                r_vars: 2,
-                log_basis: 2,
-                n_a: 3,
-                conservative_n_b: 4,
-            }],
-        };
-
-        multi_group_key
-            .validate()
-            .expect("unequal K_g is allowed for a supported precommitted dimension");
-        assert_eq!(multi_group_key.num_commitment_groups(), 2);
-    }
-
-    #[test]
-    fn validate_frozen_precommit_rejects_geometry_mismatch() {
-        let layout = PrecommittedGroupParams {
-            group: PolynomialGroupLayout::new(20, 1),
-            m_vars: 4,
-            r_vars: 2,
-            log_basis: 2,
-            n_a: 3,
-            conservative_n_b: 4,
-        };
-        let err = layout
-            .validate_frozen_precommit(64, 2)
-            .expect_err("geometry must match num_vars");
-        assert!(matches!(err, AkitaError::InvalidSetup(_)));
-    }
-}
+#[path = "schedule_tests.rs"]
+mod tests;

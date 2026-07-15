@@ -916,6 +916,7 @@ pub(crate) static CATALOG_IDENTITY: GeneratedScheduleCatalogIdentity = Generated
     basis_range: (2, 6),
     onehot_chunk_size: 1,
     witness_chunk: ChunkedWitnessCfg { num_chunks: 8, num_activated_levels: 2 },
+    recursive_setup_planning: false,
     root_fold_shape: TensorChallengeShape::Flat,
     ring_dimensions: CATALOG_RING_DIMENSIONS,
     ring_challenge_config_digest: 12477507731232336810,

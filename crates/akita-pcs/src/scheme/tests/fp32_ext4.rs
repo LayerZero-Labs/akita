@@ -72,6 +72,44 @@ where
     point
 }
 
+fn prover_claims_at_vars<'a, E: FieldCore, P, CommitF: FieldCore>(
+    point: &'a [E],
+    group_num_vars: usize,
+    polynomials: &'a [&'a P],
+    commitment: &'a Commitment<CommitF>,
+    hint: AkitaCommitmentHint<CommitF>,
+) -> ProverOpeningData<'a, E, P, CommitF> {
+    let group = PolynomialGroupClaims::new(
+        PointVariableSelection::prefix(group_num_vars, point.len()).expect("padded prover group"),
+        vec![E::zero(); polynomials.len()],
+        commitment.clone(),
+    )
+    .expect("valid prover claims group");
+    let opening_claims =
+        OpeningClaims::from_groups(point.to_vec(), vec![group]).expect("valid prover claims");
+    ProverOpeningData::new(opening_claims, vec![hint], vec![polynomials])
+        .expect("valid prover opening data")
+}
+
+fn verifier_claims_at_vars<'a, E: FieldCore, C>(
+    point: &[E],
+    group_num_vars: usize,
+    openings: &[E],
+    commitment: &'a C,
+) -> OpeningClaims<'static, E, &'a C> {
+    OpeningClaims::from_groups(
+        point.to_vec(),
+        vec![PolynomialGroupClaims::new(
+            PointVariableSelection::prefix(group_num_vars, point.len())
+                .expect("padded verifier group"),
+            openings.to_vec(),
+            commitment,
+        )
+        .expect("valid verifier claims group")],
+    )
+    .expect("valid verifier claims")
+}
+
 #[derive(Clone)]
 struct Fp32RingSubfieldRootFoldCfg;
 #[derive(Clone)]
@@ -241,12 +279,15 @@ impl CommitmentConfig for Fp32RingSubfieldRootFoldCfg {
             akita_types::RelationMatrixRowLayout::WithoutDBlock,
         )?;
         let next_w_len = w_ring * Self::D;
-        let witness_shape = akita_types::segment_typed_witness_shape(
+        let witness_shape = akita_types::segment_typed_witness_shape_from_groups(
             &lp,
             Self::Field::modulus_bits(),
-            opening_batch.num_total_polynomials(),
-            opening_batch.num_total_polynomials(),
-            1,
+            [(
+                &lp as &dyn akita_types::LevelParamsLike,
+                opening_batch.num_total_polynomials(),
+                opening_batch.num_total_polynomials(),
+                1,
+            )],
             1,
         )?;
         let direct_bytes =
@@ -263,9 +304,7 @@ impl CommitmentConfig for Fp32RingSubfieldRootFoldCfg {
                     current_w_len: next_w_len,
                     witness_shape,
                     direct_bytes,
-                    // Stub fixture: terminal-direct level params equal the
-                    // fold's `lp`.
-                    params: Some(lp.clone()),
+                    params: None,
                 }),
             ],
             total_bytes: 0,
@@ -339,12 +378,15 @@ impl CommitmentConfig for Fp32RingSubfieldOuterFallbackCfg {
             akita_types::RelationMatrixRowLayout::WithoutDBlock,
         )?;
         let next_w_len = w_ring * Self::D;
-        let witness_shape = akita_types::segment_typed_witness_shape(
+        let witness_shape = akita_types::segment_typed_witness_shape_from_groups(
             &lp,
             Self::Field::modulus_bits(),
-            opening_batch.num_total_polynomials(),
-            opening_batch.num_total_polynomials(),
-            1,
+            [(
+                &lp as &dyn akita_types::LevelParamsLike,
+                opening_batch.num_total_polynomials(),
+                opening_batch.num_total_polynomials(),
+                1,
+            )],
             1,
         )?;
         let direct_bytes =
@@ -361,9 +403,7 @@ impl CommitmentConfig for Fp32RingSubfieldOuterFallbackCfg {
                     current_w_len: next_w_len,
                     witness_shape,
                     direct_bytes,
-                    // Stub fixture: terminal-direct level params equal the
-                    // fold's `lp`.
-                    params: Some(lp.clone()),
+                    params: None,
                 }),
             ],
             total_bytes: 0,
@@ -384,7 +424,8 @@ fn fp32_ext4_root_fold_roundtrip_uses_extension_gamma() {
     type SmallF = <SmallCfg as CommitmentConfig>::Field;
     type SmallE = <SmallCfg as CommitmentConfig>::ExtField;
     const SMALL_D: usize = SmallCfg::D;
-    const NUM_VARS: usize = 1;
+    const NUM_VARS: usize = 6;
+    const SETUP_NUM_VARS: usize = 6;
     type SmallScheme = AkitaCommitmentScheme<SmallCfg>;
 
     let len = 1usize << NUM_VARS;
@@ -392,17 +433,15 @@ fn fp32_ext4_root_fold_roundtrip_uses_extension_gamma() {
         .map(|idx| SmallF::from_u64((3 * idx as u64) + 9))
         .collect::<Vec<_>>();
     let poly = DensePoly::<SmallF>::from_field_evals(NUM_VARS, SMALL_D, &evals).unwrap();
-    let point = (0..NUM_VARS)
-        .map(|idx| {
-            SmallE::new([
-                SmallF::from_u64((idx + 5) as u64),
-                SmallF::from_u64((idx + 7) as u64),
-                SmallF::from_u64((idx + 11) as u64),
-                SmallF::from_u64((idx + 13) as u64),
-            ])
-        })
-        .collect::<Vec<_>>();
-    let weights = lagrange_weights(&point).unwrap();
+    let point = fp32_ext4_ring_subfield_extension_point(SMALL_D, SETUP_NUM_VARS, |idx| {
+        SmallE::new([
+            SmallF::from_u64((idx + 5) as u64),
+            SmallF::from_u64((idx + 7) as u64),
+            SmallF::from_u64((idx + 11) as u64),
+            SmallF::from_u64((idx + 13) as u64),
+        ])
+    });
+    let weights = lagrange_weights(&point[..NUM_VARS]).unwrap();
     let opening = evals
         .iter()
         .zip(weights.iter())
@@ -410,7 +449,7 @@ fn fp32_ext4_root_fold_roundtrip_uses_extension_gamma() {
             acc + weight * SmallE::lift_base(coeff)
         });
 
-    let setup = SmallScheme::setup_prover(NUM_VARS, 1).unwrap();
+    let setup = SmallScheme::setup_prover(SETUP_NUM_VARS, 1).unwrap();
     let prepared = CpuBackend.prepare_setup(&setup).unwrap();
     let stack =
         akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
@@ -425,7 +464,7 @@ fn fp32_ext4_root_fold_roundtrip_uses_extension_gamma() {
         AkitaTranscript::<SmallF>::new(b"test/fp32-ring-subfield-root-fold");
     let proof = SmallScheme::batched_prove::<_, _, _>(
         &setup,
-        prover_claims(&point[..], &poly_refs[..], &commitments[0], hint),
+        prover_claims_at_vars(&point[..], NUM_VARS, &poly_refs[..], &commitments[0], hint),
         &stack,
         &mut prover_transcript,
         BasisMode::Lagrange,
@@ -433,10 +472,9 @@ fn fp32_ext4_root_fold_roundtrip_uses_extension_gamma() {
     )
     .unwrap();
 
-    // After Phase 1, a tiny `NUM_VARS=1` schedule has a single fold level so
-    // the root is the `Terminal` variant (not `Fold`). Both shapes carry an
-    // optional extension-opening reduction payload; this test asserts the
-    // payload is absent at the root in the degree-1 extension case.
+    // The synthetic root schedule has a single fold level, so the root is the
+    // `Terminal` variant (not `Fold`). In the fp32/FpExt4 tensor-projection
+    // path, the terminal root carries an extension-opening reduction payload.
     let root_extension_opening_reduction = match &proof.root {
         akita_types::AkitaBatchedRootProof::Fold(fold) => fold.extension_opening_reduction.as_ref(),
         akita_types::AkitaBatchedRootProof::Terminal(terminal) => {
@@ -447,8 +485,8 @@ fn fp32_ext4_root_fold_roundtrip_uses_extension_gamma() {
         }
     };
     assert!(
-        root_extension_opening_reduction.is_none(),
-        "root fold must not carry an unchecked extension-opening reduction payload"
+        root_extension_opening_reduction.is_some(),
+        "root tensor projection must prove the extension-opening reduction"
     );
 
     let openings = [opening];
@@ -458,7 +496,7 @@ fn fp32_ext4_root_fold_roundtrip_uses_extension_gamma() {
         &proof,
         &verifier_setup,
         &mut verifier_transcript,
-        verifier_claims(&point[..], &openings[..], &commitments[0]),
+        verifier_claims_at_vars(&point[..], NUM_VARS, &openings[..], &commitments[0]),
         BasisMode::Lagrange,
         akita_types::SetupContributionMode::Direct,
     )
@@ -467,11 +505,9 @@ fn fp32_ext4_root_fold_roundtrip_uses_extension_gamma() {
     let mut malformed_stage2 = proof.clone();
     let terminal = match &mut malformed_stage2.root {
         akita_types::AkitaBatchedRootProof::Terminal(terminal) => terminal,
-        akita_types::AkitaBatchedRootProof::Fold(_) => {
-            panic!("NUM_VARS=1 fixture should be terminal-rooted")
-        }
+        akita_types::AkitaBatchedRootProof::Fold(_) => panic!("fixture should be terminal-rooted"),
         akita_types::AkitaBatchedRootProof::ZeroFold { .. } => {
-            panic!("NUM_VARS=1 fixture should not be root-direct")
+            panic!("fixture should not be root-direct")
         }
     };
     let sumcheck_proof = terminal.stage2.sumcheck().clone();
@@ -488,7 +524,7 @@ fn fp32_ext4_root_fold_roundtrip_uses_extension_gamma() {
             &malformed_stage2,
             &verifier_setup,
             &mut verifier_transcript,
-            verifier_claims(&point[..], &openings[..], &commitments[0]),
+            verifier_claims_at_vars(&point[..], NUM_VARS, &openings[..], &commitments[0]),
             BasisMode::Lagrange,
             akita_types::SetupContributionMode::Direct,
         )
@@ -502,20 +538,21 @@ fn fp32_ext4_root_fold_roundtrip_uses_extension_gamma() {
         &proof,
         &verifier_setup,
         &mut verifier_transcript,
-        verifier_claims(&point[..], &wrong_openings[..], &commitments[0]),
+        verifier_claims_at_vars(&point[..], NUM_VARS, &wrong_openings[..], &commitments[0]),
         BasisMode::Lagrange,
         akita_types::SetupContributionMode::Direct,
     );
     assert!(result.is_err());
 
-    let wrong_point = [point[0] + SmallE::one()];
+    let mut wrong_point = point.clone();
+    wrong_point[0] += SmallE::one();
     let mut verifier_transcript =
         AkitaTranscript::<SmallF>::new(b"test/fp32-ring-subfield-root-fold");
     let result = SmallScheme::batched_verify(
         &proof,
         &verifier_setup,
         &mut verifier_transcript,
-        verifier_claims(&wrong_point[..], &openings[..], &commitments[0]),
+        verifier_claims_at_vars(&wrong_point[..], NUM_VARS, &openings[..], &commitments[0]),
         BasisMode::Lagrange,
         akita_types::SetupContributionMode::Direct,
     );
@@ -528,7 +565,8 @@ fn fp32_ext4_outer_extension_uses_root_tensor_projection() {
     type SmallF = <SmallCfg as CommitmentConfig>::Field;
     type SmallE = <SmallCfg as CommitmentConfig>::ExtField;
     const SMALL_D: usize = SmallCfg::D;
-    const NUM_VARS: usize = 6;
+    const NUM_VARS: usize = 7;
+    const SETUP_NUM_VARS: usize = 7;
     type SmallScheme = AkitaCommitmentScheme<SmallCfg>;
 
     let len = 1usize << NUM_VARS;
@@ -540,7 +578,7 @@ fn fp32_ext4_outer_extension_uses_root_tensor_projection() {
         .collect::<Vec<_>>();
     let poly_a = DensePoly::<SmallF>::from_field_evals(NUM_VARS, SMALL_D, &evals_a).unwrap();
     let poly_b = DensePoly::<SmallF>::from_field_evals(NUM_VARS, SMALL_D, &evals_b).unwrap();
-    let point = fp32_ext4_ring_subfield_extension_point(SMALL_D, NUM_VARS, |idx| {
+    let point = fp32_ext4_ring_subfield_extension_point(SMALL_D, SETUP_NUM_VARS, |idx| {
         SmallE::new([
             SmallF::from_u64((idx + 2) as u64),
             SmallF::from_u64((idx + 4) as u64),
@@ -548,7 +586,7 @@ fn fp32_ext4_outer_extension_uses_root_tensor_projection() {
             SmallF::from_u64((idx + 8) as u64),
         ])
     });
-    let weights = lagrange_weights(&point).unwrap();
+    let weights = lagrange_weights(&point[..NUM_VARS]).unwrap();
     let opening_a = evals_a
         .iter()
         .zip(weights.iter())
@@ -562,7 +600,7 @@ fn fp32_ext4_outer_extension_uses_root_tensor_projection() {
             acc + weight * SmallE::lift_base(coeff)
         });
 
-    let setup = SmallScheme::setup_prover(NUM_VARS, 2).unwrap();
+    let setup = SmallScheme::setup_prover(SETUP_NUM_VARS, 2).unwrap();
     let prepared = CpuBackend.prepare_setup(&setup).unwrap();
     let stack =
         akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
@@ -578,7 +616,7 @@ fn fp32_ext4_outer_extension_uses_root_tensor_projection() {
         AkitaTranscript::<SmallF>::new(b"test/fp32-ring-subfield-outer-direct");
     let proof = SmallScheme::batched_prove::<_, _, _>(
         &setup,
-        prover_claims(&point[..], &poly_refs[..], &commitments[0], hint),
+        prover_claims_at_vars(&point[..], NUM_VARS, &poly_refs[..], &commitments[0], hint),
         &stack,
         &mut prover_transcript,
         BasisMode::Lagrange,
@@ -608,7 +646,7 @@ fn fp32_ext4_outer_extension_uses_root_tensor_projection() {
         &proof,
         &verifier_setup,
         &mut verifier_transcript,
-        verifier_claims(&point[..], &openings[..], &commitments[0]),
+        verifier_claims_at_vars(&point[..], NUM_VARS, &openings[..], &commitments[0]),
         BasisMode::Lagrange,
         akita_types::SetupContributionMode::Direct,
     )
@@ -621,7 +659,7 @@ fn fp32_ext4_outer_extension_uses_root_tensor_projection() {
         &proof,
         &verifier_setup,
         &mut verifier_transcript,
-        verifier_claims(&point[..], &wrong_openings[..], &commitments[0]),
+        verifier_claims_at_vars(&point[..], NUM_VARS, &wrong_openings[..], &commitments[0]),
         BasisMode::Lagrange,
         akita_types::SetupContributionMode::Direct,
     );
@@ -634,7 +672,8 @@ fn fp32_ext4_extension_rejects_tampered_reduction_partial() {
     type SmallF = <SmallCfg as CommitmentConfig>::Field;
     type SmallE = <SmallCfg as CommitmentConfig>::ExtField;
     const SMALL_D: usize = SmallCfg::D;
-    const NUM_VARS: usize = 6;
+    const NUM_VARS: usize = 7;
+    const SETUP_NUM_VARS: usize = 7;
     type SmallScheme = AkitaCommitmentScheme<SmallCfg>;
 
     let len = 1usize << NUM_VARS;
@@ -646,7 +685,7 @@ fn fp32_ext4_extension_rejects_tampered_reduction_partial() {
         .collect::<Vec<_>>();
     let poly_a = DensePoly::<SmallF>::from_field_evals(NUM_VARS, SMALL_D, &evals_a).unwrap();
     let poly_b = DensePoly::<SmallF>::from_field_evals(NUM_VARS, SMALL_D, &evals_b).unwrap();
-    let point = fp32_ext4_ring_subfield_extension_point(SMALL_D, NUM_VARS, |idx| {
+    let point = fp32_ext4_ring_subfield_extension_point(SMALL_D, SETUP_NUM_VARS, |idx| {
         SmallE::new([
             SmallF::from_u64((idx + 2) as u64),
             SmallF::from_u64((idx + 4) as u64),
@@ -654,7 +693,7 @@ fn fp32_ext4_extension_rejects_tampered_reduction_partial() {
             SmallF::from_u64((idx + 8) as u64),
         ])
     });
-    let weights = lagrange_weights(&point).unwrap();
+    let weights = lagrange_weights(&point[..NUM_VARS]).unwrap();
     let opening_a = evals_a
         .iter()
         .zip(weights.iter())
@@ -668,7 +707,7 @@ fn fp32_ext4_extension_rejects_tampered_reduction_partial() {
             acc + weight * SmallE::lift_base(coeff)
         });
 
-    let setup = SmallScheme::setup_prover(NUM_VARS, 2).unwrap();
+    let setup = SmallScheme::setup_prover(SETUP_NUM_VARS, 2).unwrap();
     let prepared = CpuBackend.prepare_setup(&setup).unwrap();
     let stack =
         akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
@@ -684,7 +723,7 @@ fn fp32_ext4_extension_rejects_tampered_reduction_partial() {
         AkitaTranscript::<SmallF>::new(b"test/fp32-ring-subfield-eor-partial-tamper");
     let proof = SmallScheme::batched_prove::<_, _, _>(
         &setup,
-        prover_claims(&point[..], &poly_refs[..], &commitments[0], hint),
+        prover_claims_at_vars(&point[..], NUM_VARS, &poly_refs[..], &commitments[0], hint),
         &stack,
         &mut prover_transcript,
         BasisMode::Lagrange,
@@ -714,7 +753,7 @@ fn fp32_ext4_extension_rejects_tampered_reduction_partial() {
         &tampered,
         &verifier_setup,
         &mut verifier_transcript,
-        verifier_claims(&point[..], &openings[..], &commitments[0]),
+        verifier_claims_at_vars(&point[..], NUM_VARS, &openings[..], &commitments[0]),
         BasisMode::Lagrange,
         akita_types::SetupContributionMode::Direct,
     );
@@ -730,7 +769,8 @@ fn fp32_ext4_batched_extension_uses_root_tensor_projection() {
     type SmallF = <SmallCfg as CommitmentConfig>::Field;
     type SmallE = <SmallCfg as CommitmentConfig>::ExtField;
     const SMALL_D: usize = SmallCfg::D;
-    const NUM_VARS: usize = 6;
+    const NUM_VARS: usize = 7;
+    const SETUP_NUM_VARS: usize = 7;
     type SmallScheme = AkitaCommitmentScheme<SmallCfg>;
 
     let len = 1usize << NUM_VARS;
@@ -738,7 +778,7 @@ fn fp32_ext4_batched_extension_uses_root_tensor_projection() {
         .map(|idx| SmallF::from_u64((3 * idx as u64) + 5))
         .collect::<Vec<_>>();
     let poly = DensePoly::<SmallF>::from_field_evals(NUM_VARS, SMALL_D, &evals).unwrap();
-    let point_a = fp32_ext4_ring_subfield_extension_point(SMALL_D, NUM_VARS, |idx| {
+    let point_a = fp32_ext4_ring_subfield_extension_point(SMALL_D, SETUP_NUM_VARS, |idx| {
         SmallE::new([
             SmallF::from_u64((idx + 3) as u64),
             SmallF::from_u64((idx + 5) as u64),
@@ -747,7 +787,7 @@ fn fp32_ext4_batched_extension_uses_root_tensor_projection() {
         ])
     });
     let opening_at = |point: &[SmallE]| {
-        let weights = lagrange_weights(point).unwrap();
+        let weights = lagrange_weights(&point[..NUM_VARS]).unwrap();
         evals
             .iter()
             .zip(weights.iter())
@@ -757,7 +797,7 @@ fn fp32_ext4_batched_extension_uses_root_tensor_projection() {
     };
     let opening_a = opening_at(&point_a);
 
-    let setup = SmallScheme::setup_prover(NUM_VARS, 2).unwrap();
+    let setup = SmallScheme::setup_prover(SETUP_NUM_VARS, 2).unwrap();
     let prepared = CpuBackend.prepare_setup(&setup).unwrap();
     let stack =
         akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
@@ -773,7 +813,13 @@ fn fp32_ext4_batched_extension_uses_root_tensor_projection() {
         AkitaTranscript::<SmallF>::new(b"test/fp32-ring-subfield-batched-direct");
     let proof = SmallScheme::batched_prove::<_, _, _>(
         &setup,
-        prover_claims(&point_a[..], &poly_refs[..], &commitments[0], hint),
+        prover_claims_at_vars(
+            &point_a[..],
+            NUM_VARS,
+            &poly_refs[..],
+            &commitments[0],
+            hint,
+        ),
         &stack,
         &mut prover_transcript,
         BasisMode::Lagrange,
@@ -803,7 +849,7 @@ fn fp32_ext4_batched_extension_uses_root_tensor_projection() {
         &proof,
         &verifier_setup,
         &mut verifier_transcript,
-        verifier_claims(&point_a[..], &openings[..], &commitments[0]),
+        verifier_claims_at_vars(&point_a[..], NUM_VARS, &openings[..], &commitments[0]),
         BasisMode::Lagrange,
         akita_types::SetupContributionMode::Direct,
     )

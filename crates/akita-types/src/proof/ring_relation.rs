@@ -98,8 +98,7 @@ pub fn multi_group_ring_relation_segment_lengths<F: FieldCore + CanonicalField>(
         ));
     }
     opening_batch.check()?;
-    let final_group_index = opening_batch.root_final_group_index()?;
-    lp.validate_root_opening_batch(opening_batch)?;
+    lp.validate_opening_batch(opening_batch)?;
     let field_bits = lp.field_bits_for_cache();
     let num_groups = opening_batch.num_groups();
     let mut z_lens = Vec::with_capacity(num_groups);
@@ -139,26 +138,17 @@ pub fn multi_group_ring_relation_segment_lengths<F: FieldCore + CanonicalField>(
         Ok(())
     };
 
-    let final_group = opening_batch.group_layout(final_group_index)?;
-    push_group_lens(
-        final_group.num_polynomials(),
-        lp.num_blocks,
-        lp.block_len,
-        lp.a_key.row_len(),
-        lp.num_digits_commit,
-        lp.num_digits_open,
-        lp.num_digits_fold(final_group.num_polynomials(), field_bits)?,
-    )?;
-    for (pre_idx, pre_params) in lp.precommitted_groups.iter().enumerate() {
-        let group = opening_batch.group_layout(pre_idx)?;
+    for group_index in opening_batch.root_group_order()? {
+        let group_params = lp.group_params(opening_batch, group_index)?;
+        let group = opening_batch.group_layout(group_index)?;
         push_group_lens(
             group.num_polynomials(),
-            pre_params.num_blocks,
-            pre_params.block_len,
-            pre_params.a_key.row_len(),
-            pre_params.num_digits_commit,
-            pre_params.num_digits_open,
-            pre_params.num_digits_fold_one,
+            group_params.num_blocks(),
+            group_params.block_len(),
+            group_params.a_rows_len(),
+            group_params.num_digits_commit(),
+            group_params.num_digits_open(),
+            lp.num_digits_fold_for_params(group_params, group.num_polynomials(), field_bits)?,
         )?;
     }
 
@@ -1065,7 +1055,7 @@ mod tests {
     }
 
     #[test]
-    fn multi_group_segment_layout_total_matches_root_next_w_len() {
+    fn multi_group_segment_layout_total_matches_next_w_len() {
         let (lp, opening_batch) = multi_group_one_three_fixture();
         let relation_rhs_rows = lp
             .relation_matrix_row_count_for(
@@ -1135,8 +1125,8 @@ mod tests {
 
         let witness_ring_cols = z_total + e_total + t_total + r_len_total;
         let expected_w_len = lp
-            .root_next_w_len::<F>(&opening_batch, RelationMatrixRowLayout::WithDBlock)
-            .expect("root next w len");
+            .next_w_len::<F>(&opening_batch, RelationMatrixRowLayout::WithDBlock)
+            .expect("next w len");
         assert_eq!(witness_ring_cols * D, expected_w_len);
     }
 

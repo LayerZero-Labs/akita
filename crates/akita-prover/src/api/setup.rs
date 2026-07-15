@@ -283,8 +283,10 @@ mod tests {
     #[test]
     fn prover_setup_check_validates_prefix_slots() {
         use akita_types::{
-            AkitaCommitmentHint, DigitBlocks, RingVec, SetupPrefixPublicCommitment,
-            SetupPrefixSlot, SetupPrefixSlotId,
+            setup_prefix_slot_id, AjtaiKeyParams, AkitaCommitmentHint, DigitBlocks,
+            PolynomialGroupLayout, PrecommittedGroupParams, PrecommittedLevelParams, RingVec,
+            SetupPrefixPublicCommitment, SetupPrefixSlot, SisMatrixRole, SisModulusProfileId,
+            SisTableDigest, DEFAULT_SIS_SECURITY_POLICY,
         };
 
         let mut setup = AkitaProverSetup::<Prime128Offset275>::generate_with_capacity(
@@ -296,16 +298,45 @@ mod tests {
         .expect("generate setup");
         let decomposed = DigitBlocks::empty(64);
         let hint = AkitaCommitmentHint::singleton(decomposed);
+        let commitment_params = PrecommittedLevelParams {
+            layout: PrecommittedGroupParams {
+                group: PolynomialGroupLayout::singleton(6),
+                m_vars: 0,
+                r_vars: 0,
+                log_basis: 1,
+                n_a: 1,
+                conservative_n_b: 1,
+            },
+            a_key: AjtaiKeyParams::new_unchecked(
+                DEFAULT_SIS_SECURITY_POLICY,
+                SisTableDigest::CURRENT,
+                SisModulusProfileId::Q128OffsetA7F7,
+                SisMatrixRole::A,
+                1,
+                1,
+                1,
+                64,
+            ),
+            b_key: AjtaiKeyParams::new_unchecked(
+                DEFAULT_SIS_SECURITY_POLICY,
+                SisTableDigest::CURRENT,
+                SisModulusProfileId::Q128OffsetA7F7,
+                SisMatrixRole::B,
+                1,
+                1,
+                1,
+                64,
+            ),
+            num_blocks: 1,
+            block_len: 1,
+            num_digits_commit: 1,
+            num_digits_open: 1,
+            num_digits_fold_one: 1,
+        };
         setup
             .prefix_slots
             .insert(SetupPrefixSlot {
-                id: SetupPrefixSlotId {
-                    setup_seed_digest: [1u8; 32],
-                    d_setup: 64,
-                    natural_len: 1,
-                    n_prefix: 3,
-                    level_params_digest: [2u8; 32],
-                },
+                id: setup_prefix_slot_id(64, 1, commitment_params),
                 natural_len: 1,
                 padded_len: 3,
                 commitment: SetupPrefixPublicCommitment {
@@ -318,6 +349,6 @@ mod tests {
         let err = setup
             .check()
             .expect_err("prover setup check must reject invalid prefix slots");
-        assert!(err.to_string().contains("n_prefix"));
+        assert!(err.to_string().contains("padded_len"));
     }
 }

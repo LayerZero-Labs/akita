@@ -16,20 +16,19 @@
 #![allow(missing_docs)]
 
 use akita_config::proof_optimized::fp128;
-use akita_config::CommitmentConfig;
+use akita_config::{CommitmentConfig, RecursiveCommitmentConfig};
 use akita_field::{CanonicalField, PseudoMersenneField};
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::{
     compute::{OpeningFoldKernel, OpeningFoldPlan, RootOpeningSource},
-    ComputeBackendSetup, CpuBackend, OneHotIndex, OneHotPoly,
-    ProverOpeningData,
+    ComputeBackendSetup, CpuBackend, OneHotIndex, OneHotPoly, ProverOpeningData,
 };
 use akita_recursion_glue::AkitaJoltInputs;
 use akita_transcript::AkitaTranscript;
 use akita_types::{
     reduce_inner_opening_to_ring_element, ring_opening_point_from_field, BasisMode, BlockOrder,
-    PolynomialGroupClaims, LevelParams, OpeningClaimsLayout, PointVariableSelection, SetupContributionMode,
-    OpeningClaims,
+    LevelParams, OpeningClaims, OpeningClaimsLayout, PointVariableSelection, PolynomialGroupClaims,
+    SetupContributionMode,
 };
 use akita_verifier::batched_verify;
 use clap::{Parser, ValueEnum};
@@ -97,7 +96,8 @@ fn opening_from_poly<'a, I>(
 ) -> Result<F, String>
 where
     I: OneHotIndex,
-    CpuBackend: OpeningFoldKernel<<OneHotPoly<F, I> as RootOpeningSource<F, D>>::OpeningView<'a>, F, D>,
+    CpuBackend:
+        OpeningFoldKernel<<OneHotPoly<F, I> as RootOpeningSource<F, D>>::OpeningView<'a>, F, D>,
 {
     let alpha_bits = D.trailing_zeros() as usize;
     let target_num_vars = alpha_bits
@@ -316,13 +316,9 @@ fn run() -> Result<(), String> {
 
     let t0 = Instant::now();
     let prover_setup = match setup_contribution_mode {
-        SetupContributionMode::Direct => {
-            AkitaCommitmentScheme::<Cfg>::setup_prover(nv, 1)
-        }
+        SetupContributionMode::Direct => AkitaCommitmentScheme::<Cfg>::setup_prover(nv, 1),
         SetupContributionMode::Recursive => {
-            AkitaCommitmentScheme::<Cfg>::setup_prover_recursion(
-                nv, 1,
-            )
+            AkitaCommitmentScheme::<RecursiveCommitmentConfig<Cfg>>::setup_prover(nv, 1)
         }
     }
     .map_err(|err| format!("prover setup failed: {err}"))?;
@@ -354,7 +350,7 @@ fn run() -> Result<(), String> {
 
     let t0 = Instant::now();
     let mut prover_transcript = AkitaTranscript::<F>::new(TRANSCRIPT_DOMAIN);
-let prove_group = PolynomialGroupClaims::new(
+    let prove_group = PolynomialGroupClaims::new(
         PointVariableSelection::prefix(opening_point.len(), opening_point.len())
             .map_err(|err| format!("invalid opening point shape: {err}"))?,
         openings.to_vec(),
@@ -379,8 +375,7 @@ let prove_group = PolynomialGroupClaims::new(
     .map_err(|err| format!("batched_prove failed: {err}"))?;
     tracing::info!(elapsed_s = t0.elapsed().as_secs_f64(), "prove complete");
 
-    let verifier_setup =
-        AkitaCommitmentScheme::<Cfg>::setup_verifier(&prover_setup);
+    let verifier_setup = AkitaCommitmentScheme::<Cfg>::setup_verifier(&prover_setup);
 
     // Sanity check: the proof should verify with the same domain label.
     let t0 = Instant::now();

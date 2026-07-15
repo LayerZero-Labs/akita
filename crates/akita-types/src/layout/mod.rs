@@ -2,7 +2,7 @@
 //!
 //! Pure data and pure verifier-reachable helpers only. The recursion layout is
 //! owned by the schedule: the planner builds each fold level's `LevelParams`
-//! (`akita_planner::schedule_from_entry` / `find_schedule`, using the
+//! (`akita_planner::schedule_from_entry` / `find_group_batch_schedule`, using the
 //! digit-math `optimal_m_r_split` sweep), and prover/verifier read those params
 //! directly. This module retains the layout glue the replay path reaches
 //! through `CommitmentConfig`.

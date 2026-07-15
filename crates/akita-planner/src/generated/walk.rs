@@ -8,19 +8,19 @@
 //! transitions and proof-byte totals.
 
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
-use akita_field::AkitaError;
+use akita_field::{AkitaError, Prime128OffsetA7F7};
 use akita_types::{
     direct_witness_bytes, extension_opening_reduction_level_bytes, level_proof_bytes,
-    segment_typed_witness_shape, w_ring_element_count_for_chunks,
-    w_ring_element_count_with_counts_for_layout_bits, AkitaScheduleInputs, AkitaScheduleLookupKey,
+    segment_typed_witness_shape_from_groups, AkitaScheduleInputs, AkitaScheduleLookupKey,
     CleartextWitnessShape, DirectStep, FoldStep, LevelParams, PolynomialGroupLayout,
-    PrecommittedLevelParams, RelationMatrixRowLayout, Schedule, Step,
+    PrecommittedLevelParams, RelationMatrixRowLayout, Schedule, SetupContributionMode, Step,
 };
 
 use crate::generated::{
     validate_entry_key, GeneratedFoldStep, GeneratedScheduleTableEntry, GeneratedStep,
 };
-use crate::group_batch::{multi_group_root_next_w_len, multi_group_root_precommitted_groups};
+use crate::group_batch::multi_group_root_precommitted_groups;
+use crate::schedule_params::planned_next_witness_len;
 use crate::PlannerPolicy;
 
 pub(crate) struct GeneratedEntryWalkOutput {
@@ -38,6 +38,7 @@ pub(crate) fn walk_generated_schedule_entry(
     key.validate()?;
     validate_entry_key(entry, key)?;
     entry.validate()?;
+    reject_scalar_recursive_catalog_row(entry, key)?;
 
     if key.precommitteds.is_empty() {
         return walk_scalar_generated_schedule_entry(
@@ -56,6 +57,27 @@ pub(crate) fn walk_generated_schedule_entry(
         ring_challenge_config,
         fold_challenge_shape_at_level,
     )
+}
+
+fn reject_scalar_recursive_catalog_row(
+    entry: &GeneratedScheduleTableEntry,
+    key: &AkitaScheduleLookupKey,
+) -> Result<(), AkitaError> {
+    if !key.precommitteds.is_empty() {
+        return Ok(());
+    }
+    for step in entry.steps {
+        if let GeneratedStep::FoldWithSetupMetadata(meta) = step {
+            if meta.setup_contribution_mode == SetupContributionMode::Recursive {
+                return Err(AkitaError::InvalidSetup(
+                    "scalar lookup keys (empty precommitteds) do not support recursive setup \
+                     contribution; grouped-batch scheduling requires genuine precommits"
+                        .to_string(),
+                ));
+            }
+        }
+    }
+    Ok(())
 }
 
 fn walk_scalar_generated_schedule_entry(
@@ -86,7 +108,7 @@ fn walk_scalar_generated_schedule_entry(
 
     for (idx, step) in entry.steps.iter().enumerate() {
         match step {
-            GeneratedStep::Fold(level) => {
+            GeneratedStep::Fold(_) | GeneratedStep::FoldWithSetupMetadata(_) => {
                 let next = entry.steps.get(idx + 1).ok_or_else(|| {
                     AkitaError::InvalidSetup(format!(
                         "generated schedule ended with a fold step at level {fold_level}"
@@ -99,7 +121,7 @@ fn walk_scalar_generated_schedule_entry(
                     1
                 };
                 let mut lp = expand_validated_fold_level(
-                    level,
+                    step,
                     key,
                     policy,
                     ring_challenge_config,
@@ -116,35 +138,36 @@ fn walk_scalar_generated_schedule_entry(
                 } else {
                     1
                 };
-                // Chunk count of the witness this level commits/produces.
-                let num_chunks = policy.chunks_at_level(fold_level);
+                if is_terminal && lp.has_precommitted_groups() {
+                    return Err(AkitaError::InvalidSetup(
+                        "grouped terminal fold must be followed by another fold".to_string(),
+                    ));
+                }
                 let (next_w_len, next_lp, layout) = if is_terminal {
-                    let ring_len = w_ring_element_count_for_chunks(
+                    let len = planned_next_witness_len(
                         field_bits,
                         &lp,
                         num_polynomials,
                         RelationMatrixRowLayout::WithoutDBlock,
-                        num_chunks,
+                        lp.witness_chunk.num_chunks,
                     )?;
-                    let len = checked_ring_field_len(ring_len, lp.ring_dimension)?;
                     terminal_witness_field_len = Some(len);
                     (len, None, RelationMatrixRowLayout::WithoutDBlock)
                 } else {
-                    let ring_len = w_ring_element_count_for_chunks(
+                    let len = planned_next_witness_len(
                         field_bits,
                         &lp,
                         num_polynomials,
                         RelationMatrixRowLayout::WithDBlock,
-                        num_chunks,
+                        lp.witness_chunk.num_chunks,
                     )?;
-                    let len = checked_ring_field_len(ring_len, lp.ring_dimension)?;
-                    let GeneratedStep::Fold(next_level) = next else {
+                    if next.fold_step().is_none() {
                         return Err(AkitaError::InvalidSetup(
                             "generated non-terminal successor must be a fold step".to_string(),
                         ));
-                    };
+                    }
                     let mut next_lp = expand_validated_fold_level(
-                        next_level,
+                        next,
                         key,
                         policy,
                         ring_challenge_config,
@@ -195,8 +218,9 @@ fn walk_scalar_generated_schedule_entry(
                     let params = direct
                         .commit
                         .map(|commit| {
+                            let commit_step = GeneratedStep::Fold(commit);
                             expand_validated_fold_level(
-                                &commit,
+                                &commit_step,
                                 key,
                                 policy,
                                 ring_challenge_config,
@@ -240,12 +264,15 @@ fn walk_scalar_generated_schedule_entry(
                                 .to_string(),
                         ));
                     }
-                    let witness_shape = segment_typed_witness_shape(
+                    let witness_shape = segment_typed_witness_shape_from_groups(
                         terminal_lp,
                         field_bits,
-                        num_polynomials,
-                        num_polynomials,
-                        1,
+                        [(
+                            terminal_lp as &dyn akita_types::LevelParamsLike,
+                            num_polynomials,
+                            num_polynomials,
+                            1,
+                        )],
                         1,
                     )?;
                     (witness_shape, len, None)
@@ -291,6 +318,16 @@ fn walk_multi_group_generated_schedule_entry(
     ring_challenge_config: &impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
     fold_challenge_shape_at_level: &impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
 ) -> Result<GeneratedEntryWalkOutput, AkitaError> {
+    let expected_root_w_len = 1usize
+        .checked_shl(key.final_group.num_vars() as u32)
+        .ok_or_else(|| {
+            AkitaError::InvalidSetup("multi-group root witness length overflow".into())
+        })?;
+    let root_fold_shape = fold_challenge_shape_at_level(AkitaScheduleInputs {
+        num_vars: key.final_group.num_vars(),
+        level: 0,
+        current_w_len: expected_root_w_len,
+    });
     let extension_opening_width = policy.claim_ext_degree;
     let field_bits = policy.decomposition.field_bits();
     let challenge_field_bits = field_bits
@@ -303,11 +340,6 @@ fn walk_multi_group_generated_schedule_entry(
     let root_eor_key =
         PolynomialGroupLayout::new(key.final_group.num_vars(), key.num_polynomials()?);
 
-    let expected_root_w_len = 1usize
-        .checked_shl(key.final_group.num_vars() as u32)
-        .ok_or_else(|| {
-            AkitaError::InvalidSetup("multi-group root witness length overflow".into())
-        })?;
     let mut steps = Vec::with_capacity(entry.steps.len());
     let mut total_bytes = 0usize;
     let mut fold_level = 0usize;
@@ -317,24 +349,23 @@ fn walk_multi_group_generated_schedule_entry(
 
     for (idx, step) in entry.steps.iter().enumerate() {
         match step {
-            GeneratedStep::Fold(level) => {
+            GeneratedStep::Fold(_) | GeneratedStep::FoldWithSetupMetadata(_) => {
                 let next = entry.steps.get(idx + 1).ok_or_else(|| {
                     AkitaError::InvalidSetup(format!(
                         "generated multi-group schedule ended with a fold step at level {fold_level}"
                     ))
                 })?;
                 let is_terminal = matches!(next, GeneratedStep::Direct(_));
-                if fold_level == 0 && is_terminal {
-                    return Err(AkitaError::InvalidSetup(
-                        "multi-group terminal root folds are not supported yet".to_string(),
-                    ));
-                }
                 let inputs = AkitaScheduleInputs {
                     num_vars: key.final_group.num_vars(),
                     level: fold_level,
                     current_w_len,
                 };
-                let fold_shape = fold_challenge_shape_at_level(inputs);
+                let fold_shape = if fold_level == 0 {
+                    root_fold_shape
+                } else {
+                    fold_challenge_shape_at_level(inputs)
+                };
                 let lp = if fold_level == 0 {
                     let (precommitted_groups, precommitted_d_width) =
                         multi_group_root_precommitted_groups(
@@ -344,7 +375,8 @@ fn walk_multi_group_generated_schedule_entry(
                             fold_shape,
                         )?;
                     validate_expanded_precommitted_groups(key, &precommitted_groups)?;
-                    level.expand_to_multi_group_root_level_params(
+                    expand_multi_group_root_fold_step(
+                        step,
                         policy,
                         ring_challenge_config,
                         fold_shape,
@@ -353,7 +385,8 @@ fn walk_multi_group_generated_schedule_entry(
                         precommitted_d_width,
                     )?
                 } else {
-                    level.expand_to_level_params(
+                    expand_fold_step(
+                        step,
                         policy,
                         ring_challenge_config,
                         fold_level,
@@ -363,47 +396,51 @@ fn walk_multi_group_generated_schedule_entry(
                     )?
                 };
 
+                if is_terminal && lp.has_precommitted_groups() {
+                    return Err(AkitaError::InvalidSetup(
+                        "grouped terminal fold must be followed by another fold".to_string(),
+                    ));
+                }
+
                 let (next_w_len, next_lp, layout) = if is_terminal {
-                    let ring = w_ring_element_count_with_counts_for_layout_bits(
+                    let len = planned_next_witness_len(
                         field_bits,
                         &lp,
                         1,
-                        1,
                         RelationMatrixRowLayout::WithoutDBlock,
+                        lp.witness_chunk.num_chunks,
                     )?;
-                    let len = checked_ring_field_len(ring, lp.ring_dimension)?;
                     terminal_witness_field_len = Some(len);
                     (len, None, RelationMatrixRowLayout::WithoutDBlock)
                 } else {
                     let len = if fold_level == 0 {
-                        multi_group_root_next_w_len(
-                            field_bits,
-                            &lp,
-                            key.final_group.num_polynomials(),
+                        let opening_batch = key.opening_layout()?;
+                        lp.next_w_len::<Prime128OffsetA7F7>(
+                            &opening_batch,
                             RelationMatrixRowLayout::WithDBlock,
                         )?
                     } else {
-                        let ring = w_ring_element_count_with_counts_for_layout_bits(
+                        planned_next_witness_len(
                             field_bits,
                             &lp,
                             1,
-                            1,
                             RelationMatrixRowLayout::WithDBlock,
-                        )?;
-                        checked_ring_field_len(ring, lp.ring_dimension)?
+                            lp.witness_chunk.num_chunks,
+                        )?
                     };
-                    let GeneratedStep::Fold(next_level) = next else {
+                    if next.fold_step().is_none() {
                         return Err(AkitaError::InvalidSetup(
                             "generated multi-group non-terminal successor must be a fold step"
                                 .to_string(),
                         ));
-                    };
+                    }
                     let next_inputs = AkitaScheduleInputs {
                         num_vars: key.final_group.num_vars(),
                         level: fold_level + 1,
                         current_w_len: len,
                     };
-                    let next_lp = next_level.expand_to_level_params(
+                    let next_lp = expand_fold_step(
+                        next,
                         policy,
                         ring_challenge_config,
                         fold_level + 1,
@@ -495,8 +532,12 @@ fn walk_multi_group_generated_schedule_entry(
                             "terminal direct step missing predecessor fold params".to_string(),
                         )
                     })?;
-                    let witness_shape =
-                        segment_typed_witness_shape(terminal_lp, field_bits, 1, 1, 1, 1)?;
+                    let witness_shape = segment_typed_witness_shape_from_groups(
+                        terminal_lp,
+                        field_bits,
+                        [(terminal_lp as &dyn akita_types::LevelParamsLike, 1, 1, 1)],
+                        1,
+                    )?;
                     (witness_shape, len, None)
                 };
                 if direct_current_w_len == 0 {
@@ -558,7 +599,7 @@ fn validate_expanded_precommitted_groups(
 
 #[allow(clippy::too_many_arguments)]
 fn expand_validated_fold_level(
-    step: &GeneratedFoldStep,
+    step: &GeneratedStep,
     key: PolynomialGroupLayout,
     policy: &PlannerPolicy,
     ring_challenge_config: &impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
@@ -567,14 +608,18 @@ fn expand_validated_fold_level(
     current_w_len: usize,
     num_claims: usize,
 ) -> Result<LevelParams, AkitaError> {
-    validate_fold_geometry(step, key, policy, fold_level, current_w_len)?;
-    validate_log_basis(step.log_basis, policy)?;
+    let fold = step
+        .fold_step()
+        .ok_or_else(|| AkitaError::InvalidSetup("generated expected a fold step".to_string()))?;
+    validate_fold_geometry(fold, key, policy, fold_level, current_w_len)?;
+    validate_log_basis(fold.log_basis, policy)?;
     let inputs = AkitaScheduleInputs {
         num_vars: key.num_vars(),
         level: fold_level,
         current_w_len,
     };
-    let lp = step.expand_to_level_params(
+    let lp = expand_fold_step(
+        step,
         policy,
         ring_challenge_config,
         fold_level,
@@ -582,7 +627,72 @@ fn expand_validated_fold_level(
         fold_challenge_shape_at_level(inputs),
         num_claims,
     )?;
-    validate_expanded_level_params(&lp, step, policy, fold_level, num_claims)
+    validate_expanded_level_params(&lp, fold, policy, fold_level, num_claims)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn expand_fold_step(
+    step: &GeneratedStep,
+    policy: &PlannerPolicy,
+    ring_challenge_config: &impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
+    fold_level: usize,
+    current_w_len: usize,
+    fold_shape: TensorChallengeShape,
+    num_claims: usize,
+) -> Result<LevelParams, AkitaError> {
+    match step {
+        GeneratedStep::Fold(fold) => fold.expand_to_level_params(
+            policy,
+            ring_challenge_config,
+            fold_level,
+            current_w_len,
+            fold_shape,
+            num_claims,
+        ),
+        GeneratedStep::FoldWithSetupMetadata(fold) => fold.expand_to_level_params(
+            policy,
+            ring_challenge_config,
+            fold_level,
+            current_w_len,
+            fold_shape,
+            num_claims,
+        ),
+        GeneratedStep::Direct(_) => Err(AkitaError::InvalidSetup(
+            "generated expected a fold step".to_string(),
+        )),
+    }
+}
+
+fn expand_multi_group_root_fold_step(
+    step: &GeneratedStep,
+    policy: &PlannerPolicy,
+    ring_challenge_config: &impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
+    fold_shape: TensorChallengeShape,
+    main_num_polys: usize,
+    precommitted_groups: Vec<PrecommittedLevelParams>,
+    precommitted_d_width: usize,
+) -> Result<LevelParams, AkitaError> {
+    match step {
+        GeneratedStep::Fold(fold) => fold.expand_to_multi_group_root_level_params(
+            policy,
+            ring_challenge_config,
+            fold_shape,
+            main_num_polys,
+            precommitted_groups,
+            precommitted_d_width,
+        ),
+        GeneratedStep::FoldWithSetupMetadata(fold) => fold.expand_to_multi_group_root_level_params(
+            policy,
+            ring_challenge_config,
+            fold_shape,
+            main_num_polys,
+            precommitted_groups,
+            precommitted_d_width,
+        ),
+        GeneratedStep::Direct(_) => Err(AkitaError::InvalidSetup(
+            "generated expected a fold step".to_string(),
+        )),
+    }
 }
 
 fn validate_log_basis(log_basis: u32, policy: &PlannerPolicy) -> Result<(), AkitaError> {
@@ -714,10 +824,4 @@ fn validate_expanded_level_params(
     }
     lp.num_digits_fold(num_claims, policy.decomposition.field_bits())?;
     Ok(lp.clone())
-}
-
-fn checked_ring_field_len(ring_len: usize, ring_dimension: usize) -> Result<usize, AkitaError> {
-    ring_len.checked_mul(ring_dimension).ok_or_else(|| {
-        AkitaError::InvalidSetup("generated next witness length overflow".to_string())
-    })
 }

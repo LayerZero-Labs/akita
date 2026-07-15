@@ -457,7 +457,7 @@ fn mixed_d_per_level_prove_verify_replay_and_malformed_rejections() {
                 .expect("terminal step must carry final witness");
             match witness {
                 CleartextWitnessProof::SegmentTyped(segment) => {
-                    segment.z_payload.pop();
+                    segment.z_payloads[0].pop();
                 }
                 CleartextWitnessProof::FieldElements(elems) => {
                     let len = elems.coeffs().len();

@@ -1,5 +1,6 @@
 use super::*;
 use crate::api::commitment::validate_onehot_chunk_size_for_params;
+use crate::backend::RecursiveFoldSource;
 use crate::compute::{
     CommitmentComputeBackend, ComputeBackendSetup, DigitRowsComputeBackend,
     DirectRootWitnessSource, LevelProveStacks, ProveStackFor, RootPolyMeta,
@@ -7,7 +8,7 @@ use crate::compute::{
     RuntimeTensorBackendFor, SuffixOpeningProveBackend, SuffixTensorProveBackend,
 };
 use crate::RootTensorProjectionPoly;
-use akita_config::{effective_batched_schedule, CommitmentConfig};
+use akita_config::{effective_batched_schedule, ensure_schedule_fits_setup, CommitmentConfig};
 use akita_field::unreduced::ReduceTo;
 use akita_field::{AdditiveGroup, CanonicalField};
 use akita_types::{
@@ -108,12 +109,14 @@ where
     C: ComputeBackendSetup<Cfg::Field> + CommitmentComputeBackend<Cfg::Field> + 'a,
     O: ComputeBackendSetup<Cfg::Field>
         + RuntimeOpeningProveBackendFor<Cfg::Field, P>
+        + RuntimeOpeningProveBackendFor<Cfg::Field, RecursiveFoldSource<Cfg::Field>>
         + RuntimeOpeningProveBackendFor<Cfg::Field, RootTensorProjectionPoly<Cfg::Field>>
         + SuffixOpeningProveBackend<Cfg::Field>
         + DigitRowsComputeBackend<Cfg::Field>
         + 'a,
     TS: ComputeBackendSetup<Cfg::Field>
         + RuntimeTensorBackendFor<Cfg::Field, P, Cfg::ExtField>
+        + RuntimeTensorBackendFor<Cfg::Field, RecursiveFoldSource<Cfg::Field>, Cfg::ExtField>
         + RuntimeTensorBackendFor<Cfg::Field, RootTensorProjectionPoly<Cfg::Field>, Cfg::ExtField>
         + SuffixTensorProveBackend<Cfg::Field, Cfg::ExtField>
         + 'a,
@@ -142,7 +145,8 @@ where
     }
     let schedule = effective_batched_schedule::<Cfg>(&opening_batch, claims.point())?;
     validate_schedule_ring_dims(&schedule, expanded.seed())?;
-    schedule.reject_multi_group_multi_chunk("batched prove")?;
+    ensure_schedule_fits_setup::<Cfg>(expanded.as_ref(), &schedule, &opening_batch)?;
+    schedule.validate_structure()?;
     let root_commit_params = match schedule.steps.first() {
         Some(Step::Fold(root)) => &root.params,
         Some(Step::Direct(root)) => root.params.as_ref().ok_or_else(|| {
@@ -260,12 +264,14 @@ where
     C: ComputeBackendSetup<Cfg::Field> + CommitmentComputeBackend<Cfg::Field> + 'a,
     O: ComputeBackendSetup<Cfg::Field>
         + RuntimeOpeningProveBackendFor<Cfg::Field, P>
+        + RuntimeOpeningProveBackendFor<Cfg::Field, RecursiveFoldSource<Cfg::Field>>
         + RuntimeOpeningProveBackendFor<Cfg::Field, RootTensorProjectionPoly<Cfg::Field>>
         + SuffixOpeningProveBackend<Cfg::Field>
         + DigitRowsComputeBackend<Cfg::Field>
         + 'a,
     TS: ComputeBackendSetup<Cfg::Field>
         + RuntimeTensorBackendFor<Cfg::Field, P, Cfg::ExtField>
+        + RuntimeTensorBackendFor<Cfg::Field, RecursiveFoldSource<Cfg::Field>, Cfg::ExtField>
         + RuntimeTensorBackendFor<Cfg::Field, RootTensorProjectionPoly<Cfg::Field>, Cfg::ExtField>
         + SuffixTensorProveBackend<Cfg::Field, Cfg::ExtField>
         + 'a,
@@ -306,7 +312,7 @@ where
         for (group_index, commitment) in commitments.iter().enumerate() {
             let expected_rows = root_scheduled
                 .params
-                .root_group_commitment_rows(&opening_batch, group_index)?;
+                .group_commitment_rows(&opening_batch, group_index)?;
             let view = RingView::new(commitment.rows().coeffs(), root_ring_dim)?;
             if view.num_rings() != expected_rows {
                 return Err(AkitaError::InvalidInput(

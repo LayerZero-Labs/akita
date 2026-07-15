@@ -16,7 +16,7 @@ The output is an `akita_types::Schedule`: either a root-direct `Step::Direct`, o
 
 ## Inputs And Outputs
 
-The public search entry point is `find_schedule(key, &policy, ring_challenge_config, fold_challenge_shape_at_level)`.
+The public search entry point is `find_group_batch_schedule(&key, &policy, ring_challenge_config, fold_challenge_shape_at_level)`.
 
 `key: AkitaScheduleLookupKey` describes the supported root opening shape. Scalar
 same-point openings store one `PolynomialGroupLayout` in `final_group` and leave
@@ -46,12 +46,12 @@ The `ring_challenge_config` closure supplies the sparse challenge configuration 
 
 ## Resolution Flow
 
-Most runtime callers use `resolve_schedule`, not `find_schedule` directly. `resolve_schedule` is the planner's cache-then-generate entry point:
+Most runtime callers use `resolve_schedule` / `resolve_group_batch_schedule`, not the DP directly. Resolution is the planner's cache-then-generate entry point:
 
 1. The caller passes the preset's optional `GeneratedScheduleTable` catalog.
 2. If a catalog is supplied, `resolve_schedule` validates its embedded identity against the runtime policy and hook closures.
 3. If the validated table contains the lookup key, it expands the compact `GeneratedScheduleTableEntry` with `schedule_from_entry`.
-4. If there is no catalog or no matching entry, it calls `find_schedule` and regenerates the schedule from scratch.
+4. If there is no catalog or no matching entry, it calls `find_group_batch_schedule` and regenerates the schedule from scratch.
 
 Both paths are deterministic functions of the lookup key, `PlannerPolicy`, and the two closures. This is important because prover and verifier must resolve the same schedule before the Fiat-Shamir transcript is bound.
 

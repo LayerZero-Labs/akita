@@ -24,7 +24,8 @@ pub use onehot::{
     MultiChunkEntry, OneHotBatchView, OneHotIndex, OneHotPoly, OneHotView, SingleChunkEntry,
 };
 pub use recursive::{
-    RecursiveCommitmentHintCache, RecursiveWitnessFlat, SuffixWitnessBatchView, SuffixWitnessView,
+    RecursiveCommitmentHintCache, RecursiveFoldSource, RecursiveWitnessFlat,
+    SuffixWitnessBatchView, SuffixWitnessView,
 };
 pub use ring_switch::{RingSwitchQuotientView, RingSwitchRelationView};
 pub use sparse_ring::{SparseRingBatchView, SparseRingBlockEntry, SparseRingPoly, SparseRingView};
