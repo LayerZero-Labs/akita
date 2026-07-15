@@ -328,7 +328,7 @@ where
         + RingSwitchProveBackend<F, D>,
 {
     lp.reject_multi_group_multi_chunk("multi-group relation quotient")?;
-    lp.validate_root_opening_batch(opening_batch)?;
+    lp.validate_opening_batch(opening_batch)?;
     if groups.len() != opening_batch.num_groups()
         || group_ring_multiplier_points.len() != opening_batch.num_groups()
         || group_challenges.len() != opening_batch.num_groups()
@@ -502,8 +502,7 @@ where
             slot @ None => *slot = Some(RelationQuotientOutput::row_from_ring(quotient)),
         }
 
-        let a_range =
-            lp.root_a_row_range(opening_batch, group_index, relation_matrix_row_layout)?;
+        let a_range = lp.a_row_range(opening_batch, group_index, relation_matrix_row_layout)?;
         if a_range.len() != n_a {
             return Err(AkitaError::InvalidProof);
         }
@@ -531,7 +530,7 @@ where
             .ok_or(AkitaError::InvalidProof)?;
 
         let b_range =
-            lp.root_commitment_row_range(opening_batch, group_index, relation_matrix_row_layout)?;
+            lp.commitment_row_range(opening_batch, group_index, relation_matrix_row_layout)?;
         if b_range.len() != n_b {
             return Err(AkitaError::InvalidProof);
         }

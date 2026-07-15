@@ -228,12 +228,12 @@ pub fn terminal_witness_segment_layout(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::SisModulusFamily;
+    use crate::SisModulusProfileId;
     use akita_challenges::SparseChallengeConfig;
 
     fn segment_test_params(position_bits: usize, fold_bits: usize) -> LevelParams {
         LevelParams::params_only(
-            SisModulusFamily::Q128,
+            SisModulusProfileId::Q128OffsetA7F7,
             8,
             3,
             2,

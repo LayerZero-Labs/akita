@@ -53,7 +53,7 @@ tables change deliberately.
 - **Transcript binds the compact effective schedule.** The Fiat-Shamir preamble
   digests the resolved schedule (key + compact steps); the old
   `SetupSection.level_params_digest` is dropped — `setup_seed_digest`,
-  `decomposition`, and `sis_modulus_family` already pin everything the expansion
+  `decomposition`, and `sis_modulus_profile` already pin everything the expansion
   needs.
 
 ## Crate graph (dependency inversion)
@@ -67,7 +67,7 @@ akita-config ──► akita-planner ──► akita-types / akita-challenges / 
 ```
 
 - **`akita-planner`** is trait-free. `find_schedule` takes a plain
-  `PlannerPolicy` value (`ring_dimension`, `decomposition`, `sis_family`,
+  `PlannerPolicy` value (`ring_dimension`, `decomposition`, `sis_modulus_profile`,
   `ring_subfield_norm_bound`, `claim/chal_ext_degree`, `basis_range`) plus
   `stage1` / `fold_shape` closures. It depends only on
   `akita-types`/`akita-challenges`/`akita-field`. `akita-derive` is deleted; the

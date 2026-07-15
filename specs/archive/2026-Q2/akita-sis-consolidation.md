@@ -6,7 +6,7 @@
 | Created   | 2026-06-02                       |
 | Status    | superseded                       |
 | PR        |                                  |
-| Superseded-by | [`specs/sis-linf-table-cutover.md`](../../sis-linf-table-cutover.md) |
+| Superseded-by | [`specs/sis-quantum128-scalar-n-table.md`](../../sis-quantum128-scalar-n-table.md) |
 
 ## Summary
 
@@ -21,7 +21,7 @@ computation — is currently spread across at least four files in two crates:
 - `crates/akita-types/src/sis_offline.rs` (`a_role_witness_infinity_norm`,
   `a_role_collision_infinity_norm`, `sis_secure_level_params`,
   `sis_derived_root_params_for_layout`, `root_level_params_for_layout_with_log_basis`).
-- `crates/akita-types/src/sis_floor.rs` (`SisModulusFamily`, `sis_max_widths`,
+- `crates/akita-types/src/sis_floor.rs` (`SisModulusProfileId`, `sis_max_widths`,
   `min_rank_for_secure_width`, `ceil_supported_collision`).
 - `crates/akita-types/src/layout/digit_math.rs` (`num_digits_for_bound`,
   `compute_num_digits*`, `ring_product_infinity_norm_bound`,
@@ -110,7 +110,7 @@ Protected by: `generated_tables` drift guard, `proof_size_comparison`,
 crates/akita-types/src/
   sis/
     mod.rs                     # declares submodules + curated `pub use` surface
-    ajtai_key.rs               # SisModulusFamily, AjtaiKeyParams, min_secure_rank, ceil_supported_collision
+    ajtai_key.rs               # SisModulusProfileId, AjtaiKeyParams, min_secure_rank, ceil_supported_collision
     floor.rs                   # generated SIS-floor tables (private; #[rustfmt::skip])
     norm_bound.rs              # rounded_up_norm_{s,t,w,z} + internal norm helpers
     decomposition_digits.rs    # digit counts + per-role widths
@@ -118,14 +118,14 @@ crates/akita-types/src/
 
 `crates/akita-types/src/lib.rs` adds `pub mod sis;` and re-exports the types that
 are part of the `akita-types` public vocabulary at their **current** paths
-(`akita_types::SisModulusFamily`, `akita_types::AjtaiKeyParams`) so the ~32
-references to `SisModulusFamily` and ~10 to `AjtaiKeyParams` keep compiling
+(`akita_types::SisModulusProfileId`, `akita_types::AjtaiKeyParams`) so the ~32
+references to `SisModulusProfileId` and ~10 to `AjtaiKeyParams` keep compiling
 untouched:
 
 ```rust
 // akita-types/src/lib.rs
 pub mod sis;
-pub use sis::{AjtaiKeyParams, SisModulusFamily};
+pub use sis::{AjtaiKeyParams, SisModulusProfileId};
 ```
 
 The deleted top-level files `sis_floor.rs` and `sis_offline.rs` are absorbed into
@@ -137,35 +137,35 @@ pieces to `sis/` and keep only non-SIS helpers (see the move table).
 Owns the Ajtai-key type, the secure-rank lookup, and bucket rounding. The
 generated tables move into a private `sis/floor.rs` (kept compact with
 `#[rustfmt::skip]`); `scripts/gen_sis_table.py`'s output target updates to that
-file. `SisModulusFamily` (today in `sis_floor.rs`) and `AjtaiKeyParams` (today in
+file. `SisModulusProfileId` (today in `sis_floor.rs`) and `AjtaiKeyParams` (today in
 `layout/params.rs`) move here.
 
 ```rust
-pub enum SisModulusFamily { Q16, Q32, Q64, Q128 }
+pub enum SisModulusProfileId { Q16, Q32, Q64, Q128 }
 
-pub struct AjtaiKeyParams { /* row_len, col_len, collision_inf, sis_family */ }
+pub struct AjtaiKeyParams { /* row_len, col_len, collision_inf, sis_modulus_profile */ }
 impl AjtaiKeyParams {
-    pub fn new(sis_family, row_len, col_len, collision_inf, ring_dimension) -> Self;       // panics (prover-only)
-    pub fn try_new(sis_family, row_len, col_len, collision_inf, ring_dimension)
+    pub fn new(sis_modulus_profile, row_len, col_len, collision_inf, ring_dimension) -> Self;       // panics (prover-only)
+    pub fn try_new(sis_modulus_profile, row_len, col_len, collision_inf, ring_dimension)
         -> Result<Self, AkitaError>;                                                       // verifier-safe
-    pub fn new_unchecked(sis_family, row_len, col_len, collision_inf, ring_dimension) -> Self;
+    pub fn new_unchecked(sis_modulus_profile, row_len, col_len, collision_inf, ring_dimension) -> Self;
     pub fn row_len(&self) -> usize;
     pub fn col_len(&self) -> usize;
     pub fn collision_inf(&self) -> u32;
-    pub fn sis_family(&self) -> SisModulusFamily;
+    pub fn sis_modulus_profile(&self) -> SisModulusProfileId;
 }
 
 /// Minimum SIS-secure module rank that supports `width` ring columns at an
 /// already-rounded-up collision bucket. (Renames `min_rank_for_secure_width`.)
 pub fn min_secure_rank(
-    sis_family: SisModulusFamily,
+    sis_modulus_profile: SisModulusProfileId,
     d: u32,
     collision_inf_rounded_up: u32,
     width: u64,
 ) -> Option<usize>;
 
 /// Round a raw collision infinity-norm up to the nearest audited SIS bucket.
-pub fn ceil_supported_collision(sis_family: SisModulusFamily, d: u32, collision_inf: u32)
+pub fn ceil_supported_collision(sis_modulus_profile: SisModulusProfileId, d: u32, collision_inf: u32)
     -> Option<u32>;
 ```
 
@@ -194,7 +194,7 @@ feed `min_secure_rank` (s/t/w), or the folded-witness bound β (z):
 /// A-role (committed witness `s`): ceil-bucket of `2·ω̄·β̄·ν`
 /// with `β̄ = min(||c||_inf·||s||_1, ||c||_1·||s||_inf)`.
 pub fn rounded_up_norm_s(
-    sis_family: SisModulusFamily,
+    sis_modulus_profile: SisModulusProfileId,
     d: usize,
     decomposition: DecompositionParams,
     fold_challenge_config: &SparseChallengeConfig,
@@ -206,8 +206,8 @@ pub fn rounded_up_norm_s(
 
 /// B-role (`t̂`) and D-role (`ŵ`): ceil-bucket of the direct digit-difference
 /// `2γ̄ = 2^lb − 1` (no challenge multiplication).
-pub fn rounded_up_norm_t(sis_family: SisModulusFamily, d: usize, log_basis: u32) -> Option<u32>;
-pub fn rounded_up_norm_w(sis_family: SisModulusFamily, d: usize, log_basis: u32) -> Option<u32>;
+pub fn rounded_up_norm_t(sis_modulus_profile: SisModulusProfileId, d: usize, log_basis: u32) -> Option<u32>;
+pub fn rounded_up_norm_w(sis_modulus_profile: SisModulusProfileId, d: usize, log_basis: u32) -> Option<u32>;
 
 /// Folded witness `z = Σ c_i·s_i`: the L∞ bound
 /// `β = num_claims · 2^r_vars · min(||c||_inf·||s||_1, ||c||_1·||s||_inf)`.
@@ -307,7 +307,7 @@ formula, only the wiring above). See Open Questions on inline vs. one helper.
 
 | Current location | Symbol(s) | Action |
 |---|---|---|
-| `akita-types/src/sis_floor.rs` | `SisModulusFamily` | **move** → `sis/ajtai_key.rs`; `akita-types` re-exports at the current path |
+| `akita-types/src/sis_floor.rs` | `SisModulusProfileId` | **move** → `sis/ajtai_key.rs`; `akita-types` re-exports at the current path |
 | `akita-types/src/sis_floor.rs` | `sis_max_widths` (tables) | **move** → `sis/floor.rs` (private) |
 | `akita-types/src/sis_floor.rs` | `min_rank_for_secure_width` | **move + rename** → `sis::min_secure_rank` |
 | `akita-types/src/sis_floor.rs` | `ceil_supported_collision` | **move** → `sis/ajtai_key.rs` |
@@ -333,7 +333,7 @@ formula, only the wiring above). See Open Questions on inline vs. one helper.
 thin `pub mod sis_floor { pub use crate::sis::{...}; }` shim, or migrate those
 imports to `akita_types::sis::{...}` directly (recommended — one canonical path
 for the SIS function surface). The widely-referenced **types**
-(`SisModulusFamily`, `AjtaiKeyParams`) stay re-exported at `akita_types::` to
+(`SisModulusProfileId`, `AjtaiKeyParams`) stay re-exported at `akita_types::` to
 keep their ~40 references untouched.
 
 ### Alternatives considered
@@ -357,7 +357,7 @@ keep their ~40 references untouched.
 
 - [ ] `akita_types::sis` module exists with `ajtai_key`, `norm_bound`,
   `decomposition_digits` (+ private `floor`), exposing exactly:
-  `SisModulusFamily`, `AjtaiKeyParams`, `min_secure_rank`,
+  `SisModulusProfileId`, `AjtaiKeyParams`, `min_secure_rank`,
   `ceil_supported_collision`, `rounded_up_norm_{s,t,w,z}`, `num_digits_*`,
   `decomp_depths`, `decomposed_{s_block,t,w}_ring_count` (+
   `ring_product_infinity_norm_bound`, `witness_block_l1_norm` for reuse).

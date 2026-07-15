@@ -187,12 +187,13 @@ where
             .serialize_with_mode(&mut bytes, BLOB_COMPRESS)?;
         self.opening
             .serialize_with_mode(&mut bytes, BLOB_COMPRESS)?;
-        let num_commitment_coeffs = u64::try_from(self.commitment.rows().coeff_len()).map_err(
-            |_| SerializationError::LengthLimitExceeded {
-                len: self.commitment.rows().coeff_len() as u64,
-                max: usize::MAX,
-            },
-        )?;
+        let num_commitment_coeffs =
+            u64::try_from(self.commitment.rows().coeff_len()).map_err(|_| {
+                SerializationError::LengthLimitExceeded {
+                    len: self.commitment.rows().coeff_len() as u64,
+                    max: usize::MAX,
+                }
+            })?;
         num_commitment_coeffs.serialize_with_mode(&mut bytes, BLOB_COMPRESS)?;
         self.commitment
             .serialize_with_mode(&mut bytes, BLOB_COMPRESS)?;
@@ -517,8 +518,10 @@ mod tests {
     use super::*;
     use akita_field::Prime128Offset275;
     use akita_types::{
-        derive_public_matrix_flat, sample_public_matrix_seed, RingVec,
-        SetupPrefixPublicCommitment, SetupPrefixSlotId, SetupPrefixVerifierSlot,
+        derive_public_matrix_flat, sample_public_matrix_seed, setup_prefix_slot_id, AjtaiKeyParams,
+        PolynomialGroupLayout, PrecommittedGroupParams, PrecommittedLevelParams, RingVec,
+        SetupPrefixPublicCommitment, SetupPrefixVerifierSlot, SisMatrixRole,
+        SisModulusProfileId, SisTableDigest, DEFAULT_SIS_SECURITY_POLICY,
     };
 
     type TestF = Prime128Offset275;
@@ -531,6 +534,44 @@ mod tests {
             .serialize_with_mode(&mut bytes, BLOB_COMPRESS)
             .unwrap();
         bytes
+    }
+
+    fn prefix_commitment_params() -> PrecommittedLevelParams {
+        PrecommittedLevelParams {
+            layout: PrecommittedGroupParams {
+                group: PolynomialGroupLayout::singleton(TEST_D.trailing_zeros() as usize),
+                m_vars: 0,
+                r_vars: 0,
+                log_basis: 1,
+                n_a: 1,
+                conservative_n_b: 1,
+            },
+            a_key: AjtaiKeyParams::new_unchecked(
+                DEFAULT_SIS_SECURITY_POLICY,
+                SisTableDigest::CURRENT,
+                SisModulusProfileId::Q128OffsetA7F7,
+                SisMatrixRole::A,
+                1,
+                1,
+                1,
+                TEST_D,
+            ),
+            b_key: AjtaiKeyParams::new_unchecked(
+                DEFAULT_SIS_SECURITY_POLICY,
+                SisTableDigest::CURRENT,
+                SisModulusProfileId::Q128OffsetA7F7,
+                SisMatrixRole::B,
+                1,
+                1,
+                1,
+                TEST_D,
+            ),
+            num_blocks: 1,
+            block_len: 1,
+            num_digits_commit: 1,
+            num_digits_open: 1,
+            num_digits_fold_one: 1,
+        }
     }
 
     #[test]
@@ -592,17 +633,11 @@ mod tests {
             public_matrix_seed,
         };
         let shared_matrix = derive_public_matrix_flat::<TestF, TEST_D>(2, &public_matrix_seed);
-        let id = SetupPrefixSlotId {
-            setup_seed_digest: [1u8; 32],
-            d_setup: TEST_D,
-            natural_len: 1,
-            n_prefix: TEST_D,
-            level_params_digest: [2u8; 32],
-        };
+        let id = setup_prefix_slot_id(TEST_D, 1, prefix_commitment_params());
         let mut prefix_slots = SetupPrefixVerifierRegistry::new();
         prefix_slots
             .insert(SetupPrefixVerifierSlot {
-                id,
+                id: id.clone(),
                 natural_len: 1,
                 padded_len: TEST_D,
                 commitment: SetupPrefixPublicCommitment {

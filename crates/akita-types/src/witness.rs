@@ -111,7 +111,7 @@ impl WitnessLayout {
                 "witness shard count exceeds verifier cap".into(),
             ));
         }
-        lp.validate_root_opening_batch(opening_batch)?;
+        lp.validate_opening_batch(opening_batch)?;
         let relation_group_order = opening_batch.root_group_order()?;
 
         let mut units = Vec::with_capacity(
@@ -121,7 +121,7 @@ impl WitnessLayout {
         );
         let mut cursor = 0usize;
         for group_index in relation_group_order {
-            let params = lp.root_group_params(opening_batch, group_index)?;
+            let params = lp.group_params(opening_batch, group_index)?;
             let group = opening_batch.group_layout(group_index)?;
             let num_claims = group.num_polynomials();
             let depth_open = params.num_digits_open();
@@ -728,7 +728,7 @@ impl ChunkedWitnessCfg {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::SisModulusFamily;
+    use crate::SisModulusProfileId;
 
     #[test]
     fn default_is_single_chunk() {
@@ -763,7 +763,7 @@ mod tests {
 
     fn test_layout(num_shards: usize) -> (LevelParams, OpeningClaimsLayout, WitnessLayout) {
         let mut lp = LevelParams::params_only(
-            SisModulusFamily::Q32,
+            SisModulusProfileId::Q32Offset99,
             32,
             2,
             1,

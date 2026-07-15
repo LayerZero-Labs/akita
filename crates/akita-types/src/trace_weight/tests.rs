@@ -8,7 +8,7 @@ use super::{
 use crate::{
     fold_rings_at_opening, lagrange_weights, recover_ring_subfield_inner_product,
     reduce_inner_opening_to_ring_element, BasisMode, LevelParams, OpeningClaimsLayout,
-    SisModulusFamily, WitnessLayout,
+    SisModulusProfileId, WitnessLayout,
 };
 use akita_algebra::CyclotomicRing;
 use akita_field::{Prime128OffsetA7F7, RandomSampling};
@@ -30,7 +30,7 @@ fn trace_layout(
 ) -> TraceWeightLayout {
     let group_id = 0;
     let lp = LevelParams::params_only(
-        SisModulusFamily::Q128,
+        SisModulusProfileId::Q128OffsetA7F7,
         1usize << ring_bits,
         1,
         1,

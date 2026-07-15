@@ -900,7 +900,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::SisModulusFamily;
+    use crate::SisModulusProfileId;
     use akita_challenges::SparseChallengeConfig;
     use akita_field::{Fp32, FpExt4, LiftBase};
 
@@ -909,7 +909,7 @@ mod tests {
 
     fn packed_inner_lp() -> LevelParams {
         LevelParams::params_only(
-            SisModulusFamily::Q32,
+            SisModulusProfileId::Q32Offset99,
             32,
             2,
             1,

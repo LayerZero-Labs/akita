@@ -255,14 +255,14 @@ impl TerminalTamper {
                     segment.e_fields = akita_types::RingVec::from_coeffs(coeffs);
                 }
                 Self::RemainderDigit => {
-                    segment.z_payload[0] ^= 1;
+                    segment.z_payloads[0][0] ^= 1;
                 }
                 Self::WitnessLen => {
                     segment.layout.logical_num_elems =
                         segment.layout.logical_num_elems.saturating_sub(1);
                 }
                 Self::PackedPayload => {
-                    segment.z_payload.pop();
+                    segment.z_payloads[0].pop();
                 }
             },
             CleartextWitnessProof::FieldElements(_) => {
@@ -416,7 +416,8 @@ fn terminal_direct_witness_shape_mismatch_rejects_deserialization() {
         };
         // Segment-typed tails admit exact `z` payloads up to the scheduled
         // upper bound; a *tighter* budget than the encoded payload must reject.
-        shape.z_payload_bytes = shape.z_payload_bytes.saturating_sub(1);
+        shape.layout.groups[0].z_payload_bytes =
+            shape.layout.groups[0].z_payload_bytes.saturating_sub(1);
 
         AkitaBatchedProof::<F, F>::deserialize_compressed(&bytes[..], &bad_shape)
             .expect_err("terminal direct-witness shape mismatch must reject");

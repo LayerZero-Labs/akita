@@ -9,7 +9,7 @@ use akita_field::{
 use akita_sumcheck::SumcheckInstanceVerifier;
 use akita_types::{
     dispatch_for_field, eval_dense_trace_table, eval_trace_terms_closed, AkitaExpandedSetup,
-    CleartextWitnessProof, FpExtEncoding, RingRelationInstance, TraceClaim,
+    CleartextWitnessProof, FpExtEncoding, OpeningClaimsLayout, RingRelationInstance, TraceClaim,
 };
 use std::borrow::Cow;
 use std::marker::PhantomData;
@@ -126,6 +126,7 @@ pub(crate) fn stage2_cleartext_oracle<'a, F, E>(
     physical_w_len: usize,
     lp: &akita_types::LevelParams,
     num_segments: usize,
+    opening_batch: &OpeningClaimsLayout,
 ) -> Result<Stage2WitnessOracle<'a, F, E>, AkitaError>
 where
     F: FieldCore + CanonicalField + HalvingField,
@@ -136,6 +137,9 @@ where
         CleartextWitnessProof::SegmentTyped(_) => {
             let digits =
                 dispatch_for_field!(ProtocolDispatchSlot::Role(RingRole::Inner), F, d_a, |D| {
+                    if lp.has_precommitted_groups() || opening_batch.num_groups() != 1 {
+                        return Err(AkitaError::InvalidProof);
+                    }
                     witness.logical_i8_digits::<D>(lp, num_segments)
                 })?;
             if digits.len() != physical_w_len {
@@ -164,6 +168,7 @@ pub(crate) struct AkitaStage2Verifier<'a, F: FieldCore, E: FieldCore, const D: u
     witness_oracle: Stage2WitnessOracle<'a, F, E>,
     stage1_point: Vec<E>,
     relation_matrix_evaluator: RelationMatrixEvaluator<E>,
+    setup_claim: Option<E>,
     setup: &'a AkitaExpandedSetup<F>,
     relation_instance: &'a RingRelationInstance<F>,
     alpha: E,
@@ -192,6 +197,7 @@ where
         setup: &'a AkitaExpandedSetup<F>,
         relation_instance: &'a RingRelationInstance<F>,
         alpha: E,
+        setup_claim: Option<E>,
         relation_claim: E,
         col_bits: usize,
         ring_bits: usize,
@@ -212,6 +218,7 @@ where
             witness_oracle,
             stage1_point,
             relation_matrix_evaluator,
+            setup_claim,
             setup,
             relation_instance,
             alpha,
@@ -274,6 +281,7 @@ where
             self.setup,
             self.relation_instance,
             self.alpha,
+            self.setup_claim,
         )?;
         let relation_oracle = w_eval * relation_weight;
         let trace_oracle = if let Some(trace) = &self.trace {

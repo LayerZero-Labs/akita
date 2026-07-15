@@ -176,7 +176,7 @@ jobs:
           cache-on-failure: true
       - name: Drift guard (all-schedules)
         run: |
-          cargo test --release -p akita-config --features all-schedules generated_schedule_tables_match_find_schedule
+          cargo test --release -p akita-config --features all-schedules generated_schedule_tables_match_key_planner
       - name: Schedule catalog wiring
         run: |
           cargo test --release -p akita-config --no-default-features --test schedule_catalog_feature_off

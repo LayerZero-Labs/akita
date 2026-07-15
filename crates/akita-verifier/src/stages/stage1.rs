@@ -61,7 +61,7 @@ where
     let labels = witness_fold_challenge_labels();
     let mut group_challenges = Vec::with_capacity(opening_batch.num_groups());
     for group_index in 0..opening_batch.num_groups() {
-        let group_lp = lp.root_group_params(opening_batch, group_index)?;
+        let group_lp = lp.group_params(opening_batch, group_index)?;
         let k_g = opening_batch.group_layout(group_index)?.num_polynomials();
         group_challenges.push(
             LiveFoldDraw::<F, T>::new(transcript).draw_folding_challenges(
@@ -275,14 +275,14 @@ impl<E: FieldCore + FromPrimitiveInt + AkitaSerialize> AkitaStage1Verifier<E> {
 mod fold_grind_nonce_tests {
     use super::*;
     use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
-    use akita_types::{FoldLinfProtocolBinding, SisModulusFamily};
+    use akita_types::{FoldLinfProtocolBinding, SisModulusProfileId};
 
     fn sample_level_params(
         fold_challenge_config: SparseChallengeConfig,
         fold_shape: TensorChallengeShape,
     ) -> LevelParams {
         LevelParams::params_only(
-            SisModulusFamily::Q128,
+            SisModulusProfileId::Q128OffsetA7F7,
             64,
             3,
             2,

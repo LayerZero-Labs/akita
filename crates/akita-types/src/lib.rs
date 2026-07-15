@@ -26,6 +26,7 @@ pub mod proof_size;
 pub mod schedule;
 pub mod setup_contribution;
 pub mod sis;
+pub mod stage3_geometry;
 pub mod tail_golomb_rice_low_bits;
 pub mod trace_weight;
 pub mod transcript;
@@ -84,20 +85,22 @@ pub use proof::{
 pub use proof::{
     active_setup_field_len, append_batched_commitments_to_transcript,
     append_claim_values_to_transcript, assemble_relation_rhs, build_segment_typed_witness,
-    compute_relation_weight_evals, decode_terminal_z_golomb_payload, derive_public_matrix_flat,
-    e_folded_segment_bytes, emit_witness_e_planes, emit_witness_r_planes, emit_witness_t_planes,
-    emit_witness_z_planes, eval_relation_weight_at_point, expand_segment_typed_to_i8_digits,
+    build_segment_typed_witness_from_groups, compute_relation_weight_evals,
+    decode_terminal_z_golomb_payload, derive_public_matrix_flat, e_folded_segment_bytes,
+    emit_witness_e_planes, emit_witness_r_planes, emit_witness_t_planes, emit_witness_z_planes,
+    eval_relation_weight_at_point, expand_segment_typed_to_i8_digits,
     folded_root_supports_opening_shape, generate_relation_rhs, i8_digits_to_bytes,
     padded_scalar_batch_num_vars, padded_setup_prefix_len, prepare_opening_point,
     relation_claim_from_layout_extension, relation_claim_from_rows,
     relation_claim_from_rows_extension, relation_rhs_coeff_len, relation_rhs_layout_for,
     relation_rhs_row_count, ring_relation_segment_lengths,
     ring_subfield_packed_extension_opening_point, root_tensor_projection_enabled,
-    sample_public_matrix_seed, sample_public_row_coefficients, segment_typed_witness_shape,
-    segment_typed_witness_upper_bound_bytes, segment_typed_z_payload_bytes,
-    select_setup_prefix_slot, setup_prefix_level_params, setup_prefix_slot_id,
-    should_reject_multi_group_root, tail_golomb_rice_z_params, tail_segment_layout,
-    tail_segment_multiplicities_from_layout, terminal_e_hat_bytes_from_blocks,
+    sample_public_matrix_seed, sample_public_row_coefficients,
+    segment_typed_witness_shape_from_groups, segment_typed_witness_upper_bound_bytes,
+    segment_typed_z_payload_bytes, select_setup_prefix_slot, setup_prefix_precommitted_params,
+    setup_prefix_slot_id, should_reject_multi_group_root, tail_golomb_rice_z_params,
+    tail_segment_layout_from_groups, tail_segment_multiplicities_from_layout,
+    tail_segment_multiplicities_from_layout_for_params, terminal_e_hat_bytes_from_blocks,
     terminal_golomb_grind_tail_t_vectors, terminal_witness_segment_layout,
     terminal_witness_segment_layout_from_counts, terminal_witness_transcript_parts,
     validate_batched_inputs, validate_public_matrix_matches_seed,
@@ -113,13 +116,15 @@ pub use proof::{
     PolynomialGroupClaims, PolynomialGroupLayout, PreparedOpeningPoint, ProverCommitmentRows,
     PublicMatrixSeed, RelationGroupRows, RelationOnlyStage2Inputs, RelationRhsLayout,
     RingCommitment, RingMultiplierOpeningPoint, RingRelationInstance, RingRelationOpeningCounts,
-    RingRelationSegmentLengths, RingVec, RingView, SegmentTypedWitness, SegmentTypedWitnessShape,
-    SetupMatrixEnvelope, SetupPrefixProverRegistry, SetupPrefixPublicCommitment, SetupPrefixSlot,
-    SetupPrefixSlotId, SetupPrefixVerifierRegistry, SetupPrefixVerifierSlot,
-    SetupProductSumcheckShape, SetupSumcheckProof, TailSegmentLayout, TerminalLevelProof,
+    RingRelationSegmentLengths, RingVec, RingView, SegmentTypedWitness,
+    SegmentTypedWitnessGroupParts, SegmentTypedWitnessShape, SetupMatrixEnvelope,
+    SetupPrefixProverRegistry, SetupPrefixPublicCommitment, SetupPrefixSlot, SetupPrefixSlotId,
+    SetupPrefixVerifierRegistry, SetupPrefixVerifierSlot, SetupProductSumcheckShape,
+    SetupSumcheckProof, TailSegmentGroupLayout, TailSegmentLayout, TerminalLevelProof,
     TerminalLevelProofShape, TerminalWitnessSegmentLayout, TerminalWitnessTranscriptParts,
     MAX_SETUP_MATRIX_FIELD_ELEMENTS, MULTI_GROUP_ROOT_DENSE_UNSUPPORTED,
-    MULTI_GROUP_ROOT_MULTI_CHUNK_UNSUPPORTED, SETUP_OFFLOAD_D_SETUP, SETUP_SUMCHECK_DEGREE,
+    MULTI_GROUP_ROOT_MULTI_CHUNK_UNSUPPORTED, SETUP_OFFLOAD_D_SETUP,
+    SETUP_OFFLOAD_MIN_PREFIX_FIELD_LEN, SETUP_SUMCHECK_DEGREE,
 };
 pub use proof_size::{level_proof_bytes, FOLD_GRIND_NONCE_BYTES};
 pub use schedule::{
@@ -138,7 +143,11 @@ pub use setup_contribution::{
     SetupContributionPlanInputs, SetupContributionStatic, SetupIndexWeightEvaluator,
     SetupProjectionGeometry,
 };
-pub use sis::{AjtaiKeyParams, SisModulusFamily, SisTableKey, DEFAULT_SIS_SECURITY_BITS};
+pub use sis::{
+    AjtaiKeyParams, ScalarCutoff, SisMatrixRole, SisModulusProfileId, SisRoleCell,
+    SisSecurityPolicyId, SisTableDigest, SisTableKey, DEFAULT_SIS_SECURITY_POLICY,
+};
+pub use stage3_geometry::BatchedStage3Geometry;
 pub use tail_golomb_rice_low_bits::{
     cap_rice_low_bits, wire_rice_low_bits, wire_rice_low_bits_from_rule, WIRE_RICE_LOW_BITS_DELTA,
     WIRE_RICE_LOW_BITS_RULE_SECURITY_MINUS_DELTA,

@@ -13,8 +13,9 @@ use akita_transcript::labels::{
 use akita_transcript::{sample_ext_challenge, Transcript};
 use akita_types::{
     dispatch_for_field, ensure_setup_envelope, select_setup_prefix_slot, shared_setup_fold_gadget,
-    AkitaExpandedSetup, AkitaVerifierSetup, LevelParams, SetupContributionPlan,
-    SetupIndexWeightEvaluator, SetupSumcheckProof, SETUP_OFFLOAD_D_SETUP, SETUP_SUMCHECK_DEGREE,
+    AkitaExpandedSetup, AkitaVerifierSetup, BatchedStage3Geometry, LevelParams,
+    SetupContributionPlan, SetupIndexWeightEvaluator, SetupSumcheckProof, SETUP_OFFLOAD_D_SETUP,
+    SETUP_SUMCHECK_DEGREE,
 };
 
 /// Verifier counterpart to `AkitaStage3Prover`: replays the setup product
@@ -105,7 +106,7 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
         witness_rounds: usize,
         eta: E,
         transcript: &mut T,
-    ) -> Result<Vec<E>, AkitaError>
+    ) -> Result<(Vec<E>, Vec<E>), AkitaError>
     where
         F: FieldCore + CanonicalField,
         E: ExtField<F> + FromPrimitiveInt + AkitaSerialize + akita_field::MulBaseUnreduced<F>,
@@ -129,6 +130,10 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
             setup_len,
             transcript,
         )?;
+        let setup_prefix_eval = next_fold_level_params
+            .setup_prefix
+            .as_ref()
+            .map(|_| proof.setup_prefix_eval);
         dispatch_for_field!(
             ProtocolDispatchSlot::Role(RingRole::Opening),
             F,
@@ -141,6 +146,7 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
                     stage2_challenges,
                     witness_rounds,
                     setup_eval_len,
+                    setup_prefix_eval,
                     eta,
                     transcript,
                 )
@@ -165,7 +171,6 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
             let natural_field_len = geometry.natural_field_len();
             ensure_setup_envelope(&setup.expanded, geometry.required(), ring_d)?;
             let setup_prefix_selection = select_setup_prefix_slot(
-                setup.expanded.seed(),
                 setup_len,
                 |id| {
                     setup
@@ -181,6 +186,10 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
             if let Some((slot, setup_eval_len)) = setup_prefix_selection {
                 transcript.append_serde(ABSORB_SETUP_PREFIX_SLOT, &slot.id);
                 Ok(setup_eval_len)
+            } else if next_fold_level_params.setup_prefix.is_some() {
+                Err(AkitaError::InvalidSetup(
+                    "planned setup-prefix slot is missing from verifier setup".to_string(),
+                ))
             } else {
                 Ok(setup_len)
             }
@@ -198,15 +207,18 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
         stage2_challenges: &[E],
         witness_rounds: usize,
         setup_eval_len: usize,
+        setup_prefix_eval: Option<E>,
         eta: E,
         transcript: &mut T,
-    ) -> Result<Vec<E>, AkitaError>
+    ) -> Result<(Vec<E>, Vec<E>), AkitaError>
     where
         F: FieldCore + CanonicalField,
         E: ExtField<F> + FromPrimitiveInt + AkitaSerialize + akita_field::MulBaseUnreduced<F>,
         T: Transcript<F>,
     {
-        let batched_rounds = self.rounds.max(witness_rounds);
+        let required = self.plan.required();
+        let geometry = BatchedStage3Geometry::new(witness_rounds, self.rounds)?;
+        let batched_rounds = geometry.batched_rounds();
         transcript.append_serde(
             ABSORB_SUMCHECK_CLAIM,
             &(proof.claim + eta * stage2_next_w_eval),
@@ -218,23 +230,25 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
             transcript,
             |tr| sample_ext_challenge::<F, E, T>(tr, CHALLENGE_SUMCHECK_ROUND),
         )?;
-        let rho_w = challenges[..witness_rounds].to_vec();
-        let rho_setup = &challenges[..self.rounds];
-        let (rho_y, rho_setup_idx) = rho_setup.split_at(self.ring_bits);
+        let rho_w = geometry.witness_point(&challenges)?;
+        let rho_setup = geometry.setup_point(&challenges)?;
+        let (rho_y, rho_setup_idx) = geometry.setup_y_and_index(&rho_setup, self.ring_bits)?;
 
         // The setup prefix itself is still evaluated by scanning the selected
         // prefix. The setup-index weight is structured, so evaluate its MLE
         // directly at `rho_setup_idx` instead of building a dense equality
         // table for that factor.
-        let required = self.plan.required();
         let eq_y = ring_eq_table::<E, D>(rho_y)?;
-        let setup_val = setup_mle_at_eq_tables::<F, E, D>(
-            &setup.expanded,
-            required,
-            setup_eval_len,
-            rho_setup_idx,
-            &eq_y,
-        )?;
+        let setup_val = match setup_prefix_eval {
+            Some(value) => value,
+            None => setup_mle_at_eq_tables::<F, E, D>(
+                &setup.expanded,
+                required,
+                setup_eval_len,
+                rho_setup_idx,
+                &eq_y,
+            )?,
+        };
         let setup_index_weight = if let Some(evaluator) = &self.setup_index_weight_evaluator {
             evaluator.evaluate(rho_setup_idx)?
         } else {
@@ -242,25 +256,16 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
                 .evaluate_setup_index_weight_mle(rho_setup_idx, self.alpha)?
         };
         let alpha_val = eval_dense_table_with_eq(&self.alpha_pows, &eq_y)?;
-        let witness_scale = lift_scale::<E>(batched_rounds - witness_rounds)?;
-        let setup_scale = lift_scale::<E>(batched_rounds - self.rounds)?;
+        let witness_scale = geometry.witness_lift_scale::<E>()?;
+        let setup_scale = geometry.setup_lift_scale::<E>()?;
         let eq_w = EqPolynomial::mle(stage2_challenges, &rho_w)?;
         let expected = eta * witness_scale * eq_w * proof.next_w_eval
             + setup_scale * setup_val * setup_index_weight * alpha_val;
         if final_claim != expected {
-            return Err(AkitaError::InvalidInput(
-                "batched stage-3 final relation mismatch".to_string(),
-            ));
+            return Err(AkitaError::InvalidProof);
         }
-        Ok(rho_w)
+        Ok((rho_w, rho_setup))
     }
-}
-
-fn lift_scale<E: FieldCore + FromPrimitiveInt>(extra_rounds: usize) -> Result<E, AkitaError> {
-    let inv_two = E::from_u64(2)
-        .inverse()
-        .ok_or_else(|| AkitaError::InvalidSetup("two is not invertible in Akita fields".into()))?;
-    Ok((0..extra_rounds).fold(E::one(), |acc, _| acc * inv_two))
 }
 
 fn ring_eq_table<E: FieldCore, const D: usize>(rho_y: &[E]) -> Result<Vec<E>, AkitaError> {

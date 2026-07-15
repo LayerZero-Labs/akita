@@ -102,5 +102,7 @@ pub(in crate::protocol::core) type Stage2ProveResult<E> =
 pub(in crate::protocol::core) struct Stage3ProveOutput<E: FieldCore> {
     pub(in crate::protocol::core) proof: SetupSumcheckProof<E>,
     pub(in crate::protocol::core) next_w_point: Vec<E>,
+    pub(in crate::protocol::core) setup_prefix_point: Vec<E>,
+    pub(in crate::protocol::core) setup_prefix_eval: E,
     pub(in crate::protocol::core) next_w_eval: E,
 }

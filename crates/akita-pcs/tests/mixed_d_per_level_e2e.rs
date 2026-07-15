@@ -71,8 +71,8 @@ impl akita_config::CommitmentConfig for MixedD128To64 {
         Envelope::ring_challenge_config(d)
     }
 
-    fn sis_modulus_family() -> akita_types::SisModulusFamily {
-        Envelope::sis_modulus_family()
+    fn sis_modulus_profile() -> akita_types::SisModulusProfileId {
+        Envelope::sis_modulus_profile()
     }
 
     fn max_setup_matrix_size(
@@ -117,8 +117,8 @@ impl akita_config::CommitmentConfig for MixedDBadLevelDim {
         Envelope::ring_challenge_config(d)
     }
 
-    fn sis_modulus_family() -> akita_types::SisModulusFamily {
-        Envelope::sis_modulus_family()
+    fn sis_modulus_profile() -> akita_types::SisModulusProfileId {
+        Envelope::sis_modulus_profile()
     }
 
     fn max_setup_matrix_size(
@@ -457,7 +457,7 @@ fn mixed_d_per_level_prove_verify_replay_and_malformed_rejections() {
                 .expect("terminal step must carry final witness");
             match witness {
                 CleartextWitnessProof::SegmentTyped(segment) => {
-                    segment.z_payload.pop();
+                    segment.z_payloads[0].pop();
                 }
                 CleartextWitnessProof::FieldElements(elems) => {
                     let len = elems.coeffs().len();

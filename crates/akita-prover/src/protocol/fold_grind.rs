@@ -518,13 +518,13 @@ mod tests {
     use akita_challenges::SparseChallengeConfig;
     use akita_transcript::AkitaTranscript;
     use akita_types::sis::{FoldWitnessGrindContract, FoldWitnessLinfCapPolicy};
-    use akita_types::SisModulusFamily;
+    use akita_types::SisModulusProfileId;
 
     type F = akita_field::Prime128Offset275;
 
     fn sample_level() -> LevelParams {
         LevelParams::params_only(
-            SisModulusFamily::Q128,
+            SisModulusProfileId::Q128OffsetA7F7,
             64,
             3,
             2,

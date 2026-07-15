@@ -22,10 +22,10 @@ pub(super) fn verify_root<F, E, T>(
     claims: &OpeningClaims<'_, E, &Commitment<F>>,
     basis: BasisMode,
     root_lp: &LevelParams,
-    setup_contribution_mode: SetupContributionMode,
+    _setup_contribution_mode: SetupContributionMode,
     next_fold_level_params: Option<&LevelParams>,
     terminal_final_w_len: usize,
-) -> Result<Vec<E>, AkitaError>
+) -> Result<FoldVerifyOutput<E>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling + HalvingField,
     E: FpExtEncoding<F>
@@ -45,7 +45,8 @@ where
         AkitaBatchedRootProof::Terminal(_) => root_lp,
         AkitaBatchedRootProof::ZeroFold { .. } => return Err(AkitaError::InvalidProof),
     };
-    let stage3_sumcheck_proof = proof.fold_stage3_sumcheck_proof(setup_contribution_mode)?;
+    let stage3_sumcheck_proof =
+        proof.fold_stage3_sumcheck_proof(root_lp.setup_contribution_mode)?;
     let openings = claims.flat_evaluations();
     let opening_batch = claims.layout().map_err(|_| AkitaError::InvalidProof)?;
     let shared_opening_point = claims.point();
@@ -64,7 +65,7 @@ where
     opening_batch.append_batch_shape_to_transcript::<F, T>(transcript)?;
     for group_index in 0..opening_batch.num_groups() {
         let commitment = claims.group_commitment(group_index)?;
-        let expected_rows = root_lp.root_group_commitment_rows(&opening_batch, group_index)?;
+        let expected_rows = root_lp.group_commitment_rows(&opening_batch, group_index)?;
         let commitment_view = RingView::new(commitment.rows().coeffs(), ring_dim)?;
         if commitment_view.num_rings() != expected_rows {
             return Err(AkitaError::InvalidProof);
@@ -92,6 +93,7 @@ where
             next_fold_level_params,
             basis,
             root_lp,
+            terminal_final_w_len,
         );
     }
     let commitment = claims
@@ -138,7 +140,7 @@ fn verify_root_inner<F, E, T>(
     basis: BasisMode,
     root_lp: &LevelParams,
     terminal_final_w_len: usize,
-) -> Result<Vec<E>, AkitaError>
+) -> Result<FoldVerifyOutput<E>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling + HalvingField,
     E: FpExtEncoding<F>
@@ -340,7 +342,8 @@ fn verify_multi_group_root_inner<F, E, T>(
     next_fold_level_params: &LevelParams,
     basis: BasisMode,
     root_lp: &LevelParams,
-) -> Result<Vec<E>, AkitaError>
+    _terminal_final_w_len: usize,
+) -> Result<FoldVerifyOutput<E>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling + HalvingField,
     E: FpExtEncoding<F>
@@ -356,12 +359,9 @@ where
     if extension_opening_reduction.is_some() {
         return Err(AkitaError::InvalidProof);
     }
-    // Grouped roots always hand off to a singleton suffix; a terminal grouped
-    // root is unsupported.
-    if !matches!(proof, AkitaBatchedRootProof::Fold(_)) {
-        return Err(AkitaError::InvalidProof);
-    }
-    let relation_matrix_row_layout = RelationMatrixRowLayout::WithDBlock;
+    let relation_matrix_row_layout = proof
+        .fold_relation_matrix_row_layout()
+        .ok_or(AkitaError::InvalidProof)?;
     let role_dims = root_lp.role_dims();
     let d_a = role_dims.d_a();
     let alpha_bits = d_a.trailing_zeros() as usize;
@@ -371,18 +371,31 @@ where
     // prover's per-group absorb in `finish_prepared_fold`.
     let mut prepared_points = Vec::with_capacity(opening_batch.num_groups());
     for group_index in 0..opening_batch.num_groups() {
-        let group_lp = root_lp.root_group_params(opening_batch, group_index)?;
+        let group_lp = root_lp.group_params(opening_batch, group_index)?;
         let target_len = alpha_bits
             .checked_add(group_lp.position_bits())
             .and_then(|n| n.checked_add(group_lp.fold_bits()))
             .ok_or_else(|| {
                 AkitaError::InvalidSetup("group opening point length overflow".to_string())
             })?;
-        let group_point = &shared_opening_point[..shared_opening_point.len().min(target_len)];
+        let point_vars = claims.group_point_vars(group_index)?;
+        if point_vars.num_vars() != target_len {
+            return Err(AkitaError::InvalidProof);
+        }
+        let group_point = point_vars
+            .indices()
+            .iter()
+            .map(|&index| {
+                shared_opening_point
+                    .get(index)
+                    .copied()
+                    .ok_or(AkitaError::InvalidProof)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
         let prepared =
             dispatch_for_field!(ProtocolDispatchSlot::Role(RingRole::Inner), F, d_a, |D| {
                 prepare_opening_point::<F, E, D>(
-                    group_point,
+                    &group_point,
                     basis,
                     group_lp.fold_position_count(),
                     group_lp.live_fold_count(),
@@ -409,7 +422,14 @@ where
     }
     let commitment_rows = RingVec::from_coeffs(commitment_coeffs);
 
-    let w_len = root_lp.root_next_w_len::<F>(opening_batch, relation_matrix_row_layout)?;
+    let w_len = match proof {
+        AkitaBatchedRootProof::Fold(_) => {
+            root_lp.next_w_len::<F>(opening_batch, relation_matrix_row_layout)?
+        }
+        AkitaBatchedRootProof::Terminal(_) | AkitaBatchedRootProof::ZeroFold { .. } => {
+            return Err(AkitaError::InvalidProof)
+        }
+    };
 
     let stage1_proof = proof.fold_stage1()?;
     let next_w_commitment = proof.fold_next_w_commitment()?;
@@ -417,9 +437,8 @@ where
     let fold_grind_nonce = proof.fold_grind_nonce()?;
     let v_storage = match proof {
         AkitaBatchedRootProof::Fold(fold) => fold.v.clone(),
-        AkitaBatchedRootProof::Terminal(_) | AkitaBatchedRootProof::ZeroFold { .. } => {
-            return Err(AkitaError::InvalidProof)
-        }
+        AkitaBatchedRootProof::Terminal(_) => RingVec::from_coeffs(Vec::new()),
+        AkitaBatchedRootProof::ZeroFold { .. } => return Err(AkitaError::InvalidProof),
     };
     // Routes `verify_fold` to the multi-group-root trace path; inert for the dense
     // trace-weight table that multi-group roots evaluate.

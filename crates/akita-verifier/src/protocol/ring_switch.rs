@@ -251,7 +251,7 @@ where
     // block geometry (final vs frozen-precommit). For a scalar batch this is the
     // single group at `lp`'s geometry, byte-identical to the historical check.
     for group_index in 0..opening_batch.num_groups() {
-        let group_lp = lp.root_group_params(opening_batch, group_index)?;
+        let group_lp = lp.group_params(opening_batch, group_index)?;
         let opening_point = relation.group_opening_point(group_index)?;
         if opening_point.position_weights.len() != group_lp.fold_position_count()
             || opening_point.fold_weights.len() != group_lp.live_fold_count()
@@ -398,7 +398,7 @@ where
     let relation = replay.relation;
     let lp = replay.lp;
     let opening_batch = relation.opening_batch();
-    lp.validate_root_opening_batch(opening_batch)?;
+    lp.validate_opening_batch(opening_batch)?;
     validate_role_dispatch::<D>(relation.role_dims(), RingRole::Inner)?;
     if replay.row_coefficients.len() != opening_batch.num_total_polynomials() {
         return Err(AkitaError::InvalidProof);
@@ -419,7 +419,7 @@ where
     let mut group_e_offsets = vec![0usize; opening_batch.num_groups()];
     let mut d_physical_cols = 0usize;
     for &group_index in &order {
-        let group_lp = lp.root_group_params(opening_batch, group_index)?;
+        let group_lp = lp.group_params(opening_batch, group_index)?;
         let group_layout = opening_batch.group_layout(group_index)?;
         group_e_offsets[group_index] = d_physical_cols;
         let e_len = group_layout
@@ -435,7 +435,7 @@ where
     let alpha_pows_a = scalar_powers(alpha, D);
     let mut groups = Vec::with_capacity(order.len());
     for &group_index in &order {
-        let group_lp = lp.root_group_params(opening_batch, group_index)?;
+        let group_lp = lp.group_params(opening_batch, group_index)?;
         let group_layout = opening_batch.group_layout(group_index)?;
         let k_g = group_layout.num_polynomials();
         let live_fold_count = group_lp.live_fold_count();
@@ -498,12 +498,12 @@ where
             .ok_or_else(|| {
                 AkitaError::InvalidSetup("multi-group B vector width overflow".to_string())
             })?;
-        let a_range = lp.root_a_row_range(
+        let a_range = lp.a_row_range(
             opening_batch,
             group_index,
             relation.relation_matrix_row_layout(),
         )?;
-        let b_range = lp.root_commitment_row_range(
+        let b_range = lp.commitment_row_range(
             opening_batch,
             group_index,
             relation.relation_matrix_row_layout(),
@@ -842,6 +842,7 @@ impl<E: FieldCore> RelationMatrixEvaluator<E> {
         setup: &AkitaExpandedSetup<F>,
         instance: &RingRelationInstance<F>,
         alpha: E,
+        setup_claim: Option<E>,
     ) -> Result<E, AkitaError>
     where
         F: FieldCore + CanonicalField,
@@ -857,9 +858,11 @@ impl<E: FieldCore> RelationMatrixEvaluator<E> {
             let alpha_evals = scalar_powers(alpha, D);
             let coefficient_eval =
                 akita_sumcheck::multilinear_eval(&alpha_evals, coefficient_point)?;
-            return Ok(
-                coefficient_eval * self.eval_at_point::<F, D>(column_point, setup, alpha, None)?
-            );
+            return Ok(coefficient_eval
+                * self.eval_at_point::<F, D>(column_point, setup, alpha, setup_claim)?);
+        }
+        if setup_claim.is_some() {
+            return Err(AkitaError::InvalidProof);
         }
         eval_relation_weight_at_point::<F, E>(
             setup,

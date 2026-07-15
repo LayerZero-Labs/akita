@@ -21,10 +21,10 @@ pub use fold_linf_binding::{
     FOLD_GRIND_PROBE_ORDER_TRANSCRIPT_SHUFFLE,
 };
 
-use crate::descriptor_bytes::{push_usize, sis_family_tag};
+use crate::descriptor_bytes::{push_usize, sis_modulus_profile_tag};
 use crate::{
     detect_field_modulus, AkitaSetupSeed, BasisMode, DecompositionParams, LevelParams,
-    OpeningClaimsLayout, Schedule, SisModulusFamily,
+    OpeningClaimsLayout, Schedule, SisModulusProfileId,
 };
 use akita_field::{AkitaError, CanonicalField, ExtField};
 use akita_serialization::{
@@ -160,7 +160,7 @@ pub struct SetupSection {
     /// Gadget decomposition parameters.
     pub decomposition: DecompositionParams,
     /// SIS modulus family used for security sizing.
-    pub sis_modulus_family: SisModulusFamily,
+    pub sis_modulus_profile: SisModulusProfileId,
     /// Digest of the canonical `AkitaSetupSeed` bytes.
     pub setup_seed_digest: DescriptorDigest,
     /// Protocol-affecting feature mode (transparent-only after zk-strip).
@@ -183,12 +183,12 @@ impl SetupSection {
     /// Returns a serialization error if the setup seed fails to serialize.
     pub fn from_parts(
         decomposition: DecompositionParams,
-        sis_modulus_family: SisModulusFamily,
+        sis_modulus_profile: SisModulusProfileId,
         setup_seed: &AkitaSetupSeed,
     ) -> Result<Self, SerializationError> {
         Ok(Self {
             decomposition,
-            sis_modulus_family,
+            sis_modulus_profile,
             setup_seed_digest: setup_seed_digest(setup_seed)?,
             protocol_features: ProtocolFeatureSet::current(),
             fold_linf: FoldLinfProtocolBinding::CURRENT,
@@ -498,7 +498,7 @@ impl AkitaSerialize for SetupSection {
         compress: Compress,
     ) -> Result<(), SerializationError> {
         encode_decomposition(&self.decomposition, &mut writer, compress)?;
-        encode_sis_family(self.sis_modulus_family, &mut writer, compress)?;
+        encode_sis_modulus_profile(self.sis_modulus_profile, &mut writer, compress)?;
         writer.write_all(&self.setup_seed_digest)?;
         self.protocol_features
             .serialize_with_mode(&mut writer, compress)?;
@@ -508,7 +508,7 @@ impl AkitaSerialize for SetupSection {
 
     fn serialized_size(&self, compress: Compress) -> usize {
         decomposition_size(&self.decomposition, compress)
-            + sis_family_size(compress)
+            + sis_modulus_profile_size(compress)
             + 32
             + self.protocol_features.serialized_size(compress)
             + self.fold_linf.serialized_size(compress)
@@ -525,7 +525,7 @@ impl AkitaDeserialize for SetupSection {
         _ctx: &Self::Context,
     ) -> Result<Self, SerializationError> {
         let decomposition = decode_decomposition(&mut reader, compress, validate)?;
-        let sis_modulus_family = decode_sis_family(&mut reader, compress, validate)?;
+        let sis_modulus_profile = decode_sis_modulus_profile(&mut reader, compress, validate)?;
         let setup_seed_digest = read_digest(&mut reader)?;
         let protocol_features =
             ProtocolFeatureSet::deserialize_with_mode(&mut reader, compress, validate, &())?;
@@ -533,7 +533,7 @@ impl AkitaDeserialize for SetupSection {
             FoldLinfProtocolBinding::deserialize_with_mode(&mut reader, compress, validate, &())?;
         let out = Self {
             decomposition,
-            sis_modulus_family,
+            sis_modulus_profile,
             setup_seed_digest,
             protocol_features,
             fold_linf,
@@ -846,30 +846,30 @@ fn decomposition_size(decomp: &DecompositionParams, compress: Compress) -> usize
     size
 }
 
-fn encode_sis_family<W: Write>(
-    family: SisModulusFamily,
+fn encode_sis_modulus_profile<W: Write>(
+    family: SisModulusProfileId,
     writer: W,
     compress: Compress,
 ) -> Result<(), SerializationError> {
-    sis_family_tag(family).serialize_with_mode(writer, compress)
+    sis_modulus_profile_tag(family).serialize_with_mode(writer, compress)
 }
 
-fn decode_sis_family<R: Read>(
+fn decode_sis_modulus_profile<R: Read>(
     reader: R,
     compress: Compress,
     validate: Validate,
-) -> Result<SisModulusFamily, SerializationError> {
+) -> Result<SisModulusProfileId, SerializationError> {
     match u8::deserialize_with_mode(reader, compress, validate, &())? {
-        0 => Ok(SisModulusFamily::Q32),
-        1 => Ok(SisModulusFamily::Q64),
-        2 => Ok(SisModulusFamily::Q128),
+        0 => Ok(SisModulusProfileId::Q32Offset99),
+        1 => Ok(SisModulusProfileId::Q64Offset59),
+        2 => Ok(SisModulusProfileId::Q128OffsetA7F7),
         other => Err(SerializationError::InvalidData(format!(
-            "unknown SisModulusFamily tag {other}"
+            "unknown SisModulusProfileId tag {other}"
         ))),
     }
 }
 
-fn sis_family_size(compress: Compress) -> usize {
+fn sis_modulus_profile_size(compress: Compress) -> usize {
     0u8.serialized_size(compress)
 }
 

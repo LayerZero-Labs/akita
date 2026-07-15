@@ -11,8 +11,10 @@ use std::io::{Read, Write};
 ///
 /// Protocol shapes should normally provide tighter bounds before vector
 /// allocation. This cap protects generic verifier-facing decoders from
-/// allocating directly from attacker-controlled lengths.
-pub const DEFAULT_MAX_SEQUENCE_LEN: usize = 1 << 24;
+/// allocating directly from attacker-controlled lengths. Recursive setup-prefix
+/// sidecars currently store prover hint digit streams that can exceed `2^24`
+/// entries, so keep the temporary global cap high enough for that local cache.
+pub const DEFAULT_MAX_SEQUENCE_LEN: usize = 1 << 25;
 
 /// Compression mode for serialization
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

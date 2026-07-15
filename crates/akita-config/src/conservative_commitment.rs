@@ -4,17 +4,16 @@
 //! use a B rank conservative for a later multi-group root whose final basis is not
 //! known at precommit time.
 
-use crate::matrix_envelope::accumulate_matrix_envelope_for_level;
-use crate::proof_optimized::setup_envelope_poly_counts;
 use crate::{policy_of, CommitmentConfig};
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::AkitaError;
 use akita_types::sis::{
-    min_secure_rank, rounded_up_collision_inf_norm, SisTableKey, DEFAULT_SIS_SECURITY_BITS,
+    min_secure_rank, rounded_up_collision_inf_norm, SisSecurityPolicyId, SisTableKey,
 };
 use akita_types::{
-    AjtaiKeyParams, AkitaScheduleInputs, DecompositionParams, LevelParams, OpeningClaimsLayout,
-    PolynomialGroupLayout, Schedule, SetupMatrixEnvelope, SisModulusFamily, Step,
+    AjtaiKeyParams, AkitaScheduleInputs, AkitaScheduleLookupKey, DecompositionParams, LevelParams,
+    OpeningClaimsLayout, PolynomialGroupLayout, PrecommittedGroupParams, Schedule,
+    SetupMatrixEnvelope, SisModulusProfileId, Step,
 };
 use std::marker::PhantomData;
 
@@ -41,8 +40,8 @@ impl<Cfg: CommitmentConfig> CommitmentConfig for ConservativeCommitmentConfig<Cf
         Cfg::fold_challenge_shape_at_level(inputs)
     }
 
-    fn sis_modulus_family() -> SisModulusFamily {
-        Cfg::sis_modulus_family()
+    fn sis_modulus_profile() -> SisModulusProfileId {
+        Cfg::sis_modulus_profile()
     }
 
     fn ring_subfield_embedding_norm_bound() -> u32 {
@@ -72,17 +71,38 @@ impl<Cfg: CommitmentConfig> CommitmentConfig for ConservativeCommitmentConfig<Cf
         false
     }
 
-    fn get_params_for_prove(opening_batch: &OpeningClaimsLayout) -> Result<Schedule, AkitaError> {
-        let key = opening_batch.root_final_group_layout()?;
-        conservative_commit_schedule::<Cfg>(&key)
+    fn get_params_for_prove(_opening_batch: &OpeningClaimsLayout) -> Result<Schedule, AkitaError> {
+        Err(AkitaError::InvalidSetup(
+            "ConservativeCommitmentConfig is only for precommit layouts; proving must use the regular config"
+                .to_string(),
+        ))
     }
 
     fn get_params_for_batched_commitment(
         opening_batch: &OpeningClaimsLayout,
     ) -> Result<LevelParams, AkitaError> {
-        let schedule = Self::get_params_for_prove(opening_batch)?;
-        Ok(root_commit_params(&schedule, "conservative commit schedule")?.clone())
+        opening_batch.check()?;
+        if opening_batch.num_groups() != 1 {
+            return Err(AkitaError::InvalidSetup(
+                "ConservativeCommitmentConfig only commits standalone precommitted groups"
+                    .to_string(),
+            ));
+        }
+        let key = opening_batch.root_final_group_layout()?;
+        conservative_commit_params::<Cfg>(&key)
     }
+}
+
+pub(crate) fn conservative_precommitted_group_params<Cfg: CommitmentConfig>(
+    group: PolynomialGroupLayout,
+) -> Result<PrecommittedGroupParams, AkitaError> {
+    group.validate()?;
+    let singleton = OpeningClaimsLayout::new(group.num_vars(), group.num_polynomials())?;
+    let params =
+        <ConservativeCommitmentConfig<Cfg> as CommitmentConfig>::get_params_for_batched_commitment(
+            &singleton,
+        )?;
+    Ok(PrecommittedGroupParams::from_params(group, &params))
 }
 
 pub(crate) fn conservative_commit_params<Cfg: CommitmentConfig>(
@@ -90,23 +110,6 @@ pub(crate) fn conservative_commit_params<Cfg: CommitmentConfig>(
 ) -> Result<LevelParams, AkitaError> {
     let schedule = conservative_commit_schedule::<Cfg>(key)?;
     Ok(root_commit_params(&schedule, "conservative commit schedule")?.clone())
-}
-
-pub(crate) fn inflate_setup_envelope_for_conservative_commitments<Cfg: CommitmentConfig>(
-    max_num_vars: usize,
-    max_num_batched_polys: usize,
-    envelope: &mut SetupMatrixEnvelope,
-) -> Result<(), AkitaError> {
-    let poly_counts = setup_envelope_poly_counts(max_num_batched_polys);
-    for num_vars in 1..=max_num_vars {
-        for &num_polys in &poly_counts {
-            let key = PolynomialGroupLayout::new(num_vars, num_polys);
-            if let Ok(params) = conservative_commit_params::<Cfg>(&key) {
-                accumulate_matrix_envelope_for_level(&params, &mut envelope.max_setup_len)?;
-            }
-        }
-    }
-    Ok(())
 }
 
 pub(crate) fn conservative_commit_schedule<Cfg: CommitmentConfig>(
@@ -123,19 +126,20 @@ pub(crate) fn conservative_commit_schedule<Cfg: CommitmentConfig>(
     let mut policy = policy_of::<Cfg>();
     policy.basis_range = (min_basis, min_basis);
     policy.decomposition.log_basis = min_basis;
-    let mut schedule = akita_planner::find_schedule(
-        *key,
+    let mut schedule = akita_planner::find_group_batch_schedule(
+        &AkitaScheduleLookupKey::single(*key),
         &policy,
         Cfg::ring_challenge_config,
         Cfg::fold_challenge_shape_at_level,
     )?;
     let params = root_commit_params_mut(&mut schedule, "conservative commit schedule")?;
-    widen_conservative_commit_params::<Cfg>(params)?;
+    widen_conservative_commit_params::<Cfg>(params, policy.sis_security_policy)?;
     Ok(schedule)
 }
 
 fn widen_conservative_commit_params<Cfg: CommitmentConfig>(
     params: &mut LevelParams,
+    sis_security_policy: SisSecurityPolicyId,
 ) -> Result<(), AkitaError> {
     let (min_basis, max_basis) = Cfg::basis_range();
     if params.log_basis != min_basis {
@@ -145,8 +149,9 @@ fn widen_conservative_commit_params<Cfg: CommitmentConfig>(
     }
 
     let conservative_norm = rounded_up_collision_inf_norm(
-        DEFAULT_SIS_SECURITY_BITS,
-        Cfg::sis_modulus_family(),
+        sis_security_policy,
+        Cfg::sis_modulus_profile(),
+        akita_types::SisMatrixRole::B,
         Cfg::D,
         max_basis,
     )
@@ -157,8 +162,10 @@ fn widen_conservative_commit_params<Cfg: CommitmentConfig>(
     })?;
     let conservative_n_b = min_secure_rank(
         SisTableKey {
-            min_security_bits: DEFAULT_SIS_SECURITY_BITS,
-            family: Cfg::sis_modulus_family(),
+            policy: sis_security_policy,
+            table_digest: akita_types::sis::SisTableDigest::CURRENT,
+            modulus_profile: Cfg::sis_modulus_profile(),
+            role: akita_types::SisMatrixRole::B,
             ring_dimension: Cfg::D as u32,
             coeff_linf_bound: conservative_norm,
         },
@@ -170,8 +177,10 @@ fn widen_conservative_commit_params<Cfg: CommitmentConfig>(
         )
     })?;
     params.b_key = AjtaiKeyParams::try_new(
-        DEFAULT_SIS_SECURITY_BITS,
-        Cfg::sis_modulus_family(),
+        sis_security_policy,
+        akita_types::sis::SisTableDigest::CURRENT,
+        Cfg::sis_modulus_profile(),
+        akita_types::SisMatrixRole::B,
         conservative_n_b,
         params.b_key.col_len(),
         conservative_norm,

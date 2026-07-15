@@ -13,7 +13,7 @@
 //! let norm_s = norm_bound::rounded_up_role_a_inf_norm(
 //!     bits, family, d, decomp, &stage1, shape, is_root, k, nu, fold_bits, num_claims, width_s as u64)?;
 //! let n_a = ajtai_key::min_secure_rank(
-//!     SisTableKey { min_security_bits: bits, family, ring_dimension: d as u32, coeff_linf_bound: norm_s },
+//!     SisTableKey { policy, family, ring_dimension: d as u32, coeff_linf_bound: norm_s },
 //!     width_s as u64)?;
 //! let a_key   = AjtaiKeyParams::try_new(bits, family, n_a, width_s, norm_s, d)?;
 //! ```
@@ -31,13 +31,15 @@ pub mod norm_bound;
 
 pub use ajtai_key::{
     ceil_coeff_linf_bucket, ceil_supported_linf_bound, min_secure_rank,
-    sis_table_key_for_linf_bound, AjtaiKeyParams, SisModulusFamily, SisTableKey,
-    COEFF_LINF_BUCKETS, DEFAULT_SIS_SECURITY_BITS, SUPPORTED_SIS_SECURITY_BITS,
+    sis_table_key_for_linf_bound, AjtaiKeyParams, ScalarCutoff, SisMatrixRole, SisModulusProfileId,
+    SisRoleCell, SisSecurityPolicyId, SisTableDigest, SisTableKey, A_ROLE_RING_DIMS,
+    BD_ROLE_RING_DIMS, COEFF_LINF_BUCKETS, DEFAULT_SIS_SECURITY_POLICY, GADGET_COEFF_LINF_ANCHORS,
+    SIS_MATRIX_ROLES, SUPPORTED_SIS_SECURITY_POLICIES,
 };
 pub use decomposition_digits::{
     balanced_digit_abs_max, compute_num_digits_full_field, decomposed_s_block_ring_count,
     decomposed_t_ring_count, decomposed_w_ring_count, fold_witness_representable_linf_bounds,
-    num_digits_for_bound, num_digits_open, num_digits_s_commit,
+    num_digits_for_bound, num_digits_open, num_digits_s_commit, num_digits_setup_prefix_commit,
 };
 pub use fold_witness_grind::{
     FoldWitnessGrindBatchContract, FoldWitnessGrindContract, FOLD_GRIND_PROBE_ORDER_ABSORB,

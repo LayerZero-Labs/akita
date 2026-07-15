@@ -330,6 +330,8 @@ fn verify_stage2<F, E, T>(
     relation_claim: E,
     lp: &LevelParams,
     num_segments: usize,
+    opening_batch: &OpeningClaimsLayout,
+    setup_claim: Option<E>,
     destination_source_len: usize,
     destination_ring_dim: usize,
     trace: Option<TraceWireAtRoleA<'_, F, E>>,
@@ -340,15 +342,25 @@ where
     T: Transcript<F>,
 {
     let witness_oracle = match stage2 {
-        AkitaStage2Proof::Terminal(proof) => {
-            stage2_cleartext_oracle::<F, E>(&proof.final_witness, physical_w_len, lp, num_segments)?
-        }
+        AkitaStage2Proof::Terminal(proof) => stage2_cleartext_oracle::<F, E>(
+            &proof.final_witness,
+            physical_w_len,
+            lp,
+            num_segments,
+            opening_batch,
+        )?,
         AkitaStage2Proof::Intermediate(proof) => Stage2WitnessOracle::ClaimedEval {
             eval: proof.next_w_eval(),
         },
     };
     let d_a = lp.role_dims().d_a();
     dispatch_for_field!(ProtocolDispatchSlot::Role(RingRole::Inner), F, d_a, |D| {
+        let trace_claim = trace
+            .map(|wire| {
+                wire.into_claim::<D>(destination_source_len, destination_ring_dim, physical_w_len)
+            })
+            .transpose()
+            .map_err(|_| AkitaError::InvalidProof)?;
         verify_stage2_kernel::<F, E, T, D>(
             transcript,
             setup,
@@ -358,15 +370,8 @@ where
             rs,
             relation_claim,
             witness_oracle,
-            trace
-                .map(|wire| {
-                    wire.into_claim::<D>(
-                        destination_source_len,
-                        destination_ring_dim,
-                        physical_w_len,
-                    )
-                })
-                .transpose()?,
+            setup_claim,
+            trace_claim,
         )
     })
 }
@@ -629,6 +634,7 @@ fn verify_stage2_kernel<F, E, T, const D: usize>(
     rs: &RingSwitchVerifyOutput<E>,
     relation_claim: E,
     witness_oracle: Stage2WitnessOracle<'_, F, E>,
+    setup_claim: Option<E>,
     trace: Option<TraceClaim<F, E, D>>,
 ) -> Result<Vec<E>, AkitaError>
 where
@@ -645,6 +651,7 @@ where
         &setup.expanded,
         relation_instance,
         rs.alpha,
+        setup_claim,
         relation_claim,
         rs.col_bits,
         rs.ring_bits,
@@ -670,7 +677,7 @@ fn verify_stage3<F, E, T>(
     sumcheck_challenges: &[E],
     stage2_next_w_eval: E,
     stage3: Option<(&SetupSumcheckProof<E>, &LevelParams)>,
-) -> Result<Option<Vec<E>>, AkitaError>
+) -> Result<Option<FoldVerifyOutput<E>>, AkitaError>
 where
     F: FieldCore + CanonicalField,
     E: FpExtEncoding<F> + ExtField<F> + FromPrimitiveInt + AkitaSerialize + MulBaseUnreduced<F>,
@@ -701,7 +708,7 @@ where
             &rs.tau1,
             rs.alpha,
         )?;
-        let rho_w = verifier.verify_batched_stage3::<F, T>(
+        let (rho_w, rho_setup) = verifier.verify_batched_stage3::<F, T>(
             setup,
             next_fold_level_params,
             proof,
@@ -712,7 +719,11 @@ where
             transcript,
         )?;
         transcript.absorb_and_record_serde(ABSORB_STAGE3_NEXT_W_EVAL, &proof.next_w_eval);
-        return Ok(Some(rho_w));
+        let setup_prefix_opening = next_fold_level_params
+            .setup_prefix
+            .as_ref()
+            .map(|_| (rho_setup, proof.setup_prefix_eval));
+        return Ok(Some((rho_w, setup_prefix_opening)));
     }
     Ok(None)
 }
@@ -723,7 +734,7 @@ pub(in crate::protocol::core) fn verify_fold<F, E, T>(
     setup: &AkitaVerifierSetup<F>,
     transcript: &mut T,
     prepared: PreparedFoldReplay<'_, F, E>,
-) -> Result<Vec<E>, AkitaError>
+) -> Result<FoldVerifyOutput<E>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling + HalvingField + FromPrimitiveInt,
     E: FpExtEncoding<F> + ExtField<F> + FromPrimitiveInt + AkitaSerialize + MulBaseUnreduced<F>,
@@ -869,7 +880,7 @@ where
     let trace_ring_bits = d_a.trailing_zeros() as usize;
     let trace_wire = if prepared.trace_prepared_points.is_none() {
         None
-    } else if prepared.trace_block_opening.is_none() {
+    } else if prepared.trace_block_opening.is_none() && !prepared.lp.has_precommitted_groups() {
         let layout = trace_weight_layout_from_segment(
             prepared.lp,
             &trace_witness_layout,
@@ -899,7 +910,7 @@ where
         // of one opening-digit segment. Use its first relation group rather
         // than the aggregate batch width: groups may have unequal claim counts.
         let group_id = trace_witness_layout.first_group_index()?;
-        let group_lp = prepared.lp.root_group_params(opening_batch, group_id)?;
+        let group_lp = prepared.lp.group_params(opening_batch, group_id)?;
         let num_trace_blocks = opening_batch
             .group_layout(group_id)?
             .num_polynomials()
@@ -969,6 +980,7 @@ where
             opening_batch: relation_instance.opening_batch().clone(),
         })
     };
+    let setup_claim = prepared.stage3.as_ref().map(|(proof, _)| proof.claim);
     let sumcheck_challenges = verify_stage2::<F, E, T>(
         transcript,
         setup,
@@ -980,6 +992,8 @@ where
         relation_claim,
         prepared.lp,
         num_groups,
+        relation_instance.opening_batch(),
+        setup_claim,
         prepared.next_opening_source_len,
         prepared.next_witness_ring_dim.unwrap_or(role_dims.d_a()),
         trace_wire,
@@ -989,7 +1003,7 @@ where
     } else {
         E::zero()
     };
-    let stage3_challenges = verify_stage3::<F, E, T>(
+    let stage3_output = verify_stage3::<F, E, T>(
         setup,
         transcript,
         &rs,
@@ -997,5 +1011,5 @@ where
         stage2_next_w_eval,
         prepared.stage3,
     )?;
-    Ok(stage3_challenges.unwrap_or(sumcheck_challenges))
+    Ok(stage3_output.unwrap_or((sumcheck_challenges, None)))
 }

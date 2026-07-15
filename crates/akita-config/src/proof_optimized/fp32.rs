@@ -35,7 +35,7 @@ impl_proof_optimized_preset!(
     D64Full,
     Field,
     ExtensionField,
-    akita_types::SisModulusFamily::Q32,
+    akita_types::SisModulusProfileId::Q32Offset99,
     64,
     32,
     32
@@ -44,7 +44,7 @@ impl_proof_optimized_preset!(
     D64OneHot,
     Field,
     ExtensionField,
-    akita_types::SisModulusFamily::Q32,
+    akita_types::SisModulusProfileId::Q32Offset99,
     64,
     32,
     1
@@ -53,7 +53,7 @@ impl_proof_optimized_preset!(
     D128Full,
     Field,
     ExtensionField,
-    akita_types::SisModulusFamily::Q32,
+    akita_types::SisModulusProfileId::Q32Offset99,
     128,
     32,
     32
@@ -62,7 +62,7 @@ impl_proof_optimized_preset!(
     D128OneHot,
     Field,
     ExtensionField,
-    akita_types::SisModulusFamily::Q32,
+    akita_types::SisModulusProfileId::Q32Offset99,
     128,
     32,
     1,
@@ -76,7 +76,7 @@ impl_proof_optimized_preset!(
     D256Full,
     Field,
     ExtensionField,
-    akita_types::SisModulusFamily::Q32,
+    akita_types::SisModulusProfileId::Q32Offset99,
     256,
     32,
     32
@@ -85,7 +85,7 @@ impl_proof_optimized_preset!(
     D256OneHot,
     Field,
     ExtensionField,
-    akita_types::SisModulusFamily::Q32,
+    akita_types::SisModulusProfileId::Q32Offset99,
     256,
     32,
     1,

@@ -186,6 +186,9 @@ where
             .claim
             .serialize_with_mode(&mut writer, compress)?;
         stage3_sumcheck
+            .setup_prefix_eval
+            .serialize_with_mode(&mut writer, compress)?;
+        stage3_sumcheck
             .next_w_eval
             .serialize_with_mode(&mut writer, compress)?;
         stage3_sumcheck
@@ -204,6 +207,7 @@ where
 {
     stage3_sumcheck.map_or(0, |stage3_sumcheck| {
         stage3_sumcheck.claim.serialized_size(compress)
+            + stage3_sumcheck.setup_prefix_eval.serialized_size(compress)
             + stage3_sumcheck.next_w_eval.serialized_size(compress)
             + stage3_sumcheck.sumcheck.serialized_size(compress)
     })
@@ -224,11 +228,13 @@ where
     };
     shape.check()?;
     let claim = E::deserialize_with_mode(&mut reader, compress, validate, &())?;
+    let setup_prefix_eval = E::deserialize_with_mode(&mut reader, compress, validate, &())?;
     let next_w_eval = E::deserialize_with_mode(&mut reader, compress, validate, &())?;
     let sumcheck =
         SumcheckProof::deserialize_with_mode(&mut reader, compress, validate, &shape.sumcheck)?;
     Ok(Some(SetupSumcheckProof {
         claim,
+        setup_prefix_eval,
         next_w_eval,
         sumcheck,
     }))

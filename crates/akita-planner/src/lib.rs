@@ -1,7 +1,7 @@
 //! Offline schedule planner for the Akita polynomial commitment scheme.
 //!
-//! This crate is a **pure, `Cfg`-free DP library**. The single entry point
-//! is [`find_schedule`], which runs an exhaustive dynamic program to
+//! This crate is a **pure, `Cfg`-free DP library**. The DP entry point
+//! is [`find_group_batch_schedule`], which runs an exhaustive dynamic program to
 //! minimize proof size for a schedule lookup key. Every per-preset input is
 //! carried by the plain-value [`PlannerPolicy`] plus a `ring_challenge_config` /
 //! `fold_challenge_shape_at_level` closure pair, so the planner names no `CommitmentConfig`
@@ -13,7 +13,8 @@
 //! live in `akita-config`, the only crate that can name the presets.
 
 pub use akita_types::{
-    ChunkedWitnessCfg, DecompositionParams, SisModulusFamily, DEFAULT_SIS_SECURITY_BITS,
+    ChunkedWitnessCfg, DecompositionParams, SisModulusProfileId, SisSecurityPolicyId,
+    DEFAULT_SIS_SECURITY_POLICY,
 };
 
 pub mod catalog_identity;
@@ -37,7 +38,7 @@ pub use group_batch::find_group_batch_schedule;
 pub use resolve::{
     estimate_proof_bytes, resolve_group_batch_schedule, resolve_schedule, schedule_from_entry,
 };
-pub use schedule_params::find_schedule;
+pub use schedule_params::{find_schedule, suffix_opening_layout};
 
 /// Plain-value brute-force inputs the planner DP needs.
 ///
@@ -50,10 +51,12 @@ pub struct PlannerPolicy {
     pub ring_dimension: usize,
     /// Gadget base + coefficient bounds (`Cfg::decomposition()`).
     pub decomposition: DecompositionParams,
-    /// SIS modulus family (`Cfg::sis_modulus_family()`).
-    pub sis_family: SisModulusFamily,
-    /// Minimum SIS security floor in bits for generated SIS-width tables.
-    pub min_sis_security_bits: u16,
+    /// Exact SIS modulus profile (`Cfg::sis_modulus_profile()`).
+    pub sis_modulus_profile: SisModulusProfileId,
+    /// SIS security policy for generated SIS-width tables.
+    pub sis_security_policy: SisSecurityPolicyId,
+    /// Digest of the generated scalar SIS table and coverage certificate.
+    pub sis_table_digest: akita_types::SisTableDigest,
     /// `psi`-embedding infinity-norm expansion
     /// (`Cfg::ring_subfield_embedding_norm_bound()`).
     pub ring_subfield_norm_bound: u32,
@@ -77,6 +80,11 @@ pub struct PlannerPolicy {
     /// a single-chunk table. `ChunkedWitnessCfg::default()` (single chunk) leaves
     /// every schedule byte-identical to the historical layout.
     pub witness_chunk: ChunkedWitnessCfg,
+    /// Whether the DP is allowed to plan recursive setup offloading edges.
+    ///
+    /// Ordinary configs keep this false and emit direct-only schedules. The
+    /// recursion config adapter sets it true and gets a separate catalog identity.
+    pub recursive_setup_planning: bool,
 }
 
 impl PlannerPolicy {

@@ -12,10 +12,10 @@ use akita_planner::PlannerPolicy;
 use akita_types::sis::{
     decomposed_s_block_ring_count, decomposed_t_ring_count, decomposed_w_ring_count,
     min_secure_rank, num_digits_open, num_digits_s_commit, rounded_up_collision_inf_norm,
-    rounded_up_role_a_inf_norm, SisTableKey,
+    rounded_up_role_a_inf_norm, SisMatrixRole, SisTableDigest, SisTableKey,
 };
 use akita_types::{
-    direct_witness_bytes, level_proof_bytes, segment_typed_witness_shape,
+    direct_witness_bytes, level_proof_bytes, segment_typed_witness_shape_from_groups,
     w_ring_element_count_with_counts_for_layout_bits, AjtaiKeyParams, AkitaScheduleInputs,
     AkitaScheduleLookupKey, CommitmentRingDims, DecompositionParams, DirectStep, FoldStep,
     LevelParams, PolynomialGroupLayout, RelationMatrixRowLayout, Schedule, Step,
@@ -87,8 +87,8 @@ fn expand_envelope_witness_at_ring_d(
     }
     let is_root = fold_level == 0;
     let log_basis = step.log_basis;
-    let sis_family = policy.sis_family;
-    let min_security_bits = policy.min_sis_security_bits;
+    let sis_modulus_profile = policy.sis_modulus_profile;
+    let sis_policy = policy.sis_security_policy;
     let position_bits = block_m_vars.unwrap_or(step.position_bits as usize);
     let fold_bits = block_r_vars
         .unwrap_or(step.fold_bits as usize)
@@ -111,7 +111,7 @@ fn expand_envelope_witness_at_ring_d(
     let no_layout = |role: &str| {
         AkitaError::InvalidSetup(format!(
             "no audited {role}-role layout for mixed-D schedule \
-             (family={sis_family:?}, d={target_ring_d}, log_basis={log_basis})"
+             (family={sis_modulus_profile:?}, d={target_ring_d}, log_basis={log_basis})"
         ))
     };
     let decomp = DecompositionParams {
@@ -124,8 +124,8 @@ fn expand_envelope_witness_at_ring_d(
     let inner_width = decomposed_s_block_ring_count(fold_position_count, num_digits_commit)
         .ok_or_else(|| no_layout("A"))?;
     let a_bucket = rounded_up_role_a_inf_norm(
-        min_security_bits,
-        sis_family,
+        sis_policy,
+        sis_modulus_profile,
         target_ring_d,
         decomp,
         &ring_challenge_cfg,
@@ -140,29 +140,43 @@ fn expand_envelope_witness_at_ring_d(
     .ok_or_else(|| no_layout("A"))?;
     let n_a = min_secure_rank(
         SisTableKey {
-            min_security_bits,
-            family: sis_family,
+            policy: sis_policy,
+            table_digest: SisTableDigest::CURRENT,
+            modulus_profile: sis_modulus_profile,
+            role: SisMatrixRole::A,
             ring_dimension: target_ring_d as u32,
             coeff_linf_bound: a_bucket,
         },
         inner_width as u64,
     )
     .ok_or_else(|| no_layout("A"))?;
-    let b_bucket =
-        rounded_up_collision_inf_norm(min_security_bits, sis_family, target_ring_d, log_basis)
-            .ok_or_else(|| no_layout("B"))?;
+    let b_bucket = rounded_up_collision_inf_norm(
+        sis_policy,
+        sis_modulus_profile,
+        SisMatrixRole::B,
+        target_ring_d,
+        log_basis,
+    )
+    .ok_or_else(|| no_layout("B"))?;
     let outer_width =
         decomposed_t_ring_count(n_a, num_digits_open_val, live_fold_count, num_claims)
             .ok_or_else(|| no_layout("B"))?;
-    let d_bucket =
-        rounded_up_collision_inf_norm(min_security_bits, sis_family, target_ring_d, log_basis)
-            .ok_or_else(|| no_layout("D"))?;
+    let d_bucket = rounded_up_collision_inf_norm(
+        sis_policy,
+        sis_modulus_profile,
+        SisMatrixRole::D,
+        target_ring_d,
+        log_basis,
+    )
+    .ok_or_else(|| no_layout("D"))?;
     let d_matrix_width = decomposed_w_ring_count(num_digits_open_val, live_fold_count, num_claims)
         .ok_or_else(|| no_layout("D"))?;
     let n_b = min_secure_rank(
         SisTableKey {
-            min_security_bits,
-            family: sis_family,
+            policy: sis_policy,
+            table_digest: SisTableDigest::CURRENT,
+            modulus_profile: sis_modulus_profile,
+            role: SisMatrixRole::B,
             ring_dimension: target_ring_d as u32,
             coeff_linf_bound: b_bucket,
         },
@@ -171,8 +185,10 @@ fn expand_envelope_witness_at_ring_d(
     .ok_or_else(|| no_layout("B"))?;
     let n_d = min_secure_rank(
         SisTableKey {
-            min_security_bits,
-            family: sis_family,
+            policy: sis_policy,
+            table_digest: SisTableDigest::CURRENT,
+            modulus_profile: sis_modulus_profile,
+            role: SisMatrixRole::D,
             ring_dimension: target_ring_d as u32,
             coeff_linf_bound: d_bucket,
         },
@@ -188,24 +204,30 @@ fn expand_envelope_witness_at_ring_d(
         ring_dimension: target_ring_d,
         log_basis,
         a_key: AjtaiKeyParams::try_new(
-            min_security_bits,
-            sis_family,
+            sis_policy,
+            SisTableDigest::CURRENT,
+            sis_modulus_profile,
+            SisMatrixRole::A,
             n_a,
             inner_width,
             a_bucket,
             target_ring_d,
         )?,
         b_key: AjtaiKeyParams::try_new(
-            min_security_bits,
-            sis_family,
+            sis_policy,
+            SisTableDigest::CURRENT,
+            sis_modulus_profile,
+            SisMatrixRole::B,
             n_b,
             outer_width,
             b_bucket,
             target_ring_d,
         )?,
         d_key: AjtaiKeyParams::try_new(
-            min_security_bits,
-            sis_family,
+            sis_policy,
+            SisTableDigest::CURRENT,
+            sis_modulus_profile,
+            SisMatrixRole::D,
             n_d,
             d_matrix_width,
             d_bucket,
@@ -226,8 +248,10 @@ fn expand_envelope_witness_at_ring_d(
         cached_num_digits_fold_claims: 0,
         cached_num_digits_fold_value: 1,
         precommitted_groups: Vec::new(),
+        setup_prefix: None,
         witness_chunk: akita_types::witness::ChunkedWitnessCfg::default_non_chunked(),
         role_dims: CommitmentRingDims::uniform(target_ring_d),
+        setup_contribution_mode: akita_types::SetupContributionMode::Direct,
     };
     params.stamp_role_dims_from_keys();
     params.with_fold_linf_cap_config(policy.decomposition.field_bits(), num_claims)
@@ -502,12 +526,15 @@ where
         } else {
             1
         };
-        let witness_shape = segment_typed_witness_shape(
+        let witness_shape = segment_typed_witness_shape_from_groups(
             terminal_lp,
             field_bits,
-            terminal_num_polynomials,
-            terminal_num_polynomials,
-            1,
+            [(
+                terminal_lp as &dyn akita_types::LevelParamsLike,
+                terminal_num_polynomials,
+                terminal_num_polynomials,
+                1,
+            )],
             1,
         )?;
         let direct_bytes = direct_witness_bytes(field_bits, &witness_shape);

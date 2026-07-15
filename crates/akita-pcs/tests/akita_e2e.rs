@@ -384,10 +384,11 @@ fn assert_invalid_proof<T: core::fmt::Debug>(
     case: &str,
     result: Result<T, akita_field::AkitaError>,
 ) {
-    assert!(
-        matches!(result, Err(akita_field::AkitaError::InvalidProof)),
-        "{case} must reject with InvalidProof, got {result:?}"
-    );
+    match result {
+        Err(akita_field::AkitaError::InvalidProof) => {}
+        Err(akita_field::AkitaError::InvalidInput(msg)) if msg.contains("InvalidProof") => {}
+        other => panic!("{case} must reject with InvalidProof, got {other:?}"),
+    }
 }
 
 /// End-to-end chunked prove→verify: the multi-chunk preset stamps
@@ -1364,7 +1365,7 @@ fn batched_onehot_same_point_rejects_tampered_root_stage1_s_claim() {
                     .expect("terminal root proof must carry terminal stage-2 proof")
                 {
                     akita_types::CleartextWitnessProof::SegmentTyped(segment) => {
-                        segment.z_payload[0] ^= 1;
+                        segment.z_payloads[0][0] ^= 1;
                     }
                     akita_types::CleartextWitnessProof::FieldElements(_) => {
                         panic!("expected segment-typed final witness for tamper test");

@@ -46,8 +46,8 @@ pub(crate) fn emit_proof_tail_report<FF, E>(
     if let Some(segment) = final_w.as_segment_typed() {
         let field_sz = field_bytes(FF::modulus_bits());
         let ring_dim = segment.layout.ring_dimension;
-        let z_golomb_bytes = segment.z_payload.len();
-        let z_field_elems = segment.layout.z_coords;
+        let z_golomb_bytes = segment.z_payloads.iter().map(Vec::len).sum::<usize>();
+        let z_field_elems = segment.layout.z_coords();
         let z_ring_elems = z_field_elems / ring_dim.max(1);
         let z_wire_bytes = TAIL_Z_LENGTH_PREFIX_BYTES.saturating_add(z_golomb_bytes);
         let e_field_elems = segment.e_fields.coeff_len();
@@ -62,7 +62,9 @@ pub(crate) fn emit_proof_tail_report<FF, E>(
         let z_budget_bytes = schedule_terminal_direct_witness_shape(schedule)
             .ok()
             .and_then(|shape| match shape {
-                CleartextWitnessShape::SegmentTyped(scheduled) => Some(scheduled.z_payload_bytes),
+                CleartextWitnessShape::SegmentTyped(scheduled) => {
+                    Some(scheduled.layout.z_payload_bytes())
+                }
                 _ => None,
             })
             .unwrap_or(0);
@@ -197,7 +199,7 @@ fn segment_typed_z_fold_stats<FF: FieldCore>(
     let terminal_scheduled = schedule.get_execution_schedule(terminal_fold_level)?;
     let lp = &terminal_scheduled.params;
     let Ok((_num_w_vectors, num_t_vectors, _num_z_segments)) =
-        tail_segment_multiplicities_from_layout(lp, &witness.layout)
+        tail_segment_multiplicities_from_layout(lp, &witness.layout, 0)
     else {
         return Err(akita_field::AkitaError::InvalidSetup(
             "tail segment multiplicities".to_string(),
@@ -219,7 +221,7 @@ fn emit_z_golomb_k_sweep<FF: FieldCore>(
     };
     let lp = &terminal_scheduled.params;
     let Ok((_num_w_vectors, num_t_vectors, _num_z_segments)) =
-        tail_segment_multiplicities_from_layout(lp, &witness.layout)
+        tail_segment_multiplicities_from_layout(lp, &witness.layout, 0)
     else {
         return;
     };
@@ -403,6 +405,7 @@ fn stage3_sumcheck_size<E: FieldCore + AkitaSerialize>(
 ) -> usize {
     proof.map_or(0, |proof| {
         proof.claim.serialized_size(Compress::No)
+            + proof.setup_prefix_eval.serialized_size(Compress::No)
             + proof.next_w_eval.serialized_size(Compress::No)
             + proof.sumcheck.serialized_size(Compress::No)
     })

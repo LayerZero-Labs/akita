@@ -187,7 +187,7 @@ where
     let opening_batch = instance.opening_batch();
     lp.witness_chunk.validate()?;
     lp.reject_multi_group_multi_chunk("compute_relation_weight_evals")?;
-    lp.validate_root_opening_batch(opening_batch)?;
+    lp.validate_opening_batch(opening_batch)?;
     if gamma.len() != opening_batch.num_total_polynomials() {
         return Err(AkitaError::InvalidProof);
     }
@@ -244,7 +244,7 @@ where
     let mut e_setup_offsets = vec![0usize; opening_batch.num_groups()];
     for group_index in opening_batch.root_group_order()? {
         e_setup_offsets[group_index] = e_total / d_ratio;
-        let group_lp = lp.root_group_params(opening_batch, group_index)?;
+        let group_lp = lp.group_params(opening_batch, group_index)?;
         let num_claims = opening_batch.group_layout(group_index)?.num_polynomials();
         let width = num_claims
             .checked_mul(group_lp.live_fold_count())
@@ -307,7 +307,7 @@ where
     let consistency_weight = eq_tau1.eval_at(0)?;
 
     for (group_index, &e_setup_offset) in e_setup_offsets.iter().enumerate() {
-        let group_lp = lp.root_group_params(opening_batch, group_index)?;
+        let group_lp = lp.group_params(opening_batch, group_index)?;
         let group_layout = opening_batch.group_layout(group_index)?;
         let group_id = group_index;
         let units = witness_layout.units_for_group(group_id)?;
@@ -369,10 +369,9 @@ where
         let b_rows: Vec<&[F]> = (0..n_b)
             .map(|r| b_view.row_flat(r))
             .collect::<Result<_, _>>()?;
-        let a_range =
-            lp.root_a_row_range(opening_batch, group_index, relation_matrix_row_layout)?;
+        let a_range = lp.a_row_range(opening_batch, group_index, relation_matrix_row_layout)?;
         let b_range =
-            lp.root_commitment_row_range(opening_batch, group_index, relation_matrix_row_layout)?;
+            lp.commitment_row_range(opening_batch, group_index, relation_matrix_row_layout)?;
         if a_range.end > eq_tau1.len() || b_range.end > eq_tau1.len() {
             return Err(AkitaError::InvalidProof);
         }
@@ -576,11 +575,7 @@ where
             Ok::<_, AkitaError>(
                 found
                     || lp
-                        .root_commitment_row_range(
-                            opening_batch,
-                            group,
-                            relation_matrix_row_layout,
-                        )?
+                        .commitment_row_range(opening_batch, group, relation_matrix_row_layout)?
                         .contains(&row),
             )
         })?;

@@ -27,17 +27,17 @@ use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
 use akita_types::derive_tensor_extension_opening_claim_from_partials;
 use akita_types::{
     append_claim_values_to_transcript, assemble_relation_rhs, build_trace_claim_multi_group_root,
-    build_trace_claim_root, build_trace_table_scaled, ensure_trace_stage2_supported,
-    prepare_opening_point, proof::relation::evaluation_trace_row_weight,
-    relation_claim_from_layout_extension, relation_rhs_layout_for, reorder_stage1_coords,
-    ring_subfield_packed_extension_opening_point, root_trace_block_opening,
-    sample_public_row_coefficients, scheduled_next_level_params,
+    build_trace_claim_root, build_trace_table_scaled, dispatch_for_field,
+    ensure_trace_stage2_supported, prepare_opening_point,
+    proof::relation::evaluation_trace_row_weight, relation_claim_from_layout_extension,
+    relation_rhs_layout_for, reorder_stage1_coords, ring_subfield_packed_extension_opening_point,
+    root_trace_block_opening, sample_public_row_coefficients, scheduled_next_level_params,
     tensor_equality_factor_eval_at_point, trace_public_weights_recursive,
     trace_public_weights_root_terms, trace_terms_recursive, trace_weight_layout_from_segment,
-    w_ring_element_count_with_counts_for_layout, AkitaBatchedRootProof, AkitaLevelProof,
-    AkitaStage1Proof, AkitaStage2Proof, AkitaVerifierSetup, BasisMode, CleartextWitnessProof,
-    ExecutionSchedule, ExtensionOpeningReductionProof, FoldLinfProtocolBinding, FpExtEncoding,
-    LevelParams, OpeningClaims, OpeningClaimsLayout, PreparedOpeningPoint, RelationMatrixRowLayout,
+    AkitaBatchedRootProof, AkitaLevelProof, AkitaStage1Proof, AkitaStage2Proof, AkitaVerifierSetup,
+    BasisMode, CleartextWitnessProof, ExecutionSchedule, ExtensionOpeningReductionProof,
+    FoldLinfProtocolBinding, FpExtEncoding, LevelParams, OpeningClaims, OpeningClaimsLayout,
+    PointVariableSelection, PolynomialGroupClaims, PreparedOpeningPoint, RelationMatrixRowLayout,
     RelationOnlyStage2Inputs, RingMultiplierOpeningPoint, RingOpeningPoint, RingRelationInstance,
     RingVec, Schedule, SetupContributionMode, SetupSumcheckProof, TerminalWitnessSegmentLayout,
     TerminalWitnessTranscriptParts, TraceClaim,
@@ -53,6 +53,9 @@ mod suffix;
 use root_fold::verify_root;
 
 pub use verify::batched_verify;
+
+pub(in crate::protocol::core) type SetupPrefixOpening<E> = (Vec<E>, E);
+pub(in crate::protocol::core) type FoldVerifyOutput<E> = (Vec<E>, Option<SetupPrefixOpening<E>>);
 
 pub(in crate::protocol::core) use fold::{
     verify_fold, verify_fold_eor, FoldEorReplay, PreparedFoldReplay,

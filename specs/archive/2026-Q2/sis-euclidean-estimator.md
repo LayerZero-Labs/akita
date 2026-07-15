@@ -7,7 +7,7 @@
 | Revised     | 2026-07-01 (superseded by coefficient-`L∞` production SIS tables in #255) |
 | Status      | superseded |
 | PR          | [#155](https://github.com/LayerZero-Labs/akita/pull/155) (branch `quang/s3-s5-sis-estimator-spec`) |
-| Superseded-by | [`specs/sis-linf-table-cutover.md`](../../sis-linf-table-cutover.md) |
+| Superseded-by | [`specs/sis-quantum128-scalar-n-table.md`](../../sis-quantum128-scalar-n-table.md) |
 
 ## Summary
 
@@ -99,7 +99,7 @@ The estimator remains an **offline build tool**, not a runtime prover/verifier d
   | ring dimension `d` | folded into `n`, `m` |
   | width `w` (ring elements) | `m = w · d` |
   | per-row `collision_l2_sq` | `length_bound = sqrt(w · collision_l2_sq)` |
-  | `SisModulusFamily` | representative `q` (Q32/Q64/Q128) |
+  | `SisModulusProfileId` | representative `q` (Q32/Q64/Q128) |
 
 - **Bucket ladder lockstep (S5b).** Power-of-two squared-collision buckets
   (`MIN_LOG_BUCKET = 1`, `MAX_LOG_BUCKET = 84`) and `COEFF_LINF_BUCKETS` live in

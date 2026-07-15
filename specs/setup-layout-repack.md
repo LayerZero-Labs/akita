@@ -912,6 +912,10 @@ recursive proof state from one carried opening to a root-style incidence batch
 of carried openings. The singleton recursive protocol should become the
 size-one incidence case.
 
+The concrete planner rollout, including per-level direct/recursive selection,
+prefix-size gating, and the setup-prefix-plus-witness suffix shape, is specified
+in [`setup-offloading-planner.md`](setup-offloading-planner.md).
+
 ### Product Sumcheck and Integration
 
 This lane wires the delegated setup claim. It should start as a post-Stage-2

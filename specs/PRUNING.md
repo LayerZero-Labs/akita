@@ -175,12 +175,14 @@ for a stacked follow-up.
 
 ### Keep as live specs
 
-`setup-layout-repack.md`,
+`setup-layout-repack.md`, `setup-offloading-planner.md`,
 `eor-streamed-prover.md`, `packed-sumcheck.md`,
 `planner-incidence-generalization.md`, `akita-field-refactor.md`,
 `akita-compute-backend-metal.md`, `crt-ntt-prime-profiles.md`,
 `transcript-immediate-fixes.md`, `eor-sumcheck-prover-acceleration.md`,
-`cross-repo-field-microbench.md`, plus `TEMPLATE.md`, `SPEC_REVIEW.md`, and this file.
+`cross-repo-field-microbench.md`,
+`sis-quantum128-scalar-n-table.md`, plus `TEMPLATE.md`,
+`SPEC_REVIEW.md`, and this file.
 
 ## Never commit / never fold
 

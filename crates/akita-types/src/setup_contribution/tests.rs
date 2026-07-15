@@ -1221,16 +1221,26 @@ fn from_level_params_accepts_exact_non_pow2_fold_count() {
     lp.fold_position_count = 8;
     lp.num_digits_commit = 2;
     lp.num_digits_open = 3;
-    lp.a_key = crate::AjtaiKeyParams {
-        row_len: 1,
-        col_len: 16,
-        ..Default::default()
-    };
-    lp.b_key = crate::AjtaiKeyParams {
-        row_len: 1,
-        col_len: 18,
-        ..Default::default()
-    };
+    lp.a_key = crate::AjtaiKeyParams::new_unchecked(
+        crate::sis::DEFAULT_SIS_SECURITY_POLICY,
+        crate::sis::SisTableDigest::CURRENT,
+        crate::sis::SisModulusProfileId::Q128OffsetA7F7,
+        crate::sis::SisMatrixRole::A,
+        1,
+        16,
+        1,
+        64,
+    );
+    lp.b_key = crate::AjtaiKeyParams::new_unchecked(
+        crate::sis::DEFAULT_SIS_SECURITY_POLICY,
+        crate::sis::SisTableDigest::CURRENT,
+        crate::sis::SisModulusProfileId::Q128OffsetA7F7,
+        crate::sis::SisMatrixRole::B,
+        1,
+        18,
+        1,
+        64,
+    );
     assert!(SetupContributionPlanInputs::<F>::from_level_params(
         &lp,
         &[2],

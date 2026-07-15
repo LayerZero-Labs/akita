@@ -185,6 +185,15 @@ pub fn num_digits_s_commit(decomposition: DecompositionParams, is_root: bool) ->
     num_digits_for_bound(bound, field_bits, decomposition.log_basis)
 }
 
+/// `δ_setup`: digits per coefficient for setup-prefix commitments.
+///
+/// Setup prefixes commit raw shared-setup field elements, not the already-small
+/// recursive witness digits. Their commit-side decomposition must therefore
+/// cover the full configured field width.
+pub fn num_digits_setup_prefix_commit(decomposition: DecompositionParams) -> usize {
+    compute_num_digits_full_field(decomposition.field_bits(), decomposition.log_basis)
+}
+
 /// `δ_open`: digits per coefficient of the opening witnesses `t̂` / `ŵ`,
 /// which are opened at the field level (`log_open_bound`).
 pub fn num_digits_open(decomposition: DecompositionParams) -> usize {

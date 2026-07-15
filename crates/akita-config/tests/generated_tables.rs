@@ -68,6 +68,10 @@ fn family_catalog_is_linked(family: &GeneratedFamily) -> bool {
         "fp128_d128_full" => fp128::D128Full::schedule_catalog().is_some(),
         "fp128_d128_onehot" => fp128::D128OneHot::schedule_catalog().is_some(),
         "fp128_d64_onehot" => fp128::D64OneHot::schedule_catalog().is_some(),
+        "fp128_d64_onehot_recursive" => {
+            <akita_config::RecursiveCommitmentConfig<fp128::D64OneHot> as CommitmentConfig>::schedule_catalog()
+                .is_some()
+        }
         "fp128_d64_full" => fp128::D64Full::schedule_catalog().is_some(),
         "fp128_d64_onehot_tensor" => {
             tensor_verifier::fp128::D64OneHotTensor::schedule_catalog().is_some()
@@ -138,6 +142,9 @@ fn family_catalog(
             prepare_family_catalog::<fp128::D128OneHot>(family.module_name, keys)
         }
         "fp128_d64_onehot" => prepare_family_catalog::<fp128::D64OneHot>(family.module_name, keys),
+        "fp128_d64_onehot_recursive" => prepare_family_catalog::<
+            akita_config::RecursiveCommitmentConfig<fp128::D64OneHot>,
+        >(family.module_name, keys),
         "fp128_d64_full" => prepare_family_catalog::<fp128::D64Full>(family.module_name, keys),
         "fp128_d64_onehot_tensor" => prepare_family_catalog::<
             tensor_verifier::fp128::D64OneHotTensor,
@@ -196,6 +203,9 @@ fn assert_family_group_batch_table_hit(family: &GeneratedFamily, keys: &[AkitaSc
         "fp128_d64_onehot" => {
             assert_group_batch_table_hits::<fp128::D64OneHot>(family.module_name, keys)
         }
+        "fp128_d64_onehot_recursive" => assert_group_batch_table_hits::<
+            akita_config::RecursiveCommitmentConfig<fp128::D64OneHot>,
+        >(family.module_name, keys),
         "fp128_d64_full" => {
             assert_group_batch_table_hits::<fp128::D64Full>(family.module_name, keys)
         }
@@ -262,6 +272,9 @@ fn resolve_family_group_batch_schedule(
         "fp128_d128_full" => table_backed_group_batch_schedule::<fp128::D128Full>(key),
         "fp128_d128_onehot" => table_backed_group_batch_schedule::<fp128::D128OneHot>(key),
         "fp128_d64_onehot" => table_backed_group_batch_schedule::<fp128::D64OneHot>(key),
+        "fp128_d64_onehot_recursive" => table_backed_group_batch_schedule::<
+            akita_config::RecursiveCommitmentConfig<fp128::D64OneHot>,
+        >(key),
         "fp128_d64_full" => table_backed_group_batch_schedule::<fp128::D64Full>(key),
         "fp128_d64_onehot_tensor" => {
             table_backed_group_batch_schedule::<tensor_verifier::fp128::D64OneHotTensor>(key)
@@ -692,11 +705,11 @@ fn regen_hint() -> &'static str {
      crates/akita-schedules/src/generated"
 }
 
-/// The shipped tables must expand to exactly what `find_schedule` produces.
+/// The shipped tables must expand to exactly what the key-shaped DP produces.
 /// Rolled into one test so the panic message can summarize per-family
 /// mismatch counts.
 #[test]
-fn generated_schedule_tables_match_find_schedule() {
+fn generated_schedule_tables_match_key_planner() {
     let mut mismatches = Vec::new();
     for family in ALL_GENERATED_FAMILIES {
         check_family(family, &mut mismatches);
@@ -721,7 +734,7 @@ fn generated_schedule_tables_match_find_schedule() {
         .map(Mismatch::render)
         .collect::<String>();
     panic!(
-        "{count} schedule-table issue(s) disagree with `find_schedule` output.\n\
+        "{count} schedule-table issue(s) disagree with key-shaped DP output.\n\
          Per-family counts:\n  {summary}\n\n\
          First issues:\n{preview}\n\
          Regenerate the shipped tables with:\n  {hint}",

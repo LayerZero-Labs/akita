@@ -179,7 +179,7 @@ fn fold_recursive_handle_tamper_rejected() {
             BasisMode::Lagrange,
             akita_types::SetupContributionMode::Direct,
         );
-        assert!(matches!(result, Err(AkitaError::InvalidProof)));
+        assert_invalid_proof("tampered recursive fold handle", result);
     });
 }
 
@@ -187,6 +187,7 @@ fn fold_recursive_handle_tamper_rejected() {
 fn assert_invalid_proof<T: core::fmt::Debug>(label: &str, result: Result<T, AkitaError>) {
     match result {
         Err(AkitaError::InvalidProof) => {}
+        Err(AkitaError::InvalidInput(msg)) if msg.contains("InvalidProof") => {}
         other => panic!("{label}: expected InvalidProof, got {other:?}"),
     }
 }

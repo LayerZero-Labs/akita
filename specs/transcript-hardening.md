@@ -239,7 +239,7 @@ pub struct SetupSection {
     pub decomposition: DecompositionParams,
 
     /// Which SIS modulus family the security argument is sized against.
-    pub sis_modulus_family: SisModulusFamily,
+    pub sis_modulus_profile: SisModulusProfileId,
 
     /// Blake2b of canonical bytes of the verifier setup seed
     /// (`max_num_vars`, `max_num_batched_polys`, `max_num_points`,
@@ -256,7 +256,7 @@ pub struct SetupSection {
     // by `PlanSection::effective_schedule_digest` (which digests each step's
     // `LevelParams`, including the root-direct commit layout), so a separate
     // setup-level digest was redundant. `setup_seed_digest` still pins the
-    // shared-matrix capacity, and `decomposition` / `sis_modulus_family` are
+    // shared-matrix capacity, and `decomposition` / `sis_modulus_profile` are
     // bound above.
     //
     // TODO (transcript-hardening-v2): if Akita ever adds a per-deployment

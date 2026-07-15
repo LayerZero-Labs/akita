@@ -249,7 +249,7 @@ larger ring degree.
    amended).
 6. Q32 four-i16 production dispatch. The four-prime i16 profile remains only as
    comparison evidence for the measured Q32/2xi32 production profile.
-7. Planner / SIS table / `SisModulusFamily::Q16` floor generation (already on
+7. Planner / SIS table / `SisModulusProfileId::Q16` floor generation (already on
    `main` via fp16 support; orthogonal to CRT dispatch).
 8. Rewriting #134 chunking or "fixing" merged `single_cyclic` driver args for
    the Bugbot false positive (tests and optional cosmetic clarity only).

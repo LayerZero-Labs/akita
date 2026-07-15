@@ -16,7 +16,7 @@ The output is an `akita_types::Schedule`: either a root-direct `Step::Direct`, o
 
 ## Inputs And Outputs
 
-The public search entry point is `find_schedule(key, &policy, ring_challenge_config, fold_challenge_shape_at_level)`.
+The public search entry point is `find_group_batch_schedule(&key, &policy, ring_challenge_config, fold_challenge_shape_at_level)`.
 
 `key: AkitaScheduleLookupKey` describes the supported root opening shape. Scalar
 same-point openings store one `PolynomialGroupLayout` in `final_group` and leave
@@ -35,8 +35,8 @@ multiplicity is always `1`; multi-group roots derive those counts from
 
 `policy: PlannerPolicy` is the `Cfg`-free projection of a preset:
 
-- Ring dimension and SIS modulus family.
-- Minimum SIS security floor in bits.
+- The exact SIS modulus profile and table digest.
+- The scalar SIS policy identifier.
 - Decomposition parameters, including the basis search range.
 - Claim and challenge extension degrees.
 - Ring-subfield norm bound.
@@ -46,12 +46,12 @@ The `ring_challenge_config` closure supplies the sparse challenge configuration 
 
 ## Resolution Flow
 
-Most runtime callers use `resolve_schedule`, not `find_schedule` directly. `resolve_schedule` is the planner's cache-then-generate entry point:
+Most runtime callers use `resolve_schedule` / `resolve_group_batch_schedule`, not the DP directly. Resolution is the planner's cache-then-generate entry point:
 
 1. The caller passes the preset's optional `GeneratedScheduleTable` catalog.
 2. If a catalog is supplied, `resolve_schedule` validates its embedded identity against the runtime policy and hook closures.
 3. If the validated table contains the lookup key, it expands the compact `GeneratedScheduleTableEntry` with `schedule_from_entry`.
-4. If there is no catalog or no matching entry, it calls `find_schedule` and regenerates the schedule from scratch.
+4. If there is no catalog or no matching entry, it calls `find_group_batch_schedule` and regenerates the schedule from scratch.
 
 Both paths are deterministic functions of the lookup key, `PlannerPolicy`, and the two closures. This is important because prover and verifier must resolve the same schedule before the Fiat-Shamir transcript is bound.
 
@@ -124,17 +124,20 @@ For each level candidate, the planner derives the SIS layout in the same order:
 3. Compute the coefficient-`L∞` bucket for each role.
 4. Compute the decomposed matrix width for each role.
 5. Ask the SIS floor table for the minimum secure rank.
-6. Build `AjtaiKeyParams` with the audited rank, width, coefficient-`L∞` bucket, SIS family, ring dimension, and security floor.
+6. Build `AjtaiKeyParams` with the audited rank, width, coefficient-`L∞` bucket, exact SIS profile, ring dimension, and security floor.
 
-Production SIS lookups use `SisTableKey`:
+Production SIS lookups use explicit role cells and the scalar `SisTableKey`:
 
 ```text
-(min_security_bits, sis_family, ring_dimension, coeff_linf_bound)
+(sis_security_policy, table_digest, sis_modulus_profile, role,
+ ring_dimension, coeff_linf_bound)
 ```
 
-Only the 138-bit floor is generated today. The floor is part of `PlannerPolicy`,
-catalog identity, generated table expansion, and descriptor bytes, so a schedule
-generated for one SIS floor cannot be silently reused under another floor.
+The shipped policy is `Quantum128BitADPS16`: a single ADPS16 quantum LGSA rule
+at a 128-bit target. The policy, table digest, exact profile, and role are part
+of planner inputs, catalog identity, generated table expansion, and descriptor
+bytes, so a schedule generated for one table cannot be silently reused under
+another table or role.
 
 The searched parameters are therefore small: mostly `log_basis` and the fold split. The matrix dimensions are consequences of those choices and of the fixed policy inputs.
 
@@ -159,7 +162,7 @@ The reusable generated-table emitter lives in this crate and accepts explicit `E
 To regenerate schedule tables:
 
 ```bash
-cargo run --release -p akita-config --bin gen_schedule_tables -- crates/akita-schedules/src/generated
+cargo run --release -p akita-config --no-default-features --bin gen_schedule_tables -- crates/akita-schedules/src/generated
 ```
 
 The family list is in `akita-config::generated_families::ALL_GENERATED_FAMILIES`. It is shared by the emitter and drift-guard tests so shipped entries and regeneration hooks stay aligned.

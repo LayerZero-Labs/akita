@@ -11,29 +11,25 @@ use akita_types::{
     WitnessLayout,
 };
 
-/// Prover-side ring artifacts retained for segment-typed terminal encoding.
-///
-/// Ring dimension is stored at runtime; hot paths inside `dispatch_ring_dim`
-/// closures borrow typed ring rows via [`Self::e_folded_trusted`],
-/// [`Self::recomposed_block_trusted`], [`Self::z_folded_centered_trusted`], and
-/// [`Self::r_trusted`].
-pub struct RingSwitchTerminalArtifacts<F: FieldCore> {
+/// Per-group prover-side ring artifacts retained for segment-typed terminal encoding.
+pub struct RingSwitchTerminalGroupArtifacts<F: FieldCore> {
+    pub group_index: usize,
     pub e_folded: RingVec<F>,
     pub recomposed_inner_rows: Vec<RingVec<F>>,
     z_folded_centered_flat: Vec<i32>,
-    pub r: RingVec<F>,
     ring_dim: usize,
 }
 
-impl<F: FieldCore> RingSwitchTerminalArtifacts<F> {
+impl<F: FieldCore> RingSwitchTerminalGroupArtifacts<F> {
     /// Construct from typed ring-switch output at a kernel boundary.
-    fn from_parts<const D: usize>(
+    pub(crate) fn from_parts<const D: usize>(
+        group_index: usize,
         e_folded: Vec<CyclotomicRing<F, D>>,
         recomposed_inner_rows: Vec<Vec<CyclotomicRing<F, D>>>,
         z_folded_centered: Vec<[i32; D]>,
-        r: RelationQuotientOutput<F>,
-    ) -> Result<Self, AkitaError> {
-        Ok(Self {
+    ) -> Self {
+        Self {
+            group_index,
             e_folded: RingVec::from_ring_elems(&e_folded),
             recomposed_inner_rows: recomposed_inner_rows
                 .into_iter()
@@ -43,9 +39,8 @@ impl<F: FieldCore> RingSwitchTerminalArtifacts<F> {
                 .iter()
                 .flat_map(|row| row.iter().copied())
                 .collect(),
-            r: r.into_padded_ring_vec::<D>()?,
             ring_dim: D,
-        })
+        }
     }
 
     /// Stored ring dimension (coefficients per ring element).
@@ -78,12 +73,6 @@ impl<F: FieldCore> RingSwitchTerminalArtifacts<F> {
             return Err(AkitaError::InvalidSize {
                 expected: D,
                 actual: self.e_folded.coeff_len(),
-            });
-        }
-        if !self.r.can_decode_vec(D) {
-            return Err(AkitaError::InvalidSize {
-                expected: D,
-                actual: self.r.coeff_len(),
             });
         }
         for block in &self.recomposed_inner_rows {
@@ -125,6 +114,56 @@ impl<F: FieldCore> RingSwitchTerminalArtifacts<F> {
         let (chunks, rem) = self.z_folded_centered_flat.as_chunks::<D>();
         debug_assert!(rem.is_empty());
         Ok(chunks)
+    }
+}
+
+/// Prover-side ring artifacts retained for segment-typed terminal encoding.
+///
+/// Ring dimension is stored at runtime. Scalar tails use one group; grouped
+/// roots retain every group in root witness order plus one shared quotient tail.
+pub struct RingSwitchTerminalArtifacts<F: FieldCore> {
+    pub groups: Vec<RingSwitchTerminalGroupArtifacts<F>>,
+    pub r: RingVec<F>,
+    ring_dim: usize,
+}
+
+impl<F: FieldCore> RingSwitchTerminalArtifacts<F> {
+    pub(crate) fn from_parts<const D: usize>(
+        groups: Vec<RingSwitchTerminalGroupArtifacts<F>>,
+        r: RelationQuotientOutput<F>,
+    ) -> Result<Self, AkitaError> {
+        Ok(Self {
+            groups,
+            r: r.into_padded_ring_vec::<D>()?,
+            ring_dim: D,
+        })
+    }
+
+    /// Stored ring dimension (coefficients per ring element).
+    pub fn ring_dim(&self) -> usize {
+        self.ring_dim
+    }
+
+    /// # Errors
+    ///
+    /// Returns an error if the requested ring dimension does not match storage.
+    pub fn ensure_ring_dim<const D: usize>(&self) -> Result<(), AkitaError> {
+        if self.ring_dim != D {
+            return Err(AkitaError::InvalidInput(format!(
+                "ring switch terminal artifacts ring_d={} does not match requested D={D}",
+                self.ring_dim
+            )));
+        }
+        if !self.r.can_decode_vec(D) {
+            return Err(AkitaError::InvalidSize {
+                expected: D,
+                actual: self.r.coeff_len(),
+            });
+        }
+        for group in &self.groups {
+            group.ensure_ring_dim::<D>()?;
+        }
+        Ok(())
     }
 
     /// Borrow relation quotient `r` rows after [`Self::ensure_ring_dim`].
@@ -376,12 +415,12 @@ where
                     "ring-switch witness count does not match opening batch".to_string(),
                 ));
             }
-            let final_group_index = lp.validate_root_opening_batch(opening_batch)?;
+            lp.validate_opening_batch(opening_batch)?;
             let order = opening_batch.root_group_order()?;
             let mut owned = Vec::with_capacity(groups.len());
             for (group_index, group) in groups.into_iter().enumerate() {
                 group.ensure_role_dim::<D>(RingRole::Inner)?;
-                let group_lp = lp.root_group_params(opening_batch, group_index)?;
+                let group_lp = lp.group_params(opening_batch, group_index)?;
                 let RingRelationGroupWitness {
                     z_folded_rings,
                     z_folded_centered_per_chunk,
@@ -419,9 +458,11 @@ where
                 ));
             }
             validate_chunked_witness_cfg(lp)?;
-            instance
-                .group_ring_multiplier_point(final_group_index)?
-                .ensure_ring_dim::<D>()?;
+            for group_index in 0..opening_batch.num_groups() {
+                instance
+                    .group_ring_multiplier_point(group_index)?
+                    .ensure_ring_dim::<D>()?;
+            }
             let witness_layout = instance.segment_layout(lp, None)?;
 
             // Shared relation quotient `r`: its consistency row (summed over all
@@ -472,7 +513,7 @@ where
             let levels = r_decomp_levels::<F>(lp.log_basis);
             emit_r_rows_padded::<F, D>(&mut out, &witness_layout, &r, levels, lp.log_basis)?;
             let expected =
-                lp.root_next_w_len::<F>(opening_batch, instance.relation_matrix_row_layout())?;
+                lp.next_w_len::<F>(opening_batch, instance.relation_matrix_row_layout())?;
             if out.len() != expected {
                 return Err(AkitaError::InvalidSize {
                     expected,
@@ -480,16 +521,19 @@ where
                 });
             }
 
-            // Terminal artifacts are produced only for the singleton suffix, whose
-            // sole group is the final group.
             let terminal_artifacts = if retain_terminal_artifacts {
-                let group = owned
-                    .get(final_group_index)
-                    .ok_or(AkitaError::InvalidProof)?;
+                let mut terminal_groups = Vec::with_capacity(order.len());
+                for &group_index in &order {
+                    let group = owned.get(group_index).ok_or(AkitaError::InvalidProof)?;
+                    terminal_groups.push(RingSwitchTerminalGroupArtifacts::from_parts::<D>(
+                        group_index,
+                        group.e_folded.clone(),
+                        group.recomposed_inner_rows.clone(),
+                        group.z_centered.clone(),
+                    ));
+                }
                 Some(RingSwitchTerminalArtifacts::from_parts::<D>(
-                    group.e_folded.clone(),
-                    group.recomposed_inner_rows.clone(),
-                    group.z_centered.clone(),
+                    terminal_groups,
                     r,
                 )?)
             } else {

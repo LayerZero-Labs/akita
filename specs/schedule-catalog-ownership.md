@@ -254,7 +254,7 @@ per key through `schedule_from_entry` (table hit) instead of re-running full
   global `crate::generated::*_table` import block and the `root_fold_is_tensor`
   disambiguation hack they required.
 - [ ] `akita_planner::resolve_schedule(key, policy, ring_challenge_config, fold_challenge_shape_at_level, catalog: Option<GeneratedScheduleTable>)` is the single runtime entry point (catalog passed **by value** because `GeneratedScheduleTable` is `Copy`).
-- [ ] `GeneratedScheduleTable` contains a validated identity, not only `sis_family`:
+- [ ] `GeneratedScheduleTable` contains a validated identity, not only `sis_modulus_profile`:
   generated policy fields, `zk_enabled`, root fold shape, ring dimensions covered by
   the table, and a deterministic digest of `ring_challenge_config(d)` for those
   dimensions.
@@ -506,7 +506,7 @@ that each return their own `schedule_catalog()`, so the discriminator is deleted
 pub struct GeneratedScheduleCatalogIdentity {
     pub family_name: &'static str,
     pub zk_enabled: bool,
-    pub sis_family: SisModulusFamily,
+    pub sis_modulus_profile: SisModulusProfileId,
     pub ring_dimension: usize,
     pub decomposition: DecompositionParams,
     pub ring_subfield_norm_bound: u32,

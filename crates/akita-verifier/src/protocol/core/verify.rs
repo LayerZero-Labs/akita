@@ -6,7 +6,8 @@ use crate::proof::direct::verify_zero_fold_openings_with_opening_batch;
 use crate::protocol::validate_log_basis;
 use akita_algebra::CyclotomicRing;
 use akita_config::{
-    bind_transcript_instance_descriptor, effective_batched_schedule, CommitmentConfig,
+    bind_transcript_instance_descriptor, effective_batched_schedule, ensure_schedule_fits_setup,
+    CommitmentConfig,
 };
 use akita_field::{
     AkitaError, CanonicalField, FieldCore, FrobeniusExtField, FromPrimitiveInt, HalvingField,
@@ -305,7 +306,7 @@ where
     E: FieldCore,
 {
     let opening_batch = claims.layout().map_err(|_| AkitaError::InvalidProof)?;
-    params.validate_root_opening_batch(&opening_batch)?;
+    params.validate_opening_batch(&opening_batch)?;
     let ring_dim = params.role_dims().d_b();
 
     if opening_batch.num_total_polynomials() != witnesses.len() {
@@ -321,7 +322,7 @@ where
         }
 
         let commitment = claims.group_commitment(group_index).copied()?;
-        let expected_rows = params.root_group_commitment_rows(&opening_batch, group_index)?;
+        let expected_rows = params.group_commitment_rows(&opening_batch, group_index)?;
         let commitment_view = RingView::new(commitment.rows().coeffs(), ring_dim)?;
         if commitment_view.num_rings() != expected_rows {
             return Err(AkitaError::InvalidProof);
@@ -434,8 +435,9 @@ where
     let schedule = effective_batched_schedule::<Cfg>(&opening_batch, claims.point())
         .map_err(|_| AkitaError::InvalidProof)?;
     validate_schedule_ring_dims(&schedule, setup.expanded.seed())?;
+    ensure_schedule_fits_setup::<Cfg>(setup.expanded.as_ref(), &schedule, &opening_batch)?;
     schedule
-        .reject_multi_group_multi_chunk("batched verify")
+        .validate_structure()
         .map_err(|_| AkitaError::InvalidProof)?;
     validate_schedule_onehot_chunk_size::<Cfg>(&schedule)?;
 
@@ -603,7 +605,8 @@ where
                 setup_contribution_mode,
                 None,
                 root_step.next_w_len,
-            )?;
+            )
+            .map(|_| ())?;
             Ok(())
         }
         AkitaBatchedRootProof::Fold(fold_root) => {
@@ -638,7 +641,7 @@ where
                 .stage2
                 .as_intermediate()
                 .ok_or(AkitaError::InvalidProof)?;
-            let root_challenges = verify_root::<F, E, T>(
+            let (root_challenges, setup_prefix_opening) = verify_root::<F, E, T>(
                 &proof.root,
                 setup,
                 transcript,
@@ -656,7 +659,7 @@ where
             }
             let root_next_opening = proof
                 .root
-                .fold_stage3_sumcheck_proof(setup_contribution_mode)?
+                .fold_stage3_sumcheck_proof(root_lp.setup_contribution_mode)?
                 .map_or_else(|| root_stage2.next_w_eval(), |proof| proof.next_w_eval);
 
             let current_state = SuffixVerifierState {
@@ -665,6 +668,7 @@ where
                 commitment: &root_stage2.next_w_commitment,
                 basis: BasisMode::Lagrange,
                 w_len: root_step.next_w_len,
+                setup_prefix_opening,
             };
             verify_suffix::<F, E, T>(
                 &proof.steps,
@@ -686,7 +690,10 @@ mod tests {
     use super::*;
     use akita_challenges::SparseChallengeConfig;
     use akita_field::Fp32;
-    use akita_types::{AjtaiKeyParams, RingVec, SisModulusFamily, DEFAULT_SIS_SECURITY_BITS};
+    use akita_types::{
+        AjtaiKeyParams, RingVec, SisMatrixRole, SisModulusProfileId, SisTableDigest,
+        DEFAULT_SIS_SECURITY_POLICY,
+    };
 
     type F = Fp32<251>;
     const D: usize = 32;
@@ -712,7 +719,7 @@ mod tests {
     #[test]
     fn root_direct_recommitment_rejects_undersized_setup() {
         let params = LevelParams::params_only(
-            SisModulusFamily::Q32,
+            SisModulusProfileId::Q32Offset99,
             D,
             2,
             1,
@@ -740,7 +747,7 @@ mod tests {
     #[test]
     fn root_direct_recommitment_rejects_wrong_witness_dimension() {
         let mut params = LevelParams::params_only(
-            SisModulusFamily::Q32,
+            SisModulusProfileId::Q32Offset99,
             D,
             2,
             1,
@@ -751,8 +758,10 @@ mod tests {
         .with_decomp(2, 2, 2, 1)
         .expect("valid direct layout");
         params.b_key = AjtaiKeyParams::new_unchecked(
-            DEFAULT_SIS_SECURITY_BITS,
-            SisModulusFamily::Q32,
+            DEFAULT_SIS_SECURITY_POLICY,
+            SisTableDigest::CURRENT,
+            SisModulusProfileId::Q32Offset99,
+            SisMatrixRole::B,
             1,
             128,
             0,

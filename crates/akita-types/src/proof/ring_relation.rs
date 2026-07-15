@@ -492,7 +492,7 @@ mod tests {
 
     fn test_level_params() -> LevelParams {
         LevelParams::params_only(
-            crate::SisModulusFamily::Q32,
+            crate::SisModulusProfileId::Q32Offset99,
             D,
             2,
             1,
@@ -549,7 +549,7 @@ mod tests {
     fn chunk_test_level_params(fold_bits: usize) -> LevelParams {
         // live_fold_count = 2^fold_bits, fold_position_count = 2^position_bits, single-tier.
         LevelParams::params_only(
-            crate::SisModulusFamily::Q32,
+            crate::SisModulusProfileId::Q32Offset99,
             D,
             2,
             1,
@@ -771,7 +771,7 @@ mod tests {
     fn multi_group_one_three_fixture() -> (LevelParams, OpeningClaimsLayout) {
         use crate::schedule::PrecommittedGroupParams;
         let lp = LevelParams::params_only(
-            crate::SisModulusFamily::Q128,
+            crate::SisModulusProfileId::Q128OffsetA7F7,
             D,
             3,
             2,
@@ -782,7 +782,7 @@ mod tests {
         .with_decomp(4, 16, 2, 2)
         .expect("multi-group main params");
         let precommit_lp = LevelParams::params_only(
-            crate::SisModulusFamily::Q128,
+            crate::SisModulusProfileId::Q128OffsetA7F7,
             D,
             3,
             2,
@@ -814,7 +814,7 @@ mod tests {
     }
 
     #[test]
-    fn multi_group_segment_layout_total_matches_root_next_w_len() {
+    fn multi_group_segment_layout_total_matches_next_w_len() {
         let (lp, opening_batch) = multi_group_one_three_fixture();
         let relation_rhs_rows = lp
             .relation_matrix_row_count_for(
@@ -866,8 +866,8 @@ mod tests {
 
         let witness_ring_cols = base + r_len_total;
         let expected_w_len = lp
-            .root_next_w_len::<F>(&opening_batch, RelationMatrixRowLayout::WithDBlock)
-            .expect("root next w len");
+            .next_w_len::<F>(&opening_batch, RelationMatrixRowLayout::WithDBlock)
+            .expect("next w len");
         assert_eq!(witness_ring_cols * D, expected_w_len);
     }
 
@@ -929,7 +929,7 @@ mod tests {
         let mut emitted = vec![0i8; layout.total_len() * 2];
         for group_index in [1, 0] {
             let params = lp
-                .root_group_params(instance.opening_batch(), group_index)
+                .group_params(instance.opening_batch(), group_index)
                 .expect("group params");
             let num_claims = instance
                 .opening_batch()

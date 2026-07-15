@@ -495,7 +495,7 @@ where
     let mut batches = Vec::with_capacity(opening_batch.num_groups());
     let mut claim_offset = 0usize;
     for (group_index, prepared) in prepared_points.iter().enumerate() {
-        let group_lp = lp.root_group_params(opening_batch, group_index)?;
+        let group_lp = lp.group_params(opening_batch, group_index)?;
         let group_claims = opening_batch.group_layout(group_index)?.num_polynomials();
         let group_id = group_index;
         let live_fold_count = group_claims
@@ -658,7 +658,7 @@ where
             let mut table = vec![E::zero(); table_len];
             let mut claim_offset = 0usize;
             for (group_index, prepared) in prepared_points.iter().enumerate() {
-                let group_lp = lp.root_group_params(opening_batch, group_index)?;
+                let group_lp = lp.group_params(opening_batch, group_index)?;
                 let group_layout = opening_batch.group_layout(group_index)?;
                 let group_id = group_index;
                 let inner = prepared.packed_inner_owned::<D>()?;

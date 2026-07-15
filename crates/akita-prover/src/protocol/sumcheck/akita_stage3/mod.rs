@@ -18,9 +18,9 @@ use akita_sumcheck::{SumcheckInstanceProver, SumcheckInstanceProverExt, Sumcheck
 use akita_transcript::{labels::ABSORB_SETUP_PREFIX_SLOT, Transcript};
 use akita_types::{
     ensure_setup_envelope, prepare_setup_contribution_artifact, select_setup_prefix_slot,
-    shared_setup_fold_gadget, AkitaExpandedSetup, FpExtEncoding, LevelParams, RingRelationInstance,
-    SetupContributionPlan, SetupPrefixProverRegistry, SetupProjectionGeometry,
-    SETUP_OFFLOAD_D_SETUP, SETUP_SUMCHECK_DEGREE,
+    shared_setup_fold_gadget, AkitaExpandedSetup, BatchedStage3Geometry, FpExtEncoding,
+    LevelParams, RingRelationInstance, SetupContributionPlan, SetupPrefixProverRegistry,
+    SetupProjectionGeometry, SETUP_OFFLOAD_D_SETUP, SETUP_SUMCHECK_DEGREE,
 };
 use product_table::FactoredProductTerm;
 use std::sync::Arc;
@@ -29,6 +29,10 @@ use std::sync::Arc;
 pub struct AkitaStage3ProverOutput<E: FieldCore> {
     /// Unbatched setup-product claim carried in the serialized stage-3 proof.
     pub setup_product_claim: E,
+    /// Setup-prefix MLE value at the stage-3 setup suffix challenge.
+    pub setup_prefix_eval: E,
+    /// Setup-prefix opening point at the setup suffix of the stage-3 challenge.
+    pub setup_prefix_point: Vec<E>,
     /// Re-randomized next-witness opening after the batched stage-3 point projection.
     pub next_w_eval: E,
     /// Batched next-witness opening point.
@@ -53,7 +57,7 @@ pub struct AkitaStage3Prover<E: FieldCore> {
     setup: BatchedStage3Term<E>,
     witness: BatchedStage3Term<E>,
     eta: E,
-    total_rounds: usize,
+    geometry: BatchedStage3Geometry,
     setup_product_claim: E,
     pending_round: Option<PendingRound<E>>,
 }
@@ -79,6 +83,7 @@ impl<E: FieldCore + FromPrimitiveInt> AkitaStage3Prover<E> {
         live_x_cols: usize,
         col_bits: usize,
         ring_bits: usize,
+        level: usize,
         eta: E,
         transcript: &mut T,
     ) -> Result<Self, AkitaError>
@@ -118,12 +123,13 @@ impl<E: FieldCore + FromPrimitiveInt> AkitaStage3Prover<E> {
             live_x_cols,
             col_bits,
             ring_bits,
+            level,
             stage2_challenges,
             stage2_next_w_eval,
         )?;
         let setup_rounds = setup_term.num_rounds();
         let witness_rounds = witness_term.num_rounds();
-        let total_rounds = setup_rounds.max(witness_rounds);
+        let geometry = BatchedStage3Geometry::new(witness_rounds, setup_rounds)?;
         Ok(Self {
             setup: BatchedStage3Term {
                 current_claim: setup_term.input_claim(),
@@ -136,7 +142,7 @@ impl<E: FieldCore + FromPrimitiveInt> AkitaStage3Prover<E> {
                 term: witness_term,
             },
             eta,
-            total_rounds,
+            geometry,
             setup_product_claim,
             pending_round: None,
         })
@@ -159,10 +165,14 @@ impl<E: FieldCore + FromPrimitiveInt> AkitaStage3Prover<E> {
                 transcript,
                 sample_round,
             )?;
-        let next_w_point = batched_point[..self.witness.native_rounds].to_vec();
+        let next_w_point = self.geometry.witness_point(&batched_point)?;
+        let setup_prefix_point = self.geometry.setup_point(&batched_point)?;
+        let setup_prefix_eval = self.setup.term.folded_table_value()?;
         let next_w_eval = self.witness.term.folded_table_value()?;
         Ok(AkitaStage3ProverOutput {
             setup_product_claim: self.setup_product_claim,
+            setup_prefix_eval,
+            setup_prefix_point,
             next_w_eval,
             next_w_point,
             sumcheck,
@@ -170,14 +180,25 @@ impl<E: FieldCore + FromPrimitiveInt> AkitaStage3Prover<E> {
     }
 
     #[inline]
-    fn term_round_poly(term: &mut BatchedStage3Term<E>, round: usize) -> UniPoly<E> {
-        if round < term.native_rounds {
-            term.term
-                .compute_round_univariate(round, term.current_claim)
-        } else {
-            // The term is independent of this padded variable. The normalized
-            // common-cube lift contributes a constant half-claim polynomial.
+    fn term_round_poly(
+        term: &mut BatchedStage3Term<E>,
+        total_rounds: usize,
+        round: usize,
+    ) -> UniPoly<E> {
+        let inactive_rounds = total_rounds - term.native_rounds;
+        if round < inactive_rounds {
+            // The term is independent of this leading padded variable. Active
+            // low-order coordinates are the suffix of the batched challenge.
             UniPoly::from_coeffs(vec![half(term.current_claim), E::zero(), E::zero()])
+        } else {
+            let mut poly = term
+                .term
+                .compute_round_univariate(round - inactive_rounds, term.current_claim);
+            let scale = (0..inactive_rounds).fold(E::one(), |acc, _| acc * half(E::one()));
+            for coeff in &mut poly.coeffs {
+                *coeff *= scale;
+            }
+            poly
         }
     }
 
@@ -201,7 +222,7 @@ impl<E: FieldCore + FromPrimitiveInt> AkitaStage3Prover<E> {
 
 impl<E: FieldCore + FromPrimitiveInt> SumcheckInstanceProver<E> for AkitaStage3Prover<E> {
     fn num_rounds(&self) -> usize {
-        self.total_rounds
+        self.geometry.batched_rounds()
     }
 
     fn degree_bound(&self) -> usize {
@@ -213,8 +234,9 @@ impl<E: FieldCore + FromPrimitiveInt> SumcheckInstanceProver<E> for AkitaStage3P
     }
 
     fn compute_round_univariate(&mut self, round: usize, _previous_claim: E) -> UniPoly<E> {
-        let setup_poly = Self::term_round_poly(&mut self.setup, round);
-        let witness_poly = Self::term_round_poly(&mut self.witness, round);
+        let total_rounds = self.geometry.batched_rounds();
+        let setup_poly = Self::term_round_poly(&mut self.setup, total_rounds, round);
+        let witness_poly = Self::term_round_poly(&mut self.witness, total_rounds, round);
         let combined = self.combine_polys(&setup_poly, &witness_poly);
         self.pending_round = Some(PendingRound {
             setup_poly,
@@ -230,11 +252,18 @@ impl<E: FieldCore + FromPrimitiveInt> SumcheckInstanceProver<E> for AkitaStage3P
             .expect("batched stage-3 challenge ingested before round polynomial");
         self.setup.current_claim = pending.setup_poly.evaluate(&r_round);
         self.witness.current_claim = pending.witness_poly.evaluate(&r_round);
-        if round < self.setup.native_rounds {
-            self.setup.term.ingest_challenge(round, r_round);
+        let total_rounds = self.geometry.batched_rounds();
+        let setup_inactive_rounds = total_rounds - self.setup.native_rounds;
+        if round >= setup_inactive_rounds {
+            self.setup
+                .term
+                .ingest_challenge(round - setup_inactive_rounds, r_round);
         }
-        if round < self.witness.native_rounds {
-            self.witness.term.ingest_challenge(round, r_round);
+        let witness_inactive_rounds = total_rounds - self.witness.native_rounds;
+        if round >= witness_inactive_rounds {
+            self.witness
+                .term
+                .ingest_challenge(round - witness_inactive_rounds, r_round);
         }
     }
 }
@@ -276,7 +305,6 @@ where
         .total_ring_elements_at_dyn(ring_d)?;
     let setup_eval_len = if ring_d == SETUP_OFFLOAD_D_SETUP {
         let setup_prefix_selection = select_setup_prefix_slot(
-            expanded.seed(),
             setup_len,
             |slot_id| {
                 prefix_slots
@@ -291,6 +319,10 @@ where
         if let Some((slot, setup_eval_len)) = setup_prefix_selection {
             transcript.append_serde(ABSORB_SETUP_PREFIX_SLOT, &slot.id);
             setup_eval_len
+        } else if next_fold_level_params.setup_prefix.is_some() {
+            return Err(AkitaError::InvalidSetup(
+                "planned setup-prefix slot is missing from prover setup".to_string(),
+            ));
         } else {
             setup_len
         }
@@ -299,14 +331,12 @@ where
     };
     // Ring elements at `ring_d` are `ring_d` consecutive field coefficients of
     // the flat shared matrix; read them directly instead of building a typed
-    // ring view that would immediately be flattened back into the table. The
-    // former view carried the bounds the table fill relies on; assert them
-    // explicitly here.
+    // ring view that would immediately be flattened back into the table. A
+    // setup-prefix slot may have a padded evaluation domain larger than this
+    // source: only `required` natural rows are read, and the table remainder is
+    // explicit zero padding.
     let setup_field = expanded.shared_matrix().as_field_slice();
-    let setup_eval_field_len = setup_eval_len.checked_mul(ring_d).ok_or_else(|| {
-        AkitaError::InvalidSetup("setup product view field length overflow".to_string())
-    })?;
-    if setup_eval_field_len > setup_field.len() || required > setup_eval_len {
+    if required > setup_eval_len {
         return Err(AkitaError::InvalidSetup(
             "setup product exceeds selected setup view".to_string(),
         ));
@@ -343,6 +373,7 @@ fn build_witness_carry_term<E>(
     live_x_cols: usize,
     col_bits: usize,
     ring_bits: usize,
+    level: usize,
     stage2_challenges: &[E],
     stage2_next_w_eval: E,
 ) -> Result<FactoredProductTerm<E>, AkitaError>
@@ -391,7 +422,12 @@ where
     let table_len = x_len
         .checked_mul(y_len)
         .ok_or_else(|| AkitaError::InvalidSetup("witness carry table length overflow".into()))?;
-    let right_factor = EqPolynomial::evals(&stage2_challenges[..ring_bits])?;
+    let right_factor = EqPolynomial::evals(&stage2_challenges[..ring_bits]).map_err(|err| {
+        AkitaError::InvalidInput(format!(
+            "stage-3 witness carry right equality factor failed at fold level {level}: \
+             ring_bits={ring_bits}, col_bits={col_bits}, live_x_cols={live_x_cols}: {err}"
+        ))
+    })?;
     let mut opening_table = vec![0i8; table_len];
     let live_physical_cols = logical_w.len() / opening_ring_dim;
     for physical_index in 0..live_physical_cols {
@@ -410,7 +446,12 @@ where
             right_factor,
         )?
     } else {
-        let left_factor = EqPolynomial::evals(&stage2_challenges[ring_bits..])?;
+        let left_factor = EqPolynomial::evals(&stage2_challenges[ring_bits..]).map_err(|err| {
+            AkitaError::InvalidInput(format!(
+                "stage-3 witness carry left equality factor failed at fold level {level}: \
+                 col_bits={col_bits}, ring_bits={ring_bits}, live_x_cols={live_x_cols}: {err}"
+            ))
+        })?;
         FactoredProductTerm::new_compact(
             Arc::from(opening_table),
             table_len,

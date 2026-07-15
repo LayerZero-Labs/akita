@@ -5,7 +5,7 @@ use akita_field::Prime128OffsetA7F7;
 use akita_types::{
     gadget_row_scalars, r_decomp_levels, CommitmentRingDims, LevelParams, OpeningClaimsLayout,
     RelationMatrixRowLayout, SetupContributionGroupInputs, SetupContributionPlan,
-    SetupContributionPlanInputs, SetupIndexWeightEvaluator, SisModulusFamily, WitnessLayout,
+    SetupContributionPlanInputs, SetupIndexWeightEvaluator, SisModulusProfileId, WitnessLayout,
 };
 use criterion::measurement::WallTime;
 use criterion::{
@@ -51,7 +51,7 @@ fn make_case(live_fold_count: usize, blocks_per_chunk: usize) -> SetupIndexWeigh
     let n_d = 2;
     let log_basis = 4;
     let mut level_params = LevelParams::params_only(
-        SisModulusFamily::Q128,
+        SisModulusProfileId::Q128OffsetA7F7,
         D,
         log_basis,
         n_a,

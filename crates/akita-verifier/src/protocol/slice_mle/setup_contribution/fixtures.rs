@@ -9,7 +9,7 @@ use akita_field::{CanonicalField, Prime128OffsetA7F7};
 use akita_types::{
     gadget_row_scalars, AkitaExpandedSetup, AkitaSetupSeed, CommitmentRingDims, FlatMatrix,
     LevelParams, OpeningClaimsLayout, RelationMatrixRowLayout, SetupContributionPlan,
-    SetupContributionPlanInputs, SisModulusFamily, WitnessLayout,
+    SetupContributionPlanInputs, SisModulusProfileId, WitnessLayout,
 };
 
 use super::evaluate_setup_contribution_direct;
@@ -140,7 +140,7 @@ impl SetupContributionFixture {
         let n_cols_t = shape.num_polys_per_group.iter().copied().max().unwrap() * cols_per_poly_t;
 
         let lp = LevelParams::params_only(
-            SisModulusFamily::Q128,
+            SisModulusProfileId::Q128OffsetA7F7,
             TEST_RING_DIM,
             shape.log_basis,
             shape.n_a,

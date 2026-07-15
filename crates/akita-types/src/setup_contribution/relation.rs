@@ -44,7 +44,7 @@ where
     let eq_tau1: Arc<[E]> = EqPolynomial::evals_prefix(tau1, rows)?.into();
 
     let (inputs, groups, d_physical_cols, d_row_start, d_rows) = if lp.has_precommitted_groups() {
-        lp.validate_root_opening_batch(opening_batch)?;
+        lp.validate_opening_batch(opening_batch)?;
         let order = opening_batch.root_group_order()?;
         if order.iter().any(|&group_index| {
             chunk_layout.num_shards_for_group(group_index) != lp.witness_chunk.num_chunks
@@ -56,7 +56,7 @@ where
         let mut groups = Vec::with_capacity(order.len());
         let mut e_col_offset = 0usize;
         for &group_index in &order {
-            let group_lp = lp.root_group_params(opening_batch, group_index)?;
+            let group_lp = lp.group_params(opening_batch, group_index)?;
             let group_layout = opening_batch.group_layout(group_index)?;
             let num_claims = group_layout.num_polynomials();
             let live_fold_count = group_lp.live_fold_count();
@@ -70,13 +70,9 @@ where
                 .ok_or_else(|| {
                     AkitaError::InvalidSetup("multi-group B vector width overflow".into())
                 })?;
-            let a_range =
-                lp.root_a_row_range(opening_batch, group_index, relation_matrix_row_layout)?;
-            let b_range = lp.root_commitment_row_range(
-                opening_batch,
-                group_index,
-                relation_matrix_row_layout,
-            )?;
+            let a_range = lp.a_row_range(opening_batch, group_index, relation_matrix_row_layout)?;
+            let b_range =
+                lp.commitment_row_range(opening_batch, group_index, relation_matrix_row_layout)?;
             if a_range.len() != n_a || b_range.len() != n_b {
                 return Err(AkitaError::InvalidSetup(
                     "multi-group row ranges do not match group matrix heights".to_string(),
