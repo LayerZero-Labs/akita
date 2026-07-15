@@ -20,7 +20,9 @@ pub(crate) fn recompose_balanced_i8_digits(digits: &[i8], log_basis: u32) -> i64
     acc as i64
 }
 
-fn balanced_digits_from_i64(value: i64, num_digits: usize, log_basis: u32) -> Vec<i8> {
+#[cfg(test)]
+#[must_use]
+pub(crate) fn balanced_digits_from_i64(value: i64, num_digits: usize, log_basis: u32) -> Vec<i8> {
     let half_b = 1i128 << (log_basis - 1);
     let b = half_b << 1;
     let mask = b - 1;
