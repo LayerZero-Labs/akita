@@ -9,7 +9,7 @@ mod decompose_fold_partitioned;
 mod rotated_accum;
 
 pub use decompose_fold_partitioned::{
-    balanced_digit_decompose_fold_partitioned, balanced_ring_decompose_fold_partitioned,
+    balanced_ring_decompose_fold_partitioned, balanced_tight_digit_fold_partitioned,
     cached_digit_decompose_fold_partitioned,
 };
 

@@ -282,15 +282,10 @@ where
         if final_witness.as_segment_typed().is_none() {
             return Err(AkitaError::InvalidProof);
         }
-        let layout = TerminalWitnessSegmentLayout {
-            e_hat_digit_offset: 0,
-            e_hat_digit_count: 1,
-        };
         Some(prepare_terminal_witness_replay::<F, T>(
             transcript,
             final_witness,
             final_w_len,
-            layout,
         )?)
     } else {
         None

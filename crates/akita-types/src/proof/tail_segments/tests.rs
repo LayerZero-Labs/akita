@@ -112,6 +112,30 @@ fn segment_typed_wire_round_trip_with_scheduled_z_budget() {
 }
 
 #[test]
+fn terminal_e_absorb_matches_emitted_field_segment() {
+    let lp = test_lp();
+    let layout = scalar_group_layout(&lp, 1, 1, 1, 1, F::modulus_bits()).unwrap();
+    let group = layout.groups[0];
+    let e_fields = RingVec::from_coeffs(
+        (0..group.e_field_elems)
+            .map(|index| F::from_canonical_u128_reduced(index as u128 + 1))
+            .collect(),
+    );
+    let witness = SegmentTypedWitness {
+        layout: layout.clone(),
+        z_payloads: vec![vec![0]],
+        e_fields: e_fields.clone(),
+        t_fields: RingVec::from_coeffs(vec![F::zero(); group.t_field_elems]),
+        r_fields: RingVec::from_coeffs(vec![F::zero(); layout.r_field_elems]),
+    };
+
+    assert_eq!(
+        witness.terminal_transcript_parts().unwrap().e_hat,
+        e_folded_segment_bytes(&e_fields).unwrap(),
+    );
+}
+
+#[test]
 fn decode_terminal_z_rejects_coefficient_above_fold_cap() {
     use crate::golomb_rice::golomb_rice_encode_vec;
 

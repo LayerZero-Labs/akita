@@ -212,19 +212,14 @@ pub fn balanced_ring_decompose_fold_partitioned<F: CanonicalField, const D: usiz
     )
 }
 
-/// Position-partitioned accumulation for recursive witness decompose-fold.
-pub fn balanced_digit_decompose_fold_partitioned<const D: usize>(
+/// Position-partitioned accumulation for an already-tight recursive digit witness.
+pub fn balanced_tight_digit_fold_partitioned<const D: usize>(
     coeffs: &[[i8; D]],
     challenges: &[SparseChallenge],
-    active_blocks: usize,
     fold_position_count: usize,
-    num_digits: usize,
-    inner_width: usize,
 ) -> Vec<[i32; D]> {
-    debug_assert_eq!(
-        num_digits, 1,
-        "multi-digit decomposition is not implemented for partitioned accumulation"
-    );
+    let num_digits = 1;
+    let inner_width = fold_position_count;
     #[cfg(feature = "parallel")]
     let num_threads = rayon::current_num_threads();
     #[cfg(not(feature = "parallel"))]
@@ -254,7 +249,7 @@ pub fn balanced_digit_decompose_fold_partitioned<const D: usize>(
                     continue;
                 }
 
-                for (block, challenge) in challenges[..active_blocks].iter().enumerate() {
+                for (block, challenge) in challenges.iter().enumerate() {
                     let Some(index) = block
                         .checked_mul(fold_position_count)
                         .and_then(|base| base.checked_add(col))

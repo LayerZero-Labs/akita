@@ -39,8 +39,8 @@ use akita_types::{
     FoldLinfProtocolBinding, FpExtEncoding, LevelParams, OpeningClaims, OpeningClaimsLayout,
     PointVariableSelection, PolynomialGroupClaims, PreparedOpeningPoint, RelationMatrixRowLayout,
     RelationOnlyStage2Inputs, RingMultiplierOpeningPoint, RingOpeningPoint, RingRelationInstance,
-    RingVec, Schedule, SetupContributionMode, SetupSumcheckProof, TerminalWitnessSegmentLayout,
-    TerminalWitnessTranscriptParts, TraceClaim,
+    RingVec, Schedule, SetupContributionMode, SetupSumcheckProof, TerminalWitnessTranscriptParts,
+    TraceClaim,
 };
 use akita_types::{
     tensor_opening_split, tensor_reduction_claim_from_rows, tensor_row_partials_from_columns,
@@ -65,7 +65,6 @@ fn prepare_terminal_witness_replay<F, T>(
     transcript: &mut T,
     final_witness: &CleartextWitnessProof<F>,
     final_w_len: usize,
-    layout: TerminalWitnessSegmentLayout,
 ) -> Result<TerminalWitnessTranscriptParts, AkitaError>
 where
     F: FieldCore + CanonicalField,
@@ -74,7 +73,7 @@ where
     if final_witness.num_elems() != final_w_len {
         return Err(AkitaError::InvalidProof);
     }
-    let parts = final_witness.terminal_transcript_parts(layout)?;
+    let parts = final_witness.terminal_transcript_parts()?;
     transcript.absorb_and_record_bytes(ABSORB_TERMINAL_E_HAT, &parts.e_hat);
     Ok(parts)
 }

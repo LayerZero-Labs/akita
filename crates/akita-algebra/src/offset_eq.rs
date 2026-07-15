@@ -137,7 +137,7 @@ where
     }
 
     let mut cursor = outer_start;
-    let prefix_end = if cursor % low_len == 0 {
+    let prefix_end = if cursor.is_multiple_of(low_len) {
         cursor
     } else {
         outer_end.min(
@@ -1313,6 +1313,7 @@ mod tests {
         assert_eq!(got, expected);
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn reference_affine_digit_interval(
         challenges: &[F],
         base_offset: usize,
@@ -1343,7 +1344,7 @@ mod tests {
 
     #[test]
     fn affine_digit_interval_matches_dense_subwindows_and_partial_rows() {
-        let mut rng = StdRng::seed_from_u64(0xaff1_6e);
+        let mut rng = StdRng::seed_from_u64(0x00af_f16e);
         for &(low_len, high_len, outer_start, live_len, digits, stride, base) in &[
             (1, 7, 0, 7, 1, 1, 3),
             (4, 4, 1, 11, 3, 5, 9),

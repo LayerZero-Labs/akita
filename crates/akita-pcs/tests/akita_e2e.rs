@@ -350,7 +350,6 @@ fn bump_flat_ring_vec<FField: FieldCore>(flat: &mut akita_types::RingVec<FField>
 
 fn mutate_terminal_e_hat_digit<FField: FieldCore>(
     witness: &mut akita_types::CleartextWitnessProof<FField>,
-    _layout: akita_types::TerminalWitnessSegmentLayout,
 ) {
     match witness {
         akita_types::CleartextWitnessProof::SegmentTyped(segment) => {
@@ -756,22 +755,8 @@ fn trace_internalization_rejects_tampered_terminal_e_hat_digit() {
 
         let (verifier_setup, commitment, proof, opening_point, opening, _layout) =
             make_dense_fixture::<F, D, Cfg>(FULL_TEST_NV, b"akita_e2e/terminal-trace-tamper");
-        let schedule = Cfg::runtime_schedule(AkitaScheduleLookupKey::single(
-            PolynomialGroupLayout::singleton(FULL_TEST_NV),
-        ))
-        .expect("runtime schedule");
-        let terminal_params = schedule
-            .fold_steps()
-            .last()
-            .expect("folded fixture should have a terminal fold")
-            .params
-            .clone();
-        let terminal_layout =
-            akita_types::terminal_witness_segment_layout(&terminal_params, 1, 1, F::modulus_bits())
-                .expect("terminal layout");
-
         let mut malformed = proof.clone();
-        mutate_terminal_e_hat_digit(terminal_witness_mut(&mut malformed), terminal_layout);
+        mutate_terminal_e_hat_digit(terminal_witness_mut(&mut malformed));
 
         let commitments = [commitment];
         let openings = [opening];
@@ -1176,6 +1161,24 @@ fn batched_onehot_same_point_round_trip() {
         let nv = NV;
         let opening_batch = akita_types::OpeningClaimsLayout::new(nv, 2).expect("opening_batch");
         let layout = Cfg::get_params_for_batched_commitment(&opening_batch).expect("layout");
+        let plan = Cfg::runtime_schedule(AkitaScheduleLookupKey::single(
+            PolynomialGroupLayout::singleton(NV),
+        ))
+        .expect("runtime schedule");
+        let fold_steps = plan.fold_steps().collect::<Vec<_>>();
+        assert!(
+            fold_steps.windows(2).any(|steps| {
+                steps.iter().all(|step| {
+                    let params = &step.params;
+                    params.source_ring_len_per_claim % params.fold_position_count != 0
+                        && params.live_fold_count
+                            == params
+                                .source_ring_len_per_claim
+                                .div_ceil(params.fold_position_count)
+                })
+            }),
+            "fixture must cross two consecutive production folds with exact partial final rows"
+        );
         let total_field = (layout.live_fold_count * layout.fold_position_count)
             .checked_mul(D)
             .expect("total field size overflow");
@@ -1241,6 +1244,18 @@ fn batched_onehot_same_point_round_trip() {
         let mut cursor = std::io::Cursor::new(serialized);
         let decoded = AkitaBatchedProof::<F, F>::deserialize_compressed(&mut cursor, &proof_shape)
             .expect("deserialize batched onehot proof");
+        let terminal = decoded
+            .final_witness()
+            .as_segment_typed()
+            .expect("recursive proof must terminate in a segment-typed witness");
+        assert_eq!(
+            terminal.layout.groups.len(),
+            1,
+            "terminal consumer must retain one canonical scalar group"
+        );
+        terminal
+            .terminal_transcript_parts()
+            .expect("terminal witness must split into canonical transcript segments");
 
         let mut verifier_transcript = AkitaTranscript::<F>::new(b"akita_e2e/batched-onehot");
         let opening_groups = [&openings[..]];

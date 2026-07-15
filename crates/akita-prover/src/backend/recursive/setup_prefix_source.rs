@@ -183,15 +183,34 @@ fn setup_prefix_rings<F: FieldCore, const D: usize>(
         .collect())
 }
 
+fn setup_prefix_fold_geometry<const D: usize>(
+    slot: &SetupPrefixSlot<impl FieldCore>,
+    source_ring_len: usize,
+) -> Result<(usize, usize), AkitaError> {
+    let geometry = &slot.id.commitment_params.layout;
+    geometry.validate()?;
+    if slot.id.d_setup != D
+        || geometry.group.num_polynomials() != 1
+        || geometry.source_ring_len_per_claim != source_ring_len
+        || geometry.fold_position_count == 0
+        || geometry.live_fold_count != source_ring_len.div_ceil(geometry.fold_position_count)
+    {
+        return Err(AkitaError::InvalidSetup(
+            "setup-prefix source disagrees with frozen fold geometry".into(),
+        ));
+    }
+    Ok((geometry.fold_position_count, geometry.live_fold_count))
+}
+
 fn fold_setup_prefix_blocks<F: FieldCore, const D: usize>(
     coeffs: &[CyclotomicRing<F, D>],
     scalars: &[F],
-    block_len: usize,
+    fold_position_count: usize,
 ) -> Vec<CyclotomicRing<F, D>> {
-    (0..coeffs.len().div_ceil(block_len))
+    (0..coeffs.len().div_ceil(fold_position_count))
         .map(|block_idx| {
-            let start = block_idx * block_len;
-            let end = (start + block_len).min(coeffs.len());
+            let start = block_idx * fold_position_count;
+            let end = (start + fold_position_count).min(coeffs.len());
             let mut acc = CyclotomicRing::<F, D>::zero();
             for (ring, scalar) in coeffs[start..end].iter().zip(scalars.iter()) {
                 acc += ring.scale(scalar);
@@ -204,12 +223,12 @@ fn fold_setup_prefix_blocks<F: FieldCore, const D: usize>(
 fn fold_setup_prefix_blocks_ring<F: FieldCore + CanonicalField, const D: usize>(
     coeffs: &[CyclotomicRing<F, D>],
     scalars: &[CyclotomicRing<F, D>],
-    block_len: usize,
+    fold_position_count: usize,
 ) -> Vec<CyclotomicRing<F, D>> {
-    (0..coeffs.len().div_ceil(block_len))
+    (0..coeffs.len().div_ceil(fold_position_count))
         .map(|block_idx| {
-            let start = block_idx * block_len;
-            let end = (start + block_len).min(coeffs.len());
+            let start = block_idx * fold_position_count;
+            let end = (start + fold_position_count).min(coeffs.len());
             let mut acc = CyclotomicRing::<F, D>::zero();
             for (ring, scalar) in coeffs[start..end].iter().zip(scalars.iter()) {
                 ring.mul_accumulate_sparse_rhs_into(scalar, &mut acc);
@@ -226,12 +245,14 @@ fn setup_prefix_evaluate_and_fold<F: FieldCore + CanonicalField, const D: usize>
 ) -> Result<OpeningFoldOutput<F, D>, AkitaError> {
     let coeffs = setup_prefix_rings::<F, D>(expanded, slot)?;
     let fold_position_count = plan.fold_position_count();
-    if fold_position_count == 0 {
-        return Err(AkitaError::InvalidInput(
-            "setup-prefix fold position count must be positive".to_string(),
-        ));
+    let (expected_positions, live_fold_count) =
+        setup_prefix_fold_geometry::<D>(slot, coeffs.len())?;
+    if fold_position_count != expected_positions {
+        return Err(AkitaError::InvalidSize {
+            expected: expected_positions,
+            actual: fold_position_count,
+        });
     }
-    let live_fold_count = coeffs.len().div_ceil(fold_position_count);
     plan.validate(live_fold_count)?;
     match plan {
         OpeningFoldPlan::Base {
@@ -264,6 +285,13 @@ fn setup_prefix_decompose_fold<F: CanonicalField, const D: usize>(
     plan: DecomposeFoldPlan<'_>,
 ) -> Result<crate::DecomposeFoldWitness<F>, AkitaError> {
     let coeffs = setup_prefix_rings::<F, D>(expanded, slot)?;
+    let (fold_position_count, live_fold_count) =
+        setup_prefix_fold_geometry::<D>(slot, coeffs.len())?;
+    if plan.fold_position_count != fold_position_count || plan.challenges.len() != live_fold_count {
+        return Err(AkitaError::InvalidSetup(
+            "setup-prefix decompose plan disagrees with frozen fold geometry".into(),
+        ));
+    }
     let q = (-F::one()).to_canonical_u128() + 1;
     let threshold = decompose_centering_threshold(plan.num_digits, plan.log_basis, q);
     let params = DecomposeParams {

@@ -1,5 +1,5 @@
 use super::*;
-use akita_types::{dispatch_for_field, terminal_witness_segment_layout, Commitment, RingView};
+use akita_types::{dispatch_for_field, Commitment, RingView};
 
 /// Verify the folded-root proof payload for either an intermediate root or the
 /// 1-fold terminal root.
@@ -108,7 +108,6 @@ where
         &openings,
         &opening_batch,
         shared_opening_point,
-        num_claims,
         relation_matrix_row_layout,
         extension_opening_reduction,
         stage3_sumcheck_proof,
@@ -132,7 +131,6 @@ fn verify_root_inner<F, E, T>(
     openings: &[E],
     opening_batch: &OpeningClaimsLayout,
     shared_opening_point: &[E],
-    num_claims: usize,
     relation_matrix_row_layout: RelationMatrixRowLayout,
     extension_opening_reduction: Option<&ExtensionOpeningReductionProof<E>>,
     stage3_sumcheck_proof: Option<&SetupSumcheckProof<E>>,
@@ -252,13 +250,10 @@ where
                 .stage2
                 .final_witness()
                 .ok_or(AkitaError::InvalidProof)?;
-            let layout =
-                terminal_witness_segment_layout(root_lp, num_claims, 1, F::modulus_bits())?;
             Some(prepare_terminal_witness_replay::<F, T>(
                 transcript,
                 final_witness,
                 w_len,
-                layout,
             )?)
         }
         AkitaBatchedRootProof::Fold(_) => None,

@@ -540,7 +540,7 @@ where
                 None
             };
             Ok(RingSwitchBuildOutput {
-                w: RecursiveWitnessFlat::from_i8_digits(out),
+                w: RecursiveWitnessFlat::from_witness_layout::<D>(out, &witness_layout)?,
                 terminal_artifacts,
             })
         }

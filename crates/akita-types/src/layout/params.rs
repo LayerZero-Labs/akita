@@ -1414,6 +1414,16 @@ impl LevelParams {
     }
 }
 
+fn append_setup_contribution_mode_descriptor_bytes(
+    bytes: &mut Vec<u8>,
+    mode: SetupContributionMode,
+) {
+    bytes.push(match mode {
+        SetupContributionMode::Direct => 0,
+        SetupContributionMode::Recursive => 1,
+    });
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1640,13 +1650,4 @@ mod tests {
     mod precommitted_group_tests;
     #[path = "params_relation_row_tests.rs"]
     mod relation_row_tests;
-}
-fn append_setup_contribution_mode_descriptor_bytes(
-    bytes: &mut Vec<u8>,
-    mode: SetupContributionMode,
-) {
-    bytes.push(match mode {
-        SetupContributionMode::Direct => 0,
-        SetupContributionMode::Recursive => 1,
-    });
 }

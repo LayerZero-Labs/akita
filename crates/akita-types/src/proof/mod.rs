@@ -101,11 +101,7 @@ pub use tail_segments::{
     SegmentTypedWitnessGroupParts, SegmentTypedWitnessShape, TailSegmentGroupLayout,
     TailSegmentLayout,
 };
-pub use terminal_witness::{
-    i8_digits_to_bytes, terminal_e_hat_bytes_from_blocks, terminal_witness_segment_layout,
-    terminal_witness_segment_layout_from_counts, terminal_witness_transcript_parts,
-    RelationOnlyStage2Inputs, TerminalWitnessSegmentLayout, TerminalWitnessTranscriptParts,
-};
+pub use terminal_witness::{RelationOnlyStage2Inputs, TerminalWitnessTranscriptParts};
 
 use crate::EXTENSION_OPENING_REDUCTION_DEGREE;
 use akita_algebra::CyclotomicRing;
