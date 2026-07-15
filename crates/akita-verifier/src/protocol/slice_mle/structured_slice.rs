@@ -1,5 +1,5 @@
 use crate::protocol::ring_switch::RelationMatrixEvaluator;
-use akita_algebra::offset_eq::{eq_eval_at_index, MAX_COMPACT_STRIDE_TERMS};
+use akita_algebra::offset_eq::{OffsetEqWindow, MAX_COMPACT_STRIDE_TERMS};
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
 
 /// Compute the `r`-tail contribution.
@@ -26,6 +26,9 @@ where
             actual: terms,
         });
     }
+    // Share a bounded low equality table across every canonical r address
+    // instead of recomputing a full-width equality product per (row, level).
+    let eq_window = OffsetEqWindow::new(full_vec_randomness)?;
     let mut contribution = E::zero();
     for row_idx in 0..rows {
         let row_weight = prepared
@@ -44,10 +47,8 @@ where
                 prepared.setup_contribution_layout.opening_source_len(),
                 physical_index,
             )?;
-            contribution -= eq_eval_at_index(full_vec_randomness, opening_index)
-                * row_weight
-                * E::lift_base(gadget)
-                * denom;
+            contribution -=
+                eq_window.eval(opening_index) * row_weight * E::lift_base(gadget) * denom;
         }
     }
     Ok(contribution)

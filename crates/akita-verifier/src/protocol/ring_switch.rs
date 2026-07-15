@@ -1,7 +1,7 @@
 //! Verifier-side ring-switch replay.
 
 use akita_algebra::eq_poly::EqPolynomial;
-use akita_algebra::offset_eq::{eq_eval_at_index, eval_affine_digit_interval};
+use akita_algebra::offset_eq::{eval_affine_digit_interval, OffsetEqWindow};
 use akita_algebra::ring::scalar_powers;
 use akita_challenges::Challenges;
 use akita_field::{
@@ -281,11 +281,22 @@ where
     }
     let num_ring_elems = w_len / D;
     let opening_ring_dim = replay.opening_ring_dim;
-    let opening_field_len = akita_types::opening_domain_len(replay.opening_source_len)?
-        .checked_mul(opening_ring_dim)
-        .ok_or(AkitaError::InvalidProof)?;
-    let col_bits = opening_field_len.trailing_zeros() as usize;
-    let ring_bits = 0;
+    let x_capacity = akita_types::opening_domain_len(replay.opening_source_len)?;
+    // Mirror the prover's ring-switch geometry (see `ring_switch_finalize`):
+    // uniform role dimensions expose the separable (x, y) opening domain, while
+    // non-uniform roles fall back to the flattened single domain.
+    let uniform = relation.role_dims() == CommitmentRingDims::uniform(opening_ring_dim);
+    let (col_bits, ring_bits) = if uniform {
+        (
+            x_capacity.trailing_zeros() as usize,
+            opening_ring_dim.trailing_zeros() as usize,
+        )
+    } else {
+        let opening_field_len = x_capacity
+            .checked_mul(opening_ring_dim)
+            .ok_or(AkitaError::InvalidProof)?;
+        (opening_field_len.trailing_zeros() as usize, 0usize)
+    };
     let num_sc_vars = col_bits + ring_bits;
     let num_i =
         lp.relation_row_index_num_vars_for_layout(relation_matrix_row_layout, opening_batch)?;
@@ -897,6 +908,11 @@ impl<E: FieldCore> RelationMatrixEvaluator<E> {
         let setup_z_block_low_eq = setup_eq_cache.z_block_low_eq;
         let setup_fold_gadget = setup_eq_cache.fold_gadget;
 
+        // Shared bounded equality window over the X challenges. The Z direct
+        // loop evaluates `eq(x_challenges, ·)` at many canonical addresses, so
+        // materializing the low table once and reusing it avoids recomputing a
+        // full-width equality product per address.
+        let x_eq_window = OffsetEqWindow::new(x_challenges)?;
         {
             let _span = tracing::info_span!("structured_chunks").entered();
             for group in &self.groups {
@@ -957,8 +973,7 @@ impl<E: FieldCore> RelationMatrixEvaluator<E> {
                                     self.setup_contribution_layout.opening_source_len(),
                                     z_index,
                                 )?;
-                                z_weight -= eq_eval_at_index(x_challenges, z_opening_index)
-                                    * E::lift_base(fold);
+                                z_weight -= x_eq_window.eval(z_opening_index) * E::lift_base(fold);
                             }
                             z_structured_contribution +=
                                 z_weight * consistency_weight * opening_a * E::lift_base(commit);

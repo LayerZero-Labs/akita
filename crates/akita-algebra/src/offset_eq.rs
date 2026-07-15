@@ -282,6 +282,17 @@ where
     let template = high_weights
         .get(first_high)
         .ok_or_else(|| AkitaError::InvalidInput("affine high factor out of range".into()))?;
+    // Precompute the low equality table once and share it across every
+    // (low, digit) term instead of recomputing `eq(low_challenges, ·)` from
+    // scratch per term. `low_len == 2^low_bits` is the affine low factor width
+    // (a fold count), which is bounded by the interval work check above, but we
+    // still cap the materialization to keep the allocation bounded and fall
+    // back to the scalar primitive for pathologically wide low blocks.
+    let eq_low_table: Option<Vec<F>> = if low_challenges.len() <= OFFSET_EQ_LOW_BITS_CAP {
+        Some(crate::eq_poly::EqPolynomial::evals(low_challenges)?)
+    } else {
+        None
+    };
     let mut summaries = vec![template.zero_like(); carry_count];
     for low in low_start..low_end {
         let low_factor = low_weights
@@ -296,7 +307,13 @@ where
                 .and_then(|value| value.checked_add(digit))
                 .ok_or_else(|| AkitaError::InvalidInput("affine low address overflow".into()))?;
             let carry = shifted / low_len;
-            let eq_low = eq_eval_at_index(low_challenges, shifted & low_mask);
+            let low_index = shifted & low_mask;
+            let eq_low = match &eq_low_table {
+                Some(table) => table.get(low_index).copied().ok_or_else(|| {
+                    AkitaError::InvalidInput("affine low index out of range".into())
+                })?,
+                None => eq_eval_at_index(low_challenges, low_index),
+            };
             summaries
                 .get_mut(carry)
                 .ok_or_else(|| AkitaError::InvalidInput("affine carry out of range".into()))?
@@ -839,6 +856,84 @@ pub fn high_eq_window<F: FieldCore>(
         .collect()
 }
 
+/// Hard cap on the number of low bits materialized by [`OffsetEqWindow`].
+///
+/// A 16-bit low table holds at most `2^16 = 65_536` field elements
+/// (about 1 MiB for 16-byte elements), which bounds the allocation regardless
+/// of the full point width.
+pub const OFFSET_EQ_LOW_BITS_CAP: usize = 16;
+
+/// Bounded checked equality-window evaluator.
+///
+/// An `n`-coordinate equality point is split into a low block of at most
+/// [`OFFSET_EQ_LOW_BITS_CAP`] bits and a high remainder. The low equality table
+/// `eq_low[i] = eq(low_challenges, i)` is materialized once (at most
+/// `2^low_bits` elements); the high factor is evaluated on demand. Evaluating a
+/// single address then costs one bounded low lookup plus an `O(high_bits)` high
+/// evaluation instead of `O(n)`, and the low table is shared across every
+/// address in a canonical interval.
+///
+/// This obeys the verifier no-panic contract: construction validates and caps
+/// the low width, the low lookup is always in range by construction, and no
+/// unbounded allocation is performed.
+pub struct OffsetEqWindow<'a, F: FieldCore> {
+    low_bits: usize,
+    low_mask: usize,
+    eq_low: Vec<F>,
+    high_challenges: &'a [F],
+}
+
+impl<'a, F: FieldCore> OffsetEqWindow<'a, F> {
+    /// Build a window over `challenges` using the default low-bit cap.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the low equality table cannot be constructed.
+    pub fn new(challenges: &'a [F]) -> Result<Self, AkitaError> {
+        Self::with_low_bits(challenges, OFFSET_EQ_LOW_BITS_CAP)
+    }
+
+    /// Build a window over `challenges` choosing `min(len, cap, CAP)` low bits.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the low equality table cannot be constructed.
+    pub fn with_low_bits(challenges: &'a [F], low_bits_cap: usize) -> Result<Self, AkitaError> {
+        let low_bits = challenges
+            .len()
+            .min(low_bits_cap)
+            .min(OFFSET_EQ_LOW_BITS_CAP);
+        let eq_low = crate::eq_poly::EqPolynomial::evals(&challenges[..low_bits])?;
+        let low_mask = if low_bits == 0 {
+            0
+        } else {
+            (1usize << low_bits) - 1
+        };
+        Ok(Self {
+            low_bits,
+            low_mask,
+            eq_low,
+            high_challenges: &challenges[low_bits..],
+        })
+    }
+
+    /// Evaluate `eq(challenges, index)` for a little-endian hypercube index.
+    ///
+    /// Matches [`eq_eval_at_index`] exactly, including returning zero for
+    /// out-of-domain indices.
+    #[inline]
+    pub fn eval(&self, index: usize) -> F {
+        let low = index & self.low_mask;
+        // `low < 2^low_bits == eq_low.len()` by construction; the fallback keeps
+        // the accessor panic-free without masking a real bug.
+        let eq_low = self.eq_low.get(low).copied().unwrap_or_else(F::zero);
+        if eq_low.is_zero() {
+            return F::zero();
+        }
+        eq_low * eq_eval_at_index(self.high_challenges, index >> self.low_bits)
+    }
+}
+
 /// Evaluate `eq(r, index)` for a single hypercube index in little-endian order.
 pub fn eq_eval_at_index<F: FieldCore>(x_challenges: &[F], index: usize) -> F {
     if x_challenges.len() < usize::BITS as usize && index >= (1usize << x_challenges.len()) {
@@ -918,6 +1013,54 @@ mod tests {
     use rand::SeedableRng;
 
     type F = Fp64<4294967197>;
+
+    #[test]
+    fn offset_eq_window_matches_scalar_eq_across_low_bits() {
+        let mut rng = StdRng::seed_from_u64(0x0FF5E7);
+        for n in 0..14usize {
+            let challenges: Vec<F> = (0..n).map(|_| F::random(&mut rng)).collect();
+            let domain = 1usize << n;
+            for low_cap in [0usize, 1, 4, 8, 16] {
+                let window = OffsetEqWindow::with_low_bits(&challenges, low_cap).unwrap();
+                // Every in-domain index, plus a couple of out-of-domain probes.
+                for index in (0..domain).chain([domain, domain + 1, domain + 7]) {
+                    assert_eq!(
+                        window.eval(index),
+                        eq_eval_at_index(&challenges, index),
+                        "n={n} low_cap={low_cap} index={index}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn offset_eq_window_caps_low_table_and_crosses_boundary() {
+        let mut rng = StdRng::seed_from_u64(0xB0117);
+        // 20 coordinates exceed the 16-bit cap; the low table must stay capped
+        // while evaluation still matches the scalar oracle across the low/high
+        // boundary and at the exact domain end.
+        let n = 20usize;
+        let challenges: Vec<F> = (0..n).map(|_| F::random(&mut rng)).collect();
+        let window = OffsetEqWindow::new(&challenges).unwrap();
+        assert_eq!(window.eq_low.len(), 1usize << OFFSET_EQ_LOW_BITS_CAP);
+        let domain = 1usize << n;
+        for index in [
+            0usize,
+            (1 << OFFSET_EQ_LOW_BITS_CAP) - 1,
+            1 << OFFSET_EQ_LOW_BITS_CAP,
+            (1 << OFFSET_EQ_LOW_BITS_CAP) + 5,
+            domain - 1,
+            domain,
+            domain + 9,
+        ] {
+            assert_eq!(
+                window.eval(index),
+                eq_eval_at_index(&challenges, index),
+                "index={index}"
+            );
+        }
+    }
 
     fn reference_offset_eq_tensor(
         x_challenges: &[F],

@@ -94,7 +94,8 @@ mod tests {
     use akita_prover::backend::DenseView;
     use akita_prover::compute::{OpeningFoldKernel, OpeningFoldPlan, RootOpeningSource};
     use akita_prover::protocol::ring_switch::{
-        build_w_evals_compact, compute_relation_weight_evals, ring_switch_build_w,
+        build_w_evals_compact, compute_relation_matrix_col_evals, compute_relation_weight_evals,
+        ring_switch_build_w,
     };
     use akita_prover::{
         ComputeBackendSetup, CpuBackend, DensePoly, ProverOpeningData, RingRelationProver,
@@ -560,6 +561,178 @@ mod tests {
             )
             .unwrap();
             assert_eq!(got, expected, "row {row} mismatch");
+        }
+    }
+
+    /// Fix 2 correctness: for uniform ring geometry the compact per-column
+    /// relation `M(x)` produced by `compute_relation_matrix_col_evals` must
+    /// reconstruct the dense flattened relation exactly as
+    /// `R(x, y) = M(x) * alpha^y`. Checked at a random alpha (spec test 3) and
+    /// at `alpha = 0` (spec test 4), where `alpha^y` collapses to the y=0
+    /// selector so only coefficient zero survives.
+    #[test]
+    fn uniform_col_relation_reconstructs_flattened_builder() {
+        type F = fp128::Field;
+        type Cfg = fp128::D128Full;
+        const D: usize = Cfg::D;
+        const NV: usize = 12;
+
+        let opening_batch =
+            akita_types::OpeningClaimsLayout::new(NV, 1).expect("singleton opening batch");
+        let lp = Cfg::get_params_for_batched_commitment(&opening_batch).expect("lp");
+        assert_eq!(
+            lp.role_dims(),
+            akita_types::CommitmentRingDims::uniform(D),
+            "test config must have uniform role dims for the column builder"
+        );
+
+        let mut rng = StdRng::seed_from_u64(0x00c0_1de5);
+        let evals: Vec<F> = (0..(1usize << NV))
+            .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
+            .collect();
+        let poly = DensePoly::<F>::from_field_evals(NV, D, &evals).expect("dense poly");
+        let point: Vec<F> = (0..NV)
+            .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
+            .collect();
+
+        let setup = AkitaCommitmentScheme::<Cfg>::setup_prover(NV, 1).unwrap();
+        let prepared = CpuBackend.prepare_setup(&setup).unwrap();
+        let stack = akita_prover::UniformProverStack::uniform(
+            &CpuBackend,
+            &prepared,
+            setup.expanded.as_ref(),
+        )
+        .expect("stack");
+        let (commitment, batched_hint) = AkitaCommitmentScheme::<Cfg>::commit::<_, _>(
+            &setup,
+            std::slice::from_ref(&poly),
+            &stack,
+        )
+        .expect("commitment");
+
+        let alpha_bits = D.trailing_zeros() as usize;
+        let outer_point = &point[alpha_bits..];
+        let ring_opening_point = ring_opening_point_from_field(
+            outer_point,
+            lp.fold_position_count,
+            lp.live_fold_count,
+            BasisMode::Lagrange,
+        )
+        .expect("ring opening point");
+        let ring_multiplier_point = RingMultiplierOpeningPoint::from_base(&ring_opening_point);
+        let opening = OpeningFoldKernel::<DenseView<'_, F, D>, F, D>::evaluate_and_fold(
+            &CpuBackend,
+            None,
+            poly.opening_view().expect("opening view"),
+            OpeningFoldPlan::Base {
+                fold_weights: &ring_opening_point.fold_weights,
+                position_weights: &ring_opening_point.position_weights,
+                fold_position_count: lp.fold_position_count,
+            },
+        )
+        .expect("evaluate_and_fold");
+        let e_folded = opening.folded;
+
+        let mut transcript = AkitaTranscript::<F>::new(b"ring-switch-uniform-col-equiv");
+        commitment
+            .append_to_transcript(ABSORB_COMMITMENT, D, &mut transcript)
+            .expect("commitment transcript");
+        for pt in &point {
+            transcript.append_field(ABSORB_EVALUATION_CLAIMS, pt);
+        }
+        let op_ctx =
+            akita_prover::OperationCtx::new(&CpuBackend, &prepared, setup.expanded.as_ref())
+                .expect("operation ctx");
+        let poly_refs: [&DensePoly<F>; 1] = [&poly];
+        let fold_claims = prover_fold_claims(&point, &poly_refs, &commitment, batched_hint);
+        let (instance, _witness) =
+            RingRelationProver::new::<F, F, _, DensePoly<F>, CpuBackend, CpuBackend>(
+                &op_ctx,
+                &op_ctx,
+                ring_opening_point,
+                ring_multiplier_point,
+                fold_claims,
+                vec![RingVec::from_ring_elems(&e_folded)],
+                lp.clone(),
+                &mut transcript,
+                RingVec::from_single(&CyclotomicRing::<F, D>::one()),
+                RelationMatrixRowLayout::WithDBlock,
+                None,
+            )
+            .expect("ring relation");
+
+        // Boolean X capacity strictly exceeding the live column prefix is the
+        // interesting regime (spec test 2): the committed opening domain is
+        // padded to a power of two, so `x_cap * D > physical live length`.
+        let witness_layout = instance.segment_layout(&lp, None).expect("segment layout");
+        let opening_source_len = witness_layout.total_len();
+        let x_cap = akita_types::opening_domain_len(opening_source_len).expect("x capacity");
+        assert!(
+            x_cap >= opening_source_len,
+            "x capacity must cover the live prefix"
+        );
+
+        let num_i = lp
+            .relation_row_index_num_vars_for_layout(
+                RelationMatrixRowLayout::WithDBlock,
+                &opening_batch,
+            )
+            .expect("tau1 vars");
+
+        for alpha in [F::from_u64(0x9e37_79b9), F::zero()] {
+            let alpha_evals_y = scalar_powers(alpha, D);
+            let tau1: Vec<F> = (0..num_i)
+                .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
+                .collect();
+
+            let flat = compute_relation_weight_evals::<F, F>(
+                &setup.expanded,
+                &instance,
+                alpha,
+                &alpha_evals_y,
+                lp.role_dims(),
+                &lp,
+                &tau1,
+                &[F::one()],
+                RelationMatrixRowLayout::WithDBlock,
+                opening_source_len,
+                D,
+            )
+            .expect("flattened relation");
+            let col = compute_relation_matrix_col_evals::<F, F>(
+                &setup.expanded,
+                &instance,
+                alpha,
+                &alpha_evals_y,
+                lp.role_dims(),
+                &lp,
+                &tau1,
+                &[F::one()],
+                RelationMatrixRowLayout::WithDBlock,
+                opening_source_len,
+                D,
+            )
+            .expect("column relation");
+
+            assert_eq!(
+                col.len(),
+                x_cap,
+                "column relation length must be 2^col_bits"
+            );
+            assert_eq!(
+                flat.len(),
+                x_cap * D,
+                "flattened relation length must be 2^(col_bits+ring_bits)"
+            );
+            for x in 0..x_cap {
+                for y in 0..D {
+                    assert_eq!(
+                        flat[x * D + y],
+                        col[x] * alpha_evals_y[y],
+                        "R(x,y) != M(x)*alpha^y at alpha={alpha:?} x={x} y={y}"
+                    );
+                }
+            }
         }
     }
 

@@ -34,7 +34,9 @@ pub(crate) use coeffs::PreparedRingSwitchGroup;
 pub use coeffs::RingSwitchTerminalArtifacts;
 pub use coeffs::{ring_switch_build_w, RingSwitchBuildOutput};
 pub use commit::{commit_w, NextWitnessCommitment};
-pub use evals::{build_w_evals_compact, compute_relation_weight_evals};
+pub use evals::{
+    build_w_evals_compact, compute_relation_matrix_col_evals, compute_relation_weight_evals,
+};
 pub use finalize::ring_switch_finalize;
 
 /// D-agnostic output of the ring switch protocol, containing everything

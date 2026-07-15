@@ -78,11 +78,26 @@ where
                 actual: semantic_ring_elems,
             });
         }
-        let opening_x_cols = akita_types::opening_domain_len(opening_source_len)?
-            .checked_mul(opening_ring_dim)
-            .ok_or_else(|| AkitaError::InvalidSetup("stage-2 domain overflow".into()))?;
-        let col_bits = opening_x_cols.trailing_zeros() as usize;
-        let ring_bits = 0;
+        // Uniform ring geometry restores the separable (x, y) opening domain:
+        // `col_bits` addresses the source columns and `ring_bits` addresses the
+        // inner ring coefficients. This keeps the relation weights as a compact
+        // per-column table `M(x)` (see `compute_relation_matrix_col_evals`)
+        // instead of the flattened field domain. Non-uniform role dimensions
+        // fall back to the flattened single-domain layout (`ring_bits = 0`).
+        let x_capacity = akita_types::opening_domain_len(opening_source_len)?;
+        let uniform = dims == akita_types::CommitmentRingDims::uniform(opening_ring_dim);
+        let (opening_x_cols, col_bits, ring_bits) = if uniform {
+            (
+                x_capacity,
+                x_capacity.trailing_zeros() as usize,
+                opening_ring_dim.trailing_zeros() as usize,
+            )
+        } else {
+            let flat = x_capacity
+                .checked_mul(opening_ring_dim)
+                .ok_or_else(|| AkitaError::InvalidSetup("stage-2 domain overflow".into()))?;
+            (flat, flat.trailing_zeros() as usize, 0usize)
+        };
         let num_sc_vars = col_bits + ring_bits;
         let num_i =
             lp.relation_row_index_num_vars_for_layout(relation_matrix_row_layout, opening_batch)?;
@@ -103,9 +118,27 @@ where
             ));
         }
 
-        #[cfg(feature = "parallel")]
-        let (relation_weight_evals_result, w_result) = rayon::join(
-            || {
+        let build_relation_weights = || {
+            if uniform {
+                // Uniform geometry: build the per-column weights `M(x)` directly
+                // (length `1 << col_bits`), dropping the per-coefficient alpha
+                // spread that the flattened builder bakes into the full field
+                // domain. The `alpha(y)` factor is supplied to stage-2 as
+                // `ring_alpha_evals_y`.
+                compute_relation_matrix_col_evals::<F, E>(
+                    setup,
+                    instance,
+                    alpha,
+                    &ring_alpha_evals_y,
+                    dims,
+                    lp,
+                    &tau1,
+                    gamma,
+                    relation_matrix_row_layout,
+                    opening_source_len,
+                    opening_ring_dim,
+                )
+            } else {
                 compute_relation_weight_evals::<F, E>(
                     setup,
                     instance,
@@ -119,24 +152,16 @@ where
                     opening_source_len,
                     opening_ring_dim,
                 )
-            },
-            || build_w_evals_compact(w.as_i8_digits(), opening_ring_dim, 1, opening_source_len),
-        );
+            }
+        };
+
+        #[cfg(feature = "parallel")]
+        let (relation_weight_evals_result, w_result) = rayon::join(build_relation_weights, || {
+            build_w_evals_compact(w.as_i8_digits(), opening_ring_dim, 1, opening_source_len)
+        });
         #[cfg(not(feature = "parallel"))]
         let (relation_weight_evals_result, w_result) = {
-            let relation_weight_evals = compute_relation_weight_evals::<F, E>(
-                setup,
-                instance,
-                alpha,
-                &ring_alpha_evals_y,
-                dims,
-                lp,
-                &tau1,
-                gamma,
-                relation_matrix_row_layout,
-                opening_source_len,
-                opening_ring_dim,
-            );
+            let relation_weight_evals = build_relation_weights();
             let w_compact =
                 build_w_evals_compact(w.as_i8_digits(), opening_ring_dim, 1, opening_source_len);
             (relation_weight_evals, w_compact)

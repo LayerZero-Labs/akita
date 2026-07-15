@@ -29,6 +29,7 @@ fn write_role_weight<E: FieldCore, S>(
     role_ring_dim: usize,
     alpha_pows: &[E],
     column_weight: E,
+    columns: bool,
 ) -> Result<(), AkitaError>
 where
     S: FnMut(usize, E) -> Result<(), AkitaError>,
@@ -43,6 +44,13 @@ where
     let role_ratio = witness_ring_dim / role_ring_dim;
     if role_subcol >= role_ratio {
         return Err(AkitaError::InvalidProof);
+    }
+    if columns {
+        if role_subcol != 0 {
+            return Err(AkitaError::InvalidProof);
+        }
+        let opening_col = crate::checked_opening_source_index(opening_source_len, witness_col)?;
+        return sink(opening_col, column_weight);
     }
     let physical_base = witness_col
         .checked_mul(witness_ring_dim)
@@ -120,6 +128,57 @@ where
         opening_source_len,
         opening_ring_dim,
         None,
+        false,
+    )?
+    .0)
+}
+
+/// Build the per-X-column relation weights `M(x)` for the uniform ring geometry.
+///
+/// This produces one scalar per canonical witness column over the Boolean X
+/// domain (`opening_domain_len(opening_source_len)` entries), dropping the
+/// per-coefficient `alpha` spread that the flattened builder bakes into the
+/// full field domain. It is only valid when the role ring dimensions are
+/// uniform (`d_a == d_b == d_d`), i.e. the separable `R(x, y) = M(x) * a(y)`
+/// factorization holds; the caller must gate on that. The unused X-column
+/// suffix is left zero-padded.
+///
+/// # Errors
+///
+/// Returns an error if the ring dimensions are not uniform or if any of the
+/// shape/layout invariants checked by [`compute_relation_weight_evals`] fail.
+#[allow(clippy::too_many_arguments)]
+pub fn compute_relation_matrix_col_evals<F, E>(
+    setup: &AkitaExpandedSetup<F>,
+    instance: &RingRelationInstance<F>,
+    alpha: E,
+    alpha_pows: &[E],
+    role_dims: CommitmentRingDims,
+    lp: &LevelParams,
+    tau1: &[E],
+    gamma: &[E],
+    relation_matrix_row_layout: RelationMatrixRowLayout,
+    opening_source_len: usize,
+    opening_ring_dim: usize,
+) -> Result<Vec<E>, AkitaError>
+where
+    F: FieldCore + CanonicalField,
+    E: FpExtEncoding<F> + FromPrimitiveInt + LiftBase<F> + MulBase<F> + MulBaseUnreduced<F>,
+{
+    Ok(compute_relation_weight_evals_inner(
+        setup,
+        instance,
+        alpha,
+        alpha_pows,
+        role_dims,
+        lp,
+        tau1,
+        gamma,
+        relation_matrix_row_layout,
+        opening_source_len,
+        opening_ring_dim,
+        None,
+        true,
     )?
     .0)
 }
@@ -161,6 +220,7 @@ where
         opening_source_len,
         opening_ring_dim,
         Some(point),
+        false,
     )?
     .1)
 }
@@ -179,6 +239,7 @@ fn compute_relation_weight_evals_inner<F, E>(
     opening_source_len: usize,
     opening_ring_dim: usize,
     point: Option<&[E]>,
+    columns: bool,
 ) -> Result<(Vec<E>, E), AkitaError>
 where
     F: FieldCore + CanonicalField,
@@ -193,6 +254,11 @@ where
     let d_a = role_dims.d_a();
     let d_b = role_dims.d_b();
     let d_d = role_dims.d_d();
+    if columns && (point.is_some() || d_a != d_b || d_a != d_d) {
+        return Err(AkitaError::InvalidSetup(
+            "uniform column relation requires uniform ring dims and no point".into(),
+        ));
+    }
     if alpha_pows.len() != d_a {
         return Err(AkitaError::InvalidSize {
             expected: d_a,
@@ -265,6 +331,8 @@ where
     }
     let mut out = if point.is_some() {
         Vec::new()
+    } else if columns {
+        vec![E::zero(); crate::opening_domain_len(opening_source_len)?]
     } else {
         vec![E::zero(); opening_field_len]
     };
@@ -417,16 +485,24 @@ where
                                     );
                             }
                         }
-                        let physical_base = witness_col * d_a + role_subcol * d_d;
-                        for coefficient in 0..d_d {
-                            write_coefficient_weight(
-                                &mut sink,
+                        if columns {
+                            let opening_col = crate::checked_opening_source_index(
                                 opening_source_len,
-                                opening_ring_dim,
-                                physical_base + coefficient,
-                                consistency_acc * alpha_pows_a[role_subcol * d_d + coefficient]
-                                    + setup_acc * alpha_pows_d[coefficient],
+                                witness_col,
                             )?;
+                            sink(opening_col, consistency_acc + setup_acc)?;
+                        } else {
+                            let physical_base = witness_col * d_a + role_subcol * d_d;
+                            for coefficient in 0..d_d {
+                                write_coefficient_weight(
+                                    &mut sink,
+                                    opening_source_len,
+                                    opening_ring_dim,
+                                    physical_base + coefficient,
+                                    consistency_acc * alpha_pows_a[role_subcol * d_d + coefficient]
+                                        + setup_acc * alpha_pows_d[coefficient],
+                                )?;
+                            }
                         }
                     }
                 }
@@ -472,16 +548,24 @@ where
                                         );
                                 }
                             }
-                            let physical_base = witness_col * d_a + role_subcol * d_b;
-                            for coefficient in 0..d_b {
-                                write_coefficient_weight(
-                                    &mut sink,
+                            if columns {
+                                let opening_col = crate::checked_opening_source_index(
                                     opening_source_len,
-                                    opening_ring_dim,
-                                    physical_base + coefficient,
-                                    a_acc * alpha_pows_a[role_subcol * d_b + coefficient]
-                                        + b_acc * alpha_pows_b[coefficient],
+                                    witness_col,
                                 )?;
+                                sink(opening_col, a_acc + b_acc)?;
+                            } else {
+                                let physical_base = witness_col * d_a + role_subcol * d_b;
+                                for coefficient in 0..d_b {
+                                    write_coefficient_weight(
+                                        &mut sink,
+                                        opening_source_len,
+                                        opening_ring_dim,
+                                        physical_base + coefficient,
+                                        a_acc * alpha_pows_a[role_subcol * d_b + coefficient]
+                                            + b_acc * alpha_pows_b[coefficient],
+                                    )?;
+                                }
                             }
                         }
                     }
@@ -543,6 +627,7 @@ where
                             d_a,
                             alpha_pows_a,
                             -(z_base[phys_k] * fold),
+                            columns,
                         )?;
                     }
                 }
@@ -583,6 +668,7 @@ where
                 row_dim,
                 row_alpha_pows,
                 -(eq_weight * row_denom * *gadget),
+                columns,
             )?;
         }
     }

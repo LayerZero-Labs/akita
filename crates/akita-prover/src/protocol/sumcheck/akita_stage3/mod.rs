@@ -398,8 +398,7 @@ where
     let physical_capacity = opening_source_len
         .checked_mul(opening_ring_dim)
         .ok_or(AkitaError::InvalidProof)?;
-    if ring_bits != 0
-        || live_x_cols != x_len
+    if live_x_cols != x_len
         || opening_source_len == 0
         || opening_ring_dim == 0
         || !logical_w.len().is_multiple_of(opening_ring_dim)
@@ -410,18 +409,22 @@ where
             actual: live_x_cols,
         });
     }
-    let expected_x_len = akita_types::opening_domain_len(opening_source_len)?
-        .checked_mul(opening_ring_dim)
-        .ok_or(AkitaError::InvalidProof)?;
-    if expected_x_len != x_len {
-        return Err(AkitaError::InvalidSize {
-            expected: expected_x_len,
-            actual: x_len,
-        });
-    }
     let table_len = x_len
         .checked_mul(y_len)
         .ok_or_else(|| AkitaError::InvalidSetup("witness carry table length overflow".into()))?;
+    // The (x, y) split must tile the full Boolean field domain
+    // `opening_domain_len(source) * opening_ring_dim`. The flattened fallback
+    // (`ring_bits == 0`) keeps the whole domain in `x`; the uniform layout puts
+    // the `opening_ring_dim` inner coefficients in `y`.
+    let expected_field_len = akita_types::opening_domain_len(opening_source_len)?
+        .checked_mul(opening_ring_dim)
+        .ok_or(AkitaError::InvalidProof)?;
+    if table_len != expected_field_len || (ring_bits != 0 && y_len != opening_ring_dim) {
+        return Err(AkitaError::InvalidSize {
+            expected: expected_field_len,
+            actual: table_len,
+        });
+    }
     let right_factor = EqPolynomial::evals(&stage2_challenges[..ring_bits]).map_err(|err| {
         AkitaError::InvalidInput(format!(
             "stage-3 witness carry right equality factor failed at fold level {level}: \

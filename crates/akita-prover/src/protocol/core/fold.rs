@@ -992,25 +992,34 @@ fn remap_trace_table<E: FieldCore>(
     {
         return Err(AkitaError::InvalidProof);
     }
-    let source = table.materialize_dense(
-        akita_types::opening_domain_len(source_len)?,
-        source_ring_dim,
-    );
-    let destination_table_len = akita_types::opening_domain_len(destination_len)?
+    let source_domain = akita_types::opening_domain_len(source_len)?;
+    let destination_domain = akita_types::opening_domain_len(destination_len)?;
+    // Fast path: when the source and destination expose the same Boolean
+    // capacity and ring dimension the remap is the identity over the live
+    // prefix (and the padded suffix is logically zero on both sides), so keep
+    // the existing representation without materializing or allocating anything.
+    if source_ring_dim == destination_ring_dim && source_domain == destination_domain {
+        return Ok(table);
+    }
+    let destination_table_len = destination_domain
         .checked_mul(destination_ring_dim)
         .ok_or_else(|| AkitaError::InvalidSetup("trace destination length overflow".into()))?;
+    // Only the destination is allocated. The source is read in place through
+    // `TraceTable::get` (borrowed, never cloned to its Boolean capacity), so the
+    // uniform path never holds a full source-capacity plus destination-capacity
+    // pair at once.
     let mut destination = vec![E::zero(); destination_table_len];
     for physical in 0..physical_field_len {
         let source_col =
             akita_types::checked_opening_source_index(source_len, physical / source_ring_dim)?;
-        let source_index = source_col * source_ring_dim + physical % source_ring_dim;
+        let source_coeff = physical % source_ring_dim;
         let destination_col = akita_types::checked_opening_source_index(
             destination_len,
             physical / destination_ring_dim,
         )?;
         let destination_index =
             destination_col * destination_ring_dim + physical % destination_ring_dim;
-        destination[destination_index] = source[source_index];
+        destination[destination_index] = table.get(source_col, source_coeff, source_ring_dim);
     }
     Ok(TraceTable::ring_dense(destination))
 }
@@ -1033,13 +1042,18 @@ where
     T: Transcript<F>,
 {
     let _sumcheck_span = tracing::info_span!("stage2_sumcheck").entered();
+    // `alpha(y)` powers over the inner ring domain. For the flattened fallback
+    // (`ring_bits == 0`) this is `[1]`; for uniform geometry it is
+    // `[1, alpha, ..., alpha^(2^ring_bits - 1)]`, supplying the per-coefficient
+    // spread that the compact per-column relation table `M(x)` omits.
+    let alpha_evals_y = akita_algebra::ring::scalar_powers(rs.alpha, 1usize << rs.ring_bits);
     let mut stage2_prover = AkitaStage2Prover::new(
         batching_coeff,
         rs.w_evals_compact,
         stage1_point,
         s_claim,
         rs.b,
-        vec![E::one()],
+        alpha_evals_y,
         rs.relation_weight_evals,
         rs.opening_x_cols,
         rs.col_bits,
