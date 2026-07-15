@@ -15,28 +15,12 @@ use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
 use akita_types::eval_poly;
 use akita_types::proof::append_flat_coefficients;
 use akita_types::{
-    combine_polys, linear_combination, sis::FoldWitnessGrindContract,
-    stage1_interstage_batch_weights, stage1_leaf_coeffs, stage1_stage_count,
-    stage1_tree_product_stage_arities, validate_stage1_tree_basis, AkitaStage1Proof, LevelParams,
-    OpeningClaimsLayout, RelationMatrixRowLayout,
+    combine_polys, linear_combination, stage1_interstage_batch_weights, stage1_leaf_coeffs,
+    stage1_stage_count, stage1_tree_product_stage_arities, validate_stage1_tree_basis,
+    AkitaStage1Proof, LevelParams, OpeningClaimsLayout, RelationMatrixRowLayout,
 };
 
 type Stage1VerifyOutput<E> = Vec<E>;
-
-/// Reject malformed fold grind nonces before challenge replay.
-///
-/// Worst-case-β-only policies forbid reroll (`nonce = 0` only). Tail-bound-with-grind
-/// policies accept `nonce < contract.max_nonce_exclusive`.
-///
-/// # Errors
-///
-/// Returns [`AkitaError::InvalidProof`] when the nonce is out of policy range.
-pub(crate) fn validate_fold_grind_nonce(
-    contract: &FoldWitnessGrindContract,
-    fold_grind_nonce: u32,
-) -> Result<(), AkitaError> {
-    contract.validate_nonce(fold_grind_nonce)
-}
 
 /// Absorb the prover's `v` rows once, then sample one [`Challenges`] set per
 /// commitment group in `OpeningClaims` order.
@@ -325,8 +309,8 @@ mod fold_grind_nonce_tests {
             contract.policy,
             akita_types::sis::FoldWitnessLinfCapPolicy::WorstCaseBetaOnly
         );
-        assert!(validate_fold_grind_nonce(&contract, 0).is_ok());
-        assert!(validate_fold_grind_nonce(&contract, 1).is_err());
+        assert!(contract.validate_nonce(0).is_ok());
+        assert!(contract.validate_nonce(1).is_err());
     }
 
     #[test]
@@ -346,9 +330,9 @@ mod fold_grind_nonce_tests {
             akita_types::sis::FoldWitnessLinfCapPolicy::TailBoundWithGrind
         );
         let cap = contract.max_nonce_exclusive;
-        assert!(validate_fold_grind_nonce(&contract, 0).is_ok());
-        assert!(validate_fold_grind_nonce(&contract, cap - 1).is_ok());
-        assert!(validate_fold_grind_nonce(&contract, cap).is_err());
+        assert!(contract.validate_nonce(0).is_ok());
+        assert!(contract.validate_nonce(cap - 1).is_ok());
+        assert!(contract.validate_nonce(cap).is_err());
     }
 
     #[test]
@@ -368,8 +352,8 @@ mod fold_grind_nonce_tests {
             akita_types::sis::FoldWitnessLinfCapPolicy::TensorTailBoundWithGrind
         );
         let cap = contract.max_nonce_exclusive;
-        assert!(validate_fold_grind_nonce(&contract, 0).is_ok());
-        assert!(validate_fold_grind_nonce(&contract, cap - 1).is_ok());
-        assert!(validate_fold_grind_nonce(&contract, cap).is_err());
+        assert!(contract.validate_nonce(0).is_ok());
+        assert!(contract.validate_nonce(cap - 1).is_ok());
+        assert!(contract.validate_nonce(cap).is_err());
     }
 }

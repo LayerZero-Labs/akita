@@ -673,39 +673,32 @@ impl RingRelationProver {
         // Distributed-prover chunked layout: the grind emits one folded response
         // per block window (`z_i`), and the global response is their sum
         // (`Σ_i z_i = z`, exact coefficient-wise i32 accumulation).
+        let grind_groups = (0..num_groups)
+            .map(|group_index| {
+                Ok(fold_grind::FoldGrindGroup {
+                    group_index,
+                    polys: fold_claims.group_polys(group_index)?,
+                    params: lp.root_group_params(&opening_batch, group_index)?,
+                })
+            })
+            .collect::<Result<Vec<_>, AkitaError>>()?;
+        let (grind_outputs, fold_grind_nonce) =
+            fold_grind::sample_multi_group_fold_decompose_witnesses::<F, _, OB, T>(
+                opening_backend,
+                Some(opening_ctx.prepared()),
+                transcript,
+                &lp,
+                &opening_batch,
+                &grind_groups,
+                terminal_tail_t_vectors,
+            )
+            .map_err(|err| AkitaError::InvalidInput(format!("fold grind failed: {err:?}")))?;
         let mut group_challenges = Vec::with_capacity(num_groups);
         let mut group_z = Vec::with_capacity(num_groups);
-        let mut accepted_nonce = None;
-        for group_index in 0..num_groups {
-            let group_lp = lp.root_group_params(&opening_batch, group_index)?;
-            let group_polys = fold_claims.group_polys(group_index)?;
-            let (z_folded_rings, z_folded_centered_per_chunk, challenges, nonce) =
-                fold_grind::sample_fold_decompose_witness::<F, _, OB, T>(
-                    opening_backend,
-                    Some(opening_ctx.prepared()),
-                    transcript,
-                    group_polys,
-                    &lp,
-                    group_lp,
-                    group_index,
-                    group_polys.len(),
-                    terminal_tail_t_vectors,
-                )
-                .map_err(|err| AkitaError::InvalidInput(format!("fold grind failed: {err:?}")))?;
-            if let Some(existing) = accepted_nonce {
-                if existing != nonce {
-                    return Err(AkitaError::InvalidInput(
-                        "multi-group fold grind selected different nonces across groups"
-                            .to_string(),
-                    ));
-                }
-            } else {
-                accepted_nonce = Some(nonce);
-            }
-            group_challenges.push(challenges);
-            group_z.push((z_folded_rings, z_folded_centered_per_chunk));
+        for output in grind_outputs {
+            group_challenges.push(output.challenges);
+            group_z.push((output.witness, output.centered_per_chunk));
         }
-        let fold_grind_nonce = accepted_nonce.ok_or(AkitaError::InvalidProof)?;
 
         // Relation rhs spans roles (consistency | [A | B | B_inner]* | D).
         // Terminal levels drop the D-block from M entirely, so `n_d` is zero

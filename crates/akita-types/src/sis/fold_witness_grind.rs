@@ -42,3 +42,50 @@ impl FoldWitnessGrindContract {
         }
     }
 }
+
+/// One shared grind transaction over every fold group in transcript order.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FoldWitnessGrindBatchContract {
+    group_contracts: Vec<FoldWitnessGrindContract>,
+}
+
+impl FoldWitnessGrindBatchContract {
+    /// Build a nonempty batch contract.
+    pub fn new(group_contracts: Vec<FoldWitnessGrindContract>) -> Result<Self, AkitaError> {
+        if group_contracts.is_empty() {
+            return Err(AkitaError::InvalidSetup(
+                "fold grind batch requires at least one group".to_string(),
+            ));
+        }
+        Ok(Self { group_contracts })
+    }
+
+    /// Group-local contracts in transcript order.
+    #[inline]
+    pub fn group_contracts(&self) -> &[FoldWitnessGrindContract] {
+        &self.group_contracts
+    }
+
+    /// Exclusive shared nonce bound accepted by every group.
+    pub fn max_nonce_exclusive(&self) -> u32 {
+        self.group_contracts
+            .iter()
+            .map(|contract| contract.max_nonce_exclusive)
+            .min()
+            .unwrap_or(0)
+    }
+
+    /// Whether every group permits Fiat-Shamir rerolls.
+    pub fn allows_grind(&self) -> bool {
+        self.group_contracts
+            .iter()
+            .all(|contract| contract.policy.allows_grind())
+    }
+
+    /// Reject a nonce unless every group-local contract accepts it.
+    pub fn validate_nonce(&self, fold_grind_nonce: u32) -> Result<(), AkitaError> {
+        self.group_contracts
+            .iter()
+            .try_for_each(|contract| contract.validate_nonce(fold_grind_nonce))
+    }
+}

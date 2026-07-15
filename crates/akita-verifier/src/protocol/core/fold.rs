@@ -739,13 +739,13 @@ where
         role_dims.d_b(),
         |D| commitment_rows.as_ring_slice::<D>().map(|_| ())
     )?;
-    validate_fold_grind_nonce(
-        &prepared.lp.fold_witness_grind_contract(
-            opening_shape.num_total_polynomials(),
+    prepared
+        .lp
+        .fold_witness_grind_batch_contract(
+            &opening_shape,
             FoldLinfProtocolBinding::CURRENT.max_grind_attempts,
-        )?,
-        prepared.fold_grind_nonce,
-    )?;
+        )?
+        .validate_nonce(prepared.fold_grind_nonce)?;
     if !prepared.v.coeffs().is_empty() {
         dispatch_for_field!(
             ProtocolDispatchSlot::Role(RingRole::Opening),

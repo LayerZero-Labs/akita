@@ -39,7 +39,9 @@ pub use decomposition_digits::{
     decomposed_t_ring_count, decomposed_w_ring_count, fold_witness_representable_linf_bounds,
     num_digits_for_bound, num_digits_open, num_digits_s_commit,
 };
-pub use fold_witness_grind::{FoldWitnessGrindContract, FOLD_GRIND_PROBE_ORDER_ABSORB};
+pub use fold_witness_grind::{
+    FoldWitnessGrindBatchContract, FoldWitnessGrindContract, FOLD_GRIND_PROBE_ORDER_ABSORB,
+};
 pub use norm_bound::{
     fold_witness_digit_plan, fold_witness_linf_cap_policy, rademacher_proxy_variance,
     rademacher_proxy_variance_flat_challenges, rademacher_proxy_variance_tensor_challenges,

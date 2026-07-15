@@ -476,6 +476,49 @@ impl LevelParams {
         })
     }
 
+    /// Derive the shared grind contract from every root group's local geometry.
+    pub fn fold_witness_grind_batch_contract(
+        &self,
+        opening_batch: &OpeningClaimsLayout,
+        max_grind_attempts: u32,
+    ) -> Result<crate::sis::FoldWitnessGrindBatchContract, AkitaError> {
+        self.validate_root_opening_batch(opening_batch)?;
+        let mut contracts = Vec::with_capacity(opening_batch.num_groups());
+        for group_index in 0..opening_batch.num_groups() {
+            let params = self.root_group_params(opening_batch, group_index)?;
+            let num_claims = opening_batch.group_layout(group_index)?.num_polynomials();
+            let cap_config = self.fold_witness_linf_cap_config_for_params(params)?;
+            let challenge = crate::sis::FoldChallengeNorms::new(
+                &self.fold_challenge_config,
+                params.fold_challenge_shape(),
+            );
+            let witness_norms = self.fold_witness_norms_for_params(params);
+            let (_, witness_linf_cap) = crate::sis::fold_witness_digit_plan(
+                params.fold_bits(),
+                num_claims,
+                self.field_bits_for_cache(),
+                params.log_basis(),
+                challenge,
+                witness_norms,
+                &cap_config,
+            )?;
+            let policy = cap_config.policy;
+            let max_nonce_exclusive = match policy {
+                crate::sis::FoldWitnessLinfCapPolicy::WorstCaseBetaOnly => 1,
+                crate::sis::FoldWitnessLinfCapPolicy::TailBoundWithGrind
+                | crate::sis::FoldWitnessLinfCapPolicy::TensorTailBoundWithGrind => {
+                    max_grind_attempts
+                }
+            };
+            contracts.push(crate::sis::FoldWitnessGrindContract {
+                policy,
+                witness_linf_cap,
+                max_nonce_exclusive,
+            });
+        }
+        crate::sis::FoldWitnessGrindBatchContract::new(contracts)
+    }
+
     /// Domain-separated preview absorb payload for one fold-level grind search.
     pub fn fold_grind_probe_order_absorb_buf(&self, num_claims: usize) -> Vec<u8> {
         let num_claims = u32::try_from(num_claims).unwrap_or(u32::MAX);

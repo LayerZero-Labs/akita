@@ -4,8 +4,8 @@
 |---|---|
 | Author(s) | Quang Dao; Codex assistant |
 | Created | 2026-07-10 |
-| Revised | 2026-07-14 |
-| Status | proposed |
+| Revised | 2026-07-15 |
+| Status | active |
 | PR | #294 |
 | Supersedes | Root and recursive layout decisions in `setup-layout-repack.md`, `protocol-core-eor-consolidation.md`, and `distributed-verifier-row-eval.md` |
 | Superseded by | |
@@ -56,35 +56,38 @@ The current `main` branch still has these properties.
 * The tensor choice is stored on the top level `LevelParams`, so precommitted groups cannot choose it independently.
 * Multi group plus multi chunk is rejected.
 
-### Useful work already present on PR #294
+### PR #294 implementation status
 
-The PR prototype has useful work that should remain where it agrees with this spec.
+Slices 1 through 3 are complete. They establish the final parameter geometry, the physical opening and fold order, and the canonical witness ranges.
 
-* It removes `BlockOrder` from the main proof paths.
-* It emits `z_hat`, `e_hat`, `t_hat`, and `r_hat` with the digit as the innermost axis.
-* It identifies the call sites that must share one physical layout.
-* It adds checked equality evaluation primitives for compact affine addresses.
-* It keeps tensor challenges in factored sparse form in important verifier paths.
-* It improves mixed A, B, and D ring dimension handling.
-* It adds cross layer and mixed role tests that can be adapted to the final geometry.
+Slice 4 is in progress. The branch stores exact live tensor prefixes, supports a partial final tensor row, and keeps tensor challenges in factored sparse form. Challenge sampling binds the group index and group local shape. Security sizing uses each group local shape and A width. Small signed sparse coefficients use add, subtract, and double fast paths.
 
-### PR #294 work that must be replaced
+One root grind nonce satisfies every group. The prover derives one batch contract and one probe order from the ordered group geometry. It previews each candidate across every group and changes the live transcript only after every group accepts. The verifier validates the same batch contract before replay.
 
-The following parts implement the old version of this spec and are not the final design.
+Public tensor evaluation boundaries now call the full shape validator. A zero or non-power-of-two tensor low length returns `AkitaError` before indexing, division, or modulo.
 
-* `OpeningBlockLayout` maps compact `b * L + p` storage to virtual `b * P + p` openings.
-* `OpeningBatchWitnessGroup`, `WitnessOwnershipUnit`, and `OpeningBatchWitnessLayout` copy group and layout data already owned by existing types.
-* The block count remains a power of two.
-* Machine chunks must divide the block count evenly.
-* Tensor factors still use left and right names and a full rectangular product.
-* Some trace and relation evaluators enumerate live folds or digits while claiming a succinct cost.
-* Several setup carriers copy offsets, dimensions, or ranges from the witness layout.
+The following work remains before Slice 4 is complete.
 
-### Coordination with PR #296
+* Fix the D128 root proving failure where a predecomposed digit row exceeds the scheduled `log_basis` range.
 
-PR #296 is still a draft and has not landed on `main`. Its current machine major proposal gives every machine its own quotient tail. That is not the layout in this spec.
+The current challenge evaluator no longer stores one product evaluation for every live fold. Some verifier paths still visit every live fold and recompute factor evaluations. Slice 6 owns the succinct carry and trace evaluator that removes this remaining work. The current allocation change is not the final performance result.
 
-PR #296 must consume the group and shard ownership ranges defined here. It must not add a second recursive witness hierarchy, a second range resolver, or a quotient per machine. Process placement and edge communication belong to the distributed prover. Coefficient order and semantic ownership belong here.
+The failing multi group terminal root tests assert a schedule shape that current `main` now rejects. They must be replaced with tests for grouped nonterminal folds and scalar direct or terminal folds. They are not an accepted later slice target.
+
+### Integration with current `main`
+
+PR #301 landed on `main` after this branch diverged. It makes setup prefix slots exact, moves recursive prefix materialization into the new setup and prover source modules, and fixes the schedule topology as follows.
+
+* A grouped fold is nonterminal and recursive.
+* A direct fold consumes one witness group and creates no outgoing setup claim.
+* A terminal fold is scalar and direct.
+* A recursive successor contains exactly one witness group and one setup prefix group.
+
+This spec does not reopen that topology. Its canonical group and shard ranges apply to group bearing nonterminal folds. Direct and terminal consumers use the same range authority for their single witness group. The merge must keep the new setup prefix ownership from `main`, port the digit innermost address and exact live count rules into it, and delete the old `akita-setup/src/recursion.rs` path.
+
+### Coordination with distributed prover work
+
+PR #296 closed without landing on `main`. Any successor must consume the group and shard ownership ranges defined here. It must not add a second recursive witness hierarchy, a second range resolver, or a quotient per machine. Process placement and edge communication belong to the distributed prover. Coefficient order and semantic ownership belong here.
 
 ## Goals
 
@@ -935,8 +938,10 @@ Files centered on this slice:
 
 ```text
 crates/akita-prover/src/backend/recursive/witness.rs
+crates/akita-prover/src/backend/recursive/setup_prefix_source.rs
 crates/akita-prover/src/backend/poly_helpers/decompose_fold_partitioned.rs
-crates/akita-setup/src/recursion.rs
+crates/akita-setup/src/recursive_prefixes.rs
+crates/akita-config/src/setup_prefix_slots.rs
 crates/akita-prover/src/protocol/ring_switch/finalize.rs
 crates/akita-types/src/proof/terminal_witness.rs
 ```
@@ -945,9 +950,10 @@ Steps:
 
 1. Make recursive witness construction consume canonical unit ranges.
 2. Preserve tight digits and exact live counts at the next handoff.
-3. Use the same emission functions for intermediate and terminal witnesses.
-4. Delete column major recursive helpers and duplicate terminal index formulas.
-5. Test partial last fold slices across two recursive levels.
+3. Make setup prefix source and materialization consume the same ranges.
+4. Keep direct and terminal folds scalar and use the canonical single group emission path.
+5. Delete column major recursive helpers, duplicate terminal index formulas, and the old setup recursion module.
+6. Test partial last fold slices across two recursive levels and scalar terminal consumers.
 
 ### Slice 8: Planner, schedules, docs, and deletion
 

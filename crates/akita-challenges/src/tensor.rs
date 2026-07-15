@@ -554,7 +554,7 @@ impl TensorChallenges {
                 "tensor evaluation requires D >= 2".to_string(),
             ));
         }
-        self.validate_lengths()?;
+        self.validate_dyn(ring_d)?;
 
         // For `α ∈ E`, `α^D + 1 ∈ E` is the negacyclic-reduction scalar.
         // Tensor products commute with this reduction up to subtraction of a
@@ -635,6 +635,7 @@ impl TensorChallenges {
                 actual: ring_d,
             });
         }
+        self.validate_dyn(ring_d)?;
         let fold_high_len = self.fold_high_len();
         if u_weights.len() != fold_high_len {
             return Err(AkitaError::InvalidSize {
@@ -654,8 +655,6 @@ impl TensorChallenges {
                 self.num_claims
             )));
         }
-        self.validate_lengths()?;
-
         let alpha_pow_d_plus_one = alpha_pows[ring_d - 1] * alpha_pows[1] + E::one();
         let high_start = claim_idx * fold_high_len;
         let low_start = claim_idx * self.fold_low_len;

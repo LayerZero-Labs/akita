@@ -644,6 +644,40 @@ fn tensor_lazy_evals_match_ring_product_reference() {
 }
 
 #[test]
+fn tensor_public_evals_reject_malformed_low_length() {
+    const TD: usize = 8;
+    let alpha_pows = scalar_powers::<F, TD>(F::from_u64(5));
+
+    for fold_low_len in [0, 3] {
+        let tensor = TensorChallenges {
+            fold_high: Vec::new(),
+            fold_low: Vec::new(),
+            live_folds_per_claim: 1,
+            fold_low_len,
+            num_claims: 1,
+        };
+        let err = tensor.evals_at_pows::<F, F>(&alpha_pows).unwrap_err();
+        assert!(
+            matches!(err, akita_field::AkitaError::InvalidInput(msg) if msg.contains("power-of-two low length"))
+        );
+
+        let high_weights = vec![F::zero(); tensor.fold_high_len()];
+        let low_weights = vec![F::zero(); fold_low_len];
+        let err = tensor
+            .eval_factored_aggregate_at_pows::<F, F, TD>(
+                0,
+                &high_weights,
+                &low_weights,
+                &alpha_pows,
+            )
+            .unwrap_err();
+        assert!(
+            matches!(err, akita_field::AkitaError::InvalidInput(msg) if msg.contains("power-of-two low length"))
+        );
+    }
+}
+
+#[test]
 fn tensor_factored_aggregate_matches_ring_product_reference() {
     const TD: usize = 8;
     let tensor = TensorChallenges {
