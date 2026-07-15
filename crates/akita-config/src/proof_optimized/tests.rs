@@ -537,7 +537,7 @@ fn recursive_setup_envelope_counts_setup_prefix_d_segment() {
     fn scalar_level_params() -> LevelParams {
         let full_field_digits = akita_types::sis::compute_num_digits_full_field(128, 2);
         LevelParams::params_only(
-            akita_types::SisModulusProfileId::Q32Offset99,
+            akita_types::SisModulusProfileId::Q128OffsetA7F7,
             SETUP_OFFLOAD_D_SETUP,
             2,
             2,
