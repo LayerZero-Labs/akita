@@ -17,12 +17,12 @@ const TEST_D: usize = 64;
 type SingleGroupPlanParts = (
     SetupContributionPlan<F>,
     SetupContributionStatic<F>,
-    Vec<SetupContributionGroupInputs>,
+    SetupContributionLayout,
 );
 
 type StructuredWeightFixture = (
     SetupContributionPlanInputs<F>,
-    Vec<SetupContributionGroupInputs>,
+    SetupContributionLayout,
     SetupContributionStatic<F>,
     SetupContributionPlan<F>,
     Vec<F>,
@@ -139,27 +139,23 @@ fn prepare_single_group_plan_parts(
     fold_gadget: &[F],
     layout: &WitnessLayout,
 ) -> Result<SingleGroupPlanParts, AkitaError> {
-    let opening_source_len = layout.total_len();
-    let single_group =
-        SetupContributionGroupInputs::single_group_layout(inputs, layout, opening_source_len, 0)?;
-    let groups = vec![single_group.group];
-    let static_plan = SetupContributionPlan::prepare_static(
-        inputs,
-        &groups,
-        single_group.d_row_start,
-        single_group.d_rows,
-        single_group.d_physical_cols,
+    let group = SetupContributionGroupInputs::from_single_group(inputs, 0)?;
+    let setup_layout = SetupContributionLayout::new(
+        std::sync::Arc::new(layout.clone()),
+        layout.total_len(),
+        vec![group],
     )?;
+    let static_plan = SetupContributionPlan::prepare_static(inputs, &setup_layout)?;
     let plan = SetupContributionPlan::finish_plan::<F>(
         &static_plan,
         full_vec_randomness,
         eq_low,
         z_block_low_eq,
         Some(fold_gadget),
-        &groups,
+        &setup_layout,
         CommitmentRingDims::uniform(TEST_D),
     )?;
-    Ok((plan, static_plan, groups))
+    Ok((plan, static_plan, setup_layout))
 }
 
 fn structured_weight_fixture(
@@ -232,9 +228,8 @@ fn structured_weight_fixture(
         .collect::<Vec<_>>();
     let fold_gadget = gadget_row_scalars::<F>(depth_fold, log_basis);
     let opening_source_len = layout.total_len();
-    let groups = vec![SetupContributionGroupInputs {
+    let group = SetupContributionGroupInputs {
         group_id: 0,
-        e_col_offset: 0,
         num_claims,
         live_fold_count,
         fold_position_count,
@@ -247,30 +242,24 @@ fn structured_weight_fixture(
         t_cols_per_vector: n_a * depth_open * live_fold_count,
         a_row_start: 1,
         b_row_start: 1 + n_a,
-        layout: std::sync::Arc::new(layout),
-        opening_source_len,
-    }];
-    let static_plan = SetupContributionPlan::prepare_static(
-        &inputs,
-        &groups,
-        rows - n_d,
-        n_d,
-        num_claims * live_fold_count * depth_open,
-    )
-    .unwrap();
+    };
+    let setup_layout =
+        SetupContributionLayout::new(std::sync::Arc::new(layout), opening_source_len, vec![group])
+            .unwrap();
+    let static_plan = SetupContributionPlan::prepare_static(&inputs, &setup_layout).unwrap();
     let plan = SetupContributionPlan::finish_plan::<F>(
         &static_plan,
         &full_vec_randomness,
         None,
         None,
         Some(&fold_gadget),
-        &groups,
+        &setup_layout,
         role_dims,
     )
     .unwrap();
     (
         inputs,
-        groups,
+        setup_layout,
         static_plan,
         plan,
         tau1,
@@ -324,6 +313,195 @@ fn projection_scales(alpha: F, base_d: usize, role_d: usize) -> Vec<F> {
         .collect()
 }
 
+#[test]
+fn setup_layout_assigns_d_ranges_in_witness_relation_order() {
+    let units = [2, 0, 1]
+        .into_iter()
+        .enumerate()
+        .map(|(index, group_id)| {
+            WitnessUnitLayout::new_for_test(
+                group_id,
+                0,
+                0,
+                match group_id {
+                    0 => 1,
+                    1 => 3,
+                    _ => 2,
+                },
+                index * 3..index * 3 + 1,
+                index * 3 + 1..index * 3 + 2,
+                index * 3 + 2..index * 3 + 3,
+            )
+        })
+        .collect();
+    let witness_layout = WitnessLayout::new_for_test(units, 9..10);
+    let group = |group_id, num_claims, live_fold_count, depth_open| SetupContributionGroupInputs {
+        group_id,
+        num_claims,
+        live_fold_count,
+        fold_position_count: 1,
+        depth_open,
+        depth_commit: 1,
+        depth_fold: 1,
+        log_basis: 1,
+        n_a: 1,
+        n_b: 1,
+        t_cols_per_vector: live_fold_count * depth_open,
+        a_row_start: 1,
+        b_row_start: 2,
+    };
+    let layout = SetupContributionLayout::new(
+        std::sync::Arc::new(witness_layout),
+        10,
+        vec![group(2, 1, 2, 3), group(0, 2, 1, 2), group(1, 1, 3, 1)],
+    )
+    .unwrap();
+
+    assert_eq!(layout.d_col_range(2).unwrap(), 0..6);
+    assert_eq!(layout.d_col_range(0).unwrap(), 6..10);
+    assert_eq!(layout.d_col_range(1).unwrap(), 10..13);
+    assert_eq!(layout.d_physical_cols(), 13);
+}
+
+#[test]
+fn relation_ordered_setup_layout_matches_structured_direct_and_dense_oracles() {
+    let rows = 6;
+    let quotient_depth = 2;
+    let group_shapes = [
+        // Relation order deliberately differs from numeric group order.
+        (1usize, 1usize, 2usize, 2usize, 2usize),
+        (0usize, 2usize, 1usize, 1usize, 1usize),
+    ];
+    let mut cursor = 0usize;
+    let units = group_shapes
+        .iter()
+        .map(
+            |&(group_id, num_claims, live_folds, depth_open, depth_commit)| {
+                let z_len = 2 * depth_commit * quotient_depth;
+                let z_range = cursor..cursor + z_len;
+                let e_range = z_range.end..z_range.end + num_claims * live_folds * depth_open;
+                let t_range = e_range.end..e_range.end + num_claims * live_folds * depth_open;
+                cursor = t_range.end;
+                WitnessUnitLayout::new_for_test(
+                    group_id, 0, 0, live_folds, z_range, e_range, t_range,
+                )
+            },
+        )
+        .collect();
+    let witness_layout = WitnessLayout::new_for_test(units, cursor..cursor + rows * quotient_depth);
+    let opening_source_len = witness_layout.total_len();
+    let groups = group_shapes
+        .iter()
+        .enumerate()
+        .map(
+            |(relation_index, &(group_id, num_claims, live_folds, depth_open, depth_commit))| {
+                SetupContributionGroupInputs {
+                    group_id,
+                    num_claims,
+                    live_fold_count: live_folds,
+                    fold_position_count: 2,
+                    depth_open,
+                    depth_commit,
+                    depth_fold: quotient_depth,
+                    log_basis: 4,
+                    n_a: 1,
+                    n_b: 1,
+                    t_cols_per_vector: live_folds * depth_open,
+                    a_row_start: 1 + relation_index,
+                    b_row_start: 3 + relation_index,
+                }
+            },
+        )
+        .collect();
+    let setup_layout = SetupContributionLayout::new(
+        std::sync::Arc::new(witness_layout),
+        opening_source_len,
+        groups,
+    )
+    .unwrap();
+    assert_eq!(setup_layout.d_col_range(1).unwrap(), 0..4);
+    assert_eq!(setup_layout.d_col_range(0).unwrap(), 4..6);
+
+    let tau1 = vec![test_scalar(31), test_scalar(32), test_scalar(33)];
+    let inputs = SetupContributionPlanInputs {
+        relation_matrix_row_layout: RelationMatrixRowLayout::WithDBlock,
+        rows,
+        n_a: 1,
+        n_b: 1,
+        n_d: 1,
+        num_groups: 2,
+        num_polys_per_group: vec![2, 1],
+        num_t_vectors: 3,
+        num_claims: 3,
+        live_fold_count: 1,
+        fold_position_count: 2,
+        depth_open: 1,
+        depth_commit: 1,
+        depth_fold: quotient_depth,
+        inner_width: 2,
+        eq_tau1: EqPolynomial::evals(&tau1).unwrap().into(),
+    };
+    let randomness_bits = crate::opening_domain_len(opening_source_len)
+        .unwrap()
+        .trailing_zeros() as usize;
+    let full_vec_randomness = (0..randomness_bits)
+        .map(|index| test_scalar(101 + index as u128))
+        .collect::<Vec<_>>();
+    let fold_gadget = gadget_row_scalars::<F>(quotient_depth, 4);
+    let static_plan = SetupContributionPlan::prepare_static(&inputs, &setup_layout).unwrap();
+    let plan = SetupContributionPlan::finish_plan::<F>(
+        &static_plan,
+        &full_vec_randomness,
+        None,
+        None,
+        Some(&fold_gadget),
+        &setup_layout,
+        CommitmentRingDims::uniform(TEST_D),
+    )
+    .unwrap();
+
+    let setup_len = plan.required();
+    let setup = AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
+        AkitaSetupSeed {
+            max_num_vars: 0,
+            max_num_batched_polys: 0,
+            gen_ring_dim: TEST_D,
+            max_setup_len: setup_len,
+            public_matrix_seed: [0u8; 32],
+        },
+        FlatMatrix::from_flat_data(
+            (0..setup_len * TEST_D)
+                .map(|index| test_scalar(211 + index as u128))
+                .collect(),
+            TEST_D,
+        ),
+    );
+    let alpha = test_scalar(3);
+    let alpha_pows = scalar_powers(alpha, TEST_D);
+    assert_eq!(
+        plan.evaluate_direct::<F>(&setup, &alpha_pows, &alpha_pows, &alpha_pows)
+            .unwrap(),
+        plan.evaluate_direct_by_rows::<F>(&setup, &alpha_pows, &alpha_pows, &alpha_pows, TEST_D,)
+            .unwrap(),
+    );
+
+    let evaluator = SetupIndexWeightEvaluator::new::<F>(
+        &inputs,
+        &plan,
+        &setup_layout,
+        &tau1,
+        &full_vec_randomness,
+        &fold_gadget,
+        alpha,
+    )
+    .unwrap();
+    let rho = rho_for_required(plan.required());
+    assert_eq!(
+        evaluator.evaluate(&rho).unwrap(),
+        plan.evaluate_setup_index_weight_mle(&rho, alpha).unwrap(),
+    );
+}
+
 #[allow(clippy::too_many_arguments)]
 fn projected_setup_weight_reference(
     plan: &SetupContributionPlan<F>,
@@ -344,12 +522,10 @@ fn projected_setup_weight_reference(
             if d_idx < plan.d_rows * plan.d_physical_cols {
                 let d_col = d_idx % plan.d_physical_cols;
                 let d_row = d_idx / plan.d_physical_cols;
-                if d_col >= group.e_col_offset
-                    && d_col < group.e_col_offset + group.e_eq_slice.len()
-                {
+                if group.d_col_range.contains(&d_col) {
                     weight += d_scales[base_idx % d_ratio]
                         * group.d_weights[d_row]
-                        * group.e_eq_slice[d_col - group.e_col_offset];
+                        * group.e_eq_slice[d_col - group.d_col_range.start];
                 }
             }
 
@@ -701,9 +877,8 @@ fn single_group_plan_supports_multi_chunk_weights() {
         depth_fold,
     );
     let opening_source_len = layout.total_len();
-    let groups = [SetupContributionGroupInputs {
+    let group = SetupContributionGroupInputs {
         group_id: 0,
-        e_col_offset: 0,
         num_claims,
         live_fold_count,
         fold_position_count,
@@ -716,9 +891,10 @@ fn single_group_plan_supports_multi_chunk_weights() {
         t_cols_per_vector: n_a * depth_open * live_fold_count,
         a_row_start: 1,
         b_row_start: 1 + n_a,
-        layout: std::sync::Arc::new(layout),
-        opening_source_len,
-    }];
+    };
+    let setup_layout =
+        SetupContributionLayout::new(std::sync::Arc::new(layout), opening_source_len, vec![group])
+            .unwrap();
     let inputs = SetupContributionPlanInputs {
         relation_matrix_row_layout: RelationMatrixRowLayout::WithDBlock,
         rows,
@@ -743,21 +919,14 @@ fn single_group_plan_supports_multi_chunk_weights() {
         .map(|idx| test_scalar(101 + idx as u128))
         .collect::<Vec<_>>();
     let fold_gadget = gadget_row_scalars::<F>(depth_fold, log_basis);
-    let static_plan = SetupContributionPlan::prepare_static(
-        &inputs,
-        &groups,
-        rows - n_d,
-        n_d,
-        num_claims * live_fold_count * depth_open,
-    )
-    .unwrap();
+    let static_plan = SetupContributionPlan::prepare_static(&inputs, &setup_layout).unwrap();
     let plan = SetupContributionPlan::finish_plan::<F>(
         &static_plan,
         &full_vec_randomness,
         None,
         None,
         Some(&fold_gadget),
-        &groups,
+        &setup_layout,
         CommitmentRingDims::uniform(TEST_D),
     )
     .unwrap();
@@ -808,7 +977,7 @@ fn packed_direct_matches_row_fallback_with_d_offset() {
         2,
         5,
         vec![SetupContributionGroupPlan {
-            e_col_offset: 2,
+            d_col_range: 2..4,
             t_cols: 4,
             z_cols: 3,
             n_a: 2,
@@ -862,7 +1031,7 @@ fn multi_group_packed_direct_matches_row_fallback() {
         5,
         vec![
             SetupContributionGroupPlan {
-                e_col_offset: 2,
+                d_col_range: 2..4,
                 t_cols: 4,
                 z_cols: 3,
                 n_a: 2,
@@ -882,7 +1051,7 @@ fn multi_group_packed_direct_matches_row_fallback() {
                 d_weights: vec![test_scalar(43), test_scalar(47)].into(),
             },
             SetupContributionGroupPlan {
-                e_col_offset: 0,
+                d_col_range: 0..2,
                 t_cols: 4,
                 z_cols: 3,
                 n_a: 2,
@@ -953,7 +1122,7 @@ fn packed_direct_matches_row_fallback_with_nested_role_dims() {
         2,
         5,
         vec![SetupContributionGroupPlan {
-            e_col_offset: 2,
+            d_col_range: 2..4,
             t_cols: 4,
             z_cols: 3,
             n_a: 2,
@@ -1016,7 +1185,7 @@ fn packed_direct_rejects_non_decomposable_role_alpha_pows() {
         2,
         5,
         vec![SetupContributionGroupPlan {
-            e_col_offset: 2,
+            d_col_range: 2..4,
             t_cols: 4,
             z_cols: 3,
             n_a: 2,
@@ -1081,7 +1250,7 @@ fn packed_direct_accepts_d_footprint_at_nested_d_d() {
         2,
         11,
         vec![SetupContributionGroupPlan {
-            e_col_offset: 0,
+            d_col_range: 0..2,
             t_cols: 4,
             z_cols: 3,
             n_a: 2,
@@ -1142,7 +1311,7 @@ fn multi_group_packed_direct_matches_row_fallback_with_mismatched_t_cols() {
         5,
         vec![
             SetupContributionGroupPlan {
-                e_col_offset: 2,
+                d_col_range: 2..4,
                 t_cols: 4,
                 z_cols: 3,
                 n_a: 2,
@@ -1162,7 +1331,7 @@ fn multi_group_packed_direct_matches_row_fallback_with_mismatched_t_cols() {
                 d_weights: vec![test_scalar(43), test_scalar(47)].into(),
             },
             SetupContributionGroupPlan {
-                e_col_offset: 0,
+                d_col_range: 0..2,
                 t_cols: 6,
                 z_cols: 3,
                 n_a: 2,

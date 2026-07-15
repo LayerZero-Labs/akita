@@ -481,14 +481,14 @@ where
 {
     let setup_artifact =
         prepare_setup_contribution_artifact::<F, E>(relation, lp, tau1, None, None)?;
-    let fold_gadget = shared_setup_fold_gadget::<F>(&setup_artifact.groups);
+    let fold_gadget = shared_setup_fold_gadget::<F>(setup_artifact.layout.groups());
     let plan = SetupContributionPlan::finish_plan::<F>(
         &setup_artifact.static_plan,
         x_challenges,
         None,
         None,
         fold_gadget.as_deref(),
-        &setup_artifact.groups,
+        &setup_artifact.layout,
         relation.role_dims(),
     )?;
     let geometry = plan.projection_geometry();

@@ -3,8 +3,8 @@ use akita_algebra::ring::scalar_powers;
 use akita_field::{AkitaError, FieldCore, MulBase};
 
 use crate::{
-    SetupContributionGroupInputs, SetupContributionPlan, SetupContributionPlanInputs,
-    SetupProjectionGeometry,
+    SetupContributionGroupInputs, SetupContributionLayout, SetupContributionPlan,
+    SetupContributionPlanInputs, SetupProjectionGeometry,
 };
 
 /// Succinct evaluator for the setup-index weight multilinear extension.
@@ -12,13 +12,12 @@ use crate::{
 /// The evaluator contracts live D, B, and A setup spans with an exact sparse
 /// pair-carry recurrence. It does not materialize the packed setup-weight
 /// vector or a Cartesian equality domain. Witness addresses and setup columns
-/// are resolved by the canonical [`crate::WitnessLayout`] carried
-/// by each group.
+/// are resolved by one canonical shared [`SetupContributionLayout`].
 #[derive(Clone)]
 pub struct SetupIndexWeightEvaluator<E> {
     tau1: Vec<E>,
     x_challenges: Vec<E>,
-    groups: Vec<SetupContributionGroupInputs>,
+    layout: SetupContributionLayout,
     d_row_start: usize,
     d_rows: usize,
     d_physical_cols: usize,
@@ -43,7 +42,7 @@ impl<E: FieldCore> SetupIndexWeightEvaluator<E> {
     pub fn new<F>(
         inputs: &SetupContributionPlanInputs<E>,
         plan: &SetupContributionPlan<E>,
-        groups: &[SetupContributionGroupInputs],
+        layout: &SetupContributionLayout,
         tau1: &[E],
         x_challenges: &[E],
         fold_gadget: &[F],
@@ -53,7 +52,7 @@ impl<E: FieldCore> SetupIndexWeightEvaluator<E> {
         F: FieldCore,
         E: MulBase<F>,
     {
-        if groups.is_empty() {
+        if layout.groups().is_empty() {
             return Err(AkitaError::InvalidSetup(
                 "setup-index weight evaluator requires at least one group".into(),
             ));
@@ -71,14 +70,13 @@ impl<E: FieldCore> SetupIndexWeightEvaluator<E> {
         let b_projection = setup_role_projection(alpha, geometry, geometry.b_ratio(), "B")?;
         let d_projection = setup_role_projection(alpha, geometry, geometry.d_ratio(), "D")?;
 
-        for group in groups {
+        for group in layout.groups() {
             if fold_gadget.len() < group.depth_fold {
                 return Err(AkitaError::InvalidSize {
                     expected: group.depth_fold,
                     actual: fold_gadget.len(),
                 });
             }
-            validate_group_layout(group)?;
         }
         let fold_gadget = fold_gadget
             .iter()
@@ -88,7 +86,7 @@ impl<E: FieldCore> SetupIndexWeightEvaluator<E> {
         Ok(Self {
             tau1: tau1.to_vec(),
             x_challenges: x_challenges.to_vec(),
-            groups: groups.to_vec(),
+            layout: layout.clone(),
             d_row_start,
             d_rows,
             d_physical_cols,
@@ -117,7 +115,7 @@ impl<E: FieldCore> SetupIndexWeightEvaluator<E> {
         }
 
         let mut acc = E::zero();
-        for group in &self.groups {
+        for group in self.layout.groups() {
             acc += self.evaluate_d_role(group, rho_setup_idx)?;
             acc += self.evaluate_b_role(group, rho_setup_idx)?;
             acc += self.evaluate_a_role(group, rho_setup_idx)?;
@@ -147,18 +145,18 @@ impl<E: FieldCore> SetupIndexWeightEvaluator<E> {
             group.depth_open,
             "setup D active width overflow",
         )?;
-        let active_end = group
-            .e_col_offset
-            .checked_add(active_cols)
-            .ok_or_else(|| AkitaError::InvalidSetup("setup D active range overflow".into()))?;
-        if active_end > self.d_physical_cols {
+        let d_col_range = self.layout.d_col_range(group.group_id)?;
+        if d_col_range.len() != active_cols || d_col_range.end > self.d_physical_cols {
             return Err(AkitaError::InvalidSetup(
                 "setup D active range exceeds physical width".into(),
             ));
         }
 
         let mut acc = E::zero();
-        let units = group.layout.units_for_group(group.group_id)?;
+        let units = self
+            .layout
+            .witness_layout()
+            .units_for_group(group.group_id)?;
         for claim in 0..group.num_claims {
             for unit in &units {
                 let setup_col = group
@@ -166,9 +164,9 @@ impl<E: FieldCore> SetupIndexWeightEvaluator<E> {
                     .checked_mul(claim)
                     .and_then(|base| base.checked_add(unit.global_fold_start()))
                     .and_then(|base| base.checked_mul(group.depth_open))
-                    .and_then(|local| group.e_col_offset.checked_add(local))
+                    .and_then(|local| d_col_range.start.checked_add(local))
                     .ok_or_else(|| AkitaError::InvalidSetup("setup D address overflow".into()))?;
-                let witness_index = group.layout.e_index(
+                let witness_index = self.layout.witness_layout().e_index(
                     unit,
                     group.num_claims,
                     group.depth_open,
@@ -205,7 +203,7 @@ impl<E: FieldCore> SetupIndexWeightEvaluator<E> {
                                     AkitaError::InvalidSetup("witness D address overflow".into())
                                 })?;
                             let opening_address = crate::checked_opening_source_index(
-                                group.opening_source_len,
+                                self.layout.opening_source_len(),
                                 physical_address,
                             )?;
                             pair += eq_eval_at_index(rho_setup_idx, setup_address)
@@ -232,7 +230,10 @@ impl<E: FieldCore> SetupIndexWeightEvaluator<E> {
             .checked_mul(group.t_cols_per_vector)
             .ok_or_else(|| AkitaError::InvalidSetup("setup B width overflow".into()))?;
         let mut acc = E::zero();
-        let units = group.layout.units_for_group(group.group_id)?;
+        let units = self
+            .layout
+            .witness_layout()
+            .units_for_group(group.group_id)?;
         for claim in 0..group.num_claims {
             for unit in &units {
                 let setup_col = group
@@ -242,7 +243,7 @@ impl<E: FieldCore> SetupIndexWeightEvaluator<E> {
                     .and_then(|base| base.checked_mul(group.n_a))
                     .and_then(|base| base.checked_mul(group.depth_open))
                     .ok_or_else(|| AkitaError::InvalidSetup("setup B address overflow".into()))?;
-                let witness_index = group.layout.t_index(
+                let witness_index = self.layout.witness_layout().t_index(
                     unit,
                     group.num_claims,
                     group.n_a,
@@ -283,7 +284,7 @@ impl<E: FieldCore> SetupIndexWeightEvaluator<E> {
                                     AkitaError::InvalidSetup("witness B address overflow".into())
                                 })?;
                             let opening_address = crate::checked_opening_source_index(
-                                group.opening_source_len,
+                                self.layout.opening_source_len(),
                                 physical_address,
                             )?;
                             pair += eq_eval_at_index(rho_setup_idx, setup_address)
@@ -309,12 +310,15 @@ impl<E: FieldCore> SetupIndexWeightEvaluator<E> {
             .fold_position_count
             .checked_mul(group.depth_commit)
             .ok_or_else(|| AkitaError::InvalidSetup("setup A width overflow".into()))?;
-        let units = group.layout.units_for_group(group.group_id)?;
+        let units = self
+            .layout
+            .witness_layout()
+            .units_for_group(group.group_id)?;
         let setup_col = 0;
         let mut acc = E::zero();
         for unit in &units {
             for (fold_digit, &fold) in self.fold_gadget.iter().enumerate().take(group.depth_fold) {
-                let witness_index = group.layout.z_index(
+                let witness_index = self.layout.witness_layout().z_index(
                     unit,
                     group.fold_position_count,
                     group.depth_commit,
@@ -352,7 +356,7 @@ impl<E: FieldCore> SetupIndexWeightEvaluator<E> {
                                     AkitaError::InvalidSetup("witness A address overflow".into())
                                 })?;
                             let opening_address = crate::checked_opening_source_index(
-                                group.opening_source_len,
+                                self.layout.opening_source_len(),
                                 physical_address,
                             )?;
                             pair += eq_eval_at_index(rho_setup_idx, setup_address)
@@ -394,15 +398,6 @@ fn projected_setup_offset<E: FieldCore>(
         .ok_or_else(|| AkitaError::InvalidSetup("setup base index overflow".into()))?;
     base.checked_add(lane)
         .ok_or_else(|| AkitaError::InvalidSetup("setup lane index overflow".into()))
-}
-
-fn validate_group_layout(group: &SetupContributionGroupInputs) -> Result<(), AkitaError> {
-    if group.layout.group_live_fold_count(group.group_id)? != group.live_fold_count {
-        return Err(AkitaError::InvalidSetup(
-            "setup group dimensions disagree with witness layout".into(),
-        ));
-    }
-    Ok(())
 }
 
 fn setup_role_projection<E: FieldCore>(

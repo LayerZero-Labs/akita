@@ -30,7 +30,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                     let row = d_view.row_flat(row_idx)?;
                     acc += evaluate_weighted_setup_row::<F, E>(
                         row,
-                        group.e_col_offset,
+                        group.d_col_range.start,
                         &group.e_eq_slice,
                         row_weight,
                         alpha_pows_d,

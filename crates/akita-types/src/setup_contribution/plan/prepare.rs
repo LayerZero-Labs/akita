@@ -3,11 +3,18 @@ use super::*;
 impl<E: FieldCore> SetupContributionPlan<E> {
     pub fn prepare_static(
         inputs: &SetupContributionPlanInputs<E>,
-        groups: &[SetupContributionGroupInputs],
-        d_row_start: usize,
-        d_rows: usize,
-        d_physical_cols: usize,
+        layout: &SetupContributionLayout,
     ) -> Result<SetupContributionStatic<E>, AkitaError> {
+        let groups = layout.groups();
+        let d_rows = match inputs.relation_matrix_row_layout {
+            crate::RelationMatrixRowLayout::WithDBlock => inputs.n_d,
+            crate::RelationMatrixRowLayout::WithoutDBlock => 0,
+        };
+        let d_row_start = inputs
+            .rows
+            .checked_sub(d_rows)
+            .ok_or_else(|| AkitaError::InvalidSetup("setup D rows exceed relation rows".into()))?;
+        let d_physical_cols = layout.d_physical_cols();
         let d_weights: std::sync::Arc<[E]> = if d_rows == 0 {
             Vec::new().into()
         } else {
@@ -15,11 +22,10 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                 .to_vec()
                 .into()
         };
-        let num_groups = groups.len();
         let static_groups = groups
             .iter()
             .map(|group| {
-                validate_group_chunk_layout(group, num_groups)?;
+                let d_col_range = layout.d_col_range(group.group_id)?;
                 let t_cols = group
                     .num_claims
                     .checked_mul(group.t_cols_per_vector)
@@ -52,7 +58,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                         AkitaError::InvalidSetup("setup E active width overflow".into())
                     })?;
                 let (required, segments) = build_packed_segments(
-                    group.e_col_offset,
+                    d_col_range.start,
                     e_cols,
                     t_cols,
                     z_cols,
@@ -65,7 +71,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                     d_physical_cols,
                 )?;
                 Ok(SetupContributionGroupStatic {
-                    e_col_offset: group.e_col_offset,
+                    d_col_range,
                     t_cols,
                     z_cols,
                     n_a: group.n_a,
@@ -91,7 +97,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
         _eq_low: Option<&[E]>,
         _z_block_low_eq: Option<&[E]>,
         fold_gadget: Option<&[F]>,
-        groups: &[SetupContributionGroupInputs],
+        layout: &SetupContributionLayout,
         role_dims: CommitmentRingDims,
     ) -> Result<SetupContributionPlan<E>, AkitaError>
     where
@@ -99,6 +105,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
         E: MulBase<F>,
     {
         let _span = tracing::info_span!("setup_prepare_plan").entered();
+        let groups = layout.groups();
         if static_plan.groups.len() != groups.len() {
             return Err(AkitaError::InvalidSize {
                 expected: groups.len(),
@@ -113,8 +120,8 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                 let e_eq_slice = {
                     let _span = tracing::info_span!("setup_prepare_e_weights").entered();
                     setup_e_col_weights::<E>(
-                        &group.layout,
-                        group.opening_source_len,
+                        layout.witness_layout(),
+                        layout.opening_source_len(),
                         group.group_id,
                         group.live_fold_count,
                         group.num_claims,
@@ -125,8 +132,8 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                 let t_eq_slice = {
                     let _span = tracing::info_span!("setup_prepare_t_weights").entered();
                     setup_t_col_weights::<E>(
-                        &group.layout,
-                        group.opening_source_len,
+                        layout.witness_layout(),
+                        layout.opening_source_len(),
                         group.group_id,
                         group.live_fold_count,
                         group.depth_open,
@@ -160,8 +167,8 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                 {
                     let _span = tracing::info_span!("setup_prepare_z_weights").entered();
                     setup_z_col_weights::<F, E>(
-                        &group.layout,
-                        group.opening_source_len,
+                        layout.witness_layout(),
+                        layout.opening_source_len(),
                         group.group_id,
                         group.fold_position_count,
                         group.depth_commit,
@@ -175,7 +182,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                 let b_weights = static_group.b_weights.clone();
                 let d_weights = static_plan.d_weights.clone();
                 Ok(SetupContributionGroupPlan {
-                    e_col_offset: static_group.e_col_offset,
+                    d_col_range: static_group.d_col_range.clone(),
                     t_cols: static_group.t_cols,
                     z_cols: static_group.z_cols,
                     n_a: static_group.n_a,
@@ -208,7 +215,10 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                     b_rows: planned.n_b,
                     b_cols: planned.t_cols,
                     d_active_cols,
-                    ownership_units: group.layout.units_for_group(group.group_id)?.len(),
+                    ownership_units: layout
+                        .witness_layout()
+                        .units_for_group(group.group_id)?
+                        .len(),
                     depth_fold: group.depth_fold,
                 })
             })

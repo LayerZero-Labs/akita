@@ -53,15 +53,16 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
         E: ExtField<F>,
     {
         let role_dims = relation_matrix_evaluator.role_dims;
-        let fold_gadget =
-            shared_setup_fold_gadget::<F>(&relation_matrix_evaluator.setup_contribution_groups);
+        let fold_gadget = shared_setup_fold_gadget::<F>(
+            relation_matrix_evaluator.setup_contribution_layout.groups(),
+        );
         let plan = SetupContributionPlan::finish_plan::<F>(
             &relation_matrix_evaluator.setup_contribution_static,
             x_challenges,
             None,
             None,
             fold_gadget.as_deref(),
-            &relation_matrix_evaluator.setup_contribution_groups,
+            &relation_matrix_evaluator.setup_contribution_layout,
             role_dims,
         )?;
         let geometry = plan.projection_geometry();
@@ -72,7 +73,7 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
                 SetupIndexWeightEvaluator::new::<F>(
                     &relation_matrix_evaluator.setup_contribution_inputs,
                     &plan,
-                    &relation_matrix_evaluator.setup_contribution_groups,
+                    &relation_matrix_evaluator.setup_contribution_layout,
                     tau1,
                     x_challenges,
                     fold_gadget,

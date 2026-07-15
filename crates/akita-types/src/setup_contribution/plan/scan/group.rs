@@ -175,7 +175,7 @@ impl<E: FieldCore> SetupContributionGroupPlan<E> {
             &mut endpoints,
             d_rows,
             d_physical_cols,
-            self.e_col_offset,
+            self.d_col_range.start,
             self.e_eq_slice.len(),
             d_projection.ratio(),
         )?;
@@ -196,10 +196,6 @@ impl<E: FieldCore> SetupContributionGroupPlan<E> {
         endpoints.sort_unstable();
         endpoints.dedup();
 
-        let e_end = self
-            .e_col_offset
-            .checked_add(self.e_eq_slice.len())
-            .ok_or_else(|| AkitaError::InvalidSetup("setup D active columns overflow".into()))?;
         let segments = (0..endpoints.len().saturating_sub(1))
             .filter_map(|idx| {
                 let lo = endpoints[idx];
@@ -214,11 +210,11 @@ impl<E: FieldCore> SetupContributionGroupPlan<E> {
                         false
                     } else {
                         let d_col = d_idx % d_physical_cols;
-                        d_col >= self.e_col_offset && d_col < e_end
+                        self.d_col_range.contains(&d_col)
                     };
                 let d_row = if has_d { d_idx / d_physical_cols } else { 0 };
                 let d_start_abs = if has_d {
-                    d_row * d_physical_cols + self.e_col_offset
+                    d_row * d_physical_cols + self.d_col_range.start
                 } else {
                     0
                 };

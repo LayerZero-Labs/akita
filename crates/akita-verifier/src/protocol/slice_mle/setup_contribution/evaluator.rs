@@ -37,7 +37,7 @@ where
         eq_low,
         z_block_low_eq,
         (!fold_gadget.is_empty()).then_some(fold_gadget),
-        &relation_matrix_evaluator.setup_contribution_groups,
+        &relation_matrix_evaluator.setup_contribution_layout,
         relation_matrix_evaluator.role_dims,
     )?;
     plan.evaluate_direct::<F>(setup, alpha_pows_a, alpha_pows_b, alpha_pows_d)

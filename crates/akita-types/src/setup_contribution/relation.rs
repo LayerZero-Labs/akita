@@ -4,8 +4,8 @@ use akita_algebra::eq_poly::EqPolynomial;
 use akita_field::{AkitaError, CanonicalField, FieldCore};
 
 use crate::{
-    LevelParams, RingRelationInstance, SetupContributionGroupInputs, SetupContributionPlan,
-    SetupContributionPlanInputs, SetupContributionStatic, WitnessLayout,
+    LevelParams, RingRelationInstance, SetupContributionGroupInputs, SetupContributionLayout,
+    SetupContributionPlan, SetupContributionPlanInputs, SetupContributionStatic,
 };
 
 /// Setup-contribution planning artifact shared by direct replay and recursive
@@ -13,11 +13,9 @@ use crate::{
 #[derive(Clone)]
 pub struct SetupContributionArtifact<E: FieldCore> {
     /// Canonical semantic witness layout used by the setup weight formulas.
-    pub chunk_layout: WitnessLayout,
+    pub layout: SetupContributionLayout,
     /// Challenge-free setup-contribution inputs with expanded tau1 row weights.
     pub inputs: SetupContributionPlanInputs<E>,
-    /// Per-commitment-group setup weight descriptors.
-    pub groups: Vec<SetupContributionGroupInputs>,
     /// Challenge-free packed segment cache.
     pub static_plan: SetupContributionStatic<E>,
 }
@@ -43,7 +41,7 @@ where
         lp.relation_matrix_row_count_for(opening_batch.num_groups(), relation_matrix_row_layout)?;
     let eq_tau1: Arc<[E]> = EqPolynomial::evals_prefix(tau1, rows)?.into();
 
-    let (inputs, groups, d_physical_cols, d_row_start, d_rows) = if lp.has_precommitted_groups() {
+    let (inputs, groups) = if lp.has_precommitted_groups() {
         lp.validate_opening_batch(opening_batch)?;
         let order = opening_batch.root_group_order()?;
         if order.iter().any(|&group_index| {
@@ -54,7 +52,6 @@ where
             ));
         }
         let mut groups = Vec::with_capacity(order.len());
-        let mut e_col_offset = 0usize;
         for &group_index in &order {
             let group_lp = lp.group_params(opening_batch, group_index)?;
             let group_layout = opening_batch.group_layout(group_index)?;
@@ -78,13 +75,8 @@ where
                     "multi-group row ranges do not match group matrix heights".to_string(),
                 ));
             }
-            let e_len = num_claims
-                .checked_mul(live_fold_count)
-                .and_then(|n| n.checked_mul(depth_open))
-                .ok_or_else(|| AkitaError::InvalidSetup("multi-group e width overflow".into()))?;
             groups.push(SetupContributionGroupInputs {
                 group_id: group_index,
-                e_col_offset,
                 num_claims,
                 live_fold_count,
                 fold_position_count: group_lp.fold_position_count(),
@@ -101,12 +93,7 @@ where
                 t_cols_per_vector,
                 a_row_start: a_range.start,
                 b_row_start: b_range.start,
-                layout: Arc::new(chunk_layout.clone()),
-                opening_source_len: opening_layout_override.unwrap_or(chunk_layout.total_len()),
             });
-            e_col_offset = e_col_offset
-                .checked_add(e_len)
-                .ok_or_else(|| AkitaError::InvalidSetup("multi-group e width overflow".into()))?;
         }
         let inputs = SetupContributionPlanInputs {
             relation_matrix_row_layout,
@@ -126,9 +113,7 @@ where
             inner_width: lp.a_key.col_len(),
             eq_tau1: eq_tau1.clone(),
         };
-        let d_rows = lp.n_d_active_for(relation_matrix_row_layout);
-        let d_row_start = rows.checked_sub(d_rows).ok_or(AkitaError::InvalidProof)?;
-        (inputs, groups, e_col_offset, d_row_start, d_rows)
+        (inputs, groups)
     } else {
         let mut inputs = SetupContributionPlanInputs::from_level_params(
             lp,
@@ -137,19 +122,8 @@ where
             depth_fold,
         )?;
         inputs.eq_tau1 = eq_tau1;
-        let single = SetupContributionGroupInputs::single_group_layout(
-            &inputs,
-            &chunk_layout,
-            opening_layout_override.unwrap_or(chunk_layout.total_len()),
-            lp.log_basis,
-        )?;
-        (
-            inputs,
-            vec![single.group],
-            single.d_physical_cols,
-            single.d_row_start,
-            single.d_rows,
-        )
+        let group = SetupContributionGroupInputs::from_single_group(&inputs, lp.log_basis)?;
+        (inputs, vec![group])
     };
 
     if inputs.rows != rows {
@@ -157,17 +131,12 @@ where
             "setup contribution row count mismatch".to_string(),
         ));
     }
-    let static_plan = SetupContributionPlan::prepare_static(
-        &inputs,
-        &groups,
-        d_row_start,
-        d_rows,
-        d_physical_cols,
-    )?;
+    let opening_source_len = opening_layout_override.unwrap_or(chunk_layout.total_len());
+    let layout = SetupContributionLayout::new(Arc::new(chunk_layout), opening_source_len, groups)?;
+    let static_plan = SetupContributionPlan::prepare_static(&inputs, &layout)?;
     Ok(SetupContributionArtifact {
-        chunk_layout,
+        layout,
         inputs,
-        groups,
         static_plan,
     })
 }

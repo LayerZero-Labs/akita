@@ -93,14 +93,10 @@ impl<E: FieldCore> SetupContributionPlan<E> {
             if d_idx < d_footprint {
                 let d_col = d_idx % self.d_physical_cols;
                 let d_row = d_idx / self.d_physical_cols;
-                let e_end = group
-                    .e_col_offset
-                    .checked_add(group.e_eq_slice.len())
-                    .ok_or_else(|| AkitaError::InvalidSetup("setup D range overflow".into()))?;
-                if d_col >= group.e_col_offset && d_col < e_end {
+                if group.d_col_range.contains(&d_col) {
                     weight += scales[2][setup_idx % geometry.d_ratio()]
                         * group.d_weights[d_row]
-                        * group.e_eq_slice[d_col - group.e_col_offset];
+                        * group.e_eq_slice[d_col - group.d_col_range.start];
                 }
             }
 

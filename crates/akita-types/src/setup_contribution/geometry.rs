@@ -117,25 +117,7 @@ impl SetupProjectionGeometry {
         b_footprint: usize,
         d_footprint: usize,
     ) -> Result<Self, AkitaError> {
-        validate_role_dims(role_dims)?;
-        let base_ring_dim = role_dims.d_a().min(role_dims.d_b()).min(role_dims.d_d());
-        let ratio = |role: &'static str, dimension: usize| {
-            if !dimension.is_multiple_of(base_ring_dim) {
-                return Err(AkitaError::InvalidSetup(format!(
-                    "{role} ring dimension does not decompose over the Stage 3 base"
-                )));
-            }
-            let ratio = dimension / base_ring_dim;
-            if ratio == 0 || !ratio.is_power_of_two() {
-                return Err(AkitaError::InvalidSetup(format!(
-                    "{role} Stage 3 projection ratio must be a non-zero power of two"
-                )));
-            }
-            Ok(ratio)
-        };
-        let a_ratio = ratio("A", role_dims.d_a())?;
-        let b_ratio = ratio("B", role_dims.d_b())?;
-        let d_ratio = ratio("D", role_dims.d_d())?;
+        let (base_ring_dim, a_ratio, b_ratio, d_ratio) = checked_role_ratios(role_dims)?;
         let a_projection_width = a_footprint
             .checked_mul(a_ratio)
             .ok_or_else(|| AkitaError::InvalidSetup("setup A projection width overflow".into()))?;
@@ -179,6 +161,31 @@ impl SetupProjectionGeometry {
             natural_field_len,
             evaluation_terms: 0,
         })
+    }
+
+    /// Number of native B- and D-role subcolumns in one A-role witness column.
+    pub(crate) fn witness_subcolumn_ratios(
+        role_dims: CommitmentRingDims,
+    ) -> Result<(usize, usize), AkitaError> {
+        let (_, a_ratio, b_ratio, d_ratio) = checked_role_ratios(role_dims)?;
+        let b_subcolumns = a_ratio
+            .checked_div(b_ratio)
+            .filter(|ratio| *ratio != 0)
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup("B role does not divide the A-role witness width".into())
+            })?;
+        let d_subcolumns = a_ratio
+            .checked_div(d_ratio)
+            .filter(|ratio| *ratio != 0)
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup("D role does not divide the A-role witness width".into())
+            })?;
+        if !b_subcolumns.is_power_of_two() || !d_subcolumns.is_power_of_two() {
+            return Err(AkitaError::InvalidSetup(
+                "relation role projection ratios must be powers of two".into(),
+            ));
+        }
+        Ok((b_subcolumns, d_subcolumns))
     }
 
     #[must_use]
@@ -288,6 +295,33 @@ impl SetupProjectionGeometry {
         }
         Ok(())
     }
+}
+
+fn checked_role_ratios(
+    role_dims: CommitmentRingDims,
+) -> Result<(usize, usize, usize, usize), AkitaError> {
+    validate_role_dims(role_dims)?;
+    let base_ring_dim = role_dims.d_a().min(role_dims.d_b()).min(role_dims.d_d());
+    let ratio = |role: &'static str, dimension: usize| {
+        if !dimension.is_multiple_of(base_ring_dim) {
+            return Err(AkitaError::InvalidSetup(format!(
+                "{role} ring dimension does not decompose over the Stage 3 base"
+            )));
+        }
+        let ratio = dimension / base_ring_dim;
+        if ratio == 0 || !ratio.is_power_of_two() {
+            return Err(AkitaError::InvalidSetup(format!(
+                "{role} Stage 3 projection ratio must be a non-zero power of two"
+            )));
+        }
+        Ok(ratio)
+    };
+    Ok((
+        base_ring_dim,
+        ratio("A", role_dims.d_a())?,
+        ratio("B", role_dims.d_b())?,
+        ratio("D", role_dims.d_d())?,
+    ))
 }
 
 /// Required setup ring rows for one level (challenge-free).
@@ -465,7 +499,7 @@ mod tests {
     use super::*;
     use crate::{
         gadget_row_scalars, RelationMatrixRowLayout, SetupContributionGroupInputs,
-        SetupContributionPlan, WitnessLayout, WitnessUnitLayout,
+        SetupContributionLayout, SetupContributionPlan, WitnessLayout, WitnessUnitLayout,
     };
     use akita_field::Prime128OffsetA7F7;
 
@@ -498,28 +532,20 @@ mod tests {
         fold_gadget: &[F],
         layout: &WitnessLayout,
     ) -> Result<SetupContributionPlan<F>, AkitaError> {
-        let opening_source_len = layout.total_len();
-        let single_group = SetupContributionGroupInputs::single_group_layout(
-            inputs,
-            layout,
-            opening_source_len,
-            0,
+        let group = SetupContributionGroupInputs::from_single_group(inputs, 0)?;
+        let layout = SetupContributionLayout::new(
+            std::sync::Arc::new(layout.clone()),
+            layout.total_len(),
+            vec![group],
         )?;
-        let groups = std::slice::from_ref(&single_group.group);
-        let static_plan = SetupContributionPlan::prepare_static(
-            inputs,
-            groups,
-            single_group.d_row_start,
-            single_group.d_rows,
-            single_group.d_physical_cols,
-        )?;
+        let static_plan = SetupContributionPlan::prepare_static(inputs, &layout)?;
         SetupContributionPlan::finish_plan::<F>(
             &static_plan,
             full_vec_randomness,
             None,
             None,
             Some(fold_gadget),
-            groups,
+            &layout,
             CommitmentRingDims::uniform(64),
         )
     }

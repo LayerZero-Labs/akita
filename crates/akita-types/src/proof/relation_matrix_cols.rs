@@ -9,7 +9,7 @@ use crate::layout::CommitmentRingDims;
 use crate::proof::ring_relation::RingRelationInstance;
 use crate::{
     gadget_row_scalars, r_decomp_levels, AkitaExpandedSetup, FpExtEncoding, LevelParams,
-    RelationMatrixRowLayout,
+    RelationMatrixRowLayout, SetupDColumnLayout, SetupProjectionGeometry,
 };
 use akita_algebra::eq_poly::SplitEqEvals;
 use akita_algebra::ring::{eval_flat_ring_at_pows_fast, scalar_powers};
@@ -223,38 +223,22 @@ where
             "relation matrix dimensions disagree with witness layout".to_string(),
         ));
     }
-    let d_ratio = d_a
-        .checked_div(d_d)
-        .filter(|ratio| *ratio != 0)
-        .ok_or_else(|| {
-            AkitaError::InvalidSetup("D role does not divide the A-role witness width".into())
-        })?;
-    let b_ratio = d_a
-        .checked_div(d_b)
-        .filter(|ratio| *ratio != 0)
-        .ok_or_else(|| {
-            AkitaError::InvalidSetup("B role does not divide the A-role witness width".into())
-        })?;
-    if !d_ratio.is_power_of_two() || !b_ratio.is_power_of_two() {
-        return Err(AkitaError::InvalidSetup(
-            "relation role projection ratios must be powers of two".into(),
-        ));
-    }
-    let mut e_total = 0usize;
-    let mut e_setup_offsets = vec![0usize; opening_batch.num_groups()];
-    for group_index in opening_batch.root_group_order()? {
-        e_setup_offsets[group_index] = e_total / d_ratio;
-        let group_lp = lp.group_params(opening_batch, group_index)?;
-        let num_claims = opening_batch.group_layout(group_index)?.num_polynomials();
-        let width = num_claims
-            .checked_mul(group_lp.live_fold_count())
-            .and_then(|n| n.checked_mul(group_lp.num_digits_open()))
-            .and_then(|n| n.checked_mul(d_ratio))
-            .ok_or_else(|| AkitaError::InvalidSetup("setup D width overflow".to_string()))?;
-        e_total = e_total
-            .checked_add(width)
-            .ok_or_else(|| AkitaError::InvalidSetup("setup D width overflow".to_string()))?;
-    }
+    let (b_ratio, d_ratio) = SetupProjectionGeometry::witness_subcolumn_ratios(role_dims)?;
+    let d_columns = SetupDColumnLayout::new(opening_batch.root_group_order()?.into_iter().map(
+        |group_index| {
+            let group_lp = lp.group_params(opening_batch, group_index)?;
+            let num_claims = opening_batch.group_layout(group_index)?.num_polynomials();
+            let width = num_claims
+                .checked_mul(group_lp.live_fold_count())
+                .and_then(|n| n.checked_mul(group_lp.num_digits_open()))
+                .ok_or_else(|| AkitaError::InvalidSetup("setup D width overflow".to_string()))?;
+            Ok((group_index, width))
+        },
+    ))?;
+    let e_total = d_columns
+        .total_cols()
+        .checked_mul(d_ratio)
+        .ok_or_else(|| AkitaError::InvalidSetup("setup D width overflow".to_string()))?;
     let physical_field_len = witness_layout
         .total_len()
         .checked_mul(d_a)
@@ -306,7 +290,8 @@ where
         .ok_or(AkitaError::InvalidProof)?;
     let consistency_weight = eq_tau1.eval_at(0)?;
 
-    for (group_index, &e_setup_offset) in e_setup_offsets.iter().enumerate() {
+    for group_index in 0..opening_batch.num_groups() {
+        let e_setup_offset = d_columns.range(group_index)?.start;
         let group_lp = lp.group_params(opening_batch, group_index)?;
         let group_layout = opening_batch.group_layout(group_index)?;
         let group_id = group_index;

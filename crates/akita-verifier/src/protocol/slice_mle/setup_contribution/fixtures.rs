@@ -14,7 +14,7 @@ use akita_types::{
 
 use super::evaluate_setup_contribution_direct;
 use crate::protocol::ring_switch::{
-    build_setup_contribution_groups, PreparedChallengeEvals, RelationMatrixEvaluator,
+    build_setup_contribution_layout, PreparedChallengeEvals, RelationMatrixEvaluator,
     RelationMatrixGroupEvaluator,
 };
 
@@ -208,10 +208,6 @@ impl SetupContributionFixture {
                 .map(|idx| test_scalar(11 + idx as u128))
                 .collect(),
         };
-        let n_d_active = match shape.relation_matrix_row_layout {
-            RelationMatrixRowLayout::WithDBlock => shape.n_d,
-            RelationMatrixRowLayout::WithoutDBlock => 0,
-        };
         let groups = vec![RelationMatrixGroupEvaluator {
             c_alphas: PreparedChallengeEvals::Flat(
                 (0..total_blocks)
@@ -222,7 +218,6 @@ impl SetupContributionFixture {
                 .map(|idx| test_scalar(501 + idx as u128))
                 .collect(),
             group_id: 0,
-            e_col_offset: 0,
             num_claims: shape.num_claims,
             live_fold_count: shape.live_fold_count,
             fold_position_count: shape.fold_position_count,
@@ -237,23 +232,19 @@ impl SetupContributionFixture {
             b_row_start: 1 + shape.n_a,
         }];
         let opening_source_len = layout.total_len();
-        let setup_contribution_groups =
-            build_setup_contribution_groups(&layout, opening_source_len, &groups).unwrap();
+        let layout = std::sync::Arc::new(layout);
+        let setup_contribution_layout =
+            build_setup_contribution_layout(layout.clone(), opening_source_len, &groups).unwrap();
         let setup_contribution_static = SetupContributionPlan::prepare_static(
             &setup_contribution_inputs,
-            &setup_contribution_groups,
-            rows - n_d_active,
-            n_d_active,
-            n_cols_e,
+            &setup_contribution_layout,
         )
         .unwrap();
         let relation_matrix_evaluator = RelationMatrixEvaluator {
             role_dims: CommitmentRingDims::uniform(TEST_RING_DIM),
             groups,
             log_basis: shape.log_basis,
-            layout,
-            opening_source_len,
-            setup_contribution_groups,
+            setup_contribution_layout,
             setup_contribution_inputs,
             setup_contribution_static,
             flat_context: None,
@@ -307,7 +298,7 @@ impl SetupContributionFixture {
             Some(&self.eq_low),
             Some(&self.z_block_low_eq),
             Some(&self.fold_gadget),
-            &self.relation_matrix_evaluator.setup_contribution_groups,
+            &self.relation_matrix_evaluator.setup_contribution_layout,
             self.relation_matrix_evaluator.role_dims,
         )
         .unwrap();
@@ -353,7 +344,7 @@ impl SetupContributionFixture {
             Some(&self.eq_low),
             Some(&self.z_block_low_eq),
             Some(&self.fold_gadget),
-            &self.relation_matrix_evaluator.setup_contribution_groups,
+            &self.relation_matrix_evaluator.setup_contribution_layout,
             self.relation_matrix_evaluator.role_dims,
         )
         .unwrap();

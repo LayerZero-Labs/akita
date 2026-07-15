@@ -4,8 +4,9 @@ use akita_algebra::eq_poly::EqPolynomial;
 use akita_field::Prime128OffsetA7F7;
 use akita_types::{
     gadget_row_scalars, r_decomp_levels, CommitmentRingDims, LevelParams, OpeningClaimsLayout,
-    RelationMatrixRowLayout, SetupContributionGroupInputs, SetupContributionPlan,
-    SetupContributionPlanInputs, SetupIndexWeightEvaluator, SisModulusProfileId, WitnessLayout,
+    RelationMatrixRowLayout, SetupContributionGroupInputs, SetupContributionLayout,
+    SetupContributionPlan, SetupContributionPlanInputs, SetupIndexWeightEvaluator,
+    SisModulusProfileId, WitnessLayout,
 };
 use criterion::measurement::WallTime;
 use criterion::{
@@ -104,9 +105,8 @@ fn make_case(live_fold_count: usize, blocks_per_chunk: usize) -> SetupIndexWeigh
         eq_tau1: EqPolynomial::evals(&tau1).unwrap().into(),
     };
     let opening_source_len = layout.total_len();
-    let groups = vec![SetupContributionGroupInputs {
+    let group = SetupContributionGroupInputs {
         group_id: 0,
-        e_col_offset: 0,
         num_claims,
         live_fold_count,
         fold_position_count,
@@ -119,17 +119,11 @@ fn make_case(live_fold_count: usize, blocks_per_chunk: usize) -> SetupIndexWeigh
         t_cols_per_vector: n_a * depth_open * live_fold_count,
         a_row_start: 1,
         b_row_start: 1 + n_a,
-        layout: std::sync::Arc::new(layout),
-        opening_source_len,
-    }];
-    let static_plan = SetupContributionPlan::prepare_static(
-        &inputs,
-        &groups,
-        rows - n_d,
-        n_d,
-        num_claims * live_fold_count * depth_open,
-    )
-    .unwrap();
+    };
+    let setup_layout =
+        SetupContributionLayout::new(std::sync::Arc::new(layout), opening_source_len, vec![group])
+            .unwrap();
+    let static_plan = SetupContributionPlan::prepare_static(&inputs, &setup_layout).unwrap();
     let full_vec_randomness = (0..24)
         .map(|idx| test_scalar(101 + idx as u128))
         .collect::<Vec<_>>();
@@ -141,14 +135,14 @@ fn make_case(live_fold_count: usize, blocks_per_chunk: usize) -> SetupIndexWeigh
         None,
         None,
         Some(&fold_gadget),
-        &groups,
+        &setup_layout,
         CommitmentRingDims::uniform(D),
     )
     .unwrap();
     let evaluator = SetupIndexWeightEvaluator::new::<F>(
         &inputs,
         &plan,
-        &groups,
+        &setup_layout,
         &tau1,
         &full_vec_randomness,
         &fold_gadget,

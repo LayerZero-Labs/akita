@@ -28,10 +28,12 @@ mod test_oracle;
 mod types;
 
 pub use types::{
-    SetupContributionGroupInputs, SetupContributionPlan, SetupContributionStatic,
-    SingleGroupSetupContributionLayout,
+    SetupContributionGroupInputs, SetupContributionLayout, SetupContributionPlan,
+    SetupContributionStatic,
 };
-pub(crate) use types::{SetupContributionGroupPlan, SetupContributionGroupStatic};
+pub(crate) use types::{
+    SetupContributionGroupPlan, SetupContributionGroupStatic, SetupDColumnLayout,
+};
 
 use super::geometry::SetupProjectionGroupGeometry;
 use super::weights::{setup_e_col_weights, setup_t_col_weights, setup_z_col_weights};
@@ -51,4 +53,4 @@ use kernels::{
     identity_base_ring_segment_inner_sum_typed, role_projection, GroupSetupSegment,
     ProjectedRoleWeights, RoleProjection,
 };
-use segments::{build_packed_segments, validate_group_chunk_layout};
+use segments::build_packed_segments;

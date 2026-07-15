@@ -25,9 +25,10 @@ pub use geometry::{
     setup_required_for_inputs, SetupProjectionGeometry,
 };
 pub use inputs::SetupContributionPlanInputs;
+pub(crate) use plan::SetupDColumnLayout;
 pub use plan::{
-    SetupContributionGroupInputs, SetupContributionPlan, SetupContributionStatic,
-    SingleGroupSetupContributionLayout,
+    SetupContributionGroupInputs, SetupContributionLayout, SetupContributionPlan,
+    SetupContributionStatic,
 };
 pub use relation::{prepare_setup_contribution_artifact, SetupContributionArtifact};
 pub use setup_index_weight_evaluator::SetupIndexWeightEvaluator;

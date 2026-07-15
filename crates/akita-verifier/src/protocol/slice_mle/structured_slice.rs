@@ -227,7 +227,7 @@ where
                 .checked_add(row_idx * levels + level_idx)
                 .ok_or(AkitaError::InvalidProof)?;
             let opening_index = akita_types::checked_opening_source_index(
-                prepared.opening_source_len,
+                prepared.setup_contribution_layout.opening_source_len(),
                 physical_index,
             )?;
             contribution -= eq_eval_at_index(full_vec_randomness, opening_index)
@@ -257,7 +257,7 @@ mod tests {
     };
 
     use crate::protocol::ring_switch::{
-        build_setup_contribution_groups, RelationMatrixGroupEvaluator,
+        build_setup_contribution_layout, RelationMatrixGroupEvaluator,
     };
 
     type F = Prime128OffsetA7F7;
@@ -398,7 +398,6 @@ mod tests {
             ),
             opening_a_evals,
             group_id: 0,
-            e_col_offset: 0,
             num_claims,
             live_fold_count,
             fold_position_count,
@@ -413,23 +412,19 @@ mod tests {
             b_row_start: 1 + n_a,
         }];
         let opening_source_len = layout.total_len();
-        let setup_contribution_groups =
-            build_setup_contribution_groups(&layout, opening_source_len, &groups).unwrap();
+        let layout = std::sync::Arc::new(layout);
+        let setup_contribution_layout =
+            build_setup_contribution_layout(layout.clone(), opening_source_len, &groups).unwrap();
         let setup_contribution_static = SetupContributionPlan::prepare_static(
             &setup_contribution_inputs,
-            &setup_contribution_groups,
-            rows - n_d,
-            n_d,
-            total_blocks * depth_open,
+            &setup_contribution_layout,
         )
         .unwrap();
         let prepared = RelationMatrixEvaluator {
             role_dims: lp.role_dims(),
             groups,
             log_basis,
-            layout,
-            opening_source_len,
-            setup_contribution_groups,
+            setup_contribution_layout,
             setup_contribution_inputs,
             setup_contribution_static,
             flat_context: None,

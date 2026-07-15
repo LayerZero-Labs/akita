@@ -8,7 +8,7 @@ impl<E: FieldCore> SetupContributionGroupPlan<E> {
         d_physical_cols: usize,
     ) -> Result<(), AkitaError> {
         let (required, segments) = build_packed_segments(
-            self.e_col_offset,
+            self.d_col_range.start,
             self.e_eq_slice.len(),
             self.t_cols,
             self.z_cols,
@@ -35,7 +35,8 @@ impl<E: FieldCore> SetupContributionGroupPlan<E> {
         debug_assert_eq!(self.b_weights.len(), self.n_b);
         debug_assert_eq!(self.t_eq_slice.len(), self.t_cols);
         debug_assert_eq!(self.z_eq_slice.len(), self.z_cols);
-        debug_assert!(self.e_col_offset.saturating_add(self.e_eq_slice.len()) <= d_physical_cols);
+        debug_assert_eq!(self.d_col_range.len(), self.e_eq_slice.len());
+        debug_assert!(self.d_col_range.end <= d_physical_cols);
         debug_assert_eq!(
             self.required,
             setup_group_required(
@@ -74,7 +75,7 @@ fn setup_group_required(
 
 #[allow(clippy::too_many_arguments)]
 pub(super) fn build_packed_segments<E: FieldCore>(
-    e_col_offset: usize,
+    d_col_start: usize,
     e_eq_len: usize,
     t_cols: usize,
     z_cols: usize,
@@ -104,7 +105,7 @@ pub(super) fn build_packed_segments<E: FieldCore>(
             actual: b_weights.len(),
         });
     }
-    let e_end = e_col_offset
+    let e_end = d_col_start
         .checked_add(e_eq_len)
         .ok_or_else(|| AkitaError::InvalidSetup("setup D footprint overflow".into()))?;
     if e_end > d_physical_cols {
@@ -131,7 +132,7 @@ pub(super) fn build_packed_segments<E: FieldCore>(
         &mut endpoints,
         d_rows,
         d_physical_cols,
-        e_col_offset,
+        d_col_start,
         e_eq_len,
     )?;
     push_role_boundaries(&mut endpoints, n_b, t_cols, "B")?;
@@ -151,11 +152,11 @@ pub(super) fn build_packed_segments<E: FieldCore>(
                 false
             } else {
                 let d_col = lo % d_physical_cols;
-                d_col >= e_col_offset && d_col < e_end
+                d_col >= d_col_start && d_col < e_end
             };
             let d_row = if has_d { lo / d_physical_cols } else { 0 };
             let d_start_abs = if has_d {
-                d_row * d_physical_cols + e_col_offset
+                d_row * d_physical_cols + d_col_start
             } else {
                 0
             };
@@ -199,36 +200,6 @@ pub(super) fn build_packed_segments<E: FieldCore>(
         .collect();
 
     Ok((required, segments))
-}
-
-pub(super) fn validate_group_chunk_layout(
-    group: &SetupContributionGroupInputs,
-    num_groups: usize,
-) -> Result<(), AkitaError> {
-    let units = group.layout.units_for_group(group.group_id)?;
-    if units.iter().any(|unit| unit.live_fold_count() == 0) {
-        return Err(AkitaError::InvalidSetup(
-            "malformed setup witness chunk layout".into(),
-        ));
-    }
-    let mut next_block = 0usize;
-    for unit in &units {
-        if unit.group_index() != group.group_id || unit.global_fold_start() != next_block {
-            return Err(AkitaError::InvalidSetup(
-                "setup witness ownership units do not form one contiguous block tiling".into(),
-            ));
-        }
-        next_block = next_block
-            .checked_add(unit.live_fold_count())
-            .ok_or_else(|| AkitaError::InvalidSetup("setup block coverage overflow".into()))?;
-    }
-    if next_block != group.live_fold_count {
-        return Err(AkitaError::InvalidSetup(
-            "setup witness chunk windows do not tile live_fold_count".into(),
-        ));
-    }
-    let _ = num_groups;
-    Ok(())
 }
 
 #[inline(always)]
