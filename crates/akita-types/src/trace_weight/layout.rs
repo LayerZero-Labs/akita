@@ -89,9 +89,36 @@ impl TraceWeightLayout {
         let column_bound = 1usize.checked_shl(self.col_bits as u32).ok_or_else(|| {
             AkitaError::InvalidInput("opening-digit column bound overflow".to_string())
         })?;
-        for block in 0..self.live_fold_count {
-            for digit in 0..self.num_digits_open {
-                if self.opening_digit_col_index(block, digit)? >= column_bound {
+        if self.num_digits_open == 0 {
+            return Err(AkitaError::InvalidSetup(
+                "trace layout requires an opening digit".to_string(),
+            ));
+        }
+        let num_claims = self.live_fold_count / group_live_fold_count;
+        for claim in 0..num_claims {
+            let claim_start = claim.checked_mul(group_live_fold_count).ok_or_else(|| {
+                AkitaError::InvalidSetup("trace claim offset overflow".to_string())
+            })?;
+            for unit in self.witness_layout.units_for_group(self.group_id)? {
+                let last_global = unit
+                    .global_fold_start()
+                    .checked_add(unit.live_fold_count().checked_sub(1).ok_or_else(|| {
+                        AkitaError::InvalidSetup("trace unit has no live folds".to_string())
+                    })?)
+                    .ok_or_else(|| {
+                        AkitaError::InvalidSetup("trace unit fold range overflow".to_string())
+                    })?;
+                let first_block = claim_start
+                    .checked_add(unit.global_fold_start())
+                    .ok_or_else(|| {
+                        AkitaError::InvalidSetup("trace block offset overflow".to_string())
+                    })?;
+                let last_block = claim_start.checked_add(last_global).ok_or_else(|| {
+                    AkitaError::InvalidSetup("trace block offset overflow".to_string())
+                })?;
+                let first = self.opening_digit_col_index(first_block, 0)?;
+                let last = self.opening_digit_col_index(last_block, self.num_digits_open - 1)?;
+                if first >= column_bound || last >= column_bound {
                     return Err(AkitaError::InvalidInput(
                         "opening-digit segment exceeds column hypercube".to_string(),
                     ));

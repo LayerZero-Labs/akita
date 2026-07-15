@@ -1,7 +1,7 @@
 //! Verifier-side ring-switch replay.
 
 use akita_algebra::eq_poly::EqPolynomial;
-use akita_algebra::offset_eq::eq_eval_at_index;
+use akita_algebra::offset_eq::{eq_eval_at_index, eval_affine_digit_interval};
 use akita_algebra::ring::scalar_powers;
 use akita_challenges::Challenges;
 use akita_field::{
@@ -862,7 +862,7 @@ impl<E: FieldCore> RelationMatrixEvaluator<E> {
     ) -> Result<E, AkitaError>
     where
         F: FieldCore + CanonicalField,
-        E: FpExtEncoding<F> + FromPrimitiveInt + MulBaseUnreduced<F>,
+        E: FpExtEncoding<F> + FromPrimitiveInt + MulBase<F> + MulBaseUnreduced<F>,
     {
         let _ring_bits = validate_ring_dispatch::<D>()?;
         validate_role_dispatch::<D>(self.role_dims, RingRole::Inner)?;
@@ -904,6 +904,7 @@ impl<E: FieldCore> RelationMatrixEvaluator<E> {
                 validate_log_basis(group.log_basis)?;
 
                 let g_open = gadget_row_scalars::<F>(group.depth_open, group.log_basis);
+                let g_open_ext = g_open.iter().copied().map(E::lift_base).collect::<Vec<_>>();
                 let g_commit = gadget_row_scalars::<F>(group.depth_commit, group.log_basis);
                 let fold_gadget_storage;
                 let fold_gadget = match setup_fold_gadget.as_deref() {
@@ -925,59 +926,19 @@ impl<E: FieldCore> RelationMatrixEvaluator<E> {
                     .eq_tau1
                     .get(group.a_row_start..a_row_end)
                     .ok_or(AkitaError::InvalidProof)?;
+                let (e_contribution, t_contribution) = evaluate_group_et_contributions::<F, E>(
+                    group,
+                    &units,
+                    self.setup_contribution_layout.witness_layout(),
+                    self.setup_contribution_layout.opening_source_len(),
+                    x_challenges,
+                    consistency_weight,
+                    a_row_weights,
+                    &g_open_ext,
+                )?;
+                e_structured_contribution += e_contribution;
+                t_structured_contribution += t_contribution;
                 for unit in units {
-                    for claim in 0..group.num_claims {
-                        for global_block in unit.global_fold_range() {
-                            let challenge = group.c_alphas.eval_at::<F>(
-                                claim,
-                                global_block,
-                                group.live_fold_count,
-                            )?;
-                            for (digit, &gadget) in g_open.iter().enumerate() {
-                                let e_index =
-                                    self.setup_contribution_layout.witness_layout().e_index(
-                                        unit,
-                                        group.num_claims,
-                                        group.depth_open,
-                                        claim,
-                                        global_block,
-                                        digit,
-                                    )?;
-                                let e_opening_index = akita_types::checked_opening_source_index(
-                                    self.setup_contribution_layout.opening_source_len(),
-                                    e_index,
-                                )?;
-                                e_structured_contribution +=
-                                    eq_eval_at_index(x_challenges, e_opening_index)
-                                        * consistency_weight
-                                        * challenge
-                                        * E::lift_base(gadget);
-                                for (a_row, &row_weight) in a_row_weights.iter().enumerate() {
-                                    let t_index =
-                                        self.setup_contribution_layout.witness_layout().t_index(
-                                            unit,
-                                            group.num_claims,
-                                            group.n_a,
-                                            group.depth_open,
-                                            claim,
-                                            global_block,
-                                            a_row,
-                                            digit,
-                                        )?;
-                                    let t_opening_index =
-                                        akita_types::checked_opening_source_index(
-                                            self.setup_contribution_layout.opening_source_len(),
-                                            t_index,
-                                        )?;
-                                    t_structured_contribution +=
-                                        eq_eval_at_index(x_challenges, t_opening_index)
-                                            * row_weight
-                                            * challenge
-                                            * E::lift_base(gadget);
-                                }
-                            }
-                        }
-                    }
                     for (position, &opening_a) in group.opening_a_evals.iter().enumerate() {
                         for (commit_digit, &commit) in g_commit.iter().enumerate() {
                             let mut z_weight = E::zero();
@@ -1040,4 +1001,86 @@ impl<E: FieldCore> RelationMatrixEvaluator<E> {
             + setup_contribution
             + r_contribution)
     }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn evaluate_group_et_contributions<F, E>(
+    group: &RelationMatrixGroupEvaluator<E>,
+    units: &[&WitnessUnitLayout],
+    witness_layout: &WitnessLayout,
+    opening_source_len: usize,
+    x_challenges: &[E],
+    consistency_weight: E,
+    a_row_weights: &[E],
+    g_open_ext: &[E],
+) -> Result<(E, E), AkitaError>
+where
+    F: FieldCore + FromPrimitiveInt,
+    E: FieldCore + MulBase<F>,
+{
+    let t_fold_stride = group
+        .n_a
+        .checked_mul(group.depth_open)
+        .ok_or_else(|| AkitaError::InvalidSetup("T fold stride overflow".into()))?;
+    let claim_factors = (0..group.num_claims)
+        .map(|claim| {
+            group
+                .c_alphas
+                .affine_factors::<F>(claim, group.live_fold_count)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut e_contribution = E::zero();
+    let mut t_contribution = E::zero();
+    for unit in units {
+        for (claim, factors) in claim_factors.iter().enumerate() {
+            let e_index = witness_layout.e_index(
+                unit,
+                group.num_claims,
+                group.depth_open,
+                claim,
+                unit.global_fold_start(),
+                0,
+            )?;
+            let e_opening_index =
+                akita_types::checked_opening_source_index(opening_source_len, e_index)?;
+            e_contribution += consistency_weight
+                * eval_affine_digit_interval(
+                    x_challenges,
+                    e_opening_index,
+                    unit.global_fold_start(),
+                    unit.live_fold_count(),
+                    group.depth_open,
+                    g_open_ext,
+                    &factors.high,
+                    &factors.low,
+                )?;
+
+            for (a_row, &row_weight) in a_row_weights.iter().enumerate() {
+                let t_index = witness_layout.t_index(
+                    unit,
+                    group.num_claims,
+                    group.n_a,
+                    group.depth_open,
+                    claim,
+                    unit.global_fold_start(),
+                    a_row,
+                    0,
+                )?;
+                let t_opening_index =
+                    akita_types::checked_opening_source_index(opening_source_len, t_index)?;
+                t_contribution += row_weight
+                    * eval_affine_digit_interval(
+                        x_challenges,
+                        t_opening_index,
+                        unit.global_fold_start(),
+                        unit.live_fold_count(),
+                        t_fold_stride,
+                        g_open_ext,
+                        &factors.high,
+                        &factors.low,
+                    )?;
+            }
+        }
+    }
+    Ok((e_contribution, t_contribution))
 }

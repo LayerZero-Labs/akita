@@ -1,6 +1,8 @@
+use akita_algebra::offset_eq::{eval_affine_digit_interval, AffineWeight};
 use akita_algebra::CyclotomicRing;
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, Invertible};
 use std::marker::PhantomData;
+use std::sync::Arc;
 
 use crate::field_reduction::trace_open_folded_ring_mle_dot;
 use crate::{gadget_row_scalars, lagrange_weights, BasisMode, FpExtEncoding};
@@ -228,9 +230,10 @@ where
 /// - `coefficient`: the public scalar applied to this term (per-claim row
 ///   weight times any end-of-round tensor factor), in `E`.
 ///
-/// [`eval_trace_terms_closed`] evaluates the fused trace MLE from these in
-/// `O(num_digits_open · (r_pc · K³ + col_bits) + D² / K)` per term, i.e. one
-/// `Tr_H` per claim, with no dependence on the number of fold blocks.
+/// [`eval_trace_terms_closed`] evaluates the fused trace MLE from balanced
+/// high/low factors in `O((H + Q) · poly(K, num_digits_open, col_bits) + D²/K)`
+/// per term, where `H · Q` is the block capacity. It performs one `Tr_H` per
+/// claim and never materializes or enumerates the Cartesian block domain.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TraceTerm<F: FieldCore, E: FieldCore, const D: usize> {
     pub block_offset: usize,
@@ -300,6 +303,38 @@ where
         }
     }
     out
+}
+
+#[derive(Clone)]
+struct TraceAffineWeight<F: FieldCore, E: FieldCore> {
+    coordinates: Vec<E>,
+    gamma: Arc<Vec<Vec<Vec<F>>>>,
+}
+
+impl<F, E> AffineWeight<E> for TraceAffineWeight<F, E>
+where
+    F: FieldCore,
+    E: ExtField<F> + FieldCore,
+{
+    fn zero_like(&self) -> Self {
+        Self {
+            coordinates: vec![E::zero(); self.coordinates.len()],
+            gamma: Arc::clone(&self.gamma),
+        }
+    }
+
+    fn add_scaled(&mut self, factor: &Self, scale: E) {
+        for (slot, &value) in self.coordinates.iter_mut().zip(&factor.coordinates) {
+            *slot += value * scale;
+        }
+    }
+
+    fn multiply(&self, rhs: &Self) -> Self {
+        Self {
+            coordinates: cstar_mul::<F, E>(&self.coordinates, &rhs.coordinates, &self.gamma),
+            gamma: Arc::clone(&self.gamma),
+        }
+    }
 }
 
 /// Lifted ring-subfield coordinates of the two per-bit block weights `w_t(0)`
@@ -375,7 +410,7 @@ where
     let gadget_row = lift_gadget_row::<F, E>(&gadget_scalars);
     let ring_eq = lagrange_weights(ring_point)?;
     // Structure constants of the ring-subfield basis (`[[[1]]]` when `k == 1`).
-    let gamma = ring_subfield_struct_consts::<F, E>(k);
+    let gamma = Arc::new(ring_subfield_struct_consts::<F, E>(k));
 
     let mut out = E::zero();
     for term in terms {
@@ -397,27 +432,86 @@ where
             ));
         }
         layout.validate_trace_term_block_range(term.block_offset, block_span)?;
+        if !term.block_offset.is_multiple_of(block_span) {
+            return Err(AkitaError::InvalidInput(
+                "trace term must begin at a claim boundary".to_string(),
+            ));
+        }
+
+        let low_bits = r_pc / 2;
+        let low_len = 1usize.checked_shl(low_bits as u32).ok_or_else(|| {
+            AkitaError::InvalidInput("trace low-factor length overflow".to_string())
+        })?;
+        let high_len = 1usize
+            .checked_shl((r_pc - low_bits) as u32)
+            .ok_or_else(|| {
+                AkitaError::InvalidInput("trace high-factor length overflow".to_string())
+            })?;
+        let factor_count = low_len.checked_add(high_len).ok_or_else(|| {
+            AkitaError::InvalidInput("trace affine-factor count overflow".to_string())
+        })?;
+        if factor_count > akita_algebra::offset_eq::MAX_COMPACT_STRIDE_TERMS {
+            return Err(AkitaError::InvalidSize {
+                expected: akita_algebra::offset_eq::MAX_COMPACT_STRIDE_TERMS,
+                actual: factor_count,
+            });
+        }
+        let mut low_weights = Vec::new();
+        low_weights.try_reserve_exact(low_len).map_err(|_| {
+            AkitaError::InvalidInput("trace low-factor allocation failed".to_string())
+        })?;
+        for low in 0..low_len {
+            low_weights.push(TraceAffineWeight {
+                coordinates: block_weight_at_index_coords::<F, E>(
+                    &term.b_open[..low_bits],
+                    low,
+                    term.basis,
+                    k,
+                    &gamma,
+                ),
+                gamma: Arc::clone(&gamma),
+            });
+        }
+        let mut high_weights = Vec::new();
+        high_weights.try_reserve_exact(high_len).map_err(|_| {
+            AkitaError::InvalidInput("trace high-factor allocation failed".to_string())
+        })?;
+        for high in 0..high_len {
+            high_weights.push(TraceAffineWeight {
+                coordinates: block_weight_at_index_coords::<F, E>(
+                    &term.b_open[low_bits..],
+                    high,
+                    term.basis,
+                    k,
+                    &gamma,
+                ),
+                gamma: Arc::clone(&gamma),
+            });
+        }
 
         // `V = Σ_plane gadget[plane] · Σ_j eq(col, e_index(j, plane)) · coords(b_j)`.
         // The descriptor owns the physical E address for every logical block.
         let mut v = vec![E::zero(); k];
-        for local_block in 0..block_span {
-            let block_coords = block_weight_at_index_coords::<F, E>(
-                &term.b_open,
-                local_block,
-                term.basis,
-                k,
-                &gamma,
-            );
-            let block = term.block_offset.checked_add(local_block).ok_or_else(|| {
-                AkitaError::InvalidInput("trace term block index overflow".to_string())
-            })?;
-            for (plane, &gadget) in gadget_row.iter().enumerate() {
-                let col = layout.opening_digit_col_index(block, plane)?;
-                let eq_weight = eq_weight_at_index(col_point, col);
-                for (slot, &value) in v.iter_mut().zip(&block_coords) {
-                    *slot += gadget * eq_weight * value;
-                }
+        for unit in layout.witness_layout.units_for_group(layout.group_id)? {
+            let block = term
+                .block_offset
+                .checked_add(unit.global_fold_start())
+                .ok_or_else(|| {
+                    AkitaError::InvalidInput("trace term block index overflow".to_string())
+                })?;
+            let base = layout.opening_digit_col_index(block, 0)?;
+            let contribution = eval_affine_digit_interval(
+                col_point,
+                base,
+                unit.global_fold_start(),
+                unit.live_fold_count(),
+                layout.num_digits_open,
+                &gadget_row,
+                &high_weights,
+                &low_weights,
+            )?;
+            for (slot, &value) in v.iter_mut().zip(&contribution.coordinates) {
+                *slot += value;
             }
         }
 

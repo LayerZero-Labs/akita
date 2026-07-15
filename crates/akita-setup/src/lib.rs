@@ -565,8 +565,11 @@ mod tests {
                 let commitment_params = PrecommittedLevelParams {
                     layout: PrecommittedGroupParams {
                         group: PolynomialGroupLayout::singleton(TEST_D.trailing_zeros() as usize),
-                        m_vars: 0,
-                        r_vars: 0,
+                        source_ring_len_per_claim: 1,
+                        fold_position_count: 1,
+                        live_fold_count: 1,
+                        shard_granule: 1,
+                        fold_challenge_shape: akita_types::TensorChallengeShape::Flat,
                         log_basis: 1,
                         n_a: 1,
                         conservative_n_b: 1,
@@ -591,8 +594,6 @@ mod tests {
                         1,
                         TEST_D,
                     ),
-                    num_blocks: 1,
-                    block_len: 1,
                     num_digits_commit: 1,
                     num_digits_open: 1,
                     num_digits_fold_one: 1,
