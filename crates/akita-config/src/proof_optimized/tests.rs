@@ -528,7 +528,7 @@ fn grouped_root_runtime_setup_uses_per_group_roles_and_summed_d_width() {
 #[test]
 fn recursive_setup_envelope_counts_setup_prefix_d_segment() {
     use akita_types::{
-        active_setup_field_len, padded_setup_prefix_len, segment_typed_witness_shape_from_groups,
+        padded_setup_prefix_len, segment_typed_witness_shape_from_groups,
         setup_prefix_precommitted_params, setup_prefix_slot_id, AjtaiKeyParams,
         CleartextWitnessShape, DecompositionParams, DirectStep, FoldStep, LevelParamsLike,
         SetupContributionMode, Step, SETUP_OFFLOAD_D_SETUP,
@@ -593,7 +593,7 @@ fn recursive_setup_envelope_counts_setup_prefix_d_segment() {
         );
     }
 
-    fn recursive_schedule(layout: &OpeningClaimsLayout) -> Schedule {
+    fn recursive_schedule(_layout: &OpeningClaimsLayout) -> Schedule {
         let mut root = scalar_level_params();
         root.setup_contribution_mode = SetupContributionMode::Recursive;
 

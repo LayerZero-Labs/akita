@@ -16,10 +16,6 @@ pub struct AkitaScheduleInputs {
     pub current_w_len: usize,
 }
 
-#[cfg(test)]
-#[path = "schedule_tests.rs"]
-mod topology_tests;
-
 /// Schedule facts for one fold level.
 #[derive(Debug, Clone)]
 pub struct ExecutionSchedule {

@@ -282,7 +282,7 @@ impl GeneratedFoldStep {
     /// Expand a root-direct commit payload (`GeneratedDirectStep::commit`).
     ///
     /// Root-direct commits ship the raw polynomial unchunked, matching
-    /// [`crate::schedule_params::candidate::compute_root_direct_level_params`].
+    /// `compute_root_direct_level_params`.
     pub fn expand_to_root_direct_commit_params(
         &self,
         policy: &PlannerPolicy,
