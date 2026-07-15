@@ -69,7 +69,7 @@ pub use layout::{
     fold_rings_at_opening, gadget_row_scalars, lagrange_weights, monomial_weights,
     opening_domain_len, packed_digits_bytes, padded_boolean_opening_vars, planned_next_w_len,
     planned_w_ring_element_count, proof_ring_vec_bytes, reduce_inner_opening_to_ring_element,
-    ring_opening_point_from_field, sumcheck_rounds, validate_role_dims,
+    ring_opening_point_from_field, shared_d_digit_log_basis, sumcheck_rounds, validate_role_dims,
     validate_schedule_ring_dims, BasisMode, CommitmentRingDims, FlatMatrix, LevelParams,
     LevelParamsLike, PrecommittedLevelParams, RelationMatrixRowLayout, RingMatrixView,
     RingOpeningPoint, RingRole, MAX_FOLD_LEVELS, MIN_A_ROLE_FOLD_CHALLENGE_RING_D,

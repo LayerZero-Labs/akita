@@ -10,11 +10,11 @@ use akita_types::sis::{
 };
 use akita_types::{
     active_setup_field_len, direct_witness_bytes, extension_opening_reduction_level_bytes,
-    level_proof_bytes, padded_setup_prefix_len, AkitaScheduleInputs, AkitaScheduleLookupKey,
-    CleartextWitnessShape, CommitmentRingDims, DecompositionParams, DirectStep, FoldStep,
-    LevelParams, OpeningClaimsLayout, PolynomialGroupLayout, PrecommittedGroupParams,
-    PrecommittedLevelParams, RelationMatrixRowLayout, Schedule, SetupContributionMode, Step,
-    WitnessLayout, SETUP_OFFLOAD_MIN_PREFIX_FIELD_LEN,
+    level_proof_bytes, padded_setup_prefix_len, shared_d_digit_log_basis, AkitaScheduleInputs,
+    AkitaScheduleLookupKey, CleartextWitnessShape, CommitmentRingDims, DecompositionParams,
+    DirectStep, FoldStep, LevelParams, OpeningClaimsLayout, PolynomialGroupLayout,
+    PrecommittedGroupParams, PrecommittedLevelParams, RelationMatrixRowLayout, Schedule,
+    SetupContributionMode, Step, WitnessLayout, SETUP_OFFLOAD_MIN_PREFIX_FIELD_LEN,
 };
 
 use crate::schedule_params::{
@@ -417,12 +417,13 @@ fn multi_group_root_main_level_params_candidate(
     let d_width = main_d_width
         .checked_add(ctx.precommitted_d_width)
         .ok_or_else(|| AkitaError::InvalidSetup("multi-group D width overflow".to_string()))?;
+    let d_log_basis = shared_d_digit_log_basis(log_basis, ctx.precommitted_groups);
     let Some(norm_w) = rounded_up_collision_inf_norm(
         policy.sis_security_policy,
         family,
         akita_types::SisMatrixRole::D,
         d,
-        log_basis,
+        d_log_basis,
     ) else {
         return Ok(None);
     };
@@ -1034,6 +1035,43 @@ mod tests {
         };
 
         assert_eq!(root.params.log_basis, 4);
+    }
+
+    #[test]
+    fn mixed_basis_d128_root_prices_shared_d_at_precommit_basis() {
+        let mut precommit_policy = flat_policy();
+        precommit_policy.ring_dimension = 128;
+        precommit_policy.decomposition.log_basis = 3;
+        precommit_policy.basis_range = (3, 3);
+        let pre_key = PolynomialGroupLayout::new(20, 1);
+        let frozen = precommitted_from_policy(pre_key, &precommit_policy);
+        assert_eq!(frozen.log_basis, 3);
+
+        let mut root_policy = precommit_policy;
+        root_policy.decomposition.log_basis = 2;
+        root_policy.basis_range = (2, 2);
+        let key = AkitaScheduleLookupKey {
+            final_group: PolynomialGroupLayout::new(40, 2),
+            precommitteds: vec![frozen],
+        };
+        let schedule =
+            find_group_batch_schedule(&key, &root_policy, ring_challenge_config, fold_shape)
+                .expect("mixed-basis D128 root schedule");
+        let Step::Fold(root) = schedule.steps.first().expect("mixed-basis root step") else {
+            panic!("expected mixed-basis root fold");
+        };
+
+        assert_eq!(root.params.log_basis, 2);
+        assert_eq!(root.params.shared_d_digit_log_basis(), 3);
+        let expected_d_bound = rounded_up_collision_inf_norm(
+            root_policy.sis_security_policy,
+            root_policy.sis_modulus_profile,
+            akita_types::SisMatrixRole::D,
+            root_policy.ring_dimension,
+            3,
+        )
+        .expect("D128 basis-3 D bound");
+        assert_eq!(root.params.d_key.coeff_linf_bound(), expected_d_bound);
     }
 
     #[test]

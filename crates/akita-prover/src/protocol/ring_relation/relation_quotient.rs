@@ -613,7 +613,7 @@ where
                         n_d: n_d_active,
                         n_b: 0,
                         n_a: 0,
-                        log_basis: lp.log_basis,
+                        log_basis: lp.shared_d_digit_log_basis(),
                     },
                 )
                 .map_err(|err| {

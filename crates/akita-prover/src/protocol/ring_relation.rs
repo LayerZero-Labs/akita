@@ -574,7 +574,7 @@ impl RingRelationProver {
 
         // Extracted level numbers for the D-role and fused-y operations below;
         // the kernels inside the dispatch arms must not read schedule types.
-        let log_basis = lp.log_basis;
+        let d_log_basis = lp.shared_d_digit_log_basis();
         let d_row_len = lp.d_key.row_len();
 
         // D-role operations: decompose the folded opening rows into `e_hat`
@@ -653,7 +653,7 @@ impl RingRelationProver {
                     ring_switch_ctx,
                     transcript,
                     d_row_len,
-                    log_basis,
+                    d_log_basis,
                     &e_hat,
                     relation_matrix_row_layout,
                 )?;

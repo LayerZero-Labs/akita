@@ -28,8 +28,8 @@ use akita_types::sis::{
     FoldChallengeNorms, FoldWitnessLinfCapConfig, FoldWitnessNorms, SisTableKey,
 };
 use akita_types::{
-    AjtaiKeyParams, CommitmentRingDims, DecompositionParams, LevelParams, PolynomialGroupLayout,
-    PrecommittedGroupParams, PrecommittedLevelParams, SetupContributionMode,
+    shared_d_digit_log_basis, AjtaiKeyParams, CommitmentRingDims, DecompositionParams, LevelParams,
+    PolynomialGroupLayout, PrecommittedGroupParams, PrecommittedLevelParams, SetupContributionMode,
 };
 
 fn sis_key(
@@ -676,12 +676,13 @@ impl GeneratedFoldStep {
             .ok_or_else(|| {
                 AkitaError::InvalidSetup("generated multi-group D width overflow".into())
             })?;
+        let d_log_basis = shared_d_digit_log_basis(log_basis, &precommitted_groups);
         let d_bucket = rounded_up_collision_inf_norm(
             sis_policy,
             sis_modulus_profile,
             akita_types::SisMatrixRole::D,
             ring_d,
-            log_basis,
+            d_log_basis,
         )
         .ok_or_else(|| no_layout("D"))?;
 

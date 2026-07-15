@@ -23,6 +23,22 @@ use descriptor::{
 };
 pub use precommitted::{LevelParamsLike, PrecommittedLevelParams};
 
+/// Largest gadget basis used by any opening-digit segment in the shared D product.
+///
+/// A grouped root concatenates the main group's `e_hat` with every frozen
+/// precommitted group's `e_hat`. The D-role SIS bound and the prover's digit
+/// kernel must therefore cover the largest contributing balanced-digit range.
+#[must_use]
+pub fn shared_d_digit_log_basis(
+    main_log_basis: u32,
+    precommitted_groups: &[PrecommittedLevelParams],
+) -> u32 {
+    precommitted_groups
+        .iter()
+        .map(|group| group.layout.log_basis)
+        .fold(main_log_basis, u32::max)
+}
+
 fn empty_ajtai_key(role: crate::sis::SisMatrixRole) -> AjtaiKeyParams {
     AjtaiKeyParams::new_unchecked(
         crate::sis::DEFAULT_SIS_SECURITY_POLICY,
@@ -132,6 +148,12 @@ pub struct LevelParams {
 }
 
 impl LevelParams {
+    /// Largest gadget basis accepted by this level's shared D product.
+    #[must_use]
+    pub fn shared_d_digit_log_basis(&self) -> u32 {
+        shared_d_digit_log_basis(self.log_basis, &self.precommitted_groups)
+    }
+
     /// Per-role ring dimensions at this level.
     ///
     /// Per-role ring dimensions stored on this level.
@@ -1451,6 +1473,16 @@ mod tests {
         grouped.precommitted_groups = vec![precommit];
         let batch = OpeningClaimsLayout::from_group_sizes(4, &[1, 1]).expect("layout");
         (grouped, batch)
+    }
+
+    #[test]
+    fn shared_d_digit_basis_covers_every_group() {
+        let (mut grouped, _) = sample_multi_group_root_params();
+        grouped.log_basis = 3;
+        grouped.precommitted_groups[0].layout.log_basis = 6;
+
+        assert_eq!(grouped.shared_d_digit_log_basis(), 6);
+        assert_eq!(shared_d_digit_log_basis(5, &[]), 5);
     }
 
     #[test]

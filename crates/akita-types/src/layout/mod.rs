@@ -22,8 +22,8 @@ pub use opening_point::{
     ring_opening_point_from_field, BasisMode, RingOpeningPoint,
 };
 pub use params::{
-    AjtaiKeyParams, LevelParams, LevelParamsLike, PrecommittedLevelParams, RelationMatrixRowLayout,
-    SisModulusProfileId,
+    shared_d_digit_log_basis, AjtaiKeyParams, LevelParams, LevelParamsLike,
+    PrecommittedLevelParams, RelationMatrixRowLayout, SisModulusProfileId,
 };
 pub use proof_size::{
     direct_witness_bytes, extension_opening_reduction_level_bytes,
