@@ -11,7 +11,7 @@
 > shipped on this branch (`collision_A = 2·ω̄·β̄·ν` with a single-block `β̄`,
 > the "anchored" bound described under "Superseded design" below) was itself
 > still under-priced at every committed level. It has been replaced by the
-> **committed-fold reprice** (`collision_A = 8·ω·num_claims·2^r·β̄·ν`). The
+> **committed-fold reprice** (`collision_A = 8·ω·num_claims·B_live·β̄·ν`). The
 > corrected derivation, the new formula, and the schedule / preset fallout are
 > in the two sections immediately below. Everything from "Implementation
 > outcome (2026-06-02)" onward is retained as historical / superseded context.
@@ -40,7 +40,7 @@ whose size is governed by the **fold-response** difference
 `||z^(ℓ,i) − z^0||_inf`, not by a single per-block product. The only norm the
 extractor certifies for that difference is the fold bound `2·β^resp`, and
 `β^resp` sums one short product over **every** folded block, so it carries the
-fold arity `num_claims · 2^block_bits`. Dividing the response by the ring unit `c̄`
+fold arity `num_claims · live_block_count`. Dividing the response by the ring unit `c̄`
 does not recover `||s||_inf` (negacyclic division is not norm-preserving), and
 the range / one-hot / booleanity checks bind the *honest committed table*, not
 the *extracted* quotient. The anchored bound is therefore unsound at every
@@ -49,7 +49,7 @@ Ajtai-committed level (the dense root and all recursive fold levels). Only the
 read directly at `||w^(t)||_inf ≤ b/2`, with no commitment and no quotient.
 
 One-hotness does not rescue anchoring. It sets `||s||_inf = 1`, which shrinks
-`β^resp`, but it does not remove the `num_claims · 2^block_bits` fold factor. The
+`β^resp`, but it does not remove the `num_claims · live_block_count` fold factor. The
 old `is_root` / `is_onehot` regime axis was the wrong axis; the correct split
 is *committed (folded)* vs *terminal (cleartext)*, and one-hotness only enters
 through the witness norm.
@@ -60,7 +60,7 @@ Every committed level is priced at the fold response, then at the **verifier dig
 envelope** the stage-1 range check actually certifies:
 
 ```text
-β^resp = num_claims · 2^block_bits · min(||c||_inf·||s||_1, ||c||_1·||s||_inf)
+β^resp = num_claims · live_block_count · min(||c||_inf·||s||_1, ||c||_1·||s||_inf)
        = fold_witness_beta(...)
 δ_fold = num_digits_fold(..., honest cap = min(β_inf, t*) when tail-bound-with-grind)
 z_verifier = balanced_digit_abs_max(log_basis, δ_fold)
@@ -96,7 +96,7 @@ proven against, at a norm proportional to the fold width) follows
 Nguyen and Setty's SuperNeo interactive-reductions framework (ePrint 2026/242,
 Theorem 4 plus the decomposition-reduction extractor): a random-linear fold is
 a *weak* reduction whose relaxed binding is Module-SIS at norm `4·T·B`, with
-`T = num_claims · 2^r` the fold width and `B` the response-difference bound
+`T = num_claims · B_live` the fold width and `B_resp` the response-difference bound
 (Akita's `z^(ℓ,i) − z^0`); a norm check is a *strong* reduction that makes the
 output witness short for the next input but does not lower the current fold's
 binding norm. The Akita-specific batched statement and proof live in the
@@ -104,7 +104,7 @@ private Akita write-up and are not reproduced here.
 
 ### Consequences
 
-- **Proof size rises at committed levels.** The `num_claims · 2^r` factor lifts
+- **Proof size rises at committed levels.** The `num_claims · B_live` factor lifts
   the A-collision into higher SIS buckets, so committed levels need a larger
   A-rank. This is the cost of matching the proven security.
 - **SIS collision ladder extended `2^20−1 → 2^26−1`.** Under the heavier norm a
@@ -189,7 +189,7 @@ needs `||z||_1`. Two independent facts close that door:
    Hence `||c̄'||_inf·D·||z||_inf ≥ ||c̄'||_1·||z||_inf`: the `||c||_1` side always
    wins the `min`, and the `||c||_inf` side never helps.
 2. **A tight L1 would only tie.** Even granting the structural bound
-   `||z||_1 ≤ T·||c||_1` (`T = num_claims·2^block_bits`; the one-hot fold response is a
+   `||z||_1 ≤ T·||c||_1` (`T = num_claims·B_live`; the one-hot fold response is a
    sum of `T` rotated challenges), the second side is
    `||c̄'||_inf·||z||_1 = ||c̄'||_inf·T·||c||_1`, while the first is
    `||c̄'||_1·||z||_inf = ||c̄'||_1·T·||c||_inf`. The two challenges are drawn from
@@ -253,7 +253,7 @@ resolves the spec's Open Question 3 below.
 
 The committed witness `s` is shared by two prices: the A-role weak-binding
 collision (`collision_A = 2·ω̄·β̄·ν`) and the fold bound
-(`β = num_claims·2^r·β̄`). Both consume `(||s||_inf, ||s||_1)`, and per the
+(`β = num_claims·B_live·β̄`). Both consume `(||s||_inf, ||s||_1)`, and per the
 "clean symmetry" note above they **must** use the same witness norms. They
 did not:
 
@@ -304,11 +304,11 @@ holds in code.
   (`*_full`, `fp{32,64}_d{32,64}`) families' root collision rises one notch
   (`b/2−1 → b/2` on the `min` side), occasionally bumping the root A-rank.
 - **`fp16::D32Full` now ships fully cleartext (`commit: None`) for
-  `nuposition_bits >= 6`.** Previously it root-committed (`commit: Some`); the one-notch
+  `nuposition_index_bits >= 6`.** Previously it root-committed (`commit: Some`); the one-notch
   collision bump pushes the dense root A-rank above the 16-bit modulus's secure
   ceiling, so the DP drops even the root commitment. It still commits at the
-  single-block size `nuposition_bits = 5`. The `akita_e2e::fp16_static_dense_round_trip`
-  test was retargeted from `nuposition_bits = 8` to `5` so it keeps exercising a real
+  single-block size `nuposition_index_bits = 5`. The `akita_e2e::fp16_static_dense_round_trip`
+  test was retargeted from `nuposition_index_bits = 8` to `5` so it keeps exercising a real
   SIS commitment. fp32/fp64 dense are unaffected at the tested sizes.
 - **SIS-floor tables unchanged.** The lattice-estimator security tables
   (`sis/generated_sis_table.rs`) do not depend on the witness norm — only the
@@ -346,7 +346,7 @@ inequality:
    [`crates/akita-types/src/layout/digit_math.rs`](../crates/akita-types/src/layout/digit_math.rs)
    (`compute_num_digits_fold_with_claims`, line 148) uses only the
    `||c||_1 · ||s||_inf` side of the inequality
-   (`β = challenge_l1_mass · num_claims · 2^(block_bits + log_basis − 1)`). Taking
+   (`β = challenge_l1_mass · num_claims · 2^(block_index_bits + log_basis − 1)`). Taking
    the full `min(...)` lets sparse (one-hot) witnesses, where `||s_i||_1` is
    small, use the much smaller `||c||_inf` side. This shrinks `δ_fold`, the
    next-level witness, and proof size for one-hot presets at no security cost.
@@ -465,7 +465,7 @@ so there is **no factor of 2** here. The paper's naive bound is
 
 i.e. it uses the `||c||_1 · ||s||_inf` side (`ω = ||c||_1`, `b ≈ ||s||_inf`).
 The implementation encodes this as
-`β = challenge_l1_mass · num_claims · 2^(block_bits + log_basis − 1)` (with
+`β = challenge_l1_mass · num_claims · 2^(block_index_bits + log_basis − 1)` (with
 `2^(log_basis−1) = b/2`, the balanced-digit L∞). The optimization replaces the
 single side with the full `min(...)`, which is tighter whenever the per-block
 witness `||s_i||_1` is small (sparse / one-hot).
@@ -591,7 +591,7 @@ let beta_block = ring_product_infinity_norm_bound(
     witness_l1_norm,
 );
 // β = Σ over the 2^r blocks (× num_claims for batched roots) — no factor of 2 (a sum, not a collision)
-let fold_beta = (num_claims as u64) * (1u64 << block_bits) * beta_block;
+let fold_beta = (num_claims as u64) * (1u64 << block_index_bits) * beta_block;
 ```
 
 - **Dense** (`witness_infinity_norm = b/2`, `nonzeros = D`): the `min` picks
@@ -599,15 +599,15 @@ let fold_beta = (num_claims as u64) * (1u64 << block_bits) * beta_block;
   to today**.
 - **One-hot** (`witness_infinity_norm = 1`, `nonzeros = 1`): the `min` picks
   `||c||_inf·||s||_1 = challenge_infinity_norm`, so
-  `fold_beta = num_claims · 2^r · challenge_infinity_norm` — strictly smaller
-  than today's `num_claims · 2^r · challenge_l1_norm · b/2`. Both the corrected
+  `fold_beta = num_claims · B_live · challenge_infinity_norm` — strictly smaller
+  than today's `num_claims · B_live · challenge_l1_norm · b/2`. Both the corrected
   `witness_infinity_norm = 1` and the `min` are required to realize the full
   drop.
 
 Note the clean symmetry: both binding and fold feed the **same un-doubled
 witness norms** into the **same helper**; they differ only in the outer factor —
 binding is a collision of two openings (`2 · ω̄ ·`), the fold is a sum of blocks
-(`num_claims · 2^r ·`).
+(`num_claims · B_live ·`).
 
 ### Passing `K` into the planner
 
@@ -650,7 +650,7 @@ un-doubled witness norms. They differ only in the outer factor:
 - **Binding**: `collision_A = 2 · ω̄ · β̄ · ν` — the `2` because the collision
   is a difference of two openings (the paper's factor, same as B/D), and the
   `ω̄ = ||c||_1` because the collision is `c_i c'_i (s_i − s'_i)`.
-- **Fold**: `β = num_claims · 2^r · β̄` — a single sum `Σ c_i s_i`, so no
+- **Fold**: `β = num_claims · B_live · β̄` — a single sum `Σ c_i s_i`, so no
   difference (no `2`) and no `ω̄`.
 
 They are independent in effect (binding raises ranks; fold lowers digit counts)
@@ -685,7 +685,7 @@ no-panic + planner determinism contracts):
 
 - `crates/akita-types/src/layout/digit_math.rs` —
   `compute_num_digits_fold_with_claims` (reported site) and its use inside
-  `optimal_m_r_split`. Both thread the commit-block `witness_infinity_norm` and
+  `optimal_block_geometry_split`. Both thread the commit-block `witness_infinity_norm` and
   `K` in.
 - `crates/akita-types/src/layout/params.rs:340` — `LevelParams::num_digits_fold`
   (runtime, verifier-reachable).

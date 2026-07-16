@@ -175,11 +175,19 @@ fn fold_grind_probe_order_absorb_buf(
         buf.extend_from_slice(&params.log_basis().to_le_bytes());
         push_usize(
             &mut buf,
-            params.source_ring_len_per_claim(),
+            params.live_ring_elements_per_claim(),
             "fold grind source length",
         )?;
-        push_usize(&mut buf, params.block_len(), "fold grind position count")?;
-        push_usize(&mut buf, params.num_blocks(), "fold grind num_blocks")?;
+        push_usize(
+            &mut buf,
+            params.positions_per_block(),
+            "fold grind position count",
+        )?;
+        push_usize(
+            &mut buf,
+            params.live_block_count(),
+            "fold grind live_block_count",
+        )?;
         push_usize(&mut buf, params.a_col_len(), "fold grind A width")?;
         push_usize(&mut buf, num_claims, "fold grind claim count")?;
         match params.fold_challenge_shape() {
@@ -331,7 +339,7 @@ where
                 let challenges = preview.draw_folding_challenges(
                     ring_d,
                     group.group_index,
-                    group.params.num_blocks(),
+                    group.params.live_block_count(),
                     group.polys.len(),
                     &root_lp.fold_challenge_config,
                     &group.params.fold_challenge_shape(),
@@ -377,7 +385,7 @@ where
         let challenges = live.draw_folding_challenges(
             ring_d,
             group.group_index,
-            group.params.num_blocks(),
+            group.params.live_block_count(),
             group.polys.len(),
             &root_lp.fold_challenge_config,
             &group.params.fold_challenge_shape(),
@@ -456,7 +464,7 @@ where
         let witness_norms = root_lp.fold_witness_norms_for_params(group.params);
         let sizing_claims = tail_t_vectors.unwrap_or(group.polys.len());
         let (delta_fold, witness_linf_cap) = akita_types::sis::fold_witness_digit_plan(
-            group.params.block_bits(),
+            group.params.live_block_count(),
             sizing_claims,
             root_lp.field_bits_for_cache(),
             group.params.log_basis(),

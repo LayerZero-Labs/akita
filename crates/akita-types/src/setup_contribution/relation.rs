@@ -56,14 +56,14 @@ where
             let group_lp = lp.group_params(opening_batch, group_index)?;
             let group_layout = opening_batch.group_layout(group_index)?;
             let num_claims = group_layout.num_polynomials();
-            let num_blocks = group_lp.num_blocks();
+            let live_block_count = group_lp.live_block_count();
             let depth_open = group_lp.num_digits_open();
             let depth_commit = group_lp.num_digits_commit();
             let n_a = group_lp.a_rows_len();
             let n_b = group_lp.b_rows_len();
             let t_cols_per_vector = n_a
                 .checked_mul(depth_open)
-                .and_then(|n| n.checked_mul(num_blocks))
+                .and_then(|n| n.checked_mul(live_block_count))
                 .ok_or_else(|| {
                     AkitaError::InvalidSetup("multi-group B vector width overflow".into())
                 })?;
@@ -78,8 +78,8 @@ where
             groups.push(SetupContributionGroupInputs {
                 group_id: group_index,
                 num_claims,
-                num_blocks,
-                block_len: group_lp.block_len(),
+                live_block_count,
+                positions_per_block: group_lp.positions_per_block(),
                 depth_open,
                 depth_commit,
                 depth_fold: lp.num_digits_fold_for_params(
@@ -105,8 +105,8 @@ where
             num_polys_per_group: opening_batch.group_sizes(),
             num_t_vectors: opening_batch.num_total_polynomials(),
             num_claims: opening_batch.num_total_polynomials(),
-            num_blocks: lp.num_blocks,
-            block_len: lp.block_len,
+            live_block_count: lp.live_block_count,
+            positions_per_block: lp.positions_per_block,
             depth_open: lp.num_digits_open,
             depth_commit: lp.num_digits_commit,
             depth_fold,

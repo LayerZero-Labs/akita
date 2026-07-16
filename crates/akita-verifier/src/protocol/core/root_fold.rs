@@ -163,8 +163,8 @@ where
                 prepare_opening_point::<F, E, D>(
                     shared_opening_point,
                     basis,
-                    root_lp.block_len,
-                    root_lp.num_blocks,
+                    root_lp.positions_per_block,
+                    root_lp.live_block_count,
                     d_a.trailing_zeros() as usize,
                 )
             })?;
@@ -201,15 +201,15 @@ where
             })?;
         root_trace_block_opening::<E>(
             &protocol_point,
-            root_lp.block_len,
-            root_lp.num_blocks,
+            root_lp.positions_per_block,
+            root_lp.live_block_count,
             d_a.trailing_zeros() as usize,
         )?
     } else {
         root_trace_block_opening::<E>(
             shared_opening_point,
-            root_lp.block_len,
-            root_lp.num_blocks,
+            root_lp.positions_per_block,
+            root_lp.live_block_count,
             d_a.trailing_zeros() as usize,
         )?
     };
@@ -368,8 +368,8 @@ where
     for group_index in 0..opening_batch.num_groups() {
         let group_lp = root_lp.group_params(opening_batch, group_index)?;
         let target_len = alpha_bits
-            .checked_add(group_lp.position_bits())
-            .and_then(|n| n.checked_add(group_lp.block_bits()))
+            .checked_add(group_lp.position_index_bits())
+            .and_then(|n| n.checked_add(group_lp.block_index_bits()))
             .ok_or_else(|| {
                 AkitaError::InvalidSetup("group opening point length overflow".to_string())
             })?;
@@ -392,8 +392,8 @@ where
                 prepare_opening_point::<F, E, D>(
                     &group_point,
                     basis,
-                    group_lp.block_len(),
-                    group_lp.num_blocks(),
+                    group_lp.positions_per_block(),
+                    group_lp.live_block_count(),
                     alpha_bits,
                 )
             })?;
@@ -439,8 +439,8 @@ where
     // trace-weight table that multi-group roots evaluate.
     let trace_block_opening = root_trace_block_opening::<E>(
         shared_opening_point,
-        root_lp.block_len,
-        root_lp.num_blocks,
+        root_lp.positions_per_block,
+        root_lp.live_block_count,
         alpha_bits,
     )?;
 

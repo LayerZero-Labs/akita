@@ -1,5 +1,5 @@
 use super::build::{
-    build_trace_weight_table_field_block_weights, build_trace_weight_table_field_terms,
+    build_trace_weight_table_field_live_block_weights, build_trace_weight_table_field_terms,
     build_trace_weight_table_ring_terms,
 };
 use super::stage2::{
@@ -37,9 +37,9 @@ fn layout() -> TraceWeightLayout {
     TraceWeightLayout {
         ring_bits: 3,
         col_bits: 4,
-        num_blocks: 2,
+        live_block_count: 2,
         num_digits_open: 2,
-        block_bits: 1,
+        block_index_bits: 1,
         log_basis: 3,
         witness_layout,
         opening_source_len,
@@ -76,12 +76,12 @@ fn trace_table_field_sparse_matches_materialized_dense() {
     let terms = vec![
         TraceFieldBlockOpening {
             block_offset: 0,
-            block_weights: vec![F::from_u64(2), F::from_u64(5)],
+            live_block_weights: vec![F::from_u64(2), F::from_u64(5)],
             inner_opening_ring: test_ring(10),
         },
         TraceFieldBlockOpening {
             block_offset: 1,
-            block_weights: vec![F::from_u64(7)],
+            live_block_weights: vec![F::from_u64(7)],
             inner_opening_ring: test_ring(40),
         },
     ];
@@ -102,12 +102,12 @@ fn stage2_compact_field_matches_dense_slice_for_partial_live_columns() {
     let terms = vec![
         TraceFieldBlockOpening {
             block_offset: 0,
-            block_weights: vec![F::from_u64(2), F::from_u64(5)],
+            live_block_weights: vec![F::from_u64(2), F::from_u64(5)],
             inner_opening_ring: test_ring(10),
         },
         TraceFieldBlockOpening {
             block_offset: 1,
-            block_weights: vec![F::from_u64(7)],
+            live_block_weights: vec![F::from_u64(7)],
             inner_opening_ring: test_ring(40),
         },
     ];
@@ -185,7 +185,7 @@ fn trace_claim_eval_matches_dense_table_for_k1() {
     let layout = layout();
     let inner_open = vec![F::from_u64(3), F::from_u64(5), F::from_u64(7)];
     let b_open = vec![F::from_u64(11)];
-    let block_weights = lagrange_weights(&b_open).unwrap();
+    let live_block_weights = lagrange_weights(&b_open).unwrap();
     let inner_ring =
         reduce_inner_opening_to_ring_element::<F, D>(&inner_open, BasisMode::Lagrange).unwrap();
     let claim = TraceClaim {
@@ -203,9 +203,9 @@ fn trace_claim_eval_matches_dense_table_for_k1() {
         dense_evals: None,
     };
 
-    let table = build_trace_weight_table_field_block_weights::<F, F, D>(
+    let table = build_trace_weight_table_field_live_block_weights::<F, F, D>(
         &layout,
-        &block_weights,
+        &live_block_weights,
         &inner_ring,
     )
     .unwrap();

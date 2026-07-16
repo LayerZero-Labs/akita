@@ -83,7 +83,7 @@ akita-config ──► akita-planner ──► akita-types / akita-challenges / 
   intentionally repealed; `find_schedule` and everything it calls are audited
   under the verifier no-panic contract (`Result`-returning, no
   `panic!`/`unwrap`/`unreachable!`/unchecked indexing/overflow-prone shape math).
-  The verifier validates `key.nuposition_bits` against setup capacity before the DP runs.
+  The verifier validates `key.nuposition_index_bits` against setup capacity before the DP runs.
 - **Test-only helper relocated.** `akita_batched_root_layout` (used only by tests
   and the `profile` example to pre-size per-poly inputs) lives in the
   feature-gated `akita_config::test_support` module, enabled via dev-deps of

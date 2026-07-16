@@ -7,8 +7,8 @@ use std::{ops::Range, sync::Arc};
 pub struct SetupContributionGroupInputs {
     pub group_id: usize,
     pub num_claims: usize,
-    pub num_blocks: usize,
-    pub block_len: usize,
+    pub live_block_count: usize,
+    pub positions_per_block: usize,
     pub depth_open: usize,
     pub depth_commit: usize,
     pub depth_fold: usize,
@@ -61,13 +61,13 @@ impl SetupContributionGroupInputs {
         let t_cols_per_vector = inputs
             .n_a
             .checked_mul(inputs.depth_open)
-            .and_then(|width| width.checked_mul(inputs.num_blocks))
+            .and_then(|width| width.checked_mul(inputs.live_block_count))
             .ok_or_else(|| AkitaError::InvalidSetup("T polynomial width overflow".into()))?;
         Ok(Self {
             group_id: 0,
             num_claims: inputs.num_claims,
-            num_blocks: inputs.num_blocks,
-            block_len: inputs.block_len,
+            live_block_count: inputs.live_block_count,
+            positions_per_block: inputs.positions_per_block,
             depth_open: inputs.depth_open,
             depth_commit: inputs.depth_commit,
             depth_fold: inputs.depth_fold,
@@ -118,7 +118,7 @@ impl SetupContributionLayout {
         let d_columns = SetupDColumnLayout::new(groups.iter().map(|group| {
             let width = group
                 .num_claims
-                .checked_mul(group.num_blocks)
+                .checked_mul(group.live_block_count)
                 .and_then(|cols| cols.checked_mul(group.depth_open))
                 .ok_or_else(|| AkitaError::InvalidSetup("setup D width overflow".into()))?;
             Ok((group.group_id, width))
@@ -221,7 +221,7 @@ fn validate_group_witness_layout(
             .checked_add(unit.live_block_count())
             .ok_or_else(|| AkitaError::InvalidSetup("setup fold coverage overflow".into()))?;
     }
-    if next_fold != group.num_blocks {
+    if next_fold != group.live_block_count {
         return Err(AkitaError::InvalidSetup(
             "setup group dimensions disagree with witness layout".into(),
         ));

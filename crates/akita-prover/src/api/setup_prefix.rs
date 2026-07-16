@@ -19,7 +19,7 @@ use akita_types::{
 ///
 /// The witness is the coefficient form of `S^flat[0..natural_len]`,
 /// zero-padded to `n_prefix`. The caller must supply `level_params` whose inner
-/// witness shape satisfies `num_blocks * block_len == n_prefix / D`.
+/// witness shape satisfies `live_block_count * positions_per_block == n_prefix / D`.
 ///
 /// # Errors
 ///
@@ -51,8 +51,8 @@ where
     let padded_ring_slots = n_prefix / D;
     let witness_ring_slots = level_params
         .layout
-        .num_blocks
-        .checked_mul(level_params.layout.block_len)
+        .live_block_count
+        .checked_mul(level_params.layout.positions_per_block)
         .ok_or_else(|| {
             AkitaError::InvalidSetup("setup prefix witness shape overflow".to_string())
         })?;
@@ -79,8 +79,8 @@ where
         extract_setup_prefix_ring_elems::<F, D>(expanded, padded_ring_slots, natural_len)?;
     let block_slices = setup_prefix_block_slices(
         &ring_elems,
-        level_params.layout.num_blocks,
-        level_params.layout.block_len,
+        level_params.layout.live_block_count,
+        level_params.layout.positions_per_block,
     )?;
 
     let recomposed_inner_rows = backend.dense_commit_rows(
@@ -133,7 +133,7 @@ where
         })?;
 
     let b_input_len = commit_inner_flat_digit_count(
-        level_params.layout.num_blocks,
+        level_params.layout.live_block_count,
         level_params.a_key.row_len(),
         level_params.num_digits_open,
     )?;
@@ -200,26 +200,26 @@ where
 
 fn setup_prefix_block_slices<F, const D: usize>(
     ring_elems: &[CyclotomicRing<F, D>],
-    num_blocks: usize,
-    block_len: usize,
+    live_block_count: usize,
+    positions_per_block: usize,
 ) -> Result<Vec<&[CyclotomicRing<F, D>]>, AkitaError>
 where
     F: FieldCore,
 {
-    if num_blocks
-        .checked_mul(block_len)
+    if live_block_count
+        .checked_mul(positions_per_block)
         .is_none_or(|witness| witness != ring_elems.len())
     {
         return Err(AkitaError::InvalidSetup(
             "setup prefix ring elements do not match witness block layout".to_string(),
         ));
     }
-    Ok((0..num_blocks)
+    Ok((0..live_block_count)
         .map(|block_idx| {
             let start = block_idx
-                .checked_mul(block_len)
+                .checked_mul(positions_per_block)
                 .expect("block index fits after witness length check");
-            &ring_elems[start..start + block_len]
+            &ring_elems[start..start + positions_per_block]
         })
         .collect())
 }
@@ -257,7 +257,7 @@ mod tests {
                 .row_len()
                 .checked_mul(
                     level_params
-                        .num_blocks
+                        .live_block_count
                         .checked_mul(level_params.a_key.row_len())
                         .and_then(|n| n.checked_mul(level_params.num_digits_open))
                         .expect("b input shape"),
@@ -336,8 +336,8 @@ mod tests {
         .with_decomp(16, 256, 2, 2)
         .expect("level params");
         let witness_ring_slots = level_params
-            .num_blocks
-            .checked_mul(level_params.block_len)
+            .live_block_count
+            .checked_mul(level_params.positions_per_block)
             .expect("witness shape");
         let n_prefix = witness_ring_slots.checked_mul(64).expect("prefix length");
         let natural_len = n_prefix / 2 + 1;
@@ -368,8 +368,8 @@ mod tests {
         let level_params = prefix_level_params(D);
         let opening_batch = OpeningClaimsLayout::new(4, 1).expect("opening_batch");
         let witness_ring_slots = level_params
-            .num_blocks
-            .checked_mul(level_params.block_len)
+            .live_block_count
+            .checked_mul(level_params.positions_per_block)
             .expect("witness shape");
         let n_prefix = witness_ring_slots.checked_mul(D).expect("prefix length");
         let natural_len = active_setup_field_len(&level_params, &opening_batch)

@@ -12,7 +12,7 @@ use akita_field::{AkitaError, CanonicalField, FieldCore, FromPrimitiveInt};
 pub(super) fn decompose_fold_batched_tensor_sparse<F, const D: usize>(
     polys: &[&SparseRingPoly<F>],
     tensor: &TensorChallengeSet,
-    block_len: usize,
+    positions_per_block: usize,
     num_digits: usize,
 ) -> Result<DecomposeFoldWitness<F>, AkitaError>
 where
@@ -20,11 +20,11 @@ where
 {
     let cached_blocks = polys
         .iter()
-        .map(|poly| poly.blocks_for(D, block_len))
+        .map(|poly| poly.blocks_for(D, positions_per_block))
         .collect::<Result<Vec<_>, _>>()?;
     let mut flat_blocks = Vec::new();
     for blocks in &cached_blocks {
-        flat_blocks.extend((0..blocks.num_blocks()).map(|idx| blocks.block(idx)));
+        flat_blocks.extend((0..blocks.live_block_count()).map(|idx| blocks.block(idx)));
     }
     let expected_blocks = tensor.total_blocks()?;
     if flat_blocks.len() != expected_blocks {
@@ -34,7 +34,7 @@ where
         });
     }
     validate_tensor_blocks::<D>(tensor, expected_blocks)?;
-    let inner_width = block_len.checked_mul(num_digits).ok_or_else(|| {
+    let inner_width = positions_per_block.checked_mul(num_digits).ok_or_else(|| {
         AkitaError::InvalidSetup("sparse tensor fold inner width overflow".to_string())
     })?;
     let accum_i64 = sparse_accumulate_tensor::<D>(&flat_blocks, tensor, inner_width, num_digits)?;

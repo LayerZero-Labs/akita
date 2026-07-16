@@ -450,7 +450,7 @@ Proposed generated families:
 
 Wire D32 as the primary production target and D64 as the only comparison schedule. Do not generate D128-or-larger schedules for any prime family unless a future measured proof-size result reverses the current ordering.
 
-For singleton dense workloads, use `ScheduleKey::singleton(nuposition_bits)`. Do not set `num_w_vectors = K` at the root. The root EOR partial count for one dense opening is `K`.
+For singleton dense workloads, use `ScheduleKey::singleton(nuposition_index_bits)`. Do not set `num_w_vectors = K` at the root. The root EOR partial count for one dense opening is `K`.
 
 For one-hot nv32, use the same workload conventions as the fp32/fp64 profile comparisons.
 

@@ -35,12 +35,12 @@ fn prefix_eligible_level_params() -> LevelParams {
 fn active_setup_field_len_matches_packed_role_maximum() {
     let lp = sample_level_params();
     let opening_batch = OpeningClaimsLayout::new(5, 3).expect("opening batch");
-    let w_a = lp.block_len * lp.num_digits_commit;
+    let w_a = lp.positions_per_block * lp.num_digits_commit;
     let w_b = opening_batch.num_total_polynomials()
         * lp.a_key.row_len()
-        * lp.num_blocks
+        * lp.live_block_count
         * lp.num_digits_open;
-    let w_d = opening_batch.num_total_polynomials() * lp.num_blocks * lp.num_digits_open;
+    let w_d = opening_batch.num_total_polynomials() * lp.live_block_count * lp.num_digits_open;
     let expected_ring_slots = lp
         .a_key
         .row_len()

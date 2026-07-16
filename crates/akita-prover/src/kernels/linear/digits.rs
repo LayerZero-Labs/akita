@@ -40,8 +40,8 @@ pub(super) fn mat_vec_mul_digits_i8_with_params_impl<
     log_basis: u32,
     params: &CrtNttParamSet<W, K, D>,
 ) -> Vec<Vec<CyclotomicRing<F, D>>> {
-    let num_blocks = blocks.len();
-    if num_blocks == 0 {
+    let live_block_count = blocks.len();
+    if live_block_count == 0 {
         return vec![];
     }
     let n_a = ntt_mat.len();
@@ -49,7 +49,7 @@ pub(super) fn mat_vec_mul_digits_i8_with_params_impl<
     let max_data_width = blocks.iter().map(|b| b.len()).max().unwrap_or(0);
     let inner_width = mat_width.min(max_data_width);
     if inner_width == 0 || n_a == 0 {
-        return vec![vec![CyclotomicRing::<F, D>::zero(); n_a]; num_blocks];
+        return vec![vec![CyclotomicRing::<F, D>::zero(); n_a]; live_block_count];
     }
 
     let digit_bound = balanced_digit_abs_bound(log_basis);
@@ -66,7 +66,7 @@ pub(super) fn mat_vec_mul_digits_i8_with_params_impl<
     let safe_width = safe_crt_chunk_width::<F, W, K, D>(params, inner_width, digit_bound)
         .expect("single i8 CRT term must fit supported parameters");
     if n_a <= SMALL_ROW_BLOCK_PARALLEL_MAX_ROWS
-        && num_blocks >= SMALL_ROW_BLOCK_PARALLEL_MIN_BLOCKS
+        && live_block_count >= SMALL_ROW_BLOCK_PARALLEL_MIN_BLOCKS
         && inner_width == max_data_width
     {
         if inner_width <= safe_width {
@@ -89,7 +89,7 @@ pub(super) fn mat_vec_mul_digits_i8_with_params_impl<
 
     let lut = DigitMontLut::<W, K>::new_with_digit_bound(params, digit_bound);
     drive_block_chunked_matvec(
-        num_blocks,
+        live_block_count,
         n_a,
         inner_width,
         safe_width,
@@ -116,7 +116,7 @@ pub(super) fn mat_vec_mul_digits_i8_with_params_impl<
                     }
                 }
             } else {
-                for block_idx in 0..num_blocks {
+                for block_idx in 0..live_block_count {
                     let block = blocks[block_idx];
                     if start >= block.len() {
                         continue;
@@ -144,26 +144,26 @@ pub(super) fn mat_vec_mul_digits_i8_strided_with_params<
 >(
     ntt_mat: &[&[CyclotomicCrtNtt<W, K, D>]],
     coeffs: &[[i8; D]],
-    num_blocks: usize,
-    block_len: usize,
+    live_block_count: usize,
+    positions_per_block: usize,
     log_basis: u32,
     params: &CrtNttParamSet<W, K, D>,
 ) -> Vec<Vec<CyclotomicRing<F, D>>> {
-    if num_blocks == 0 {
+    if live_block_count == 0 {
         return vec![];
     }
     let n_a = ntt_mat.len();
     let mat_width = ntt_mat.first().map_or(0, |row| row.len());
-    let inner_width = mat_width.min(block_len);
+    let inner_width = mat_width.min(positions_per_block);
     if inner_width == 0 || n_a == 0 {
-        return vec![vec![CyclotomicRing::<F, D>::zero(); n_a]; num_blocks];
+        return vec![vec![CyclotomicRing::<F, D>::zero(); n_a]; live_block_count];
     }
 
     let digit_bound = balanced_digit_abs_bound(log_basis);
     debug_assert!(
         digit_rows_within_digit_bound::<D>(
             coeffs,
-            inner_width.saturating_mul(num_blocks),
+            inner_width.saturating_mul(live_block_count),
             digit_bound
         ),
         "predecomposed strided digit block contains digits outside its log_basis range"
@@ -171,13 +171,13 @@ pub(super) fn mat_vec_mul_digits_i8_strided_with_params<
     let safe_width = safe_crt_chunk_width::<F, W, K, D>(params, inner_width, digit_bound)
         .expect("single i8 CRT term must fit supported parameters");
     if n_a <= SMALL_ROW_BLOCK_PARALLEL_MAX_ROWS
-        && num_blocks >= SMALL_ROW_BLOCK_PARALLEL_MIN_BLOCKS
+        && live_block_count >= SMALL_ROW_BLOCK_PARALLEL_MIN_BLOCKS
         && inner_width <= safe_width
     {
         return mat_vec_mul_digits_i8_strided_block_parallel(
             ntt_mat,
             coeffs,
-            num_blocks,
+            live_block_count,
             inner_width,
             digit_bound,
             params,
@@ -186,7 +186,7 @@ pub(super) fn mat_vec_mul_digits_i8_strided_with_params<
 
     let lut = DigitMontLut::<W, K>::new_with_digit_bound(params, digit_bound);
     drive_block_chunked_matvec(
-        num_blocks,
+        live_block_count,
         n_a,
         inner_width,
         safe_width,
@@ -195,11 +195,11 @@ pub(super) fn mat_vec_mul_digits_i8_strided_with_params<
         params,
         |accs, start, end| {
             for col in start..end {
-                let seq_start = col * num_blocks;
+                let seq_start = col * live_block_count;
                 if seq_start >= coeffs.len() {
                     break;
                 }
-                let live_blocks = num_blocks.min(coeffs.len() - seq_start);
+                let live_blocks = live_block_count.min(coeffs.len() - seq_start);
                 let coeffs_for_col = &coeffs[seq_start..seq_start + live_blocks];
                 for (block_idx, digit) in coeffs_for_col.iter().enumerate() {
                     if is_zero_plane(digit) {
@@ -222,25 +222,28 @@ pub(super) fn mat_vec_mul_raw_i8_strided_with_params<
 >(
     ntt_mat: &[&[CyclotomicCrtNtt<W, K, D>]],
     coeffs: &[[i8; D]],
-    num_blocks: usize,
-    block_len: usize,
+    live_block_count: usize,
+    positions_per_block: usize,
     params: &CrtNttParamSet<W, K, D>,
 ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError> {
-    if num_blocks == 0 {
+    if live_block_count == 0 {
         return Ok(vec![]);
     }
     let n_a = ntt_mat.len();
     let mat_width = ntt_mat.first().map_or(0, |row| row.len());
-    let inner_width = mat_width.min(block_len);
+    let inner_width = mat_width.min(positions_per_block);
     if inner_width == 0 || n_a == 0 {
-        return Ok(vec![vec![CyclotomicRing::<F, D>::zero(); n_a]; num_blocks]);
+        return Ok(vec![
+            vec![CyclotomicRing::<F, D>::zero(); n_a];
+            live_block_count
+        ]);
     }
 
     // Unlike the balanced-digit paths (bound <= 32, always within capacity),
     // the raw signed-i8 bound is read from the witness and can in principle be
     // large enough that even a single CRT term cannot lift exactly. Reject that
     // at this checked boundary rather than panicking on a `Result` path.
-    let rhs_bound = strided_i8_abs_bound(coeffs, num_blocks, inner_width);
+    let rhs_bound = strided_i8_abs_bound(coeffs, live_block_count, inner_width);
     let safe_width = safe_crt_chunk_width::<F, W, K, D>(params, inner_width, rhs_bound)
         .ok_or_else(|| {
             AkitaError::InvalidInput(
@@ -257,18 +260,19 @@ pub(super) fn mat_vec_mul_raw_i8_strided_with_params<
     // lift; over-capacity widths still chunk in the driver.
     if n_a <= SMALL_ROW_BLOCK_PARALLEL_MAX_ROWS && inner_width <= safe_width {
         let num_tiles = inner_width.div_ceil(base_tile_width::<W, K, D>());
-        if num_blocks >= SMALL_ROW_BLOCK_PARALLEL_MIN_BLOCKS || num_blocks >= num_tiles {
+        if live_block_count >= SMALL_ROW_BLOCK_PARALLEL_MIN_BLOCKS || live_block_count >= num_tiles
+        {
             return Ok(mat_vec_mul_raw_i8_strided_block_parallel(
                 ntt_mat,
                 coeffs,
-                num_blocks,
+                live_block_count,
                 inner_width,
                 params,
             ));
         }
     }
     Ok(drive_block_chunked_matvec(
-        num_blocks,
+        live_block_count,
         n_a,
         inner_width,
         safe_width,
@@ -276,7 +280,15 @@ pub(super) fn mat_vec_mul_raw_i8_strided_with_params<
         safe_width,
         params,
         |accs, start, end| {
-            accumulate_raw_i8_strided_range(accs, ntt_mat, coeffs, num_blocks, start, end, params);
+            accumulate_raw_i8_strided_range(
+                accs,
+                ntt_mat,
+                coeffs,
+                live_block_count,
+                start,
+                end,
+                params,
+            );
         },
     ))
 }
@@ -302,8 +314,8 @@ pub(super) fn mat_vec_mul_raw_digits_i8_with_params<
     blocks: &[&[[i8; D]]],
     params: &CrtNttParamSet<W, K, D>,
 ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError> {
-    let num_blocks = blocks.len();
-    if num_blocks == 0 {
+    let live_block_count = blocks.len();
+    if live_block_count == 0 {
         return Ok(vec![]);
     }
     let n_a = ntt_mat.len();
@@ -311,7 +323,10 @@ pub(super) fn mat_vec_mul_raw_digits_i8_with_params<
     let max_data_width = blocks.iter().map(|b| b.len()).max().unwrap_or(0);
     let inner_width = mat_width.min(max_data_width);
     if inner_width == 0 || n_a == 0 {
-        return Ok(vec![vec![CyclotomicRing::<F, D>::zero(); n_a]; num_blocks]);
+        return Ok(vec![
+            vec![CyclotomicRing::<F, D>::zero(); n_a];
+            live_block_count
+        ]);
     }
     // Read the raw signed-i8 bound directly from the witness. It can in
     // principle be large enough that even a single CRT term cannot lift
@@ -331,7 +346,7 @@ pub(super) fn mat_vec_mul_raw_digits_i8_with_params<
             )
         })?;
     Ok(drive_block_chunked_matvec(
-        num_blocks,
+        live_block_count,
         n_a,
         inner_width,
         safe_width,
@@ -339,7 +354,7 @@ pub(super) fn mat_vec_mul_raw_digits_i8_with_params<
         safe_width,
         params,
         |accs, start, end| {
-            for block_idx in 0..num_blocks {
+            for block_idx in 0..live_block_count {
                 let block = blocks[block_idx];
                 if start >= block.len() {
                     continue;
@@ -363,18 +378,18 @@ pub(super) fn mat_vec_mul_raw_digits_i8_with_params<
 
 fn strided_i8_abs_bound<const D: usize>(
     coeffs: &[[i8; D]],
-    num_blocks: usize,
+    live_block_count: usize,
     inner_width: usize,
 ) -> u64 {
     let mut bound = 0u64;
     for col in 0..inner_width {
-        let Some(seq_start) = col.checked_mul(num_blocks) else {
+        let Some(seq_start) = col.checked_mul(live_block_count) else {
             break;
         };
         if seq_start >= coeffs.len() {
             break;
         }
-        let live_blocks = num_blocks.min(coeffs.len() - seq_start);
+        let live_blocks = live_block_count.min(coeffs.len() - seq_start);
         for row in &coeffs[seq_start..seq_start + live_blocks] {
             for &coeff in row {
                 bound = bound.max(u64::from(coeff.unsigned_abs()));
@@ -389,19 +404,19 @@ fn accumulate_raw_i8_strided_range<W: PrimeWidth, const K: usize, const D: usize
     accs: &mut [Vec<CyclotomicCrtNtt<W, K, D>>],
     ntt_mat: &[&[CyclotomicCrtNtt<W, K, D>]],
     coeffs: &[[i8; D]],
-    num_blocks: usize,
+    live_block_count: usize,
     tile_start: usize,
     tile_end: usize,
     params: &CrtNttParamSet<W, K, D>,
 ) {
     for col in tile_start..tile_end {
-        let Some(seq_start) = col.checked_mul(num_blocks) else {
+        let Some(seq_start) = col.checked_mul(live_block_count) else {
             break;
         };
         if seq_start >= coeffs.len() {
             break;
         }
-        let live_blocks = num_blocks.min(coeffs.len() - seq_start);
+        let live_blocks = live_block_count.min(coeffs.len() - seq_start);
         let coeffs_for_col = &coeffs[seq_start..seq_start + live_blocks];
         for (block_idx, coeff) in coeffs_for_col.iter().enumerate() {
             if is_zero_plane(coeff) {

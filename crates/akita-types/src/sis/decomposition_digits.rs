@@ -204,34 +204,37 @@ pub fn num_digits_open(decomposition: DecompositionParams) -> usize {
     num_digits_for_bound(bound, field_bits, decomposition.log_basis)
 }
 
-/// A-matrix committed width (ring columns): `block_len · δ_commit`.
+/// A-matrix committed width (ring columns): `positions_per_block · δ_commit`.
 #[inline]
-pub fn decomposed_s_block_ring_count(block_len: usize, num_digits_commit: usize) -> Option<usize> {
-    block_len.checked_mul(num_digits_commit)
+pub fn decomposed_s_block_ring_count(
+    positions_per_block: usize,
+    num_digits_commit: usize,
+) -> Option<usize> {
+    positions_per_block.checked_mul(num_digits_commit)
 }
 
-/// B-matrix committed width (ring columns): `n_a · δ_open · num_blocks · num_polynomials`.
+/// B-matrix committed width (ring columns): `n_a · δ_open · live_block_count · num_polynomials`.
 #[inline]
 pub fn decomposed_t_ring_count(
     n_a: usize,
     num_digits_open: usize,
-    num_blocks: usize,
+    live_block_count: usize,
     num_polynomials: usize,
 ) -> Option<usize> {
     n_a.checked_mul(num_digits_open)?
-        .checked_mul(num_blocks)?
+        .checked_mul(live_block_count)?
         .checked_mul(num_polynomials)
 }
 
-/// D-matrix committed width (ring columns): `δ_open · num_blocks · num_polynomials`.
+/// D-matrix committed width (ring columns): `δ_open · live_block_count · num_polynomials`.
 #[inline]
 pub fn decomposed_w_ring_count(
     num_digits_open: usize,
-    num_blocks: usize,
+    live_block_count: usize,
     num_polynomials: usize,
 ) -> Option<usize> {
     num_digits_open
-        .checked_mul(num_blocks)?
+        .checked_mul(live_block_count)?
         .checked_mul(num_polynomials)
 }
 
@@ -373,15 +376,15 @@ mod tests {
     }
 
     #[test]
-    fn fold_witness_digit_plan_rejects_high_arity() {
+    fn fold_witness_digit_plan_rejects_zero_live_blocks() {
         let challenge = FoldChallengeNorms {
             infinity_norm: 8,
             l1_norm: 54,
         };
         let witness = FoldWitnessNorms::new(3, 64, 1, false);
-        // block_bits >= 127 is rejected.
+        // A fold must contain at least one live block.
         assert!(fold_witness_digit_plan(
-            127,
+            0,
             1,
             128,
             3,

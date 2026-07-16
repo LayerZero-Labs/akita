@@ -91,13 +91,13 @@ pub struct LevelParams {
     /// Prover matrix (D): `row_len = n_d`, `col_len = d_matrix_width`.
     pub d_key: AjtaiKeyParams,
     /// Exact live source ring elements per claim (`N`).
-    pub source_ring_len_per_claim: usize,
-    /// Power-of-two positions in one block (`L`).
-    pub block_len: usize,
-    /// Exact number of live blocks (`F = ceil(N / L)`).
-    pub num_blocks: usize,
+    pub live_ring_elements_per_claim: usize,
+    /// Positions per block (`M`), power-of-two in the current Boolean layout.
+    pub positions_per_block: usize,
+    /// Exact number of live blocks (`B = ceil(N / M)`).
+    pub live_block_count: usize,
     /// Power-of-two ownership granule used to partition live blocks into chunks.
-    pub chunk_granule: usize,
+    pub blocks_per_chunk_granule: usize,
     pub fold_challenge_config: SparseChallengeConfig,
     /// Shape of the stage-1 fold-round challenge vector at this level.
     ///
@@ -207,10 +207,10 @@ impl LevelParams {
             a_key: empty_ajtai_key(crate::sis::SisMatrixRole::A),
             b_key: empty_ajtai_key(crate::sis::SisMatrixRole::B),
             d_key: empty_ajtai_key(crate::sis::SisMatrixRole::D),
-            source_ring_len_per_claim: 0,
-            block_len: 0,
-            num_blocks: 0,
-            chunk_granule: 0,
+            live_ring_elements_per_claim: 0,
+            positions_per_block: 0,
+            live_block_count: 0,
+            blocks_per_chunk_granule: 0,
             fold_challenge_config: SparseChallengeConfig {
                 count_pm1: 0,
                 count_pm2: 0,
@@ -279,10 +279,10 @@ impl LevelParams {
                 0,
                 ring_dimension,
             ),
-            source_ring_len_per_claim: 0,
-            block_len: 0,
-            num_blocks: 0,
-            chunk_granule: 0,
+            live_ring_elements_per_claim: 0,
+            positions_per_block: 0,
+            live_block_count: 0,
+            blocks_per_chunk_granule: 0,
             fold_challenge_config,
             fold_challenge_shape: TensorChallengeShape::Flat,
             num_digits_commit: 0,
@@ -404,14 +404,14 @@ impl LevelParams {
         (self.inner_width() as u128).saturating_mul(self.ring_dimension as u128)
     }
 
-    /// Fold block count `num_claims · 2^block_bits` used in the tail-bound formula.
+    /// Exact fold block count `num_claims · live_block_count` used in the tail-bound formula.
     ///
     /// # Errors
     ///
     /// Returns [`AkitaError::InvalidSetup`] when the product overflows `u128`.
     pub fn num_fold_blocks(&self, num_claims: usize) -> Result<u128, AkitaError> {
         (num_claims as u128)
-            .checked_mul(self.num_blocks as u128)
+            .checked_mul(self.live_block_count as u128)
             .ok_or_else(|| AkitaError::InvalidSetup("num_fold_blocks overflows u128".to_string()))
     }
 
@@ -477,7 +477,7 @@ impl LevelParams {
         );
         let witness = self.fold_witness_norms();
         let (num_digits_fold_one, _) = crate::sis::fold_witness_digit_plan(
-            self.block_bits(),
+            self.live_block_count,
             1,
             field_bits,
             self.log_basis,
@@ -489,7 +489,7 @@ impl LevelParams {
         if root_num_claims > 1 {
             self.cached_num_digits_block_claims = root_num_claims;
             let (cached_value, _) = crate::sis::fold_witness_digit_plan(
-                self.block_bits(),
+                self.live_block_count,
                 root_num_claims,
                 field_bits,
                 self.log_basis,
@@ -513,7 +513,7 @@ impl LevelParams {
     /// Propagates [`crate::sis::fold_witness_digit_plan`] setup errors.
     pub fn fold_witness_linf_cap_for_claims(&self, num_claims: usize) -> Result<u128, AkitaError> {
         let (_delta_fold, inf_norm_bound) = crate::sis::fold_witness_digit_plan(
-            self.block_bits(),
+            self.live_block_count,
             num_claims,
             self.field_bits_for_cache(),
             self.log_basis,
@@ -565,7 +565,7 @@ impl LevelParams {
             );
             let witness_norms = self.fold_witness_norms_for_params(params);
             let (_, witness_linf_cap) = crate::sis::fold_witness_digit_plan(
-                params.block_bits(),
+                params.live_block_count(),
                 num_claims,
                 self.field_bits_for_cache(),
                 params.log_basis(),
@@ -597,10 +597,10 @@ impl LevelParams {
         buf.extend_from_slice(crate::sis::FOLD_GRIND_PROBE_ORDER_ABSORB);
         buf.extend_from_slice(&(self.ring_dimension as u64).to_le_bytes());
         buf.extend_from_slice(&self.log_basis.to_le_bytes());
-        buf.extend_from_slice(&(self.source_ring_len_per_claim as u64).to_le_bytes());
-        buf.extend_from_slice(&(self.block_len as u64).to_le_bytes());
-        buf.extend_from_slice(&(self.num_blocks as u64).to_le_bytes());
-        buf.extend_from_slice(&(self.chunk_granule as u64).to_le_bytes());
+        buf.extend_from_slice(&(self.live_ring_elements_per_claim as u64).to_le_bytes());
+        buf.extend_from_slice(&(self.positions_per_block as u64).to_le_bytes());
+        buf.extend_from_slice(&(self.live_block_count as u64).to_le_bytes());
+        buf.extend_from_slice(&(self.blocks_per_chunk_granule as u64).to_le_bytes());
         buf.extend_from_slice(&num_claims.to_le_bytes());
         buf
     }
@@ -621,7 +621,7 @@ impl LevelParams {
         let witness_linf = self.fold_witness_norms().infinity_norm();
         let witness_linf_sq = witness_linf.saturating_mul(witness_linf);
         crate::sis::rademacher_proxy_variance(
-            self.block_bits(),
+            self.live_block_count,
             num_claims,
             witness_linf_sq,
             &cap_config,
@@ -631,14 +631,14 @@ impl LevelParams {
     /// Gadget decomposition depth for the folded witness (δ_fold / τ).
     ///
     /// Delegates to [`crate::sis::fold_witness_digit_plan`], which derives
-    /// `β = num_claims · 2^block_bits · min(||c||_inf·||s||_1, ||c||_1·||s||_inf)`
+    /// `β = num_claims · live_block_count · min(||c||_inf·||s||_1, ||c||_1·||s||_inf)`
     /// from this level's fold challenge and witness norms, then applies
     /// `min(β_inf, t*)` under tail-bound-with-grind policies.
     ///
     /// # Errors
     ///
     /// Propagates [`crate::sis::fold_witness_digit_plan`]'s rejection of a
-    /// degenerate fold bound (`block_bits >= 127` or `β` overflow).
+    /// degenerate fold bound (`live_block_count == 0` or `β` overflow).
     #[inline]
     pub fn num_digits_fold(&self, num_claims: usize, field_bits: u32) -> Result<usize, AkitaError> {
         if num_claims == 1 {
@@ -654,7 +654,7 @@ impl LevelParams {
             self.fold_challenge_shape(),
         );
         let (decomposed_fold_digits, _) = crate::sis::fold_witness_digit_plan(
-            self.block_bits(),
+            self.live_block_count,
             num_claims,
             field_bits,
             self.log_basis,
@@ -681,7 +681,7 @@ impl LevelParams {
         );
         let cap_config = self.fold_witness_linf_cap_config_for_params(params)?;
         let (decomposed_fold_digits, _) = crate::sis::fold_witness_digit_plan(
-            params.block_bits(),
+            params.live_block_count(),
             num_claims,
             field_bits,
             params.log_basis(),
@@ -706,7 +706,7 @@ impl LevelParams {
         );
         let cap_config = self.fold_witness_linf_cap_config_for_params(params)?;
         let (_decomposed_fold_digits, inf_norm_bound) = crate::sis::fold_witness_digit_plan(
-            params.block_bits(),
+            params.live_block_count(),
             num_claims,
             field_bits,
             params.log_basis(),
@@ -738,51 +738,55 @@ impl LevelParams {
         self.with_fold_linf_cap_config(field_bits, root_num_claims)
     }
 
-    /// Number of Boolean coordinates in the fold-capacity domain.
+    /// Number of Boolean coordinates in the block-index domain.
     #[inline]
-    pub fn block_bits(&self) -> usize {
-        self.num_blocks
+    pub fn block_index_bits(&self) -> usize {
+        self.live_block_count
             .checked_next_power_of_two()
             .map_or(0, |capacity| capacity.trailing_zeros() as usize)
     }
 
     /// Number of Boolean coordinates in one block-position slice.
     #[inline]
-    pub fn position_bits(&self) -> usize {
-        self.block_len.trailing_zeros() as usize
+    pub fn position_index_bits(&self) -> usize {
+        self.positions_per_block.trailing_zeros() as usize
     }
 
-    /// Boolean block capacity (`next_power_of_two(F)`).
+    /// Boolean block-index domain size (`next_power_of_two(B)`).
     #[inline]
-    pub fn block_capacity(&self) -> Result<usize, AkitaError> {
-        self.num_blocks
+    pub fn block_index_domain_size(&self) -> Result<usize, AkitaError> {
+        self.live_block_count
             .checked_next_power_of_two()
-            .ok_or_else(|| AkitaError::InvalidSetup("block capacity overflows usize".to_string()))
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup("block-index domain size overflows usize".to_string())
+            })
     }
 
     /// Validate the exact source/block geometry before it reaches allocation.
     pub fn validate_block_geometry(&self) -> Result<(), AkitaError> {
-        if self.source_ring_len_per_claim == 0
-            || self.block_len == 0
-            || !self.block_len.is_power_of_two()
-            || self.num_blocks == 0
-            || self.chunk_granule == 0
-            || !self.chunk_granule.is_power_of_two()
+        if self.live_ring_elements_per_claim == 0
+            || self.positions_per_block == 0
+            || !self.positions_per_block.is_power_of_two()
+            || self.live_block_count == 0
+            || self.blocks_per_chunk_granule == 0
+            || !self.blocks_per_chunk_granule.is_power_of_two()
         {
             return Err(AkitaError::InvalidSetup(
                 "invalid digit-innermost block geometry".to_string(),
             ));
         }
-        let expected = self.source_ring_len_per_claim.div_ceil(self.block_len);
-        if self.num_blocks != expected {
+        let expected = self
+            .live_ring_elements_per_claim
+            .div_ceil(self.positions_per_block);
+        if self.live_block_count != expected {
             return Err(AkitaError::InvalidSetup(format!(
-                "num_blocks={} does not equal ceil(source_ring_len_per_claim={} / block_len={})={expected}",
-                self.num_blocks,
-                self.source_ring_len_per_claim,
-                self.block_len,
+                "live_block_count={} does not equal ceil(live_ring_elements_per_claim={} / positions_per_block={})={expected}",
+                self.live_block_count,
+                self.live_ring_elements_per_claim,
+                self.positions_per_block,
             )));
         }
-        self.block_capacity()?;
+        self.block_index_domain_size()?;
         Ok(())
     }
 
@@ -799,7 +803,7 @@ impl LevelParams {
     /// Returns [`AkitaError::InvalidSetup`] on overflow.
     pub fn n_ring_elems(&self) -> Result<usize, AkitaError> {
         self.validate_block_geometry()?;
-        Ok(self.source_ring_len_per_claim)
+        Ok(self.live_ring_elements_per_claim)
     }
 
     /// Total flat field-element count (`n_ring_elems * d_a`).
@@ -827,10 +831,10 @@ impl LevelParams {
         self.a_key.append_descriptor_bytes(bytes);
         self.b_key.append_descriptor_bytes(bytes);
         self.d_key.append_descriptor_bytes(bytes);
-        push_usize(bytes, self.source_ring_len_per_claim);
-        push_usize(bytes, self.block_len);
-        push_usize(bytes, self.num_blocks);
-        push_usize(bytes, self.chunk_granule);
+        push_usize(bytes, self.live_ring_elements_per_claim);
+        push_usize(bytes, self.positions_per_block);
+        push_usize(bytes, self.live_block_count);
+        push_usize(bytes, self.blocks_per_chunk_granule);
         append_sparse_challenge_descriptor_bytes(bytes, &self.fold_challenge_config);
         append_tensor_challenge_shape_descriptor_bytes(bytes, self.fold_challenge_shape);
         append_fold_linf_policy_descriptor_bytes(bytes, self.fold_witness_linf_cap_policy());
@@ -873,10 +877,10 @@ impl LevelParams {
         self.d_key.col_len()
     }
 
-    /// Total outer variable count (`log_num_blocks + log_block_len`).
+    /// Total outer variable count (`block_index_bits + position_index_bits`).
     #[inline]
     pub fn outer_vars(&self) -> usize {
-        self.block_bits() + self.position_bits()
+        self.block_index_bits() + self.position_index_bits()
     }
 
     /// Logical opening-point variable count for recursive fold levels.
@@ -891,8 +895,8 @@ impl LevelParams {
         let alpha_bits = self.d_a().trailing_zeros() as usize;
         self.validate_block_geometry()?;
         let outer_bits = self
-            .position_bits()
-            .checked_add(self.block_bits())
+            .position_index_bits()
+            .checked_add(self.block_index_bits())
             .ok_or_else(|| {
                 AkitaError::InvalidSetup("recursive opening outer variable overflow".to_string())
             })?;
@@ -1225,41 +1229,46 @@ impl LevelParams {
     /// Fill in layout-derived fields from exact digit-innermost geometry.
     ///
     /// Takes a params-only `LevelParams` (with zeroed layout fields) and
-    /// `block_len` is the power-of-two `L` and
-    /// `source_ring_len_per_claim` is the exact live `N`. The exact live block
-    /// count `F` is derived as `ceil(N / L)`.
+    /// `positions_per_block` is `M`, power-of-two in the current Boolean layout, and
+    /// `live_ring_elements_per_claim` is the exact live `N`. The exact live block
+    /// count `B` is derived as `ceil(N / M)`.
     ///
     /// # Errors
     ///
     /// Returns an error when parameters are invalid or derived widths overflow.
     pub fn with_decomp(
         &self,
-        block_len: usize,
-        source_ring_len_per_claim: usize,
+        positions_per_block: usize,
+        live_ring_elements_per_claim: usize,
         num_digits_commit: usize,
         num_digits_open: usize,
     ) -> Result<Self, AkitaError> {
-        if source_ring_len_per_claim == 0 || block_len == 0 || !block_len.is_power_of_two() {
+        if live_ring_elements_per_claim == 0
+            || positions_per_block == 0
+            || !positions_per_block.is_power_of_two()
+        {
             return Err(AkitaError::InvalidSetup(
-                "with_decomp requires positive N and power-of-two L".to_string(),
+                "with_decomp requires positive N and power-of-two M".to_string(),
             ));
         }
-        let num_blocks = source_ring_len_per_claim.div_ceil(block_len);
-        num_blocks.checked_next_power_of_two().ok_or_else(|| {
-            AkitaError::InvalidSetup("block capacity overflows usize".to_string())
-        })?;
-        let chunk_granule = 1;
-        let inner_width = block_len
+        let live_block_count = live_ring_elements_per_claim.div_ceil(positions_per_block);
+        live_block_count
+            .checked_next_power_of_two()
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup("block-index domain size overflows usize".to_string())
+            })?;
+        let blocks_per_chunk_granule = 1;
+        let inner_width = positions_per_block
             .checked_mul(num_digits_commit)
             .ok_or_else(|| AkitaError::InvalidSetup("inner width overflow".to_string()))?;
         let outer_width = self
             .a_key
             .row_len()
             .checked_mul(num_digits_open)
-            .and_then(|x| x.checked_mul(num_blocks))
+            .and_then(|x| x.checked_mul(live_block_count))
             .ok_or_else(|| AkitaError::InvalidSetup("outer width overflow".to_string()))?;
         let d_matrix_width = num_digits_open
-            .checked_mul(num_blocks)
+            .checked_mul(live_block_count)
             .ok_or_else(|| AkitaError::InvalidSetup("D-matrix width overflow".to_string()))?;
         let d = self.ring_dimension;
         let rebuilt = Self {
@@ -1295,10 +1304,10 @@ impl LevelParams {
                 self.d_key.coeff_linf_bound(),
                 d,
             ),
-            source_ring_len_per_claim,
-            block_len,
-            num_blocks,
-            chunk_granule,
+            live_ring_elements_per_claim,
+            positions_per_block,
+            live_block_count,
+            blocks_per_chunk_granule,
             fold_challenge_config: self.fold_challenge_config,
             fold_challenge_shape: self.fold_challenge_shape,
             num_digits_commit,
@@ -1325,8 +1334,8 @@ impl LevelParams {
     /// from `self` but replaces all layout-derived fields with those
     /// from `other`.
     ///
-    /// "Layout-derived fields" are `col_len`, `num_blocks`, `block_len`,
-    /// `position_bits`, `block_bits`, and the commit/open digit counts. The audited
+    /// "Layout-derived fields" are `col_len`, `live_block_count`, `positions_per_block`,
+    /// `position_index_bits`, `block_index_bits`, and the commit/open digit counts. The audited
     /// coefficient-L∞ SIS bucket is not a layout field: it is the bucket the
     /// rank (`row_len`) was sized against, so it is preserved from `self`,
     /// matching the placement of `row_len` and `sis_modulus_profile`. Pulling the
@@ -1369,10 +1378,10 @@ impl LevelParams {
                 self.d_key.coeff_linf_bound(),
                 d,
             ),
-            source_ring_len_per_claim: other.source_ring_len_per_claim,
-            block_len: other.block_len,
-            num_blocks: other.num_blocks,
-            chunk_granule: other.chunk_granule,
+            live_ring_elements_per_claim: other.live_ring_elements_per_claim,
+            positions_per_block: other.positions_per_block,
+            live_block_count: other.live_block_count,
+            blocks_per_chunk_granule: other.blocks_per_chunk_granule,
             fold_challenge_config: self.fold_challenge_config,
             fold_challenge_shape: other.fold_challenge_shape,
             num_digits_commit: other.num_digits_commit,

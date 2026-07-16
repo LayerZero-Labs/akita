@@ -9,14 +9,14 @@ pub(crate) fn setup_e_col_weights<E: FieldCore>(
     layout: &WitnessLayout,
     opening_source_len: usize,
     group_id: usize,
-    num_blocks: usize,
+    live_block_count: usize,
     num_claims: usize,
     depth_open: usize,
     eq_window: &OffsetEqWindow<E>,
 ) -> Result<Vec<E>, AkitaError> {
     let e_cols = checked_mul3(
         num_claims,
-        num_blocks,
+        live_block_count,
         depth_open,
         "setup D columns overflow",
     )?;
@@ -24,8 +24,8 @@ pub(crate) fn setup_e_col_weights<E: FieldCore>(
         .map(|local_col| {
             let digit = local_col % depth_open;
             let block_claim = local_col / depth_open;
-            let block = block_claim % num_blocks;
-            let claim = block_claim / num_blocks;
+            let block = block_claim % live_block_count;
+            let claim = block_claim / live_block_count;
             let unit = layout.unit_for_block(group_id, block)?;
             let witness_index =
                 layout.e_index(unit, num_claims, depth_open, claim, block, digit)?;
@@ -42,7 +42,7 @@ pub(crate) fn setup_t_col_weights<E: FieldCore>(
     layout: &WitnessLayout,
     opening_source_len: usize,
     group_id: usize,
-    num_blocks: usize,
+    live_block_count: usize,
     depth_open: usize,
     n_a: usize,
     cols_per_vector: usize,
@@ -52,7 +52,7 @@ pub(crate) fn setup_t_col_weights<E: FieldCore>(
     eq_window: &OffsetEqWindow<E>,
 ) -> Result<Vec<E>, AkitaError> {
     let expected_cols_per_vector = checked_mul3(
-        num_blocks,
+        live_block_count,
         n_a,
         depth_open,
         "setup B columns per vector overflow",
@@ -75,7 +75,7 @@ pub(crate) fn setup_t_col_weights<E: FieldCore>(
             let digit = local_col % depth_open;
             let rest = local_col / depth_open;
             let a_row = rest % n_a;
-            let block = (rest / n_a) % num_blocks;
+            let block = (rest / n_a) % live_block_count;
             let claim = vector_base
                 .checked_add(vector)
                 .ok_or_else(|| AkitaError::InvalidSetup("setup B claim index overflow".into()))?;
@@ -103,7 +103,7 @@ pub(crate) fn setup_z_col_weights<F, E>(
     layout: &WitnessLayout,
     opening_source_len: usize,
     group_id: usize,
-    block_len: usize,
+    positions_per_block: usize,
     depth_commit: usize,
     depth_fold: usize,
     eq_window: &OffsetEqWindow<E>,
@@ -120,7 +120,7 @@ where
             "setup A weights have malformed ownership or block geometry".into(),
         ));
     }
-    let z_cols = block_len
+    let z_cols = positions_per_block
         .checked_mul(depth_commit)
         .ok_or_else(|| AkitaError::InvalidSetup("setup A width overflow".into()))?;
     if z_weights.len() != z_cols {
@@ -139,7 +139,7 @@ where
                 for (fold_digit, &fold) in fold_gadget.iter().enumerate().take(depth_fold) {
                     let witness_index = layout.z_index(
                         unit,
-                        block_len,
+                        positions_per_block,
                         depth_commit,
                         depth_fold,
                         position,

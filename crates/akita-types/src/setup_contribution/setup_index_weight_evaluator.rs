@@ -148,7 +148,7 @@ impl<E: FieldCore> SetupIndexWeightEvaluator<E> {
         }
         let active_cols = checked_mul3(
             group.num_claims,
-            group.num_blocks,
+            group.live_block_count,
             group.depth_open,
             "setup D active width overflow",
         )?;
@@ -167,7 +167,7 @@ impl<E: FieldCore> SetupIndexWeightEvaluator<E> {
         for claim in 0..group.num_claims {
             for unit in &units {
                 let setup_col = group
-                    .num_blocks
+                    .live_block_count
                     .checked_mul(claim)
                     .and_then(|base| base.checked_add(unit.global_block_start()))
                     .and_then(|base| base.checked_mul(group.depth_open))
@@ -239,7 +239,7 @@ impl<E: FieldCore> SetupIndexWeightEvaluator<E> {
         for claim in 0..group.num_claims {
             for unit in &units {
                 let setup_col = group
-                    .num_blocks
+                    .live_block_count
                     .checked_mul(claim)
                     .and_then(|base| base.checked_add(unit.global_block_start()))
                     .and_then(|base| base.checked_mul(group.n_a))
@@ -304,7 +304,7 @@ impl<E: FieldCore> SetupIndexWeightEvaluator<E> {
             return Ok(E::zero());
         }
         let z_cols = group
-            .block_len
+            .positions_per_block
             .checked_mul(group.depth_commit)
             .ok_or_else(|| AkitaError::InvalidSetup("setup A width overflow".into()))?;
         let units = self
@@ -317,7 +317,7 @@ impl<E: FieldCore> SetupIndexWeightEvaluator<E> {
             for (fold_digit, &fold) in self.fold_gadget.iter().enumerate().take(group.depth_fold) {
                 let witness_index = self.layout.witness_layout().z_index(
                     unit,
-                    group.block_len,
+                    group.positions_per_block,
                     group.depth_commit,
                     group.depth_fold,
                     0,

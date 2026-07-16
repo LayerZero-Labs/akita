@@ -39,7 +39,7 @@ Key structural facts:
 ## End-to-end lifecycle
 
 1. **Preset selection.** The caller picks a `CommitmentConfig` preset (`fp32` / `fp64` / `fp128` families). `CommitmentConfig::runtime_schedule` resolves the recursion schedule from a shipped table or the offline DP (`akita_planner::resolve_schedule`).
-2. **Setup.** `akita-setup` expands the config-backed setup (Ajtai matrices, stride envelopes). Setup capacity must cover the requested `nuposition_bits`.
+2. **Setup.** `akita-setup` expands the config-backed setup (Ajtai matrices, stride envelopes). Setup capacity must cover the requested `nuposition_index_bits`.
 3. **Commit.** `commit` / `batched_commit` (in `akita-prover`, orchestrated by `akita-pcs`) produce commitments over root polynomials at the opening layout implied by the schedule.
 4. **Prove.** `batched_prove` walks the resolved schedule level by level: sumcheck stages, fold or direct openings, extension-opening reduction, and recursive suffix work as dictated by each `LevelParams` step. The same batched API dispatches to ZeroFold, terminal-root, and fold+recursive families purely from schedule shape.
 5. **Verify.** `batched_verify` re-derives the schedule, replays each level's sumcheck and opening checks, and evaluates the relation matrix at the derived point. Prover and verifier share `bind_transcript_instance_descriptor` so Fiat-Shamir challenges match.

@@ -101,8 +101,9 @@ class ProfileBenchReportTests(unittest.TestCase):
 
         log = (
             'INFO planned fold level label=onehot_fp128_d64 level=0 d=64 n_a=2 n_b=3 n_d=4 '
-            'challenge_l1_mass=8 log_basis=5 position_bits=7 block_bits=3 '
-            'num_blocks=6 block_len=128 delta_commit=4 delta_open=5 '
+            'challenge_l1_mass=8 log_basis=5 position_index_bits=7 block_index_bits=3 '
+            'live_ring_elements_per_claim=768 live_block_count=6 block_index_domain_size=8 '
+            'positions_per_block=128 delta_commit=4 delta_open=5 '
             'delta_fold=6 current_w_len=1024 next_w_ring=32 next_w_len=2048 level_bytes=4096\n'
         )
 
@@ -118,10 +119,12 @@ class ProfileBenchReportTests(unittest.TestCase):
                 "n_d": 4,
                 "challenge_l1_mass": 8,
                 "log_basis": 5,
-                "position_bits": 7,
-                "block_bits": 3,
-                "block_len": 128,
-                "num_blocks": 6,
+                "position_index_bits": 7,
+                "block_index_bits": 3,
+                "positions_per_block": 128,
+                "live_block_count": 6,
+                "live_ring_elements_per_claim": 768,
+                "block_index_domain_size": 8,
                 "delta_commit": 4,
                 "delta_open": 5,
                 "delta_fold": 6,
@@ -145,10 +148,12 @@ class ProfileBenchReportTests(unittest.TestCase):
         summary = extract_summary(log, mode="onehot_fp128_d64", num_vars=24, num_polys=1)
         level = summary["planned_levels"][0]
 
-        self.assertEqual(level["position_bits"], 7)
-        self.assertEqual(level["block_bits"], 3)
-        self.assertEqual(level["block_len"], 128)
-        self.assertEqual(level["num_blocks"], 8)
+        self.assertEqual(level["position_index_bits"], 7)
+        self.assertEqual(level["block_index_bits"], 3)
+        self.assertEqual(level["positions_per_block"], 128)
+        self.assertEqual(level["live_block_count"], 8)
+        self.assertEqual(level["live_ring_elements_per_claim"], 16)
+        self.assertEqual(level["block_index_domain_size"], 8)
 
     def test_configured_cases_treats_setup_mode_as_case_dimension(self) -> None:
         from scripts.profile_bench_report import configured_cases

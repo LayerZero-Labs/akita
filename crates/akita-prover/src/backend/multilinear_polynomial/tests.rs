@@ -255,7 +255,7 @@ fn multilinear_mixed_sparse_batch_fold_returns_fallback_per_poly() {
             batch_view,
             DecomposeFoldBatchPlan::Sparse {
                 challenges: &[],
-                block_len: 1,
+                positions_per_block: 1,
                 num_digits: 1,
                 log_basis: 1,
             },

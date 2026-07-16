@@ -3,7 +3,7 @@
 > **Status:** stub. Part of the initial Akita Book scaffold.
 
 Common failure modes and fixes (Jolt-book parallel): the `--release` profile
-guard (`AKITA_ALLOW_DEBUG_PROFILE`), eq-table OOM at high `nuposition_bits`, setup-cache
+guard (`AKITA_ALLOW_DEBUG_PROFILE`), eq-table OOM at high `nuposition_index_bits`, setup-cache
 invalidation, `RAYON_NUM_THREADS`, and recursion-guest panics
 (`JOLT_BACKTRACE=full`).
 

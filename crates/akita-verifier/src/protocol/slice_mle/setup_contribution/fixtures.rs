@@ -37,12 +37,12 @@ pub(crate) struct SetupContributionFixture {
 
 #[derive(Clone)]
 pub(crate) struct SetupContributionShape {
-    pub num_blocks: usize,
+    pub live_block_count: usize,
     pub num_claims: usize,
     pub depth_open: usize,
     pub depth_commit: usize,
     pub depth_fold: usize,
-    pub block_len: usize,
+    pub positions_per_block: usize,
     pub log_basis: u32,
     pub n_a: usize,
     pub n_d: usize,
@@ -54,12 +54,12 @@ pub(crate) struct SetupContributionShape {
 impl SetupContributionShape {
     pub fn root_single_point() -> Self {
         Self {
-            num_blocks: 4,
+            live_block_count: 4,
             num_claims: 1,
             depth_open: 8,
             depth_commit: 2,
             depth_fold: 3,
-            block_len: 16,
+            positions_per_block: 16,
             log_basis: 4,
             n_a: 2,
             n_d: 1,
@@ -71,12 +71,12 @@ impl SetupContributionShape {
 
     pub fn recursive_multi_group() -> Self {
         Self {
-            num_blocks: 8,
+            live_block_count: 8,
             num_claims: 3,
             depth_open: 26,
             depth_commit: 1,
             depth_fold: 4,
-            block_len: 512,
+            positions_per_block: 512,
             log_basis: 5,
             n_a: 2,
             n_d: 2,
@@ -94,7 +94,7 @@ impl SetupContributionShape {
 
     pub fn dense_non_pow2_z() -> Self {
         let mut shape = Self::root_single_point();
-        shape.block_len = 16;
+        shape.positions_per_block = 16;
         shape.depth_commit = 3;
         shape.depth_fold = 2;
         shape
@@ -109,8 +109,8 @@ impl SetupContributionShape {
 
     pub fn e_t_offset_carry() -> Self {
         let mut shape = Self::root_single_point();
-        shape.num_blocks = 8;
-        shape.block_len = 16;
+        shape.live_block_count = 8;
+        shape.positions_per_block = 16;
         shape.depth_commit = 3;
         shape.depth_fold = 2;
         shape
@@ -118,7 +118,7 @@ impl SetupContributionShape {
 
     pub fn pow2_z_offset_carry() -> Self {
         let mut shape = Self::root_single_point();
-        shape.block_len = 64;
+        shape.positions_per_block = 64;
         shape
     }
 }
@@ -128,15 +128,15 @@ impl SetupContributionFixture {
         let mut shape = shape.clone();
         let num_points = shape.num_polys_per_group.len();
         let num_t_vectors = shape.num_polys_per_group.iter().sum();
-        let total_blocks = shape.num_blocks * shape.num_claims;
-        let inner_width = shape.block_len * shape.depth_commit;
+        let total_blocks = shape.live_block_count * shape.num_claims;
+        let inner_width = shape.positions_per_block * shape.depth_commit;
 
         // Canonical relation-matrix row layout: consistency | A | B | D.
         let rows = 1 + shape.n_a + shape.n_b * num_points + shape.n_d;
 
         let stride_t = shape.n_a * shape.depth_open;
-        let cols_per_poly_t = stride_t * shape.num_blocks;
-        let n_cols_e = shape.num_claims * shape.num_blocks * shape.depth_open;
+        let cols_per_poly_t = stride_t * shape.live_block_count;
+        let n_cols_e = shape.num_claims * shape.live_block_count * shape.depth_open;
         let n_cols_t = shape.num_polys_per_group.iter().copied().max().unwrap() * cols_per_poly_t;
 
         let lp = LevelParams::params_only(
@@ -149,8 +149,8 @@ impl SetupContributionFixture {
             akita_challenges::SparseChallengeConfig::pm1_only(1),
         )
         .with_decomp(
-            shape.block_len,
-            shape.num_blocks * shape.block_len,
+            shape.positions_per_block,
+            shape.live_block_count * shape.positions_per_block,
             shape.depth_commit,
             shape.depth_open,
         )
@@ -198,8 +198,8 @@ impl SetupContributionFixture {
             num_polys_per_group: shape.num_polys_per_group.clone(),
             num_t_vectors,
             num_claims: shape.num_claims,
-            num_blocks: shape.num_blocks,
-            block_len: shape.block_len,
+            live_block_count: shape.live_block_count,
+            positions_per_block: shape.positions_per_block,
             depth_open: shape.depth_open,
             depth_commit: shape.depth_commit,
             depth_fold: shape.depth_fold,
@@ -214,20 +214,20 @@ impl SetupContributionFixture {
                     .map(|idx| test_scalar(41 + idx as u128))
                     .collect(),
             ),
-            opening_a_evals: (0..shape.block_len)
+            opening_a_evals: (0..shape.positions_per_block)
                 .map(|idx| test_scalar(501 + idx as u128))
                 .collect(),
             group_id: 0,
             num_claims: shape.num_claims,
-            num_blocks: shape.num_blocks,
-            block_len: shape.block_len,
+            live_block_count: shape.live_block_count,
+            positions_per_block: shape.positions_per_block,
             depth_open: shape.depth_open,
             depth_commit: shape.depth_commit,
             depth_fold: shape.depth_fold,
             log_basis: shape.log_basis,
             n_a: shape.n_a,
             n_b: shape.n_b,
-            t_cols_per_vector: shape.n_a * shape.depth_open * shape.num_blocks,
+            t_cols_per_vector: shape.n_a * shape.depth_open * shape.live_block_count,
             a_row_start: 1,
             b_row_start: 1 + shape.n_a,
         }];
@@ -256,9 +256,9 @@ impl SetupContributionFixture {
         let alpha = test_scalar(19);
         let alpha_pows = scalar_powers(alpha, TEST_RING_DIM);
         let fold_gadget = gadget_row_scalars::<TestField>(shape.depth_fold, shape.log_basis);
-        let block_bits = shape.num_blocks.trailing_zeros() as usize;
-        let eq_low = EqPolynomial::evals(&full_vec_randomness[..block_bits]).unwrap();
-        let z_offset_low_bits = shape.block_len.trailing_zeros() as usize;
+        let block_index_bits = shape.live_block_count.trailing_zeros() as usize;
+        let eq_low = EqPolynomial::evals(&full_vec_randomness[..block_index_bits]).unwrap();
+        let z_offset_low_bits = shape.positions_per_block.trailing_zeros() as usize;
         let z_block_low_eq = if z_offset_low_bits == 0 {
             vec![TestField::one()]
         } else {

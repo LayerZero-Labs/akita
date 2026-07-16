@@ -134,11 +134,11 @@ pub fn planned_w_ring_element_count<F: CanonicalField>(
 ) -> Result<usize, AkitaError> {
     let _field_marker = core::marker::PhantomData::<F>;
     let e_hat_count = lp
-        .num_blocks
+        .live_block_count
         .checked_mul(lp.num_digits_open)
         .ok_or_else(|| AkitaError::InvalidSetup("planned W width overflow".to_string()))?;
     let t_hat_count = lp
-        .num_blocks
+        .live_block_count
         .checked_mul(lp.a_key.row_len())
         .and_then(|n| n.checked_mul(lp.num_digits_open))
         .ok_or_else(|| AkitaError::InvalidSetup("planned T width overflow".to_string()))?;

@@ -308,8 +308,8 @@ where
                             ))
                         })?;
                     let target_len = alpha_bits
-                        .checked_add(group_lp.position_bits())
-                        .and_then(|n| n.checked_add(group_lp.block_bits()))
+                        .checked_add(group_lp.position_index_bits())
+                        .and_then(|n| n.checked_add(group_lp.block_index_bits()))
                         .ok_or_else(|| {
                             AkitaError::InvalidSetup(
                                 "group opening point length overflow".to_string(),
@@ -337,8 +337,8 @@ where
                     let prepared_point = prepare_opening_point::<F, E, D>(
                         &group_protocol_point,
                         basis,
-                        group_lp.block_len(),
-                        group_lp.num_blocks(),
+                        group_lp.positions_per_block(),
+                        group_lp.live_block_count(),
                         alpha_bits,
                     )
                     .map_err(|err| {
@@ -357,7 +357,7 @@ where
                             Some(opening.prepared()),
                             group_polys,
                             &prepared_point,
-                            group_lp.block_len(),
+                            group_lp.positions_per_block(),
                         )
                         .map_err(|err| {
                             AkitaError::InvalidInput(format!(
@@ -690,7 +690,7 @@ where
                 .instance
                 .opening_batch()
                 .num_total_polynomials()
-                .checked_mul(lp.num_blocks)
+                .checked_mul(lp.live_block_count)
                 .ok_or_else(|| {
                     AkitaError::InvalidSetup("trace block count overflow".to_string())
                 })?;
@@ -704,7 +704,7 @@ where
             )?;
             Some(build_root_stage2_trace_table::<F, E>(
                 ring_d,
-                lp.num_blocks,
+                lp.live_block_count,
                 &layout,
                 prepared_fold.instance.opening_batch(),
                 prepared_fold
@@ -729,7 +729,7 @@ where
             trace_opening_source_len,
             trace_col_bits,
             trace_ring_bits,
-            lp.num_blocks,
+            lp.live_block_count,
         )?;
         Some(build_recursive_stage2_trace_table::<F, E>(
             ring_d,

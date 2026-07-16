@@ -129,8 +129,8 @@ impl WitnessLayout {
             let depth_fold =
                 lp.num_digits_fold_for_params(params, num_claims, lp.field_bits_for_cache())?;
             if num_claims == 0
-                || params.num_blocks() == 0
-                || params.block_len() == 0
+                || params.live_block_count() == 0
+                || params.positions_per_block() == 0
                 || depth_open == 0
                 || depth_commit == 0
                 || depth_fold == 0
@@ -142,7 +142,7 @@ impl WitnessLayout {
             }
             let chunk_block_ranges = Self::resolve_chunk_block_ranges(params, num_chunks)?;
             let z_len = checked_mul3(
-                params.block_len(),
+                params.positions_per_block(),
                 depth_commit,
                 depth_fold,
                 "witness Z width overflow",
@@ -188,29 +188,29 @@ impl WitnessLayout {
         params: &(impl crate::LevelParamsLike + ?Sized),
         num_chunks: usize,
     ) -> Result<Vec<Range<usize>>, AkitaError> {
-        let num_blocks = params.num_blocks();
-        let chunk_granule = params.chunk_granule();
+        let live_block_count = params.live_block_count();
+        let blocks_per_chunk_granule = params.blocks_per_chunk_granule();
         if num_chunks == 0
             || num_chunks > MAX_WITNESS_CHUNKS
-            || num_blocks == 0
-            || chunk_granule == 0
-            || !chunk_granule.is_power_of_two()
+            || live_block_count == 0
+            || blocks_per_chunk_granule == 0
+            || !blocks_per_chunk_granule.is_power_of_two()
         {
             return Err(AkitaError::InvalidSetup(
                 "witness chunk geometry is malformed".into(),
             ));
         }
         if num_chunks
-            .checked_mul(chunk_granule)
-            .is_none_or(|minimum| minimum > num_blocks)
+            .checked_mul(blocks_per_chunk_granule)
+            .is_none_or(|minimum| minimum > live_block_count)
         {
             return Err(AkitaError::InvalidSetup(
                 "witness chunks exceed the live block granules".into(),
             ));
         }
 
-        let full_granules = num_blocks / chunk_granule;
-        let residual = num_blocks % chunk_granule;
+        let full_granules = live_block_count / blocks_per_chunk_granule;
+        let residual = live_block_count % blocks_per_chunk_granule;
         let base_granules = full_granules / num_chunks;
         let extra_granules = full_granules % num_chunks;
         let mut ranges = Vec::with_capacity(num_chunks);
@@ -218,7 +218,7 @@ impl WitnessLayout {
         for chunk_index in 0..num_chunks {
             let owned_granules = base_granules + usize::from(chunk_index < extra_granules);
             let mut count = owned_granules
-                .checked_mul(chunk_granule)
+                .checked_mul(blocks_per_chunk_granule)
                 .ok_or_else(|| AkitaError::InvalidSetup("witness chunk width overflow".into()))?;
             if chunk_index + 1 == num_chunks {
                 count = count.checked_add(residual).ok_or_else(|| {
@@ -229,7 +229,7 @@ impl WitnessLayout {
             start = range.end;
             ranges.push(range);
         }
-        if start != num_blocks {
+        if start != live_block_count {
             return Err(AkitaError::InvalidSetup(
                 "witness chunks do not cover the live blocks".into(),
             ));
@@ -416,7 +416,7 @@ impl WitnessLayout {
     pub fn z_index(
         &self,
         unit: &WitnessUnitLayout,
-        block_len: usize,
+        positions_per_block: usize,
         depth_commit: usize,
         depth_fold: usize,
         position: usize,
@@ -425,7 +425,7 @@ impl WitnessLayout {
     ) -> Result<usize, AkitaError> {
         self.validate_unit_membership(unit)?;
         let expected_len = checked_mul3(
-            block_len,
+            positions_per_block,
             depth_commit,
             depth_fold,
             "witness Z shape overflow",
@@ -435,7 +435,10 @@ impl WitnessLayout {
                 "witness Z shape disagrees with resolved range".into(),
             ));
         }
-        if position >= block_len || commit_digit >= depth_commit || fold_digit >= depth_fold {
+        if position >= positions_per_block
+            || commit_digit >= depth_commit
+            || fold_digit >= depth_fold
+        {
             return Err(AkitaError::InvalidInput(
                 "witness Z semantic index out of range".into(),
             ));
@@ -770,7 +773,7 @@ mod tests {
         )
         .with_decomp(4, 25, 2, 2)
         .expect("test params");
-        lp.chunk_granule = 2;
+        lp.blocks_per_chunk_granule = 2;
         let opening_batch = OpeningClaimsLayout::new(0, 2).expect("opening batch");
         let layout =
             WitnessLayout::new(&lp, &opening_batch, num_chunks, 3, 2).expect("witness layout");

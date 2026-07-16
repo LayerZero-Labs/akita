@@ -53,7 +53,7 @@ The cutover also covers the non-tensor operations currently attached to
 `AkitaPolyOps`:
 
 - `num_ring_elems`
-- `nuposition_bits`
+- `nuposition_index_bits`
 - `fold_blocks`
 - `fold_blocks_ring`
 - `evaluate_and_fold`
@@ -420,7 +420,7 @@ pub trait RootPoly<F: FieldCore, const D: usize>: Clone + Send + Sync {
         E: ExtField<F>;
 
     fn num_ring_elems(&self) -> usize;
-    fn nuposition_bits(&self) -> usize;
+    fn nuposition_index_bits(&self) -> usize;
 
     fn commit_view(&self) -> Result<Self::Commit<'_>, AkitaError>;
     fn opening_view(&self) -> Result<Self::Opening<'_>, AkitaError>;
@@ -683,7 +683,7 @@ Akita should provide standard borrowed views for built-in representations and
 for downstream users that can reduce their representation to an existing shape:
 
 - `DenseRootView<'a, F, D>`: borrowed ring coefficients, optional cached digit
-  planes, optional small-i8 coefficients, and validated `nuposition_bits`.
+  planes, optional small-i8 coefficients, and validated `nuposition_index_bits`.
 - `OneHotRootView<'a, F, D, I>` or an index-erased internal view: borrowed
   one-hot block tables and shape metadata.
 - `SparseRingRootView<'a, F, D>`: borrowed sparse signed ring blocks and shape
@@ -750,7 +750,7 @@ Current `AkitaPolyOps` method to new owner:
 
 | Current method | New owner |
 | --- | --- |
-| `num_ring_elems`, `nuposition_bits` | root polynomial shape/provider trait |
+| `num_ring_elems`, `nuposition_index_bits` | root polynomial shape/provider trait |
 | `commit_inner`, `commit_inner_witness` | `RootCommitKernel<CommitView, F, D>` over backend and prepared setup |
 | `fold_blocks`, `fold_blocks_ring` | private helpers or `OpeningFoldKernel<OpeningView, F, D>` internals |
 | `evaluate_and_fold`, `evaluate_and_fold_ring` | `OpeningFoldKernel<OpeningView, F, D>` |
@@ -1359,7 +1359,7 @@ and load-bearing:
 
 - `JoltPackedPoly` becomes a custom `RootCommitSource` `S`. Its traversal is exactly
   the per-block sparse iterator `for_each_block(block_idx) -> {(pos_in_block,
-  coeff_idx)}` plus `num_blocks` / `block_len` and a density hint. The
+  coeff_idx)}` plus `live_block_count` / `positions_per_block` and a density hint. The
   `PackedBitLayout` mapping stays inside the source, because the layout is a property
   of how this particular mega-poly is concatenated, not a backend concern.
 - The CpuBackend `commit_inner` kernel owns the strategy zoo currently inlined in the

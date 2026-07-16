@@ -124,7 +124,7 @@ if root tensor projection is enabled:
     partial masks:
       num_claims * EXT_DEGREE extension scalars
     compressed reduction-sumcheck pads:
-      (nuposition_bits - log2(EXT_DEGREE)) * EXTENSION_OPENING_REDUCTION_DEGREE
+      (nuposition_index_bits - log2(EXT_DEGREE)) * EXTENSION_OPENING_REDUCTION_DEGREE
       extension scalars
 
 root_y_ring_masks:

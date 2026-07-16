@@ -38,8 +38,8 @@ where
             for group_index in 0..opening_batch.num_groups() {
                 let group_lp = lp.group_params(opening_batch, group_index)?;
                 let target_len = alpha_bits
-                    .checked_add(group_lp.position_bits())
-                    .and_then(|n| n.checked_add(group_lp.block_bits()))
+                    .checked_add(group_lp.position_index_bits())
+                    .and_then(|n| n.checked_add(group_lp.block_index_bits()))
                     .ok_or_else(|| {
                         AkitaError::InvalidSetup("group opening point length overflow".to_string())
                     })?;
@@ -66,8 +66,8 @@ where
                 prepared_points.push(prepare_opening_point::<F, E, D>(
                     &group_protocol_point,
                     BasisMode::Lagrange,
-                    group_lp.block_len(),
-                    group_lp.num_blocks(),
+                    group_lp.positions_per_block(),
+                    group_lp.live_block_count(),
                     alpha_bits,
                 )?);
             }

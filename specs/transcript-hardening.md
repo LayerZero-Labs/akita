@@ -242,7 +242,7 @@ pub struct SetupSection {
     pub sis_modulus_profile: SisModulusProfileId,
 
     /// Blake2b of canonical bytes of the verifier setup seed
-    /// (`max_nuposition_bits`, `max_num_batched_polys`, `max_num_points`,
+    /// (`max_nuposition_index_bits`, `max_num_batched_polys`, `max_num_points`,
     /// `max_stride`, `public_matrix_seed`).
     pub setup_seed_digest: [u8; 32],
 
@@ -291,13 +291,13 @@ pub struct CallSection {
 
     pub basis_mode: BasisMode,                       // Lagrange | Monomial
 
-    /// Common opening-point arity `n = nuposition_bits`.
+    /// Common opening-point arity `n = nuposition_index_bits`.
     /// Today `validate_batched_inputs` rejects mixed arities across points.
     pub opening_point_arity: u32,
 
     /// Blake2b of canonical bytes of the normalized
     /// `akita_types::proof::incidence::ClaimIncidenceSummary` (existing type
-    /// at `crates/akita-types/src/proof/incidence.rs:94`): `nuposition_bits`,
+    /// at `crates/akita-types/src/proof/incidence.rs:94`): `nuposition_index_bits`,
     /// `num_polys_per_point`, `claim_to_point`, `claim_poly_indices`, and
     /// `public_rows: Vec<PublicOpeningRow>`. This distinguishes shapes like
     /// `[2, 1]` from `[1, 2]`, which have the same totals but different
@@ -508,7 +508,7 @@ These are *named* future PRs with crisp triggers, so the scope cut in this PR is
 
 - `crates/akita-transcript/README.md` (new) — minimum: trait surface, `Label` / `label!()` discipline, preamble construction, smell-check listing.
 - `AGENTS.md` / `CLAUDE.md` — add a small "Transcript" section listing the three active pillars and pointing at this spec for detail.
-- `crates/akita-pcs/examples/transcript_schedule` — new example that dumps a schedule for a chosen `(mode, nuposition_bits)` to stdout via `LoggingTranscript`.
+- `crates/akita-pcs/examples/transcript_schedule` — new example that dumps a schedule for a chosen `(mode, nuposition_index_bits)` to stdout via `LoggingTranscript`.
 - The `NOTE` in `crates/akita-transcript/src/labels.rs:10-11` is removed (its short-term content is now Pillar P2.a; its long-term content is Deferred Follow-Up #3).
 
 ## Execution

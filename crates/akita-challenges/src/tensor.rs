@@ -1,10 +1,10 @@
 //! Tensor-shaped sparse-challenge sampling.
 //!
-//! For protocols that sample a length-`num_blocks` sparse-challenge vector per
+//! For protocols that sample a length-`live_block_count` sparse-challenge vector per
 //! claim, the tensor variant samples two factor vectors of length
-//! `√num_blocks` and presents the logical fold challenge at block `(p, q)` as
+//! `√live_block_count` and presents the logical fold challenge at block `(p, q)` as
 //! the negacyclic tensor product `fold_high[p] · fold_low[q]`. This shrinks transcript
-//! challenge sampling from `O(num_blocks)` to `O(√num_blocks)` per claim
+//! challenge sampling from `O(live_block_count)` to `O(√live_block_count)` per claim
 //! while leaving the downstream fold semantics unchanged through structured
 //! evaluation and factor-aware prover kernels.
 //!
@@ -125,7 +125,7 @@ pub struct TensorChallenges {
 /// challenge-domain methods such as [`Self::evals_at_pows`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Challenges {
-    /// Flat challenge vector indexed as `claim * num_blocks + block`.
+    /// Flat challenge vector indexed as `claim * live_block_count + block`.
     Sparse {
         /// Per-(claim, block) sparse challenges.
         challenges: Vec<SparseChallenge>,
@@ -225,7 +225,7 @@ impl Challenges {
     #[inline]
     #[must_use]
     pub fn logical_len(&self) -> usize {
-        self.num_claims() * self.num_blocks_per_claim()
+        self.num_claims() * self.live_block_count_per_claim()
     }
 
     /// Number of claims represented by this challenge set.
@@ -241,7 +241,7 @@ impl Challenges {
     /// Number of logical block challenges per claim.
     #[inline]
     #[must_use]
-    pub fn num_blocks_per_claim(&self) -> usize {
+    pub fn live_block_count_per_claim(&self) -> usize {
         match self {
             Self::Sparse {
                 live_blocks_per_claim,
@@ -418,7 +418,7 @@ impl TensorChallenges {
     pub fn validate_dyn(&self, ring_d: usize) -> Result<(), AkitaError> {
         if self.live_blocks_per_claim == 0 || !self.fold_low_len.is_power_of_two() {
             return Err(AkitaError::InvalidInput(
-                "tensor challenges require positive num_blocks and a power-of-two low length"
+                "tensor challenges require positive live_block_count and a power-of-two low length"
                     .to_string(),
             ));
         }
@@ -462,7 +462,7 @@ impl TensorChallenges {
     ) -> Result<(usize, usize, &SparseChallenge, &SparseChallenge), AkitaError> {
         if self.live_blocks_per_claim == 0 || !self.fold_low_len.is_power_of_two() {
             return Err(AkitaError::InvalidInput(
-                "tensor challenges require positive num_blocks and a power-of-two low length"
+                "tensor challenges require positive live_block_count and a power-of-two low length"
                     .to_string(),
             ));
         }
@@ -858,21 +858,21 @@ fn eval_dense_negacyclic_product_at_pows<E: FieldCore, const D: usize>(
 
 /// Total sparse challenges drawn in one fold round.
 ///
-/// Flat: `num_blocks · num_claims`.
-/// Tensor: `num_claims · (ceil(num_blocks / fold_low_len) + fold_low_len)`.
+/// Flat: `live_block_count · num_claims`.
+/// Tensor: `num_claims · (ceil(live_block_count / fold_low_len) + fold_low_len)`.
 #[inline]
 pub fn fold_sparse_challenge_sample_count(
     shape: ChallengeShape,
-    num_blocks: usize,
+    live_block_count: usize,
     num_claims: usize,
 ) -> Option<usize> {
     match shape {
-        ChallengeShape::Flat => num_blocks.checked_mul(num_claims),
+        ChallengeShape::Flat => live_block_count.checked_mul(num_claims),
         ChallengeShape::Tensor { fold_low_len } => {
-            if num_blocks == 0 || !fold_low_len.is_power_of_two() {
+            if live_block_count == 0 || !fold_low_len.is_power_of_two() {
                 return None;
             }
-            let fold_high_len = num_blocks.div_ceil(fold_low_len);
+            let fold_high_len = live_block_count.div_ceil(fold_low_len);
             fold_high_len
                 .checked_add(fold_low_len)?
                 .checked_mul(num_claims)

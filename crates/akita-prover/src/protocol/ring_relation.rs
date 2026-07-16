@@ -225,7 +225,7 @@ where
                 batch_view,
                 DecomposeFoldBatchPlan::Sparse {
                     challenges: &point_challenges,
-                    block_len: params.block_len(),
+                    positions_per_block: params.positions_per_block(),
                     num_digits: params.num_digits_commit(),
                     log_basis: params.log_basis(),
                 },
@@ -242,7 +242,7 @@ where
                                 poly.opening_view()?,
                                 DecomposeFoldPlan {
                                     challenges: poly_challenges,
-                                    block_len: params.block_len(),
+                                    positions_per_block: params.positions_per_block(),
                                     num_digits: params.num_digits_commit(),
                                     log_basis: params.log_basis(),
                                 },
@@ -273,7 +273,7 @@ where
                 batch_view,
                 DecomposeFoldBatchPlan::Tensor {
                     tensor: &point_factored,
-                    block_len: params.block_len(),
+                    positions_per_block: params.positions_per_block(),
                     num_digits: params.num_digits_commit(),
                     log_basis: params.log_basis(),
                 },
@@ -532,15 +532,15 @@ impl RingRelationProver {
             let group_lp = lp.group_params(&opening_batch, group_index)?;
             let opening_point = &group_opening_points[group_index];
             let ring_multiplier_point = &group_ring_multiplier_points[group_index];
-            if opening_point.position_weights.len() != group_lp.block_len()
-                || opening_point.block_weights.len() != group_lp.num_blocks()
+            if opening_point.position_weights.len() != group_lp.positions_per_block()
+                || opening_point.live_block_weights.len() != group_lp.live_block_count()
             {
                 return Err(AkitaError::InvalidInput(
                     "batched prover opening-point layout mismatch".to_string(),
                 ));
             }
-            if ring_multiplier_point.position_len() != group_lp.block_len()
-                || ring_multiplier_point.fold_len() != group_lp.num_blocks()
+            if ring_multiplier_point.position_len() != group_lp.positions_per_block()
+                || ring_multiplier_point.fold_len() != group_lp.live_block_count()
             {
                 return Err(AkitaError::InvalidInput(
                     "batched prover ring-multiplier opening-point layout mismatch".to_string(),

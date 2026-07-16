@@ -16,7 +16,7 @@ use akita_field::{AkitaError, CanonicalField, FieldCore};
 pub(super) fn decompose_fold_batched_tensor_dense<F, const D: usize>(
     polys: &[&DensePoly<F>],
     tensor: &TensorChallengeSet,
-    block_len: usize,
+    positions_per_block: usize,
     num_digits: usize,
     log_basis: u32,
 ) -> Result<Option<DecomposeFoldWitness<F>>, AkitaError>
@@ -45,7 +45,7 @@ where
             &digit_planes,
             tensor,
             blocks_per_claim,
-            block_len,
+            positions_per_block,
             num_digits,
         )?
     } else {
@@ -68,7 +68,7 @@ where
             &coeff_slices,
             tensor,
             blocks_per_claim,
-            block_len,
+            positions_per_block,
             num_digits,
             &params,
         )?
@@ -86,12 +86,12 @@ fn accumulate_cached_digit_planes_tensor<const D: usize>(
     digit_planes_by_poly: &[&[[i8; D]]],
     tensor: &TensorChallengeSet,
     blocks_per_claim: usize,
-    block_len: usize,
+    positions_per_block: usize,
     num_digits: usize,
 ) -> Result<Vec<[i64; D]>, AkitaError> {
-    if block_len == 0 || num_digits == 0 {
+    if positions_per_block == 0 || num_digits == 0 {
         return Err(AkitaError::InvalidInput(
-            "dense cached tensor decompose-fold requires non-zero block_len and num_digits"
+            "dense cached tensor decompose-fold requires non-zero positions_per_block and num_digits"
                 .to_string(),
         ));
     }
@@ -106,15 +106,15 @@ fn accumulate_cached_digit_planes_tensor<const D: usize>(
     #[cfg(not(feature = "parallel"))]
     let num_threads = 1;
 
-    let actual_threads = num_threads.min(block_len.max(1)).max(1);
-    let elem_chunk = block_len.div_ceil(actual_threads);
+    let actual_threads = num_threads.min(positions_per_block.max(1)).max(1);
+    let elem_chunk = positions_per_block.div_ceil(actual_threads);
     let chunks = cfg_into_iter!(0..actual_threads)
         .map(|tid| {
             let elem_start = tid * elem_chunk;
-            if elem_start >= block_len {
+            if elem_start >= positions_per_block {
                 return Ok(Vec::new());
             }
-            let elem_end = (elem_start + elem_chunk).min(block_len);
+            let elem_end = (elem_start + elem_chunk).min(positions_per_block);
             let mut acc = vec![[0i64; D]; (elem_end - elem_start) * num_digits];
             let mut tmp = vec![[0i64; D]; (elem_end - elem_start) * num_digits];
 
@@ -130,7 +130,7 @@ fn accumulate_cached_digit_planes_tensor<const D: usize>(
                         let fold_low = &tensor.fold_low[claim_idx * tensor.fold_low_len + low_idx];
 
                         for elem_idx in elem_start..elem_end {
-                            let ring_idx = local_block_idx * block_len + elem_idx;
+                            let ring_idx = local_block_idx * positions_per_block + elem_idx;
                             let plane_base = ring_idx * num_digits;
                             if plane_base >= digit_planes.len() {
                                 continue;
@@ -168,13 +168,14 @@ fn balanced_ring_decompose_fold_tensor_partitioned<F: CanonicalField, const D: u
     poly_coeffs: &[&[CyclotomicRing<F, D>]],
     tensor: &TensorChallengeSet,
     blocks_per_claim: usize,
-    block_len: usize,
+    positions_per_block: usize,
     num_digits: usize,
     p: &DecomposeParams,
 ) -> Result<Vec<[i64; D]>, AkitaError> {
-    if block_len == 0 || num_digits == 0 {
+    if positions_per_block == 0 || num_digits == 0 {
         return Err(AkitaError::InvalidInput(
-            "dense tensor decompose-fold requires non-zero block_len and num_digits".to_string(),
+            "dense tensor decompose-fold requires non-zero positions_per_block and num_digits"
+                .to_string(),
         ));
     }
     let expected_blocks = poly_coeffs
@@ -188,15 +189,15 @@ fn balanced_ring_decompose_fold_tensor_partitioned<F: CanonicalField, const D: u
     #[cfg(not(feature = "parallel"))]
     let num_threads = 1;
 
-    let actual_threads = num_threads.min(block_len.max(1)).max(1);
-    let elem_chunk = block_len.div_ceil(actual_threads);
+    let actual_threads = num_threads.min(positions_per_block.max(1)).max(1);
+    let elem_chunk = positions_per_block.div_ceil(actual_threads);
     let chunks = cfg_into_iter!(0..actual_threads)
         .map(|tid| {
             let elem_start = tid * elem_chunk;
-            if elem_start >= block_len {
+            if elem_start >= positions_per_block {
                 return Ok(Vec::new());
             }
-            let elem_end = (elem_start + elem_chunk).min(block_len);
+            let elem_end = (elem_start + elem_chunk).min(positions_per_block);
             let mut acc = vec![[0i64; D]; (elem_end - elem_start) * num_digits];
             let mut tmp = vec![[0i64; D]; (elem_end - elem_start) * num_digits];
             let mut digit_buf = vec![[0i8; D]; num_digits];
@@ -207,11 +208,12 @@ fn balanced_ring_decompose_fold_tensor_partitioned<F: CanonicalField, const D: u
                     for low_idx in 0..tensor.fold_low_len {
                         let local_block_idx = high_idx * tensor.fold_low_len + low_idx;
                         let fold_low = &tensor.fold_low[claim_idx * tensor.fold_low_len + low_idx];
-                        let coeff_start = local_block_idx * block_len + elem_start;
+                        let coeff_start = local_block_idx * positions_per_block + elem_start;
                         if coeff_start >= coeffs.len() {
                             continue;
                         }
-                        let coeff_end = (local_block_idx * block_len + elem_end).min(coeffs.len());
+                        let coeff_end =
+                            (local_block_idx * positions_per_block + elem_end).min(coeffs.len());
                         if coeff_start >= coeff_end {
                             continue;
                         }

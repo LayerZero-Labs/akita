@@ -20,9 +20,9 @@ covered entry. That scan length is
 required = max(A_footprint, B_footprint, D_footprint)
 ```
 
-and `B_footprint = n_b · (n_a · delta_open · num_blocks · t_vectors)` is the
+and `B_footprint = n_b · (n_a · delta_open · live_block_count · t_vectors)` is the
 largest of the three for batched and high-block-count levels (it carries the
-batch factor `t_vectors` and the block count `num_blocks`). `A` commits the
+batch factor `t_vectors` and the block count `live_block_count`). `A` commits the
 real witness and cannot shrink; `D` is always smaller than `A` in our regime.
 So `B` is the lever.
 
@@ -186,16 +186,16 @@ guarantee.
    `nonzeros = ⌈D/K⌉` instead of `D`, which lowers SIS ranks and often picks
    smaller `log_basis` / `(m, r, n_a, n_b)` layouts — e.g. `fp128_d64_onehot`
    nv=32 singleton first fold on this branch: `log_basis: 2, n_a: 5, n_b: 1` vs
-   pre-migration `main`: `log_basis: 3, n_a: 7, n_b: 2` (same `position_bits`/`block_bits`).
-2. **`optimal_m_r_split` / schedule-DP tie-break.** Fold split search iterates
+   pre-migration `main`: `log_basis: 3, n_a: 7, n_b: 2` (same `position_index_bits`/`block_index_bits`).
+2. **`optimal_block_geometry_split` / schedule-DP tie-break.** Fold split search iterates
    `r` descending (`(1..reduced_vars).rev()` in
    [`digit_math.rs`](crates/akita-types/src/layout/digit_math.rs) and
-   `(min_block_bits..=max_block_bits).rev()` in the root DP in
+   `(min_block_index_bits..=max_block_index_bits).rev()` in the root DP in
    [`schedule_params.rs`](crates/akita-planner/src/schedule_params.rs)). When
    fold-digit or proof-size scores tie, the first candidate wins — a
    deterministic tie-break bundled here. **Primary schedule deltas vs pre-PR
    `main` come from the K256 migration**, not this tie-break (e.g. nv=32
-   singleton first fold keeps the same `position_bits`/`block_bits` but changes
+   singleton first fold keeps the same `position_index_bits`/`block_index_bits` but changes
    `log_basis`/`n_a`/`n_b`).
 
 **Drift guard scope:** `crates/akita-config/tests/generated_tables.rs` compares
@@ -307,12 +307,12 @@ prefix `ring_view::<D>(rows, cols)` of it
 Per level (`LevelParams`,
 [`crates/akita-types/src/layout/params.rs`](crates/akita-types/src/layout/params.rs)):
 
-- `A` (inner): `n_a × width_s`, `width_s = block_len · delta_commit`
+- `A` (inner): `n_a × width_s`, `width_s = positions_per_block · delta_commit`
   (`decomposed_s_block_ring_count`).
 - `B` (outer commitment): `n_b × width_t`,
-  `width_t = n_a · delta_open · num_blocks · t_vectors`
+  `width_t = n_a · delta_open · live_block_count · t_vectors`
   (`decomposed_t_ring_count`).
-- `D` (prover): `n_d × width_w`, `width_w = delta_open · num_blocks · t_vectors`.
+- `D` (prover): `n_d × width_w`, `width_w = delta_open · live_block_count · t_vectors`.
 
 The commitment pipeline today is already **two-tier** (A then B):
 
@@ -426,9 +426,9 @@ let b_footprint = n_b * width_t;            // current (single-tier) B
 if !policy.tiered || b_footprint <= a_footprint {
     // keep current B; tier_split = 1, f_key = None
 } else {
-    // search f over powers of two that divide (num_blocks * t_vectors),
+    // search f over powers of two that divide (live_block_count * t_vectors),
     // smallest first: pick the smallest f with b_foot' <= a_footprint
-    for f in feasible_powers_of_two(num_blocks * t_vectors) {
+    for f in feasible_powers_of_two(live_block_count * t_vectors) {
         width_t' = width_t / f;                                  // shrink B width
         n_b'     = min_secure_rank(key_t, width_t');             // rank may drop
         b_foot'  = n_b' * width_t';
@@ -448,10 +448,10 @@ if !policy.tiered || b_footprint <= a_footprint {
 
 Notes and edge cases:
 
-- **Why `f | (num_blocks · t_vectors)`:** `width_t = n_a · delta_open ·
-  num_blocks · t_vectors`. Splitting along the "repeat" dimensions
-  (`num_blocks`, `t_vectors`) keeps each slice structurally identical
-  (`n_a · delta_open · (num_blocks·t_vectors/f)` columns), so "the same `B`
+- **Why `f | (live_block_count · t_vectors)`:** `width_t = n_a · delta_open ·
+  live_block_count · t_vectors`. Splitting along the "repeat" dimensions
+  (`live_block_count`, `t_vectors`) keeps each slice structurally identical
+  (`n_a · delta_open · (live_block_count·t_vectors/f)` columns), so "the same `B`
   applies to each slice" is well-defined. The relation indexing
   (`get_eq_indices_for_b` in `setup_contribution.rs`) already factors
   `digit / a_row / block`; the split is a clean partition of the
@@ -521,7 +521,7 @@ Notes and edge cases:
      worst case. The tiered version must re-derive the same way and add `F`:
 
      ```text
-     // existing: t_cols_per_vector = n_a · delta_open · num_blocks
+     // existing: t_cols_per_vector = n_a · delta_open · live_block_count
      //           b_width = max_group_poly_count · t_cols_per_vector
      b'_width = b_width / tier_split                          // shrunk B' at the root
      b'_len   = lp.b_key.row_len() · b'_width
@@ -869,7 +869,7 @@ the hidden `u_i`/`û_concat` are never absorbed (like `ê`/`t̂`).
 - **`tier_split == 1` everywhere (flag on, no level benefits):** identical to
   flag-off behavior for those levels; `f_key == None`. The flag does not force
   tiering where `B <= A` already.
-- **Batched `D` exceeds `A`:** `D_footprint = n_d · delta_open · num_blocks ·
+- **Batched `D` exceeds `A`:** `D_footprint = n_d · delta_open · live_block_count ·
   t_vectors` carries the batch factor; for very large `t_vectors` it can exceed
   `A`. In that case shrinking `B` alone does not make `A` the bottleneck. The
   planner detects `d_footprint > a_footprint` and logs that the shared matrix is
@@ -877,7 +877,7 @@ the hidden `u_i`/`û_concat` are never absorbed (like `ê`/`t̂`).
   follow-up).
 - **Terminal fold (`WithoutDBlock`):** `B`/`F` blocks still present; `D` block
   dropped. The `f`-search runs identically.
-- **Tiny levels (`num_blocks · t_vectors` has few factors of two):** the
+- **Tiny levels (`live_block_count · t_vectors` has few factors of two):** the
   feasible `f` set is small; the search may land on `tier_split == 1`. Correct
   and safe.
 - **Overflow / malformed input:** every new width/footprint computation uses

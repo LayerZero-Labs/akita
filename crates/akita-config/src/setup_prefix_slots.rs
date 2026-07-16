@@ -213,8 +213,18 @@ mod tests {
 
         let mut slot_envelope = SetupMatrixEnvelope { max_setup_len: 1 };
         for slot in &slots {
-            inflate_envelope_for_setup_prefix_slot(&mut slot_envelope, slot).expect("inflate");
-            assert!(slot.n_prefix().expect("n_prefix") >= slot.natural_len);
+            let n_prefix = slot.n_prefix().expect("n_prefix");
+            assert!(n_prefix >= slot.natural_len);
+            let mut one_slot_envelope = SetupMatrixEnvelope { max_setup_len: 1 };
+            inflate_envelope_for_setup_prefix_slot(&mut one_slot_envelope, slot)
+                .expect("inflate one slot");
+            assert!(
+                one_slot_envelope.max_setup_len >= n_prefix / slot.d_setup,
+                "slot envelope must cover the padded prefix storage"
+            );
+            slot_envelope.max_setup_len = slot_envelope
+                .max_setup_len
+                .max(one_slot_envelope.max_setup_len);
         }
         assert!(slot_envelope.max_setup_len > 1);
     }

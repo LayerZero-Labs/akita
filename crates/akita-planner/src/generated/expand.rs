@@ -2,7 +2,7 @@
 //! [`LevelParams`].
 //!
 //! The planner stores only the brute-forced parameters
-//! (`ring_d, log_basis, position_bits, block_bits, n_a, n_b, n_d`) in
+//! (`ring_d, log_basis, position_index_bits, block_index_bits, live_block_count, n_a, n_b, n_d`) in
 //! [`GeneratedFoldStep`]; every other `LevelParams` component is a
 //! deterministic function of those plus the config-fixed policy inputs.
 //! [`GeneratedFoldStep::expand_to_level_params`] is the single place that
@@ -20,7 +20,7 @@ use crate::generated::{
     GeneratedDirectStep, GeneratedFoldStep, GeneratedFoldStepWithSetupMetadata,
     GeneratedScheduleTableEntry, GeneratedSetupPrefixGroup, GeneratedStep,
 };
-use crate::schedule_params::{optimize_chunk_granule, optimize_fold_challenge_shape};
+use crate::schedule_params::{optimize_blocks_per_chunk_granule, optimize_fold_challenge_shape};
 use crate::PlannerPolicy;
 use akita_types::sis::{
     decomposed_s_block_ring_count, decomposed_t_ring_count, decomposed_w_ring_count,
@@ -84,12 +84,12 @@ impl GeneratedSetupPrefixGroup {
         let d = policy.ring_dimension;
         let sis_modulus_profile = policy.sis_modulus_profile;
         let sis_policy = policy.sis_security_policy;
-        let source_ring_len_per_claim = self.source_ring_len_per_claim as usize;
-        let block_len = self.block_len as usize;
-        let num_blocks = self.num_blocks as usize;
-        let chunk_granule = self.chunk_granule as usize;
-        let fold_shape = optimize_fold_challenge_shape(fold_shape, num_blocks)?;
-        let n_prefix = source_ring_len_per_claim.checked_mul(d).ok_or_else(|| {
+        let live_ring_elements_per_claim = self.live_ring_elements_per_claim as usize;
+        let positions_per_block = self.positions_per_block as usize;
+        let live_block_count = self.live_block_count as usize;
+        let blocks_per_chunk_granule = self.blocks_per_chunk_granule as usize;
+        let fold_shape = optimize_fold_challenge_shape(fold_shape, live_block_count)?;
+        let n_prefix = live_ring_elements_per_claim.checked_mul(d).ok_or_else(|| {
             AkitaError::InvalidSetup("generated setup-prefix length overflow".into())
         })?;
         if n_prefix == 0 || !n_prefix.is_power_of_two() {
@@ -100,10 +100,10 @@ impl GeneratedSetupPrefixGroup {
         let prefix_num_vars = n_prefix.trailing_zeros() as usize;
         let layout = PrecommittedGroupParams {
             group: PolynomialGroupLayout::singleton(prefix_num_vars),
-            source_ring_len_per_claim,
-            block_len,
-            num_blocks,
-            chunk_granule,
+            live_ring_elements_per_claim,
+            positions_per_block,
+            live_block_count,
+            blocks_per_chunk_granule,
             fold_challenge_shape: self.fold_challenge_shape,
             log_basis,
             n_a: self.n_a as usize,
@@ -127,11 +127,7 @@ impl GeneratedSetupPrefixGroup {
                 "generated setup-prefix challenge shape mismatch".into(),
             ));
         }
-        let block_bits = num_blocks
-            .checked_next_power_of_two()
-            .ok_or_else(|| AkitaError::InvalidSetup("setup-prefix block capacity overflow".into()))?
-            .trailing_zeros() as usize;
-        let inner_width = decomposed_s_block_ring_count(block_len, num_digits_commit)
+        let inner_width = decomposed_s_block_ring_count(positions_per_block, num_digits_commit)
             .ok_or_else(|| no_layout("A"))?;
         let a_bucket = rounded_up_role_a_inf_norm(
             sis_policy,
@@ -143,7 +139,7 @@ impl GeneratedSetupPrefixGroup {
             false,
             0,
             policy.ring_subfield_norm_bound,
-            block_bits,
+            live_block_count,
             1,
             inner_width as u64,
         )
@@ -163,7 +159,7 @@ impl GeneratedSetupPrefixGroup {
         )
         .ok_or_else(|| no_layout("B"))?;
         let outer_width =
-            decomposed_t_ring_count(self.n_a as usize, num_digits_open_val, num_blocks, 1)
+            decomposed_t_ring_count(self.n_a as usize, num_digits_open_val, live_block_count, 1)
                 .ok_or_else(|| no_layout("B"))?;
         require_exact_rank(
             "setup-prefix b",
@@ -202,7 +198,7 @@ impl GeneratedSetupPrefixGroup {
             l1_norm: fold_shape.effective_l1_mass(ring_challenge_cfg) as u128,
         };
         let (num_digits_fold_one, _) = fold_witness_digit_plan(
-            block_bits,
+            live_block_count,
             1,
             policy.decomposition.field_bits(),
             log_basis,
@@ -229,7 +225,7 @@ impl GeneratedFoldStep {
     /// selects the level-local decomposition (root inherits the config
     /// decomposition; recursive levels collapse `log_commit_bound` to the
     /// level's own `log_basis`). `current_w_len` is the witness length in
-    /// field elements entering this level, used to size `block_len`.
+    /// field elements entering this level, used to size `positions_per_block`.
     ///
     /// `num_claims` is the batch factor folded directly into the outer (B)
     /// and prover (D) matrix widths — the root commits `num_claims`
@@ -329,36 +325,47 @@ impl GeneratedFoldStep {
         let sis_modulus_profile = policy.sis_modulus_profile;
         let sis_policy = policy.sis_security_policy;
 
-        // Digit-innermost geometry keeps `L = 2^position_bits` at every level
-        // and derives the exact live `F = ceil(N / L)`.
-        let position_bits = self.position_bits as usize;
-        let block_bits = self.block_bits as usize;
-        let block_len = 1usize.checked_shl(position_bits as u32).ok_or_else(|| {
-            AkitaError::InvalidSetup(
-                "generated schedule 2^position_bits overflows usize".to_string(),
-            )
-        })?;
-        let source_ring_len_per_claim = if is_root {
-            let block_capacity = 1usize.checked_shl(block_bits as u32).ok_or_else(|| {
-                AkitaError::InvalidSetup(
-                    "generated schedule block capacity overflows usize".to_string(),
-                )
-            })?;
-            block_len.checked_mul(block_capacity).ok_or_else(|| {
-                AkitaError::InvalidSetup("generated root source length overflows usize".to_string())
-            })?
-        } else {
-            if !current_w_len.is_multiple_of(ring_d) {
-                return Err(AkitaError::InvalidSetup(
-                    "recursive witness length is not divisible by the ring dimension".to_string(),
-                ));
-            }
-            current_w_len / ring_d
-        };
-        let num_blocks = source_ring_len_per_claim.div_ceil(block_len);
-        let fold_shape = optimize_fold_challenge_shape(fold_shape, num_blocks)?;
+        // Digit-innermost geometry keeps `M = 2^position_index_bits` at every level
+        // and carries exact live `B = ceil(N / M)` separately from its Boolean domain.
+        let position_index_bits = self.position_index_bits as usize;
+        let block_index_bits = self.block_index_bits as usize;
+        let positions_per_block =
+            1usize
+                .checked_shl(position_index_bits as u32)
+                .ok_or_else(|| {
+                    AkitaError::InvalidSetup(
+                        "generated schedule 2^position_index_bits overflows usize".to_string(),
+                    )
+                })?;
+        let live_block_count = self.live_block_count as usize;
+        if live_block_count == 0
+            || live_block_count
+                .checked_next_power_of_two()
+                .map(|domain| domain.trailing_zeros() as usize)
+                != Some(block_index_bits)
+        {
+            return Err(AkitaError::InvalidSetup(
+                "generated schedule exact live block count disagrees with block_index_bits"
+                    .to_string(),
+            ));
+        }
+        if !current_w_len.is_multiple_of(ring_d) {
+            return Err(AkitaError::InvalidSetup(
+                "witness length is not divisible by the ring dimension".to_string(),
+            ));
+        }
+        let live_ring_elements_per_claim = current_w_len / ring_d;
+        let derived_live_block_count = live_ring_elements_per_claim.div_ceil(positions_per_block);
+        if derived_live_block_count != live_block_count {
+            return Err(AkitaError::InvalidSetup(format!(
+                "generated schedule live_block_count={} does not match ceil(N={live_ring_elements_per_claim} / M={positions_per_block})={derived_live_block_count}",
+                live_block_count,
+            )));
+        }
+        let fold_shape = optimize_fold_challenge_shape(fold_shape, live_block_count)?;
         let num_chunks = chunk_count_override.unwrap_or_else(|| policy.chunks_at_level(fold_level));
-        let chunk_granule = optimize_chunk_granule(num_blocks, num_chunks, fold_shape)?;
+        let blocks_per_chunk_granule =
+            optimize_blocks_per_chunk_granule(live_block_count, num_chunks, fold_shape)?;
 
         // Per-role rounded-up collision buckets + committed widths, via the
         // `akita_types::sis` primitives. The B/D widths carry the `num_claims`
@@ -379,7 +386,7 @@ impl GeneratedFoldStep {
         let num_digits_commit = num_digits_s_commit(decomp, is_root);
         let num_digits_open_val = num_digits_open(decomp);
 
-        let inner_width = decomposed_s_block_ring_count(block_len, num_digits_commit)
+        let inner_width = decomposed_s_block_ring_count(positions_per_block, num_digits_commit)
             .ok_or_else(|| no_layout("A"))?;
         let a_bucket = rounded_up_role_a_inf_norm(
             sis_policy,
@@ -391,7 +398,7 @@ impl GeneratedFoldStep {
             is_root,
             policy.onehot_chunk_size,
             policy.ring_subfield_norm_bound,
-            block_bits,
+            live_block_count,
             num_claims,
             inner_width as u64,
         )
@@ -419,7 +426,7 @@ impl GeneratedFoldStep {
         let outer_width = decomposed_t_ring_count(
             self.n_a as usize,
             num_digits_open_val,
-            num_blocks,
+            live_block_count,
             num_claims,
         )
         .ok_or_else(|| no_layout("B"))?;
@@ -432,8 +439,9 @@ impl GeneratedFoldStep {
             log_basis,
         )
         .ok_or_else(|| no_layout("D"))?;
-        let main_d_width = decomposed_w_ring_count(num_digits_open_val, num_blocks, num_claims)
-            .ok_or_else(|| no_layout("D"))?;
+        let main_d_width =
+            decomposed_w_ring_count(num_digits_open_val, live_block_count, num_claims)
+                .ok_or_else(|| no_layout("D"))?;
         let setup_prefix = if let Some(group) = setup_prefix_group {
             let commitment_params = group.expand_to_precommitted_group(
                 policy,
@@ -539,10 +547,10 @@ impl GeneratedFoldStep {
                 d_bucket,
                 ring_d,
             )?,
-            source_ring_len_per_claim,
-            num_blocks,
-            block_len,
-            chunk_granule,
+            live_ring_elements_per_claim,
+            live_block_count,
+            positions_per_block,
+            blocks_per_chunk_granule,
             fold_challenge_config: ring_challenge_cfg,
             fold_challenge_shape: fold_shape,
             num_digits_commit,
@@ -623,21 +631,35 @@ impl GeneratedFoldStep {
         let log_basis = self.log_basis;
         let sis_modulus_profile = policy.sis_modulus_profile;
         let sis_policy = policy.sis_security_policy;
-        let position_bits = self.position_bits as usize;
-        let block_bits = self.block_bits as usize;
-        let num_blocks = 1usize.checked_shl(block_bits as u32).ok_or_else(|| {
-            AkitaError::InvalidSetup(
-                "generated multi-group root 2^block_bits overflows usize".to_string(),
-            )
-        })?;
-        let block_len = 1usize.checked_shl(position_bits as u32).ok_or_else(|| {
-            AkitaError::InvalidSetup(
-                "generated multi-group root 2^position_bits overflows usize".to_string(),
-            )
-        })?;
-        let fold_shape = optimize_fold_challenge_shape(fold_shape, num_blocks)?;
-        let chunk_granule =
-            optimize_chunk_granule(num_blocks, policy.chunks_at_level(0), fold_shape)?;
+        let position_index_bits = self.position_index_bits as usize;
+        let block_index_bits = self.block_index_bits as usize;
+        let live_block_count = self.live_block_count as usize;
+        if live_block_count == 0
+            || live_block_count
+                .checked_next_power_of_two()
+                .map(|domain| domain.trailing_zeros() as usize)
+                != Some(block_index_bits)
+        {
+            return Err(AkitaError::InvalidSetup(
+                "generated multi-group exact live block count disagrees with block_index_bits"
+                    .to_string(),
+            ));
+        }
+        let positions_per_block =
+            1usize
+                .checked_shl(position_index_bits as u32)
+                .ok_or_else(|| {
+                    AkitaError::InvalidSetup(
+                        "generated multi-group root 2^position_index_bits overflows usize"
+                            .to_string(),
+                    )
+                })?;
+        let fold_shape = optimize_fold_challenge_shape(fold_shape, live_block_count)?;
+        let blocks_per_chunk_granule = optimize_blocks_per_chunk_granule(
+            live_block_count,
+            policy.chunks_at_level(0),
+            fold_shape,
+        )?;
 
         let no_layout = |role: &str| {
             AkitaError::InvalidSetup(format!(
@@ -653,7 +675,7 @@ impl GeneratedFoldStep {
         let num_digits_commit = num_digits_s_commit(decomp, true);
         let num_digits_open_val = num_digits_open(decomp);
 
-        let inner_width = decomposed_s_block_ring_count(block_len, num_digits_commit)
+        let inner_width = decomposed_s_block_ring_count(positions_per_block, num_digits_commit)
             .ok_or_else(|| no_layout("A"))?;
         let a_bucket = rounded_up_role_a_inf_norm(
             sis_policy,
@@ -665,7 +687,7 @@ impl GeneratedFoldStep {
             true,
             policy.onehot_chunk_size,
             policy.ring_subfield_norm_bound,
-            block_bits,
+            live_block_count,
             main_num_polys,
             inner_width as u64,
         )
@@ -693,13 +715,14 @@ impl GeneratedFoldStep {
         let outer_width = decomposed_t_ring_count(
             self.n_a as usize,
             num_digits_open_val,
-            num_blocks,
+            live_block_count,
             main_num_polys,
         )
         .ok_or_else(|| no_layout("B"))?;
 
-        let main_d_width = decomposed_w_ring_count(num_digits_open_val, num_blocks, main_num_polys)
-            .ok_or_else(|| no_layout("D"))?;
+        let main_d_width =
+            decomposed_w_ring_count(num_digits_open_val, live_block_count, main_num_polys)
+                .ok_or_else(|| no_layout("D"))?;
         let d_matrix_width = main_d_width
             .checked_add(precommitted_d_width)
             .ok_or_else(|| {
@@ -754,12 +777,14 @@ impl GeneratedFoldStep {
                 d_bucket,
                 ring_d,
             )?,
-            source_ring_len_per_claim: num_blocks.checked_mul(block_len).ok_or_else(|| {
-                AkitaError::InvalidSetup("generated root source length overflow".to_string())
-            })?,
-            num_blocks,
-            block_len,
-            chunk_granule,
+            live_ring_elements_per_claim: live_block_count
+                .checked_mul(positions_per_block)
+                .ok_or_else(|| {
+                    AkitaError::InvalidSetup("generated root source length overflow".to_string())
+                })?,
+            live_block_count,
+            positions_per_block,
+            blocks_per_chunk_granule,
             fold_challenge_config: ring_challenge_cfg,
             fold_challenge_shape: fold_shape,
             num_digits_commit,

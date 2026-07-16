@@ -13,7 +13,7 @@ use super::layout::TraceWeightLayout;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TraceFieldBlockOpening<F: FieldCore, const D: usize> {
     pub block_offset: usize,
-    pub block_weights: Vec<F>,
+    pub live_block_weights: Vec<F>,
     pub inner_opening_ring: CyclotomicRing<F, D>,
 }
 
@@ -131,9 +131,9 @@ where
     let mut out = E::zero();
 
     for term in terms {
-        layout.validate_trace_term_block_range(term.block_offset, term.block_weights.len())?;
+        layout.validate_trace_term_block_range(term.block_offset, term.live_block_weights.len())?;
         let mut col_factor = E::zero();
-        for (local_block, &block_weight) in term.block_weights.iter().enumerate() {
+        for (local_block, &block_weight) in term.live_block_weights.iter().enumerate() {
             let block = term.block_offset + local_block;
             for (plane, &gadget) in gadget_row.iter().enumerate() {
                 let col = layout.opening_digit_col_index(block, plane)?;
@@ -232,7 +232,7 @@ where
 ///
 /// [`eval_trace_terms_closed`] evaluates the fused trace MLE from balanced
 /// high/low factors in `O((H + Q) · poly(K, num_digits_open, col_bits) + D²/K)`
-/// per term, where `H · Q` is the block capacity. It performs one `Tr_H` per
+/// per term, where `H · Q` is the block-index domain size. It performs one `Tr_H` per
 /// claim and never materializes or enumerates the Cartesian block domain.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TraceTerm<F: FieldCore, E: FieldCore, const D: usize> {
@@ -420,15 +420,15 @@ where
                 "trace term block-opening width exceeds column dimension".to_string(),
             ));
         }
-        let block_capacity = 1usize.checked_shl(r_pc as u32).ok_or_else(|| {
+        let block_index_domain_size = 1usize.checked_shl(r_pc as u32).ok_or_else(|| {
             AkitaError::InvalidInput("trace term block span overflow".to_string())
         })?;
         let block_span = layout
             .witness_layout
             .group_live_block_count(layout.group_id)?;
-        if block_span > block_capacity {
+        if block_span > block_index_domain_size {
             return Err(AkitaError::InvalidInput(
-                "trace term num_blocks exceeds block-opening capacity".to_string(),
+                "trace term live_block_count exceeds block-opening capacity".to_string(),
             ));
         }
         layout.validate_trace_term_block_range(term.block_offset, block_span)?;

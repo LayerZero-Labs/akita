@@ -75,13 +75,13 @@ where
     FF: CanonicalField + FromPrimitiveInt,
 {
     let total_field = layout
-        .num_blocks
-        .checked_mul(layout.block_len)
+        .live_block_count
+        .checked_mul(layout.positions_per_block)
         .and_then(|n| n.checked_mul(D))
         .expect("onehot total field size overflow");
     let num_vars = layout
-        .position_bits()
-        .checked_add(layout.block_bits())
+        .position_index_bits()
+        .checked_add(layout.block_index_bits())
         .and_then(|n| n.checked_add(D.trailing_zeros() as usize))
         .expect("onehot variable count overflow");
     assert_eq!(total_field, 1usize << num_vars);
@@ -371,7 +371,7 @@ where
     CpuBackend: OpeningFoldKernel<P::OpeningView<'a>, FF, D>,
 {
     let alpha_bits = D.trailing_zeros() as usize;
-    let target_num_vars = alpha_bits + layout.position_bits() + layout.block_bits();
+    let target_num_vars = alpha_bits + layout.position_index_bits() + layout.block_index_bits();
     assert!(
         point.len() <= target_num_vars,
         "opening point length {} exceeds target root arity {}",
@@ -383,18 +383,22 @@ where
 
     let inner_point = &padded_point[..alpha_bits];
     let reduced_point = &padded_point[alpha_bits..];
-    let ring_opening_point =
-        ring_opening_point_from_field(reduced_point, layout.block_len, layout.num_blocks, basis)
-            .expect("opening point shape should match layout");
+    let ring_opening_point = ring_opening_point_from_field(
+        reduced_point,
+        layout.positions_per_block,
+        layout.live_block_count,
+        basis,
+    )
+    .expect("opening point shape should match layout");
 
     let opening = OpeningFoldKernel::<P::OpeningView<'a>, FF, D>::evaluate_and_fold(
         &CpuBackend,
         None,
         poly.opening_view().expect("opening view"),
         OpeningFoldPlan::Base {
-            block_weights: &ring_opening_point.block_weights,
+            live_block_weights: &ring_opening_point.live_block_weights,
             position_weights: &ring_opening_point.position_weights,
-            block_len: layout.block_len,
+            positions_per_block: layout.positions_per_block,
         },
     )
     .expect("evaluate_and_fold");
@@ -669,7 +673,7 @@ pub(crate) fn run_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
         + AkitaSerialize,
 {
     let mut rng = StdRng::seed_from_u64(0xbeef_cafe);
-    let total_field = (layout.num_blocks * layout.block_len)
+    let total_field = (layout.live_block_count * layout.positions_per_block)
         .checked_mul(D)
         .expect("total field size overflow");
     let onehot_k = onehot_k_for_num_vars(nv);

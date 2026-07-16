@@ -2,7 +2,7 @@ use super::*;
 
 /// Accumulates one-hot decompose-fold rows in compressed position order.
 ///
-/// The returned vector has `block_len` rows. Callers expand each row across
+/// The returned vector has `positions_per_block` rows. Callers expand each row across
 /// `num_digits` later, inserting zero rows for higher digit planes.
 ///
 /// `blocks` is a slice-of-slices view over per-block entries. Both
@@ -12,8 +12,8 @@ use super::*;
 pub(super) fn onehot_accumulate<E, const D: usize>(
     blocks: &[&[E]],
     challenges: &[SparseChallenge],
-    num_blocks: usize,
-    block_len: usize,
+    live_block_count: usize,
+    positions_per_block: usize,
 ) -> Vec<[i32; D]>
 where
     E: OneHotEntry,
@@ -23,21 +23,21 @@ where
     #[cfg(not(feature = "parallel"))]
     let num_threads = 1;
 
-    let actual_threads = num_threads.min(block_len).max(1);
-    let pos_chunk = block_len.div_ceil(actual_threads);
+    let actual_threads = num_threads.min(positions_per_block).max(1);
+    let pos_chunk = positions_per_block.div_ceil(actual_threads);
 
     let chunks: Vec<Vec<[i32; D]>> = cfg_into_iter!(0..actual_threads)
         .map(|tid| {
             let pos_start = tid * pos_chunk;
-            if pos_start >= block_len {
+            if pos_start >= positions_per_block {
                 return Vec::new();
             }
-            let pos_end = (pos_start + pos_chunk).min(block_len);
+            let pos_end = (pos_start + pos_chunk).min(positions_per_block);
             let len = pos_end - pos_start;
             let mut acc = vec![[0i32; D]; len];
             let mut rotated = vec![[0i16; D]; D];
 
-            for (block_idx, challenge) in challenges.iter().enumerate().take(num_blocks) {
+            for (block_idx, challenge) in challenges.iter().enumerate().take(live_block_count) {
                 let entries = blocks[block_idx];
                 let lo = entries.partition_point(|entry| entry.pos_in_block() < pos_start);
                 let hi = entries.partition_point(|entry| entry.pos_in_block() < pos_end);
@@ -72,22 +72,22 @@ where
 pub(super) fn onehot_accumulate_tensor<E, const D: usize>(
     blocks: &[&[E]],
     tensor: &TensorChallengeSet,
-    num_blocks: usize,
-    block_len: usize,
+    live_block_count: usize,
+    positions_per_block: usize,
 ) -> Result<Vec<[i64; D]>, AkitaError>
 where
     E: OneHotEntry,
 {
     let tensor_blocks = tensor.total_blocks()?;
-    if tensor_blocks != num_blocks {
+    if tensor_blocks != live_block_count {
         return Err(AkitaError::InvalidSize {
-            expected: num_blocks,
+            expected: live_block_count,
             actual: tensor_blocks,
         });
     }
-    if blocks.len() != num_blocks {
+    if blocks.len() != live_block_count {
         return Err(AkitaError::InvalidSize {
-            expected: num_blocks,
+            expected: live_block_count,
             actual: blocks.len(),
         });
     }
@@ -96,16 +96,16 @@ where
     #[cfg(not(feature = "parallel"))]
     let num_threads = 1;
 
-    let actual_threads = num_threads.min(block_len).max(1);
-    let pos_chunk = block_len.div_ceil(actual_threads);
+    let actual_threads = num_threads.min(positions_per_block).max(1);
+    let pos_chunk = positions_per_block.div_ceil(actual_threads);
 
     let chunks: Vec<Vec<[i64; D]>> = cfg_into_iter!(0..actual_threads)
         .map(|tid| {
             let pos_start = tid * pos_chunk;
-            if pos_start >= block_len {
+            if pos_start >= positions_per_block {
                 return Ok(Vec::new());
             }
-            let pos_end = (pos_start + pos_chunk).min(block_len);
+            let pos_end = (pos_start + pos_chunk).min(positions_per_block);
             let len = pos_end - pos_start;
             let mut acc = vec![[0i64; D]; len];
             let mut tmp = vec![[0i64; D]; len];

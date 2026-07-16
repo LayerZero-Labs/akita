@@ -142,15 +142,15 @@ W_D = d_setup_width
 The base active widths are:
 
 ```text
-W_A = block_len * depth_commit
+W_A = positions_per_block * depth_commit
 ```
 
 ```text
-W_D = num_claims * num_blocks * depth_open
+W_D = num_claims * live_block_count * depth_open
 ```
 
 ```text
-W_B = max(num_polys_per_point) * n_a * num_blocks * depth_open
+W_B = max(num_polys_per_point) * n_a * live_block_count * depth_open
 ```
 
 The maximum over `num_polys_per_point` is deliberate. A B row is
@@ -170,8 +170,8 @@ This counts ring slots. For coefficient-level setup-claim delegation:
 N_active^F = D_setup * N_active^R
 ```
 
-A/B/D dimensions are not generally powers of two. Only protocol axes such as
-`num_blocks = 2^r` are power-of-two aligned.
+A/B/D dimensions and the exact `live_block_count = B` are not generally powers
+of two. The Boolean block-index domain `2^r_blk` is power-of-two aligned.
 
 ### Capacity
 
@@ -274,8 +274,10 @@ Recursive folded witnesses are block-fast. For recursive levels where we use
 setup-claim delegation, D/B should use block-fast views, and recursive A should
 also use a block-fast view if recursive setup offloading is enabled.
 
-Let `B = 2^r`, `delta = depth_open`, `delta_c = depth_commit`,
-`L = block_len`, `K = max_p n_p`, and `C = num_claims`.
+Let `B = live_block_count`, `delta = depth_open`, `delta_c = depth_commit`,
+`M = positions_per_block`, `K = max_p n_p`, and `C = num_claims`. The Boolean
+block-index domain has size `B_dom = next_power_of_two(B)`; setup role widths
+below use exact live `B`, not `B_dom`.
 
 Root digit-fast D/B/A views:
 
@@ -989,7 +991,7 @@ The layout branch commits multi-point B with one cyclic NTT pass per opening
 point.
 `repeated_b_commitment_rows` loops over the `num_polys_per_point` groups and
 calls the single-RHS cyclic mat-vec once per group, zero-padding each group to
-the packed `W_B = max(num_polys_per_point) * n_a * num_blocks * depth_open`
+the packed `W_B = max(num_polys_per_point) * n_a * live_block_count * depth_open`
 width.
 Single-point B avoids the extra passes by fusing into the
 `fused_split_eq_quotients` pass that already computes D and A.

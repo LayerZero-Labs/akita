@@ -254,21 +254,21 @@ fn centered_i32_ring<F: FieldCore + FromPrimitiveInt, const D: usize>(
 fn cyclic_consistency_z_product<F, const D: usize>(
     ring_multiplier_point: &RingMultiplierOpeningPoint<F>,
     z_folded_centered: &[[i32; D]],
-    block_len: usize,
+    positions_per_block: usize,
     depth_commit: usize,
     log_basis: u32,
 ) -> Result<(CyclotomicRing<F, D>, CyclotomicRing<F, D>), AkitaError>
 where
     F: FieldCore + CanonicalField + FromPrimitiveInt,
 {
-    let inner_width = block_len
+    let inner_width = positions_per_block
         .checked_mul(depth_commit)
         .ok_or_else(|| AkitaError::InvalidSetup("z inner width overflow".to_string()))?;
     if inner_width == 0 || z_folded_centered.len() != inner_width {
         return Err(AkitaError::InvalidInput(format!(
-            "ring-multiplier z layout mismatch: z_folded_len={} block_len={} depth_commit={} expected={}",
+            "ring-multiplier z layout mismatch: z_folded_len={} positions_per_block={} depth_commit={} expected={}",
             z_folded_centered.len(),
-            block_len,
+            positions_per_block,
             depth_commit,
             inner_width
         )));
@@ -278,13 +278,13 @@ where
     let mut reduced = CyclotomicRing::<F, D>::zero();
 
     {
-        if ring_multiplier_point.position_len() < block_len {
+        if ring_multiplier_point.position_len() < positions_per_block {
             return Err(AkitaError::InvalidInput(format!(
-                "ring-multiplier a length mismatch: actual={} expected_at_least={block_len}",
+                "ring-multiplier a length mismatch: actual={} expected_at_least={positions_per_block}",
                 ring_multiplier_point.position_len()
             )));
         }
-        for block_idx in 0..block_len {
+        for block_idx in 0..positions_per_block {
             let mut z_block = CyclotomicRing::<F, D>::zero();
             for (digit_idx, &g) in g_commit.iter().enumerate() {
                 let z_idx = block_idx * depth_commit + digit_idx;
@@ -373,7 +373,7 @@ where
         let num_digits_open = group.params.num_digits_open();
         let n_a = group.params.a_rows_len();
         let n_b = group.params.b_rows_len();
-        let blocks_per_claim = group.params.num_blocks();
+        let blocks_per_claim = group.params.live_block_count();
         let inner_width = group.params.a_col_len();
         validate_i8_setup_log_basis(log_basis, "for multi-group relation quotient")?;
         if group_layout.num_polynomials() == 0 {
@@ -480,7 +480,7 @@ where
             let (consistency_z_cyclic, consistency_z_reduced) = cyclic_consistency_z_product::<F, D>(
                 ring_multiplier_point,
                 &group.z_centered,
-                group.params.block_len(),
+                group.params.positions_per_block(),
                 group.params.num_digits_commit(),
                 log_basis,
             )?;
