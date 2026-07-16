@@ -6,7 +6,6 @@
 //! equality primitive shared by the kernel and direct callers.
 
 use crate::{AkitaError, FieldCore};
-#[cfg(test)]
 use std::collections::BTreeMap;
 
 /// Verifier work cap for one compact-stride equality contraction.
@@ -542,7 +541,6 @@ pub fn eval_compact_stride_eq<F: FieldCore>(
 /// Returns an error for zero strides, arithmetic overflow, unsupported
 /// challenge arity, or recurrence work above [`MAX_COMPACT_STRIDE_TERMS`].
 #[allow(clippy::too_many_arguments)]
-#[cfg(test)]
 pub fn eval_compact_pair_eq<F: FieldCore>(
     left_challenges: &[F],
     left_offset: usize,
@@ -624,7 +622,6 @@ pub fn eval_compact_pair_eq<F: FieldCore>(
 }
 
 #[allow(clippy::too_many_arguments)]
-#[cfg(test)]
 fn eval_compact_pair_pow2_block<F: FieldCore>(
     left_challenges: &[F],
     left_offset: usize,

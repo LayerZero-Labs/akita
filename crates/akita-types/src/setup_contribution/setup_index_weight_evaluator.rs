@@ -1,4 +1,4 @@
-use akita_algebra::offset_eq::{eq_eval_at_index, OffsetEqWindow};
+use akita_algebra::offset_eq::{eq_eval_at_index, eval_compact_pair_eq};
 use akita_algebra::ring::scalar_powers;
 use akita_field::{AkitaError, FieldCore, MulBase};
 
@@ -115,19 +115,17 @@ impl<E: FieldCore> SetupIndexWeightEvaluator<E> {
             });
         }
 
-        // Build bounded equality windows once and share them across every role
-        // and every strided address in the inner sums. The setup-index and
-        // opening addresses are each visited O(setup columns) times per level,
-        // so recomputing a full O(bits) equality product per address dominated
-        // the recursive-mode verifier (setup-product stage 3).
-        let setup_window = OffsetEqWindow::new(rho_setup_idx)?;
-        let x_window = OffsetEqWindow::new(&self.x_challenges)?;
-
+        // Each role's inner sum contracts two affine equality-address streams:
+        // the setup-index address (strided by the role projection ratio) and the
+        // opening address (strided by 1 for D/B, by the fold depth for A). Use
+        // the exact compact-pair recurrence so the contraction is polylog in the
+        // span instead of scanning every setup column, which dominated the
+        // recursive-mode verifier (setup-product stage 3).
         let mut acc = E::zero();
         for group in self.layout.groups() {
-            acc += self.evaluate_d_role(group, &setup_window, &x_window)?;
-            acc += self.evaluate_b_role(group, &setup_window, &x_window)?;
-            acc += self.evaluate_a_role(group, &setup_window, &x_window)?;
+            acc += self.evaluate_d_role(group, rho_setup_idx)?;
+            acc += self.evaluate_b_role(group, rho_setup_idx)?;
+            acc += self.evaluate_a_role(group, rho_setup_idx)?;
         }
         Ok(acc)
     }
@@ -143,8 +141,7 @@ impl<E: FieldCore> SetupIndexWeightEvaluator<E> {
     fn evaluate_d_role(
         &self,
         group: &SetupContributionGroupInputs,
-        setup_window: &OffsetEqWindow<E>,
-        x_window: &OffsetEqWindow<E>,
+        rho_setup_idx: &[E],
     ) -> Result<E, AkitaError> {
         if self.d_rows == 0 || self.d_physical_cols == 0 {
             return Ok(E::zero());
@@ -188,6 +185,13 @@ impl<E: FieldCore> SetupIndexWeightEvaluator<E> {
                     .live_fold_count()
                     .checked_mul(group.depth_open)
                     .ok_or_else(|| AkitaError::InvalidSetup("setup D span overflow".into()))?;
+                validate_opening_span(
+                    self.layout.opening_source_len(),
+                    witness_index,
+                    len,
+                    1,
+                    "witness D address overflow",
+                )?;
                 for row in 0..self.d_rows {
                     let row_weight = eq_eval_at_index(&self.tau1, self.d_row_start + row);
                     for (lane, &scale) in self.d_projection.scales.iter().enumerate() {
@@ -198,27 +202,15 @@ impl<E: FieldCore> SetupIndexWeightEvaluator<E> {
                             setup_col,
                             lane,
                         )?;
-                        let mut pair = E::zero();
-                        for index in 0..len {
-                            let setup_delta =
-                                index.checked_mul(self.d_projection.ratio).ok_or_else(|| {
-                                    AkitaError::InvalidSetup("setup D address overflow".into())
-                                })?;
-                            let setup_address =
-                                setup_index.checked_add(setup_delta).ok_or_else(|| {
-                                    AkitaError::InvalidSetup("setup D address overflow".into())
-                                })?;
-                            let physical_address =
-                                witness_index.checked_add(index).ok_or_else(|| {
-                                    AkitaError::InvalidSetup("witness D address overflow".into())
-                                })?;
-                            let opening_address = crate::checked_opening_source_index(
-                                self.layout.opening_source_len(),
-                                physical_address,
-                            )?;
-                            pair +=
-                                setup_window.eval(setup_address) * x_window.eval(opening_address);
-                        }
+                        let pair = eval_compact_pair_eq(
+                            rho_setup_idx,
+                            setup_index,
+                            self.d_projection.ratio,
+                            &self.x_challenges,
+                            witness_index,
+                            1,
+                            len,
+                        )?;
                         acc += row_weight * scale * pair;
                     }
                 }
@@ -230,8 +222,7 @@ impl<E: FieldCore> SetupIndexWeightEvaluator<E> {
     fn evaluate_b_role(
         &self,
         group: &SetupContributionGroupInputs,
-        setup_window: &OffsetEqWindow<E>,
-        x_window: &OffsetEqWindow<E>,
+        rho_setup_idx: &[E],
     ) -> Result<E, AkitaError> {
         if group.n_b == 0 {
             return Ok(E::zero());
@@ -270,6 +261,13 @@ impl<E: FieldCore> SetupIndexWeightEvaluator<E> {
                     group.depth_open,
                     "setup B span overflow",
                 )?;
+                validate_opening_span(
+                    self.layout.opening_source_len(),
+                    witness_index,
+                    len,
+                    1,
+                    "witness B address overflow",
+                )?;
                 for row in 0..group.n_b {
                     let row_weight = eq_eval_at_index(&self.tau1, group.b_row_start + row);
                     for (lane, &scale) in self.b_projection.scales.iter().enumerate() {
@@ -280,27 +278,15 @@ impl<E: FieldCore> SetupIndexWeightEvaluator<E> {
                             setup_col,
                             lane,
                         )?;
-                        let mut pair = E::zero();
-                        for index in 0..len {
-                            let setup_delta =
-                                index.checked_mul(self.b_projection.ratio).ok_or_else(|| {
-                                    AkitaError::InvalidSetup("setup B address overflow".into())
-                                })?;
-                            let setup_address =
-                                setup_index.checked_add(setup_delta).ok_or_else(|| {
-                                    AkitaError::InvalidSetup("setup B address overflow".into())
-                                })?;
-                            let physical_address =
-                                witness_index.checked_add(index).ok_or_else(|| {
-                                    AkitaError::InvalidSetup("witness B address overflow".into())
-                                })?;
-                            let opening_address = crate::checked_opening_source_index(
-                                self.layout.opening_source_len(),
-                                physical_address,
-                            )?;
-                            pair +=
-                                setup_window.eval(setup_address) * x_window.eval(opening_address);
-                        }
+                        let pair = eval_compact_pair_eq(
+                            rho_setup_idx,
+                            setup_index,
+                            self.b_projection.ratio,
+                            &self.x_challenges,
+                            witness_index,
+                            1,
+                            len,
+                        )?;
                         acc += row_weight * scale * pair;
                     }
                 }
@@ -312,8 +298,7 @@ impl<E: FieldCore> SetupIndexWeightEvaluator<E> {
     fn evaluate_a_role(
         &self,
         group: &SetupContributionGroupInputs,
-        setup_window: &OffsetEqWindow<E>,
-        x_window: &OffsetEqWindow<E>,
+        rho_setup_idx: &[E],
     ) -> Result<E, AkitaError> {
         if group.n_a == 0 {
             return Ok(E::zero());
@@ -339,6 +324,13 @@ impl<E: FieldCore> SetupIndexWeightEvaluator<E> {
                     0,
                     fold_digit,
                 )?;
+                validate_opening_span(
+                    self.layout.opening_source_len(),
+                    witness_index,
+                    z_cols,
+                    group.depth_fold,
+                    "witness A address overflow",
+                )?;
                 for row in 0..group.n_a {
                     let row_weight = eq_eval_at_index(&self.tau1, group.a_row_start + row);
                     for (lane, &scale) in self.a_projection.scales.iter().enumerate() {
@@ -349,31 +341,15 @@ impl<E: FieldCore> SetupIndexWeightEvaluator<E> {
                             setup_col,
                             lane,
                         )?;
-                        let mut pair = E::zero();
-                        for index in 0..z_cols {
-                            let setup_delta =
-                                index.checked_mul(self.a_projection.ratio).ok_or_else(|| {
-                                    AkitaError::InvalidSetup("setup A address overflow".into())
-                                })?;
-                            let setup_address =
-                                setup_index.checked_add(setup_delta).ok_or_else(|| {
-                                    AkitaError::InvalidSetup("setup A address overflow".into())
-                                })?;
-                            let witness_delta =
-                                index.checked_mul(group.depth_fold).ok_or_else(|| {
-                                    AkitaError::InvalidSetup("witness A address overflow".into())
-                                })?;
-                            let physical_address =
-                                witness_index.checked_add(witness_delta).ok_or_else(|| {
-                                    AkitaError::InvalidSetup("witness A address overflow".into())
-                                })?;
-                            let opening_address = crate::checked_opening_source_index(
-                                self.layout.opening_source_len(),
-                                physical_address,
-                            )?;
-                            pair +=
-                                setup_window.eval(setup_address) * x_window.eval(opening_address);
-                        }
+                        let pair = eval_compact_pair_eq(
+                            rho_setup_idx,
+                            setup_index,
+                            self.a_projection.ratio,
+                            &self.x_challenges,
+                            witness_index,
+                            group.depth_fold,
+                            z_cols,
+                        )?;
                         acc -= row_weight * scale * fold * pair;
                     }
                 }
@@ -381,6 +357,30 @@ impl<E: FieldCore> SetupIndexWeightEvaluator<E> {
         }
         Ok(acc)
     }
+}
+
+/// Reject an affine opening span that leaves the live opening source.
+///
+/// The opening map is the identity within `[0, opening_source_len)` (see
+/// [`crate::checked_opening_source_index`]), and each role scans a monotone
+/// affine address sequence, so validating the maximum address is sufficient to
+/// keep the compact-pair contraction confined to live witness positions.
+fn validate_opening_span(
+    opening_source_len: usize,
+    base: usize,
+    len: usize,
+    stride: usize,
+    context: &'static str,
+) -> Result<(), AkitaError> {
+    if len == 0 {
+        return Ok(());
+    }
+    let max_address = stride
+        .checked_mul(len - 1)
+        .and_then(|delta| base.checked_add(delta))
+        .ok_or_else(|| AkitaError::InvalidSetup(context.into()))?;
+    crate::checked_opening_source_index(opening_source_len, max_address)?;
+    Ok(())
 }
 
 fn projected_setup_offset<E: FieldCore>(
