@@ -23,7 +23,7 @@ use akita_types::{
 };
 use std::sync::Arc;
 
-use super::slice_mle::{compute_r_contribution, evaluate_setup_contribution_direct};
+use super::slice_mle::compute_r_contribution;
 use super::validate_log_basis;
 use akita_types::validate_ring_dispatch;
 pub(crate) use tensor_challenges::PreparedChallengeEvals;
@@ -908,29 +908,39 @@ impl<E: FieldCore> RelationMatrixEvaluator<E> {
         let setup_z_block_low_eq = setup_eq_cache.z_block_low_eq;
         let setup_fold_gadget = setup_eq_cache.fold_gadget;
 
-        // Shared bounded equality window over the X challenges. The Z direct
-        // loop evaluates `eq(x_challenges, ·)` at many canonical addresses, so
-        // materializing the low table once and reusing it avoids recomputing a
-        // full-width equality product per address.
-        let x_eq_window = OffsetEqWindow::new(x_challenges)?;
+        // In direct setup mode, build the setup-contribution plan up front. Its
+        // prepared Z equality slice (`z_eq_slice`, built in parallel and already
+        // contracted over units and fold digits) is the same equality
+        // evaluation the structured Z contribution needs, so reusing it removes
+        // a second, serial pass over the Z addresses (Fix 6). In tensor mode the
+        // setup contribution is supplied as `setup_claim`, so no plan is built
+        // and the structured Z contribution falls back to a direct evaluation.
+        let setup_plan = if setup_claim.is_none() {
+            let fold_gadget = setup_fold_gadget.as_deref().unwrap_or(&[]);
+            Some(SetupContributionPlan::finish_plan::<F>(
+                &self.setup_contribution_static,
+                x_challenges,
+                setup_eq_low.as_deref(),
+                setup_z_block_low_eq.as_deref(),
+                (!fold_gadget.is_empty()).then_some(fold_gadget),
+                &self.setup_contribution_layout,
+                self.role_dims,
+            )?)
+        } else {
+            None
+        };
+
         {
             let _span = tracing::info_span!("structured_chunks").entered();
-            for group in &self.groups {
+            // Bounded equality window for the serial Z fallback (tensor mode).
+            let x_eq_window = OffsetEqWindow::new(x_challenges)?;
+            for (group_index, group) in self.groups.iter().enumerate() {
                 let units = self.group_units(group)?;
                 validate_log_basis(group.log_basis)?;
 
                 let g_open = gadget_row_scalars::<F>(group.depth_open, group.log_basis);
                 let g_open_ext = g_open.iter().copied().map(E::lift_base).collect::<Vec<_>>();
                 let g_commit = gadget_row_scalars::<F>(group.depth_commit, group.log_basis);
-                let fold_gadget_storage;
-                let fold_gadget = match setup_fold_gadget.as_deref() {
-                    Some(fold_gadget) if fold_gadget.len() >= group.depth_fold => fold_gadget,
-                    _ => {
-                        fold_gadget_storage =
-                            gadget_row_scalars::<F>(group.depth_fold, group.log_basis);
-                        &fold_gadget_storage
-                    }
-                };
 
                 let consistency_weight = self.setup_contribution_inputs.eq_tau1[0];
                 let a_row_end = group
@@ -954,29 +964,65 @@ impl<E: FieldCore> RelationMatrixEvaluator<E> {
                 )?;
                 e_structured_contribution += e_contribution;
                 t_structured_contribution += t_contribution;
-                for unit in units {
+
+                if let Some(plan) = setup_plan.as_ref() {
+                    // Reuse the prepared Z equality slice:
+                    //   z_structured = Σ_pos Σ_cd z_eq_slice[pos·depth_commit + cd]
+                    //                      · consistency · opening_a[pos] · commit_gadget[cd]
+                    // The slice is already `-Σ_unit Σ_fold_digit eq · fold_gadget`,
+                    // so this is a cheap contraction with no equality evaluation.
+                    let z_slice = plan
+                        .group_z_eq_slice(group_index)
+                        .ok_or(AkitaError::InvalidProof)?;
                     for (position, &opening_a) in group.opening_a_evals.iter().enumerate() {
                         for (commit_digit, &commit) in g_commit.iter().enumerate() {
-                            let mut z_weight = E::zero();
-                            for (fold_digit, &fold) in fold_gadget.iter().enumerate() {
-                                let z_index =
-                                    self.setup_contribution_layout.witness_layout().z_index(
-                                        unit,
-                                        group.opening_a_evals.len(),
-                                        group.depth_commit,
-                                        group.depth_fold,
-                                        position,
-                                        commit_digit,
-                                        fold_digit,
-                                    )?;
-                                let z_opening_index = akita_types::checked_opening_source_index(
-                                    self.setup_contribution_layout.opening_source_len(),
-                                    z_index,
-                                )?;
-                                z_weight -= x_eq_window.eval(z_opening_index) * E::lift_base(fold);
-                            }
+                            let col = position
+                                .checked_mul(group.depth_commit)
+                                .and_then(|base| base.checked_add(commit_digit))
+                                .ok_or(AkitaError::InvalidProof)?;
+                            let z_eq = *z_slice.get(col).ok_or(AkitaError::InvalidProof)?;
                             z_structured_contribution +=
-                                z_weight * consistency_weight * opening_a * E::lift_base(commit);
+                                z_eq * consistency_weight * opening_a * E::lift_base(commit);
+                        }
+                    }
+                } else {
+                    let fold_gadget_storage;
+                    let fold_gadget = match setup_fold_gadget.as_deref() {
+                        Some(fold_gadget) if fold_gadget.len() >= group.depth_fold => fold_gadget,
+                        _ => {
+                            fold_gadget_storage =
+                                gadget_row_scalars::<F>(group.depth_fold, group.log_basis);
+                            &fold_gadget_storage
+                        }
+                    };
+                    for unit in units {
+                        for (position, &opening_a) in group.opening_a_evals.iter().enumerate() {
+                            for (commit_digit, &commit) in g_commit.iter().enumerate() {
+                                let mut z_weight = E::zero();
+                                for (fold_digit, &fold) in fold_gadget.iter().enumerate() {
+                                    let z_index =
+                                        self.setup_contribution_layout.witness_layout().z_index(
+                                            unit,
+                                            group.opening_a_evals.len(),
+                                            group.depth_commit,
+                                            group.depth_fold,
+                                            position,
+                                            commit_digit,
+                                            fold_digit,
+                                        )?;
+                                    let z_opening_index =
+                                        akita_types::checked_opening_source_index(
+                                            self.setup_contribution_layout.opening_source_len(),
+                                            z_index,
+                                        )?;
+                                    z_weight -=
+                                        x_eq_window.eval(z_opening_index) * E::lift_base(fold);
+                                }
+                                z_structured_contribution += z_weight
+                                    * consistency_weight
+                                    * opening_a
+                                    * E::lift_base(commit);
+                            }
                         }
                     }
                 }
@@ -987,18 +1033,8 @@ impl<E: FieldCore> RelationMatrixEvaluator<E> {
             claim
         } else {
             let _span = tracing::info_span!("setup_contribution").entered();
-            let fold_gadget = setup_fold_gadget.as_deref().unwrap_or(&[]);
-            evaluate_setup_contribution_direct::<F, E, D>(
-                self,
-                x_challenges,
-                setup_eq_low.as_deref(),
-                setup_z_block_low_eq.as_deref(),
-                &alpha_pows_a,
-                alpha_pows_b,
-                alpha_pows_d,
-                fold_gadget,
-                setup,
-            )?
+            let plan = setup_plan.as_ref().ok_or(AkitaError::InvalidProof)?;
+            plan.evaluate_direct::<F>(setup, &alpha_pows_a, alpha_pows_b, alpha_pows_d)?
         };
 
         let r_contribution = {

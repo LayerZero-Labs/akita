@@ -20,7 +20,7 @@ pub(crate) fn setup_e_col_weights<E: FieldCore>(
         depth_open,
         "setup D columns overflow",
     )?;
-    (0..e_cols)
+    cfg_into_iter!(0..e_cols)
         .map(|local_col| {
             let digit = local_col % depth_open;
             let block_claim = local_col / depth_open;
@@ -66,7 +66,7 @@ pub(crate) fn setup_t_col_weights<E: FieldCore>(
     let t_cols = num_vectors
         .checked_mul(cols_per_vector)
         .ok_or_else(|| AkitaError::InvalidSetup("setup B width overflow".into()))?;
-    (0..t_cols)
+    cfg_into_iter!(0..t_cols)
         .map(|local_col| {
             let vector = local_col / cols_per_vector;
             if vector >= active_vectors {

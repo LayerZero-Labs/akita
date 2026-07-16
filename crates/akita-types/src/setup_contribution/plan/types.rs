@@ -236,6 +236,23 @@ pub struct SetupContributionPlan<E> {
     pub(crate) projection_geometry: SetupProjectionGeometry,
 }
 
+impl<E: FieldCore> SetupContributionPlan<E> {
+    /// Prepared A-role (Z) column equality slice for the group at `index` in
+    /// plan (witness relation) order, laid out as
+    /// `z_eq_slice[position * depth_commit + commit_digit]` and already
+    /// contracted over units and fold digits.
+    ///
+    /// Exposed so the ring-switch verifier can reuse this slice for the
+    /// structured Z relation contribution instead of recomputing the same
+    /// equality evaluations, per the setup-contribution reuse in Fix 6.
+    #[must_use]
+    pub fn group_z_eq_slice(&self, index: usize) -> Option<&[E]> {
+        self.groups
+            .get(index)
+            .map(|group| group.z_eq_slice.as_slice())
+    }
+}
+
 /// Tau1-derived setup weights cached at ring-switch prepare time.
 #[derive(Clone)]
 pub struct SetupContributionStatic<E> {

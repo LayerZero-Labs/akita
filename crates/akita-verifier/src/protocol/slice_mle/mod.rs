@@ -14,5 +14,4 @@
 mod setup_contribution;
 mod structured_slice;
 
-pub(crate) use setup_contribution::evaluate_setup_contribution_direct;
 pub(super) use structured_slice::compute_r_contribution;
