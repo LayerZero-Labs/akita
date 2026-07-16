@@ -123,6 +123,20 @@ fn proof_optimized_max_setup_matrix_size_uncached<Cfg: CommitmentConfig>(
         }
     }
 
+    // Prefix-slot materialization is driven by these bounded exact recursive
+    // keys. Size their shared matrices from the same keys directly: converting
+    // through `OpeningClaimsLayout` would discard frozen precommitted params
+    // and could resolve a different schedule.
+    for key in crate::generated_families::recursive_group_batch_candidates_for_capacity::<Cfg>(
+        max_num_vars,
+        max_num_batched_polys,
+    )? {
+        let schedule = Cfg::runtime_schedule(key)?;
+        let entry_envelope = setup_matrix_envelope_for_schedule(&schedule)?;
+        saw_supported_shape = true;
+        envelope.max_setup_len = envelope.max_setup_len.max(entry_envelope.max_setup_len);
+    }
+
     if !saw_supported_shape {
         return Err(AkitaError::InvalidSetup(format!(
             "setup matrix sizing found no generated schedules for max_num_vars={max_num_vars}"
@@ -153,6 +167,7 @@ fn setup_envelope_scan_layouts<Cfg: CommitmentConfig>(
             }
         }
     }
+
     Ok(layouts)
 }
 
@@ -173,11 +188,17 @@ fn setup_matrix_envelope_for_shape<Cfg: CommitmentConfig>(
         return Ok(None);
     };
 
+    Ok(Some(setup_matrix_envelope_for_schedule(&schedule)?))
+}
+
+fn setup_matrix_envelope_for_schedule(
+    schedule: &Schedule,
+) -> Result<SetupMatrixEnvelope, AkitaError> {
     let mut envelope = SetupMatrixEnvelope { max_setup_len: 1 };
     for params in setup_level_params_from_schedule(&schedule) {
         accumulate_matrix_envelope_for_level(&params, &mut envelope.max_setup_len)?;
     }
-    Ok(Some(envelope))
+    Ok(envelope)
 }
 
 /// Extract setup-level params from a `Schedule`.

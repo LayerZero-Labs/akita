@@ -320,6 +320,33 @@ fn setup_matrix_envelope_covers_multi_group_batch_schedules() {
     assert!(setup_envelope.max_setup_len >= multi_group_same_point.max_setup_len);
 }
 
+#[test]
+fn recursive_setup_envelope_covers_selected_exact_group_batch_keys() {
+    type Cfg = crate::RecursiveCommitmentConfig<fp128::D64OneHot>;
+
+    let candidates =
+        crate::generated_families::recursive_group_batch_candidates_for_capacity::<Cfg>(32, 4)
+            .expect("selected recursive setup keys");
+    assert!(
+        !candidates.is_empty(),
+        "recursive setup profile must select exact multi-group keys"
+    );
+
+    let setup_envelope =
+        proof_optimized_max_setup_matrix_size::<Cfg>(32, 4).expect("recursive setup envelope");
+    for key in candidates {
+        let schedule = Cfg::runtime_schedule(key.clone()).expect("selected exact-key schedule");
+        let required =
+            setup_matrix_envelope_for_schedule(&schedule).expect("selected exact-key envelope");
+        assert!(
+            setup_envelope.max_setup_len >= required.max_setup_len,
+            "capacity envelope {} must cover selected-key requirement {} for {key:?}",
+            setup_envelope.max_setup_len,
+            required.max_setup_len,
+        );
+    }
+}
+
 fn expected_runtime_root_setup_len(lp: &LevelParams, opening_batch: &OpeningClaimsLayout) -> usize {
     if lp.has_precommitted_groups() {
         return expected_multi_group_runtime_root_setup_len(lp, opening_batch);
