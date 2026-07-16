@@ -140,18 +140,18 @@ impl BatchedStage3Geometry {
         }
         let ring_bits = setup_prefix_id.d_setup.trailing_zeros() as usize;
         let params = &setup_prefix_id.commitment_params;
-        let position_bits = params.layout.block_len.trailing_zeros() as usize;
-        let block_bits = params
+        let position_index_bits = params.layout.num_positions_per_block.trailing_zeros() as usize;
+        let block_index_bits = params
             .layout
-            .num_blocks
+            .num_live_blocks
             .checked_next_power_of_two()
             .map(|capacity| capacity.trailing_zeros() as usize)
             .ok_or_else(|| {
-                AkitaError::InvalidSetup("setup-prefix block capacity overflow".into())
+                AkitaError::InvalidSetup("setup-prefix block-index domain size overflow".into())
             })?;
         let expected = ring_bits
-            .checked_add(position_bits)
-            .and_then(|n| n.checked_add(block_bits))
+            .checked_add(position_index_bits)
+            .and_then(|n| n.checked_add(block_index_bits))
             .ok_or_else(|| AkitaError::InvalidSetup("setup-prefix point length overflow".into()))?;
         if setup_prefix_point_len != expected {
             return Err(AkitaError::InvalidPointDimension {
@@ -224,10 +224,10 @@ mod tests {
             commitment_params: PrecommittedLevelParams {
                 layout: PrecommittedGroupParams {
                     group: PolynomialGroupLayout::singleton(8),
-                    source_ring_len_per_claim: 8,
-                    block_len: 4,
-                    num_blocks: 2,
-                    chunk_granule: 1,
+                    num_live_ring_elements_per_claim: 8,
+                    num_positions_per_block: 4,
+                    num_live_blocks: 2,
+                    num_blocks_per_chunk_granule: 1,
                     fold_challenge_shape: akita_challenges::TensorChallengeShape::Flat,
                     log_basis: 3,
                     n_a: 1,

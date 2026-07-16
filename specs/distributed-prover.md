@@ -115,7 +115,7 @@ This is the layout the [planner](distributed-planner.md) prices
 [verifier](distributed-verifier-row-eval.md) evaluates (`segment_layout` /
 `eval_at_point`). The per-window segment lengths are:
 
-- `z_len_i = num_digits_fold · num_digits_commit · block_len` (replicated, full),
+- `z_len_i = num_digits_fold · num_digits_commit · num_positions_per_block` (replicated, full),
 - `e_len_i = num_digits_open · num_claims · blocks_per_chunk` (partitioned),
 - `t_len_i = num_digits_open · n_a · num_t_vectors · blocks_per_chunk` (partitioned),
 - per-window stride `L = z_len_i + e_len_i + t_len_i`,
@@ -149,7 +149,7 @@ count the planner stamped and derive the windows:
 
 ```rust
 let num_chunks = lp.witness_chunk.num_chunks;        // W; 1 on non-modified levels
-let blocks_per_chunk = lp.num_blocks / num_chunks;   // B_loc, power of two
+let blocks_per_chunk = lp.num_live_blocks / num_chunks;   // B_loc, power of two
 // window i owns global blocks [ i*B_loc, (i+1)*B_loc )
 ```
 
@@ -159,7 +159,7 @@ Validate at this boundary, before any witness math (no-panic contract):
 |------|-------|
 | `num_chunks == 0` | `InvalidSetup` |
 | `num_chunks > 1` and not a power of two | `InvalidSetup` |
-| `num_chunks > 1` and `lp.num_blocks % num_chunks != 0` | `InvalidSetup` |
+| `num_chunks > 1` and `lp.num_live_blocks % num_chunks != 0` | `InvalidSetup` |
 | `num_chunks > 1` under `feature = "zk"` | `InvalidSetup` |
 
 (`zk` blinding segments are not specified for the chunked witness yet; reject
@@ -389,7 +389,7 @@ relation.
 ### S5 — End-to-end prove → verify
 
 With the chunked verifier landed, prove with a multi-chunk preset and verify with
-the same preset for `W ∈ {1,2,4,8}`, `block_len` pow2 (root) and dense (recursive).
+the same preset for `W ∈ {1,2,4,8}`, `num_positions_per_block` pow2 (root) and dense (recursive).
 
 - **Invariant:** the modified-relation proof verifies; `W = 1` matches the legacy
   proof.
@@ -407,7 +407,7 @@ the same preset for `W ∈ {1,2,4,8}`, `block_len` pow2 (root) and dense (recurs
 - [ ] Produced proof size equals the planner `Schedule.total_bytes` for the D64
   multi-chunk presets (shared `r̂` tail keeps its single-machine row count).
 - [ ] The modified-relation proof verifies under the chunked verifier for
-  `W ∈ {2,4,8}` (pow2 and dense `block_len`); `W = 1` matches the legacy proof.
+  `W ∈ {2,4,8}` (pow2 and dense `num_positions_per_block`); `W = 1` matches the legacy proof.
 - [ ] No change to the matvec commit kernels, `compute_relation_quotient`, or the
   `AkitaStage{1,2,3}Prover` bodies (review assertion).
 - [ ] `W > 1` under `zk` rejects with `AkitaError` (no panic).
@@ -422,7 +422,7 @@ the same preset for `W ∈ {1,2,4,8}`, `block_len` pow2 (root) and dense (recurs
 4. **Proof-size parity** vs the planner schedule.
 5. **End-to-end roundtrip** (gated on verifier landing).
 6. **Determinism** and **no-panic negatives** (bad `num_chunks`,
-   `num_chunks ∤ num_blocks`, zk+chunked).
+   `num_chunks ∤ num_live_blocks`, zk+chunked).
 
 ### Performance
 

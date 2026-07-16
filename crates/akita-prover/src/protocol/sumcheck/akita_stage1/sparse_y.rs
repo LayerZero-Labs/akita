@@ -7,9 +7,9 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage1Prover<E> {
     }
 
     #[tracing::instrument(skip_all, name = "AkitaStage1Prover::compute_round_compact_sparse_x_y")]
-    pub(super) fn compute_round_compact_sparse_x_y(
+    pub(super) fn compute_round_compact_sparse_x_y<S: CompactSValue>(
         &self,
-        s_compact: &[i16],
+        s_compact: &[S],
     ) -> EqFactoredUniPoly<E> {
         debug_assert!(self.use_sparse_x_y_round());
         let y_len = s_compact.len() / self.live_x_cols;
@@ -24,7 +24,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage1Prover<E> {
                 }
                 let y_pair = j % y_pairs;
                 let top = x * y_len + 2 * y_pair;
-                (s_compact[top], s_compact[top + 1])
+                (s_compact[top].compact_s(), s_compact[top + 1].compact_s())
             },
         )
     }

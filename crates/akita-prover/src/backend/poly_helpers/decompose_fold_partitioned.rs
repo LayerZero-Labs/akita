@@ -27,12 +27,12 @@ fn precompute_rotated_tables<const D: usize>(
         .collect()
 }
 
-fn partition_thread_count(block_len: usize) -> usize {
+fn partition_thread_count(num_positions_per_block: usize) -> usize {
     #[cfg(feature = "parallel")]
     let num_threads = rayon::current_num_threads();
     #[cfg(not(feature = "parallel"))]
     let num_threads = 1;
-    num_threads.min(block_len.max(1)).max(1)
+    num_threads.min(num_positions_per_block.max(1)).max(1)
 }
 
 enum ElementFoldSource<'a, F: CanonicalField, const D: usize> {
@@ -120,10 +120,10 @@ impl<F: CanonicalField, const D: usize> ElementFoldSource<'_, F, D> {
 fn element_partitioned_decompose_fold<F: CanonicalField, const D: usize>(
     source: ElementFoldSource<'_, F, D>,
     challenges: &[SparseChallenge],
-    block_len: usize,
+    num_positions_per_block: usize,
     num_digits: usize,
 ) -> Vec<[i32; D]> {
-    let inner_width = block_len
+    let inner_width = num_positions_per_block
         .checked_mul(num_digits)
         .expect("element-partitioned fold inner width overflow");
     if inner_width == 0 || num_digits == 0 {
@@ -131,15 +131,15 @@ fn element_partitioned_decompose_fold<F: CanonicalField, const D: usize>(
     }
 
     let rotated_tables = precompute_rotated_tables::<D>(challenges);
-    let actual_threads = partition_thread_count(block_len);
-    let elem_chunk = block_len.div_ceil(actual_threads);
+    let actual_threads = partition_thread_count(num_positions_per_block);
+    let elem_chunk = num_positions_per_block.div_ceil(actual_threads);
     let mut out = vec![[0i32; D]; inner_width];
 
     cfg_chunks_mut!(out, elem_chunk * num_digits)
         .enumerate()
         .for_each(|(tid, acc)| {
             let elem_start = tid * elem_chunk;
-            if elem_start >= block_len {
+            if elem_start >= num_positions_per_block {
                 return;
             }
             let elems_in_chunk = acc.len() / num_digits;
@@ -149,7 +149,7 @@ fn element_partitioned_decompose_fold<F: CanonicalField, const D: usize>(
                 .then(|| vec![[0i8; D]; num_digits]);
 
             for (block_idx, challenge) in challenges.iter().enumerate() {
-                let block_start = block_idx * block_len;
+                let block_start = block_idx * num_positions_per_block;
                 if block_start >= source.num_rings() {
                     break;
                 }
@@ -180,7 +180,7 @@ fn element_partitioned_decompose_fold<F: CanonicalField, const D: usize>(
 pub fn cached_digit_decompose_fold_partitioned<const D: usize>(
     digit_planes: &[[i8; D]],
     challenges: &[SparseChallenge],
-    block_len: usize,
+    num_positions_per_block: usize,
     num_digits: usize,
 ) -> Vec<[i32; D]> {
     let num_rings = digit_planes.len() / num_digits;
@@ -191,7 +191,7 @@ pub fn cached_digit_decompose_fold_partitioned<const D: usize>(
             num_rings,
         },
         challenges,
-        block_len,
+        num_positions_per_block,
         num_digits,
     )
 }
@@ -200,14 +200,14 @@ pub fn cached_digit_decompose_fold_partitioned<const D: usize>(
 pub fn balanced_ring_decompose_fold_partitioned<F: CanonicalField, const D: usize>(
     coeffs: &[CyclotomicRing<F, D>],
     challenges: &[SparseChallenge],
-    block_len: usize,
+    num_positions_per_block: usize,
     num_digits: usize,
     p: &DecomposeParams,
 ) -> Vec<[i32; D]> {
     element_partitioned_decompose_fold::<F, D>(
         ElementFoldSource::LiveRings { coeffs, params: p },
         challenges,
-        block_len,
+        num_positions_per_block,
         num_digits,
     )
 }
@@ -216,10 +216,10 @@ pub fn balanced_ring_decompose_fold_partitioned<F: CanonicalField, const D: usiz
 pub fn balanced_tight_digit_fold_partitioned<const D: usize>(
     coeffs: &[[i8; D]],
     challenges: &[SparseChallenge],
-    block_len: usize,
+    num_positions_per_block: usize,
 ) -> Vec<[i32; D]> {
     let num_digits = 1;
-    let inner_width = block_len;
+    let inner_width = num_positions_per_block;
     #[cfg(feature = "parallel")]
     let num_threads = rayon::current_num_threads();
     #[cfg(not(feature = "parallel"))]
@@ -241,8 +241,8 @@ pub fn balanced_tight_digit_fold_partitioned<const D: usize>(
             let elem_start = pos_start / num_digits;
             let elem_end = pos_end.div_ceil(num_digits);
 
-            let lo = elem_start.min(block_len);
-            let hi = elem_end.min(block_len);
+            let lo = elem_start.min(num_positions_per_block);
+            let hi = elem_end.min(num_positions_per_block);
             for col in lo..hi {
                 let out_pos = col * num_digits;
                 if out_pos < pos_start || out_pos >= pos_end {
@@ -251,7 +251,7 @@ pub fn balanced_tight_digit_fold_partitioned<const D: usize>(
 
                 for (block, challenge) in challenges.iter().enumerate() {
                     let Some(index) = block
-                        .checked_mul(block_len)
+                        .checked_mul(num_positions_per_block)
                         .and_then(|base| base.checked_add(col))
                     else {
                         continue;

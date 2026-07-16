@@ -55,10 +55,11 @@ $\alpha$-evaluations are still performed exactly once, and all $\mathcal M$-fold
 structure lands on the cheap bookkeeping. The canonical single-machine
 implementation lives in `crates/akita-verifier/src/protocol/ring_switch.rs`.
 
-Throughout we write $B_{\mathsf{loc}} := B/\mathcal M$ for the number of blocks one
-machine owns. Since $\mathcal M = 2^N$ and $B = 2^r$ with $N \le r$,
-$B_{\mathsf{loc}}$ is again a power of two — the property that keeps the
-per-machine fast paths available.
+When equal chunks apply, we write $B_{\mathsf{loc}} := B/\mathcal M$ for the
+number of live blocks one machine owns. This is a power of two exactly when the
+chosen machine count divides exact live $B$ and the quotient is a power of two.
+The common root case has $B=B_{\mathsf{dom}}=2^{r_{\mathsf{blk}}}$, but recursive
+levels may have $B < B_{\mathsf{dom}}$ and therefore use residual-aware chunks.
 
 ## What the verifier needs to compute
 
@@ -169,13 +170,13 @@ shrunk to $B_{\mathsf{loc}}$ for the partitioned `e`/`t` pieces:
 |---|---|---|---|
 | `e_hat^(j)` | `do · C · B_loc` | `dig → claim → block_local` | partitioned |
 | `t_hat^(j)` | `do · n_A · C · B_loc` | `a_row → dig → claim → block_local` | partitioned |
-| `z_hat^(j)` | `dc · df · block_len` | `dc → df → blk` | **replicated** |
+| `z_hat^(j)` | `dc · df · num_positions_per_block` | `dc → df → blk` | **replicated** |
 | `r_tail` | `rows · levels` | `level → row` (single) | shared |
 
 The machine index is *not* an axis inside a piece — it is the outer grouping that
 selects which block $w_j$ (hence which offset) a piece lives in. The `e`/`t` block
 sub-axis shrinks from `B` to `B_loc` because each machine holds only its
-`B_loc` blocks; the `z` block sub-axis stays the full `block_len` because the fold
+`B_loc` blocks; the `z` block sub-axis stays the full `num_positions_per_block` because the fold
 is replicated, and `z_hat^(j)` is repeated $\mathcal M$ times.
 
 > The "global block" point now reads cleanly off this layout: inside `e_hat^(j)`
@@ -200,7 +201,7 @@ sits. A segment's offset enters only as two per-machine scalars: the in-window
 shift $e^{(j)}_{\text{lo}} = e^{(j)}_{\text{start}} \bmod B_{\mathsf{loc}}$ (which
 sets the carry split) and the high index $e^{(j)}_{\text{hi}}$. So a single
 `eq_low` (window $B_{\mathsf{loc}}$) is reused by every `e_hat^(j)` and
-`t_hat^(j)`, and a single `eq_low_z` (window `block_len`) by every `z_hat^(j)`;
+`t_hat^(j)`, and a single `eq_low_z` (window `num_positions_per_block`) by every `z_hat^(j)`;
 the offsets differing per machine is fine.
 
 Within one machine, `e_hat^(j)` and `t_hat^(j)` are spaced by
@@ -219,7 +220,7 @@ the growth is negligible.
 (Because the canonical deployment uses $\mathcal M = 2^N$, $B_{\mathsf{loc}}$ is
 always a power of two and the per-machine `e_hat`/`t_hat` peel always applies; a
 non-power-of-two machine count would fall back to a dense per-machine evaluation,
-exactly as the `z`-tensor does for non-power-of-two `block_len`. See the closing
+exactly as the `z`-tensor does for non-power-of-two `num_positions_per_block`. See the closing
 note.)
 
 ## Tensor components
@@ -418,7 +419,7 @@ The in-block consistency contribution ties `z_hat` to the opening point's
 in-block weights, on the consistency row (so it shares that row's `row_weight`,
 applied with the relation's minus sign at the end). Here the **replication
 asymmetry** bites: each `z_hat^(j)` is a *full-size* copy with the full
-`block_len`, not a $1/\mathcal M$ slice, so the $\mathcal M$ repetitions are
+`num_positions_per_block`, not a $1/\mathcal M$ slice, so the $\mathcal M$ repetitions are
 $\mathcal M$ full evaluations.
 
 #### The cell formula (per machine)
@@ -441,20 +442,20 @@ not depend on $j$**: the fold rows carry no machine-specific data (the opening
 weight $a[\text{blk}]$ and the gadget weights are global). Only the segment offset
 $z^{(j)}_{\text{start}}$ differs between machines.
 
-#### Case 1: `block_len` a power of two (root)
+#### Case 1: `num_positions_per_block` a power of two (root)
 
-Peel the `block_len` window per machine and build a two-bucket in-block summary
+Peel the `num_positions_per_block` window per machine and build a two-bucket in-block summary
 per machine (the shared `eq_low_z` table serves all of them):
 
 ```text
-# Per-machine in-block summaries — O(M * block_len):
+# Per-machine in-block summaries — O(M * num_positions_per_block):
 for j in 0..M:
     A0[j] = 0      # carry = 0
     A1[j] = 0      # carry = 1
-    for blk in 0..block_len:
-        s = z_lo[j] + blk                   # z_lo[j] = z_start[j] mod block_len (per machine)
-        if s >= block_len:
-            A1[j] += a[blk] * eq_low_z[s - block_len]
+    for blk in 0..num_positions_per_block:
+        s = z_lo[j] + blk                   # z_lo[j] = z_start[j] mod num_positions_per_block (per machine)
+        if s >= num_positions_per_block:
+            A1[j] += a[blk] * eq_low_z[s - num_positions_per_block]
         else:
             A0[j] += a[blk] * eq_low_z[s]
 
@@ -471,7 +472,7 @@ acc *= -consistency_weight
 Because $a[\text{blk}]$ is shared, the per-machine summaries differ only by the
 offset/carry split; they combine additively into one `acc`.
 
-#### Case 2: `block_len` not a power of two (dense fallback)
+#### Case 2: `num_positions_per_block` not a power of two (dense fallback)
 
 Per machine, materialize the structured `z` segment (the tensor product) and run
 one offset-equality evaluation over it — $\mathcal M$ times — exactly as the
@@ -481,8 +482,8 @@ single-machine fallback, repeated per machine.
 
 | case | overhead |
 |---|---|
-| `block_len` a power of two (root) | $O(\mathcal M \cdot \text{block\_len} + \mathcal M \cdot \text{DF} \cdot \text{DC})$ |
-| `block_len` not a power of two | $O(\mathcal M \cdot \text{DF} \cdot \text{DC} \cdot \text{block\_len})$ |
+| `num_positions_per_block` a power of two (root) | $O(\mathcal M \cdot \text{block\_len} + \mathcal M \cdot \text{DF} \cdot \text{DC})$ |
+| `num_positions_per_block` not a power of two | $O(\mathcal M \cdot \text{DF} \cdot \text{DC} \cdot \text{block\_len})$ |
 
 This is $\mathcal M\times$ the single-machine `z`-tensor — but the `z`-tensor is
 already the *cheap* part of the verifier (no $\alpha$-evaluations), so
@@ -606,7 +607,7 @@ precomputed weight vector changed (`Z_comb` instead of `Z_col`).
   = \sum_j Z^{(j)}_{\text{col}}[c]$.
   Each $Z^{(j)}_{\text{col}}[c]$ is the `G_fold` weighted equality sum over the
   `df` axis of machine $j$'s `z_hat` segment. Build cost is
-  $O(\mathcal M \cdot A_{\text{cols}})$; in the non-power-of-two `block_len`
+  $O(\mathcal M \cdot A_{\text{cols}})$; in the non-power-of-two `num_positions_per_block`
   case it is built densely per machine, as there.
 
 ### Two coordinate systems (plus the machine axis)
@@ -662,7 +663,7 @@ $C\,B_{\mathsf{loc}}$, but the $\mathcal M$ pieces *tile* the same $B$ blocks, s
 the total is $\mathcal M \cdot C\,B_{\mathsf{loc}} = C\,B$ — written with $B$, not
 $B_{\mathsf{loc}}$, precisely because it does not shrink per machine and does not
 grow with $\mathcal M$. The *replicated* `z_hat` is the opposite: each of the
-$\mathcal M$ copies carries the full `block_len`, the pieces duplicate rather than
+$\mathcal M$ copies carries the full `num_positions_per_block`, the pieces duplicate rather than
 tile, so the $\mathcal M$ survives in $\mathcal M\,\text{block\_len}$.
 
 The dominant row — the $O(D)$ shared-matrix $\alpha$-evaluation scan — is
@@ -694,14 +695,15 @@ field-arithmetic pre-pass.
 > **Status: design constraint, not yet implemented.** Recorded so the
 > peelability reasoning does not have to be re-derived.
 
-The per-machine fast path requires the block window
+The per-machine fast path requires an equal block window
 $B_{\mathsf{loc}} = B/\mathcal M$ to be a power of two, so that `block_local`
 occupies a contiguous low-bit window and the two-bucket carry split is defined
-(the same condition `block_len` must satisfy in the `z`-tensor Case 1). This holds
-**iff $\mathcal M$ is a power of two dividing $B$** — which is exactly the
-canonical choice $\mathcal M = 2^N$ used by the distributed prover: since
-$B = 2^r$ is itself a power of two, any $\mathcal M = 2^N \le 2^r$ works and gives
-equal chunks $|\mathcal I_j| = B_{\mathsf{loc}}$.
+(the same condition `num_positions_per_block` must satisfy in the `z`-tensor Case 1). This holds
+**iff $\mathcal M$ divides exact live $B$ and $B/\mathcal M$ is a power of two**.
+At a root level, where $B=B_{\mathsf{dom}}=2^{r_{\mathsf{blk}}}$, the canonical
+choice $\mathcal M=2^N\le B$ satisfies this automatically. A recursive level can
+have $B<B_{\mathsf{dom}}$ and must not substitute $B_{\mathsf{dom}}$ merely to
+recover equal chunks.
 
 For other machine counts (not a power of two, or $\mathcal M \nmid B$) the
 contiguous partition still makes sense but $B_{\mathsf{loc}}$ is no longer a clean

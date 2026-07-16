@@ -320,6 +320,33 @@ fn setup_matrix_envelope_covers_multi_group_batch_schedules() {
     assert!(setup_envelope.max_setup_len >= multi_group_same_point.max_setup_len);
 }
 
+#[test]
+fn recursive_setup_envelope_covers_selected_exact_group_batch_keys() {
+    type Cfg = crate::RecursiveCommitmentConfig<fp128::D64OneHot>;
+
+    let candidates =
+        crate::generated_families::recursive_group_batch_candidates_for_capacity::<Cfg>(32, 4)
+            .expect("selected recursive setup keys");
+    assert!(
+        !candidates.is_empty(),
+        "recursive setup profile must select exact multi-group keys"
+    );
+
+    let setup_envelope =
+        proof_optimized_max_setup_matrix_size::<Cfg>(32, 4).expect("recursive setup envelope");
+    for key in candidates {
+        let schedule = Cfg::runtime_schedule(key.clone()).expect("selected exact-key schedule");
+        let required =
+            setup_matrix_envelope_for_schedule(&schedule).expect("selected exact-key envelope");
+        assert!(
+            setup_envelope.max_setup_len >= required.max_setup_len,
+            "capacity envelope {} must cover selected-key requirement {} for {key:?}",
+            setup_envelope.max_setup_len,
+            required.max_setup_len,
+        );
+    }
+}
+
 fn expected_runtime_root_setup_len(lp: &LevelParams, opening_batch: &OpeningClaimsLayout) -> usize {
     if lp.has_precommitted_groups() {
         return expected_multi_group_runtime_root_setup_len(lp, opening_batch);
@@ -330,7 +357,7 @@ fn expected_runtime_root_setup_len(lp: &LevelParams, opening_batch: &OpeningClai
         lp.a_key.col_len(),
         lp.b_key.row_len(),
         opening_batch.num_total_polynomials(),
-        lp.num_blocks,
+        lp.num_live_blocks,
         lp.num_digits_open,
     );
     expected_root_setup_len(lp.d_key.row_len(), d_width, a_len, b_len)
@@ -341,13 +368,13 @@ fn expected_group_setup_footprint(
     a_width: usize,
     b_rows: usize,
     num_polys: usize,
-    num_blocks: usize,
+    num_live_blocks: usize,
     num_digits_open: usize,
 ) -> (usize, usize, usize) {
     let a_len = a_rows * a_width;
-    let d_width = num_polys * num_blocks * num_digits_open;
-    let t_cols_per_vector = a_rows * num_digits_open * num_blocks;
-    let b_len = b_rows * num_polys * t_cols_per_vector;
+    let d_width = num_polys * num_live_blocks * num_digits_open;
+    let t_vector_width = a_rows * num_digits_open * num_live_blocks;
+    let b_len = b_rows * num_polys * t_vector_width;
     (a_len, b_len, d_width)
 }
 
@@ -375,7 +402,7 @@ fn expected_multi_group_runtime_root_setup_len(
         lp.a_key.col_len(),
         lp.b_key.row_len(),
         final_group.num_polynomials(),
-        lp.num_blocks,
+        lp.num_live_blocks,
         lp.num_digits_open,
     );
 
@@ -385,7 +412,7 @@ fn expected_multi_group_runtime_root_setup_len(
             group.a_key.col_len(),
             group.b_key.row_len(),
             group.layout.group.num_polynomials(),
-            group.layout.num_blocks,
+            group.layout.num_live_blocks,
             group.num_digits_open,
         );
         max_a_len = max_a_len.max(a_len);
@@ -516,7 +543,7 @@ fn grouped_root_runtime_setup_uses_per_group_roles_and_summed_d_width() {
         .map(|group| group.d_segment_width().expect("precommitted D width"))
         .sum();
     let expected_d_width =
-        final_group.num_polynomials() * root_params.num_blocks * root_params.num_digits_open
+        final_group.num_polynomials() * root_params.num_live_blocks * root_params.num_digits_open
             + precommitted_d_width;
     assert_eq!(
         root_params.d_key.col_len(),
@@ -918,8 +945,8 @@ fn assert_generated_batched_roots_are_scaled<Cfg: CommitmentConfig>(table: Gener
         checked_folded_entry = true;
         let root_lp = &root.params;
         let singleton_outer_width =
-            root_lp.a_key.row_len() * root_lp.num_digits_open * root_lp.num_blocks;
-        let singleton_d_width = root_lp.num_digits_open * root_lp.num_blocks;
+            root_lp.a_key.row_len() * root_lp.num_digits_open * root_lp.num_live_blocks;
+        let singleton_d_width = root_lp.num_digits_open * root_lp.num_live_blocks;
         assert_eq!(
             root_lp.outer_width(),
             singleton_outer_width * entry.final_group.num_polynomials(),
@@ -1067,20 +1094,21 @@ fn power_of_two_positions_cover_exact_source() {
         .expect("planner should succeed");
         for (level_idx, fold) in schedule.fold_steps().enumerate() {
             let lp = &fold.params;
-            let pow2_block = 1usize << lp.position_bits();
+            let pow2_block = 1usize << lp.position_index_bits();
             assert!(
-                lp.block_len <= pow2_block,
-                "block_len {} should be <= 2^position_bits {} at level {level_idx} (num_vars={num_vars})",
-                lp.block_len,
+                lp.num_positions_per_block <= pow2_block,
+                "num_positions_per_block {} should be <= 2^position_index_bits {} at level {level_idx} (num_vars={num_vars})",
+                lp.num_positions_per_block,
                 pow2_block,
             );
             if level_idx > 0 {
                 let num_ring = fold.current_w_len / lp.ring_dimension;
-                let expected_position_count = num_ring.div_ceil(lp.num_blocks).next_power_of_two();
+                let expected_position_count =
+                    num_ring.div_ceil(lp.num_live_blocks).next_power_of_two();
                 assert_eq!(
-                    lp.block_len, expected_position_count,
-                    "recursive level {level_idx} should use the least power-of-two block_len covering ceil({num_ring} / {})",
-                    lp.num_blocks
+                    lp.num_positions_per_block, expected_position_count,
+                    "recursive level {level_idx} should use the least power-of-two num_positions_per_block covering ceil({num_ring} / {})",
+                    lp.num_live_blocks
                 );
             }
         }

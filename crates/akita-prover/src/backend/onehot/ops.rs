@@ -173,25 +173,27 @@ where
         source: OneHotView<'_, F, D, I>,
         plan: OpeningFoldPlan<'_, F, D>,
     ) -> Result<OpeningFoldOutput<F, D>, AkitaError> {
-        let blocks = source.poly.blocks_for(D, plan.block_len())?;
-        plan.validate(blocks.num_blocks())?;
+        let blocks = source.poly.blocks_for(D, plan.num_positions_per_block())?;
+        plan.validate(blocks.num_live_blocks())?;
         let (eval, folded) = match plan {
             OpeningFoldPlan::Base {
-                block_weights,
+                live_block_weights,
                 position_weights,
-                block_len,
-            } => source
-                .poly
-                .evaluate_and_fold::<D>(block_weights, position_weights, block_len),
+                num_positions_per_block,
+            } => source.poly.evaluate_and_fold::<D>(
+                live_block_weights,
+                position_weights,
+                num_positions_per_block,
+            ),
             OpeningFoldPlan::Ring {
-                block_weights,
+                live_block_weights,
                 position_weights,
-                block_len,
-            } => {
-                source
-                    .poly
-                    .evaluate_and_fold_ring::<D>(block_weights, position_weights, block_len)
-            }
+                num_positions_per_block,
+            } => source.poly.evaluate_and_fold_ring::<D>(
+                live_block_weights,
+                position_weights,
+                num_positions_per_block,
+            ),
         };
         Ok(OpeningFoldOutput { eval, folded })
     }
@@ -204,7 +206,7 @@ where
     ) -> Result<DecomposeFoldWitness<F>, AkitaError> {
         Ok(source.poly.decompose_fold::<D>(
             plan.challenges,
-            plan.block_len,
+            plan.num_positions_per_block,
             plan.num_digits,
             plan.log_basis,
         ))
@@ -225,13 +227,13 @@ where
         match plan {
             DecomposeFoldBatchPlan::Sparse {
                 challenges,
-                block_len,
+                num_positions_per_block,
                 num_digits,
                 log_basis,
             } => match OneHotPoly::decompose_fold_batched::<D>(
                 source.polys,
                 challenges,
-                block_len,
+                num_positions_per_block,
                 num_digits,
                 log_basis,
             ) {
@@ -240,13 +242,13 @@ where
             },
             DecomposeFoldBatchPlan::Tensor {
                 tensor,
-                block_len,
+                num_positions_per_block,
                 num_digits,
                 log_basis,
             } => match OneHotPoly::decompose_fold_tensor_batched::<D>(
                 source.polys,
                 tensor,
-                block_len,
+                num_positions_per_block,
                 num_digits,
                 log_basis,
             )? {
@@ -335,18 +337,18 @@ where
     pub(crate) fn fold_blocks<const D: usize>(
         &self,
         scalars: &[F],
-        block_len: usize,
+        num_positions_per_block: usize,
     ) -> Vec<CyclotomicRing<F, D>> {
         let blocks = self
-            .blocks_for(D, block_len)
-            .expect("OneHotPoly::fold_blocks: invalid block_len for this polynomial");
-        let num_blocks = blocks.num_blocks();
+            .blocks_for(D, num_positions_per_block)
+            .expect("OneHotPoly::fold_blocks: invalid num_positions_per_block for this polynomial");
+        let num_live_blocks = blocks.num_live_blocks();
         match blocks.as_ref() {
-            OneHotBlocks::SingleChunk(flat) => cfg_into_iter!(0..num_blocks)
-                .map(|i| fold_onehot_block(flat.block(i), scalars, block_len))
+            OneHotBlocks::SingleChunk(flat) => cfg_into_iter!(0..num_live_blocks)
+                .map(|i| fold_onehot_block(flat.block(i), scalars, num_positions_per_block))
                 .collect(),
-            OneHotBlocks::MultiChunk(flat) => cfg_into_iter!(0..num_blocks)
-                .map(|i| fold_onehot_block(flat.block(i), scalars, block_len))
+            OneHotBlocks::MultiChunk(flat) => cfg_into_iter!(0..num_live_blocks)
+                .map(|i| fold_onehot_block(flat.block(i), scalars, num_positions_per_block))
                 .collect(),
         }
     }
@@ -354,43 +356,43 @@ where
     pub(crate) fn fold_blocks_ring<const D: usize>(
         &self,
         scalars: &[CyclotomicRing<F, D>],
-        block_len: usize,
+        num_positions_per_block: usize,
     ) -> Vec<CyclotomicRing<F, D>> {
-        let blocks = self
-            .blocks_for(D, block_len)
-            .expect("OneHotPoly::fold_blocks_ring: invalid block_len for this polynomial");
-        let num_blocks = blocks.num_blocks();
+        let blocks = self.blocks_for(D, num_positions_per_block).expect(
+            "OneHotPoly::fold_blocks_ring: invalid num_positions_per_block for this polynomial",
+        );
+        let num_live_blocks = blocks.num_live_blocks();
         match blocks.as_ref() {
-            OneHotBlocks::SingleChunk(flat) => cfg_into_iter!(0..num_blocks)
-                .map(|i| fold_onehot_block_ring(flat.block(i), scalars, block_len))
+            OneHotBlocks::SingleChunk(flat) => cfg_into_iter!(0..num_live_blocks)
+                .map(|i| fold_onehot_block_ring(flat.block(i), scalars, num_positions_per_block))
                 .collect(),
-            OneHotBlocks::MultiChunk(flat) => cfg_into_iter!(0..num_blocks)
-                .map(|i| fold_onehot_block_ring(flat.block(i), scalars, block_len))
+            OneHotBlocks::MultiChunk(flat) => cfg_into_iter!(0..num_live_blocks)
+                .map(|i| fold_onehot_block_ring(flat.block(i), scalars, num_positions_per_block))
                 .collect(),
         }
     }
 
     pub(crate) fn evaluate_and_fold<const D: usize>(
         &self,
-        block_weights: &[F],
+        live_block_weights: &[F],
         position_weights: &[F],
-        block_len: usize,
+        num_positions_per_block: usize,
     ) -> (CyclotomicRing<F, D>, Vec<CyclotomicRing<F, D>>) {
         crate::backend::poly_helpers::fused_evaluate_and_fold_base(
-            self.fold_blocks::<D>(position_weights, block_len),
-            block_weights,
+            self.fold_blocks::<D>(position_weights, num_positions_per_block),
+            live_block_weights,
         )
     }
 
     pub(crate) fn evaluate_and_fold_ring<const D: usize>(
         &self,
-        block_weights: &[CyclotomicRing<F, D>],
+        live_block_weights: &[CyclotomicRing<F, D>],
         position_weights: &[CyclotomicRing<F, D>],
-        block_len: usize,
+        num_positions_per_block: usize,
     ) -> (CyclotomicRing<F, D>, Vec<CyclotomicRing<F, D>>) {
         crate::backend::poly_helpers::fused_evaluate_and_fold_ring(
-            self.fold_blocks_ring::<D>(position_weights, block_len),
-            block_weights,
+            self.fold_blocks_ring::<D>(position_weights, num_positions_per_block),
+            live_block_weights,
         )
     }
 
@@ -761,19 +763,25 @@ where
     pub(crate) fn decompose_fold<const D: usize>(
         &self,
         challenges: &[SparseChallenge],
-        block_len: usize,
+        num_positions_per_block: usize,
         num_digits: usize,
         _log_basis: u32,
     ) -> DecomposeFoldWitness<F> {
-        let blocks = self
-            .blocks_for(D, block_len)
-            .expect("OneHotPoly::decompose_fold: invalid block_len for this polynomial");
+        let blocks = self.blocks_for(D, num_positions_per_block).expect(
+            "OneHotPoly::decompose_fold: invalid num_positions_per_block for this polynomial",
+        );
         match blocks.as_ref() {
             OneHotBlocks::SingleChunk(blocks) => self.decompose_fold_onehot::<SingleChunkEntry, D>(
-                blocks, challenges, block_len, num_digits,
+                blocks,
+                challenges,
+                num_positions_per_block,
+                num_digits,
             ),
             OneHotBlocks::MultiChunk(blocks) => self.decompose_fold_onehot::<MultiChunkEntry, D>(
-                blocks, challenges, block_len, num_digits,
+                blocks,
+                challenges,
+                num_positions_per_block,
+                num_digits,
             ),
         }
     }
@@ -782,20 +790,26 @@ where
     pub(crate) fn decompose_fold_batched<const D: usize>(
         polys: &[&Self],
         challenges: &[SparseChallenge],
-        block_len: usize,
+        num_positions_per_block: usize,
         num_digits: usize,
         _log_basis: u32,
     ) -> Option<DecomposeFoldWitness<F>> {
         let first = polys.first()?;
-        let first_blocks = first
-            .blocks_for(D, block_len)
-            .expect("OneHotPoly::decompose_fold_batched: invalid block_len for first polynomial");
+        let first_blocks = first.blocks_for(D, num_positions_per_block).expect(
+            "OneHotPoly::decompose_fold_batched: invalid num_positions_per_block for first polynomial",
+        );
         match first_blocks.as_ref() {
             OneHotBlocks::SingleChunk(_) => Self::decompose_fold_batched_single_chunk_onehot::<D>(
-                polys, challenges, block_len, num_digits,
+                polys,
+                challenges,
+                num_positions_per_block,
+                num_digits,
             ),
             OneHotBlocks::MultiChunk(_) => Self::decompose_fold_batched_multi_chunk_onehot::<D>(
-                polys, challenges, block_len, num_digits,
+                polys,
+                challenges,
+                num_positions_per_block,
+                num_digits,
             ),
         }
     }
@@ -804,11 +818,16 @@ where
     pub(crate) fn decompose_fold_tensor_batched<const D: usize>(
         polys: &[&Self],
         tensor: &TensorChallengeSet,
-        block_len: usize,
+        num_positions_per_block: usize,
         num_digits: usize,
         _log_basis: u32,
     ) -> Result<Option<DecomposeFoldWitness<F>>, AkitaError> {
-        Self::decompose_fold_batched_tensor_onehot::<D>(polys, tensor, block_len, num_digits)
+        Self::decompose_fold_batched_tensor_onehot::<D>(
+            polys,
+            tensor,
+            num_positions_per_block,
+            num_digits,
+        )
     }
 
     #[tracing::instrument(skip_all, name = "OneHotPoly::commit_inner")]
@@ -821,12 +840,12 @@ where
     where
         B: CommitmentComputeBackend<F>,
     {
-        let blocks = self.blocks_for(D, plan.block_len)?;
+        let blocks = self.blocks_for(D, plan.num_positions_per_block)?;
         let t = backend.onehot_commit_rows::<D>(
             prepared,
             OneHotCommitRowsPlan {
                 n_a: plan.n_a,
-                block_len: plan.block_len,
+                num_positions_per_block: plan.num_positions_per_block,
                 num_digits_commit: plan.num_digits_commit,
                 blocks: blocks.commit_plan_blocks(),
             },

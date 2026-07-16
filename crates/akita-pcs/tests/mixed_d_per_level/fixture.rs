@@ -63,7 +63,7 @@ fn generated_fold_step<Cfg: CommitmentConfig>(
 /// while halving `ring_d`. Ranks are recomputed for the target geometry
 /// instead of reusing the stored compact tuple from either table (the same
 /// role-pricing primitives `GeneratedFoldStep::expand_to_level_params` audits
-/// stored ranks against). `extra_block_vars` is the additional `block_bits` added
+/// stored ranks against). `extra_block_vars` is the additional `block_index_bits` added
 /// when the previous fold executed at a larger ring dimension (typically `1`
 /// on the first suffix level after a `128 → 64` drop, `0` thereafter).
 #[allow(clippy::too_many_arguments)]
@@ -89,27 +89,34 @@ fn expand_envelope_witness_at_ring_d(
     let log_basis = step.log_basis;
     let sis_modulus_profile = policy.sis_modulus_profile;
     let sis_policy = policy.sis_security_policy;
-    let position_bits = block_m_vars.unwrap_or(step.position_bits as usize);
-    let block_bits = block_r_vars
-        .unwrap_or(step.block_bits as usize)
+    let position_index_bits = block_m_vars.unwrap_or(step.position_index_bits as usize);
+    let block_index_bits = block_r_vars
+        .unwrap_or(step.block_index_bits as usize)
         .checked_add(extra_block_vars)
         .ok_or_else(|| AkitaError::InvalidSetup("mixed-D block variable count overflow".into()))?;
-    let block_len = 1usize.checked_shl(position_bits as u32).ok_or_else(|| {
-        AkitaError::InvalidSetup("generated schedule 2^position_bits overflows usize".to_string())
-    })?;
-    let source_ring_len_per_claim = if is_root {
-        let capacity = 1usize.checked_shl(block_bits as u32).ok_or_else(|| {
+    let num_positions_per_block =
+        1usize
+            .checked_shl(position_index_bits as u32)
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup(
+                    "generated schedule 2^position_index_bits overflows usize".to_string(),
+                )
+            })?;
+    let num_live_ring_elements_per_claim = if is_root {
+        let capacity = 1usize.checked_shl(block_index_bits as u32).ok_or_else(|| {
             AkitaError::InvalidSetup(
-                "generated schedule block capacity overflows usize".to_string(),
+                "generated schedule block-index domain size overflows usize".to_string(),
             )
         })?;
-        block_len.checked_mul(capacity).ok_or_else(|| {
-            AkitaError::InvalidSetup("mixed-D root source length overflow".to_string())
-        })?
+        num_positions_per_block
+            .checked_mul(capacity)
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup("mixed-D root source length overflow".to_string())
+            })?
     } else {
         envelope_current_w_len / target_ring_d
     };
-    let num_blocks = source_ring_len_per_claim.div_ceil(block_len);
+    let num_live_blocks = num_live_ring_elements_per_claim.div_ceil(num_positions_per_block);
     let no_layout = |role: &str| {
         AkitaError::InvalidSetup(format!(
             "no audited {role}-role layout for mixed-D schedule \
@@ -123,7 +130,7 @@ fn expand_envelope_witness_at_ring_d(
     let ring_challenge_cfg = ring_challenge_config(target_ring_d)?;
     let num_digits_commit = num_digits_s_commit(decomp, is_root);
     let num_digits_open_val = num_digits_open(decomp);
-    let inner_width = decomposed_s_block_ring_count(block_len, num_digits_commit)
+    let inner_width = decomposed_s_block_ring_count(num_positions_per_block, num_digits_commit)
         .ok_or_else(|| no_layout("A"))?;
     let a_bucket = rounded_up_role_a_inf_norm(
         sis_policy,
@@ -135,7 +142,7 @@ fn expand_envelope_witness_at_ring_d(
         is_root,
         policy.onehot_chunk_size,
         policy.ring_subfield_norm_bound,
-        block_bits,
+        num_live_blocks,
         num_claims,
         inner_width as u64,
     )
@@ -160,8 +167,9 @@ fn expand_envelope_witness_at_ring_d(
         log_basis,
     )
     .ok_or_else(|| no_layout("B"))?;
-    let outer_width = decomposed_t_ring_count(n_a, num_digits_open_val, num_blocks, num_claims)
-        .ok_or_else(|| no_layout("B"))?;
+    let outer_width =
+        decomposed_t_ring_count(n_a, num_digits_open_val, num_live_blocks, num_claims)
+            .ok_or_else(|| no_layout("B"))?;
     let d_bucket = rounded_up_collision_inf_norm(
         sis_policy,
         sis_modulus_profile,
@@ -170,7 +178,7 @@ fn expand_envelope_witness_at_ring_d(
         log_basis,
     )
     .ok_or_else(|| no_layout("D"))?;
-    let d_matrix_width = decomposed_w_ring_count(num_digits_open_val, num_blocks, num_claims)
+    let d_matrix_width = decomposed_w_ring_count(num_digits_open_val, num_live_blocks, num_claims)
         .ok_or_else(|| no_layout("D"))?;
     let n_b = min_secure_rank(
         SisTableKey {
@@ -234,10 +242,10 @@ fn expand_envelope_witness_at_ring_d(
             d_bucket,
             target_ring_d,
         )?,
-        source_ring_len_per_claim,
-        num_blocks,
-        block_len,
-        chunk_granule: 1,
+        num_live_ring_elements_per_claim,
+        num_live_blocks,
+        num_positions_per_block,
+        num_blocks_per_chunk_granule: 1,
         fold_challenge_config: ring_challenge_cfg,
         fold_challenge_shape: fold_shape,
         num_digits_commit,
@@ -440,8 +448,8 @@ where
                     level,
                     w_len,
                     suffix_ring_d,
-                    prev.params.position_bits(),
-                    prev.params.block_bits(),
+                    prev.params.position_index_bits(),
+                    prev.params.block_index_bits(),
                 )?
             };
             let is_terminal_fold = level + 1 == num_fold_levels;

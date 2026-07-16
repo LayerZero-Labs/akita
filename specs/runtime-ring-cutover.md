@@ -539,7 +539,7 @@ representation. Do not try.**
 
 The cutover:
 
-- A polynomial is flat field coefficients plus arity metadata. `nuposition_bits` is
+- A polynomial is flat field coefficients plus arity metadata. `num_vars` is
   already stored on the poly independent of `D` (that is what the
   `RootPolyMeta<F>` / `RootPolyShape<F, D>` split established). Make the
   storage types D-free: `DensePoly<F>`, `OneHotPoly<F, I>`,

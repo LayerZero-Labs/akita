@@ -23,7 +23,7 @@ fn run_single_onehot_tensor(nv: usize) {
             &akita_types::OpeningClaimsLayout::new(nv, 1).expect("singleton opening batch"),
         )
         .expect("layout");
-        let total_ring = layout.num_blocks * layout.block_len;
+        let total_ring = layout.num_live_blocks * layout.num_positions_per_block;
         assert_eq!(total_ring * TENSOR_K, 1usize << nv);
         assert_eq!(
             layout.fold_challenge_shape,
@@ -97,7 +97,7 @@ fn run_single_dense_tensor(nv: usize) {
             &akita_types::OpeningClaimsLayout::new(nv, 1).expect("singleton opening batch"),
         )
         .expect("layout");
-        let total_ring = layout.num_blocks * layout.block_len;
+        let total_ring = layout.num_live_blocks * layout.num_positions_per_block;
         assert_eq!(total_ring * TENSOR_D, 1usize << nv);
         assert_eq!(
             layout.fold_challenge_shape,

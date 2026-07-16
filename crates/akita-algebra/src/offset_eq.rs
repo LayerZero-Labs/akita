@@ -598,9 +598,9 @@ pub fn eval_compact_pair_eq<F: FieldCore>(
     let mut block_base = 0usize;
     let mut work = 0usize;
     let mut acc = F::zero();
-    for block_bits in (0..=highest_bit).rev() {
-        let block_len = 1usize << block_bits;
-        if live_len & block_len == 0 {
+    for block_index_bits in (0..=highest_bit).rev() {
+        let block_size = 1usize << block_index_bits;
+        if live_len & block_size == 0 {
             continue;
         }
         acc += eval_compact_pair_pow2_block(
@@ -611,10 +611,10 @@ pub fn eval_compact_pair_eq<F: FieldCore>(
             right_offset,
             right_stride,
             block_base,
-            block_bits,
+            block_index_bits,
             &mut work,
         )?;
-        block_base = block_base.checked_add(block_len).ok_or_else(|| {
+        block_base = block_base.checked_add(block_size).ok_or_else(|| {
             AkitaError::InvalidInput("compact-pair block coverage overflow".into())
         })?;
     }
@@ -630,10 +630,10 @@ fn eval_compact_pair_pow2_block<F: FieldCore>(
     right_offset: usize,
     right_stride: usize,
     block_base: usize,
-    block_bits: usize,
+    block_index_bits: usize,
     work: &mut usize,
 ) -> Result<F, AkitaError> {
-    if block_bits > left_challenges.len() || block_bits > right_challenges.len() {
+    if block_index_bits > left_challenges.len() || block_index_bits > right_challenges.len() {
         return Err(AkitaError::InvalidInput(
             "compact-pair block exceeds equality arity".into(),
         ));
@@ -647,7 +647,7 @@ fn eval_compact_pair_pow2_block<F: FieldCore>(
         .and_then(|delta| right_offset.checked_add(delta))
         .ok_or_else(|| AkitaError::InvalidInput("compact-pair right address overflow".into()))?;
     let mut states = BTreeMap::from([((left_carry, right_carry), F::one())]);
-    for bit in 0..block_bits {
+    for bit in 0..block_index_bits {
         *work = work
             .checked_add(states.len().checked_mul(2).ok_or_else(|| {
                 AkitaError::InvalidInput("compact-pair recurrence work overflow".into())
@@ -700,8 +700,8 @@ fn eval_compact_pair_pow2_block<F: FieldCore>(
         .into_iter()
         .map(|((left_high, right_high), state_weight)| {
             state_weight
-                * eq_eval_at_index(&left_challenges[block_bits..], left_high)
-                * eq_eval_at_index(&right_challenges[block_bits..], right_high)
+                * eq_eval_at_index(&left_challenges[block_index_bits..], left_high)
+                * eq_eval_at_index(&right_challenges[block_index_bits..], right_high)
         })
         .sum())
 }

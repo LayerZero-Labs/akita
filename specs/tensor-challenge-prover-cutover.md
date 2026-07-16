@@ -409,9 +409,9 @@ For the current symmetric factor family:
 ```text
 s2_L = s2_R = challenge_l2_sq_max
 k_L  = k_R  = challenge_nonzero_count_max
-P    = 2^floor(block_bits / 2)
-Q    = 2^ceil(block_bits / 2)
-B    = n * 2^block_bits
+P    = 2^floor(block_index_bits / 2)
+Q    = 2^ceil(block_index_bits / 2)
+B    = n * num_live_blocks
 
 lambda_inner =
   ln(4 * N * n * min(P, Q) * k_L / (1 - p_grind))
@@ -435,7 +435,7 @@ threshold constants than D64. Their ratio against the tensor worst-case beta
 ratio is smaller, but the absolute `t_tensor` for the same `(B, N, s_inf)` is
 lower.
 
-For a concrete balanced-root comparison with `N = 2^16`, `n = 1`, `block_bits = 16`,
+For a concrete balanced-root comparison with `N = 2^16`, `n = 1`, `block_index_bits = 16`,
 `p_grind = 1/8`, and `s_inf = 1`:
 
 | ring dimension | `t_tensor` | tensor beta `B * omega^2` | ratio |

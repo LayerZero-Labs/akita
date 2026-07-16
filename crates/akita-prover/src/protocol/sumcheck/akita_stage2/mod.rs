@@ -82,7 +82,7 @@ use std::mem;
 use std::time::Instant;
 
 enum WTable<E: FieldCore> {
-    Compact(Vec<i8>),
+    Compact(std::sync::Arc<[i8]>),
     Full(Vec<E>),
 }
 

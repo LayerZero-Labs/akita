@@ -78,8 +78,8 @@ Per-level `op_norm_rejection` on `LevelParams` is ring-dimension-agnostic
 infrastructure: the planner may enable it only when Γ collision pricing
 strictly lowers audited A-rank vs ω pricing **and** the fold-level witness
 scoring cost (`(1 + n_a)·δ_open·2^r + δ_commit·δ_fold·m_eff`, same as
-`optimal_m_r_split`) is strictly lower with rejection on at that geometry **and**
-the fold draw samples at most `2^12` sparse challenges (flat `2^{block_bits} · num_claims`,
+`optimal_block_geometry_split`) is strictly lower with rejection on at that geometry **and**
+the fold draw samples at most `2^12` sparse challenges (flat `2^{block_index_bits} · num_claims`,
 or tensor `num_claims · (left_len + right_len)`).
 **Production scope today is D=64 only.** The only shipped binding preset is
 `signed-sparse { count_mag1: 31, count_mag2: 11 }` with `T = 18` at ring degree 64.
@@ -360,7 +360,7 @@ AKITA_ALLOW_DEBUG_PROFILE=1 AKITA_PROFILE_TRACE=0 \
 
 - Certified object: `DecomposeFoldWitness.centered_coeffs` for
   `z = sum_i c_i * s_i`.
-- Fold width: `B = num_claims * num_blocks` (typically `num_claims = 1` at
+- Fold width: `B = num_claims * num_live_blocks` (typically `num_claims = 1` at
   root).
 - Per-coordinate RMS: `z_rms = ||z||_2 / sqrt(coeffs)`.
 - Current production D=64 signed sparse is `(31, 11)`, so
@@ -637,7 +637,7 @@ No realized `‖z‖_2` certificate in production yet. The planner bounds
 
 ```text
 β_inf = fold_witness_beta(...)
-      = num_claims · 2^block_bits ·
+      = num_claims · 2^block_index_bits ·
         min(||c||_inf · ‖s‖_1, ‖c‖_1 · ‖s‖_inf),
 
 ‖z‖_inf  ≤  β_inf,
@@ -1131,10 +1131,10 @@ per-coordinate bound `balanced_digit_max(lb, K) = (b/2)·(b^K − 1)/(b − 1)`
 ```text
 balanced_digit_max(lb, K) >= β_inf
       = fold_witness_beta(...)
-      = num_claims · 2^block_bits · min(‖c‖_inf · ‖s‖_1, ‖c‖_1 · ‖s‖_inf)
+      = num_claims · 2^block_index_bits · min(‖c‖_inf · ‖s‖_1, ‖c‖_1 · ‖s‖_inf)
 ```
 
-i.e. `β_inf = T_p · ω · σ_inf` in the worst case (`T_p = num_claims · 2^block_bits`,
+i.e. `β_inf = T_p · ω · σ_inf` in the worst case (`T_p = num_claims · 2^block_index_bits`,
 `ω = ‖c‖_1`, `σ_inf = ‖s‖_inf`). This worst case assumes all `T_p · ω`
 challenge-coefficient products align in sign at one output coordinate, which the
 honest fold never attains. The prover already aborts when the realized

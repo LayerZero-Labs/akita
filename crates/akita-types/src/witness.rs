@@ -17,7 +17,7 @@ pub struct WitnessUnitLayout {
     group_index: usize,
     chunk_index: usize,
     global_block_start: usize,
-    live_block_count: usize,
+    num_live_blocks: usize,
     z_range: Range<usize>,
     e_range: Range<usize>,
     t_range: Range<usize>,
@@ -36,7 +36,7 @@ impl WitnessUnitLayout {
         group_index: usize,
         chunk_index: usize,
         global_block_start: usize,
-        live_block_count: usize,
+        num_live_blocks: usize,
         z_range: Range<usize>,
         e_range: Range<usize>,
         t_range: Range<usize>,
@@ -45,7 +45,7 @@ impl WitnessUnitLayout {
             group_index,
             chunk_index,
             global_block_start,
-            live_block_count,
+            num_live_blocks,
             z_range,
             e_range,
             t_range,
@@ -64,12 +64,12 @@ impl WitnessUnitLayout {
         self.global_block_start
     }
 
-    pub fn live_block_count(&self) -> usize {
-        self.live_block_count
+    pub fn num_live_blocks(&self) -> usize {
+        self.num_live_blocks
     }
 
     pub fn global_block_range(&self) -> Range<usize> {
-        self.global_block_start..self.global_block_start + self.live_block_count
+        self.global_block_start..self.global_block_start + self.num_live_blocks
     }
 
     pub fn z_range(&self) -> Range<usize> {
@@ -129,8 +129,8 @@ impl WitnessLayout {
             let depth_fold =
                 lp.num_digits_fold_for_params(params, num_claims, lp.field_bits_for_cache())?;
             if num_claims == 0
-                || params.num_blocks() == 0
-                || params.block_len() == 0
+                || params.num_live_blocks() == 0
+                || params.num_positions_per_block() == 0
                 || depth_open == 0
                 || depth_commit == 0
                 || depth_fold == 0
@@ -142,22 +142,22 @@ impl WitnessLayout {
             }
             let chunk_block_ranges = Self::resolve_chunk_block_ranges(params, num_chunks)?;
             let z_len = checked_mul3(
-                params.block_len(),
+                params.num_positions_per_block(),
                 depth_commit,
                 depth_fold,
                 "witness Z width overflow",
             )?;
             for (chunk_index, global_block_range) in chunk_block_ranges.into_iter().enumerate() {
                 let global_block_start = global_block_range.start;
-                let chunk_live_block_count = global_block_range.len();
+                let chunk_num_live_blocks = global_block_range.len();
                 let e_len = checked_mul3(
                     num_claims,
-                    chunk_live_block_count,
+                    chunk_num_live_blocks,
                     depth_open,
                     "witness E width overflow",
                 )?;
                 let t_len = num_claims
-                    .checked_mul(chunk_live_block_count)
+                    .checked_mul(chunk_num_live_blocks)
                     .and_then(|n| n.checked_mul(params.a_rows_len()))
                     .and_then(|n| n.checked_mul(depth_open))
                     .ok_or_else(|| AkitaError::InvalidSetup("witness T width overflow".into()))?;
@@ -169,7 +169,7 @@ impl WitnessLayout {
                     group_index,
                     chunk_index,
                     global_block_start,
-                    live_block_count: chunk_live_block_count,
+                    num_live_blocks: chunk_num_live_blocks,
                     z_range,
                     e_range,
                     t_range,
@@ -188,29 +188,29 @@ impl WitnessLayout {
         params: &(impl crate::LevelParamsLike + ?Sized),
         num_chunks: usize,
     ) -> Result<Vec<Range<usize>>, AkitaError> {
-        let num_blocks = params.num_blocks();
-        let chunk_granule = params.chunk_granule();
+        let num_live_blocks = params.num_live_blocks();
+        let num_blocks_per_chunk_granule = params.num_blocks_per_chunk_granule();
         if num_chunks == 0
             || num_chunks > MAX_WITNESS_CHUNKS
-            || num_blocks == 0
-            || chunk_granule == 0
-            || !chunk_granule.is_power_of_two()
+            || num_live_blocks == 0
+            || num_blocks_per_chunk_granule == 0
+            || !num_blocks_per_chunk_granule.is_power_of_two()
         {
             return Err(AkitaError::InvalidSetup(
                 "witness chunk geometry is malformed".into(),
             ));
         }
         if num_chunks
-            .checked_mul(chunk_granule)
-            .is_none_or(|minimum| minimum > num_blocks)
+            .checked_mul(num_blocks_per_chunk_granule)
+            .is_none_or(|minimum| minimum > num_live_blocks)
         {
             return Err(AkitaError::InvalidSetup(
                 "witness chunks exceed the live block granules".into(),
             ));
         }
 
-        let full_granules = num_blocks / chunk_granule;
-        let residual = num_blocks % chunk_granule;
+        let full_granules = num_live_blocks / num_blocks_per_chunk_granule;
+        let residual = num_live_blocks % num_blocks_per_chunk_granule;
         let base_granules = full_granules / num_chunks;
         let extra_granules = full_granules % num_chunks;
         let mut ranges = Vec::with_capacity(num_chunks);
@@ -218,7 +218,7 @@ impl WitnessLayout {
         for chunk_index in 0..num_chunks {
             let owned_granules = base_granules + usize::from(chunk_index < extra_granules);
             let mut count = owned_granules
-                .checked_mul(chunk_granule)
+                .checked_mul(num_blocks_per_chunk_granule)
                 .ok_or_else(|| AkitaError::InvalidSetup("witness chunk width overflow".into()))?;
             if chunk_index + 1 == num_chunks {
                 count = count.checked_add(residual).ok_or_else(|| {
@@ -229,7 +229,7 @@ impl WitnessLayout {
             start = range.end;
             ranges.push(range);
         }
-        if start != num_blocks {
+        if start != num_live_blocks {
             return Err(AkitaError::InvalidSetup(
                 "witness chunks do not cover the live blocks".into(),
             ));
@@ -271,7 +271,7 @@ impl WitnessLayout {
             .count()
     }
 
-    pub fn group_live_block_count(&self, group_index: usize) -> Result<usize, AkitaError> {
+    pub fn group_num_live_blocks(&self, group_index: usize) -> Result<usize, AkitaError> {
         let mut total = 0usize;
         let mut found = false;
         for unit in self
@@ -281,7 +281,7 @@ impl WitnessLayout {
         {
             found = true;
             total = total
-                .checked_add(unit.live_block_count)
+                .checked_add(unit.num_live_blocks)
                 .ok_or_else(|| AkitaError::InvalidSetup("witness fold coverage overflow".into()))?;
         }
         if !found {
@@ -340,7 +340,7 @@ impl WitnessLayout {
         self.validate_unit_membership(unit)?;
         let expected_len = checked_mul3(
             num_claims,
-            unit.live_block_count,
+            unit.num_live_blocks,
             depth_open,
             "witness E shape overflow",
         )?;
@@ -356,7 +356,7 @@ impl WitnessLayout {
             ));
         }
         let block_claim = unit
-            .live_block_count
+            .num_live_blocks
             .checked_mul(claim)
             .and_then(|base| base.checked_add(local_block))
             .ok_or_else(|| AkitaError::InvalidSetup("witness E index overflow".into()))?;
@@ -381,7 +381,7 @@ impl WitnessLayout {
     ) -> Result<usize, AkitaError> {
         self.validate_unit_membership(unit)?;
         let expected_len = num_claims
-            .checked_mul(unit.live_block_count)
+            .checked_mul(unit.num_live_blocks)
             .and_then(|len| len.checked_mul(n_a))
             .and_then(|len| len.checked_mul(depth_open))
             .ok_or_else(|| AkitaError::InvalidSetup("witness T shape overflow".into()))?;
@@ -397,7 +397,7 @@ impl WitnessLayout {
             ));
         }
         let block_claim = unit
-            .live_block_count
+            .num_live_blocks
             .checked_mul(claim)
             .and_then(|base| base.checked_add(local_block))
             .ok_or_else(|| AkitaError::InvalidSetup("witness T index overflow".into()))?;
@@ -416,7 +416,7 @@ impl WitnessLayout {
     pub fn z_index(
         &self,
         unit: &WitnessUnitLayout,
-        block_len: usize,
+        num_positions_per_block: usize,
         depth_commit: usize,
         depth_fold: usize,
         position: usize,
@@ -425,7 +425,7 @@ impl WitnessLayout {
     ) -> Result<usize, AkitaError> {
         self.validate_unit_membership(unit)?;
         let expected_len = checked_mul3(
-            block_len,
+            num_positions_per_block,
             depth_commit,
             depth_fold,
             "witness Z shape overflow",
@@ -435,7 +435,10 @@ impl WitnessLayout {
                 "witness Z shape disagrees with resolved range".into(),
             ));
         }
-        if position >= block_len || commit_digit >= depth_commit || fold_digit >= depth_fold {
+        if position >= num_positions_per_block
+            || commit_digit >= depth_commit
+            || fold_digit >= depth_fold
+        {
             return Err(AkitaError::InvalidInput(
                 "witness Z semantic index out of range".into(),
             ));
@@ -515,7 +518,7 @@ fn checked_owned_block(unit: &WitnessUnitLayout, global_block: usize) -> Result<
     let local = global_block
         .checked_sub(unit.global_block_start)
         .ok_or_else(|| AkitaError::InvalidInput("witness fold is not owned by unit".into()))?;
-    if local >= unit.live_block_count {
+    if local >= unit.num_live_blocks {
         return Err(AkitaError::InvalidInput(
             "witness fold is not owned by unit".into(),
         ));
@@ -770,7 +773,7 @@ mod tests {
         )
         .with_decomp(4, 25, 2, 2)
         .expect("test params");
-        lp.chunk_granule = 2;
+        lp.num_blocks_per_chunk_granule = 2;
         let opening_batch = OpeningClaimsLayout::new(0, 2).expect("opening batch");
         let layout =
             WitnessLayout::new(&lp, &opening_batch, num_chunks, 3, 2).expect("witness layout");
@@ -813,7 +816,7 @@ mod tests {
         assert_eq!(units[1].global_block_range(), 4..7);
         assert_eq!(units[0].t_range().end, units[1].z_range().start);
         assert_eq!(units[1].t_range().end, layout.r_range().start);
-        assert_eq!(layout.group_live_block_count(0).expect("fold count"), 7);
+        assert_eq!(layout.group_num_live_blocks(0).expect("fold count"), 7);
     }
 
     #[test]

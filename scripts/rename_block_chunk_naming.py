@@ -18,11 +18,11 @@ EXTENSIONS = {".rs", ".md", ".py", ".toml"}
 
 # Order matters: longer / more specific first.
 REPLACEMENTS: list[tuple[str, str]] = [
-    ("live_folds_per_claim", "live_blocks_per_claim"),
+    ("live_folds_per_claim", "num_live_blocks_per_claim"),
     ("resolve_shard_fold_ranges", "resolve_chunk_block_ranges"),
     ("num_shards_for_group", "num_chunks_for_group"),
-    ("group_live_fold_count", "group_live_block_count"),
-    ("optimize_shard_granule", "optimize_chunk_granule"),
+    ("group_live_fold_count", "group_num_live_blocks"),
+    ("optimize_shard_granule", "optimize_num_blocks_per_chunk_granule"),
     ("shard_geometry_cost", "chunk_geometry_cost"),
     ("validate_fold_geometry", "validate_block_geometry"),
     ("global_fold_start", "global_block_start"),
@@ -31,23 +31,23 @@ REPLACEMENTS: list[tuple[str, str]] = [
     ("checked_owned_fold", "checked_owned_block"),
     ("fold_rings_at_opening", "block_rings_at_opening"),
     ("shard_fold_ranges", "chunk_block_ranges"),
-    ("shard_live_fold_count", "chunk_live_block_count"),
-    ("fold_position_count", "block_len"),
+    ("shard_live_fold_count", "chunk_num_live_blocks"),
+    ("fold_position_count", "num_positions_per_block"),
     ("FOLD_EMBED_ERROR", "BLOCK_EMBED_ERROR"),
     ("shard_chunks_override", "chunk_count_override"),
     ("root_num_shards", "root_num_chunks"),
-    ("shard_granule", "chunk_granule"),
+    ("shard_granule", "num_blocks_per_chunk_granule"),
     ("shard_index", "chunk_index"),
     # Opening geometry only (not fold_high/fold_low).
-    ("fold_weights", "block_weights"),
-    ("fold_capacity", "block_capacity"),
-    ("fold_bits", "block_bits"),
+    ("fold_weights", "live_block_weights"),
+    ("fold_capacity", "block_index_domain_size"),
+    ("fold_bits", "block_index_bits"),
     ("global_fold", "global_block"),
     ("local_fold", "local_block"),
     ("fold_claim", "block_claim"),
-    ("min_r_vars", "min_block_bits"),
-    ("max_r_vars", "max_block_bits"),
-    ("live_fold_count", "num_blocks"),
+    ("min_r_vars", "min_block_index_bits"),
+    ("max_r_vars", "max_block_index_bits"),
+    ("live_fold_count", "num_live_blocks"),
 ]
 
 # Prose / comment patterns in md
@@ -81,8 +81,8 @@ PROSE_REPLACEMENTS: list[tuple[str, str]] = [
     ("fold capacity", "block capacity"),
     ("eq(r_fold", "eq(r_block"),
     ("r_fold", "r_block"),
-    ("m_vars", "position_bits"),
-    ("r_vars", "block_bits"),
+    ("m_vars", "position_index_bits"),
+    ("r_vars", "block_index_bits"),
 ]
 
 

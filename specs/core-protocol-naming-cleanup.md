@@ -283,7 +283,7 @@ This is the right shape because it names the second axis that the loose `claim_t
 
 Why a sibling type and not an extension of `ClaimIncidenceSummary`: the summary's model is one-commitment-per-point, enforced by its `validate()` (`incidence.rs:110-166`), and it is a verifier-reachable no-panic type. Folding a decoupled commitment axis into it would either weaken those invariants or require a second validation mode on the same type. Keeping `CommitmentRouting` separate preserves the summary's invariants and states the commitment axis as its own checked object.
 
-`CommitmentRouting` carries no new transcript bytes: the absorbed incidence shape stays exactly `append_claim_incidence_shape_to_transcript` (`incidence.rs:430`), which binds only `nuposition_bits` / `num_points` / `num_claims` / `num_polys_per_point` / `claim_to_point` / `claim_poly_indices`. `CommitmentRouting` is in-memory routing only, so adding it changes no Fiat-Shamir output.
+`CommitmentRouting` carries no new transcript bytes: the absorbed incidence shape stays exactly `append_claim_incidence_shape_to_transcript` (`incidence.rs:430`), which binds only `num_vars` / `num_points` / `num_claims` / `num_polys_per_point` / `claim_to_point` / `claim_poly_indices`. `CommitmentRouting` is in-memory routing only, so adding it changes no Fiat-Shamir output.
 `CommitmentRouting` must validate at construction (lengths equal `num_claims`, `claim_to_group[i] < num_polys_per_group.len()`, `claim_poly_in_group[i] < num_polys_per_group[claim_to_group[i]]`) to keep the verifier no-panic boundary; this mirrors the bounds `compute_relation_matrix_col_evals` checks today at `evals.rs:96-111`.
 
 **Verifier adoption (the payoff).**

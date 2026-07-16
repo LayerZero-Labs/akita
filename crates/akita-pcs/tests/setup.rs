@@ -189,7 +189,7 @@ where
     } else {
         D
     };
-    let total_ring = layout.num_blocks * layout.block_len;
+    let total_ring = layout.num_live_blocks * layout.num_positions_per_block;
     assert_eq!(
         total_ring * D,
         1usize << poly_nv,
@@ -332,9 +332,9 @@ fn run_dense_batched_e2e<Cfg, const D: usize>(
 
 /// Batched onehot round-trip.
 ///
-/// Important: onehot polys bake their `(block_bits, position_bits)` block split in at
+/// Important: onehot polys bake their `(block_index_bits, position_index_bits)` block split in at
 /// construction time, unlike dense polys which rebuild blocks from the
-/// prover-supplied `block_len`. Under batched commits that split must match
+/// prover-supplied `num_positions_per_block`. Under batched commits that split must match
 /// the layout the prover will use, which is
 /// `test_support::akita_batched_root_layout(nv, setup_polys)` — i.e., sized
 /// for the setup's `max_num_batched_polys`, not for a lone poly.
@@ -358,7 +358,7 @@ fn run_onehot_batched_e2e<Cfg, const D: usize>(
     } else {
         D
     };
-    let total_ring = layout.num_blocks * layout.block_len;
+    let total_ring = layout.num_live_blocks * layout.num_positions_per_block;
     assert_eq!(total_ring * D, 1usize << poly_nv);
     let total_chunks = total_ring * D / k;
 

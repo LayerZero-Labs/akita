@@ -70,14 +70,14 @@ Primary types live in two crates:
 | `OpeningClaims` | point, evaluations, commitments, routing |
 | `PolynomialGroupClaims` | per-group public claims |
 | `OpeningClaimsLayout` | batch structure without field values |
-| `PolynomialGroupLayout` | per-group `(nuposition_bits, num_polynomials)` layout; also the schedule lookup group key |
+| `PolynomialGroupLayout` | per-group `(num_vars, num_polynomials)` layout; also the schedule lookup group key |
 
 Schedule types in `crates/akita-types/src/schedule.rs` are renamed and unified:
 
 | Type | Role |
 |------|------|
 | `PolynomialGroupLayout` | per-group opening/schedule dimensions (shared with opening layout) |
-| `PrecommittedGroupParams` | frozen standalone precommit metadata (`position_bits`, `block_bits`, basis, row counts) |
+| `PrecommittedGroupParams` | frozen standalone precommit metadata (`position_index_bits`, `block_index_bits`, basis, row counts) |
 | `AkitaScheduleLookupKey` | multi-group-root schedule lookup key |
 
 Wire as `pub mod opening_claims` from `lib.rs`; re-export the public types at the
@@ -107,7 +107,7 @@ pub struct OpeningClaimsLayout {
 /// Also used as the schedule lookup group key (replaces `CommitmentGroupScheduleKey`).
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct PolynomialGroupLayout {
-    nuposition_bits: usize,
+    num_vars: usize,
     num_polynomials: usize,
 }
 
@@ -115,8 +115,8 @@ pub struct PolynomialGroupLayout {
 /// Frozen metadata from a standalone precommit (params, not layout).
 pub struct PrecommittedGroupParams {
     pub group: PolynomialGroupLayout,
-    pub position_bits: usize,
-    pub block_bits: usize,
+    pub position_index_bits: usize,
+    pub block_index_bits: usize,
     pub log_basis: u32,
     pub n_a: usize,
     pub conservative_n_b: usize,
@@ -145,7 +145,7 @@ constructors and read through accessor methods only.
 | `ProverCommitmentGroup` | accessors on `ProverOpeningData` |
 | `OpeningBatchShape` | **`OpeningClaimsLayout`** (layout) + claims accessors (data) |
 | `OpeningGroupShape` | **`PolynomialGroupLayout`** |
-| `OpeningBatchLimits` | removed — `OpeningClaims::validate(&AkitaSetupSeed)` reads `max_nuposition_bits` / `max_num_batched_polys` directly |
+| `OpeningBatchLimits` | removed — `OpeningClaims::validate(&AkitaSetupSeed)` reads `max_num_vars` / `max_num_batched_polys` directly |
 | `CommitmentGroupScheduleKey` | **`PolynomialGroupLayout`** |
 | schedule `CommitmentGroupLayout` | **`PrecommittedGroupParams`** |
 | `GeneratedCommitmentGroupScheduleKey` | **`PolynomialGroupLayout`** (in static tables) |
@@ -265,7 +265,7 @@ group). `PolynomialGroupClaims::num_evaluations()` remains for one group.
 | Type | Has | Used by |
 |------|-----|---------|
 | **`OpeningClaims`** | point, evaluations, commitments, `point_vars` | `batched_prove`, `batched_verify`, transcript absorption of **values**, fold/root replay |
-| **`OpeningClaimsLayout`** | per-group `nuposition_bits`, `num_polynomials` only | setup sizing, schedule lookup, planner, commit-param preview, layout tests |
+| **`OpeningClaimsLayout`** | per-group `num_vars`, `num_polynomials` only | setup sizing, schedule lookup, planner, commit-param preview, layout tests |
 
 **Prove/verify are not changed to accommodate setup.** PCS entry points keep
 `OpeningClaims` / `ProverOpeningData`. Setup and planner APIs take
@@ -295,19 +295,19 @@ call sites construct `OpeningClaimsLayout` directly.
 
 **Decision:** Rename and narrow the old shape type to **`OpeningClaimsLayout`**:
 counts only, no pretense of being prove input. There is **no batch-level
-`nuposition_bits` field** — each group's active variable count lives on
-`PolynomialGroupLayout`, and the batch exposes `max_nuposition_bits()` when a single
+`num_vars` field** — each group's active variable count lives on
+`PolynomialGroupLayout`, and the batch exposes `max_num_vars()` when a single
 scalar is needed.
 
 ```rust
 impl OpeningClaimsLayout {
     /// Single full-point group (production default).
-    pub fn new(nuposition_bits: usize, num_total_polynomials: usize) -> Result<Self, AkitaError>;
+    pub fn new(num_vars: usize, num_total_polynomials: usize) -> Result<Self, AkitaError>;
 
     /// Multi-group structure (planner / multi-group specs).
-    /// Every group receives the same `nuposition_bits` (shared padded point).
+    /// Every group receives the same `num_vars` (shared padded point).
     pub fn from_group_sizes(
-        nuposition_bits: usize,
+        num_vars: usize,
         polynomials_per_group: &[usize],
     ) -> Result<Self, AkitaError>;
 
@@ -320,10 +320,10 @@ impl OpeningClaimsLayout {
     pub fn from_setup_seed(seed: &AkitaSetupSeed) -> Result<Self, AkitaError>;
 
     /// Maximum active point-variable count across groups.
-    pub fn max_nuposition_bits(&self) -> usize {
+    pub fn max_num_vars(&self) -> usize {
         self.groups()
             .iter()
-            .map(PolynomialGroupLayout::nuposition_bits)
+            .map(PolynomialGroupLayout::num_vars)
             .max()
             .unwrap_or(0)
     }
@@ -343,20 +343,20 @@ impl OpeningClaimsLayout {
 
 impl PolynomialGroupLayout {
     /// Usable in `const` generated schedule tables.
-    pub const fn new(nuposition_bits: usize, num_polynomials: usize) -> Self;
+    pub const fn new(num_vars: usize, num_polynomials: usize) -> Self;
 
     /// Runtime validation (non-const callers).
     pub fn validate(self) -> Result<(), AkitaError>;
 
-    pub const fn nuposition_bits(self) -> usize;
+    pub const fn num_vars(self) -> usize;
     pub const fn num_polynomials(self) -> usize;
 
-    /// Scalar default: one polynomial at `nuposition_bits`.
-    pub const fn singleton(nuposition_bits: usize) -> Self;
+    /// Scalar default: one polynomial at `num_vars`.
+    pub const fn singleton(num_vars: usize) -> Self;
 }
 ```
 
-Default per-group geometry: `PolynomialGroupLayout::new(nuposition_bits, k)`.
+Default per-group geometry: `PolynomialGroupLayout::new(num_vars, k)`.
 Custom per-group counts: `OpeningClaimsLayout::from_groups(vec![PolynomialGroupLayout::new(...), ...])`.
 
 **Replacement map (layout consumers):**
@@ -365,7 +365,7 @@ Custom per-group counts: `OpeningClaimsLayout::from_groups(vec![PolynomialGroupL
 |-------------------------------|-------|
 | `OpeningBatchShape::new(nv, k)` | `OpeningClaimsLayout::new(nv, k)?` |
 | `from_commitment_groups(nv, sizes)` | `OpeningClaimsLayout::from_group_sizes(nv, sizes)?` |
-| `shape.nuposition_bits()` | `layout.max_nuposition_bits()` |
+| `shape.num_vars()` | `layout.max_num_vars()` |
 | `Cfg::get_params_for_prove(&shape)` | `Cfg::get_params_for_prove(&layout)` |
 | `Cfg::get_params_for_batched_commitment(&shape)` | `Cfg::get_params_for_batched_commitment(&layout)` |
 | `CommitmentGroupScheduleKey::new_from_opening_batch(&shape)` | `AkitaScheduleLookupKey::from_layout(&layout)?` |
@@ -460,12 +460,12 @@ precommitted groups are valid schedule keys.
 
 ```rust
 AkitaScheduleLookupKey {
-    final_group: PolynomialGroupLayout::new(nuposition_bits, num_polynomials)?,
+    final_group: PolynomialGroupLayout::new(num_vars, num_polynomials)?,
     precommitteds: vec![],
 }
 ```
 
-**Test migration:** `group_batch_key_allows_precommitted_nuposition_bits_above_half_main`
+**Test migration:** `group_batch_key_allows_precommitted_num_vars_above_half_main`
 remains an acceptance test, and coverage includes precommitted groups larger
 than the final group.
 
@@ -494,7 +494,7 @@ pub struct GeneratedGroupBatchScheduleTableEntry {
 | Trait / API | Why |
 |-------------|-----|
 | `Copy + Eq` | Rows are plain data in `static` tables |
-| `const fn new(nuposition_bits, num_polynomials)` on `PolynomialGroupLayout` | Emitted by offline table generation |
+| `const fn new(num_vars, num_polynomials)` on `PolynomialGroupLayout` | Emitted by offline table generation |
 | `Copy` on `PrecommittedGroupParams` | Precommitted rows in multi-group batch tables |
 
 **Deleted:**
@@ -544,7 +544,7 @@ Inventory from the current codebase (~60 references):
 
 | Location | Today | Next |
 |----------|-------|------|
-| `prepare_batched_commit_inputs` | returns `OpeningBatchShape` | returns `OpeningClaimsLayout` from poly count + padded `max_nuposition_bits` |
+| `prepare_batched_commit_inputs` | returns `OpeningBatchShape` | returns `OpeningClaimsLayout` from poly count + padded `max_num_vars` |
 | `batched_commit` param sizing | shape from polys | `OpeningClaimsLayout` from polys |
 
 **E. Tests / benches / examples** — split by intent
@@ -553,9 +553,9 @@ Inventory from the current codebase (~60 references):
 |--------|-------|------|
 | Schedule / commit layout only | `OpeningBatchShape::new(nv, k)` (~35 sites) | `OpeningClaimsLayout::new(nv, k)?` |
 | Full prove/verify e2e | builds batch structs | `OpeningClaims` / `ProverOpeningData` |
-| Descriptor digest routing tests | `OpeningBatchShape::from_groups` with custom `point_vars` | claims-side `PolynomialGroupClaims` with custom `point_vars`; layout uses derived `nuposition_bits` |
+| Descriptor digest routing tests | `OpeningBatchShape::from_groups` with custom `point_vars` | claims-side `PolynomialGroupClaims` with custom `point_vars`; layout uses derived `num_vars` |
 | Catalog / planner unit tests | shape / `CommitmentGroupScheduleKey` | layout / `PolynomialGroupLayout` |
-| Grouped schedule validation | allows precommitted above half main | accepts arbitrary per-group `nuposition_bits` supported by setup/schedule |
+| Grouped schedule validation | allows precommitted above half main | accepts arbitrary per-group `num_vars` supported by setup/schedule |
 
 **F. Instance descriptor** → layout for routing digest, claims for live prove
 
@@ -570,9 +570,9 @@ binds descriptor via `opening_claims.layout()` at entry.
 - **No backward compatibility** — old names and generated mirror structs are deleted outright.
 - **No new wrapper structs** — `PolynomialGroupLayout` is the single per-group key/layout type; do not reintroduce a scalar-only schedule key sibling.
 
-`AkitaSetupSeed` (`max_nuposition_bits`, `max_num_batched_polys`) remains the stored
+`AkitaSetupSeed` (`max_num_vars`, `max_num_batched_polys`) remains the stored
 **capacity envelope**; `OpeningClaimsLayout::from_setup_seed` is the typed view
-for schedule/setup code that today synthesizes `OpeningBatchShape::new(seed.max_nuposition_bits, seed.max_num_batched_polys)`.
+for schedule/setup code that today synthesizes `OpeningBatchShape::new(seed.max_num_vars, seed.max_num_batched_polys)`.
 
 #### 13. Pass whole typed objects into internal protocol functions
 
@@ -603,15 +603,15 @@ Do **not** spread an object into scalar/slice arguments such as
 `f(opening_claims.num_total_polynomials())`; pass `&opening_claims` or `&layout`
 instead. The old monolithic shape type is gone either way.
 
-#### 14. `point_vars` on claims only; layout uses `nuposition_bits`
+#### 14. `point_vars` on claims only; layout uses `num_vars`
 
-**Decision:** `PolynomialGroupLayout` stores **`nuposition_bits: usize`**, not
+**Decision:** `PolynomialGroupLayout` stores **`num_vars: usize`**, not
 `PointVariableSelection`. Layout describes how many shared point coordinates each
 group actively uses (prefix routing in the common case).
 
 `PolynomialGroupClaims` **still carries `point_vars`** for transcript absorption and
 descriptor-digest routing tests that need non-default selections. `opening_claims.layout()`
-derives each group's `nuposition_bits` from its `point_vars` (active coordinate count).
+derives each group's `num_vars` from its `point_vars` (active coordinate count).
 
 There is **no** `group_point_vars` on `OpeningClaimsLayout`.
 
@@ -621,16 +621,16 @@ There is **no** `group_point_vars` on `OpeningClaimsLayout`.
 | --------------------------- | ----------------------------------------------------------------------------------- |
 | Encapsulation | No public fields on any of the five opening-claims types; constructor + accessor API only |
 | Single batch poly count | Only `num_total_polynomials()` at batch level — no `num_claims` / `num_polynomials` |
-| Batch max vars | `layout.max_nuposition_bits()` is the batch-wide padded point length; equals `opening_claims.nuposition_bits()` for valid claims |
+| Batch max vars | `layout.max_num_vars()` is the batch-wide padded point length; equals `opening_claims.num_vars()` for valid claims |
 | Group alignment | `opening_claims.num_groups()`; each group nonempty |
 | Prover alignment | `group_polys(g).len() == group_evaluations(g).len()`; hints 1:1 with groups |
 | No `OpeningBatchShape` | Replaced by `OpeningClaimsLayout` + claims types |
 | No intermediate types | Exactly five opening-claims types; no bridge/summary/limits types (`OpeningBatchLimits` deleted) |
 | Whole-object passing | Helpers take `&OpeningClaims` / `&OpeningClaimsLayout` / `&ProverOpeningData`, not spread fields |
-| Layout/claims consistency | `opening_claims.layout()` matches group sizes and per-group `nuposition_bits` derived from claims routing |
+| Layout/claims consistency | `opening_claims.layout()` matches group sizes and per-group `num_vars` derived from claims routing |
 | Prover/verifier consistency | Same `OpeningClaims` transcript binding |
 | No verifier panic | Constructors and validation return `AkitaError`; no panic on malformed input |
-| Grouped-root sizing | Precommitted `nuposition_bits` are independent of final-group `nuposition_bits`; setup/schedule capacity decides support |
+| Grouped-root sizing | Precommitted `num_vars` are independent of final-group `num_vars`; setup/schedule capacity decides support |
 | Shared schedule key | `PolynomialGroupLayout` is the only per-group schedule lookup key type |
 | Generated table types | Static rows use `PolynomialGroupLayout` / `PrecommittedGroupParams` directly — no generated mirror structs |
 
@@ -658,7 +658,7 @@ There is **no** `group_point_vars` on `OpeningClaimsLayout`.
 - [ ] `ProverOpeningData` in `akita-prover/src/types/` with private fields, `new(...)`, accessors, and `validate::<PolyF>()` (alignment + poly-shape; no limits arg).
 - [ ] Exactly five opening-claims types ship; `OpeningBatchLimits` and all other intermediate/bridge types are removed.
 - [ ] Batch-level count API is `num_total_polynomials()` **only** — no `num_claims()` or `num_polynomials()` on `OpeningClaims`.
-- [ ] `OpeningClaimsLayout` has no batch-level `nuposition_bits`; exposes `max_nuposition_bits()` and `groups()`.
+- [ ] `OpeningClaimsLayout` has no batch-level `num_vars`; exposes `max_num_vars()` and `groups()`.
 - [ ] `PolynomialGroupLayout` replaces `CommitmentGroupScheduleKey`; `PrecommittedGroupParams` replaces schedule `CommitmentGroupLayout`.
 - [ ] `AkitaScheduleLookupKey` uses `PolynomialGroupLayout` / `PrecommittedGroupParams`; grouped validation accepts independent precommitted group sizes.
 - [ ] Generated tables use shared types; `GeneratedCommitmentGroupScheduleKey`, `GeneratedCommitmentGroupLayout`, and `GeneratedScheduleLookupKey` are deleted.
@@ -672,7 +672,7 @@ There is **no** `group_point_vars` on `OpeningClaimsLayout`.
 ### Testing Strategy
 
 - Port unit tests to `OpeningClaims`; assert `num_total_polynomials()` matches group sum.
-- Update schedule tests: precommitted `nuposition_bits` above half of `final_group.nuposition_bits` and larger than the final group are accepted when setup/schedule capacity supports them.
+- Update schedule tests: precommitted `num_vars` above half of `final_group.num_vars` and larger than the final group are accepted when setup/schedule capacity supports them.
 - Grep gate: no `OpeningBatchShape`, `OpeningGroupShape`, `OpeningBatchLimits`, `CommitmentGroupScheduleKey`, schedule `CommitmentGroupLayout`, or generated mirror struct names.
 - Run full workspace `cargo test`.
 
@@ -693,7 +693,7 @@ There is **no** `group_point_vars` on `OpeningClaimsLayout`.
                           │  opening_claims.layout()   (structure only; no field values)
                           ▼
                  OpeningClaimsLayout
-                 └─ groups: [PolynomialGroupLayout { nuposition_bits, num_polynomials }, ...]
+                 └─ groups: [PolynomialGroupLayout { num_vars, num_polynomials }, ...]
                           │
         ┌─────────────────┼───────────────────────────┐
         ▼                 ▼                            ▼
@@ -703,7 +703,7 @@ There is **no** `group_point_vars` on `OpeningClaimsLayout`.
                           ▼
               AkitaScheduleLookupKey
               ├─ final_group: PolynomialGroupLayout
-              └─ precommitteds: [PrecommittedGroupParams { group, position_bits, ... }]
+              └─ precommitteds: [PrecommittedGroupParams { group, position_index_bits, ... }]
                           │
                           ▼
               GeneratedScheduleTableEntry / GeneratedGroupBatchScheduleTableEntry
@@ -747,12 +747,12 @@ impl<'a, F, C> OpeningClaims<'a, F, C> {
     pub fn check(&self) -> Result<(), AkitaError>;
 
     /// Validate internal consistency plus public capacity against the setup
-    /// envelope (`seed.max_nuposition_bits`, `seed.max_num_batched_polys`). Returns
+    /// envelope (`seed.max_num_vars`, `seed.max_num_batched_polys`). Returns
     /// `()`; callers obtain the structural view via `layout()`.
     pub fn validate(&self, seed: &AkitaSetupSeed) -> Result<(), AkitaError>;
 
     pub fn point(&self) -> &[F];
-    pub fn nuposition_bits(&self) -> usize;
+    pub fn num_vars(&self) -> usize;
     pub fn num_groups(&self) -> usize;
     pub fn num_total_polynomials(&self) -> usize;
     pub fn group_sizes(&self) -> Vec<usize>;
@@ -774,7 +774,7 @@ impl<'a, F, C> OpeningClaims<'a, F, C> {
 impl<'a, F: FieldCore> OpeningClaims<'a, F, ()> {
     pub fn with_padded_point(
         point: &[F],
-        nuposition_bits: usize,
+        num_vars: usize,
         num_total_polynomials: usize,
     ) -> Result<Self, AkitaError>;
 }
@@ -784,12 +784,12 @@ impl<'a, F: FieldCore> OpeningClaims<'a, F, ()> {
 
 ```rust
 impl OpeningClaimsLayout {
-    pub fn new(nuposition_bits: usize, num_total_polynomials: usize) -> Result<Self, AkitaError>;
-    pub fn from_group_sizes(nuposition_bits: usize, polynomials_per_group: &[usize]) -> Result<Self, AkitaError>;
+    pub fn new(num_vars: usize, num_total_polynomials: usize) -> Result<Self, AkitaError>;
+    pub fn from_group_sizes(num_vars: usize, polynomials_per_group: &[usize]) -> Result<Self, AkitaError>;
     pub fn from_groups(groups: Vec<PolynomialGroupLayout>) -> Result<Self, AkitaError>;
     pub fn from_setup_seed(seed: &AkitaSetupSeed) -> Result<Self, AkitaError>;
 
-    pub fn max_nuposition_bits(&self) -> usize;
+    pub fn max_num_vars(&self) -> usize;
     pub fn groups(&self) -> &[PolynomialGroupLayout];
     pub fn num_groups(&self) -> usize;
     pub fn num_total_polynomials(&self) -> usize;
@@ -800,11 +800,11 @@ impl OpeningClaimsLayout {
 }
 
 impl PolynomialGroupLayout {
-    pub const fn new(nuposition_bits: usize, num_polynomials: usize) -> Self;
+    pub const fn new(num_vars: usize, num_polynomials: usize) -> Self;
     pub fn validate(self) -> Result<(), AkitaError>;
-    pub const fn nuposition_bits(self) -> usize;
+    pub const fn num_vars(self) -> usize;
     pub const fn num_polynomials(self) -> usize;
-    pub const fn singleton(nuposition_bits: usize) -> Self;
+    pub const fn singleton(num_vars: usize) -> Self;
 }
 ```
 
@@ -867,7 +867,7 @@ impl<'a, PointF, P, CommitF, const D: usize> ProverOpeningData<'a, PointF, P, Co
         PolyF: FieldCore,
         P: RootPolyShape<PolyF, D> + RootOpeningSource<PolyF, D>;
 
-    pub fn nuposition_bits<PolyF>(&self) -> Result<usize, AkitaError>
+    pub fn num_vars<PolyF>(&self) -> Result<usize, AkitaError>
     where P: RootPolyShape<PolyF, D>;
 
     pub fn opening_claims(&self) -> &OpeningClaims<'a, PointF, RingCommitment<CommitF, D>>;

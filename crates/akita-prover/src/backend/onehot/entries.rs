@@ -84,7 +84,7 @@ pub(crate) trait OneHotEntry: Sync {
 ///
 /// Fields are private and accessed via public accessors or the
 /// internal `OneHotEntry` trait. The caller-owned invariants
-/// `pos_in_block < block_len <= u32::MAX` and `coeff_idx < D <= 65536` are pre-validated in
+/// `pos_in_block < num_positions_per_block <= u32::MAX` and `coeff_idx < D <= 65536` are pre-validated in
 /// `FlatBlocks::<SingleChunkEntry>::from_indices`; the
 /// constructor just stores the already-narrowed fields.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -103,7 +103,7 @@ impl SingleChunkEntry {
         }
     }
 
-    /// Position within the block (0..block_len).
+    /// Position within the block (0..num_positions_per_block).
     #[inline]
     pub fn pos_in_block(self) -> usize {
         self.pos_in_block as usize
@@ -175,7 +175,7 @@ impl OneHotEntry for SingleChunkEntry {
 ///
 /// Fields are private and accessed via public accessors or the
 /// internal `OneHotEntry` trait. The caller-owned invariants
-/// `pos_in_block < block_len <= u32::MAX` and every `coeff < D <= 65536` are pre-validated in
+/// `pos_in_block < num_positions_per_block <= u32::MAX` and every `coeff < D <= 65536` are pre-validated in
 /// `FlatBlocks::<MultiChunkEntry>::from_indices`; the
 /// constructor just stores the already-narrowed fields.
 #[derive(Debug, Clone, PartialEq)]
@@ -195,7 +195,7 @@ impl MultiChunkEntry {
         }
     }
 
-    /// Position within the block (0..block_len).
+    /// Position within the block (0..num_positions_per_block).
     #[inline]
     pub fn pos_in_block(&self) -> usize {
         self.pos_in_block as usize

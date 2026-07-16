@@ -4,7 +4,7 @@ use super::*;
 fn verify_passes_for_consistent_opening() {
     let alpha = D.trailing_zeros() as usize;
     let layout = singleton_layout::<Cfg>(16);
-    let num_vars = layout.position_bits() + layout.block_bits() + alpha;
+    let num_vars = layout.position_index_bits() + layout.block_index_bits() + alpha;
 
     let (poly, evals) = make_dense_poly(num_vars);
 
@@ -57,7 +57,7 @@ fn verify_passes_for_consistent_opening() {
 fn verify_rejects_wrong_opening() {
     let alpha = D.trailing_zeros() as usize;
     let layout = singleton_layout::<Cfg>(16);
-    let num_vars = layout.position_bits() + layout.block_bits() + alpha;
+    let num_vars = layout.position_index_bits() + layout.block_index_bits() + alpha;
 
     let (poly, evals) = make_dense_poly(num_vars);
 
@@ -237,7 +237,7 @@ fn folded_root_rejects_unchecked_extension_opening_reduction_payload() {
 fn monomial_basis_prove_verify_round_trip() {
     let alpha = D.trailing_zeros() as usize;
     let layout = singleton_layout::<Cfg>(16);
-    let num_vars = layout.position_bits() + layout.block_bits() + alpha;
+    let num_vars = layout.position_index_bits() + layout.block_index_bits() + alpha;
     let len = 1usize << num_vars;
 
     let coeffs: Vec<F> = (0..len).map(|i| F::from_u64(i as u64)).collect();

@@ -10,6 +10,7 @@ pub(super) const I8_RHS_MAX_ABS: u64 = 128;
 pub(crate) struct CrtI8CapacityProfile {
     pub profile_id: &'static str,
     pub num_primes: usize,
+    pub prime_modulus_bits: u32,
     pub limb_bits: u32,
     pub max_i8_log_basis: u32,
     pub balanced_digit_safe_width: usize,
@@ -172,6 +173,12 @@ where
     Ok(CrtI8CapacityProfile {
         profile_id,
         num_primes: K,
+        prime_modulus_bits: params
+            .primes
+            .iter()
+            .map(|prime| u64::BITS - (prime.p.to_i64() as u64).leading_zeros())
+            .max()
+            .unwrap_or(0),
         limb_bits,
         max_i8_log_basis: MAX_I8_LOG_BASIS,
         balanced_digit_safe_width: require_safe_width::<F, W, K, D>(

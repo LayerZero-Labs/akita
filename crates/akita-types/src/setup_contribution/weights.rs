@@ -9,14 +9,14 @@ pub(crate) fn setup_e_col_weights<E: FieldCore>(
     layout: &WitnessLayout,
     opening_source_len: usize,
     group_id: usize,
-    num_blocks: usize,
+    num_live_blocks: usize,
     num_claims: usize,
     depth_open: usize,
     eq_window: &OffsetEqWindow<E>,
 ) -> Result<Vec<E>, AkitaError> {
     let e_cols = checked_mul3(
         num_claims,
-        num_blocks,
+        num_live_blocks,
         depth_open,
         "setup D columns overflow",
     )?;
@@ -24,8 +24,8 @@ pub(crate) fn setup_e_col_weights<E: FieldCore>(
         .map(|local_col| {
             let digit = local_col % depth_open;
             let block_claim = local_col / depth_open;
-            let block = block_claim % num_blocks;
-            let claim = block_claim / num_blocks;
+            let block = block_claim % num_live_blocks;
+            let claim = block_claim / num_live_blocks;
             let unit = layout.unit_for_block(group_id, block)?;
             let witness_index =
                 layout.e_index(unit, num_claims, depth_open, claim, block, digit)?;
@@ -42,40 +42,40 @@ pub(crate) fn setup_t_col_weights<E: FieldCore>(
     layout: &WitnessLayout,
     opening_source_len: usize,
     group_id: usize,
-    num_blocks: usize,
+    num_live_blocks: usize,
     depth_open: usize,
     n_a: usize,
-    cols_per_vector: usize,
+    vector_width: usize,
     num_vectors: usize,
     active_vectors: usize,
     vector_base: usize,
     eq_window: &OffsetEqWindow<E>,
 ) -> Result<Vec<E>, AkitaError> {
-    let expected_cols_per_vector = checked_mul3(
-        num_blocks,
+    let expected_vector_width = checked_mul3(
+        num_live_blocks,
         n_a,
         depth_open,
         "setup B columns per vector overflow",
     )?;
-    if cols_per_vector != expected_cols_per_vector {
+    if vector_width != expected_vector_width {
         return Err(AkitaError::InvalidSize {
-            expected: expected_cols_per_vector,
-            actual: cols_per_vector,
+            expected: expected_vector_width,
+            actual: vector_width,
         });
     }
-    let t_cols = num_vectors
-        .checked_mul(cols_per_vector)
+    let num_t_columns = num_vectors
+        .checked_mul(vector_width)
         .ok_or_else(|| AkitaError::InvalidSetup("setup B width overflow".into()))?;
-    cfg_into_iter!(0..t_cols)
+    cfg_into_iter!(0..num_t_columns)
         .map(|local_col| {
-            let vector = local_col / cols_per_vector;
+            let vector = local_col / vector_width;
             if vector >= active_vectors {
                 return Ok(E::zero());
             }
             let digit = local_col % depth_open;
             let rest = local_col / depth_open;
             let a_row = rest % n_a;
-            let block = (rest / n_a) % num_blocks;
+            let block = (rest / n_a) % num_live_blocks;
             let claim = vector_base
                 .checked_add(vector)
                 .ok_or_else(|| AkitaError::InvalidSetup("setup B claim index overflow".into()))?;
@@ -103,7 +103,7 @@ pub(crate) fn setup_z_col_weights<F, E>(
     layout: &WitnessLayout,
     opening_source_len: usize,
     group_id: usize,
-    block_len: usize,
+    num_positions_per_block: usize,
     depth_commit: usize,
     depth_fold: usize,
     eq_window: &OffsetEqWindow<E>,
@@ -120,7 +120,7 @@ where
             "setup A weights have malformed ownership or block geometry".into(),
         ));
     }
-    let z_cols = block_len
+    let z_cols = num_positions_per_block
         .checked_mul(depth_commit)
         .ok_or_else(|| AkitaError::InvalidSetup("setup A width overflow".into()))?;
     if z_weights.len() != z_cols {
@@ -139,7 +139,7 @@ where
                 for (fold_digit, &fold) in fold_gadget.iter().enumerate().take(depth_fold) {
                     let witness_index = layout.z_index(
                         unit,
-                        block_len,
+                        num_positions_per_block,
                         depth_commit,
                         depth_fold,
                         position,

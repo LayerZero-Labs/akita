@@ -1,3 +1,6 @@
+import argparse
+import contextlib
+import io
 import json
 import pathlib
 import tempfile
@@ -100,10 +103,12 @@ class ProfileBenchReportTests(unittest.TestCase):
         from scripts.profile_bench_report import extract_summary
 
         log = (
-            'INFO planned fold level label=onehot_fp128_d64 level=0 d=64 n_a=2 n_b=3 n_d=4 '
-            'challenge_l1_mass=8 log_basis=5 position_bits=7 block_bits=3 '
-            'num_blocks=6 block_len=128 delta_commit=4 delta_open=5 '
-            'delta_fold=6 current_w_len=1024 next_w_ring=32 next_w_len=2048 level_bytes=4096\n'
+            'INFO planned fold level label=onehot_fp128_d64 level=0 d=64 d_a=64 d_b=32 d_d=16 '
+            'n_a=2 n_b=3 n_d=4 '
+            'challenge_l1_mass=8 log_basis=5 position_index_bits=7 block_index_bits=3 '
+            'num_live_ring_elements_per_claim=768 num_live_blocks=6 block_index_domain_size=8 '
+            'num_positions_per_block=128 delta_commit=4 delta_open=5 '
+            'delta_fold=6 current_w_len=1024 next_w_len=2048 level_bytes=4096\n'
         )
 
         summary = extract_summary(log, mode="onehot_fp128_d64", num_vars=24, num_polys=1)
@@ -112,21 +117,24 @@ class ProfileBenchReportTests(unittest.TestCase):
             summary["planned_levels"][0],
             {
                 "level": 0,
-                "d": 64,
+                "d_a": 64,
+                "d_b": 32,
+                "d_d": 16,
                 "n_a": 2,
                 "n_b": 3,
                 "n_d": 4,
                 "challenge_l1_mass": 8,
                 "log_basis": 5,
-                "position_bits": 7,
-                "block_bits": 3,
-                "block_len": 128,
-                "num_blocks": 6,
+                "position_index_bits": 7,
+                "block_index_bits": 3,
+                "num_positions_per_block": 128,
+                "num_live_blocks": 6,
+                "num_live_ring_elements_per_claim": 768,
+                "block_index_domain_size": 8,
                 "delta_commit": 4,
                 "delta_open": 5,
                 "delta_fold": 6,
                 "current_w_len": 1024,
-                "next_w_ring": 32,
                 "next_w_len": 2048,
                 "level_bytes": 4096,
             },
@@ -138,17 +146,218 @@ class ProfileBenchReportTests(unittest.TestCase):
         log = (
             'INFO planned fold level label=onehot_fp128_d64 level=0 d=64 n_a=2 n_b=3 n_d=4 '
             'challenge_l1_mass=8 log_basis=5 m_vars=7 r_vars=3 '
-            'live_fold_count=8 fold_position_count=128 delta_commit=4 delta_open=5 '
-            'delta_fold=6 current_w_len=1024 next_w_ring=32 next_w_len=2048 level_bytes=4096\n'
+            'num_blocks=8 block_len=2 delta_commit=4 delta_open=5 '
+            'delta_fold=6 current_w_len=1024 next_w_len=2048 level_bytes=4096\n'
         )
 
         summary = extract_summary(log, mode="onehot_fp128_d64", num_vars=24, num_polys=1)
         level = summary["planned_levels"][0]
 
-        self.assertEqual(level["position_bits"], 7)
-        self.assertEqual(level["block_bits"], 3)
-        self.assertEqual(level["block_len"], 128)
-        self.assertEqual(level["num_blocks"], 8)
+        self.assertEqual(level["position_index_bits"], 7)
+        self.assertEqual(level["block_index_bits"], 3)
+        self.assertEqual(level["num_positions_per_block"], 128)
+        self.assertEqual(level["num_live_blocks"], 1)
+        self.assertEqual(level["num_live_ring_elements_per_claim"], 16)
+        self.assertEqual(level["block_index_domain_size"], 8)
+        self.assertEqual((level["d_a"], level["d_b"], level["d_d"]), (64, 64, 64))
+
+    def test_planned_fold_level_normalizes_position_bits_merge_base_geometry(self) -> None:
+        from scripts.profile_bench_report import extract_summary
+
+        log = (
+            'INFO planned fold level label=onehot_fp128_d64 level=0 d=64 n_a=2 n_b=3 n_d=4 '
+            'challenge_l1_mass=8 log_basis=5 position_bits=7 block_bits=3 '
+            'num_blocks=8 block_len=128 delta_commit=4 delta_open=5 '
+            'delta_fold=6 current_w_len=1024 next_w_len=2048 level_bytes=4096\n'
+        )
+
+        summary = extract_summary(log, mode="onehot_fp128_d64", num_vars=24, num_polys=1)
+        level = summary["planned_levels"][0]
+
+        self.assertEqual(level["position_index_bits"], 7)
+        self.assertEqual(level["block_index_bits"], 3)
+        self.assertEqual(level["num_positions_per_block"], 128)
+        self.assertEqual(level["num_live_blocks"], 1)
+
+    def test_rendered_schedule_uses_names_and_main_deltas(self) -> None:
+        from scripts.profile_bench_report import extract_summary, render_planned_levels
+
+        current_log = (
+            'INFO planned fold level label=onehot_fp128_d64 level=0 d=64 d_a=64 d_b=32 d_d=16 '
+            'n_a=4 n_b=6 n_d=8 challenge_l1_mass=16 log_basis=6 position_index_bits=7 '
+            'block_index_bits=3 num_live_ring_elements_per_claim=768 num_live_blocks=6 '
+            'block_index_domain_size=8 num_positions_per_block=128 delta_commit=4 delta_open=5 '
+            'delta_fold=6 current_w_len=1024 next_w_len=2048 level_bytes=4096\n'
+        )
+        baseline_log = current_log.replace("n_a=4", "n_a=2").replace(
+            "level_bytes=4096", "level_bytes=2048"
+        )
+        current = extract_summary(current_log, "onehot_fp128_d64", 24, 1)["planned_levels"]
+        baseline = extract_summary(baseline_log, "onehot_fp128_d64", 24, 1)["planned_levels"]
+
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            render_planned_levels(current, baseline)
+        report = output.getvalue()
+
+        self.assertIn("A ring dimension", report)
+        self.assertIn("Number of positions in each block", report)
+        self.assertIn("Number of live source A-ring elements in each claim", report)
+        self.assertIn("+100.00% vs main", report)
+        self.assertNotIn("| M |", report)
+        self.assertNotIn("r_pos", report)
+
+    def test_proof_breakdown_marks_absent_components(self) -> None:
+        from scripts.profile_bench_report import extract_summary, render_proof_levels
+
+        log = (
+            'INFO proof fold level label=onehot_fp128_d64 level=0 d=64 total_bytes=12 '
+            'fold_grind_nonce_bytes=4 grind_nonce=3 grind_attempts=4 '
+            'stage2_sumcheck_bytes=8 root_variant=terminal\n'
+        )
+        levels = extract_summary(log, "onehot_fp128_d64", 24, 1)["proof_levels"]
+
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            render_proof_levels(levels, levels)
+        report = output.getvalue()
+
+        self.assertIn("Fold-level bytes", report)
+        self.assertIn("—", report)
+        self.assertIn("+0.00% vs main", report)
+        self.assertIn("final witness", report)
+        proof_table_lines = [line for line in report.splitlines() if line.startswith("| ")][:3]
+        self.assertEqual(len({line.count("|") for line in proof_table_lines}), 1)
+
+    def test_matrix_embeds_main_delta_in_every_numeric_metric(self) -> None:
+        from scripts.profile_bench_report import normalize_case_summary, render_matrix_summary
+
+        current = normalize_case_summary(
+            {
+                "mode": "onehot_fp128_d64",
+                "num_vars": 32,
+                "num_polys": 1,
+                "exit_code": 0,
+                "setup_s": 2.0,
+                "commit_s": 4.0,
+                "prove_total_s": 6.0,
+                "verify_total_s": 0.008,
+                "max_rss_kib": 2048,
+                "proof_size_bytes": 4096,
+                "planned_levels": [{"level": 0, "d_a": 64, "d_b": 64, "d_d": 64}],
+            }
+        )
+        baseline = dict(current)
+        for key in (
+            "setup_s",
+            "commit_s",
+            "prove_total_s",
+            "verify_total_s",
+            "max_rss_kib",
+            "proof_size_bytes",
+        ):
+            baseline[key] = float(current[key]) / 2.0
+
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            render_matrix_summary([current], {str(current["case_id"]): baseline})
+        report = output.getvalue()
+
+        self.assertEqual(report.count("+100.00% vs main"), 6)
+        self.assertIn("32 variables", report)
+        self.assertIn("ring dimension 64 for A, B, and D", report)
+        self.assertNotIn("Proof B", report)
+        self.assertNotIn("Setup Mode", report)
+
+    def test_full_report_renders_overhauled_tables(self) -> None:
+        from scripts.profile_bench_report import render_report
+
+        level = {
+            "level": 0,
+            "d_a": 64,
+            "d_b": 32,
+            "d_d": 16,
+            "n_a": 2,
+            "n_b": 3,
+            "n_d": 4,
+            "challenge_l1_mass": 8,
+            "log_basis": 5,
+            "position_index_bits": 7,
+            "block_index_bits": 3,
+            "num_positions_per_block": 128,
+            "num_live_blocks": 6,
+            "num_live_ring_elements_per_claim": 768,
+            "block_index_domain_size": 8,
+            "delta_commit": 4,
+            "delta_open": 5,
+            "delta_fold": 6,
+            "current_w_len": 1024,
+            "next_w_len": 2048,
+            "level_bytes": 12,
+        }
+        proof_level = {
+            "level": 0,
+            "d": 64,
+            "total_bytes": 12,
+            "present_byte_fields": ["fold_grind_nonce_bytes", "stage2_sumcheck_bytes"],
+            "extension_opening_partials_bytes": 0,
+            "extension_opening_sumcheck_bytes": 0,
+            "fold_grind_nonce_bytes": 4,
+            "v_bytes": 0,
+            "stage1_sumcheck_bytes": 0,
+            "stage1_interstage_claims_bytes": 0,
+            "stage1_s_claim_bytes": 0,
+            "stage2_sumcheck_bytes": 8,
+            "stage3_sumcheck_bytes": 0,
+            "next_w_commitment_bytes": 0,
+            "next_w_eval_bytes": 0,
+            "root_variant": "terminal",
+        }
+        case = {
+            "mode": "onehot_fp128_d64",
+            "num_vars": 32,
+            "num_polys": 1,
+            "setup_contribution_mode": "direct",
+            "exit_code": 0,
+            "setup_s": 2.0,
+            "commit_s": 3.0,
+            "prove_total_s": 4.0,
+            "verify_total_s": 0.005,
+            "max_rss_kib": 2048,
+            "proof_size_bytes": 12,
+            "accounted_bytes": 12,
+            "akita_fold_bytes": 12,
+            "tail_bytes": 0,
+            "akita_levels": 1,
+            "planned_levels": [level],
+            "proof_levels": [proof_level],
+        }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            current_path = root / "current.json"
+            baseline_dir = root / "baseline"
+            baseline_dir.mkdir()
+            payload = {"warmups": 0, "cases": [case]}
+            current_path.write_text(json.dumps(payload), encoding="utf-8")
+            (baseline_dir / "summary.json").write_text(json.dumps(payload), encoding="utf-8")
+            args = argparse.Namespace(
+                summary=str(current_path),
+                main_baseline_dir=str(baseline_dir),
+                previous_baseline_dir="",
+                compact=False,
+            )
+
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                self.assertEqual(render_report(args), 0)
+            report = output.getvalue()
+
+        self.assertIn("Delta versus main", report)
+        self.assertIn("unchanged", report)
+        self.assertIn("A ring dimension", report)
+        self.assertIn("Proof size by fold level", report)
+        self.assertNotIn("Proof framing", report)
 
     def test_configured_cases_treats_setup_mode_as_case_dimension(self) -> None:
         from scripts.profile_bench_report import configured_cases

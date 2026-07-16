@@ -71,13 +71,13 @@ fn shared_d_digit_basis_covers_every_group() {
 fn with_decomp_derives_exact_live_block_geometry() {
     let lp = sample_params_only().with_decomp(8, 17, 2, 2).unwrap();
 
-    assert_eq!(lp.source_ring_len_per_claim, 17);
-    assert_eq!(lp.block_len, 8);
-    assert_eq!(lp.num_blocks, 3);
-    assert_eq!(lp.chunk_granule, 1);
-    assert_eq!(lp.position_bits(), 3);
-    assert_eq!(lp.block_bits(), 2);
-    assert_eq!(lp.block_capacity().unwrap(), 4);
+    assert_eq!(lp.num_live_ring_elements_per_claim, 17);
+    assert_eq!(lp.num_positions_per_block, 8);
+    assert_eq!(lp.num_live_blocks, 3);
+    assert_eq!(lp.num_blocks_per_chunk_granule, 1);
+    assert_eq!(lp.position_index_bits(), 3);
+    assert_eq!(lp.block_index_bits(), 2);
+    assert_eq!(lp.block_index_domain_size().unwrap(), 4);
     assert_eq!(lp.n_ring_elems().unwrap(), 17);
 
     assert!(sample_params_only().with_decomp(3, 17, 2, 2).is_err());
@@ -114,8 +114,11 @@ fn with_layout_keeps_self_ranks() {
     assert_eq!(lp.a_key.row_len(), 2);
     assert_eq!(lp.b_key.row_len(), 4);
     assert_eq!(lp.d_key.row_len(), 3);
-    assert_eq!(lp.num_blocks, layout_lp.num_blocks);
-    assert_eq!(lp.block_len, layout_lp.block_len);
+    assert_eq!(lp.num_live_blocks, layout_lp.num_live_blocks);
+    assert_eq!(
+        lp.num_positions_per_block,
+        layout_lp.num_positions_per_block
+    );
     assert_eq!(lp.challenge_l1_mass(), 3);
     assert_eq!(lp.num_digits_commit, layout_lp.num_digits_commit);
     assert_eq!(lp.num_digits_open, layout_lp.num_digits_open);
@@ -149,11 +152,11 @@ fn derived_log_values() {
     let layout_lp = sample_layout_lp();
     let lp = sample_params_only().with_layout(&layout_lp, 128).unwrap();
 
-    assert_eq!(lp.block_bits(), layout_lp.block_bits());
-    assert_eq!(lp.position_bits(), layout_lp.position_bits());
+    assert_eq!(lp.block_index_bits(), layout_lp.block_index_bits());
+    assert_eq!(lp.position_index_bits(), layout_lp.position_index_bits());
     assert_eq!(
         lp.outer_vars(),
-        layout_lp.position_bits() + layout_lp.block_bits()
+        layout_lp.position_index_bits() + layout_lp.block_index_bits()
     );
 }
 
