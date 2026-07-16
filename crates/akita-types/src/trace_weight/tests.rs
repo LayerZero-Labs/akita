@@ -23,7 +23,7 @@ fn trace_layout(
     ring_bits: usize,
     col_bits: usize,
     num_claims: usize,
-    live_block_count_per_claim: usize,
+    num_live_blocks_per_claim: usize,
     num_digits_open: usize,
     log_basis: u32,
     num_chunks: usize,
@@ -38,7 +38,7 @@ fn trace_layout(
         1,
         akita_challenges::SparseChallengeConfig::pm1_only(1),
     )
-    .with_decomp(1, live_block_count_per_claim, 1, num_digits_open)
+    .with_decomp(1, num_live_blocks_per_claim, 1, num_digits_open)
     .unwrap();
     let opening_batch = OpeningClaimsLayout::new(0, num_claims).unwrap();
     let witness_layout = WitnessLayout::new(&lp, &opening_batch, num_chunks, 1, 1).unwrap();
@@ -50,9 +50,9 @@ fn trace_layout(
     TraceWeightLayout {
         ring_bits,
         col_bits: col_bits.max(required_col_bits),
-        live_block_count: num_claims * live_block_count_per_claim,
+        num_live_blocks: num_claims * num_live_blocks_per_claim,
         num_digits_open,
-        block_index_bits: (num_claims * live_block_count_per_claim)
+        block_index_bits: (num_claims * num_live_blocks_per_claim)
             .next_power_of_two()
             .trailing_zeros() as usize,
         log_basis,
@@ -247,7 +247,7 @@ fn witness_dot_matches_ring_subfield_inner_product_field_live_block_weights() {
         )
         .unwrap();
 
-        let folded_blocks: Vec<CyclotomicRing<F, D>> = (0..layout.live_block_count)
+        let folded_blocks: Vec<CyclotomicRing<F, D>> = (0..layout.num_live_blocks)
             .map(|_| random_folded_block(&mut rng))
             .collect();
         let combined = weighted_folded_block_sum(&folded_blocks, &live_block_weights);
@@ -428,7 +428,7 @@ mod ring_live_block_weights {
             )
             .unwrap();
 
-            let folded_blocks: Vec<CyclotomicRing<F, D>> = (0..layout.live_block_count)
+            let folded_blocks: Vec<CyclotomicRing<F, D>> = (0..layout.num_live_blocks)
                 .map(|_| random_folded_block::<F, D>(&mut rng))
                 .collect();
             let combined = folded_blocks
@@ -499,7 +499,7 @@ mod ring_live_block_weights {
             .unwrap();
             assert_eq!(dense, closed);
 
-            let folded_blocks: Vec<CyclotomicRing<F4, 8>> = (0..layout.live_block_count)
+            let folded_blocks: Vec<CyclotomicRing<F4, 8>> = (0..layout.num_live_blocks)
                 .map(|_| random_folded_block::<F4, 8>(&mut rng))
                 .collect();
             let expected = terms.iter().fold(E4::zero(), |acc, term| {
@@ -672,7 +672,7 @@ mod closed_terms {
             block_rings.truncate(
                 layout
                     .witness_layout
-                    .group_live_block_count(layout.group_id)
+                    .group_num_live_blocks(layout.group_id)
                     .unwrap(),
             );
             let table = build_trace_weight_table_ring_live_block_weights::<Fk, E4, D8>(
@@ -749,7 +749,7 @@ mod closed_terms {
 
     #[test]
     fn closed_terms_match_dense_k1_multi_claim() {
-        // Two claims tiled along the block axis (live_block_count = 2 claims * 2^1).
+        // Two claims tiled along the block axis (num_live_blocks = 2 claims * 2^1).
         let layout = trace_layout(3, 4, 2, 2, 2, LB, 1);
         const D8: usize = 8;
         let mut rng = StdRng::seed_from_u64(0x5EED_1001);
@@ -830,19 +830,19 @@ mod closed_terms {
 
     #[test]
     fn closed_terms_match_dense_k1_chunked() {
-        // Chunked layout: num_claims=2, live_block_count_global=4; sweep W in {1,2,4}.
+        // Chunked layout: num_claims=2, num_live_blocks_global=4; sweep W in {1,2,4}.
         // The dense table places ê weights at chunked columns (chunk-aware
         // `opening_digit_col_index`); the closed form must reconstruct them.
         const D8: usize = 8;
         let num_claims = 2usize;
-        let live_block_count_global = 4usize;
+        let num_live_blocks_global = 4usize;
         let num_digits_open = 2usize;
         for w in [1usize, 2, 4] {
             let layout = trace_layout(
                 3,
                 8,
                 num_claims,
-                live_block_count_global,
+                num_live_blocks_global,
                 num_digits_open,
                 LB,
                 w,
@@ -860,15 +860,15 @@ mod closed_terms {
                     )
                     .unwrap();
                     let b_open =
-                        random_point(&mut rng, live_block_count_global.trailing_zeros() as usize);
+                        random_point(&mut rng, num_live_blocks_global.trailing_zeros() as usize);
                     let live_block_weights = lagrange_weights(&b_open).unwrap();
                     dense_terms.push(TraceFieldBlockOpening {
-                        block_offset: claim * live_block_count_global,
+                        block_offset: claim * num_live_blocks_global,
                         live_block_weights,
                         inner_opening_ring: inner,
                     });
                     terms.push(TraceTerm {
-                        block_offset: claim * live_block_count_global,
+                        block_offset: claim * num_live_blocks_global,
                         b_open,
                         basis: BasisMode::Lagrange,
                         packed_inner_point: inner,
@@ -892,12 +892,12 @@ mod closed_terms {
     #[test]
     fn closed_terms_match_dense_k4_chunked() {
         // K=4 chunked: exercises the per-chunk high-bit weight in the ring-subfield
-        // coordinate algebra. num_claims=2, live_block_count_global=4, W=2.
+        // coordinate algebra. num_claims=2, num_live_blocks_global=4, W=2.
         const D8: usize = 8;
         let num_claims = 2usize;
-        let live_block_count_global = 4usize;
+        let num_live_blocks_global = 4usize;
         let w = 2usize;
-        let layout = trace_layout(3, 8, num_claims, live_block_count_global, 2, LB, w);
+        let layout = trace_layout(3, 8, num_claims, num_live_blocks_global, 2, LB, w);
         layout.validate_opening_digit_segment().unwrap();
         let mut rng = StdRng::seed_from_u64(0xC0DE_4444);
         for _ in 0..8 {
@@ -907,16 +907,16 @@ mod closed_terms {
                 let trace_inner_open = ext_point::<E4>(&mut rng, trace_inner_len::<E4, D8>());
                 let inner = packed_inner::<E4, D8>(&trace_inner_open);
                 let b_open =
-                    ext_point::<E4>(&mut rng, live_block_count_global.trailing_zeros() as usize);
+                    ext_point::<E4>(&mut rng, num_live_blocks_global.trailing_zeros() as usize);
                 let block_rings =
                     block_rings_at_opening::<Fk, E4, D8>(&b_open, 1usize << b_open.len()).unwrap();
                 dense_terms.push(TraceRingBlockOpening {
-                    block_offset: claim * live_block_count_global,
+                    block_offset: claim * num_live_blocks_global,
                     block_rings,
                     packed_inner_point: inner,
                 });
                 terms.push(TraceTerm {
-                    block_offset: claim * live_block_count_global,
+                    block_offset: claim * num_live_blocks_global,
                     b_open,
                     basis: BasisMode::Lagrange,
                     packed_inner_point: inner,

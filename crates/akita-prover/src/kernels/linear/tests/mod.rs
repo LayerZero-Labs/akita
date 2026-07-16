@@ -79,8 +79,8 @@ fn mat_vec_mul_i8_strided_with_params_for_log_basis<
 >(
     ntt_mat: &[&[CyclotomicCrtNtt<W, K, D>]],
     coeffs: &[CyclotomicRing<F, D>],
-    live_block_count: usize,
-    positions_per_block: usize,
+    num_live_blocks: usize,
+    num_positions_per_block: usize,
     num_digits: usize,
     log_basis: u32,
     params: &CrtNttParamSet<W, K, D>,
@@ -88,8 +88,8 @@ fn mat_vec_mul_i8_strided_with_params_for_log_basis<
     mat_vec_mul_i8_strided_with_params(
         ntt_mat,
         coeffs,
-        live_block_count,
-        positions_per_block,
+        num_live_blocks,
+        num_positions_per_block,
         num_digits,
         log_basis,
         params,
@@ -118,16 +118,16 @@ fn mat_vec_mul_digits_i8_strided_with_params_for_log_basis<
 >(
     ntt_mat: &[&[CyclotomicCrtNtt<W, K, D>]],
     coeffs: &[[i8; D]],
-    live_block_count: usize,
-    positions_per_block: usize,
+    num_live_blocks: usize,
+    num_positions_per_block: usize,
     log_basis: u32,
     params: &CrtNttParamSet<W, K, D>,
 ) -> Vec<Vec<CyclotomicRing<F, D>>> {
     mat_vec_mul_digits_i8_strided_with_params(
         ntt_mat,
         coeffs,
-        live_block_count,
-        positions_per_block,
+        num_live_blocks,
+        num_positions_per_block,
         log_basis,
         params,
     )

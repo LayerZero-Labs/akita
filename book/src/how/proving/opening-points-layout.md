@@ -4,15 +4,15 @@ Akita uses one physical source order at the root and at every recursive level.
 For one commitment group, let
 
 ```text
-N = exact live source ring elements per claim (live_ring_elements_per_claim)
-L = positions_per_block, positions in one block, a power of two
-F = live_block_count = ceil(N / L), the exact number of live blocks
+N = exact live source ring elements per claim (num_live_ring_elements_per_claim)
+L = num_positions_per_block, positions in one block, a power of two
+F = num_live_blocks = ceil(N / L), the exact number of live blocks
 ```
 
 The physical source index is
 
 ```text
-source_index = block_idx * positions_per_block + position
+source_index = block_idx * num_positions_per_block + position
 ```
 
 so position is the low-order coordinate and block_idx is the high-order coordinate.
@@ -20,8 +20,8 @@ The final block may be partial; it is not padded in the stored source.
 
 ## Opening point split
 
-An opening point first contains `log2(positions_per_block)` position coordinates. The remaining
-coordinates address `next_power_of_two(live_block_count)` block slots. Akita constructs all `L`
+An opening point first contains `log2(num_positions_per_block)` position coordinates. The remaining
+coordinates address `next_power_of_two(num_live_blocks)` block slots. Akita constructs all `L`
 position weights but retains only the exact live prefix of `F` block weights.
 There is no virtual compact-to-padded address map and no root-versus-recursive
 block-order mode.
@@ -29,8 +29,8 @@ block-order mode.
 `RingOpeningPoint` exposes the resulting factors directly:
 
 ```text
-position_weights: length positions_per_block
-live_block_weights:    length live_block_count
+position_weights: length num_positions_per_block
+live_block_weights:    length num_live_blocks
 ```
 
 Both the Lagrange and monomial bases use this same physical order.
@@ -56,13 +56,13 @@ r_hat[relation_row][quotient_digit]
 `WitnessLayout` is the range authority shared by planning, proving, setup,
 relation evaluation, recursive handoff, and verification. Units are ordered by
 relation group and then chunk. Each unit records its exact `global_block_start` and
-`live_block_count`.
+`num_live_blocks`.
 
 ## Chunks and tensor challenges
 
 Chunks own contiguous ranges of the exact `F` live blocks. Internal allocation
-uses a power-of-two `blocks_per_chunk_granule`; any residual blocks remain tight in the final
-chunk. The planner chooses the granule independently of `positions_per_block` and of the challenge shape.
+uses a power-of-two `num_blocks_per_chunk_granule`; any residual blocks remain tight in the final
+chunk. The planner chooses the granule independently of `num_positions_per_block` and of the challenge shape.
 
 A flat fold challenge has `F` independent coefficients. A tensor challenge
 chooses a power-of-two low-factor width `Q` and derives

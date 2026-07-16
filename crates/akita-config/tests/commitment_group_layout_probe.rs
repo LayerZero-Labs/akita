@@ -70,7 +70,7 @@ fn layout_summary(
     )
     .ok_or_else(|| AkitaError::InvalidSetup("B rank lookup failed".to_string()))?;
     let t_hat_g = params
-        .live_block_count
+        .num_live_blocks
         .checked_mul(params.a_key.row_len())
         .and_then(|n| n.checked_mul(params.num_digits_open))
         .ok_or_else(|| AkitaError::InvalidSetup("t_hat_g overflow".to_string()))?;

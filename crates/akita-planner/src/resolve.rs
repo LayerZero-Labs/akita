@@ -197,7 +197,7 @@ mod tests {
             log_basis: lp.log_basis,
             position_index_bits: lp.position_index_bits() as u32,
             block_index_bits: lp.block_index_bits() as u32,
-            live_block_count: lp.live_block_count as u32,
+            num_live_blocks: lp.num_live_blocks as u32,
             n_a: lp.a_key.row_len() as u32,
             n_b: lp.b_key.row_len() as u32,
             n_d: lp.d_key.row_len() as u32,
@@ -414,12 +414,12 @@ mod tests {
     }
 
     #[test]
-    fn validate_generated_entry_rejects_inexact_live_block_count() {
+    fn validate_generated_entry_rejects_inexact_num_live_blocks() {
         let key = PolynomialGroupLayout::new(30, 1);
         let policy = flat_policy();
         let schedule = find_single_schedule(key, &policy).expect("find schedule");
         let mut steps = generated_steps_from_schedule(&schedule);
-        mutate_first_generated_fold_step(&mut steps, |fold| fold.live_block_count -= 1);
+        mutate_first_generated_fold_step(&mut steps, |fold| fold.num_live_blocks -= 1);
         let entry = generated_entry_from_steps(key, steps);
 
         let err = validate_generated_schedule_entry(

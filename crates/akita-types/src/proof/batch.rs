@@ -474,21 +474,21 @@ fn flat_rings_are_constant<F: FieldCore>(coeffs: &[F], ring_dim: usize) -> bool 
 
 fn ring_multiplier_opening_point_from_ext<F, E, const D: usize>(
     opening_point: &[E],
-    positions_per_block: usize,
-    live_block_count: usize,
+    num_positions_per_block: usize,
+    num_live_blocks: usize,
     basis: BasisMode,
 ) -> Result<RingMultiplierOpeningPoint<F>, AkitaError>
 where
     F: FieldCore + akita_field::FromPrimitiveInt,
     E: FpExtEncoding<F>,
 {
-    if !positions_per_block.is_power_of_two() || live_block_count == 0 {
+    if !num_positions_per_block.is_power_of_two() || num_live_blocks == 0 {
         return Err(AkitaError::InvalidSetup(
             "opening geometry requires power-of-two M and positive B".to_string(),
         ));
     }
-    let position_index_bits = positions_per_block.trailing_zeros() as usize;
-    let block_index_domain_size = live_block_count
+    let position_index_bits = num_positions_per_block.trailing_zeros() as usize;
+    let block_index_domain_size = num_live_blocks
         .checked_next_power_of_two()
         .ok_or_else(|| AkitaError::InvalidSetup("block-index domain size overflow".to_string()))?;
     let block_index_bits = block_index_domain_size.trailing_zeros() as usize;
@@ -506,7 +506,7 @@ where
     let live_block_weights = basis_weights_prefix(
         &opening_point[position_index_bits..],
         basis,
-        live_block_count,
+        num_live_blocks,
     )?;
     let error = AkitaError::InvalidInput(
         "opening point does not encode in the ring-subfield basis".to_string(),
@@ -687,8 +687,8 @@ where
 pub fn prepare_opening_point<F, E, const D: usize>(
     opening_point: &[E],
     basis: BasisMode,
-    positions_per_block: usize,
-    live_block_count: usize,
+    num_positions_per_block: usize,
+    num_live_blocks: usize,
     alpha_bits: usize,
 ) -> Result<PreparedOpeningPoint<F, E>, AkitaError>
 where
@@ -696,15 +696,15 @@ where
     E: FpExtEncoding<F>,
 {
     let _span = tracing::info_span!("ring_opening_point").entered();
-    if !positions_per_block.is_power_of_two() || live_block_count == 0 {
+    if !num_positions_per_block.is_power_of_two() || num_live_blocks == 0 {
         return Err(AkitaError::InvalidSetup(
             "opening geometry requires power-of-two M and positive B".to_string(),
         ));
     }
-    let block_index_domain_size = live_block_count
+    let block_index_domain_size = num_live_blocks
         .checked_next_power_of_two()
         .ok_or_else(|| AkitaError::InvalidSetup("block-index domain size overflow".to_string()))?;
-    let outer_bits = (positions_per_block.trailing_zeros() as usize)
+    let outer_bits = (num_positions_per_block.trailing_zeros() as usize)
         .checked_add(block_index_domain_size.trailing_zeros() as usize)
         .ok_or_else(|| AkitaError::InvalidSetup("opening point length overflow".to_string()))?;
     let target_num_vars = outer_bits
@@ -734,8 +734,8 @@ where
         let outer_point = &base_point[alpha_bits..];
         let ring_opening_point = ring_opening_point_from_field::<F>(
             outer_point,
-            positions_per_block,
-            live_block_count,
+            num_positions_per_block,
+            num_live_blocks,
             basis,
         )?;
         let ring_multiplier_point = RingMultiplierOpeningPoint::from_base(&ring_opening_point);
@@ -774,14 +774,14 @@ where
     let outer_point = &padded_point[alpha_bits..];
     let ring_multiplier_point = ring_multiplier_opening_point_from_ext::<F, E, D>(
         outer_point,
-        positions_per_block,
-        live_block_count,
+        num_positions_per_block,
+        num_live_blocks,
         basis,
     )?;
     let ring_opening_point = ring_opening_point_from_field::<F>(
         &vec![F::zero(); outer_point.len()],
-        positions_per_block,
-        live_block_count,
+        num_positions_per_block,
+        num_live_blocks,
         basis,
     )?;
 

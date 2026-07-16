@@ -60,7 +60,7 @@ Both paths are deterministic functions of the lookup key, `PlannerPolicy`, and t
 For a fixed field, ring dimension, decomposition policy, and opening shape, the planner mainly searches over:
 
 - `log_basis`: the balanced-digit base used by the fold level.
-- `live_block_count`: the exact number `B` of folded blocks.
+- `num_live_blocks`: the exact number `B` of folded blocks.
 - `block_index_bits`: the number `r_blk = ceil(log2 B)` of Boolean block-index variables.
 - `position_index_bits`: the number of variables inside each block.
 

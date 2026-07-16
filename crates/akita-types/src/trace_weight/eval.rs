@@ -425,10 +425,10 @@ where
         })?;
         let block_span = layout
             .witness_layout
-            .group_live_block_count(layout.group_id)?;
+            .group_num_live_blocks(layout.group_id)?;
         if block_span > block_index_domain_size {
             return Err(AkitaError::InvalidInput(
-                "trace term live_block_count exceeds block-opening capacity".to_string(),
+                "trace term num_live_blocks exceeds block-opening capacity".to_string(),
             ));
         }
         layout.validate_trace_term_block_range(term.block_offset, block_span)?;
@@ -504,7 +504,7 @@ where
                 col_point,
                 base,
                 unit.global_block_start(),
-                unit.live_block_count(),
+                unit.num_live_blocks(),
                 layout.num_digits_open,
                 &gadget_row,
                 &high_weights,

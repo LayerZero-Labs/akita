@@ -294,19 +294,19 @@ fn serialize_precommitted_level_params<W: Write>(
         .serialize_with_mode(&mut writer, compress)?;
     params
         .layout
-        .live_ring_elements_per_claim
+        .num_live_ring_elements_per_claim
         .serialize_with_mode(&mut writer, compress)?;
     params
         .layout
-        .positions_per_block
+        .num_positions_per_block
         .serialize_with_mode(&mut writer, compress)?;
     params
         .layout
-        .live_block_count
+        .num_live_blocks
         .serialize_with_mode(&mut writer, compress)?;
     params
         .layout
-        .blocks_per_chunk_granule
+        .num_blocks_per_chunk_granule
         .serialize_with_mode(&mut writer, compress)?;
     match params.layout.fold_challenge_shape {
         akita_challenges::TensorChallengeShape::Flat => writer.write_all(&[0])?,
@@ -348,11 +348,12 @@ fn deserialize_precommitted_level_params<R: Read>(
 ) -> Result<PrecommittedLevelParams, SerializationError> {
     let group_num_vars = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
     let group_num_polynomials = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
-    let live_ring_elements_per_claim =
+    let num_live_ring_elements_per_claim =
         usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
-    let positions_per_block = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
-    let live_block_count = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
-    let blocks_per_chunk_granule =
+    let num_positions_per_block =
+        usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
+    let num_live_blocks = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
+    let num_blocks_per_chunk_granule =
         usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
     let mut shape_tag = [0u8; 1];
     reader.read_exact(&mut shape_tag)?;
@@ -378,10 +379,10 @@ fn deserialize_precommitted_level_params<R: Read>(
     Ok(PrecommittedLevelParams {
         layout: PrecommittedGroupParams {
             group: PolynomialGroupLayout::new(group_num_vars, group_num_polynomials),
-            live_ring_elements_per_claim,
-            positions_per_block,
-            live_block_count,
-            blocks_per_chunk_granule,
+            num_live_ring_elements_per_claim,
+            num_positions_per_block,
+            num_live_blocks,
+            num_blocks_per_chunk_granule,
             fold_challenge_shape,
             log_basis,
             n_a,
@@ -407,13 +408,16 @@ fn precommitted_level_params_serialized_size(
             .serialized_size(compress)
         + params
             .layout
-            .live_ring_elements_per_claim
+            .num_live_ring_elements_per_claim
             .serialized_size(compress)
-        + params.layout.positions_per_block.serialized_size(compress)
-        + params.layout.live_block_count.serialized_size(compress)
         + params
             .layout
-            .blocks_per_chunk_granule
+            .num_positions_per_block
+            .serialized_size(compress)
+        + params.layout.num_live_blocks.serialized_size(compress)
+        + params
+            .layout
+            .num_blocks_per_chunk_granule
             .serialized_size(compress)
         + 1
         + match params.layout.fold_challenge_shape {
@@ -1094,7 +1098,7 @@ fn active_setup_projection_geometry(
         let group_layout = opening_batch.group_layout(group_index)?;
         let group_params = level_params.group_params(opening_batch, group_index)?;
         let a_width = group_params
-            .positions_per_block()
+            .num_positions_per_block()
             .checked_mul(group_params.num_digits_commit())
             .ok_or_else(|| AkitaError::InvalidSetup("A setup width overflow".to_string()))?;
         let a_slots = group_params
@@ -1105,7 +1109,7 @@ fn active_setup_projection_geometry(
         let b_width = group_layout
             .num_polynomials()
             .checked_mul(group_params.a_rows_len())
-            .and_then(|n| n.checked_mul(group_params.live_block_count()))
+            .and_then(|n| n.checked_mul(group_params.num_live_blocks()))
             .and_then(|n| n.checked_mul(group_params.num_digits_open()))
             .ok_or_else(|| AkitaError::InvalidSetup("B setup width overflow".to_string()))?;
         let b_slots = group_params
@@ -1115,7 +1119,7 @@ fn active_setup_projection_geometry(
 
         let d_width = group_layout
             .num_polynomials()
-            .checked_mul(group_params.live_block_count())
+            .checked_mul(group_params.num_live_blocks())
             .and_then(|n| n.checked_mul(group_params.num_digits_open()))
             .ok_or_else(|| AkitaError::InvalidSetup("D setup width overflow".to_string()))?;
         shared_d_width = shared_d_width
@@ -1165,13 +1169,13 @@ pub fn setup_prefix_precommitted_params(
         ));
     }
     let ring_slots = n_prefix / d_setup;
-    let mut positions_per_block = 1usize;
-    while positions_per_block <= ring_slots.max(1) {
-        let live_block_count = ring_slots.div_ceil(positions_per_block);
-        let inner_width = positions_per_block
+    let mut num_positions_per_block = 1usize;
+    while num_positions_per_block <= ring_slots.max(1) {
+        let num_live_blocks = ring_slots.div_ceil(num_positions_per_block);
+        let inner_width = num_positions_per_block
             .checked_mul(prefix_params.num_digits_commit)
             .ok_or_else(|| AkitaError::InvalidSetup("prefix inner width overflow".to_string()))?;
-        let outer_width = live_block_count
+        let outer_width = num_live_blocks
             .checked_mul(prefix_params.a_key.row_len())
             .and_then(|n| n.checked_mul(prefix_params.num_digits_open))
             .ok_or_else(|| AkitaError::InvalidSetup("prefix outer width overflow".to_string()))?;
@@ -1181,10 +1185,10 @@ pub fn setup_prefix_precommitted_params(
             return Ok(PrecommittedLevelParams {
                 layout: PrecommittedGroupParams {
                     group: PolynomialGroupLayout::singleton(n_prefix.trailing_zeros() as usize),
-                    live_ring_elements_per_claim: ring_slots,
-                    positions_per_block,
-                    live_block_count,
-                    blocks_per_chunk_granule: 1,
+                    num_live_ring_elements_per_claim: ring_slots,
+                    num_positions_per_block,
+                    num_live_blocks,
+                    num_blocks_per_chunk_granule: 1,
                     fold_challenge_shape: prefix_params.fold_challenge_shape,
                     log_basis: prefix_params.log_basis,
                     n_a: prefix_params.a_key.row_len(),
@@ -1197,7 +1201,7 @@ pub fn setup_prefix_precommitted_params(
                 num_digits_fold_one: prefix_params.num_digits_fold_one,
             });
         }
-        positions_per_block = positions_per_block.checked_mul(2).ok_or_else(|| {
+        num_positions_per_block = num_positions_per_block.checked_mul(2).ok_or_else(|| {
             AkitaError::InvalidSetup("prefix position count overflow".to_string())
         })?;
     }

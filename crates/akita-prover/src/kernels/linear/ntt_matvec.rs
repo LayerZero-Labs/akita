@@ -106,8 +106,8 @@ pub fn mat_vec_mul_ntt_i8_strided<F: FieldCore + CanonicalField, const D: usize>
     num_rows: usize,
     num_cols: usize,
     coeffs: &[CyclotomicRing<F, D>],
-    live_block_count: usize,
-    positions_per_block: usize,
+    num_live_blocks: usize,
+    num_positions_per_block: usize,
     num_digits: usize,
     log_basis: u32,
 ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError> {
@@ -118,8 +118,8 @@ pub fn mat_vec_mul_ntt_i8_strided<F: FieldCore + CanonicalField, const D: usize>
         num_cols,
         mat_vec_mul_i8_strided_with_params,
         coeffs,
-        live_block_count,
-        positions_per_block,
+        num_live_blocks,
+        num_positions_per_block,
         num_digits,
         log_basis
     ))
@@ -217,14 +217,14 @@ pub fn mat_vec_mul_ntt_digits_i8_strided<F: FieldCore + CanonicalField, const D:
     num_rows: usize,
     num_cols: usize,
     coeffs: &[[i8; D]],
-    live_block_count: usize,
-    positions_per_block: usize,
+    num_live_blocks: usize,
+    num_positions_per_block: usize,
     log_basis: u32,
 ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError> {
     validate_i8_log_basis(log_basis)?;
     let used = num_cols
-        .min(positions_per_block)
-        .saturating_mul(live_block_count);
+        .min(num_positions_per_block)
+        .saturating_mul(num_live_blocks);
     validate_digit_rows_for_log_basis(
         coeffs,
         used.min(coeffs.len()),
@@ -237,8 +237,8 @@ pub fn mat_vec_mul_ntt_digits_i8_strided<F: FieldCore + CanonicalField, const D:
         num_cols,
         mat_vec_mul_digits_i8_strided_with_params,
         coeffs,
-        live_block_count,
-        positions_per_block,
+        num_live_blocks,
+        num_positions_per_block,
         log_basis
     ))
 }
@@ -255,8 +255,8 @@ pub fn mat_vec_mul_ntt_raw_i8_strided<F: FieldCore + CanonicalField, const D: us
     num_rows: usize,
     num_cols: usize,
     coeffs: &[[i8; D]],
-    live_block_count: usize,
-    positions_per_block: usize,
+    num_live_blocks: usize,
+    num_positions_per_block: usize,
 ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError> {
     dispatch_slot!(
         slot,
@@ -264,8 +264,8 @@ pub fn mat_vec_mul_ntt_raw_i8_strided<F: FieldCore + CanonicalField, const D: us
         num_cols,
         mat_vec_mul_raw_i8_strided_with_params,
         coeffs,
-        live_block_count,
-        positions_per_block
+        num_live_blocks,
+        num_positions_per_block
     )
 }
 

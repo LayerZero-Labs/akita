@@ -411,7 +411,7 @@ s2_L = s2_R = challenge_l2_sq_max
 k_L  = k_R  = challenge_nonzero_count_max
 P    = 2^floor(block_index_bits / 2)
 Q    = 2^ceil(block_index_bits / 2)
-B    = n * live_block_count
+B    = n * num_live_blocks
 
 lambda_inner =
   ln(4 * N * n * min(P, Q) * k_L / (1 - p_grind))

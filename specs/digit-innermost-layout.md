@@ -50,7 +50,7 @@ factored, partial final rows are live, and group-local challenge geometry is
 transcript-bound. Setup, relation, trace, recursive, and terminal consumers use
 the same range authority.
 
-The planner independently enumerates `positions_per_block` choices, `blocks_per_chunk_granule` values, and
+The planner independently enumerates `num_positions_per_block` choices, `num_blocks_per_chunk_granule` values, and
 tensor low-factor widths. It prices exact physical witness width, compact
 structured verifier work, and chunk imbalance. Generated schedules have been
 regenerated from those rules. Multi-group plus multi-chunk is no longer rejected.
@@ -106,16 +106,16 @@ This cutover does not redesign the mixed ring projection algebra. It keeps the p
 
 Three namespaces govern naming in this spec.
 
-1. **Source opening.** `N` (`live_ring_elements_per_claim`), `M` (`positions_per_block`), `B` (`live_block_count`), `block_idx`, `position`, `block_index_bits`, `position_index_bits`, `live_block_weights`, `block_index_domain_size`.
-2. **Distributed layout.** `num_chunks`, `chunk_index`, `blocks_per_chunk_granule`, `WitnessUnit = (group, chunk)`.
+1. **Source opening.** `N` (`num_live_ring_elements_per_claim`), `M` (`num_positions_per_block`), `B` (`num_live_blocks`), `block_idx`, `position`, `block_index_bits`, `position_index_bits`, `live_block_weights`, `block_index_domain_size`.
+2. **Distributed layout.** `num_chunks`, `chunk_index`, `num_blocks_per_chunk_granule`, `WitnessUnit = (group, chunk)`.
 3. **Protocol recursion.** Unchanged: `fold_level`, fold challenge, `fold_grind`, `fold_high` / `fold_low`, `depth_fold`, `fold_digit`.
 
 For one commitment group `g`, define the following source-opening values.
 
 ```text
-N_g       exact live source ring elements per claim (live_ring_elements_per_claim)
-M_g       positions in one source block (positions_per_block)
-B_g       exact live blocks per claim (live_block_count)
+N_g       exact live source ring elements per claim (num_live_ring_elements_per_claim)
+M_g       positions in one source block (num_positions_per_block)
+B_g       exact live blocks per claim (num_live_blocks)
 B_dom_g   Boolean block-index domain size (block_index_domain_size)
 C_g       number of claims in the group
 
@@ -210,11 +210,11 @@ The cutover must reuse the current parameter model.
 ```text
 field                    meaning
 
-live_ring_elements_per_claim   N_g
-positions_per_block                   M_g
-live_block_count                      B_g (derived)
+num_live_ring_elements_per_claim   N_g
+num_positions_per_block                   M_g
+num_live_blocks                      B_g (derived)
 block_index_domain_size               B_dom_g (derived)
-blocks_per_chunk_granule               S_g
+num_blocks_per_chunk_granule               S_g
 position_index_bits                   derive log2(M_g) as position_index_bits
 block_index_bits                      derive log2(block_index_domain_size_g) as block_index_bits
 fold_challenge_shape        group local Flat or Tensor { fold_low_len }
@@ -226,7 +226,7 @@ Do not keep deprecated aliases.
 
 ### `PrecommittedLevelParams`
 
-`PrecommittedLevelParams` remains the group local parameter object for each precommitted root group. It must carry the same group local source-opening and distributed-layout fields as `LevelParams`, including the challenge shape and `blocks_per_chunk_granule`.
+`PrecommittedLevelParams` remains the group local parameter object for each precommitted root group. It must carry the same group local source-opening and distributed-layout fields as `LevelParams`, including the challenge shape and `num_blocks_per_chunk_granule`.
 
 Extend `LevelParamsLike` with the final group local accessors. Remove accessors for stored values that become derived.
 
@@ -247,7 +247,7 @@ pub struct WitnessUnitLayout {
     pub group_index: usize,
     pub chunk_index: usize,
     pub global_block_start: usize,
-    pub live_block_count: usize,
+    pub num_live_blocks: usize,
     pub z_range: Range<usize>,
     pub e_range: Range<usize>,
     pub t_range: Range<usize>,
@@ -302,7 +302,7 @@ group 1
 shared:    [ r ]
 ```
 
-For one unit, let `s_j` be its `global_block_start` and let `F_j` be its `live_block_count`.
+For one unit, let `s_j` be its `global_block_start` and let `F_j` be its `num_live_blocks`.
 
 Its exact segment lengths are:
 
@@ -413,7 +413,7 @@ If a digit count happens to be a power of two, an evaluator may use a simpler in
 
 ## Chunk ownership
 
-Let `num_chunks` be the number of chunks for the level. Let `S_g` be a power of two `blocks_per_chunk_granule` for group `g`.
+Let `num_chunks` be the number of chunks for the level. Let `S_g` be a power of two `num_blocks_per_chunk_granule` for group `g`.
 
 ```text
 S_g > 0
@@ -510,14 +510,14 @@ Repurpose `TensorChallenges` as follows.
 ```text
 fold_high                  C_g * H_g sparse challenges
 fold_low                   C_g * Q_g sparse challenges
-live_block_count                 B_g
+num_live_blocks                 B_g
 fold_low_len               Q_g
 num_claims                 C_g
 ```
 
 Derive `H_g`. Do not store both `H_g` and values from which it is derived.
 
-`Challenges::live_block_count_per_claim()` returns `B_g`, not `H_g * Q_g`.
+`Challenges::num_live_blocks_per_claim()` returns `B_g`, not `H_g * Q_g`.
 
 `Challenges::logical_len()` returns `C_g * B_g`.
 
@@ -601,7 +601,7 @@ The `t_hat` interval uses the same address rule with the A row inside the block 
 The evaluator must handle:
 
 * a nonzero `global_block_start` `s_j`;
-* an exact local `live_block_count` `F_j`;
+* an exact local `num_live_blocks` `F_j`;
 * a tight digit count;
 * a nonzero physical segment offset;
 * a structured block equality weight;
@@ -643,7 +643,7 @@ Each group owns:
 * its digit counts;
 * its fold challenge shape;
 * its tensor low length when tensor mode is active;
-* its `blocks_per_chunk_granule`;
+* its `num_blocks_per_chunk_granule`;
 * its `z_hat`, `e_hat`, and `t_hat` units.
 
 The root relation is a direct sum of group fold relations plus the existing shared terms.
@@ -669,8 +669,8 @@ The current `reject_multi_group_multi_chunk` check is deleted only when emission
 The planner chooses these values independently for every group and active level.
 
 ```text
-M_g   power of two positions_per_block
-S_g   power of two blocks_per_chunk_granule
+M_g   power of two num_positions_per_block
+S_g   power of two num_blocks_per_chunk_granule
 Q_g   power of two tensor low length, when tensor mode is active
 ```
 
@@ -699,11 +699,11 @@ This is a breaking cutover. Do not add a version branch, old enum variant, conve
 
 Bind all protocol affecting final fields in the schedule or instance descriptor. This includes:
 
-* exact source length (`live_ring_elements_per_claim`);
-* `positions_per_block`;
-* exact live block count (`live_block_count`);
+* exact source length (`num_live_ring_elements_per_claim`);
+* `num_positions_per_block`;
+* exact live block count (`num_live_blocks`);
 * `num_chunks` and active levels;
-* group local `blocks_per_chunk_granule`;
+* group local `num_blocks_per_chunk_granule`;
 * group local challenge shape;
 * tensor low length;
 * digit counts;
@@ -763,12 +763,12 @@ Cases must include:
 * [ ] This file is the normative design record for PR #294.
 * [ ] `BlockOrder`, row major versus column major dispatch, and all old layout branches are deleted.
 * [ ] `OpeningBlockLayout` and its virtual address mapping are deleted.
-* [ ] Root and recursive folds use power of two `positions_per_block` and exact live `live_block_count`.
-* [ ] `LevelParams` and `PrecommittedLevelParams` store `live_ring_elements_per_claim`, `positions_per_block`, `live_block_count`, and `blocks_per_chunk_granule` with the same group local meanings.
+* [ ] Root and recursive folds use power of two `num_positions_per_block` and exact live `num_live_blocks`.
+* [ ] `LevelParams` and `PrecommittedLevelParams` store `num_live_ring_elements_per_claim`, `num_positions_per_block`, `num_live_blocks`, and `num_blocks_per_chunk_granule` with the same group local meanings.
 * [ ] `block_index_domain_size` and bit counts are derived instead of stored twice.
 * [ ] `WitnessLayout` is the only physical range authority.
 * [ ] `WitnessChunkLengths` and `TraceChunkLayout` are deleted.
-* [ ] Every witness unit records a group, a chunk, an exact `global_block_start`, an exact `live_block_count`, and checked `z`, `e`, and `t` ranges.
+* [ ] Every witness unit records a group, a chunk, an exact `global_block_start`, an exact `num_live_blocks`, and checked `z`, `e`, and `t` ranges.
 * [ ] Digits remain tight for `z_hat`, `e_hat`, `t_hat`, and `r_hat`.
 * [ ] Tensor challenges use fold high and fold low names.
 * [ ] Tensor high length may be non power of two and the final row may be partial.
@@ -779,7 +779,7 @@ Cases must include:
 * [ ] Multi group plus multi chunk uses the product layout and no longer takes the old rejection path.
 * [ ] One shared `r_hat` tail follows all groups and chunks.
 * [ ] Setup, relation, trace, terminal, and recursive code consume the same group and chunk ranges.
-* [ ] Planner width formulas use exact `live_block_count`, and Boolean formulas use derived `block_index_domain_size`.
+* [ ] Planner width formulas use exact `num_live_blocks`, and Boolean formulas use derived `block_index_domain_size`.
 * [ ] Schedule and transcript descriptors bind every protocol affecting choice once.
 * [ ] Malformed verifier inputs return `AkitaError` without panic.
 * [ ] Generated schedules are regenerated with explained drift.
@@ -809,9 +809,9 @@ crates/akita-challenges/src/tensor.rs
 Steps:
 
 1. Replace stored `position_index_bits` and `block_index_bits` with derived methods.
-2. Add `live_ring_elements_per_claim` and `blocks_per_chunk_granule` to both group parameter forms.
-3. Rename geometry fields to `positions_per_block` and `live_block_count`.
-4. Make `with_decomp` derive `live_block_count` from `live_ring_elements_per_claim` and power of two `positions_per_block`.
+2. Add `num_live_ring_elements_per_claim` and `num_blocks_per_chunk_granule` to both group parameter forms.
+3. Rename geometry fields to `num_positions_per_block` and `num_live_blocks`.
+4. Make `with_decomp` derive `num_live_blocks` from `num_live_ring_elements_per_claim` and power of two `num_positions_per_block`.
 5. Change challenge shape to `Tensor { fold_low_len }`.
 6. Put challenge shape on each precommitted group.
 7. Update descriptor bytes and schedule identity.
@@ -835,8 +835,8 @@ Steps:
 
 1. Delete `BlockOrder` and all dispatch on it.
 2. Rename opening point fields to `position_weights` and `live_block_weights`.
-3. Split opening variables at `log2(positions_per_block)` and evaluate only the live `live_block_count` high prefix.
-4. Rewrite fold kernels around `source = block_idx * positions_per_block + position` with a partial last block.
+3. Split opening variables at `log2(num_positions_per_block)` and evaluate only the live `num_live_blocks` high prefix.
+4. Rewrite fold kernels around `source = block_idx * num_positions_per_block + position` with a partial last block.
 5. Delete `OpeningBlockLayout` and all compact to virtual address conversion.
 6. Update root, recursive, and terminal fold parity tests.
 
@@ -876,7 +876,7 @@ crates/akita-verifier/src/stages/stage1.rs
 Steps:
 
 1. Rename left and right fields, labels, and helpers to fold high and fold low.
-2. Store live `live_block_count` and low `Q`; derive high `H`.
+2. Store live `num_live_blocks` and low `Q`; derive high `H`.
 3. Sample exact flat and tensor counts.
 4. Support one partial final low row.
 5. Remove tensor product materialization from runtime challenge paths.
@@ -943,7 +943,7 @@ crates/akita-types/src/proof/terminal_witness.rs
 Steps:
 
 1. Make recursive witness construction consume canonical unit ranges.
-2. Preserve tight digits and exact live `live_block_count` at the next handoff.
+2. Preserve tight digits and exact live `num_live_blocks` at the next handoff.
 3. Make setup prefix source and materialization consume the same ranges.
 4. Keep direct and terminal folds scalar and use the canonical single group emission path.
 5. Delete column major recursive helpers, duplicate terminal index formulas, and the old setup recursion module.
@@ -966,7 +966,7 @@ specs/distributed-verifier-row-eval.md
 
 Steps:
 
-1. Enumerate `positions_per_block`, `blocks_per_chunk_granule`, and `Q` independently.
+1. Enumerate `num_positions_per_block`, `num_blocks_per_chunk_granule`, and `Q` independently.
 2. Price exact physical widths, structured verifier work, and chunk imbalance.
 3. Regenerate every affected schedule table.
 4. Delete the old block-order note and replace the book page with the final geometry.

@@ -397,7 +397,7 @@ where
         F::Wide: AdditiveGroup + From<F> + ReduceTo<F>,
     {
         let active_a_cols = plan
-            .positions_per_block
+            .num_positions_per_block
             .checked_mul(plan.num_digits_commit)
             .ok_or_else(|| AkitaError::InvalidSetup("active A width overflow".to_string()))?;
         let a_view = prepared
@@ -436,7 +436,7 @@ where
         F::Wide: AdditiveGroup + From<F> + ReduceTo<F>,
     {
         let active_a_cols = plan
-            .positions_per_block
+            .num_positions_per_block
             .checked_mul(plan.num_digits_commit)
             .ok_or_else(|| AkitaError::InvalidSetup("active A width overflow".to_string()))?;
         let a_view = prepared
@@ -450,7 +450,7 @@ where
             &a_rows,
             &plan.blocks.block_slices()?,
             plan.n_a,
-            plan.positions_per_block,
+            plan.num_positions_per_block,
             plan.num_digits_commit,
         ))
     }
@@ -461,13 +461,13 @@ where
         plan: RecursiveWitnessCommitRowsPlan<'_, D>,
     ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError> {
         let row_width = plan
-            .positions_per_block
+            .num_positions_per_block
             .checked_mul(plan.num_digits_commit)
             .ok_or_else(|| AkitaError::InvalidSetup("recursive A width overflow".to_string()))?;
         if plan.num_digits_commit == 1 {
             let blocks = plan
                 .coeffs
-                .chunks(plan.positions_per_block)
+                .chunks(plan.num_positions_per_block)
                 .collect::<Vec<_>>();
             // The `num_digits_commit == 1` recursive witness is a raw signed-i8
             // coefficient stream. Degree-one fields yield balanced gadget digits
@@ -494,7 +494,7 @@ where
                 })
                 .collect();
             let blocks = ring_elems
-                .chunks(plan.positions_per_block)
+                .chunks(plan.num_positions_per_block)
                 .collect::<Vec<_>>();
             prepared.with_shared_ntt::<D, _>(|ntt| {
                 mat_vec_mul_ntt_i8(

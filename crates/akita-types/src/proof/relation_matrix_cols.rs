@@ -294,7 +294,7 @@ where
             let group_lp = lp.group_params(opening_batch, group_index)?;
             let num_claims = opening_batch.group_layout(group_index)?.num_polynomials();
             let width = num_claims
-                .checked_mul(group_lp.live_block_count())
+                .checked_mul(group_lp.num_live_blocks())
                 .and_then(|n| n.checked_mul(group_lp.num_digits_open()))
                 .ok_or_else(|| AkitaError::InvalidSetup("setup D width overflow".to_string()))?;
             Ok((group_index, width))
@@ -367,22 +367,22 @@ where
         let opening_point = instance.group_opening_point(group_index)?;
         let ring_multiplier_point = instance.group_ring_multiplier_point(group_index)?;
         let challenges = &instance.group_challenges()[group_index];
-        if opening_point.position_weights.len() != group_lp.positions_per_block()
-            || opening_point.live_block_weights.len() != group_lp.live_block_count()
+        if opening_point.position_weights.len() != group_lp.num_positions_per_block()
+            || opening_point.live_block_weights.len() != group_lp.num_live_blocks()
         {
             return Err(AkitaError::InvalidInput(
                 "relation matrix col eval opening-point layout mismatch".to_string(),
             ));
         }
-        if ring_multiplier_point.position_len() != group_lp.positions_per_block()
-            || ring_multiplier_point.fold_len() != group_lp.live_block_count()
+        if ring_multiplier_point.position_len() != group_lp.num_positions_per_block()
+            || ring_multiplier_point.fold_len() != group_lp.num_live_blocks()
         {
             return Err(AkitaError::InvalidInput(
                 "relation matrix col eval multiplier layout mismatch".to_string(),
             ));
         }
         let total_blocks = k_g
-            .checked_mul(group_lp.live_block_count())
+            .checked_mul(group_lp.num_live_blocks())
             .ok_or(AkitaError::InvalidProof)?;
         if challenges.logical_len() != total_blocks {
             return Err(AkitaError::InvalidProof);
@@ -396,22 +396,21 @@ where
         let inner_width = group_lp.a_col_len();
         // Hoist per-group geometry into `Copy` locals so the parallel closures
         // below capture scalars instead of the `!Sync` `&dyn LevelParamsLike`.
-        let live_block_count_g = group_lp.live_block_count();
-        let positions_per_block_g = group_lp.positions_per_block();
-        let semantic_t_cols_per_vector = n_a
+        let num_live_blocks_g = group_lp.num_live_blocks();
+        let num_positions_per_block_g = group_lp.num_positions_per_block();
+        let semantic_t_vector_width = n_a
             .checked_mul(depth_open)
-            .and_then(|len| len.checked_mul(live_block_count_g))
+            .and_then(|len| len.checked_mul(num_live_blocks_g))
             .ok_or_else(|| {
                 AkitaError::InvalidSetup("multi-group B vector width overflow".to_string())
             })?;
-        let t_cols_per_vector =
-            semantic_t_cols_per_vector
-                .checked_mul(b_ratio)
-                .ok_or_else(|| {
-                    AkitaError::InvalidSetup("multi-group B vector width overflow".to_string())
-                })?;
+        let t_vector_width = semantic_t_vector_width
+            .checked_mul(b_ratio)
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup("multi-group B vector width overflow".to_string())
+            })?;
         let b_width = k_g
-            .checked_mul(t_cols_per_vector)
+            .checked_mul(t_vector_width)
             .ok_or_else(|| AkitaError::InvalidSetup("setup B width overflow".to_string()))?;
         let setup_a_view = setup.shared_matrix.ring_view_dyn(n_a, inner_width, d_a)?;
         let b_view = setup.shared_matrix.ring_view_dyn(n_b, b_width, d_b)?;
@@ -441,10 +440,10 @@ where
             .collect();
 
         for claim in 0..k_g {
-            for global_block in 0..live_block_count_g {
+            for global_block in 0..num_live_blocks_g {
                 let unit = witness_layout.unit_for_block(group_id, global_block)?;
                 let challenge_index = claim
-                    .checked_mul(live_block_count_g)
+                    .checked_mul(num_live_blocks_g)
                     .and_then(|base| base.checked_add(global_block))
                     .ok_or_else(|| {
                         AkitaError::InvalidSetup("relation challenge index overflow".into())
@@ -461,7 +460,7 @@ where
                         digit,
                     )?;
                     for role_subcol in 0..d_ratio {
-                        let logical_block = claim * live_block_count_g + global_block;
+                        let logical_block = claim * num_live_blocks_g + global_block;
                         let d_phys_col = logical_block
                             .checked_mul(d_ratio)
                             .and_then(|base| base.checked_add(role_subcol))
@@ -509,7 +508,7 @@ where
                 for a_idx in 0..n_a {
                     let a_row_weight = eq_tau1.eval_at(a_range.start + a_idx)?;
                     for (digit, &opening_gadget) in g_open.iter().enumerate() {
-                        let block_claim = live_block_count_g
+                        let block_claim = num_live_blocks_g
                             .checked_mul(claim)
                             .and_then(|base| base.checked_add(global_block))
                             .ok_or(AkitaError::InvalidProof)?;
@@ -604,13 +603,13 @@ where
             })
             .collect::<Result<Vec<_>, AkitaError>>()?;
         for unit in units {
-            for position in 0..positions_per_block_g {
+            for position in 0..num_positions_per_block_g {
                 for commit_digit in 0..depth_commit {
                     for (fold_digit, &fold) in fold_gadget.iter().enumerate() {
                         let phys_k = position * depth_commit + commit_digit;
                         let witness_col = witness_layout.z_index(
                             unit,
-                            positions_per_block_g,
+                            num_positions_per_block_g,
                             depth_commit,
                             depth_fold,
                             position,

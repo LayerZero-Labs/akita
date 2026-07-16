@@ -30,11 +30,11 @@ fn raw_i8_strided_accepts_signed_unit_outside_binary_digit_range() {
     type F = Fp64<4294967197>;
     const D: usize = 64;
     let num_rows = 2;
-    let positions_per_block = 3;
-    let live_block_count = 2;
+    let num_positions_per_block = 3;
+    let num_live_blocks = 2;
     let mat: Vec<Vec<CyclotomicRing<F, D>>> = (0..num_rows)
         .map(|row| {
-            (0..positions_per_block)
+            (0..num_positions_per_block)
                 .map(|col| {
                     CyclotomicRing::from_coefficients(std::array::from_fn(|k| {
                         F::from_u64((row + col + k + 1) as u64)
@@ -46,13 +46,13 @@ fn raw_i8_strided_accepts_signed_unit_outside_binary_digit_range() {
     let flat_rows: Vec<_> = mat.iter().flatten().copied().collect();
     let flat = FlatMatrix::from_ring_slice(&flat_rows);
     let slot = build_ntt_slot(
-        flat.ring_view::<D>(num_rows, positions_per_block)
+        flat.ring_view::<D>(num_rows, num_positions_per_block)
             .expect("valid matrix view"),
     )
     .expect("Q32 dispatch should support this field and ring dimension");
-    let coeffs: Vec<[i8; D]> = (0..positions_per_block)
+    let coeffs: Vec<[i8; D]> = (0..num_positions_per_block)
         .flat_map(|col| {
-            (0..live_block_count).map(move |block| {
+            (0..num_live_blocks).map(move |block| {
                 if (col + block) % 2 == 0 {
                     [1i8; D]
                 } else {
@@ -61,10 +61,10 @@ fn raw_i8_strided_accepts_signed_unit_outside_binary_digit_range() {
             })
         })
         .collect();
-    let blocks: Vec<Vec<[i8; D]>> = (0..live_block_count)
+    let blocks: Vec<Vec<[i8; D]>> = (0..num_live_blocks)
         .map(|block| {
-            (0..positions_per_block)
-                .map(|col| coeffs[col * live_block_count + block])
+            (0..num_positions_per_block)
+                .map(|col| coeffs[col * num_live_blocks + block])
                 .collect()
         })
         .collect();
@@ -72,10 +72,10 @@ fn raw_i8_strided_accepts_signed_unit_outside_binary_digit_range() {
     let got = mat_vec_mul_ntt_raw_i8_strided::<F, D>(
         &slot,
         num_rows,
-        positions_per_block,
+        num_positions_per_block,
         &coeffs,
-        live_block_count,
-        positions_per_block,
+        num_live_blocks,
+        num_positions_per_block,
     )
     .expect("raw signed-i8 strided mat-vec");
     let expected = schoolbook_digit_mat_vec(&mat, &blocks);

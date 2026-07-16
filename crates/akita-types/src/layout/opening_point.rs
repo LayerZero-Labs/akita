@@ -173,8 +173,8 @@ pub fn checked_opening_source_index(
 
 /// Convert the outer portion of a field opening point into ring-native vectors.
 ///
-/// The first `log2(positions_per_block)` coordinates select a position and the
-/// remaining `log2(next_power_of_two(live_block_count))` coordinates select a
+/// The first `log2(num_positions_per_block)` coordinates select a position and the
+/// remaining `log2(next_power_of_two(num_live_blocks))` coordinates select a
 /// block. Only the exact live block prefix is retained.
 ///
 /// # Errors
@@ -182,17 +182,17 @@ pub fn checked_opening_source_index(
 /// Returns an error if the point dimension does not match `layout`.
 pub fn ring_opening_point_from_field<F: FieldCore>(
     opening_point: &[F],
-    positions_per_block: usize,
-    live_block_count: usize,
+    num_positions_per_block: usize,
+    num_live_blocks: usize,
     basis: BasisMode,
 ) -> Result<RingOpeningPoint<F>, AkitaError> {
-    if !positions_per_block.is_power_of_two() || live_block_count == 0 {
+    if !num_positions_per_block.is_power_of_two() || num_live_blocks == 0 {
         return Err(AkitaError::InvalidSetup(
             "opening geometry requires power-of-two M and positive B".to_string(),
         ));
     }
-    let position_index_bits = positions_per_block.trailing_zeros() as usize;
-    let block_index_domain_size = live_block_count
+    let position_index_bits = num_positions_per_block.trailing_zeros() as usize;
+    let block_index_domain_size = num_live_blocks
         .checked_next_power_of_two()
         .ok_or_else(|| AkitaError::InvalidSetup("block-index domain size overflow".to_string()))?;
     let block_index_bits = block_index_domain_size.trailing_zeros() as usize;
@@ -210,7 +210,7 @@ pub fn ring_opening_point_from_field<F: FieldCore>(
     let live_block_weights = basis_weights_prefix(
         &opening_point[position_index_bits..],
         basis,
-        live_block_count,
+        num_live_blocks,
     )?;
     Ok(RingOpeningPoint {
         position_weights,
@@ -241,13 +241,13 @@ pub fn reduce_inner_opening_to_ring_element<F: FieldCore, const D: usize>(
 /// Embed `eq(block_open, j)` as a ring element for each live block index `j`.
 pub fn block_rings_at_opening<F, E, const D: usize>(
     fold_open: &[E],
-    live_block_count: usize,
+    num_live_blocks: usize,
 ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>
 where
     F: FieldCore + FromPrimitiveInt,
     E: FpExtEncoding<F> + FieldCore,
 {
-    basis_weights_prefix(fold_open, BasisMode::Lagrange, live_block_count)?
+    basis_weights_prefix(fold_open, BasisMode::Lagrange, num_live_blocks)?
         .into_iter()
         .map(|weight| {
             embed_ring_subfield_scalar::<F, E, D>(

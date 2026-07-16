@@ -66,7 +66,7 @@ benchmark matrix.
    first, a canonical SHA3-256 digest of the left vector and shape is absorbed,
    and the right vector is sampled from the updated transcript.
    `tensor_sampling_absorbs_left_digest_before_right` protects this invariant.
-3. Sampled tensor dimensions come from `tensor_split(live_block_count)`, which splits
+3. Sampled tensor dimensions come from `tensor_split(num_live_blocks)`, which splits
    `2^r` into balanced dimensions `2^{floor(r/2)}` and `2^{ceil(r/2)}`. The
    lower-level `TensorChallenges` container stores explicit left/right lengths
    and validates power-of-two dimensions, vector lengths, and product size, but
@@ -249,10 +249,10 @@ QuadraticEquation::new_prover
 sample_folding_challenges(shape = Flat | Tensor)
         |
         +-- Flat:
-        |     sample num_claims * live_block_count SparseChallenge values
+        |     sample num_claims * num_live_blocks SparseChallenge values
         |
         +-- Tensor:
-              split live_block_count = left_len * right_len
+              split num_live_blocks = left_len * right_len
               sample left[claim, p]
               absorb tensor_left_digest(left, D, num_claims, left_len)
               sample right[claim, q]
@@ -268,9 +268,9 @@ Challenges enum
 
 `ChallengeShape` is a selector, not sampled state. `Challenges` is the runtime
 state. The flat variant stores `Vec<SparseChallenge>` with explicit
-`live_block_count_per_claim` and `num_claims`. The tensor variant stores
+`num_live_blocks_per_claim` and `num_claims`. The tensor variant stores
 `TensorChallenges { left, right, left_len, right_len, num_claims }`. Sampling
-uses the balanced `tensor_split(live_block_count)` shape; explicit tensor containers
+uses the balanced `tensor_split(num_live_blocks)` shape; explicit tensor containers
 may carry any power-of-two factorization whose product matches the expected
 block count.
 
@@ -285,7 +285,7 @@ keeps that product implicit and contracts/evaluates it from the factors.
 Flat sampling:
 
 ```text
-sample_sparse_challenges(CHALLENGE_WITNESS_FOLD, num_claims * live_block_count)
+sample_sparse_challenges(CHALLENGE_WITNESS_FOLD, num_claims * num_live_blocks)
 ```
 
 Tensor sampling:
@@ -393,7 +393,7 @@ PreparedChallengeEvals::Tensor { challenges: TensorChallenges, alpha_pows: Vec<E
 
 The flat path stores `c_i(alpha)` for every logical challenge. The tensor path
 stores the factored challenges and alpha powers, validates that
-`left_len * right_len == lp.live_block_count`, and defers contraction until row
+`left_len * right_len == lp.num_live_blocks`, and defers contraction until row
 evaluation.
 
 Structured W/T row replay needs block-carry summaries of the form:

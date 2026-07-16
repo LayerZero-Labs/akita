@@ -346,7 +346,7 @@ fn debug_random_point(nv: usize) -> Vec<OneHotF> {
 }
 
 fn debug_make_onehot_poly(layout: &LevelParams, seed: u64) -> OneHotPoly<OneHotF, u8> {
-    let total_ring = layout.live_block_count * layout.positions_per_block;
+    let total_ring = layout.num_live_blocks * layout.num_positions_per_block;
     let num_vars = layout.position_index_bits()
         + layout.block_index_bits()
         + ONEHOT_D.trailing_zeros() as usize;
@@ -379,8 +379,8 @@ where
     let reduced_point = &point[alpha_bits..];
     let ring_opening_point = ring_opening_point_from_field(
         reduced_point,
-        layout.positions_per_block,
-        layout.live_block_count,
+        layout.num_positions_per_block,
+        layout.num_live_blocks,
         BasisMode::Lagrange,
     )
     .expect("opening point shape should match layout");
@@ -392,7 +392,7 @@ where
         OpeningFoldPlan::Base {
             live_block_weights: &ring_opening_point.live_block_weights,
             position_weights: &ring_opening_point.position_weights,
-            positions_per_block: layout.positions_per_block,
+            num_positions_per_block: layout.num_positions_per_block,
         },
     )
     .expect("evaluate_and_fold");

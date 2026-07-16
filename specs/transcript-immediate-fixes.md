@@ -272,8 +272,8 @@ num_w_vectors = descriptor-bound number of opened W vectors
 num_t_vectors = descriptor-bound number of T/relation vectors
 num_z_vectors = descriptor-bound number of public/folded Z rows
 
-w_hat_ring_count = num_w_vectors * live_block_count * num_digits_open
-t_hat_ring_count = num_t_vectors * live_block_count * a_key_row_len * num_digits_open
+w_hat_ring_count = num_w_vectors * num_live_blocks * num_digits_open
+t_hat_ring_count = num_t_vectors * num_live_blocks * a_key_row_len * num_digits_open
 z_pre_ring_count = num_z_vectors * inner_width * num_digits_fold
 
 w_hat_digit_count = w_hat_ring_count * ring_dim

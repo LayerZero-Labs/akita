@@ -40,7 +40,7 @@ whose size is governed by the **fold-response** difference
 `||z^(ℓ,i) − z^0||_inf`, not by a single per-block product. The only norm the
 extractor certifies for that difference is the fold bound `2·β^resp`, and
 `β^resp` sums one short product over **every** folded block, so it carries the
-fold arity `num_claims · live_block_count`. Dividing the response by the ring unit `c̄`
+fold arity `num_claims · num_live_blocks`. Dividing the response by the ring unit `c̄`
 does not recover `||s||_inf` (negacyclic division is not norm-preserving), and
 the range / one-hot / booleanity checks bind the *honest committed table*, not
 the *extracted* quotient. The anchored bound is therefore unsound at every
@@ -49,7 +49,7 @@ Ajtai-committed level (the dense root and all recursive fold levels). Only the
 read directly at `||w^(t)||_inf ≤ b/2`, with no commitment and no quotient.
 
 One-hotness does not rescue anchoring. It sets `||s||_inf = 1`, which shrinks
-`β^resp`, but it does not remove the `num_claims · live_block_count` fold factor. The
+`β^resp`, but it does not remove the `num_claims · num_live_blocks` fold factor. The
 old `is_root` / `is_onehot` regime axis was the wrong axis; the correct split
 is *committed (folded)* vs *terminal (cleartext)*, and one-hotness only enters
 through the witness norm.
@@ -60,7 +60,7 @@ Every committed level is priced at the fold response, then at the **verifier dig
 envelope** the stage-1 range check actually certifies:
 
 ```text
-β^resp = num_claims · live_block_count · min(||c||_inf·||s||_1, ||c||_1·||s||_inf)
+β^resp = num_claims · num_live_blocks · min(||c||_inf·||s||_1, ||c||_1·||s||_inf)
        = fold_witness_beta(...)
 δ_fold = num_digits_fold(..., honest cap = min(β_inf, t*) when tail-bound-with-grind)
 z_verifier = balanced_digit_abs_max(log_basis, δ_fold)

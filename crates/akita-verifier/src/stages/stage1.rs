@@ -28,11 +28,11 @@ type Stage1VerifyOutput<E> = Vec<E>;
 /// This mirrors the prover's multi-group [`RingRelationProver`] live sampling: the
 /// D-block `v = D · concat_g(ê_g)` is absorbed a single time (it spans every
 /// group; the terminal layout drops the D-block so the absorb is skipped on
-/// both sides), then each group samples with its own `live_block_count`/`K_g` under
+/// both sides), then each group samples with its own `num_live_blocks`/`K_g` under
 /// the shared root `fold_challenge_config`, each group's local challenge shape,
 /// and the shared
 /// accepted grind nonce. A scalar batch (`num_groups == 1`) samples a single
-/// `Challenges` set with `lp.live_block_count`/`num_total_polynomials`.
+/// `Challenges` set with `lp.num_live_blocks`/`num_total_polynomials`.
 ///
 /// # Errors
 ///
@@ -67,7 +67,7 @@ where
             LiveFoldDraw::<F, T>::new(transcript).draw_folding_challenges(
                 challenge_ring_d,
                 group_index,
-                group_lp.live_block_count(),
+                group_lp.num_live_blocks(),
                 k_g,
                 &lp.fold_challenge_config,
                 &group_lp.fold_challenge_shape(),

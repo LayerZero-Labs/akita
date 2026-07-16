@@ -40,7 +40,7 @@ pub(crate) fn tensor_oracle_challenges<const D: usize>() -> TensorChallenges {
                 coeffs: vec![1],
             },
         ],
-        live_blocks_per_claim: 4,
+        num_live_blocks_per_claim: 4,
         fold_low_len: 2,
         num_claims: 2,
     }

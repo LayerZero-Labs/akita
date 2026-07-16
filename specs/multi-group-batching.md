@@ -623,8 +623,8 @@ pub struct GroupRootParams {
     pub layout: PrecommittedGroupParams,
     pub a_key: AjtaiKeyParams,
     pub b_key: AjtaiKeyParams,
-    pub live_block_count: usize,
-    pub positions_per_block: usize,
+    pub num_live_blocks: usize,
+    pub num_positions_per_block: usize,
     pub num_digits_commit: usize,
     pub num_digits_open: usize,
     pub num_digits_fold_one: usize,
@@ -635,8 +635,8 @@ pub struct LevelParams {
     pub a_key: AjtaiKeyParams,
     pub b_key: AjtaiKeyParams,
     pub d_key: AjtaiKeyParams,
-    pub live_block_count: usize,
-    pub positions_per_block: usize,
+    pub num_live_blocks: usize,
+    pub num_positions_per_block: usize,
     pub position_index_bits: usize,
     pub block_index_bits: usize,
     pub log_basis: u32,
@@ -748,9 +748,9 @@ singleton recursive suffix).
 For each group, the planner prices:
 
 ```text
-e_hat_g = live_block_count_g * num_digits_open_g
-t_hat_g = K_g * live_block_count_g * n_a_g * num_digits_open_g
-z_hat_g = positions_per_block_g * num_digits_commit_g * num_digits_fold_g
+e_hat_g = num_live_blocks_g * num_digits_open_g
+t_hat_g = K_g * num_live_blocks_g * n_a_g * num_digits_open_g
+z_hat_g = num_positions_per_block_g * num_digits_commit_g * num_digits_fold_g
 ```
 
 For a folded multi-group root, the multi-group root's next recursive witness ring count
@@ -774,7 +774,7 @@ sum_g K_g * 2^{num_vars_g}
 The implemented D width uses one `w_hat_g` segment per group:
 
 ```text
-d_width = decomposed_w_ring_count(main.num_digits_open, main.live_block_count, 1)
+d_width = decomposed_w_ring_count(main.num_digits_open, main.num_live_blocks, 1)
         + sum_precommitted group.d_segment_width()
 ```
 

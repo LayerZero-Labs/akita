@@ -465,8 +465,8 @@ For each group `g`, use the existing `LevelParamsLike` view and let:
 
 ```text
 K_g       = group polynomial count
-B_g       = live_block_count_g
-L_g       = positions_per_block_g
+B_g       = num_live_blocks_g
+L_g       = num_positions_per_block_g
 delta_c_g = num_digits_commit_g
 delta_o_g = num_digits_open_g
 n_a_g     = A rows
@@ -534,8 +534,8 @@ fold shape  = successor fold challenge shape
 It owns:
 
 ```text
-live_block_count_prefix = 2^r_prefix
-positions_per_block_prefix  = 2^m_prefix
+num_live_blocks_prefix = 2^r_prefix
+num_positions_per_block_prefix  = 2^m_prefix
 n_a_prefix
 n_b_prefix
 A_prefix key
@@ -546,14 +546,14 @@ For `ring_slots = n_prefix / D_setup`, search deterministic power-of-two block
 splits satisfying:
 
 ```text
-live_block_count_prefix * positions_per_block_prefix = ring_slots
+num_live_blocks_prefix * num_positions_per_block_prefix = ring_slots
 ```
 
 For each split:
 
 ```text
-A_width_prefix = positions_per_block_prefix * delta_commit
-B_width_prefix = live_block_count_prefix * n_a_prefix * delta_open
+A_width_prefix = num_positions_per_block_prefix * delta_commit
+B_width_prefix = num_live_blocks_prefix * n_a_prefix * delta_open
 ```
 
 derive SIS-secure `n_a_prefix` and `n_b_prefix` exactly as a singleton
@@ -625,7 +625,7 @@ For each existing `block_index_bits` candidate:
 3. When `incoming_n_prefix` is present, derive an independent setup-prefix
    precommitted group:
    - `group = PolynomialGroupLayout::singleton(log2(incoming_n_prefix))`;
-   - `live_block_count_prefix * positions_per_block_prefix = incoming_n_prefix / D_setup`;
+   - `num_live_blocks_prefix * num_positions_per_block_prefix = incoming_n_prefix / D_setup`;
    - `log_basis`, digit depths, fold shape, and ring dimension are shared with
      the current fold candidate;
    - `n_a_prefix`, `n_b_prefix`, `A_prefix`, and `B_prefix` are derived for the

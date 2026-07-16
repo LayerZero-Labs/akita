@@ -23,8 +23,8 @@ fn make_fold_step(ring_dimension: usize) -> FoldStep {
     let mut params = LevelParams::log_basis_stub(3);
     params.ring_dimension = ring_dimension;
     params.role_dims = akita_types::CommitmentRingDims::uniform(ring_dimension);
-    params.live_block_count = 4;
-    params.positions_per_block = 8;
+    params.num_live_blocks = 4;
+    params.num_positions_per_block = 8;
     FoldStep {
         params,
         current_w_len: 256,

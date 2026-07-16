@@ -27,7 +27,7 @@ use crate::CommitmentConfig;
 /// not a singleton).
 ///
 /// Tests, benches, and the `profile` example use this to pre-size per-poly
-/// inputs (e.g. `OneHotPoly`) so the `positions_per_block` / `live_block_count` line up with
+/// inputs (e.g. `OneHotPoly`) so the `num_positions_per_block` / `num_live_blocks` line up with
 /// what `Scheme::commit` will use under the batched layout. Production
 /// callers always go through `Cfg::get_params_for_batched_commitment(&opening_batch)`
 /// instead.

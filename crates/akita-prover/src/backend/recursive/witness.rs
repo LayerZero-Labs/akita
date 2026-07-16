@@ -109,10 +109,10 @@ impl<'a, F: FieldCore, const D: usize> SuffixWitnessView<'a, F, D> {
         &self,
         block_idx: usize,
         col_idx: usize,
-        positions_per_block: usize,
+        num_positions_per_block: usize,
     ) -> Option<&'a [i8; D]> {
         block_idx
-            .checked_mul(positions_per_block)
+            .checked_mul(num_positions_per_block)
             .and_then(|base| base.checked_add(col_idx))
             .and_then(|index| self.coeffs.get(index))
     }
@@ -122,13 +122,13 @@ impl<'a, F: FieldCore, const D: usize> SuffixWitnessView<'a, F, D> {
     }
 
     #[inline]
-    fn live_block_count(&self, positions_per_block: usize) -> Result<usize, AkitaError> {
-        if positions_per_block == 0 || self.coeffs.is_empty() {
+    fn num_live_blocks(&self, num_positions_per_block: usize) -> Result<usize, AkitaError> {
+        if num_positions_per_block == 0 || self.coeffs.is_empty() {
             return Err(AkitaError::InvalidInput(
                 "recursive witness requires positive exact block geometry".into(),
             ));
         }
-        Ok(self.coeffs.len().div_ceil(positions_per_block))
+        Ok(self.coeffs.len().div_ceil(num_positions_per_block))
     }
 
     #[inline]
@@ -249,14 +249,14 @@ where
     pub(crate) fn fold_blocks(
         &self,
         scalars: &[F],
-        positions_per_block: usize,
+        num_positions_per_block: usize,
     ) -> Vec<CyclotomicRing<F, D>> {
-        let live_block_count = self.live_block_count(positions_per_block).unwrap();
-        cfg_into_iter!(0..live_block_count)
+        let num_live_blocks = self.num_live_blocks(num_positions_per_block).unwrap();
+        cfg_into_iter!(0..num_live_blocks)
             .map(|block_idx| {
                 let mut acc = [F::zero(); D];
-                for (col_idx, &scalar) in scalars.iter().take(positions_per_block).enumerate() {
-                    let Some(ring) = self.block_elem(block_idx, col_idx, positions_per_block)
+                for (col_idx, &scalar) in scalars.iter().take(num_positions_per_block).enumerate() {
+                    let Some(ring) = self.block_elem(block_idx, col_idx, num_positions_per_block)
                     else {
                         break;
                     };
@@ -275,14 +275,14 @@ where
     pub(crate) fn fold_blocks_ring(
         &self,
         scalars: &[CyclotomicRing<F, D>],
-        positions_per_block: usize,
+        num_positions_per_block: usize,
     ) -> Vec<CyclotomicRing<F, D>> {
-        let live_block_count = self.live_block_count(positions_per_block).unwrap();
-        cfg_into_iter!(0..live_block_count)
+        let num_live_blocks = self.num_live_blocks(num_positions_per_block).unwrap();
+        cfg_into_iter!(0..num_live_blocks)
             .map(|block_idx| {
                 let mut acc = CyclotomicRing::<F, D>::zero();
-                for (col_idx, scalar) in scalars.iter().take(positions_per_block).enumerate() {
-                    let Some(digits) = self.block_elem(block_idx, col_idx, positions_per_block)
+                for (col_idx, scalar) in scalars.iter().take(num_positions_per_block).enumerate() {
+                    let Some(digits) = self.block_elem(block_idx, col_idx, num_positions_per_block)
                     else {
                         break;
                     };
@@ -300,18 +300,18 @@ where
         &self,
         live_block_weights: &[F],
         position_weights: &[F],
-        positions_per_block: usize,
+        num_positions_per_block: usize,
     ) -> Result<(CyclotomicRing<F, D>, Vec<CyclotomicRing<F, D>>), AkitaError> {
-        let live_block_count = self.live_block_count(positions_per_block)?;
-        let folded = cfg_into_iter!(0..live_block_count)
+        let num_live_blocks = self.num_live_blocks(num_positions_per_block)?;
+        let folded = cfg_into_iter!(0..num_live_blocks)
             .map(|block_idx| {
                 let mut acc = [F::zero(); D];
                 for (col_idx, &scalar) in position_weights
                     .iter()
-                    .take(positions_per_block)
+                    .take(num_positions_per_block)
                     .enumerate()
                 {
-                    let Some(ring) = self.block_elem(block_idx, col_idx, positions_per_block)
+                    let Some(ring) = self.block_elem(block_idx, col_idx, num_positions_per_block)
                     else {
                         break;
                     };
@@ -337,18 +337,18 @@ where
         &self,
         live_block_weights: &[CyclotomicRing<F, D>],
         position_weights: &[CyclotomicRing<F, D>],
-        positions_per_block: usize,
+        num_positions_per_block: usize,
     ) -> Result<(CyclotomicRing<F, D>, Vec<CyclotomicRing<F, D>>), AkitaError> {
-        let live_block_count = self.live_block_count(positions_per_block)?;
-        let folded = cfg_into_iter!(0..live_block_count)
+        let num_live_blocks = self.num_live_blocks(num_positions_per_block)?;
+        let folded = cfg_into_iter!(0..num_live_blocks)
             .map(|block_idx| {
                 let mut acc = CyclotomicRing::<F, D>::zero();
                 for (col_idx, scalar) in position_weights
                     .iter()
-                    .take(positions_per_block)
+                    .take(num_positions_per_block)
                     .enumerate()
                 {
-                    let Some(digits) = self.block_elem(block_idx, col_idx, positions_per_block)
+                    let Some(digits) = self.block_elem(block_idx, col_idx, num_positions_per_block)
                     else {
                         break;
                     };
@@ -373,14 +373,14 @@ where
     pub(crate) fn decompose_fold(
         &self,
         challenges: &[SparseChallenge],
-        positions_per_block: usize,
+        num_positions_per_block: usize,
         num_digits: usize,
         _log_basis: u32,
     ) -> Result<DecomposeFoldWitness<F>, AkitaError> {
-        let live_block_count = self.live_block_count(positions_per_block)?;
-        if challenges.len() != live_block_count {
+        let num_live_blocks = self.num_live_blocks(num_positions_per_block)?;
+        if challenges.len() != num_live_blocks {
             return Err(AkitaError::InvalidSize {
-                expected: live_block_count,
+                expected: num_live_blocks,
                 actual: challenges.len(),
             });
         }
@@ -393,14 +393,14 @@ where
         let q = (-F::one()).to_canonical_u128() + 1;
         let coeffs = self.coeffs;
         let coeff_accum =
-            balanced_tight_digit_fold_partitioned::<D>(coeffs, challenges, positions_per_block);
+            balanced_tight_digit_fold_partitioned::<D>(coeffs, challenges, num_positions_per_block);
         Ok(build_decompose_fold_witness::<F, D>(coeff_accum, q))
     }
 
     pub(crate) fn decompose_fold_tensor_batched(
         _polys: &[&Self],
         _tensor: &TensorChallenges,
-        _positions_per_block: usize,
+        _num_positions_per_block: usize,
         _num_digits: usize,
         _log_basis: u32,
     ) -> Result<Option<DecomposeFoldWitness<F>>, AkitaError> {
@@ -417,14 +417,14 @@ where
     where
         B: CommitmentComputeBackend<F>,
     {
-        let live_block_count = self.live_block_count(plan.positions_per_block)?;
+        let num_live_blocks = self.num_live_blocks(plan.num_positions_per_block)?;
         let t = backend.recursive_witness_commit_rows(
             prepared,
             RecursiveWitnessCommitRowsPlan {
                 coeffs: self.coeffs,
                 n_rows: plan.n_a,
-                positions_per_block: plan.positions_per_block,
-                live_block_count,
+                num_positions_per_block: plan.num_positions_per_block,
+                num_live_blocks,
                 num_digits_commit: plan.num_digits_commit,
                 log_basis: plan.log_basis,
             },
@@ -588,32 +588,32 @@ where
         source: SuffixWitnessView<'_, F, D>,
         plan: OpeningFoldPlan<'_, F, D>,
     ) -> Result<OpeningFoldOutput<F, D>, AkitaError> {
-        let positions_per_block = plan.positions_per_block();
-        if positions_per_block == 0 {
+        let num_positions_per_block = plan.num_positions_per_block();
+        if num_positions_per_block == 0 {
             return Err(AkitaError::InvalidInput(
-                "positions_per_block must be positive".to_string(),
+                "num_positions_per_block must be positive".to_string(),
             ));
         }
-        let live_block_count = source.live_block_count(positions_per_block)?;
-        plan.validate(live_block_count)?;
+        let num_live_blocks = source.num_live_blocks(num_positions_per_block)?;
+        plan.validate(num_live_blocks)?;
         let (eval, folded) = match plan {
             OpeningFoldPlan::Base {
                 live_block_weights,
                 position_weights,
-                positions_per_block,
+                num_positions_per_block,
             } => source.evaluate_and_fold(
                 live_block_weights,
                 position_weights,
-                positions_per_block,
+                num_positions_per_block,
             )?,
             OpeningFoldPlan::Ring {
                 live_block_weights,
                 position_weights,
-                positions_per_block,
+                num_positions_per_block,
             } => source.evaluate_and_fold_ring(
                 live_block_weights,
                 position_weights,
-                positions_per_block,
+                num_positions_per_block,
             )?,
         };
         Ok(OpeningFoldOutput { eval, folded })
@@ -627,7 +627,7 @@ where
     ) -> Result<DecomposeFoldWitness<F>, AkitaError> {
         source.decompose_fold(
             plan.challenges,
-            plan.positions_per_block,
+            plan.num_positions_per_block,
             plan.num_digits,
             plan.log_basis,
         )
@@ -654,13 +654,13 @@ where
             DecomposeFoldBatchPlan::Sparse { .. } => Ok(BatchDecomposeFoldOutcome::FallbackPerPoly),
             DecomposeFoldBatchPlan::Tensor {
                 tensor,
-                positions_per_block,
+                num_positions_per_block,
                 num_digits,
                 log_basis,
             } => match SuffixWitnessView::decompose_fold_tensor_batched(
                 &refs,
                 tensor,
-                positions_per_block,
+                num_positions_per_block,
                 num_digits,
                 log_basis,
             )? {
@@ -804,13 +804,13 @@ mod tests {
         let view = w
             .view::<akita_field::Prime128OffsetA7F7, 2>()
             .expect("view");
-        let live_block_count = 4;
-        let positions_per_block = (w.len() / 2).div_ceil(live_block_count);
+        let num_live_blocks = 4;
+        let num_positions_per_block = (w.len() / 2).div_ceil(num_live_blocks);
 
         let row = |block_idx: usize| -> Vec<[i8; 2]> {
-            (0..positions_per_block)
+            (0..num_positions_per_block)
                 .filter_map(|col_idx| {
-                    view.block_elem(block_idx, col_idx, positions_per_block)
+                    view.block_elem(block_idx, col_idx, num_positions_per_block)
                         .copied()
                 })
                 .collect()
@@ -858,7 +858,7 @@ mod tests {
         let digits = (0..24).map(|idx| idx as i8 - 12).collect();
         let w = RecursiveWitnessFlat::from_i8_digits(digits);
         let view = w.view::<F, D>().expect("view");
-        let positions_per_block = 4;
+        let num_positions_per_block = 4;
         let live_block_weights = vec![F::from_u64(2), F::from_u64(5)];
         let position_weights = vec![
             F::from_u64(7),
@@ -867,7 +867,7 @@ mod tests {
             F::from_u64(17),
         ];
 
-        let expected_folded = view.fold_blocks(&position_weights, positions_per_block);
+        let expected_folded = view.fold_blocks(&position_weights, num_positions_per_block);
         let expected_eval = expected_folded
             .iter()
             .zip(live_block_weights.iter())
@@ -875,7 +875,11 @@ mod tests {
                 acc + f_i.scale(s_i)
             });
         let (eval, folded) = view
-            .evaluate_and_fold(&live_block_weights, &position_weights, positions_per_block)
+            .evaluate_and_fold(
+                &live_block_weights,
+                &position_weights,
+                num_positions_per_block,
+            )
             .unwrap();
 
         assert_eq!(folded, expected_folded);
@@ -888,11 +892,11 @@ mod tests {
         let digits = (0..24).map(|idx| idx as i8 - 12).collect();
         let w = RecursiveWitnessFlat::from_i8_digits(digits);
         let view = w.view::<F, D>().expect("view");
-        let positions_per_block = 4;
+        let num_positions_per_block = 4;
         let live_block_weights = vec![ring::<D>(2), ring::<D>(5)];
         let position_weights = vec![ring::<D>(7), ring::<D>(11), ring::<D>(13), ring::<D>(17)];
 
-        let expected_folded = view.fold_blocks_ring(&position_weights, positions_per_block);
+        let expected_folded = view.fold_blocks_ring(&position_weights, num_positions_per_block);
         let expected_eval = expected_folded
             .iter()
             .zip(live_block_weights.iter())
@@ -900,7 +904,11 @@ mod tests {
                 acc + (*f_i * *s_i)
             });
         let (eval, folded) = view
-            .evaluate_and_fold_ring(&live_block_weights, &position_weights, positions_per_block)
+            .evaluate_and_fold_ring(
+                &live_block_weights,
+                &position_weights,
+                num_positions_per_block,
+            )
             .unwrap();
 
         assert_eq!(folded, expected_folded);

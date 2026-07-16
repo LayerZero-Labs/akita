@@ -117,8 +117,8 @@ where
     let reduced_point = &padded_point[alpha_bits..];
     let ring_opening_point = ring_opening_point_from_field(
         reduced_point,
-        layout.positions_per_block,
-        layout.live_block_count,
+        layout.num_positions_per_block,
+        layout.num_live_blocks,
         basis,
     )
     .map_err(|err| format!("opening point shape should match layout: {err}"))?;
@@ -131,7 +131,7 @@ where
         OpeningFoldPlan::Base {
             live_block_weights: &ring_opening_point.live_block_weights,
             position_weights: &ring_opening_point.position_weights,
-            positions_per_block: layout.positions_per_block,
+            num_positions_per_block: layout.num_positions_per_block,
         },
     )
     .map_err(|err| format!("opening fold: {err}"))?;
@@ -290,7 +290,7 @@ fn run() -> Result<(), String> {
     // for reproducibility.
     let mut rng = StdRng::seed_from_u64(0xbeef_cafe);
     let total_field = layout
-        .live_ring_elements_per_claim
+        .num_live_ring_elements_per_claim
         .checked_mul(D)
         .ok_or_else(|| "total field size overflow".to_string())?;
     let total_chunks = total_field / onehot_k;

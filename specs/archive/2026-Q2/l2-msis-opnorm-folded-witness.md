@@ -360,7 +360,7 @@ AKITA_ALLOW_DEBUG_PROFILE=1 AKITA_PROFILE_TRACE=0 \
 
 - Certified object: `DecomposeFoldWitness.centered_coeffs` for
   `z = sum_i c_i * s_i`.
-- Fold width: `B = num_claims * live_block_count` (typically `num_claims = 1` at
+- Fold width: `B = num_claims * num_live_blocks` (typically `num_claims = 1` at
   root).
 - Per-coordinate RMS: `z_rms = ||z||_2 / sqrt(coeffs)`.
 - Current production D=64 signed sparse is `(31, 11)`, so

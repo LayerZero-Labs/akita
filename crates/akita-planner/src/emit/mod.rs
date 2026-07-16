@@ -52,7 +52,7 @@ fn fold_step_from_params(p: &LevelParams) -> GeneratedFoldStep {
         log_basis: p.log_basis,
         position_index_bits: p.position_index_bits() as u32,
         block_index_bits: p.block_index_bits() as u32,
-        live_block_count: p.live_block_count as u32,
+        num_live_blocks: p.num_live_blocks as u32,
         n_a: p.a_key.row_len() as u32,
         n_b: p.b_key.row_len() as u32,
         n_d: p.d_key.row_len() as u32,
@@ -70,10 +70,11 @@ fn setup_prefix_group_from_params(
             let group = &setup_prefix.commitment_params;
             GeneratedSetupPrefixGroup {
                 natural_len: setup_prefix.natural_len as u32,
-                live_ring_elements_per_claim: group.layout.live_ring_elements_per_claim as u32,
-                positions_per_block: group.layout.positions_per_block as u32,
-                live_block_count: group.layout.live_block_count as u32,
-                blocks_per_chunk_granule: group.layout.blocks_per_chunk_granule as u32,
+                num_live_ring_elements_per_claim: group.layout.num_live_ring_elements_per_claim
+                    as u32,
+                num_positions_per_block: group.layout.num_positions_per_block as u32,
+                num_live_blocks: group.layout.num_live_blocks as u32,
+                num_blocks_per_chunk_granule: group.layout.num_blocks_per_chunk_granule as u32,
                 fold_challenge_shape: group.layout.fold_challenge_shape,
                 n_a: group.a_key.row_len() as u32,
                 n_b: group.b_key.row_len() as u32,
@@ -125,12 +126,12 @@ fn emit_key(key: PolynomialGroupLayout) -> String {
 fn emit_precommitted_group_key(layout: &PrecommittedGroupParams) -> String {
     let challenge_shape = emit_root_fold_shape(layout.fold_challenge_shape);
     format!(
-        "PrecommittedGroupParams {{ group: {}, live_ring_elements_per_claim: {}, positions_per_block: {}, live_block_count: {}, blocks_per_chunk_granule: {}, fold_challenge_shape: {}, log_basis: {}, n_a: {}, conservative_n_b: {} }}",
+        "PrecommittedGroupParams {{ group: {}, num_live_ring_elements_per_claim: {}, num_positions_per_block: {}, num_live_blocks: {}, num_blocks_per_chunk_granule: {}, fold_challenge_shape: {}, log_basis: {}, n_a: {}, conservative_n_b: {} }}",
         emit_key(layout.group),
-        layout.live_ring_elements_per_claim,
-        layout.positions_per_block,
-        layout.live_block_count,
-        layout.blocks_per_chunk_granule,
+        layout.num_live_ring_elements_per_claim,
+        layout.num_positions_per_block,
+        layout.num_live_blocks,
+        layout.num_blocks_per_chunk_granule,
         challenge_shape,
         layout.log_basis,
         layout.n_a,
@@ -156,12 +157,12 @@ fn emit_compact_fold_struct(p: &LevelParams) -> String {
     let fold = fold_step_from_params(p);
     format!(
         "GeneratedFoldStep {{ \
-         ring_d: {}, log_basis: {}, position_index_bits: {}, block_index_bits: {}, live_block_count: {}, n_a: {}, n_b: {}, n_d: {} }}",
+         ring_d: {}, log_basis: {}, position_index_bits: {}, block_index_bits: {}, num_live_blocks: {}, n_a: {}, n_b: {}, n_d: {} }}",
         fold.ring_d,
         fold.log_basis,
         fold.position_index_bits,
         fold.block_index_bits,
-        fold.live_block_count,
+        fold.num_live_blocks,
         fold.n_a,
         fold.n_b,
         fold.n_d,
@@ -178,12 +179,12 @@ fn emit_setup_contribution_mode(mode: SetupContributionMode) -> &'static str {
 fn emit_setup_prefix_group(group: Option<GeneratedSetupPrefixGroup>) -> String {
     match group {
         Some(group) => format!(
-            "Some(GeneratedSetupPrefixGroup {{ natural_len: {}, live_ring_elements_per_claim: {}, positions_per_block: {}, live_block_count: {}, blocks_per_chunk_granule: {}, fold_challenge_shape: {}, n_a: {}, n_b: {} }})",
+            "Some(GeneratedSetupPrefixGroup {{ natural_len: {}, num_live_ring_elements_per_claim: {}, num_positions_per_block: {}, num_live_blocks: {}, num_blocks_per_chunk_granule: {}, fold_challenge_shape: {}, n_a: {}, n_b: {} }})",
             group.natural_len,
-            group.live_ring_elements_per_claim,
-            group.positions_per_block,
-            group.live_block_count,
-            group.blocks_per_chunk_granule,
+            group.num_live_ring_elements_per_claim,
+            group.num_positions_per_block,
+            group.num_live_blocks,
+            group.num_blocks_per_chunk_granule,
             emit_root_fold_shape(group.fold_challenge_shape),
             group.n_a,
             group.n_b,

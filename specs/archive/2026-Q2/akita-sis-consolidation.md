@@ -256,13 +256,13 @@ pub fn num_digits_fold(beta: u128, field_bits: u32, log_basis: u32) -> usize;
 pub fn decomp_depths(decomposition: DecompositionParams) -> (usize, usize);
 
 // --- per-role committed widths (ring-element column counts) ---
-/// A width: `positions_per_block · δ_commit`.
-pub fn decomposed_s_block_ring_count(positions_per_block: usize, num_digits_commit: usize) -> Option<usize>;
-/// B width: `n_a · δ_open · live_block_count · t_vectors`.
-pub fn decomposed_t_ring_count(n_a: usize, num_digits_open: usize, live_block_count: usize, t_vectors: usize)
+/// A width: `num_positions_per_block · δ_commit`.
+pub fn decomposed_s_block_ring_count(num_positions_per_block: usize, num_digits_commit: usize) -> Option<usize>;
+/// B width: `n_a · δ_open · num_live_blocks · t_vectors`.
+pub fn decomposed_t_ring_count(n_a: usize, num_digits_open: usize, num_live_blocks: usize, t_vectors: usize)
     -> Option<usize>;
-/// D width: `δ_open · live_block_count · t_vectors`.
-pub fn decomposed_w_ring_count(num_digits_open: usize, live_block_count: usize, t_vectors: usize)
+/// D width: `δ_open · num_live_blocks · t_vectors`.
+pub fn decomposed_w_ring_count(num_digits_open: usize, num_live_blocks: usize, t_vectors: usize)
     -> Option<usize>;
 ```
 
@@ -281,14 +281,14 @@ use akita_types::sis::*;
 let norm_s   = rounded_up_norm_s(family, d, decomp, &stage1, fold_shape, is_root, onehot_k, nu)
     .ok_or(/* InvalidSetup */)?;
 let d_commit = num_digits_s_commit(decomp, log_basis, is_root);
-let width_s  = decomposed_s_block_ring_count(positions_per_block, d_commit).ok_or(..)?;
+let width_s  = decomposed_s_block_ring_count(num_positions_per_block, d_commit).ok_or(..)?;
 let n_a      = min_secure_rank(family, d as u32, norm_s, width_s as u64).ok_or(..)?;
 let a_key    = AjtaiKeyParams::try_new(family, n_a, width_s, norm_s, d)?;
 
 // B key
 let norm_t   = rounded_up_norm_t(family, d, log_basis).ok_or(..)?;
 let d_open   = num_digits_open(decomp, log_basis);
-let width_t  = decomposed_t_ring_count(n_a, d_open, live_block_count, t_vectors).ok_or(..)?;
+let width_t  = decomposed_t_ring_count(n_a, d_open, num_live_blocks, t_vectors).ok_or(..)?;
 let n_b      = min_secure_rank(family, d as u32, norm_t, width_t as u64).ok_or(..)?;
 let b_key    = AjtaiKeyParams::try_new(family, n_b, width_t, norm_t, d)?;
 

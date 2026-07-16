@@ -737,10 +737,10 @@ fn validate_block_geometry(
             "generated schedule 2^block_index_bits overflows usize".to_string(),
         )
     })?;
-    let live_block_count = step.live_block_count as usize;
-    if live_block_count == 0
-        || live_block_count > block_index_domain_size
-        || live_block_count
+    let num_live_blocks = step.num_live_blocks as usize;
+    if num_live_blocks == 0
+        || num_live_blocks > block_index_domain_size
+        || num_live_blocks
             .checked_next_power_of_two()
             .is_none_or(|domain| domain != block_index_domain_size)
     {
@@ -749,13 +749,14 @@ fn validate_block_geometry(
                 .to_string(),
         ));
     }
-    let positions_per_block = 1usize
-        .checked_shl(step.position_index_bits)
-        .ok_or_else(|| {
-            AkitaError::InvalidSetup(
-                "generated schedule 2^position_index_bits overflows usize".to_string(),
-            )
-        })?;
+    let num_positions_per_block =
+        1usize
+            .checked_shl(step.position_index_bits)
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup(
+                    "generated schedule 2^position_index_bits overflows usize".to_string(),
+                )
+            })?;
     if fold_level == 0 {
         if !current_w_len.is_multiple_of(policy.ring_dimension) {
             return Err(AkitaError::InvalidSetup(format!(
@@ -763,11 +764,12 @@ fn validate_block_geometry(
                 policy.ring_dimension
             )));
         }
-        let live_ring_elements_per_claim = current_w_len / policy.ring_dimension;
-        let derived_live_block_count = live_ring_elements_per_claim.div_ceil(positions_per_block);
-        if live_block_count != derived_live_block_count {
+        let num_live_ring_elements_per_claim = current_w_len / policy.ring_dimension;
+        let derived_num_live_blocks =
+            num_live_ring_elements_per_claim.div_ceil(num_positions_per_block);
+        if num_live_blocks != derived_num_live_blocks {
             return Err(AkitaError::InvalidSetup(format!(
-                "generated root exact live block mismatch: stored={live_block_count}, derived={derived_live_block_count}"
+                "generated root exact live block mismatch: stored={num_live_blocks}, derived={derived_num_live_blocks}"
             )));
         }
         let alpha = policy.ring_dimension.trailing_zeros() as usize;
@@ -801,10 +803,10 @@ fn validate_block_geometry(
             "generated recursive geometry mismatch at level {fold_level}: position_index_bits={position_index_bits}, block_index_bits={block_index_bits}, reduced_vars={reduced_vars}"
         )));
     }
-    let derived_live_block_count = num_ring_elems.div_ceil(positions_per_block);
-    if live_block_count != derived_live_block_count {
+    let derived_num_live_blocks = num_ring_elems.div_ceil(num_positions_per_block);
+    if num_live_blocks != derived_num_live_blocks {
         return Err(AkitaError::InvalidSetup(format!(
-            "generated recursive exact live block mismatch at level {fold_level}: stored={live_block_count}, derived={derived_live_block_count}"
+            "generated recursive exact live block mismatch at level {fold_level}: stored={num_live_blocks}, derived={derived_num_live_blocks}"
         )));
     }
     Ok(())
@@ -819,7 +821,7 @@ fn validate_expanded_level_params(
 ) -> Result<LevelParams, AkitaError> {
     if lp.position_index_bits() != step.position_index_bits as usize
         || lp.block_index_bits() != step.block_index_bits as usize
-        || lp.live_block_count != step.live_block_count as usize
+        || lp.num_live_blocks != step.num_live_blocks as usize
     {
         return Err(AkitaError::InvalidSetup(
             "expanded generated level has mismatched block geometry".to_string(),

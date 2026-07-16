@@ -18,8 +18,9 @@ use akita_types::{
 };
 
 use crate::schedule_params::{
-    derive_optimal_suffix_schedule, find_schedule, optimize_blocks_per_chunk_granule,
-    optimize_fold_challenge_shape, RingChallengeConfigFn, ScheduleMemo, SuffixCtx, SuffixState,
+    derive_optimal_suffix_schedule, find_schedule, optimize_fold_challenge_shape,
+    optimize_num_blocks_per_chunk_granule, RingChallengeConfigFn, ScheduleMemo, SuffixCtx,
+    SuffixState,
 };
 use crate::PlannerPolicy;
 
@@ -59,10 +60,10 @@ pub(crate) fn group_root_params_from_layout(
     };
     let num_digits_commit = num_digits_s_commit(level_decomp, true);
     let num_digits_open = num_digits_open(level_decomp);
-    let live_block_count = layout.live_block_count;
-    let positions_per_block = layout.positions_per_block;
+    let num_live_blocks = layout.num_live_blocks;
+    let num_positions_per_block = layout.num_positions_per_block;
     let fold_challenge_shape = layout.fold_challenge_shape;
-    let width_s = decomposed_s_block_ring_count(positions_per_block, num_digits_commit)
+    let width_s = decomposed_s_block_ring_count(num_positions_per_block, num_digits_commit)
         .ok_or_else(|| AkitaError::InvalidSetup("multi-group A width overflow".to_string()))?;
     let norm_s = rounded_up_role_a_inf_norm(
         policy.sis_security_policy,
@@ -74,7 +75,7 @@ pub(crate) fn group_root_params_from_layout(
         true,
         policy.onehot_chunk_size,
         policy.ring_subfield_norm_bound,
-        live_block_count,
+        num_live_blocks,
         layout.group.num_polynomials(),
         width_s as u64,
     )
@@ -123,7 +124,7 @@ pub(crate) fn group_root_params_from_layout(
     let width_t = decomposed_t_ring_count(
         layout.n_a,
         num_digits_open,
-        live_block_count,
+        num_live_blocks,
         layout.group.num_polynomials(),
     )
     .ok_or_else(|| AkitaError::InvalidSetup("setup B width overflow".to_string()))?;
@@ -180,7 +181,7 @@ pub(crate) fn group_root_params_from_layout(
         onehot_chunk_size > 0,
     );
     let (num_digits_fold_one, _) = fold_witness_digit_plan(
-        live_block_count,
+        num_live_blocks,
         layout.group.num_polynomials(),
         policy.decomposition.field_bits(),
         layout.log_basis,
@@ -245,8 +246,8 @@ fn checked_score_mul(lhs: u128, rhs: usize, context: &'static str) -> Result<u12
 
 fn root_direct_split_cost(
     n_a: usize,
-    live_block_count: usize,
-    positions_per_block: usize,
+    num_live_blocks: usize,
+    num_positions_per_block: usize,
     num_digits_commit: usize,
     num_digits_open: usize,
     num_digits_fold: usize,
@@ -254,13 +255,13 @@ fn root_direct_split_cost(
 ) -> Result<u128, AkitaError> {
     // Match `optimal_block_geometry_split`: opening `(1 + n_a) * delta_open * 2^r`
     // plus folded witness `delta_commit * delta_fold * 2^m`.
-    let e_hat_cost = checked_score_mul(num_digits_open as u128, live_block_count, context)?;
+    let e_hat_cost = checked_score_mul(num_digits_open as u128, num_live_blocks, context)?;
     let t_hat_cost = checked_score_mul(num_digits_open as u128, n_a, context)?;
-    let t_hat_cost = checked_score_mul(t_hat_cost, live_block_count, context)?;
+    let t_hat_cost = checked_score_mul(t_hat_cost, num_live_blocks, context)?;
     let opening_cost = checked_score_add(e_hat_cost, t_hat_cost, context)?;
 
     let z_hat_cost = checked_score_mul(num_digits_commit as u128, num_digits_fold, context)?;
-    let z_hat_cost = checked_score_mul(z_hat_cost, positions_per_block, context)?;
+    let z_hat_cost = checked_score_mul(z_hat_cost, num_positions_per_block, context)?;
 
     checked_score_add(opening_cost, z_hat_cost, context)
 }
@@ -273,8 +274,8 @@ fn multi_group_root_direct_cost_score(
     let main_num_digits_fold = params.num_digits_fold(main_num_polys, field_bits)?;
     let mut total = root_direct_split_cost(
         params.a_key.row_len(),
-        params.live_block_count,
-        params.positions_per_block,
+        params.num_live_blocks,
+        params.num_positions_per_block,
         params.num_digits_commit,
         params.num_digits_open,
         main_num_digits_fold,
@@ -284,8 +285,8 @@ fn multi_group_root_direct_cost_score(
     for group in &params.precommitted_groups {
         let group_cost = root_direct_split_cost(
             group.a_key.row_len(),
-            group.layout.live_block_count,
-            group.layout.positions_per_block,
+            group.layout.num_live_blocks,
+            group.layout.num_positions_per_block,
             group.num_digits_commit,
             group.num_digits_open,
             group.num_digits_fold_one,
@@ -336,20 +337,21 @@ fn multi_group_root_main_level_params_candidate(
     };
     let num_digits_commit = num_digits_s_commit(level_decomp, true);
     let num_digits_open = num_digits_open(level_decomp);
-    let Some(live_block_count) = 1usize.checked_shl(block_index_bits as u32) else {
+    let Some(num_live_blocks) = 1usize.checked_shl(block_index_bits as u32) else {
         return Ok(None);
     };
-    let Some(positions_per_block) = 1usize.checked_shl(position_index_bits as u32) else {
+    let Some(num_positions_per_block) = 1usize.checked_shl(position_index_bits as u32) else {
         return Ok(None);
     };
-    let Some(live_ring_elements_per_claim) = live_block_count.checked_mul(positions_per_block)
+    let Some(num_live_ring_elements_per_claim) =
+        num_live_blocks.checked_mul(num_positions_per_block)
     else {
         return Ok(None);
     };
     let fold_challenge_shape =
-        optimize_fold_challenge_shape(ctx.requested_fold_shape, live_block_count)?;
+        optimize_fold_challenge_shape(ctx.requested_fold_shape, num_live_blocks)?;
 
-    let Some(width_s) = decomposed_s_block_ring_count(positions_per_block, num_digits_commit)
+    let Some(width_s) = decomposed_s_block_ring_count(num_positions_per_block, num_digits_commit)
     else {
         return Ok(None);
     };
@@ -363,7 +365,7 @@ fn multi_group_root_main_level_params_candidate(
         true,
         policy.onehot_chunk_size,
         policy.ring_subfield_norm_bound,
-        live_block_count,
+        num_live_blocks,
         main_num_polys,
         width_s as u64,
     ) else {
@@ -387,7 +389,7 @@ fn multi_group_root_main_level_params_candidate(
         return Ok(None);
     };
     let Some(width_t) =
-        decomposed_t_ring_count(n_a, num_digits_open, live_block_count, main_num_polys)
+        decomposed_t_ring_count(n_a, num_digits_open, num_live_blocks, main_num_polys)
     else {
         return Ok(None);
     };
@@ -399,7 +401,7 @@ fn multi_group_root_main_level_params_candidate(
     };
 
     let Some(main_d_width) =
-        decomposed_w_ring_count(num_digits_open, live_block_count, main_num_polys)
+        decomposed_w_ring_count(num_digits_open, num_live_blocks, main_num_polys)
     else {
         return Ok(None);
     };
@@ -434,10 +436,10 @@ fn multi_group_root_main_level_params_candidate(
         a_key,
         b_key,
         d_key,
-        live_ring_elements_per_claim,
-        positions_per_block,
-        live_block_count,
-        blocks_per_chunk_granule: 1,
+        num_live_ring_elements_per_claim,
+        num_positions_per_block,
+        num_live_blocks,
+        num_blocks_per_chunk_granule: 1,
         fold_challenge_config: *ctx.ring_challenge_cfg,
         fold_challenge_shape,
         num_digits_commit,
@@ -659,18 +661,18 @@ pub fn find_group_batch_schedule(
             };
             let root_num_chunks = policy.chunks_at_level(0);
             if candidate_params.precommitted_groups.iter().any(|group| {
-                group.layout.live_block_count < root_num_chunks
+                group.layout.num_live_blocks < root_num_chunks
                     || group
                         .layout
-                        .blocks_per_chunk_granule
+                        .num_blocks_per_chunk_granule
                         .checked_mul(root_num_chunks)
-                        .is_none_or(|required| required > group.layout.live_block_count)
+                        .is_none_or(|required| required > group.layout.num_live_blocks)
             }) {
                 continue;
             }
             candidate_params.witness_chunk = policy.witness_chunk_for_level(0);
-            candidate_params.blocks_per_chunk_granule = optimize_blocks_per_chunk_granule(
-                candidate_params.live_block_count,
+            candidate_params.num_blocks_per_chunk_granule = optimize_num_blocks_per_chunk_granule(
+                candidate_params.num_live_blocks,
                 root_num_chunks,
                 candidate_params.fold_challenge_shape,
             )?;
@@ -839,10 +841,10 @@ mod tests {
         let position_index_bits = outer - block_index_bits;
         PrecommittedGroupParams {
             group: PolynomialGroupLayout::new(num_vars, num_polys),
-            live_ring_elements_per_claim: 1usize << outer,
-            positions_per_block: 1usize << position_index_bits,
-            live_block_count: 1usize << block_index_bits,
-            blocks_per_chunk_granule: 1,
+            num_live_ring_elements_per_claim: 1usize << outer,
+            num_positions_per_block: 1usize << position_index_bits,
+            num_live_blocks: 1usize << block_index_bits,
+            num_blocks_per_chunk_granule: 1,
             fold_challenge_shape: TensorChallengeShape::Flat,
             log_basis: 3,
             n_a: 1,
@@ -885,11 +887,11 @@ mod tests {
     #[test]
     fn decomposed_w_ring_count_scales_with_polynomial_count() {
         let main_polys = 4usize;
-        let live_block_count = 8usize;
+        let num_live_blocks = 8usize;
         let num_digits_open = 3usize;
         let per_group_w =
-            decomposed_w_ring_count(num_digits_open, live_block_count, 1).expect("w width");
-        let scalar_w = decomposed_w_ring_count(num_digits_open, live_block_count, main_polys)
+            decomposed_w_ring_count(num_digits_open, num_live_blocks, 1).expect("w width");
+        let scalar_w = decomposed_w_ring_count(num_digits_open, num_live_blocks, main_polys)
             .expect("scalar w");
         assert_ne!(per_group_w, scalar_w);
         assert_eq!(per_group_w * main_polys, scalar_w);
@@ -920,7 +922,7 @@ mod tests {
         let expected_d_width = root
             .params
             .num_digits_open
-            .checked_mul(root.params.live_block_count)
+            .checked_mul(root.params.num_live_blocks)
             .and_then(|n| n.checked_mul(final_polys))
             .expect("main D width")
             + root
@@ -971,10 +973,10 @@ mod tests {
         let policy = flat_policy();
         let malformed = PrecommittedGroupParams {
             group: PolynomialGroupLayout::new(20, 1),
-            live_ring_elements_per_claim: 2,
-            positions_per_block: 2,
-            live_block_count: 1,
-            blocks_per_chunk_granule: 1,
+            num_live_ring_elements_per_claim: 2,
+            num_positions_per_block: 2,
+            num_live_blocks: 1,
+            num_blocks_per_chunk_granule: 1,
             fold_challenge_shape: TensorChallengeShape::Flat,
             log_basis: 3,
             n_a: 1,

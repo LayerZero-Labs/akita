@@ -106,8 +106,8 @@ class ProfileBenchReportTests(unittest.TestCase):
             'INFO planned fold level label=onehot_fp128_d64 level=0 d=64 d_a=64 d_b=32 d_d=16 '
             'n_a=2 n_b=3 n_d=4 '
             'challenge_l1_mass=8 log_basis=5 position_index_bits=7 block_index_bits=3 '
-            'live_ring_elements_per_claim=768 live_block_count=6 block_index_domain_size=8 '
-            'positions_per_block=128 delta_commit=4 delta_open=5 '
+            'num_live_ring_elements_per_claim=768 num_live_blocks=6 block_index_domain_size=8 '
+            'num_positions_per_block=128 delta_commit=4 delta_open=5 '
             'delta_fold=6 current_w_len=1024 next_w_len=2048 level_bytes=4096\n'
         )
 
@@ -127,9 +127,9 @@ class ProfileBenchReportTests(unittest.TestCase):
                 "log_basis": 5,
                 "position_index_bits": 7,
                 "block_index_bits": 3,
-                "positions_per_block": 128,
-                "live_block_count": 6,
-                "live_ring_elements_per_claim": 768,
+                "num_positions_per_block": 128,
+                "num_live_blocks": 6,
+                "num_live_ring_elements_per_claim": 768,
                 "block_index_domain_size": 8,
                 "delta_commit": 4,
                 "delta_open": 5,
@@ -155,9 +155,9 @@ class ProfileBenchReportTests(unittest.TestCase):
 
         self.assertEqual(level["position_index_bits"], 7)
         self.assertEqual(level["block_index_bits"], 3)
-        self.assertEqual(level["positions_per_block"], 128)
-        self.assertEqual(level["live_block_count"], 1)
-        self.assertEqual(level["live_ring_elements_per_claim"], 16)
+        self.assertEqual(level["num_positions_per_block"], 128)
+        self.assertEqual(level["num_live_blocks"], 1)
+        self.assertEqual(level["num_live_ring_elements_per_claim"], 16)
         self.assertEqual(level["block_index_domain_size"], 8)
         self.assertEqual((level["d_a"], level["d_b"], level["d_d"]), (64, 64, 64))
 
@@ -167,8 +167,8 @@ class ProfileBenchReportTests(unittest.TestCase):
         current_log = (
             'INFO planned fold level label=onehot_fp128_d64 level=0 d=64 d_a=64 d_b=32 d_d=16 '
             'n_a=4 n_b=6 n_d=8 challenge_l1_mass=16 log_basis=6 position_index_bits=7 '
-            'block_index_bits=3 live_ring_elements_per_claim=768 live_block_count=6 '
-            'block_index_domain_size=8 positions_per_block=128 delta_commit=4 delta_open=5 '
+            'block_index_bits=3 num_live_ring_elements_per_claim=768 num_live_blocks=6 '
+            'block_index_domain_size=8 num_positions_per_block=128 delta_commit=4 delta_open=5 '
             'delta_fold=6 current_w_len=1024 next_w_len=2048 level_bytes=4096\n'
         )
         baseline_log = current_log.replace("n_a=4", "n_a=2").replace(
@@ -183,8 +183,8 @@ class ProfileBenchReportTests(unittest.TestCase):
         report = output.getvalue()
 
         self.assertIn("A ring dimension", report)
-        self.assertIn("Positions in each block", report)
-        self.assertIn("Live source A-ring elements for each claim", report)
+        self.assertIn("Number of positions in each block", report)
+        self.assertIn("Number of live source A-ring elements in each claim", report)
         self.assertIn("+100.00% vs main", report)
         self.assertNotIn("| M |", report)
         self.assertNotIn("r_pos", report)
@@ -266,9 +266,9 @@ class ProfileBenchReportTests(unittest.TestCase):
             "log_basis": 5,
             "position_index_bits": 7,
             "block_index_bits": 3,
-            "positions_per_block": 128,
-            "live_block_count": 6,
-            "live_ring_elements_per_claim": 768,
+            "num_positions_per_block": 128,
+            "num_live_blocks": 6,
+            "num_live_ring_elements_per_claim": 768,
             "block_index_domain_size": 8,
             "delta_commit": 4,
             "delta_open": 5,

@@ -37,16 +37,16 @@ fn configure_group(group: &mut BenchmarkGroup<'_, WallTime>) {
     group.measurement_time(Duration::from_secs(3));
 }
 
-fn make_case(live_block_count: usize, blocks_per_chunk: usize) -> SetupIndexWeightBenchCase {
-    assert!(live_block_count.is_power_of_two());
+fn make_case(num_live_blocks: usize, blocks_per_chunk: usize) -> SetupIndexWeightBenchCase {
+    assert!(num_live_blocks.is_power_of_two());
     assert!(blocks_per_chunk.is_power_of_two());
-    assert!(blocks_per_chunk <= live_block_count);
-    assert_eq!(live_block_count % blocks_per_chunk, 0);
+    assert!(blocks_per_chunk <= num_live_blocks);
+    assert_eq!(num_live_blocks % blocks_per_chunk, 0);
 
     let num_claims = 2;
     let depth_open = 2;
     let depth_commit = 2;
-    let positions_per_block = 8;
+    let num_positions_per_block = 8;
     let n_a = 2;
     let n_b = 2;
     let n_d = 2;
@@ -61,22 +61,22 @@ fn make_case(live_block_count: usize, blocks_per_chunk: usize) -> SetupIndexWeig
         akita_challenges::SparseChallengeConfig::pm1_only(1),
     )
     .with_decomp(
-        positions_per_block,
-        live_block_count * positions_per_block,
+        num_positions_per_block,
+        num_live_blocks * num_positions_per_block,
         depth_commit,
         depth_open,
     )
     .unwrap();
-    level_params.blocks_per_chunk_granule = 1;
+    level_params.num_blocks_per_chunk_granule = 1;
     let depth_fold = level_params
         .num_digits_fold(num_claims, level_params.field_bits_for_cache())
         .unwrap();
     let opening_batch = OpeningClaimsLayout::new(0, num_claims).unwrap();
-    let z_range = positions_per_block * depth_commit;
+    let z_range = num_positions_per_block * depth_commit;
     let layout = WitnessLayout::new(
         &level_params,
         &opening_batch,
-        live_block_count / blocks_per_chunk,
+        num_live_blocks / blocks_per_chunk,
         1 + n_a + n_b + n_d,
         r_decomp_levels::<F>(log_basis),
     )
@@ -96,8 +96,8 @@ fn make_case(live_block_count: usize, blocks_per_chunk: usize) -> SetupIndexWeig
         num_polys_per_group: vec![num_claims],
         num_t_vectors: num_claims,
         num_claims,
-        live_block_count,
-        positions_per_block,
+        num_live_blocks,
+        num_positions_per_block,
         depth_open,
         depth_commit,
         depth_fold,
@@ -108,15 +108,15 @@ fn make_case(live_block_count: usize, blocks_per_chunk: usize) -> SetupIndexWeig
     let group = SetupContributionGroupInputs {
         group_id: 0,
         num_claims,
-        live_block_count,
-        positions_per_block,
+        num_live_blocks,
+        num_positions_per_block,
         depth_open,
         depth_commit,
         depth_fold,
         log_basis,
         n_a,
         n_b,
-        t_cols_per_vector: n_a * depth_open * live_block_count,
+        t_vector_width: n_a * depth_open * num_live_blocks,
         a_row_start: 1,
         b_row_start: 1 + n_a,
     };
@@ -170,14 +170,14 @@ fn bench_setup_index_weight(c: &mut Criterion) {
     let mut group = c.benchmark_group("setup_index_weight_mle");
     configure_group(&mut group);
 
-    for live_block_count in [64usize, 256, 1024, 4096, 16384] {
+    for num_live_blocks in [64usize, 256, 1024, 4096, 16384] {
         for (layout, blocks_per_chunk) in [
-            ("single_chunk", live_block_count),
-            ("chunk64", 64usize.min(live_block_count)),
+            ("single_chunk", num_live_blocks),
+            ("chunk64", 64usize.min(num_live_blocks)),
         ] {
-            let case = make_case(live_block_count, blocks_per_chunk);
+            let case = make_case(num_live_blocks, blocks_per_chunk);
             group.bench_with_input(
-                BenchmarkId::new(format!("{layout}/packed_path"), live_block_count),
+                BenchmarkId::new(format!("{layout}/packed_path"), num_live_blocks),
                 &case,
                 |b, case| {
                     b.iter(|| {
@@ -193,7 +193,7 @@ fn bench_setup_index_weight(c: &mut Criterion) {
                 },
             );
             group.bench_with_input(
-                BenchmarkId::new(format!("{layout}/succinct_path"), live_block_count),
+                BenchmarkId::new(format!("{layout}/succinct_path"), num_live_blocks),
                 &case,
                 |b, case| {
                     b.iter(|| black_box(case.evaluator.evaluate(black_box(&case.rho)).unwrap()))

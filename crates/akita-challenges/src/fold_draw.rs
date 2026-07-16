@@ -15,7 +15,7 @@ const FOLD_CHALLENGE_ROUND_DOMAIN: &[u8] = b"akita/fold-challenge-round/v1";
 
 /// Build the canonical transcript prefix for one group-local fold draw.
 ///
-/// The prefix binds the group index, exact `live_block_count`, claim count, and
+/// The prefix binds the group index, exact `num_live_blocks`, claim count, and
 /// tensor shape before the sparse challenge seed is squeezed.
 ///
 /// # Errors
@@ -25,20 +25,20 @@ const FOLD_CHALLENGE_ROUND_DOMAIN: &[u8] = b"akita/fold-challenge-round/v1";
 pub fn fold_challenge_sample_label(
     base_label: &[u8],
     group_index: usize,
-    live_block_count: usize,
+    num_live_blocks: usize,
     num_claims: usize,
     shape: ChallengeShape,
 ) -> Result<Vec<u8>, AkitaError> {
     let group_index = u64::try_from(group_index)
         .map_err(|_| AkitaError::InvalidSetup("fold group index exceeds u64".to_string()))?;
-    let live_block_count = u64::try_from(live_block_count)
-        .map_err(|_| AkitaError::InvalidSetup("live_block_count exceeds u64".to_string()))?;
+    let num_live_blocks = u64::try_from(num_live_blocks)
+        .map_err(|_| AkitaError::InvalidSetup("num_live_blocks exceeds u64".to_string()))?;
     let num_claims = u64::try_from(num_claims)
         .map_err(|_| AkitaError::InvalidSetup("fold claim count exceeds u64".to_string()))?;
     let mut label = Vec::with_capacity(FOLD_CHALLENGE_ROUND_DOMAIN.len() + base_label.len() + 33);
     label.extend_from_slice(FOLD_CHALLENGE_ROUND_DOMAIN);
     label.extend_from_slice(&group_index.to_le_bytes());
-    label.extend_from_slice(&live_block_count.to_le_bytes());
+    label.extend_from_slice(&num_live_blocks.to_le_bytes());
     label.extend_from_slice(&num_claims.to_le_bytes());
     match shape {
         ChallengeShape::Flat => {
@@ -88,7 +88,7 @@ pub trait FoldDraw {
         &mut self,
         ring_d: usize,
         group_index: usize,
-        live_block_count: usize,
+        num_live_blocks: usize,
         num_claims: usize,
         cfg: &SparseChallengeConfig,
         shape: &ChallengeShape,
@@ -103,40 +103,40 @@ pub trait FoldDraw {
         cfg.validate_dyn(ring_d).map_err(|e| {
             AkitaError::InvalidInput(format!("invalid sparse challenge config: {e}"))
         })?;
-        if live_block_count == 0 || num_claims == 0 {
+        if num_live_blocks == 0 || num_claims == 0 {
             return Err(AkitaError::InvalidInput(
-                "fold challenges require positive live_block_count and claims".to_string(),
+                "fold challenges require positive num_live_blocks and claims".to_string(),
             ));
         }
 
         match shape {
             ChallengeShape::Flat => {
-                let total = challenge_count(live_block_count, num_claims, "sparse")?;
+                let total = challenge_count(num_live_blocks, num_claims, "sparse")?;
                 let sample_label = fold_challenge_sample_label(
                     labels.flat,
                     group_index,
-                    live_block_count,
+                    num_live_blocks,
                     num_claims,
                     *shape,
                 )?;
                 let challenges =
                     self.draw_sparse_challenges(&sample_label, ring_d, total, cfg, grind_nonce);
-                Challenges::from_sparse(challenges, live_block_count, num_claims)
+                Challenges::from_sparse(challenges, num_live_blocks, num_claims)
             }
             ChallengeShape::Tensor { fold_low_len } => {
-                if live_block_count == 0 || !fold_low_len.is_power_of_two() {
+                if num_live_blocks == 0 || !fold_low_len.is_power_of_two() {
                     return Err(AkitaError::InvalidInput(
-                        "tensor challenges require positive live_block_count and a power-of-two low length"
+                        "tensor challenges require positive num_live_blocks and a power-of-two low length"
                             .to_string(),
                     ));
                 }
-                let fold_high_len = live_block_count.div_ceil(*fold_low_len);
+                let fold_high_len = num_live_blocks.div_ceil(*fold_low_len);
                 let high_total = challenge_count(fold_high_len, num_claims, "fold-high")?;
                 let low_total = challenge_count(*fold_low_len, num_claims, "fold-low")?;
                 let high_label = fold_challenge_sample_label(
                     labels.fold_high,
                     group_index,
-                    live_block_count,
+                    num_live_blocks,
                     num_claims,
                     *shape,
                 )?;
@@ -147,7 +147,7 @@ pub trait FoldDraw {
                 let low_label = fold_challenge_sample_label(
                     labels.fold_low,
                     group_index,
-                    live_block_count,
+                    num_live_blocks,
                     num_claims,
                     *shape,
                 )?;
@@ -157,7 +157,7 @@ pub trait FoldDraw {
                     TensorChallenges {
                         fold_high,
                         fold_low,
-                        live_blocks_per_claim: live_block_count,
+                        num_live_blocks_per_claim: num_live_blocks,
                         fold_low_len: *fold_low_len,
                         num_claims,
                     },

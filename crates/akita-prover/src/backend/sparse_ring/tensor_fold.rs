@@ -12,7 +12,7 @@ use akita_field::{AkitaError, CanonicalField, FieldCore, FromPrimitiveInt};
 pub(super) fn decompose_fold_batched_tensor_sparse<F, const D: usize>(
     polys: &[&SparseRingPoly<F>],
     tensor: &TensorChallengeSet,
-    positions_per_block: usize,
+    num_positions_per_block: usize,
     num_digits: usize,
 ) -> Result<DecomposeFoldWitness<F>, AkitaError>
 where
@@ -20,11 +20,11 @@ where
 {
     let cached_blocks = polys
         .iter()
-        .map(|poly| poly.blocks_for(D, positions_per_block))
+        .map(|poly| poly.blocks_for(D, num_positions_per_block))
         .collect::<Result<Vec<_>, _>>()?;
     let mut flat_blocks = Vec::new();
     for blocks in &cached_blocks {
-        flat_blocks.extend((0..blocks.live_block_count()).map(|idx| blocks.block(idx)));
+        flat_blocks.extend((0..blocks.num_live_blocks()).map(|idx| blocks.block(idx)));
     }
     let expected_blocks = tensor.total_blocks()?;
     if flat_blocks.len() != expected_blocks {
@@ -34,9 +34,11 @@ where
         });
     }
     validate_tensor_blocks::<D>(tensor, expected_blocks)?;
-    let inner_width = positions_per_block.checked_mul(num_digits).ok_or_else(|| {
-        AkitaError::InvalidSetup("sparse tensor fold inner width overflow".to_string())
-    })?;
+    let inner_width = num_positions_per_block
+        .checked_mul(num_digits)
+        .ok_or_else(|| {
+            AkitaError::InvalidSetup("sparse tensor fold inner width overflow".to_string())
+        })?;
     let accum_i64 = sparse_accumulate_tensor::<D>(&flat_blocks, tensor, inner_width, num_digits)?;
     let coeff_accum = narrow_tensor_accum_to_i32::<D>(accum_i64)?;
     let modulus = (-F::one()).to_canonical_u128() + 1;
@@ -72,10 +74,10 @@ fn sparse_accumulate_tensor<const D: usize>(
                     tmp.fill([0i64; D]);
                     for low_idx in 0..tensor.fold_low_len {
                         let local_block = high_idx * tensor.fold_low_len + low_idx;
-                        if local_block >= tensor.live_blocks_per_claim {
+                        if local_block >= tensor.num_live_blocks_per_claim {
                             break;
                         }
-                        let block_idx = claim_idx * tensor.live_blocks_per_claim + local_block;
+                        let block_idx = claim_idx * tensor.num_live_blocks_per_claim + local_block;
                         let entries = blocks[block_idx];
                         let lo =
                             entries.partition_point(|e| e.pos_in_block() * num_digits < pos_start);

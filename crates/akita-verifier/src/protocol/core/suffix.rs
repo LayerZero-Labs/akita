@@ -66,8 +66,8 @@ where
                 prepared_points.push(prepare_opening_point::<F, E, D>(
                     &group_protocol_point,
                     BasisMode::Lagrange,
-                    group_lp.positions_per_block(),
-                    group_lp.live_block_count(),
+                    group_lp.num_positions_per_block(),
+                    group_lp.num_live_blocks(),
                     alpha_bits,
                 )?);
             }

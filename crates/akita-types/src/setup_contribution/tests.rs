@@ -37,8 +37,8 @@ fn test_scalar(value: u128) -> F {
 #[allow(clippy::too_many_arguments)]
 fn test_witness_layout(
     num_claims: usize,
-    live_block_count: usize,
-    positions_per_block: usize,
+    num_live_blocks: usize,
+    num_positions_per_block: usize,
     depth_open: usize,
     depth_commit: usize,
     depth_fold: usize,
@@ -49,27 +49,27 @@ fn test_witness_layout(
 ) -> WitnessLayout {
     let mut cursor = 0usize;
     let mut global_block_start = 0usize;
-    let base = live_block_count / num_chunks;
-    let extra = live_block_count % num_chunks;
+    let base = num_live_blocks / num_chunks;
+    let extra = num_live_blocks % num_chunks;
     let mut units = Vec::with_capacity(num_chunks);
     for chunk_index in 0..num_chunks {
-        let chunk_live_block_count = base + usize::from(chunk_index < extra);
-        let z_len = positions_per_block * depth_commit * depth_fold;
+        let chunk_num_live_blocks = base + usize::from(chunk_index < extra);
+        let z_len = num_positions_per_block * depth_commit * depth_fold;
         let z_range = cursor..cursor + z_len;
-        let e_range = z_range.end..z_range.end + num_claims * chunk_live_block_count * depth_open;
+        let e_range = z_range.end..z_range.end + num_claims * chunk_num_live_blocks * depth_open;
         let t_range =
-            e_range.end..e_range.end + num_claims * chunk_live_block_count * n_a * depth_open;
+            e_range.end..e_range.end + num_claims * chunk_num_live_blocks * n_a * depth_open;
         cursor = t_range.end;
         units.push(WitnessUnitLayout::new_for_test(
             0,
             chunk_index,
             global_block_start,
-            chunk_live_block_count,
+            chunk_num_live_blocks,
             z_range,
             e_range,
             t_range,
         ));
-        global_block_start += chunk_live_block_count;
+        global_block_start += chunk_num_live_blocks;
     }
     WitnessLayout::new_for_test(units, cursor..cursor + relation_rows * quotient_depth)
 }
@@ -159,7 +159,7 @@ fn prepare_single_group_plan_parts(
 }
 
 fn structured_weight_fixture(
-    live_block_count: usize,
+    num_live_blocks: usize,
     ownership_widths: &[usize],
     role_dims: CommitmentRingDims,
 ) -> StructuredWeightFixture {
@@ -167,13 +167,13 @@ fn structured_weight_fixture(
     let depth_open = 2;
     let depth_commit = 2;
     let depth_fold = 2;
-    let positions_per_block = 8;
+    let num_positions_per_block = 8;
     let n_a = 2;
     let n_b = 2;
     let n_d = 2;
     let log_basis = 4;
-    assert_eq!(ownership_widths.iter().sum::<usize>(), live_block_count);
-    let z_len = positions_per_block * depth_commit * depth_fold;
+    assert_eq!(ownership_widths.iter().sum::<usize>(), num_live_blocks);
+    let z_len = num_positions_per_block * depth_commit * depth_fold;
     let mut cursor = 0usize;
     let mut global_block_base = 0usize;
     let ownership_units = ownership_widths
@@ -215,12 +215,12 @@ fn structured_weight_fixture(
         num_polys_per_group: vec![num_claims],
         num_t_vectors: num_claims,
         num_claims,
-        live_block_count,
-        positions_per_block,
+        num_live_blocks,
+        num_positions_per_block,
         depth_open,
         depth_commit,
         depth_fold,
-        inner_width: positions_per_block * depth_commit,
+        inner_width: num_positions_per_block * depth_commit,
         eq_tau1: EqPolynomial::evals(&tau1).unwrap().into(),
     };
     let full_vec_randomness = (0..18)
@@ -231,15 +231,15 @@ fn structured_weight_fixture(
     let group = SetupContributionGroupInputs {
         group_id: 0,
         num_claims,
-        live_block_count,
-        positions_per_block,
+        num_live_blocks,
+        num_positions_per_block,
         depth_open,
         depth_commit,
         depth_fold,
         log_basis,
         n_a,
         n_b,
-        t_cols_per_vector: n_a * depth_open * live_block_count,
+        t_vector_width: n_a * depth_open * num_live_blocks,
         a_row_start: 1,
         b_row_start: 1 + n_a,
     };
@@ -272,13 +272,13 @@ fn expected_z_setup_weights(
     layout: &WitnessLayout,
     opening_source_len: usize,
     group_id: usize,
-    positions_per_block: usize,
+    num_positions_per_block: usize,
     depth_commit: usize,
     fold_gadget: &[F],
     full_vec_randomness: &[F],
 ) -> Vec<F> {
     let depth_fold = fold_gadget.len();
-    let z_cols = positions_per_block * depth_commit;
+    let z_cols = num_positions_per_block * depth_commit;
     (0..z_cols)
         .map(|column| {
             let position = column / depth_commit;
@@ -335,18 +335,18 @@ fn setup_layout_assigns_d_ranges_in_witness_relation_order() {
         })
         .collect();
     let witness_layout = WitnessLayout::new_for_test(units, 9..10);
-    let group = |group_id, num_claims, live_block_count, depth_open| SetupContributionGroupInputs {
+    let group = |group_id, num_claims, num_live_blocks, depth_open| SetupContributionGroupInputs {
         group_id,
         num_claims,
-        live_block_count,
-        positions_per_block: 1,
+        num_live_blocks,
+        num_positions_per_block: 1,
         depth_open,
         depth_commit: 1,
         depth_fold: 1,
         log_basis: 1,
         n_a: 1,
         n_b: 1,
-        t_cols_per_vector: live_block_count * depth_open,
+        t_vector_width: num_live_blocks * depth_open,
         a_row_start: 1,
         b_row_start: 2,
     };
@@ -376,17 +376,17 @@ fn relation_ordered_setup_layout_matches_structured_direct_and_dense_oracles() {
     let units = group_shapes
         .iter()
         .map(
-            |&(group_id, num_claims, live_block_count, depth_open, depth_commit)| {
+            |&(group_id, num_claims, num_live_blocks, depth_open, depth_commit)| {
                 let z_len = 2 * depth_commit * quotient_depth;
                 let z_range = cursor..cursor + z_len;
-                let e_range = z_range.end..z_range.end + num_claims * live_block_count * depth_open;
-                let t_range = e_range.end..e_range.end + num_claims * live_block_count * depth_open;
+                let e_range = z_range.end..z_range.end + num_claims * num_live_blocks * depth_open;
+                let t_range = e_range.end..e_range.end + num_claims * num_live_blocks * depth_open;
                 cursor = t_range.end;
                 WitnessUnitLayout::new_for_test(
                     group_id,
                     0,
                     0,
-                    live_block_count,
+                    num_live_blocks,
                     z_range,
                     e_range,
                     t_range,
@@ -402,20 +402,20 @@ fn relation_ordered_setup_layout_matches_structured_direct_and_dense_oracles() {
         .map(
             |(
                 relation_index,
-                &(group_id, num_claims, live_block_count, depth_open, depth_commit),
+                &(group_id, num_claims, num_live_blocks, depth_open, depth_commit),
             )| {
                 SetupContributionGroupInputs {
                     group_id,
                     num_claims,
-                    live_block_count,
-                    positions_per_block: 2,
+                    num_live_blocks,
+                    num_positions_per_block: 2,
                     depth_open,
                     depth_commit,
                     depth_fold: quotient_depth,
                     log_basis: 4,
                     n_a: 1,
                     n_b: 1,
-                    t_cols_per_vector: live_block_count * depth_open,
+                    t_vector_width: num_live_blocks * depth_open,
                     a_row_start: 1 + relation_index,
                     b_row_start: 3 + relation_index,
                 }
@@ -442,8 +442,8 @@ fn relation_ordered_setup_layout_matches_structured_direct_and_dense_oracles() {
         num_polys_per_group: vec![2, 1],
         num_t_vectors: 3,
         num_claims: 3,
-        live_block_count: 1,
-        positions_per_block: 2,
+        num_live_blocks: 1,
+        num_positions_per_block: 2,
         depth_open: 1,
         depth_commit: 1,
         depth_fold: quotient_depth,
@@ -668,7 +668,7 @@ fn setup_index_weight_evaluator_applies_mixed_role_projection_lanes() {
 
 #[test]
 fn dense_z_eq_slice_uses_relative_high_carry() {
-    let positions_per_block = 12;
+    let num_positions_per_block = 12;
     let depth_commit = 3;
     let depth_fold = 2;
     let num_points = 1;
@@ -686,19 +686,19 @@ fn dense_z_eq_slice_uses_relative_high_carry() {
         num_polys_per_group: vec![0],
         num_t_vectors: 0,
         num_claims: 1,
-        live_block_count: 4,
-        positions_per_block,
+        num_live_blocks: 4,
+        num_positions_per_block,
         depth_open: 16,
         depth_commit,
         depth_fold,
-        inner_width: positions_per_block * depth_commit,
+        inner_width: num_positions_per_block * depth_commit,
         eq_tau1: vec![test_scalar(11), test_scalar(12)].into(),
     };
 
     let layout = test_witness_layout(
         inputs.num_claims,
-        inputs.live_block_count,
-        inputs.positions_per_block,
+        inputs.num_live_blocks,
+        inputs.num_positions_per_block,
         inputs.depth_open,
         inputs.depth_commit,
         inputs.depth_fold,
@@ -721,7 +721,7 @@ fn dense_z_eq_slice_uses_relative_high_carry() {
         &layout,
         layout.total_len(),
         0,
-        positions_per_block,
+        num_positions_per_block,
         depth_commit,
         &fold_gadget,
         &full_vec_randomness,
@@ -732,7 +732,7 @@ fn dense_z_eq_slice_uses_relative_high_carry() {
 
 #[test]
 fn setup_a_z_weights_do_not_include_commit_gadget() {
-    let positions_per_block = 8;
+    let num_positions_per_block = 8;
     let depth_commit = 3;
     let depth_fold = 2;
     let num_points = 1;
@@ -752,18 +752,18 @@ fn setup_a_z_weights_do_not_include_commit_gadget() {
         num_polys_per_group: vec![0],
         num_t_vectors: 0,
         num_claims: 1,
-        live_block_count: 4,
-        positions_per_block,
+        num_live_blocks: 4,
+        num_positions_per_block,
         depth_open: 16,
         depth_commit,
         depth_fold,
-        inner_width: positions_per_block * depth_commit,
+        inner_width: num_positions_per_block * depth_commit,
         eq_tau1: vec![test_scalar(11), test_scalar(12)].into(),
     };
     let layout = test_witness_layout(
         inputs.num_claims,
-        inputs.live_block_count,
-        inputs.positions_per_block,
+        inputs.num_live_blocks,
+        inputs.num_positions_per_block,
         inputs.depth_open,
         inputs.depth_commit,
         inputs.depth_fold,
@@ -787,7 +787,7 @@ fn setup_a_z_weights_do_not_include_commit_gadget() {
         &layout,
         layout.total_len(),
         0,
-        positions_per_block,
+        num_positions_per_block,
         depth_commit,
         &fold_gadget,
         &full_vec_randomness,
@@ -808,13 +808,13 @@ fn setup_a_z_weights_do_not_include_commit_gadget() {
 #[test]
 fn z_setup_weight_oracle_uses_physical_addresses() {
     let group_id = 0;
-    let positions_per_block = 4;
+    let num_positions_per_block = 4;
     let depth_commit = 2;
     let depth_fold = 2;
     let layout = test_witness_layout(
         1,
         2,
-        positions_per_block,
+        num_positions_per_block,
         2,
         depth_commit,
         depth_fold,
@@ -830,13 +830,13 @@ fn z_setup_weight_oracle_uses_physical_addresses() {
         .map(|index| test_scalar(1201 + index as u128))
         .collect::<Vec<_>>();
     let fold_gadget = gadget_row_scalars::<F>(depth_fold, 4);
-    let mut got = vec![F::zero(); positions_per_block * depth_commit];
+    let mut got = vec![F::zero(); num_positions_per_block * depth_commit];
     let eq_window = akita_algebra::offset_eq::OffsetEqWindow::new(&point).unwrap();
     setup_z_col_weights(
         &layout,
         opening_source_len,
         group_id,
-        positions_per_block,
+        num_positions_per_block,
         depth_commit,
         depth_fold,
         &eq_window,
@@ -848,7 +848,7 @@ fn z_setup_weight_oracle_uses_physical_addresses() {
         &layout,
         opening_source_len,
         group_id,
-        positions_per_block,
+        num_positions_per_block,
         depth_commit,
         &fold_gadget,
         &point,
@@ -862,13 +862,13 @@ fn z_setup_weight_oracle_uses_physical_addresses() {
 
 #[test]
 fn single_group_plan_supports_multi_chunk_weights() {
-    let live_block_count = 4;
+    let num_live_blocks = 4;
     let blocks_per_chunk = 2;
     let num_claims = 3;
     let depth_open = 2;
     let depth_commit = 2;
     let depth_fold = 2;
-    let positions_per_block = 4;
+    let num_positions_per_block = 4;
     let n_a = 2;
     let n_b = 2;
     let n_d = 1;
@@ -876,13 +876,13 @@ fn single_group_plan_supports_multi_chunk_weights() {
     let rows = 1 + n_a + n_b + n_d;
     let layout = test_witness_layout(
         num_claims,
-        live_block_count,
-        positions_per_block,
+        num_live_blocks,
+        num_positions_per_block,
         depth_open,
         depth_commit,
         depth_fold,
         n_a,
-        live_block_count / blocks_per_chunk,
+        num_live_blocks / blocks_per_chunk,
         n_d,
         depth_fold,
     );
@@ -890,15 +890,15 @@ fn single_group_plan_supports_multi_chunk_weights() {
     let group = SetupContributionGroupInputs {
         group_id: 0,
         num_claims,
-        live_block_count,
-        positions_per_block,
+        num_live_blocks,
+        num_positions_per_block,
         depth_open,
         depth_commit,
         depth_fold,
         log_basis,
         n_a,
         n_b,
-        t_cols_per_vector: n_a * depth_open * live_block_count,
+        t_vector_width: n_a * depth_open * num_live_blocks,
         a_row_start: 1,
         b_row_start: 1 + n_a,
     };
@@ -915,12 +915,12 @@ fn single_group_plan_supports_multi_chunk_weights() {
         num_polys_per_group: vec![num_claims],
         num_t_vectors: num_claims,
         num_claims,
-        live_block_count,
-        positions_per_block,
+        num_live_blocks,
+        num_positions_per_block,
         depth_open,
         depth_commit,
         depth_fold,
-        inner_width: positions_per_block * depth_commit,
+        inner_width: num_positions_per_block * depth_commit,
         eq_tau1: (0..rows.next_power_of_two())
             .map(|idx| test_scalar(11 + idx as u128))
             .collect(),
@@ -1396,8 +1396,8 @@ fn from_level_params_accepts_exact_non_pow2_fold_count() {
     let mut lp = LevelParams::log_basis_stub(3);
     lp.ring_dimension = 64;
     lp.role_dims = crate::CommitmentRingDims::uniform(64);
-    lp.live_block_count = 3;
-    lp.positions_per_block = 8;
+    lp.num_live_blocks = 3;
+    lp.num_positions_per_block = 8;
     lp.num_digits_commit = 2;
     lp.num_digits_open = 3;
     lp.a_key = crate::AjtaiKeyParams::new_unchecked(

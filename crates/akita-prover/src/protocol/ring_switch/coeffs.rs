@@ -260,7 +260,7 @@ fn emit_group_witness_segments<F: CanonicalField, const D: usize>(
             out,
             layout,
             unit,
-            group.params.positions_per_block(),
+            group.params.num_positions_per_block(),
             group.params.num_digits_commit(),
             num_digits_fold,
             &z_planes,
@@ -273,7 +273,7 @@ fn emit_group_witness_segments<F: CanonicalField, const D: usize>(
         num_claims,
         group.params.num_digits_open(),
         &group.e_hat,
-        group.params.live_block_count(),
+        group.params.num_live_blocks(),
     )?;
     emit_witness_t_planes::<D>(
         out,
@@ -283,7 +283,7 @@ fn emit_group_witness_segments<F: CanonicalField, const D: usize>(
         group.params.a_rows_len(),
         group.params.num_digits_open(),
         group.t_hat.typed_planes::<D>()?,
-        group.params.live_block_count(),
+        group.params.num_live_blocks(),
     )?;
     Ok(())
 }
@@ -295,7 +295,7 @@ fn emit_group_e_planes_padded<const D_A: usize>(
     num_claims: usize,
     depth_open: usize,
     e_hat: &DigitBlocks,
-    source_live_block_count: usize,
+    source_num_live_blocks: usize,
 ) -> Result<(), AkitaError> {
     if e_hat.digit_stride() > D_A || !D_A.is_multiple_of(e_hat.digit_stride()) {
         return Err(AkitaError::InvalidSize {
@@ -304,7 +304,7 @@ fn emit_group_e_planes_padded<const D_A: usize>(
         });
     }
     let expected = num_claims
-        .checked_mul(source_live_block_count)
+        .checked_mul(source_num_live_blocks)
         .and_then(|n| n.checked_mul(depth_open))
         .ok_or_else(|| AkitaError::InvalidSetup("witness E source length overflow".into()))?;
     let expected_digits = expected
@@ -317,14 +317,14 @@ fn emit_group_e_planes_padded<const D_A: usize>(
         });
     }
     let role_ratio = D_A / e_hat.digit_stride();
-    if e_hat.block_count() != num_claims * source_live_block_count * role_ratio {
+    if e_hat.block_count() != num_claims * source_num_live_blocks * role_ratio {
         return Err(AkitaError::InvalidProof);
     }
     for unit in layout.units_for_group(group_id)? {
         for claim in 0..num_claims {
             for global_block in unit.global_block_range() {
                 for digit in 0..depth_open {
-                    let logical_block = claim * source_live_block_count + global_block;
+                    let logical_block = claim * source_num_live_blocks + global_block;
                     let mut plane = [0i8; D_A];
                     for role_subcol in 0..role_ratio {
                         let source_block = logical_block * role_ratio + role_subcol;

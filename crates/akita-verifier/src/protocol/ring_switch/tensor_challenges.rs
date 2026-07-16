@@ -26,7 +26,7 @@ impl<F: FieldCore> PreparedChallengeEvals<F> {
     pub(crate) fn affine_factors<Base>(
         &self,
         claim: usize,
-        live_block_count: usize,
+        num_live_blocks: usize,
     ) -> Result<PreparedAffineFactors<F>, AkitaError>
     where
         Base: FieldCore + FromPrimitiveInt,
@@ -34,28 +34,26 @@ impl<F: FieldCore> PreparedChallengeEvals<F> {
     {
         match self {
             Self::Flat(c_alphas) => {
-                if live_block_count == 0 {
+                if num_live_blocks == 0 {
                     return Err(AkitaError::InvalidSetup(
-                        "flat challenge factors require live_block_count > 0".into(),
+                        "flat challenge factors require num_live_blocks > 0".into(),
                     ));
                 }
-                let start = claim.checked_mul(live_block_count).ok_or_else(|| {
+                let start = claim.checked_mul(num_live_blocks).ok_or_else(|| {
                     AkitaError::InvalidSetup("flat challenge factor offset overflow".into())
                 })?;
-                let end = start.checked_add(live_block_count).ok_or_else(|| {
+                let end = start.checked_add(num_live_blocks).ok_or_else(|| {
                     AkitaError::InvalidSetup("flat challenge factor end overflow".into())
                 })?;
                 let values = c_alphas.get(start..end).ok_or(AkitaError::InvalidSize {
                     expected: end,
                     actual: c_alphas.len(),
                 })?;
-                let low_len = live_block_count
-                    .checked_next_power_of_two()
-                    .ok_or_else(|| {
-                        AkitaError::InvalidSetup("flat challenge factor length overflow".into())
-                    })?;
+                let low_len = num_live_blocks.checked_next_power_of_two().ok_or_else(|| {
+                    AkitaError::InvalidSetup("flat challenge factor length overflow".into())
+                })?;
                 let mut low = vec![F::zero(); low_len];
-                low[..live_block_count].copy_from_slice(values);
+                low[..num_live_blocks].copy_from_slice(values);
                 Ok(PreparedAffineFactors {
                     high: vec![F::one()],
                     low,
@@ -66,7 +64,7 @@ impl<F: FieldCore> PreparedChallengeEvals<F> {
                 alpha_pows,
             } => {
                 if claim >= challenges.num_claims
-                    || challenges.live_blocks_per_claim != live_block_count
+                    || challenges.num_live_blocks_per_claim != num_live_blocks
                     || challenges.fold_low_len == 0
                 {
                     return Err(AkitaError::InvalidSetup(
@@ -84,16 +82,14 @@ impl<F: FieldCore> PreparedChallengeEvals<F> {
                 // logical evaluations here and return them in the same
                 // single-high-factor shape as the flat branch, so the kernel
                 // computes `1 · low[f]` and matches the prover exactly.
-                let low_len = live_block_count
-                    .checked_next_power_of_two()
-                    .ok_or_else(|| {
-                        AkitaError::InvalidSetup("tensor challenge factor length overflow".into())
-                    })?;
-                let base = claim.checked_mul(live_block_count).ok_or_else(|| {
+                let low_len = num_live_blocks.checked_next_power_of_two().ok_or_else(|| {
+                    AkitaError::InvalidSetup("tensor challenge factor length overflow".into())
+                })?;
+                let base = claim.checked_mul(num_live_blocks).ok_or_else(|| {
                     AkitaError::InvalidSetup("tensor challenge factor offset overflow".into())
                 })?;
                 let mut low = vec![F::zero(); low_len];
-                for (fold, slot) in low.iter_mut().take(live_block_count).enumerate() {
+                for (fold, slot) in low.iter_mut().take(num_live_blocks).enumerate() {
                     let block_idx = base.checked_add(fold).ok_or_else(|| {
                         AkitaError::InvalidSetup("tensor challenge block index overflow".into())
                     })?;

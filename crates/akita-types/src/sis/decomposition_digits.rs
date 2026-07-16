@@ -204,37 +204,37 @@ pub fn num_digits_open(decomposition: DecompositionParams) -> usize {
     num_digits_for_bound(bound, field_bits, decomposition.log_basis)
 }
 
-/// A-matrix committed width (ring columns): `positions_per_block · δ_commit`.
+/// A-matrix committed width (ring columns): `num_positions_per_block · δ_commit`.
 #[inline]
 pub fn decomposed_s_block_ring_count(
-    positions_per_block: usize,
+    num_positions_per_block: usize,
     num_digits_commit: usize,
 ) -> Option<usize> {
-    positions_per_block.checked_mul(num_digits_commit)
+    num_positions_per_block.checked_mul(num_digits_commit)
 }
 
-/// B-matrix committed width (ring columns): `n_a · δ_open · live_block_count · num_polynomials`.
+/// B-matrix committed width (ring columns): `n_a · δ_open · num_live_blocks · num_polynomials`.
 #[inline]
 pub fn decomposed_t_ring_count(
     n_a: usize,
     num_digits_open: usize,
-    live_block_count: usize,
+    num_live_blocks: usize,
     num_polynomials: usize,
 ) -> Option<usize> {
     n_a.checked_mul(num_digits_open)?
-        .checked_mul(live_block_count)?
+        .checked_mul(num_live_blocks)?
         .checked_mul(num_polynomials)
 }
 
-/// D-matrix committed width (ring columns): `δ_open · live_block_count · num_polynomials`.
+/// D-matrix committed width (ring columns): `δ_open · num_live_blocks · num_polynomials`.
 #[inline]
 pub fn decomposed_w_ring_count(
     num_digits_open: usize,
-    live_block_count: usize,
+    num_live_blocks: usize,
     num_polynomials: usize,
 ) -> Option<usize> {
     num_digits_open
-        .checked_mul(live_block_count)?
+        .checked_mul(num_live_blocks)?
         .checked_mul(num_polynomials)
 }
 

@@ -3,10 +3,10 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GeneratedSetupPrefixGroup {
     pub natural_len: u32,
-    pub live_ring_elements_per_claim: u32,
-    pub positions_per_block: u32,
-    pub live_block_count: u32,
-    pub blocks_per_chunk_granule: u32,
+    pub num_live_ring_elements_per_claim: u32,
+    pub num_positions_per_block: u32,
+    pub num_live_blocks: u32,
+    pub num_blocks_per_chunk_granule: u32,
     pub fold_challenge_shape: akita_challenges::TensorChallengeShape,
     pub n_a: u32,
     pub n_b: u32,
@@ -18,8 +18,8 @@ pub struct GeneratedFoldStep {
     pub log_basis: u32,
     pub position_index_bits: u32,
     pub block_index_bits: u32,
-    /// Exact live block count `B`; may be smaller than `2^block_index_bits`.
-    pub live_block_count: u32,
+    /// Exact number of live blocks `B`; may be smaller than `2^block_index_bits`.
+    pub num_live_blocks: u32,
     pub n_a: u32,
     /// Stored first-tier `B` rank.
     pub n_b: u32,
@@ -251,10 +251,10 @@ fn precommitted_group_sort_key(
     (
         key.group.num_vars(),
         key.group.num_polynomials(),
-        key.live_ring_elements_per_claim,
-        key.positions_per_block,
-        key.live_block_count,
-        key.blocks_per_chunk_granule,
+        key.num_live_ring_elements_per_claim,
+        key.num_positions_per_block,
+        key.num_live_blocks,
+        key.num_blocks_per_chunk_granule,
         match key.fold_challenge_shape {
             akita_challenges::TensorChallengeShape::Flat => 0,
             akita_challenges::TensorChallengeShape::Tensor { .. } => 1,
@@ -287,10 +287,10 @@ fn precommitted_group_key_eq(
     layout: &akita_types::PrecommittedGroupParams,
 ) -> bool {
     generated.group == layout.group
-        && generated.live_ring_elements_per_claim == layout.live_ring_elements_per_claim
-        && generated.positions_per_block == layout.positions_per_block
-        && generated.live_block_count == layout.live_block_count
-        && generated.blocks_per_chunk_granule == layout.blocks_per_chunk_granule
+        && generated.num_live_ring_elements_per_claim == layout.num_live_ring_elements_per_claim
+        && generated.num_positions_per_block == layout.num_positions_per_block
+        && generated.num_live_blocks == layout.num_live_blocks
+        && generated.num_blocks_per_chunk_granule == layout.num_blocks_per_chunk_granule
         && generated.fold_challenge_shape == layout.fold_challenge_shape
         && generated.log_basis == layout.log_basis
         && generated.n_a == layout.n_a

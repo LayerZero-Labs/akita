@@ -140,10 +140,10 @@ impl BatchedStage3Geometry {
         }
         let ring_bits = setup_prefix_id.d_setup.trailing_zeros() as usize;
         let params = &setup_prefix_id.commitment_params;
-        let position_index_bits = params.layout.positions_per_block.trailing_zeros() as usize;
+        let position_index_bits = params.layout.num_positions_per_block.trailing_zeros() as usize;
         let block_index_bits = params
             .layout
-            .live_block_count
+            .num_live_blocks
             .checked_next_power_of_two()
             .map(|capacity| capacity.trailing_zeros() as usize)
             .ok_or_else(|| {
@@ -224,10 +224,10 @@ mod tests {
             commitment_params: PrecommittedLevelParams {
                 layout: PrecommittedGroupParams {
                     group: PolynomialGroupLayout::singleton(8),
-                    live_ring_elements_per_claim: 8,
-                    positions_per_block: 4,
-                    live_block_count: 2,
-                    blocks_per_chunk_granule: 1,
+                    num_live_ring_elements_per_claim: 8,
+                    num_positions_per_block: 4,
+                    num_live_blocks: 2,
+                    num_blocks_per_chunk_granule: 1,
                     fold_challenge_shape: akita_challenges::TensorChallengeShape::Flat,
                     log_basis: 3,
                     n_a: 1,

@@ -154,16 +154,16 @@ ring_slots = N_prefix / D_setup
 The prefix is committed as a witness with:
 
 ```text
-ring_slots = live_block_count * positions_per_block
+ring_slots = num_live_blocks * num_positions_per_block
 ```
 
 `setup_prefix_level_params(next_params, N_prefix, D_setup)` searches for a
-power-of-two `live_block_count` divisor of `ring_slots` such that the normal Akita
+power-of-two `num_live_blocks` divisor of `ring_slots` such that the normal Akita
 commitment dimensions fit:
 
 ```text
-positions_per_block * num_digits_commit <= a_key.col_len()
-live_block_count * a_key.row_len() * num_digits_open <= b_key.col_len()
+num_positions_per_block * num_digits_commit <= a_key.col_len()
+num_live_blocks * a_key.row_len() * num_digits_open <= b_key.col_len()
 ```
 
 If a split fits, the function returns repacked `LevelParams` for the prefix

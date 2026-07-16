@@ -39,23 +39,23 @@ where
     F: FieldCore + CanonicalField + HasWide,
     F::Wide: AdditiveGroup + From<F> + ReduceTo<F>,
 {
-    let live_block_count = blocks.len();
+    let num_live_blocks = blocks.len();
     let accum_bytes = n_a * D * std::mem::size_of::<F::Wide>();
     let block_tile = L2_TILE_BUDGET
         .checked_div(accum_bytes)
-        .map_or(live_block_count, |tile| tile.max(1));
+        .map_or(num_live_blocks, |tile| tile.max(1));
 
     #[cfg(feature = "parallel")]
-    let num_threads = rayon::current_num_threads().min(live_block_count).max(1);
+    let num_threads = rayon::current_num_threads().min(num_live_blocks).max(1);
     #[cfg(not(feature = "parallel"))]
     let num_threads = 1;
 
-    let blocks_per_thread = live_block_count.div_ceil(num_threads);
+    let blocks_per_thread = num_live_blocks.div_ceil(num_threads);
 
     let thread_results: Vec<Vec<Vec<CyclotomicRing<F, D>>>> = cfg_into_iter!(0..num_threads)
         .map(|tid| {
             let block_start = tid * blocks_per_thread;
-            let block_end = (block_start + blocks_per_thread).min(live_block_count);
+            let block_end = (block_start + blocks_per_thread).min(num_live_blocks);
             if block_start >= block_end {
                 return Vec::new();
             }
@@ -114,7 +114,7 @@ where
         })
         .collect();
 
-    let mut out: Vec<Vec<CyclotomicRing<F, D>>> = Vec::with_capacity(live_block_count);
+    let mut out: Vec<Vec<CyclotomicRing<F, D>>> = Vec::with_capacity(num_live_blocks);
     for thread_blocks in thread_results {
         out.extend(thread_blocks);
     }
@@ -139,7 +139,7 @@ where
     F: FieldCore + CanonicalField + HasWide,
     F::Wide: AdditiveGroup + From<F> + ReduceTo<F>,
 {
-    let live_block_count = blocks.len();
+    let num_live_blocks = blocks.len();
     debug_assert!(
         active_a_cols <= a_view.num_cols(),
         "active A width exceeds setup envelope"
@@ -149,19 +149,19 @@ where
         .iter()
         .any(|entries| shift_accumulation_count(entries) > MAX_WIDE_SHIFT_ACCUMULATIONS)
     {
-        return cfg_into_iter!(0..live_block_count)
+        return cfg_into_iter!(0..num_live_blocks)
             .map(|i| inner_ajtai_wide_onehot_safe(a_view, blocks[i], num_digits_commit))
             .collect();
     }
 
     #[cfg(feature = "parallel")]
-    let num_threads = rayon::current_num_threads().min(live_block_count).max(1);
+    let num_threads = rayon::current_num_threads().min(num_live_blocks).max(1);
     #[cfg(not(feature = "parallel"))]
     let num_threads = 1;
-    let blocks_per_thread = live_block_count.div_ceil(num_threads);
+    let blocks_per_thread = num_live_blocks.div_ceil(num_threads);
 
     if blocks_per_thread <= SWEEP_THRESHOLD {
-        return cfg_into_iter!(0..live_block_count)
+        return cfg_into_iter!(0..num_live_blocks)
             .map(|i| inner_ajtai_wide_onehot(a_view, blocks[i], num_digits_commit))
             .collect();
     }

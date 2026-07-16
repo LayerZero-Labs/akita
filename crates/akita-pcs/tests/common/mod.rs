@@ -133,8 +133,8 @@ where
     let reduced_point = &padded_point[alpha_bits..];
     let ring_opening_point = ring_opening_point_from_field(
         reduced_point,
-        layout.positions_per_block,
-        layout.live_block_count,
+        layout.num_positions_per_block,
+        layout.num_live_blocks,
         basis_mode,
     )
     .expect("opening point shape should match layout");
@@ -146,7 +146,7 @@ where
         OpeningFoldPlan::Base {
             live_block_weights: &ring_opening_point.live_block_weights,
             position_weights: &ring_opening_point.position_weights,
-            positions_per_block: layout.positions_per_block,
+            num_positions_per_block: layout.num_positions_per_block,
         },
     )
     .expect("evaluate_and_fold");
@@ -157,9 +157,9 @@ where
 }
 
 pub(super) fn make_onehot_poly(layout: &LevelParams, seed: u64) -> OneHotPoly<F, u8> {
-    // `2^nv = (live_block_count · positions_per_block) · D` field elements, grouped into
+    // `2^nv = (num_live_blocks · num_positions_per_block) · D` field elements, grouped into
     // `2^nv / K` one-hot chunks of size `K`.
-    let total_field = layout.live_block_count * layout.positions_per_block * ONEHOT_D;
+    let total_field = layout.num_live_blocks * layout.num_positions_per_block * ONEHOT_D;
     let total_chunks = total_field / ONEHOT_K;
     let mut rng = StdRng::seed_from_u64(seed);
     let indices: Vec<Option<u8>> = (0..total_chunks)

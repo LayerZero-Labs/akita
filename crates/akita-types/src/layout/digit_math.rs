@@ -117,14 +117,15 @@ pub fn optimal_block_geometry_split(
     let mut best: Option<(u64, usize, u32)> = None;
 
     for r in (1..reduced_vars).rev() {
-        let positions_per_block = 1u64 << (reduced_vars - r);
-        let live_block_count = if num_ring > 0 {
-            num_ring.div_ceil(positions_per_block as usize)
+        let num_positions_per_block = 1u64 << (reduced_vars - r);
+        let num_live_blocks = if num_ring > 0 {
+            num_ring.div_ceil(num_positions_per_block as usize)
         } else {
             1usize << r
         };
 
-        let Some(inner_width) = (positions_per_block as usize).checked_mul(delta_commit as usize)
+        let Some(inner_width) =
+            (num_positions_per_block as usize).checked_mul(delta_commit as usize)
         else {
             continue;
         };
@@ -138,7 +139,7 @@ pub fn optimal_block_geometry_split(
             log_commit_bound == 1,
             onehot_chunk_size,
             ring_subfield_norm_bound,
-            live_block_count,
+            num_live_blocks,
             num_claims,
             inner_width as u64,
         ) else {
@@ -161,7 +162,7 @@ pub fn optimal_block_geometry_split(
 
         let Some(total) = fold_level_witness_scoring_cost(
             n_a,
-            live_block_count,
+            num_live_blocks,
             num_claims,
             inner_width,
             decomposition,
@@ -197,7 +198,7 @@ pub fn optimal_block_geometry_split(
 #[allow(clippy::too_many_arguments)]
 pub fn fold_level_witness_scoring_cost(
     n_a: usize,
-    live_block_count: usize,
+    num_live_blocks: usize,
     num_claims: usize,
     inner_width: usize,
     decomposition: DecompositionParams,
@@ -213,12 +214,12 @@ pub fn fold_level_witness_scoring_cost(
     let open_bound = log_commit_bound.max(field_bits);
     let delta_open = num_digits_for_bound(open_bound, field_bits, log_basis) as u64;
     let delta_commit = num_digits_for_bound(log_commit_bound, field_bits, log_basis) as u64;
-    let positions_per_block = inner_width.checked_div(delta_commit as usize)?;
-    if positions_per_block == 0 {
+    let num_positions_per_block = inner_width.checked_div(delta_commit as usize)?;
+    if num_positions_per_block == 0 {
         return None;
     }
-    let live_block_count_u64 = u64::try_from(live_block_count).ok()?;
-    let positions_per_block_u64 = positions_per_block as u64;
+    let num_live_blocks_u64 = u64::try_from(num_live_blocks).ok()?;
+    let num_positions_per_block_u64 = num_positions_per_block as u64;
     let cap_policy =
         fold_witness_linf_cap_policy(fold_challenge_config, fold_shape, ring_dimension);
     let binding = crate::FoldLinfProtocolBinding::CURRENT;
@@ -234,7 +235,7 @@ pub fn fold_level_witness_scoring_cost(
     )
     .ok()?;
     let (decomposed_fold_digits, _) = fold_witness_digit_plan(
-        live_block_count,
+        num_live_blocks,
         num_claims,
         field_bits,
         log_basis,
@@ -244,10 +245,10 @@ pub fn fold_level_witness_scoring_cost(
     )
     .ok()?;
     let per_block_cost = delta_open.saturating_add((n_a as u64).saturating_mul(delta_open));
-    let opening_cost = per_block_cost.saturating_mul(live_block_count_u64);
+    let opening_cost = per_block_cost.saturating_mul(num_live_blocks_u64);
     let folding_cost = delta_commit
         .saturating_mul(decomposed_fold_digits as u64)
-        .saturating_mul(positions_per_block_u64);
+        .saturating_mul(num_positions_per_block_u64);
     Some(opening_cost.saturating_add(folding_cost))
 }
 

@@ -163,8 +163,8 @@ where
                 prepare_opening_point::<F, E, D>(
                     shared_opening_point,
                     basis,
-                    root_lp.positions_per_block,
-                    root_lp.live_block_count,
+                    root_lp.num_positions_per_block,
+                    root_lp.num_live_blocks,
                     d_a.trailing_zeros() as usize,
                 )
             })?;
@@ -201,15 +201,15 @@ where
             })?;
         root_trace_block_opening::<E>(
             &protocol_point,
-            root_lp.positions_per_block,
-            root_lp.live_block_count,
+            root_lp.num_positions_per_block,
+            root_lp.num_live_blocks,
             d_a.trailing_zeros() as usize,
         )?
     } else {
         root_trace_block_opening::<E>(
             shared_opening_point,
-            root_lp.positions_per_block,
-            root_lp.live_block_count,
+            root_lp.num_positions_per_block,
+            root_lp.num_live_blocks,
             d_a.trailing_zeros() as usize,
         )?
     };
@@ -392,8 +392,8 @@ where
                 prepare_opening_point::<F, E, D>(
                     &group_point,
                     basis,
-                    group_lp.positions_per_block(),
-                    group_lp.live_block_count(),
+                    group_lp.num_positions_per_block(),
+                    group_lp.num_live_blocks(),
                     alpha_bits,
                 )
             })?;
@@ -439,8 +439,8 @@ where
     // trace-weight table that multi-group roots evaluate.
     let trace_block_opening = root_trace_block_opening::<E>(
         shared_opening_point,
-        root_lp.positions_per_block,
-        root_lp.live_block_count,
+        root_lp.num_positions_per_block,
+        root_lp.num_live_blocks,
         alpha_bits,
     )?;
 

@@ -764,10 +764,13 @@ def extract_summary(
                 kvs["block_index_bits"] if "block_index_bits" in kvs else kvs["r_vars"]
             )
             legacy_d = int(kvs["d"])
-            live_ring_elements_per_claim = int(
+            num_live_ring_elements_per_claim = int(
                 kvs.get(
-                    "live_ring_elements_per_claim",
-                    int(kvs["current_w_len"]) // legacy_d,
+                    "num_live_ring_elements_per_claim",
+                    kvs.get(
+                        "live_ring_elements_per_claim",
+                        int(kvs["current_w_len"]) // legacy_d,
+                    ),
                 )
             )
             # Legacy traces exposed the Boolean-domain bit split plus
@@ -775,14 +778,20 @@ def extract_summary(
             # values did not carry today's exact-live geometry. Reconstruct
             # the new semantics from the authoritative live source length and
             # domain bits so main/head deltas compare like with like.
-            positions_per_block = int(
-                kvs.get("positions_per_block", 1 << position_index_bits)
-            )
-            live_block_count = int(
+            num_positions_per_block = int(
                 kvs.get(
-                    "live_block_count",
-                    (live_ring_elements_per_claim + positions_per_block - 1)
-                    // positions_per_block,
+                    "num_positions_per_block",
+                    kvs.get("positions_per_block", 1 << position_index_bits),
+                )
+            )
+            num_live_blocks = int(
+                kvs.get(
+                    "num_live_blocks",
+                    kvs.get(
+                        "live_block_count",
+                        (num_live_ring_elements_per_claim + num_positions_per_block - 1)
+                        // num_positions_per_block,
+                    ),
                 )
             )
             block_index_domain_size = int(
@@ -800,9 +809,9 @@ def extract_summary(
                 "log_basis": int(kvs["log_basis"]),
                 "position_index_bits": position_index_bits,
                 "block_index_bits": block_index_bits,
-                "positions_per_block": positions_per_block,
-                "live_block_count": live_block_count,
-                "live_ring_elements_per_claim": live_ring_elements_per_claim,
+                "num_positions_per_block": num_positions_per_block,
+                "num_live_blocks": num_live_blocks,
+                "num_live_ring_elements_per_claim": num_live_ring_elements_per_claim,
                 "block_index_domain_size": block_index_domain_size,
                 "delta_commit": int(kvs["delta_commit"]),
                 "delta_open": int(kvs["delta_open"]),
@@ -1671,7 +1680,8 @@ def render_planned_levels(
     print()
     print(
         "| Fold level | A ring dimension | B ring dimension | D ring dimension | "
-        "Live source A-ring elements for each claim | Positions in each block | Live blocks | "
+        "Number of live source A-ring elements in each claim | "
+        "Number of positions in each block | Number of live blocks | "
         "Block-domain slots |"
     )
     print("| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |")
@@ -1680,9 +1690,9 @@ def render_planned_levels(
         print(
             f"| L{level['level']} | {level_value(level, baseline, 'd_a')} | "
             f"{level_value(level, baseline, 'd_b')} | {level_value(level, baseline, 'd_d')} | "
-            f"{level_value(level, baseline, 'live_ring_elements_per_claim')} | "
-            f"{level_value(level, baseline, 'positions_per_block')} | "
-            f"{level_value(level, baseline, 'live_block_count')} | "
+            f"{level_value(level, baseline, 'num_live_ring_elements_per_claim')} | "
+            f"{level_value(level, baseline, 'num_positions_per_block')} | "
+            f"{level_value(level, baseline, 'num_live_blocks')} | "
             f"{level_value(level, baseline, 'block_index_domain_size')} |"
         )
     print()

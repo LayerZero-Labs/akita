@@ -337,8 +337,8 @@ where
                     let prepared_point = prepare_opening_point::<F, E, D>(
                         &group_protocol_point,
                         basis,
-                        group_lp.positions_per_block(),
-                        group_lp.live_block_count(),
+                        group_lp.num_positions_per_block(),
+                        group_lp.num_live_blocks(),
                         alpha_bits,
                     )
                     .map_err(|err| {
@@ -357,7 +357,7 @@ where
                             Some(opening.prepared()),
                             group_polys,
                             &prepared_point,
-                            group_lp.positions_per_block(),
+                            group_lp.num_positions_per_block(),
                         )
                         .map_err(|err| {
                             AkitaError::InvalidInput(format!(
@@ -690,7 +690,7 @@ where
                 .instance
                 .opening_batch()
                 .num_total_polynomials()
-                .checked_mul(lp.live_block_count)
+                .checked_mul(lp.num_live_blocks)
                 .ok_or_else(|| {
                     AkitaError::InvalidSetup("trace block count overflow".to_string())
                 })?;
@@ -704,7 +704,7 @@ where
             )?;
             Some(build_root_stage2_trace_table::<F, E>(
                 ring_d,
-                lp.live_block_count,
+                lp.num_live_blocks,
                 &layout,
                 prepared_fold.instance.opening_batch(),
                 prepared_fold
@@ -729,7 +729,7 @@ where
             trace_opening_source_len,
             trace_col_bits,
             trace_ring_bits,
-            lp.live_block_count,
+            lp.num_live_blocks,
         )?;
         Some(build_recursive_stage2_trace_table::<F, E>(
             ring_d,

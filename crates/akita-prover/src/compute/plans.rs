@@ -36,7 +36,7 @@ impl<'a, E> FlatBlockTable<'a, E> {
 
     /// Number of logical blocks.
     #[inline]
-    pub fn live_block_count(&self) -> usize {
+    pub fn num_live_blocks(&self) -> usize {
         self.offsets.len().saturating_sub(1)
     }
 
@@ -58,7 +58,7 @@ impl<'a, E> FlatBlockTable<'a, E> {
     }
 
     pub(crate) fn block_slices(&self) -> Result<Vec<&'a [E]>, AkitaError> {
-        (0..self.live_block_count())
+        (0..self.num_live_blocks())
             .map(|idx| self.block(idx))
             .collect()
     }
@@ -109,8 +109,8 @@ pub enum OneHotCommitBlocks<'a> {
 pub struct OneHotCommitRowsPlan<'a> {
     /// Number of A rows to produce.
     pub n_a: usize,
-    /// Root block length in ring elements.
-    pub positions_per_block: usize,
+    /// Number of ring-element positions in each root block.
+    pub num_positions_per_block: usize,
     /// Number of balanced digits used for the A-side commit.
     pub num_digits_commit: usize,
     /// Per-block one-hot entries.
@@ -129,8 +129,8 @@ impl<'a> OneHotCommitRowsPlan<'a> {
 pub struct SparseRingCommitRowsPlan<'a> {
     /// Number of A rows to produce.
     pub n_a: usize,
-    /// Root block length in ring elements.
-    pub positions_per_block: usize,
+    /// Number of ring-element positions in each root block.
+    pub num_positions_per_block: usize,
     /// Number of balanced digits used for the A-side commit.
     pub num_digits_commit: usize,
     /// Per-block sparse signed coefficients.
@@ -151,10 +151,10 @@ pub struct RecursiveWitnessCommitRowsPlan<'a, const D: usize> {
     pub coeffs: &'a [[i8; D]],
     /// Number of rows to produce.
     pub n_rows: usize,
-    /// Recursive block length.
-    pub positions_per_block: usize,
+    /// Number of positions in each recursive block.
+    pub num_positions_per_block: usize,
     /// Number of logical blocks.
-    pub live_block_count: usize,
+    pub num_live_blocks: usize,
     /// Number of balanced digits used for the A-side commit.
     pub num_digits_commit: usize,
     /// Logarithm of the gadget basis.

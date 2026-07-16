@@ -20,10 +20,10 @@ where
     E: ExtField<F> + FromPrimitiveInt,
 {
     let ring_len = layout.ring_len();
-    debug_assert_eq!(block_rows.len(), layout.live_block_count * ring_len);
+    debug_assert_eq!(block_rows.len(), layout.num_live_blocks * ring_len);
     for (plane, gadget_scalar) in gadget_scalars.iter().enumerate() {
         let gadget = E::lift_base(*gadget_scalar);
-        for block in 0..layout.live_block_count {
+        for block in 0..layout.num_live_blocks {
             let col = layout.opening_digit_col_index(block, plane)?;
             let row_base = block * ring_len;
             for ring_coord in 0..ring_len {
@@ -132,7 +132,7 @@ where
 
     let gadget_scalars = gadget_row_scalars::<F>(layout.num_digits_open, layout.log_basis);
     let ring_len = layout.ring_len();
-    let mut block_rows = vec![E::zero(); layout.live_block_count * ring_len];
+    let mut block_rows = vec![E::zero(); layout.num_live_blocks * ring_len];
 
     for term in terms {
         layout.validate_trace_term_block_range(term.block_offset, term.live_block_weights.len())?;
@@ -239,7 +239,7 @@ where
 
     let gadget_scalars = gadget_row_scalars::<F>(layout.num_digits_open, layout.log_basis);
     let ring_len = layout.ring_len();
-    let mut block_rows = vec![E::zero(); layout.live_block_count * ring_len];
+    let mut block_rows = vec![E::zero(); layout.num_live_blocks * ring_len];
 
     for term in terms {
         layout.validate_trace_term_block_range(term.block_offset, term.block_rings.len())?;

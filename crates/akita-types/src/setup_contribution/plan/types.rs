@@ -7,15 +7,15 @@ use std::{ops::Range, sync::Arc};
 pub struct SetupContributionGroupInputs {
     pub group_id: usize,
     pub num_claims: usize,
-    pub live_block_count: usize,
-    pub positions_per_block: usize,
+    pub num_live_blocks: usize,
+    pub num_positions_per_block: usize,
     pub depth_open: usize,
     pub depth_commit: usize,
     pub depth_fold: usize,
     pub log_basis: u32,
     pub n_a: usize,
     pub n_b: usize,
-    pub t_cols_per_vector: usize,
+    pub t_vector_width: usize,
     pub a_row_start: usize,
     pub b_row_start: usize,
 }
@@ -58,23 +58,23 @@ impl SetupContributionGroupInputs {
         let b_row_start = a_row_start
             .checked_add(inputs.n_a)
             .ok_or_else(|| AkitaError::InvalidSetup("B row start overflow".into()))?;
-        let t_cols_per_vector = inputs
+        let t_vector_width = inputs
             .n_a
             .checked_mul(inputs.depth_open)
-            .and_then(|width| width.checked_mul(inputs.live_block_count))
+            .and_then(|width| width.checked_mul(inputs.num_live_blocks))
             .ok_or_else(|| AkitaError::InvalidSetup("T polynomial width overflow".into()))?;
         Ok(Self {
             group_id: 0,
             num_claims: inputs.num_claims,
-            live_block_count: inputs.live_block_count,
-            positions_per_block: inputs.positions_per_block,
+            num_live_blocks: inputs.num_live_blocks,
+            num_positions_per_block: inputs.num_positions_per_block,
             depth_open: inputs.depth_open,
             depth_commit: inputs.depth_commit,
             depth_fold: inputs.depth_fold,
             log_basis: fold_log_basis,
             n_a: inputs.n_a,
             n_b: inputs.n_b,
-            t_cols_per_vector,
+            t_vector_width,
             a_row_start,
             b_row_start,
         })
@@ -118,7 +118,7 @@ impl SetupContributionLayout {
         let d_columns = SetupDColumnLayout::new(groups.iter().map(|group| {
             let width = group
                 .num_claims
-                .checked_mul(group.live_block_count)
+                .checked_mul(group.num_live_blocks)
                 .and_then(|cols| cols.checked_mul(group.depth_open))
                 .ok_or_else(|| AkitaError::InvalidSetup("setup D width overflow".into()))?;
             Ok((group.group_id, width))
@@ -212,16 +212,16 @@ fn validate_group_witness_layout(
     let units = layout.units_for_group(group.group_id)?;
     let mut next_fold = 0usize;
     for unit in units {
-        if unit.live_block_count() == 0 || unit.global_block_start() != next_fold {
+        if unit.num_live_blocks() == 0 || unit.global_block_start() != next_fold {
             return Err(AkitaError::InvalidSetup(
                 "setup witness units do not form a contiguous fold tiling".into(),
             ));
         }
         next_fold = next_fold
-            .checked_add(unit.live_block_count())
+            .checked_add(unit.num_live_blocks())
             .ok_or_else(|| AkitaError::InvalidSetup("setup fold coverage overflow".into()))?;
     }
-    if next_fold != group.live_block_count {
+    if next_fold != group.num_live_blocks {
         return Err(AkitaError::InvalidSetup(
             "setup group dimensions disagree with witness layout".into(),
         ));

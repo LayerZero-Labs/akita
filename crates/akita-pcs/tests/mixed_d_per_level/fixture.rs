@@ -94,26 +94,29 @@ fn expand_envelope_witness_at_ring_d(
         .unwrap_or(step.block_index_bits as usize)
         .checked_add(extra_block_vars)
         .ok_or_else(|| AkitaError::InvalidSetup("mixed-D block variable count overflow".into()))?;
-    let positions_per_block = 1usize
-        .checked_shl(position_index_bits as u32)
-        .ok_or_else(|| {
-            AkitaError::InvalidSetup(
-                "generated schedule 2^position_index_bits overflows usize".to_string(),
-            )
-        })?;
-    let live_ring_elements_per_claim = if is_root {
+    let num_positions_per_block =
+        1usize
+            .checked_shl(position_index_bits as u32)
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup(
+                    "generated schedule 2^position_index_bits overflows usize".to_string(),
+                )
+            })?;
+    let num_live_ring_elements_per_claim = if is_root {
         let capacity = 1usize.checked_shl(block_index_bits as u32).ok_or_else(|| {
             AkitaError::InvalidSetup(
                 "generated schedule block-index domain size overflows usize".to_string(),
             )
         })?;
-        positions_per_block.checked_mul(capacity).ok_or_else(|| {
-            AkitaError::InvalidSetup("mixed-D root source length overflow".to_string())
-        })?
+        num_positions_per_block
+            .checked_mul(capacity)
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup("mixed-D root source length overflow".to_string())
+            })?
     } else {
         envelope_current_w_len / target_ring_d
     };
-    let live_block_count = live_ring_elements_per_claim.div_ceil(positions_per_block);
+    let num_live_blocks = num_live_ring_elements_per_claim.div_ceil(num_positions_per_block);
     let no_layout = |role: &str| {
         AkitaError::InvalidSetup(format!(
             "no audited {role}-role layout for mixed-D schedule \
@@ -127,7 +130,7 @@ fn expand_envelope_witness_at_ring_d(
     let ring_challenge_cfg = ring_challenge_config(target_ring_d)?;
     let num_digits_commit = num_digits_s_commit(decomp, is_root);
     let num_digits_open_val = num_digits_open(decomp);
-    let inner_width = decomposed_s_block_ring_count(positions_per_block, num_digits_commit)
+    let inner_width = decomposed_s_block_ring_count(num_positions_per_block, num_digits_commit)
         .ok_or_else(|| no_layout("A"))?;
     let a_bucket = rounded_up_role_a_inf_norm(
         sis_policy,
@@ -139,7 +142,7 @@ fn expand_envelope_witness_at_ring_d(
         is_root,
         policy.onehot_chunk_size,
         policy.ring_subfield_norm_bound,
-        live_block_count,
+        num_live_blocks,
         num_claims,
         inner_width as u64,
     )
@@ -165,7 +168,7 @@ fn expand_envelope_witness_at_ring_d(
     )
     .ok_or_else(|| no_layout("B"))?;
     let outer_width =
-        decomposed_t_ring_count(n_a, num_digits_open_val, live_block_count, num_claims)
+        decomposed_t_ring_count(n_a, num_digits_open_val, num_live_blocks, num_claims)
             .ok_or_else(|| no_layout("B"))?;
     let d_bucket = rounded_up_collision_inf_norm(
         sis_policy,
@@ -175,7 +178,7 @@ fn expand_envelope_witness_at_ring_d(
         log_basis,
     )
     .ok_or_else(|| no_layout("D"))?;
-    let d_matrix_width = decomposed_w_ring_count(num_digits_open_val, live_block_count, num_claims)
+    let d_matrix_width = decomposed_w_ring_count(num_digits_open_val, num_live_blocks, num_claims)
         .ok_or_else(|| no_layout("D"))?;
     let n_b = min_secure_rank(
         SisTableKey {
@@ -239,10 +242,10 @@ fn expand_envelope_witness_at_ring_d(
             d_bucket,
             target_ring_d,
         )?,
-        live_ring_elements_per_claim,
-        live_block_count,
-        positions_per_block,
-        blocks_per_chunk_granule: 1,
+        num_live_ring_elements_per_claim,
+        num_live_blocks,
+        num_positions_per_block,
+        num_blocks_per_chunk_granule: 1,
         fold_challenge_config: ring_challenge_cfg,
         fold_challenge_shape: fold_shape,
         num_digits_commit,

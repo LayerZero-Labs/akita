@@ -86,7 +86,7 @@ pub fn rounded_up_role_a_inf_norm(
     is_root: bool,
     onehot_chunk_size: usize,
     ring_subfield_norm_bound: u32,
-    live_block_count: usize,
+    num_live_blocks: usize,
     num_claims: usize,
     inner_width: u64,
 ) -> Option<u128> {
@@ -101,7 +101,7 @@ pub fn rounded_up_role_a_inf_norm(
     )
     .ok()?;
     let (fold_decomposed_digits, _) = fold_witness_digit_plan(
-        live_block_count,
+        num_live_blocks,
         num_claims,
         decomposition.field_bits(),
         decomposition.log_basis,
@@ -216,7 +216,7 @@ impl FoldWitnessNorms {
 ///
 /// Propagates folded-witness bound / tail-bound setup errors.
 pub fn fold_witness_digit_plan(
-    live_block_count: usize,
+    num_live_blocks: usize,
     num_claims: usize,
     field_bits: u32,
     log_basis: u32,
@@ -224,20 +224,20 @@ pub fn fold_witness_digit_plan(
     witness: FoldWitnessNorms,
     cap_config: &FoldWitnessLinfCapConfig,
 ) -> Result<(usize, u128), AkitaError> {
-    if live_block_count == 0 {
+    if num_live_blocks == 0 {
         return Err(AkitaError::InvalidSetup(
-            "fold_witness_digit_plan: live_block_count must be positive".to_string(),
+            "fold_witness_digit_plan: num_live_blocks must be positive".to_string(),
         ));
     }
     // Worst-case negacyclic ring-product L∞ of
     // `c · s` is `min(||c||_inf·||s||_1, ||c||_1·||s||_inf)`, so
-    // `β_inf = num_claims · live_block_count · that min side`.
+    // `β_inf = num_claims · num_live_blocks · that min side`.
     let mut inf_norm_bound = challenge
         .infinity_norm
         .saturating_mul(witness.l1_norm)
         .min(challenge.l1_norm.saturating_mul(witness.infinity_norm))
         .checked_mul(num_claims as u128)
-        .and_then(|t| t.checked_mul(live_block_count as u128))
+        .and_then(|t| t.checked_mul(num_live_blocks as u128))
         .ok_or_else(|| {
             AkitaError::InvalidSetup(
                 "fold_witness_digit_plan: folded-witness bound β overflows u128".to_string(),
@@ -257,7 +257,7 @@ pub fn fold_witness_digit_plan(
                 .infinity_norm()
                 .saturating_mul(witness.infinity_norm());
             let rademacher_inf_norm_bound = isqrt_ceil(rademacher_proxy_variance(
-                live_block_count,
+                num_live_blocks,
                 num_claims,
                 witness_linf_sq,
                 cap_config,
@@ -343,9 +343,9 @@ mod tests {
             infinity_norm: 4,
             l1_norm: 10,
         };
-        let beta = |live_block_count| {
+        let beta = |num_live_blocks| {
             fold_witness_digit_plan(
-                live_block_count,
+                num_live_blocks,
                 1,
                 128,
                 3,
@@ -402,7 +402,7 @@ mod tests {
             log_commit_bound: 1,
             log_open_bound: Some(128),
         };
-        let (d, is_root, onehot_chunk_size, live_block_count, num_claims, subfield, inner_width) =
+        let (d, is_root, onehot_chunk_size, num_live_blocks, num_claims, subfield, inner_width) =
             (64usize, true, 64usize, 2usize, 1usize, 1u32, 2u64);
 
         // Recompute the Lemma-7 envelope from the same primitives the function wires.
@@ -418,7 +418,7 @@ mod tests {
         )
         .unwrap();
         let (delta_fold, _) = fold_witness_digit_plan(
-            live_block_count,
+            num_live_blocks,
             num_claims,
             decomposition.field_bits(),
             decomposition.log_basis,
@@ -450,7 +450,7 @@ mod tests {
                 is_root,
                 onehot_chunk_size,
                 subfield,
-                live_block_count,
+                num_live_blocks,
                 num_claims,
                 inner_width,
             )
@@ -480,7 +480,7 @@ mod tests {
             log_commit_bound: 1,
             log_open_bound: Some(128),
         };
-        let (d, is_root, onehot_chunk_size, live_block_count, num_claims, subfield, inner_width) =
+        let (d, is_root, onehot_chunk_size, num_live_blocks, num_claims, subfield, inner_width) =
             (64usize, true, 64usize, 4usize, 1usize, 1u32, 2u64);
 
         let challenge = FoldChallengeNorms::new(&fold_challenge_config, fold_shape);
@@ -495,7 +495,7 @@ mod tests {
         )
         .unwrap();
         let (delta_fold, honest_cap) = fold_witness_digit_plan(
-            live_block_count,
+            num_live_blocks,
             num_claims,
             decomposition.field_bits(),
             decomposition.log_basis,
@@ -519,7 +519,7 @@ mod tests {
             is_root,
             onehot_chunk_size,
             subfield,
-            live_block_count,
+            num_live_blocks,
             num_claims,
             inner_width,
         )
@@ -624,7 +624,7 @@ mod tests {
             log_commit_bound: 128,
             log_open_bound: None,
         };
-        let (d, is_root, onehot_chunk_size, live_block_count, num_claims, subfield, inner_width) =
+        let (d, is_root, onehot_chunk_size, num_live_blocks, num_claims, subfield, inner_width) =
             (64usize, false, 1usize, 2usize, 1usize, 1u32, 2u64);
 
         let challenge = FoldChallengeNorms::new(&fold_challenge_config, fold_shape);
@@ -639,7 +639,7 @@ mod tests {
         )
         .unwrap();
         let (delta_fold, _) = fold_witness_digit_plan(
-            live_block_count,
+            num_live_blocks,
             num_claims,
             decomposition.field_bits(),
             decomposition.log_basis,
@@ -659,7 +659,7 @@ mod tests {
             is_root,
             onehot_chunk_size,
             subfield,
-            live_block_count,
+            num_live_blocks,
             num_claims,
             inner_width,
         )

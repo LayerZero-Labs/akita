@@ -41,12 +41,12 @@ pub(crate) fn balanced_digits_from_i64(value: i64, num_digits: usize, log_basis:
 #[cfg(test)]
 pub(crate) fn encode_z_segment_from_centered<const D: usize>(
     centered: &[[i32; D]],
-    positions_per_block: usize,
+    num_positions_per_block: usize,
     depth_commit: usize,
     rice_low_bits: u32,
     zigzag_w_z: u32,
 ) -> Result<Vec<u8>, AkitaError> {
-    let inner_width = positions_per_block * depth_commit;
+    let inner_width = num_positions_per_block * depth_commit;
     if !centered.len().is_multiple_of(inner_width) {
         return Err(AkitaError::InvalidInput(
             "z_folded length does not match layout".to_string(),
