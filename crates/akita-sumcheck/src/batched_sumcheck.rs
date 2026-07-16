@@ -9,11 +9,11 @@
 //! Adapted from Jolt's `BatchedSumcheck` implementation.
 
 use crate::{SumcheckInstanceProver, SumcheckInstanceVerifier, SumcheckProof, UniPoly};
-use akita_field::AkitaError;
-use akita_field::{CanonicalField, FieldCore, FromPrimitiveInt, HalvingField};
+use akita_error::AkitaError;
 use akita_serialization::AkitaSerialize;
 use akita_transcript::labels;
 use akita_transcript::Transcript;
+use jolt_field::{CanonicalField, FieldCore, FromPrimitiveInt, HalvingField};
 
 fn mul_pow_2<E: FieldCore>(x: E, k: usize) -> E {
     let mut result = x;
@@ -370,7 +370,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use akita_field::Fp64;
+    use jolt_field::Fp64;
 
     type F = Fp64<4294967197>;
 

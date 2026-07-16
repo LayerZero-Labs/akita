@@ -7,16 +7,16 @@ use akita_config::proof_optimized::{fp128, fp32, fp64};
 use akita_config::tensor_verifier;
 use akita_config::test_support::akita_batched_root_layout;
 use akita_config::CommitmentConfig;
-use akita_field::unreduced::HasWide;
-use akita_field::unreduced::{HasOptimizedFold, HasUnreducedOps};
-use akita_field::TranscriptChallenge;
-use akita_field::{
-    CanonicalBytes, CanonicalField, FrobeniusExtField, FromPrimitiveInt, HalvingField,
-    PseudoMersenneField, RandomSampling,
-};
 use akita_serialization::{AkitaSerialize, Valid};
 use akita_types::{
     AkitaScheduleLookupKey, FpExtEncoding, LevelParams, MultiChunkProfileId, PolynomialGroupLayout,
+};
+use jolt_field::unreduced::HasWide;
+use jolt_field::unreduced::{HasOptimizedFold, HasUnreducedOps};
+use jolt_field::TranscriptChallenge;
+use jolt_field::{
+    CanonicalBytes, CanonicalField, FrobeniusExtField, FromPrimitiveInt, HalvingField,
+    PseudoMersenneField, RandomSampling,
 };
 
 type F = fp128::Field;

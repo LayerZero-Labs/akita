@@ -22,7 +22,7 @@ fn miswired_catalog_rejects_before_lookup() {
     .expect_err("D64 full preset must reject D64 one-hot catalog");
 
     assert!(
-        matches!(err, akita_field::AkitaError::InvalidSetup(_)),
+        matches!(err, akita_error::AkitaError::InvalidSetup(_)),
         "expected InvalidSetup, got {err:?}"
     );
 }

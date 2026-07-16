@@ -9,10 +9,7 @@ use akita_config::{
     bind_transcript_instance_descriptor, effective_batched_schedule, ensure_schedule_fits_setup,
     CommitmentConfig,
 };
-use akita_field::{
-    AkitaError, CanonicalField, FieldCore, FrobeniusExtField, FromPrimitiveInt, HalvingField,
-    PseudoMersenneField, RandomSampling,
-};
+use akita_error::AkitaError;
 use akita_serialization::AkitaSerialize;
 use akita_transcript::Transcript;
 #[cfg(test)]
@@ -22,6 +19,10 @@ use akita_types::{
     AkitaLevelProof, AkitaSetupSeed, AkitaVerifierSetup, BasisMode, CleartextWitnessProof,
     Commitment, FpExtEncoding, LevelParams, LevelParamsLike, OpeningClaims, RingCommitment,
     RingVec, RingView, Schedule, SetupContributionMode, Step,
+};
+use jolt_field::{
+    CanonicalField, FieldCore, FrobeniusExtField, FromPrimitiveInt, HalvingField,
+    PseudoMersenneField, RandomSampling,
 };
 use std::array::from_fn;
 
@@ -553,7 +554,12 @@ pub(crate) fn verify_folded_batched_proof<F, E, T>(
     setup_contribution_mode: SetupContributionMode,
 ) -> Result<(), AkitaError>
 where
-    F: FieldCore + CanonicalField + RandomSampling + PseudoMersenneField + HalvingField,
+    F: FieldCore
+        + CanonicalField
+        + RandomSampling
+        + PseudoMersenneField
+        + HalvingField
+        + AkitaSerialize,
     E: FpExtEncoding<F>
         + ExtField<F>
         + FrobeniusExtField<F>
@@ -687,8 +693,8 @@ where
 mod tests {
     use super::*;
     use akita_challenges::SparseChallengeConfig;
-    use akita_field::Fp32;
     use akita_types::{AjtaiKeyParams, RingVec, SisModulusFamily, DEFAULT_SIS_SECURITY_BITS};
+    use jolt_field::Fp32;
 
     type F = Fp32<251>;
     const D: usize = 32;

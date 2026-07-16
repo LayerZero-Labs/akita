@@ -7,7 +7,7 @@
 //! primitives but contain no SIS formula of their own.
 
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
-use akita_field::{CanonicalField, FieldCore};
+use jolt_field::{CanonicalField, FieldCore};
 
 use crate::sis::{
     fold_witness_digit_plan, fold_witness_linf_cap_policy, min_secure_rank, num_digits_for_bound,

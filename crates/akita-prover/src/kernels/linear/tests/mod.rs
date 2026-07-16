@@ -14,16 +14,16 @@ use akita_algebra::ntt::{
     PrimeWidth,
 };
 use akita_algebra::{CrtNttParamSet, CyclotomicCrtNtt, CyclotomicRing};
-use akita_field::{CanonicalField, FieldCore, Fp64, Prime128Offset275, Prime64Offset59};
 use akita_types::layout::FlatMatrix;
+use jolt_field::{CanonicalField, FieldCore, Fp64, Prime128Offset275, Prime64Offset59};
 
-fn centered_i32_ring<F: akita_field::CanonicalField, const D: usize>(
+fn centered_i32_ring<F: jolt_field::CanonicalField, const D: usize>(
     coeffs: &[i32; D],
 ) -> CyclotomicRing<F, D> {
     CyclotomicRing::from_coefficients(std::array::from_fn(|idx| F::from_i64(coeffs[idx] as i64)))
 }
 
-fn cyclic_product<F: akita_field::FieldCore, const D: usize>(
+fn cyclic_product<F: jolt_field::FieldCore, const D: usize>(
     lhs: &CyclotomicRing<F, D>,
     rhs: &CyclotomicRing<F, D>,
 ) -> CyclotomicRing<F, D> {
@@ -123,7 +123,7 @@ fn mat_vec_mul_digits_i8_strided_with_params_for_log_basis<
 }
 
 fn quotient_from_cyclic_and_negacyclic<
-    F: akita_field::FieldCore + akita_field::HalvingField,
+    F: jolt_field::FieldCore + jolt_field::HalvingField,
     const D: usize,
 >(
     cyclic: &CyclotomicRing<F, D>,

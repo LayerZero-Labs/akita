@@ -8,8 +8,8 @@
 use crate::types::EqFactoredUniPoly;
 use akita_algebra::split_eq::GruenSplitEq;
 use akita_algebra::uni_poly::UniPoly;
-use akita_field::AkitaError;
-use akita_field::FieldCore;
+use akita_error::AkitaError;
+use jolt_field::FieldCore;
 
 /// Prover-side sumcheck instance interface.
 ///

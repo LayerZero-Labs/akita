@@ -7,8 +7,8 @@ use super::rotated_accum::{
 use super::{decompose_ring_interleaved, fill_rotated_challenge, sparse_mul_acc, DecomposeParams};
 use akita_algebra::CyclotomicRing;
 use akita_challenges::SparseChallenge;
-use akita_field::parallel::*;
-use akita_field::CanonicalField;
+use jolt_field::parallel::*;
+use jolt_field::CanonicalField;
 
 type RotatedTable<const D: usize> = Option<[[i16; D]; D]>;
 
@@ -185,7 +185,7 @@ pub fn cached_digit_decompose_fold_partitioned<const D: usize>(
 ) -> Vec<[i32; D]> {
     let num_rings = digit_planes.len() / num_digits;
     // `F` is unused for the predecomposed source; any `CanonicalField` instantiates the driver.
-    element_partitioned_decompose_fold::<akita_field::Prime128Offset275, D>(
+    element_partitioned_decompose_fold::<jolt_field::Prime128Offset275, D>(
         ElementFoldSource::Predecomposed {
             digit_planes,
             num_rings,

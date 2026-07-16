@@ -3,13 +3,13 @@
 
 #![allow(missing_docs)]
 
-use akita_field::AkitaError;
-use akita_field::Prime128OffsetA7F7 as F;
+use akita_error::AkitaError;
 use akita_types::{
     validate_role_dims, validate_role_dispatch, validate_schedule_ring_dims, AkitaSetupSeed,
     CleartextWitnessShape, CommitmentRingDims, DirectStep, FoldStep, LevelParams, RingRole,
     RingView, Schedule, Step,
 };
+use jolt_field::Prime128OffsetA7F7 as F;
 
 const NUM_VARS: usize = 16;
 

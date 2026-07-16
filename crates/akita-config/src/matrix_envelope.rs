@@ -1,6 +1,6 @@
 //! Shared setup-matrix envelope accumulation helpers.
 
-use akita_field::AkitaError;
+use akita_error::AkitaError;
 use akita_types::{LevelParams, SetupMatrixEnvelope, SetupPrefixSlotId};
 
 /// Extend `max_setup_len` with the full per-level setup footprint.

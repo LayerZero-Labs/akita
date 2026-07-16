@@ -8,7 +8,7 @@
 //! [`crate::find_group_batch_schedule`].
 
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
-use akita_field::AkitaError;
+use akita_error::AkitaError;
 use akita_types::{AkitaScheduleInputs, AkitaScheduleLookupKey, PolynomialGroupLayout, Schedule};
 
 use crate::catalog_identity::validate_catalog_identity;

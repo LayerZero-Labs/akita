@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, HashMap};
 
-use akita_field::AkitaError;
+use akita_error::AkitaError;
 use akita_types::{
     active_setup_field_len, direct_witness_bytes, extension_opening_reduction_level_bytes,
     level_proof_bytes, padded_setup_prefix_len, segment_typed_witness_shape_from_groups,

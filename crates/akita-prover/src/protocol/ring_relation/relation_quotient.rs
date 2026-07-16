@@ -428,7 +428,7 @@ mod tests {
     use super::*;
     use crate::backend::test_support::tensor_oracle_challenges;
     use akita_challenges::SparseChallenge;
-    use akita_field::Prime128OffsetA7F7 as F;
+    use jolt_field::Prime128OffsetA7F7 as F;
 
     fn ring<const D: usize>(offset: u64) -> CyclotomicRing<F, D> {
         CyclotomicRing::from_coefficients(std::array::from_fn(|idx| {

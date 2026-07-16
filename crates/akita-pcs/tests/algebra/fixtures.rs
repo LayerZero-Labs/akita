@@ -1,7 +1,7 @@
 use num_bigint::BigUint;
 use rand::{rngs::StdRng, SeedableRng};
 
-use akita_field::{CanonicalField, FieldCore, Fp32, FpExt2Config, Invertible, PseudoMersenneField};
+use jolt_field::{CanonicalField, FieldCore, Fp32, FpExt2Config, Invertible, PseudoMersenneField};
 
 pub(super) fn rand_u128<R: rand_core::RngCore>(rng: &mut R) -> u128 {
     let lo = rng.next_u64() as u128;

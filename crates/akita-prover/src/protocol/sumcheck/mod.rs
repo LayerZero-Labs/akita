@@ -16,7 +16,7 @@ pub use akita_stage3::AkitaStage3Prover;
 
 // --- Shared helpers ------------------------------------------------------
 
-use akita_field::FieldCore;
+use jolt_field::FieldCore;
 
 /// Fold a pair of adjacent evaluations in a full-width row at a challenge `r`,
 /// with implicit zero-padding when the index falls past the end.

@@ -1,8 +1,6 @@
 use super::*;
 use akita_challenges::SparseChallengeConfig;
 #[cfg(feature = "schedules-default")]
-use akita_field::{CanonicalField, One};
-#[cfg(feature = "schedules-default")]
 use akita_planner::generated::GeneratedScheduleTable;
 #[cfg(feature = "schedules-default")]
 use akita_planner::schedule_from_entry;
@@ -17,6 +15,8 @@ use akita_schedules::{
 };
 #[cfg(feature = "schedules-default")]
 use akita_types::SisModulusFamily;
+#[cfg(feature = "schedules-default")]
+use jolt_field::{CanonicalField, One};
 
 #[cfg(feature = "schedules-default")]
 const MAX_I8_LOG_BASIS: u32 = 6;
@@ -100,8 +100,8 @@ fn uncommittable_root_direct_schedule_yields_empty_setup_levels_and_loud_get_par
     #[derive(Clone)]
     struct UncommittableRootDirectCfg;
     impl CommitmentConfig for UncommittableRootDirectCfg {
-        type Field = akita_field::Fp32<251>;
-        type ExtField = akita_field::Fp32<251>;
+        type Field = jolt_field::Fp32<251>;
+        type ExtField = jolt_field::Fp32<251>;
         const D: usize = 8;
         fn decomposition() -> akita_types::DecompositionParams {
             akita_types::DecompositionParams {
@@ -166,8 +166,8 @@ fn setup_matrix_envelope_does_not_add_conservative_layout() {
     struct GroupLayoutRejectCfg;
 
     impl CommitmentConfig for GroupLayoutRejectCfg {
-        type Field = akita_field::Fp32<251>;
-        type ExtField = akita_field::Fp32<251>;
+        type Field = jolt_field::Fp32<251>;
+        type ExtField = jolt_field::Fp32<251>;
         const D: usize = 8;
 
         fn decomposition() -> DecompositionParams {
@@ -638,8 +638,8 @@ fn recursive_setup_envelope_counts_setup_prefix_d_segment() {
     #[derive(Clone)]
     struct SyntheticRecursiveCfg;
     impl CommitmentConfig for SyntheticRecursiveCfg {
-        type Field = akita_field::Prime128OffsetA7F7;
-        type ExtField = akita_field::Prime128OffsetA7F7;
+        type Field = jolt_field::Prime128OffsetA7F7;
+        type ExtField = jolt_field::Prime128OffsetA7F7;
         const D: usize = SETUP_OFFLOAD_D_SETUP;
 
         fn decomposition() -> DecompositionParams {

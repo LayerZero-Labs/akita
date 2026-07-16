@@ -1,10 +1,10 @@
 use super::wire::extension_opening_reduction_serialized_size;
 use super::*;
 use akita_algebra::CompressedUniPoly;
-use akita_field::{Prime128Offset275, RandomSampling};
 use akita_serialization::Valid;
 use akita_sumcheck::SumcheckProof;
 use akita_transcript::{labels, AkitaTranscript, Transcript};
+use jolt_field::{Prime128Offset275, RandomSampling};
 use rand::SeedableRng;
 
 type F = Prime128Offset275;

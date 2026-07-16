@@ -16,7 +16,8 @@ repository = "https://github.com/LayerZero-Labs/akita"
 readme = "../../README.md"
 
 [dependencies]
-akita-field = { version = "0.1.0", path = "../akita-field" }
+jolt-field = { version = "=0.1.0", git = "https://github.com/Acentelles/jolt.git", rev = "09b2f7b6ddd9427c756b781c39530a6c005e332d", default-features = false, features = ["solinas"] }
+akita-error = { version = "0.1.0", path = "../akita-error" }
 
 [lints]
 workspace = true

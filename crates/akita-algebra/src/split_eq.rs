@@ -23,7 +23,9 @@
 
 use super::eq_poly::EqPolynomial;
 use super::uni_poly::UniPoly;
-use crate::{AkitaError, FieldCore, FromPrimitiveInt};
+use akita_error::AkitaError;
+
+use crate::{FieldCore, FromPrimitiveInt};
 
 /// Split equality polynomial with Gruen scalar accumulation.
 ///
@@ -262,7 +264,7 @@ mod tests {
     use super::*;
     use crate::poly::fold_evals_in_place;
     use crate::RandomSampling;
-    use akita_field::Prime128Offset275;
+    use jolt_field::Prime128Offset275;
     use rand::rngs::StdRng;
     use rand::SeedableRng;
 

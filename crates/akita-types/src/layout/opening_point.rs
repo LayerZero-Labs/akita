@@ -1,10 +1,10 @@
 //! Ring-native opening point for the Akita protocol.
 
 use akita_algebra::CyclotomicRing;
-use akita_field::AkitaError;
-use akita_field::FieldCore;
-use akita_field::FromPrimitiveInt;
+use akita_error::AkitaError;
 use akita_serialization::DEFAULT_MAX_SEQUENCE_LEN;
+use jolt_field::FieldCore;
+use jolt_field::FromPrimitiveInt;
 
 use crate::field_reduction::{embed_ring_subfield_scalar, FpExtEncoding};
 

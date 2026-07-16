@@ -11,8 +11,9 @@ use crate::{
 };
 use akita_algebra::CyclotomicRing;
 use akita_challenges::Challenges;
-use akita_field::{AkitaError, FieldCore};
-use akita_field::{CanonicalField, ExtField, FromPrimitiveInt};
+use akita_error::AkitaError;
+use jolt_field::FieldCore;
+use jolt_field::{CanonicalField, ExtField, FromPrimitiveInt};
 
 /// Ring-column counts per witness segment in emission order (`z ‖ e ‖ t ‖ …`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -712,7 +713,7 @@ mod tests {
     use crate::layout::PrecommittedLevelParams;
     use crate::PolynomialGroupLayout;
     use akita_challenges::{SparseChallenge, SparseChallengeConfig};
-    use akita_field::Fp32;
+    use jolt_field::Fp32;
 
     type F = Fp32<251>;
     const D: usize = 32;

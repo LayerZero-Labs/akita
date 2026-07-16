@@ -3,12 +3,11 @@ use std::sync::Arc;
 
 use akita_algebra::ring::cyclotomic::decompose_centering_threshold;
 use akita_algebra::CyclotomicRing;
-use akita_field::{
-    AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, MulBaseUnreduced,
-};
+use akita_error::AkitaError;
 use akita_types::{
     AkitaExpandedSetup, CleartextWitnessProof, FpExtEncoding, RingVec, SetupPrefixSlot,
 };
+use jolt_field::{CanonicalField, ExtField, FieldCore, FromPrimitiveInt, MulBaseUnreduced};
 
 use crate::backend::poly_helpers::{
     balanced_ring_decompose_fold_partitioned, build_decompose_fold_witness, DecomposeParams,

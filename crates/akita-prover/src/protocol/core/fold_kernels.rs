@@ -105,7 +105,7 @@ pub(in crate::protocol::core) fn compute_trace_target<F, E, T, const D: usize>(
     transcript: &mut T,
 ) -> Result<(TraceTarget<E>, Vec<E>), AkitaError>
 where
-    F: FieldCore + CanonicalField + FromPrimitiveInt,
+    F: FieldCore + CanonicalField + FromPrimitiveInt + akita_serialization::AkitaSerialize,
     E: FpExtEncoding<F> + ExtField<F>,
     T: Transcript<F>,
 {
@@ -154,17 +154,17 @@ where
     };
     let ordinary_trace_eval_target =
         opening_batch.batched_eval_target(&row_coefficients, &openings)?;
-    let trace_eval_target =
-        reduction
-            .as_ref()
-            .map_or(Ok(ordinary_trace_eval_target), |reduction| {
-                check_extension_opening_reduction_output(
-                    reduction.final_claim,
-                    ordinary_trace_eval_target,
-                    reduction.final_factor,
-                )?;
-                Ok(reduction.final_claim)
-            })?;
+    let trace_eval_target = reduction.as_ref().map_or(
+        Ok::<_, AkitaError>(ordinary_trace_eval_target),
+        |reduction| {
+            check_extension_opening_reduction_output(
+                reduction.final_claim,
+                ordinary_trace_eval_target,
+                reduction.final_factor,
+            )?;
+            Ok(reduction.final_claim)
+        },
+    )?;
     let trace_claim_scales = reduction
         .as_ref()
         .map(|reduction| vec![reduction.final_factor; opening_batch.num_total_polynomials()]);

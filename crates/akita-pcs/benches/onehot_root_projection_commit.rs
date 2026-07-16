@@ -4,11 +4,6 @@ use akita_prover::{ComputeBackendSetup, CpuBackend};
 
 use akita_config::proof_optimized::{fp32, fp64};
 use akita_config::CommitmentConfig;
-use akita_field::unreduced::{HasOptimizedFold, HasUnreducedOps, HasWide, ReduceTo};
-use akita_field::{
-    AdditiveGroup, CanonicalField, FieldCore, FrobeniusExtField, FromPrimitiveInt, HalvingField,
-    PseudoMersenneField, RandomSampling,
-};
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::compute::{RootTensorSource, TensorProjectionKernel};
 use akita_prover::{commit_with_params, OneHotPoly, RootTensorProjectionPoly};
@@ -16,6 +11,11 @@ use akita_serialization::{AkitaSerialize, Valid};
 use akita_types::{FpExtEncoding, OpeningClaimsLayout};
 use criterion::measurement::WallTime;
 use criterion::{black_box, criterion_group, BenchmarkGroup, Criterion, SamplingMode};
+use jolt_field::unreduced::{HasOptimizedFold, HasUnreducedOps, HasWide, ReduceTo};
+use jolt_field::{
+    AdditiveGroup, CanonicalField, FieldCore, FrobeniusExtField, FromPrimitiveInt, HalvingField,
+    PseudoMersenneField, RandomSampling,
+};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use std::time::{Duration, Instant};

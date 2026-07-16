@@ -1,7 +1,7 @@
 //! Multi-group root-batch schedule planning.
 
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
-use akita_field::{AkitaError, Prime128OffsetA7F7};
+use akita_error::AkitaError;
 use akita_types::sis::{
     compute_num_digits_full_field, decomposed_s_block_ring_count, decomposed_t_ring_count,
     decomposed_w_ring_count, fold_witness_digit_plan, min_secure_rank, num_digits_open,
@@ -16,6 +16,7 @@ use akita_types::{
     RelationMatrixRowLayout, Schedule, SetupContributionMode, Step, SETUP_OFFLOAD_D_SETUP,
     SETUP_OFFLOAD_MIN_PREFIX_FIELD_LEN,
 };
+use jolt_field::Prime128OffsetA7F7;
 
 use crate::schedule_params::{
     derive_optimal_suffix_schedule, find_schedule, RingChallengeConfigFn, ScheduleMemo, SuffixCtx,
@@ -821,11 +822,11 @@ pub fn find_group_batch_schedule(
 mod tests {
     use super::*;
     use crate::find_schedule;
-    use akita_field::Prime128OffsetA7F7;
     use akita_types::{
         AkitaScheduleLookupKey, DecompositionParams, PolynomialGroupLayout,
         RelationMatrixRowLayout, SisModulusFamily, DEFAULT_SIS_SECURITY_BITS,
     };
+    use jolt_field::Prime128OffsetA7F7;
 
     fn flat_policy() -> PlannerPolicy {
         PlannerPolicy {

@@ -19,7 +19,7 @@ readme = "../../README.md"
 default = ["schedules-default"]
 parallel = [
   "akita-algebra/parallel",
-  "akita-field/parallel",
+  "jolt-field/parallel",
   "akita-prover/parallel",
 ]
 disk-persistence = []
@@ -28,7 +28,8 @@ schedules-default = ["akita-config/schedules-default"]
 [dependencies]
 akita-algebra = { version = "0.1.0", path = "../akita-algebra" }
 akita-config = { version = "0.1.0", path = "../akita-config", default-features = false }
-akita-field = { version = "0.1.0", path = "../akita-field" }
+jolt-field = { version = "=0.1.0", git = "https://github.com/Acentelles/jolt.git", rev = "09b2f7b6ddd9427c756b781c39530a6c005e332d", default-features = false, features = ["solinas"] }
+akita-error = { version = "0.1.0", path = "../akita-error" }
 akita-prover = { version = "0.1.0", path = "../akita-prover", default-features = false }
 akita-serialization = { version = "0.1.0", path = "../akita-serialization" }
 akita-types = { version = "0.1.0", path = "../akita-types" }

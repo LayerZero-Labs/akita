@@ -1,8 +1,8 @@
 //! Scalar evaluation helpers for cyclotomic ring elements.
 
 use super::CyclotomicRing;
-use akita_field::unreduced::HasUnreducedOps;
-use akita_field::{FieldCore, MulBase, MulBaseUnreduced, Zero};
+use jolt_field::unreduced::HasUnreducedOps;
+use jolt_field::{FieldCore, MulBase, MulBaseUnreduced, Zero};
 
 /// Return the first `len` powers of `alpha`, starting with one.
 pub fn scalar_powers<F: FieldCore>(alpha: F, len: usize) -> Vec<F> {
@@ -126,7 +126,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use akita_field::Prime128OffsetA7F7;
+    use jolt_field::Prime128OffsetA7F7;
 
     type F = Prime128OffsetA7F7;
     const D: usize = 64;

@@ -1,5 +1,6 @@
-use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, MulBaseUnreduced};
+use akita_error::AkitaError;
 use akita_types::{AkitaExpandedSetup, SetupContributionPlan};
+use jolt_field::{CanonicalField, ExtField, FieldCore, MulBaseUnreduced};
 
 use crate::protocol::ring_switch::RelationMatrixEvaluator;
 

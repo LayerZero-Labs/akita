@@ -19,8 +19,9 @@
 //! `recomposed_inner_rows` now recompute them here.
 
 use akita_algebra::CyclotomicRing;
-use akita_field::{AkitaError, CanonicalField, FieldCore};
+use akita_error::AkitaError;
 use akita_types::{AkitaCommitmentHint, DigitBlocks};
+use jolt_field::{CanonicalField, FieldCore};
 
 /// Recompose one D-free [`DigitBlocks`] digit stream into typed inner rows,
 /// grouped by block (`Vec<block> of Vec<CyclotomicRing<F, D>>`).

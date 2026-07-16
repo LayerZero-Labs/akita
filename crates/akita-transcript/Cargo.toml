@@ -16,7 +16,7 @@ repository = "https://github.com/LayerZero-Labs/akita"
 readme = "../../README.md"
 
 [dependencies]
-akita-field = { version = "0.1.0", path = "../akita-field" }
+jolt-field = { version = "=0.1.0", git = "https://github.com/Acentelles/jolt.git", rev = "09b2f7b6ddd9427c756b781c39530a6c005e332d", default-features = false, features = ["solinas"] }
 akita-serialization = { version = "0.1.0", path = "../akita-serialization" }
 blake2 = "0.10.6"
 spongefish = { git = "https://github.com/arkworks-rs/spongefish", rev = "d2d190b1329d35ac9577438d05aed4f17a57b9f9", default-features = false, features = [

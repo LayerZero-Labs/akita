@@ -26,12 +26,13 @@ use crate::{
     detect_field_modulus, AkitaSetupSeed, BasisMode, DecompositionParams, LevelParams,
     OpeningClaimsLayout, Schedule, SisModulusFamily,
 };
-use akita_field::{AkitaError, CanonicalField, ExtField};
+use akita_error::AkitaError;
 use akita_serialization::{
     AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
 };
 use blake2::digest::consts::U32;
 use blake2::{Blake2b, Digest};
+use jolt_field::{CanonicalField, ExtField};
 use std::collections::BTreeSet;
 use std::io::{Read, Write};
 

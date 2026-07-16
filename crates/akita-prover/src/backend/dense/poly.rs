@@ -4,9 +4,10 @@ use crate::backend::poly_helpers::try_small_i8_cache_from_ring_coeffs;
 use crate::kernels::linear::try_centered_i8;
 use akita_algebra::ring::cyclotomic::BalancedDecomposePow2I8Params;
 use akita_algebra::CyclotomicRing;
-use akita_field::parallel::*;
-use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
+use akita_error::AkitaError;
 use akita_types::{tensor_opening_split, RingVec, TensorColumnSource};
+use jolt_field::parallel::*;
+use jolt_field::{CanonicalField, ExtField, FieldCore};
 use std::mem::size_of;
 use std::sync::OnceLock;
 

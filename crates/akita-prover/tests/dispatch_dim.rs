@@ -17,7 +17,7 @@
 use akita_challenges::SparseChallengeConfig;
 use akita_config::proof_optimized::{fp128, fp64};
 use akita_config::CommitmentConfig;
-use akita_field::AkitaError;
+use akita_error::AkitaError;
 use akita_types::{
     validate_schedule_ring_dims, AkitaScheduleLookupKey, AkitaSetupSeed, CleartextWitnessShape,
     DirectStep, FoldStep, LevelParams, Schedule, SisModulusFamily, Step,

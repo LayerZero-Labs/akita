@@ -1,4 +1,4 @@
-use akita_field::AkitaError;
+use akita_error::AkitaError;
 
 /// Chunked-witness geometry for the opening-digit trace columns.
 ///

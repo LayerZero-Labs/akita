@@ -2,8 +2,8 @@
 //!
 //! Used by Akita stage sumchecks for compact-witness folding.
 
-use akita_field::unreduced::HasUnreducedOps;
-use akita_field::{FieldCore, FromPrimitiveInt};
+use jolt_field::unreduced::HasUnreducedOps;
+use jolt_field::{FieldCore, FromPrimitiveInt};
 
 /// Precomputed lookup table for folding pairs of small integer values at a
 /// fixed challenge `r`.

@@ -1,8 +1,9 @@
 //! Shared stage-1 tree shape and polynomial helpers.
 
 use crate::AkitaStage1StageShape;
-use akita_field::{AkitaError, CanonicalField, FieldCore, FromPrimitiveInt};
+use akita_error::AkitaError;
 use akita_transcript::{labels, Transcript};
+use jolt_field::{CanonicalField, FieldCore, FromPrimitiveInt};
 
 /// Validate the stage-1 range basis.
 ///

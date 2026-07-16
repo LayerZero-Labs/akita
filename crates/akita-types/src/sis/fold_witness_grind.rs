@@ -1,6 +1,6 @@
 //! Fold-l∞ Fiat–Shamir grind contract shared by prover reroll and verifier replay.
 
-use akita_field::AkitaError;
+use akita_error::AkitaError;
 
 use super::FoldWitnessLinfCapPolicy;
 

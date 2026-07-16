@@ -2,14 +2,14 @@
 
 use crate::protocol::ring_switch::RelationMatrixEvaluator;
 use akita_algebra::eq_poly::EqPolynomial;
-use akita_field::{
-    AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, HalvingField,
-    MulBaseUnreduced,
-};
+use akita_error::AkitaError;
 use akita_sumcheck::{multilinear_eval, SumcheckInstanceVerifier};
 use akita_types::{
     dispatch_for_field, eval_dense_trace_table, eval_trace_terms_closed, AkitaExpandedSetup,
     CleartextWitnessProof, FpExtEncoding, OpeningClaimsLayout, TraceClaim,
+};
+use jolt_field::{
+    CanonicalField, ExtField, FieldCore, FromPrimitiveInt, HalvingField, MulBaseUnreduced,
 };
 use std::borrow::Cow;
 use std::marker::PhantomData;
@@ -385,9 +385,10 @@ where
 #[cfg(test)]
 mod tests {
     use super::{cleartext_source_eval, Stage2CleartextSource};
-    use akita_field::{AkitaError, FieldCore};
-    use akita_field::{FpExt2, NegOneNr, Prime128Offset275};
+    use akita_error::AkitaError;
     use akita_sumcheck::multilinear_eval;
+    use jolt_field::FieldCore;
+    use jolt_field::{FpExt2, NegOneNr, Prime128Offset275};
 
     type F = Prime128Offset275;
     type E = FpExt2<F, NegOneNr>;

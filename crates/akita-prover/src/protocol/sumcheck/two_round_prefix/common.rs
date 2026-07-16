@@ -1,8 +1,8 @@
-use akita_field::unreduced::HasUnreducedOps;
-use akita_field::{FieldCore, FromPrimitiveInt};
 use akita_sumcheck::{EqFactoredUniPoly, UniPoly};
 #[cfg(test)]
 use akita_types::range_check_eval_from_s;
+use jolt_field::unreduced::HasUnreducedOps;
+use jolt_field::{FieldCore, FromPrimitiveInt};
 
 #[cfg(test)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

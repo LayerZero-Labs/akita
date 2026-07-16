@@ -6,7 +6,7 @@
 //! carried by the plain-value [`PlannerPolicy`] plus a `ring_challenge_config` /
 //! `fold_challenge_shape_at_level` closure pair, so the planner names no `CommitmentConfig`
 //! types and depends only on `akita-types` / `akita-challenges` /
-//! `akita-field`.
+//! `jolt-field`.
 //!
 //! The preset family list, the `gen_schedule_tables` binary, and the
 //! `policy_of::<Cfg>()` bridge that derives a [`PlannerPolicy`] from a preset

@@ -2,9 +2,9 @@ mod trace_prefix;
 
 use super::*;
 use crate::protocol::sumcheck::akita_stage1::pad_compact_witness;
-use akita_field::Prime128Offset275;
 use akita_sumcheck::multilinear_eval;
 use akita_types::{TraceSparseColumn, TraceTable};
+use jolt_field::Prime128Offset275;
 
 type F = Prime128Offset275;
 

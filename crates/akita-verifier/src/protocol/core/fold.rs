@@ -608,7 +608,12 @@ pub(in crate::protocol::core) fn verify_fold<F, E, T>(
     prepared: PreparedFoldReplay<'_, F, E>,
 ) -> Result<FoldVerifyOutput<E>, AkitaError>
 where
-    F: FieldCore + CanonicalField + RandomSampling + HalvingField + FromPrimitiveInt,
+    F: FieldCore
+        + CanonicalField
+        + RandomSampling
+        + HalvingField
+        + FromPrimitiveInt
+        + akita_serialization::AkitaSerialize,
     E: FpExtEncoding<F> + ExtField<F> + FromPrimitiveInt + AkitaSerialize + MulBaseUnreduced<F>,
     T: Transcript<F>,
 {

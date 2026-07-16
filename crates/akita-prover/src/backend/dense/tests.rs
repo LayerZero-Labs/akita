@@ -4,11 +4,11 @@ use crate::backend::test_support::{
 };
 use crate::compute::DirectRootWitnessSource;
 use akita_algebra::CyclotomicRing;
-use akita_field::Prime128OffsetA7F7 as F;
-use akita_field::{ExtField, FpExt4};
 use akita_types::{
     tensor_column_partials_from_base_evals, tensor_packed_witness_evals, CleartextWitnessProof,
 };
+use jolt_field::Prime128OffsetA7F7 as F;
+use jolt_field::{ExtField, FpExt4};
 
 fn ring<const D: usize>(offset: u64) -> CyclotomicRing<F, D> {
     CyclotomicRing::from_coefficients(std::array::from_fn(|idx| {

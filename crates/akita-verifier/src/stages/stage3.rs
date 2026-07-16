@@ -4,8 +4,7 @@
 use crate::protocol::ring_switch::RelationMatrixEvaluator;
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::ring::{eval_ring_at_pows_fast, scalar_powers};
-use akita_field::parallel::*;
-use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt};
+use akita_error::AkitaError;
 use akita_serialization::AkitaSerialize;
 use akita_transcript::labels::{
     ABSORB_SETUP_PREFIX_SLOT, ABSORB_SUMCHECK_CLAIM, CHALLENGE_SUMCHECK_ROUND,
@@ -17,6 +16,8 @@ use akita_types::{
     BatchedStage3Geometry, LevelParams, SetupContributionPlan, SetupIndexWeightEvaluator,
     SetupSumcheckProof, SETUP_OFFLOAD_D_SETUP, SETUP_SUMCHECK_DEGREE,
 };
+use jolt_field::parallel::*;
+use jolt_field::{CanonicalField, ExtField, FieldCore, FromPrimitiveInt};
 
 /// Verifier counterpart to `AkitaStage3Prover`: replays the setup product
 /// sumcheck for the setup contribution at `x_challenges`.
@@ -123,7 +124,7 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
     ) -> Result<(Vec<E>, Vec<E>), AkitaError>
     where
         F: FieldCore + CanonicalField,
-        E: ExtField<F> + FromPrimitiveInt + AkitaSerialize + akita_field::MulBaseUnreduced<F>,
+        E: ExtField<F> + FromPrimitiveInt + AkitaSerialize + jolt_field::MulBaseUnreduced<F>,
         T: Transcript<F>,
     {
         if stage2_challenges.len() != witness_rounds {
@@ -226,7 +227,7 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
     ) -> Result<(Vec<E>, Vec<E>), AkitaError>
     where
         F: FieldCore + CanonicalField,
-        E: ExtField<F> + FromPrimitiveInt + AkitaSerialize + akita_field::MulBaseUnreduced<F>,
+        E: ExtField<F> + FromPrimitiveInt + AkitaSerialize + jolt_field::MulBaseUnreduced<F>,
         T: Transcript<F>,
     {
         let required = self.plan.required()?;
@@ -339,7 +340,7 @@ fn setup_mle_at_eq_tables<F, E, const D: usize>(
 ) -> Result<E, AkitaError>
 where
     F: FieldCore,
-    E: ExtField<F> + akita_field::MulBaseUnreduced<F>,
+    E: ExtField<F> + jolt_field::MulBaseUnreduced<F>,
 {
     if required > setup_eval_len {
         return Err(AkitaError::InvalidSetup(

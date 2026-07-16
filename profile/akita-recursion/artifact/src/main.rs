@@ -17,7 +17,7 @@
 
 use akita_config::proof_optimized::fp128;
 use akita_config::{CommitmentConfig, RecursiveCommitmentConfig};
-use akita_field::{CanonicalField, PseudoMersenneField};
+use jolt_field::{CanonicalField, PseudoMersenneField};
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::{
     compute::{OpeningFoldKernel, OpeningFoldPlan, RootOpeningSource},

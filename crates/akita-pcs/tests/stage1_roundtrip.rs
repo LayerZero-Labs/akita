@@ -1,10 +1,10 @@
 #![allow(missing_docs)]
 
-use akita_field::Prime128Offset275;
 use akita_prover::AkitaStage1Prover;
 use akita_transcript::{labels, AkitaTranscript};
 use akita_types::reorder_stage1_coords;
 use akita_verifier::AkitaStage1Verifier;
+use jolt_field::Prime128Offset275;
 
 type F = Prime128Offset275;
 

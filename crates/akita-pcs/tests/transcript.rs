@@ -1,9 +1,9 @@
 #![allow(missing_docs)]
 
-use akita_field::{ExtField, Fp32, Fp64, FpExt2, FpExt4, NegOneNr};
 use akita_transcript::{
     append_ext_field, labels, sample_ext_challenge, AkitaTranscript, Transcript,
 };
+use jolt_field::{ExtField, Fp32, Fp64, FpExt2, FpExt4, NegOneNr};
 
 type F = Fp64<4294967197>;
 type Base = Fp32<251>;

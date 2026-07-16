@@ -19,8 +19,9 @@
 //! are part of the invariant.
 
 use crate::{SparseChallenge, SparseChallengeConfig};
-use akita_field::{AkitaError, FieldCore, FromPrimitiveInt, MulBase};
+use akita_error::AkitaError;
 use akita_transcript::labels;
+use jolt_field::{FieldCore, FromPrimitiveInt, MulBase};
 use sha3::{Digest, Sha3_256};
 
 const TENSOR_LEFT_DIGEST_DOMAIN: &[u8] = b"akita/tensor-left-digest/v1";

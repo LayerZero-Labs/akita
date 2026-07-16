@@ -9,8 +9,9 @@
 //! driven by the `Cfg`-derived [`policy_of`] bridge.
 
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
-use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, MulBaseUnreduced};
+use akita_error::AkitaError;
 use akita_planner::PlannerPolicy;
+use akita_serialization::{AkitaDeserialize, AkitaSerialize, Valid};
 use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
 #[cfg(test)]
 use akita_types::PolynomialGroupLayout;
@@ -18,6 +19,7 @@ use akita_types::{
     AkitaScheduleInputs, AkitaScheduleLookupKey, ChunkedWitnessCfg, DecompositionParams,
     LevelParams, OpeningClaimsLayout, Schedule, SetupMatrixEnvelope, SisModulusFamily, Step,
 };
+use jolt_field::{CanonicalField, ExtField, FieldCore, MulBaseUnreduced};
 
 /// Define a multi-chunk companion preset that delegates every layout-affecting
 /// parameter to a base `Cfg` and overrides only the multi-chunk witness config
@@ -40,7 +42,7 @@ macro_rules! impl_multi_chunk_companion {
             }
             fn ring_challenge_config(
                 d: usize,
-            ) -> Result<akita_challenges::SparseChallengeConfig, akita_field::AkitaError> {
+            ) -> Result<akita_challenges::SparseChallengeConfig, akita_error::AkitaError> {
                 <$base as $crate::CommitmentConfig>::ring_challenge_config(d)
             }
             fn fold_challenge_shape_at_level(
@@ -57,7 +59,7 @@ macro_rules! impl_multi_chunk_companion {
             fn max_setup_matrix_size(
                 max_num_vars: usize,
                 max_num_batched_polys: usize,
-            ) -> Result<akita_types::SetupMatrixEnvelope, akita_field::AkitaError> {
+            ) -> Result<akita_types::SetupMatrixEnvelope, akita_error::AkitaError> {
                 $crate::proof_optimized::proof_optimized_max_setup_matrix_size::<$cfg>(
                     max_num_vars,
                     max_num_batched_polys,
@@ -85,7 +87,7 @@ macro_rules! impl_multi_chunk_companion {
 
             fn get_params_for_prove(
                 layout: &akita_types::OpeningClaimsLayout,
-            ) -> Result<akita_types::Schedule, akita_field::AkitaError> {
+            ) -> Result<akita_types::Schedule, akita_error::AkitaError> {
                 Self::runtime_schedule(
                     $crate::proof_optimized::proof_optimized_schedule_key::<Self>(layout)?,
                 )
@@ -148,10 +150,14 @@ pub fn policy_of<Cfg: CommitmentConfig>() -> PlannerPolicy {
 /// extension opening with base-field committed witnesses internally.
 pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     /// Base field used by ring commitments, setup matrices, and SIS bounds.
-    type Field: CanonicalField + FieldCore;
+    type Field: CanonicalField + FieldCore + AkitaSerialize + AkitaDeserialize<Context = ()> + Valid;
 
     /// Field used by public openings and all proof scalars.
-    type ExtField: ExtField<Self::Field> + MulBaseUnreduced<Self::Field>;
+    type ExtField: ExtField<Self::Field>
+        + MulBaseUnreduced<Self::Field>
+        + AkitaSerialize
+        + AkitaDeserialize<Context = ()>
+        + Valid;
 
     /// Extension degree `K = [ExtField : Field]`.
     ///
@@ -372,10 +378,10 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use akita_field::{Fp32, FpExt4};
     use akita_transcript::{
         append_ext_field, labels, sample_ext_challenge, AkitaTranscript, Transcript,
     };
+    use jolt_field::{Fp32, FpExt4};
 
     type Base = Fp32<251>;
     type BaseExt = FpExt4<Base>;

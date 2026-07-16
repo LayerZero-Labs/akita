@@ -1,13 +1,14 @@
 use crate::api::CommitmentWithHint;
 use crate::backend::RecursiveFoldSource;
 use crate::compute::RootPolyMeta;
-use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
+use akita_error::AkitaError;
 use akita_transcript::Transcript;
 use akita_types::{
     AkitaCommitmentHint, BatchedStage3Geometry, Commitment, LevelParams, OpeningClaims,
     OpeningClaimsLayout, PointVariableSelection, PolynomialGroupClaims, PolynomialGroupLayout,
     RelationMatrixRowLayout, RingVec, SetupPrefixSlot,
 };
+use jolt_field::{CanonicalField, ExtField, FieldCore};
 
 /// Prover opening input: public claims plus prover-only hints and polynomials.
 #[derive(Debug, Clone)]
@@ -17,7 +18,10 @@ pub struct ProverOpeningData<'a, PointF: Clone, P, CommitF: FieldCore> {
     polynomials: Vec<&'a [&'a P]>,
 }
 
-impl<'a, PointF: Clone, P, CommitF: FieldCore> ProverOpeningData<'a, PointF, P, CommitF> {
+impl<'a, PointF: Clone, P, CommitF> ProverOpeningData<'a, PointF, P, CommitF>
+where
+    CommitF: FieldCore,
+{
     /// Bundle public claims with matching prover hints and polynomial groups.
     pub fn new(
         opening_claims: OpeningClaims<'a, PointF, Commitment<CommitF>>,
@@ -173,7 +177,7 @@ impl<'a, PointF: Clone, P, CommitF: FieldCore> ProverOpeningData<'a, PointF, P, 
         transcript: &mut T,
     ) -> Result<(), AkitaError>
     where
-        CommitF: CanonicalField,
+        CommitF: CanonicalField + akita_serialization::AkitaSerialize,
         PointF: ExtField<CommitF>,
         P: RootPolyMeta<CommitF>,
         T: Transcript<CommitF>,
@@ -443,9 +447,9 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use akita_field::Fp32;
     use akita_transcript::labels::ABSORB_COMMITMENT;
     use akita_transcript::AkitaTranscript;
+    use jolt_field::Fp32;
 
     type F = Fp32<251>;
 

@@ -4,7 +4,8 @@
 //! Stage-3 challenge into witness/setup points and for routing those projected
 //! points into the next recursive suffix opening batch.
 
-use akita_field::{AkitaError, FieldCore, FromPrimitiveInt};
+use akita_error::AkitaError;
+use jolt_field::{FieldCore, FromPrimitiveInt};
 
 use crate::{PointVariableSelection, SetupPrefixSlotId};
 
@@ -189,7 +190,7 @@ mod tests {
         AjtaiKeyParams, PolynomialGroupLayout, PrecommittedGroupParams, PrecommittedLevelParams,
         SisModulusFamily,
     };
-    use akita_field::Prime32Offset99 as F;
+    use jolt_field::Prime32Offset99 as F;
 
     fn test_prefix_id() -> SetupPrefixSlotId {
         let key = AjtaiKeyParams::new_unchecked(128, SisModulusFamily::Q32, 1, 1, 1, 32);

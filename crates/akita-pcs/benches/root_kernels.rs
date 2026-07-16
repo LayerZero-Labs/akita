@@ -2,7 +2,6 @@
 
 use akita_config::proof_optimized::fp128;
 use akita_config::CommitmentConfig;
-use akita_field::CanonicalField;
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::kernels::crt_ntt::build_ntt_slot;
 use akita_prover::kernels::linear::{
@@ -11,6 +10,7 @@ use akita_prover::kernels::linear::{
 };
 use akita_prover::DensePoly;
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use jolt_field::CanonicalField;
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 

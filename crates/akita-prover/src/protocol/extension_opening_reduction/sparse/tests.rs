@@ -1,6 +1,6 @@
 use super::*;
-use akita_field::RandomSampling;
-use akita_field::{FpExt4, Prime24Offset3};
+use jolt_field::RandomSampling;
+use jolt_field::{FpExt4, Prime24Offset3};
 use rand::rngs::StdRng;
 use rand::{RngCore, SeedableRng};
 
@@ -107,7 +107,7 @@ fn merge_free_matches_general_round_by_round() {
 /// takes the delayed-reduction accumulator (`DELAYED_PRODUCT_SUM_IS_EXACT`).
 #[test]
 fn fused_term_matches_unfused_reference() {
-    use akita_field::{FpExt4, Prime32Offset99};
+    use jolt_field::{FpExt4, Prime32Offset99};
     type TE = FpExt4<Prime32Offset99>;
 
     for (log_chunks, s) in [(6usize, 4usize), (14usize, 4usize)] {

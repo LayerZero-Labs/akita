@@ -1,7 +1,8 @@
 //! Verifier helpers for zero-fold proof payloads.
 
-use akita_field::{AkitaError, ExtField, FieldCore};
+use akita_error::AkitaError;
 use akita_types::{basis_weights, BasisMode, CleartextWitnessProof, OpeningClaims};
+use jolt_field::{ExtField, FieldCore};
 
 /// Check one zero-fold cleartext witness against one claimed opening.
 ///
@@ -101,8 +102,8 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use akita_field::{Fp32, FpExt2, NegOneNr};
     use akita_types::{PointVariableSelection, PolynomialGroupClaims, RingVec};
+    use jolt_field::{Fp32, FpExt2, NegOneNr};
 
     type F = Fp32<251>;
     type E = FpExt2<F, NegOneNr>;
@@ -153,8 +154,8 @@ mod tests {
 
     #[test]
     fn root_direct_witnesses_are_indexed_in_flat_claim_order() {
-        use akita_field::MulBase;
         use akita_types::basis_weights;
+        use jolt_field::MulBase;
 
         let witness0 = CleartextWitnessProof::FieldElements(RingVec::from_coeffs(vec![
             F::from_u64(1),

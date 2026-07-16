@@ -7,10 +7,10 @@ mod traits;
 mod wide;
 
 use crate::{AdditiveGroup, CanonicalField, FieldCore, One, RandomSampling, RingCore, Zero};
-use akita_field::unreduced::ReduceTo;
 use akita_serialization::{
     AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
 };
+use jolt_field::unreduced::ReduceTo;
 use rand_core::RngCore;
 use std::array::from_fn;
 use std::fmt;

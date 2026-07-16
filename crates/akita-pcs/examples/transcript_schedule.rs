@@ -7,8 +7,8 @@ use akita_transcript::TranscriptEvent;
 fn main() {
     use akita_config::proof_optimized::fp128;
     use akita_config::CommitmentConfig;
-    use akita_field::{CanonicalField, Fp64};
     use akita_transcript::{labels, AkitaTranscript, LoggingTranscript, Transcript};
+    use jolt_field::{CanonicalField, Fp64};
 
     type F = Fp64<4294967197>;
 

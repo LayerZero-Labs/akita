@@ -10,7 +10,8 @@ mod policy;
 
 use crate::layout::{CommitmentRingDims, RingRole};
 use akita_algebra::ntt::tables::{Q32_MODULUS, Q64_MODULUS};
-use akita_field::{AkitaError, CanonicalField};
+use akita_error::AkitaError;
+use jolt_field::CanonicalField;
 
 pub use policy::{
     inner_ring_dim_supported_for_tier, ntt_max_ring_d, opening_ring_dim_supported_for_tier,
@@ -159,7 +160,7 @@ pub fn validate_role_dispatch<const D: usize>(
 mod tests {
     use super::*;
     use crate::dispatch_for_field;
-    use akita_field::{Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59};
+    use jolt_field::{Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59};
 
     #[test]
     fn protocol_dispatch_tier_classifies_fields() {

@@ -4,10 +4,7 @@ use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::offset_eq::summarize_pow2_block_carries;
 use akita_algebra::ring::scalar_powers;
 use akita_challenges::Challenges;
-use akita_field::{
-    AkitaError, CanonicalField, FieldCore, FromPrimitiveInt, MulBase, MulBaseUnreduced,
-    RandomSampling,
-};
+use akita_error::AkitaError;
 use akita_transcript::labels::{
     ABSORB_NEXT_LEVEL_WITNESS_BINDING, ABSORB_TERMINAL_W_REMAINDER, CHALLENGE_RING_SWITCH,
     CHALLENGE_TAU0, CHALLENGE_TAU1,
@@ -19,6 +16,9 @@ use akita_types::{
     RelationMatrixRowLayout, RingMultiplierOpeningPoint, RingRelationInstance, RingRole, RingVec,
     SetupContributionArtifact, SetupContributionGroupInputs, SetupContributionPlanInputs,
     SetupContributionStatic, TerminalWitnessTranscriptParts, WitnessChunkLayout, WitnessLayout,
+};
+use jolt_field::{
+    CanonicalField, FieldCore, FromPrimitiveInt, MulBase, MulBaseUnreduced, RandomSampling,
 };
 use std::ops::Range;
 
@@ -175,7 +175,7 @@ pub(crate) fn ring_switch_verifier<F, E, T, const D: usize>(
     transcript: &mut T,
 ) -> Result<RingSwitchVerifyOutput<E>, AkitaError>
 where
-    F: FieldCore + CanonicalField + RandomSampling,
+    F: FieldCore + CanonicalField + RandomSampling + akita_serialization::AkitaSerialize,
     E: FpExtEncoding<F> + FromPrimitiveInt + MulBaseUnreduced<F>,
     T: Transcript<F>,
 {

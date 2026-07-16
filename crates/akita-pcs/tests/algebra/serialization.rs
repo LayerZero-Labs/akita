@@ -1,7 +1,7 @@
 use akita_algebra::poly::Poly;
 use akita_algebra::{CyclotomicRing, VectorModule};
-use akita_field::{Fp32, Fp64, FpExt2, FpExt4, Prime128Offset275};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize, SerializationError};
+use jolt_field::{Fp32, Fp64, FpExt2, FpExt4, Prime128Offset275};
 
 use super::fixtures::NR;
 

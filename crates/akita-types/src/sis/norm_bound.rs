@@ -6,7 +6,7 @@
 //! is decomposed (not Ajtai-committed), so it has no SIS bucket.
 
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
-use akita_field::AkitaError;
+use akita_error::AkitaError;
 
 use super::ajtai_key::{ceil_supported_linf_bound, SisModulusFamily};
 use super::decomposition_digits::{

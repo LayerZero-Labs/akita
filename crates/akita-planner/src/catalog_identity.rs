@@ -10,7 +10,7 @@ use std::collections::HashSet;
 use std::sync::{LazyLock, Mutex};
 
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
-use akita_field::AkitaError;
+use akita_error::AkitaError;
 use akita_types::{AkitaScheduleInputs, PolynomialGroupLayout, PrecommittedGroupParams};
 
 use crate::generated::{

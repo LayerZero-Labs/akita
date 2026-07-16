@@ -10,10 +10,11 @@
 //! the same underlying vector to serve multiple roles with different shapes.
 
 use akita_algebra::CyclotomicRing;
-use akita_field::{AkitaError, FieldCore};
+use akita_error::AkitaError;
 use akita_serialization::{
     AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
 };
+use jolt_field::FieldCore;
 use std::io::{Read, Write};
 
 /// Flat 1D vector of field elements, independent of ring dimension.
@@ -487,7 +488,7 @@ impl<'a, F: FieldCore, const D: usize> RingMatrixView<'a, F, D> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use akita_field::{Prime128Offset275, RandomSampling};
+    use jolt_field::{Prime128Offset275, RandomSampling};
     use rand::rngs::StdRng;
     use rand::SeedableRng;
 

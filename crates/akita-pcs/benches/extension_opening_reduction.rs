@@ -1,8 +1,6 @@
 #![allow(missing_docs)]
 
 use akita_config::proof_optimized::{fp32, fp64};
-use akita_field::unreduced::{HasOptimizedFold, HasUnreducedOps};
-use akita_field::{CanonicalBytes, CanonicalField, ExtField, TranscriptChallenge};
 use akita_prover::protocol::extension_opening_reduction::{
     ExtensionOpeningReductionProver, ExtensionOpeningReductionTerm, SparseExtensionOpeningWitness,
 };
@@ -11,6 +9,8 @@ use akita_transcript::{labels, sample_ext_challenge, AkitaTranscript, Transcript
 use akita_types::tensor_opening_split;
 use criterion::measurement::WallTime;
 use criterion::{criterion_group, BenchmarkGroup, Criterion, SamplingMode};
+use jolt_field::unreduced::{HasOptimizedFold, HasUnreducedOps};
+use jolt_field::{CanonicalBytes, CanonicalField, ExtField, TranscriptChallenge};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use std::hint::black_box;

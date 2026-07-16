@@ -1,7 +1,7 @@
 use super::*;
-use akita_field::Prime128Offset275;
 use akita_sumcheck::multilinear_eval;
 use akita_types::reorder_stage1_coords;
+use jolt_field::Prime128Offset275;
 
 type F = Prime128Offset275;
 

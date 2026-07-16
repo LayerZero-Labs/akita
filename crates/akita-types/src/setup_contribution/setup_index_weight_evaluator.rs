@@ -1,7 +1,8 @@
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::offset_eq::eq_eval_at_index;
 use akita_algebra::ring::scalar_powers;
-use akita_field::{AkitaError, FieldCore, MulBase};
+use akita_error::AkitaError;
+use jolt_field::{FieldCore, MulBase};
 
 use crate::layout::CommitmentRingDims;
 use crate::{

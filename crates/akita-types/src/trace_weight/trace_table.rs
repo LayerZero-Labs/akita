@@ -1,6 +1,7 @@
 //! Prover-side trace table: sparse columns for `K = 1`, dense flat slice for `K > 1`.
 
-use akita_field::{AkitaError, FieldCore};
+use akita_error::AkitaError;
+use jolt_field::FieldCore;
 
 #[inline]
 fn fold_pair<E: FieldCore>(a: E, b: E, r: E) -> E {
@@ -330,7 +331,7 @@ impl<E: FieldCore> TraceTable<E> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use akita_field::Fp32;
+    use jolt_field::Fp32;
 
     type F = Fp32<251>;
 

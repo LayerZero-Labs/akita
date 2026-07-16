@@ -11,8 +11,7 @@
 use akita_algebra::CyclotomicRing;
 use akita_config::proof_optimized::fp64;
 use akita_config::CommitmentConfig;
-use akita_field::unreduced::{HasWide, ReduceTo};
-use akita_field::{AkitaError, CanonicalField, FieldCore, FromPrimitiveInt};
+use akita_error::AkitaError;
 use akita_prover::backend::DenseView;
 use akita_prover::compute::{
     CommitInnerPlan, ComputeBackendSetup, DigitRowsComputeBackend, OperationCtx, RootCommitKernel,
@@ -23,6 +22,8 @@ use akita_prover::{
     DensePoly,
 };
 use akita_types::{NttCacheKey, OpeningClaimsLayout};
+use jolt_field::unreduced::{HasWide, ReduceTo};
+use jolt_field::{CanonicalField, FieldCore, FromPrimitiveInt};
 
 type Cfg = fp64::D64Full;
 type F = <Cfg as CommitmentConfig>::Field;

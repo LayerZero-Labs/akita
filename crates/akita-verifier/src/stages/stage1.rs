@@ -7,7 +7,7 @@
 
 use akita_algebra::split_eq::GruenSplitEq;
 use akita_challenges::{witness_fold_challenge_labels, Challenges, FoldDraw, LiveFoldDraw};
-use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt};
+use akita_error::AkitaError;
 use akita_serialization::AkitaSerialize;
 use akita_sumcheck::{EqFactoredSumcheckInstanceVerifier, EqFactoredSumcheckInstanceVerifierExt};
 use akita_transcript::labels::{self, ABSORB_PROVER_V};
@@ -20,6 +20,7 @@ use akita_types::{
     stage1_tree_product_stage_arities, validate_stage1_tree_basis, AkitaStage1Proof, LevelParams,
     OpeningClaimsLayout, RelationMatrixRowLayout,
 };
+use jolt_field::{CanonicalField, ExtField, FieldCore, FromPrimitiveInt};
 
 type Stage1VerifyOutput<E> = Vec<E>;
 

@@ -1,8 +1,8 @@
 use super::*;
 use crate::SisModulusFamily;
 use akita_challenges::SparseChallengeConfig;
-use akita_field::CanonicalField;
-use akita_field::Prime128OffsetA7F7;
+use jolt_field::CanonicalField;
+use jolt_field::Prime128OffsetA7F7;
 
 type F = Prime128OffsetA7F7;
 
@@ -66,8 +66,8 @@ fn segment_typed_z_budget_uses_golomb_rate_not_packed_digit_width() {
 
 #[test]
 fn segment_typed_wire_round_trip_with_scheduled_z_budget() {
-    use akita_field::CanonicalField;
     use akita_serialization::{AkitaDeserialize, AkitaSerialize, Compress, Validate};
+    use jolt_field::CanonicalField;
 
     let lp = test_lp();
     let field_bits = F::modulus_bits();

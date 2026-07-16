@@ -2,13 +2,13 @@
 
 use super::eq_poly::EqPolynomial;
 use crate::{cfg_fold_reduce, FieldCore, FromPrimitiveInt, Zero};
-#[allow(unused_imports)]
-use akita_field::parallel::*;
-use akita_field::unreduced::{HasOptimizedFold, HasWide, ReduceTo};
-use akita_field::AkitaError;
+use akita_error::AkitaError;
 use akita_serialization::{
     AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
 };
+#[allow(unused_imports)]
+use jolt_field::parallel::*;
+use jolt_field::unreduced::{HasOptimizedFold, HasWide, ReduceTo};
 use std::io::{Read, Write};
 use std::ops::{Add, Neg, Sub};
 

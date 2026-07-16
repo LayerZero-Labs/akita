@@ -6,10 +6,10 @@ use crate::compute::{
     SuffixOpeningProveBackend, SuffixTensorProveBackend,
 };
 use crate::RootTensorProjectionPoly;
-use akita_field::unreduced::ReduceTo;
-use akita_field::AdditiveGroup;
 use akita_types::schedule_terminal_direct_witness_shape;
 use akita_types::terminal_golomb_grind_tail_t_vectors;
+use jolt_field::unreduced::ReduceTo;
+use jolt_field::AdditiveGroup;
 use std::sync::Arc;
 
 /// Prover state carried between suffix fold levels.
@@ -80,6 +80,7 @@ where
         + Invertible
         + PseudoMersenneField
         + FromPrimitiveInt
+        + akita_serialization::AkitaSerialize
         + 'static,
     <Cfg::Field as HasWide>::Wide: From<Cfg::Field> + ReduceTo<Cfg::Field> + AdditiveGroup,
     Cfg::ExtField: FpExtEncoding<Cfg::Field>
@@ -244,6 +245,7 @@ where
         + Invertible
         + PseudoMersenneField
         + FromPrimitiveInt
+        + akita_serialization::AkitaSerialize
         + 'static,
     <F as HasWide>::Wide: From<F> + ReduceTo<F> + AdditiveGroup,
     E: FpExtEncoding<F>
@@ -360,9 +362,9 @@ where
 mod tests {
     use super::*;
     use crate::protocol::core::fold_kernels::compute_trace_target;
-    use akita_field::Fp32;
     use akita_transcript::AkitaTranscript;
     use akita_types::RingOpeningPoint;
+    use jolt_field::Fp32;
 
     type TestF = Fp32<251>;
     const D: usize = 4;

@@ -1,10 +1,10 @@
 //! Ring-switch integration regressions.
 
 use akita_algebra::CyclotomicRing;
-#[cfg(all(test, feature = "parallel"))]
-use akita_field::parallel::*;
-use akita_field::AkitaError;
+use akita_error::AkitaError;
 use akita_pcs::{CanonicalField, FieldCore};
+#[cfg(all(test, feature = "parallel"))]
+use jolt_field::parallel::*;
 use std::array::from_fn;
 
 fn compute_r_via_poly_division<F: FieldCore + CanonicalField, const D: usize>(
@@ -766,7 +766,7 @@ mod tests {
         let depth_open = level_params.num_digits_open;
         let depth_commit = level_params.num_digits_commit;
         let depth_fold = level_params
-            .num_digits_fold(1, <F as akita_field::CanonicalField>::modulus_bits())
+            .num_digits_fold(1, <F as jolt_field::CanonicalField>::modulus_bits())
             .unwrap();
         let n_a = level_params.a_key.row_len();
         let num_claims = 1usize;

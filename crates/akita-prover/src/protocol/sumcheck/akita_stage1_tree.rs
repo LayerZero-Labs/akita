@@ -15,9 +15,7 @@
 
 use super::akita_stage1 as single_stage_backend;
 use akita_algebra::split_eq::GruenSplitEq;
-use akita_field::parallel::*;
-use akita_field::unreduced::{HasOptimizedFold, HasUnreducedOps};
-use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt};
+use akita_error::AkitaError;
 use akita_serialization::AkitaSerialize;
 use akita_sumcheck::EqFactoredSumcheckInstanceProverExt;
 use akita_sumcheck::{fold_evals_in_place, EqFactoredSumcheckInstanceProver, EqFactoredUniPoly};
@@ -28,6 +26,9 @@ use akita_types::{
     stage1_leaf_coeffs, stage1_tree_product_stage_arities, validate_stage1_tree_basis,
     AkitaStage1Proof, AkitaStage1StageProof,
 };
+use jolt_field::parallel::*;
+use jolt_field::unreduced::{HasOptimizedFold, HasUnreducedOps};
+use jolt_field::{CanonicalField, ExtField, FieldCore, FromPrimitiveInt};
 
 type Stage1ProveOutput<E> = (AkitaStage1Proof<E>, Vec<E>);
 

@@ -1,4 +1,3 @@
-use akita_field::{CanonicalField, FieldCore};
 use akita_prover::PreparedCrtNttProfile;
 use akita_serialization::{AkitaSerialize, Compress};
 use akita_types::{
@@ -9,6 +8,7 @@ use akita_types::{
     AkitaBatchedRootProof, AkitaLevelProof, CleartextWitnessProof, CleartextWitnessShape,
     LevelParams, Schedule, SetupSumcheckProof, Step, TerminalLevelProof, ZFoldEncodingStats,
 };
+use jolt_field::{CanonicalField, FieldCore};
 
 const TAIL_Z_LENGTH_PREFIX_BYTES: usize = 8;
 
@@ -194,14 +194,14 @@ fn segment_typed_z_fold_stats<FF: FieldCore>(
     witness: &akita_types::SegmentTypedWitness<FF>,
     schedule: &Schedule,
     field_bits: u32,
-) -> Result<ZFoldEncodingStats, akita_field::AkitaError> {
+) -> Result<ZFoldEncodingStats, akita_error::AkitaError> {
     let terminal_fold_level = schedule.num_fold_levels().saturating_sub(1);
     let terminal_scheduled = schedule.get_execution_schedule(terminal_fold_level)?;
     let lp = &terminal_scheduled.params;
     let Ok((_num_w_vectors, num_t_vectors, _num_z_segments)) =
         tail_segment_multiplicities_from_layout(lp, &witness.layout, 0)
     else {
-        return Err(akita_field::AkitaError::InvalidSetup(
+        return Err(akita_error::AkitaError::InvalidSetup(
             "tail segment multiplicities".to_string(),
         ));
     };

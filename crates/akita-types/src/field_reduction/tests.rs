@@ -1,6 +1,6 @@
 use super::*;
 use crate::{reduce_inner_opening_to_ring_element, BasisMode};
-use akita_field::{Fp32, FpExt4, FpExt8};
+use jolt_field::{Fp32, FpExt4, FpExt8};
 
 type F = Fp32<251>;
 type AkitaF32 = Fp32<4294967197>;

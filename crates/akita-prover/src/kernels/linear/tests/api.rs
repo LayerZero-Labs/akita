@@ -21,7 +21,7 @@ fn predecomposed_digit_api_rejects_digits_outside_log_basis_range() {
 
     assert!(matches!(
         mat_vec_mul_ntt_digits_i8::<F, D>(&slot, 1, 1, &blocks, 3),
-        Err(akita_field::AkitaError::InvalidInput(_))
+        Err(akita_error::AkitaError::InvalidInput(_))
     ));
 }
 

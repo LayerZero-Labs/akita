@@ -6,7 +6,7 @@
 
 use crate::proof::AkitaSetupSeed;
 use crate::schedule::{schedule_num_fold_levels, Schedule, Step};
-use akita_field::AkitaError;
+use akita_error::AkitaError;
 
 /// Upper bound on fold levels accepted by [`validate_schedule_ring_dims`].
 pub const MAX_FOLD_LEVELS: usize = 16;
@@ -250,7 +250,7 @@ mod tests {
     use crate::sis::SisModulusFamily;
     use crate::CleartextWitnessShape;
     use akita_challenges::SparseChallengeConfig;
-    use akita_field::AkitaError;
+    use akita_error::AkitaError;
 
     fn fold_challenge_config_for_ring_dim(ring_dimension: usize) -> SparseChallengeConfig {
         SparseChallengeConfig::production_for_ring_dim(ring_dimension).unwrap_or_else(|| {

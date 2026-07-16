@@ -5,9 +5,10 @@ use crate::{
     tensor_left_digest, tensor_split, ChallengeLabels, ChallengeShape, Challenges, SparseChallenge,
     SparseChallengeConfig, TensorChallenges,
 };
-use akita_field::{AkitaError, CanonicalField, FieldCore};
+use akita_error::AkitaError;
 use akita_transcript::labels::{ABSORB_SPARSE_CHALLENGE, CHALLENGE_SPARSE_CHALLENGE};
 use akita_transcript::{FoldChallengeSeedPreview, Transcript};
+use jolt_field::{CanonicalField, FieldCore};
 use std::marker::PhantomData;
 
 const SPARSE_CHALLENGE_SEED_LEN: usize = 32;

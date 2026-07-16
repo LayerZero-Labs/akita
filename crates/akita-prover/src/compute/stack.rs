@@ -17,8 +17,9 @@
 //! then dispatch through the cluster accessors on that stack.
 
 use crate::compute::backend::ComputeBackendSetup;
-use akita_field::{AkitaError, CanonicalField, FieldCore};
+use akita_error::AkitaError;
 use akita_types::{AkitaExpandedSetup, NttCacheKey};
+use jolt_field::{CanonicalField, FieldCore};
 use std::marker::PhantomData;
 
 /// A single operation context: a backend plus its validated prepared setup.
@@ -402,8 +403,9 @@ mod tests {
     use super::*;
     use crate::AkitaProverSetup;
     use crate::CpuBackend;
-    use akita_field::{AkitaError, Fp64};
+    use akita_error::AkitaError;
     use akita_types::SetupMatrixEnvelope;
+    use jolt_field::Fp64;
 
     type F = Fp64<4294967197>;
     const D: usize = 64;

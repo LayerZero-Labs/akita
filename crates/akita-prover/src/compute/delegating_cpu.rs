@@ -24,11 +24,12 @@ use super::plans::{
 };
 use crate::{CommitInnerWitness, DecomposeFoldWitness};
 use akita_algebra::CyclotomicRing;
-use akita_field::unreduced::{HasWide, ReduceTo};
-use akita_field::{
-    AdditiveGroup, AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, HalvingField,
-};
+use akita_error::AkitaError;
 use akita_types::{AkitaExpandedSetup, FpExtEncoding, NttCacheKey};
+use jolt_field::unreduced::{HasWide, ReduceTo};
+use jolt_field::{
+    AdditiveGroup, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, HalvingField,
+};
 use std::sync::Arc;
 
 macro_rules! delegate_compute_backend_setup {
@@ -177,7 +178,7 @@ macro_rules! delegate_tensor_kernels {
                 logical_point: &[E],
             ) -> Result<Vec<E>, AkitaError>
             where
-                E: akita_field::MulBaseUnreduced<F>,
+                E: jolt_field::MulBaseUnreduced<F>,
             {
                 CpuBackend.column_partials(prepared, source, logical_point)
             }
@@ -216,7 +217,7 @@ macro_rules! delegate_tensor_kernels {
                 logical_point: &[E],
             ) -> Result<Vec<Vec<E>>, AkitaError>
             where
-                E: akita_field::MulBaseUnreduced<F>,
+                E: jolt_field::MulBaseUnreduced<F>,
             {
                 CpuBackend.column_partials_batch(prepared, source, logical_point)
             }

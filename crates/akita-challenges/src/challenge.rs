@@ -10,10 +10,11 @@
 //! type check cheap shape/range errors needed for memory safety, but they do
 //! not re-validate every sampler invariant on the hot path.
 //!
-//! This module deliberately depends only on `akita-field`; it does not pull in
+//! This module deliberately depends only on `jolt-field`; it does not pull in
 //! the transcript layer or the sampler.
 
-use akita_field::{AkitaError, FieldCore, FromPrimitiveInt, MulBase};
+use akita_error::AkitaError;
+use jolt_field::{FieldCore, FromPrimitiveInt, MulBase};
 
 /// Sparse polynomial in `F[X]/(X^D+1)` represented by its non-zero terms.
 ///
@@ -126,7 +127,7 @@ impl SparseChallenge {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use akita_field::Prime128Offset275;
+    use jolt_field::Prime128Offset275;
 
     type F = Prime128Offset275;
     const D: usize = 4;

@@ -2,8 +2,8 @@
 
 use crate::Label;
 use crate::Transcript;
-use akita_field::{CanonicalBytes, CanonicalField, FieldCore, TranscriptChallenge};
 use akita_serialization::AkitaSerialize;
+use jolt_field::{CanonicalBytes, CanonicalField, FieldCore, TranscriptChallenge};
 use spongefish::{
     DomainSeparator, DuplexSpongeInterface, Encoding, ProverState, VerifierState, WithoutInstance,
 };
@@ -384,7 +384,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use akita_field::Prime128Offset275;
+    use jolt_field::Prime128Offset275;
 
     type F = Prime128Offset275;
 

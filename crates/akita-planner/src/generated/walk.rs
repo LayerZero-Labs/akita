@@ -8,13 +8,14 @@
 //! transitions and proof-byte totals.
 
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
-use akita_field::{AkitaError, Prime128OffsetA7F7};
+use akita_error::AkitaError;
 use akita_types::{
     direct_witness_bytes, extension_opening_reduction_level_bytes, level_proof_bytes,
     segment_typed_witness_shape_from_groups, AkitaScheduleInputs, AkitaScheduleLookupKey,
     CleartextWitnessShape, DirectStep, FoldStep, LevelParams, PolynomialGroupLayout,
     PrecommittedLevelParams, RelationMatrixRowLayout, Schedule, SetupContributionMode, Step,
 };
+use jolt_field::Prime128OffsetA7F7;
 
 use crate::generated::{
     validate_entry_key, GeneratedFoldStep, GeneratedScheduleTableEntry, GeneratedStep,

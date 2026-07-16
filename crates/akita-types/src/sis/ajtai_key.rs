@@ -6,7 +6,7 @@
 //! `AjtaiKeyParams` does it yield". The generated SIS-floor tables it consults
 //! live in the private sibling module `super::generated_sis_table`.
 
-use akita_field::AkitaError;
+use akita_error::AkitaError;
 
 use super::generated_sis_table::sis_max_widths;
 use crate::descriptor_bytes::{push_u128, push_u16, push_usize, sis_family_tag};

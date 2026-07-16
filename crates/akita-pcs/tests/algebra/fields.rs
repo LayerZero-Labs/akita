@@ -1,7 +1,7 @@
 use rand::{rngs::StdRng, SeedableRng};
 
 use akita_algebra::{Module, VectorModule};
-use akita_field::{
+use jolt_field::{
     pseudo_mersenne_modulus, Fp32, Fp64, FpExt2, FpExt4, Invertible, Prime128Offset159,
     Prime128Offset2355, Prime128Offset275, Prime128OffsetA7F7, PrimeOffsetSpec,
     PseudoMersenneField, RandomSampling, PRIME_OFFSET_MAX, PRIME_OFFSET_SPECS,

@@ -3,11 +3,12 @@
 use crate::proof::RingVec;
 use crate::transcript::AppendToTranscript;
 use akita_algebra::ring::CyclotomicRing;
-use akita_field::{AkitaError, CanonicalField, FieldCore};
+use akita_error::AkitaError;
 use akita_serialization::{
     AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
 };
 use akita_transcript::Transcript;
+use jolt_field::{CanonicalField, FieldCore};
 use std::io::{Read, Write};
 
 /// Minimal commitment wrapper used by protocol traits/tests.
@@ -139,7 +140,7 @@ impl<F: FieldCore> Commitment<F> {
         transcript: &mut T,
     ) -> Result<(), AkitaError>
     where
-        F: CanonicalField,
+        F: CanonicalField + AkitaSerialize,
     {
         self.0
             .append_flat_to_transcript(label, ring_dim, transcript)

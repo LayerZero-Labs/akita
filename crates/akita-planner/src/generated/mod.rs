@@ -270,11 +270,11 @@ fn precommitted_group_key_eq(
 pub(crate) fn validate_entry_key(
     generated: &GeneratedScheduleTableEntry,
     key: &akita_types::AkitaScheduleLookupKey,
-) -> Result<(), akita_field::AkitaError> {
+) -> Result<(), akita_error::AkitaError> {
     if schedule_key_eq(generated, key) {
         Ok(())
     } else {
-        Err(akita_field::AkitaError::InvalidSetup(
+        Err(akita_error::AkitaError::InvalidSetup(
             "generated schedule key mismatch".to_string(),
         ))
     }

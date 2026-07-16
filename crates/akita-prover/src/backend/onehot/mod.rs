@@ -34,12 +34,11 @@ use crate::protocol::extension_opening_reduction::SparseExtensionOpeningWitness;
 use akita_algebra::ring::cyclotomic::WideCyclotomicRing;
 use akita_algebra::CyclotomicRing;
 use akita_challenges::{SparseChallenge, TensorChallenges as TensorChallengeSet};
-use akita_field::parallel::*;
-use akita_field::unreduced::{HasWide, ReduceTo};
-use akita_field::{
-    AdditiveGroup, AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt,
-};
+use akita_error::AkitaError;
 use akita_types::{CleartextWitnessProof, FpExtEncoding, RingMatrixView, RingVec};
+use jolt_field::parallel::*;
+use jolt_field::unreduced::{HasWide, ReduceTo};
+use jolt_field::{AdditiveGroup, CanonicalField, ExtField, FieldCore, FromPrimitiveInt};
 use std::collections::HashMap;
 use std::marker::PhantomData;
 use std::sync::{Arc, Mutex};

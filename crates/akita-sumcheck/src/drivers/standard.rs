@@ -2,11 +2,11 @@
 
 use crate::traits::{SumcheckInstanceProver, SumcheckInstanceVerifier};
 use crate::types::SumcheckProof;
-use akita_field::AkitaError;
-use akita_field::{CanonicalField, FieldCore};
+use akita_error::AkitaError;
 use akita_serialization::AkitaSerialize;
 use akita_transcript::labels;
 use akita_transcript::Transcript;
+use jolt_field::{CanonicalField, FieldCore};
 
 /// Plain extension for standard sumcheck provers.
 pub trait SumcheckInstanceProverExt<E>: SumcheckInstanceProver<E> + Sized

@@ -1,4 +1,4 @@
-use akita_field::AkitaError;
+use akita_error::AkitaError;
 
 pub(crate) const MAX_I8_LOG_BASIS: u32 = 6;
 

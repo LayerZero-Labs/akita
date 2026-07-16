@@ -1,10 +1,11 @@
 use akita_config::CommitmentConfig;
-use akita_field::{AkitaError, CanonicalField, FieldCore, RandomSampling};
+use akita_error::AkitaError;
 use akita_prover::{
     commit_setup_prefix, AkitaProverSetup, CommitmentComputeBackend, ComputeBackendSetup,
     CpuBackend,
 };
 use akita_types::{dispatch_for_field, SetupPrefixSlotId, SETUP_OFFLOAD_D_SETUP};
+use jolt_field::{CanonicalField, FieldCore, RandomSampling};
 use std::collections::BTreeSet;
 
 fn commit_setup_prefix_slot<F, B>(

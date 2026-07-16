@@ -154,7 +154,12 @@ fn prepare_fold_replay<'a, F, E, T>(
     _setup_contribution_mode: SetupContributionMode,
 ) -> Result<PreparedFoldReplay<'a, F, E>, AkitaError>
 where
-    F: FieldCore + CanonicalField + RandomSampling + PseudoMersenneField + HalvingField,
+    F: FieldCore
+        + CanonicalField
+        + RandomSampling
+        + PseudoMersenneField
+        + HalvingField
+        + akita_serialization::AkitaSerialize,
     E: FpExtEncoding<F>
         + ExtField<F>
         + FrobeniusExtField<F>
@@ -377,7 +382,12 @@ pub(super) fn verify_suffix<'a, F, E, T>(
     setup_contribution_mode: SetupContributionMode,
 ) -> Result<(), AkitaError>
 where
-    F: FieldCore + CanonicalField + RandomSampling + PseudoMersenneField + HalvingField,
+    F: FieldCore
+        + CanonicalField
+        + RandomSampling
+        + PseudoMersenneField
+        + HalvingField
+        + akita_serialization::AkitaSerialize,
     E: FpExtEncoding<F>
         + ExtField<F>
         + FrobeniusExtField<F>

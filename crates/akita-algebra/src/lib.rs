@@ -5,7 +5,7 @@
 //! - Low-level NTT and CRT+NTT arithmetic scaffolding (`ntt`)
 //! - Cyclotomic ring and backend arithmetic structure
 //!
-//! Concrete fields and field packing live in `akita-field`. Sparse
+//! Concrete fields and field packing live in `jolt-field`. Sparse
 //! Fiat–Shamir challenge representations and samplers live in
 //! `akita-challenges`.
 
@@ -23,16 +23,15 @@ pub mod split_eq;
 pub mod uni_poly;
 
 // Flat re-exports for convenience.
-pub use akita_field::{
-    cfg_chunks, cfg_chunks_mut, cfg_fold_reduce, cfg_into_iter, cfg_iter, cfg_iter_mut, cfg_join,
-};
-pub use akita_field::{
-    AdditiveGroup, AkitaError, BalancedDigitLookup, CanonicalField, FieldCore, FromPrimitiveInt,
-    HalvingField, Invertible, One, PseudoMersenneField, RandomSampling, RingCore, SmoothFftField,
-    Zero,
-};
 pub use backend::{CrtReconstruct, NttPrimeOps, NttTransform, RingBackend, ScalarBackend};
 pub use eq_poly::{EqPolynomial, SplitEqEvals};
+pub use jolt_field::{
+    cfg_chunks, cfg_chunks_mut, cfg_fold_reduce, cfg_into_iter, cfg_iter, cfg_iter_mut, cfg_join,
+};
+pub use jolt_field::{
+    AdditiveGroup, BalancedDigitLookup, CanonicalField, FieldCore, FromPrimitiveInt, HalvingField,
+    Invertible, One, PseudoMersenneField, RandomSampling, RingCore, SmoothFftField, Zero,
+};
 pub use module::{Module, VectorModule};
 pub use ntt::tables;
 pub use ntt::{GarnerData, LimbQ, MontCoeff, NttPrime, PrimeWidth, RADIX_BITS};

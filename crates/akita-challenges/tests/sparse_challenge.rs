@@ -5,12 +5,12 @@ use akita_challenges::{
     FoldDraw, LiveFoldDraw, PreviewFoldDraw, SparseChallenge, SparseChallengeConfig,
     TensorChallenges,
 };
-use akita_field::{CanonicalField, FieldCore, Fp64};
 use akita_transcript::labels::{
     ABSORB_TENSOR_FOLD_LEFT, CHALLENGE_TENSOR_FOLD_LEFT, CHALLENGE_TENSOR_FOLD_RIGHT,
     CHALLENGE_WITNESS_FOLD, DOMAIN_AKITA_PROTOCOL,
 };
 use akita_transcript::{AkitaTranscript, Transcript};
+use jolt_field::{CanonicalField, FieldCore, Fp64};
 
 /// Stage-1 fold label bundle reused by every tensor-vs-flat sampling test.
 fn fold_challenge_labels() -> ChallengeLabels<'static> {
@@ -464,7 +464,7 @@ fn tensor_left_digest_rejects_duplicate_positions() {
 
     let err = tensor_left_digest(&left, 1, 1, TD).unwrap_err();
 
-    assert!(matches!(err, akita_field::AkitaError::InvalidInput(msg) if msg.contains("unique")));
+    assert!(matches!(err, akita_error::AkitaError::InvalidInput(msg) if msg.contains("unique")));
 }
 
 #[test]

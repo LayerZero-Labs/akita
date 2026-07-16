@@ -17,14 +17,15 @@ readme = "../../README.md"
 
 [dependencies]
 akita-algebra = { version = "0.1.0", path = "../akita-algebra" }
-akita-field = { version = "0.1.0", path = "../akita-field" }
+jolt-field = { version = "=0.1.0", git = "https://github.com/Acentelles/jolt.git", rev = "09b2f7b6ddd9427c756b781c39530a6c005e332d", default-features = false, features = ["solinas"] }
+akita-error = { version = "0.1.0", path = "../akita-error" }
 akita-serialization = { version = "0.1.0", path = "../akita-serialization" }
 akita-transcript = { version = "0.1.0", path = "../akita-transcript" }
 tracing = "0.1"
 
 [features]
 default = []
-parallel = ["akita-algebra/parallel", "akita-field/parallel"]
+parallel = ["akita-algebra/parallel", "jolt-field/parallel"]
 
 [lints]
 workspace = true

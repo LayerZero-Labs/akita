@@ -3,7 +3,8 @@
 use crate::config::SetupContributionMode;
 use crate::descriptor_bytes::{push_u32, push_usize};
 use crate::{CleartextWitnessShape, LevelParams, OpeningClaimsLayout, PolynomialGroupLayout};
-use akita_field::{AkitaError, CanonicalField};
+use akita_error::AkitaError;
+use jolt_field::CanonicalField;
 
 /// Public inputs that deterministically select one level's active Akita params.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

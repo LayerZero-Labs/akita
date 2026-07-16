@@ -27,7 +27,11 @@ pub(super) fn verify_root<F, E, T>(
     terminal_final_w_len: usize,
 ) -> Result<FoldVerifyOutput<E>, AkitaError>
 where
-    F: FieldCore + CanonicalField + RandomSampling + HalvingField,
+    F: FieldCore
+        + CanonicalField
+        + RandomSampling
+        + HalvingField
+        + akita_serialization::AkitaSerialize,
     E: FpExtEncoding<F>
         + ExtField<F>
         + FrobeniusExtField<F>
@@ -142,7 +146,11 @@ fn verify_root_inner<F, E, T>(
     terminal_final_w_len: usize,
 ) -> Result<FoldVerifyOutput<E>, AkitaError>
 where
-    F: FieldCore + CanonicalField + RandomSampling + HalvingField,
+    F: FieldCore
+        + CanonicalField
+        + RandomSampling
+        + HalvingField
+        + akita_serialization::AkitaSerialize,
     E: FpExtEncoding<F>
         + ExtField<F>
         + FrobeniusExtField<F>
@@ -217,7 +225,7 @@ where
         .as_ref()
         .map(|(_, factors_by_point)| {
             let shared_factor = *factors_by_point.first().ok_or(AkitaError::InvalidProof)?;
-            Ok(vec![shared_factor; opening_batch.num_total_polynomials()])
+            Ok::<_, AkitaError>(vec![shared_factor; opening_batch.num_total_polynomials()])
         })
         .transpose()?;
 
@@ -327,13 +335,17 @@ fn verify_multi_group_root_inner<F, E, T>(
     terminal_final_w_len: usize,
 ) -> Result<FoldVerifyOutput<E>, AkitaError>
 where
-    F: FieldCore + CanonicalField + RandomSampling + HalvingField,
+    F: FieldCore
+        + CanonicalField
+        + RandomSampling
+        + HalvingField
+        + akita_serialization::AkitaSerialize,
     E: FpExtEncoding<F>
         + ExtField<F>
         + FrobeniusExtField<F>
         + FromPrimitiveInt
         + AkitaSerialize
-        + akita_field::MulBaseUnreduced<F>,
+        + jolt_field::MulBaseUnreduced<F>,
     T: Transcript<F>,
 {
     // Grouped roots are degree-one one-hot same-point folds: extension-opening

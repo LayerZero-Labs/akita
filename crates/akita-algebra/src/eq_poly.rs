@@ -13,7 +13,9 @@
 //! bit `k` of `b` equals `x[k]`. In other words, `r[0]` corresponds to the
 //! **least-significant bit** (bit 0) and `r[n-1]` to the MSB.
 
-use crate::{AkitaError, FieldCore};
+use akita_error::AkitaError;
+
+use crate::FieldCore;
 use std::marker::PhantomData;
 use std::mem;
 use std::panic::Location;
@@ -240,7 +242,7 @@ impl<E: FieldCore> EqPolynomial<E> {
 /// This cuts the equality allocation from `2^n` to `2^{n-m} + 2^m` and lets a
 /// contraction `Σ_x eq(point, x) · src(x)` run as an outer loop over `x_out`
 /// (parallelizable) wrapping an inner loop over `x_in` that can defer reduction
-/// via [`akita_field::MulBaseUnreduced`].
+/// via [`jolt_field::MulBaseUnreduced`].
 #[derive(Debug, Clone)]
 pub struct SplitEqEvals<E: FieldCore> {
     /// Equality table over the high (outer) `n - m` variables, size `2^{n-m}`.
@@ -278,7 +280,7 @@ impl<E: FieldCore> SplitEqEvals<E> {
 mod tests {
     use super::*;
     use crate::RandomSampling;
-    use akita_field::Fp64;
+    use jolt_field::Fp64;
     use rand::rngs::StdRng;
     use rand::SeedableRng;
 

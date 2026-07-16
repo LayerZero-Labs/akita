@@ -175,7 +175,7 @@ macro_rules! __dispatch_ring_dim_arms {
                 const $D: usize = $dim;
                 $body
             }, )+
-            _ => Err(akita_field::AkitaError::InvalidSetup(format!(
+            _ => Err(akita_error::AkitaError::InvalidSetup(format!(
                 "unsupported ring dimension {__d} for this role/tier dispatch table"
             ))),
         }

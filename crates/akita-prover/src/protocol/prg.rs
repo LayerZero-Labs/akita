@@ -23,13 +23,13 @@ pub enum MatrixPrgBackendId {
 }
 
 impl TryFrom<u8> for MatrixPrgBackendId {
-    type Error = akita_field::AkitaError;
+    type Error = akita_error::AkitaError;
 
     fn try_from(value: u8) -> Result<Self, Self::Error> {
         match value {
             0 => Ok(Self::Shake256),
             1 => Ok(Self::Aes128Ctr),
-            _ => Err(akita_field::AkitaError::InvalidInput(format!(
+            _ => Err(akita_error::AkitaError::InvalidInput(format!(
                 "unknown matrix PRG backend id: {value}"
             ))),
         }

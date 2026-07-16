@@ -1,5 +1,6 @@
 use akita_algebra::CyclotomicRing;
-use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, Invertible};
+use akita_error::AkitaError;
+use jolt_field::{CanonicalField, ExtField, FieldCore, FromPrimitiveInt, Invertible};
 
 use crate::field_reduction::trace_open_ring_row;
 use crate::{gadget_row_scalars, FpExtEncoding};

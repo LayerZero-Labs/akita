@@ -187,7 +187,7 @@ Recursive levels use the flat fold shape in the current planner search.
 The dependency direction is:
 
 ```text
-akita-config -> akita-planner -> akita-types / akita-challenges / akita-field
+akita-config -> akita-planner -> akita-types / akita-challenges / jolt-field
 akita-config -> akita-schedules -> akita-planner
 ```
 

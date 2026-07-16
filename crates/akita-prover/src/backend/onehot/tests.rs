@@ -5,9 +5,9 @@ use crate::backend::test_support::{
 };
 use crate::compute::RootPolyMeta;
 use crate::DensePoly;
-use akita_field::RandomSampling;
-use akita_field::{Fp64, FpExt4, Prime128Offset275, Prime24Offset3, Prime32Offset99};
 use akita_types::FlatMatrix;
+use jolt_field::RandomSampling;
+use jolt_field::{Fp64, FpExt4, Prime128Offset275, Prime24Offset3, Prime32Offset99};
 use rand::rngs::StdRng;
 use rand::SeedableRng;
 

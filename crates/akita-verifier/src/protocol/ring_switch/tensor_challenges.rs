@@ -1,7 +1,8 @@
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::offset_eq::summarize_pow2_block_carries;
 use akita_challenges::TensorChallenges as TensorChallengeSet;
-use akita_field::{AkitaError, FieldCore, FromPrimitiveInt, MulBase};
+use akita_error::AkitaError;
+use jolt_field::{FieldCore, FromPrimitiveInt, MulBase};
 
 /// Challenge evaluations used by relation-matrix challenge replay.
 #[derive(Clone)]
@@ -234,7 +235,7 @@ mod tests {
     use super::*;
     use akita_algebra::ring::scalar_powers;
     use akita_challenges::{Challenges, SparseChallenge};
-    use akita_field::Fp32;
+    use jolt_field::Fp32;
 
     #[test]
     fn factored_carry_summary_matches_flat_for_tensor_challenges() {

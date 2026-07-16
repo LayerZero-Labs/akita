@@ -17,8 +17,8 @@ use crate::kernels::linear::try_centered_i8;
 use crate::DecomposeFoldWitness;
 use akita_algebra::CyclotomicRing;
 use akita_challenges::SparseChallenge;
-use akita_field::parallel::*;
-use akita_field::{CanonicalField, FieldCore};
+use jolt_field::parallel::*;
+use jolt_field::{CanonicalField, FieldCore};
 use std::array::from_fn;
 
 #[cfg(target_arch = "aarch64")]
@@ -457,9 +457,9 @@ mod tests {
     };
     use akita_algebra::CyclotomicRing;
     use akita_challenges::SparseChallenge;
-    use akita_field::CanonicalField;
-    use akita_field::{Fp64, Prime128Offset275};
     use akita_types::sis::compute_num_digits_full_field;
+    use jolt_field::CanonicalField;
+    use jolt_field::{Fp64, Prime128Offset275};
 
     /// SIMD-vs-scalar parity for the sparse-multiply-accumulate decompose-fold
     /// kernel, exercising whichever SIMD backend is active (NEON / AVX2 /

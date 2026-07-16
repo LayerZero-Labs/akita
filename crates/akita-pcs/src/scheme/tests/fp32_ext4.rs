@@ -54,7 +54,7 @@ fn fp32_ext4_ring_subfield_extension_point<E>(
     coord_at: impl Fn(usize) -> E,
 ) -> Vec<E>
 where
-    E: akita_field::AdditiveGroup + Copy,
+    E: jolt_field::AdditiveGroup + Copy,
 {
     const EXT_DEGREE: usize = 4;
     let trace_inner = (ring_d / EXT_DEGREE).trailing_zeros() as usize;
@@ -157,7 +157,7 @@ fn fp32_ext4_setup_matrix_size<F>(
     max_num_polynomials: usize,
 ) -> Result<akita_types::SetupMatrixEnvelope, AkitaError>
 where
-    F: akita_field::CanonicalField,
+    F: jolt_field::CanonicalField,
 {
     let _field_marker = core::marker::PhantomData::<F>;
     let outer_width = lp
@@ -197,8 +197,8 @@ fn fp32_ext4_max_claims(max_num_batched_polys: usize) -> Result<usize, AkitaErro
 }
 
 impl CommitmentConfig for Fp32RingSubfieldRootFoldCfg {
-    type Field = akita_field::Prime32Offset99;
-    type ExtField = akita_field::FpExt4<Self::Field>;
+    type Field = jolt_field::Prime32Offset99;
+    type ExtField = jolt_field::FpExt4<Self::Field>;
 
     const D: usize = 64;
 
@@ -291,8 +291,8 @@ impl Fp32RingSubfieldOuterFallbackCfg {
 }
 
 impl CommitmentConfig for Fp32RingSubfieldOuterFallbackCfg {
-    type Field = akita_field::Prime32Offset99;
-    type ExtField = akita_field::FpExt4<Self::Field>;
+    type Field = jolt_field::Prime32Offset99;
+    type ExtField = jolt_field::FpExt4<Self::Field>;
 
     const D: usize = 64;
 

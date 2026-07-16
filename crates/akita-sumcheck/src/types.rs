@@ -1,13 +1,13 @@
 //! Sumcheck proof containers and round-message types.
 
 use akita_algebra::uni_poly::CompressedUniPoly;
-use akita_field::AkitaError;
-use akita_field::{CanonicalField, FieldCore};
+use akita_error::AkitaError;
 use akita_serialization::{
     AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
 };
 use akita_transcript::labels;
 use akita_transcript::Transcript;
+use jolt_field::{CanonicalField, FieldCore};
 use std::io::{Read, Write};
 
 /// Eq-factored round message storing `q(X)` without its linear coefficient.

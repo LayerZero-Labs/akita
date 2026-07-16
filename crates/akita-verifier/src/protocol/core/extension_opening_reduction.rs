@@ -5,12 +5,13 @@
 //! so this helper returns the derived `(final_claim, rho)` instead of reading
 //! a standalone on-wire opening handle.
 
-use akita_field::{AkitaError, CanonicalField, FieldCore};
+use akita_error::AkitaError;
 use akita_serialization::AkitaSerialize;
 use akita_sumcheck::SumcheckProof;
 use akita_transcript::labels::ABSORB_SUMCHECK_CLAIM;
 use akita_transcript::Transcript;
 use akita_types::EXTENSION_OPENING_REDUCTION_DEGREE;
+use jolt_field::{CanonicalField, FieldCore};
 
 /// Verify the non-zk EOR sumcheck rounds and return the final running claim
 /// together with the sampled sumcheck point.

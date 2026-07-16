@@ -111,8 +111,7 @@ pub use terminal_witness::{
 
 use crate::EXTENSION_OPENING_REDUCTION_DEGREE;
 use akita_algebra::CyclotomicRing;
-use akita_field::AkitaError;
-use akita_field::{CanonicalField, FieldCore, HalvingField};
+use akita_error::AkitaError;
 use akita_serialization::{AkitaDeserialize, AkitaSerialize, DEFAULT_MAX_SEQUENCE_LEN};
 use akita_serialization::{Compress, SerializationError};
 use akita_serialization::{Valid, Validate};
@@ -121,6 +120,7 @@ use akita_sumcheck::{
     uniform_sumcheck_shape, EqFactoredSumcheckProofShape, SumcheckProof, SumcheckProofShape,
 };
 use akita_transcript::Transcript;
+use jolt_field::{CanonicalField, FieldCore, HalvingField};
 use std::io::{Read, Write};
 use std::marker::PhantomData;
 

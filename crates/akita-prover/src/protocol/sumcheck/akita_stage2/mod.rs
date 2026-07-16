@@ -71,13 +71,14 @@ use super::two_round_prefix::{
 use super::two_round_prefix::{stage2_b4_w_digit, stage2_b8_w_digit};
 use akita_algebra::poly::trim_trailing_zeros;
 use akita_algebra::split_eq::GruenSplitEq;
-use akita_field::parallel::*;
-use akita_field::unreduced::{HasOptimizedFold, HasUnreducedOps};
-use akita_field::{AkitaError, FieldCore, FromPrimitiveInt, Zero};
+use akita_error::AkitaError;
 use akita_sumcheck::{
     fold_evals_in_place, reduce_signed_accum, CompactPairFoldLut, SumcheckInstanceProver, UniPoly,
 };
 use akita_types::TraceTable;
+use jolt_field::parallel::*;
+use jolt_field::unreduced::{HasOptimizedFold, HasUnreducedOps};
+use jolt_field::{FieldCore, FromPrimitiveInt, Zero};
 use std::mem;
 use std::time::Instant;
 

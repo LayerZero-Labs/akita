@@ -4,10 +4,10 @@ use crate::kernels::linear::{
     fused_split_eq_quotients, mat_vec_mul_ntt_single_i8, mat_vec_mul_ntt_single_i8_cyclic,
 };
 use akita_algebra::CyclotomicRing;
-use akita_field::{
+use akita_types::layout::FlatMatrix;
+use jolt_field::{
     CanonicalField, FieldCore, HalvingField, Prime128Offset275, Prime32Offset99, Prime64Offset59,
 };
-use akita_types::layout::FlatMatrix;
 
 fn assert_single_i8_chunk_paths<F: FieldCore + CanonicalField, const D: usize>(cols: usize) {
     let log_basis = 6;

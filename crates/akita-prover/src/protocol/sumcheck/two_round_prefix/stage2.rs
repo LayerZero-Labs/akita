@@ -1,10 +1,10 @@
 use super::common::*;
 use akita_algebra::eq_poly::EqPolynomial;
-use akita_field::parallel::*;
-use akita_field::unreduced::HasUnreducedOps;
-use akita_field::{FieldCore, FromPrimitiveInt, Zero};
 use akita_sumcheck::{reduce_signed_accum, UniPoly};
 use akita_types::TraceTable;
+use jolt_field::parallel::*;
+use jolt_field::unreduced::HasUnreducedOps;
+use jolt_field::{FieldCore, FromPrimitiveInt, Zero};
 
 /// Boolean corner in the `{0, 1}^2` sub-grid of the stage-2 full domain.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

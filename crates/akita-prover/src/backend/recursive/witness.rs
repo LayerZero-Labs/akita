@@ -10,8 +10,9 @@
 
 use akita_algebra::CyclotomicRing;
 use akita_challenges::{SparseChallenge, TensorChallenges};
-use akita_field::parallel::*;
-use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt};
+use akita_error::AkitaError;
+use jolt_field::parallel::*;
+use jolt_field::{CanonicalField, ExtField, FieldCore, FromPrimitiveInt};
 
 use crate::backend::poly_helpers::{
     balanced_digit_decompose_fold_partitioned, build_decompose_fold_witness,
@@ -146,7 +147,7 @@ where
         logical_point: &[E],
     ) -> Result<Vec<E>, AkitaError>
     where
-        E: akita_field::MulBaseUnreduced<F>,
+        E: jolt_field::MulBaseUnreduced<F>,
     {
         let num_vars = self.num_vars();
         if logical_point.len() != num_vars {
@@ -164,7 +165,7 @@ where
         logical_point: &[E],
     ) -> Result<Vec<Vec<E>>, AkitaError>
     where
-        E: akita_field::MulBaseUnreduced<F>,
+        E: jolt_field::MulBaseUnreduced<F>,
     {
         polys
             .iter()
@@ -404,7 +405,7 @@ use crate::compute::{
     TensorPackedWitness, TensorProjectionBatchKernel, TensorProjectionKernel,
 };
 use crate::protocol::extension_opening_reduction::SparseExtensionOpeningWitness;
-use akita_field::MulBaseUnreduced;
+use jolt_field::MulBaseUnreduced;
 
 fn padded_ring_elems_for_digits<const D: usize>(digits: &[i8]) -> Result<usize, AkitaError> {
     let (coeffs, remainder) = digits.as_chunks::<D>();
@@ -693,7 +694,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use akita_field::Prime128OffsetA7F7 as F;
+    use jolt_field::Prime128OffsetA7F7 as F;
 
     #[test]
     fn suffix_opening_views_borrow_flat_digit_buffer() {
@@ -720,7 +721,7 @@ mod tests {
     #[test]
     fn suffix_root_projection_is_rejected() {
         const D: usize = 16;
-        type E = akita_field::FpExt4<F>;
+        type E = jolt_field::FpExt4<F>;
         let digits: Vec<i8> = (0..64).map(|idx| (idx % 5) as i8 - 2).collect();
         let witness = RecursiveWitnessFlat::from_i8_digits(digits);
         let view = witness.tensor_view().expect("tensor view");
@@ -737,9 +738,7 @@ mod tests {
     fn logical_rows_use_strided_column_major_indices() {
         let digits: Vec<i8> = (0..20).collect();
         let w = RecursiveWitnessFlat::from_i8_digits(digits);
-        let view = w
-            .view::<akita_field::Prime128OffsetA7F7, 2>()
-            .expect("view");
+        let view = w.view::<jolt_field::Prime128OffsetA7F7, 2>().expect("view");
         let num_blocks = 4;
         let block_len = (w.len() / 2).div_ceil(num_blocks);
 

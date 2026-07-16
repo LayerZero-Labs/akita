@@ -7,10 +7,11 @@
 use akita_algebra::ring::cyclotomic::WideCyclotomicRing;
 use akita_algebra::CyclotomicRing;
 use akita_challenges::{SparseChallenge, TensorChallenges as TensorChallengeSet};
-use akita_field::parallel::*;
-use akita_field::unreduced::{HasWide, ReduceTo};
-use akita_field::{AdditiveGroup, AkitaError, CanonicalField, FieldCore, FromPrimitiveInt};
+use akita_error::AkitaError;
 use akita_types::embed_ring_subfield_vector;
+use jolt_field::parallel::*;
+use jolt_field::unreduced::{HasWide, ReduceTo};
+use jolt_field::{AdditiveGroup, CanonicalField, FieldCore, FromPrimitiveInt};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
@@ -553,7 +554,7 @@ where
         logical_point: &[E],
     ) -> Result<Vec<E>, AkitaError>
     where
-        E: akita_field::MulBaseUnreduced<F>,
+        E: jolt_field::MulBaseUnreduced<F>,
     {
         let num_vars = self.num_vars();
         if logical_point.len() != num_vars {
@@ -572,7 +573,7 @@ where
 
     pub(crate) fn tensor_packed_extension_evals<E>(&self) -> Result<Vec<E>, AkitaError>
     where
-        E: akita_field::ExtField<F>,
+        E: jolt_field::ExtField<F>,
     {
         let num_vars = self.num_vars();
         let field_elems = self.direct_field_evals()?;
@@ -586,7 +587,7 @@ where
         AkitaError,
     >
     where
-        E: akita_field::ExtField<F>,
+        E: jolt_field::ExtField<F>,
     {
         Ok(None)
     }
@@ -909,7 +910,7 @@ mod tests {
         aggregate_witnesses, negacyclic_tensor_product_challenges_i8, tensor_oracle_challenges,
     };
     use crate::DensePoly;
-    use akita_field::Prime128OffsetA7F7 as F;
+    use jolt_field::Prime128OffsetA7F7 as F;
 
     #[test]
     fn sparse_ring_fold_matches_dense_reference() {

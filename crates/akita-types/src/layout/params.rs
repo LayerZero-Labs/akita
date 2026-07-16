@@ -5,7 +5,8 @@
 //! describes one recursion level.
 
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
-use akita_field::{AkitaError, CanonicalField};
+use akita_error::AkitaError;
+use jolt_field::CanonicalField;
 
 use crate::config::SetupContributionMode;
 use crate::descriptor_bytes::{push_u128, push_u32, push_usize};

@@ -1,7 +1,6 @@
 #![allow(missing_docs)]
 
 use akita_algebra::eq_poly::EqPolynomial;
-use akita_field::Prime128OffsetA7F7;
 use akita_types::{
     gadget_row_scalars, CommitmentRingDims, RelationMatrixRowLayout, SetupContributionGroupInputs,
     SetupContributionPlan, SetupContributionPlanInputs, SetupIndexWeightEvaluator,
@@ -11,6 +10,7 @@ use criterion::{
     black_box, criterion_group, criterion_main, BenchmarkGroup, BenchmarkId, Criterion,
     SamplingMode,
 };
+use jolt_field::Prime128OffsetA7F7;
 use std::time::Duration;
 
 type F = Prime128OffsetA7F7;

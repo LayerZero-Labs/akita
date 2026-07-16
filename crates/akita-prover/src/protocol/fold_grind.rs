@@ -7,8 +7,7 @@ use akita_challenges::{
     grind_probe_permutation, witness_fold_challenge_labels, Challenges, FoldDraw, LiveFoldDraw,
     PreviewFoldDraw,
 };
-use akita_field::unreduced::{HasWide, ReduceTo};
-use akita_field::{AkitaError, CanonicalField, FieldCore, FromPrimitiveInt};
+use akita_error::AkitaError;
 use akita_transcript::{AkitaTranscript, FoldChallengeSeedPreview, Transcript, TranscriptSponge};
 use akita_types::{
     golomb_rice_rows_admit_terminal_wire,
@@ -16,6 +15,8 @@ use akita_types::{
     FoldLinfProtocolBinding, LevelParams, LevelParamsLike, FOLD_GRIND_PROBE_ORDER_SEQUENTIAL_MIN,
     FOLD_GRIND_PROBE_ORDER_TRANSCRIPT_SHUFFLE,
 };
+use jolt_field::unreduced::{HasWide, ReduceTo};
+use jolt_field::{CanonicalField, FieldCore, FromPrimitiveInt};
 
 use super::ring_relation::{
     aggregate_decompose_fold_witnesses, build_point_decompose_fold_witness,
@@ -35,14 +36,14 @@ where
 }
 
 impl<F> ProverTranscriptGrind<F> for AkitaTranscript<F, TranscriptSponge> where
-    F: FieldCore + CanonicalField + akita_field::CanonicalBytes + akita_field::TranscriptChallenge
+    F: FieldCore + CanonicalField + jolt_field::CanonicalBytes + jolt_field::TranscriptChallenge
 {
 }
 
 #[cfg(feature = "logging-transcript")]
 impl<F, T> ProverTranscriptGrind<F> for akita_transcript::LoggingTranscript<T>
 where
-    F: FieldCore + CanonicalField + akita_field::CanonicalBytes + akita_field::TranscriptChallenge,
+    F: FieldCore + CanonicalField + jolt_field::CanonicalBytes + jolt_field::TranscriptChallenge,
     T: ProverTranscriptGrind<F>,
 {
 }
@@ -424,7 +425,7 @@ mod tests {
     use akita_types::sis::{FoldWitnessGrindContract, FoldWitnessLinfCapPolicy};
     use akita_types::SisModulusFamily;
 
-    type F = akita_field::Prime128Offset275;
+    type F = jolt_field::Prime128Offset275;
 
     fn sample_level() -> LevelParams {
         LevelParams::params_only(

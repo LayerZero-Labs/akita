@@ -1,9 +1,10 @@
 //! Tensor extension-opening packing helpers.
 
-use akita_field::unreduced::{HasWide, ReduceTo};
-use akita_field::{AdditiveGroup, CanonicalField, FromPrimitiveInt, MulBaseUnreduced};
-use akita_field::{AkitaError, ExtField, FieldCore};
+use akita_error::AkitaError;
 use akita_types::{pack_tensor_base_lift_i8_digits, CleartextWitnessProof, FpExtEncoding};
+use jolt_field::unreduced::{HasWide, ReduceTo};
+use jolt_field::{AdditiveGroup, CanonicalField, FromPrimitiveInt, MulBaseUnreduced};
+use jolt_field::{ExtField, FieldCore};
 use std::sync::Arc;
 
 use super::dense::{DenseBatchView, DenseView};
@@ -528,7 +529,8 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use akita_field::{AkitaError, FpExt4, Prime32Offset99};
+    use akita_error::AkitaError;
+    use jolt_field::{FpExt4, Prime32Offset99};
 
     #[test]
     fn recursive_tensor_pack_rejects_non_divisible_digit_count() {

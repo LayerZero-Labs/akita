@@ -12,10 +12,7 @@ use crate::{DecomposeFoldWitness, DigitRowsComputeBackend, ProverOpeningData};
 use akita_algebra::ring::cyclotomic::BalancedDecomposePow2I8Params;
 use akita_algebra::CyclotomicRing;
 use akita_challenges::{Challenges, SparseChallenge};
-use akita_field::parallel::*;
-use akita_field::unreduced::{HasWide, ReduceTo};
-use akita_field::AkitaError;
-use akita_field::{CanonicalField, FieldCore, FromPrimitiveInt, HalvingField};
+use akita_error::AkitaError;
 use akita_transcript::labels::{ABSORB_PROVER_V, ABSORB_TERMINAL_E_HAT};
 use akita_transcript::Transcript;
 use akita_types::dispatch_for_field;
@@ -23,6 +20,9 @@ use akita_types::{assemble_relation_rhs, relation_rhs_layout_for, RingVec, RingV
 use akita_types::{gadget_row_scalars, AkitaCommitmentHint, DigitBlocks, RelationMatrixRowLayout};
 use akita_types::{LevelParams, LevelParamsLike, RingRelationInstance};
 use akita_types::{RingMultiplierOpeningPoint, RingOpeningPoint};
+use jolt_field::parallel::*;
+use jolt_field::unreduced::{HasWide, ReduceTo};
+use jolt_field::{CanonicalField, FieldCore, FromPrimitiveInt, HalvingField};
 
 use super::fold_grind::{self, ProverTranscriptGrind};
 use super::ring_relation_witness::{RingRelationGroupWitness, RingRelationWitness};
@@ -82,7 +82,7 @@ fn flatten_commitment_hints_for_ring_relation<F>(
     group_sizes: &[usize],
 ) -> Result<AkitaCommitmentHint<F>, AkitaError>
 where
-    F: FieldCore + CanonicalField,
+    F: FieldCore + CanonicalField + akita_serialization::AkitaSerialize,
 {
     if hints.len() != group_sizes.len() {
         return Err(AkitaError::InvalidInput(
@@ -354,7 +354,7 @@ fn compute_v_rows_for_layout<F, T, RB, const D: usize>(
     relation_matrix_row_layout: RelationMatrixRowLayout,
 ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>
 where
-    F: FieldCore + CanonicalField,
+    F: FieldCore + CanonicalField + akita_serialization::AkitaSerialize,
     T: Transcript<F>,
     RB: DigitRowsComputeBackend<F>,
 {
@@ -484,7 +484,12 @@ impl RingRelationProver {
         terminal_tail_t_vectors: Option<usize>,
     ) -> Result<(RingRelationInstance<F>, RingRelationWitness<F>), AkitaError>
     where
-        F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
+        F: FieldCore
+            + CanonicalField
+            + FromPrimitiveInt
+            + HasWide
+            + akita_serialization::AkitaSerialize
+            + 'static,
         <F as HasWide>::Wide: From<F> + ReduceTo<F>,
         PointF: Clone,
         T: Transcript<F> + ProverTranscriptGrind<F>,

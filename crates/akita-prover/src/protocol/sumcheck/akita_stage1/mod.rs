@@ -40,12 +40,13 @@ use super::two_round_prefix::{
     Stage1BivariateSkipState,
 };
 use akita_algebra::split_eq::GruenSplitEq;
-use akita_field::parallel::*;
-use akita_field::unreduced::{HasOptimizedFold, HasUnreducedOps};
-use akita_field::{AkitaError, FieldCore, FromPrimitiveInt, Zero};
+use akita_error::AkitaError;
 use akita_sumcheck::{
     fold_evals_in_place, CompactPairFoldLut, EqFactoredSumcheckInstanceProver, EqFactoredUniPoly,
 };
+use jolt_field::parallel::*;
+use jolt_field::unreduced::{HasOptimizedFold, HasUnreducedOps};
+use jolt_field::{FieldCore, FromPrimitiveInt, Zero};
 use std::time::Instant;
 
 const MAX_AFFINE_COEFFS: usize = 17;

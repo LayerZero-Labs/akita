@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
-use akita_field::AkitaError;
+use akita_error::AkitaError;
 use akita_types::{
     AkitaScheduleInputs, AkitaScheduleLookupKey, DirectStep, LevelParams, PolynomialGroupLayout,
     PrecommittedGroupParams, Schedule, SetupContributionMode, Step,

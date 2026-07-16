@@ -1,6 +1,6 @@
 //! Verifier replay for batched, recursive, and ring-switch proof steps.
 
-use akita_field::AkitaError;
+use akita_error::AkitaError;
 
 pub(crate) mod core;
 pub(crate) mod ring_switch;

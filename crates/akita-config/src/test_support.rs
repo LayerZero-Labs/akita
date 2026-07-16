@@ -9,7 +9,7 @@
 //! per-poly inputs through [`CommitmentConfig::get_params_for_batched_commitment`]
 //! directly and never need this module.
 
-use akita_field::AkitaError;
+use akita_error::AkitaError;
 use akita_types::{
     AkitaScheduleLookupKey, LevelParams, OpeningClaimsLayout, PolynomialGroupLayout,
 };

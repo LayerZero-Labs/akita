@@ -7,11 +7,12 @@ use akita_algebra::ntt::tables::{
     Q64_NUM_PRIMES, Q64_PRIMES,
 };
 use akita_algebra::ring::{CrtNttParamSet, CyclotomicCrtNtt};
-#[allow(unused_imports)]
-use akita_field::parallel::*;
-use akita_field::{cfg_iter, AkitaError, CanonicalField, FieldCore, PseudoMersenneField};
-use akita_field::{Prime128Offset159, Prime128Offset2355, Prime128OffsetA7F7};
+use akita_error::AkitaError;
 use akita_types::ntt_ring_degree_supported_for_field;
+#[allow(unused_imports)]
+use jolt_field::parallel::*;
+use jolt_field::{cfg_iter, CanonicalField, FieldCore, PseudoMersenneField};
+use jolt_field::{Prime128Offset159, Prime128Offset2355, Prime128OffsetA7F7};
 
 use akita_types::{NttCacheKey, RingMatrixView};
 
@@ -283,7 +284,7 @@ impl<const D: usize> NttSlotCache<D> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use akita_field::{
+    use jolt_field::{
         Prime128Offset159, Prime128Offset2355, Prime128Offset275, Prime128OffsetA7F7,
         Prime32Offset99, Prime64Offset59,
     };
@@ -380,8 +381,9 @@ mod tests {
 #[cfg(test)]
 mod ntt_slot_cache_any {
     use super::*;
-    use akita_field::{AkitaError, Prime128OffsetA7F7, Prime32Offset99};
+    use akita_error::AkitaError;
     use akita_types::FlatMatrix;
+    use jolt_field::{Prime128OffsetA7F7, Prime32Offset99};
 
     fn sample_cache<F: FieldCore + CanonicalField, const D: usize>() -> NttSlotCache<D> {
         let ring = akita_algebra::CyclotomicRing::<F, D>::zero();
@@ -405,7 +407,7 @@ mod ntt_slot_cache_any {
     #[test]
     fn from_maps_each_supported_ring_degree() {
         let d16: NttSlotCacheAny = sample_cache::<Prime128OffsetA7F7, 16>().into();
-        let d32: NttSlotCacheAny = sample_cache::<akita_field::Prime64Offset59, 32>().into();
+        let d32: NttSlotCacheAny = sample_cache::<jolt_field::Prime64Offset59, 32>().into();
         let d64: NttSlotCacheAny = sample_cache::<Prime32Offset99, 64>().into();
         let d128: NttSlotCacheAny = sample_cache::<Prime32Offset99, 128>().into();
         let d256: NttSlotCacheAny = sample_cache::<Prime32Offset99, 256>().into();

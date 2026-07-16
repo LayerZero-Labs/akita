@@ -2,7 +2,7 @@
 
 use std::collections::BTreeSet;
 
-use akita_field::AkitaError;
+use akita_error::AkitaError;
 use akita_planner::suffix_opening_layout;
 use akita_types::{
     active_setup_field_len, config::SetupContributionMode, padded_setup_prefix_len, Schedule,

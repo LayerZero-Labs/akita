@@ -6,8 +6,9 @@
 
 use akita_algebra::poly::multilinear_eval;
 use akita_algebra::{EqPolynomial, SplitEqEvals};
-use akita_field::unreduced::HasUnreducedOps;
-use akita_field::{AkitaError, ExtField, FieldCore, MulBaseUnreduced};
+use akita_error::AkitaError;
+use jolt_field::unreduced::HasUnreducedOps;
+use jolt_field::{ExtField, FieldCore, MulBaseUnreduced};
 use num_traits::Zero;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;

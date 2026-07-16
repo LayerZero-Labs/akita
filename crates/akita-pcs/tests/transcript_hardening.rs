@@ -5,7 +5,6 @@ use akita_prover::{ComputeBackendSetup, CpuBackend};
 
 mod common;
 
-use akita_field::CanonicalField;
 use akita_pcs::AkitaCommitmentScheme;
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_transcript::{
@@ -17,6 +16,7 @@ use akita_types::{
     TerminalWitnessSegmentLayout,
 };
 use common::*;
+use jolt_field::CanonicalField;
 
 type Scheme = AkitaCommitmentScheme<OneHotCfg>;
 

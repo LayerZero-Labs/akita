@@ -1,12 +1,13 @@
 //! Shared batched schedule selection for prove and verify entry points.
 
 use crate::CommitmentConfig;
-use akita_field::{AkitaError, FieldCore};
+use akita_error::AkitaError;
 use akita_types::{
     dispatch_for_field, folded_root_supports_opening_shape, root_direct_schedule,
     root_tensor_projection_enabled, schedule_is_root_direct, schedule_root_fold_step,
     FpExtEncoding, OpeningClaimsLayout, Schedule,
 };
+use jolt_field::FieldCore;
 
 /// Select the effective runtime schedule for a batched opening, including the
 /// root-direct rewrite when the folded-root opening geometry is unsupported.
@@ -82,11 +83,11 @@ where
 mod tests {
     use super::*;
     use akita_challenges::SparseChallengeConfig;
-    use akita_field::{ExtField, Fp32, FpExt4};
     use akita_types::{
         AkitaScheduleLookupKey, CleartextWitnessShape, DirectStep, FoldStep, LevelParams,
         PolynomialGroupLayout, SetupMatrixEnvelope, SisModulusFamily, Step,
     };
+    use jolt_field::{ExtField, Fp32, FpExt4};
 
     type Base = Fp32<251>;
     type BaseExt = FpExt4<Base>;

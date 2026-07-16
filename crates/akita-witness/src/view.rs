@@ -4,7 +4,7 @@
 //! lanes of the stack resolve openings to. It owns no data: it borrows an
 //! existing evaluation table and records its multilinear shape (`num_vars`).
 
-use akita_field::AkitaError;
+use akita_error::AkitaError;
 
 /// A borrowed multilinear polynomial, given by its evaluations over the boolean
 /// hypercube `{0,1}^num_vars`.

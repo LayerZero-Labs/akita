@@ -5,8 +5,8 @@
 /// Gated on `#[cfg(test)]` so the production binary never sees them.
 #[cfg(test)]
 use super::{CyclotomicRing, FlatBlocks, MultiChunkEntry, OneHotEntry, OneHotIndex, OneHotPoly};
-use akita_field::parallel::*;
-use akita_field::{CanonicalField, FieldCore};
+use jolt_field::parallel::*;
+use jolt_field::{CanonicalField, FieldCore};
 
 /// Reference ring-space evaluation for [`OneHotPoly`].
 ///

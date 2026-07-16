@@ -11,10 +11,11 @@ use crate::{
 };
 use akita_algebra::CyclotomicRing;
 use akita_challenges::SparseChallengeConfig;
-use akita_field::{AkitaError, CanonicalField, FieldCore, Prime128OffsetA7F7};
+use akita_error::AkitaError;
 use akita_serialization::{AkitaSerialize, Compress};
 use akita_sumcheck::EqFactoredUniPoly;
 use akita_sumcheck::{CompressedUniPoly, EqFactoredSumcheckProof, SumcheckProof};
+use jolt_field::{CanonicalField, FieldCore, Prime128OffsetA7F7};
 
 type F = Prime128OffsetA7F7;
 

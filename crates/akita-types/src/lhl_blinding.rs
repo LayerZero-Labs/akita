@@ -3,7 +3,7 @@
 //! This module is always compiled. The transparent protocol does not use it;
 //! it documents the digit-plane sizing discipline and anchors post-audit ZK work.
 
-use akita_field::CanonicalField;
+use jolt_field::CanonicalField;
 
 /// Statistical security target used by the LHL hiding mask.
 pub const LHL_STATISTICAL_SECURITY_BITS: usize = 128;

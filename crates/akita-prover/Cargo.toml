@@ -19,7 +19,8 @@ readme = "../../README.md"
 akita-algebra = { version = "0.1.0", path = "../akita-algebra" }
 akita-challenges = { version = "0.1.0", path = "../akita-challenges" }
 akita-config = { version = "0.1.0", path = "../akita-config", default-features = false }
-akita-field = { version = "0.1.0", path = "../akita-field" }
+jolt-field = { version = "=0.1.0", git = "https://github.com/Acentelles/jolt.git", rev = "09b2f7b6ddd9427c756b781c39530a6c005e332d", default-features = false, features = ["solinas"] }
+akita-error = { version = "0.1.0", path = "../akita-error" }
 akita-serialization = { version = "0.1.0", path = "../akita-serialization" }
 akita-sumcheck = { version = "0.1.0", path = "../akita-sumcheck" }
 akita-transcript = { version = "0.1.0", path = "../akita-transcript" }
@@ -44,7 +45,7 @@ logging-transcript = ["akita-transcript/logging-transcript"]
 parallel = [
   "dep:rayon",
   "akita-challenges/parallel",
-  "akita-field/parallel",
+  "jolt-field/parallel",
   "akita-sumcheck/parallel",
   "akita-types/parallel",
 ]

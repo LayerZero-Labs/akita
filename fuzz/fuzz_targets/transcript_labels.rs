@@ -1,6 +1,6 @@
 #![no_main]
 
-use akita_field::Prime128Offset275;
+use jolt_field::Prime128Offset275;
 use akita_transcript::{AkitaTranscript, Transcript};
 use libfuzzer_sys::fuzz_target;
 

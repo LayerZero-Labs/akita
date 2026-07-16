@@ -18,10 +18,10 @@ use akita_challenges::{
     sample_sparse_challenges, SparseChallengeConfig, D64_PRODUCTION_PM1_COUNT,
     D64_PRODUCTION_PM2_COUNT,
 };
-use akita_field::Prime128OffsetA7F7;
 use akita_transcript::labels::DOMAIN_AKITA_PROTOCOL;
 use akita_transcript::{AkitaTranscript, Transcript};
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use jolt_field::Prime128OffsetA7F7;
 
 type F = Prime128OffsetA7F7;
 

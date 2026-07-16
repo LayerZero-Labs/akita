@@ -1,7 +1,7 @@
 use akita_algebra::CyclotomicRing;
 use akita_challenges::{SparseChallenge, TensorChallenges};
-use akita_field::FieldCore;
 use akita_types::LevelParams;
+use jolt_field::FieldCore;
 
 // ===========================================================================
 // Open, source-typed operation boundary (PO1)

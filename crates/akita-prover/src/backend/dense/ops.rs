@@ -18,11 +18,10 @@ use crate::{CommitInnerWitness, DecomposeFoldWitness};
 use akita_algebra::ring::cyclotomic::decompose_centering_threshold;
 use akita_algebra::{CyclotomicRing, SplitEqEvals};
 use akita_challenges::{SparseChallenge, TensorChallenges as TensorChallengeSet};
-use akita_field::parallel::*;
-use akita_field::{
-    AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, MulBaseUnreduced,
-};
+use akita_error::AkitaError;
 use akita_types::{embed_ring_subfield_vector, tensor_column_partials_split_fold, FpExtEncoding};
+use jolt_field::parallel::*;
+use jolt_field::{CanonicalField, ExtField, FieldCore, FromPrimitiveInt, MulBaseUnreduced};
 
 impl<F> DensePoly<F>
 where

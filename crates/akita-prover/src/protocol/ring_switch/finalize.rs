@@ -1,6 +1,6 @@
 use super::*;
-use akita_field::MulBaseUnreduced;
 use akita_types::dispatch_for_field;
+use jolt_field::MulBaseUnreduced;
 
 /// Complete the ring switch after the caller has bound the next witness.
 ///

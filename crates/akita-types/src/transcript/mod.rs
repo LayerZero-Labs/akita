@@ -1,7 +1,7 @@
 //! Traits for appending commitment objects to protocol transcripts.
 
-use akita_field::{CanonicalField, FieldCore};
 use akita_transcript::Transcript;
+use jolt_field::{CanonicalField, FieldCore};
 
 /// Protocol object that can be absorbed into a transcript.
 pub trait AppendToTranscript<F>

@@ -3,8 +3,9 @@ use crate::protocol::ring_switch::PreparedChallengeEvals;
 use crate::protocol::ring_switch::RelationMatrixEvaluator;
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::offset_eq::{eval_offset_eq_interval, summarize_pow2_block_carries};
-use akita_field::parallel::*;
-use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
+use akita_error::AkitaError;
+use jolt_field::parallel::*;
+use jolt_field::{CanonicalField, ExtField, FieldCore};
 
 /// Number of carry buckets per outer index produced by
 /// [`StructuredSliceMleEvaluator::compute_inner_sum`].
@@ -338,13 +339,13 @@ mod tests {
     use akita_algebra::ring::scalar_powers;
     use akita_algebra::CyclotomicRing;
     use akita_challenges::SparseChallengeConfig;
-    use akita_field::Prime128OffsetA7F7;
     use akita_types::{
         gadget_row_scalars, r_decomp_levels, LevelParams, OpeningClaimsLayout,
         RelationMatrixRowLayout, RingMultiplierOpeningPoint, RingOpeningPoint,
         RingRelationInstance, SetupContributionPlan, SetupContributionPlanInputs, SisModulusFamily,
         WitnessLayout,
     };
+    use jolt_field::Prime128OffsetA7F7;
 
     use crate::protocol::ring_switch::{
         build_setup_contribution_groups, RelationMatrixGroupEvaluator,

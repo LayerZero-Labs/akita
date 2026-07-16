@@ -5,12 +5,12 @@
 
 use super::CommitmentConfig;
 use crate::matrix_envelope::accumulate_matrix_envelope_for_level;
-use akita_field::AkitaError;
-use akita_field::{Ext2, FpExt4, Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59};
+use akita_error::AkitaError;
 use akita_types::{
     AkitaExpandedSetup, AkitaScheduleLookupKey, LevelParams, OpeningClaimsLayout,
     PolynomialGroupLayout, Schedule, SetupMatrixEnvelope,
 };
+use jolt_field::{Ext2, FpExt4, Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59};
 use std::any::TypeId;
 use std::collections::HashMap;
 use std::sync::{LazyLock, Mutex};
@@ -420,7 +420,7 @@ macro_rules! impl_proof_optimized_preset {
 
             fn ring_challenge_config(
                 d: usize,
-            ) -> Result<akita_challenges::SparseChallengeConfig, akita_field::AkitaError> {
+            ) -> Result<akita_challenges::SparseChallengeConfig, akita_error::AkitaError> {
                 $crate::proof_optimized::proof_optimized_ring_challenge_config(d)
             }
 
@@ -431,7 +431,7 @@ macro_rules! impl_proof_optimized_preset {
             fn max_setup_matrix_size(
                 max_num_vars: usize,
                 max_num_batched_polys: usize,
-            ) -> Result<akita_types::SetupMatrixEnvelope, akita_field::AkitaError> {
+            ) -> Result<akita_types::SetupMatrixEnvelope, akita_error::AkitaError> {
                 $crate::proof_optimized::proof_optimized_max_setup_matrix_size::<Self>(
                     max_num_vars,
                     max_num_batched_polys,
@@ -451,7 +451,7 @@ macro_rules! impl_proof_optimized_preset {
 
             fn get_params_for_prove(
                 layout: &akita_types::OpeningClaimsLayout,
-            ) -> Result<akita_types::Schedule, akita_field::AkitaError> {
+            ) -> Result<akita_types::Schedule, akita_error::AkitaError> {
                 Self::runtime_schedule($crate::proof_optimized::proof_optimized_schedule_key::<Self>(
                     layout,
                 )?)
@@ -480,7 +480,7 @@ macro_rules! impl_proof_optimized_preset {
 
             fn ring_challenge_config(
                 d: usize,
-            ) -> Result<akita_challenges::SparseChallengeConfig, akita_field::AkitaError> {
+            ) -> Result<akita_challenges::SparseChallengeConfig, akita_error::AkitaError> {
                 $crate::proof_optimized::proof_optimized_ring_challenge_config(d)
             }
 
@@ -491,7 +491,7 @@ macro_rules! impl_proof_optimized_preset {
             fn max_setup_matrix_size(
                 max_num_vars: usize,
                 max_num_batched_polys: usize,
-            ) -> Result<akita_types::SetupMatrixEnvelope, akita_field::AkitaError> {
+            ) -> Result<akita_types::SetupMatrixEnvelope, akita_error::AkitaError> {
                 $crate::proof_optimized::proof_optimized_max_setup_matrix_size::<Self>(
                     max_num_vars,
                     max_num_batched_polys,
@@ -511,7 +511,7 @@ macro_rules! impl_proof_optimized_preset {
 
             fn get_params_for_prove(
                 layout: &akita_types::OpeningClaimsLayout,
-            ) -> Result<akita_types::Schedule, akita_field::AkitaError> {
+            ) -> Result<akita_types::Schedule, akita_error::AkitaError> {
                 Self::runtime_schedule($crate::proof_optimized::proof_optimized_schedule_key::<Self>(
                     layout,
                 )?)

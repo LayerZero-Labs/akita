@@ -5,7 +5,8 @@
 //! identical.
 
 use akita_algebra::CyclotomicRing;
-use akita_field::{AkitaError, CanonicalField, FieldCore, HalvingField};
+use akita_error::AkitaError;
+use jolt_field::{CanonicalField, FieldCore, HalvingField};
 
 use crate::compute::{
     CpuBackend, RingSwitchComputeBackend, RingSwitchQuotientKernel, RingSwitchQuotientPlan,

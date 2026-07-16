@@ -20,7 +20,7 @@ mod common;
 mod mixed_d_per_level_fixture;
 
 use akita_config::proof_optimized::fp128;
-use akita_field::AkitaError;
+use akita_error::AkitaError;
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::{ComputeBackendSetup, CpuBackend};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};

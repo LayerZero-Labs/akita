@@ -5,8 +5,8 @@ use crate::compute::{
     RuntimeRingSwitchProveBackend, RuntimeRootProvePoly, RuntimeTensorBackendFor,
 };
 use crate::RootTensorProjectionPoly;
-use akita_field::unreduced::ReduceTo;
-use akita_field::AdditiveGroup;
+use jolt_field::unreduced::ReduceTo;
+use jolt_field::AdditiveGroup;
 
 use crate::protocol::ring_switch::RingSwitchTerminalArtifacts;
 use akita_types::build_segment_typed_witness_from_groups;
@@ -75,7 +75,7 @@ pub(in crate::protocol::core) fn prepare_fold_inner<'a, F, E, T, P, V, C, O, TS,
     terminal_tail_t_vectors: Option<usize>,
 ) -> Result<PreparedFold<F, E>, AkitaError>
 where
-    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide,
+    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + AkitaSerialize,
     E: FpExtEncoding<F>
         + ExtField<F>
         + HasUnreducedOps
@@ -247,7 +247,13 @@ fn finish_prepared_fold<'a, 'p, F, E, T, Q, C, O, TS, R>(
     args: FinishFoldArgs<'a, 'p, F, E, T, Q, C, O, TS, R>,
 ) -> Result<PreparedFold<F, E>, AkitaError>
 where
-    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + RandomSampling + 'static,
+    F: FieldCore
+        + CanonicalField
+        + FromPrimitiveInt
+        + HasWide
+        + RandomSampling
+        + AkitaSerialize
+        + 'static,
     <F as HasWide>::Wide: From<F> + ReduceTo<F> + AdditiveGroup,
     E: FpExtEncoding<F>
         + ExtField<F>
@@ -1015,10 +1021,10 @@ where
 #[cfg(all(test, feature = "logging-transcript"))]
 mod transcript_schedule_tests {
     use super::*;
-    use akita_field::{Fp32, FpExt2, NegOneNr};
     use akita_transcript::{
         is_ext_limb_label, labels, AkitaTranscript, LoggingTranscript, Transcript, TranscriptEvent,
     };
+    use jolt_field::{Fp32, FpExt2, NegOneNr};
 
     type F = Fp32<251>;
     type E = FpExt2<F, NegOneNr>;

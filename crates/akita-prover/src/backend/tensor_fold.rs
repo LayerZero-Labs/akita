@@ -1,5 +1,5 @@
 use akita_challenges::{SparseChallenge, TensorChallenges as TensorChallengeSet};
-use akita_field::AkitaError;
+use akita_error::AkitaError;
 
 pub(crate) fn validate_tensor_blocks<const D: usize>(
     tensor: &TensorChallengeSet,

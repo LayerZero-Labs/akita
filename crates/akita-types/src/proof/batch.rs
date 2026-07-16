@@ -9,9 +9,11 @@ use akita_algebra::{
     ring::{eval_flat_ring_at_pows_fast, eval_ring_at_pows_fast},
     CyclotomicRing,
 };
-use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, MulBaseUnreduced};
+use akita_error::AkitaError;
+use akita_serialization::AkitaSerialize;
 use akita_transcript::labels::{ABSORB_COMMITMENT, ABSORB_EVAL_OPENINGS_FIELD};
 use akita_transcript::{append_ext_field, Transcript};
+use jolt_field::{CanonicalField, ExtField, FieldCore, MulBaseUnreduced};
 
 /// Recursive opening point prepared for ring-level replay.
 ///
@@ -447,7 +449,7 @@ fn ring_multiplier_opening_point_from_ext<F, E, const D: usize>(
     block_order: BlockOrder,
 ) -> Result<RingMultiplierOpeningPoint<F>, AkitaError>
 where
-    F: FieldCore + akita_field::FromPrimitiveInt,
+    F: FieldCore + jolt_field::FromPrimitiveInt,
     E: FpExtEncoding<F>,
 {
     let expected_len = r_vars
@@ -487,7 +489,7 @@ where
 /// Absorb public claim-field evaluations into the base-field transcript.
 pub fn append_claim_values_to_transcript<F, E, T>(values: &[E], transcript: &mut T)
 where
-    F: FieldCore + CanonicalField,
+    F: FieldCore + CanonicalField + AkitaSerialize,
     E: ExtField<F>,
     T: Transcript<F>,
 {
@@ -521,7 +523,7 @@ pub fn append_batched_commitments_to_transcript<F, T>(
     transcript: &mut T,
 ) -> Result<(), AkitaError>
 where
-    F: FieldCore + CanonicalField,
+    F: FieldCore + CanonicalField + AkitaSerialize,
     T: Transcript<F>,
 {
     commitment.append_to_transcript(ABSORB_COMMITMENT, ring_dim, transcript)
@@ -652,7 +654,7 @@ pub fn prepare_opening_point<F, E, const D: usize>(
     block_order: BlockOrder,
 ) -> Result<PreparedOpeningPoint<F, E>, AkitaError>
 where
-    F: FieldCore + akita_field::FromPrimitiveInt,
+    F: FieldCore + jolt_field::FromPrimitiveInt,
     E: FpExtEncoding<F>,
 {
     let _span = tracing::info_span!("ring_opening_point").entered();
@@ -866,7 +868,7 @@ mod tests {
     use super::*;
     use crate::SisModulusFamily;
     use akita_challenges::SparseChallengeConfig;
-    use akita_field::{Fp32, FpExt4, LiftBase};
+    use jolt_field::{Fp32, FpExt4, LiftBase};
 
     type F = Fp32<251>;
     type E = FpExt4<F>;

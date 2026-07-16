@@ -3,7 +3,7 @@ use crate::{
     CleartextWitnessShape, FoldStep, LevelParams, OpeningClaimsLayout, PolynomialGroupLayout, Step,
 };
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
-use akita_field::{Prime32Offset99, Prime64Offset59};
+use jolt_field::{Prime32Offset99, Prime64Offset59};
 
 fn sample_level_params() -> LevelParams {
     LevelParams::params_only(

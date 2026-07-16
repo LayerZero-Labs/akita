@@ -11,8 +11,7 @@ mod utils;
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::ring::scalar_powers;
 use akita_algebra::uni_poly::UniPoly;
-use akita_field::parallel::*;
-use akita_field::{AkitaError, CanonicalField, FieldCore, FromPrimitiveInt, LiftBase};
+use akita_error::AkitaError;
 use akita_serialization::AkitaSerialize;
 use akita_sumcheck::{SumcheckInstanceProver, SumcheckInstanceProverExt, SumcheckProof};
 use akita_transcript::{labels::ABSORB_SETUP_PREFIX_SLOT, Transcript};
@@ -22,6 +21,8 @@ use akita_types::{
     BatchedStage3Geometry, FpExtEncoding, LevelParams, RingRelationInstance, SetupContributionPlan,
     SetupPrefixProverRegistry, SETUP_OFFLOAD_D_SETUP, SETUP_SUMCHECK_DEGREE,
 };
+use jolt_field::parallel::*;
+use jolt_field::{CanonicalField, FieldCore, FromPrimitiveInt, LiftBase};
 use product_table::FactoredProductTerm;
 use std::sync::Arc;
 

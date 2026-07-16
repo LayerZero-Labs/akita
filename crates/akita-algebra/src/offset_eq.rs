@@ -17,7 +17,9 @@
 //! positions; the peel captures that carry state (0 or 1) as the two buckets
 //! `[A0, A1]` of [`summarize_pow2_block_carries`].
 
-use crate::{AkitaError, FieldCore};
+use akita_error::AkitaError;
+
+use crate::FieldCore;
 
 /// Sparse/pruned partial multilinear evaluation of a single materialized
 /// factor over the contiguous global interval `[offset, offset + factor.len())`.
@@ -188,7 +190,7 @@ mod tests {
     use super::*;
     use crate::eq_poly::EqPolynomial;
     use crate::RandomSampling;
-    use akita_field::Fp64;
+    use jolt_field::Fp64;
     use rand::rngs::StdRng;
     use rand::SeedableRng;
 

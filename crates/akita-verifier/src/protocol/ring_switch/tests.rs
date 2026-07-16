@@ -1,7 +1,7 @@
 use super::*;
 use akita_challenges::SparseChallengeConfig;
-use akita_field::Fp32;
 use akita_types::{RelationMatrixRowLayout, SetupContributionPlanInputs, SisModulusFamily};
+use jolt_field::Fp32;
 
 type F = Fp32<251>;
 const D: usize = 32;

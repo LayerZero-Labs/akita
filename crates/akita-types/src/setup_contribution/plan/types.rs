@@ -2,7 +2,8 @@ use super::kernels::GroupSetupSegment;
 use crate::{
     RelationMatrixRowLayout, SetupContributionPlanInputs, WitnessChunkLayout, WitnessLayout,
 };
-use akita_field::{AkitaError, FieldCore};
+use akita_error::AkitaError;
+use jolt_field::FieldCore;
 use std::sync::Arc;
 
 #[derive(Clone)]

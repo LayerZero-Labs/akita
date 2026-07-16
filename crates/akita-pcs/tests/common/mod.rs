@@ -2,7 +2,6 @@
 
 pub(super) use akita_config::proof_optimized::fp128;
 pub(super) use akita_config::CommitmentConfig;
-pub(super) use akita_field::{CanonicalField, FieldCore};
 use akita_prover::compute::{OpeningFoldKernel, OpeningFoldPlan, RootOpeningSource, RootPolyShape};
 use akita_prover::CpuBackend;
 pub(super) use akita_prover::DensePoly;
@@ -14,6 +13,7 @@ pub(super) use akita_types::{
     BasisMode, BlockOrder, Commitment, OpeningClaims, PointVariableSelection,
     PolynomialGroupClaims,
 };
+pub(super) use jolt_field::{CanonicalField, FieldCore};
 pub(super) use rand::rngs::StdRng;
 pub(super) use rand::{Rng, SeedableRng};
 use std::sync::Once;

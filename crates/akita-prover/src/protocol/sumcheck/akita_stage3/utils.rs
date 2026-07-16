@@ -1,5 +1,5 @@
-use akita_field::parallel::*;
-use akita_field::{FieldCore, FromPrimitiveInt};
+use jolt_field::parallel::*;
+use jolt_field::{FieldCore, FromPrimitiveInt};
 
 pub(super) fn product_claim<E: FieldCore>(table: &[E], left_factor: &[E], right_factor: &[E]) -> E {
     let right_len = right_factor.len();

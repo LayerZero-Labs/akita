@@ -249,7 +249,7 @@ pub(crate) fn pad_compact_witness(
 
 #[cfg(test)]
 pub(crate) fn advance_stage1_claim<
-    F: FieldCore + FromPrimitiveInt + akita_field::CanonicalField + HasUnreducedOps + HasOptimizedFold,
+    F: FieldCore + FromPrimitiveInt + jolt_field::CanonicalField + HasUnreducedOps + HasOptimizedFold,
 >(
     prover: &AkitaStage1Prover<F>,
     scaled_claim: F,

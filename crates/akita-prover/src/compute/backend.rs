@@ -6,9 +6,10 @@ use crate::compute::plans::{
 use crate::kernels::crt_ntt::NttSlotCacheAny;
 use crate::AkitaProverSetup;
 use akita_algebra::CyclotomicRing;
-use akita_field::unreduced::{HasWide, ReduceTo};
-use akita_field::{AdditiveGroup, AkitaError, CanonicalField, FieldCore, HalvingField};
+use akita_error::AkitaError;
 use akita_types::{dispatch_for_field, AkitaExpandedSetup, NttCacheKey};
+use jolt_field::unreduced::{HasWide, ReduceTo};
+use jolt_field::{AdditiveGroup, CanonicalField, FieldCore, HalvingField};
 use std::sync::Arc;
 
 /// Shared prepared-setup contract for prover compute backends.

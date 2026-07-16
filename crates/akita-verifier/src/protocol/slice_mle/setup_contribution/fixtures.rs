@@ -5,12 +5,12 @@
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::ring::{eval_ring_at_pows, scalar_powers};
 use akita_algebra::CyclotomicRing;
-use akita_field::{CanonicalField, Prime128OffsetA7F7};
 use akita_types::{
     gadget_row_scalars, AkitaExpandedSetup, AkitaSetupSeed, CommitmentRingDims, FlatMatrix,
     RelationMatrixRowLayout, SetupContributionPlan, SetupContributionPlanInputs,
     WitnessChunkLayout, WitnessChunkLengths, WitnessLayout,
 };
+use jolt_field::{CanonicalField, Prime128OffsetA7F7};
 
 use super::evaluate_setup_contribution_direct;
 use crate::protocol::ring_switch::{

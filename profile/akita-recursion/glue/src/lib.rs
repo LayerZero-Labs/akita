@@ -10,7 +10,7 @@
 
 #![allow(clippy::missing_errors_doc)]
 
-use akita_field::{CanonicalField, FieldCore, RandomSampling};
+use jolt_field::{CanonicalField, FieldCore, RandomSampling};
 use akita_serialization::{
     AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
 };
@@ -516,7 +516,7 @@ pub use akita_algebra as _akita_algebra_dep;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use akita_field::Prime128Offset275;
+    use jolt_field::Prime128Offset275;
     use akita_types::{
         derive_public_matrix_flat, sample_public_matrix_seed, setup_prefix_slot_id, AjtaiKeyParams,
         PolynomialGroupLayout, PrecommittedGroupParams, PrecommittedLevelParams, RingVec,

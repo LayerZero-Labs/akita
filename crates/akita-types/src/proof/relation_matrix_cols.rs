@@ -15,9 +15,10 @@ use crate::{
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::ring::{eval_flat_ring_at_pows_fast, scalar_powers};
 use akita_challenges::Challenges;
-use akita_field::parallel::*;
-use akita_field::{
-    AkitaError, CanonicalField, FieldCore, FromPrimitiveInt, LiftBase, MulBase, MulBaseUnreduced,
+use akita_error::AkitaError;
+use jolt_field::parallel::*;
+use jolt_field::{
+    CanonicalField, FieldCore, FromPrimitiveInt, LiftBase, MulBase, MulBaseUnreduced,
 };
 
 /// Unified relation matrix column evaluation for singleton and multi-group root relations.

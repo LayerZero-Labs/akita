@@ -1,6 +1,7 @@
 //! Header-stripped proof-size and planned-witness sizing formulas.
 
-use akita_field::{AkitaError, CanonicalField};
+use akita_error::AkitaError;
+use jolt_field::CanonicalField;
 
 use crate::sis::compute_num_digits_full_field;
 use crate::PolynomialGroupLayout;

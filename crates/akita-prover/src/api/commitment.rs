@@ -8,9 +8,7 @@ use crate::compute::{
 use crate::validation::validate_i8_setup_log_basis;
 use crate::{CommitInnerWitness, RootTensorProjectionPoly};
 use akita_config::{ensure_schedule_fits_setup, CommitmentConfig, ConservativeCommitmentConfig};
-use akita_field::parallel::*;
-use akita_field::unreduced::{HasWide, ReduceTo};
-use akita_field::{AkitaError, CanonicalField, FieldCore, FromPrimitiveInt, RandomSampling};
+use akita_error::AkitaError;
 use akita_types::{
     dispatch_for_field, root_tensor_projection_enabled, schedule_root_fold_step,
     validate_role_dims, validate_role_dims_for_field, AkitaCommitmentHint, AkitaExpandedSetup,
@@ -18,6 +16,9 @@ use akita_types::{
     OpeningClaimsLayout, PolynomialGroupLayout, PrecommittedGroupParams,
     MULTI_GROUP_ROOT_DENSE_UNSUPPORTED,
 };
+use jolt_field::parallel::*;
+use jolt_field::unreduced::{HasWide, ReduceTo};
+use jolt_field::{CanonicalField, FieldCore, FromPrimitiveInt, RandomSampling};
 
 /// Commitment output plus prover-side hint for one committed polynomial bundle.
 ///
@@ -897,9 +898,9 @@ mod tests {
     use crate::{AkitaProverSetup, MultilinearPolynomial, OneHotPoly};
     use akita_algebra::CyclotomicRing;
     use akita_challenges::SparseChallengeConfig;
-    use akita_field::Fp64;
     use akita_types::DigitBlocks;
     use akita_types::{SetupMatrixEnvelope, SisModulusFamily};
+    use jolt_field::Fp64;
 
     type F = Fp64<4294967197>;
     const D: usize = 64;

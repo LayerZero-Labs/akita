@@ -12,7 +12,7 @@ use std::ops::{Add, Neg, Sub};
 ///
 /// This trait represents a module over a scalar field or ring. It lives in
 /// `akita-algebra` because modules are algebraic containers; concrete scalar
-/// fields live in `akita-field`.
+/// fields live in `jolt-field`.
 pub trait Module:
     Sized
     + Clone
@@ -151,7 +151,12 @@ impl<F: FieldCore + Valid + AkitaDeserialize<Context = ()>, const N: usize> Akit
 
 impl<F, const N: usize> Module for VectorModule<F, N>
 where
-    F: FieldCore + CanonicalField + RandomSampling + Valid,
+    F: FieldCore
+        + CanonicalField
+        + RandomSampling
+        + Valid
+        + AkitaSerialize
+        + AkitaDeserialize<Context = ()>,
 {
     type Scalar = F;
 

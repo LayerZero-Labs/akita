@@ -3,12 +3,6 @@ use crate::report::{
     print_batched_proof_summary, report_crt_profile, report_setup_sizes, report_timing,
 };
 use akita_config::{CommitmentConfig, ConservativeCommitmentConfig, RecursiveCommitmentConfig};
-use akita_field::unreduced::{HasOptimizedFold, HasUnreducedOps, HasWide, ReduceTo};
-use akita_field::{
-    AdditiveGroup, CanonicalBytes, CanonicalField, ExtField, FieldCore, FrobeniusExtField,
-    FromPrimitiveInt, HalvingField, LiftBase, PseudoMersenneField, RandomSampling,
-    TranscriptChallenge,
-};
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::compute::{
     OpeningFoldKernel, OpeningFoldPlan, RecursiveProveBackend, RootPolyShape, RootProvePoly,
@@ -24,6 +18,12 @@ use akita_types::{
     BlockOrder, CleartextWitnessProof, CleartextWitnessShape, Commitment, FpExtEncoding,
     LevelParams, OpeningClaims, OpeningClaimsLayout, PointVariableSelection, PolynomialGroupClaims,
     PolynomialGroupLayout, PrecommittedGroupParams, Schedule, SetupContributionMode, Step,
+};
+use jolt_field::unreduced::{HasOptimizedFold, HasUnreducedOps, HasWide, ReduceTo};
+use jolt_field::{
+    AdditiveGroup, CanonicalBytes, CanonicalField, ExtField, FieldCore, FrobeniusExtField,
+    FromPrimitiveInt, HalvingField, LiftBase, PseudoMersenneField, RandomSampling,
+    TranscriptChallenge,
 };
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};

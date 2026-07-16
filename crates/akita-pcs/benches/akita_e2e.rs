@@ -3,7 +3,6 @@
 use akita_algebra::poly::multilinear_eval;
 use akita_config::proof_optimized::fp128;
 use akita_config::CommitmentConfig;
-use akita_field::{CanonicalField, FieldCore};
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::{ComputeBackendSetup, CpuBackend, DensePoly, OneHotPoly, ProverOpeningData};
 use akita_transcript::AkitaTranscript;
@@ -13,6 +12,7 @@ use akita_types::{
 };
 use criterion::measurement::WallTime;
 use criterion::{black_box, criterion_group, BatchSize, BenchmarkGroup, Criterion};
+use jolt_field::{CanonicalField, FieldCore};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use std::time::Duration;

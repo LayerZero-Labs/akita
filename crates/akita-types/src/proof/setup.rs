@@ -4,12 +4,12 @@ use super::setup_prefix::SetupPrefixVerifierRegistry;
 use crate::FlatMatrix;
 #[cfg(test)]
 use akita_algebra::CyclotomicRing;
-#[allow(unused_imports)]
-use akita_field::parallel::*;
-use akita_field::{FieldCore, RandomSampling};
 use akita_serialization::{
     AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
 };
+#[allow(unused_imports)]
+use jolt_field::parallel::*;
+use jolt_field::{FieldCore, RandomSampling};
 use rand_core::{CryptoRng, RngCore};
 use sha3::digest::{ExtendableOutput, Update, XofReader};
 use sha3::Shake256;
@@ -519,7 +519,7 @@ impl<F: FieldCore + RandomSampling + Valid + AkitaDeserialize<Context = ()>> Aki
 #[cfg(test)]
 mod tests {
     use super::*;
-    use akita_field::{Fp64, Prime128Offset275};
+    use jolt_field::{Fp64, Prime128Offset275};
 
     type F = Prime128Offset275;
     const D: usize = 4;

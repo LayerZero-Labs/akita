@@ -14,7 +14,7 @@
 //! [`crate::policy_of`].
 
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
-use akita_field::AkitaError;
+use akita_error::AkitaError;
 use akita_planner::{find_group_batch_schedule, EmitSpec, PlannerPolicy};
 use akita_types::{
     AkitaScheduleInputs, AkitaScheduleLookupKey, OpeningClaimsLayout, PolynomialGroupLayout,

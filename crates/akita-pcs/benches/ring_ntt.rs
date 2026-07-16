@@ -8,9 +8,9 @@ use akita_algebra::{
     CrtNttParamSet, CyclotomicCrtNtt, CyclotomicRing, MontCoeff, PackedPartialSplitEval16,
     PartialSplitEval16, PartialSplitNtt16,
 };
-use akita_field::packed::HasPacking;
-use akita_field::{Fp64, HalvingField, Prime128Offset159};
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
+use jolt_field::packed::HasPacking;
+use jolt_field::{Fp64, HalvingField, Prime128Offset159};
 
 type F = Fp64<{ Q32_MODULUS }>;
 type R = CyclotomicRing<F, 64>;

@@ -10,10 +10,11 @@ use crate::backend::{
     RecursiveFoldSource, RecursiveWitnessFlat, RingSwitchQuotientView, RingSwitchRelationView,
 };
 use crate::RootTensorProjectionPoly;
-use akita_field::unreduced::{HasWide, ReduceTo};
-use akita_field::RandomSampling;
-use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt};
+use akita_error::AkitaError;
 use akita_types::CleartextWitnessProof;
+use jolt_field::unreduced::{HasWide, ReduceTo};
+use jolt_field::RandomSampling;
+use jolt_field::{CanonicalField, ExtField, FieldCore, FromPrimitiveInt};
 
 /// D-free shape metadata every root polynomial exposes.
 ///

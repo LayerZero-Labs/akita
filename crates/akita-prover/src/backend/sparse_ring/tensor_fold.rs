@@ -6,8 +6,9 @@ use crate::backend::tensor_fold::{
 };
 use crate::DecomposeFoldWitness;
 use akita_challenges::TensorChallenges as TensorChallengeSet;
-use akita_field::parallel::*;
-use akita_field::{AkitaError, CanonicalField, FieldCore, FromPrimitiveInt};
+use akita_error::AkitaError;
+use jolt_field::parallel::*;
+use jolt_field::{CanonicalField, FieldCore, FromPrimitiveInt};
 
 pub(super) fn decompose_fold_batched_tensor_sparse<F, const D: usize>(
     polys: &[&SparseRingPoly<F>],

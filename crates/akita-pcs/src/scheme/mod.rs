@@ -1,11 +1,7 @@
 //! End-to-end Akita PCS scheme orchestration.
 
 use akita_config::CommitmentConfig;
-use akita_field::unreduced::{HasOptimizedFold, HasUnreducedOps, HasWide, ReduceTo};
-use akita_field::{
-    AdditiveGroup, AkitaError, CanonicalField, FieldCore, FrobeniusExtField, FromPrimitiveInt,
-    HalvingField, PseudoMersenneField, RandomSampling,
-};
+use akita_error::AkitaError;
 use akita_prover::compute::{
     ComputeBackendSetup, LevelProveStacks, RecursiveProveBackend, RuntimeRootCommitBackend,
     RuntimeRootCommitPoly, RuntimeRootProvePoly, UniformProverStack,
@@ -21,6 +17,11 @@ use akita_types::{
 };
 use akita_types::{AkitaBatchedProof, AkitaCommitmentHint, SetupContributionMode};
 use akita_types::{AkitaVerifierSetup, OpeningClaims};
+use jolt_field::unreduced::{HasOptimizedFold, HasUnreducedOps, HasWide, ReduceTo};
+use jolt_field::{
+    AdditiveGroup, CanonicalField, FieldCore, FrobeniusExtField, FromPrimitiveInt, HalvingField,
+    PseudoMersenneField, RandomSampling,
+};
 use std::marker::PhantomData;
 use std::time::Instant;
 

@@ -9,12 +9,12 @@ use crate::compute::{
 };
 use crate::RootTensorProjectionPoly;
 use akita_config::{effective_batched_schedule, ensure_schedule_fits_setup, CommitmentConfig};
-use akita_field::unreduced::ReduceTo;
-use akita_field::{AdditiveGroup, CanonicalField};
 use akita_types::{
     dispatch_for_field, schedule_terminal_direct_witness_shape, should_reject_multi_group_root,
     validate_schedule_ring_dims,
 };
+use jolt_field::unreduced::ReduceTo;
+use jolt_field::{AdditiveGroup, CanonicalField};
 
 /// Build a root-direct batched proof from flattened polynomial references and
 /// their commitment-group hints.

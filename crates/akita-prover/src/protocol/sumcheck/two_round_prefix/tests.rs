@@ -4,11 +4,11 @@ use super::stage2::*;
 use crate::protocol::sumcheck::akita_stage1::advance_stage1_claim;
 use crate::protocol::sumcheck::akita_stage1::AkitaStage1Prover;
 use akita_algebra::eq_poly::EqPolynomial;
-use akita_field::{FieldCore, Prime128Offset275};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_sumcheck::{EqFactoredSumcheckInstanceProver, EqFactoredUniPoly, UniPoly};
 use akita_types::{range_check_eval_from_s, reorder_stage1_coords};
 use akita_types::{TraceSparseColumn, TraceTable};
+use jolt_field::{FieldCore, Prime128Offset275};
 use std::collections::HashMap;
 
 type F = Prime128Offset275;

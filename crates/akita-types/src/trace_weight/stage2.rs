@@ -4,7 +4,8 @@ use std::marker::PhantomData;
 
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::CyclotomicRing;
-use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, Invertible};
+use akita_error::AkitaError;
+use jolt_field::{CanonicalField, ExtField, FieldCore, FromPrimitiveInt, Invertible};
 
 use super::build::{
     build_trace_weight_compact_field_sparse_scaled, build_trace_weight_compact_ring_terms_scaled,
@@ -318,7 +319,7 @@ where
                                 .to_string(),
                         )
                     })?;
-                Ok(TraceRingBlockOpening {
+                Ok::<_, AkitaError>(TraceRingBlockOpening {
                     block_offset: item.block_offset,
                     block_rings: scaled_ring_weights(block_rings, item.scaled_coefficient)?,
                     packed_inner_point: item.prepared.packed_inner_owned::<D>()?,

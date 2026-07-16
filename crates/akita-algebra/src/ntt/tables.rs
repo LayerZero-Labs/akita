@@ -116,14 +116,14 @@ pub fn q128_garner() -> GarnerData<i32, Q128_NUM_PRIMES> {
 pub fn validate_profile_crt_ring_degree(
     ring_d: usize,
     max_d: usize,
-) -> Result<(), akita_field::AkitaError> {
+) -> Result<(), akita_error::AkitaError> {
     if ring_d == 0 || !ring_d.is_power_of_two() {
-        return Err(akita_field::AkitaError::InvalidSetup(format!(
+        return Err(akita_error::AkitaError::InvalidSetup(format!(
             "CRT ring degree must be a non-zero power of two, got {ring_d}"
         )));
     }
     if ring_d > max_d {
-        return Err(akita_field::AkitaError::InvalidSetup(format!(
+        return Err(akita_error::AkitaError::InvalidSetup(format!(
             "ring degree {ring_d} exceeds profile max {max_d}"
         )));
     }

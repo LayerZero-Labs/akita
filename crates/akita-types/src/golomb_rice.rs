@@ -3,7 +3,7 @@
 //! Wire format is standard Rice only: unary quotient prefix + stop bit + low-bit remainder.
 //! Decode rejects unary runs longer than the cap-derived maximum quotient.
 
-use akita_field::AkitaError;
+use akita_error::AkitaError;
 
 use crate::instance_descriptor::FoldLinfProtocolBinding;
 use crate::tail_golomb_rice_low_bits::{

@@ -10,8 +10,9 @@ use crate::compute::{
     DirectRootWitnessSource, RootCommitSource, RootOpeningSource, RootPolyMeta, RootPolyShape,
     RootTensorSource,
 };
-use akita_field::{AkitaError, FieldCore};
+use akita_error::AkitaError;
 use akita_types::{CleartextWitnessProof, RingVec};
+use jolt_field::FieldCore;
 
 /// Borrowed single-polynomial view over dense ring storage at dimension `D`.
 ///

@@ -5,7 +5,7 @@
 use akita_config::proof_optimized::{fp128, fp64};
 use akita_config::test_support::ring_plan_test_seed;
 use akita_config::{effective_batched_schedule, CommitmentConfig};
-use akita_field::AkitaError;
+use akita_error::AkitaError;
 use akita_types::{
     validate_role_dispatch, validate_schedule_ring_dims, AkitaScheduleLookupKey,
     CleartextWitnessShape, DirectStep, FoldStep, LevelParams, OpeningClaimsLayout, RingRole,

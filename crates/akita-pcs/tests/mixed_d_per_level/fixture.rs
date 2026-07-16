@@ -6,7 +6,7 @@
 
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_config::{policy_of, CommitmentConfig};
-use akita_field::AkitaError;
+use akita_error::AkitaError;
 use akita_planner::generated::{table_entry, GeneratedFoldStep, GeneratedStep};
 use akita_planner::PlannerPolicy;
 use akita_types::sis::{

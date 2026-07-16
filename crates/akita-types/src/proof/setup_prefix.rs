@@ -10,10 +10,11 @@ use crate::{
     AjtaiKeyParams, LevelParams, OpeningClaimsLayout, PolynomialGroupLayout,
     PrecommittedGroupParams, PrecommittedLevelParams, SisModulusFamily,
 };
-use akita_field::{AkitaError, FieldCore};
+use akita_error::AkitaError;
 use akita_serialization::{
     AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
 };
+use jolt_field::FieldCore;
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
 use std::hash::{Hash, Hasher};
@@ -1222,7 +1223,7 @@ mod tests {
 
     #[test]
     fn select_setup_prefix_slot_uses_exact_registry_match() {
-        use akita_field::Prime32Offset99 as F;
+        use jolt_field::Prime32Offset99 as F;
 
         let level_params = prefix_eligible_level_params();
         let d_setup = 32usize;
@@ -1294,7 +1295,7 @@ mod tests {
 
     #[test]
     fn select_setup_prefix_slot_rejects_missing_registry_entry() {
-        use akita_field::Prime32Offset99 as F;
+        use jolt_field::Prime32Offset99 as F;
 
         let mut level_params = prefix_eligible_level_params();
         let d_setup = 32usize;
@@ -1324,7 +1325,7 @@ mod tests {
     #[test]
     fn prover_registry_duplicate_insert_does_not_replace_existing_slot() {
         use crate::proof::DigitBlocks;
-        use akita_field::Prime32Offset99 as F;
+        use jolt_field::Prime32Offset99 as F;
 
         let commitment_params =
             setup_prefix_precommitted_params(&sample_level_params(), 32).expect("prefix params");
@@ -1356,7 +1357,7 @@ mod tests {
 
     #[test]
     fn verifier_registry_duplicate_insert_does_not_replace_existing_slot() {
-        use akita_field::Prime32Offset99 as F;
+        use jolt_field::Prime32Offset99 as F;
 
         let commitment_params =
             setup_prefix_precommitted_params(&sample_level_params(), 32).expect("prefix params");

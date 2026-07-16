@@ -1,4 +1,4 @@
-use akita_field::AkitaError;
+use akita_error::AkitaError;
 
 /// Unified singleton/multi-group relation matrix column evaluation.
 ///

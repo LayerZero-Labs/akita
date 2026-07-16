@@ -10,7 +10,7 @@ use crate::{
     reduce_inner_opening_to_ring_element, BasisMode,
 };
 use akita_algebra::CyclotomicRing;
-use akita_field::{Prime128OffsetA7F7, RandomSampling};
+use jolt_field::{Prime128OffsetA7F7, RandomSampling};
 use rand::rngs::StdRng;
 use rand::SeedableRng;
 
@@ -75,7 +75,7 @@ fn weighted_folded_block_sum(
         })
 }
 
-fn trace_weight_witness_dot<E: akita_field::FieldCore>(witness: &[E], trace_weight: &[E]) -> E {
+fn trace_weight_witness_dot<E: jolt_field::FieldCore>(witness: &[E], trace_weight: &[E]) -> E {
     witness
         .iter()
         .zip(trace_weight.iter())
@@ -254,7 +254,8 @@ fn witness_dot_matches_ring_subfield_inner_product_field_block_weights() {
 mod ring_block_weights {
     use super::*;
     use crate::{basis_weights, embed_ring_subfield_vector};
-    use akita_field::{AkitaError, Ext2, Fp32, FpExt4, FpExt8, LiftBase};
+    use akita_error::AkitaError;
+    use jolt_field::{Ext2, Fp32, FpExt4, FpExt8, LiftBase};
     use std::marker::PhantomData;
 
     type F2 = Fp32<251>;
@@ -294,16 +295,16 @@ mod ring_block_weights {
 
     fn trace_inner_open_len<F, E, const D: usize>() -> usize
     where
-        F: akita_field::FieldCore,
-        E: akita_field::ExtField<F>,
+        F: jolt_field::FieldCore,
+        E: jolt_field::ExtField<F>,
     {
         (D / E::EXT_DEGREE).trailing_zeros() as usize
     }
 
     fn packed_inner_point<F, E, const D: usize>(trace_inner_open: &[E]) -> CyclotomicRing<F, D>
     where
-        F: akita_field::FieldCore + akita_field::FromPrimitiveInt,
-        E: akita_field::ExtField<F> + crate::FpExtEncoding<F> + akita_field::FieldCore,
+        F: jolt_field::FieldCore + jolt_field::FromPrimitiveInt,
+        E: jolt_field::ExtField<F> + crate::FpExtEncoding<F> + jolt_field::FieldCore,
     {
         let weights = basis_weights(trace_inner_open, BasisMode::Lagrange).unwrap();
         embed_ring_subfield_vector(
@@ -313,7 +314,7 @@ mod ring_block_weights {
         .unwrap()
     }
 
-    fn random_extension_point<E: akita_field::RandomSampling>(
+    fn random_extension_point<E: jolt_field::RandomSampling>(
         rng: &mut StdRng,
         len: usize,
     ) -> Vec<E> {
@@ -325,8 +326,8 @@ mod ring_block_weights {
         layout: &TraceWeightLayout,
     ) -> (Vec<E>, Vec<E>)
     where
-        F: akita_field::FieldCore,
-        E: akita_field::ExtField<F> + akita_field::RandomSampling,
+        F: jolt_field::FieldCore,
+        E: jolt_field::ExtField<F> + jolt_field::RandomSampling,
     {
         let trace_inner_open = random_extension_point(rng, trace_inner_open_len::<F, E, D>());
         let b_open = random_extension_point(rng, layout.r_vars);
@@ -334,7 +335,7 @@ mod ring_block_weights {
     }
 
     fn random_folded_block<
-        F: akita_field::FieldCore + akita_field::RandomSampling,
+        F: jolt_field::FieldCore + jolt_field::RandomSampling,
         const D: usize,
     >(
         rng: &mut StdRng,
@@ -349,16 +350,16 @@ mod ring_block_weights {
 
     fn run_closed_form_matches_dense_table<F, E, const D: usize, const K: usize>()
     where
-        F: akita_field::FieldCore
-            + akita_field::CanonicalField
-            + akita_field::FromPrimitiveInt
-            + akita_field::Invertible
-            + akita_field::RandomSampling,
+        F: jolt_field::FieldCore
+            + jolt_field::CanonicalField
+            + jolt_field::FromPrimitiveInt
+            + jolt_field::Invertible
+            + jolt_field::RandomSampling,
         E: crate::FpExtEncoding<F>
-            + akita_field::ExtField<F>
-            + akita_field::FieldCore
-            + akita_field::FromPrimitiveInt
-            + akita_field::RandomSampling,
+            + jolt_field::ExtField<F>
+            + jolt_field::FieldCore
+            + jolt_field::FromPrimitiveInt
+            + jolt_field::RandomSampling,
     {
         let layout = ring_block_weights_layout::<D>();
         let mut rng = StdRng::seed_from_u64(0x7ACE_1000 + D as u64);
@@ -400,16 +401,16 @@ mod ring_block_weights {
 
     fn run_witness_dot_matches_ring_subfield_inner_product<F, E, const D: usize, const K: usize>()
     where
-        F: akita_field::FieldCore
-            + akita_field::CanonicalField
-            + akita_field::FromPrimitiveInt
-            + akita_field::Invertible
-            + akita_field::RandomSampling,
+        F: jolt_field::FieldCore
+            + jolt_field::CanonicalField
+            + jolt_field::FromPrimitiveInt
+            + jolt_field::Invertible
+            + jolt_field::RandomSampling,
         E: crate::FpExtEncoding<F>
-            + akita_field::ExtField<F>
-            + akita_field::FieldCore
-            + akita_field::FromPrimitiveInt
-            + akita_field::RandomSampling,
+            + jolt_field::ExtField<F>
+            + jolt_field::FieldCore
+            + jolt_field::FromPrimitiveInt
+            + jolt_field::RandomSampling,
     {
         let layout = ring_block_weights_layout::<D>();
         let mut rng = StdRng::seed_from_u64(0x7ACE_2000 + D as u64);
@@ -564,7 +565,8 @@ mod ring_block_weights {
 mod closed_terms {
     use super::*;
     use crate::{basis_weights, embed_ring_subfield_vector, reduce_inner_opening_to_ring_element};
-    use akita_field::{AkitaError, Ext2, Fp32, FpExt4, FpExt8};
+    use akita_error::AkitaError;
+    use jolt_field::{Ext2, Fp32, FpExt4, FpExt8};
 
     type Fk = Fp32<251>;
     type E2 = Ext2<Fk>;
@@ -573,20 +575,20 @@ mod closed_terms {
 
     const LB: u32 = 3;
 
-    fn ext_point<E: akita_field::RandomSampling>(rng: &mut StdRng, len: usize) -> Vec<E> {
+    fn ext_point<E: jolt_field::RandomSampling>(rng: &mut StdRng, len: usize) -> Vec<E> {
         (0..len).map(|_| E::random(rng)).collect()
     }
 
     fn trace_inner_len<E, const D: usize>() -> usize
     where
-        E: akita_field::ExtField<Fk>,
+        E: jolt_field::ExtField<Fk>,
     {
         (D / E::EXT_DEGREE).trailing_zeros() as usize
     }
 
     fn packed_inner<E, const D: usize>(trace_inner_open: &[E]) -> CyclotomicRing<Fk, D>
     where
-        E: akita_field::ExtField<Fk> + crate::FpExtEncoding<Fk> + akita_field::FieldCore,
+        E: jolt_field::ExtField<Fk> + crate::FpExtEncoding<Fk> + jolt_field::FieldCore,
     {
         let weights = basis_weights(trace_inner_open, BasisMode::Lagrange).unwrap();
         embed_ring_subfield_vector(
@@ -600,10 +602,10 @@ mod closed_terms {
     fn run_single_ring<E, const D: usize>(seed: u64, layout: &TraceWeightLayout)
     where
         E: crate::FpExtEncoding<Fk>
-            + akita_field::ExtField<Fk>
-            + akita_field::FieldCore
-            + akita_field::FromPrimitiveInt
-            + akita_field::RandomSampling,
+            + jolt_field::ExtField<Fk>
+            + jolt_field::FieldCore
+            + jolt_field::FromPrimitiveInt
+            + jolt_field::RandomSampling,
     {
         let mut rng = StdRng::seed_from_u64(seed);
         for _ in 0..8 {

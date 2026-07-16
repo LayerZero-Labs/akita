@@ -1,11 +1,11 @@
 use super::common::*;
 use akita_algebra::eq_poly::EqPolynomial;
-use akita_field::parallel::*;
-use akita_field::unreduced::HasUnreducedOps;
-use akita_field::{FieldCore, FromPrimitiveInt, Zero};
 #[cfg(test)]
 use akita_sumcheck::UniPoly;
 use akita_sumcheck::{reduce_signed_accum, EqFactoredUniPoly};
+use jolt_field::parallel::*;
+use jolt_field::unreduced::HasUnreducedOps;
+use jolt_field::{FieldCore, FromPrimitiveInt, Zero};
 
 /// Candidate stage-1 domain `{1, -1, 2, Infinity}`.
 #[cfg(test)]

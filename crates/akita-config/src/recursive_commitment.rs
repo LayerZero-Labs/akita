@@ -2,7 +2,7 @@
 
 use crate::CommitmentConfig;
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
-use akita_field::AkitaError;
+use akita_error::AkitaError;
 use akita_types::{
     AkitaScheduleInputs, AkitaScheduleLookupKey, ChunkedWitnessCfg, DecompositionParams,
     OpeningClaimsLayout, Schedule, SetupMatrixEnvelope, SisModulusFamily, SETUP_OFFLOAD_D_SETUP,

@@ -1,7 +1,8 @@
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::offset_eq::{eq_eval_at_index, high_eq_window};
-use akita_field::parallel::*;
-use akita_field::{AkitaError, FieldCore, MulBase};
+use akita_error::AkitaError;
+use jolt_field::parallel::*;
+use jolt_field::{FieldCore, MulBase};
 
 const POSSIBLE_CARRIES: usize = 2;
 

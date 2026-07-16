@@ -2,8 +2,9 @@
 
 use crate::DecomposeFoldWitness;
 use akita_algebra::CyclotomicRing;
-use akita_field::{AkitaError, FieldCore};
+use akita_error::AkitaError;
 use akita_types::{AkitaCommitmentHint, CommitmentRingDims, DigitBlocks, RingRole, RingVec};
+use jolt_field::FieldCore;
 
 /// Per-group secret witness for the ring relation at one fold level.
 pub struct RingRelationGroupWitness<F: FieldCore> {

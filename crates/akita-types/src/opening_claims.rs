@@ -4,11 +4,12 @@ use crate::descriptor_bytes::{push_usize, push_usize_vec};
 use crate::instance_descriptor::DescriptorDigest;
 use crate::proof::scheme::OpeningPoints;
 use crate::proof::setup::AkitaSetupSeed;
-use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
+use akita_error::AkitaError;
 use akita_transcript::labels::{ABSORB_BATCH_SHAPE, CHALLENGE_EVAL_BATCH};
 use akita_transcript::{sample_ext_challenge, Transcript};
 use blake2::digest::consts::U32;
 use blake2::{Blake2b, Digest};
+use jolt_field::{CanonicalField, ExtField, FieldCore};
 use std::collections::BTreeSet;
 
 /// Dense polynomials cannot open multi-group root batches yet.
@@ -699,7 +700,7 @@ fn blake2b_256(bytes: &[u8]) -> DescriptorDigest {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use akita_field::Prime128OffsetA7F7;
+    use jolt_field::Prime128OffsetA7F7;
 
     type F = Prime128OffsetA7F7;
 

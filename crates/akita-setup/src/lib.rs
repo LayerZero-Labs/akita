@@ -7,8 +7,7 @@
 mod recursive_prefixes;
 
 use akita_config::CommitmentConfig;
-use akita_field::unreduced::HasWide;
-use akita_field::{AkitaError, CanonicalField, FieldCore, RandomSampling};
+use akita_error::AkitaError;
 use akita_prover::AkitaProverSetup;
 use akita_serialization::Valid;
 #[cfg(feature = "disk-persistence")]
@@ -24,6 +23,8 @@ use akita_types::{
 };
 #[cfg(test)]
 use akita_types::{AkitaVerifierSetup, SetupPrefixVerifierRegistry};
+use jolt_field::unreduced::HasWide;
+use jolt_field::{CanonicalField, FieldCore, RandomSampling};
 #[cfg(feature = "disk-persistence")]
 use std::fmt::Write as _;
 #[cfg(feature = "disk-persistence")]
@@ -87,7 +88,12 @@ pub fn new_prover_setup<F, Cfg>(
     max_num_batched_polys: usize,
 ) -> Result<AkitaProverSetup<F>, AkitaError>
 where
-    F: FieldCore + CanonicalField + RandomSampling + HasWide + Valid,
+    F: FieldCore
+        + CanonicalField
+        + RandomSampling
+        + HasWide
+        + Valid
+        + akita_serialization::AkitaSerialize,
     Cfg: CommitmentConfig<Field = F>,
 {
     if max_num_batched_polys == 0 {

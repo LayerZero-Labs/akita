@@ -13,10 +13,10 @@ pub(crate) use position_sample::MAX_STACK_RING_DIM;
 pub(crate) use signed_sparse::SignedSparseScratch;
 pub(crate) use xof::XofCursor;
 
-use akita_field::AkitaError;
-use akita_field::{CanonicalField, FieldCore};
+use akita_error::AkitaError;
 use akita_transcript::labels::{ABSORB_SPARSE_CHALLENGE, CHALLENGE_SPARSE_CHALLENGE};
 use akita_transcript::Transcript;
+use jolt_field::{CanonicalField, FieldCore};
 
 use crate::{SparseChallenge, SparseChallengeConfig};
 

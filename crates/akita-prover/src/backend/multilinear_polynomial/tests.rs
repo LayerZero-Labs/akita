@@ -6,7 +6,7 @@ use crate::compute::{
     TensorProjectionKernel,
 };
 use crate::{DensePoly, OneHotPoly};
-use akita_field::{CanonicalField, ExtField, FpExt4, Prime24Offset3};
+use jolt_field::{CanonicalField, ExtField, FpExt4, Prime24Offset3};
 
 fn sample_dense<const D: usize>() -> DensePoly<Prime24Offset3> {
     let num_vars = 5;

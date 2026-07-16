@@ -6,8 +6,8 @@ pub mod labels;
 mod logging;
 mod sponge;
 
-use akita_field::{CanonicalField, ExtField, FieldCore};
 use akita_serialization::AkitaSerialize;
+use jolt_field::{CanonicalField, ExtField, FieldCore};
 
 pub use label::Label;
 #[cfg(feature = "logging-transcript")]

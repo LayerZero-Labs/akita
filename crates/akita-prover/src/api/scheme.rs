@@ -7,13 +7,13 @@ use crate::compute::{
 };
 use crate::ProverOpeningData;
 use crate::ProverTranscriptGrind;
-use akita_field::unreduced::{HasWide, ReduceTo};
-use akita_field::{
-    AdditiveGroup, AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt,
-    RandomSampling,
-};
+use akita_error::AkitaError;
 use akita_transcript::Transcript;
 use akita_types::{BasisMode, FpExtEncoding, PolynomialGroupLayout, SetupContributionMode};
+use jolt_field::unreduced::{HasWide, ReduceTo};
+use jolt_field::{
+    AdditiveGroup, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, RandomSampling,
+};
 
 /// Prover-side commitment-scheme interface used by Akita protocol code.
 ///

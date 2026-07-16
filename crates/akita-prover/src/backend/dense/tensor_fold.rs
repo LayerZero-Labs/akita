@@ -10,8 +10,9 @@ use crate::DecomposeFoldWitness;
 use akita_algebra::ring::cyclotomic::decompose_centering_threshold;
 use akita_algebra::CyclotomicRing;
 use akita_challenges::TensorChallenges as TensorChallengeSet;
-use akita_field::parallel::*;
-use akita_field::{AkitaError, CanonicalField, FieldCore};
+use akita_error::AkitaError;
+use jolt_field::parallel::*;
+use jolt_field::{CanonicalField, FieldCore};
 
 pub(super) fn decompose_fold_batched_tensor_dense<F, const D: usize>(
     polys: &[&DensePoly<F>],

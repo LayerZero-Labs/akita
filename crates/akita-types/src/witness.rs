@@ -11,7 +11,7 @@
 //! and the per-level [`crate::LevelParams::witness_chunk`] carries the resolved
 //! value the verifier consumes.
 
-use akita_field::AkitaError;
+use akita_error::AkitaError;
 
 /// Per-chunk witness segment ring-column counts (emission order `z ‖ e ‖ t ‖ r`).
 ///

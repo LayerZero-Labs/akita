@@ -1,6 +1,7 @@
 use akita_algebra::offset_eq::eq_eval_at_index;
 use akita_algebra::CyclotomicRing;
-use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, Invertible};
+use akita_error::AkitaError;
+use jolt_field::{CanonicalField, ExtField, FieldCore, FromPrimitiveInt, Invertible};
 use std::marker::PhantomData;
 
 use crate::field_reduction::trace_open_folded_ring_mle_dot;

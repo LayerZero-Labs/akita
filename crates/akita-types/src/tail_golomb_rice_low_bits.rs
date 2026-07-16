@@ -1,6 +1,6 @@
 //! Cap-derived Rice low-bit width for terminal Golomb `z` (descriptor-bound wire rule).
 
-use akita_field::AkitaError;
+use akita_error::AkitaError;
 
 use crate::golomb_rice::rice_low_bits_for_cap;
 

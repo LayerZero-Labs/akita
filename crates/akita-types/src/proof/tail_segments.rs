@@ -4,10 +4,11 @@ use std::io::Write;
 
 use akita_algebra::ring::cyclotomic::BalancedDecomposePow2I8Params;
 use akita_algebra::CyclotomicRing;
-use akita_field::{AkitaError, CanonicalField, FieldCore, HalvingField};
+use akita_error::AkitaError;
 use akita_serialization::{
     AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
 };
+use jolt_field::{CanonicalField, FieldCore, HalvingField};
 
 use crate::descriptor_bytes::{push_u32, push_usize};
 use crate::golomb_rice::{

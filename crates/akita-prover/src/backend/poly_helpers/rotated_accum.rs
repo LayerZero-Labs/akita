@@ -3,7 +3,7 @@
 use super::{extract_balanced_digit, peel_first_balanced_digit_i32, to_signed, DecomposeParams};
 use akita_algebra::CyclotomicRing;
 use akita_challenges::SparseChallenge;
-use akita_field::CanonicalField;
+use jolt_field::CanonicalField;
 
 const D32_ROTATED_CHALLENGE_MIN_WEIGHT: usize = 24;
 const D64_ROTATED_CHALLENGE_MIN_WEIGHT: usize = 42;

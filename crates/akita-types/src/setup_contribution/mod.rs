@@ -8,7 +8,8 @@
 //! challenge point, while the direct verifier scans the packed setup with the
 //! same segment partition.
 
-use akita_field::{AkitaError, CanonicalField, FieldCore};
+use akita_error::AkitaError;
+use jolt_field::{CanonicalField, FieldCore};
 
 mod geometry;
 mod inputs;

@@ -2,7 +2,6 @@ use super::*;
 use akita_config::proof_optimized::fp128;
 use akita_config::test_support::akita_batched_root_layout;
 use akita_config::{CommitmentConfig, ConservativeCommitmentConfig};
-use akita_field::LiftBase;
 use akita_prover::compute::{OpeningFoldKernel, OpeningFoldPlan, RootOpeningSource, RootPolyShape};
 use akita_prover::{ComputeBackendSetup, CpuBackend};
 use akita_prover::{DensePoly, OneHotPoly, ProverOpeningData};
@@ -26,6 +25,7 @@ use akita_types::{
     PolynomialGroupClaims,
 };
 use akita_verifier::cleartext_witness_opening_matches;
+use jolt_field::LiftBase;
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 type Cfg = fp128::D64Full;

@@ -6,11 +6,6 @@ use akita_config::proof_optimized::fp128;
 use akita_config::proof_optimized::{fp32, fp64};
 use akita_config::test_support::akita_batched_root_layout;
 use akita_config::CommitmentConfig;
-use akita_field::unreduced::{HasOptimizedFold, HasUnreducedOps, HasWide, ReduceTo};
-use akita_field::{
-    CanonicalBytes, CanonicalField, ExtField, FieldCore, FrobeniusExtField, FromPrimitiveInt,
-    HalvingField, PseudoMersenneField, RandomSampling, TranscriptChallenge,
-};
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::DensePoly;
 use akita_prover::OneHotPoly;
@@ -26,6 +21,11 @@ use akita_types::{
     OpeningClaims, PointVariableSelection, PolynomialGroupClaims,
 };
 use akita_types::{AkitaScheduleLookupKey, PolynomialGroupLayout};
+use jolt_field::unreduced::{HasOptimizedFold, HasUnreducedOps, HasWide, ReduceTo};
+use jolt_field::{
+    CanonicalBytes, CanonicalField, ExtField, FieldCore, FrobeniusExtField, FromPrimitiveInt,
+    HalvingField, PseudoMersenneField, RandomSampling, TranscriptChallenge,
+};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 #[cfg(feature = "disk-persistence")]
@@ -240,6 +240,7 @@ where
         + 'static
         + HalvingField
         + PseudoMersenneField
+        + AkitaSerialize
         + Valid,
     Cfg::ExtField: FrobeniusExtField<FField> + HasUnreducedOps + HasOptimizedFold,
     <FField as HasWide>::Wide: From<FField> + ReduceTo<FField>,
@@ -382,11 +383,11 @@ fn terminal_witness_mut<FField: FieldCore, E: FieldCore>(
 
 fn assert_invalid_proof<T: core::fmt::Debug>(
     case: &str,
-    result: Result<T, akita_field::AkitaError>,
+    result: Result<T, akita_error::AkitaError>,
 ) {
     match result {
-        Err(akita_field::AkitaError::InvalidProof) => {}
-        Err(akita_field::AkitaError::InvalidInput(msg)) if msg.contains("InvalidProof") => {}
+        Err(akita_error::AkitaError::InvalidProof) => {}
+        Err(akita_error::AkitaError::InvalidInput(msg)) if msg.contains("InvalidProof") => {}
         other => panic!("{case} must reject with InvalidProof, got {other:?}"),
     }
 }

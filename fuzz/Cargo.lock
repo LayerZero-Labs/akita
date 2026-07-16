@@ -6,8 +6,9 @@ version = 4
 name = "akita-algebra"
 version = "0.1.0"
 dependencies = [
- "akita-field",
+ "akita-error",
  "akita-serialization",
+ "jolt-field",
  "rand_core 0.6.4",
  "tracing",
 ]
@@ -16,19 +17,18 @@ dependencies = [
 name = "akita-challenges"
 version = "0.1.0"
 dependencies = [
- "akita-field",
+ "akita-error",
  "akita-transcript",
+ "jolt-field",
  "sha3 0.10.9",
  "tracing",
 ]
 
 [[package]]
-name = "akita-field"
+name = "akita-error"
 version = "0.1.0"
 dependencies = [
- "akita-serialization",
- "num-traits",
- "rand_core 0.6.4",
+ "jolt-field",
  "thiserror",
 ]
 
@@ -36,10 +36,10 @@ dependencies = [
 name = "akita-fuzz"
 version = "0.0.0"
 dependencies = [
- "akita-field",
  "akita-serialization",
  "akita-transcript",
  "akita-types",
+ "jolt-field",
  "libfuzzer-sys",
 ]
 
@@ -47,6 +47,7 @@ dependencies = [
 name = "akita-serialization"
 version = "0.1.0"
 dependencies = [
+ "jolt-field",
  "thiserror",
 ]
 
@@ -55,9 +56,10 @@ name = "akita-sumcheck"
 version = "0.1.0"
 dependencies = [
  "akita-algebra",
- "akita-field",
+ "akita-error",
  "akita-serialization",
  "akita-transcript",
+ "jolt-field",
  "tracing",
 ]
 
@@ -65,9 +67,9 @@ dependencies = [
 name = "akita-transcript"
 version = "0.1.0"
 dependencies = [
- "akita-field",
  "akita-serialization",
  "blake2 0.10.6",
+ "jolt-field",
  "spongefish",
 ]
 
@@ -77,11 +79,12 @@ version = "0.1.0"
 dependencies = [
  "akita-algebra",
  "akita-challenges",
- "akita-field",
+ "akita-error",
  "akita-serialization",
  "akita-sumcheck",
  "akita-transcript",
  "blake2 0.10.6",
+ "jolt-field",
  "num-traits",
  "rand_core 0.6.4",
  "sha3 0.10.9",
@@ -306,6 +309,18 @@ checksum = "9afb3de4395d6b3e67a780b6de64b51c978ecf11cb9a462c66be7d4ca9039d33"
 dependencies = [
  "getrandom 0.3.4",
  "libc",
+]
+
+[[package]]
+name = "jolt-field"
+version = "0.1.0"
+source = "git+https://github.com/Acentelles/jolt.git?rev=09b2f7b6ddd9427c756b781c39530a6c005e332d#09b2f7b6ddd9427c756b781c39530a6c005e332d"
+dependencies = [
+ "num-traits",
+ "rand 0.8.6",
+ "rand_core 0.6.4",
+ "serde",
+ "thiserror",
 ]
 
 [[package]]

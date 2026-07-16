@@ -35,7 +35,7 @@ pub(in crate::protocol::core) fn build_extension_opening_reduction_terms<
     eta: &[E],
 ) -> Result<Vec<ExtensionOpeningReductionTerm<E>>, AkitaError>
 where
-    F: FieldCore + CanonicalField,
+    F: FieldCore + CanonicalField + AkitaSerialize,
     E: ExtField<F> + MulBaseUnreduced<F>,
     P: RootTensorSource<F, D>,
     B: ComputeBackendSetup<F>
@@ -194,7 +194,7 @@ pub(in crate::protocol::core) fn prepare_extension_opening_reduction<
     transcript: &mut T,
 ) -> Result<PreparedExtensionOpeningReduction<E>, AkitaError>
 where
-    F: FieldCore + CanonicalField,
+    F: FieldCore + CanonicalField + AkitaSerialize,
     E: ExtField<F> + MulBaseUnreduced<F>,
     T: Transcript<F>,
     P: RootTensorSource<F, D>,
@@ -342,7 +342,7 @@ pub(in crate::protocol::core) fn prove_extension_opening_reduction<F, E, T, P, B
     path: &'static str,
 ) -> Result<ProvedExtensionOpeningReduction<E>, AkitaError>
 where
-    F: FieldCore + CanonicalField,
+    F: FieldCore + CanonicalField + AkitaSerialize,
     E: ExtField<F> + HasUnreducedOps + HasOptimizedFold + MulBaseUnreduced<F> + AkitaSerialize,
     T: Transcript<F>,
     P: RootTensorSource<F, D>,

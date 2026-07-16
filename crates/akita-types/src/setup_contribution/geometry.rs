@@ -4,7 +4,8 @@
 //! without fold challenges so NTT sizing, prefix offload, and envelope checks
 //! do not depend on `tau1`.
 
-use akita_field::{AkitaError, FieldCore};
+use akita_error::AkitaError;
+use jolt_field::FieldCore;
 
 use crate::layout::RelationMatrixRowLayout;
 use crate::proof::AkitaExpandedSetup;
@@ -199,7 +200,7 @@ mod tests {
         gadget_row_scalars, RelationMatrixRowLayout, SetupContributionGroupInputs,
         SetupContributionPlan,
     };
-    use akita_field::Prime128OffsetA7F7;
+    use jolt_field::Prime128OffsetA7F7;
 
     type F = Prime128OffsetA7F7;
 

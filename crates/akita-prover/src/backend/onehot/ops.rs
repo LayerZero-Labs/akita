@@ -8,7 +8,7 @@ use crate::compute::{
     RootPolyMeta, RootPolyShape, RootTensorSource, TensorPackedWitness,
     TensorProjectionBatchKernel, TensorProjectionKernel,
 };
-use akita_field::MulBaseUnreduced;
+use jolt_field::MulBaseUnreduced;
 
 /// Inner (low) coordinate count for the factorized one-hot column-partials
 /// fast path. The high opening coordinates split into `inner_bits` low bits
@@ -578,7 +578,7 @@ where
 
     pub(crate) fn tensor_packed_extension_evals<E>(&self) -> Result<Vec<E>, AkitaError>
     where
-        E: akita_field::ExtField<F>,
+        E: jolt_field::ExtField<F>,
     {
         let field_elems = self.direct_field_evals()?;
         akita_types::tensor_packed_witness_evals::<F, E>(self.num_vars, &field_elems)

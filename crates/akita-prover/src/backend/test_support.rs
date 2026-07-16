@@ -1,6 +1,7 @@
 use crate::DecomposeFoldWitness;
 use akita_challenges::{SparseChallenge, TensorChallenges};
-use akita_field::{AkitaError, FieldCore};
+use akita_error::AkitaError;
+use jolt_field::FieldCore;
 
 pub(crate) fn tensor_oracle_challenges<const D: usize>() -> TensorChallenges {
     TensorChallenges {

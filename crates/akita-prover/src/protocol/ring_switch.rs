@@ -11,9 +11,7 @@ use akita_algebra::ring::cyclotomic::BalancedDecomposePow2I8Params;
 use akita_algebra::ring::scalar_powers;
 use akita_algebra::CyclotomicRing;
 use akita_config::CommitmentConfig;
-use akita_field::{
-    AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, HalvingField, RandomSampling,
-};
+use akita_error::AkitaError;
 use akita_transcript::labels::{CHALLENGE_RING_SWITCH, CHALLENGE_TAU0, CHALLENGE_TAU1};
 use akita_transcript::{sample_ext_challenge, Transcript};
 use akita_types::DigitBlocks;
@@ -21,6 +19,9 @@ use akita_types::RingRelationInstance;
 use akita_types::{
     r_decomp_levels, AkitaCommitmentHint, AkitaExpandedSetup, FpExtEncoding, LevelParams,
     RelationMatrixRowLayout, RingVec,
+};
+use jolt_field::{
+    CanonicalField, ExtField, FieldCore, FromPrimitiveInt, HalvingField, RandomSampling,
 };
 
 mod coeffs;

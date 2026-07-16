@@ -1,7 +1,8 @@
 use crate::backend::onehot::{MultiChunkEntry, SingleChunkEntry};
 use crate::backend::sparse_ring::SparseRingBlockEntry;
 use akita_algebra::CyclotomicRing;
-use akita_field::{AkitaError, FieldCore};
+use akita_error::AkitaError;
+use jolt_field::FieldCore;
 
 /// Flat block table handed to a compute backend.
 ///

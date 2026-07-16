@@ -1,6 +1,6 @@
 use super::*;
-use akita_field::unreduced::{Fp128x8i32, Fp64x4i32};
-use akita_field::{Fp64, Prime128Offset275};
+use jolt_field::unreduced::{Fp128x8i32, Fp64x4i32};
+use jolt_field::{Fp64, Prime128Offset275};
 use rand::rngs::StdRng;
 use rand::SeedableRng;
 

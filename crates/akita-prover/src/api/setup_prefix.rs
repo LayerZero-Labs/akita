@@ -7,13 +7,14 @@ use crate::api::commitment::{
 use crate::compute::{CommitmentComputeBackend, DenseCommitInput, DenseCommitRowsPlan};
 use crate::kernels::linear::decompose_rows_i8_into;
 use akita_algebra::CyclotomicRing;
-#[cfg(feature = "parallel")]
-use akita_field::parallel::*;
-use akita_field::{AkitaError, CanonicalField, FieldCore, RandomSampling};
+use akita_error::AkitaError;
 use akita_types::{
     setup_prefix_slot_id, AkitaCommitmentHint, AkitaExpandedSetup, DigitBlocks,
     PrecommittedLevelParams, RingVec, SetupPrefixPublicCommitment, SetupPrefixSlot,
 };
+#[cfg(feature = "parallel")]
+use jolt_field::parallel::*;
+use jolt_field::{CanonicalField, FieldCore, RandomSampling};
 
 /// Commit one padded flat prefix of the shared setup matrix.
 ///
@@ -226,11 +227,11 @@ mod tests {
     use crate::compute::{ComputeBackendSetup, CpuBackend};
     use crate::AkitaProverSetup;
     use akita_challenges::SparseChallengeConfig;
-    use akita_field::Prime128Offset275 as F;
     use akita_types::{
         active_setup_field_len, padded_setup_prefix_len, setup_prefix_precommitted_params,
         LevelParams, OpeningClaimsLayout, SetupMatrixEnvelope, SisModulusFamily,
     };
+    use jolt_field::Prime128Offset275 as F;
 
     fn prefix_level_params(ring_dimension: usize) -> LevelParams {
         LevelParams::params_only(
