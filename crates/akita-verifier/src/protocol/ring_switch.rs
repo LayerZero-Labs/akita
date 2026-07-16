@@ -936,6 +936,9 @@ impl<E: FieldCore> RelationMatrixEvaluator<E> {
                             &fold_gadget_storage
                         }
                     };
+                    let fold_gadget = fold_gadget
+                        .get(..group.depth_fold)
+                        .ok_or(AkitaError::InvalidProof)?;
                     for unit in units {
                         for (position, &opening_a) in group.opening_a_evals.iter().enumerate() {
                             for (commit_digit, &commit) in g_commit.iter().enumerate() {

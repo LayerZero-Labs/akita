@@ -11,16 +11,13 @@ use akita_algebra::offset_eq::eq_eval_at_index;
 use akita_algebra::ring::{eval_ring_at_pows, scalar_powers};
 use akita_challenges::SparseChallengeConfig;
 use akita_field::Prime128OffsetA7F7;
-
 type F = Prime128OffsetA7F7;
 const TEST_D: usize = 64;
-
 type SingleGroupPlanParts = (
     SetupContributionPlan<F>,
     SetupContributionStatic<F>,
     SetupContributionLayout,
 );
-
 type StructuredWeightFixture = (
     TestSetupInputs,
     SetupContributionLayout,
@@ -30,46 +27,37 @@ type StructuredWeightFixture = (
     Vec<F>,
     Vec<F>,
 );
-
 struct TestSetupInputs {
     level_params: LevelParams,
     opening_batch: OpeningClaimsLayout,
     relation_matrix_row_layout: RelationMatrixRowLayout,
     eq_tau1: std::sync::Arc<[F]>,
 }
-
 impl TestSetupInputs {
     fn n_a(&self) -> usize {
         self.level_params.a_key.row_len()
     }
-
     fn num_claims(&self) -> usize {
         self.opening_batch.num_total_polynomials()
     }
-
     fn num_live_blocks(&self) -> usize {
         self.level_params.num_live_blocks
     }
-
     fn num_positions_per_block(&self) -> usize {
         self.level_params.num_positions_per_block
     }
-
     fn depth_open(&self) -> usize {
         self.level_params.num_digits_open
     }
-
     fn depth_commit(&self) -> usize {
         self.level_params.num_digits_commit
     }
-
     fn depth_fold(&self) -> Result<usize, AkitaError> {
         self.level_params.num_digits_fold(
             self.opening_batch.num_total_polynomials(),
             self.level_params.field_bits_for_cache(),
         )
     }
-
     fn prepare_static(
         &self,
         layout: &SetupContributionLayout,
@@ -83,11 +71,9 @@ impl TestSetupInputs {
         )
     }
 }
-
 fn test_scalar(value: u128) -> F {
     F::from_canonical_u128(value)
 }
-
 #[allow(clippy::too_many_arguments)]
 fn test_inputs(
     relation_matrix_row_layout: RelationMatrixRowLayout,
@@ -118,7 +104,6 @@ fn test_inputs(
         eq_tau1,
     )
 }
-
 #[allow(clippy::too_many_arguments)]
 fn test_inputs_for_group_sizes(
     relation_matrix_row_layout: RelationMatrixRowLayout,
@@ -197,7 +182,6 @@ fn test_inputs_for_group_sizes(
         eq_tau1: eq_tau1.into(),
     }
 }
-
 #[allow(clippy::too_many_arguments)]
 fn test_witness_layout(
     num_claims: usize,
@@ -237,7 +221,6 @@ fn test_witness_layout(
     }
     WitnessLayout::new_for_test(units, cursor..cursor + relation_rows * quotient_depth)
 }
-
 fn test_setup_layout(
     inputs: &TestSetupInputs,
     witness_layout: WitnessLayout,
@@ -253,7 +236,6 @@ fn test_setup_layout(
         groups,
     )
 }
-
 fn finalize_test_plan(
     d_rows: usize,
     d_physical_cols: usize,
@@ -291,7 +273,6 @@ fn finalize_test_plan(
     }
     plan
 }
-
 fn prepare_single_group_plan(
     inputs: &TestSetupInputs,
     full_vec_randomness: &[F],
@@ -301,7 +282,6 @@ fn prepare_single_group_plan(
     prepare_single_group_plan_parts(inputs, full_vec_randomness, fold_gadget, layout)
         .map(|(plan, _, _)| plan)
 }
-
 fn test_single_group_descriptor(
     inputs: &TestSetupInputs,
 ) -> Result<SetupContributionGroupInputs, AkitaError> {
@@ -338,7 +318,6 @@ fn test_single_group_descriptor(
         b_row_start: b_range.start,
     })
 }
-
 fn prepare_single_group_plan_parts(
     inputs: &TestSetupInputs,
     full_vec_randomness: &[F],
@@ -357,7 +336,6 @@ fn prepare_single_group_plan_parts(
     )?;
     Ok((plan, static_plan, setup_layout))
 }
-
 fn structured_weight_fixture(
     num_live_blocks: usize,
     ownership_widths: &[usize],
@@ -450,7 +428,6 @@ fn structured_weight_fixture(
         fold_gadget,
     )
 }
-
 fn expected_z_setup_weights(
     layout: &WitnessLayout,
     opening_source_len: usize,
@@ -481,21 +458,18 @@ fn expected_z_setup_weights(
         })
         .collect()
 }
-
 fn rho_for_required(required: usize) -> Vec<F> {
     let bits = required.next_power_of_two().trailing_zeros() as usize;
     (0..bits)
         .map(|idx| test_scalar(901 + idx as u128))
         .collect()
 }
-
 fn projection_scales(alpha: F, base_d: usize, role_d: usize) -> Vec<F> {
     scalar_powers(alpha, role_d)
         .chunks(base_d)
         .map(|chunk| chunk[0])
         .collect()
 }
-
 #[test]
 fn relation_ordered_setup_layout_matches_structured_direct_and_dense_oracles() {
     let rows = 6;
@@ -594,7 +568,6 @@ fn relation_ordered_setup_layout_matches_structured_direct_and_dense_oracles() {
         CommitmentRingDims::uniform(TEST_D),
     )
     .unwrap();
-
     let setup_len = plan.required();
     let setup = AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
         AkitaSetupSeed {
@@ -619,7 +592,6 @@ fn relation_ordered_setup_layout_matches_structured_direct_and_dense_oracles() {
         plan.evaluate_direct_by_rows::<F>(&setup, &alpha_pows, &alpha_pows, &alpha_pows, TEST_D,)
             .unwrap(),
     );
-
     let evaluator = SetupIndexWeightEvaluator::new::<F>(
         &static_plan,
         &plan,
@@ -636,7 +608,6 @@ fn relation_ordered_setup_layout_matches_structured_direct_and_dense_oracles() {
         plan.evaluate_setup_index_weight_mle(&rho, alpha).unwrap(),
     );
 }
-
 #[allow(clippy::too_many_arguments)]
 fn projected_setup_weight_reference(
     plan: &SetupContributionPlan<F>,
@@ -663,7 +634,6 @@ fn projected_setup_weight_reference(
                         * group.e_eq_slice[d_col - group.d_col_range.start];
                 }
             }
-
             let b_idx = base_idx / b_ratio;
             if b_idx < group.n_b * group.t_cols {
                 let b_col = b_idx % group.t_cols;
@@ -671,7 +641,6 @@ fn projected_setup_weight_reference(
                 weight +=
                     b_scales[base_idx % b_ratio] * group.b_weights[b_row] * group.t_eq_slice[b_col];
             }
-
             let a_idx = base_idx / a_ratio;
             if a_idx < group.n_a * group.z_cols {
                 let a_col = a_idx % group.z_cols;
@@ -685,7 +654,6 @@ fn projected_setup_weight_reference(
     }
     acc
 }
-
 #[test]
 fn setup_index_weight_evaluator_matches_packed_mle_single_chunk() {
     let (_inputs, groups, static_plan, plan, tau1, full_vec_randomness, fold_gadget) =
@@ -702,13 +670,11 @@ fn setup_index_weight_evaluator_matches_packed_mle_single_chunk() {
     )
     .unwrap();
     assert_eq!(evaluator.required(), plan.required());
-
     let rho = rho_for_required(evaluator.required());
     let got = evaluator.evaluate(&rho).unwrap();
     let expected = plan.evaluate_setup_index_weight_mle(&rho, alpha).unwrap();
     assert_eq!(got, expected);
 }
-
 #[test]
 fn setup_index_weight_evaluator_matches_packed_mle_multi_chunk() {
     let (_inputs, groups, static_plan, plan, tau1, full_vec_randomness, fold_gadget) =
@@ -730,7 +696,6 @@ fn setup_index_weight_evaluator_matches_packed_mle_multi_chunk() {
         plan.evaluate_setup_index_weight_mle(&rho, alpha).unwrap()
     );
 }
-
 #[test]
 fn setup_index_weight_evaluator_supports_non_power_of_two_ownership_widths() {
     let (_inputs, groups, static_plan, plan, tau1, full_vec_randomness, fold_gadget) =
@@ -752,7 +717,6 @@ fn setup_index_weight_evaluator_supports_non_power_of_two_ownership_widths() {
         plan.evaluate_setup_index_weight_mle(&rho, alpha).unwrap()
     );
 }
-
 #[test]
 fn setup_index_weight_evaluator_applies_mixed_role_projection_lanes() {
     let alpha = test_scalar(3);
@@ -791,7 +755,6 @@ fn setup_index_weight_evaluator_applies_mixed_role_projection_lanes() {
         assert_eq!(got, expected, "ownership widths {ownership_widths:?}");
     }
 }
-
 #[test]
 fn dense_z_eq_slice_uses_relative_high_carry() {
     let num_positions_per_block = 16;
@@ -815,7 +778,6 @@ fn dense_z_eq_slice_uses_relative_high_carry() {
         4,
         vec![test_scalar(11), test_scalar(12)],
     );
-
     let layout = test_witness_layout(
         inputs.num_claims(),
         inputs.num_live_blocks(),
@@ -830,7 +792,6 @@ fn dense_z_eq_slice_uses_relative_high_carry() {
     );
     let plan =
         prepare_single_group_plan(&inputs, &full_vec_randomness, &fold_gadget, &layout).unwrap();
-
     let expected = expected_z_setup_weights(
         &layout,
         layout.total_len(),
@@ -840,10 +801,8 @@ fn dense_z_eq_slice_uses_relative_high_carry() {
         &fold_gadget,
         &full_vec_randomness,
     );
-
     assert_eq!(plan.groups[0].z_eq_slice, expected);
 }
-
 #[test]
 fn setup_a_z_weights_do_not_include_commit_gadget() {
     let num_positions_per_block = 8;
@@ -881,10 +840,8 @@ fn setup_a_z_weights_do_not_include_commit_gadget() {
         1,
         inputs.depth_fold().unwrap(),
     );
-
     let plan =
         prepare_single_group_plan(&inputs, &full_vec_randomness, &fold_gadget, &layout).unwrap();
-
     let expected = expected_z_setup_weights(
         &layout,
         layout.total_len(),
@@ -899,14 +856,12 @@ fn setup_a_z_weights_do_not_include_commit_gadget() {
         .enumerate()
         .map(|(k, &weight)| weight * commit_gadget[k % depth_commit])
         .collect::<Vec<_>>();
-
     assert_eq!(plan.groups[0].z_eq_slice, expected);
     assert_ne!(
         plan.groups[0].z_eq_slice, wrong_with_commit_gadget,
         "A setup weights are for A * G_fold * z_hat, not A * G_commit * G_fold * z_hat"
     );
 }
-
 #[test]
 fn z_setup_weight_oracle_uses_physical_addresses() {
     let group_id = 0;
@@ -961,7 +916,6 @@ fn z_setup_weight_oracle_uses_physical_addresses() {
         opening_source_len - 1
     );
 }
-
 #[test]
 fn single_group_plan_supports_multi_chunk_weights() {
     let num_live_blocks = 4;
@@ -1026,7 +980,6 @@ fn single_group_plan_supports_multi_chunk_weights() {
         CommitmentRingDims::uniform(TEST_D),
     )
     .unwrap();
-
     let setup_len = plan.required();
     let setup = AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
         AkitaSetupSeed {
@@ -1051,7 +1004,6 @@ fn single_group_plan_supports_multi_chunk_weights() {
         .evaluate_direct::<F>(&setup, &alpha_pows, &alpha_pows, &alpha_pows)
         .unwrap();
     assert_eq!(got, expected);
-
     let setup_index_weight = plan
         .materialize_setup_index_weights(test_scalar(3))
         .unwrap();
@@ -1066,7 +1018,6 @@ fn single_group_plan_supports_multi_chunk_weights() {
         .sum();
     assert_eq!(tie, got);
 }
-
 #[test]
 fn packed_direct_matches_row_fallback_with_d_offset() {
     let plan = finalize_test_plan(
@@ -1119,7 +1070,6 @@ fn packed_direct_matches_row_fallback_with_d_offset() {
         .unwrap();
     assert_eq!(got, expected);
 }
-
 #[test]
 fn multi_group_packed_direct_matches_row_fallback() {
     let plan = finalize_test_plan(
@@ -1193,7 +1143,6 @@ fn multi_group_packed_direct_matches_row_fallback() {
         .evaluate_direct::<F>(&setup, &alpha_pows, &alpha_pows, &alpha_pows)
         .unwrap();
     assert_eq!(got, expected);
-
     let setup_index_weight = plan
         .materialize_setup_index_weights(test_scalar(3))
         .unwrap();
@@ -1208,7 +1157,6 @@ fn multi_group_packed_direct_matches_row_fallback() {
         .sum();
     assert_eq!(tie, got);
 }
-
 #[test]
 fn packed_direct_matches_row_fallback_with_nested_role_dims() {
     const D: usize = 64;
@@ -1271,7 +1219,6 @@ fn packed_direct_matches_row_fallback_with_nested_role_dims() {
         .unwrap();
     assert_eq!(got, expected);
 }
-
 #[test]
 fn packed_direct_rejects_non_decomposable_role_alpha_pows() {
     const D_A: usize = 64;
@@ -1327,13 +1274,11 @@ fn packed_direct_rejects_non_decomposable_role_alpha_pows() {
     let mut alpha_pows_b = scalar_powers(alpha, D_B);
     let alpha_pows_d = scalar_powers(alpha, D_D);
     alpha_pows_b[1] += test_scalar(1);
-
     assert!(matches!(
         plan.evaluate_direct::<F>(&setup, &alpha_pows_a, &alpha_pows_b, &alpha_pows_d),
         Err(AkitaError::InvalidSetup(_))
     ));
 }
-
 #[test]
 fn packed_direct_accepts_d_footprint_at_nested_d_d() {
     // D-role columns are counted at d_d; comparing `required` against
@@ -1399,7 +1344,6 @@ fn packed_direct_accepts_d_footprint_at_nested_d_d() {
         .unwrap();
     assert_eq!(got, expected);
 }
-
 #[test]
 fn multi_group_packed_direct_matches_row_fallback_with_mismatched_t_cols() {
     let plan = finalize_test_plan(
@@ -1476,7 +1420,6 @@ fn multi_group_packed_direct_matches_row_fallback_with_mismatched_t_cols() {
         .unwrap();
     assert_eq!(got, expected);
 }
-
 #[test]
 fn prepare_static_accepts_exact_non_pow2_fold_count() {
     let mut lp = LevelParams::log_basis_stub(3);

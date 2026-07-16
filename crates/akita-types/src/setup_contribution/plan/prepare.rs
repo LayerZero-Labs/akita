@@ -273,44 +273,51 @@ fn validate_static_inputs<E: FieldCore>(
     eq_tau1: &[E],
 ) -> Result<usize, AkitaError> {
     opening_batch.check()?;
-    let num_polynomials = opening_batch.num_total_polynomials();
     let num_groups = opening_batch.num_groups();
+    let num_polynomials = opening_batch.num_total_polynomials();
     let depth_fold =
         level_params.num_digits_fold(num_polynomials, level_params.field_bits_for_cache())?;
-    let depth_commit = level_params.num_digits_commit;
-    let depth_open = level_params.num_digits_open;
     if level_params.num_live_blocks == 0 {
         return Err(AkitaError::InvalidSetup(
             "num_live_blocks must be positive".into(),
         ));
     }
-    if level_params.num_positions_per_block == 0
-        || depth_commit == 0
-        || depth_open == 0
-        || depth_fold == 0
-    {
+    if depth_fold == 0 {
         return Err(AkitaError::InvalidSetup(
             "setup evaluator layout has zero width".into(),
         ));
     }
-    let inner_width = level_params
-        .num_positions_per_block
-        .checked_mul(depth_commit)
-        .ok_or_else(|| AkitaError::InvalidSetup("inner width overflow".into()))?;
-    if level_params.a_key.col_len() < inner_width {
-        return Err(AkitaError::InvalidSetup(
-            "A-key column width is too small for setup contribution layout".into(),
-        ));
-    }
-    let expected_b_width = num_polynomials
-        .checked_mul(level_params.a_key.row_len())
-        .and_then(|width| width.checked_mul(depth_open))
-        .and_then(|width| width.checked_mul(level_params.num_live_blocks))
-        .ok_or_else(|| AkitaError::InvalidSetup("B-matrix width overflow".into()))?;
-    if level_params.b_key.col_len() < expected_b_width {
-        return Err(AkitaError::InvalidSetup(
-            "B-key column width is too small for setup contribution layout".into(),
-        ));
+    for group_index in 0..num_groups {
+        let group_layout = opening_batch.group_layout(group_index)?;
+        let group_params = level_params.group_params(opening_batch, group_index)?;
+        let depth_commit = group_params.num_digits_commit();
+        let depth_open = group_params.num_digits_open();
+        let num_positions_per_block = group_params.num_positions_per_block();
+        let num_live_blocks = group_params.num_live_blocks();
+        if num_positions_per_block == 0 || depth_commit == 0 || depth_open == 0 {
+            return Err(AkitaError::InvalidSetup(
+                "setup evaluator layout has zero width".into(),
+            ));
+        }
+        let inner_width = num_positions_per_block
+            .checked_mul(depth_commit)
+            .ok_or_else(|| AkitaError::InvalidSetup("inner width overflow".into()))?;
+        if group_params.a_col_len() < inner_width {
+            return Err(AkitaError::InvalidSetup(
+                "A-key column width is too small for setup contribution layout".into(),
+            ));
+        }
+        let expected_b_width = group_layout
+            .num_polynomials()
+            .checked_mul(group_params.a_rows_len())
+            .and_then(|width| width.checked_mul(depth_open))
+            .and_then(|width| width.checked_mul(num_live_blocks))
+            .ok_or_else(|| AkitaError::InvalidSetup("B-matrix width overflow".into()))?;
+        if group_params.b_col_len() < expected_b_width {
+            return Err(AkitaError::InvalidSetup(
+                "B-key column width is too small for setup contribution layout".into(),
+            ));
+        }
     }
     let rows =
         level_params.relation_matrix_row_count_for(num_groups, relation_matrix_row_layout)?;
