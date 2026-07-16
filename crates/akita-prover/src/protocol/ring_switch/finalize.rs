@@ -86,9 +86,9 @@ where
         // fall back to the flattened single-domain layout (`ring_bits = 0`).
         let x_capacity = akita_types::opening_domain_len(opening_source_len)?;
         let uniform = dims == akita_types::CommitmentRingDims::uniform(opening_ring_dim);
-        let (opening_x_cols, col_bits, ring_bits) = if uniform {
+        let (live_x_cols, col_bits, ring_bits) = if uniform {
             (
-                x_capacity,
+                w.len() / opening_ring_dim,
                 x_capacity.trailing_zeros() as usize,
                 opening_ring_dim.trailing_zeros() as usize,
             )
@@ -96,7 +96,7 @@ where
             let flat = x_capacity
                 .checked_mul(opening_ring_dim)
                 .ok_or_else(|| AkitaError::InvalidSetup("stage-2 domain overflow".into()))?;
-            (flat, flat.trailing_zeros() as usize, 0usize)
+            (w.len(), flat.trailing_zeros() as usize, 0usize)
         };
         let num_sc_vars = col_bits + ring_bits;
         let num_i =
@@ -176,7 +176,7 @@ where
 
         Ok(RingSwitchOutput {
             w_evals_compact,
-            opening_x_cols,
+            live_x_cols,
             relation_weight_evals,
             col_bits,
             ring_bits,

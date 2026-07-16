@@ -9,7 +9,9 @@ pub use akita_types::{compute_relation_matrix_col_evals, compute_relation_weight
 /// Produce the compact `Vec<i8>` eval table of `w` for the fused prover.
 ///
 /// The compact witness stays in the raw `build_w_coeffs` order:
-/// `w[x * y_len + y]`, with x outer and y inner.
+/// `w[x * y_len + y]`, with x outer and y inner. Only exact live columns are
+/// returned; the Boolean-domain suffix is represented implicitly by the
+/// Stage 1 and Stage 2 prefix kernels.
 ///
 /// # Errors
 ///
@@ -27,24 +29,18 @@ pub fn build_w_evals_compact(
             actual: w.len(),
         });
     }
-    let live_x_cols = w.len() / d;
-    if live_x_cols > opening_source_len {
+    let live_physical_cols = w.len() / d;
+    if live_physical_cols > opening_source_len {
         return Err(AkitaError::InvalidSize {
             expected: opening_source_len,
-            actual: live_x_cols,
+            actual: live_physical_cols,
         });
     }
     let opening_x_cols = akita_types::opening_domain_len(opening_source_len)?;
     let col_bits = opening_x_cols.trailing_zeros() as usize;
     if extension_degree == 1 {
         let ring_bits = d.trailing_zeros() as usize;
-        let mut compact = vec![0i8; opening_x_cols * d];
-        for (physical_index, ring) in w.chunks_exact(d).enumerate() {
-            let opening_index =
-                akita_types::checked_opening_source_index(opening_source_len, physical_index)?;
-            compact[opening_index * d..(opening_index + 1) * d].copy_from_slice(ring);
-        }
-        return Ok((compact, col_bits, ring_bits));
+        return Ok((w.to_vec(), col_bits, ring_bits));
     }
     let packed_len = d / extension_degree;
     if packed_len == 0 || !packed_len.is_power_of_two() {
@@ -53,7 +49,7 @@ pub fn build_w_evals_compact(
         ));
     }
     let half = d / (2 * extension_degree);
-    let mut compact = vec![0i8; opening_x_cols * packed_len];
+    let mut compact = vec![0i8; live_physical_cols * packed_len];
     for (physical_index, ring) in w.chunks_exact(d).enumerate() {
         let opening_index =
             akita_types::checked_opening_source_index(opening_source_len, physical_index)?;

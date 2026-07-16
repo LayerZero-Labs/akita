@@ -683,7 +683,7 @@ where
                 row_coefficients,
                 prepared_fold.trace_claim_scales.as_deref(),
                 evaluation_trace_weight,
-                trace_x_cols,
+                trace_opening_source_len,
             )?)
         } else {
             let num_trace_blocks = prepared_fold
@@ -715,7 +715,7 @@ where
                 row_coefficients,
                 prepared_fold.trace_claim_scales.as_deref(),
                 evaluation_trace_weight,
-                trace_x_cols,
+                trace_opening_source_len,
             )?)
         }
     } else if let Some(prepared) = prepared_fold
@@ -737,7 +737,7 @@ where
             prepared,
             prepared_fold.trace_scale,
             evaluation_trace_weight,
-            trace_x_cols,
+            trace_opening_source_len,
         )?)
     } else {
         None
@@ -755,7 +755,7 @@ where
     .transpose()?;
     let ring_bits = rs.ring_bits;
     let col_bits = rs.col_bits;
-    let live_x_cols = rs.opening_x_cols;
+    let live_x_cols = rs.live_x_cols;
     let tau1 = rs.tau1.clone();
     let alpha = rs.alpha;
     let (stage2_sumcheck_proof, sumcheck_challenges, stage2_prover) = prove_stage2::<F, E, T>(
@@ -964,7 +964,7 @@ where
         &rs.w_evals_compact,
         &tau0_reordered,
         rs.b,
-        rs.opening_x_cols,
+        rs.live_x_cols,
         rs.col_bits,
         rs.ring_bits,
     )?;
@@ -994,23 +994,20 @@ fn remap_trace_table<E: FieldCore>(
     {
         return Err(AkitaError::InvalidProof);
     }
-    let source_domain = akita_types::opening_domain_len(source_len)?;
-    let destination_domain = akita_types::opening_domain_len(destination_len)?;
     // Fast path: when the source and destination expose the same Boolean
-    // capacity and ring dimension the remap is the identity over the live
-    // prefix (and the padded suffix is logically zero on both sides), so keep
-    // the existing representation without materializing or allocating anything.
-    if source_ring_dim == destination_ring_dim && source_domain == destination_domain {
+    // source and ring geometry, the remap is the identity over the complete
+    // live prefix, so keep the existing representation without materializing
+    // or allocating anything.
+    if source_ring_dim == destination_ring_dim
+        && source_len == destination_len
+        && physical_field_len == source_capacity
+    {
         return Ok(table);
     }
-    let destination_table_len = destination_domain
-        .checked_mul(destination_ring_dim)
-        .ok_or_else(|| AkitaError::InvalidSetup("trace destination length overflow".into()))?;
-    // Only the destination is allocated. The source is read in place through
-    // `TraceTable::get` (borrowed, never cloned to its Boolean capacity), so the
-    // uniform path never holds a full source-capacity plus destination-capacity
-    // pair at once.
-    let mut destination = vec![E::zero(); destination_table_len];
+    // Stage 2 represents the padded Boolean suffix implicitly. Allocate only
+    // the exact destination prefix and read the source in place, so a remap
+    // never holds either source or destination Boolean capacity densely.
+    let mut destination = vec![E::zero(); physical_field_len];
     for physical in 0..physical_field_len {
         let source_col =
             akita_types::checked_opening_source_index(source_len, physical / source_ring_dim)?;
@@ -1024,6 +1021,26 @@ fn remap_trace_table<E: FieldCore>(
         destination[destination_index] = table.get(source_col, source_coeff, source_ring_dim);
     }
     Ok(TraceTable::ring_dense(destination))
+}
+
+#[cfg(test)]
+mod trace_remap_tests {
+    use super::*;
+    use akita_field::Fp32;
+
+    type F = Fp32<251>;
+
+    #[test]
+    fn nonidentity_trace_remap_keeps_only_live_prefix() {
+        let source = (0..12).map(F::from_u64).collect::<Vec<_>>();
+        let remapped = remap_trace_table(TraceTable::ring_dense(source.clone()), 3, 4, 6, 2, 12)
+            .expect("valid trace remap")
+            .into_ring_dense()
+            .expect("dense trace");
+
+        assert_eq!(remapped, source);
+        assert_eq!(remapped.len(), 12);
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1057,7 +1074,7 @@ where
         rs.b,
         alpha_evals_y,
         rs.relation_weight_evals,
-        rs.opening_x_cols,
+        rs.live_x_cols,
         rs.col_bits,
         rs.ring_bits,
         relation_claim,

@@ -630,8 +630,8 @@ where
             "multi-group root trace table currently requires degree-one openings".to_string(),
         ));
     }
-    if live_x_cols != crate::opening_domain_len(opening_source_len)?
-        || witness_layout.total_len() > opening_source_len
+    if live_x_cols > crate::opening_domain_len(opening_source_len)?
+        || witness_layout.total_len() > live_x_cols
     {
         return Err(AkitaError::InvalidProof);
     }

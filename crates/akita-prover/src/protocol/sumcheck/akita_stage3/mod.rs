@@ -398,14 +398,21 @@ where
     let physical_capacity = opening_source_len
         .checked_mul(opening_ring_dim)
         .ok_or(AkitaError::InvalidProof)?;
-    if live_x_cols != x_len
-        || opening_source_len == 0
+    if opening_source_len == 0
         || opening_ring_dim == 0
         || !logical_w.len().is_multiple_of(opening_ring_dim)
         || logical_w.len() > physical_capacity
     {
+        return Err(AkitaError::InvalidProof);
+    }
+    let expected_live_x_cols = if ring_bits == 0 {
+        logical_w.len()
+    } else {
+        logical_w.len() / opening_ring_dim
+    };
+    if live_x_cols != expected_live_x_cols || live_x_cols > x_len {
         return Err(AkitaError::InvalidSize {
-            expected: x_len,
+            expected: expected_live_x_cols,
             actual: live_x_cols,
         });
     }

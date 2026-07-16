@@ -44,8 +44,8 @@ pub use finalize::ring_switch_finalize;
 pub struct RingSwitchOutput<E: FieldCore> {
     /// Compact evaluation table of w, stored as x-outer/y-inner slices.
     pub w_evals_compact: Vec<i8>,
-    /// Boolean x capacity, including only the zero suffix after the physical source.
-    pub opening_x_cols: usize,
+    /// Exact live x-column count; the remaining Boolean x domain is an implicit zero suffix.
+    pub live_x_cols: usize,
     /// Tau1-weighted relation table over the full Boolean coefficient domain.
     pub relation_weight_evals: Vec<E>,
     /// Number of upper variable bits.
