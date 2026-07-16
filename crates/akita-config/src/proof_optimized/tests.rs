@@ -1211,12 +1211,19 @@ fn all_proof_optimized_presets_use_shared_ring_challenge() {
 
     assert_preset_uses_shared_ring_challenge::<fp128::D64Full>();
     assert_preset_uses_shared_ring_challenge::<fp128::D64OneHot>();
+    assert_preset_uses_shared_ring_challenge::<fp128::D64OneHotK16>();
     assert_preset_uses_shared_ring_challenge::<fp128::D128Full>();
     assert_preset_uses_shared_ring_challenge::<fp128::D128OneHot>();
 
     // Hand-written (non-macro) preset: guards that the bespoke impl still
     // routes through the shared policy.
     assert_preset_uses_shared_ring_challenge::<crate::tensor_verifier::fp128::D64OneHotTensor>();
+}
+
+#[test]
+fn d64_onehot_k16_uses_the_canonical_chunk_policy_without_a_catalog() {
+    assert_eq!(fp128::D64OneHotK16::onehot_chunk_size(), 16);
+    assert!(fp128::D64OneHotK16::schedule_catalog().is_none());
 }
 
 #[test]
