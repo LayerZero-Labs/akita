@@ -168,11 +168,11 @@ class CiTestTimingReportTests(unittest.TestCase):
                 encoding="utf-8",
             )
             (shard_dir / "timing-shard-1.json").write_text(
-                '{"started_at_epoch":100,"finished_at_epoch":120,"exit_code":0,"shard_index":1,"shard_total":2}\n',
+                '{"started_at_epoch":100,"finished_at_epoch":120,"exit_code":0,"chunk_index":1,"shard_total":2}\n',
                 encoding="utf-8",
             )
             (shard_dir / "timing-shard-2.json").write_text(
-                '{"started_at_epoch":110,"finished_at_epoch":150,"exit_code":1,"shard_index":2,"shard_total":2}\n',
+                '{"started_at_epoch":110,"finished_at_epoch":150,"exit_code":1,"chunk_index":2,"shard_total":2}\n',
                 encoding="utf-8",
             )
 
@@ -227,7 +227,7 @@ class CiTestTimingReportTests(unittest.TestCase):
                 encoding="utf-8",
             )
             (nested / "timing-shard-1.json").write_text(
-                '{"started_at_epoch":100,"finished_at_epoch":120,"exit_code":0,"shard_index":1,"shard_total":1}\n',
+                '{"started_at_epoch":100,"finished_at_epoch":120,"exit_code":0,"chunk_index":1,"shard_total":1}\n',
                 encoding="utf-8",
             )
 
@@ -257,7 +257,7 @@ class CiTestTimingReportTests(unittest.TestCase):
                 encoding="utf-8",
             )
             (shard_dir / "timing-shard-1.json").write_text(
-                '{"started_at_epoch":100,"finished_at_epoch":120,"exit_code":0,"shard_index":1,"shard_total":2}\n',
+                '{"started_at_epoch":100,"finished_at_epoch":120,"exit_code":0,"chunk_index":1,"shard_total":2}\n',
                 encoding="utf-8",
             )
 

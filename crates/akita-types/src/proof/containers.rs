@@ -689,25 +689,21 @@ impl DigitBlocks {
         dst.extend_from_slice(&self.digits);
     }
 
-    /// Truncate every block to at most `fold_position_count` digit planes.
-    pub fn truncate_each_block(&mut self, fold_position_count: usize) {
-        if self
-            .block_sizes
-            .iter()
-            .all(|&size| size <= fold_position_count)
-        {
+    /// Truncate every block to at most `block_len` digit planes.
+    pub fn truncate_each_block(&mut self, block_len: usize) {
+        if self.block_sizes.iter().all(|&size| size <= block_len) {
             return;
         }
         let stride = self.digit_stride;
         let total_planes: usize = self
             .block_sizes
             .iter()
-            .map(|&size| size.min(fold_position_count))
+            .map(|&size| size.min(block_len))
             .sum();
         let mut new_digits = Vec::with_capacity(total_planes * stride);
         let mut offset_planes = 0usize;
         for size in &mut self.block_sizes {
-            let keep = (*size).min(fold_position_count);
+            let keep = (*size).min(block_len);
             let start = offset_planes * stride;
             new_digits.extend_from_slice(&self.digits[start..start + keep * stride]);
             offset_planes += *size;

@@ -101,8 +101,8 @@ class ProfileBenchReportTests(unittest.TestCase):
 
         log = (
             'INFO planned fold level label=onehot_fp128_d64 level=0 d=64 n_a=2 n_b=3 n_d=4 '
-            'challenge_l1_mass=8 log_basis=5 position_bits=7 fold_bits=3 '
-            'live_fold_count=6 fold_position_count=128 delta_commit=4 delta_open=5 '
+            'challenge_l1_mass=8 log_basis=5 position_bits=7 block_bits=3 '
+            'num_blocks=6 block_len=128 delta_commit=4 delta_open=5 '
             'delta_fold=6 current_w_len=1024 next_w_ring=32 next_w_len=2048 level_bytes=4096\n'
         )
 
@@ -119,9 +119,9 @@ class ProfileBenchReportTests(unittest.TestCase):
                 "challenge_l1_mass": 8,
                 "log_basis": 5,
                 "position_bits": 7,
-                "fold_bits": 3,
-                "fold_position_count": 128,
-                "live_fold_count": 6,
+                "block_bits": 3,
+                "block_len": 128,
+                "num_blocks": 6,
                 "delta_commit": 4,
                 "delta_open": 5,
                 "delta_fold": 6,
@@ -138,7 +138,7 @@ class ProfileBenchReportTests(unittest.TestCase):
         log = (
             'INFO planned fold level label=onehot_fp128_d64 level=0 d=64 n_a=2 n_b=3 n_d=4 '
             'challenge_l1_mass=8 log_basis=5 m_vars=7 r_vars=3 '
-            'num_blocks=8 block_len=128 delta_commit=4 delta_open=5 '
+            'live_fold_count=8 fold_position_count=128 delta_commit=4 delta_open=5 '
             'delta_fold=6 current_w_len=1024 next_w_ring=32 next_w_len=2048 level_bytes=4096\n'
         )
 
@@ -146,9 +146,9 @@ class ProfileBenchReportTests(unittest.TestCase):
         level = summary["planned_levels"][0]
 
         self.assertEqual(level["position_bits"], 7)
-        self.assertEqual(level["fold_bits"], 3)
-        self.assertEqual(level["fold_position_count"], 128)
-        self.assertEqual(level["live_fold_count"], 8)
+        self.assertEqual(level["block_bits"], 3)
+        self.assertEqual(level["block_len"], 128)
+        self.assertEqual(level["num_blocks"], 8)
 
     def test_configured_cases_treats_setup_mode_as_case_dimension(self) -> None:
         from scripts.profile_bench_report import configured_cases

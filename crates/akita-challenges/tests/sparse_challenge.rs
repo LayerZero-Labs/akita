@@ -328,7 +328,7 @@ fn tensor_sampling_uses_two_vectors() {
 }
 
 #[test]
-fn tensor_sampling_keeps_only_the_exact_live_fold_prefix() {
+fn tensor_sampling_keeps_only_the_exact_live_block_prefix() {
     const TD: usize = 8;
     let cfg = SparseChallengeConfig::pm1_only(2);
     let mut transcript = AkitaTranscript::<F>::new(DOMAIN_AKITA_PROTOCOL);
@@ -350,7 +350,7 @@ fn tensor_sampling_keeps_only_the_exact_live_fold_prefix() {
     let Challenges::Tensor { factored } = challenges else {
         panic!("expected tensor challenges");
     };
-    assert_eq!(factored.live_folds_per_claim, 5);
+    assert_eq!(factored.live_blocks_per_claim, 5);
     assert_eq!(factored.fold_high_len(), 2);
     assert_eq!(factored.fold_high.len(), 4);
     assert_eq!(factored.fold_low.len(), 8);
@@ -652,7 +652,7 @@ fn tensor_public_evals_reject_malformed_low_length() {
         let tensor = TensorChallenges {
             fold_high: Vec::new(),
             fold_low: Vec::new(),
-            live_folds_per_claim: 1,
+            live_blocks_per_claim: 1,
             fold_low_len,
             num_claims: 1,
         };
@@ -733,7 +733,7 @@ fn tensor_factored_aggregate_matches_ring_product_reference() {
                 coeffs: vec![3, 1],
             },
         ],
-        live_folds_per_claim: 8,
+        live_blocks_per_claim: 8,
         fold_low_len: 4,
         num_claims: 2,
     };
@@ -793,7 +793,7 @@ fn tensor_factored_aggregate_excludes_partial_final_low_row_suffix() {
                 coeffs: vec![1],
             },
         ],
-        live_folds_per_claim: 5,
+        live_blocks_per_claim: 5,
         fold_low_len: 4,
         num_claims: 1,
     };
@@ -810,7 +810,7 @@ fn tensor_factored_aggregate_excludes_partial_final_low_row_suffix() {
         .eval_factored_aggregate_at_pows::<F, F, TD>(0, &u_weights, &v_weights, &alpha_pows)
         .unwrap();
 
-    let expected = (0..tensor.live_folds_per_claim).fold(F::zero(), |acc, local_block| {
+    let expected = (0..tensor.live_blocks_per_claim).fold(F::zero(), |acc, local_block| {
         let high_idx = local_block / tensor.fold_low_len;
         let low_idx = local_block % tensor.fold_low_len;
         let (_, _, high, low) = tensor.factors_for_logical_block(local_block).unwrap();
@@ -846,7 +846,7 @@ fn tensor_evals_at_pows_match_ring_product_reference() {
                 coeffs: vec![3, -1],
             },
         ],
-        live_folds_per_claim: 4,
+        live_blocks_per_claim: 4,
         fold_low_len: 2,
         num_claims: 1,
     };
@@ -878,7 +878,7 @@ fn tensor_product_only_formula_is_not_exact_for_generic_alpha() {
             positions: vec![1],
             coeffs: vec![1],
         }],
-        live_folds_per_claim: 1,
+        live_blocks_per_claim: 1,
         fold_low_len: 1,
         num_claims: 1,
     };
@@ -914,7 +914,7 @@ fn tensor_exact_aggregate_collapses_to_product_at_negacyclic_root() {
             positions: vec![1],
             coeffs: vec![1],
         }],
-        live_folds_per_claim: 1,
+        live_blocks_per_claim: 1,
         fold_low_len: 1,
         num_claims: 1,
     };

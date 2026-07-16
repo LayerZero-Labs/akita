@@ -11,13 +11,13 @@ use akita_field::AkitaError;
 
 use crate::{LevelParams, OpeningClaimsLayout};
 
-/// One physical `[z_hat | e_hat | t_hat]` group-and-shard unit.
+/// One physical `[z_hat | e_hat | t_hat]` group-and-chunk unit.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WitnessUnitLayout {
     group_index: usize,
-    shard_index: usize,
-    global_fold_start: usize,
-    live_fold_count: usize,
+    chunk_index: usize,
+    global_block_start: usize,
+    live_block_count: usize,
     z_range: Range<usize>,
     e_range: Range<usize>,
     t_range: Range<usize>,
@@ -34,18 +34,18 @@ impl WitnessUnitLayout {
     #[cfg(test)]
     pub(crate) fn new_for_test(
         group_index: usize,
-        shard_index: usize,
-        global_fold_start: usize,
-        live_fold_count: usize,
+        chunk_index: usize,
+        global_block_start: usize,
+        live_block_count: usize,
         z_range: Range<usize>,
         e_range: Range<usize>,
         t_range: Range<usize>,
     ) -> Self {
         Self {
             group_index,
-            shard_index,
-            global_fold_start,
-            live_fold_count,
+            chunk_index,
+            global_block_start,
+            live_block_count,
             z_range,
             e_range,
             t_range,
@@ -56,20 +56,20 @@ impl WitnessUnitLayout {
         self.group_index
     }
 
-    pub fn shard_index(&self) -> usize {
-        self.shard_index
+    pub fn chunk_index(&self) -> usize {
+        self.chunk_index
     }
 
-    pub fn global_fold_start(&self) -> usize {
-        self.global_fold_start
+    pub fn global_block_start(&self) -> usize {
+        self.global_block_start
     }
 
-    pub fn live_fold_count(&self) -> usize {
-        self.live_fold_count
+    pub fn live_block_count(&self) -> usize {
+        self.live_block_count
     }
 
-    pub fn global_fold_range(&self) -> Range<usize> {
-        self.global_fold_start..self.global_fold_start + self.live_fold_count
+    pub fn global_block_range(&self) -> Range<usize> {
+        self.global_block_start..self.global_block_start + self.live_block_count
     }
 
     pub fn z_range(&self) -> Range<usize> {
@@ -91,24 +91,24 @@ impl WitnessLayout {
         Self { units, r_range }
     }
 
-    /// Resolve exact group-major, shard-minor witness ranges from the canonical
+    /// Resolve exact group-major, chunk-minor witness ranges from the canonical
     /// level parameters and opening claims layout.
     pub fn new(
         lp: &LevelParams,
         opening_batch: &OpeningClaimsLayout,
-        num_shards: usize,
+        num_chunks: usize,
         relation_rows: usize,
         quotient_depth: usize,
     ) -> Result<Self, AkitaError> {
         let num_groups = opening_batch.num_groups();
-        if num_groups == 0 || num_shards == 0 || quotient_depth == 0 {
+        if num_groups == 0 || num_chunks == 0 || quotient_depth == 0 {
             return Err(AkitaError::InvalidSetup(
-                "witness layout requires non-empty groups, shards, and quotient depth".into(),
+                "witness layout requires non-empty groups, chunks, and quotient depth".into(),
             ));
         }
-        if num_shards > MAX_WITNESS_CHUNKS {
+        if num_chunks > MAX_WITNESS_CHUNKS {
             return Err(AkitaError::InvalidSetup(
-                "witness shard count exceeds verifier cap".into(),
+                "witness chunk count exceeds verifier cap".into(),
             ));
         }
         lp.validate_opening_batch(opening_batch)?;
@@ -116,7 +116,7 @@ impl WitnessLayout {
 
         let mut units = Vec::with_capacity(
             num_groups
-                .checked_mul(num_shards)
+                .checked_mul(num_chunks)
                 .ok_or_else(|| AkitaError::InvalidSetup("witness unit count overflow".into()))?,
         );
         let mut cursor = 0usize;
@@ -129,8 +129,8 @@ impl WitnessLayout {
             let depth_fold =
                 lp.num_digits_fold_for_params(params, num_claims, lp.field_bits_for_cache())?;
             if num_claims == 0
-                || params.live_fold_count() == 0
-                || params.fold_position_count() == 0
+                || params.num_blocks() == 0
+                || params.block_len() == 0
                 || depth_open == 0
                 || depth_commit == 0
                 || depth_fold == 0
@@ -140,24 +140,24 @@ impl WitnessLayout {
                     "witness group has malformed dimensions".into(),
                 ));
             }
-            let shard_fold_ranges = Self::resolve_shard_fold_ranges(params, num_shards)?;
+            let chunk_block_ranges = Self::resolve_chunk_block_ranges(params, num_chunks)?;
             let z_len = checked_mul3(
-                params.fold_position_count(),
+                params.block_len(),
                 depth_commit,
                 depth_fold,
                 "witness Z width overflow",
             )?;
-            for (shard_index, global_fold_range) in shard_fold_ranges.into_iter().enumerate() {
-                let global_fold_start = global_fold_range.start;
-                let shard_live_fold_count = global_fold_range.len();
+            for (chunk_index, global_block_range) in chunk_block_ranges.into_iter().enumerate() {
+                let global_block_start = global_block_range.start;
+                let chunk_live_block_count = global_block_range.len();
                 let e_len = checked_mul3(
                     num_claims,
-                    shard_live_fold_count,
+                    chunk_live_block_count,
                     depth_open,
                     "witness E width overflow",
                 )?;
                 let t_len = num_claims
-                    .checked_mul(shard_live_fold_count)
+                    .checked_mul(chunk_live_block_count)
                     .and_then(|n| n.checked_mul(params.a_rows_len()))
                     .and_then(|n| n.checked_mul(depth_open))
                     .ok_or_else(|| AkitaError::InvalidSetup("witness T width overflow".into()))?;
@@ -167,9 +167,9 @@ impl WitnessLayout {
                 cursor = t_range.end;
                 units.push(WitnessUnitLayout {
                     group_index,
-                    shard_index,
-                    global_fold_start,
-                    live_fold_count: shard_live_fold_count,
+                    chunk_index,
+                    global_block_start,
+                    live_block_count: chunk_live_block_count,
                     z_range,
                     e_range,
                     t_range,
@@ -183,55 +183,55 @@ impl WitnessLayout {
         Ok(Self { units, r_range })
     }
 
-    /// Resolve the exact contiguous fold ranges owned by each shard.
-    pub fn resolve_shard_fold_ranges(
+    /// Resolve the exact contiguous block ranges owned by each chunk.
+    pub fn resolve_chunk_block_ranges(
         params: &(impl crate::LevelParamsLike + ?Sized),
-        num_shards: usize,
+        num_chunks: usize,
     ) -> Result<Vec<Range<usize>>, AkitaError> {
-        let live_fold_count = params.live_fold_count();
-        let shard_granule = params.shard_granule();
-        if num_shards == 0
-            || num_shards > MAX_WITNESS_CHUNKS
-            || live_fold_count == 0
-            || shard_granule == 0
-            || !shard_granule.is_power_of_two()
+        let num_blocks = params.num_blocks();
+        let chunk_granule = params.chunk_granule();
+        if num_chunks == 0
+            || num_chunks > MAX_WITNESS_CHUNKS
+            || num_blocks == 0
+            || chunk_granule == 0
+            || !chunk_granule.is_power_of_two()
         {
             return Err(AkitaError::InvalidSetup(
-                "witness shard geometry is malformed".into(),
+                "witness chunk geometry is malformed".into(),
             ));
         }
-        if num_shards
-            .checked_mul(shard_granule)
-            .is_none_or(|minimum| minimum > live_fold_count)
+        if num_chunks
+            .checked_mul(chunk_granule)
+            .is_none_or(|minimum| minimum > num_blocks)
         {
             return Err(AkitaError::InvalidSetup(
-                "witness shards exceed the live fold granules".into(),
+                "witness chunks exceed the live block granules".into(),
             ));
         }
 
-        let full_granules = live_fold_count / shard_granule;
-        let residual = live_fold_count % shard_granule;
-        let base_granules = full_granules / num_shards;
-        let extra_granules = full_granules % num_shards;
-        let mut ranges = Vec::with_capacity(num_shards);
+        let full_granules = num_blocks / chunk_granule;
+        let residual = num_blocks % chunk_granule;
+        let base_granules = full_granules / num_chunks;
+        let extra_granules = full_granules % num_chunks;
+        let mut ranges = Vec::with_capacity(num_chunks);
         let mut start = 0usize;
-        for shard_index in 0..num_shards {
-            let owned_granules = base_granules + usize::from(shard_index < extra_granules);
+        for chunk_index in 0..num_chunks {
+            let owned_granules = base_granules + usize::from(chunk_index < extra_granules);
             let mut count = owned_granules
-                .checked_mul(shard_granule)
-                .ok_or_else(|| AkitaError::InvalidSetup("witness shard width overflow".into()))?;
-            if shard_index + 1 == num_shards {
+                .checked_mul(chunk_granule)
+                .ok_or_else(|| AkitaError::InvalidSetup("witness chunk width overflow".into()))?;
+            if chunk_index + 1 == num_chunks {
                 count = count.checked_add(residual).ok_or_else(|| {
-                    AkitaError::InvalidSetup("witness shard width overflow".into())
+                    AkitaError::InvalidSetup("witness chunk width overflow".into())
                 })?;
             }
-            let range = checked_range(start, count, "witness shard range overflow")?;
+            let range = checked_range(start, count, "witness chunk range overflow")?;
             start = range.end;
             ranges.push(range);
         }
-        if start != live_fold_count {
+        if start != num_blocks {
             return Err(AkitaError::InvalidSetup(
-                "witness shards do not cover the live folds".into(),
+                "witness chunks do not cover the live blocks".into(),
             ));
         }
         Ok(ranges)
@@ -264,14 +264,14 @@ impl WitnessLayout {
         self.r_range.end
     }
 
-    pub fn num_shards_for_group(&self, group_index: usize) -> usize {
+    pub fn num_chunks_for_group(&self, group_index: usize) -> usize {
         self.units
             .iter()
             .filter(|unit| unit.group_index == group_index)
             .count()
     }
 
-    pub fn group_live_fold_count(&self, group_index: usize) -> Result<usize, AkitaError> {
+    pub fn group_live_block_count(&self, group_index: usize) -> Result<usize, AkitaError> {
         let mut total = 0usize;
         let mut found = false;
         for unit in self
@@ -281,7 +281,7 @@ impl WitnessLayout {
         {
             found = true;
             total = total
-                .checked_add(unit.live_fold_count)
+                .checked_add(unit.live_block_count)
                 .ok_or_else(|| AkitaError::InvalidSetup("witness fold coverage overflow".into()))?;
         }
         if !found {
@@ -293,11 +293,11 @@ impl WitnessLayout {
     pub fn unit(
         &self,
         group_index: usize,
-        shard_index: usize,
+        chunk_index: usize,
     ) -> Result<&WitnessUnitLayout, AkitaError> {
         self.units
             .iter()
-            .find(|unit| unit.group_index == group_index && unit.shard_index == shard_index)
+            .find(|unit| unit.group_index == group_index && unit.chunk_index == chunk_index)
             .ok_or_else(|| AkitaError::InvalidSetup("witness unit is missing".into()))
     }
 
@@ -316,15 +316,15 @@ impl WitnessLayout {
         Ok(units)
     }
 
-    pub fn unit_for_fold(
+    pub fn unit_for_block(
         &self,
         group_index: usize,
-        global_fold: usize,
+        global_block: usize,
     ) -> Result<&WitnessUnitLayout, AkitaError> {
         self.units
             .iter()
             .filter(|unit| unit.group_index == group_index)
-            .find(|unit| unit.global_fold_range().contains(&global_fold))
+            .find(|unit| unit.global_block_range().contains(&global_block))
             .ok_or_else(|| AkitaError::InvalidInput("witness fold has no owning unit".into()))
     }
 
@@ -334,13 +334,13 @@ impl WitnessLayout {
         num_claims: usize,
         depth_open: usize,
         claim: usize,
-        global_fold: usize,
+        global_block: usize,
         digit: usize,
     ) -> Result<usize, AkitaError> {
         self.validate_unit_membership(unit)?;
         let expected_len = checked_mul3(
             num_claims,
-            unit.live_fold_count,
+            unit.live_block_count,
             depth_open,
             "witness E shape overflow",
         )?;
@@ -349,19 +349,19 @@ impl WitnessLayout {
                 "witness E shape disagrees with resolved range".into(),
             ));
         }
-        let local_fold = checked_owned_fold(unit, global_fold)?;
+        let local_block = checked_owned_block(unit, global_block)?;
         if claim >= num_claims || digit >= depth_open {
             return Err(AkitaError::InvalidInput(
                 "witness E semantic index out of range".into(),
             ));
         }
-        let fold_claim = unit
-            .live_fold_count
+        let block_claim = unit
+            .live_block_count
             .checked_mul(claim)
-            .and_then(|base| base.checked_add(local_fold))
+            .and_then(|base| base.checked_add(local_block))
             .ok_or_else(|| AkitaError::InvalidSetup("witness E index overflow".into()))?;
         let local = depth_open
-            .checked_mul(fold_claim)
+            .checked_mul(block_claim)
             .and_then(|base| base.checked_add(digit))
             .ok_or_else(|| AkitaError::InvalidSetup("witness E index overflow".into()))?;
         checked_range_index(&unit.e_range, local, "witness E")
@@ -375,13 +375,13 @@ impl WitnessLayout {
         n_a: usize,
         depth_open: usize,
         claim: usize,
-        global_fold: usize,
+        global_block: usize,
         a_row: usize,
         digit: usize,
     ) -> Result<usize, AkitaError> {
         self.validate_unit_membership(unit)?;
         let expected_len = num_claims
-            .checked_mul(unit.live_fold_count)
+            .checked_mul(unit.live_block_count)
             .and_then(|len| len.checked_mul(n_a))
             .and_then(|len| len.checked_mul(depth_open))
             .ok_or_else(|| AkitaError::InvalidSetup("witness T shape overflow".into()))?;
@@ -390,23 +390,23 @@ impl WitnessLayout {
                 "witness T shape disagrees with resolved range".into(),
             ));
         }
-        let local_fold = checked_owned_fold(unit, global_fold)?;
+        let local_block = checked_owned_block(unit, global_block)?;
         if claim >= num_claims || a_row >= n_a || digit >= depth_open {
             return Err(AkitaError::InvalidInput(
                 "witness T semantic index out of range".into(),
             ));
         }
-        let fold_claim = unit
-            .live_fold_count
+        let block_claim = unit
+            .live_block_count
             .checked_mul(claim)
-            .and_then(|base| base.checked_add(local_fold))
+            .and_then(|base| base.checked_add(local_block))
             .ok_or_else(|| AkitaError::InvalidSetup("witness T index overflow".into()))?;
-        let row_fold_claim = n_a
-            .checked_mul(fold_claim)
+        let row_block_claim = n_a
+            .checked_mul(block_claim)
             .and_then(|base| base.checked_add(a_row))
             .ok_or_else(|| AkitaError::InvalidSetup("witness T index overflow".into()))?;
         let local = depth_open
-            .checked_mul(row_fold_claim)
+            .checked_mul(row_block_claim)
             .and_then(|base| base.checked_add(digit))
             .ok_or_else(|| AkitaError::InvalidSetup("witness T index overflow".into()))?;
         checked_range_index(&unit.t_range, local, "witness T")
@@ -416,7 +416,7 @@ impl WitnessLayout {
     pub fn z_index(
         &self,
         unit: &WitnessUnitLayout,
-        fold_position_count: usize,
+        block_len: usize,
         depth_commit: usize,
         depth_fold: usize,
         position: usize,
@@ -425,7 +425,7 @@ impl WitnessLayout {
     ) -> Result<usize, AkitaError> {
         self.validate_unit_membership(unit)?;
         let expected_len = checked_mul3(
-            fold_position_count,
+            block_len,
             depth_commit,
             depth_fold,
             "witness Z shape overflow",
@@ -435,10 +435,7 @@ impl WitnessLayout {
                 "witness Z shape disagrees with resolved range".into(),
             ));
         }
-        if position >= fold_position_count
-            || commit_digit >= depth_commit
-            || fold_digit >= depth_fold
-        {
+        if position >= block_len || commit_digit >= depth_commit || fold_digit >= depth_fold {
             return Err(AkitaError::InvalidInput(
                 "witness Z semantic index out of range".into(),
             ));
@@ -514,11 +511,11 @@ fn checked_range_index(
     Ok(index)
 }
 
-fn checked_owned_fold(unit: &WitnessUnitLayout, global_fold: usize) -> Result<usize, AkitaError> {
-    let local = global_fold
-        .checked_sub(unit.global_fold_start)
+fn checked_owned_block(unit: &WitnessUnitLayout, global_block: usize) -> Result<usize, AkitaError> {
+    let local = global_block
+        .checked_sub(unit.global_block_start)
         .ok_or_else(|| AkitaError::InvalidInput("witness fold is not owned by unit".into()))?;
-    if local >= unit.live_fold_count {
+    if local >= unit.live_block_count {
         return Err(AkitaError::InvalidInput(
             "witness fold is not owned by unit".into(),
         ));
@@ -761,7 +758,7 @@ mod tests {
         }
     }
 
-    fn test_layout(num_shards: usize) -> (LevelParams, OpeningClaimsLayout, WitnessLayout) {
+    fn test_layout(num_chunks: usize) -> (LevelParams, OpeningClaimsLayout, WitnessLayout) {
         let mut lp = LevelParams::params_only(
             SisModulusProfileId::Q32Offset99,
             32,
@@ -773,10 +770,10 @@ mod tests {
         )
         .with_decomp(4, 25, 2, 2)
         .expect("test params");
-        lp.shard_granule = 2;
+        lp.chunk_granule = 2;
         let opening_batch = OpeningClaimsLayout::new(0, 2).expect("opening batch");
         let layout =
-            WitnessLayout::new(&lp, &opening_batch, num_shards, 3, 2).expect("witness layout");
+            WitnessLayout::new(&lp, &opening_batch, num_chunks, 3, 2).expect("witness layout");
         (lp, opening_batch, layout)
     }
 
@@ -787,7 +784,7 @@ mod tests {
         let depth_fold = lp
             .num_digits_fold(2, lp.field_bits_for_cache())
             .expect("fold depth");
-        assert_eq!(unit.global_fold_range(), 4..7);
+        assert_eq!(unit.global_block_range(), 4..7);
         assert_eq!(
             layout.e_index(unit, 2, 2, 1, 6, 1).expect("e"),
             unit.e_range().start + 1 + 2 * (2 + 3)
@@ -808,15 +805,15 @@ mod tests {
     }
 
     #[test]
-    fn granule_aligned_shards_are_exact_and_contiguous() {
+    fn granule_aligned_chunks_are_exact_and_contiguous() {
         let (_, _, layout) = test_layout(2);
         let units = layout.units_for_group(0).expect("units");
         assert_eq!(units.len(), 2);
-        assert_eq!(units[0].global_fold_range(), 0..4);
-        assert_eq!(units[1].global_fold_range(), 4..7);
+        assert_eq!(units[0].global_block_range(), 0..4);
+        assert_eq!(units[1].global_block_range(), 4..7);
         assert_eq!(units[0].t_range().end, units[1].z_range().start);
         assert_eq!(units[1].t_range().end, layout.r_range().start);
-        assert_eq!(layout.group_live_fold_count(0).expect("fold count"), 7);
+        assert_eq!(layout.group_live_block_count(0).expect("fold count"), 7);
     }
 
     #[test]

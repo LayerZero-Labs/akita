@@ -52,8 +52,8 @@ where
 /// block-bucketed storage can still feed it into kernels that
 /// consume `FlatBlocks`.
 pub(crate) fn from_buckets<E>(buckets: Vec<Vec<E>>) -> FlatBlocks<E> {
-    let live_fold_count = buckets.len();
-    let mut offsets = Vec::with_capacity(live_fold_count + 1);
+    let num_blocks = buckets.len();
+    let mut offsets = Vec::with_capacity(num_blocks + 1);
     let total: usize = buckets.iter().map(Vec::len).sum();
     let mut entries = Vec::with_capacity(total);
     offsets.push(0);

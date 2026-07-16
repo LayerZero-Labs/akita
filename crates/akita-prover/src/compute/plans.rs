@@ -36,7 +36,7 @@ impl<'a, E> FlatBlockTable<'a, E> {
 
     /// Number of logical blocks.
     #[inline]
-    pub fn live_fold_count(&self) -> usize {
+    pub fn num_blocks(&self) -> usize {
         self.offsets.len().saturating_sub(1)
     }
 
@@ -58,9 +58,7 @@ impl<'a, E> FlatBlockTable<'a, E> {
     }
 
     pub(crate) fn block_slices(&self) -> Result<Vec<&'a [E]>, AkitaError> {
-        (0..self.live_fold_count())
-            .map(|idx| self.block(idx))
-            .collect()
+        (0..self.num_blocks()).map(|idx| self.block(idx)).collect()
     }
 }
 
@@ -110,7 +108,7 @@ pub struct OneHotCommitRowsPlan<'a> {
     /// Number of A rows to produce.
     pub n_a: usize,
     /// Root block length in ring elements.
-    pub fold_position_count: usize,
+    pub block_len: usize,
     /// Number of balanced digits used for the A-side commit.
     pub num_digits_commit: usize,
     /// Per-block one-hot entries.
@@ -130,7 +128,7 @@ pub struct SparseRingCommitRowsPlan<'a> {
     /// Number of A rows to produce.
     pub n_a: usize,
     /// Root block length in ring elements.
-    pub fold_position_count: usize,
+    pub block_len: usize,
     /// Number of balanced digits used for the A-side commit.
     pub num_digits_commit: usize,
     /// Per-block sparse signed coefficients.
@@ -152,9 +150,9 @@ pub struct RecursiveWitnessCommitRowsPlan<'a, const D: usize> {
     /// Number of rows to produce.
     pub n_rows: usize,
     /// Recursive block length.
-    pub fold_position_count: usize,
+    pub block_len: usize,
     /// Number of logical blocks.
-    pub live_fold_count: usize,
+    pub num_blocks: usize,
     /// Number of balanced digits used for the A-side commit.
     pub num_digits_commit: usize,
     /// Logarithm of the gadget basis.

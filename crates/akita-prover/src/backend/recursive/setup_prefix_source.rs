@@ -192,25 +192,25 @@ fn setup_prefix_fold_geometry<const D: usize>(
     if slot.id.d_setup != D
         || geometry.group.num_polynomials() != 1
         || geometry.source_ring_len_per_claim != source_ring_len
-        || geometry.fold_position_count == 0
-        || geometry.live_fold_count != source_ring_len.div_ceil(geometry.fold_position_count)
+        || geometry.block_len == 0
+        || geometry.num_blocks != source_ring_len.div_ceil(geometry.block_len)
     {
         return Err(AkitaError::InvalidSetup(
-            "setup-prefix source disagrees with frozen fold geometry".into(),
+            "setup-prefix source disagrees with frozen block geometry".into(),
         ));
     }
-    Ok((geometry.fold_position_count, geometry.live_fold_count))
+    Ok((geometry.block_len, geometry.num_blocks))
 }
 
 fn fold_setup_prefix_blocks<F: FieldCore, const D: usize>(
     coeffs: &[CyclotomicRing<F, D>],
     scalars: &[F],
-    fold_position_count: usize,
+    block_len: usize,
 ) -> Vec<CyclotomicRing<F, D>> {
-    (0..coeffs.len().div_ceil(fold_position_count))
+    (0..coeffs.len().div_ceil(block_len))
         .map(|block_idx| {
-            let start = block_idx * fold_position_count;
-            let end = (start + fold_position_count).min(coeffs.len());
+            let start = block_idx * block_len;
+            let end = (start + block_len).min(coeffs.len());
             let mut acc = CyclotomicRing::<F, D>::zero();
             for (ring, scalar) in coeffs[start..end].iter().zip(scalars.iter()) {
                 acc += ring.scale(scalar);
@@ -223,12 +223,12 @@ fn fold_setup_prefix_blocks<F: FieldCore, const D: usize>(
 fn fold_setup_prefix_blocks_ring<F: FieldCore + CanonicalField, const D: usize>(
     coeffs: &[CyclotomicRing<F, D>],
     scalars: &[CyclotomicRing<F, D>],
-    fold_position_count: usize,
+    block_len: usize,
 ) -> Vec<CyclotomicRing<F, D>> {
-    (0..coeffs.len().div_ceil(fold_position_count))
+    (0..coeffs.len().div_ceil(block_len))
         .map(|block_idx| {
-            let start = block_idx * fold_position_count;
-            let end = (start + fold_position_count).min(coeffs.len());
+            let start = block_idx * block_len;
+            let end = (start + block_len).min(coeffs.len());
             let mut acc = CyclotomicRing::<F, D>::zero();
             for (ring, scalar) in coeffs[start..end].iter().zip(scalars.iter()) {
                 ring.mul_accumulate_sparse_rhs_into(scalar, &mut acc);
@@ -244,36 +244,34 @@ fn setup_prefix_evaluate_and_fold<F: FieldCore + CanonicalField, const D: usize>
     plan: OpeningFoldPlan<'_, F, D>,
 ) -> Result<OpeningFoldOutput<F, D>, AkitaError> {
     let coeffs = setup_prefix_rings::<F, D>(expanded, slot)?;
-    let fold_position_count = plan.fold_position_count();
-    let (expected_positions, live_fold_count) =
-        setup_prefix_fold_geometry::<D>(slot, coeffs.len())?;
-    if fold_position_count != expected_positions {
+    let block_len = plan.block_len();
+    let (expected_positions, num_blocks) = setup_prefix_fold_geometry::<D>(slot, coeffs.len())?;
+    if block_len != expected_positions {
         return Err(AkitaError::InvalidSize {
             expected: expected_positions,
-            actual: fold_position_count,
+            actual: block_len,
         });
     }
-    plan.validate(live_fold_count)?;
+    plan.validate(num_blocks)?;
     match plan {
         OpeningFoldPlan::Base {
-            fold_weights,
+            block_weights,
             position_weights,
-            fold_position_count,
+            block_len,
         } => {
-            let folded = fold_setup_prefix_blocks(&coeffs, position_weights, fold_position_count);
+            let folded = fold_setup_prefix_blocks(&coeffs, position_weights, block_len);
             let (eval, folded) =
-                crate::backend::poly_helpers::fused_evaluate_and_fold_base(folded, fold_weights);
+                crate::backend::poly_helpers::fused_evaluate_and_fold_base(folded, block_weights);
             Ok(OpeningFoldOutput { eval, folded })
         }
         OpeningFoldPlan::Ring {
-            fold_weights,
+            block_weights,
             position_weights,
-            fold_position_count,
+            block_len,
         } => {
-            let folded =
-                fold_setup_prefix_blocks_ring(&coeffs, position_weights, fold_position_count);
+            let folded = fold_setup_prefix_blocks_ring(&coeffs, position_weights, block_len);
             let (eval, folded) =
-                crate::backend::poly_helpers::fused_evaluate_and_fold_ring(folded, fold_weights);
+                crate::backend::poly_helpers::fused_evaluate_and_fold_ring(folded, block_weights);
             Ok(OpeningFoldOutput { eval, folded })
         }
     }
@@ -285,11 +283,10 @@ fn setup_prefix_decompose_fold<F: CanonicalField, const D: usize>(
     plan: DecomposeFoldPlan<'_>,
 ) -> Result<crate::DecomposeFoldWitness<F>, AkitaError> {
     let coeffs = setup_prefix_rings::<F, D>(expanded, slot)?;
-    let (fold_position_count, live_fold_count) =
-        setup_prefix_fold_geometry::<D>(slot, coeffs.len())?;
-    if plan.fold_position_count != fold_position_count || plan.challenges.len() != live_fold_count {
+    let (block_len, num_blocks) = setup_prefix_fold_geometry::<D>(slot, coeffs.len())?;
+    if plan.block_len != block_len || plan.challenges.len() != num_blocks {
         return Err(AkitaError::InvalidSetup(
-            "setup-prefix decompose plan disagrees with frozen fold geometry".into(),
+            "setup-prefix decompose plan disagrees with frozen block geometry".into(),
         ));
     }
     let q = (-F::one()).to_canonical_u128() + 1;
@@ -306,7 +303,7 @@ fn setup_prefix_decompose_fold<F: CanonicalField, const D: usize>(
     let centered = balanced_ring_decompose_fold_partitioned::<F, D>(
         &coeffs,
         plan.challenges,
-        plan.fold_position_count,
+        plan.block_len,
         plan.num_digits,
         &params,
     );

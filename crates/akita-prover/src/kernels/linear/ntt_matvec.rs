@@ -106,8 +106,8 @@ pub fn mat_vec_mul_ntt_i8_strided<F: FieldCore + CanonicalField, const D: usize>
     num_rows: usize,
     num_cols: usize,
     coeffs: &[CyclotomicRing<F, D>],
-    live_fold_count: usize,
-    fold_position_count: usize,
+    num_blocks: usize,
+    block_len: usize,
     num_digits: usize,
     log_basis: u32,
 ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError> {
@@ -118,8 +118,8 @@ pub fn mat_vec_mul_ntt_i8_strided<F: FieldCore + CanonicalField, const D: usize>
         num_cols,
         mat_vec_mul_i8_strided_with_params,
         coeffs,
-        live_fold_count,
-        fold_position_count,
+        num_blocks,
+        block_len,
         num_digits,
         log_basis
     ))
@@ -217,14 +217,12 @@ pub fn mat_vec_mul_ntt_digits_i8_strided<F: FieldCore + CanonicalField, const D:
     num_rows: usize,
     num_cols: usize,
     coeffs: &[[i8; D]],
-    live_fold_count: usize,
-    fold_position_count: usize,
+    num_blocks: usize,
+    block_len: usize,
     log_basis: u32,
 ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError> {
     validate_i8_log_basis(log_basis)?;
-    let used = num_cols
-        .min(fold_position_count)
-        .saturating_mul(live_fold_count);
+    let used = num_cols.min(block_len).saturating_mul(num_blocks);
     validate_digit_rows_for_log_basis(
         coeffs,
         used.min(coeffs.len()),
@@ -237,8 +235,8 @@ pub fn mat_vec_mul_ntt_digits_i8_strided<F: FieldCore + CanonicalField, const D:
         num_cols,
         mat_vec_mul_digits_i8_strided_with_params,
         coeffs,
-        live_fold_count,
-        fold_position_count,
+        num_blocks,
+        block_len,
         log_basis
     ))
 }
@@ -255,8 +253,8 @@ pub fn mat_vec_mul_ntt_raw_i8_strided<F: FieldCore + CanonicalField, const D: us
     num_rows: usize,
     num_cols: usize,
     coeffs: &[[i8; D]],
-    live_fold_count: usize,
-    fold_position_count: usize,
+    num_blocks: usize,
+    block_len: usize,
 ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError> {
     dispatch_slot!(
         slot,
@@ -264,8 +262,8 @@ pub fn mat_vec_mul_ntt_raw_i8_strided<F: FieldCore + CanonicalField, const D: us
         num_cols,
         mat_vec_mul_raw_i8_strided_with_params,
         coeffs,
-        live_fold_count,
-        fold_position_count
+        num_blocks,
+        block_len
     )
 }
 

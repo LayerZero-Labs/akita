@@ -75,7 +75,7 @@ This is why the protocol tracks the challenge `L1` mass, not only the maximum
 absolute coefficient. The planner uses this mass in the folded-witness bound:
 
 ```text
-beta = challenge_l1_mass * num_claims * 2^(r_vars + log_basis - 1)
+beta = challenge_l1_mass * num_claims * 2^(block_bits + log_basis - 1)
 ```
 
 A smaller worst-case `L1` mass can reduce the number of fold decomposition

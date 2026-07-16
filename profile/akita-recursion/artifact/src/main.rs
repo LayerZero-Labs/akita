@@ -102,7 +102,7 @@ where
     let alpha_bits = D.trailing_zeros() as usize;
     let target_num_vars = alpha_bits
         .checked_add(layout.position_bits())
-        .and_then(|n| n.checked_add(layout.fold_bits()))
+        .and_then(|n| n.checked_add(layout.block_bits()))
         .ok_or_else(|| "opening point target arity overflow".to_string())?;
     if point.len() > target_num_vars {
         return Err(format!(
@@ -117,8 +117,8 @@ where
     let reduced_point = &padded_point[alpha_bits..];
     let ring_opening_point = ring_opening_point_from_field(
         reduced_point,
-        layout.fold_position_count,
-        layout.live_fold_count,
+        layout.block_len,
+        layout.num_blocks,
         basis,
     )
     .map_err(|err| format!("opening point shape should match layout: {err}"))?;
@@ -129,9 +129,9 @@ where
         poly.opening_view()
             .map_err(|err| format!("opening view: {err}"))?,
         OpeningFoldPlan::Base {
-            fold_weights: &ring_opening_point.fold_weights,
+            block_weights: &ring_opening_point.block_weights,
             position_weights: &ring_opening_point.position_weights,
-            fold_position_count: layout.fold_position_count,
+            block_len: layout.block_len,
         },
     )
     .map_err(|err| format!("opening fold: {err}"))?;
@@ -272,7 +272,7 @@ fn run() -> Result<(), String> {
     )
     .expect("layout");
     let alpha_bits = D.trailing_zeros() as usize;
-    let required_vars = layout.position_bits() + layout.fold_bits() + alpha_bits;
+    let required_vars = layout.position_bits() + layout.block_bits() + alpha_bits;
     // Both `main` (`required_vars <= nv`, layout fits in nv) and
     // `opening_from_poly` (`point.len() <= target_num_vars`, i.e.
     // `nv <= required_vars`) need to hold simultaneously, which means
@@ -281,8 +281,8 @@ fn run() -> Result<(), String> {
     if required_vars != nv {
         return Err(format!(
             "OneHot D={D} layout at nv={nv} expects exactly {required_vars} variables \
-             (alpha_bits={alpha_bits} + position_bits={} + fold_bits={}); pick an AKITA_NUM_VARS that matches the layout",
-            layout.position_bits(), layout.fold_bits()
+             (alpha_bits={alpha_bits} + position_bits={} + block_bits={}); pick an AKITA_NUM_VARS that matches the layout",
+            layout.position_bits(), layout.block_bits()
         ));
     }
 

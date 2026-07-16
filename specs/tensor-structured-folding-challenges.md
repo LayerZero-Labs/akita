@@ -432,13 +432,13 @@ challenge_l1_mass =
 This feeds the existing fold decomposition formulas:
 
 ```text
-beta = challenge_l1_mass * num_claims * 2^(r_vars + log_basis - 1)
+beta = challenge_l1_mass * num_claims * 2^(block_bits + log_basis - 1)
 ```
 
 The implemented tensor preset relies on generated schedule tables. When
 materializing a generated fold entry, `akita-derive` stamps the configured
 fold shape onto the generated level params before deriving the singleton root
-layout, so that singleton fold digits and the `(m_vars, r_vars)` split observe
+layout, so that singleton fold digits and the `(position_bits, block_bits)` split observe
 `omega^2` for tensor roots.
 
 One current limitation is intentionally reflected in this spec:

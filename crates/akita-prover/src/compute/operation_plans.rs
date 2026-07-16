@@ -39,7 +39,7 @@ pub struct CommitInnerPlan {
     /// Number of A rows to produce.
     pub n_a: usize,
     /// Root block length in ring elements.
-    pub fold_position_count: usize,
+    pub block_len: usize,
     /// Number of balanced digits used for the A-side commit.
     pub num_digits_commit: usize,
     /// Number of balanced digits used when opening (recomposition width).
@@ -53,7 +53,7 @@ impl CommitInnerPlan {
     pub fn from_level(params: &LevelParams) -> Self {
         Self {
             n_a: params.a_key.row_len(),
-            fold_position_count: params.fold_position_count,
+            block_len: params.block_len,
             num_digits_commit: params.num_digits_commit,
             num_digits_open: params.num_digits_open,
             log_basis: params.log_basis,
@@ -71,63 +71,48 @@ pub enum OpeningFoldPlan<'a, F: FieldCore, const D: usize> {
     /// Base multiplier point: scalar fold weights.
     Base {
         /// Outer evaluation scalars applied to the folded blocks.
-        fold_weights: &'a [F],
+        block_weights: &'a [F],
         /// Per-block fold scalars.
         position_weights: &'a [F],
         /// Block length in ring elements.
-        fold_position_count: usize,
+        block_len: usize,
     },
     /// Ring multiplier point: ring-element fold weights.
     Ring {
         /// Outer evaluation ring multipliers applied to the folded blocks.
-        fold_weights: &'a [CyclotomicRing<F, D>],
+        block_weights: &'a [CyclotomicRing<F, D>],
         /// Per-block fold ring multipliers.
         position_weights: &'a [CyclotomicRing<F, D>],
         /// Block length in ring elements.
-        fold_position_count: usize,
+        block_len: usize,
     },
 }
 
 impl<F: FieldCore, const D: usize> OpeningFoldPlan<'_, F, D> {
-    pub(crate) fn fold_position_count(self) -> usize {
+    pub(crate) fn block_len(self) -> usize {
         match self {
-            Self::Base {
-                fold_position_count,
-                ..
-            }
-            | Self::Ring {
-                fold_position_count,
-                ..
-            } => fold_position_count,
+            Self::Base { block_len, .. } | Self::Ring { block_len, .. } => block_len,
         }
     }
 
     /// Validate exact position and live-fold weight lengths at a kernel boundary.
-    pub(crate) fn validate(self, live_fold_count: usize) -> Result<(), AkitaError> {
-        let (fold_len, position_len, fold_position_count) = match self {
+    pub(crate) fn validate(self, num_blocks: usize) -> Result<(), AkitaError> {
+        let (fold_len, position_len, block_len) = match self {
             Self::Base {
-                fold_weights,
+                block_weights,
                 position_weights,
-                fold_position_count,
-            } => (
-                fold_weights.len(),
-                position_weights.len(),
-                fold_position_count,
-            ),
+                block_len,
+            } => (block_weights.len(), position_weights.len(), block_len),
             Self::Ring {
-                fold_weights,
+                block_weights,
                 position_weights,
-                fold_position_count,
-            } => (
-                fold_weights.len(),
-                position_weights.len(),
-                fold_position_count,
-            ),
+                block_len,
+            } => (block_weights.len(), position_weights.len(), block_len),
         };
-        if !fold_position_count.is_power_of_two()
-            || live_fold_count == 0
-            || position_len != fold_position_count
-            || fold_len != live_fold_count
+        if !block_len.is_power_of_two()
+            || num_blocks == 0
+            || position_len != block_len
+            || fold_len != num_blocks
         {
             return Err(AkitaError::InvalidInput(
                 "opening fold weights do not match exact L/F geometry".to_string(),
@@ -152,7 +137,7 @@ pub struct DecomposeFoldPlan<'a> {
     /// Sparse fold challenges, outermost first.
     pub challenges: &'a [SparseChallenge],
     /// Block length in ring elements.
-    pub fold_position_count: usize,
+    pub block_len: usize,
     /// Number of balanced digits.
     pub num_digits: usize,
     /// Logarithm of the gadget basis.
@@ -171,7 +156,7 @@ pub enum DecomposeFoldBatchPlan<'a> {
         /// Sparse fold challenges, outermost first.
         challenges: &'a [SparseChallenge],
         /// Block length in ring elements.
-        fold_position_count: usize,
+        block_len: usize,
         /// Number of balanced digits.
         num_digits: usize,
         /// Logarithm of the gadget basis.
@@ -182,7 +167,7 @@ pub enum DecomposeFoldBatchPlan<'a> {
         /// Tensor-structured fold challenges.
         tensor: &'a TensorChallenges,
         /// Block length in ring elements.
-        fold_position_count: usize,
+        block_len: usize,
         /// Number of balanced digits.
         num_digits: usize,
         /// Logarithm of the gadget basis.

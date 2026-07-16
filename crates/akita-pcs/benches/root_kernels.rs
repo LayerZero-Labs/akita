@@ -57,14 +57,14 @@ fn bench_dense_root_matvec_full_nv25_d32(c: &mut Criterion) {
     )
     .unwrap();
     let rings = poly.ring_coeffs::<D>().expect("dense ring view");
-    let live_fold_count = rings.len().div_ceil(layout.fold_position_count);
-    let block_slices: Vec<&[akita_algebra::CyclotomicRing<F, D>]> = (0..live_fold_count)
+    let num_blocks = rings.len().div_ceil(layout.block_len);
+    let block_slices: Vec<&[akita_algebra::CyclotomicRing<F, D>]> = (0..num_blocks)
         .map(|i| {
-            let start = i * layout.fold_position_count;
+            let start = i * layout.block_len;
             if start >= rings.len() {
                 &[] as &[akita_algebra::CyclotomicRing<F, D>]
             } else {
-                &rings[start..(start + layout.fold_position_count).min(rings.len())]
+                &rings[start..(start + layout.block_len).min(rings.len())]
             }
         })
         .collect();

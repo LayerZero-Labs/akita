@@ -394,7 +394,7 @@ fn effective_schedule_digest_binds_root_direct_commit_params() {
     // This is the binding the dropped `SetupSection::level_params_digest`
     // used to provide; it now lives in the per-proof schedule digest.
     let mut other_params = sample_level_params();
-    other_params.live_fold_count += 1;
+    other_params.num_blocks += 1;
 
     let schedule_a = Schedule {
         steps: vec![Step::Direct(crate::DirectStep {

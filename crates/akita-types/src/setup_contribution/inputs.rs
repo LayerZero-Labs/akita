@@ -17,8 +17,8 @@ pub struct SetupContributionPlanInputs<E: FieldCore> {
     pub num_polys_per_group: Vec<usize>,
     pub num_t_vectors: usize,
     pub num_claims: usize,
-    pub live_fold_count: usize,
-    pub fold_position_count: usize,
+    pub num_blocks: usize,
+    pub block_len: usize,
     pub depth_open: usize,
     pub depth_commit: usize,
     pub depth_fold: usize,
@@ -47,18 +47,18 @@ impl<E: FieldCore> SetupContributionPlanInputs<E> {
         let num_groups = num_polys_per_group.len().max(1);
         let depth_commit = lp.num_digits_commit;
         let depth_open = lp.num_digits_open;
-        if lp.live_fold_count == 0 {
+        if lp.num_blocks == 0 {
             return Err(AkitaError::InvalidSetup(
-                "live_fold_count must be positive".into(),
+                "num_blocks must be positive".into(),
             ));
         }
-        if lp.fold_position_count == 0 || depth_commit == 0 || depth_open == 0 || depth_fold == 0 {
+        if lp.block_len == 0 || depth_commit == 0 || depth_open == 0 || depth_fold == 0 {
             return Err(AkitaError::InvalidSetup(
                 "setup evaluator layout has zero width".into(),
             ));
         }
         let inner_width = lp
-            .fold_position_count
+            .block_len
             .checked_mul(depth_commit)
             .ok_or_else(|| AkitaError::InvalidSetup("inner width overflow".into()))?;
         if lp.a_key.col_len() < inner_width {
@@ -69,7 +69,7 @@ impl<E: FieldCore> SetupContributionPlanInputs<E> {
         let expected_b_width = num_polynomials
             .checked_mul(lp.a_key.row_len())
             .and_then(|width| width.checked_mul(depth_open))
-            .and_then(|width| width.checked_mul(lp.live_fold_count))
+            .and_then(|width| width.checked_mul(lp.num_blocks))
             .ok_or_else(|| AkitaError::InvalidSetup("B-matrix width overflow".into()))?;
         if lp.b_key.col_len() < expected_b_width {
             return Err(AkitaError::InvalidSetup(
@@ -87,8 +87,8 @@ impl<E: FieldCore> SetupContributionPlanInputs<E> {
             num_polys_per_group: num_polys_per_group.to_vec(),
             num_t_vectors: num_polynomials,
             num_claims: num_polynomials,
-            live_fold_count: lp.live_fold_count,
-            fold_position_count: lp.fold_position_count,
+            num_blocks: lp.num_blocks,
+            block_len: lp.block_len,
             depth_open,
             depth_commit,
             depth_fold,

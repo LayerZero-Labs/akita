@@ -330,7 +330,7 @@ where
         RecursiveFoldSource::setup_prefix(Arc::clone(expanded), Arc::new(slot.clone()))
     });
     let setup_polys_storage = setup_source_storage.as_ref().map(|source| [source]);
-    let (fold_claims, eor_opening_batch, protocol_point) =
+    let (block_claims, eor_opening_batch, protocol_point) =
         ProverOpeningData::new_recursive_suffix_fold(
             opening_point,
             recursive_num_vars,
@@ -349,7 +349,7 @@ where
     prepare_fold_inner::<F, E, T, _, _, C, O, TS, R>(
         stack,
         needs_extension_reduction,
-        fold_claims,
+        block_claims,
         &logical_polys,
         &eor_opening_batch,
         true,
@@ -382,11 +382,11 @@ mod tests {
             Vec::new(),
             RingOpeningPoint {
                 position_weights: vec![TestF::one()],
-                fold_weights: vec![TestF::one()],
+                block_weights: vec![TestF::one()],
             },
             RingMultiplierOpeningPoint::from_base(&RingOpeningPoint {
                 position_weights: vec![TestF::one()],
-                fold_weights: vec![TestF::one()],
+                block_weights: vec![TestF::one()],
             }),
             CyclotomicRing::<TestF, D>::zero(),
         );

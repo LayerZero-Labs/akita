@@ -116,7 +116,7 @@ mod tests {
 
     use akita_pcs::{FieldCore, FromPrimitiveInt, RandomSampling};
 
-    fn prover_fold_claims<'a, F: FieldCore + Clone, P>(
+    fn prover_block_claims<'a, F: FieldCore + Clone, P>(
         point: &'a [F],
         polynomials: &'a [&'a P],
         commitment: &'a Commitment<F>,
@@ -236,13 +236,13 @@ mod tests {
     }
 
     fn nonconstant_ring_multiplier_point<F, const D: usize>(
-        fold_position_count: usize,
-        live_fold_count: usize,
+        block_len: usize,
+        num_blocks: usize,
     ) -> RingMultiplierOpeningPoint<F>
     where
         F: FieldCore + FromPrimitiveInt,
     {
-        let a = (0..fold_position_count)
+        let a = (0..block_len)
             .map(|idx| {
                 CyclotomicRing::<F, D>::from_coefficients(from_fn(|k| {
                     if k % 17 == idx % 17 {
@@ -253,7 +253,7 @@ mod tests {
                 }))
             })
             .collect();
-        let b = (0..live_fold_count)
+        let b = (0..num_blocks)
             .map(|idx| {
                 CyclotomicRing::<F, D>::from_coefficients(from_fn(|k| {
                     if k % 19 == idx % 19 {
@@ -304,19 +304,19 @@ mod tests {
         let outer_point = &point[alpha_bits..];
         let ring_opening_point = ring_opening_point_from_field(
             outer_point,
-            lp.fold_position_count,
-            lp.live_fold_count,
+            lp.block_len,
+            lp.num_blocks,
             BasisMode::Lagrange,
         )
         .expect("ring opening point");
         let ring_multiplier_point =
-            nonconstant_ring_multiplier_point::<F, D>(lp.fold_position_count, lp.live_fold_count);
+            nonconstant_ring_multiplier_point::<F, D>(lp.block_len, lp.num_blocks);
         let opening = OpeningFoldKernel::<DenseView<'_, F, D>, F, D>::evaluate_and_fold(
             &CpuBackend,
             None,
             poly.opening_view().expect("opening view"),
             OpeningFoldPlan::Ring {
-                fold_weights: ring_multiplier_point
+                block_weights: ring_multiplier_point
                     .fold_rings_trusted::<D>()
                     .expect("nonconstant test point has ring b weights")
                     .expect("ring b weights"),
@@ -324,7 +324,7 @@ mod tests {
                     .position_rings_trusted::<D>()
                     .expect("nonconstant test point has ring a weights")
                     .expect("ring a weights"),
-                fold_position_count: lp.fold_position_count,
+                block_len: lp.block_len,
             },
         )
         .expect("evaluate_and_fold_ring");
@@ -341,14 +341,14 @@ mod tests {
             akita_prover::OperationCtx::new(&CpuBackend, &prepared, setup.expanded.as_ref())
                 .expect("operation ctx");
         let poly_refs: [&DensePoly<F>; 1] = [&poly];
-        let fold_claims = prover_fold_claims(&point, &poly_refs, &commitment, batched_hint);
+        let block_claims = prover_block_claims(&point, &poly_refs, &commitment, batched_hint);
         let (instance, witness) =
             RingRelationProver::new::<F, F, _, DensePoly<F>, CpuBackend, CpuBackend>(
                 &op_ctx,
                 &op_ctx,
                 ring_opening_point,
                 ring_multiplier_point.clone(),
-                fold_claims,
+                block_claims,
                 vec![RingVec::from_ring_elems(&e_folded)],
                 lp.clone(),
                 &mut transcript,
@@ -457,8 +457,8 @@ mod tests {
         let outer_point = &point[alpha_bits..];
         let ring_opening_point = ring_opening_point_from_field(
             outer_point,
-            lp.fold_position_count,
-            lp.live_fold_count,
+            lp.block_len,
+            lp.num_blocks,
             BasisMode::Lagrange,
         )
         .expect("ring opening point");
@@ -468,9 +468,9 @@ mod tests {
             None,
             poly.opening_view().expect("opening view"),
             OpeningFoldPlan::Base {
-                fold_weights: &ring_opening_point.fold_weights,
+                block_weights: &ring_opening_point.block_weights,
                 position_weights: &ring_opening_point.position_weights,
-                fold_position_count: lp.fold_position_count,
+                block_len: lp.block_len,
             },
         )
         .expect("evaluate_and_fold");
@@ -487,14 +487,14 @@ mod tests {
             akita_prover::OperationCtx::new(&CpuBackend, &prepared, setup.expanded.as_ref())
                 .expect("operation ctx");
         let poly_refs: [&DensePoly<F>; 1] = [&poly];
-        let fold_claims = prover_fold_claims(&point, &poly_refs, &commitment, batched_hint);
+        let block_claims = prover_block_claims(&point, &poly_refs, &commitment, batched_hint);
         let (instance, witness) =
             RingRelationProver::new::<F, F, _, DensePoly<F>, CpuBackend, CpuBackend>(
                 &op_ctx,
                 &op_ctx,
                 ring_opening_point,
                 ring_multiplier_point.clone(),
-                fold_claims,
+                block_claims,
                 vec![RingVec::from_ring_elems(&e_folded)],
                 lp.clone(),
                 &mut transcript,
@@ -614,8 +614,8 @@ mod tests {
         let outer_point = &point[alpha_bits..];
         let ring_opening_point = ring_opening_point_from_field(
             outer_point,
-            lp.fold_position_count,
-            lp.live_fold_count,
+            lp.block_len,
+            lp.num_blocks,
             BasisMode::Lagrange,
         )
         .expect("ring opening point");
@@ -625,9 +625,9 @@ mod tests {
             None,
             poly.opening_view().expect("opening view"),
             OpeningFoldPlan::Base {
-                fold_weights: &ring_opening_point.fold_weights,
+                block_weights: &ring_opening_point.block_weights,
                 position_weights: &ring_opening_point.position_weights,
-                fold_position_count: lp.fold_position_count,
+                block_len: lp.block_len,
             },
         )
         .expect("evaluate_and_fold");
@@ -644,14 +644,14 @@ mod tests {
             akita_prover::OperationCtx::new(&CpuBackend, &prepared, setup.expanded.as_ref())
                 .expect("operation ctx");
         let poly_refs: [&DensePoly<F>; 1] = [&poly];
-        let fold_claims = prover_fold_claims(&point, &poly_refs, &commitment, batched_hint);
+        let block_claims = prover_block_claims(&point, &poly_refs, &commitment, batched_hint);
         let (instance, _witness) =
             RingRelationProver::new::<F, F, _, DensePoly<F>, CpuBackend, CpuBackend>(
                 &op_ctx,
                 &op_ctx,
                 ring_opening_point,
                 ring_multiplier_point,
-                fold_claims,
+                block_claims,
                 vec![RingVec::from_ring_elems(&e_folded)],
                 lp.clone(),
                 &mut transcript,
@@ -812,8 +812,8 @@ mod tests {
         let outer_point = &point[alpha_bits..];
         let ring_opening_point = ring_opening_point_from_field(
             outer_point,
-            level_params.fold_position_count,
-            level_params.live_fold_count,
+            level_params.block_len,
+            level_params.num_blocks,
             BasisMode::Lagrange,
         )
         .expect("ring opening point");
@@ -823,9 +823,9 @@ mod tests {
             None,
             poly.opening_view().expect("opening view"),
             OpeningFoldPlan::Base {
-                fold_weights: &ring_opening_point.fold_weights,
+                block_weights: &ring_opening_point.block_weights,
                 position_weights: &ring_opening_point.position_weights,
-                fold_position_count: level_params.fold_position_count,
+                block_len: level_params.block_len,
             },
         )
         .expect("evaluate_and_fold");
@@ -842,14 +842,14 @@ mod tests {
             akita_prover::OperationCtx::new(&CpuBackend, &prepared, setup.expanded.as_ref())
                 .expect("operation ctx");
         let poly_refs: [&DensePoly<F>; 1] = [&poly];
-        let fold_claims = prover_fold_claims(&point, &poly_refs, &commitment, batched_hint);
+        let block_claims = prover_block_claims(&point, &poly_refs, &commitment, batched_hint);
         let (instance, witness) =
             RingRelationProver::new::<F, F, _, DensePoly<F>, CpuBackend, CpuBackend>(
                 &op_ctx,
                 &op_ctx,
                 ring_opening_point.clone(),
                 ring_multiplier_point.clone(),
-                fold_claims,
+                block_claims,
                 vec![RingVec::from_ring_elems(&e_folded)],
                 level_params.clone(),
                 &mut transcript,
@@ -926,12 +926,12 @@ mod tests {
             "RelationMatrixEvaluator::eval_at_point must match materialized multilinear_eval"
         );
 
-        // ----- Chunked layout ground truth (W ∈ powers of two | live_fold_count) --
+        // ----- Chunked layout ground truth (W ∈ powers of two | num_blocks) --
         // The chunked relation's column-MLE has the same per-cell values as the
         // single-unit vector, repositioned by the canonical witness descriptor.
         // Each ownership unit receives its e/t block window and one replicated z
         // segment; the r tail remains shared.
-        let live_fold_count = level_params.live_fold_count;
+        let num_blocks = level_params.num_blocks;
         let group_id = 0;
         let single_layout = instance
             .segment_layout(&level_params, None)
@@ -948,7 +948,7 @@ mod tests {
             .group_layout(group_id)
             .expect("single group layout")
             .num_polynomials();
-        let fold_position_count = group_params.fold_position_count();
+        let block_len = group_params.block_len();
         let depth_commit = group_params.num_digits_commit();
         let depth_open = group_params.num_digits_open();
         let depth_fold = level_params
@@ -963,12 +963,12 @@ mod tests {
 
         let chunk_counts: Vec<usize> = (0..)
             .map(|k| 1usize << k)
-            .take_while(|&w| w <= live_fold_count)
-            .filter(|&w| live_fold_count % w == 0)
+            .take_while(|&w| w <= num_blocks)
+            .filter(|&w| num_blocks % w == 0)
             .collect();
         assert!(
             chunk_counts.iter().any(|&w| w > 1),
-            "fixture must have live_fold_count > 1 to exercise chunking (live_fold_count={live_fold_count})"
+            "fixture must have num_blocks > 1 to exercise chunking (num_blocks={num_blocks})"
         );
         for w in chunk_counts.into_iter().filter(|&w| w > 1) {
             let mut lp_w = level_params.clone();
@@ -984,13 +984,13 @@ mod tests {
                 .units_for_group(group_id)
                 .expect("chunked group")
             {
-                for position in 0..fold_position_count {
+                for position in 0..block_len {
                     for commit_digit in 0..depth_commit {
                         for fold_digit in 0..depth_fold {
                             let source = single_layout
                                 .z_index(
                                     &single_unit,
-                                    fold_position_count,
+                                    block_len,
                                     depth_commit,
                                     depth_fold,
                                     position,
@@ -1001,7 +1001,7 @@ mod tests {
                             let target = chunk_layout
                                 .z_index(
                                     unit,
-                                    fold_position_count,
+                                    block_len,
                                     depth_commit,
                                     depth_fold,
                                     position,
@@ -1014,7 +1014,7 @@ mod tests {
                     }
                 }
                 for claim in 0..num_claims {
-                    for block in unit.global_fold_range() {
+                    for block in unit.global_block_range() {
                         for digit in 0..depth_open {
                             let source = single_layout
                                 .e_index(&single_unit, num_claims, depth_open, claim, block, digit)
@@ -1165,8 +1165,8 @@ mod tests {
         let outer_point = &point[alpha_bits..];
         let ring_opening_point = ring_opening_point_from_field(
             outer_point,
-            level_params.fold_position_count,
-            level_params.live_fold_count,
+            level_params.block_len,
+            level_params.num_blocks,
             BasisMode::Lagrange,
         )
         .expect("ring opening point");
@@ -1176,9 +1176,9 @@ mod tests {
             None,
             poly.opening_view().expect("opening view"),
             OpeningFoldPlan::Base {
-                fold_weights: &ring_opening_point.fold_weights,
+                block_weights: &ring_opening_point.block_weights,
                 position_weights: &ring_opening_point.position_weights,
-                fold_position_count: level_params.fold_position_count,
+                block_len: level_params.block_len,
             },
         )
         .expect("evaluate_and_fold");
@@ -1195,14 +1195,14 @@ mod tests {
             akita_prover::OperationCtx::new(&CpuBackend, &prepared, setup.expanded.as_ref())
                 .expect("operation ctx");
         let poly_refs: [&DensePoly<F>; 1] = [&poly];
-        let fold_claims = prover_fold_claims(&point, &poly_refs, &commitment, batched_hint);
+        let block_claims = prover_block_claims(&point, &poly_refs, &commitment, batched_hint);
         let (instance, witness) =
             RingRelationProver::new::<F, F, _, DensePoly<F>, CpuBackend, CpuBackend>(
                 &op_ctx,
                 &op_ctx,
                 ring_opening_point,
                 ring_multiplier_point,
-                fold_claims,
+                block_claims,
                 vec![RingVec::from_ring_elems(&e_folded)],
                 level_params.clone(),
                 &mut transcript,

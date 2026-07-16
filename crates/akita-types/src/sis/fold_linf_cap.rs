@@ -272,16 +272,16 @@ fn fold_witness_linf_tensor_inner_ln(
 }
 
 pub fn rademacher_proxy_variance(
-    fold_bits: usize,
+    block_bits: usize,
     num_claims: usize,
     witness_linf_sq: u128,
     cap_config: &FoldWitnessLinfCapConfig,
 ) -> Result<u128, AkitaError> {
-    let live_fold_count = 1usize.checked_shl(fold_bits as u32).ok_or_else(|| {
-        AkitaError::InvalidSetup("rademacher_proxy_variance: fold_bits too large".to_string())
+    let num_blocks = 1usize.checked_shl(block_bits as u32).ok_or_else(|| {
+        AkitaError::InvalidSetup("rademacher_proxy_variance: block_bits too large".to_string())
     })?;
     let num_fold_blocks = (num_claims as u128)
-        .checked_mul(live_fold_count as u128)
+        .checked_mul(num_blocks as u128)
         .ok_or_else(|| {
             AkitaError::InvalidSetup(
                 "rademacher_proxy_variance: num_fold_blocks overflows u128".to_string(),
@@ -304,7 +304,7 @@ pub fn rademacher_proxy_variance(
                     "tensor tail sizing requires a power-of-two fold low length".to_string(),
                 ));
             }
-            let fold_high_len = live_fold_count.div_ceil(fold_low_len);
+            let fold_high_len = num_blocks.div_ceil(fold_low_len);
             rademacher_proxy_variance_tensor_challenges(
                 num_claims as u128,
                 fold_high_len as u128,
@@ -365,7 +365,7 @@ impl FoldWitnessLinfCapConfig {
     }
 
     /// Tail-aware sizing inputs for a fold level from its sparse family, shape,
-    /// ring degree, and inner A-matrix width (`fold_position_count · δ_commit`).
+    /// ring degree, and inner A-matrix width (`block_len · δ_commit`).
     #[inline]
     pub fn for_fold_level(
         fold_challenge_config: &SparseChallengeConfig,

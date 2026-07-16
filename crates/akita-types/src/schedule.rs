@@ -77,12 +77,12 @@ pub struct PrecommittedGroupParams {
     pub group: PolynomialGroupLayout,
     /// Exact live source ring elements per claim (`N`).
     pub source_ring_len_per_claim: usize,
-    /// Power-of-two positions per fold slice (`L`).
-    pub fold_position_count: usize,
-    /// Exact live fold count (`F`).
-    pub live_fold_count: usize,
-    /// Power-of-two shard ownership granule (`S`).
-    pub shard_granule: usize,
+    /// Power-of-two positions per block (`L`).
+    pub block_len: usize,
+    /// Exact live block count (`F`).
+    pub num_blocks: usize,
+    /// Power-of-two chunk ownership granule (`S`).
+    pub chunk_granule: usize,
     /// Group-local flat or tensor fold challenge shape.
     pub fold_challenge_shape: akita_challenges::TensorChallengeShape,
     /// Gadget basis selected for the standalone group commit.
@@ -99,9 +99,9 @@ impl PrecommittedGroupParams {
         Self {
             group,
             source_ring_len_per_claim: params.source_ring_len_per_claim,
-            fold_position_count: params.fold_position_count,
-            live_fold_count: params.live_fold_count,
-            shard_granule: params.shard_granule,
+            block_len: params.block_len,
+            num_blocks: params.num_blocks,
+            chunk_granule: params.chunk_granule,
             fold_challenge_shape: params.fold_challenge_shape,
             log_basis: params.log_basis,
             n_a: params.a_key.row_len(),
@@ -113,9 +113,9 @@ impl PrecommittedGroupParams {
         push_usize(bytes, self.group.num_vars());
         push_usize(bytes, self.group.num_polynomials());
         push_usize(bytes, self.source_ring_len_per_claim);
-        push_usize(bytes, self.fold_position_count);
-        push_usize(bytes, self.live_fold_count);
-        push_usize(bytes, self.shard_granule);
+        push_usize(bytes, self.block_len);
+        push_usize(bytes, self.num_blocks);
+        push_usize(bytes, self.chunk_granule);
         bytes.push(match self.fold_challenge_shape {
             akita_challenges::TensorChallengeShape::Flat => 0,
             akita_challenges::TensorChallengeShape::Tensor { .. } => 1,
@@ -153,7 +153,7 @@ impl PrecommittedGroupParams {
         Ok(())
     }
 
-    /// Validate that frozen exact fold geometry matches `group.num_vars`.
+    /// Validate that frozen exact block geometry matches `group.num_vars`.
     pub fn validate_root_geometry(&self, ring_dimension: usize) -> Result<(), AkitaError> {
         let alpha = ring_dimension.trailing_zeros() as usize;
         let Some(source_field_len) = self.source_ring_len_per_claim.checked_mul(ring_dimension)
@@ -168,22 +168,19 @@ impl PrecommittedGroupParams {
                 AkitaError::InvalidSetup("commitment group field length overflow".to_string())
             })?;
         if source_field_len != expected_field_len
-            || self.fold_position_count == 0
-            || !self.fold_position_count.is_power_of_two()
-            || self.live_fold_count
-                != self
-                    .source_ring_len_per_claim
-                    .div_ceil(self.fold_position_count)
-            || self.shard_granule == 0
-            || !self.shard_granule.is_power_of_two()
+            || self.block_len == 0
+            || !self.block_len.is_power_of_two()
+            || self.num_blocks != self.source_ring_len_per_claim.div_ceil(self.block_len)
+            || self.chunk_granule == 0
+            || !self.chunk_granule.is_power_of_two()
         {
             return Err(AkitaError::InvalidSetup(format!(
                 "precommitted group geometry does not match group.num_vars: \
                  N={} L={} F={} S={} alpha={} group.num_vars={}",
                 self.source_ring_len_per_claim,
-                self.fold_position_count,
-                self.live_fold_count,
-                self.shard_granule,
+                self.block_len,
+                self.num_blocks,
+                self.chunk_granule,
                 alpha,
                 self.group.num_vars()
             )));
@@ -358,11 +355,11 @@ pub fn w_ring_element_count_with_counts_for_layout_bits(
 ) -> Result<usize, AkitaError> {
     lp.require_scalar_level("w_ring_element_count_with_counts_for_layout_bits")?;
     let e_hat_count = num_polynomials
-        .checked_mul(lp.live_fold_count)
+        .checked_mul(lp.num_blocks)
         .and_then(|n| n.checked_mul(lp.num_digits_open))
         .ok_or_else(|| AkitaError::InvalidSetup("witness W width overflow".to_string()))?;
     let t_hat_count = num_polynomials
-        .checked_mul(lp.live_fold_count)
+        .checked_mul(lp.num_blocks)
         .and_then(|n| n.checked_mul(lp.a_key.row_len()))
         .and_then(|n| n.checked_mul(lp.num_digits_open))
         .ok_or_else(|| AkitaError::InvalidSetup("witness T width overflow".to_string()))?;
@@ -403,13 +400,13 @@ pub fn w_ring_element_count_with_counts_for_layout_bits(
 /// single-chunk layout is `(num_chunks - 1) · z_chunk` ring elements (the
 /// replicated `ẑ`).
 ///
-/// The exact `ê`/`t̂` live-fold prefix is partitioned without padding. Its
+/// The exact `ê`/`t̂` live-block prefix is partitioned without padding. Its
 /// total width and the shared `r` tail therefore stay unchanged.
 ///
 /// # Errors
 ///
 /// Returns [`AkitaError::InvalidSetup`] when `num_chunks == 0`, `num_chunks > 1`
-/// is not a power of two, there are fewer live folds than chunks, or
+/// is not a power of two, there are fewer live blocks than chunks, or
 /// any width product overflows. Never panics — verifier-reachable through the runtime DP fallback.
 pub fn w_ring_element_count_for_chunks(
     field_bits: u32,
@@ -437,10 +434,10 @@ pub fn w_ring_element_count_for_chunks(
             "w_ring_element_count_for_chunks: num_chunks must be a power of two".to_string(),
         ));
     }
-    if lp.live_fold_count < num_chunks {
+    if lp.num_blocks < num_chunks {
         return Err(AkitaError::InvalidSetup(format!(
-            "w_ring_element_count_for_chunks: live_fold_count={} smaller than num_chunks={num_chunks}",
-            lp.live_fold_count
+            "w_ring_element_count_for_chunks: num_blocks={} smaller than num_chunks={num_chunks}",
+            lp.num_blocks
         )));
     }
     let overflow = || AkitaError::InvalidSetup("chunked witness width overflow".to_string());
@@ -810,8 +807,8 @@ fn append_direct_witness_shape_descriptor_bytes(
 
 /// Witness length entering the root fold, in field elements.
 pub fn root_current_w_len(lp: &LevelParams) -> usize {
-    lp.live_fold_count
-        .checked_mul(lp.fold_position_count)
+    lp.num_blocks
+        .checked_mul(lp.block_len)
         .and_then(|len| len.checked_mul(lp.ring_dimension))
         .unwrap_or(0)
 }

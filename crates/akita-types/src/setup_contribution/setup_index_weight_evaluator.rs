@@ -148,7 +148,7 @@ impl<E: FieldCore> SetupIndexWeightEvaluator<E> {
         }
         let active_cols = checked_mul3(
             group.num_claims,
-            group.live_fold_count,
+            group.num_blocks,
             group.depth_open,
             "setup D active width overflow",
         )?;
@@ -167,9 +167,9 @@ impl<E: FieldCore> SetupIndexWeightEvaluator<E> {
         for claim in 0..group.num_claims {
             for unit in &units {
                 let setup_col = group
-                    .live_fold_count
+                    .num_blocks
                     .checked_mul(claim)
-                    .and_then(|base| base.checked_add(unit.global_fold_start()))
+                    .and_then(|base| base.checked_add(unit.global_block_start()))
                     .and_then(|base| base.checked_mul(group.depth_open))
                     .and_then(|local| d_col_range.start.checked_add(local))
                     .ok_or_else(|| AkitaError::InvalidSetup("setup D address overflow".into()))?;
@@ -178,11 +178,11 @@ impl<E: FieldCore> SetupIndexWeightEvaluator<E> {
                     group.num_claims,
                     group.depth_open,
                     claim,
-                    unit.global_fold_start(),
+                    unit.global_block_start(),
                     0,
                 )?;
                 let len = unit
-                    .live_fold_count()
+                    .live_block_count()
                     .checked_mul(group.depth_open)
                     .ok_or_else(|| AkitaError::InvalidSetup("setup D span overflow".into()))?;
                 validate_opening_span(
@@ -239,9 +239,9 @@ impl<E: FieldCore> SetupIndexWeightEvaluator<E> {
         for claim in 0..group.num_claims {
             for unit in &units {
                 let setup_col = group
-                    .live_fold_count
+                    .num_blocks
                     .checked_mul(claim)
-                    .and_then(|base| base.checked_add(unit.global_fold_start()))
+                    .and_then(|base| base.checked_add(unit.global_block_start()))
                     .and_then(|base| base.checked_mul(group.n_a))
                     .and_then(|base| base.checked_mul(group.depth_open))
                     .ok_or_else(|| AkitaError::InvalidSetup("setup B address overflow".into()))?;
@@ -251,12 +251,12 @@ impl<E: FieldCore> SetupIndexWeightEvaluator<E> {
                     group.n_a,
                     group.depth_open,
                     claim,
-                    unit.global_fold_start(),
+                    unit.global_block_start(),
                     0,
                     0,
                 )?;
                 let len = checked_mul3(
-                    unit.live_fold_count(),
+                    unit.live_block_count(),
                     group.n_a,
                     group.depth_open,
                     "setup B span overflow",
@@ -304,7 +304,7 @@ impl<E: FieldCore> SetupIndexWeightEvaluator<E> {
             return Ok(E::zero());
         }
         let z_cols = group
-            .fold_position_count
+            .block_len
             .checked_mul(group.depth_commit)
             .ok_or_else(|| AkitaError::InvalidSetup("setup A width overflow".into()))?;
         let units = self
@@ -317,7 +317,7 @@ impl<E: FieldCore> SetupIndexWeightEvaluator<E> {
             for (fold_digit, &fold) in self.fold_gadget.iter().enumerate().take(group.depth_fold) {
                 let witness_index = self.layout.witness_layout().z_index(
                     unit,
-                    group.fold_position_count,
+                    group.block_len,
                     group.depth_commit,
                     group.depth_fold,
                     0,

@@ -294,7 +294,7 @@ where
             let group_lp = lp.group_params(opening_batch, group_index)?;
             let num_claims = opening_batch.group_layout(group_index)?.num_polynomials();
             let width = num_claims
-                .checked_mul(group_lp.live_fold_count())
+                .checked_mul(group_lp.num_blocks())
                 .and_then(|n| n.checked_mul(group_lp.num_digits_open()))
                 .ok_or_else(|| AkitaError::InvalidSetup("setup D width overflow".to_string()))?;
             Ok((group_index, width))
@@ -367,22 +367,22 @@ where
         let opening_point = instance.group_opening_point(group_index)?;
         let ring_multiplier_point = instance.group_ring_multiplier_point(group_index)?;
         let challenges = &instance.group_challenges()[group_index];
-        if opening_point.position_weights.len() != group_lp.fold_position_count()
-            || opening_point.fold_weights.len() != group_lp.live_fold_count()
+        if opening_point.position_weights.len() != group_lp.block_len()
+            || opening_point.block_weights.len() != group_lp.num_blocks()
         {
             return Err(AkitaError::InvalidInput(
                 "relation matrix col eval opening-point layout mismatch".to_string(),
             ));
         }
-        if ring_multiplier_point.position_len() != group_lp.fold_position_count()
-            || ring_multiplier_point.fold_len() != group_lp.live_fold_count()
+        if ring_multiplier_point.position_len() != group_lp.block_len()
+            || ring_multiplier_point.fold_len() != group_lp.num_blocks()
         {
             return Err(AkitaError::InvalidInput(
                 "relation matrix col eval multiplier layout mismatch".to_string(),
             ));
         }
         let total_blocks = k_g
-            .checked_mul(group_lp.live_fold_count())
+            .checked_mul(group_lp.num_blocks())
             .ok_or(AkitaError::InvalidProof)?;
         if challenges.logical_len() != total_blocks {
             return Err(AkitaError::InvalidProof);
@@ -396,8 +396,8 @@ where
         let inner_width = group_lp.a_col_len();
         // Hoist per-group geometry into `Copy` locals so the parallel closures
         // below capture scalars instead of the `!Sync` `&dyn LevelParamsLike`.
-        let num_blocks_g = group_lp.live_fold_count();
-        let block_len_g = group_lp.fold_position_count();
+        let num_blocks_g = group_lp.num_blocks();
+        let block_len_g = group_lp.block_len();
         let semantic_t_cols_per_vector = n_a
             .checked_mul(depth_open)
             .and_then(|len| len.checked_mul(num_blocks_g))
@@ -442,7 +442,7 @@ where
 
         for claim in 0..k_g {
             for global_block in 0..num_blocks_g {
-                let unit = witness_layout.unit_for_fold(group_id, global_block)?;
+                let unit = witness_layout.unit_for_block(group_id, global_block)?;
                 let challenge_index = claim
                     .checked_mul(num_blocks_g)
                     .and_then(|base| base.checked_add(global_block))
@@ -509,16 +509,16 @@ where
                 for a_idx in 0..n_a {
                     let a_row_weight = eq_tau1.eval_at(a_range.start + a_idx)?;
                     for (digit, &opening_gadget) in g_open.iter().enumerate() {
-                        let fold_claim = num_blocks_g
+                        let block_claim = num_blocks_g
                             .checked_mul(claim)
                             .and_then(|base| base.checked_add(global_block))
                             .ok_or(AkitaError::InvalidProof)?;
-                        let row_fold_claim = n_a
-                            .checked_mul(fold_claim)
+                        let row_block_claim = n_a
+                            .checked_mul(block_claim)
                             .and_then(|base| base.checked_add(a_idx))
                             .ok_or(AkitaError::InvalidProof)?;
                         let semantic_col = depth_open
-                            .checked_mul(row_fold_claim)
+                            .checked_mul(row_block_claim)
                             .and_then(|base| base.checked_add(digit))
                             .ok_or(AkitaError::InvalidProof)?;
                         let witness_col = witness_layout.t_index(

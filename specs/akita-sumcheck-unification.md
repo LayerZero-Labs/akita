@@ -338,7 +338,7 @@ pub fn plan_level<const D: usize>(params: &LevelParams, next_w_len: usize, gates
 
 The plan is field-free (it inherits the descriptor's identifier-only generics), so `plan_level` describes schedule structure without committing to an evaluation field.
 The ring dimension is a `const D`, not a runtime parameter: `plan_level` validates `D == params.ring_dimension` (and that `D` is a power of two and `next_w_len` a positive multiple of `D`), so the compile-time `D` threaded through the prover/verifier stack cannot drift from the runtime layout.
-Stage-2 round counts come from `next_w_len` (the next folded-witness length) via `akita_types::sumcheck_rounds(D, next_w_len)`, the same source the stage-1/2 provers and verifiers use, rather than from `LevelParams::outer_vars()`.
+Stage-2 round counts come from `next_w_len` (the next folded-witness length) via `akita_types::sumcheck_rounds(D, next_w_len)`, the same source the stage-1/2 provers and verifiers use, rather than from `LevelParams::outeblock_bits()`.
 
 Both prover and verifier call `plan_level` with the same inputs and obtain the same schedule, so Fiat-Shamir ordering, batching, and per-instance proof format are identical by construction.
 `ProtocolGates` carries the feature switches: trace on/off, setup-offload eligibility, ZK.

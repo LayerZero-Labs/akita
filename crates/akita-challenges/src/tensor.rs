@@ -1,10 +1,10 @@
 //! Tensor-shaped sparse-challenge sampling.
 //!
-//! For protocols that sample a length-`live_fold_count` sparse-challenge vector per
+//! For protocols that sample a length-`num_blocks` sparse-challenge vector per
 //! claim, the tensor variant samples two factor vectors of length
-//! `√live_fold_count` and presents the logical fold challenge at block `(p, q)` as
+//! `√num_blocks` and presents the logical fold challenge at block `(p, q)` as
 //! the negacyclic tensor product `fold_high[p] · fold_low[q]`. This shrinks transcript
-//! challenge sampling from `O(live_fold_count)` to `O(√live_fold_count)` per claim
+//! challenge sampling from `O(num_blocks)` to `O(√num_blocks)` per claim
 //! while leaving the downstream fold semantics unchanged through structured
 //! evaluation and factor-aware prover kernels.
 //!
@@ -36,7 +36,7 @@ pub enum ChallengeShape {
     /// Sample one independent challenge for every logical block.
     #[default]
     Flat,
-    /// Factor each live fold index as `fold_low_len * high + low`.
+    /// Factor each live block index as `fold_low_len * high + low`.
     Tensor {
         /// Number of low-factor challenges per claim. Must be a power of two.
         fold_low_len: usize,
@@ -102,7 +102,7 @@ impl ChallengeShape {
 /// Factored tensor sparse challenges for one folding round.
 ///
 /// `fold_high` and `fold_low` are laid out per claim. The logical challenge at
-/// live fold `f = fold_low_len * h + q` is the tensor product
+/// live block `f = fold_low_len * h + q` is the tensor product
 /// `fold_high[c, h] · fold_low[c, q]`. Keeping this as the tensor-only payload makes
 /// the factorization invariant explicit for callers that can evaluate weighted
 /// aggregates without expanding every logical block.
@@ -112,8 +112,8 @@ pub struct TensorChallenges {
     pub fold_high: Vec<SparseChallenge>,
     /// Low-factor entries, grouped by claim.
     pub fold_low: Vec<SparseChallenge>,
-    /// Exact number of live folds per claim.
-    pub live_folds_per_claim: usize,
+    /// Exact number of live blocks per claim.
+    pub live_blocks_per_claim: usize,
     /// Number of low-factor entries per claim.
     pub fold_low_len: usize,
     /// Number of claims represented by this tensor challenge family.
@@ -125,12 +125,12 @@ pub struct TensorChallenges {
 /// challenge-domain methods such as [`Self::evals_at_pows`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Challenges {
-    /// Flat challenge vector indexed as `claim * live_fold_count + block`.
+    /// Flat challenge vector indexed as `claim * num_blocks + block`.
     Sparse {
         /// Per-(claim, block) sparse challenges.
         challenges: Vec<SparseChallenge>,
-        /// Exact number of live folds packed into one claim.
-        live_folds_per_claim: usize,
+        /// Exact number of live blocks packed into one claim.
+        live_blocks_per_claim: usize,
         /// Number of claims represented by this vector.
         num_claims: usize,
     },
@@ -178,13 +178,13 @@ impl Challenges {
     /// # Errors
     ///
     /// Returns an error if `challenges.len()` does not match
-    /// `live_folds_per_claim * num_claims`.
+    /// `live_blocks_per_claim * num_claims`.
     pub fn from_sparse(
         challenges: Vec<SparseChallenge>,
-        live_folds_per_claim: usize,
+        live_blocks_per_claim: usize,
         num_claims: usize,
     ) -> Result<Self, AkitaError> {
-        let expected = live_folds_per_claim
+        let expected = live_blocks_per_claim
             .checked_mul(num_claims)
             .ok_or_else(|| AkitaError::InvalidSetup("challenge count overflow".to_string()))?;
         if challenges.len() != expected {
@@ -195,7 +195,7 @@ impl Challenges {
         }
         Ok(Self::Sparse {
             challenges,
-            live_folds_per_claim,
+            live_blocks_per_claim,
             num_claims,
         })
     }
@@ -244,10 +244,10 @@ impl Challenges {
     pub fn num_blocks_per_claim(&self) -> usize {
         match self {
             Self::Sparse {
-                live_folds_per_claim,
+                live_blocks_per_claim,
                 ..
-            } => *live_folds_per_claim,
-            Self::Tensor { factored, .. } => factored.live_folds_per_claim,
+            } => *live_blocks_per_claim,
+            Self::Tensor { factored, .. } => factored.live_blocks_per_claim,
         }
     }
 
@@ -313,7 +313,7 @@ impl Challenges {
 
     /// Slice this challenge set down to the subset whose claim indices
     /// appear in `claim_indices`, returning a fresh `Challenges` of length
-    /// `claim_indices.len() * live_folds_per_claim`.
+    /// `claim_indices.len() * live_blocks_per_claim`.
     ///
     /// Used by `RingRelationProver::new` to chunk the global challenge
     /// vector by opening point before handing each chunk to the poly
@@ -330,17 +330,17 @@ impl Challenges {
         match self {
             Self::Sparse {
                 challenges,
-                live_folds_per_claim,
+                live_blocks_per_claim,
                 ..
             } => {
-                let mut selected = Vec::with_capacity(claim_indices.len() * live_folds_per_claim);
+                let mut selected = Vec::with_capacity(claim_indices.len() * live_blocks_per_claim);
                 for &claim_idx in claim_indices {
                     let start = claim_idx
-                        .checked_mul(*live_folds_per_claim)
+                        .checked_mul(*live_blocks_per_claim)
                         .ok_or_else(|| {
                             AkitaError::InvalidSetup("challenge offset overflow".to_string())
                         })?;
-                    let end = start.checked_add(*live_folds_per_claim).ok_or_else(|| {
+                    let end = start.checked_add(*live_blocks_per_claim).ok_or_else(|| {
                         AkitaError::InvalidSetup("challenge offset overflow".to_string())
                     })?;
                     selected.extend_from_slice(challenges.get(start..end).ok_or(
@@ -350,7 +350,7 @@ impl Challenges {
                         },
                     )?);
                 }
-                Self::from_sparse(selected, *live_folds_per_claim, claim_indices.len())
+                Self::from_sparse(selected, *live_blocks_per_claim, claim_indices.len())
             }
             Self::Tensor { factored, .. } => {
                 factored.validate_lengths()?;
@@ -376,7 +376,7 @@ impl Challenges {
                 Self::from_tensor::<D>(TensorChallenges {
                     fold_high,
                     fold_low,
-                    live_folds_per_claim: factored.live_folds_per_claim,
+                    live_blocks_per_claim: factored.live_blocks_per_claim,
                     fold_low_len: factored.fold_low_len,
                     num_claims: claim_indices.len(),
                 })
@@ -393,7 +393,7 @@ impl TensorChallenges {
         if self.fold_low_len == 0 {
             0
         } else {
-            self.live_folds_per_claim.div_ceil(self.fold_low_len)
+            self.live_blocks_per_claim.div_ceil(self.fold_low_len)
         }
     }
 
@@ -416,9 +416,9 @@ impl TensorChallenges {
     /// Returns an error under the same conditions as [`Self::validate`] with
     /// ring dimension `ring_d`.
     pub fn validate_dyn(&self, ring_d: usize) -> Result<(), AkitaError> {
-        if self.live_folds_per_claim == 0 || !self.fold_low_len.is_power_of_two() {
+        if self.live_blocks_per_claim == 0 || !self.fold_low_len.is_power_of_two() {
             return Err(AkitaError::InvalidInput(
-                "tensor challenges require positive live folds and a power-of-two low length"
+                "tensor challenges require positive num_blocks and a power-of-two low length"
                     .to_string(),
             ));
         }
@@ -436,7 +436,7 @@ impl TensorChallenges {
     ///
     /// This is the exact live prefix, not the padded tensor capacity.
     pub fn blocks_per_claim(&self) -> Result<usize, AkitaError> {
-        Ok(self.live_folds_per_claim)
+        Ok(self.live_blocks_per_claim)
     }
 
     /// Total logical block challenges across all claims.
@@ -460,9 +460,9 @@ impl TensorChallenges {
         &self,
         block_idx: usize,
     ) -> Result<(usize, usize, &SparseChallenge, &SparseChallenge), AkitaError> {
-        if self.live_folds_per_claim == 0 || !self.fold_low_len.is_power_of_two() {
+        if self.live_blocks_per_claim == 0 || !self.fold_low_len.is_power_of_two() {
             return Err(AkitaError::InvalidInput(
-                "tensor challenges require positive live folds and a power-of-two low length"
+                "tensor challenges require positive num_blocks and a power-of-two low length"
                     .to_string(),
             ));
         }
@@ -561,7 +561,7 @@ impl TensorChallenges {
         // quotient contribution; we precompute the scalar once and reuse it.
         let alpha_pow_d_plus_one = alpha_pows[ring_d - 1] * alpha_pows[1] + E::one();
         let fold_high_len = self.fold_high_len();
-        let mut out = Vec::with_capacity(self.num_claims * self.live_folds_per_claim);
+        let mut out = Vec::with_capacity(self.num_claims * self.live_blocks_per_claim);
         for claim_idx in 0..self.num_claims {
             let high_start = claim_idx * fold_high_len;
             let low_start = claim_idx * self.fold_low_len;
@@ -576,7 +576,7 @@ impl TensorChallenges {
                 .map(|challenge| challenge.eval_at_pows::<F, E>(alpha_pows))
                 .collect::<Result<Vec<_>, _>>()?;
 
-            for local_idx in 0..self.live_folds_per_claim {
+            for local_idx in 0..self.live_blocks_per_claim {
                 let h = local_idx / self.fold_low_len;
                 let q = local_idx % self.fold_low_len;
                 out.push(reduced_tensor_product_eval_at_pows::<F, E>(
@@ -690,7 +690,7 @@ impl TensorChallenges {
             alpha_pow_d_plus_one,
         );
 
-        let final_low_len = self.live_folds_per_claim % self.fold_low_len;
+        let final_low_len = self.live_blocks_per_claim % self.fold_low_len;
         if final_low_len == 0 {
             return Ok(aggregate);
         }
@@ -858,21 +858,21 @@ fn eval_dense_negacyclic_product_at_pows<E: FieldCore, const D: usize>(
 
 /// Total sparse challenges drawn in one fold round.
 ///
-/// Flat: `live_fold_count · num_claims`.
-/// Tensor: `num_claims · (ceil(live_fold_count / fold_low_len) + fold_low_len)`.
+/// Flat: `num_blocks · num_claims`.
+/// Tensor: `num_claims · (ceil(num_blocks / fold_low_len) + fold_low_len)`.
 #[inline]
 pub fn fold_sparse_challenge_sample_count(
     shape: ChallengeShape,
-    live_fold_count: usize,
+    num_blocks: usize,
     num_claims: usize,
 ) -> Option<usize> {
     match shape {
-        ChallengeShape::Flat => live_fold_count.checked_mul(num_claims),
+        ChallengeShape::Flat => num_blocks.checked_mul(num_claims),
         ChallengeShape::Tensor { fold_low_len } => {
-            if live_fold_count == 0 || !fold_low_len.is_power_of_two() {
+            if num_blocks == 0 || !fold_low_len.is_power_of_two() {
                 return None;
             }
-            let fold_high_len = live_fold_count.div_ceil(fold_low_len);
+            let fold_high_len = num_blocks.div_ceil(fold_low_len);
             fold_high_len
                 .checked_add(fold_low_len)?
                 .checked_mul(num_claims)

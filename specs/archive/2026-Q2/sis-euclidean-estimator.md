@@ -163,7 +163,7 @@ Shipped schedules are emitted in **two** passes: plain (`gen_schedule_tables`) a
 the DP objective differs because `level_proof_bytes` and recursive witness widths
 include ZK mask/blinding bytes under the `zk` feature.
 
-Structural divergence at the same `(preset, num_vars, incidence)` key is therefore
+Structural divergence at the same `(preset, nuposition_bits, incidence)` key is therefore
 **expected**, not table corruption. Example (`fp128_d128_full`, nv=30 singleton): non-zk
 tail `…(m=9,r=3)→(m=8,r=3)→(m=8,r=3)`; zk tail `…(m=9,r=3)→(m=9,r=3)→(m=8,r=3)` (same
 fold count, different byte-optimal geometry).
@@ -173,7 +173,7 @@ Guards:
   and all-features) and compares each shipped table to `find_schedule` compiled under the
   same features.
 - `generated_families_stay_within_audited_sis_widths` (zk only) spot-checks every shipped
-  family at `num_vars ∈ {8,16,28,30}` against `min_secure_rank` using stored
+  family at `nuposition_bits ∈ {8,16,28,30}` against `min_secure_rank` using stored
   `collision_l2_sq` keys (no pow2 re-rounding).
 
 Regen both passes after SIS or proof-size changes; never expect `*_zk.rs` to mirror the

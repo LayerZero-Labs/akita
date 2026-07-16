@@ -22,7 +22,7 @@ The public search entry point is `find_group_batch_schedule(&key, &policy, ring_
 same-point openings store one `PolynomialGroupLayout` in `final_group` and leave
 `precommitteds` empty:
 
-- `num_vars`: the number of Boolean variables in the opened polynomial domain
+- `nuposition_bits`: the number of Boolean variables in the opened polynomial domain
   (shared opening-point arity).
 - `num_polynomials`: the number of polynomials in the single commitment group,
   opened at the shared point (one claim per polynomial).
@@ -60,8 +60,8 @@ Both paths are deterministic functions of the lookup key, `PlannerPolicy`, and t
 For a fixed field, ring dimension, decomposition policy, and opening shape, the planner mainly searches over:
 
 - `log_basis`: the balanced-digit base used by the fold level.
-- `r_vars`: the number of block-index variables, which determines `num_blocks = 2^r`.
-- `m_vars`: the number of variables inside each block.
+- `block_bits`: the number of block-index variables, which determines `num_blocks = 2^r`.
+- `position_bits`: the number of variables inside each block.
 
 Once those values are chosen, the rest of the level is derived rather than independently searched. Digit counts, coefficient-`L∞` bounds, matrix widths, and SIS-secure ranks come from the shared `akita_types::sis` helpers. The planner builds the A, B, and D Ajtai key parameters from those derived values and then scores the resulting proof size.
 
@@ -74,11 +74,11 @@ The first question determines whether the current fold is worthwhile. The second
 
 ## Root Level Search
 
-The root level starts from the original witness length `2^num_vars`. It is the only level that sees the full root batching shape from the lookup key.
+The root level starts from the original witness length `2^nuposition_bits`. It is the only level that sees the full root batching shape from the lookup key.
 
-At the root, the planner iterates over the configured `log_basis` range and over valid `r_vars` values. For each candidate it derives:
+At the root, the planner iterates over the configured `log_basis` range and over valid `block_bits` values. For each candidate it derives:
 
-- `m_vars = reduced_vars - r_vars`, where `reduced_vars` accounts for the ring dimension.
+- `position_bits = reduced_vars - block_bits`, where `reduced_vars` accounts for the ring dimension.
 - The A-role committed block width.
 - The B-role opening/check width.
 - The D-role prover witness width.
@@ -91,9 +91,9 @@ The planner also considers the root-direct case, where the schedule ships the or
 
 ## Recursive Suffix Search
 
-Recursive levels do not enumerate the full exponential tree of all possible `(log_basis, r_vars)` choices at every depth. That would make schedule search too expensive as the number of levels grows.
+Recursive levels do not enumerate the full exponential tree of all possible `(log_basis, block_bits)` choices at every depth. That would make schedule search too expensive as the number of levels grows.
 
-Instead, for each recursive `log_basis`, `derive_candidate_level_params` scans the valid `r_vars` choices and keeps the candidate that minimizes the next witness length. This is a local shrinking rule: recursive levels commit dense balanced-digit witnesses, and reducing the next witness length is the main driver for making the remaining suffix cheaper.
+Instead, for each recursive `log_basis`, `derive_candidate_level_params` scans the valid `block_bits` choices and keeps the candidate that minimizes the next witness length. This is a local shrinking rule: recursive levels commit dense balanced-digit witnesses, and reducing the next witness length is the main driver for making the remaining suffix cheaper.
 
 After that candidate is chosen, the suffix DP still performs the important global comparison:
 
@@ -149,8 +149,8 @@ The planner owns the generated schedule-table representation and expansion logic
 
 - `ring_d`
 - `log_basis`
-- `m_vars`
-- `r_vars`
+- `position_bits`
+- `block_bits`
 - `n_a`
 - `n_b`
 - `n_d`

@@ -742,16 +742,16 @@ def extract_summary(
             position_bits = int(
                 kvs["position_bits"] if "position_bits" in kvs else kvs["m_vars"]
             )
-            fold_bits = int(kvs["fold_bits"] if "fold_bits" in kvs else kvs["r_vars"])
-            fold_position_count = int(
-                kvs["fold_position_count"]
-                if "fold_position_count" in kvs
-                else kvs["block_len"]
+            block_bits = int(kvs["block_bits"] if "block_bits" in kvs else kvs["r_vars"])
+            block_len = int(
+                kvs["block_len"]
+                if "block_len" in kvs
+                else kvs["fold_position_count"]
             )
-            live_fold_count = int(
-                kvs["live_fold_count"]
-                if "live_fold_count" in kvs
-                else kvs["num_blocks"]
+            num_blocks = int(
+                kvs["num_blocks"]
+                if "num_blocks" in kvs
+                else kvs["live_fold_count"]
             )
             planned_levels[level] = {
                 "level": level,
@@ -762,9 +762,9 @@ def extract_summary(
                 "challenge_l1_mass": int(kvs["challenge_l1_mass"]),
                 "log_basis": int(kvs["log_basis"]),
                 "position_bits": position_bits,
-                "fold_bits": fold_bits,
-                "fold_position_count": fold_position_count,
-                "live_fold_count": live_fold_count,
+                "block_bits": block_bits,
+                "block_len": block_len,
+                "num_blocks": num_blocks,
                 "delta_commit": int(kvs["delta_commit"]),
                 "delta_open": int(kvs["delta_open"]),
                 "delta_fold": int(kvs["delta_fold"]),
@@ -1562,8 +1562,8 @@ def render_planned_levels(levels: list[dict[str, object]]) -> None:
             f"| L{level['level']} | `D{level['d']}-na{level['n_a']}` | "
             f"{level['d']} | {level['n_a']} | {level['n_b']} | {level['n_d']} | "
             f"{level['log_basis']} | {level['challenge_l1_mass']} | "
-            f"{level['position_bits']} | {level['fold_bits']} | "
-            f"{level['fold_position_count']} | {level['live_fold_count']} | "
+            f"{level['position_bits']} | {level['block_bits']} | "
+            f"{level['block_len']} | {level['num_blocks']} | "
             f"{level['delta_commit']} | {level['delta_open']} | {level['delta_fold']} | "
             f"{fmt_count(float(level['next_w_ring']))} | {fmt_count(float(level['next_w_len']))} | "
             f"{fmt_bytes(float(level['level_bytes']))} B |"

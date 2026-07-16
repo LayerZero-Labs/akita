@@ -53,7 +53,7 @@ The cutover also covers the non-tensor operations currently attached to
 `AkitaPolyOps`:
 
 - `num_ring_elems`
-- `num_vars`
+- `nuposition_bits`
 - `fold_blocks`
 - `fold_blocks_ring`
 - `evaluate_and_fold`
@@ -420,7 +420,7 @@ pub trait RootPoly<F: FieldCore, const D: usize>: Clone + Send + Sync {
         E: ExtField<F>;
 
     fn num_ring_elems(&self) -> usize;
-    fn num_vars(&self) -> usize;
+    fn nuposition_bits(&self) -> usize;
 
     fn commit_view(&self) -> Result<Self::Commit<'_>, AkitaError>;
     fn opening_view(&self) -> Result<Self::Opening<'_>, AkitaError>;
@@ -683,7 +683,7 @@ Akita should provide standard borrowed views for built-in representations and
 for downstream users that can reduce their representation to an existing shape:
 
 - `DenseRootView<'a, F, D>`: borrowed ring coefficients, optional cached digit
-  planes, optional small-i8 coefficients, and validated `num_vars`.
+  planes, optional small-i8 coefficients, and validated `nuposition_bits`.
 - `OneHotRootView<'a, F, D, I>` or an index-erased internal view: borrowed
   one-hot block tables and shape metadata.
 - `SparseRingRootView<'a, F, D>`: borrowed sparse signed ring blocks and shape
@@ -750,7 +750,7 @@ Current `AkitaPolyOps` method to new owner:
 
 | Current method | New owner |
 | --- | --- |
-| `num_ring_elems`, `num_vars` | root polynomial shape/provider trait |
+| `num_ring_elems`, `nuposition_bits` | root polynomial shape/provider trait |
 | `commit_inner`, `commit_inner_witness` | `RootCommitKernel<CommitView, F, D>` over backend and prepared setup |
 | `fold_blocks`, `fold_blocks_ring` | private helpers or `OpeningFoldKernel<OpeningView, F, D>` internals |
 | `evaluate_and_fold`, `evaluate_and_fold_ring` | `OpeningFoldKernel<OpeningView, F, D>` |

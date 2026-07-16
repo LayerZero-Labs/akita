@@ -68,12 +68,12 @@ where
             let num_ring_elems = w.len() / D_A;
             tracing::debug!(
                 num_ring_elems,
-                live_fold_count = commit_params.live_fold_count,
-                fold_position_count = commit_params.fold_position_count,
+                num_blocks = commit_params.num_blocks,
+                block_len = commit_params.block_len,
                 depth_commit = commit_params.num_digits_commit,
                 depth_open = commit_params.num_digits_open,
                 position_bits = commit_params.position_bits(),
-                fold_bits = commit_params.fold_bits(),
+                block_bits = commit_params.block_bits(),
                 inner_width = commit_params.inner_width(),
                 pow2_block = 1usize << commit_params.position_bits(),
                 "commit_w layout"
@@ -84,7 +84,7 @@ where
             let inner = w_view.commit_inner(backend, prepared, plan)?;
             validate_commit_inner_shape::<Cfg::Field, D_A>(
                 &inner,
-                commit_params.live_fold_count,
+                commit_params.num_blocks,
                 commit_params.a_key.row_len(),
                 commit_params.num_digits_open,
                 commit_params.log_basis,

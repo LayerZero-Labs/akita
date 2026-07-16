@@ -260,7 +260,7 @@ fn emit_group_witness_segments<F: CanonicalField, const D: usize>(
             out,
             layout,
             unit,
-            group.params.fold_position_count(),
+            group.params.block_len(),
             group.params.num_digits_commit(),
             num_digits_fold,
             &z_planes,
@@ -273,7 +273,7 @@ fn emit_group_witness_segments<F: CanonicalField, const D: usize>(
         num_claims,
         group.params.num_digits_open(),
         &group.e_hat,
-        group.params.live_fold_count(),
+        group.params.num_blocks(),
     )?;
     emit_witness_t_planes::<D>(
         out,
@@ -283,7 +283,7 @@ fn emit_group_witness_segments<F: CanonicalField, const D: usize>(
         group.params.a_rows_len(),
         group.params.num_digits_open(),
         group.t_hat.typed_planes::<D>()?,
-        group.params.live_fold_count(),
+        group.params.num_blocks(),
     )?;
     Ok(())
 }
@@ -322,7 +322,7 @@ fn emit_group_e_planes_padded<const D_A: usize>(
     }
     for unit in layout.units_for_group(group_id)? {
         for claim in 0..num_claims {
-            for global_block in unit.global_fold_range() {
+            for global_block in unit.global_block_range() {
                 for digit in 0..depth_open {
                     let logical_block = claim * source_num_blocks + global_block;
                     let mut plane = [0i8; D_A];

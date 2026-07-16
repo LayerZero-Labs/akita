@@ -674,7 +674,7 @@ fn trace_internalization_rejects_tampered_recursive_fold_handle() {
 
         let opening_batch = akita_types::OpeningClaimsLayout::new(NV, 2).expect("opening_batch");
         let layout = Cfg::get_params_for_batched_commitment(&opening_batch).expect("layout");
-        let total_field = (layout.live_fold_count * layout.fold_position_count)
+        let total_field = (layout.num_blocks * layout.block_len)
             .checked_mul(D)
             .expect("total field size overflow");
         let total_chunks = total_field / ONEHOT_K;
@@ -1034,7 +1034,7 @@ fn adaptive_onehot_direct_tail_uses_terminal_schedule_basis() {
 
         let nv = ONEHOT_TEST_NV;
         let layout = singleton_layout::<Cfg>(nv);
-        let total_field = (layout.live_fold_count * layout.fold_position_count)
+        let total_field = (layout.num_blocks * layout.block_len)
             .checked_mul(D)
             .expect("total field size overflow");
         let total_chunks = total_field / ONEHOT_K;
@@ -1170,16 +1170,14 @@ fn batched_onehot_same_point_round_trip() {
             fold_steps.windows(2).any(|steps| {
                 steps.iter().all(|step| {
                     let params = &step.params;
-                    params.source_ring_len_per_claim % params.fold_position_count != 0
-                        && params.live_fold_count
-                            == params
-                                .source_ring_len_per_claim
-                                .div_ceil(params.fold_position_count)
+                    params.source_ring_len_per_claim % params.block_len != 0
+                        && params.num_blocks
+                            == params.source_ring_len_per_claim.div_ceil(params.block_len)
                 })
             }),
             "fixture must cross two consecutive production folds with exact partial final rows"
         );
-        let total_field = (layout.live_fold_count * layout.fold_position_count)
+        let total_field = (layout.num_blocks * layout.block_len)
             .checked_mul(D)
             .expect("total field size overflow");
         let total_chunks = total_field / ONEHOT_K;
@@ -1306,7 +1304,7 @@ fn batched_onehot_same_point_rejects_tampered_root_stage1_s_claim() {
         let nv = ONEHOT_TEST_NV;
         let layout =
             akita_batched_root_layout::<Cfg>(nv, SAME_POINT_ONEHOT_BATCH_SIZE).expect("layout");
-        let total_field = (layout.live_fold_count * layout.fold_position_count)
+        let total_field = (layout.num_blocks * layout.block_len)
             .checked_mul(D)
             .expect("total field size overflow");
         let total_chunks = total_field / ONEHOT_K;

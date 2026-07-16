@@ -53,7 +53,7 @@ pub fn gadget_row_scalars<F: FieldCore + CanonicalField>(levels: usize, log_basi
 /// ```
 ///
 /// `n_A` is the per-`r` minimum SIS-secure A-rank for the candidate's
-/// `inner_width(r) = fold_position_count(r) · δ_commit` (via [`crate::sis::min_secure_rank`]). The
+/// `inner_width(r) = block_len(r) · δ_commit` (via [`crate::sis::min_secure_rank`]). The
 /// A collision is itself recomputed per `r` via
 /// [`crate::sis::rounded_up_role_a_inf_norm`], because the committed-level
 /// weak-binding norm grows with the fold arity `num_claims · 2^r`; scoring
@@ -70,7 +70,7 @@ pub fn gadget_row_scalars<F: FieldCore + CanonicalField>(levels: usize, log_basi
 ///
 /// # Return value
 ///
-/// `(position_bits, fold_bits, n_a)` — the chosen split plus its per-`r` SIS-secure
+/// `(position_bits, block_bits, n_a)` — the chosen split plus its per-`r` SIS-secure
 /// A-rank. Callers building a `LevelParams` should use this `n_a` so the
 /// derived `b_key.col_len` matches the cost the optimizer scored.
 ///
@@ -114,14 +114,13 @@ pub fn optimal_m_r_split(
     let mut best: Option<(u64, usize, u32)> = None;
 
     for r in (1..reduced_vars).rev() {
-        let fold_position_count: u64 = if num_ring > 0 {
+        let block_len: u64 = if num_ring > 0 {
             num_ring.div_ceil(1usize << r) as u64
         } else {
             1u64 << (reduced_vars - r)
         };
 
-        let Some(inner_width) = (fold_position_count as usize).checked_mul(delta_commit as usize)
-        else {
+        let Some(inner_width) = (block_len as usize).checked_mul(delta_commit as usize) else {
             continue;
         };
         let Some(a_collision) = rounded_up_role_a_inf_norm(
@@ -184,7 +183,7 @@ pub fn optimal_m_r_split(
     }
 }
 
-/// Next-level witness scoring cost for one fold geometry, matching
+/// Next-level witness scoring cost for one block geometry, matching
 /// [`optimal_m_r_split`]:
 ///
 /// ```text
@@ -193,7 +192,7 @@ pub fn optimal_m_r_split(
 #[allow(clippy::too_many_arguments)]
 pub fn fold_level_witness_scoring_cost(
     n_a: usize,
-    fold_bits: usize,
+    block_bits: usize,
     num_claims: usize,
     inner_width: usize,
     decomposition: DecompositionParams,
@@ -209,12 +208,12 @@ pub fn fold_level_witness_scoring_cost(
     let open_bound = log_commit_bound.max(field_bits);
     let delta_open = num_digits_for_bound(open_bound, field_bits, log_basis) as u64;
     let delta_commit = num_digits_for_bound(log_commit_bound, field_bits, log_basis) as u64;
-    let fold_position_count = inner_width.checked_div(delta_commit as usize)?;
-    if fold_position_count == 0 {
+    let block_len = inner_width.checked_div(delta_commit as usize)?;
+    if block_len == 0 {
         return None;
     }
-    let live_fold_count = 1u64.checked_shl(fold_bits as u32)?;
-    let m_eff = fold_position_count as u64;
+    let num_blocks = 1u64.checked_shl(block_bits as u32)?;
+    let m_eff = block_len as u64;
     let cap_policy =
         fold_witness_linf_cap_policy(fold_challenge_config, fold_shape, ring_dimension);
     let binding = crate::FoldLinfProtocolBinding::CURRENT;
@@ -230,7 +229,7 @@ pub fn fold_level_witness_scoring_cost(
     )
     .ok()?;
     let (decomposed_fold_digits, _) = fold_witness_digit_plan(
-        fold_bits,
+        block_bits,
         num_claims,
         field_bits,
         log_basis,
@@ -240,7 +239,7 @@ pub fn fold_level_witness_scoring_cost(
     )
     .ok()?;
     let per_block_cost = delta_open.saturating_add((n_a as u64).saturating_mul(delta_open));
-    let opening_cost = per_block_cost.saturating_mul(live_fold_count);
+    let opening_cost = per_block_cost.saturating_mul(num_blocks);
     let folding_cost = delta_commit
         .saturating_mul(decomposed_fold_digits as u64)
         .saturating_mul(m_eff);

@@ -394,7 +394,7 @@ where
         F::Wide: AdditiveGroup + From<F> + ReduceTo<F>,
     {
         let active_a_cols = plan
-            .fold_position_count
+            .block_len
             .checked_mul(plan.num_digits_commit)
             .ok_or_else(|| AkitaError::InvalidSetup("active A width overflow".to_string()))?;
         let a_view = prepared
@@ -433,7 +433,7 @@ where
         F::Wide: AdditiveGroup + From<F> + ReduceTo<F>,
     {
         let active_a_cols = plan
-            .fold_position_count
+            .block_len
             .checked_mul(plan.num_digits_commit)
             .ok_or_else(|| AkitaError::InvalidSetup("active A width overflow".to_string()))?;
         let a_view = prepared
@@ -447,7 +447,7 @@ where
             &a_rows,
             &plan.blocks.block_slices()?,
             plan.n_a,
-            plan.fold_position_count,
+            plan.block_len,
             plan.num_digits_commit,
         ))
     }
@@ -458,14 +458,11 @@ where
         plan: RecursiveWitnessCommitRowsPlan<'_, D>,
     ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError> {
         let row_width = plan
-            .fold_position_count
+            .block_len
             .checked_mul(plan.num_digits_commit)
             .ok_or_else(|| AkitaError::InvalidSetup("recursive A width overflow".to_string()))?;
         if plan.num_digits_commit == 1 {
-            let blocks = plan
-                .coeffs
-                .chunks(plan.fold_position_count)
-                .collect::<Vec<_>>();
+            let blocks = plan.coeffs.chunks(plan.block_len).collect::<Vec<_>>();
             // The `num_digits_commit == 1` recursive witness is a raw signed-i8
             // coefficient stream. Degree-one fields yield balanced gadget digits
             // (fast predecomposed-digit kernel), but extension-field tensor
@@ -490,9 +487,7 @@ where
                     CyclotomicRing::from_coefficients(coeffs)
                 })
                 .collect();
-            let blocks = ring_elems
-                .chunks(plan.fold_position_count)
-                .collect::<Vec<_>>();
+            let blocks = ring_elems.chunks(plan.block_len).collect::<Vec<_>>();
             prepared.with_shared_ntt::<D, _>(|ntt| {
                 mat_vec_mul_ntt_i8(
                     ntt,

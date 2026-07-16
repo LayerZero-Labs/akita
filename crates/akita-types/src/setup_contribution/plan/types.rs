@@ -7,8 +7,8 @@ use std::{ops::Range, sync::Arc};
 pub struct SetupContributionGroupInputs {
     pub group_id: usize,
     pub num_claims: usize,
-    pub live_fold_count: usize,
-    pub fold_position_count: usize,
+    pub num_blocks: usize,
+    pub block_len: usize,
     pub depth_open: usize,
     pub depth_commit: usize,
     pub depth_fold: usize,
@@ -61,13 +61,13 @@ impl SetupContributionGroupInputs {
         let t_cols_per_vector = inputs
             .n_a
             .checked_mul(inputs.depth_open)
-            .and_then(|width| width.checked_mul(inputs.live_fold_count))
+            .and_then(|width| width.checked_mul(inputs.num_blocks))
             .ok_or_else(|| AkitaError::InvalidSetup("T polynomial width overflow".into()))?;
         Ok(Self {
             group_id: 0,
             num_claims: inputs.num_claims,
-            live_fold_count: inputs.live_fold_count,
-            fold_position_count: inputs.fold_position_count,
+            num_blocks: inputs.num_blocks,
+            block_len: inputs.block_len,
             depth_open: inputs.depth_open,
             depth_commit: inputs.depth_commit,
             depth_fold: inputs.depth_fold,
@@ -118,7 +118,7 @@ impl SetupContributionLayout {
         let d_columns = SetupDColumnLayout::new(groups.iter().map(|group| {
             let width = group
                 .num_claims
-                .checked_mul(group.live_fold_count)
+                .checked_mul(group.num_blocks)
                 .and_then(|cols| cols.checked_mul(group.depth_open))
                 .ok_or_else(|| AkitaError::InvalidSetup("setup D width overflow".into()))?;
             Ok((group.group_id, width))
@@ -212,16 +212,16 @@ fn validate_group_witness_layout(
     let units = layout.units_for_group(group.group_id)?;
     let mut next_fold = 0usize;
     for unit in units {
-        if unit.live_fold_count() == 0 || unit.global_fold_start() != next_fold {
+        if unit.live_block_count() == 0 || unit.global_block_start() != next_fold {
             return Err(AkitaError::InvalidSetup(
                 "setup witness units do not form a contiguous fold tiling".into(),
             ));
         }
         next_fold = next_fold
-            .checked_add(unit.live_fold_count())
+            .checked_add(unit.live_block_count())
             .ok_or_else(|| AkitaError::InvalidSetup("setup fold coverage overflow".into()))?;
     }
-    if next_fold != group.live_fold_count {
+    if next_fold != group.num_blocks {
         return Err(AkitaError::InvalidSetup(
             "setup group dimensions disagree with witness layout".into(),
         ));

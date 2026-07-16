@@ -402,7 +402,7 @@ where
     type BatchedProof: Clone + Send + Sync;
 
     fn setup_prover(
-        max_num_vars: usize,
+        max_nuposition_bits: usize,
         max_num_batched_polys: usize,
         max_num_points: usize,
     ) -> Self::ProverSetup;

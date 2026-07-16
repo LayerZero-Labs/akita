@@ -164,7 +164,7 @@ This refactor must not change:
 - **Verifier hot path latency.** Today's closure-based `verify_batched_with_policy` and tomorrow's `verify_batched::<Cfg>` are both monomorphized per `Cfg`, so inlining is preserved. Verifier wallclock on the standard fp128 profile example stays within ±5% noise. (Tighter targets are infeasible without dedicated hardware; ±5% is the project's current measurement floor.)
 - **Prover wallclock** for `AKITA_MODE=onehot AKITA_NUM_VARS=32 cargo run --release --example profile`. Same ±5% noise band.
 - **Schedule planner DP wallclock** for `find_optimal_schedule_from_scratch` on the standard fixture set. The DP itself is byte-for-byte identical; only its trait surface changes.
-- **Setup matrix sizing** (`AkitaSetupSeed::max_stride`, `max_num_batched_polys`, etc.) for all presets across the `(num_vars, num_polys, num_points)` tuples exercised by tests.
+- **Setup matrix sizing** (`AkitaSetupSeed::max_stride`, `max_num_batched_polys`, etc.) for all presets across the `(nuposition_bits, num_polys, num_points)` tuples exercised by tests.
 - **Generated-table fast path** is preserved. With the `planner` feature enabled, `Cfg::get_params_for_prove(...)` first calls `Cfg::schedule_plan(key)`, which checks the generated table and returns the materialized plan immediately on hit. Planner DP runs only on table miss. Verifier replay therefore performs no DP search in any production build; it materializes from the table and proceeds.
 
 If `gen_schedule_tables` produces a non-cosmetic diff, or if `schedule.total_bytes` changes for any standard fixture, the refactor is incorrect and must be fixed before merge.
@@ -355,10 +355,10 @@ pub trait Cfg: Clone + Send + Sync + 'static {
     fn decomposition() -> DecompositionParams;
     fn sis_modulus_profile() -> SisModulusProfileId;
     fn stage1_challenge_config(d: usize) -> Result<SparseChallengeConfig, AkitaError>;
-    fn envelope(max_num_vars: usize) -> CommitmentEnvelope;
-    fn audited_root_rank(role: AjtaiRole, max_num_vars: usize) -> usize;
+    fn envelope(max_nuposition_bits: usize) -> CommitmentEnvelope;
+    fn audited_root_rank(role: AjtaiRole, max_nuposition_bits: usize) -> usize;
     fn max_setup_matrix_size(
-        max_num_vars: usize,
+        max_nuposition_bits: usize,
         max_num_batched_polys: usize,
         max_num_points: usize,
     ) -> Result<(usize, usize), AkitaError>;
@@ -419,19 +419,19 @@ pub trait Cfg: Clone + Send + Sync + 'static {
         }
     }
 
-    fn commitment_layout(max_num_vars: usize) -> Result<LevelParams, AkitaError> {
+    fn commitment_layout(max_nuposition_bits: usize) -> Result<LevelParams, AkitaError> {
         // Table → first fold → planner fallback (with feature) → tiny-root fallback.
         // Same control flow as today's CommitmentConfig::commitment_layout, but
         // routed through Cfg APIs only.
-        default_commitment_layout::<Self>(max_num_vars)
+        default_commitment_layout::<Self>(max_nuposition_bits)
     }
 
     fn get_params_for_commitment(
-        num_vars: usize,
+        nuposition_bits: usize,
         num_polys_per_point: usize,
         max_num_points: usize,
     ) -> Result<LevelParams, AkitaError> {
-        default_get_params_for_commitment::<Self>(num_vars, num_polys_per_point, max_num_points)
+        default_get_params_for_commitment::<Self>(nuposition_bits, num_polys_per_point, max_num_points)
     }
 
     fn get_params_for_prove(
@@ -468,7 +468,7 @@ pub trait Cfg: Clone + Send + Sync + 'static {
         let schedule = Self::get_params_for_prove(incidence)?;
         match schedule.steps.first() {
             Some(akita_types::Step::Fold(root_step)) => Ok(root_step.params.clone()),
-            _ => Self::commitment_layout(incidence.num_vars()),
+            _ => Self::commitment_layout(incidence.nuposition_bits()),
         }
     }
 
@@ -517,9 +517,9 @@ impl<const D: usize, C: Cfg> Cfg for WCfg<D, C> {
     fn stage1_challenge_config(d: usize) -> Result<SparseChallengeConfig, AkitaError> {
         C::stage1_challenge_config(d)
     }
-    fn envelope(max_num_vars: usize) -> CommitmentEnvelope { C::envelope(max_num_vars) }
-    fn audited_root_rank(role: AjtaiRole, max_num_vars: usize) -> usize {
-        C::audited_root_rank(role, max_num_vars)
+    fn envelope(max_nuposition_bits: usize) -> CommitmentEnvelope { C::envelope(max_nuposition_bits) }
+    fn audited_root_rank(role: AjtaiRole, max_nuposition_bits: usize) -> usize {
+        C::audited_root_rank(role, max_nuposition_bits)
     }
     fn max_setup_matrix_size(...) -> Result<(usize, usize), AkitaError> {
         C::max_setup_matrix_size(...)
@@ -588,8 +588,8 @@ impl Cfg for fp128::D64OneHot {
     fn stage1_challenge_config(d: usize) -> Result<SparseChallengeConfig, AkitaError> {
         fp128_stage1_challenge_config(d)
     }
-    fn envelope(max_num_vars: usize) -> CommitmentEnvelope { /* ... */ }
-    fn audited_root_rank(role: AjtaiRole, max_num_vars: usize) -> usize { /* ... */ }
+    fn envelope(max_nuposition_bits: usize) -> CommitmentEnvelope { /* ... */ }
+    fn audited_root_rank(role: AjtaiRole, max_nuposition_bits: usize) -> usize { /* ... */ }
     fn max_setup_matrix_size(...) -> Result<(usize, usize), AkitaError> { /* ... */ }
 
     fn schedule_table() -> Option<GeneratedScheduleTable> {
@@ -714,7 +714,7 @@ where
     check_batched_proof_step_shape(proof)?;
 
     let prepared = prepare_verifier_claims(&setup.expanded, &claims)?;
-    let num_vars = prepared.incidence_summary.num_vars();
+    let nuposition_bits = prepared.incidence_summary.nuposition_bits();
 
     // 1. Schedule selection. Cfg owns the table-vs-planner choice.
     let mut schedule = Cfg::get_params_for_prove(&prepared.incidence_summary)
@@ -727,9 +727,9 @@ where
             &prepared.opening_points,
             &root_step.params,
             alpha_bits,
-        ) && !root_tensor_projection_enabled::<F, Cfg::ClaimField, Cfg::ChallengeField, D>(num_vars)
+        ) && !root_tensor_projection_enabled::<F, Cfg::ClaimField, Cfg::ChallengeField, D>(nuposition_bits)
         {
-            schedule = root_direct_schedule(num_vars).map_err(|_| AkitaError::InvalidProof)?;
+            schedule = root_direct_schedule(nuposition_bits).map_err(|_| AkitaError::InvalidProof)?;
         }
     }
 
@@ -739,7 +739,7 @@ where
     )?;
 
     // 4. Recursive level params successor closure (now Result-returning).
-    let schedule_context = prepare_batched_verifier_schedule_context(num_vars, &schedule, |next_inputs| {
+    let schedule_context = prepare_batched_verifier_schedule_context(nuposition_bits, &schedule, |next_inputs| {
         scheduled_next_level_params(
             &schedule, 1, next_inputs, Cfg::level_params_with_log_basis,
         )

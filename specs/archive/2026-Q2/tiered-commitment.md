@@ -186,16 +186,16 @@ guarantee.
    `nonzeros = ⌈D/K⌉` instead of `D`, which lowers SIS ranks and often picks
    smaller `log_basis` / `(m, r, n_a, n_b)` layouts — e.g. `fp128_d64_onehot`
    nv=32 singleton first fold on this branch: `log_basis: 2, n_a: 5, n_b: 1` vs
-   pre-migration `main`: `log_basis: 3, n_a: 7, n_b: 2` (same `m_vars`/`r_vars`).
+   pre-migration `main`: `log_basis: 3, n_a: 7, n_b: 2` (same `position_bits`/`block_bits`).
 2. **`optimal_m_r_split` / schedule-DP tie-break.** Fold split search iterates
    `r` descending (`(1..reduced_vars).rev()` in
    [`digit_math.rs`](crates/akita-types/src/layout/digit_math.rs) and
-   `(min_r_vars..=max_r_vars).rev()` in the root DP in
+   `(min_block_bits..=max_block_bits).rev()` in the root DP in
    [`schedule_params.rs`](crates/akita-planner/src/schedule_params.rs)). When
    fold-digit or proof-size scores tie, the first candidate wins — a
    deterministic tie-break bundled here. **Primary schedule deltas vs pre-PR
    `main` come from the K256 migration**, not this tie-break (e.g. nv=32
-   singleton first fold keeps the same `m_vars`/`r_vars` but changes
+   singleton first fold keeps the same `position_bits`/`block_bits` but changes
    `log_basis`/`n_a`/`n_b`).
 
 **Drift guard scope:** `crates/akita-config/tests/generated_tables.rs` compares

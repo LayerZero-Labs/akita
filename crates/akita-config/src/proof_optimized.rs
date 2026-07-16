@@ -275,7 +275,7 @@ fn root_runtime_matrix_len_for_opening_batch(
         lp.a_key.col_len(),
         lp.b_key.row_len(),
         final_group.num_polynomials(),
-        lp.live_fold_count,
+        lp.num_blocks,
         lp.num_digits_open,
     )?;
 
@@ -285,7 +285,7 @@ fn root_runtime_matrix_len_for_opening_batch(
             group.a_key.col_len(),
             group.b_key.row_len(),
             group.layout.group.num_polynomials(),
-            group.layout.live_fold_count,
+            group.layout.num_blocks,
             group.num_digits_open,
         )?;
         max_a_len = max_a_len.max(a_len);
@@ -303,21 +303,21 @@ fn group_setup_footprint(
     a_width: usize,
     b_rows: usize,
     num_polys: usize,
-    live_fold_count: usize,
+    num_blocks: usize,
     num_digits_open: usize,
 ) -> Result<(usize, usize, usize), AkitaError> {
     let a_len = a_rows.checked_mul(a_width).ok_or_else(|| {
         AkitaError::InvalidSetup("multi-group A setup envelope overflow".to_string())
     })?;
     let d_width = num_polys
-        .checked_mul(live_fold_count)
+        .checked_mul(num_blocks)
         .and_then(|n| n.checked_mul(num_digits_open))
         .ok_or_else(|| {
             AkitaError::InvalidSetup("multi-group D setup width overflow".to_string())
         })?;
     let t_cols_per_vector = a_rows
         .checked_mul(num_digits_open)
-        .and_then(|n| n.checked_mul(live_fold_count))
+        .and_then(|n| n.checked_mul(num_blocks))
         .ok_or_else(|| {
             AkitaError::InvalidSetup("multi-group B setup width overflow".to_string())
         })?;

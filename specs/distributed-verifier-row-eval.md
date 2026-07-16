@@ -17,7 +17,7 @@
 > **Superseded (2026-07-15).** PR #296 closed without landing. Its proposed
 > `ChunkedWitnessCfg`-owned layout and copied chunk geometry must not be revived.
 > [`digit-innermost-layout.md`](digit-innermost-layout.md) now owns coefficient
-> order, group-and-shard ranges, and structured verifier evaluation through one
+> order, group-and-chunk ranges, and structured verifier evaluation through one
 > canonical `WitnessLayout`. Future distributed process placement should consume
 > those ranges rather than introduce another layout type.
 

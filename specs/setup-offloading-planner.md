@@ -86,7 +86,7 @@ direct-only.
 - **One setup-prefix identity.** `SetupPrefixSlotId` remains the canonical
   identity. `natural_len` and `n_prefix` identify the prefix domain;
   `level_params_digest` identifies the exact commitment params, including
-  `log_basis`, `m_vars`, `r_vars`, group params, and per-level mode.
+  `log_basis`, `position_bits`, `block_bits`, group params, and per-level mode.
 - **One total-prefix calculation.** `active_setup_field_len` is the canonical
   challenge-free calculation of active setup coefficients. Planner,
   preprocessing, prover, and verifier do not maintain separate formulas.
@@ -349,8 +349,8 @@ that **consume** an incoming setup prefix:
 
 ```rust
 pub struct GeneratedSetupPrefixGroup {
-    pub m_vars: u32,
-    pub r_vars: u32,
+    pub position_bits: u32,
+    pub block_bits: u32,
     pub n_a: u32,
     pub n_b: u32,
 }
@@ -358,8 +358,8 @@ pub struct GeneratedSetupPrefixGroup {
 pub struct GeneratedFoldStep {
     pub ring_d: u32,
     pub log_basis: u32,
-    pub m_vars: u32,
-    pub r_vars: u32,
+    pub position_bits: u32,
+    pub block_bits: u32,
     pub n_a: u32,
     pub n_b: u32,
     pub n_d: u32,
@@ -368,7 +368,7 @@ pub struct GeneratedFoldStep {
 }
 ```
 
-`m_vars/r_vars/n_a/n_b` on `GeneratedFoldStep` describe the final folded-witness
+`position_bits/block_bits/n_a/n_b` on `GeneratedFoldStep` describe the final folded-witness
 group. `setup_prefix_group` describes the offloaded setup-prefix precommitted
 group. `log_basis` is shared across all groups in that fold and is stored only on
 `GeneratedFoldStep`. `n_d` is also shared and stored only on `GeneratedFoldStep`.
@@ -604,7 +604,7 @@ slot ID.
 ### Locally Minimized Candidate Derivation
 
 Retain the current algorithm: for each `log_basis`,
-`derive_candidate_level_params` scans `r_vars` and keeps only the candidate
+`derive_candidate_level_params` scans `block_bits` and keeps only the candidate
 with the smallest outgoing witness.
 
 The scalar `find_schedule` path never computes or forwards an outgoing setup
@@ -617,7 +617,7 @@ context retains that root-path fact while planning later folds; setup
 offloading does not become available merely because a scalar suffix happens to
 have two commitments.
 
-For each existing `r_vars` candidate:
+For each existing `block_bits` candidate:
 
 1. Derive main-group block geometry, A key, B key, digit depths, norms, and
    chunk metadata as today.
@@ -963,7 +963,7 @@ and are not per-proof bytes.
       steps and terminal folds consume exactly one group.
 - [ ] Generated recursive rows store `setup_prefix_group` for every fold that
       consumes an incoming setup prefix.
-- [ ] `setup_prefix_group.{m_vars,r_vars,n_a,n_b}` describe the prefix group's
+- [ ] `setup_prefix_group.{position_bits,block_bits,n_a,n_b}` describe the prefix group's
       own A/B matrices and never duplicate or capacity-check against the final
       witness group.
 - [ ] `active_setup_field_len` retains scalar arithmetic parity and agrees with

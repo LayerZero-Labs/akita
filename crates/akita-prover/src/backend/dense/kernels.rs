@@ -39,37 +39,29 @@ where
         source: DenseView<'_, F, D>,
         plan: OpeningFoldPlan<'_, F, D>,
     ) -> Result<OpeningFoldOutput<F, D>, AkitaError> {
-        let fold_position_count = plan.fold_position_count();
-        if fold_position_count == 0 {
+        let block_len = plan.block_len();
+        if block_len == 0 {
             return Err(AkitaError::InvalidInput(
-                "fold position count must be positive".to_string(),
+                "block_len must be positive".to_string(),
             ));
         }
-        let live_fold_count = source
-            .poly
-            .ring_coeffs::<D>()?
-            .len()
-            .div_ceil(fold_position_count);
-        plan.validate(live_fold_count)?;
+        let num_blocks = source.poly.ring_coeffs::<D>()?.len().div_ceil(block_len);
+        plan.validate(num_blocks)?;
         let (eval, folded) = match plan {
             OpeningFoldPlan::Base {
-                fold_weights,
+                block_weights,
                 position_weights,
-                fold_position_count,
-            } => source.poly.evaluate_and_fold::<D>(
-                fold_weights,
-                position_weights,
-                fold_position_count,
-            ),
+                block_len,
+            } => source
+                .poly
+                .evaluate_and_fold::<D>(block_weights, position_weights, block_len),
             OpeningFoldPlan::Ring {
-                fold_weights,
+                block_weights,
                 position_weights,
-                fold_position_count,
-            } => source.poly.evaluate_and_fold_ring(
-                fold_weights,
-                position_weights,
-                fold_position_count,
-            ),
+                block_len,
+            } => source
+                .poly
+                .evaluate_and_fold_ring(block_weights, position_weights, block_len),
         };
         Ok(OpeningFoldOutput { eval, folded })
     }
@@ -82,7 +74,7 @@ where
     ) -> Result<DecomposeFoldWitness<F>, AkitaError> {
         Ok(source.poly.decompose_fold::<D>(
             plan.challenges,
-            plan.fold_position_count,
+            plan.block_len,
             plan.num_digits,
             plan.log_basis,
         ))
@@ -103,13 +95,13 @@ where
             DecomposeFoldBatchPlan::Sparse { .. } => Ok(BatchDecomposeFoldOutcome::FallbackPerPoly),
             DecomposeFoldBatchPlan::Tensor {
                 tensor,
-                fold_position_count,
+                block_len,
                 num_digits,
                 log_basis,
             } => match DensePoly::decompose_fold_tensor_batched::<D>(
                 source.polys,
                 tensor,
-                fold_position_count,
+                block_len,
                 num_digits,
                 log_basis,
             )? {

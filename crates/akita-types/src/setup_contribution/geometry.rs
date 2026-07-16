@@ -334,12 +334,12 @@ pub fn setup_required_for_inputs<E: FieldCore>(
     inputs: &SetupContributionPlanInputs<E>,
     role_dims: CommitmentRingDims,
 ) -> Result<usize, AkitaError> {
-    if inputs.live_fold_count == 0 {
+    if inputs.num_blocks == 0 {
         return Err(AkitaError::InvalidSetup(
-            "live_fold_count must be positive".into(),
+            "num_blocks must be positive".into(),
         ));
     }
-    if inputs.fold_position_count == 0
+    if inputs.block_len == 0
         || inputs.depth_open == 0
         || inputs.depth_commit == 0
         || inputs.depth_fold == 0
@@ -357,7 +357,7 @@ pub fn setup_required_for_inputs<E: FieldCore>(
 
     let z_range = inputs.inner_width;
     let expected_z_range = inputs
-        .fold_position_count
+        .block_len
         .checked_mul(inputs.depth_commit)
         .ok_or_else(|| AkitaError::InvalidSetup("Z width overflow".into()))?;
     if z_range != expected_z_range {
@@ -392,7 +392,7 @@ pub fn setup_required_for_inputs<E: FieldCore>(
     }
 
     let b_per_claim_e = inputs
-        .live_fold_count
+        .num_blocks
         .checked_mul(inputs.depth_open)
         .ok_or_else(|| AkitaError::InvalidSetup("e-hat claim width overflow".into()))?;
     let n_cols_e = inputs
@@ -410,7 +410,7 @@ pub fn setup_required_for_inputs<E: FieldCore>(
         .checked_mul(inputs.depth_open)
         .ok_or_else(|| AkitaError::InvalidSetup("T stride overflow".into()))?;
     let t_polynomial_width = t_stride
-        .checked_mul(inputs.live_fold_count)
+        .checked_mul(inputs.num_blocks)
         .ok_or_else(|| AkitaError::InvalidSetup("T polynomial width overflow".into()))?;
     let n_cols_t = max_group_poly_count
         .checked_mul(t_polynomial_width)
@@ -510,14 +510,14 @@ mod tests {
     }
 
     fn single_chunk_layout_from_inputs(inputs: &SetupContributionPlanInputs<F>) -> WitnessLayout {
-        let z_len = inputs.fold_position_count * inputs.depth_commit * inputs.depth_fold;
-        let e_len = inputs.num_claims * inputs.live_fold_count * inputs.depth_open;
+        let z_len = inputs.block_len * inputs.depth_commit * inputs.depth_fold;
+        let e_len = inputs.num_claims * inputs.num_blocks * inputs.depth_open;
         let t_len = e_len * inputs.n_a;
         let unit = WitnessUnitLayout::new_for_test(
             0,
             0,
             0,
-            inputs.live_fold_count,
+            inputs.num_blocks,
             0..z_len,
             z_len..z_len + e_len,
             z_len + e_len..z_len + e_len + t_len,
@@ -552,11 +552,11 @@ mod tests {
 
     #[test]
     fn setup_required_for_inputs_matches_prepare_required() {
-        let fold_position_count = 12;
+        let block_len = 12;
         let depth_commit = 3;
         let depth_fold = 2;
         let num_points = 1;
-        let z_range = fold_position_count * depth_commit;
+        let z_range = block_len * depth_commit;
         let full_vec_randomness = (0..9)
             .map(|idx| test_scalar(101 + idx as u128))
             .collect::<Vec<_>>();
@@ -571,8 +571,8 @@ mod tests {
             num_polys_per_group: vec![0],
             num_t_vectors: 0,
             num_claims: 1,
-            live_fold_count: 4,
-            fold_position_count,
+            num_blocks: 4,
+            block_len,
             depth_open: 16,
             depth_commit,
             depth_fold,
@@ -589,10 +589,10 @@ mod tests {
 
     #[test]
     fn setup_required_for_inputs_is_challenge_free() {
-        let fold_position_count = 12;
+        let block_len = 12;
         let depth_commit = 3;
         let depth_fold = 2;
-        let z_range = fold_position_count * depth_commit;
+        let z_range = block_len * depth_commit;
         let inputs = SetupContributionPlanInputs::<F> {
             relation_matrix_row_layout: RelationMatrixRowLayout::WithoutDBlock,
             rows: 2,
@@ -603,8 +603,8 @@ mod tests {
             num_polys_per_group: vec![2],
             num_t_vectors: 2,
             num_claims: 1,
-            live_fold_count: 4,
-            fold_position_count,
+            num_blocks: 4,
+            block_len,
             depth_open: 16,
             depth_commit,
             depth_fold,
@@ -649,8 +649,8 @@ mod tests {
             num_polys_per_group: vec![1],
             num_t_vectors: 1,
             num_claims: 1,
-            live_fold_count: 4,
-            fold_position_count: 16,
+            num_blocks: 4,
+            block_len: 16,
             depth_open: 8,
             depth_commit: 2,
             depth_fold: 3,
@@ -685,8 +685,8 @@ mod tests {
             num_polys_per_group: vec![1],
             num_t_vectors: 1,
             num_claims: 1,
-            live_fold_count: 3,
-            fold_position_count: 16,
+            num_blocks: 3,
+            block_len: 16,
             depth_open: 8,
             depth_commit: 2,
             depth_fold: 3,

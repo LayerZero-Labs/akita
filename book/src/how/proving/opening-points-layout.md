@@ -4,40 +4,40 @@ Akita uses one physical source order at the root and at every recursive level.
 For one commitment group, let
 
 ```text
-N = exact live source ring elements per claim
-L = positions in one fold slice, a power of two
-F = ceil(N / L), the exact number of live fold slices
+N = exact live source ring elements per claim (source_ring_len_per_claim)
+L = block_len, positions in one block, a power of two
+F = num_blocks = ceil(N / L), the exact number of live blocks
 ```
 
 The physical source index is
 
 ```text
-source_index = fold_index * L + position
+source_index = block_idx * block_len + position
 ```
 
-so position is the low-order coordinate and fold is the high-order coordinate.
-The final fold slice may be partial; it is not padded in the stored source.
+so position is the low-order coordinate and block_idx is the high-order coordinate.
+The final block may be partial; it is not padded in the stored source.
 
 ## Opening point split
 
-An opening point first contains `log2(L)` position coordinates. The remaining
-coordinates address `next_power_of_two(F)` fold slots. Akita constructs all `L`
-position weights but retains only the exact live prefix of `F` fold weights.
+An opening point first contains `log2(block_len)` position coordinates. The remaining
+coordinates address `next_power_of_two(num_blocks)` block slots. Akita constructs all `L`
+position weights but retains only the exact live prefix of `F` block weights.
 There is no virtual compact-to-padded address map and no root-versus-recursive
 block-order mode.
 
 `RingOpeningPoint` exposes the resulting factors directly:
 
 ```text
-position_weights: length L
-fold_weights:     length F
+position_weights: length block_len
+block_weights:    length num_blocks
 ```
 
 Both the Lagrange and monomial bases use this same physical order.
 
 ## Witness order
 
-Decomposition digits are innermost. For each group and shard, the canonical
+Decomposition digits are innermost. For each group and chunk, the canonical
 physical unit is
 
 ```text
@@ -48,28 +48,28 @@ and one shared `r_hat` quotient tail follows every unit. The logical orders are
 
 ```text
 z_hat[position][commit_digit][fold_digit]
-e_hat[claim][live_fold][opening_digit]
-t_hat[claim][live_fold][A_row][opening_digit]
+e_hat[claim][block_idx][opening_digit]
+t_hat[claim][block_idx][A_row][opening_digit]
 r_hat[relation_row][quotient_digit]
 ```
 
 `WitnessLayout` is the range authority shared by planning, proving, setup,
 relation evaluation, recursive handoff, and verification. Units are ordered by
-relation group and then shard. Each unit records its exact global fold start and
-live fold count.
+relation group and then chunk. Each unit records its exact `global_block_start` and
+`live_block_count`.
 
-## Shards and tensor challenges
+## Chunks and tensor challenges
 
-Shards own contiguous ranges of the exact `F` live folds. Internal allocation
-uses a power-of-two granule `S`; any residual folds remain tight in the final
-shard. The planner chooses `S` independently of `L` and of the challenge shape.
+Chunks own contiguous ranges of the exact `F` live blocks. Internal allocation
+uses a power-of-two `chunk_granule`; any residual blocks remain tight in the final
+chunk. The planner chooses the granule independently of `block_len` and of the challenge shape.
 
 A flat fold challenge has `F` independent coefficients. A tensor challenge
 chooses a power-of-two low-factor width `Q` and derives
 
 ```text
 H = ceil(F / Q)
-coefficient(f) = fold_high[f / Q] * fold_low[f % Q]
+coefficient(b) = fold_high[b / Q] * fold_low[b % Q]
 ```
 
 Only the first `F` products are live, so the last high-factor row may be
@@ -77,6 +77,6 @@ partial. Each commitment group owns its own flat-or-tensor shape.
 
 ## Validation boundary
 
-Malformed dimensions, overflowing sizes, invalid powers of two, and fold or
-shard indices outside the exact live ranges are rejected with `AkitaError`.
+Malformed dimensions, overflowing sizes, invalid powers of two, and block or
+chunk indices outside the exact live ranges are rejected with `AkitaError`.
 Verifier-reachable code does not recover an obsolete block-order interpretation.

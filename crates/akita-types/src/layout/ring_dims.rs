@@ -262,8 +262,8 @@ mod tests {
 
     fn make_fold_level_params(
         ring_dimension: usize,
-        live_fold_count: usize,
-        fold_position_count: usize,
+        num_blocks: usize,
+        block_len: usize,
     ) -> LevelParams {
         let mut params = LevelParams::params_only(
             SisModulusProfileId::Q128OffsetA7F7,
@@ -274,23 +274,19 @@ mod tests {
             1,
             fold_challenge_config_for_ring_dim(ring_dimension),
         );
-        params.source_ring_len_per_claim = live_fold_count * fold_position_count;
-        params.live_fold_count = live_fold_count;
-        params.fold_position_count = fold_position_count;
-        params.shard_granule = 1;
+        params.source_ring_len_per_claim = num_blocks * block_len;
+        params.num_blocks = num_blocks;
+        params.block_len = block_len;
+        params.chunk_granule = 1;
         params.num_digits_commit = 2;
         params.num_digits_open = 2;
         params.stamp_role_dims_from_keys();
         params
     }
 
-    fn make_fold_step(
-        ring_dimension: usize,
-        live_fold_count: usize,
-        fold_position_count: usize,
-    ) -> FoldStep {
+    fn make_fold_step(ring_dimension: usize, num_blocks: usize, block_len: usize) -> FoldStep {
         FoldStep {
-            params: make_fold_level_params(ring_dimension, live_fold_count, fold_position_count),
+            params: make_fold_level_params(ring_dimension, num_blocks, block_len),
             current_w_len: 0,
             next_w_len: 0,
             level_bytes: 0,
@@ -488,8 +484,8 @@ mod tests {
 
         let mut params = LevelParams::log_basis_stub(3);
         params.ring_dimension = 256;
-        params.live_fold_count = 4;
-        params.fold_position_count = 8;
+        params.num_blocks = 4;
+        params.block_len = 8;
         params.num_digits_commit = 2;
         params.num_digits_open = 2;
         params.fold_challenge_config = fold_challenge_config_for_ring_dim(params.ring_dimension);
@@ -553,8 +549,8 @@ mod tests {
 
         let mut params = LevelParams::log_basis_stub(3);
         params.ring_dimension = 128;
-        params.live_fold_count = 4;
-        params.fold_position_count = 8;
+        params.num_blocks = 4;
+        params.block_len = 8;
         params.num_digits_commit = 2;
         params.num_digits_open = 2;
         params.fold_challenge_config = fold_challenge_config_for_ring_dim(params.ring_dimension);

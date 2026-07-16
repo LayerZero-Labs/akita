@@ -97,8 +97,8 @@ where
             row_coefficients,
             opening_batch,
             basis,
-            lp.fold_position_count,
-            lp.live_fold_count,
+            lp.block_len,
+            lp.num_blocks,
             d_a.trailing_zeros() as usize,
             requires_reduction,
             transcript,
@@ -114,8 +114,8 @@ fn verify_fold_eor_kernel<F, E, T, const D: usize>(
     row_coefficients: &[E],
     opening_batch: &OpeningClaimsLayout,
     basis: BasisMode,
-    fold_position_count: usize,
-    live_fold_count: usize,
+    block_len: usize,
+    num_blocks: usize,
     alpha_bits: usize,
     requires_reduction: bool,
     transcript: &mut T,
@@ -193,8 +193,8 @@ where
         let prepared = prepare_opening_point::<F, E, D>(
             &protocol_point,
             basis,
-            fold_position_count,
-            live_fold_count,
+            block_len,
+            num_blocks,
             alpha_bits,
         )?;
         vec![prepared]
@@ -202,8 +202,8 @@ where
         vec![prepare_opening_point::<F, E, D>(
             challenge_point,
             basis,
-            fold_position_count,
-            live_fold_count,
+            block_len,
+            num_blocks,
             alpha_bits,
         )?]
     };
@@ -483,7 +483,7 @@ where
                 )?;
                 if destination_ring_dim != D {
                     let public = trace_public_weights_root_terms::<F, E, D>(
-                        lp.live_fold_count,
+                        lp.num_blocks,
                         &opening_batch,
                         &prepared_point,
                         &row_coefficients,
@@ -887,7 +887,7 @@ where
             trace_opening_source_len,
             trace_col_bits,
             trace_ring_bits,
-            prepared.lp.live_fold_count,
+            prepared.lp.num_blocks,
         )?;
         let prepared_point = prepared
             .trace_prepared_points
@@ -904,7 +904,7 @@ where
             trace_eval_scale: prepared.trace_eval_scale,
         })
     } else if prepared.lp.has_precommitted_groups() {
-        // Grouped root: dense trace-weight table (per-group `live_fold_count`,
+        // Grouped root: dense trace-weight table (per-group `num_blocks`,
         // `num_digits_open`, and group-major e-hat offset). The layout is inert
         // for dense evaluation, but remains the canonical checked description
         // of one opening-digit segment. Use its first relation group rather
@@ -914,7 +914,7 @@ where
         let num_trace_blocks = opening_batch
             .group_layout(group_id)?
             .num_polynomials()
-            .checked_mul(group_lp.live_fold_count())
+            .checked_mul(group_lp.num_blocks())
             .ok_or_else(|| AkitaError::InvalidSetup("trace block count overflow".to_string()))?;
         let layout = trace_weight_layout_from_segment(
             prepared.lp,
@@ -948,7 +948,7 @@ where
         let num_trace_blocks = relation_instance
             .opening_batch()
             .num_total_polynomials()
-            .checked_mul(prepared.lp.live_fold_count)
+            .checked_mul(prepared.lp.num_blocks)
             .ok_or_else(|| AkitaError::InvalidSetup("trace block count overflow".to_string()))?;
         let layout = trace_weight_layout_from_segment(
             prepared.lp,

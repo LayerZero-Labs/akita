@@ -298,15 +298,15 @@ fn serialize_precommitted_level_params<W: Write>(
         .serialize_with_mode(&mut writer, compress)?;
     params
         .layout
-        .fold_position_count
+        .block_len
         .serialize_with_mode(&mut writer, compress)?;
     params
         .layout
-        .live_fold_count
+        .num_blocks
         .serialize_with_mode(&mut writer, compress)?;
     params
         .layout
-        .shard_granule
+        .chunk_granule
         .serialize_with_mode(&mut writer, compress)?;
     match params.layout.fold_challenge_shape {
         akita_challenges::TensorChallengeShape::Flat => writer.write_all(&[0])?,
@@ -350,9 +350,9 @@ fn deserialize_precommitted_level_params<R: Read>(
     let group_num_polynomials = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
     let source_ring_len_per_claim =
         usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
-    let fold_position_count = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
-    let live_fold_count = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
-    let shard_granule = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
+    let block_len = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
+    let num_blocks = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
+    let chunk_granule = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
     let mut shape_tag = [0u8; 1];
     reader.read_exact(&mut shape_tag)?;
     let fold_challenge_shape = match shape_tag[0] {
@@ -378,9 +378,9 @@ fn deserialize_precommitted_level_params<R: Read>(
         layout: PrecommittedGroupParams {
             group: PolynomialGroupLayout::new(group_num_vars, group_num_polynomials),
             source_ring_len_per_claim,
-            fold_position_count,
-            live_fold_count,
-            shard_granule,
+            block_len,
+            num_blocks,
+            chunk_granule,
             fold_challenge_shape,
             log_basis,
             n_a,
@@ -408,9 +408,9 @@ fn precommitted_level_params_serialized_size(
             .layout
             .source_ring_len_per_claim
             .serialized_size(compress)
-        + params.layout.fold_position_count.serialized_size(compress)
-        + params.layout.live_fold_count.serialized_size(compress)
-        + params.layout.shard_granule.serialized_size(compress)
+        + params.layout.block_len.serialized_size(compress)
+        + params.layout.num_blocks.serialized_size(compress)
+        + params.layout.chunk_granule.serialized_size(compress)
         + 1
         + match params.layout.fold_challenge_shape {
             akita_challenges::TensorChallengeShape::Flat => 0,
@@ -1090,7 +1090,7 @@ fn active_setup_projection_geometry(
         let group_layout = opening_batch.group_layout(group_index)?;
         let group_params = level_params.group_params(opening_batch, group_index)?;
         let a_width = group_params
-            .fold_position_count()
+            .block_len()
             .checked_mul(group_params.num_digits_commit())
             .ok_or_else(|| AkitaError::InvalidSetup("A setup width overflow".to_string()))?;
         let a_slots = group_params
@@ -1101,7 +1101,7 @@ fn active_setup_projection_geometry(
         let b_width = group_layout
             .num_polynomials()
             .checked_mul(group_params.a_rows_len())
-            .and_then(|n| n.checked_mul(group_params.live_fold_count()))
+            .and_then(|n| n.checked_mul(group_params.num_blocks()))
             .and_then(|n| n.checked_mul(group_params.num_digits_open()))
             .ok_or_else(|| AkitaError::InvalidSetup("B setup width overflow".to_string()))?;
         let b_slots = group_params
@@ -1111,7 +1111,7 @@ fn active_setup_projection_geometry(
 
         let d_width = group_layout
             .num_polynomials()
-            .checked_mul(group_params.live_fold_count())
+            .checked_mul(group_params.num_blocks())
             .and_then(|n| n.checked_mul(group_params.num_digits_open()))
             .ok_or_else(|| AkitaError::InvalidSetup("D setup width overflow".to_string()))?;
         shared_d_width = shared_d_width
@@ -1161,13 +1161,13 @@ pub fn setup_prefix_precommitted_params(
         ));
     }
     let ring_slots = n_prefix / d_setup;
-    let mut fold_position_count = 1usize;
-    while fold_position_count <= ring_slots.max(1) {
-        let live_fold_count = ring_slots.div_ceil(fold_position_count);
-        let inner_width = fold_position_count
+    let mut block_len = 1usize;
+    while block_len <= ring_slots.max(1) {
+        let num_blocks = ring_slots.div_ceil(block_len);
+        let inner_width = block_len
             .checked_mul(prefix_params.num_digits_commit)
             .ok_or_else(|| AkitaError::InvalidSetup("prefix inner width overflow".to_string()))?;
-        let outer_width = live_fold_count
+        let outer_width = num_blocks
             .checked_mul(prefix_params.a_key.row_len())
             .and_then(|n| n.checked_mul(prefix_params.num_digits_open))
             .ok_or_else(|| AkitaError::InvalidSetup("prefix outer width overflow".to_string()))?;
@@ -1178,9 +1178,9 @@ pub fn setup_prefix_precommitted_params(
                 layout: PrecommittedGroupParams {
                     group: PolynomialGroupLayout::singleton(n_prefix.trailing_zeros() as usize),
                     source_ring_len_per_claim: ring_slots,
-                    fold_position_count,
-                    live_fold_count,
-                    shard_granule: 1,
+                    block_len,
+                    num_blocks,
+                    chunk_granule: 1,
                     fold_challenge_shape: prefix_params.fold_challenge_shape,
                     log_basis: prefix_params.log_basis,
                     n_a: prefix_params.a_key.row_len(),
@@ -1193,7 +1193,7 @@ pub fn setup_prefix_precommitted_params(
                 num_digits_fold_one: prefix_params.num_digits_fold_one,
             });
         }
-        fold_position_count = fold_position_count.checked_mul(2).ok_or_else(|| {
+        block_len = block_len.checked_mul(2).ok_or_else(|| {
             AkitaError::InvalidSetup("prefix position count overflow".to_string())
         })?;
     }

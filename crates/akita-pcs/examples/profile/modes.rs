@@ -108,7 +108,7 @@ fn run_onehot_mode_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
     if num_polys == 1 {
         let layout = resolve_layout::<FF, Cfg>(nv);
         let required_vars =
-            layout.position_bits() + layout.fold_bits() + D.trailing_zeros() as usize;
+            layout.position_bits() + layout.block_bits() + D.trailing_zeros() as usize;
         if required_vars > nv {
             tracing::error!(
                 label,
@@ -132,7 +132,7 @@ fn run_onehot_mode_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
             .expect("schedule plan");
         let layout = akita_batched_root_layout::<Cfg>(nv, num_polys).expect("layout");
         let required_vars =
-            layout.position_bits() + layout.fold_bits() + D.trailing_zeros() as usize;
+            layout.position_bits() + layout.block_bits() + D.trailing_zeros() as usize;
         if required_vars > nv {
             tracing::error!(
                 label,

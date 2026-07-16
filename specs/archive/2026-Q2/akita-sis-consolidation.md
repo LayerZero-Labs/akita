@@ -210,14 +210,14 @@ pub fn rounded_up_norm_t(sis_modulus_profile: SisModulusProfileId, d: usize, log
 pub fn rounded_up_norm_w(sis_modulus_profile: SisModulusProfileId, d: usize, log_basis: u32) -> Option<u32>;
 
 /// Folded witness `z = Σ c_i·s_i`: the L∞ bound
-/// `β = num_claims · 2^r_vars · min(||c||_inf·||s||_1, ||c||_1·||s||_inf)`.
+/// `β = num_claims · 2^block_bits · min(||c||_inf·||s||_1, ||c||_1·||s||_inf)`.
 /// `z` is *not* Ajtai-committed, so this is the raw bound (no SIS bucket); it
 /// feeds the next-level fold digit count in `decomposition_digits`.
 pub fn rounded_up_norm_z(
     decomposition: DecompositionParams,
     fold_challenge_config: &SparseChallengeConfig,
     fold_shape: TensorChallengeShape,
-    r_vars: usize,
+    block_bits: usize,
     num_claims: usize,
     d: usize,
     onehot_chunk_size: usize,

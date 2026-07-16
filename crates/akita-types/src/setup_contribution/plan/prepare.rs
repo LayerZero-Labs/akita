@@ -31,7 +31,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                     .checked_mul(group.t_cols_per_vector)
                     .ok_or_else(|| AkitaError::InvalidSetup("setup B width overflow".into()))?;
                 let z_cols = group
-                    .fold_position_count
+                    .block_len
                     .checked_mul(group.depth_commit)
                     .ok_or_else(|| AkitaError::InvalidSetup("setup Z range overflow".into()))?;
                 let a_row_weights: std::sync::Arc<[E]> = checked_slice(
@@ -52,7 +52,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                 .into();
                 let e_cols = group
                     .num_claims
-                    .checked_mul(group.live_fold_count)
+                    .checked_mul(group.num_blocks)
                     .and_then(|cols| cols.checked_mul(group.depth_open))
                     .ok_or_else(|| {
                         AkitaError::InvalidSetup("setup E active width overflow".into())
@@ -131,7 +131,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                         layout.witness_layout(),
                         layout.opening_source_len(),
                         group.group_id,
-                        group.live_fold_count,
+                        group.num_blocks,
                         group.num_claims,
                         group.depth_open,
                         &eq_window,
@@ -143,7 +143,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                         layout.witness_layout(),
                         layout.opening_source_len(),
                         group.group_id,
-                        group.live_fold_count,
+                        group.num_blocks,
                         group.depth_open,
                         group.n_a,
                         group.t_cols_per_vector,
@@ -168,7 +168,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                     &fold_gadget_storage
                 };
                 let z_range = group
-                    .fold_position_count
+                    .block_len
                     .checked_mul(group.depth_commit)
                     .ok_or_else(|| AkitaError::InvalidSetup("setup Z range overflow".into()))?;
                 let mut z_eq_slice = vec![E::zero(); z_range];
@@ -178,7 +178,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                         layout.witness_layout(),
                         layout.opening_source_len(),
                         group.group_id,
-                        group.fold_position_count,
+                        group.block_len,
                         group.depth_commit,
                         group.depth_fold,
                         &eq_window,
@@ -212,7 +212,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
             .map(|(planned, group)| {
                 let d_active_cols = group
                     .num_claims
-                    .checked_mul(group.live_fold_count)
+                    .checked_mul(group.num_blocks)
                     .and_then(|cols| cols.checked_mul(group.depth_open))
                     .ok_or_else(|| {
                         AkitaError::InvalidSetup("setup D active width overflow".into())

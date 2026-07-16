@@ -171,10 +171,8 @@ fn fp32_ext4_root_lp(position_bits: usize) -> LevelParams {
         bd_bucket,
         d,
     );
-    let fold_position_count = 1usize << position_bits;
-    params
-        .with_decomp(fold_position_count, fold_position_count, 12, 12)
-        .unwrap()
+    let block_len = 1usize << position_bits;
+    params.with_decomp(block_len, block_len, 12, 12).unwrap()
 }
 
 impl Fp32RingSubfieldRootFoldCfg {

@@ -4,7 +4,7 @@ use super::*;
 fn batched_commit_matches_individual_commits() {
     let alpha = D.trailing_zeros() as usize;
     let layout = singleton_layout::<Cfg>(16);
-    let num_vars = layout.position_bits() + layout.fold_bits() + alpha;
+    let num_vars = layout.position_bits() + layout.block_bits() + alpha;
     let len = 1usize << num_vars;
     let evals_a: Vec<F> = (0..len).map(|i| F::from_u64((i + 1) as u64)).collect();
     let evals_b: Vec<F> = (0..len).map(|i| F::from_u64((i * 3 + 7) as u64)).collect();
@@ -196,7 +196,7 @@ fn batched_root_direct_rejects_wrong_opening() {
 fn batched_verify_accepts_consistent_openings_and_rejects_bad_inputs() {
     let alpha = D.trailing_zeros() as usize;
     let layout = singleton_layout::<Cfg>(16);
-    let num_vars = layout.position_bits() + layout.fold_bits() + alpha;
+    let num_vars = layout.position_bits() + layout.block_bits() + alpha;
     let len = 1usize << num_vars;
     let evals_a: Vec<F> = (0..len).map(|i| F::from_u64((i + 5) as u64)).collect();
     let evals_b: Vec<F> = (0..len).map(|i| F::from_u64((i * 7 + 3) as u64)).collect();

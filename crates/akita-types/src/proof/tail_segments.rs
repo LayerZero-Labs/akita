@@ -715,11 +715,11 @@ pub fn tail_segment_layout_from_groups<'a>(
             ));
         }
         let total_w_blocks = params
-            .live_fold_count()
+            .num_blocks()
             .checked_mul(num_w_vectors)
             .ok_or_else(|| AkitaError::InvalidSetup("tail e block count overflow".to_string()))?;
         let total_t_blocks = params
-            .live_fold_count()
+            .num_blocks()
             .checked_mul(num_t_vectors)
             .ok_or_else(|| AkitaError::InvalidSetup("tail t block count overflow".to_string()))?;
         let e_field_elems = total_w_blocks
@@ -730,12 +730,12 @@ pub fn tail_segment_layout_from_groups<'a>(
             .and_then(|n| n.checked_mul(d))
             .ok_or_else(|| AkitaError::InvalidSetup("tail t field count overflow".to_string()))?;
         let z_coords = num_z_segments
-            .checked_mul(params.fold_position_count())
+            .checked_mul(params.block_len())
             .and_then(|n| n.checked_mul(depth_commit))
             .and_then(|n| n.checked_mul(d))
             .ok_or_else(|| AkitaError::InvalidSetup("tail z coord count overflow".to_string()))?;
         let z_plane_rings = num_z_segments
-            .checked_mul(params.fold_position_count())
+            .checked_mul(params.block_len())
             .and_then(|n| n.checked_mul(depth_commit))
             .and_then(|n| n.checked_mul(depth_fold))
             .ok_or_else(|| AkitaError::InvalidSetup("tail z plane count overflow".to_string()))?;
@@ -809,7 +809,7 @@ pub fn tail_segment_multiplicities_from_layout_for_params(
     group_index: usize,
 ) -> Result<(usize, usize, usize), AkitaError> {
     let d = layout.ring_dimension;
-    if d == 0 || d != ring_dimension || params.live_fold_count() == 0 {
+    if d == 0 || d != ring_dimension || params.num_blocks() == 0 {
         return Err(AkitaError::InvalidSetup(
             "tail segment layout has zero ring dimension or block count".to_string(),
         ));
@@ -819,7 +819,7 @@ pub fn tail_segment_multiplicities_from_layout_for_params(
         .get(group_index)
         .ok_or(AkitaError::InvalidProof)?;
     let e_unit = d
-        .checked_mul(params.live_fold_count())
+        .checked_mul(params.num_blocks())
         .ok_or_else(|| AkitaError::InvalidSetup("tail e unit overflow".to_string()))?;
     if !group.e_field_elems.is_multiple_of(e_unit) {
         return Err(AkitaError::InvalidProof);
@@ -835,7 +835,7 @@ pub fn tail_segment_multiplicities_from_layout_for_params(
     let num_t_vectors = group.t_field_elems / t_unit;
 
     let z_unit = params
-        .fold_position_count()
+        .block_len()
         .checked_mul(params.num_digits_commit())
         .and_then(|n| n.checked_mul(d))
         .ok_or_else(|| AkitaError::InvalidSetup("tail z unit overflow".to_string()))?;
@@ -1001,7 +1001,7 @@ where
             lp.fold_witness_linf_cap_for_params(group.params, group.num_t_vectors, field_bits)?;
         golomb_rice_flat_admit_terminal_wire(&z_centered_i64, cap)?;
         let depth_commit = group.params.num_digits_commit();
-        let inner_width = group.params.fold_position_count() * depth_commit;
+        let inner_width = group.params.block_len() * depth_commit;
         let row_count = group.z_folded_centered_flat.len() / ring_d;
         if inner_width == 0 || !row_count.is_multiple_of(inner_width) {
             return Err(AkitaError::InvalidInput(
@@ -1152,7 +1152,7 @@ where
         lp.fold_witness_linf_cap_for_params(lp, num_t_vectors, field_bits)?,
         Some(group_layout.z_payload_bytes),
     )?;
-    let inner_width = lp.fold_position_count * depth_commit;
+    let inner_width = lp.block_len * depth_commit;
     let total_z_elems = z_values.len() / D;
     if total_z_elems * D != z_values.len() || !total_z_elems.is_multiple_of(inner_width) {
         return Err(AkitaError::InvalidProof);
@@ -1167,14 +1167,14 @@ where
         }
     }
 
-    let w_block_count = num_w_vectors * lp.live_fold_count;
+    let w_block_count = num_w_vectors * lp.num_blocks;
     let e_planes = decompose_field_segment_to_planes::<F, D>(
         witness.e_fields.coeffs(),
         w_block_count,
         depth_open,
         log_basis,
     )?;
-    let t_block_count = num_t_vectors * lp.live_fold_count;
+    let t_block_count = num_t_vectors * lp.num_blocks;
     let t_planes_per_block = lp.a_key.row_len() * depth_open;
     let t_planes = decompose_field_segment_to_planes::<F, D>(
         witness.t_fields.coeffs(),
@@ -1217,7 +1217,7 @@ where
     }
     let mut out = vec![0i8; physical_len];
     let z_planes_per_unit = lp
-        .fold_position_count
+        .block_len
         .checked_mul(depth_commit)
         .and_then(|n| n.checked_mul(num_digits_fold))
         .ok_or_else(|| AkitaError::InvalidSetup("terminal Z plane count overflow".into()))?;
@@ -1232,7 +1232,7 @@ where
             &mut out,
             &physical_layout,
             unit,
-            lp.fold_position_count,
+            lp.block_len,
             depth_commit,
             num_digits_fold,
             all_z_planes
@@ -1247,7 +1247,7 @@ where
         num_w_vectors,
         depth_open,
         &e_planes,
-        lp.live_fold_count,
+        lp.num_blocks,
     )?;
     emit_witness_t_planes::<D>(
         &mut out,
@@ -1257,7 +1257,7 @@ where
         lp.a_key.row_len(),
         depth_open,
         &t_planes,
-        lp.live_fold_count,
+        lp.num_blocks,
     )?;
     emit_witness_r_planes::<D>(&mut out, &physical_layout, levels, &r_planes_flat)?;
     Ok(out)
@@ -1312,7 +1312,7 @@ pub fn emit_witness_e_planes<const D: usize>(
     }
     for unit in layout.units_for_group(group_id)? {
         for claim in 0..num_claims {
-            for global_block in unit.global_fold_range() {
+            for global_block in unit.global_block_range() {
                 for digit in 0..depth_open {
                     let source = (claim * source_num_blocks + global_block) * depth_open + digit;
                     write_witness_plane(
@@ -1355,7 +1355,7 @@ pub fn emit_witness_t_planes<const D: usize>(
         .ok_or_else(|| AkitaError::InvalidSetup("witness T source stride overflow".into()))?;
     for unit in layout.units_for_group(group_id)? {
         for claim in 0..num_claims {
-            for global_block in unit.global_fold_range() {
+            for global_block in unit.global_block_range() {
                 for a_row in 0..n_a {
                     for digit in 0..depth_open {
                         let source = (claim * source_num_blocks + global_block) * planes_per_block
@@ -1388,12 +1388,12 @@ pub fn emit_witness_z_planes<const D: usize>(
     out: &mut [i8],
     layout: &WitnessLayout,
     unit: &WitnessUnitLayout,
-    fold_position_count: usize,
+    block_len: usize,
     depth_commit: usize,
     depth_fold: usize,
     all_planes: &[[i8; D]],
 ) -> Result<(), AkitaError> {
-    let expected = fold_position_count
+    let expected = block_len
         .checked_mul(depth_commit)
         .and_then(|n| n.checked_mul(depth_fold))
         .ok_or_else(|| AkitaError::InvalidSetup("witness Z source length overflow".into()))?;
@@ -1403,7 +1403,7 @@ pub fn emit_witness_z_planes<const D: usize>(
             actual: all_planes.len(),
         });
     }
-    for position in 0..fold_position_count {
+    for position in 0..block_len {
         for commit_digit in 0..depth_commit {
             for fold_digit in 0..depth_fold {
                 let source = (position * depth_commit + commit_digit) * depth_fold + fold_digit;
@@ -1411,7 +1411,7 @@ pub fn emit_witness_z_planes<const D: usize>(
                     out,
                     layout.z_index(
                         unit,
-                        fold_position_count,
+                        block_len,
                         depth_commit,
                         depth_fold,
                         position,

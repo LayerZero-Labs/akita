@@ -178,16 +178,8 @@ fn fold_grind_probe_order_absorb_buf(
             params.source_ring_len_per_claim(),
             "fold grind source length",
         )?;
-        push_usize(
-            &mut buf,
-            params.fold_position_count(),
-            "fold grind position count",
-        )?;
-        push_usize(
-            &mut buf,
-            params.live_fold_count(),
-            "fold grind live fold count",
-        )?;
+        push_usize(&mut buf, params.block_len(), "fold grind position count")?;
+        push_usize(&mut buf, params.num_blocks(), "fold grind num_blocks")?;
         push_usize(&mut buf, params.a_col_len(), "fold grind A width")?;
         push_usize(&mut buf, num_claims, "fold grind claim count")?;
         match params.fold_challenge_shape() {
@@ -264,9 +256,9 @@ where
         return Ok((witness, per_chunk));
     }
 
-    let shard_fold_ranges =
-        akita_types::WitnessLayout::resolve_shard_fold_ranges(params, num_chunks)?;
-    let windows = shard_fold_ranges
+    let chunk_block_ranges =
+        akita_types::WitnessLayout::resolve_chunk_block_ranges(params, num_chunks)?;
+    let windows = chunk_block_ranges
         .into_iter()
         .map(|fold_range| {
             let windowed = window_sparse_challenges(challenges, fold_range)?;
@@ -339,7 +331,7 @@ where
                 let challenges = preview.draw_folding_challenges(
                     ring_d,
                     group.group_index,
-                    group.params.live_fold_count(),
+                    group.params.num_blocks(),
                     group.polys.len(),
                     &root_lp.fold_challenge_config,
                     &group.params.fold_challenge_shape(),
@@ -385,7 +377,7 @@ where
         let challenges = live.draw_folding_challenges(
             ring_d,
             group.group_index,
-            group.params.live_fold_count(),
+            group.params.num_blocks(),
             group.polys.len(),
             &root_lp.fold_challenge_config,
             &group.params.fold_challenge_shape(),
@@ -464,7 +456,7 @@ where
         let witness_norms = root_lp.fold_witness_norms_for_params(group.params);
         let sizing_claims = tail_t_vectors.unwrap_or(group.polys.len());
         let (delta_fold, witness_linf_cap) = akita_types::sis::fold_witness_digit_plan(
-            group.params.fold_bits(),
+            group.params.block_bits(),
             sizing_claims,
             root_lp.field_bits_for_cache(),
             group.params.log_basis(),

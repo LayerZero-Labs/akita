@@ -19,7 +19,7 @@ pub(super) struct SuffixVerifierState<'a, F: FieldCore, E: FieldCore> {
 
 fn prepare_suffix_group_points<F, E>(
     protocol_point: &[E],
-    fold_claims: &OpeningClaims<'_, E>,
+    block_claims: &OpeningClaims<'_, E>,
     lp: &LevelParams,
     opening_batch: &OpeningClaimsLayout,
     role_d_a: usize,
@@ -39,11 +39,11 @@ where
                 let group_lp = lp.group_params(opening_batch, group_index)?;
                 let target_len = alpha_bits
                     .checked_add(group_lp.position_bits())
-                    .and_then(|n| n.checked_add(group_lp.fold_bits()))
+                    .and_then(|n| n.checked_add(group_lp.block_bits()))
                     .ok_or_else(|| {
                         AkitaError::InvalidSetup("group opening point length overflow".to_string())
                     })?;
-                let point_vars = fold_claims.group_point_vars(group_index)?;
+                let point_vars = block_claims.group_point_vars(group_index)?;
                 if point_vars.num_vars() != target_len {
                     return Err(AkitaError::InvalidInput(format!(
                         "suffix group point width mismatch: group={group_index}, \
@@ -66,8 +66,8 @@ where
                 prepared_points.push(prepare_opening_point::<F, E, D>(
                     &group_protocol_point,
                     BasisMode::Lagrange,
-                    group_lp.fold_position_count(),
-                    group_lp.live_fold_count(),
+                    group_lp.block_len(),
+                    group_lp.num_blocks(),
                     alpha_bits,
                 )?);
             }
@@ -180,7 +180,7 @@ where
         transcript,
     )?;
     let recursive_num_vars = lp.recursive_opening_num_vars()?;
-    let fold_claims = match (
+    let block_claims = match (
         &current_state.setup_prefix_opening,
         lp.setup_prefix.as_ref(),
     ) {
@@ -220,10 +220,10 @@ where
         }
         _ => return Err(AkitaError::InvalidProof),
     };
-    let opening_batch = fold_claims.layout()?;
+    let opening_batch = block_claims.layout()?;
     let openings = (0..opening_batch.num_groups())
         .flat_map(|group_index| {
-            fold_claims
+            block_claims
                 .group_evaluations(group_index)
                 .map(|evals| evals.to_vec())
                 .unwrap_or_default()
@@ -242,7 +242,7 @@ where
         ..
     } = verify_fold_eor::<F, E, T>(
         proof.extension_opening_reduction(),
-        fold_claims.point(),
+        block_claims.point(),
         &openings,
         &row_coefficients,
         &opening_batch,
@@ -258,8 +258,8 @@ where
         prepared_points
     } else {
         prepare_suffix_group_points::<F, E>(
-            fold_claims.point(),
-            &fold_claims,
+            block_claims.point(),
+            &block_claims,
             lp,
             &opening_batch,
             role_dims.d_a(),

@@ -302,9 +302,9 @@ mod tests {
             layout: PrecommittedGroupParams {
                 group: PolynomialGroupLayout::singleton(6),
                 source_ring_len_per_claim: 1,
-                fold_position_count: 1,
-                live_fold_count: 1,
-                shard_granule: 1,
+                block_len: 1,
+                num_blocks: 1,
+                chunk_granule: 1,
                 fold_challenge_shape: akita_challenges::TensorChallengeShape::Flat,
                 log_basis: 1,
                 n_a: 1,

@@ -7,9 +7,9 @@ use crate::WitnessLayout;
 pub struct TraceWeightLayout {
     pub ring_bits: usize,
     pub col_bits: usize,
-    pub live_fold_count: usize,
+    pub num_blocks: usize,
     pub num_digits_open: usize,
-    pub fold_bits: usize,
+    pub block_bits: usize,
     pub log_basis: u32,
     pub witness_layout: WitnessLayout,
     pub opening_source_len: usize,
@@ -18,7 +18,7 @@ pub struct TraceWeightLayout {
 
 impl TraceWeightLayout {
     pub fn opening_digit_col_count(&self) -> usize {
-        self.live_fold_count * self.num_digits_open
+        self.num_blocks * self.num_digits_open
     }
 
     pub fn ring_len(&self) -> usize {
@@ -34,24 +34,24 @@ impl TraceWeightLayout {
     }
 
     pub fn opening_digit_col_index(&self, block: usize, digit: usize) -> Result<usize, AkitaError> {
-        if block >= self.live_fold_count || digit >= self.num_digits_open {
+        if block >= self.num_blocks || digit >= self.num_digits_open {
             return Err(AkitaError::InvalidInput(
                 "trace opening-digit index out of range".to_string(),
             ));
         }
-        let group_live_fold_count = self.witness_layout.group_live_fold_count(self.group_id)?;
+        let group_live_block_count = self.witness_layout.group_live_block_count(self.group_id)?;
         let num_claims = self
-            .live_fold_count
-            .checked_div(group_live_fold_count)
-            .filter(|_| self.live_fold_count.is_multiple_of(group_live_fold_count))
+            .num_blocks
+            .checked_div(group_live_block_count)
+            .filter(|_| self.num_blocks.is_multiple_of(group_live_block_count))
             .ok_or_else(|| {
                 AkitaError::InvalidSetup("trace claim axis disagrees with witness layout".into())
             })?;
-        let claim = block / group_live_fold_count;
-        let global_block = block % group_live_fold_count;
+        let claim = block / group_live_block_count;
+        let global_block = block % group_live_block_count;
         let unit = self
             .witness_layout
-            .unit_for_fold(self.group_id, global_block)?;
+            .unit_for_block(self.group_id, global_block)?;
         let physical_index = self.witness_layout.e_index(
             unit,
             num_claims,
@@ -77,10 +77,10 @@ impl TraceWeightLayout {
     }
 
     pub(crate) fn validate_opening_digit_segment(&self) -> Result<(), AkitaError> {
-        let group_live_fold_count = self.witness_layout.group_live_fold_count(self.group_id)?;
-        if self.live_fold_count == 0
-            || group_live_fold_count == 0
-            || !self.live_fold_count.is_multiple_of(group_live_fold_count)
+        let group_live_block_count = self.witness_layout.group_live_block_count(self.group_id)?;
+        if self.num_blocks == 0
+            || group_live_block_count == 0
+            || !self.num_blocks.is_multiple_of(group_live_block_count)
         {
             return Err(AkitaError::InvalidSetup(
                 "trace geometry disagrees with witness layout".to_string(),
@@ -94,22 +94,22 @@ impl TraceWeightLayout {
                 "trace layout requires an opening digit".to_string(),
             ));
         }
-        let num_claims = self.live_fold_count / group_live_fold_count;
+        let num_claims = self.num_blocks / group_live_block_count;
         for claim in 0..num_claims {
-            let claim_start = claim.checked_mul(group_live_fold_count).ok_or_else(|| {
+            let claim_start = claim.checked_mul(group_live_block_count).ok_or_else(|| {
                 AkitaError::InvalidSetup("trace claim offset overflow".to_string())
             })?;
             for unit in self.witness_layout.units_for_group(self.group_id)? {
                 let last_global = unit
-                    .global_fold_start()
-                    .checked_add(unit.live_fold_count().checked_sub(1).ok_or_else(|| {
-                        AkitaError::InvalidSetup("trace unit has no live folds".to_string())
+                    .global_block_start()
+                    .checked_add(unit.live_block_count().checked_sub(1).ok_or_else(|| {
+                        AkitaError::InvalidSetup("trace unit has no live blocks".to_string())
                     })?)
                     .ok_or_else(|| {
-                        AkitaError::InvalidSetup("trace unit fold range overflow".to_string())
+                        AkitaError::InvalidSetup("trace unit block range overflow".to_string())
                     })?;
                 let first_block = claim_start
-                    .checked_add(unit.global_fold_start())
+                    .checked_add(unit.global_block_start())
                     .ok_or_else(|| {
                         AkitaError::InvalidSetup("trace block offset overflow".to_string())
                     })?;
@@ -136,7 +136,7 @@ impl TraceWeightLayout {
         let end = block_offset.checked_add(block_span).ok_or_else(|| {
             AkitaError::InvalidInput("trace term block range overflow".to_string())
         })?;
-        if end > self.live_fold_count {
+        if end > self.num_blocks {
             return Err(AkitaError::InvalidInput(
                 "trace term exceeds layout block count".to_string(),
             ));

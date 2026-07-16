@@ -264,7 +264,7 @@ def shard_totals_from_timing(timing_paths: list[pathlib.Path]) -> tuple[int, set
             continue
         data = json.loads(path.read_text(encoding="utf-8"))
         totals.add(safe_int(str(data.get("shard_total", 0)), 0))
-        indices.add(safe_int(str(data.get("shard_index", 0)), 0))
+        indices.add(safe_int(str(data.get("chunk_index", 0)), 0))
     totals.discard(0)
     if len(totals) != 1:
         return 0, indices

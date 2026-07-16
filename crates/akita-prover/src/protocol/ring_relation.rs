@@ -197,18 +197,18 @@ where
     match challenges {
         Challenges::Sparse {
             challenges: sparse,
-            live_folds_per_claim,
+            live_blocks_per_claim,
             ..
         } => {
             let mut point_challenges =
-                Vec::with_capacity(point_indices.len() * *live_folds_per_claim);
+                Vec::with_capacity(point_indices.len() * *live_blocks_per_claim);
             for &claim_idx in point_indices {
                 let start = claim_idx
-                    .checked_mul(*live_folds_per_claim)
+                    .checked_mul(*live_blocks_per_claim)
                     .ok_or_else(|| {
                         AkitaError::InvalidSetup("batched challenge offset overflow".to_string())
                     })?;
-                let end = start.checked_add(*live_folds_per_claim).ok_or_else(|| {
+                let end = start.checked_add(*live_blocks_per_claim).ok_or_else(|| {
                     AkitaError::InvalidSetup("batched challenge offset overflow".to_string())
                 })?;
                 point_challenges.extend_from_slice(sparse.get(start..end).ok_or(
@@ -225,7 +225,7 @@ where
                 batch_view,
                 DecomposeFoldBatchPlan::Sparse {
                     challenges: &point_challenges,
-                    fold_position_count: params.fold_position_count(),
+                    block_len: params.block_len(),
                     num_digits: params.num_digits_commit(),
                     log_basis: params.log_basis(),
                 },
@@ -234,7 +234,7 @@ where
                 BatchDecomposeFoldOutcome::FallbackPerPoly => {
                     let witnesses: Vec<DecomposeFoldWitness<F>> = point_polys
                         .iter()
-                        .zip(point_challenges.chunks(*live_folds_per_claim))
+                        .zip(point_challenges.chunks(*live_blocks_per_claim))
                         .map(|(poly, poly_challenges)| -> Result<_, AkitaError> {
                             OpeningFoldKernel::decompose_fold(
                                 backend,
@@ -242,7 +242,7 @@ where
                                 poly.opening_view()?,
                                 DecomposeFoldPlan {
                                     challenges: poly_challenges,
-                                    fold_position_count: params.fold_position_count(),
+                                    block_len: params.block_len(),
                                     num_digits: params.num_digits_commit(),
                                     log_basis: params.log_basis(),
                                 },
@@ -273,7 +273,7 @@ where
                 batch_view,
                 DecomposeFoldBatchPlan::Tensor {
                     tensor: &point_factored,
-                    fold_position_count: params.fold_position_count(),
+                    block_len: params.block_len(),
                     num_digits: params.num_digits_commit(),
                     log_basis: params.log_basis(),
                 },
@@ -388,8 +388,8 @@ pub(crate) fn validate_chunked_witness_cfg(lp: &LevelParams) -> Result<(), Akita
     lp.witness_chunk.validate()
 }
 
-/// Restrict sparse fold challenges to one shard's exact global fold range,
-/// zeroing all other folds. Folding under these yields the partial response
+/// Restrict sparse fold challenges to one chunk's exact global block range,
+/// zeroing all other blocks. Folding under these yields the partial response
 /// `z_i = Σ_{j∈I_i} c_j s_j`.
 pub(super) fn window_sparse_challenges(
     challenges: &Challenges,
@@ -398,14 +398,14 @@ pub(super) fn window_sparse_challenges(
     match challenges {
         Challenges::Sparse {
             challenges: sparse,
-            live_folds_per_claim,
+            live_blocks_per_claim,
             num_claims,
         } => {
             let windowed: Vec<SparseChallenge> = sparse
                 .iter()
                 .enumerate()
                 .map(|(idx, ch)| {
-                    let block = idx % live_folds_per_claim;
+                    let block = idx % live_blocks_per_claim;
                     if fold_range.contains(&block) {
                         ch.clone()
                     } else {
@@ -416,7 +416,7 @@ pub(super) fn window_sparse_challenges(
                     }
                 })
                 .collect();
-            Challenges::from_sparse(windowed, *live_folds_per_claim, *num_claims)
+            Challenges::from_sparse(windowed, *live_blocks_per_claim, *num_claims)
         }
         Challenges::Tensor { .. } => Err(AkitaError::InvalidSetup(
             "chunked fold response requires sparse fold challenges".to_string(),
@@ -456,7 +456,7 @@ impl RingRelationProver {
         ring_switch_ctx: &OperationCtx<'_, F, RB>,
         group_opening_points: impl IntoRingOpeningPointVec<F>,
         group_ring_multiplier_points: impl IntoRingMultiplierOpeningPointVec<F>,
-        fold_claims: ProverOpeningData<'a, PointF, P, F>,
+        block_claims: ProverOpeningData<'a, PointF, P, F>,
         pre_folded_e_by_poly: Vec<RingVec<F>>,
         lp: LevelParams,
         transcript: &mut T,
@@ -487,10 +487,10 @@ impl RingRelationProver {
             return Err(AkitaError::InvalidProof);
         }
         let dims = lp.role_dims();
-        let opening_batch = fold_claims.opening_claims().layout()?;
-        let polys = fold_claims.flat_polys();
+        let opening_batch = block_claims.opening_claims().layout()?;
+        let polys = block_claims.flat_polys();
         let group_sizes = opening_batch.group_sizes();
-        let num_groups = fold_claims.opening_claims().num_groups();
+        let num_groups = block_claims.opening_claims().num_groups();
         let group_opening_points = group_opening_points.into_vec();
         let group_ring_multiplier_points = group_ring_multiplier_points.into_vec();
         if group_opening_points.len() != num_groups
@@ -510,7 +510,9 @@ impl RingRelationProver {
             (0..num_groups).collect()
         };
         for &group_index in &commit_group_order {
-            let group_commitment = fold_claims.opening_claims().group_commitment(group_index)?;
+            let group_commitment = block_claims
+                .opening_claims()
+                .group_commitment(group_index)?;
             let group_rows =
                 RingView::new(group_commitment.rows().coeffs(), dims.d_b())?.num_rings();
             let expected_rows = lp.group_commitment_rows(&opening_batch, group_index)?;
@@ -522,7 +524,7 @@ impl RingRelationProver {
             commitment_row_coeffs.extend_from_slice(group_commitment.rows().coeffs());
         }
         for group_index in 0..num_groups {
-            let group_hint = fold_claims.group_hint(group_index)?;
+            let group_hint = block_claims.group_hint(group_index)?;
             hints.push(group_hint.clone());
         }
         let commitment_rows = RingVec::from_coeffs(commitment_row_coeffs);
@@ -530,15 +532,15 @@ impl RingRelationProver {
             let group_lp = lp.group_params(&opening_batch, group_index)?;
             let opening_point = &group_opening_points[group_index];
             let ring_multiplier_point = &group_ring_multiplier_points[group_index];
-            if opening_point.position_weights.len() != group_lp.fold_position_count()
-                || opening_point.fold_weights.len() != group_lp.live_fold_count()
+            if opening_point.position_weights.len() != group_lp.block_len()
+                || opening_point.block_weights.len() != group_lp.num_blocks()
             {
                 return Err(AkitaError::InvalidInput(
                     "batched prover opening-point layout mismatch".to_string(),
                 ));
             }
-            if ring_multiplier_point.position_len() != group_lp.fold_position_count()
-                || ring_multiplier_point.fold_len() != group_lp.live_fold_count()
+            if ring_multiplier_point.position_len() != group_lp.block_len()
+                || ring_multiplier_point.fold_len() != group_lp.num_blocks()
             {
                 return Err(AkitaError::InvalidInput(
                     "batched prover ring-multiplier opening-point layout mismatch".to_string(),
@@ -689,7 +691,7 @@ impl RingRelationProver {
             .map(|group_index| {
                 Ok(fold_grind::FoldGrindGroup {
                     group_index,
-                    polys: fold_claims.group_polys(group_index)?,
+                    polys: block_claims.group_polys(group_index)?,
                     params: lp.group_params(&opening_batch, group_index)?,
                 })
             })

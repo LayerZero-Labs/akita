@@ -17,7 +17,7 @@ type Cfg = fp128::D64OneHot;
 
 struct LayoutSummary {
     position_bits: usize,
-    fold_bits: usize,
+    block_bits: usize,
     log_basis: u32,
     n_a: usize,
     n_b_at_layout_basis: usize,
@@ -70,14 +70,14 @@ fn layout_summary(
     )
     .ok_or_else(|| AkitaError::InvalidSetup("B rank lookup failed".to_string()))?;
     let t_hat_g = params
-        .live_fold_count
+        .num_blocks
         .checked_mul(params.a_key.row_len())
         .and_then(|n| n.checked_mul(params.num_digits_open))
         .ok_or_else(|| AkitaError::InvalidSetup("t_hat_g overflow".to_string()))?;
 
     Ok(LayoutSummary {
         position_bits: params.position_bits(),
-        fold_bits: params.fold_bits(),
+        block_bits: params.block_bits(),
         log_basis: params.log_basis,
         n_a: params.a_key.row_len(),
         n_b_at_layout_basis: params.b_key.row_len(),
@@ -91,7 +91,7 @@ fn print_layout(result: Result<LayoutSummary, AkitaError>) {
         Ok(layout) => print!(
             ",ok,{},{},{},{},{},{},{}",
             layout.position_bits,
-            layout.fold_bits,
+            layout.block_bits,
             layout.log_basis,
             layout.n_a,
             layout.n_b_at_layout_basis,

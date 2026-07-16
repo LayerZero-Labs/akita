@@ -104,7 +104,7 @@ Regression tests should target the boundary validation, not the internal asserti
 - [x] The local verification command set passes.
 - [x] Verifier setup deserialization and validation reject malformed `FlatMatrix` metadata and wrapped matrix sizes before allocation or matrix view construction.
 - [x] Verifier setup/schedule validation proves every verifier-used matrix view has sufficient capacity for the selected root and recursive layouts.
-- [x] `LevelParams` validation rejects invalid verifier layouts, including zero or non-power-of-two ring dimensions, unsupported `log_basis`, zero `num_blocks`, inconsistent `r_vars`, zero `block_len`, overflowing row/column widths, and malformed digit depths.
+- [x] `LevelParams` validation rejects invalid verifier layouts, including zero or non-power-of-two ring dimensions, unsupported `log_basis`, zero `num_blocks`, inconsistent `block_bits`, zero `block_len`, overflowing row/column widths, and malformed digit depths.
 - [x] Ring-switch preparation rejects inconsistent opening-point, challenge, gamma, group-routing, block, and row-weight shapes before constructing `RelationMatrixEvaluator`.
 - [x] Stage-1 to stage-2 verifier wiring checks challenge vector dimensions before calling algebra helpers that assert equal lengths.
 - [x] Root folded verification rejects a `root_lp` whose ring dimension does not match the dispatch dimension before deriving `alpha_bits`.
@@ -206,7 +206,7 @@ The audit identified these verifier-reachable panic classes and the implementati
 - **Setup matrix shape:** `FlatMatrix` deserialization currently multiplies `total_ring * gen_ring_dim`, and matrix views assert on zero or incompatible generation dimensions and insufficient capacity.
   Addressed by strengthening `FlatMatrix`/`AkitaVerifierSetup` validation and checking selected schedule matrix envelopes before verifier replay.
 - **Level layout shape:** ring-switch and folded-root verification assume valid `LevelParams`.
-  Addressed by shared verifier layout guards for `ring_dimension`, `log_basis`, `num_blocks`, `block_len`, `m_vars`, `r_vars`, digit depths, row counts, and derived widths.
+  Addressed by shared verifier layout guards for `ring_dimension`, `log_basis`, `num_blocks`, `block_len`, `position_bits`, `block_bits`, digit depths, row counts, and derived widths.
 - **Ring-switch prepared state:** `RelationMatrixEvaluator::eval_at_point` assumes preparation already validated challenge lengths, block summaries, opening-point lengths, `eq_tau1` rows, group routing, and setup capacity.
   Addressed in `prepare_relation_matrix_evaluator`, `ring_switch_verifier`, and the row-eval entry checks, without fallback arithmetic paths.
 - **Claim incidence routing:** transcript absorption indexes `claim_to_point`, `claim_to_group`, and `claim_poly_indices` according to `num_claims`.

@@ -58,5 +58,5 @@ fn multi_group_root_accepts_multi_chunk_witness_layout() {
         num_activated_levels: 1,
     };
     lp.evaluation_trace_row_index_for_layout(RelationMatrixRowLayout::WithDBlock, &batch)
-        .expect("canonical product layout supports grouped shards");
+        .expect("canonical product layout supports grouped chunks");
 }

@@ -22,7 +22,7 @@ type F = Prime128OffsetA7F7;
 fn chunked_witness_count_matches_chunk_layout_arithmetic() {
     const D: usize = 64;
     let fold_challenge_config = SparseChallengeConfig::pm1_only(3);
-    // live_fold_count = 2^3 = 8, divisible by {1, 2, 4, 8}.
+    // num_blocks = 2^3 = 8, divisible by {1, 2, 4, 8}.
     let lp = LevelParams::params_only(
         SisModulusProfileId::Q128OffsetA7F7,
         D,
@@ -69,7 +69,7 @@ fn chunked_witness_count_matches_chunk_layout_arithmetic() {
 fn chunked_witness_count_rejects_invalid_chunk_counts() {
     const D: usize = 64;
     let fold_challenge_config = SparseChallengeConfig::pm1_only(3);
-    // live_fold_count = 2^3 = 8.
+    // num_blocks = 2^3 = 8.
     let lp = LevelParams::params_only(
         SisModulusProfileId::Q128OffsetA7F7,
         D,
@@ -86,7 +86,7 @@ fn chunked_witness_count_rejects_invalid_chunk_counts() {
         w_ring_element_count_for_chunks(128, &lp, 1, RelationMatrixRowLayout::WithDBlock, 6),
         Err(AkitaError::InvalidSetup(_))
     ));
-    // num_chunks does not divide live_fold_count (8 % 16 != 0).
+    // num_chunks does not divide num_blocks (8 % 16 != 0).
     assert!(matches!(
         w_ring_element_count_for_chunks(128, &lp, 1, RelationMatrixRowLayout::WithDBlock, 16),
         Err(AkitaError::InvalidSetup(_))
@@ -497,9 +497,9 @@ fn group_batch_key_rejects_precommitted_num_vars_above_main() {
         precommitteds: vec![PrecommittedGroupParams {
             group: PolynomialGroupLayout::new(24, 1),
             source_ring_len_per_claim: 1usize << 18,
-            fold_position_count: 16,
-            live_fold_count: 1usize << 14,
-            shard_granule: 1,
+            block_len: 16,
+            num_blocks: 1usize << 14,
+            chunk_granule: 1,
             fold_challenge_shape: akita_challenges::TensorChallengeShape::Flat,
             log_basis: 2,
             n_a: 3,
@@ -520,9 +520,9 @@ fn group_batch_key_rejects_precommitted_num_vars_above_half_main() {
         precommitteds: vec![PrecommittedGroupParams {
             group: PolynomialGroupLayout::new(12, 1),
             source_ring_len_per_claim: 64,
-            fold_position_count: 16,
-            live_fold_count: 4,
-            shard_granule: 1,
+            block_len: 16,
+            num_blocks: 4,
+            chunk_granule: 1,
             fold_challenge_shape: akita_challenges::TensorChallengeShape::Flat,
             log_basis: 2,
             n_a: 3,
@@ -542,9 +542,9 @@ fn group_batch_key_allows_mixed_polynomial_counts() {
         precommitteds: vec![PrecommittedGroupParams {
             group: PolynomialGroupLayout::new(10, 1),
             source_ring_len_per_claim: 16,
-            fold_position_count: 4,
-            live_fold_count: 4,
-            shard_granule: 1,
+            block_len: 4,
+            num_blocks: 4,
+            chunk_granule: 1,
             fold_challenge_shape: akita_challenges::TensorChallengeShape::Flat,
             log_basis: 2,
             n_a: 3,
@@ -563,9 +563,9 @@ fn validate_frozen_precommit_rejects_geometry_mismatch() {
     let layout = PrecommittedGroupParams {
         group: PolynomialGroupLayout::new(20, 1),
         source_ring_len_per_claim: 1,
-        fold_position_count: 16,
-        live_fold_count: 1,
-        shard_granule: 1,
+        block_len: 16,
+        num_blocks: 1,
+        chunk_granule: 1,
         fold_challenge_shape: akita_challenges::TensorChallengeShape::Flat,
         log_basis: 2,
         n_a: 3,

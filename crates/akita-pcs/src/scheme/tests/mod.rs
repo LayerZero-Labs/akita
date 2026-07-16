@@ -284,7 +284,7 @@ type VerifyFixture = (
 fn make_verify_fixture(num_vars: usize) -> VerifyFixture {
     let alpha = D.trailing_zeros() as usize;
     let layout = singleton_layout::<Cfg>(num_vars);
-    let full_num_vars = layout.position_bits() + layout.fold_bits() + alpha;
+    let full_num_vars = layout.position_bits() + layout.block_bits() + alpha;
 
     let (poly, evals) = make_dense_poly(full_num_vars);
     let setup = Scheme::setup_prover(full_num_vars, 1).unwrap();
@@ -346,8 +346,9 @@ fn debug_random_point(nv: usize) -> Vec<OneHotF> {
 }
 
 fn debug_make_onehot_poly(layout: &LevelParams, seed: u64) -> OneHotPoly<OneHotF, u8> {
-    let total_ring = layout.live_fold_count * layout.fold_position_count;
-    let num_vars = layout.position_bits() + layout.fold_bits() + ONEHOT_D.trailing_zeros() as usize;
+    let total_ring = layout.num_blocks * layout.block_len;
+    let num_vars =
+        layout.position_bits() + layout.block_bits() + ONEHOT_D.trailing_zeros() as usize;
     // `total_ring` ring elements of degree D cover `2^num_vars` field elements,
     // grouped into `2^num_vars / K` one-hot chunks.
     let total_field = total_ring * ONEHOT_D;
@@ -370,15 +371,15 @@ where
     let alpha_bits = ONEHOT_D.trailing_zeros() as usize;
     assert_eq!(
         point.len(),
-        alpha_bits + layout.position_bits() + layout.fold_bits()
+        alpha_bits + layout.position_bits() + layout.block_bits()
     );
 
     let inner_point = &point[..alpha_bits];
     let reduced_point = &point[alpha_bits..];
     let ring_opening_point = ring_opening_point_from_field(
         reduced_point,
-        layout.fold_position_count,
-        layout.live_fold_count,
+        layout.block_len,
+        layout.num_blocks,
         BasisMode::Lagrange,
     )
     .expect("opening point shape should match layout");
@@ -388,9 +389,9 @@ where
         None,
         poly.opening_view().expect("opening view"),
         OpeningFoldPlan::Base {
-            fold_weights: &ring_opening_point.fold_weights,
+            block_weights: &ring_opening_point.block_weights,
             position_weights: &ring_opening_point.position_weights,
-            fold_position_count: layout.fold_position_count,
+            block_len: layout.block_len,
         },
     )
     .expect("evaluate_and_fold");

@@ -224,7 +224,7 @@ where
 ///   every block multiplier.
 /// - `basis`: the opening basis that fixes those per-bit weights.
 /// - `packed_inner_point`: the ψ-packed inner opening over `F`.
-/// - `block_offset`: where this claim's exact live fold run starts inside the
+/// - `block_offset`: where this claim's exact live block run starts inside the
 ///   (possibly claim-batched) block row. `b_open` addresses the enclosing
 ///   power-of-two capacity; the layout supplies the exact live run length.
 /// - `coefficient`: the public scalar applied to this term (per-claim row
@@ -425,10 +425,10 @@ where
         })?;
         let block_span = layout
             .witness_layout
-            .group_live_fold_count(layout.group_id)?;
+            .group_live_block_count(layout.group_id)?;
         if block_span > block_capacity {
             return Err(AkitaError::InvalidInput(
-                "trace term live fold count exceeds block-opening capacity".to_string(),
+                "trace term num_blocks exceeds block-opening capacity".to_string(),
             ));
         }
         layout.validate_trace_term_block_range(term.block_offset, block_span)?;
@@ -495,7 +495,7 @@ where
         for unit in layout.witness_layout.units_for_group(layout.group_id)? {
             let block = term
                 .block_offset
-                .checked_add(unit.global_fold_start())
+                .checked_add(unit.global_block_start())
                 .ok_or_else(|| {
                     AkitaError::InvalidInput("trace term block index overflow".to_string())
                 })?;
@@ -503,8 +503,8 @@ where
             let contribution = eval_affine_digit_interval(
                 col_point,
                 base,
-                unit.global_fold_start(),
-                unit.live_fold_count(),
+                unit.global_block_start(),
+                unit.live_block_count(),
                 layout.num_digits_open,
                 &gadget_row,
                 &high_weights,

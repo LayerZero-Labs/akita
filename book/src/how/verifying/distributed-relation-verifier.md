@@ -279,7 +279,7 @@ factor into separate per-claim and per-block scalars.
 > ($B_{\mathsf{loc}} = 4$): machine $1$'s local block $0$ is global block $4$ and
 > carries $c_{\alpha}[\text{claim}, 4]$. Reading $c_{\alpha}$ at the global block
 > is also what keeps the block scan equal to the single-machine cost: every global
-> block $0..B$ is visited exactly once, only reordered into $\mathcal M$ shards of
+> block $0..B$ is visited exactly once, only reordered into $\mathcal M$ chunks of
 > $B_{\mathsf{loc}}$.
 
 #### The naive evaluation
@@ -701,7 +701,7 @@ occupies a contiguous low-bit window and the two-bucket carry split is defined
 **iff $\mathcal M$ is a power of two dividing $B$** — which is exactly the
 canonical choice $\mathcal M = 2^N$ used by the distributed prover: since
 $B = 2^r$ is itself a power of two, any $\mathcal M = 2^N \le 2^r$ works and gives
-equal shards $|\mathcal I_j| = B_{\mathsf{loc}}$.
+equal chunks $|\mathcal I_j| = B_{\mathsf{loc}}$.
 
 For other machine counts (not a power of two, or $\mathcal M \nmid B$) the
 contiguous partition still makes sense but $B_{\mathsf{loc}}$ is no longer a clean

@@ -14,7 +14,7 @@ where
         backend: &B,
         prepared: &B::PreparedSetup,
         n_a: usize,
-        fold_position_count: usize,
+        block_len: usize,
         num_digits_commit: usize,
         log_basis: u32,
     ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError>
@@ -23,11 +23,11 @@ where
     {
         let coeffs = self.ring_coeffs::<D>()?;
         let n = coeffs.len();
-        let live_fold_count = n.div_ceil(fold_position_count);
+        let num_blocks = n.div_ceil(block_len);
 
         if let Some(digit_planes) = self.digit_planes_for::<D>(num_digits_commit, log_basis) {
             let digit_block_slices =
-                digit_block_slices(digit_planes, n, fold_position_count, num_digits_commit);
+                digit_block_slices(digit_planes, n, block_len, num_digits_commit);
             return backend.dense_commit_rows(
                 prepared,
                 DenseCommitRowsPlan {
@@ -40,13 +40,13 @@ where
             );
         }
 
-        let block_slices: Vec<&[CyclotomicRing<F, D>]> = (0..live_fold_count)
+        let block_slices: Vec<&[CyclotomicRing<F, D>]> = (0..num_blocks)
             .map(|i| {
-                let start = i * fold_position_count;
+                let start = i * block_len;
                 if start >= n {
                     &[] as &[CyclotomicRing<F, D>]
                 } else {
-                    &coeffs[start..(start + fold_position_count).min(n)]
+                    &coeffs[start..(start + block_len).min(n)]
                 }
             })
             .collect();
@@ -68,14 +68,14 @@ where
 pub(super) fn digit_block_slices<const D: usize>(
     digit_planes: &[[i8; D]],
     num_rings: usize,
-    fold_position_count: usize,
+    block_len: usize,
     num_digits: usize,
 ) -> Vec<&[[i8; D]]> {
-    let live_fold_count = num_rings.div_ceil(fold_position_count);
-    (0..live_fold_count)
+    let num_blocks = num_rings.div_ceil(block_len);
+    (0..num_blocks)
         .map(|block_idx| {
-            let ring_start = block_idx * fold_position_count;
-            let ring_end = (ring_start + fold_position_count).min(num_rings);
+            let ring_start = block_idx * block_len;
+            let ring_end = (ring_start + block_len).min(num_rings);
             let digit_start = ring_start * num_digits;
             let digit_end = ring_end * num_digits;
             &digit_planes[digit_start..digit_end]

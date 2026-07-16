@@ -46,7 +46,7 @@ artifacts, soundness, or any public PCS API.
 
 ### Invariants
 
-- **Byte-identical proofs.** For every benchmarked mode/`num_vars`,
+- **Byte-identical proofs.** For every benchmarked mode/`nuposition_bits`,
   `proof_size_bytes` and the full proof are unchanged versus the pre-PR baseline,
   and the proof verifies. Protected by
   `sparse_tensor_factor_matches_dense_factor_rounds` and its per-prime
@@ -157,7 +157,7 @@ fp16 EOR fast-path port vs pre-port HEAD (`onehot_fp16_d32`):
 | 30 | −47.9% | 1.92× |
 | 32 | −59.6% | 2.48× |
 
-The speedup grows with `num_vars` and with extension degree, because the EOR's
+The speedup grows with `nuposition_bits` and with extension degree, because the EOR's
 share of prove time grows in both. `fp64_fold` is intentionally small (~−1% at
 nv30/32): at degree 2 the generic Karatsuba fold is already cheap. `fp128`
 (degree 1) gains little because its EOR is negligible.
@@ -301,7 +301,7 @@ Risk notes: the only correctness-sensitive surface is the wide accumulators
 Each must be guarded by a direct-vs-generic unit test plus the end-to-end EOR
 byte-identicality guard and the profile proof-size gate.
 The `u64` lanes for the fp16 accumulator have about \(2^{28}\) accumulation headroom.
-Widening to `u128` is the safe fallback at extreme `num_vars` with very few threads.
+Widening to `u128` is the safe fallback at extreme `nuposition_bits` with very few threads.
 
 ## References
 

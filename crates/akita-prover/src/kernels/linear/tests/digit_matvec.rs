@@ -157,7 +157,7 @@ fn mat_vec_mul_i8_matches_direct_digits_on_multi_tile_path() {
     const D: usize = 64;
     let log_basis = 3;
     let num_digits = 3;
-    let live_fold_count = 4;
+    let num_blocks = 4;
     let rings_per_block = 1_400;
     let digits_per_block = rings_per_block * num_digits;
 
@@ -175,7 +175,7 @@ fn mat_vec_mul_i8_matches_direct_digits_on_multi_tile_path() {
         })
         .collect();
 
-    let digit_blocks: Vec<Vec<[i8; D]>> = (0..live_fold_count)
+    let digit_blocks: Vec<Vec<[i8; D]>> = (0..num_blocks)
         .map(|block_idx| {
             (0..digits_per_block)
                 .map(|digit_idx| {
@@ -501,8 +501,8 @@ macro_rules! block_parallel_matches_column_tiled_wide_rows_test {
             let width = 5_500;
             // Keep the reference on the column-tiled path:
             // `mat_vec_mul_digits_i8_with_params` only takes the block-parallel branch
-            // when `live_fold_count >= 16`.
-            let live_fold_count = 2;
+            // when `num_blocks >= 16`.
+            let num_blocks = 2;
 
             let mat: Vec<Vec<CyclotomicRing<F, D>>> = (0..7)
                 .map(|i| {
@@ -518,7 +518,7 @@ macro_rules! block_parallel_matches_column_tiled_wide_rows_test {
                 })
                 .collect();
 
-            let digit_blocks: Vec<Vec<[i8; D]>> = (0..live_fold_count)
+            let digit_blocks: Vec<Vec<[i8; D]>> = (0..num_blocks)
                 .map(|block_idx| {
                     (0..width)
                         .map(|digit_idx| {
@@ -659,7 +659,7 @@ fn mat_vec_mul_digits_i8_strided_matches_block_path_across_batch_boundary() {
     type F = Fp64<4294967197>;
     const D: usize = 64;
     let log_basis = 3;
-    let live_fold_count = 20;
+    let num_blocks = 20;
     let digits_per_block = 9;
 
     let mat: Vec<Vec<CyclotomicRing<F, D>>> = (0..5)
@@ -676,7 +676,7 @@ fn mat_vec_mul_digits_i8_strided_matches_block_path_across_batch_boundary() {
         })
         .collect();
 
-    let digit_blocks: Vec<Vec<[i8; D]>> = (0..live_fold_count)
+    let digit_blocks: Vec<Vec<[i8; D]>> = (0..num_blocks)
         .map(|block_idx| {
             (0..digits_per_block)
                 .map(|digit_idx| {
@@ -690,7 +690,7 @@ fn mat_vec_mul_digits_i8_strided_matches_block_path_across_batch_boundary() {
         .collect();
     let digit_block_slices: Vec<&[[i8; D]]> = digit_blocks.iter().map(Vec::as_slice).collect();
 
-    let mut strided_digits = Vec::with_capacity(live_fold_count * digits_per_block);
+    let mut strided_digits = Vec::with_capacity(num_blocks * digits_per_block);
     for col in 0..digits_per_block {
         for block in &digit_blocks {
             strided_digits.push(block[col]);
@@ -710,7 +710,7 @@ fn mat_vec_mul_digits_i8_strided_matches_block_path_across_batch_boundary() {
             let strided_path = mat_vec_mul_digits_i8_strided_with_params_for_log_basis(
                 &ntt_mat,
                 &strided_digits,
-                live_fold_count,
+                num_blocks,
                 digits_per_block,
                 log_basis,
                 &params,
@@ -726,9 +726,9 @@ fn mat_vec_mul_digits_i8_sparse_batches_match_schoolbook() {
     type F = Fp64<4294967197>;
     const D: usize = 64;
     let log_basis = 3;
-    let live_fold_count = 7;
+    let num_blocks = 7;
     let digits_per_block = 5;
-    let total_planes = live_fold_count * digits_per_block;
+    let total_planes = num_blocks * digits_per_block;
 
     let mat: Vec<Vec<CyclotomicRing<F, D>>> = (0..5)
         .map(|i| {
@@ -747,12 +747,12 @@ fn mat_vec_mul_digits_i8_sparse_batches_match_schoolbook() {
     let positions: Vec<(usize, usize)> = (0..total_planes)
         .map(|idx| {
             let permuted = (idx * 11) % total_planes;
-            (permuted % live_fold_count, permuted / live_fold_count)
+            (permuted % num_blocks, permuted / num_blocks)
         })
         .collect();
 
     for live_count in [0usize, 15, 16, 17, 31] {
-        let mut digit_blocks = vec![vec![[0i8; D]; digits_per_block]; live_fold_count];
+        let mut digit_blocks = vec![vec![[0i8; D]; digits_per_block]; num_blocks];
         for (live_idx, &(block_idx, col)) in positions.iter().take(live_count).enumerate() {
             digit_blocks[block_idx][col] = std::array::from_fn(|k| {
                 let raw = ((live_idx as i16 * 5 + col as i16 * 3 + k as i16) % 7) - 3;
@@ -787,7 +787,7 @@ fn mat_vec_mul_digits_i8_sparse_batches_match_schoolbook() {
                 let strided_path = mat_vec_mul_digits_i8_strided_with_params_for_log_basis(
                     &ntt_mat,
                     &strided_digits,
-                    live_fold_count,
+                    num_blocks,
                     digits_per_block,
                     log_basis,
                     &params,
@@ -808,7 +808,7 @@ fn mat_vec_mul_digits_i8_sparse_strided_ragged_tail_matches_schoolbook() {
     type F = Fp64<4294967197>;
     const D: usize = 64;
     let log_basis = 3;
-    let live_fold_count = 7;
+    let num_blocks = 7;
     let digits_per_block = 5;
 
     let mat: Vec<Vec<CyclotomicRing<F, D>>> = (0..5)
@@ -825,7 +825,7 @@ fn mat_vec_mul_digits_i8_sparse_strided_ragged_tail_matches_schoolbook() {
         })
         .collect();
 
-    let mut digit_blocks = vec![vec![[0i8; D]; digits_per_block]; live_fold_count];
+    let mut digit_blocks = vec![vec![[0i8; D]; digits_per_block]; num_blocks];
     for col in 0..(digits_per_block - 1) {
         for (block_idx, block) in digit_blocks.iter_mut().enumerate() {
             if (block_idx + 2 * col) % 3 == 0 {
@@ -841,7 +841,7 @@ fn mat_vec_mul_digits_i8_sparse_strided_ragged_tail_matches_schoolbook() {
         }
     }
 
-    let mut strided_digits = Vec::with_capacity(live_fold_count * digits_per_block);
+    let mut strided_digits = Vec::with_capacity(num_blocks * digits_per_block);
     for col in 0..digits_per_block {
         for block in &digit_blocks {
             strided_digits.push(block[col]);
@@ -857,7 +857,7 @@ fn mat_vec_mul_digits_i8_sparse_strided_ragged_tail_matches_schoolbook() {
             let strided_path = mat_vec_mul_digits_i8_strided_with_params_for_log_basis(
                 &ntt_mat,
                 &strided_digits,
-                live_fold_count,
+                num_blocks,
                 digits_per_block,
                 log_basis,
                 &params,
@@ -947,7 +947,7 @@ fn mat_vec_mul_i8_strided_matches_direct_digits_on_multi_tile_path() {
     const D: usize = 64;
     let log_basis = 3;
     let num_digits = 3;
-    let live_fold_count = 4;
+    let num_blocks = 4;
     let rings_per_block = 1_400;
     let digits_per_block = rings_per_block * num_digits;
 
@@ -965,7 +965,7 @@ fn mat_vec_mul_i8_strided_matches_direct_digits_on_multi_tile_path() {
         })
         .collect();
 
-    let digit_blocks: Vec<Vec<[i8; D]>> = (0..live_fold_count)
+    let digit_blocks: Vec<Vec<[i8; D]>> = (0..num_blocks)
         .map(|block_idx| {
             (0..digits_per_block)
                 .map(|digit_idx| {
@@ -998,14 +998,14 @@ fn mat_vec_mul_i8_strided_matches_direct_digits_on_multi_tile_path() {
         })
         .collect();
 
-    let mut strided_coeffs = Vec::with_capacity(live_fold_count * rings_per_block);
+    let mut strided_coeffs = Vec::with_capacity(num_blocks * rings_per_block);
     for col in 0..rings_per_block {
         for block in &ring_blocks {
             strided_coeffs.push(block[col]);
         }
     }
 
-    let mut strided_digits = Vec::with_capacity(live_fold_count * digits_per_block);
+    let mut strided_digits = Vec::with_capacity(num_blocks * digits_per_block);
     for col in 0..digits_per_block {
         for block in &digit_blocks {
             strided_digits.push(block[col]);
@@ -1019,7 +1019,7 @@ fn mat_vec_mul_i8_strided_matches_direct_digits_on_multi_tile_path() {
             let via_roundtrip = mat_vec_mul_i8_strided_with_params_for_log_basis(
                 &ntt_mat,
                 &strided_coeffs,
-                live_fold_count,
+                num_blocks,
                 rings_per_block,
                 num_digits,
                 log_basis,
@@ -1028,7 +1028,7 @@ fn mat_vec_mul_i8_strided_matches_direct_digits_on_multi_tile_path() {
             let direct = mat_vec_mul_digits_i8_strided_with_params_for_log_basis(
                 &ntt_mat,
                 &strided_digits,
-                live_fold_count,
+                num_blocks,
                 digits_per_block,
                 log_basis,
                 &params,

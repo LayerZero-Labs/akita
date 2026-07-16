@@ -37,7 +37,7 @@ fn ring_switch_prepare_rejects_zero_num_blocks() {
         RelationMatrixRowLayout::WithDBlock,
         1,
     ) {
-        Ok(_) => panic!("zero live_fold_count should be rejected"),
+        Ok(_) => panic!("zero num_blocks should be rejected"),
         Err(err) => err,
     };
     assert!(matches!(err, AkitaError::InvalidSetup(_)));
@@ -56,14 +56,14 @@ fn tensor_et_intervals_match_dense_oracle_across_residual_shards() {
     )
     .with_decomp(4, 25, 1, 3)
     .unwrap();
-    lp.shard_granule = 2;
+    lp.chunk_granule = 2;
     let opening_batch = OpeningClaimsLayout::new(0, 2).unwrap();
     let witness_layout = WitnessLayout::new(&lp, &opening_batch, 2, 4, 2).unwrap();
     let units = witness_layout.units_for_group(0).unwrap();
     assert_eq!(
         units
             .iter()
-            .map(|unit| unit.live_fold_count())
+            .map(|unit| unit.live_block_count())
             .collect::<Vec<_>>(),
         vec![4, 3]
     );
@@ -84,7 +84,7 @@ fn tensor_et_intervals_match_dense_oracle_across_residual_shards() {
             sparse(10, 1),
             sparse(11, -1),
         ],
-        live_folds_per_claim: 7,
+        live_blocks_per_claim: 7,
         fold_low_len: 4,
         num_claims: 2,
     };
@@ -97,8 +97,8 @@ fn tensor_et_intervals_match_dense_oracle_across_residual_shards() {
         opening_a_evals: Vec::new(),
         group_id: 0,
         num_claims: 2,
-        live_fold_count: 7,
-        fold_position_count: 4,
+        num_blocks: 7,
+        block_len: 4,
         depth_open: 3,
         depth_commit: 1,
         depth_fold: 1,
@@ -133,8 +133,8 @@ fn tensor_et_intervals_match_dense_oracle_across_residual_shards() {
     let mut expected = (F::zero(), F::zero());
     for &unit in &units {
         for claim in 0..group.num_claims {
-            for global_fold in unit.global_fold_range() {
-                let logical = claim * group.live_fold_count + global_fold;
+            for global_block in unit.global_block_range() {
+                let logical = claim * group.num_blocks + global_block;
                 let challenge = tensor
                     .eval_logical_at_pows::<F, F>(logical, &alpha_pows)
                     .unwrap();
@@ -145,7 +145,7 @@ fn tensor_et_intervals_match_dense_oracle_across_residual_shards() {
                             group.num_claims,
                             group.depth_open,
                             claim,
-                            global_fold,
+                            global_block,
                             digit,
                         )
                         .unwrap();
@@ -161,7 +161,7 @@ fn tensor_et_intervals_match_dense_oracle_across_residual_shards() {
                                 group.n_a,
                                 group.depth_open,
                                 claim,
-                                global_fold,
+                                global_block,
                                 a_row,
                                 digit,
                             )

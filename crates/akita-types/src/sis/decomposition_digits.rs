@@ -204,37 +204,34 @@ pub fn num_digits_open(decomposition: DecompositionParams) -> usize {
     num_digits_for_bound(bound, field_bits, decomposition.log_basis)
 }
 
-/// A-matrix committed width (ring columns): `fold_position_count · δ_commit`.
+/// A-matrix committed width (ring columns): `block_len · δ_commit`.
 #[inline]
-pub fn decomposed_s_block_ring_count(
-    fold_position_count: usize,
-    num_digits_commit: usize,
-) -> Option<usize> {
-    fold_position_count.checked_mul(num_digits_commit)
+pub fn decomposed_s_block_ring_count(block_len: usize, num_digits_commit: usize) -> Option<usize> {
+    block_len.checked_mul(num_digits_commit)
 }
 
-/// B-matrix committed width (ring columns): `n_a · δ_open · live_fold_count · num_polynomials`.
+/// B-matrix committed width (ring columns): `n_a · δ_open · num_blocks · num_polynomials`.
 #[inline]
 pub fn decomposed_t_ring_count(
     n_a: usize,
     num_digits_open: usize,
-    live_fold_count: usize,
+    num_blocks: usize,
     num_polynomials: usize,
 ) -> Option<usize> {
     n_a.checked_mul(num_digits_open)?
-        .checked_mul(live_fold_count)?
+        .checked_mul(num_blocks)?
         .checked_mul(num_polynomials)
 }
 
-/// D-matrix committed width (ring columns): `δ_open · live_fold_count · num_polynomials`.
+/// D-matrix committed width (ring columns): `δ_open · num_blocks · num_polynomials`.
 #[inline]
 pub fn decomposed_w_ring_count(
     num_digits_open: usize,
-    live_fold_count: usize,
+    num_blocks: usize,
     num_polynomials: usize,
 ) -> Option<usize> {
     num_digits_open
-        .checked_mul(live_fold_count)?
+        .checked_mul(num_blocks)?
         .checked_mul(num_polynomials)
 }
 
@@ -382,7 +379,7 @@ mod tests {
             l1_norm: 54,
         };
         let witness = FoldWitnessNorms::new(3, 64, 1, false);
-        // fold_bits >= 127 is rejected.
+        // block_bits >= 127 is rejected.
         assert!(fold_witness_digit_plan(
             127,
             1,

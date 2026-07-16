@@ -2,7 +2,7 @@ use super::*;
 
 /// Accumulates one-hot decompose-fold rows in compressed position order.
 ///
-/// The returned vector has `fold_position_count` rows. Callers expand each row across
+/// The returned vector has `block_len` rows. Callers expand each row across
 /// `num_digits` later, inserting zero rows for higher digit planes.
 ///
 /// `blocks` is a slice-of-slices view over per-block entries. Both
@@ -12,8 +12,8 @@ use super::*;
 pub(super) fn onehot_accumulate<E, const D: usize>(
     blocks: &[&[E]],
     challenges: &[SparseChallenge],
-    live_fold_count: usize,
-    fold_position_count: usize,
+    num_blocks: usize,
+    block_len: usize,
 ) -> Vec<[i32; D]>
 where
     E: OneHotEntry,
@@ -23,21 +23,21 @@ where
     #[cfg(not(feature = "parallel"))]
     let num_threads = 1;
 
-    let actual_threads = num_threads.min(fold_position_count).max(1);
-    let pos_chunk = fold_position_count.div_ceil(actual_threads);
+    let actual_threads = num_threads.min(block_len).max(1);
+    let pos_chunk = block_len.div_ceil(actual_threads);
 
     let chunks: Vec<Vec<[i32; D]>> = cfg_into_iter!(0..actual_threads)
         .map(|tid| {
             let pos_start = tid * pos_chunk;
-            if pos_start >= fold_position_count {
+            if pos_start >= block_len {
                 return Vec::new();
             }
-            let pos_end = (pos_start + pos_chunk).min(fold_position_count);
+            let pos_end = (pos_start + pos_chunk).min(block_len);
             let len = pos_end - pos_start;
             let mut acc = vec![[0i32; D]; len];
             let mut rotated = vec![[0i16; D]; D];
 
-            for (block_idx, challenge) in challenges.iter().enumerate().take(live_fold_count) {
+            for (block_idx, challenge) in challenges.iter().enumerate().take(num_blocks) {
                 let entries = blocks[block_idx];
                 let lo = entries.partition_point(|entry| entry.pos_in_block() < pos_start);
                 let hi = entries.partition_point(|entry| entry.pos_in_block() < pos_end);
@@ -73,7 +73,7 @@ pub(super) fn onehot_accumulate_tensor<E, const D: usize>(
     blocks: &[&[E]],
     tensor: &TensorChallengeSet,
     num_blocks: usize,
-    fold_position_count: usize,
+    block_len: usize,
 ) -> Result<Vec<[i64; D]>, AkitaError>
 where
     E: OneHotEntry,
@@ -96,16 +96,16 @@ where
     #[cfg(not(feature = "parallel"))]
     let num_threads = 1;
 
-    let actual_threads = num_threads.min(fold_position_count).max(1);
-    let pos_chunk = fold_position_count.div_ceil(actual_threads);
+    let actual_threads = num_threads.min(block_len).max(1);
+    let pos_chunk = block_len.div_ceil(actual_threads);
 
     let chunks: Vec<Vec<[i64; D]>> = cfg_into_iter!(0..actual_threads)
         .map(|tid| {
             let pos_start = tid * pos_chunk;
-            if pos_start >= fold_position_count {
+            if pos_start >= block_len {
                 return Ok(Vec::new());
             }
-            let pos_end = (pos_start + pos_chunk).min(fold_position_count);
+            let pos_end = (pos_start + pos_chunk).min(block_len);
             let len = pos_end - pos_start;
             let mut acc = vec![[0i64; D]; len];
             let mut tmp = vec![[0i64; D]; len];
@@ -116,10 +116,10 @@ where
                     tmp.fill([0i64; D]);
                     for low_idx in 0..tensor.fold_low_len {
                         let local_block = high_idx * tensor.fold_low_len + low_idx;
-                        if local_block >= tensor.live_folds_per_claim {
+                        if local_block >= tensor.live_blocks_per_claim {
                             break;
                         }
-                        let block_idx = claim_idx * tensor.live_folds_per_claim + local_block;
+                        let block_idx = claim_idx * tensor.live_blocks_per_claim + local_block;
                         let entries = blocks[block_idx];
                         let lo = entries.partition_point(|entry| entry.pos_in_block() < pos_start);
                         let hi = entries.partition_point(|entry| entry.pos_in_block() < pos_end);

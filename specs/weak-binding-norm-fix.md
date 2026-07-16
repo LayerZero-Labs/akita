@@ -40,7 +40,7 @@ whose size is governed by the **fold-response** difference
 `||z^(ℓ,i) − z^0||_inf`, not by a single per-block product. The only norm the
 extractor certifies for that difference is the fold bound `2·β^resp`, and
 `β^resp` sums one short product over **every** folded block, so it carries the
-fold arity `num_claims · 2^r_vars`. Dividing the response by the ring unit `c̄`
+fold arity `num_claims · 2^block_bits`. Dividing the response by the ring unit `c̄`
 does not recover `||s||_inf` (negacyclic division is not norm-preserving), and
 the range / one-hot / booleanity checks bind the *honest committed table*, not
 the *extracted* quotient. The anchored bound is therefore unsound at every
@@ -49,7 +49,7 @@ Ajtai-committed level (the dense root and all recursive fold levels). Only the
 read directly at `||w^(t)||_inf ≤ b/2`, with no commitment and no quotient.
 
 One-hotness does not rescue anchoring. It sets `||s||_inf = 1`, which shrinks
-`β^resp`, but it does not remove the `num_claims · 2^r_vars` fold factor. The
+`β^resp`, but it does not remove the `num_claims · 2^block_bits` fold factor. The
 old `is_root` / `is_onehot` regime axis was the wrong axis; the correct split
 is *committed (folded)* vs *terminal (cleartext)*, and one-hotness only enters
 through the witness norm.
@@ -60,7 +60,7 @@ Every committed level is priced at the fold response, then at the **verifier dig
 envelope** the stage-1 range check actually certifies:
 
 ```text
-β^resp = num_claims · 2^r_vars · min(||c||_inf·||s||_1, ||c||_1·||s||_inf)
+β^resp = num_claims · 2^block_bits · min(||c||_inf·||s||_1, ||c||_1·||s||_inf)
        = fold_witness_beta(...)
 δ_fold = num_digits_fold(..., honest cap = min(β_inf, t*) when tail-bound-with-grind)
 z_verifier = balanced_digit_abs_max(log_basis, δ_fold)
@@ -189,7 +189,7 @@ needs `||z||_1`. Two independent facts close that door:
    Hence `||c̄'||_inf·D·||z||_inf ≥ ||c̄'||_1·||z||_inf`: the `||c||_1` side always
    wins the `min`, and the `||c||_inf` side never helps.
 2. **A tight L1 would only tie.** Even granting the structural bound
-   `||z||_1 ≤ T·||c||_1` (`T = num_claims·2^r_vars`; the one-hot fold response is a
+   `||z||_1 ≤ T·||c||_1` (`T = num_claims·2^block_bits`; the one-hot fold response is a
    sum of `T` rotated challenges), the second side is
    `||c̄'||_inf·||z||_1 = ||c̄'||_inf·T·||c||_1`, while the first is
    `||c̄'||_1·||z||_inf = ||c̄'||_1·T·||c||_inf`. The two challenges are drawn from
@@ -304,11 +304,11 @@ holds in code.
   (`*_full`, `fp{32,64}_d{32,64}`) families' root collision rises one notch
   (`b/2−1 → b/2` on the `min` side), occasionally bumping the root A-rank.
 - **`fp16::D32Full` now ships fully cleartext (`commit: None`) for
-  `num_vars >= 6`.** Previously it root-committed (`commit: Some`); the one-notch
+  `nuposition_bits >= 6`.** Previously it root-committed (`commit: Some`); the one-notch
   collision bump pushes the dense root A-rank above the 16-bit modulus's secure
   ceiling, so the DP drops even the root commitment. It still commits at the
-  single-block size `num_vars = 5`. The `akita_e2e::fp16_static_dense_round_trip`
-  test was retargeted from `num_vars = 8` to `5` so it keeps exercising a real
+  single-block size `nuposition_bits = 5`. The `akita_e2e::fp16_static_dense_round_trip`
+  test was retargeted from `nuposition_bits = 8` to `5` so it keeps exercising a real
   SIS commitment. fp32/fp64 dense are unaffected at the tested sizes.
 - **SIS-floor tables unchanged.** The lattice-estimator security tables
   (`sis/generated_sis_table.rs`) do not depend on the witness norm — only the
@@ -346,7 +346,7 @@ inequality:
    [`crates/akita-types/src/layout/digit_math.rs`](../crates/akita-types/src/layout/digit_math.rs)
    (`compute_num_digits_fold_with_claims`, line 148) uses only the
    `||c||_1 · ||s||_inf` side of the inequality
-   (`β = challenge_l1_mass · num_claims · 2^(r_vars + log_basis − 1)`). Taking
+   (`β = challenge_l1_mass · num_claims · 2^(block_bits + log_basis − 1)`). Taking
    the full `min(...)` lets sparse (one-hot) witnesses, where `||s_i||_1` is
    small, use the much smaller `||c||_inf` side. This shrinks `δ_fold`, the
    next-level witness, and proof size for one-hot presets at no security cost.
@@ -465,7 +465,7 @@ so there is **no factor of 2** here. The paper's naive bound is
 
 i.e. it uses the `||c||_1 · ||s||_inf` side (`ω = ||c||_1`, `b ≈ ||s||_inf`).
 The implementation encodes this as
-`β = challenge_l1_mass · num_claims · 2^(r_vars + log_basis − 1)` (with
+`β = challenge_l1_mass · num_claims · 2^(block_bits + log_basis − 1)` (with
 `2^(log_basis−1) = b/2`, the balanced-digit L∞). The optimization replaces the
 single side with the full `min(...)`, which is tighter whenever the per-block
 witness `||s_i||_1` is small (sparse / one-hot).
@@ -591,7 +591,7 @@ let beta_block = ring_product_infinity_norm_bound(
     witness_l1_norm,
 );
 // β = Σ over the 2^r blocks (× num_claims for batched roots) — no factor of 2 (a sum, not a collision)
-let fold_beta = (num_claims as u64) * (1u64 << r_vars) * beta_block;
+let fold_beta = (num_claims as u64) * (1u64 << block_bits) * beta_block;
 ```
 
 - **Dense** (`witness_infinity_norm = b/2`, `nonzeros = D`): the `min` picks

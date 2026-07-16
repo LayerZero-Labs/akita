@@ -50,11 +50,11 @@ pub(crate) fn commit_inner_block_digit_count(
 }
 
 pub(crate) fn commit_inner_flat_digit_count(
-    live_fold_count: usize,
+    num_blocks: usize,
     n_a: usize,
     num_digits_open: usize,
 ) -> Result<usize, AkitaError> {
-    live_fold_count
+    num_blocks
         .checked_mul(commit_inner_block_digit_count(n_a, num_digits_open)?)
         .ok_or_else(|| {
             AkitaError::InvalidSetup(
@@ -66,7 +66,7 @@ pub(crate) fn commit_inner_flat_digit_count(
 #[tracing::instrument(skip_all, name = "validate_commit_inner_shape")]
 pub(crate) fn validate_commit_inner_shape<F, const D: usize>(
     inner: &CommitInnerWitness<F>,
-    live_fold_count: usize,
+    num_blocks: usize,
     n_a: usize,
     num_digits_open: usize,
     log_basis: u32,
@@ -75,20 +75,19 @@ where
     F: FieldCore + CanonicalField,
 {
     let expected_block_digits = commit_inner_block_digit_count(n_a, num_digits_open)?;
-    let expected_flat_digits =
-        commit_inner_flat_digit_count(live_fold_count, n_a, num_digits_open)?;
+    let expected_flat_digits = commit_inner_flat_digit_count(num_blocks, n_a, num_digits_open)?;
     validate_i8_setup_log_basis(log_basis, "when recomposing i8 inner commitment digits")?;
 
     inner.ensure_ring_dim::<D>()?;
 
-    if inner.block_count() != live_fold_count {
+    if inner.block_count() != num_blocks {
         return Err(AkitaError::InvalidSetup(format!(
             "backend returned {} inner commitment blocks, expected {}",
             inner.block_count(),
-            live_fold_count
+            num_blocks
         )));
     }
-    for block_idx in 0..live_fold_count {
+    for block_idx in 0..num_blocks {
         let block_rows = inner.recomposed_block_trusted::<D>(block_idx)?;
         if block_rows.len() != n_a {
             return Err(AkitaError::InvalidSetup(format!(
@@ -100,11 +99,11 @@ where
         }
     }
 
-    if inner.decomposed_inner_rows.block_count() != live_fold_count {
+    if inner.decomposed_inner_rows.block_count() != num_blocks {
         return Err(AkitaError::InvalidSetup(format!(
             "backend returned {} decomposed inner commitment blocks, expected {}",
             inner.decomposed_inner_rows.block_count(),
-            live_fold_count
+            num_blocks
         )));
     }
     for (block_idx, &block_digits) in inner.decomposed_inner_rows.block_sizes().iter().enumerate() {
@@ -133,9 +132,9 @@ pub(crate) fn validate_commit_level_params<F>(
 where
     F: FieldCore + CanonicalField,
 {
-    if params.live_fold_count == 0 || params.fold_position_count == 0 {
+    if params.num_blocks == 0 || params.block_len == 0 {
         return Err(AkitaError::InvalidSetup(
-            "commit params require nonzero live_fold_count and fold_position_count".to_string(),
+            "commit params require nonzero num_blocks and block_len".to_string(),
         ));
     }
     if params.num_digits_commit == 0 || params.num_digits_open == 0 {
@@ -148,12 +147,12 @@ where
     validate_role_dims(dims)?;
     validate_role_dims_for_field::<F>(dims)?;
     let expected_a_width = params
-        .fold_position_count
+        .block_len
         .checked_mul(params.num_digits_commit)
         .ok_or_else(|| AkitaError::InvalidSetup("A commit width overflow".to_string()))?;
     if params.a_key.col_len() != expected_a_width {
         return Err(AkitaError::InvalidSetup(format!(
-            "commit params A width {} does not match fold_position_count * num_digits_commit = {expected_a_width}",
+            "commit params A width {} does not match block_len * num_digits_commit = {expected_a_width}",
             params.a_key.col_len()
         )));
     }
@@ -370,12 +369,12 @@ where
     let dims = params.role_dims();
     let plan = CommitInnerPlan::from_level(params);
     let b_input_len_per_poly = commit_inner_flat_digit_count(
-        params.live_fold_count,
+        params.num_blocks,
         params.a_key.row_len(),
         params.num_digits_open,
     )?;
     let total_b_input_len = checked_commit_b_input_len(polys.len(), b_input_len_per_poly)?;
-    let live_fold_count = params.live_fold_count;
+    let num_blocks = params.num_blocks;
     let n_a = params.a_key.row_len();
     let num_digits_open = params.num_digits_open;
     let log_basis = params.log_basis;
@@ -407,7 +406,7 @@ where
                         RootCommitKernel::<_, F, D_A>::commit_inner(backend, prepared, view, plan)?;
                     validate_commit_inner_shape::<F, D_A>(
                         &inner,
-                        live_fold_count,
+                        num_blocks,
                         n_a,
                         num_digits_open,
                         log_basis,
@@ -951,10 +950,9 @@ mod tests {
 
     #[test]
     fn commit_inner_shape_accepts_many_all_zero_blocks() {
-        let live_fold_count = 1024;
-        let inner = inner_witness(live_fold_count, 3, vec![6; live_fold_count]);
-        validate_commit_inner_shape::<F, D>(&inner, live_fold_count, 3, 2, 4)
-            .expect("all-zero blocks");
+        let num_blocks = 1024;
+        let inner = inner_witness(num_blocks, 3, vec![6; num_blocks]);
+        validate_commit_inner_shape::<F, D>(&inner, num_blocks, 3, 2, 4).expect("all-zero blocks");
         check_decomposed_rows_i8_match::<F, D>(&inner, 3, 2, 4).expect("digit consistency");
     }
 

@@ -45,7 +45,7 @@ where
         lp.validate_opening_batch(opening_batch)?;
         let order = opening_batch.root_group_order()?;
         if order.iter().any(|&group_index| {
-            chunk_layout.num_shards_for_group(group_index) != lp.witness_chunk.num_chunks
+            chunk_layout.num_chunks_for_group(group_index) != lp.witness_chunk.num_chunks
         }) {
             return Err(AkitaError::InvalidSetup(
                 "multi-group witness layout does not match root group order".to_string(),
@@ -56,14 +56,14 @@ where
             let group_lp = lp.group_params(opening_batch, group_index)?;
             let group_layout = opening_batch.group_layout(group_index)?;
             let num_claims = group_layout.num_polynomials();
-            let live_fold_count = group_lp.live_fold_count();
+            let num_blocks = group_lp.num_blocks();
             let depth_open = group_lp.num_digits_open();
             let depth_commit = group_lp.num_digits_commit();
             let n_a = group_lp.a_rows_len();
             let n_b = group_lp.b_rows_len();
             let t_cols_per_vector = n_a
                 .checked_mul(depth_open)
-                .and_then(|n| n.checked_mul(live_fold_count))
+                .and_then(|n| n.checked_mul(num_blocks))
                 .ok_or_else(|| {
                     AkitaError::InvalidSetup("multi-group B vector width overflow".into())
                 })?;
@@ -78,8 +78,8 @@ where
             groups.push(SetupContributionGroupInputs {
                 group_id: group_index,
                 num_claims,
-                live_fold_count,
-                fold_position_count: group_lp.fold_position_count(),
+                num_blocks,
+                block_len: group_lp.block_len(),
                 depth_open,
                 depth_commit,
                 depth_fold: lp.num_digits_fold_for_params(
@@ -105,8 +105,8 @@ where
             num_polys_per_group: opening_batch.group_sizes(),
             num_t_vectors: opening_batch.num_total_polynomials(),
             num_claims: opening_batch.num_total_polynomials(),
-            live_fold_count: lp.live_fold_count,
-            fold_position_count: lp.fold_position_count,
+            num_blocks: lp.num_blocks,
+            block_len: lp.block_len,
             depth_open: lp.num_digits_open,
             depth_commit: lp.num_digits_commit,
             depth_fold,

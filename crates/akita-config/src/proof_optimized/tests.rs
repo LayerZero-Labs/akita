@@ -301,10 +301,10 @@ fn multi_group_multi_chunk_schedule_resolves_at_effective_schedule_boundary() {
     let point = vec![fp128::Field::zero(); opening_batch.max_num_vars()];
 
     let schedule = crate::effective_batched_schedule::<Cfg>(&opening_batch, &point)
-        .expect("canonical group-by-shard layout must resolve");
+        .expect("canonical group-by-chunk layout must resolve");
     schedule
         .validate_structure()
-        .expect("resolved grouped shard schedule must validate");
+        .expect("resolved grouped chunk schedule must validate");
 }
 
 #[test]
@@ -330,7 +330,7 @@ fn expected_runtime_root_setup_len(lp: &LevelParams, opening_batch: &OpeningClai
         lp.a_key.col_len(),
         lp.b_key.row_len(),
         opening_batch.num_total_polynomials(),
-        lp.live_fold_count,
+        lp.num_blocks,
         lp.num_digits_open,
     );
     expected_root_setup_len(lp.d_key.row_len(), d_width, a_len, b_len)
@@ -341,12 +341,12 @@ fn expected_group_setup_footprint(
     a_width: usize,
     b_rows: usize,
     num_polys: usize,
-    live_fold_count: usize,
+    num_blocks: usize,
     num_digits_open: usize,
 ) -> (usize, usize, usize) {
     let a_len = a_rows * a_width;
-    let d_width = num_polys * live_fold_count * num_digits_open;
-    let t_cols_per_vector = a_rows * num_digits_open * live_fold_count;
+    let d_width = num_polys * num_blocks * num_digits_open;
+    let t_cols_per_vector = a_rows * num_digits_open * num_blocks;
     let b_len = b_rows * num_polys * t_cols_per_vector;
     (a_len, b_len, d_width)
 }
@@ -375,7 +375,7 @@ fn expected_multi_group_runtime_root_setup_len(
         lp.a_key.col_len(),
         lp.b_key.row_len(),
         final_group.num_polynomials(),
-        lp.live_fold_count,
+        lp.num_blocks,
         lp.num_digits_open,
     );
 
@@ -385,7 +385,7 @@ fn expected_multi_group_runtime_root_setup_len(
             group.a_key.col_len(),
             group.b_key.row_len(),
             group.layout.group.num_polynomials(),
-            group.layout.live_fold_count,
+            group.layout.num_blocks,
             group.num_digits_open,
         );
         max_a_len = max_a_len.max(a_len);
@@ -516,7 +516,7 @@ fn grouped_root_runtime_setup_uses_per_group_roles_and_summed_d_width() {
         .map(|group| group.d_segment_width().expect("precommitted D width"))
         .sum();
     let expected_d_width =
-        final_group.num_polynomials() * root_params.live_fold_count * root_params.num_digits_open
+        final_group.num_polynomials() * root_params.num_blocks * root_params.num_digits_open
             + precommitted_d_width;
     assert_eq!(
         root_params.d_key.col_len(),
@@ -918,8 +918,8 @@ fn assert_generated_batched_roots_are_scaled<Cfg: CommitmentConfig>(table: Gener
         checked_folded_entry = true;
         let root_lp = &root.params;
         let singleton_outer_width =
-            root_lp.a_key.row_len() * root_lp.num_digits_open * root_lp.live_fold_count;
-        let singleton_d_width = root_lp.num_digits_open * root_lp.live_fold_count;
+            root_lp.a_key.row_len() * root_lp.num_digits_open * root_lp.num_blocks;
+        let singleton_d_width = root_lp.num_digits_open * root_lp.num_blocks;
         assert_eq!(
             root_lp.outer_width(),
             singleton_outer_width * entry.final_group.num_polynomials(),
@@ -1069,19 +1069,18 @@ fn power_of_two_positions_cover_exact_source() {
             let lp = &fold.params;
             let pow2_block = 1usize << lp.position_bits();
             assert!(
-                lp.fold_position_count <= pow2_block,
-                "fold_position_count {} should be <= 2^position_bits {} at level {level_idx} (num_vars={num_vars})",
-                lp.fold_position_count,
+                lp.block_len <= pow2_block,
+                "block_len {} should be <= 2^position_bits {} at level {level_idx} (num_vars={num_vars})",
+                lp.block_len,
                 pow2_block,
             );
             if level_idx > 0 {
                 let num_ring = fold.current_w_len / lp.ring_dimension;
-                let expected_position_count =
-                    num_ring.div_ceil(lp.live_fold_count).next_power_of_two();
+                let expected_position_count = num_ring.div_ceil(lp.num_blocks).next_power_of_two();
                 assert_eq!(
-                    lp.fold_position_count, expected_position_count,
-                    "recursive level {level_idx} should use the least power-of-two fold position count covering ceil({num_ring} / {})",
-                    lp.live_fold_count
+                    lp.block_len, expected_position_count,
+                    "recursive level {level_idx} should use the least power-of-two block_len covering ceil({num_ring} / {})",
+                    lp.num_blocks
                 );
             }
         }

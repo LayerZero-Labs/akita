@@ -4,9 +4,9 @@
 pub struct GeneratedSetupPrefixGroup {
     pub natural_len: u32,
     pub source_ring_len_per_claim: u32,
-    pub fold_position_count: u32,
-    pub live_fold_count: u32,
-    pub shard_granule: u32,
+    pub block_len: u32,
+    pub num_blocks: u32,
+    pub chunk_granule: u32,
     pub fold_challenge_shape: akita_challenges::TensorChallengeShape,
     pub n_a: u32,
     pub n_b: u32,
@@ -17,7 +17,7 @@ pub struct GeneratedFoldStep {
     pub ring_d: u32,
     pub log_basis: u32,
     pub position_bits: u32,
-    pub fold_bits: u32,
+    pub block_bits: u32,
     pub n_a: u32,
     /// Stored first-tier `B` rank.
     pub n_b: u32,
@@ -250,9 +250,9 @@ fn precommitted_group_sort_key(
         key.group.num_vars(),
         key.group.num_polynomials(),
         key.source_ring_len_per_claim,
-        key.fold_position_count,
-        key.live_fold_count,
-        key.shard_granule,
+        key.block_len,
+        key.num_blocks,
+        key.chunk_granule,
         match key.fold_challenge_shape {
             akita_challenges::TensorChallengeShape::Flat => 0,
             akita_challenges::TensorChallengeShape::Tensor { .. } => 1,
@@ -286,9 +286,9 @@ fn precommitted_group_key_eq(
 ) -> bool {
     generated.group == layout.group
         && generated.source_ring_len_per_claim == layout.source_ring_len_per_claim
-        && generated.fold_position_count == layout.fold_position_count
-        && generated.live_fold_count == layout.live_fold_count
-        && generated.shard_granule == layout.shard_granule
+        && generated.block_len == layout.block_len
+        && generated.num_blocks == layout.num_blocks
+        && generated.chunk_granule == layout.chunk_granule
         && generated.fold_challenge_shape == layout.fold_challenge_shape
         && generated.log_basis == layout.log_basis
         && generated.n_a == layout.n_a

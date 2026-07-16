@@ -35,10 +35,10 @@ pub fn ring_relation_segment_lengths<F: FieldCore + CanonicalField>(
     opening_counts: RingRelationOpeningCounts,
     _relation_matrix_row_layout: RelationMatrixRowLayout,
 ) -> Result<RingRelationSegmentLengths, AkitaError> {
-    let live_fold_count = lp.live_fold_count;
-    if live_fold_count == 0 {
+    let num_blocks = lp.num_blocks;
+    if num_blocks == 0 {
         return Err(AkitaError::InvalidSetup(
-            "live_fold_count must be positive".to_string(),
+            "num_blocks must be positive".to_string(),
         ));
     }
     let depth_open = lp.num_digits_open;
@@ -53,10 +53,10 @@ pub fn ring_relation_segment_lengths<F: FieldCore + CanonicalField>(
             "prepared ring-switch layout has zero width".to_string(),
         ));
     }
-    let total_blocks = live_fold_count
+    let total_blocks = num_blocks
         .checked_mul(num_claims)
         .ok_or_else(|| AkitaError::InvalidSetup("total block count overflow".to_string()))?;
-    let t_total_blocks = live_fold_count
+    let t_total_blocks = num_blocks
         .checked_mul(num_t_vectors)
         .ok_or_else(|| AkitaError::InvalidSetup("T block count overflow".to_string()))?;
 
@@ -69,7 +69,7 @@ pub fn ring_relation_segment_lengths<F: FieldCore + CanonicalField>(
         .ok_or_else(|| AkitaError::InvalidSetup("T segment length overflow".to_string()))?;
     let z_len = depth_fold
         .checked_mul(depth_commit)
-        .and_then(|len| len.checked_mul(lp.fold_position_count))
+        .and_then(|len| len.checked_mul(lp.block_len))
         .ok_or_else(|| AkitaError::InvalidSetup("Z segment length overflow".to_string()))?;
 
     Ok(RingRelationSegmentLengths {
@@ -136,7 +136,7 @@ impl<F: FieldCore + CanonicalField> RingRelationInstance<F> {
                 )));
             }
             let num_blocks_g = challenges.num_blocks_per_claim();
-            if group_opening_points[g].fold_weights.len() != num_blocks_g {
+            if group_opening_points[g].block_weights.len() != num_blocks_g {
                 return Err(AkitaError::InvalidInput(format!(
                     "ring relation group {g} opening point block count does not match challenges"
                 )));
@@ -485,8 +485,8 @@ mod tests {
 
     fn opening_point(lp: &LevelParams) -> RingOpeningPoint<F> {
         RingOpeningPoint {
-            position_weights: vec![F::zero(); lp.fold_position_count],
-            fold_weights: vec![F::zero(); lp.live_fold_count],
+            position_weights: vec![F::zero(); lp.block_len],
+            block_weights: vec![F::zero(); lp.num_blocks],
         }
     }
 
@@ -505,7 +505,7 @@ mod tests {
     }
 
     fn test_challenges(lp: &LevelParams, num_claims: usize) -> Challenges {
-        let total = lp.live_fold_count * num_claims;
+        let total = lp.num_blocks * num_claims;
         Challenges::from_sparse(
             vec![
                 SparseChallenge {
@@ -514,7 +514,7 @@ mod tests {
                 };
                 total
             ],
-            lp.live_fold_count,
+            lp.num_blocks,
             num_claims,
         )
         .expect("challenges")
@@ -546,8 +546,8 @@ mod tests {
         );
     }
 
-    fn chunk_test_level_params(fold_bits: usize) -> LevelParams {
-        // live_fold_count = 2^fold_bits, fold_position_count = 2^position_bits, single-tier.
+    fn chunk_test_level_params(block_bits: usize) -> LevelParams {
+        // num_blocks = 2^block_bits, block_len = 2^position_bits, single-tier.
         LevelParams::params_only(
             crate::SisModulusProfileId::Q32Offset99,
             D,
@@ -557,7 +557,7 @@ mod tests {
             1,
             fold_challenge_config(),
         )
-        .with_decomp(4, 1usize << (2 + fold_bits), 1, 2)
+        .with_decomp(4, 1usize << (2 + block_bits), 1, 2)
         .expect("test params")
     }
 
@@ -605,7 +605,7 @@ mod tests {
         let resolved = build_instance(&lp, num_claims, 4)
             .segment_layout(&lp, None)
             .expect("resolved layout");
-        assert_eq!(resolved.num_shards_for_group(0), 1);
+        assert_eq!(resolved.num_chunks_for_group(0), 1);
         let unit = &resolved.units()[0];
         // Single-unit compact offsets: z first, then e, t, and the shared r tail.
         assert_eq!(unit.z_range().start, 0);
@@ -616,15 +616,15 @@ mod tests {
             resolved.r_range().start,
             lens.z_len + lens.e_len + lens.t_len
         );
-        assert_eq!(unit.global_fold_start(), 0);
-        assert_eq!(unit.live_fold_count(), lp.live_fold_count);
+        assert_eq!(unit.global_block_start(), 0);
+        assert_eq!(unit.live_block_count(), lp.num_blocks);
     }
 
     #[test]
     fn resolve_multi_chunk_offsets_contiguous_and_cover_blocks() {
         let num_claims = 2;
         for w in [1usize, 2, 4, 8] {
-            let mut lp = chunk_test_level_params(3); // live_fold_count = 8
+            let mut lp = chunk_test_level_params(3); // num_blocks = 8
             if w > 1 {
                 lp.witness_chunk = crate::witness::ChunkedWitnessCfg {
                     num_chunks: w,
@@ -643,8 +643,8 @@ mod tests {
             let layout = build_instance(&lp, num_claims, 4)
                 .segment_layout(&lp, None)
                 .expect("layout");
-            assert_eq!(layout.num_shards_for_group(0), w);
-            let blocks_per_chunk = lp.live_fold_count / w;
+            assert_eq!(layout.num_chunks_for_group(0), w);
+            let blocks_per_chunk = lp.num_blocks / w;
 
             // Partitioned e/t lengths sum to the single-machine totals; z replicated.
             let e_sum: usize = layout.units().iter().map(|unit| unit.e_range().len()).sum();
@@ -662,13 +662,13 @@ mod tests {
                 assert_eq!(unit.z_range().start, base);
                 assert_eq!(unit.e_range().start, base + lens.z_len);
                 assert_eq!(unit.t_range().start, base + lens.z_len + lens.e_len / w);
-                assert_eq!(unit.global_fold_start(), j * blocks_per_chunk);
+                assert_eq!(unit.global_block_start(), j * blocks_per_chunk);
             }
             assert_eq!(layout.r_range().start, w * stride);
-            // Block windows tile [0, live_fold_count).
+            // Block windows tile [0, num_blocks).
             assert_eq!(
-                layout.units().last().unwrap().global_fold_start() + blocks_per_chunk,
-                lp.live_fold_count
+                layout.units().last().unwrap().global_block_start() + blocks_per_chunk,
+                lp.num_blocks
             );
         }
     }
@@ -686,7 +686,7 @@ mod tests {
             .segment_layout(&lp, None)
             .is_err());
 
-        // num_chunks = 16 exceeds live_fold_count = 8.
+        // num_chunks = 16 exceeds num_blocks = 8.
         let mut lp = chunk_test_level_params(3);
         lp.witness_chunk = crate::witness::ChunkedWitnessCfg {
             num_chunks: 16,
@@ -758,7 +758,7 @@ mod tests {
             instance.relation_matrix_row_layout(),
         )
         .expect("segment lengths");
-        assert_eq!(layout.num_shards_for_group(0), 1);
+        assert_eq!(layout.num_chunks_for_group(0), 1);
         assert_eq!(unit.z_range().start, 0);
         assert_eq!(unit.e_range().start, lens.z_len);
         assert_eq!(unit.t_range().start, lens.z_len + lens.e_len);
@@ -903,20 +903,20 @@ mod tests {
         .expect("multi-group instance");
         let layout = instance
             .segment_layout(&lp, None)
-            .expect("multi-group multi-shard layout");
+            .expect("multi-group multi-chunk layout");
         assert_eq!(layout.units().len(), 4);
         assert_eq!(
             layout
                 .units()
                 .iter()
-                .map(|unit| (unit.group_index(), unit.shard_index()))
+                .map(|unit| (unit.group_index(), unit.chunk_index()))
                 .collect::<Vec<_>>(),
             vec![(1, 0), (1, 1), (0, 0), (0, 1)]
         );
         for group_index in [1, 0] {
             let units = layout.units_for_group(group_index).expect("group units");
-            assert_eq!(units[0].global_fold_range(), 0..2);
-            assert_eq!(units[1].global_fold_range(), 2..4);
+            assert_eq!(units[0].global_block_range(), 0..2);
+            assert_eq!(units[1].global_block_range(), 2..4);
             assert_eq!(units[0].t_range().end, units[1].z_range().start);
         }
         assert_eq!(
@@ -936,13 +936,13 @@ mod tests {
                 .group_layout(group_index)
                 .expect("group layout")
                 .num_polynomials();
-            let live_folds = params.live_fold_count();
+            let num_blocks = params.num_blocks();
             let depth_open = params.num_digits_open();
             let n_a = params.a_rows_len();
-            let e_source = (0..num_claims * live_folds * depth_open)
+            let e_source = (0..num_claims * num_blocks * depth_open)
                 .map(|index| marker(100 * group_index + index))
                 .collect::<Vec<_>>();
-            let t_source = (0..num_claims * live_folds * n_a * depth_open)
+            let t_source = (0..num_claims * num_blocks * n_a * depth_open)
                 .map(|index| marker(300 * group_index + index))
                 .collect::<Vec<_>>();
             emit_witness_e_planes(
@@ -952,7 +952,7 @@ mod tests {
                 num_claims,
                 depth_open,
                 &e_source,
-                live_folds,
+                num_blocks,
             )
             .expect("emit E");
             emit_witness_t_planes(
@@ -963,7 +963,7 @@ mod tests {
                 n_a,
                 depth_open,
                 &t_source,
-                live_folds,
+                num_blocks,
             )
             .expect("emit T");
 
@@ -971,15 +971,14 @@ mod tests {
                 .num_digits_fold_for_params(params, num_claims, lp.field_bits_for_cache())
                 .expect("fold depth");
             for unit in layout.units_for_group(group_index).expect("units") {
-                let z_source =
-                    (0..params.fold_position_count() * params.num_digits_commit() * depth_fold)
-                        .map(|index| marker(500 * group_index + 100 * unit.shard_index() + index))
-                        .collect::<Vec<_>>();
+                let z_source = (0..params.block_len() * params.num_digits_commit() * depth_fold)
+                    .map(|index| marker(500 * group_index + 100 * unit.chunk_index() + index))
+                    .collect::<Vec<_>>();
                 emit_witness_z_planes(
                     &mut emitted,
                     &layout,
                     unit,
-                    params.fold_position_count(),
+                    params.block_len(),
                     params.num_digits_commit(),
                     depth_fold,
                     &z_source,
@@ -993,10 +992,11 @@ mod tests {
 
                 let mut expected_e = Vec::new();
                 for claim in 0..num_claims {
-                    for fold in unit.global_fold_range() {
+                    for block_idx in unit.global_block_range() {
                         for digit in 0..depth_open {
-                            expected_e
-                                .push(e_source[(claim * live_folds + fold) * depth_open + digit]);
+                            expected_e.push(
+                                e_source[(claim * num_blocks + block_idx) * depth_open + digit],
+                            );
                         }
                     }
                 }
@@ -1008,11 +1008,11 @@ mod tests {
 
                 let mut expected_t = Vec::new();
                 for claim in 0..num_claims {
-                    for fold in unit.global_fold_range() {
+                    for block_idx in unit.global_block_range() {
                         for a_row in 0..n_a {
                             for digit in 0..depth_open {
                                 expected_t.push(
-                                    t_source[((claim * live_folds + fold) * n_a + a_row)
+                                    t_source[((claim * num_blocks + block_idx) * n_a + a_row)
                                         * depth_open
                                         + digit],
                                 );

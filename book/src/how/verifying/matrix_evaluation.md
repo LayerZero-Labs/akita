@@ -6,28 +6,28 @@ materializing the matrix. Its column geometry comes from the same
 
 ## Canonical walk
 
-`WitnessLayout` orders group-and-shard units as
+`WitnessLayout` orders group-and-chunk units as
 
 ```text
-group 0, shard 0: [z_hat | e_hat | t_hat]
-group 0, shard 1: [z_hat | e_hat | t_hat]
+group 0, chunk 0: [z_hat | e_hat | t_hat]
+group 0, chunk 1: [z_hat | e_hat | t_hat]
 ...
-group g, shard s: [z_hat | e_hat | t_hat]
+group g, chunk c: [z_hat | e_hat | t_hat]
 shared tail:       [r_hat]
 ```
 
-Each unit carries an exact global fold range. Relation, setup, and trace
+Each unit carries an exact global block range. Relation, setup, and trace
 evaluators consume these checked ranges; they do not reconstruct offsets from a
-second chunk-layout description. Multi-group and multi-shard layouts are the
+second chunk-layout description. Multi-group and multi-chunk layouts are the
 ordinary product of the same two indices.
 
-`z_hat` is replicated per shard because it participates in every shard-local
-relation. `e_hat` and `t_hat` are partitioned by the shard's exact fold range.
+`z_hat` is replicated per chunk because it participates in every chunk-local
+relation. `e_hat` and `t_hat` are partitioned by the chunk's exact block range.
 The quotient `r_hat` is shared once after all units.
 
-## Exact fold weights
+## Exact block weights
 
-For a group with exact live fold count `F`, a flat challenge supplies `F`
+For a group with exact live block count `F`, a flat challenge supplies `F`
 coefficients. A tensor challenge supplies factors of lengths
 
 ```text
@@ -53,16 +53,16 @@ partial final row
 ```
 
 This avoids allocating or scanning the Cartesian `H * Q` table and avoids
-materializing one coefficient per padded fold slot. Sparse challenge values use
+materializing one coefficient per padded block slot. Sparse challenge values use
 the ring add, subtract, and double fast paths where applicable.
 
 Flat challenges necessarily cost linear work in `F`, because their entries are
-independent. Tensor work is priced from the compact factors (`H + Q`) and shard
+independent. Tensor work is priced from the compact factors (`H + Q`) and chunk
 subwindows, with a checked work cap at the verifier boundary.
 
 ## Setup roles and mixed rings
 
-The A, B, and D setup contributions use the same group and shard ranges. D group
+The A, B, and D setup contributions use the same group and chunk ranges. D group
 offsets follow checked relation-group prefix sums. `SetupProjectionGeometry`
 owns mixed-ring projection, so verifier evaluation does not maintain a parallel
 layout carrier for setup columns.

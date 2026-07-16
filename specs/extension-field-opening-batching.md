@@ -705,7 +705,7 @@ Remaining TODOs for this branch:
   SIS modulus and reject mismatches. Small-field generated coverage is baked
   for separate full-field and one-hot configs: fp32 `D = 64,128,256,512` and
   fp64 `D = 32,64,128,256`, each with non-ZK and ZK variants through
-  `num_vars <= 32` for singleton and same-point `np=4` incidence shapes. fp32
+  `nuposition_bits <= 32` for singleton and same-point `np=4` incidence shapes. fp32
   `D=32` remains tuning-only because strict generated-table validation exposed
   recursive terminal layouts that cannot be materialized under the current
   rank-4 SIS floors. SIS A-role collision pricing includes the `psi`

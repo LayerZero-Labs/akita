@@ -7,7 +7,7 @@ no successor setup claim, and the terminal fold is scalar and direct.
 ## Intermediate vs terminal levels
 
 For each group, source elements use `source = fold * L + position`, where `L`
-is a power of two and `F = ceil(N / L)` is exact. A partial final fold slice
+is a power of two and `F = ceil(N / L)` is exact. A partial final block
 stays tight. Recursive witness construction consumes canonical
 `WitnessLayout` units and emits the next source in that same order; it does not
 transpose through a column-major intermediate.
@@ -26,6 +26,6 @@ protocol change, not a serialization-only change.
 The serialized structure is rooted at `AkitaBatchedProof` and
 `AkitaBatchedRootProof`, followed by `AkitaLevelProof` / `AkitaProofStep`
 records for the suffix. Each level's descriptors bind the resolved `L`, exact
-`F`, shard granule `S`, challenge shape, and decomposition parameters.
-Singleton openings and terminal folds are ordinary one-group, one-shard cases;
+`F`, chunk granule `S`, challenge shape, and decomposition parameters.
+Singleton openings and terminal folds are ordinary one-group, one-chunk cases;
 there is no alternate block order.

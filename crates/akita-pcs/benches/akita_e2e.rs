@@ -244,7 +244,7 @@ fn bench_onehot_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField
         &akita_types::OpeningClaimsLayout::new(nv, 1).expect("singleton opening batch"),
     )
     .expect("benchmark layout");
-    let total_ring = layout.live_fold_count * layout.fold_position_count;
+    let total_ring = layout.num_blocks * layout.block_len;
     let onehot_k = D;
 
     let mut rng = StdRng::seed_from_u64(0xbeef_cafe);

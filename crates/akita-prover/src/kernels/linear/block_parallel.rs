@@ -4,7 +4,7 @@ use super::*;
 ///
 /// Parallelizes over blocks (high fanout) instead of column tiles (low fanout).
 /// With many blocks but few matrix rows, the old tile-based approach had limited
-/// parallelism (few tiles) while this path gives live_fold_count-way parallelism.
+/// parallelism (few tiles) while this path gives num_blocks-way parallelism.
 pub(super) fn mat_vec_mul_digits_i8_block_parallel<
     F: FieldCore + CanonicalField,
     W: PrimeWidth,
@@ -106,22 +106,22 @@ pub(super) fn mat_vec_mul_digits_i8_strided_block_parallel<
 >(
     ntt_mat: &[&[CyclotomicCrtNtt<W, K, D>]],
     coeffs: &[[i8; D]],
-    live_fold_count: usize,
-    fold_position_count: usize,
+    num_blocks: usize,
+    block_len: usize,
     digit_bound: u64,
     params: &CrtNttParamSet<W, K, D>,
 ) -> Vec<Vec<CyclotomicRing<F, D>>> {
     let n_a = ntt_mat.len();
     let lut = DigitMontLut::<W, K>::new_with_digit_bound(params, digit_bound);
 
-    cfg_into_iter!(0..live_fold_count)
+    cfg_into_iter!(0..num_blocks)
         .map(|block_idx| {
             let mut accs: Vec<CyclotomicCrtNtt<W, K, D>> =
                 vec![CyclotomicCrtNtt::<W, K, D>::zero(); n_a];
             let mut rhs_scratch = [[MontCoeff::from_raw(W::default()); D]; K];
 
-            for col in 0..fold_position_count {
-                let seq = block_idx + col * live_fold_count;
+            for col in 0..block_len {
+                let seq = block_idx + col * num_blocks;
                 let Some(digit) = coeffs.get(seq) else {
                     break;
                 };
@@ -162,19 +162,19 @@ pub(super) fn mat_vec_mul_raw_i8_strided_block_parallel<
 >(
     ntt_mat: &[&[CyclotomicCrtNtt<W, K, D>]],
     coeffs: &[[i8; D]],
-    live_fold_count: usize,
+    num_blocks: usize,
     inner_width: usize,
     params: &CrtNttParamSet<W, K, D>,
 ) -> Vec<Vec<CyclotomicRing<F, D>>> {
     let n_a = ntt_mat.len();
 
-    cfg_into_iter!(0..live_fold_count)
+    cfg_into_iter!(0..num_blocks)
         .map(|block_idx| {
             let mut accs: Vec<CyclotomicCrtNtt<W, K, D>> =
                 vec![CyclotomicCrtNtt::<W, K, D>::zero(); n_a];
 
             for col in 0..inner_width {
-                let seq = block_idx + col * live_fold_count;
+                let seq = block_idx + col * num_blocks;
                 let Some(coeff) = coeffs.get(seq) else {
                     break;
                 };
@@ -375,8 +375,8 @@ pub(super) fn mat_vec_mul_i8_dense_single_row_with_params<
     params: &CrtNttParamSet<W, K, D>,
 ) -> Vec<CyclotomicRing<F, D>> {
     debug_assert_eq!(ntt_mat.len(), 1);
-    let live_fold_count = blocks.len();
-    if live_fold_count == 0 {
+    let num_blocks = blocks.len();
+    if num_blocks == 0 {
         return vec![];
     }
     let mat_width = ntt_mat.first().map_or(0, |row| row.len());
@@ -387,7 +387,7 @@ pub(super) fn mat_vec_mul_i8_dense_single_row_with_params<
         .unwrap_or(0);
     let inner_width = mat_width.min(max_data_width);
     if inner_width == 0 {
-        return vec![CyclotomicRing::<F, D>::zero(); live_fold_count];
+        return vec![CyclotomicRing::<F, D>::zero(); num_blocks];
     }
 
     let digit_bound = balanced_digit_abs_bound(log_basis);
@@ -433,7 +433,7 @@ pub(super) fn mat_vec_mul_i8_dense_single_row_with_params<
     // chunk-parallel work so long CRT splits do not serialize.
     let chunk_width = capacity_safe_i8_chunk_width(safe_width, inner_width, num_digits);
     let num_chunks = inner_width.div_ceil(chunk_width);
-    if live_fold_count < SMALL_ROW_BLOCK_PARALLEL_MIN_BLOCKS {
+    if num_blocks < SMALL_ROW_BLOCK_PARALLEL_MIN_BLOCKS {
         return mat_vec_mul_i8_dense_single_row_chunk_parallel_with_params(
             mat_row,
             blocks,
@@ -565,8 +565,8 @@ pub(super) fn mat_vec_mul_i8_strided_block_parallel_with_params<
 >(
     ntt_mat: &[&[CyclotomicCrtNtt<W, K, D>]],
     coeffs: &[CyclotomicRing<F, D>],
-    live_fold_count: usize,
-    fold_position_count: usize,
+    num_blocks: usize,
+    block_len: usize,
     num_digits: usize,
     log_basis: u32,
     params: &CrtNttParamSet<W, K, D>,
@@ -577,7 +577,7 @@ pub(super) fn mat_vec_mul_i8_strided_block_parallel_with_params<
     let q = (-F::one()).to_canonical_u128() + 1;
     let decompose_params = BalancedDecomposePow2I8Params::new(num_digits, log_basis, q);
 
-    cfg_into_iter!(0..live_fold_count)
+    cfg_into_iter!(0..num_blocks)
         .map(|block_idx| {
             let mut accs: Vec<CyclotomicCrtNtt<W, K, D>> =
                 vec![CyclotomicCrtNtt::<W, K, D>::zero(); n_a];
@@ -585,8 +585,8 @@ pub(super) fn mat_vec_mul_i8_strided_block_parallel_with_params<
             let mut rhs_scratch = [[MontCoeff::from_raw(W::default()); D]; K];
             let mut mat_col = 0usize;
 
-            for col in 0..fold_position_count {
-                let seq = block_idx + col * live_fold_count;
+            for col in 0..block_len {
+                let seq = block_idx + col * num_blocks;
                 let Some(coeff) = coeffs.get(seq) else {
                     break;
                 };

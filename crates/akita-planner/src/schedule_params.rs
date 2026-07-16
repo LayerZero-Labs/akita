@@ -66,30 +66,30 @@ pub(crate) type RingChallengeConfigFn<'a> =
 
 pub(crate) type LayoutCandidateScore = (usize, usize, usize, usize);
 
-/// Resolve the tensor low length independently from the fold-position split.
+/// Resolve the tensor low length independently from the block_len split.
 /// A tensor-enabled policy selects the shape family; the planner enumerates
-/// every power-of-two low length through the Boolean fold capacity and chooses
+/// every power-of-two low length through the Boolean block capacity and chooses
 /// the minimum exact `Q + ceil(F/Q)` verifier work.
 pub(crate) fn optimize_fold_challenge_shape(
     requested: TensorChallengeShape,
-    live_fold_count: usize,
+    num_blocks: usize,
 ) -> Result<TensorChallengeShape, AkitaError> {
-    if live_fold_count == 0 {
+    if num_blocks == 0 {
         return Err(AkitaError::InvalidSetup(
-            "fold-shape optimization requires a positive live fold count".to_string(),
+            "fold-shape optimization requires a positive num_blocks".to_string(),
         ));
     }
     if matches!(requested, TensorChallengeShape::Flat) {
         return Ok(TensorChallengeShape::Flat);
     }
 
-    let capacity = live_fold_count.checked_next_power_of_two().ok_or_else(|| {
+    let capacity = num_blocks.checked_next_power_of_two().ok_or_else(|| {
         AkitaError::InvalidSetup("tensor low-length capacity overflow".to_string())
     })?;
     let mut best = None;
     let mut low_len = 1usize;
     loop {
-        let high_len = live_fold_count.div_ceil(low_len);
+        let high_len = num_blocks.div_ceil(low_len);
         let work = high_len
             .checked_add(low_len)
             .ok_or_else(|| AkitaError::InvalidSetup("tensor verifier-work overflow".to_string()))?;
@@ -109,26 +109,25 @@ pub(crate) fn optimize_fold_challenge_shape(
     Ok(TensorChallengeShape::Tensor { fold_low_len })
 }
 
-/// Choose the shard ownership granule independently from `L` and tensor `Q`.
-/// The score uses the exact residual-aware shard loads. Flat challenges cannot
-/// exploit factored shard evaluation and therefore minimize imbalance; tensor
-/// challenges additionally price `S + ceil(F_j/S)` for every shard.
-pub(crate) fn optimize_shard_granule(
-    live_fold_count: usize,
-    num_shards: usize,
+/// Choose the chunk ownership granule independently from `L` and tensor `Q`.
+/// The score uses the exact residual-aware chunk loads. Flat challenges cannot
+/// exploit factored chunk evaluation and therefore minimize imbalance; tensor
+/// challenges additionally price `S + ceil(F_j/S)` for every chunk.
+pub(crate) fn optimize_chunk_granule(
+    num_blocks: usize,
+    num_chunks: usize,
     fold_shape: TensorChallengeShape,
 ) -> Result<usize, AkitaError> {
-    if live_fold_count == 0 || num_shards == 0 || num_shards > live_fold_count {
+    if num_blocks == 0 || num_chunks == 0 || num_chunks > num_blocks {
         return Err(AkitaError::InvalidSetup(
-            "shard-granule optimization requires 0 < W <= F".to_string(),
+            "chunk-granule optimization requires 0 < W <= F".to_string(),
         ));
     }
-    let max_granule = live_fold_count / num_shards;
+    let max_granule = num_blocks / num_chunks;
     let mut best = None;
     let mut granule = 1usize;
     while granule <= max_granule {
-        let (work, imbalance) =
-            shard_geometry_cost(live_fold_count, num_shards, granule, fold_shape)?;
+        let (work, imbalance) = chunk_geometry_cost(num_blocks, num_chunks, granule, fold_shape)?;
         if best.is_none_or(|best_score| (work, imbalance, granule) < best_score) {
             best = Some((work, imbalance, granule));
         }
@@ -138,89 +137,89 @@ pub(crate) fn optimize_shard_granule(
         };
     }
     best.map(|(_, _, granule)| granule)
-        .ok_or_else(|| AkitaError::InvalidSetup("shard-granule enumeration was empty".to_string()))
+        .ok_or_else(|| AkitaError::InvalidSetup("chunk-granule enumeration was empty".to_string()))
 }
 
 /// Exact evaluator work and residual-aware load imbalance for one resolved
-/// shard geometry. Flat coefficients are independent, so their work remains
-/// `F`; tensor coefficients use the shard-local `S + ceil(F_j/S)` factors.
-pub(crate) fn shard_geometry_cost(
-    live_fold_count: usize,
-    num_shards: usize,
-    shard_granule: usize,
+/// chunk geometry. Flat coefficients are independent, so their work remains
+/// `F`; tensor coefficients use the chunk-local `S + ceil(F_j/S)` factors.
+pub(crate) fn chunk_geometry_cost(
+    num_blocks: usize,
+    num_chunks: usize,
+    chunk_granule: usize,
     fold_shape: TensorChallengeShape,
 ) -> Result<(usize, usize), AkitaError> {
-    if live_fold_count == 0
-        || num_shards == 0
-        || shard_granule == 0
-        || !shard_granule.is_power_of_two()
-        || num_shards
-            .checked_mul(shard_granule)
-            .is_none_or(|required| required > live_fold_count)
+    if num_blocks == 0
+        || num_chunks == 0
+        || chunk_granule == 0
+        || !chunk_granule.is_power_of_two()
+        || num_chunks
+            .checked_mul(chunk_granule)
+            .is_none_or(|required| required > num_blocks)
     {
         return Err(AkitaError::InvalidSetup(
-            "resolved shard geometry is malformed".to_string(),
+            "resolved chunk geometry is malformed".to_string(),
         ));
     }
-    let full_granules = live_fold_count / shard_granule;
-    let residual = live_fold_count % shard_granule;
-    let base = full_granules / num_shards;
-    let larger = full_granules % num_shards;
+    let full_granules = num_blocks / chunk_granule;
+    let residual = num_blocks % chunk_granule;
+    let base = full_granules / num_chunks;
+    let larger = full_granules % num_chunks;
     let mut min_load = usize::MAX;
     let mut max_load = 0usize;
     let mut structured_work = 0usize;
-    for shard in 0..num_shards {
-        let mut load = (base + usize::from(shard < larger))
-            .checked_mul(shard_granule)
-            .ok_or_else(|| AkitaError::InvalidSetup("shard load overflow".to_string()))?;
-        if shard + 1 == num_shards {
+    for chunk in 0..num_chunks {
+        let mut load = (base + usize::from(chunk < larger))
+            .checked_mul(chunk_granule)
+            .ok_or_else(|| AkitaError::InvalidSetup("chunk load overflow".to_string()))?;
+        if chunk + 1 == num_chunks {
             load = load.checked_add(residual).ok_or_else(|| {
-                AkitaError::InvalidSetup("residual shard load overflow".to_string())
+                AkitaError::InvalidSetup("residual chunk load overflow".to_string())
             })?;
         }
         min_load = min_load.min(load);
         max_load = max_load.max(load);
         if matches!(fold_shape, TensorChallengeShape::Tensor { .. }) {
             structured_work = structured_work
-                .checked_add(shard_granule)
-                .and_then(|work| work.checked_add(load.div_ceil(shard_granule)))
+                .checked_add(chunk_granule)
+                .and_then(|work| work.checked_add(load.div_ceil(chunk_granule)))
                 .ok_or_else(|| {
-                    AkitaError::InvalidSetup("structured shard-work overflow".to_string())
+                    AkitaError::InvalidSetup("structured chunk-work overflow".to_string())
                 })?;
         }
     }
     let work = if matches!(fold_shape, TensorChallengeShape::Flat) {
-        live_fold_count
+        num_blocks
     } else {
         structured_work
     };
     Ok((work, max_load - min_load))
 }
 
-/// Combine exact physical width, challenge-factor work, shard evaluator work,
+/// Combine exact physical width, challenge-factor work, chunk evaluator work,
 /// and load imbalance when comparing `L` candidates. All terms count ring or
 /// scalar work units; exact physical width remains an explicit tie-breaker.
 pub(crate) fn layout_candidate_score(
     physical_width: usize,
-    live_fold_count: usize,
-    num_shards: usize,
-    shard_granule: usize,
+    num_blocks: usize,
+    num_chunks: usize,
+    chunk_granule: usize,
     fold_shape: TensorChallengeShape,
 ) -> Result<LayoutCandidateScore, AkitaError> {
     let challenge_work = match fold_shape {
-        TensorChallengeShape::Flat => live_fold_count,
+        TensorChallengeShape::Flat => num_blocks,
         TensorChallengeShape::Tensor { fold_low_len } => fold_low_len
-            .checked_add(live_fold_count.div_ceil(fold_low_len))
+            .checked_add(num_blocks.div_ceil(fold_low_len))
             .ok_or_else(|| AkitaError::InvalidSetup("challenge-work overflow".to_string()))?,
     };
-    let (shard_work, imbalance) =
-        shard_geometry_cost(live_fold_count, num_shards, shard_granule, fold_shape)?;
+    let (chunk_work, imbalance) =
+        chunk_geometry_cost(num_blocks, num_chunks, chunk_granule, fold_shape)?;
     let combined = physical_width
         .checked_add(challenge_work)
-        .and_then(|cost| cost.checked_add(shard_work))
+        .and_then(|cost| cost.checked_add(chunk_work))
         .and_then(|cost| cost.checked_add(imbalance))
         .ok_or_else(|| AkitaError::InvalidSetup("layout candidate score overflow".to_string()))?;
-    Ok((combined, physical_width, shard_work, imbalance))
+    Ok((combined, physical_width, chunk_work, imbalance))
 }
 
 // Suffix-DP depth cap. Schedules in our working parameter range never need
@@ -326,8 +325,8 @@ fn find_schedule_inner(
         });
     }
 
-    let min_r_vars: usize = if reduced_vars >= 3 { 1 } else { 0 };
-    let max_r_vars: usize = (reduced_vars - 1).min(usize::BITS as usize - 1);
+    let min_block_bits: usize = if reduced_vars >= 3 { 1 } else { 0 };
+    let max_block_bits: usize = (reduced_vars - 1).min(usize::BITS as usize - 1);
 
     // Chunk count of the witness committed at the root fold (absolute level 0).
     let root_num_chunks = policy.chunks_at_level(0);
@@ -341,14 +340,14 @@ fn find_schedule_inner(
             0
         });
     for candidate_log_basis in min_log_basis..=max_log_basis {
-        for fold_bits in (min_r_vars..=max_r_vars).rev() {
+        for block_bits in (min_block_bits..=max_block_bits).rev() {
             let Some(candidate_params) = scalar_root_fold_level_params_candidate(
                 policy,
                 &ring_challenge_cfg,
                 key.num_vars(),
                 key.num_polynomials(),
                 candidate_log_basis,
-                fold_bits,
+                block_bits,
                 fold_challenge_shape,
             )?
             else {
@@ -492,11 +491,11 @@ mod geometry_tests {
     }
 
     #[test]
-    fn shard_granule_prices_residual_loads_and_structured_work() {
+    fn chunk_granule_prices_residual_loads_and_structured_work() {
         let tensor = TensorChallengeShape::Tensor { fold_low_len: 4 };
-        assert_eq!(optimize_shard_granule(13, 3, tensor).unwrap(), 2);
+        assert_eq!(optimize_chunk_granule(13, 3, tensor).unwrap(), 2);
         assert_eq!(
-            optimize_shard_granule(13, 3, TensorChallengeShape::Flat).unwrap(),
+            optimize_chunk_granule(13, 3, TensorChallengeShape::Flat).unwrap(),
             1,
         );
     }

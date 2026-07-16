@@ -46,11 +46,7 @@ fn real_schedule<Cfg: CommitmentConfig>(num_vars: usize) -> Schedule {
 }
 
 /// Build a minimal `FoldStep` with explicit ring dimension and geometry.
-fn make_fold_step(
-    ring_dimension: usize,
-    live_fold_count: usize,
-    fold_position_count: usize,
-) -> FoldStep {
+fn make_fold_step(ring_dimension: usize, num_blocks: usize, block_len: usize) -> FoldStep {
     let fold_challenge_config = SparseChallengeConfig::production_for_ring_dim(ring_dimension)
         .unwrap_or_else(|| SparseChallengeConfig::pm1_only(ring_dimension.max(31)));
     let mut params = LevelParams::params_only(
@@ -63,10 +59,10 @@ fn make_fold_step(
         fold_challenge_config,
     );
     params.role_dims = akita_types::CommitmentRingDims::uniform(ring_dimension);
-    params.source_ring_len_per_claim = live_fold_count * fold_position_count;
-    params.live_fold_count = live_fold_count;
-    params.fold_position_count = fold_position_count;
-    params.shard_granule = 1;
+    params.source_ring_len_per_claim = num_blocks * block_len;
+    params.num_blocks = num_blocks;
+    params.block_len = block_len;
+    params.chunk_granule = 1;
     params.num_digits_commit = 2;
     params.num_digits_open = 2;
     params.stamp_role_dims_from_keys();

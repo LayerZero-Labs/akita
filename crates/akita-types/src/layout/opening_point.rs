@@ -7,7 +7,7 @@ use akita_field::FromPrimitiveInt;
 use akita_serialization::DEFAULT_MAX_SEQUENCE_LEN;
 
 use crate::field_reduction::{embed_ring_subfield_scalar, FpExtEncoding};
-const FOLD_EMBED_ERROR: &str = "fold opening weight does not embed in the ring-subfield basis";
+const BLOCK_EMBED_ERROR: &str = "fold opening weight does not embed in the ring-subfield basis";
 
 /// Polynomial basis mode for the evaluation relation.
 ///
@@ -34,17 +34,17 @@ pub enum BasisMode {
 ///
 /// Contains the two exact factors of the physical source opening:
 /// - `position_weights`: position weights of length `L`.
-/// - `fold_weights`: the live prefix of `F` fold weights.
+/// - `block_weights`: the live prefix of `F` block weights.
 ///
 /// These are raw field scalars, not ring elements — they originate from
 /// basis weight evaluations (Lagrange or monomial) and are always constant
 /// (scalar) ring elements when embedded into the ring.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RingOpeningPoint<F: FieldCore> {
-    /// Position weights, with exactly one entry per fold position.
+    /// Position weights, with exactly one entry per block position.
     pub position_weights: Vec<F>,
-    /// Fold-select weights, truncated to the exact live fold prefix.
-    pub fold_weights: Vec<F>,
+    /// Block-select weights, truncated to the exact live block prefix.
+    pub block_weights: Vec<F>,
 }
 
 /// Multilinear Lagrange weights: `⊗ᵢ (1 − xᵢ, xᵢ)`.
@@ -173,31 +173,31 @@ pub fn checked_opening_source_index(
 
 /// Convert the outer portion of a field opening point into ring-native vectors.
 ///
-/// The first `log2(fold_position_count)` coordinates select a position and the
-/// remaining `log2(next_power_of_two(live_fold_count))` coordinates select a
-/// fold. Only the exact live fold prefix is retained.
+/// The first `log2(block_len)` coordinates select a position and the
+/// remaining `log2(next_power_of_two(num_blocks))` coordinates select a
+/// block. Only the exact live block prefix is retained.
 ///
 /// # Errors
 ///
 /// Returns an error if the point dimension does not match `layout`.
 pub fn ring_opening_point_from_field<F: FieldCore>(
     opening_point: &[F],
-    fold_position_count: usize,
-    live_fold_count: usize,
+    block_len: usize,
+    num_blocks: usize,
     basis: BasisMode,
 ) -> Result<RingOpeningPoint<F>, AkitaError> {
-    if !fold_position_count.is_power_of_two() || live_fold_count == 0 {
+    if !block_len.is_power_of_two() || num_blocks == 0 {
         return Err(AkitaError::InvalidSetup(
             "opening geometry requires power-of-two L and positive F".to_string(),
         ));
     }
-    let position_bits = fold_position_count.trailing_zeros() as usize;
-    let fold_capacity = live_fold_count
+    let position_bits = block_len.trailing_zeros() as usize;
+    let block_capacity = num_blocks
         .checked_next_power_of_two()
-        .ok_or_else(|| AkitaError::InvalidSetup("fold capacity overflow".to_string()))?;
-    let fold_bits = fold_capacity.trailing_zeros() as usize;
+        .ok_or_else(|| AkitaError::InvalidSetup("block capacity overflow".to_string()))?;
+    let block_bits = block_capacity.trailing_zeros() as usize;
     let expected_len = position_bits
-        .checked_add(fold_bits)
+        .checked_add(block_bits)
         .ok_or_else(|| AkitaError::InvalidSetup("opening point length overflow".to_string()))?;
     if opening_point.len() != expected_len {
         return Err(AkitaError::InvalidPointDimension {
@@ -207,11 +207,10 @@ pub fn ring_opening_point_from_field<F: FieldCore>(
     }
 
     let position_weights = basis_weights(&opening_point[..position_bits], basis)?;
-    let fold_weights =
-        basis_weights_prefix(&opening_point[position_bits..], basis, live_fold_count)?;
+    let block_weights = basis_weights_prefix(&opening_point[position_bits..], basis, num_blocks)?;
     Ok(RingOpeningPoint {
         position_weights,
-        fold_weights,
+        block_weights,
     })
 }
 
@@ -235,21 +234,21 @@ pub fn reduce_inner_opening_to_ring_element<F: FieldCore, const D: usize>(
     Ok(CyclotomicRing::from_slice(&weights))
 }
 
-/// Embed `eq(fold_open, j)` as a ring element for each live fold index `j`.
-pub fn fold_rings_at_opening<F, E, const D: usize>(
+/// Embed `eq(block_open, j)` as a ring element for each live block index `j`.
+pub fn block_rings_at_opening<F, E, const D: usize>(
     fold_open: &[E],
-    live_fold_count: usize,
+    num_blocks: usize,
 ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>
 where
     F: FieldCore + FromPrimitiveInt,
     E: FpExtEncoding<F> + FieldCore,
 {
-    basis_weights_prefix(fold_open, BasisMode::Lagrange, live_fold_count)?
+    basis_weights_prefix(fold_open, BasisMode::Lagrange, num_blocks)?
         .into_iter()
         .map(|weight| {
             embed_ring_subfield_scalar::<F, E, D>(
                 weight,
-                AkitaError::InvalidInput(FOLD_EMBED_ERROR.to_string()),
+                AkitaError::InvalidInput(BLOCK_EMBED_ERROR.to_string()),
             )
         })
         .collect()
@@ -263,7 +262,7 @@ mod tests {
     type F = Prime128OffsetA7F7;
 
     #[test]
-    fn opening_point_keeps_exact_live_fold_prefix() {
+    fn opening_point_keeps_exact_live_block_prefix() {
         let point = [
             F::from_u64(2),
             F::from_u64(3),
@@ -276,7 +275,7 @@ mod tests {
             lagrange_weights(&point[..2]).unwrap()
         );
         assert_eq!(
-            opening.fold_weights,
+            opening.block_weights,
             lagrange_weights(&point[2..]).unwrap()[..3]
         );
     }

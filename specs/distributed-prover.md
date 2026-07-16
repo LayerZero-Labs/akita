@@ -364,7 +364,7 @@ Produce $W$ full-ambient responses in the decompose-fold path; wire
 
 - **Invariant:** $\sum_i z_i$ == single global fold; each `z_i` full
   `inner_width`; L∞ cap satisfied per window.
-- **Tests:** `fold_responses_sum_to_global_fold` (`W ∈ {2,4,8}`).
+- **Tests:** `fold_responses_sum_to_global_block` (`W ∈ {2,4,8}`).
 
 ### S3 — Modified relation MLE (`compute_relation_matrix_col_evals`)
 
@@ -416,7 +416,7 @@ the same preset for `W ∈ {1,2,4,8}`, `block_len` pow2 (root) and dense (recurs
 ### Testing Strategy
 
 1. **Layout cross-check** against `segment_layout` (`W ∈ {1,2,4,8}`).
-2. **Fold-response unit:** `fold_responses_sum_to_global_fold`.
+2. **Fold-response unit:** `fold_responses_sum_to_global_block`.
 3. **Relation-MLE unit:** prover `compute_relation_matrix_col_evals` vs the verifier-materialized
    chunked relation row.
 4. **Proof-size parity** vs the planner schedule.

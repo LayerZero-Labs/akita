@@ -531,9 +531,9 @@ mod tests {
             layout: crate::PrecommittedGroupParams {
                 group: crate::PolynomialGroupLayout::singleton(n_prefix.trailing_zeros() as usize),
                 source_ring_len_per_claim: n_prefix / d_setup,
-                fold_position_count: 1,
-                live_fold_count: n_prefix / d_setup,
-                shard_granule: 1,
+                block_len: 1,
+                num_blocks: n_prefix / d_setup,
+                chunk_granule: 1,
                 fold_challenge_shape: akita_challenges::TensorChallengeShape::Flat,
                 log_basis: 1,
                 n_a: 1,

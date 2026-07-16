@@ -330,7 +330,7 @@ Same recipe applied to `compute_norm_round_eq_poly_from_s*` (stage1),
 
 ## Invariants
 
-- **Byte-identical proofs and transcript** for every mode/`num_vars` (packing is a
+- **Byte-identical proofs and transcript** for every mode/`nuposition_bits` (packing is a
   representation; results are field-exact). The packed fold/accumulate equals the scalar
   one element-for-element; the only ordering freedom (associativity of the reduction) must
   preserve the field-exact sum — verify with the equality oracle.

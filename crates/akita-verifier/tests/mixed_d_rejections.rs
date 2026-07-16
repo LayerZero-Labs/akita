@@ -61,8 +61,8 @@ fn ring_dim_plan_rejects_fold_dim_above_gen_ring_dim() {
                 };
                 step.params.ring_dimension = 128;
                 step.params.role_dims = CommitmentRingDims::uniform(128);
-                step.params.live_fold_count = 4;
-                step.params.fold_position_count = 8;
+                step.params.num_blocks = 4;
+                step.params.block_len = 8;
                 step
             }),
             Step::Direct(DirectStep {
