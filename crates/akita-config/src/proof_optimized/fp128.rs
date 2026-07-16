@@ -18,6 +18,10 @@ pub struct D64Full;
 #[derive(Clone, Copy, Debug, Default)]
 pub struct D64OneHot;
 
+/// Binary onehot `D=64`, `K=16` preset with planner-derived schedules.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct D64OneHotK16;
+
 /// Binary onehot `D=128` preset for planner-backed experiments.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct D128OneHot;
@@ -95,6 +99,16 @@ impl_proof_optimized_preset!(
         "fp128_d64_onehot",
         fp128_d64_onehot_table
     )
+);
+impl_proof_optimized_preset!(
+    D64OneHotK16,
+    Field,
+    Field,
+    akita_types::SisModulusProfileId::Q128OffsetA7F7,
+    64,
+    128,
+    1,
+    16
 );
 impl_multi_chunk_companion!(
     D64OneHotMultiChunk,
