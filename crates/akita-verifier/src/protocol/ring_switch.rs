@@ -1079,6 +1079,17 @@ where
                 .affine_factors::<F>(claim, group.num_live_blocks)
         })
         .collect::<Result<Vec<_>, _>>()?;
+    let e_digit_weights = g_open_ext
+        .iter()
+        .map(|&gadget| consistency_weight * gadget)
+        .collect::<Vec<_>>();
+    // T is laid out block-major, then A-row, then opening digit. Contract the
+    // contiguous `(A row, digit)` lane in one affine evaluation instead of
+    // rebuilding the same low equality table once per A row.
+    let t_block_weights = a_row_weights
+        .iter()
+        .flat_map(|&row_weight| g_open_ext.iter().map(move |&gadget| row_weight * gadget))
+        .collect::<Vec<_>>();
     let mut e_contribution = E::zero();
     let mut t_contribution = E::zero();
     for unit in units {
@@ -1093,43 +1104,39 @@ where
             )?;
             let e_opening_index =
                 akita_types::checked_opening_source_index(opening_source_len, e_index)?;
-            e_contribution += consistency_weight
-                * eval_affine_digit_interval(
-                    x_challenges,
-                    e_opening_index,
-                    unit.global_block_start(),
-                    unit.num_live_blocks(),
-                    group.depth_open,
-                    g_open_ext,
-                    &factors.high,
-                    &factors.low,
-                )?;
+            e_contribution += eval_affine_digit_interval(
+                x_challenges,
+                e_opening_index,
+                unit.global_block_start(),
+                unit.num_live_blocks(),
+                group.depth_open,
+                &e_digit_weights,
+                &factors.high,
+                &factors.low,
+            )?;
 
-            for (a_row, &row_weight) in a_row_weights.iter().enumerate() {
-                let t_index = witness_layout.t_index(
-                    unit,
-                    group.num_claims,
-                    group.n_a,
-                    group.depth_open,
-                    claim,
-                    unit.global_block_start(),
-                    a_row,
-                    0,
-                )?;
-                let t_opening_index =
-                    akita_types::checked_opening_source_index(opening_source_len, t_index)?;
-                t_contribution += row_weight
-                    * eval_affine_digit_interval(
-                        x_challenges,
-                        t_opening_index,
-                        unit.global_block_start(),
-                        unit.num_live_blocks(),
-                        t_fold_stride,
-                        g_open_ext,
-                        &factors.high,
-                        &factors.low,
-                    )?;
-            }
+            let t_index = witness_layout.t_index(
+                unit,
+                group.num_claims,
+                group.n_a,
+                group.depth_open,
+                claim,
+                unit.global_block_start(),
+                0,
+                0,
+            )?;
+            let t_opening_index =
+                akita_types::checked_opening_source_index(opening_source_len, t_index)?;
+            t_contribution += eval_affine_digit_interval(
+                x_challenges,
+                t_opening_index,
+                unit.global_block_start(),
+                unit.num_live_blocks(),
+                t_fold_stride,
+                &t_block_weights,
+                &factors.high,
+                &factors.low,
+            )?;
         }
     }
     Ok((e_contribution, t_contribution))

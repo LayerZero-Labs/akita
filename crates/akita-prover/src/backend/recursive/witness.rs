@@ -22,24 +22,29 @@ use akita_types::{
     tensor_column_partials_from_base_evals, tensor_packed_witness_evals, CleartextWitnessProof,
     FpExtEncoding, WitnessLayout,
 };
-use std::marker::PhantomData;
+use std::{marker::PhantomData, sync::Arc};
 
 use crate::{CommitInnerWitness, DecomposeFoldWitness};
 
 /// D-agnostic owner for the recursive witness vector `w`.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct RecursiveWitnessFlat {
-    digits: Vec<i8>,
+    digits: Arc<[i8]>,
+    known_balanced_log_basis: Option<u32>,
 }
 
 impl RecursiveWitnessFlat {
     pub fn from_i8_digits(digits: Vec<i8>) -> Self {
-        Self { digits }
+        Self {
+            digits: digits.into(),
+            known_balanced_log_basis: None,
+        }
     }
 
     pub(crate) fn from_witness_layout<const D: usize>(
         digits: Vec<i8>,
         layout: &WitnessLayout,
+        log_basis: u32,
     ) -> Result<Self, AkitaError> {
         let expected = layout
             .total_len()
@@ -51,11 +56,18 @@ impl RecursiveWitnessFlat {
                 actual: digits.len(),
             });
         }
-        Ok(Self { digits })
+        Ok(Self {
+            digits: digits.into(),
+            known_balanced_log_basis: Some(log_basis),
+        })
     }
 
     pub fn as_i8_digits(&self) -> &[i8] {
         &self.digits
+    }
+
+    pub(crate) fn shared_i8_digits(&self) -> Arc<[i8]> {
+        Arc::clone(&self.digits)
     }
 
     pub fn len(&self) -> usize {
@@ -69,7 +81,7 @@ impl RecursiveWitnessFlat {
     pub fn view<F: FieldCore, const D: usize>(
         &self,
     ) -> Result<SuffixWitnessView<'_, F, D>, AkitaError> {
-        SuffixWitnessView::from_i8_digits(&self.digits)
+        SuffixWitnessView::from_recursive_witness(&self.digits, self.known_balanced_log_basis)
     }
 }
 
@@ -84,11 +96,19 @@ impl AsRef<[i8]> for RecursiveWitnessFlat {
 pub struct SuffixWitnessView<'a, F: FieldCore, const D: usize> {
     coeffs: &'a [[i8; D]],
     padded_ring_elems: usize,
+    known_balanced_log_basis: Option<u32>,
     _marker: PhantomData<F>,
 }
 
 impl<'a, F: FieldCore, const D: usize> SuffixWitnessView<'a, F, D> {
     pub fn from_i8_digits(digits: &'a [i8]) -> Result<Self, AkitaError> {
+        Self::from_recursive_witness(digits, None)
+    }
+
+    fn from_recursive_witness(
+        digits: &'a [i8],
+        known_balanced_log_basis: Option<u32>,
+    ) -> Result<Self, AkitaError> {
         let (coeffs, remainder) = digits.as_chunks::<D>();
         if !remainder.is_empty() {
             return Err(AkitaError::InvalidSize {
@@ -100,6 +120,7 @@ impl<'a, F: FieldCore, const D: usize> SuffixWitnessView<'a, F, D> {
         Ok(Self {
             coeffs,
             padded_ring_elems: coeffs.len().next_power_of_two().max(1),
+            known_balanced_log_basis,
             _marker: PhantomData,
         })
     }
@@ -427,6 +448,7 @@ where
                 num_live_blocks,
                 num_digits_commit: plan.num_digits_commit,
                 log_basis: plan.log_basis,
+                known_balanced_log_basis: self.known_balanced_log_basis,
             },
         )?;
 

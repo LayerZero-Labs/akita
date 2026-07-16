@@ -405,8 +405,11 @@ impl<E: FieldCore + HasOptimizedFold> EqFactoredSumcheckInstanceProver<E>
 
 /// Backend-specific Stage 1 witness representation.
 enum Stage1Witness<E: FieldCore> {
-    Compact(Vec<i8>),
-    PaddedS(Vec<E>),
+    Compact(std::sync::Arc<[i8]>),
+    PaddedS {
+        s_table: Vec<E>,
+        w: std::sync::Arc<[i8]>,
+    },
 }
 
 /// Stage-1 range-check prover, including the root/leaf tree choreography.
@@ -428,6 +431,24 @@ impl<E: FieldCore + FromPrimitiveInt> AkitaStage1Prover<E> {
     /// match `live_x_cols * 2^ring_bits`.
     pub fn new(
         w_evals_compact: &[i8],
+        tau0: &[E],
+        b: usize,
+        live_x_cols: usize,
+        col_bits: usize,
+        ring_bits: usize,
+    ) -> Result<Self, AkitaError> {
+        Self::new_owned(
+            std::sync::Arc::from(w_evals_compact),
+            tau0,
+            b,
+            live_x_cols,
+            col_bits,
+            ring_bits,
+        )
+    }
+
+    pub(crate) fn new_owned(
+        w_evals_compact: std::sync::Arc<[i8]>,
         tau0: &[E],
         b: usize,
         live_x_cols: usize,
@@ -471,14 +492,13 @@ impl<E: FieldCore + FromPrimitiveInt> AkitaStage1Prover<E> {
         }
         Ok(Self {
             witness: if b <= 8 {
-                Stage1Witness::Compact(w_evals_compact.to_vec())
+                Stage1Witness::Compact(w_evals_compact)
             } else {
-                Stage1Witness::PaddedS(padded_s_table(
-                    w_evals_compact,
-                    live_x_cols,
-                    col_bits,
-                    ring_bits,
-                )?)
+                let s_table = padded_s_table(&w_evals_compact, live_x_cols, col_bits, ring_bits)?;
+                Stage1Witness::PaddedS {
+                    s_table,
+                    w: w_evals_compact,
+                }
             },
             tau0: tau0.to_vec(),
             b,
@@ -499,6 +519,19 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + HasOptimizedFold + Akit
     /// Propagates any transcript or sumcheck failure from the internal root
     /// and leaf-stage proofs.
     pub fn prove<F, T>(self, transcript: &mut T) -> Result<Stage1ProveOutput<E>, AkitaError>
+    where
+        F: FieldCore + CanonicalField,
+        E: ExtField<F>,
+        T: Transcript<F>,
+    {
+        self.prove_recover_w::<F, T>(transcript)
+            .map(|(output, _)| output)
+    }
+
+    pub(crate) fn prove_recover_w<F, T>(
+        self,
+        transcript: &mut T,
+    ) -> Result<(Stage1ProveOutput<E>, std::sync::Arc<[i8]>), AkitaError>
     where
         F: FieldCore + CanonicalField,
         E: ExtField<F>,
@@ -527,10 +560,11 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + HasOptimizedFold + Akit
             ring_bits,
         } = self;
         validate_stage1_tree_basis(b)?;
+        let retained_w;
         let s_table = match witness {
             Stage1Witness::Compact(w_evals_compact) => {
-                let mut leaf_stage = single_stage_backend::AkitaStage1Prover::new(
-                    &w_evals_compact,
+                let mut leaf_stage = single_stage_backend::AkitaStage1Prover::new_owned(
+                    w_evals_compact,
                     &tau0,
                     b,
                     live_x_cols,
@@ -542,6 +576,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + HasOptimizedFold + Akit
                         sample_ext_challenge::<F, E, T>(tr, labels::CHALLENGE_SUMCHECK_ROUND)
                     })?;
                 let true_s_claim = leaf_stage.final_s_claim();
+                let w_evals_compact = leaf_stage.take_w_evals_compact();
                 let proof = AkitaStage1Proof {
                     stages: vec![AkitaStage1StageProof {
                         sumcheck_proof: sumcheck,
@@ -549,9 +584,12 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + HasOptimizedFold + Akit
                     }],
                     s_claim: true_s_claim,
                 };
-                return Ok((proof, stage1_point));
+                return Ok(((proof, stage1_point), w_evals_compact));
             }
-            Stage1Witness::PaddedS(s_table) => s_table,
+            Stage1Witness::PaddedS { s_table, w } => {
+                retained_w = w;
+                s_table
+            }
         };
 
         let leaf_coeffs = stage1_leaf_coeffs::<E>(b);
@@ -609,7 +647,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + HasOptimizedFold + Akit
             stages: stage_proofs,
             s_claim: true_s_claim,
         };
-        Ok((proof, stage1_point))
+        Ok(((proof, stage1_point), retained_w))
     }
 }
 

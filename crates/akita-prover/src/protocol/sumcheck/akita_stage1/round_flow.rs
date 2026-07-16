@@ -21,7 +21,8 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage1Prover<E> {
             EqFactoredUniPoly::from_q_coeffs(vec![E::zero()])
         } else {
             match &self.s_table {
-                STable::Compact(s_compact) => {
+                STable::Compact => {
+                    let s_compact = &self.w_evals_compact;
                     if use_prefix_x_round {
                         self.compute_round_compact_prefix_x(s_compact)
                     } else if use_sparse_x_y_round {
@@ -60,12 +61,17 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage1Prover<E> {
     }
 
     #[tracing::instrument(skip_all, name = "AkitaStage1Prover::fold_s_compact_to_full")]
-    pub(super) fn fold_s_compact_to_full(
-        s_compact: &[i16],
+    pub(super) fn fold_s_compact_to_full<S: CompactSValue>(
+        s_compact: &[S],
         fold_lut: &CompactPairFoldLut<E>,
     ) -> Vec<E> {
         cfg_into_iter!(0..s_compact.len() / 2)
-            .map(|j| fold_lut.fold(s_compact[2 * j], s_compact[2 * j + 1]))
+            .map(|j| {
+                fold_lut.fold(
+                    s_compact[2 * j].compact_s(),
+                    s_compact[2 * j + 1].compact_s(),
+                )
+            })
             .collect()
     }
 }
@@ -113,20 +119,21 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + HasOptimizedFold>
                         .expect("round 1 ingest requires the round 0 challenge")
                 };
                 let y_len = match &self.s_table {
-                    STable::Compact(s_compact) => s_compact.len() / self.live_x_cols,
+                    STable::Compact => self.w_evals_compact.len() / self.live_x_cols,
                     STable::Full(_) => panic!("two-round prefix expected compact table"),
                 };
                 self.s_table = match std::mem::replace(&mut self.s_table, STable::Full(Vec::new()))
                 {
-                    STable::Compact(s_compact) => {
+                    STable::Compact => {
+                        let s_compact = &self.w_evals_compact;
                         if self.ring_bits() > 2 {
                             let (s_full, round_poly) =
-                                self.fuse_compact_to_round2_and_compute_round(&s_compact, r0, r);
+                                self.fuse_compact_to_round2_and_compute_round(s_compact, r0, r);
                             self.cached_round_poly = Some(round_poly);
                             STable::Full(s_full)
                         } else {
                             let s_full = Self::fold_s_compact_to_round2(
-                                &s_compact,
+                                s_compact,
                                 self.live_x_cols,
                                 y_len,
                                 r0,
@@ -159,17 +166,18 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + HasOptimizedFold>
         let fuse_next_sparse_x_y =
             use_sparse_x_y_round && self.next_use_sparse_x_y_round_after_current();
         let y_len = match &self.s_table {
-            STable::Compact(s_compact) => s_compact.len() / self.live_x_cols,
+            STable::Compact => self.w_evals_compact.len() / self.live_x_cols,
             STable::Full(s_full) => s_full.len() / self.live_x_cols,
         };
 
         self.s_table = match std::mem::replace(&mut self.s_table, STable::Full(Vec::new())) {
-            STable::Compact(s_compact) => {
+            STable::Compact => {
+                let s_compact = &self.w_evals_compact;
                 let fold_lut = Self::build_compact_s_fold_lut(self.b, r);
                 let s_full = if use_prefix_x_round {
-                    Self::fold_s_compact_prefix_x(&s_compact, self.live_x_cols, y_len, &fold_lut)
+                    Self::fold_s_compact_prefix_x(s_compact, self.live_x_cols, y_len, &fold_lut)
                 } else {
-                    Self::fold_s_compact_to_full(&s_compact, &fold_lut)
+                    Self::fold_s_compact_to_full(s_compact, &fold_lut)
                 };
                 STable::Full(s_full)
             }

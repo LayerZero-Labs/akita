@@ -159,6 +159,10 @@ pub struct RecursiveWitnessCommitRowsPlan<'a, const D: usize> {
     pub num_digits_commit: usize,
     /// Logarithm of the gadget basis.
     pub log_basis: u32,
+    /// Known source digit basis, when construction proves every coefficient is
+    /// balanced for that basis. A commit basis at least this large can skip a
+    /// redundant full witness range scan.
+    pub known_balanced_log_basis: Option<u32>,
 }
 
 /// Full ring-switch relation operation input.

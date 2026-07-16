@@ -592,19 +592,43 @@ fn compute_norm_round_eq_poly_from_s_compact_with_pairs<
     EqFactoredUniPoly::from_q_coeffs(q_coeffs)
 }
 
-fn compute_norm_round_eq_poly_from_s_compact<E: FieldCore + FromPrimitiveInt + HasUnreducedOps>(
+fn compute_norm_round_eq_poly_from_s_compact<
+    E: FieldCore + FromPrimitiveInt + HasUnreducedOps,
+    S: CompactSValue,
+>(
     split_eq: &GruenSplitEq<E>,
-    s_compact: &[i16],
+    s_compact: &[S],
     range_precomp: &RangeAffineFromSPrecomp<E>,
 ) -> EqFactoredUniPoly<E> {
     compute_norm_round_eq_poly_from_s_compact_with_pairs(split_eq, range_precomp, |j| {
-        (s_compact[2 * j], s_compact[2 * j + 1])
+        (
+            s_compact[2 * j].compact_s(),
+            s_compact[2 * j + 1].compact_s(),
+        )
     })
 }
 
 enum STable<E: FieldCore> {
-    Compact(Vec<i16>),
+    Compact,
     Full(Vec<E>),
+}
+
+pub(crate) trait CompactSValue: Copy + Send + Sync {
+    fn compact_s(self) -> i16;
+}
+
+impl CompactSValue for i16 {
+    #[inline(always)]
+    fn compact_s(self) -> i16 {
+        self
+    }
+}
+
+impl CompactSValue for i8 {
+    #[inline(always)]
+    fn compact_s(self) -> i16 {
+        compact_s_from_w(self)
+    }
 }
 
 #[inline]
@@ -615,6 +639,7 @@ fn compact_s_from_w(w: i8) -> i16 {
     s as i16
 }
 
+#[cfg(test)]
 fn build_compact_s_table(w_evals_compact: &[i8]) -> Vec<i16> {
     w_evals_compact
         .iter()
@@ -631,6 +656,7 @@ struct Stage1TwoRoundPrefix<E: FieldCore> {
 /// Stage-1 norm sumcheck prover over the virtual table `S(x) = w(x)(w(x)+1)`.
 pub struct AkitaStage1Prover<E: FieldCore> {
     s_table: STable<E>,
+    w_evals_compact: std::sync::Arc<[i8]>,
     split_eq: GruenSplitEq<E>,
     range_precomp: RangeAffineFromSPrecomp<E>,
     live_x_cols: usize,

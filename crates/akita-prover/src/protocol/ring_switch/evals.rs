@@ -18,11 +18,11 @@ pub use akita_types::{compute_relation_matrix_col_evals, compute_relation_weight
 /// Returns an error if the witness length is not divisible by the ring
 /// dimension.
 pub fn build_w_evals_compact(
-    w: &[i8],
+    w: std::sync::Arc<[i8]>,
     d: usize,
     extension_degree: usize,
     opening_source_len: usize,
-) -> Result<(Vec<i8>, usize, usize), AkitaError> {
+) -> Result<(std::sync::Arc<[i8]>, usize, usize), AkitaError> {
     if !w.len().is_multiple_of(d) {
         return Err(AkitaError::InvalidSize {
             expected: d,
@@ -40,7 +40,7 @@ pub fn build_w_evals_compact(
     let col_bits = opening_x_cols.trailing_zeros() as usize;
     if extension_degree == 1 {
         let ring_bits = d.trailing_zeros() as usize;
-        return Ok((w.to_vec(), col_bits, ring_bits));
+        return Ok((w, col_bits, ring_bits));
     }
     let packed_len = d / extension_degree;
     if packed_len == 0 || !packed_len.is_power_of_two() {
@@ -59,5 +59,9 @@ pub fn build_w_evals_compact(
             dst[half + slot] = ring[d / 2 + low - half];
         }
     }
-    Ok((compact, col_bits, packed_len.trailing_zeros() as usize))
+    Ok((
+        compact.into(),
+        col_bits,
+        packed_len.trailing_zeros() as usize,
+    ))
 }

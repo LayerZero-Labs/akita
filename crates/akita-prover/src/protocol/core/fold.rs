@@ -614,7 +614,7 @@ where
         return Err(AkitaError::InvalidProof);
     }
     let next_opening_source_len = logical_w.len() / next_opening_ring_dim;
-    let rs = ring_switch_finalize::<F, E, T>(
+    let mut rs = ring_switch_finalize::<F, E, T>(
         &prepared_fold.instance,
         expanded.as_ref(),
         transcript,
@@ -643,7 +643,7 @@ where
     let (stage1_proof, stage1_point, s_claim) = if is_terminal_fold {
         (None, vec![E::zero(); rs.col_bits + rs.ring_bits], E::zero())
     } else {
-        let (stage1_proof, stage1_point, s_claim) = prove_stage1::<F, E, T>(transcript, &rs)?;
+        let (stage1_proof, stage1_point, s_claim) = prove_stage1::<F, E, T>(transcript, &mut rs)?;
         transcript.append_serde(ABSORB_SUMCHECK_S_CLAIM, &stage1_proof.s_claim);
         (Some(stage1_proof), stage1_point, s_claim)
     };
@@ -951,7 +951,7 @@ where
 #[allow(clippy::too_many_arguments)]
 pub(in crate::protocol::core) fn prove_stage1<F, E, T>(
     transcript: &mut T,
-    rs: &RingSwitchOutput<E>,
+    rs: &mut RingSwitchOutput<E>,
 ) -> Result<(AkitaStage1Proof<E>, Vec<E>, E), AkitaError>
 where
     F: FieldCore + CanonicalField,
@@ -960,15 +960,17 @@ where
 {
     let _sumcheck_span = tracing::info_span!("stage1_sumcheck").entered();
     let tau0_reordered = reorder_stage1_coords(&rs.tau0, rs.col_bits, rs.ring_bits);
-    let stage1_prover = AkitaStage1Prover::new(
-        &rs.w_evals_compact,
+    let stage1_prover = AkitaStage1Prover::new_owned(
+        std::mem::take(&mut rs.w_evals_compact),
         &tau0_reordered,
         rs.b,
         rs.live_x_cols,
         rs.col_bits,
         rs.ring_bits,
     )?;
-    let (stage1_proof, stage1_point) = stage1_prover.prove::<F, T>(transcript)?;
+    let ((stage1_proof, stage1_point), w_evals_compact) =
+        stage1_prover.prove_recover_w::<F, T>(transcript)?;
+    rs.w_evals_compact = w_evals_compact;
     let s_claim = stage1_proof.s_claim;
     Ok((stage1_proof, stage1_point, s_claim))
 }

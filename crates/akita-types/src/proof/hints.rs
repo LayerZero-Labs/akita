@@ -56,8 +56,15 @@ impl<F: FieldCore> AkitaCommitmentHint<F> {
     /// the hint is empty, or the flattened digit planes do not match the
     /// concatenated block-size metadata.
     pub fn into_flat_parts(self) -> Result<DigitBlocks, AkitaError> {
-        let digit_stride = self
-            .decomposed_inner_rows
+        let mut decomposed_inner_rows = self.decomposed_inner_rows;
+        if decomposed_inner_rows.len() == 1 {
+            return decomposed_inner_rows.pop().ok_or_else(|| {
+                AkitaError::InvalidInput(
+                    "cannot flatten an empty commitment hint into ring-switch view".to_string(),
+                )
+            });
+        }
+        let digit_stride = decomposed_inner_rows
             .first()
             .map(DigitBlocks::digit_stride)
             .ok_or_else(|| {
@@ -66,13 +73,12 @@ impl<F: FieldCore> AkitaCommitmentHint<F> {
                 )
             })?;
         let mut block_sizes = Vec::new();
-        let total_digits: usize = self
-            .decomposed_inner_rows
+        let total_digits: usize = decomposed_inner_rows
             .iter()
             .map(|digits| digits.digits().len())
             .sum();
         let mut flat_digits = Vec::with_capacity(total_digits);
-        for digits in &self.decomposed_inner_rows {
+        for digits in &decomposed_inner_rows {
             if digits.digit_stride() != digit_stride {
                 return Err(AkitaError::InvalidInput(
                     "commitment hint components have mismatched digit strides".to_string(),

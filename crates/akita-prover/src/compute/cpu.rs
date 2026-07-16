@@ -475,7 +475,10 @@ where
             // base-lift packing sums gadget digits and can push coefficients
             // past the balanced range; those must commit through the general
             // raw ring mat-vec instead of the balanced-digit LUT kernel.
-            if digit_blocks_are_balanced(&blocks, row_width, plan.log_basis) {
+            let known_balanced = plan
+                .known_balanced_log_basis
+                .is_some_and(|source_log_basis| plan.log_basis >= source_log_basis);
+            if known_balanced || digit_blocks_are_balanced(&blocks, row_width, plan.log_basis) {
                 prepared.with_shared_ntt::<D, _>(|ntt| {
                     mat_vec_mul_ntt_digits_i8(ntt, plan.n_rows, row_width, &blocks, plan.log_basis)
                 })

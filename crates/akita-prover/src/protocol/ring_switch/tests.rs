@@ -35,9 +35,9 @@ fn centered_i32_decompose_matches_ring_decompose() {
 fn compact_witness_keeps_exact_live_prefix() {
     let witness = (0..(5 * 8)).map(|value| value as i8).collect::<Vec<_>>();
     let (compact, col_bits, ring_bits) =
-        build_w_evals_compact(&witness, 8, 1, 7).expect("valid compact witness");
+        build_w_evals_compact(witness.clone().into(), 8, 1, 7).expect("valid compact witness");
 
-    assert_eq!(compact, witness);
+    assert_eq!(compact.as_ref(), witness.as_slice());
     assert_eq!(col_bits, 3);
     assert_eq!(ring_bits, 3);
 }
@@ -46,7 +46,7 @@ fn compact_witness_keeps_exact_live_prefix() {
 fn packed_compact_witness_keeps_exact_live_prefix() {
     let witness = (0..(5 * 8)).map(|value| value as i8).collect::<Vec<_>>();
     let (compact, col_bits, ring_bits) =
-        build_w_evals_compact(&witness, 8, 2, 7).expect("valid packed witness");
+        build_w_evals_compact(witness.clone().into(), 8, 2, 7).expect("valid packed witness");
 
     assert_eq!(compact.len(), 5 * 4);
     assert_eq!(col_bits, 3);

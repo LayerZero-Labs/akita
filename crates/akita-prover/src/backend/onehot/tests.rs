@@ -679,6 +679,62 @@ fn wide_matches_reference_fp128() {
     }
 }
 
+#[test]
+fn counting_column_sweep_matches_per_block_reference() {
+    type F = Fp64<4294967197>;
+    const D: usize = 64;
+
+    let mut rng = StdRng::seed_from_u64(0x51ee_7eed);
+    let n_a = 2;
+    let num_positions_per_block = 4;
+    let num_digits_commit = 3;
+    // The production sweep threshold is 32 blocks per worker.
+    const BLOCKS_PER_THREAD: usize = 33;
+    #[cfg(feature = "parallel")]
+    let num_live_blocks = rayon::current_num_threads() * BLOCKS_PER_THREAD;
+    #[cfg(not(feature = "parallel"))]
+    let num_live_blocks = BLOCKS_PER_THREAD;
+    let active_a_cols = num_positions_per_block * num_digits_commit;
+    let a_matrix: Vec<Vec<CyclotomicRing<F, D>>> = (0..n_a)
+        .map(|_| {
+            (0..active_a_cols)
+                .map(|_| CyclotomicRing::random(&mut rng))
+                .collect()
+        })
+        .collect();
+    let buckets = (0..num_live_blocks)
+        .map(|block| {
+            vec![
+                MultiChunkEntry::new((block % num_positions_per_block) as u32, vec![0, 7, 31]),
+                MultiChunkEntry::new(((block + 1) % num_positions_per_block) as u32, vec![5, 19]),
+            ]
+        })
+        .collect::<Vec<_>>();
+    let blocks = super::test_helpers::from_buckets(buckets.clone());
+    let block_views = (0..num_live_blocks)
+        .map(|block| blocks.block(block))
+        .collect::<Vec<_>>();
+    let a_flat =
+        FlatMatrix::from_ring_slice(&a_matrix.iter().flatten().copied().collect::<Vec<_>>());
+    let a_view = a_flat.ring_view::<D>(n_a, active_a_cols).unwrap();
+
+    let got = column_sweep_ajtai_onehot::<MultiChunkEntry, F, D>(
+        &a_view,
+        &block_views,
+        n_a,
+        active_a_cols,
+        num_digits_commit,
+    );
+    let expected = buckets
+        .iter()
+        .map(|entries| {
+            inner_ajtai_multi_chunk_t_only::<F, D>(&a_matrix, entries, num_digits_commit)
+        })
+        .collect::<Vec<_>>();
+
+    assert_eq!(got, expected);
+}
+
 // -------------------------------------------------------------------------
 // Tests that exercise the column-sweep kernels and the OneHotPoly-level
 // behaviour defined above.

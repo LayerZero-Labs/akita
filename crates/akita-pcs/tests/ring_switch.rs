@@ -364,9 +364,13 @@ mod tests {
             ring_switch_build_w::<F, CpuBackend>(&instance, witness, &op_ctx, &lp, false)
                 .expect("ring-switch witness");
         let opening_source_len = build_output.w.len() / D;
-        let (w_compact, _col_bits, _ring_bits) =
-            build_w_evals_compact(build_output.w.as_i8_digits(), D, 1, opening_source_len)
-                .expect("compact witness");
+        let (w_compact, _col_bits, _ring_bits) = build_w_evals_compact(
+            build_output.w.as_i8_digits().into(),
+            D,
+            1,
+            opening_source_len,
+        )
+        .expect("compact witness");
 
         let alpha = F::from_u64(29);
         let alpha_evals_y = scalar_powers(alpha, D);
@@ -510,9 +514,13 @@ mod tests {
             ring_switch_build_w::<F, CpuBackend>(&instance, witness, &op_ctx, &lp, false)
                 .expect("ring-switch witness");
         let opening_source_len = build_output.w.len() / D;
-        let (w_compact, _col_bits, _ring_bits) =
-            build_w_evals_compact(build_output.w.as_i8_digits(), D, 1, opening_source_len)
-                .expect("compact witness");
+        let (w_compact, _col_bits, _ring_bits) = build_w_evals_compact(
+            build_output.w.as_i8_digits().into(),
+            D,
+            1,
+            opening_source_len,
+        )
+        .expect("compact witness");
 
         let alpha = F::from_u64(17);
         let alpha_evals_y = scalar_powers(alpha, D);

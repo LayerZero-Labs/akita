@@ -43,7 +43,7 @@ pub use finalize::ring_switch_finalize;
 /// needed for sumchecks and level chaining.
 pub struct RingSwitchOutput<E: FieldCore> {
     /// Compact evaluation table of w, stored as x-outer/y-inner slices.
-    pub w_evals_compact: Vec<i8>,
+    pub w_evals_compact: std::sync::Arc<[i8]>,
     /// Exact live x-column count; the remaining Boolean x domain is an implicit zero suffix.
     pub live_x_cols: usize,
     /// Tau1-weighted relation table over the full Boolean coefficient domain.

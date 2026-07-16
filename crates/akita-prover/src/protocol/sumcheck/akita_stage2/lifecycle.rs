@@ -6,7 +6,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
     #[tracing::instrument(skip_all, name = "AkitaStage2Prover::new")]
     pub(crate) fn new(
         batching_coeff: E,
-        w_evals_compact: Vec<i8>,
+        w_evals_compact: impl Into<std::sync::Arc<[i8]>>,
         stage1_point: &[E],
         s_claim: E,
         b: usize,
@@ -19,6 +19,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
         trace_table: Option<TraceTable<E>>,
         trace_opening_claim: E,
     ) -> Result<Self, AkitaError> {
+        let w_evals_compact = w_evals_compact.into();
         let num_vars = col_bits.checked_add(ring_bits).ok_or_else(|| {
             AkitaError::InvalidInput("stage-2 challenge width overflow".to_string())
         })?;

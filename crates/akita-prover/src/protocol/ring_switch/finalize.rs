@@ -157,13 +157,22 @@ where
 
         #[cfg(feature = "parallel")]
         let (relation_weight_evals_result, w_result) = rayon::join(build_relation_weights, || {
-            build_w_evals_compact(w.as_i8_digits(), opening_ring_dim, 1, opening_source_len)
+            build_w_evals_compact(
+                w.shared_i8_digits(),
+                opening_ring_dim,
+                1,
+                opening_source_len,
+            )
         });
         #[cfg(not(feature = "parallel"))]
         let (relation_weight_evals_result, w_result) = {
             let relation_weight_evals = build_relation_weights();
-            let w_compact =
-                build_w_evals_compact(w.as_i8_digits(), opening_ring_dim, 1, opening_source_len);
+            let w_compact = build_w_evals_compact(
+                w.shared_i8_digits(),
+                opening_ring_dim,
+                1,
+                opening_source_len,
+            );
             (relation_weight_evals, w_compact)
         };
 

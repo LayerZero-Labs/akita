@@ -190,15 +190,20 @@ pub(crate) struct PreparedRingSwitchGroup<'a, F: FieldCore, const D: usize> {
     pub(crate) z_folded_centered_per_chunk: Vec<Vec<[i32; D]>>,
 }
 
-fn concat_digit_blocks(blocks: &[DigitBlocks]) -> Result<DigitBlocks, AkitaError> {
-    let Some(first) = blocks.first() else {
+fn concat_digit_blocks<'a>(
+    blocks: impl IntoIterator<Item = &'a DigitBlocks>,
+) -> Result<DigitBlocks, AkitaError> {
+    let mut blocks = blocks.into_iter();
+    let Some(first) = blocks.next() else {
         return Err(AkitaError::InvalidInput(
             "multi-group ring-switch requires at least one digit group".to_string(),
         ));
     };
     let stride = first.digit_stride();
-    let mut digits = Vec::new();
-    let mut block_sizes = Vec::new();
+    let mut digits = Vec::with_capacity(first.digits().len());
+    let mut block_sizes = Vec::with_capacity(first.block_sizes().len());
+    digits.extend_from_slice(first.digits());
+    block_sizes.extend_from_slice(first.block_sizes());
     for block in blocks {
         if block.digit_stride() != stride {
             return Err(AkitaError::InvalidInput(
@@ -430,13 +435,13 @@ where
                     ..
                 } = group;
                 let e_folded = e_folded.as_ring_slice_trusted::<D>().to_vec();
-                let recomposed_inner_rows = crate::compute::recompose_flat_hint_inner_rows::<F, D>(
-                    &hint,
+                let t_hat = hint.into_flat_parts()?;
+                t_hat.ensure_stride::<D>()?;
+                let recomposed_inner_rows = crate::compute::recompose_inner_rows::<F, D>(
+                    &t_hat,
                     group_lp.num_digits_open(),
                     group_lp.log_basis(),
                 )?;
-                let t_hat = hint.into_flat_parts()?;
-                t_hat.ensure_stride::<D>()?;
                 let z_folded_centered_per_chunk =
                     typed_z_folded_centered_per_chunk::<D>(&z_folded_centered_per_chunk)?;
                 owned.push(PreparedRingSwitchGroup {
@@ -468,11 +473,15 @@ where
             // Shared relation quotient `r`: its consistency row (summed over all
             // groups) and D rows span every group, so a single trailing block owns
             // it. `groups.len() == 1` reproduces the scalar layout byte-for-byte.
-            let e_hat_blocks = order
-                .iter()
-                .map(|&group_index| owned[group_index].e_hat.clone())
-                .collect::<Vec<_>>();
-            let e_hat_concat = concat_digit_blocks(&e_hat_blocks)?;
+            let e_hat_concat_storage;
+            let e_hat_concat = if let [group_index] = order.as_slice() {
+                &owned[*group_index].e_hat
+            } else {
+                e_hat_concat_storage = concat_digit_blocks(
+                    order.iter().map(|&group_index| &owned[group_index].e_hat),
+                )?;
+                &e_hat_concat_storage
+            };
             let ring_multiplier_points = owned
                 .iter()
                 .enumerate()
@@ -485,7 +494,7 @@ where
                 &owned,
                 &ring_multiplier_points,
                 instance.group_challenges(),
-                &e_hat_concat,
+                e_hat_concat,
                 instance.rhs(),
                 dims,
                 instance.relation_matrix_row_layout(),
@@ -539,8 +548,20 @@ where
             } else {
                 None
             };
+            // Every segment of the generated witness is balanced, but grouped
+            // roots may mix decomposition bases. The whole-buffer certificate
+            // must therefore carry the widest emitted basis: using only the
+            // root basis could incorrectly trust a later narrower commit.
+            let known_balanced_log_basis = owned
+                .iter()
+                .map(|group| group.params.log_basis())
+                .fold(lp.log_basis, u32::max);
             Ok(RingSwitchBuildOutput {
-                w: RecursiveWitnessFlat::from_witness_layout::<D>(out, &witness_layout)?,
+                w: RecursiveWitnessFlat::from_witness_layout::<D>(
+                    out,
+                    &witness_layout,
+                    known_balanced_log_basis,
+                )?,
                 terminal_artifacts,
             })
         }
