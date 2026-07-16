@@ -51,7 +51,9 @@ pub struct PreparedCrtNttProfile {
     pub profile_id: &'static str,
     /// Number of CRT primes in the selected profile.
     pub num_primes: usize,
-    /// Signed limb width used by the CRT NTT representation.
+    /// Maximum bit length of a CRT prime modulus.
+    pub prime_modulus_bits: u32,
+    /// Signed storage width used by the CRT NTT representation.
     pub limb_bits: u32,
     /// Largest balanced i8 log basis accepted by prover i8 kernels.
     pub max_i8_log_basis: u32,
@@ -66,6 +68,7 @@ impl From<CrtI8CapacityProfile> for PreparedCrtNttProfile {
         Self {
             profile_id: profile.profile_id,
             num_primes: profile.num_primes,
+            prime_modulus_bits: profile.prime_modulus_bits,
             limb_bits: profile.limb_bits,
             max_i8_log_basis: profile.max_i8_log_basis,
             balanced_digit_safe_width: profile.balanced_digit_safe_width,
