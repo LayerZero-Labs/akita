@@ -7,7 +7,8 @@ The codebase is being decomposed into a focused `akita-*` crate family rather th
 
 The current workspace exposes the main ownership boundaries under `crates/`:
 
-- `akita-field`, `akita-serialization`, and `akita-algebra` own foundational arithmetic, encoding, NTT, ring, and polynomial utilities.
+- `akita-serialization` owns Akita's wire encoding, and `akita-algebra` owns NTT, ring, and polynomial utilities.
+- `akita-error` owns Akita protocol errors independently of the shared field package.
 - `akita-transcript`, `akita-challenges`, and `akita-sumcheck` own Fiat-Shamir transcripts, challenge sampling, and generic sumcheck machinery.
 - `akita-types` owns shared proof, setup, schedule, layout, SIS, and commitment data shapes used by both roles.
 - `akita-planner` is the `Cfg`-free schedule engine: generated table types, on-demand expansion, catalog identity validation, and the schedule-search DP. It sits *below* `akita-config`.

@@ -3,7 +3,7 @@
 | Field     | Value                        |
 | --------- | ---------------------------- |
 | Author(s) | Taghi Badakhshan             |
-| Status    | proposal for this PR         |
+| Status    | superseded by `jolt-field-unification.md` |
 | Branch    | `taghi/refactor/akita-field` |
 
 ## Summary

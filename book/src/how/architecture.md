@@ -11,7 +11,8 @@ orchestration lives in `akita-pcs`.
 
 | Crate | Role |
 |-------|------|
-| `akita-field` | Field traits, prime/extension fields, unreduced/packed helpers, FFT, parallel macros |
+| `jolt-field` (Jolt repository) | Shared field traits, prime/extension fields, unreduced/packed helpers, FFT, parallel macros |
+| `akita-error` | Akita protocol error definition |
 | `akita-witness` | Shared borrowed witness/polynomial view vocabulary (`PolynomialView`, `WitnessProvider`) for sumcheck and polyops paths |
 | `akita-serialization` | Serialization, validation, and compression traits |
 | `akita-algebra` | Modules, vectors, NTTs, cyclotomic rings, sparse challenges, polynomials |
@@ -32,6 +33,7 @@ CI enforces one-way boundaries via `scripts/check-crate-deps.sh`.
 
 Key structural facts:
 
+- `jolt-field` is owned by Jolt and imported directly; Akita has no field wrapper crate.
 - `akita-planner` sits **below** `akita-config` and names no `CommitmentConfig` type.
 - `akita-verifier` depends on `akita-config` and therefore reaches `akita-planner` transitively; the schedule DP is verifier-reachable.
 - Verifier-only integrations should use `akita-verifier` + `akita-types` + `akita-config`, not the umbrella `akita-pcs` package.

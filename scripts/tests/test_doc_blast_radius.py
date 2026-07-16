@@ -23,7 +23,10 @@ class TestPathMatchesGlob(unittest.TestCase):
             )
         )
         self.assertFalse(
-            mod.path_matches_glob("crates/akita-field/src/lib.rs", "crates/akita-planner/**")
+            mod.path_matches_glob(
+                "crates/akita-serialization/src/field_impls.rs",
+                "crates/akita-planner/**",
+            )
         )
 
     def test_single_file(self) -> None:

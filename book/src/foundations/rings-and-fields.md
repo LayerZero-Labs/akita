@@ -8,6 +8,9 @@ subfield where extension-field points live, and the norms that control folding.
 This page folds directly from paper §2.1, with the concrete low-degree
 arithmetic from implementation appendix B.1.4.
 
+Paths under `crates/jolt-field` refer to the canonical package in the Jolt
+repository; Akita imports those types directly.
+
 ## The ring and partial splitting
 
 \\( R_q = \mathbb{Z}_q[X]/(X^d+1) \\) with \\( d = 2^\alpha \\); when
@@ -31,7 +34,7 @@ the concrete degree-2 and degree-4 arithmetic in the implementation
 **Sources to fold in**
 
 - Paper §2.1 ("Extension-field embedding", "Ring-subfield coordinates"; Hachi Thm 2 / Lemma 4), App B.1.4 `sec:akita-ext-fields` (degree-2/4 multiplication tables, tower squaring/inversion, the \\( K=4 \\) trace map).
-- `crates/akita-field/src/ext/` (`fp_ext2.rs`, `fp_ext4.rs`, `fp_ext8.rs`, `lift.rs`, `native_algebra.rs`).
+- `crates/jolt-field/src/ext/` (`fp_ext2.rs`, `fp_ext4.rs`, `fp_ext8.rs`, `lift.rs`, `native_algebra.rs`).
 
 ## Base-field coefficients vs extension evaluation points
 
@@ -44,7 +47,7 @@ reduction later resolves.
 **Sources to fold in**
 
 - Paper §2.1 ("Base-field coefficients and extension-field points").
-- `crates/akita-field/src/ext/lift.rs`, `ext/mod.rs`.
+- `crates/jolt-field/src/ext/lift.rs`, `ext/mod.rs`.
 
 ## Norms, invertibility, and challenge families
 

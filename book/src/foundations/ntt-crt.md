@@ -8,6 +8,9 @@ the smooth-subgroup FFT, and the accumulation-capacity bound that governs
 chunking. This is the bridge from the §2.1 algebra to the hot prover loops, and
 folds from implementation appendix B.1-B.2.
 
+Paths under `crates/jolt-field` refer to the canonical package in the Jolt
+repository.
+
 ## Pseudo-Mersenne fields and Solinas reduction
 
 Every prime field is \\( p = 2^k - c \\) with small \\( c \\); elements are
@@ -18,7 +21,7 @@ widths (16/31/32/64/128) and the fused multiply-add.
 **Sources to fold in**
 
 - Paper App B.1.1-B.1.2 (`alg:akita-solinas`, `tab:akita-primes`, prime selection).
-- `crates/akita-field/src/prime/` (`fp32.rs`, `fp64.rs`, `fp128/`, `pseudo_mersenne.rs`).
+- `crates/jolt-field/src/prime/` (`fp32.rs`, `fp64.rs`, `fp128/`, `pseudo_mersenne.rs`).
 
 ## Deferred reduction and balanced digits
 
@@ -28,7 +31,7 @@ signed balanced-digit extraction that feeds the commitment mat-vec.
 **Sources to fold in**
 
 - Paper App B.1.3 (`sec:akita-deferred-acc`), B.1.3 `sec:akita-balanced-digits`.
-- `crates/akita-field/src/unreduced/`, `crates/akita-algebra/src/ring/cyclotomic/decomposition.rs`.
+- `crates/jolt-field/src/unreduced/`, `crates/akita-algebra/src/ring/cyclotomic/decomposition.rs`.
 
 ## CRT+NTT representation
 
@@ -64,4 +67,4 @@ evaluation.
 **Sources to fold in**
 
 - Paper App B.1.5 `sec:akita-fft` (mixed-radix DIT, Winograd kernels, coset Reed-Solomon).
-- `crates/akita-field/src/fft.rs`.
+- `crates/jolt-field/src/fft.rs`.

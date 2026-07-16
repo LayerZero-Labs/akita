@@ -13,7 +13,8 @@ orchestration lives in `akita-pcs`.
 
 | Crate | Role |
 |-------|------|
-| `akita-field` | Field traits, prime/extension fields, FFT, parallel macros |
+| `jolt-field` (Jolt repository) | Shared field traits, prime/extension fields, packed/unreduced arithmetic, FFT, parallel macros |
+| `akita-error` | Akita protocol error definition |
 | `akita-witness` | Shared `PolynomialView` / `WitnessProvider` vocabulary |
 | `akita-serialization` | Serialization, validation, compression traits |
 | `akita-algebra` | Modules, NTTs, cyclotomic rings, polynomials |
@@ -34,7 +35,8 @@ orchestration lives in `akita-pcs`.
 ```mermaid
 graph TD
   Ser["akita-serialization"]
-  Field["akita-field"]
+  Error["akita-error"]
+  Field["jolt-field"]
   Witness["akita-witness"]
   Algebra["akita-algebra"]
   Transcript["akita-transcript"]
@@ -48,35 +50,45 @@ graph TD
   Setup["akita-setup"]
   Pcs["akita-pcs"]
 
-  Field --> Ser
+  Ser --> Field
+  Error --> Field
   Witness --> Field
+  Witness --> Error
   Algebra --> Field
+  Algebra --> Error
   Algebra --> Ser
   Transcript --> Field
   Transcript --> Ser
   Challenges --> Field
+  Challenges --> Error
   Challenges --> Transcript
   Sumcheck --> Algebra
+  Sumcheck --> Error
   Sumcheck --> Field
   Sumcheck --> Ser
   Sumcheck --> Transcript
   Types --> Algebra
   Types --> Challenges
+  Types --> Error
   Types --> Field
   Types --> Ser
   Types --> Sumcheck
   Types --> Transcript
   Planner --> Challenges
+  Planner --> Error
   Planner --> Field
   Planner --> Types
   Config --> Challenges
+  Config --> Error
   Config --> Field
   Config --> Planner
+  Config --> Ser
   Config --> Transcript
   Config --> Types
   Verifier --> Algebra
   Verifier --> Challenges
   Verifier --> Config
+  Verifier --> Error
   Verifier --> Field
   Verifier --> Ser
   Verifier --> Sumcheck
@@ -85,6 +97,7 @@ graph TD
   Prover --> Algebra
   Prover --> Challenges
   Prover --> Config
+  Prover --> Error
   Prover --> Field
   Prover --> Ser
   Prover --> Sumcheck
@@ -92,6 +105,7 @@ graph TD
   Prover --> Types
   Setup --> Algebra
   Setup --> Config
+  Setup --> Error
   Setup --> Field
   Setup --> Prover
   Setup --> Ser
@@ -99,6 +113,7 @@ graph TD
   Pcs --> Algebra
   Pcs --> Challenges
   Pcs --> Config
+  Pcs --> Error
   Pcs --> Field
   Pcs --> Prover
   Pcs --> Ser
@@ -113,14 +128,18 @@ graph TD
 
 - `akita-witness` owns the shared borrowed witness/polynomial view vocabulary
   (`PolynomialView`, `WitnessProvider`) consumed by sumcheck and polyops paths.
-  It depends only on `akita-field`. At the time of this graph, it is a workspace
+  It depends only on `jolt-field`. At the time of this graph, it is a workspace
   member without downstream `Cargo.toml` edges; cite it from the architecture
   chapter and polyops/sumcheck specs until prover/sumcheck depend on it explicitly.
+- `jolt-field` is the canonical shared primitive package and lives in the Jolt
+  repository. Akita depends on it directly; no Akita field facade remains.
+- `akita-error` owns `AkitaError`. Field-independent failures stay in
+  `jolt-field::FieldError` and are converted at Akita protocol boundaries.
 - `akita-planner` is the `Cfg`-free schedule engine: generated table types,
   on-demand compact→`LevelParams` expansion, catalog identity validation, and
   the schedule-search DP. It sits **below** `akita-config` and names no
   `CommitmentConfig` type. It depends only on `akita-types`, `akita-challenges`,
-  and `akita-field`.
+  and `jolt-field`.
 - `akita-schedules` owns feature-gated shipped schedule table data. It depends
   on `akita-planner` for generated table types only.
 - `akita-config` owns concrete runtime presets and the single `CommitmentConfig`

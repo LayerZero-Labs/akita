@@ -8,7 +8,7 @@ integrators should pin versions and read release notes.
 
 | Feature | Enables |
 |---------|---------|
-| `parallel` | Rayon thread pools across `akita-field`, `akita-algebra`, `akita-prover`, `akita-setup`, `akita-sumcheck`, `akita-verifier` |
+| `parallel` | Rayon thread pools across `jolt-field`, `akita-algebra`, `akita-prover`, `akita-setup`, `akita-sumcheck`, `akita-verifier` |
 | `schedules-default` | Dev/CI schedule catalog bundles on `akita-config` |
 
 Disable parallel locally: `cargo build --no-default-features` (or add only the features you need).

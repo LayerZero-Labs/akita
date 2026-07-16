@@ -9,7 +9,7 @@ Any malformed verifier-facing proof, setup, schedule, public claim, opening poin
 ## In scope
 
 - `akita-verifier`
-- Verifier-reachable code in `akita-types` (including SIS derivation and table materialization), `akita-serialization`, `akita-algebra`, `akita-sumcheck`, `akita-transcript`, `akita-challenges`, verifier-used `akita-field` paths
+- Verifier-reachable code in `akita-types` (including SIS derivation and table materialization), `akita-serialization`, `akita-algebra`, `akita-sumcheck`, `akita-transcript`, `akita-challenges`, verifier-used `jolt-field` paths
 - `akita-config` (every `CommitmentConfig` method reachable from `batched_verify`)
 - `akita-planner` (the schedule-search DP is verifier-reachable through `CommitmentConfig::runtime_schedule` table-miss fallback)
 
