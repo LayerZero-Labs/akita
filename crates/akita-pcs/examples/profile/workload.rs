@@ -1,3 +1,4 @@
+use crate::parallel::ProfileThreadPools;
 use crate::report::{
     emit_proof_tail_report, emit_runtime_schedule_summary, observed_stage3_setup_product_bytes,
     print_batched_proof_summary, report_crt_profile, report_setup_sizes, report_timing,
@@ -437,17 +438,9 @@ fn run_prove<
     CpuBackend: RuntimeRootCommitBackend<FF, P, Cfg::ExtField>
         + RecursiveProveBackend<FF, P, Cfg::ExtField>,
 {
-    let t0 = Instant::now();
-    let (commitment, hint) =
-        AkitaCommitmentScheme::<Cfg>::commit(setup, std::slice::from_ref(poly), stack).unwrap();
-    report_timing(label, "commit", t0.elapsed().as_secs_f64());
-
+    let pools = ProfileThreadPools::get();
     let poly_refs: [&P; 1] = [poly];
-    let commitments = [commitment];
     let openings = [opening];
-
-    let t0 = Instant::now();
-    let mut prover_transcript = AkitaTranscript::<FF>::new(b"profile");
     let setup_contribution_mode = profile_setup_contribution_mode();
     tracing::info!(
         label,
@@ -455,16 +448,29 @@ fn run_prove<
         "profile setup-contribution mode"
     );
     eprintln!("[{label}] setup_contribution_mode: {setup_contribution_mode:?}");
-    let proof = AkitaCommitmentScheme::<Cfg>::batched_prove(
-        setup,
-        prover_claims(pt, &poly_refs[..], &commitments[0], hint),
-        stack,
-        &mut prover_transcript,
-        BasisMode::Lagrange,
-        setup_contribution_mode,
-    )
-    .unwrap();
-    report_timing(label, "prove", t0.elapsed().as_secs_f64());
+
+    let (commitments, proof) = {
+        let t0 = Instant::now();
+        let (commitment, hint) =
+            AkitaCommitmentScheme::<Cfg>::commit(setup, std::slice::from_ref(poly), stack).unwrap();
+        report_timing(label, "commit", t0.elapsed().as_secs_f64());
+
+        let commitments = [commitment];
+        let t0 = Instant::now();
+        let mut prover_transcript = AkitaTranscript::<FF>::new(b"profile");
+        let proof = AkitaCommitmentScheme::<Cfg>::batched_prove(
+            setup,
+            prover_claims(pt, &poly_refs[..], &commitments[0], hint),
+            stack,
+            &mut prover_transcript,
+            BasisMode::Lagrange,
+            setup_contribution_mode,
+        )
+        .unwrap();
+        report_timing(label, "prove", t0.elapsed().as_secs_f64());
+        (commitments, proof)
+    };
+
     assert_observed_proof_size::<FF, Cfg::ExtField>(label, &proof);
     print_batched_proof_summary::<FF, Cfg::ExtField, D>(label, &proof);
     tracing::info!(
@@ -520,24 +526,27 @@ fn run_prove<
     }
 
     let t0 = Instant::now();
-    let verifier_setup = AkitaCommitmentScheme::<Cfg>::setup_verifier(setup);
-    let mut verifier_transcript = AkitaTranscript::<FF>::new(b"profile");
-    match AkitaCommitmentScheme::<Cfg>::batched_verify(
-        &proof,
-        &verifier_setup,
-        &mut verifier_transcript,
-        verifier_claims(pt, &openings[..], &commitments[0]),
-        BasisMode::Lagrange,
-        setup_contribution_mode,
-    ) {
-        Ok(()) => report_timing(label, "verify OK", t0.elapsed().as_secs_f64()),
-        Err(e) => {
-            let elapsed_s = t0.elapsed().as_secs_f64();
-            tracing::error!(label, elapsed_s, error = %e, "verify FAILED");
-            eprintln!("[{label}] verify FAILED: {elapsed_s:.6}s ({e})");
-            panic!("[{label}] profile verification failed: {e}");
+    pools.in_verify(|| {
+        let verifier_setup = AkitaCommitmentScheme::<Cfg>::setup_verifier(setup);
+        let mut verifier_transcript = AkitaTranscript::<FF>::new(b"profile");
+        match AkitaCommitmentScheme::<Cfg>::batched_verify(
+            &proof,
+            &verifier_setup,
+            &mut verifier_transcript,
+            verifier_claims(pt, &openings[..], &commitments[0]),
+            BasisMode::Lagrange,
+            setup_contribution_mode,
+        ) {
+            Ok(()) => {}
+            Err(e) => {
+                let elapsed_s = t0.elapsed().as_secs_f64();
+                tracing::error!(label, elapsed_s, error = %e, "verify FAILED");
+                eprintln!("[{label}] verify FAILED: {elapsed_s:.6}s ({e})");
+                panic!("[{label}] profile verification failed: {e}");
+            }
         }
-    }
+    });
+    report_timing(label, "verify OK", t0.elapsed().as_secs_f64());
 }
 
 pub(crate) fn run_dense_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
@@ -780,68 +789,77 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
         };
     let poly_refs: Vec<&OneHotPoly<FF, u8>> = polys.iter().collect();
 
-    let t0 = Instant::now();
+    let pools = ProfileThreadPools::get();
     let setup_contribution_mode = profile_setup_contribution_mode();
-    let setup = match setup_contribution_mode {
-        SetupContributionMode::Direct => AkitaCommitmentScheme::<Cfg>::setup_prover(nv, num_polys),
-        SetupContributionMode::Recursive => {
-            AkitaCommitmentScheme::<RecursiveCommitmentConfig<Cfg>>::setup_prover(nv, num_polys)
+    let (commitments, proof, setup) = {
+        let t0 = Instant::now();
+        let setup = match setup_contribution_mode {
+            SetupContributionMode::Direct => {
+                AkitaCommitmentScheme::<Cfg>::setup_prover(nv, num_polys)
+            }
+            SetupContributionMode::Recursive => {
+                AkitaCommitmentScheme::<RecursiveCommitmentConfig<Cfg>>::setup_prover(nv, num_polys)
+            }
         }
-    }
-    .unwrap();
-    let setup_expand_secs = t0.elapsed().as_secs_f64();
-    let t_prepare = Instant::now();
-    let prepared = CpuBackend.prepare_setup(&setup).unwrap();
-    let stack =
-        akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
-            .expect("stack");
-    report_timing(label, "setup_expand", setup_expand_secs);
-    report_timing(label, "backend_prepare", t_prepare.elapsed().as_secs_f64());
-    report_timing(label, "setup", t0.elapsed().as_secs_f64());
-    let setup_ring_elements = setup.expanded.shared_matrix().total_ring_elements();
-    report_setup_sizes(
-        label,
-        setup_ring_elements,
-        setup_ring_elements * D * std::mem::size_of::<FF>(),
-        prepared.shared_ntt_cache_bytes(),
-    );
-    report_crt_profile(
-        label,
-        prepared
-            .shared_ntt_profile::<D>()
-            .expect("prepared setup CRT profile"),
-    );
+        .unwrap();
+        let setup_expand_secs = t0.elapsed().as_secs_f64();
+        let t_prepare = Instant::now();
+        let prepared = CpuBackend.prepare_setup(&setup).unwrap();
+        let stack = akita_prover::UniformProverStack::uniform(
+            &CpuBackend,
+            &prepared,
+            setup.expanded.as_ref(),
+        )
+        .expect("stack");
+        report_timing(label, "setup_expand", setup_expand_secs);
+        report_timing(label, "backend_prepare", t_prepare.elapsed().as_secs_f64());
+        report_timing(label, "setup", t0.elapsed().as_secs_f64());
+        let setup_ring_elements = setup.expanded.shared_matrix().total_ring_elements();
+        report_setup_sizes(
+            label,
+            setup_ring_elements,
+            setup_ring_elements * D * std::mem::size_of::<FF>(),
+            prepared.shared_ntt_cache_bytes(),
+        );
+        report_crt_profile(
+            label,
+            prepared
+                .shared_ntt_profile::<D>()
+                .expect("prepared setup CRT profile"),
+        );
 
-    let t0 = Instant::now();
-    let (commitment, hint) =
-        AkitaCommitmentScheme::<Cfg>::commit::<_, _>(&setup, &polys, &stack).unwrap();
-    let commitments = [commitment];
-    let hints = vec![hint];
-    report_timing(label, "commit", t0.elapsed().as_secs_f64());
+        let t0 = Instant::now();
+        let (commitment, hint) =
+            AkitaCommitmentScheme::<Cfg>::commit::<_, _>(&setup, &polys, &stack).unwrap();
+        let commitments = [commitment];
+        let hints = vec![hint];
+        report_timing(label, "commit", t0.elapsed().as_secs_f64());
 
-    let t0 = Instant::now();
-    let mut prover_transcript = AkitaTranscript::<FF>::new(b"profile");
-    tracing::info!(
-        label,
-        ?setup_contribution_mode,
-        "profile setup-contribution mode"
-    );
-    eprintln!("[{label}] setup_contribution_mode: {setup_contribution_mode:?}");
-    let proof = AkitaCommitmentScheme::<Cfg>::batched_prove::<_, _, _>(
-        &setup,
-        prover_claims(
-            &pt[..],
-            &poly_refs[..],
-            &commitments[0],
-            hints.into_iter().next().unwrap(),
-        ),
-        &stack,
-        &mut prover_transcript,
-        BasisMode::Lagrange,
-        setup_contribution_mode,
-    )
-    .unwrap();
-    report_timing(label, "prove", t0.elapsed().as_secs_f64());
+        let t0 = Instant::now();
+        let mut prover_transcript = AkitaTranscript::<FF>::new(b"profile");
+        tracing::info!(
+            label,
+            ?setup_contribution_mode,
+            "profile setup-contribution mode"
+        );
+        eprintln!("[{label}] setup_contribution_mode: {setup_contribution_mode:?}");
+        let proof = AkitaCommitmentScheme::<Cfg>::batched_prove::<_, _, _>(
+            &setup,
+            prover_claims(
+                &pt[..],
+                &poly_refs[..],
+                &commitments[0],
+                hints.into_iter().next().unwrap(),
+            ),
+            &stack,
+            &mut prover_transcript,
+            BasisMode::Lagrange,
+            setup_contribution_mode,
+        )
+        .unwrap();
+        report_timing(label, "prove", t0.elapsed().as_secs_f64());
+        (commitments, proof, setup)
+    };
     assert_observed_proof_size::<FF, Cfg::ExtField>(label, &proof);
     print_batched_proof_summary::<FF, Cfg::ExtField, D>(label, &proof);
     let opening_batch = OpeningClaimsLayout::new(nv, num_polys).expect("same-point opening batch");
@@ -916,24 +934,27 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
     }
 
     let t0 = Instant::now();
-    let verifier_setup = AkitaCommitmentScheme::<Cfg>::setup_verifier(&setup);
-    let mut verifier_transcript = AkitaTranscript::<FF>::new(b"profile");
-    match AkitaCommitmentScheme::<Cfg>::batched_verify(
-        &proof,
-        &verifier_setup,
-        &mut verifier_transcript,
-        verifier_claims(&pt[..], &openings[..], &commitments[0]),
-        BasisMode::Lagrange,
-        setup_contribution_mode,
-    ) {
-        Ok(()) => report_timing(label, "verify OK", t0.elapsed().as_secs_f64()),
-        Err(e) => {
-            let elapsed_s = t0.elapsed().as_secs_f64();
-            tracing::error!(label, elapsed_s, error = %e, "verify FAILED");
-            eprintln!("[{label}] verify FAILED: {elapsed_s:.6}s ({e})");
-            panic!("[{label}] batched profile verification failed: {e}");
+    pools.in_verify(|| {
+        let verifier_setup = AkitaCommitmentScheme::<Cfg>::setup_verifier(&setup);
+        let mut verifier_transcript = AkitaTranscript::<FF>::new(b"profile");
+        match AkitaCommitmentScheme::<Cfg>::batched_verify(
+            &proof,
+            &verifier_setup,
+            &mut verifier_transcript,
+            verifier_claims(&pt[..], &openings[..], &commitments[0]),
+            BasisMode::Lagrange,
+            setup_contribution_mode,
+        ) {
+            Ok(()) => {}
+            Err(e) => {
+                let elapsed_s = t0.elapsed().as_secs_f64();
+                tracing::error!(label, elapsed_s, error = %e, "verify FAILED");
+                eprintln!("[{label}] verify FAILED: {elapsed_s:.6}s ({e})");
+                panic!("[{label}] batched profile verification failed: {e}");
+            }
         }
-    }
+    });
+    report_timing(label, "verify OK", t0.elapsed().as_secs_f64());
 }
 
 pub(crate) fn run_recursive_multi_group_onehot<FF, const D: usize, Cfg>(
@@ -972,157 +993,179 @@ pub(crate) fn run_recursive_multi_group_onehot<FF, const D: usize, Cfg>(
     );
 
     let total_polys = PRE_GROUPS * PRE_POLYS_PER_GROUP + final_num_polys;
-    let t0 = Instant::now();
-    let setup =
-        AkitaCommitmentScheme::<ProofCfg<Cfg>>::setup_prover(final_num_vars, total_polys).unwrap();
-    let setup_expand_secs = t0.elapsed().as_secs_f64();
-    let t_prepare = Instant::now();
-    let prepared = CpuBackend.prepare_setup(&setup).unwrap();
-    let stack =
-        akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
-            .expect("stack");
-    report_timing(label, "setup_expand", setup_expand_secs);
-    report_timing(label, "backend_prepare", t_prepare.elapsed().as_secs_f64());
-    report_timing(label, "setup", t0.elapsed().as_secs_f64());
-    let setup_ring_elements = setup.expanded.shared_matrix().total_ring_elements();
-    report_setup_sizes(
-        label,
-        setup_ring_elements,
-        setup_ring_elements * D * std::mem::size_of::<FF>(),
-        prepared.shared_ntt_cache_bytes(),
-    );
-    report_crt_profile(
-        label,
-        prepared
-            .shared_ntt_profile::<D>()
-            .expect("prepared setup CRT profile"),
-    );
-
-    let mut pre_keys = Vec::with_capacity(PRE_GROUPS);
-    let mut pre_frozen = Vec::with_capacity(PRE_GROUPS);
-    let mut pre_commitments = Vec::with_capacity(PRE_GROUPS);
-    let mut pre_hints = Vec::with_capacity(PRE_GROUPS);
-    let mut pre_polys_by_group = Vec::with_capacity(PRE_GROUPS);
-    let mut pre_openings = Vec::with_capacity(PRE_GROUPS);
+    let pools = ProfileThreadPools::get();
 
     let mut point_rng = StdRng::seed_from_u64(0xfeed_face);
     let point = random_claim_point::<FF, Cfg::ExtField>(final_num_vars, &mut point_rng);
     let pre_point = &point[..pre_num_vars];
 
-    let t_commit = Instant::now();
-    for group_idx in 0..PRE_GROUPS {
-        let key = PolynomialGroupLayout::new(pre_num_vars, PRE_POLYS_PER_GROUP);
-        let opening_batch =
-            OpeningClaimsLayout::new(pre_num_vars, PRE_POLYS_PER_GROUP).expect("precommit batch");
-        let layout =
-            ConservativeCommitmentConfig::<Cfg>::get_params_for_batched_commitment(&opening_batch)
-                .expect("precommit layout");
-        let polys = vec![make_profile_onehot_poly::<FF, D>(
-            &layout,
-            0x0bee_fcaf_2100_0000 + group_idx as u64,
-        )];
-        let openings = polys
-            .iter()
-            .map(|poly| onehot_lagrange_opening::<FF, Cfg::ExtField, u8>(poly, pre_point))
-            .collect::<Vec<_>>();
-        let (commitment, hint) =
-            AkitaCommitmentScheme::<ConservativeCommitmentConfig<Cfg>>::batched_commit(
-                &setup, &polys, &stack,
-            )
-            .expect("precommit");
-        pre_frozen.push(PrecommittedGroupParams::from_params(key, &layout));
-        pre_keys.push(key);
-        pre_commitments.push(commitment);
-        pre_hints.push(hint);
-        pre_polys_by_group.push(polys);
-        pre_openings.push(openings);
-    }
-
-    let multi_group_key = akita_types::AkitaScheduleLookupKey {
-        final_group: PolynomialGroupLayout::new(final_num_vars, final_num_polys),
-        precommitteds: pre_frozen,
-    };
-    let schedule =
-        ProofCfg::<Cfg>::runtime_schedule(multi_group_key).expect("multi-group runtime schedule");
-    let main_params =
-        akita_types::multi_group_root_commit_params(&schedule).expect("multi-group root params");
-    let final_polys = (0..final_num_polys)
-        .map(|poly_idx| {
-            make_profile_onehot_poly::<FF, D>(&main_params, 0x0bee_fcaf_2800_0000 + poly_idx as u64)
-        })
-        .collect::<Vec<_>>();
-    let final_openings = final_polys
-        .iter()
-        .map(|poly| onehot_lagrange_opening::<FF, Cfg::ExtField, u8>(poly, &point))
-        .collect::<Vec<_>>();
-    let (final_commitment, final_hint) =
-        AkitaCommitmentScheme::<ProofCfg<Cfg>>::commit_final_group(
-            &setup,
-            &final_polys,
-            &stack,
-            pre_keys,
+    let (proof, schedule, pre_openings, pre_commitments, final_openings, final_commitment, setup) = {
+        let t0 = Instant::now();
+        let setup =
+            AkitaCommitmentScheme::<ProofCfg<Cfg>>::setup_prover(final_num_vars, total_polys)
+                .unwrap();
+        let setup_expand_secs = t0.elapsed().as_secs_f64();
+        let t_prepare = Instant::now();
+        let prepared = CpuBackend.prepare_setup(&setup).unwrap();
+        let stack = akita_prover::UniformProverStack::uniform(
+            &CpuBackend,
+            &prepared,
+            setup.expanded.as_ref(),
         )
-        .expect("final multi-group commitment");
-    report_timing(label, "commit", t_commit.elapsed().as_secs_f64());
+        .expect("stack");
+        report_timing(label, "setup_expand", setup_expand_secs);
+        report_timing(label, "backend_prepare", t_prepare.elapsed().as_secs_f64());
+        report_timing(label, "setup", t0.elapsed().as_secs_f64());
+        let setup_ring_elements = setup.expanded.shared_matrix().total_ring_elements();
+        report_setup_sizes(
+            label,
+            setup_ring_elements,
+            setup_ring_elements * D * std::mem::size_of::<FF>(),
+            prepared.shared_ntt_cache_bytes(),
+        );
+        report_crt_profile(
+            label,
+            prepared
+                .shared_ntt_profile::<D>()
+                .expect("prepared setup CRT profile"),
+        );
 
-    let pre_refs_by_group = pre_polys_by_group
-        .iter()
-        .map(|polys| polys.iter().collect::<Vec<_>>())
-        .collect::<Vec<_>>();
-    let final_refs = final_polys.iter().collect::<Vec<_>>();
+        let mut pre_keys = Vec::with_capacity(PRE_GROUPS);
+        let mut pre_frozen = Vec::with_capacity(PRE_GROUPS);
+        let mut pre_commitments = Vec::with_capacity(PRE_GROUPS);
+        let mut pre_hints = Vec::with_capacity(PRE_GROUPS);
+        let mut pre_polys_by_group = Vec::with_capacity(PRE_GROUPS);
+        let mut pre_openings = Vec::with_capacity(PRE_GROUPS);
 
-    let mut prover_groups = Vec::with_capacity(PRE_GROUPS + 1);
-    for (group_idx, openings) in pre_openings.iter().enumerate() {
+        let t_commit = Instant::now();
+        for group_idx in 0..PRE_GROUPS {
+            let key = PolynomialGroupLayout::new(pre_num_vars, PRE_POLYS_PER_GROUP);
+            let opening_batch = OpeningClaimsLayout::new(pre_num_vars, PRE_POLYS_PER_GROUP)
+                .expect("precommit batch");
+            let layout = ConservativeCommitmentConfig::<Cfg>::get_params_for_batched_commitment(
+                &opening_batch,
+            )
+            .expect("precommit layout");
+            let polys = vec![make_profile_onehot_poly::<FF, D>(
+                &layout,
+                0x0bee_fcaf_2100_0000 + group_idx as u64,
+            )];
+            let openings = polys
+                .iter()
+                .map(|poly| onehot_lagrange_opening::<FF, Cfg::ExtField, u8>(poly, pre_point))
+                .collect::<Vec<_>>();
+            let (commitment, hint) =
+                AkitaCommitmentScheme::<ConservativeCommitmentConfig<Cfg>>::batched_commit(
+                    &setup, &polys, &stack,
+                )
+                .expect("precommit");
+            pre_frozen.push(PrecommittedGroupParams::from_params(key, &layout));
+            pre_keys.push(key);
+            pre_commitments.push(commitment);
+            pre_hints.push(hint);
+            pre_polys_by_group.push(polys);
+            pre_openings.push(openings);
+        }
+
+        let multi_group_key = akita_types::AkitaScheduleLookupKey {
+            final_group: PolynomialGroupLayout::new(final_num_vars, final_num_polys),
+            precommitteds: pre_frozen,
+        };
+        let schedule = ProofCfg::<Cfg>::runtime_schedule(multi_group_key)
+            .expect("multi-group runtime schedule");
+        let main_params = akita_types::multi_group_root_commit_params(&schedule)
+            .expect("multi-group root params");
+        let final_polys = (0..final_num_polys)
+            .map(|poly_idx| {
+                make_profile_onehot_poly::<FF, D>(
+                    &main_params,
+                    0x0bee_fcaf_2800_0000 + poly_idx as u64,
+                )
+            })
+            .collect::<Vec<_>>();
+        let final_openings = final_polys
+            .iter()
+            .map(|poly| onehot_lagrange_opening::<FF, Cfg::ExtField, u8>(poly, &point))
+            .collect::<Vec<_>>();
+        let (final_commitment, final_hint) =
+            AkitaCommitmentScheme::<ProofCfg<Cfg>>::commit_final_group(
+                &setup,
+                &final_polys,
+                &stack,
+                pre_keys,
+            )
+            .expect("final multi-group commitment");
+        report_timing(label, "commit", t_commit.elapsed().as_secs_f64());
+
+        let pre_refs_by_group = pre_polys_by_group
+            .iter()
+            .map(|polys| polys.iter().collect::<Vec<_>>())
+            .collect::<Vec<_>>();
+        let final_refs = final_polys.iter().collect::<Vec<_>>();
+
+        let mut prover_groups = Vec::with_capacity(PRE_GROUPS + 1);
+        for (group_idx, openings) in pre_openings.iter().enumerate() {
+            prover_groups.push(
+                PolynomialGroupClaims::new(
+                    PointVariableSelection::prefix(pre_num_vars, final_num_vars)
+                        .expect("pre point vars"),
+                    openings.clone(),
+                    pre_commitments[group_idx].clone(),
+                )
+                .expect("pre prover group"),
+            );
+        }
         prover_groups.push(
             PolynomialGroupClaims::new(
-                PointVariableSelection::prefix(pre_num_vars, final_num_vars)
-                    .expect("pre point vars"),
-                openings.clone(),
-                pre_commitments[group_idx].clone(),
+                PointVariableSelection::prefix(final_num_vars, final_num_vars)
+                    .expect("final point vars"),
+                final_openings.clone(),
+                final_commitment.clone(),
             )
-            .expect("pre prover group"),
+            .expect("final prover group"),
         );
-    }
-    prover_groups.push(
-        PolynomialGroupClaims::new(
-            PointVariableSelection::prefix(final_num_vars, final_num_vars)
-                .expect("final point vars"),
-            final_openings.clone(),
-            final_commitment.clone(),
-        )
-        .expect("final prover group"),
-    );
-    let mut prover_polys = pre_refs_by_group
-        .iter()
-        .map(|refs| refs.as_slice())
-        .collect::<Vec<_>>();
-    prover_polys.push(final_refs.as_slice());
-    let mut prover_hints = pre_hints;
-    prover_hints.push(final_hint);
+        let mut prover_polys = pre_refs_by_group
+            .iter()
+            .map(|refs| refs.as_slice())
+            .collect::<Vec<_>>();
+        prover_polys.push(final_refs.as_slice());
+        let mut prover_hints = pre_hints;
+        prover_hints.push(final_hint);
 
-    let t_prove = Instant::now();
-    let mut prover_transcript = AkitaTranscript::<FF>::new(b"profile");
-    tracing::info!(
-        label,
-        ?setup_contribution_mode,
-        "profile setup-contribution mode"
-    );
-    eprintln!("[{label}] setup_contribution_mode: {setup_contribution_mode:?}");
-    let proof = AkitaCommitmentScheme::<ProofCfg<Cfg>>::batched_prove::<_, _, _>(
-        &setup,
-        ProverOpeningData::new(
-            OpeningClaims::from_groups(point.clone(), prover_groups).expect("prover claims"),
-            prover_hints,
-            prover_polys,
+        let t_prove = Instant::now();
+        let mut prover_transcript = AkitaTranscript::<FF>::new(b"profile");
+        tracing::info!(
+            label,
+            ?setup_contribution_mode,
+            "profile setup-contribution mode"
+        );
+        eprintln!("[{label}] setup_contribution_mode: {setup_contribution_mode:?}");
+        let proof = AkitaCommitmentScheme::<ProofCfg<Cfg>>::batched_prove::<_, _, _>(
+            &setup,
+            ProverOpeningData::new(
+                OpeningClaims::from_groups(point.clone(), prover_groups).expect("prover claims"),
+                prover_hints,
+                prover_polys,
+            )
+            .expect("multi-group prover data"),
+            &stack,
+            &mut prover_transcript,
+            BasisMode::Lagrange,
+            setup_contribution_mode,
         )
-        .expect("multi-group prover data"),
-        &stack,
-        &mut prover_transcript,
-        BasisMode::Lagrange,
-        setup_contribution_mode,
-    )
-    .expect("multi-group prove");
-    report_timing(label, "prove", t_prove.elapsed().as_secs_f64());
+        .expect("multi-group prove");
+        report_timing(label, "prove", t_prove.elapsed().as_secs_f64());
+        (
+            proof,
+            schedule,
+            pre_openings,
+            pre_commitments,
+            final_openings,
+            final_commitment,
+            setup,
+        )
+    };
+
     assert_observed_proof_size::<FF, Cfg::ExtField>(label, &proof);
     print_batched_proof_summary::<FF, Cfg::ExtField, D>(label, &proof);
     report_proof_size_against_planner(
@@ -1175,22 +1218,25 @@ pub(crate) fn run_recursive_multi_group_onehot<FF, const D: usize, Cfg>(
     );
 
     let t_verify = Instant::now();
-    let verifier_setup = AkitaCommitmentScheme::<ProofCfg<Cfg>>::setup_verifier(&setup);
-    let mut verifier_transcript = AkitaTranscript::<FF>::new(b"profile");
-    match AkitaCommitmentScheme::<ProofCfg<Cfg>>::batched_verify(
-        &proof,
-        &verifier_setup,
-        &mut verifier_transcript,
-        OpeningClaims::from_groups(point, verifier_groups).expect("verifier claims"),
-        BasisMode::Lagrange,
-        setup_contribution_mode,
-    ) {
-        Ok(()) => report_timing(label, "verify OK", t_verify.elapsed().as_secs_f64()),
-        Err(e) => {
-            let elapsed_s = t_verify.elapsed().as_secs_f64();
-            tracing::error!(label, elapsed_s, error = %e, "verify FAILED");
-            eprintln!("[{label}] verify FAILED: {elapsed_s:.6}s ({e})");
-            panic!("[{label}] multi-group profile verification failed: {e}");
+    pools.in_verify(|| {
+        let verifier_setup = AkitaCommitmentScheme::<ProofCfg<Cfg>>::setup_verifier(&setup);
+        let mut verifier_transcript = AkitaTranscript::<FF>::new(b"profile");
+        match AkitaCommitmentScheme::<ProofCfg<Cfg>>::batched_verify(
+            &proof,
+            &verifier_setup,
+            &mut verifier_transcript,
+            OpeningClaims::from_groups(point, verifier_groups).expect("verifier claims"),
+            BasisMode::Lagrange,
+            setup_contribution_mode,
+        ) {
+            Ok(()) => {}
+            Err(e) => {
+                let elapsed_s = t_verify.elapsed().as_secs_f64();
+                tracing::error!(label, elapsed_s, error = %e, "verify FAILED");
+                eprintln!("[{label}] verify FAILED: {elapsed_s:.6}s ({e})");
+                panic!("[{label}] multi-group profile verification failed: {e}");
+            }
         }
-    }
+    });
+    report_timing(label, "verify OK", t_verify.elapsed().as_secs_f64());
 }
