@@ -1,11 +1,12 @@
 //! Tensor-shaped sparse-challenge sampling.
 //!
 //! For protocols that sample a length-`num_live_blocks` sparse-challenge vector per
-//! claim, the tensor variant samples two factor vectors of length
-//! `√num_live_blocks` and presents the logical fold challenge at block `(p, q)` as
-//! the negacyclic tensor product `fold_high[p] · fold_low[q]`. This shrinks transcript
-//! challenge sampling from `O(num_live_blocks)` to `O(√num_live_blocks)` per claim
-//! while leaving the downstream fold semantics unchanged through structured
+//! claim, the tensor variant samples two factor vectors — `fold_high` of length
+//! `ceil(num_live_blocks / fold_low_len)` and `fold_low` of length `fold_low_len` —
+//! and presents the logical fold challenge at block `fold_low_len * h + q` as the
+//! negacyclic tensor product `fold_high[h] · fold_low[q]`. This shrinks transcript
+//! challenge sampling from `O(num_live_blocks)` to `O(fold_high_len + fold_low_len)`
+//! per claim while leaving the downstream fold semantics unchanged through structured
 //! evaluation and factor-aware prover kernels.
 //!
 //! Sampling labels are taken as a [`ChallengeLabels`] parameter so callers can

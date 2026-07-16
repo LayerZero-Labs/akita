@@ -14,11 +14,12 @@ use akita_transcript::labels::{
 };
 use akita_transcript::{sample_ext_challenge, Transcript};
 use akita_types::{
-    eval_relation_weight_at_point, gadget_row_scalars, r_decomp_levels, validate_role_dispatch,
-    AkitaExpandedSetup, CommitmentRingDims, FpExtEncoding, LevelParams, OpeningClaimsLayout,
-    RelationMatrixRowLayout, RingMultiplierOpeningPoint, RingRelationInstance, RingRole, RingVec,
-    SetupContributionGroupInputs, SetupContributionLayout, SetupContributionPlan,
-    SetupContributionStatic, TerminalWitnessTranscriptParts, WitnessLayout, WitnessUnitLayout,
+    eval_relation_weight_at_point, gadget_row_scalars, r_decomp_levels, shared_setup_fold_gadget,
+    validate_role_dispatch, AkitaExpandedSetup, CommitmentRingDims, FpExtEncoding, LevelParams,
+    OpeningClaimsLayout, RelationMatrixRowLayout, RingMultiplierOpeningPoint, RingRelationInstance,
+    RingRole, RingVec, SetupContributionGroupInputs, SetupContributionLayout,
+    SetupContributionPlan, SetupContributionStatic, TerminalWitnessTranscriptParts, WitnessLayout,
+    WitnessUnitLayout,
 };
 use std::sync::Arc;
 
@@ -733,28 +734,19 @@ pub(crate) fn build_setup_contribution_layout<F: FieldCore>(
     )
 }
 
-struct SetupContributionEqCache<E, F> {
-    eq_low: Option<Vec<E>>,
-    z_block_low_eq: Option<Vec<E>>,
+struct SetupContributionEqCache<F> {
     fold_gadget: Option<Vec<F>>,
 }
 
-fn precompute_setup_contribution_eq_cache<E, F>(
-    layout: &SetupContributionLayout,
-    _x_challenges: &[E],
-) -> Result<SetupContributionEqCache<E, F>, AkitaError>
+fn precompute_setup_contribution_eq_cache<F>(
+    setup_layout: &SetupContributionLayout,
+) -> SetupContributionEqCache<F>
 where
     F: FieldCore + CanonicalField,
-    E: FieldCore,
 {
-    let mut cache = SetupContributionEqCache {
-        eq_low: None,
-        z_block_low_eq: None,
-        fold_gadget: None,
-    };
-    cache.fold_gadget = akita_types::shared_setup_fold_gadget::<F>(layout);
-
-    Ok(cache)
+    SetupContributionEqCache {
+        fold_gadget: shared_setup_fold_gadget(setup_layout),
+    }
 }
 
 impl<E: FieldCore> RelationMatrixEvaluator<E> {
@@ -856,12 +848,8 @@ impl<E: FieldCore> RelationMatrixEvaluator<E> {
         let mut e_structured_contribution = E::zero();
         let mut t_structured_contribution = E::zero();
         let mut z_structured_contribution = E::zero();
-        let setup_eq_cache = precompute_setup_contribution_eq_cache::<E, F>(
-            &self.setup_contribution_layout,
-            x_challenges,
-        )?;
-        let setup_eq_low = setup_eq_cache.eq_low;
-        let setup_z_block_low_eq = setup_eq_cache.z_block_low_eq;
+        let setup_eq_cache =
+            precompute_setup_contribution_eq_cache::<F>(&self.setup_contribution_layout);
         let setup_fold_gadget = setup_eq_cache.fold_gadget;
 
         // In direct setup mode, build the setup-contribution plan up front. Its
@@ -876,8 +864,6 @@ impl<E: FieldCore> RelationMatrixEvaluator<E> {
             Some(SetupContributionPlan::finish_plan::<F>(
                 &self.setup_contribution_static,
                 x_challenges,
-                setup_eq_low.as_deref(),
-                setup_z_block_low_eq.as_deref(),
                 (!fold_gadget.is_empty()).then_some(fold_gadget),
                 &self.setup_contribution_layout,
                 self.role_dims,
@@ -911,7 +897,6 @@ impl<E: FieldCore> RelationMatrixEvaluator<E> {
                 let (e_contribution, t_contribution) = evaluate_group_et_contributions::<F, E>(
                     group,
                     &units,
-                    self.setup_contribution_layout.witness_layout(),
                     self.setup_contribution_layout.opening_source_len(),
                     x_challenges,
                     consistency_weight,
@@ -956,16 +941,14 @@ impl<E: FieldCore> RelationMatrixEvaluator<E> {
                             for (commit_digit, &commit) in g_commit.iter().enumerate() {
                                 let mut z_weight = E::zero();
                                 for (fold_digit, &fold) in fold_gadget.iter().enumerate() {
-                                    let z_index =
-                                        self.setup_contribution_layout.witness_layout().z_index(
-                                            unit,
-                                            group.opening_a_evals.len(),
-                                            group.depth_commit,
-                                            group.depth_fold,
-                                            position,
-                                            commit_digit,
-                                            fold_digit,
-                                        )?;
+                                    let z_index = unit.z_index(
+                                        group.opening_a_evals.len(),
+                                        group.depth_commit,
+                                        group.depth_fold,
+                                        position,
+                                        commit_digit,
+                                        fold_digit,
+                                    )?;
                                     let z_opening_index =
                                         akita_types::checked_opening_source_index(
                                             self.setup_contribution_layout.opening_source_len(),
@@ -1014,7 +997,6 @@ impl<E: FieldCore> RelationMatrixEvaluator<E> {
 fn evaluate_group_et_contributions<F, E>(
     group: &RelationMatrixGroupEvaluator<E>,
     units: &[&WitnessUnitLayout],
-    witness_layout: &WitnessLayout,
     opening_source_len: usize,
     x_challenges: &[E],
     consistency_weight: E,
@@ -1051,8 +1033,7 @@ where
     let mut t_contribution = E::zero();
     for unit in units {
         for (claim, factors) in claim_factors.iter().enumerate() {
-            let e_index = witness_layout.e_index(
-                unit,
+            let e_index = unit.e_index(
                 group.num_claims,
                 group.depth_open,
                 claim,
@@ -1072,8 +1053,7 @@ where
                 &factors.low,
             )?;
 
-            let t_index = witness_layout.t_index(
-                unit,
+            let t_index = unit.t_index(
                 group.num_claims,
                 group.n_a,
                 group.depth_open,

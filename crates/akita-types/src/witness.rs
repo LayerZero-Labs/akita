@@ -83,6 +83,126 @@ impl WitnessUnitLayout {
     pub fn t_range(&self) -> Range<usize> {
         self.t_range.clone()
     }
+
+    pub fn e_index(
+        &self,
+        num_claims: usize,
+        depth_open: usize,
+        claim: usize,
+        global_block: usize,
+        digit: usize,
+    ) -> Result<usize, AkitaError> {
+        let expected_len = checked_mul3(
+            num_claims,
+            self.num_live_blocks,
+            depth_open,
+            "witness E shape overflow",
+        )?;
+        if self.e_range.len() != expected_len {
+            return Err(AkitaError::InvalidSetup(
+                "witness E shape disagrees with resolved range".into(),
+            ));
+        }
+        let local_block = checked_owned_block(self, global_block)?;
+        if claim >= num_claims || digit >= depth_open {
+            return Err(AkitaError::InvalidInput(
+                "witness E semantic index out of range".into(),
+            ));
+        }
+        let block_claim = self
+            .num_live_blocks
+            .checked_mul(claim)
+            .and_then(|base| base.checked_add(local_block))
+            .ok_or_else(|| AkitaError::InvalidSetup("witness E index overflow".into()))?;
+        let local = depth_open
+            .checked_mul(block_claim)
+            .and_then(|base| base.checked_add(digit))
+            .ok_or_else(|| AkitaError::InvalidSetup("witness E index overflow".into()))?;
+        checked_range_index(&self.e_range, local, "witness E")
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn t_index(
+        &self,
+        num_claims: usize,
+        n_a: usize,
+        depth_open: usize,
+        claim: usize,
+        global_block: usize,
+        a_row: usize,
+        digit: usize,
+    ) -> Result<usize, AkitaError> {
+        let expected_len = num_claims
+            .checked_mul(self.num_live_blocks)
+            .and_then(|len| len.checked_mul(n_a))
+            .and_then(|len| len.checked_mul(depth_open))
+            .ok_or_else(|| AkitaError::InvalidSetup("witness T shape overflow".into()))?;
+        if self.t_range.len() != expected_len {
+            return Err(AkitaError::InvalidSetup(
+                "witness T shape disagrees with resolved range".into(),
+            ));
+        }
+        let local_block = checked_owned_block(self, global_block)?;
+        if claim >= num_claims || a_row >= n_a || digit >= depth_open {
+            return Err(AkitaError::InvalidInput(
+                "witness T semantic index out of range".into(),
+            ));
+        }
+        let block_claim = self
+            .num_live_blocks
+            .checked_mul(claim)
+            .and_then(|base| base.checked_add(local_block))
+            .ok_or_else(|| AkitaError::InvalidSetup("witness T index overflow".into()))?;
+        let row_block_claim = n_a
+            .checked_mul(block_claim)
+            .and_then(|base| base.checked_add(a_row))
+            .ok_or_else(|| AkitaError::InvalidSetup("witness T index overflow".into()))?;
+        let local = depth_open
+            .checked_mul(row_block_claim)
+            .and_then(|base| base.checked_add(digit))
+            .ok_or_else(|| AkitaError::InvalidSetup("witness T index overflow".into()))?;
+        checked_range_index(&self.t_range, local, "witness T")
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn z_index(
+        &self,
+        num_positions_per_block: usize,
+        depth_commit: usize,
+        depth_fold: usize,
+        position: usize,
+        commit_digit: usize,
+        fold_digit: usize,
+    ) -> Result<usize, AkitaError> {
+        let expected_len = checked_mul3(
+            num_positions_per_block,
+            depth_commit,
+            depth_fold,
+            "witness Z shape overflow",
+        )?;
+        if self.z_range.len() != expected_len {
+            return Err(AkitaError::InvalidSetup(
+                "witness Z shape disagrees with resolved range".into(),
+            ));
+        }
+        if position >= num_positions_per_block
+            || commit_digit >= depth_commit
+            || fold_digit >= depth_fold
+        {
+            return Err(AkitaError::InvalidInput(
+                "witness Z semantic index out of range".into(),
+            ));
+        }
+        let position_commit = depth_commit
+            .checked_mul(position)
+            .and_then(|base| base.checked_add(commit_digit))
+            .ok_or_else(|| AkitaError::InvalidSetup("witness Z index overflow".into()))?;
+        let local = depth_fold
+            .checked_mul(position_commit)
+            .and_then(|base| base.checked_add(fold_digit))
+            .ok_or_else(|| AkitaError::InvalidSetup("witness Z index overflow".into()))?;
+        checked_range_index(&self.z_range, local, "witness Z")
+    }
 }
 
 impl WitnessLayout {
@@ -309,132 +429,6 @@ impl WitnessLayout {
             .ok_or_else(|| AkitaError::InvalidInput("witness fold has no owning unit".into()))
     }
 
-    pub fn e_index(
-        &self,
-        unit: &WitnessUnitLayout,
-        num_claims: usize,
-        depth_open: usize,
-        claim: usize,
-        global_block: usize,
-        digit: usize,
-    ) -> Result<usize, AkitaError> {
-        self.validate_unit_membership(unit)?;
-        let expected_len = checked_mul3(
-            num_claims,
-            unit.num_live_blocks,
-            depth_open,
-            "witness E shape overflow",
-        )?;
-        if unit.e_range.len() != expected_len {
-            return Err(AkitaError::InvalidSetup(
-                "witness E shape disagrees with resolved range".into(),
-            ));
-        }
-        let local_block = checked_owned_block(unit, global_block)?;
-        if claim >= num_claims || digit >= depth_open {
-            return Err(AkitaError::InvalidInput(
-                "witness E semantic index out of range".into(),
-            ));
-        }
-        let block_claim = unit
-            .num_live_blocks
-            .checked_mul(claim)
-            .and_then(|base| base.checked_add(local_block))
-            .ok_or_else(|| AkitaError::InvalidSetup("witness E index overflow".into()))?;
-        let local = depth_open
-            .checked_mul(block_claim)
-            .and_then(|base| base.checked_add(digit))
-            .ok_or_else(|| AkitaError::InvalidSetup("witness E index overflow".into()))?;
-        checked_range_index(&unit.e_range, local, "witness E")
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    pub fn t_index(
-        &self,
-        unit: &WitnessUnitLayout,
-        num_claims: usize,
-        n_a: usize,
-        depth_open: usize,
-        claim: usize,
-        global_block: usize,
-        a_row: usize,
-        digit: usize,
-    ) -> Result<usize, AkitaError> {
-        self.validate_unit_membership(unit)?;
-        let expected_len = num_claims
-            .checked_mul(unit.num_live_blocks)
-            .and_then(|len| len.checked_mul(n_a))
-            .and_then(|len| len.checked_mul(depth_open))
-            .ok_or_else(|| AkitaError::InvalidSetup("witness T shape overflow".into()))?;
-        if unit.t_range.len() != expected_len {
-            return Err(AkitaError::InvalidSetup(
-                "witness T shape disagrees with resolved range".into(),
-            ));
-        }
-        let local_block = checked_owned_block(unit, global_block)?;
-        if claim >= num_claims || a_row >= n_a || digit >= depth_open {
-            return Err(AkitaError::InvalidInput(
-                "witness T semantic index out of range".into(),
-            ));
-        }
-        let block_claim = unit
-            .num_live_blocks
-            .checked_mul(claim)
-            .and_then(|base| base.checked_add(local_block))
-            .ok_or_else(|| AkitaError::InvalidSetup("witness T index overflow".into()))?;
-        let row_block_claim = n_a
-            .checked_mul(block_claim)
-            .and_then(|base| base.checked_add(a_row))
-            .ok_or_else(|| AkitaError::InvalidSetup("witness T index overflow".into()))?;
-        let local = depth_open
-            .checked_mul(row_block_claim)
-            .and_then(|base| base.checked_add(digit))
-            .ok_or_else(|| AkitaError::InvalidSetup("witness T index overflow".into()))?;
-        checked_range_index(&unit.t_range, local, "witness T")
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    pub fn z_index(
-        &self,
-        unit: &WitnessUnitLayout,
-        num_positions_per_block: usize,
-        depth_commit: usize,
-        depth_fold: usize,
-        position: usize,
-        commit_digit: usize,
-        fold_digit: usize,
-    ) -> Result<usize, AkitaError> {
-        self.validate_unit_membership(unit)?;
-        let expected_len = checked_mul3(
-            num_positions_per_block,
-            depth_commit,
-            depth_fold,
-            "witness Z shape overflow",
-        )?;
-        if unit.z_range.len() != expected_len {
-            return Err(AkitaError::InvalidSetup(
-                "witness Z shape disagrees with resolved range".into(),
-            ));
-        }
-        if position >= num_positions_per_block
-            || commit_digit >= depth_commit
-            || fold_digit >= depth_fold
-        {
-            return Err(AkitaError::InvalidInput(
-                "witness Z semantic index out of range".into(),
-            ));
-        }
-        let position_commit = depth_commit
-            .checked_mul(position)
-            .and_then(|base| base.checked_add(commit_digit))
-            .ok_or_else(|| AkitaError::InvalidSetup("witness Z index overflow".into()))?;
-        let local = depth_fold
-            .checked_mul(position_commit)
-            .and_then(|base| base.checked_add(fold_digit))
-            .ok_or_else(|| AkitaError::InvalidSetup("witness Z index overflow".into()))?;
-        checked_range_index(&unit.z_range, local, "witness Z")
-    }
-
     pub fn r_index(
         &self,
         quotient_depth: usize,
@@ -459,15 +453,6 @@ impl WitnessLayout {
 
     pub fn r_offset(&self) -> usize {
         self.r_range.start
-    }
-
-    fn validate_unit_membership(&self, unit: &WitnessUnitLayout) -> Result<(), AkitaError> {
-        if !self.units.contains(unit) {
-            return Err(AkitaError::InvalidInput(
-                "witness unit does not belong to this layout".into(),
-            ));
-        }
-        Ok(())
     }
 }
 
@@ -769,15 +754,15 @@ mod tests {
             .expect("fold depth");
         assert_eq!(unit.global_block_range(), 4..7);
         assert_eq!(
-            layout.e_index(unit, 2, 2, 1, 6, 1).expect("e"),
+            unit.e_index(2, 2, 1, 6, 1).expect("e"),
             unit.e_range().start + 1 + 2 * (2 + 3)
         );
         assert_eq!(
-            layout.t_index(unit, 2, 1, 2, 0, 5, 0, 1).expect("t"),
+            unit.t_index(2, 1, 2, 0, 5, 0, 1).expect("t"),
             unit.t_range().start + 1 + 2
         );
         assert_eq!(
-            layout.z_index(unit, 4, 2, depth_fold, 1, 1, 0).expect("z"),
+            unit.z_index(4, 2, depth_fold, 1, 1, 0).expect("z"),
             unit.z_range().start + depth_fold * (1 + 2)
         );
         assert_eq!(
@@ -816,22 +801,19 @@ mod tests {
         let depth_fold = lp
             .num_digits_fold(2, lp.field_bits_for_cache())
             .expect("fold depth");
-        assert!(layout.e_index(unit, 2, 2, 2, 0, 0).is_err());
-        assert!(layout.t_index(unit, 2, 1, 2, 0, 0, 1, 0).is_err());
-        assert!(layout.z_index(unit, 4, 2, depth_fold, 4, 0, 0).is_err());
+        assert!(unit.e_index(2, 2, 2, 0, 0).is_err());
+        assert!(unit.t_index(2, 1, 2, 0, 0, 1, 0).is_err());
+        assert!(unit.z_index(4, 2, depth_fold, 4, 0, 0).is_err());
         assert!(layout.r_index(2, 3, 0).is_err());
     }
 
     #[test]
-    fn layout_rejects_mismatched_shapes_and_foreign_units() {
+    fn layout_rejects_mismatched_shapes() {
         let (_, _, layout) = test_layout(2);
         let unit = layout.unit(0, 0).expect("unit");
-        assert!(layout.e_index(unit, 1, 2, 0, 0, 0).is_err());
-        assert!(layout.t_index(unit, 2, 2, 2, 0, 0, 0, 0).is_err());
-        assert!(layout.z_index(unit, 1, 1, 1, 0, 0, 0).is_err());
-
-        let foreign = WitnessUnitLayout::new_for_test(0, 0, 0, 1, 0..1, 1..2, 2..3);
-        assert!(layout.e_index(&foreign, 1, 1, 0, 0, 0).is_err());
+        assert!(unit.e_index(1, 2, 0, 0, 0).is_err());
+        assert!(unit.t_index(2, 2, 2, 0, 0, 0, 0).is_err());
+        assert!(unit.z_index(1, 1, 1, 0, 0, 0).is_err());
     }
 
     #[test]

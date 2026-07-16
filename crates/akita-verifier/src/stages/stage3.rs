@@ -58,8 +58,6 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
         let plan = SetupContributionPlan::finish_plan::<F>(
             &relation_matrix_evaluator.setup_contribution_static,
             x_challenges,
-            None,
-            None,
             fold_gadget.as_deref(),
             &relation_matrix_evaluator.setup_contribution_layout,
             role_dims,

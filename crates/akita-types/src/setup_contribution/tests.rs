@@ -295,20 +295,11 @@ fn finalize_test_plan(
 fn prepare_single_group_plan(
     inputs: &TestSetupInputs,
     full_vec_randomness: &[F],
-    eq_low: Option<&[F]>,
-    z_block_low_eq: Option<&[F]>,
     fold_gadget: &[F],
     layout: &WitnessLayout,
 ) -> Result<SetupContributionPlan<F>, AkitaError> {
-    prepare_single_group_plan_parts(
-        inputs,
-        full_vec_randomness,
-        eq_low,
-        z_block_low_eq,
-        fold_gadget,
-        layout,
-    )
-    .map(|(plan, _, _)| plan)
+    prepare_single_group_plan_parts(inputs, full_vec_randomness, fold_gadget, layout)
+        .map(|(plan, _, _)| plan)
 }
 
 fn test_single_group_descriptor(
@@ -351,8 +342,6 @@ fn test_single_group_descriptor(
 fn prepare_single_group_plan_parts(
     inputs: &TestSetupInputs,
     full_vec_randomness: &[F],
-    eq_low: Option<&[F]>,
-    z_block_low_eq: Option<&[F]>,
     fold_gadget: &[F],
     layout: &WitnessLayout,
 ) -> Result<SingleGroupPlanParts, AkitaError> {
@@ -362,8 +351,6 @@ fn prepare_single_group_plan_parts(
     let plan = SetupContributionPlan::finish_plan::<F>(
         &static_plan,
         full_vec_randomness,
-        eq_low,
-        z_block_low_eq,
         Some(fold_gadget),
         &setup_layout,
         CommitmentRingDims::uniform(TEST_D),
@@ -448,8 +435,6 @@ fn structured_weight_fixture(
     let plan = SetupContributionPlan::finish_plan::<F>(
         &static_plan,
         &full_vec_randomness,
-        None,
-        None,
         Some(&fold_gadget),
         &setup_layout,
         role_dims,
@@ -604,8 +589,6 @@ fn relation_ordered_setup_layout_matches_structured_direct_and_dense_oracles() {
     let plan = SetupContributionPlan::finish_plan::<F>(
         &static_plan,
         &full_vec_randomness,
-        None,
-        None,
         Some(&fold_gadget),
         &setup_layout,
         CommitmentRingDims::uniform(TEST_D),
@@ -845,15 +828,8 @@ fn dense_z_eq_slice_uses_relative_high_carry() {
         1,
         inputs.depth_fold().unwrap(),
     );
-    let plan = prepare_single_group_plan(
-        &inputs,
-        &full_vec_randomness,
-        None,
-        None,
-        &fold_gadget,
-        &layout,
-    )
-    .unwrap();
+    let plan =
+        prepare_single_group_plan(&inputs, &full_vec_randomness, &fold_gadget, &layout).unwrap();
 
     let expected = expected_z_setup_weights(
         &layout,
@@ -906,15 +882,8 @@ fn setup_a_z_weights_do_not_include_commit_gadget() {
         inputs.depth_fold().unwrap(),
     );
 
-    let plan = prepare_single_group_plan(
-        &inputs,
-        &full_vec_randomness,
-        None,
-        None,
-        &fold_gadget,
-        &layout,
-    )
-    .unwrap();
+    let plan =
+        prepare_single_group_plan(&inputs, &full_vec_randomness, &fold_gadget, &layout).unwrap();
 
     let expected = expected_z_setup_weights(
         &layout,
@@ -1052,8 +1021,6 @@ fn single_group_plan_supports_multi_chunk_weights() {
     let plan = SetupContributionPlan::finish_plan::<F>(
         &static_plan,
         &full_vec_randomness,
-        None,
-        None,
         Some(&fold_gadget),
         &setup_layout,
         CommitmentRingDims::uniform(TEST_D),

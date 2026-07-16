@@ -105,8 +105,6 @@ impl<E: FieldCore> SetupContributionPlan<E> {
     pub fn finish_plan<F>(
         static_plan: &SetupContributionStatic<E>,
         full_vec_randomness: &[E],
-        _eq_low: Option<&[E]>,
-        _z_block_low_eq: Option<&[E]>,
         fold_gadget: Option<&[F]>,
         layout: &SetupContributionLayout,
         role_dims: CommitmentRingDims,
@@ -128,8 +126,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
         // low-table lookup plus a short high evaluation instead of a full
         // `O(col_bits+ring_bits)` equality product recomputed per column, which
         // was the dominant verifier setup-plan cost after the digit-innermost
-        // cutover (root cause 4). The `_eq_low`/`_z_block_low_eq` parameters are
-        // subsumed by this window.
+        // cutover (root cause 4).
         let eq_window = akita_algebra::offset_eq::OffsetEqWindow::new(full_vec_randomness)?;
         let dynamic_groups = static_plan
             .groups

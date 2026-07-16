@@ -116,8 +116,6 @@ fn make_case(num_live_blocks: usize, blocks_per_chunk: usize) -> SetupIndexWeigh
     let plan = SetupContributionPlan::finish_plan::<F>(
         &static_plan,
         &full_vec_randomness,
-        None,
-        None,
         Some(&fold_gadget),
         &setup_layout,
         CommitmentRingDims::uniform(D),

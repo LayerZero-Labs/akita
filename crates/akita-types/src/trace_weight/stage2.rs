@@ -694,8 +694,7 @@ where
                                 ));
                             }
                             let unit = witness_layout.unit_for_block(group_id, block)?;
-                            let physical_col = witness_layout.e_index(
-                                unit,
+                            let physical_col = unit.e_index(
                                 group_layout.num_polynomials(),
                                 group_lp.num_digits_open(),
                                 local_claim,

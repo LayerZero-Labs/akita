@@ -495,8 +495,6 @@ where
     let plan = SetupContributionPlan::finish_plan::<F>(
         &static_plan,
         x_challenges,
-        None,
-        None,
         fold_gadget.as_deref(),
         &layout,
         relation.role_dims(),

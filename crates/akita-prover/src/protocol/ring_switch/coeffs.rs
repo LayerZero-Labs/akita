@@ -263,7 +263,6 @@ fn emit_group_witness_segments<F: CanonicalField, const D: usize>(
             decompose_z_folded_planes(z_centered, num_digits_fold, group.params.log_basis())?;
         emit_witness_z_planes::<D>(
             out,
-            layout,
             unit,
             group.params.num_positions_per_block(),
             group.params.num_digits_commit(),
@@ -340,7 +339,7 @@ fn emit_group_e_planes_padded<const D_A: usize>(
                     }
                     write_padded_plane::<D_A>(
                         out,
-                        layout.e_index(unit, num_claims, depth_open, claim, global_block, digit)?,
+                        unit.e_index(num_claims, depth_open, claim, global_block, digit)?,
                         &plane,
                     )?;
                 }

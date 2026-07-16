@@ -997,9 +997,8 @@ mod tests {
                 for position in 0..num_positions_per_block {
                     for commit_digit in 0..depth_commit {
                         for fold_digit in 0..depth_fold {
-                            let source = single_layout
+                            let source = single_unit
                                 .z_index(
-                                    &single_unit,
                                     num_positions_per_block,
                                     depth_commit,
                                     depth_fold,
@@ -1008,9 +1007,8 @@ mod tests {
                                     fold_digit,
                                 )
                                 .expect("single z index");
-                            let target = chunk_layout
+                            let target = unit
                                 .z_index(
-                                    unit,
                                     num_positions_per_block,
                                     depth_commit,
                                     depth_fold,
@@ -1026,30 +1024,22 @@ mod tests {
                 for claim in 0..num_claims {
                     for block in unit.global_block_range() {
                         for digit in 0..depth_open {
-                            let source = single_layout
-                                .e_index(&single_unit, num_claims, depth_open, claim, block, digit)
+                            let source = single_unit
+                                .e_index(num_claims, depth_open, claim, block, digit)
                                 .expect("single e index");
-                            let target = chunk_layout
-                                .e_index(unit, num_claims, depth_open, claim, block, digit)
+                            let target = unit
+                                .e_index(num_claims, depth_open, claim, block, digit)
                                 .expect("chunked e index");
                             chunked[target] = relation_matrix_col_evals[source];
                             for a_row in 0..n_a {
-                                let source = single_layout
+                                let source = single_unit
                                     .t_index(
-                                        &single_unit,
-                                        num_claims,
-                                        n_a,
-                                        depth_open,
-                                        claim,
-                                        block,
-                                        a_row,
-                                        digit,
+                                        num_claims, n_a, depth_open, claim, block, a_row, digit,
                                     )
                                     .expect("single t index");
-                                let target = chunk_layout
+                                let target = unit
                                     .t_index(
-                                        unit, num_claims, n_a, depth_open, claim, block, a_row,
-                                        digit,
+                                        num_claims, n_a, depth_open, claim, block, a_row, digit,
                                     )
                                     .expect("chunked t index");
                                 chunked[target] = relation_matrix_col_evals[source];

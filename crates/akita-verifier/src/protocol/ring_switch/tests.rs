@@ -147,7 +147,6 @@ fn tensor_et_intervals_match_dense_oracle_across_residual_shards() {
     let got = evaluate_group_et_contributions::<F, F>(
         &group,
         &units,
-        &witness_layout,
         opening_source_len,
         &x_challenges,
         consistency_weight,
@@ -165,9 +164,8 @@ fn tensor_et_intervals_match_dense_oracle_across_residual_shards() {
                     .eval_logical_at_pows::<F, F>(logical, &alpha_pows)
                     .unwrap();
                 for (digit, &digit_weight) in gadget.iter().enumerate() {
-                    let e_index = witness_layout
+                    let e_index = unit
                         .e_index(
-                            unit,
                             group.num_claims,
                             group.depth_open,
                             claim,
@@ -180,9 +178,8 @@ fn tensor_et_intervals_match_dense_oracle_across_residual_shards() {
                         * challenge
                         * digit_weight;
                     for (a_row, &row_weight) in a_row_weights.iter().enumerate() {
-                        let t_index = witness_layout
+                        let t_index = unit
                             .t_index(
-                                unit,
                                 group.num_claims,
                                 group.n_a,
                                 group.depth_open,

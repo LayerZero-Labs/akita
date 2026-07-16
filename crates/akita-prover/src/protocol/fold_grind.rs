@@ -387,7 +387,6 @@ where
                 "fold grind preview did not match live transcript replay".to_string(),
             ));
         }
-        output.challenges = challenges;
     }
     Ok((candidate_outputs, nonce))
 }

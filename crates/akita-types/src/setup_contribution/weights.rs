@@ -27,8 +27,7 @@ pub(crate) fn setup_e_col_weights<E: FieldCore>(
             let block = block_claim % num_live_blocks;
             let claim = block_claim / num_live_blocks;
             let unit = layout.unit_for_block(group_id, block)?;
-            let witness_index =
-                layout.e_index(unit, num_claims, depth_open, claim, block, digit)?;
+            let witness_index = unit.e_index(num_claims, depth_open, claim, block, digit)?;
             let opening_index =
                 crate::checked_opening_source_index(opening_source_len, witness_index)?;
             Ok(eq_window.eval(opening_index))
@@ -80,16 +79,8 @@ pub(crate) fn setup_t_col_weights<E: FieldCore>(
                 .checked_add(vector)
                 .ok_or_else(|| AkitaError::InvalidSetup("setup B claim index overflow".into()))?;
             let unit = layout.unit_for_block(group_id, block)?;
-            let witness_index = layout.t_index(
-                unit,
-                num_vectors,
-                n_a,
-                depth_open,
-                claim,
-                block,
-                a_row,
-                digit,
-            )?;
+            let witness_index =
+                unit.t_index(num_vectors, n_a, depth_open, claim, block, a_row, digit)?;
             let opening_index =
                 crate::checked_opening_source_index(opening_source_len, witness_index)?;
             Ok(eq_window.eval(opening_index))
@@ -137,8 +128,7 @@ where
             let mut weight = E::zero();
             for unit in &units {
                 for (fold_digit, &fold) in fold_gadget.iter().enumerate().take(depth_fold) {
-                    let witness_index = layout.z_index(
-                        unit,
+                    let witness_index = unit.z_index(
                         num_positions_per_block,
                         depth_commit,
                         depth_fold,
