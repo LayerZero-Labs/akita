@@ -76,7 +76,6 @@ pub trait LevelParamsLike {
     fn num_live_ring_elements_per_claim(&self) -> usize;
     fn num_positions_per_block(&self) -> usize;
     fn num_live_blocks(&self) -> usize;
-    fn num_blocks_per_chunk_granule(&self) -> usize;
     fn fold_challenge_shape(&self) -> TensorChallengeShape;
     fn position_index_bits(&self) -> usize;
     fn block_index_bits(&self) -> usize;
@@ -109,10 +108,6 @@ impl LevelParamsLike for LevelParams {
 
     fn num_live_blocks(&self) -> usize {
         self.num_live_blocks
-    }
-
-    fn num_blocks_per_chunk_granule(&self) -> usize {
-        self.num_blocks_per_chunk_granule
     }
 
     fn fold_challenge_shape(&self) -> TensorChallengeShape {
@@ -167,10 +162,6 @@ impl LevelParamsLike for PrecommittedLevelParams {
 
     fn num_live_blocks(&self) -> usize {
         self.layout.num_live_blocks
-    }
-
-    fn num_blocks_per_chunk_granule(&self) -> usize {
-        self.layout.num_blocks_per_chunk_granule
     }
 
     fn fold_challenge_shape(&self) -> TensorChallengeShape {

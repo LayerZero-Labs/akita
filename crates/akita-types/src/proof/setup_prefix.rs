@@ -304,10 +304,6 @@ fn serialize_precommitted_level_params<W: Write>(
         .layout
         .num_live_blocks
         .serialize_with_mode(&mut writer, compress)?;
-    params
-        .layout
-        .num_blocks_per_chunk_granule
-        .serialize_with_mode(&mut writer, compress)?;
     match params.layout.fold_challenge_shape {
         akita_challenges::TensorChallengeShape::Flat => writer.write_all(&[0])?,
         akita_challenges::TensorChallengeShape::Tensor { fold_low_len } => {
@@ -353,8 +349,6 @@ fn deserialize_precommitted_level_params<R: Read>(
     let num_positions_per_block =
         usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
     let num_live_blocks = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
-    let num_blocks_per_chunk_granule =
-        usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
     let mut shape_tag = [0u8; 1];
     reader.read_exact(&mut shape_tag)?;
     let fold_challenge_shape = match shape_tag[0] {
@@ -382,7 +376,6 @@ fn deserialize_precommitted_level_params<R: Read>(
             num_live_ring_elements_per_claim,
             num_positions_per_block,
             num_live_blocks,
-            num_blocks_per_chunk_granule,
             fold_challenge_shape,
             log_basis,
             n_a,
@@ -415,10 +408,6 @@ fn precommitted_level_params_serialized_size(
             .num_positions_per_block
             .serialized_size(compress)
         + params.layout.num_live_blocks.serialized_size(compress)
-        + params
-            .layout
-            .num_blocks_per_chunk_granule
-            .serialized_size(compress)
         + 1
         + match params.layout.fold_challenge_shape {
             akita_challenges::TensorChallengeShape::Flat => 0,
@@ -1188,7 +1177,6 @@ pub fn setup_prefix_precommitted_params(
                     num_live_ring_elements_per_claim: ring_slots,
                     num_positions_per_block,
                     num_live_blocks,
-                    num_blocks_per_chunk_granule: 1,
                     fold_challenge_shape: prefix_params.fold_challenge_shape,
                     log_basis: prefix_params.log_basis,
                     n_a: prefix_params.a_key.row_len(),

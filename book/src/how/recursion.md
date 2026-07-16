@@ -26,6 +26,6 @@ protocol change, not a serialization-only change.
 The serialized structure is rooted at `AkitaBatchedProof` and
 `AkitaBatchedRootProof`, followed by `AkitaLevelProof` / `AkitaProofStep`
 records for the suffix. Each level's descriptors bind the resolved `L`, exact
-`F`, chunk granule `S`, challenge shape, and decomposition parameters.
+`F`, chunk count, challenge shape, and decomposition parameters.
 Singleton openings and terminal folds are ordinary one-group, one-chunk cases;
 there is no alternate block order.

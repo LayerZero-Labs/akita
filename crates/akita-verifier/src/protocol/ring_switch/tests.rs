@@ -45,7 +45,7 @@ fn ring_switch_prepare_rejects_zero_num_live_blocks() {
 
 #[test]
 fn tensor_et_intervals_match_dense_oracle_across_residual_shards() {
-    let mut lp = LevelParams::params_only(
+    let lp = LevelParams::params_only(
         SisModulusProfileId::Q32Offset99,
         D,
         2,
@@ -56,7 +56,6 @@ fn tensor_et_intervals_match_dense_oracle_across_residual_shards() {
     )
     .with_decomp(4, 25, 1, 3)
     .unwrap();
-    lp.num_blocks_per_chunk_granule = 2;
     let opening_batch = OpeningClaimsLayout::new(0, 2).unwrap();
     let witness_layout = WitnessLayout::new(&lp, &opening_batch, 2, 4, 2).unwrap();
     let units = witness_layout.units_for_group(0).unwrap();

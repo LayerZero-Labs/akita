@@ -19,8 +19,7 @@ use akita_types::{
 
 use crate::schedule_params::{
     derive_optimal_suffix_schedule, find_schedule, optimize_fold_challenge_shape,
-    optimize_num_blocks_per_chunk_granule, RingChallengeConfigFn, ScheduleMemo, SuffixCtx,
-    SuffixState,
+    RingChallengeConfigFn, ScheduleMemo, SuffixCtx, SuffixState,
 };
 use crate::PlannerPolicy;
 
@@ -439,7 +438,6 @@ fn multi_group_root_main_level_params_candidate(
         num_live_ring_elements_per_claim,
         num_positions_per_block,
         num_live_blocks,
-        num_blocks_per_chunk_granule: 1,
         fold_challenge_config: *ctx.ring_challenge_cfg,
         fold_challenge_shape,
         num_digits_commit,
@@ -660,22 +658,14 @@ pub fn find_group_batch_schedule(
                 continue;
             };
             let root_num_chunks = policy.chunks_at_level(0);
-            if candidate_params.precommitted_groups.iter().any(|group| {
-                group.layout.num_live_blocks < root_num_chunks
-                    || group
-                        .layout
-                        .num_blocks_per_chunk_granule
-                        .checked_mul(root_num_chunks)
-                        .is_none_or(|required| required > group.layout.num_live_blocks)
-            }) {
+            if candidate_params
+                .precommitted_groups
+                .iter()
+                .any(|group| group.layout.num_live_blocks < root_num_chunks)
+            {
                 continue;
             }
             candidate_params.witness_chunk = policy.witness_chunk_for_level(0);
-            candidate_params.num_blocks_per_chunk_granule = optimize_num_blocks_per_chunk_granule(
-                candidate_params.num_live_blocks,
-                root_num_chunks,
-                candidate_params.fold_challenge_shape,
-            )?;
             let opening_batch = key.opening_layout()?;
             let next_w_len = multi_group_root_next_w_len(
                 field_bits,
@@ -844,7 +834,6 @@ mod tests {
             num_live_ring_elements_per_claim: 1usize << outer,
             num_positions_per_block: 1usize << position_index_bits,
             num_live_blocks: 1usize << block_index_bits,
-            num_blocks_per_chunk_granule: 1,
             fold_challenge_shape: TensorChallengeShape::Flat,
             log_basis: 3,
             n_a: 1,
@@ -976,7 +965,6 @@ mod tests {
             num_live_ring_elements_per_claim: 2,
             num_positions_per_block: 2,
             num_live_blocks: 1,
-            num_blocks_per_chunk_granule: 1,
             fold_challenge_shape: TensorChallengeShape::Flat,
             log_basis: 3,
             n_a: 1,

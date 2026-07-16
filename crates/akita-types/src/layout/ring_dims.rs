@@ -277,7 +277,6 @@ mod tests {
         params.num_live_ring_elements_per_claim = num_live_blocks * num_positions_per_block;
         params.num_live_blocks = num_live_blocks;
         params.num_positions_per_block = num_positions_per_block;
-        params.num_blocks_per_chunk_granule = 1;
         params.num_digits_commit = 2;
         params.num_digits_open = 2;
         params.stamp_role_dims_from_keys();

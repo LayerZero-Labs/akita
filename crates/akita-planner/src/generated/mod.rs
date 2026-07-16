@@ -6,7 +6,6 @@ pub struct GeneratedSetupPrefixGroup {
     pub num_live_ring_elements_per_claim: u32,
     pub num_positions_per_block: u32,
     pub num_live_blocks: u32,
-    pub num_blocks_per_chunk_granule: u32,
     pub fold_challenge_shape: akita_challenges::TensorChallengeShape,
     pub n_a: u32,
     pub n_b: u32,
@@ -241,7 +240,6 @@ fn precommitted_group_sort_key(
     usize,
     usize,
     usize,
-    usize,
     u8,
     usize,
     u32,
@@ -254,7 +252,6 @@ fn precommitted_group_sort_key(
         key.num_live_ring_elements_per_claim,
         key.num_positions_per_block,
         key.num_live_blocks,
-        key.num_blocks_per_chunk_granule,
         match key.fold_challenge_shape {
             akita_challenges::TensorChallengeShape::Flat => 0,
             akita_challenges::TensorChallengeShape::Tensor { .. } => 1,
@@ -290,7 +287,6 @@ fn precommitted_group_key_eq(
         && generated.num_live_ring_elements_per_claim == layout.num_live_ring_elements_per_claim
         && generated.num_positions_per_block == layout.num_positions_per_block
         && generated.num_live_blocks == layout.num_live_blocks
-        && generated.num_blocks_per_chunk_granule == layout.num_blocks_per_chunk_granule
         && generated.fold_challenge_shape == layout.fold_challenge_shape
         && generated.log_basis == layout.log_basis
         && generated.n_a == layout.n_a

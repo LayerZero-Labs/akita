@@ -61,8 +61,9 @@ relation group and then chunk. Each unit records its exact `global_block_start` 
 ## Chunks and tensor challenges
 
 Chunks own contiguous ranges of the exact `F` live blocks. Internal allocation
-uses a power-of-two `num_blocks_per_chunk_granule`; any residual blocks remain tight in the final
-chunk. The planner chooses the granule independently of `num_positions_per_block` and of the challenge shape.
+balances blocks directly: each chunk receives `floor(F / num_chunks)` blocks,
+and the first `F mod num_chunks` chunks receive one additional block. The ranges
+stay exact and contain no padding.
 
 A flat fold challenge has `F` independent coefficients. A tensor challenge
 chooses a power-of-two low-factor width `Q` and derives

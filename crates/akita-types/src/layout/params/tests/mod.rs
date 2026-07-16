@@ -74,7 +74,6 @@ fn with_decomp_derives_exact_live_block_geometry() {
     assert_eq!(lp.num_live_ring_elements_per_claim, 17);
     assert_eq!(lp.num_positions_per_block, 8);
     assert_eq!(lp.num_live_blocks, 3);
-    assert_eq!(lp.num_blocks_per_chunk_granule, 1);
     assert_eq!(lp.position_index_bits(), 3);
     assert_eq!(lp.block_index_bits(), 2);
     assert_eq!(lp.block_index_domain_size().unwrap(), 4);

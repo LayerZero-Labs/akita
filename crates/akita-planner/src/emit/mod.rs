@@ -74,7 +74,6 @@ fn setup_prefix_group_from_params(
                     as u32,
                 num_positions_per_block: group.layout.num_positions_per_block as u32,
                 num_live_blocks: group.layout.num_live_blocks as u32,
-                num_blocks_per_chunk_granule: group.layout.num_blocks_per_chunk_granule as u32,
                 fold_challenge_shape: group.layout.fold_challenge_shape,
                 n_a: group.a_key.row_len() as u32,
                 n_b: group.b_key.row_len() as u32,
@@ -126,12 +125,11 @@ fn emit_key(key: PolynomialGroupLayout) -> String {
 fn emit_precommitted_group_key(layout: &PrecommittedGroupParams) -> String {
     let challenge_shape = emit_root_fold_shape(layout.fold_challenge_shape);
     format!(
-        "PrecommittedGroupParams {{ group: {}, num_live_ring_elements_per_claim: {}, num_positions_per_block: {}, num_live_blocks: {}, num_blocks_per_chunk_granule: {}, fold_challenge_shape: {}, log_basis: {}, n_a: {}, conservative_n_b: {} }}",
+        "PrecommittedGroupParams {{ group: {}, num_live_ring_elements_per_claim: {}, num_positions_per_block: {}, num_live_blocks: {}, fold_challenge_shape: {}, log_basis: {}, n_a: {}, conservative_n_b: {} }}",
         emit_key(layout.group),
         layout.num_live_ring_elements_per_claim,
         layout.num_positions_per_block,
         layout.num_live_blocks,
-        layout.num_blocks_per_chunk_granule,
         challenge_shape,
         layout.log_basis,
         layout.n_a,
@@ -179,12 +177,11 @@ fn emit_setup_contribution_mode(mode: SetupContributionMode) -> &'static str {
 fn emit_setup_prefix_group(group: Option<GeneratedSetupPrefixGroup>) -> String {
     match group {
         Some(group) => format!(
-            "Some(GeneratedSetupPrefixGroup {{ natural_len: {}, num_live_ring_elements_per_claim: {}, num_positions_per_block: {}, num_live_blocks: {}, num_blocks_per_chunk_granule: {}, fold_challenge_shape: {}, n_a: {}, n_b: {} }})",
+            "Some(GeneratedSetupPrefixGroup {{ natural_len: {}, num_live_ring_elements_per_claim: {}, num_positions_per_block: {}, num_live_blocks: {}, fold_challenge_shape: {}, n_a: {}, n_b: {} }})",
             group.natural_len,
             group.num_live_ring_elements_per_claim,
             group.num_positions_per_block,
             group.num_live_blocks,
-            group.num_blocks_per_chunk_granule,
             emit_root_fold_shape(group.fold_challenge_shape),
             group.n_a,
             group.n_b,

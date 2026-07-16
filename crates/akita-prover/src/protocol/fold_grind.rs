@@ -264,8 +264,10 @@ where
         return Ok((witness, per_chunk));
     }
 
-    let chunk_block_ranges =
-        akita_types::WitnessLayout::resolve_chunk_block_ranges(params, num_chunks)?;
+    let chunk_block_ranges = akita_types::WitnessLayout::resolve_chunk_block_ranges(
+        params.num_live_blocks(),
+        num_chunks,
+    )?;
     let windows = chunk_block_ranges
         .into_iter()
         .map(|fold_range| {

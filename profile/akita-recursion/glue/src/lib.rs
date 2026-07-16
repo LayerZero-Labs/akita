@@ -543,7 +543,6 @@ mod tests {
                 num_live_ring_elements_per_claim: 1,
                 num_positions_per_block: 1,
                 num_live_blocks: 1,
-                num_blocks_per_chunk_granule: 1,
                 fold_challenge_shape: TensorChallengeShape::Flat,
                 log_basis: 1,
                 n_a: 1,

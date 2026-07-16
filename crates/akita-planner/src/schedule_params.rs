@@ -22,7 +22,8 @@ use akita_types::{
     w_ring_element_count_for_chunks, AkitaScheduleInputs, ChunkedWitnessCfg, CleartextWitnessShape,
     CommitmentRingDims, DecompositionParams, DirectStep, FoldStep, LevelParams,
     OpeningClaimsLayout, PolynomialGroupLayout, PrecommittedGroupParams, PrecommittedLevelParams,
-    RelationMatrixRowLayout, Schedule, SetupContributionMode, Step, SETUP_OFFLOAD_D_SETUP,
+    RelationMatrixRowLayout, Schedule, SetupContributionMode, Step, WitnessLayout,
+    SETUP_OFFLOAD_D_SETUP,
 };
 
 use crate::PlannerPolicy;
@@ -109,94 +110,6 @@ pub(crate) fn optimize_fold_challenge_shape(
     Ok(TensorChallengeShape::Tensor { fold_low_len })
 }
 
-/// Choose the chunk ownership granule independently from `M` and tensor `Q`.
-/// The score uses the exact residual-aware chunk loads. Flat challenges cannot
-/// exploit factored chunk evaluation and therefore minimize imbalance; tensor
-/// challenges additionally price `S + ceil(B_j/S)` for every chunk.
-pub(crate) fn optimize_num_blocks_per_chunk_granule(
-    num_live_blocks: usize,
-    num_chunks: usize,
-    fold_shape: TensorChallengeShape,
-) -> Result<usize, AkitaError> {
-    if num_live_blocks == 0 || num_chunks == 0 || num_chunks > num_live_blocks {
-        return Err(AkitaError::InvalidSetup(
-            "chunk-granule optimization requires 0 < W <= F".to_string(),
-        ));
-    }
-    let max_granule = num_live_blocks / num_chunks;
-    let mut best = None;
-    let mut granule = 1usize;
-    while granule <= max_granule {
-        let (work, imbalance) =
-            chunk_geometry_cost(num_live_blocks, num_chunks, granule, fold_shape)?;
-        if best.is_none_or(|best_score| (work, imbalance, granule) < best_score) {
-            best = Some((work, imbalance, granule));
-        }
-        granule = match granule.checked_mul(2) {
-            Some(next) => next,
-            None => break,
-        };
-    }
-    best.map(|(_, _, granule)| granule)
-        .ok_or_else(|| AkitaError::InvalidSetup("chunk-granule enumeration was empty".to_string()))
-}
-
-/// Exact evaluator work and residual-aware load imbalance for one resolved
-/// chunk geometry. Flat coefficients are independent, so their work remains
-/// `B`; tensor coefficients use the chunk-local `S + ceil(B_j/S)` factors.
-pub(crate) fn chunk_geometry_cost(
-    num_live_blocks: usize,
-    num_chunks: usize,
-    num_blocks_per_chunk_granule: usize,
-    fold_shape: TensorChallengeShape,
-) -> Result<(usize, usize), AkitaError> {
-    if num_live_blocks == 0
-        || num_chunks == 0
-        || num_blocks_per_chunk_granule == 0
-        || !num_blocks_per_chunk_granule.is_power_of_two()
-        || num_chunks
-            .checked_mul(num_blocks_per_chunk_granule)
-            .is_none_or(|required| required > num_live_blocks)
-    {
-        return Err(AkitaError::InvalidSetup(
-            "resolved chunk geometry is malformed".to_string(),
-        ));
-    }
-    let full_granules = num_live_blocks / num_blocks_per_chunk_granule;
-    let residual = num_live_blocks % num_blocks_per_chunk_granule;
-    let base = full_granules / num_chunks;
-    let larger = full_granules % num_chunks;
-    let mut min_load = usize::MAX;
-    let mut max_load = 0usize;
-    let mut structured_work = 0usize;
-    for chunk in 0..num_chunks {
-        let mut load = (base + usize::from(chunk < larger))
-            .checked_mul(num_blocks_per_chunk_granule)
-            .ok_or_else(|| AkitaError::InvalidSetup("chunk load overflow".to_string()))?;
-        if chunk + 1 == num_chunks {
-            load = load.checked_add(residual).ok_or_else(|| {
-                AkitaError::InvalidSetup("residual chunk load overflow".to_string())
-            })?;
-        }
-        min_load = min_load.min(load);
-        max_load = max_load.max(load);
-        if matches!(fold_shape, TensorChallengeShape::Tensor { .. }) {
-            structured_work = structured_work
-                .checked_add(num_blocks_per_chunk_granule)
-                .and_then(|work| work.checked_add(load.div_ceil(num_blocks_per_chunk_granule)))
-                .ok_or_else(|| {
-                    AkitaError::InvalidSetup("structured chunk-work overflow".to_string())
-                })?;
-        }
-    }
-    let work = if matches!(fold_shape, TensorChallengeShape::Flat) {
-        num_live_blocks
-    } else {
-        structured_work
-    };
-    Ok((work, max_load - min_load))
-}
-
 /// Combine exact physical width, challenge-factor work, chunk evaluator work,
 /// and load imbalance when comparing `M` candidates. All terms count ring or
 /// scalar work units; exact physical width remains an explicit tie-breaker.
@@ -204,7 +117,6 @@ pub(crate) fn layout_candidate_score(
     physical_width: usize,
     num_live_blocks: usize,
     num_chunks: usize,
-    num_blocks_per_chunk_granule: usize,
     fold_shape: TensorChallengeShape,
 ) -> Result<LayoutCandidateScore, AkitaError> {
     let challenge_work = match fold_shape {
@@ -213,12 +125,19 @@ pub(crate) fn layout_candidate_score(
             .checked_add(num_live_blocks.div_ceil(fold_low_len))
             .ok_or_else(|| AkitaError::InvalidSetup("challenge-work overflow".to_string()))?,
     };
-    let (chunk_work, imbalance) = chunk_geometry_cost(
-        num_live_blocks,
-        num_chunks,
-        num_blocks_per_chunk_granule,
-        fold_shape,
-    )?;
+    let chunk_ranges = WitnessLayout::resolve_chunk_block_ranges(num_live_blocks, num_chunks)?;
+    let min_load = chunk_ranges
+        .iter()
+        .map(|range| range.len())
+        .min()
+        .ok_or_else(|| AkitaError::InvalidSetup("balanced chunk geometry is empty".to_string()))?;
+    let max_load = chunk_ranges
+        .iter()
+        .map(|range| range.len())
+        .max()
+        .ok_or_else(|| AkitaError::InvalidSetup("balanced chunk geometry is empty".to_string()))?;
+    let chunk_work = num_live_blocks;
+    let imbalance = max_load - min_load;
     let combined = physical_width
         .checked_add(challenge_work)
         .and_then(|cost| cost.checked_add(chunk_work))
@@ -496,15 +415,15 @@ mod geometry_tests {
     }
 
     #[test]
-    fn num_blocks_per_chunk_granule_prices_residual_loads_and_structured_work() {
-        let tensor = TensorChallengeShape::Tensor { fold_low_len: 4 };
+    fn balanced_chunk_geometry_prices_exact_work_and_residual_imbalance() {
+        let flat = TensorChallengeShape::Flat;
         assert_eq!(
-            optimize_num_blocks_per_chunk_granule(13, 3, tensor).unwrap(),
-            2
+            layout_candidate_score(100, 13, 3, flat).unwrap(),
+            (127, 100, 13, 1)
         );
         assert_eq!(
-            optimize_num_blocks_per_chunk_granule(13, 3, TensorChallengeShape::Flat).unwrap(),
-            1,
+            layout_candidate_score(100, 12, 3, flat).unwrap(),
+            (124, 100, 12, 0)
         );
     }
 }

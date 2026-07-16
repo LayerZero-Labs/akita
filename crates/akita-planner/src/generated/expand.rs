@@ -20,9 +20,7 @@ use crate::generated::{
     GeneratedDirectStep, GeneratedFoldStep, GeneratedFoldStepWithSetupMetadata,
     GeneratedScheduleTableEntry, GeneratedSetupPrefixGroup, GeneratedStep,
 };
-use crate::schedule_params::{
-    optimize_fold_challenge_shape, optimize_num_blocks_per_chunk_granule,
-};
+use crate::schedule_params::optimize_fold_challenge_shape;
 use crate::PlannerPolicy;
 use akita_types::sis::{
     decomposed_s_block_ring_count, decomposed_t_ring_count, decomposed_w_ring_count,
@@ -89,7 +87,6 @@ impl GeneratedSetupPrefixGroup {
         let num_live_ring_elements_per_claim = self.num_live_ring_elements_per_claim as usize;
         let num_positions_per_block = self.num_positions_per_block as usize;
         let num_live_blocks = self.num_live_blocks as usize;
-        let num_blocks_per_chunk_granule = self.num_blocks_per_chunk_granule as usize;
         let fold_shape = optimize_fold_challenge_shape(fold_shape, num_live_blocks)?;
         let n_prefix = num_live_ring_elements_per_claim
             .checked_mul(d)
@@ -107,7 +104,6 @@ impl GeneratedSetupPrefixGroup {
             num_live_ring_elements_per_claim,
             num_positions_per_block,
             num_live_blocks,
-            num_blocks_per_chunk_granule,
             fold_challenge_shape: self.fold_challenge_shape,
             log_basis,
             n_a: self.n_a as usize,
@@ -275,7 +271,6 @@ impl GeneratedFoldStep {
             num_claims,
             None,
             SetupContributionMode::Direct,
-            None,
         )
     }
 
@@ -300,7 +295,6 @@ impl GeneratedFoldStep {
             num_claims,
             None,
             SetupContributionMode::Direct,
-            Some(1),
         )
     }
 
@@ -315,7 +309,6 @@ impl GeneratedFoldStep {
         num_claims: usize,
         setup_prefix_group: Option<GeneratedSetupPrefixGroup>,
         setup_contribution_mode: SetupContributionMode,
-        chunk_count_override: Option<usize>,
     ) -> Result<LevelParams, AkitaError> {
         let ring_d = self.ring_d as usize;
         if ring_d == 0 || ring_d != policy.ring_dimension {
@@ -374,9 +367,6 @@ impl GeneratedFoldStep {
             )));
         }
         let fold_shape = optimize_fold_challenge_shape(fold_shape, num_live_blocks)?;
-        let num_chunks = chunk_count_override.unwrap_or_else(|| policy.chunks_at_level(fold_level));
-        let num_blocks_per_chunk_granule =
-            optimize_num_blocks_per_chunk_granule(num_live_blocks, num_chunks, fold_shape)?;
 
         // Per-role rounded-up collision buckets + committed widths, via the
         // `akita_types::sis` primitives. The B/D widths carry the `num_claims`
@@ -561,7 +551,6 @@ impl GeneratedFoldStep {
             num_live_ring_elements_per_claim,
             num_live_blocks,
             num_positions_per_block,
-            num_blocks_per_chunk_granule,
             fold_challenge_config: ring_challenge_cfg,
             fold_challenge_shape: fold_shape,
             num_digits_commit,
@@ -666,11 +655,6 @@ impl GeneratedFoldStep {
                     )
                 })?;
         let fold_shape = optimize_fold_challenge_shape(fold_shape, num_live_blocks)?;
-        let num_blocks_per_chunk_granule = optimize_num_blocks_per_chunk_granule(
-            num_live_blocks,
-            policy.chunks_at_level(0),
-            fold_shape,
-        )?;
 
         let no_layout = |role: &str| {
             AkitaError::InvalidSetup(format!(
@@ -795,7 +779,6 @@ impl GeneratedFoldStep {
                 })?,
             num_live_blocks,
             num_positions_per_block,
-            num_blocks_per_chunk_granule,
             fold_challenge_config: ring_challenge_cfg,
             fold_challenge_shape: fold_shape,
             num_digits_commit,
@@ -840,7 +823,6 @@ impl GeneratedFoldStepWithSetupMetadata {
             num_claims,
             self.setup_prefix_group,
             self.setup_contribution_mode,
-            None,
         )
     }
 

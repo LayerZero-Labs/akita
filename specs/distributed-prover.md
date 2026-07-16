@@ -74,10 +74,10 @@ $(X^d+1)$ quotient. (See `crates/akita-types/src/proof/ring_relation.rs`.)
 
 ### The modified relation, parameterized by `num_chunks = W`
 
-Partition the block index set $[B]$ into $W$ contiguous windows
-$\mathcal I_i = [\,iB_{\mathsf{loc}},(i{+}1)B_{\mathsf{loc}})$ with
-$B_{\mathsf{loc}} = B/W$ (require $W \mid B$ and $W$ a power of two, so each window
-is a clean power-of-two block range). Window $i$ gets its **own** sub-witness
+Partition the block index set $[B]$ into $W$ balanced contiguous windows. Let
+$q = \lfloor B/W\rfloor$ and $r = B\bmod W$; the first $r$ windows contain
+$q+1$ blocks and the rest contain $q$. Require $B\ge W$ and $W$ a power of two.
+Window $i$ gets its **own** sub-witness
 $\mathbf w_i = (\widehat{\mathbf e}_i,\widehat{\mathbf t}_i,\mathbf z_i)$ where:
 
 - $\widehat{\mathbf e}_i,\widehat{\mathbf t}_i$ are the original $\widehat{\mathbf e},
@@ -116,8 +116,8 @@ This is the layout the [planner](distributed-planner.md) prices
 `eval_at_point`). The per-window segment lengths are:
 
 - `z_len_i = num_digits_fold · num_digits_commit · num_positions_per_block` (replicated, full),
-- `e_len_i = num_digits_open · num_claims · blocks_per_chunk` (partitioned),
-- `t_len_i = num_digits_open · n_a · num_t_vectors · blocks_per_chunk` (partitioned),
+- `e_len_i = num_digits_open · num_claims · blocks_in_chunk(i)` (partitioned),
+- `t_len_i = num_digits_open · n_a · num_t_vectors · blocks_in_chunk(i)` (partitioned),
 - per-window stride `L = z_len_i + e_len_i + t_len_i`,
 - one shared `r̂` tail of `num_rows · r_decomp_levels(log_basis)` after window $W-1$,
   where `num_rows` is the **single-machine** relation row count (the windows stack
@@ -149,8 +149,9 @@ count the planner stamped and derive the windows:
 
 ```rust
 let num_chunks = lp.witness_chunk.num_chunks;        // W; 1 on non-modified levels
-let blocks_per_chunk = lp.num_live_blocks / num_chunks;   // B_loc, power of two
-// window i owns global blocks [ i*B_loc, (i+1)*B_loc )
+let base_blocks = lp.num_live_blocks / num_chunks;
+let extra_blocks = lp.num_live_blocks % num_chunks;
+// the first extra_blocks windows own base_blocks + 1; the rest own base_blocks
 ```
 
 Validate at this boundary, before any witness math (no-panic contract):
@@ -159,7 +160,7 @@ Validate at this boundary, before any witness math (no-panic contract):
 |------|-------|
 | `num_chunks == 0` | `InvalidSetup` |
 | `num_chunks > 1` and not a power of two | `InvalidSetup` |
-| `num_chunks > 1` and `lp.num_live_blocks % num_chunks != 0` | `InvalidSetup` |
+| `num_chunks > lp.num_live_blocks` | `InvalidSetup` |
 | `num_chunks > 1` under `feature = "zk"` | `InvalidSetup` |
 
 (`zk` blinding segments are not specified for the chunked witness yet; reject
@@ -422,7 +423,7 @@ the same preset for `W ∈ {1,2,4,8}`, `num_positions_per_block` pow2 (root) and
 4. **Proof-size parity** vs the planner schedule.
 5. **End-to-end roundtrip** (gated on verifier landing).
 6. **Determinism** and **no-panic negatives** (bad `num_chunks`,
-   `num_chunks ∤ num_live_blocks`, zk+chunked).
+   `num_chunks > num_live_blocks`, zk+chunked).
 
 ### Performance
 

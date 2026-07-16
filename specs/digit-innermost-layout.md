@@ -37,7 +37,7 @@ r_hat[relation row][quotient digit]
 
 Digits remain tightly packed. Akita does not insert zero digits to make a digit count a power of two.
 
-For distributed proving, each group divides its exact live block prefix into contiguous chunk ranges. Internal boundaries are aligned to a chosen power of two granule. A final residual range remains live and tight. Each group and chunk unit contains `[z_hat | e_hat | t_hat]`. One shared `r_hat` tail follows all units.
+For distributed proving, each group divides its exact live block prefix into balanced contiguous chunk ranges. Any residual blocks are assigned one at a time to the earliest chunks, with no padding. Each group and chunk unit contains `[z_hat | e_hat | t_hat]`. One shared `r_hat` tail follows all units.
 
 ## Current state
 
@@ -50,9 +50,9 @@ factored, partial final rows are live, and group-local challenge geometry is
 transcript-bound. Setup, relation, trace, recursive, and terminal consumers use
 the same range authority.
 
-The planner independently enumerates `num_positions_per_block` choices, `num_blocks_per_chunk_granule` values, and
-tensor low-factor widths. It prices exact physical witness width, compact
-structured verifier work, and chunk imbalance. Generated schedules have been
+The planner independently enumerates `num_positions_per_block` choices and
+tensor low-factor widths. It prices exact physical witness width, exact live-block
+work, and the canonical balanced chunk layout. Generated schedules have been
 regenerated from those rules. Multi-group plus multi-chunk is no longer rejected.
 
 The full historical verification matrix in this record remains a release/CI
@@ -107,7 +107,7 @@ This cutover does not redesign the mixed ring projection algebra. It keeps the p
 Three namespaces govern naming in this spec.
 
 1. **Source opening.** `N` (`num_live_ring_elements_per_claim`), `M` (`num_positions_per_block`), `B` (`num_live_blocks`), `block_idx`, `position`, `block_index_bits`, `position_index_bits`, `live_block_weights`, `block_index_domain_size`.
-2. **Distributed layout.** `num_chunks`, `chunk_index`, `num_blocks_per_chunk_granule`, `WitnessUnit = (group, chunk)`.
+2. **Distributed layout.** `num_chunks`, `chunk_index`, `WitnessUnit = (group, chunk)`.
 3. **Protocol recursion.** Unchanged: `fold_level`, fold challenge, `fold_grind`, `fold_high` / `fold_low`, `depth_fold`, `fold_digit`.
 
 For one commitment group `g`, define the following source-opening values.
@@ -214,7 +214,6 @@ num_live_ring_elements_per_claim   N_g
 num_positions_per_block                   M_g
 num_live_blocks                      B_g (derived)
 block_index_domain_size               B_dom_g (derived)
-num_blocks_per_chunk_granule               S_g
 position_index_bits                   derive log2(M_g) as position_index_bits
 block_index_bits                      derive log2(block_index_domain_size_g) as block_index_bits
 fold_challenge_shape        group local Flat or Tensor { fold_low_len }
@@ -226,7 +225,7 @@ Do not keep deprecated aliases.
 
 ### `PrecommittedLevelParams`
 
-`PrecommittedLevelParams` remains the group local parameter object for each precommitted root group. It must carry the same group local source-opening and distributed-layout fields as `LevelParams`, including the challenge shape and `num_blocks_per_chunk_granule`.
+`PrecommittedLevelParams` remains the group local parameter object for each precommitted root group. It must carry the same group local source-opening fields and challenge shape as `LevelParams`.
 
 Extend `LevelParamsLike` with the final group local accessors. Remove accessors for stored values that become derived.
 
@@ -413,51 +412,23 @@ If a digit count happens to be a power of two, an evaluator may use a simpler in
 
 ## Chunk ownership
 
-Let `num_chunks` be the number of chunks for the level. Let `S_g` be a power of two `num_blocks_per_chunk_granule` for group `g`.
+Let `num_chunks` be the number of chunks for the level.
 
 ```text
-S_g > 0
-S_g is a power of two
-num_chunks * S_g <= B_g
+0 < num_chunks <= B_g
+q = floor(B_g / num_chunks)
+r = B_g mod num_chunks
 ```
 
-The planner may choose `S_g = 1`. This always gives exact balancing when `B_g >= num_chunks`.
-
-Split the full granules first.
+The first `r` chunks receive `q + 1` blocks. The remaining chunks receive `q` blocks.
 
 ```text
-A = floor(B_g / S_g)       full granules
-R = B_g mod S_g            residual live blocks
-q = floor(A / num_chunks)
-v = A mod num_chunks
-```
-
-The first `v` chunks receive `q + 1` full granules. The remaining chunks receive `q` full granules. The final chunk also receives the residual `R`.
-
-```text
-F_j = full_granules_j * S_g
-F_(num_chunks - 1) += R
+F_j = q + 1 when j < r, otherwise q
 s_0 = 0
 s_j = sum of F_i for i < j
 ```
 
-This produces contiguous ranges. Every internal boundary is aligned to `S_g`. Only the final chunk may have a non multiple of `S_g` count. The difference between the largest and smallest chunk is at most `S_g` after the larger full granule counts are placed first.
-
-The physical witness contains no chunk padding.
-
-The verifier benefit from `S_g` applies only to structured weights. If a local block index is written as:
-
-```text
-u = S_g * v + q
-```
-
-then a factored evaluator can use a low table of size `S_g` and a high table of size about `F_j / S_g`. Its rough state and evaluation cost is:
-
-```text
-delta * (S_g + ceil(F_j / S_g))
-```
-
-The balanced choice is near `sqrt(F_j)`. The planner must enumerate nearby powers of two and include load imbalance in the cost. It must not claim an `S_g` block reduction for flat independent challenges.
+This produces contiguous ranges that exactly cover `[0, B_g)`. Their sizes differ by at most one, and the physical witness contains no chunk padding. Structured evaluators receive each exact range and handle unaligned first and last rows as edge intervals.
 
 ## Opening point
 
@@ -643,7 +614,6 @@ Each group owns:
 * its digit counts;
 * its fold challenge shape;
 * its tensor low length when tensor mode is active;
-* its `num_blocks_per_chunk_granule`;
 * its `z_hat`, `e_hat`, and `t_hat` units.
 
 The root relation is a direct sum of group fold relations plus the existing shared terms.
@@ -670,7 +640,6 @@ The planner chooses these values independently for every group and active level.
 
 ```text
 M_g   power of two num_positions_per_block
-S_g   power of two num_blocks_per_chunk_granule
 Q_g   power of two tensor low length, when tensor mode is active
 ```
 
@@ -689,9 +658,7 @@ The cost model includes:
 * proof bytes and setup widths;
 * the selected number of active distributed levels.
 
-The planner must not force `S_g = Q_g`. If both are active, their common low alignment is the smaller power of two. A boundary that cuts a larger low row is handled as an edge interval.
-
-The planner should enumerate nearby powers of two instead of using one fixed root rule. A square root granule is the natural balanced candidate, but it is not always best once `num_chunks`, replicated `z_hat`, tensor mode, and exact residual load are priced.
+Chunk ownership is independent of `Q_g`. A boundary that cuts a tensor low row is handled as an edge interval.
 
 ## Transcript and serialization
 
@@ -703,7 +670,6 @@ Bind all protocol affecting final fields in the schedule or instance descriptor.
 * `num_positions_per_block`;
 * exact live block count (`num_live_blocks`);
 * `num_chunks` and active levels;
-* group local `num_blocks_per_chunk_granule`;
 * group local challenge shape;
 * tensor low length;
 * digit counts;
@@ -764,7 +730,7 @@ Cases must include:
 * [ ] `BlockOrder`, row major versus column major dispatch, and all old layout branches are deleted.
 * [ ] `OpeningBlockLayout` and its virtual address mapping are deleted.
 * [ ] Root and recursive folds use power of two `num_positions_per_block` and exact live `num_live_blocks`.
-* [ ] `LevelParams` and `PrecommittedLevelParams` store `num_live_ring_elements_per_claim`, `num_positions_per_block`, `num_live_blocks`, and `num_blocks_per_chunk_granule` with the same group local meanings.
+* [ ] `LevelParams` and `PrecommittedLevelParams` store `num_live_ring_elements_per_claim`, `num_positions_per_block`, and `num_live_blocks` with the same group local meanings.
 * [ ] `block_index_domain_size` and bit counts are derived instead of stored twice.
 * [ ] `WitnessLayout` is the only physical range authority.
 * [ ] `WitnessChunkLengths` and `TraceChunkLayout` are deleted.
@@ -809,7 +775,7 @@ crates/akita-challenges/src/tensor.rs
 Steps:
 
 1. Replace stored `position_index_bits` and `block_index_bits` with derived methods.
-2. Add `num_live_ring_elements_per_claim` and `num_blocks_per_chunk_granule` to both group parameter forms.
+2. Add `num_live_ring_elements_per_claim` to both group parameter forms.
 3. Rename geometry fields to `num_positions_per_block` and `num_live_blocks`.
 4. Make `with_decomp` derive `num_live_blocks` from `num_live_ring_elements_per_claim` and power of two `num_positions_per_block`.
 5. Change challenge shape to `Tensor { fold_low_len }`.
@@ -855,7 +821,7 @@ Steps:
 
 1. Replace `WitnessChunkLayout` with the group and chunk unit record.
 2. Delete `WitnessChunkLengths` and parallel vectors.
-3. Resolve granule aligned exact chunk ranges.
+3. Resolve balanced exact chunk ranges.
 4. Resolve multi group by multi chunk units in relation order.
 5. Emit each unit as `[z_hat | e_hat | t_hat]` with one final `r_hat`.
 6. Move the useful independent oracle tests out of the PR only contract module, then delete that module if it has no production role.
@@ -966,8 +932,8 @@ specs/distributed-verifier-row-eval.md
 
 Steps:
 
-1. Enumerate `num_positions_per_block`, `num_blocks_per_chunk_granule`, and `Q` independently.
-2. Price exact physical widths, structured verifier work, and chunk imbalance.
+1. Enumerate `num_positions_per_block` and `Q` independently.
+2. Price exact physical widths, live-block verifier work, and balanced chunk ownership.
 3. Regenerate every affected schedule table.
 4. Delete the old block-order note and replace the book page with the final geometry.
 5. Mark superseded layout sections in older live specs.

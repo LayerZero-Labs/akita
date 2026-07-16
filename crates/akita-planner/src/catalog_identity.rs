@@ -453,7 +453,6 @@ fn write_generated_precommitted_group_key(h: &mut Fnv64, key: &PrecommittedGroup
     h.write_u64(key.num_live_ring_elements_per_claim as u64);
     h.write_u64(key.num_positions_per_block as u64);
     h.write_u64(key.num_live_blocks as u64);
-    h.write_u64(key.num_blocks_per_chunk_granule as u64);
     match key.fold_challenge_shape {
         TensorChallengeShape::Flat => h.write_u64(0),
         TensorChallengeShape::Tensor { fold_low_len } => {
@@ -575,7 +574,6 @@ mod tests {
             num_live_ring_elements_per_claim: 2,
             num_positions_per_block: 2,
             num_live_blocks: 1,
-            num_blocks_per_chunk_granule: 1,
             fold_challenge_shape: TensorChallengeShape::Flat,
             log_basis: 2,
             n_a: 1,

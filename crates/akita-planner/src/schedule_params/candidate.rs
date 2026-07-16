@@ -48,8 +48,6 @@ pub(crate) fn recursive_fold_level_params_candidate(
     }
     let fold_challenge_shape =
         optimize_fold_challenge_shape(requested_fold_shape, num_live_blocks)?;
-    let num_blocks_per_chunk_granule =
-        optimize_num_blocks_per_chunk_granule(num_live_blocks, num_chunks, fold_challenge_shape)?;
     let decomp = DecompositionParams {
         log_basis,
         ..policy.decomposition
@@ -127,7 +125,6 @@ pub(crate) fn recursive_fold_level_params_candidate(
         num_live_ring_elements_per_claim: num_ring_elems,
         num_positions_per_block,
         num_live_blocks,
-        num_blocks_per_chunk_granule,
         fold_challenge_config: *ring_challenge_cfg,
         fold_challenge_shape,
         num_digits_commit: delta_commit,
@@ -368,8 +365,6 @@ fn derive_setup_prefix_group(
         if num_live_blocks < num_chunks {
             continue;
         }
-        let num_blocks_per_chunk_granule =
-            optimize_num_blocks_per_chunk_granule(num_live_blocks, num_chunks, fold_shape)?;
         let Some(width_s) =
             decomposed_s_block_ring_count(num_positions_per_block, num_digits_commit)
         else {
@@ -437,7 +432,6 @@ fn derive_setup_prefix_group(
             num_live_ring_elements_per_claim: ring_slots,
             num_positions_per_block,
             num_live_blocks,
-            num_blocks_per_chunk_granule,
             fold_challenge_shape: fold_shape,
             log_basis,
             n_a: a_key.row_len(),
@@ -461,13 +455,8 @@ fn derive_setup_prefix_group(
             num_digits_open_val,
             num_digits_fold_one,
         )?;
-        let score = layout_candidate_score(
-            physical_width,
-            num_live_blocks,
-            num_chunks,
-            num_blocks_per_chunk_granule,
-            fold_shape,
-        )?;
+        let score =
+            layout_candidate_score(physical_width, num_live_blocks, num_chunks, fold_shape)?;
         if best
             .as_ref()
             .is_none_or(|(best_score, _)| score < *best_score)
@@ -588,7 +577,6 @@ pub(crate) fn derive_candidate_level_params(
             next_witness_len,
             candidate_params.num_live_blocks,
             num_chunks,
-            candidate_params.num_blocks_per_chunk_granule,
             candidate_params.fold_challenge_shape,
         )?;
         if best
@@ -807,7 +795,6 @@ pub(crate) fn compute_root_direct_level_params(
         num_live_ring_elements_per_claim,
         num_positions_per_block,
         num_live_blocks,
-        num_blocks_per_chunk_granule: 1,
         fold_challenge_config: *ring_challenge_cfg,
         fold_challenge_shape,
         num_digits_commit: depth_commit,
@@ -857,11 +844,6 @@ pub(crate) fn scalar_root_fold_level_params_candidate(
     }
     let fold_challenge_shape =
         optimize_fold_challenge_shape(requested_fold_shape, num_live_blocks)?;
-    let num_blocks_per_chunk_granule = optimize_num_blocks_per_chunk_granule(
-        num_live_blocks,
-        root_num_chunks,
-        fold_challenge_shape,
-    )?;
     let position_index_bits = reduced_vars - block_index_bits;
     let num_positions_per_block =
         1usize
@@ -960,7 +942,6 @@ pub(crate) fn scalar_root_fold_level_params_candidate(
         num_live_ring_elements_per_claim,
         num_positions_per_block,
         num_live_blocks,
-        num_blocks_per_chunk_granule,
         fold_challenge_config: *ring_challenge_cfg,
         fold_challenge_shape,
         num_digits_commit,

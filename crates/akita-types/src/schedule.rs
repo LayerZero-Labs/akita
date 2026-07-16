@@ -81,8 +81,6 @@ pub struct PrecommittedGroupParams {
     pub num_positions_per_block: usize,
     /// Exact number of live blocks (`B = ceil(N / M)`).
     pub num_live_blocks: usize,
-    /// Power-of-two chunk ownership granule (`S`).
-    pub num_blocks_per_chunk_granule: usize,
     /// Group-local flat or tensor fold challenge shape.
     pub fold_challenge_shape: akita_challenges::TensorChallengeShape,
     /// Gadget basis selected for the standalone group commit.
@@ -101,7 +99,6 @@ impl PrecommittedGroupParams {
             num_live_ring_elements_per_claim: params.num_live_ring_elements_per_claim,
             num_positions_per_block: params.num_positions_per_block,
             num_live_blocks: params.num_live_blocks,
-            num_blocks_per_chunk_granule: params.num_blocks_per_chunk_granule,
             fold_challenge_shape: params.fold_challenge_shape,
             log_basis: params.log_basis,
             n_a: params.a_key.row_len(),
@@ -115,7 +112,6 @@ impl PrecommittedGroupParams {
         push_usize(bytes, self.num_live_ring_elements_per_claim);
         push_usize(bytes, self.num_positions_per_block);
         push_usize(bytes, self.num_live_blocks);
-        push_usize(bytes, self.num_blocks_per_chunk_granule);
         bytes.push(match self.fold_challenge_shape {
             akita_challenges::TensorChallengeShape::Flat => 0,
             akita_challenges::TensorChallengeShape::Tensor { .. } => 1,
@@ -176,16 +172,13 @@ impl PrecommittedGroupParams {
                 != self
                     .num_live_ring_elements_per_claim
                     .div_ceil(self.num_positions_per_block)
-            || self.num_blocks_per_chunk_granule == 0
-            || !self.num_blocks_per_chunk_granule.is_power_of_two()
         {
             return Err(AkitaError::InvalidSetup(format!(
                 "precommitted group geometry does not match group.num_vars: \
-                 N={} L={} F={} S={} alpha={} group.num_vars={}",
+                 N={} L={} F={} alpha={} group.num_vars={}",
                 self.num_live_ring_elements_per_claim,
                 self.num_positions_per_block,
                 self.num_live_blocks,
-                self.num_blocks_per_chunk_granule,
                 alpha,
                 self.group.num_vars()
             )));

@@ -245,7 +245,6 @@ fn expand_envelope_witness_at_ring_d(
         num_live_ring_elements_per_claim,
         num_live_blocks,
         num_positions_per_block,
-        num_blocks_per_chunk_granule: 1,
         fold_challenge_config: ring_challenge_cfg,
         fold_challenge_shape: fold_shape,
         num_digits_commit,

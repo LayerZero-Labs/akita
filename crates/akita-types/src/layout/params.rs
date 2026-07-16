@@ -96,8 +96,6 @@ pub struct LevelParams {
     pub num_positions_per_block: usize,
     /// Exact number of live blocks (`B = ceil(N / M)`).
     pub num_live_blocks: usize,
-    /// Number of blocks in one power-of-two chunk-ownership granule.
-    pub num_blocks_per_chunk_granule: usize,
     pub fold_challenge_config: SparseChallengeConfig,
     /// Shape of the stage-1 fold-round challenge vector at this level.
     ///
@@ -210,7 +208,6 @@ impl LevelParams {
             num_live_ring_elements_per_claim: 0,
             num_positions_per_block: 0,
             num_live_blocks: 0,
-            num_blocks_per_chunk_granule: 0,
             fold_challenge_config: SparseChallengeConfig {
                 count_pm1: 0,
                 count_pm2: 0,
@@ -282,7 +279,6 @@ impl LevelParams {
             num_live_ring_elements_per_claim: 0,
             num_positions_per_block: 0,
             num_live_blocks: 0,
-            num_blocks_per_chunk_granule: 0,
             fold_challenge_config,
             fold_challenge_shape: TensorChallengeShape::Flat,
             num_digits_commit: 0,
@@ -600,7 +596,6 @@ impl LevelParams {
         buf.extend_from_slice(&(self.num_live_ring_elements_per_claim as u64).to_le_bytes());
         buf.extend_from_slice(&(self.num_positions_per_block as u64).to_le_bytes());
         buf.extend_from_slice(&(self.num_live_blocks as u64).to_le_bytes());
-        buf.extend_from_slice(&(self.num_blocks_per_chunk_granule as u64).to_le_bytes());
         buf.extend_from_slice(&num_claims.to_le_bytes());
         buf
     }
@@ -768,8 +763,6 @@ impl LevelParams {
             || self.num_positions_per_block == 0
             || !self.num_positions_per_block.is_power_of_two()
             || self.num_live_blocks == 0
-            || self.num_blocks_per_chunk_granule == 0
-            || !self.num_blocks_per_chunk_granule.is_power_of_two()
         {
             return Err(AkitaError::InvalidSetup(
                 "invalid digit-innermost block geometry".to_string(),
@@ -834,7 +827,6 @@ impl LevelParams {
         push_usize(bytes, self.num_live_ring_elements_per_claim);
         push_usize(bytes, self.num_positions_per_block);
         push_usize(bytes, self.num_live_blocks);
-        push_usize(bytes, self.num_blocks_per_chunk_granule);
         append_sparse_challenge_descriptor_bytes(bytes, &self.fold_challenge_config);
         append_tensor_challenge_shape_descriptor_bytes(bytes, self.fold_challenge_shape);
         append_fold_linf_policy_descriptor_bytes(bytes, self.fold_witness_linf_cap_policy());
@@ -1255,7 +1247,6 @@ impl LevelParams {
         num_live_blocks.checked_next_power_of_two().ok_or_else(|| {
             AkitaError::InvalidSetup("block-index domain size overflows usize".to_string())
         })?;
-        let num_blocks_per_chunk_granule = 1;
         let inner_width = num_positions_per_block
             .checked_mul(num_digits_commit)
             .ok_or_else(|| AkitaError::InvalidSetup("inner width overflow".to_string()))?;
@@ -1305,7 +1296,6 @@ impl LevelParams {
             num_live_ring_elements_per_claim,
             num_positions_per_block,
             num_live_blocks,
-            num_blocks_per_chunk_granule,
             fold_challenge_config: self.fold_challenge_config,
             fold_challenge_shape: self.fold_challenge_shape,
             num_digits_commit,
@@ -1379,7 +1369,6 @@ impl LevelParams {
             num_live_ring_elements_per_claim: other.num_live_ring_elements_per_claim,
             num_positions_per_block: other.num_positions_per_block,
             num_live_blocks: other.num_live_blocks,
-            num_blocks_per_chunk_granule: other.num_blocks_per_chunk_granule,
             fold_challenge_config: self.fold_challenge_config,
             fold_challenge_shape: other.fold_challenge_shape,
             num_digits_commit: other.num_digits_commit,

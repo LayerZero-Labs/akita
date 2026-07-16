@@ -67,7 +67,6 @@ fn make_case(num_live_blocks: usize, blocks_per_chunk: usize) -> SetupIndexWeigh
         depth_open,
     )
     .unwrap();
-    level_params.num_blocks_per_chunk_granule = 1;
     let depth_fold = level_params
         .num_digits_fold(num_claims, level_params.field_bits_for_cache())
         .unwrap();

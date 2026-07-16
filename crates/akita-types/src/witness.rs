@@ -140,7 +140,8 @@ impl WitnessLayout {
                     "witness group has malformed dimensions".into(),
                 ));
             }
-            let chunk_block_ranges = Self::resolve_chunk_block_ranges(params, num_chunks)?;
+            let chunk_block_ranges =
+                Self::resolve_chunk_block_ranges(params.num_live_blocks(), num_chunks)?;
             let z_len = checked_mul3(
                 params.num_positions_per_block(),
                 depth_commit,
@@ -185,46 +186,26 @@ impl WitnessLayout {
 
     /// Resolve the exact contiguous block ranges owned by each chunk.
     pub fn resolve_chunk_block_ranges(
-        params: &(impl crate::LevelParamsLike + ?Sized),
+        num_live_blocks: usize,
         num_chunks: usize,
     ) -> Result<Vec<Range<usize>>, AkitaError> {
-        let num_live_blocks = params.num_live_blocks();
-        let num_blocks_per_chunk_granule = params.num_blocks_per_chunk_granule();
-        if num_chunks == 0
-            || num_chunks > MAX_WITNESS_CHUNKS
-            || num_live_blocks == 0
-            || num_blocks_per_chunk_granule == 0
-            || !num_blocks_per_chunk_granule.is_power_of_two()
-        {
+        if num_chunks == 0 || num_chunks > MAX_WITNESS_CHUNKS || num_live_blocks == 0 {
             return Err(AkitaError::InvalidSetup(
                 "witness chunk geometry is malformed".into(),
             ));
         }
-        if num_chunks
-            .checked_mul(num_blocks_per_chunk_granule)
-            .is_none_or(|minimum| minimum > num_live_blocks)
-        {
+        if num_chunks > num_live_blocks {
             return Err(AkitaError::InvalidSetup(
-                "witness chunks exceed the live block granules".into(),
+                "witness chunks exceed the live blocks".into(),
             ));
         }
 
-        let full_granules = num_live_blocks / num_blocks_per_chunk_granule;
-        let residual = num_live_blocks % num_blocks_per_chunk_granule;
-        let base_granules = full_granules / num_chunks;
-        let extra_granules = full_granules % num_chunks;
+        let base_blocks = num_live_blocks / num_chunks;
+        let extra_blocks = num_live_blocks % num_chunks;
         let mut ranges = Vec::with_capacity(num_chunks);
         let mut start = 0usize;
         for chunk_index in 0..num_chunks {
-            let owned_granules = base_granules + usize::from(chunk_index < extra_granules);
-            let mut count = owned_granules
-                .checked_mul(num_blocks_per_chunk_granule)
-                .ok_or_else(|| AkitaError::InvalidSetup("witness chunk width overflow".into()))?;
-            if chunk_index + 1 == num_chunks {
-                count = count.checked_add(residual).ok_or_else(|| {
-                    AkitaError::InvalidSetup("witness chunk width overflow".into())
-                })?;
-            }
+            let count = base_blocks + usize::from(chunk_index < extra_blocks);
             let range = checked_range(start, count, "witness chunk range overflow")?;
             start = range.end;
             ranges.push(range);
@@ -762,7 +743,7 @@ mod tests {
     }
 
     fn test_layout(num_chunks: usize) -> (LevelParams, OpeningClaimsLayout, WitnessLayout) {
-        let mut lp = LevelParams::params_only(
+        let lp = LevelParams::params_only(
             SisModulusProfileId::Q32Offset99,
             32,
             2,
@@ -773,7 +754,6 @@ mod tests {
         )
         .with_decomp(4, 25, 2, 2)
         .expect("test params");
-        lp.num_blocks_per_chunk_granule = 2;
         let opening_batch = OpeningClaimsLayout::new(0, 2).expect("opening batch");
         let layout =
             WitnessLayout::new(&lp, &opening_batch, num_chunks, 3, 2).expect("witness layout");
@@ -808,7 +788,7 @@ mod tests {
     }
 
     #[test]
-    fn granule_aligned_chunks_are_exact_and_contiguous() {
+    fn balanced_chunks_are_exact_and_contiguous() {
         let (_, _, layout) = test_layout(2);
         let units = layout.units_for_group(0).expect("units");
         assert_eq!(units.len(), 2);
@@ -817,6 +797,16 @@ mod tests {
         assert_eq!(units[0].t_range().end, units[1].z_range().start);
         assert_eq!(units[1].t_range().end, layout.r_range().start);
         assert_eq!(layout.group_num_live_blocks(0).expect("fold count"), 7);
+    }
+
+    #[test]
+    fn balanced_chunks_distribute_residual_to_earliest_chunks() {
+        let (mut lp, _, _) = test_layout(1);
+        lp.num_live_blocks = 13;
+        lp.num_live_ring_elements_per_claim = 13 * lp.num_positions_per_block;
+        let ranges =
+            WitnessLayout::resolve_chunk_block_ranges(lp.num_live_blocks, 4).expect("chunk ranges");
+        assert_eq!(ranges, vec![0..4, 4..7, 7..10, 10..13]);
     }
 
     #[test]

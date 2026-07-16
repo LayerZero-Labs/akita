@@ -92,10 +92,10 @@ fields on `AkitaScheduleLookupKey`.
   `policy.witness_chunk.uses_multi_chunk()`. Callers must pass the policy derived
   from the preset they intend to prove under; mismatched preset vs policy is out
   of scope (same as today for `basis_range`, etc.).
-- **Block divisibility.** Multi-chunk root candidates require
-  `num_live_blocks % num_chunks == 0` so each node owns an equal block window
-  (`blocks_per_chunk = num_live_blocks / num_chunks`). Candidates violating this are
-  skipped in the DP, not fixed up later.
+- **Exact balanced ownership.** Multi-chunk candidates require
+  `num_live_blocks >= num_chunks`. The canonical layout assigns
+  `floor(num_live_blocks / num_chunks)` blocks to every chunk and one additional
+  block to each of the first `num_live_blocks % num_chunks` chunks.
 - **Power-of-two `num_chunks`.** Initial scope: `num_chunks` is a power of two
   (matching the book's $2^N$ nodes and the verifier chunked fast path in
   [`distributed-verifier-row-eval.md`](distributed-verifier-row-eval.md)).
@@ -177,10 +177,12 @@ a level with `witness_chunk.num_chunks = num_chunks > 1` concatenates
 
 with (matching the verifier spec's per-chunk segment ordering and lengths):
 
-- `blocks_per_chunk = num_live_blocks / num_chunks`
+- `blocks_in_chunk(j) = floor(num_live_blocks / num_chunks) + 1` for the first
+  `num_live_blocks % num_chunks` chunks, and `floor(num_live_blocks / num_chunks)`
+  for the rest
 - $\widehat e^j$, $\widehat t^j$ each cover **only** chunk $j$'s block window
-  (partitioned: their per-chunk lengths are the single-chunk totals divided by
-  `num_chunks`; still scaled by root `num_polynomials` at level 0)
+  (partitioned according to its exact block count; still scaled by root
+  `num_polynomials` at level 0)
 - $\widehat z^j$ is **full** `inner_width · num_digits_fold` (replicated per chunk,
   *not* divided by `num_chunks`)
 - $r$ is **shared** (one summed quotient $\mathbf r = \sum_j \mathbf r_j$, a single
@@ -200,12 +202,12 @@ with (matching the verifier spec's per-chunk segment ordering and lengths):
 Closed form for total ring elements at an intermediate fold (non-zk):
 
 ```text
-e_chunk = num_polynomials · blocks_per_chunk · δ_open
-t_chunk = num_polynomials · blocks_per_chunk · n_a · δ_open
+e_chunk(j) = num_polynomials · blocks_in_chunk(j) · δ_open
+t_chunk(j) = num_polynomials · blocks_in_chunk(j) · n_a · δ_open
 z_chunk = inner_width · δ_fold                         // full fold width, not / num_chunks
-body    = e_chunk + t_chunk + z_chunk
+body(j) = e_chunk(j) + t_chunk(j) + z_chunk
 r_rows  = relation_matrix_row_count_for(num_commitments = 1, 0, layout)  // summed quotient: single-machine shape, UNCHANGED
-rings   = num_chunks · body + r_rows · r_decomp_levels
+rings   = sum_j body(j) + r_rows · r_decomp_levels
 ```
 
 Note `num_chunks · e_chunk` and `num_chunks · t_chunk` equal the single-chunk
@@ -252,17 +254,15 @@ This gives a single, unambiguous cutover with no extra round:
 - Level `R + 1` and beyond: single-chunk throughout.
 
 Equivalently, exactly the leading `R` committed witnesses (levels `0 .. R - 1`)
-carry replicated $\widehat z$; the divisibility constraint
-(`num_live_blocks % num_chunks == 0`) applies to each such level's `num_live_blocks`.
+carry replicated $\widehat z$; each such level requires at least one live block
+per chunk.
 
 If the optimal schedule has fewer than `R` folds, only the executed prefix uses
 chunked pricing; the remaining configured activated levels are a no-op.
 
-**Feasibility floor on chunked levels.** Because `num_chunks` and `num_live_blocks` are
-both powers of two, `num_live_blocks % num_chunks == 0` is equivalent to
-`block_index_bits(L) ≥ log₂(num_chunks)` at every chunked level `L < R`. The DP therefore
-only considers `r`-splits with at least `log₂(num_chunks)` block bits on the
-leading `R` folds; a cost-optimal split with fewer blocks is unavailable there.
+**Feasibility floor on chunked levels.** The DP requires
+`num_live_blocks >= num_chunks` at every chunked level `L < R`; a cost-optimal
+split with fewer live blocks is unavailable there.
 If **no** candidate survives at a leading level (e.g. the witness has already
 shrunk below `num_chunks` blocks), the DP finds no chunked schedule for that
 `(key, policy)` and returns the usual "no schedule found" `AkitaError` rather than
@@ -275,7 +275,7 @@ so the leading folds always have `≥ num_chunks` blocks (the root is the larges
 **Terminology.** In prose this spec says **node** for a distributed prover
 participant (matching the book's $P_j$). In code and identifiers we say
 **chunk** for the same count: witness layout, config fields, and
-`ChunkedWitnessCfg { num_chunks, .. }` all use `num_chunks` / `blocks_per_chunk`,
+`ChunkedWitnessCfg { num_chunks, .. }` all use `num_chunks` / exact chunk ranges,
 not `num_nodes`. A level is "chunked" when `lp.witness_chunk.num_chunks > 1`.
 
 ### New and modified types
@@ -494,7 +494,7 @@ Behavior:
   shape — the horizontal $\mathbf M_j$ stacking adds columns, not rows — so the
   tail is byte-identical to the single-chunk delegate); only $\widehat z$ grows,
   by $(\texttt{num\_chunks}-1)\cdot z_chunk$. First validate
-  `num_chunks.is_power_of_two()` and `lp.num_live_blocks % num_chunks == 0`, else
+  `num_chunks.is_power_of_two()` and `lp.num_live_blocks >= num_chunks`, else
   `AkitaError::InvalidSetup`.
 
 To keep the single-source-of-truth invariant, the `num_chunks > 1` branch must
@@ -563,7 +563,7 @@ The cutover falls out automatically: level `R` commits a single-chunk witness
 
 At the root-only loop over `(log_basis, block_index_bits)` (absolute level `L = 0`):
 
-1. **Skip** candidates with `num_live_blocks % num_chunks != 0` when
+1. **Skip** candidates with `num_live_blocks < num_chunks` when
    `mc.uses_multi_chunk()` (the root commits a chunked witness when `R >= 1`).
 2. Compute `next_w_len` / `next_w_len_terminal` via
    `w_ring_element_count_for_chunks(..., key.num_polynomials, …,
@@ -598,7 +598,7 @@ For each suffix fold at absolute level `L` (`L >= 1`; the root `L == 0` is handl
 separately in Step 3), with `mc = policy.witness_chunk`:
 
 1. `num_chunks = chunks_at_level(L)` — the chunk count of the witness committed at
-   this level. Skip candidate `r`-splits whose `num_live_blocks % num_chunks != 0`.
+   this level. Skip candidate `r`-splits whose `num_live_blocks < num_chunks`.
 2. Price `next_w_len` / `next_w_len_terminal` with
    `w_ring_element_count_for_chunks(..., 1, …, num_chunks)`. Use
    `num_polynomials = 1` for recursive suffix folds (same as today).
@@ -766,7 +766,7 @@ Non-zk only in this spec phase.
                          ▼
               ┌────────────────────────────────────────┐
               │  Root DP (level 0)                      │
-              │  skip if num_live_blocks % num_chunks != 0   │
+              │  skip if num_live_blocks < num_chunks        │
               │  commit chunks_at_level(0) witness      │
               ├────────────────────────────────────────┤
               │  Suffix DP (levels ≥ 1)                 │
@@ -848,7 +848,7 @@ Non-zk only in this spec phase.
 - **Table size:** Two new D64 modules with the **same row count** as their
   non-chunked siblings (one entry per `(num_vars, num_polynomials)`); schedules
   differ because emission runs DP with a multi-chunk `PlannerPolicy.witness_chunk`.
-- **DP runtime:** Root loop skips more `block_index_bits` candidates due to divisibility;
+- **DP runtime:** Root loop skips `block_index_bits` candidates with too few live blocks;
   negligible vs existing exhaustive search.
 
 Regenerate command (after implementation):

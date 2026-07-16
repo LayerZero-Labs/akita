@@ -22,7 +22,6 @@ REPLACEMENTS: list[tuple[str, str]] = [
     ("resolve_shard_fold_ranges", "resolve_chunk_block_ranges"),
     ("num_shards_for_group", "num_chunks_for_group"),
     ("group_live_fold_count", "group_num_live_blocks"),
-    ("optimize_shard_granule", "optimize_num_blocks_per_chunk_granule"),
     ("shard_geometry_cost", "chunk_geometry_cost"),
     ("validate_fold_geometry", "validate_block_geometry"),
     ("global_fold_start", "global_block_start"),
@@ -36,7 +35,6 @@ REPLACEMENTS: list[tuple[str, str]] = [
     ("FOLD_EMBED_ERROR", "BLOCK_EMBED_ERROR"),
     ("shard_chunks_override", "chunk_count_override"),
     ("root_num_shards", "root_num_chunks"),
-    ("shard_granule", "num_blocks_per_chunk_granule"),
     ("shard_index", "chunk_index"),
     # Opening geometry only (not fold_high/fold_low).
     ("fold_weights", "live_block_weights"),
@@ -57,7 +55,6 @@ PROSE_REPLACEMENTS: list[tuple[str, str]] = [
     ("multi_shard", "multi_chunk"),
     ("per-shard", "per-chunk"),
     ("shard ranges", "chunk ranges"),
-    ("shard granule", "chunk granule"),
     ("Shard ownership", "Chunk ownership"),
     ("shard ownership", "chunk ownership"),
     ("shard count", "chunk count"),
