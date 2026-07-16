@@ -304,11 +304,11 @@ holds in code.
   (`*_full`, `fp{32,64}_d{32,64}`) families' root collision rises one notch
   (`b/2−1 → b/2` on the `min` side), occasionally bumping the root A-rank.
 - **`fp16::D32Full` now ships fully cleartext (`commit: None`) for
-  `nuposition_index_bits >= 6`.** Previously it root-committed (`commit: Some`); the one-notch
+  `num_vars >= 6`.** Previously it root-committed (`commit: Some`); the one-notch
   collision bump pushes the dense root A-rank above the 16-bit modulus's secure
   ceiling, so the DP drops even the root commitment. It still commits at the
-  single-block size `nuposition_index_bits = 5`. The `akita_e2e::fp16_static_dense_round_trip`
-  test was retargeted from `nuposition_index_bits = 8` to `5` so it keeps exercising a real
+  single-block size `num_vars = 5`. The `akita_e2e::fp16_static_dense_round_trip`
+  test was retargeted from `num_vars = 8` to `5` so it keeps exercising a real
   SIS commitment. fp32/fp64 dense are unaffected at the tested sizes.
 - **SIS-floor tables unchanged.** The lattice-estimator security tables
   (`sis/generated_sis_table.rs`) do not depend on the witness norm — only the

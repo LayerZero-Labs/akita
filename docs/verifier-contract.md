@@ -13,7 +13,7 @@ Any malformed verifier-facing proof, setup, schedule, public claim, opening poin
 - `akita-config` (every `CommitmentConfig` method reachable from `batched_verify`)
 - `akita-planner` (the schedule-search DP is verifier-reachable through `CommitmentConfig::runtime_schedule` table-miss fallback)
 
-The verifier must validate `key.nuposition_index_bits` against setup capacity before invoking the DP so a malformed proof cannot blow up the search's bounded state space.
+The verifier must validate `key.num_vars` against setup capacity before invoking the DP so a malformed proof cannot blow up the search's bounded state space.
 
 ## Rules
 

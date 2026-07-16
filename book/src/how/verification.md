@@ -12,7 +12,7 @@ directly `<Cfg>`-generic: it calls `CommitmentConfig` hooks and
 At a high level:
 
 1. **Bind the instance** and absorb the opening batch shape into the transcript.
-2. **Resolve the schedule** the prover used (`CommitmentConfig::runtime_schedule`), validating `nuposition_index_bits` against setup capacity before any DP fallback.
+2. **Resolve the schedule** the prover used (`CommitmentConfig::runtime_schedule`), validating `num_vars` against setup capacity before any DP fallback.
 3. **For each level**, replay sumcheck stages, opening checks, and fold or direct paths as dictated by `LevelParams` (see `protocol/levels/`, `levels/root_fold.rs`, `levels/suffix.rs`, `src/stages/`).
 4. **Evaluate the relation matrix** `M` at the derived point ([Matrix evaluation](./verifying/matrix_evaluation.md)).
 
@@ -33,7 +33,7 @@ commitment, direct witness, or transcript input must be rejected with
 - `akita-config` (every `CommitmentConfig` method reachable from `batched_verify`)
 - `akita-planner` (schedule-search DP on table miss, reachable through `runtime_schedule`)
 
-The verifier must validate `key.nuposition_index_bits` against setup capacity **before**
+The verifier must validate `key.num_vars` against setup capacity **before**
 invoking the DP so a malformed proof cannot blow up the search state space.
 
 ### Rules for contributors

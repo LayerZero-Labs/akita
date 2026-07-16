@@ -131,7 +131,7 @@ The test-coverage cleanup touches:
 3. Benchmark-facing labels expose field family, workload, and ring dimension.
    fp128 rows say `*_fp128_d128`; one-hot rows say `1-of-256 one-hot`.
 4. Case IDs are semantic and stable for new artifacts:
-   `{field}-{workload[-batched]}-nv{nuposition_index_bits}-np{num_polys}-d{D}` for direct
+   `{field}-{workload[-batched]}-nv{num_vars}-np{num_polys}-d{D}` for direct
    setup mode, with `-setup-recursive` appended for recursive setup mode.
    Loaded summaries are normalized from `(mode, nv, np, setup_mode)` using the
    new naming scheme. This intentionally does not preserve or compare legacy

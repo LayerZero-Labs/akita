@@ -13,7 +13,7 @@ The root and recursive extension-opening-reduction (EOR) prover proves the
 degree-two sum-check for `Σ_x g(x)·A_η(x)`, where `g` is the degree-`d_ext`
 extension packing of a base-field witness `f` (`g(w) = Σ_{v<d_ext} f(v,w)·γ_v`)
 and `A_η` is the transparent FRI-Binius tensor-equality weight. Both `g` and
-`A_η` are currently **materialized as full `2^nuposition_index_bits` tables** on the paths
+`A_η` are currently **materialized as full `2^num_vars` tables** on the paths
 that dominate small-field prove time, and the `A_η` materialization also trips a
 1 GiB eq-table allocation cap.
 
@@ -26,17 +26,17 @@ the big tables; stream/stage from the structured inputs — plus a cap fix:
    EOR sum-check and the ring-switch transform (today dense packs `g` twice).
 2. **Factor side (`A_η`):** make the cutoff **budget-driven against a RAM-scale
    budget** (replacing the fixed `materialize_at = 12`). When the flat `2^tail`
-   factor fits the budget — the common case at realistic `nuposition_index_bits` (≈ through nv32-
+   factor fits the budget — the common case at realistic `num_vars` (≈ through nv32-
    33 on 64 GB) — the cutoff is **`m = 0`: materialize and use the dense / flat
    O(1) path** (no prefix-suffix). Only when the flat table exceeds the budget
    (≈ nv34+ on 64 GB) does the single `d_ext`-term prefix-suffix cutoff kick in, so
    no path materializes a `width × 2^suffix` (or flat `2^tail`) table over budget at
-   any `nuposition_index_bits`. The recursive `O(√)`-space prover is an escape hatch, not the
+   any `num_vars`. The recursive `O(√)`-space prover is an escape hatch, not the
    default (see "Operating point").
 3. **Cap:** retarget `MAX_MATERIALIZED_EQ_TABLE_BYTES` (`eq_poly.rs:25`) to a
    verifier-only allocation ceiling so it no longer guards the wrong quantity, no
    longer pins the prover to a bad operating point, and no longer hard-fails valid
-   prover shapes at large `nuposition_index_bits`.
+   prover shapes at large `num_vars`.
 
 The math, notation, and the streamed staged-prover construction are taken directly
 from the Akita implementation-details writeup (paragraphs "Dense packing versus the
@@ -122,7 +122,7 @@ native release, all cores, `AKITA_PROFILE_LOG=debug`.
 `root_extension_transform_polys` each call `tensor_packed_extension_evals::<C>()`
 on the same polys. That function takes **no point** (`dense.rs:324`, default
 `lib.rs:331`) — it is a pure function of `(poly, C)`, so the two calls are
-byte-identical full `2^nuposition_index_bits` extension packings. Together they dominate
+byte-identical full `2^num_vars` extension packings. Together they dominate
 `prove_prepared_root_extension_opening_reduction` and
 `root_extension_transform_polys`.
 
@@ -136,7 +136,7 @@ byte-identical full `2^nuposition_index_bits` extension packings. Together they 
 | `sumcheck_round_univariate` (total)    | **1252 ms** | 52 ms      |
 | `sumcheck_round_fold` (total)          | 719 ms      | 293 ms     |
 
-The comparison is **confounded by `nuposition_index_bits`** (a dense nv32 factor is
+The comparison is **confounded by `num_vars`** (a dense nv32 factor is
 `2^30×16 B = 16 GiB`, infeasible — the reason one-hot goes sparse), so the point
 is the *shape*, not "onehot slow vs dense". Per-round univariate µs for the
 largest one-hot EOR sum-check (tail = 30):
@@ -168,7 +168,7 @@ structured-weight cost (see "Honest framing").
 An older trace (`materialize_at = 4`) showed `suffix_tables = width × 2^26 = 4 GiB`
 and **9.8 s (83% of an 11.9 s prove)** in `TensorEqualityFactor::new`. Current
 `materialize_at = 12` shrinks it to `4 × 2^18 = 16 MB`, but the blow-up returns at
-larger `nuposition_index_bits`, and the cap turns it into a hard failure (P-F2 below).
+larger `num_vars`, and the cap turns it into a hard failure (P-F2 below).
 
 ## Background: the structured EOR inner product
 
@@ -265,7 +265,7 @@ byte-identical either way.
   `extension_opening_reduction.rs:792-799`) has **no byte budget**. So the cap
   bounds the scalar `suffix_eq`, not the real `width × suffix_eq` allocation (a
   1 GiB cap silently permits 4 GiB), forces `materialize_at ≥ tail−26`, and makes
-  `EqPolynomial::evals` **return `Err`** once `tail−12 > 26` (`nuposition_index_bits ≳ 41` for
+  `EqPolynomial::evals` **return `Err`** once `tail−12 > 26` (`num_vars ≳ 41` for
   onehot fp32_d32) — a hard prover failure. It is an allocation-safety ceiling, not
   a correctness requirement.
 - **P-F3 — `materialize_at` U-curve + `low_states` churn (irreducible floor).**
@@ -293,7 +293,7 @@ streamed path (see "Operating point"):
 3. **Budget-driven cutoff, not a hard-coded constant.** Replace the fixed
    `SPARSE_TENSOR_FACTOR_MAX_LAZY_ROUNDS = 12` with `m` derived from `(tail, d_ext,
    budget)` so the prefix-block suffix `d_ext × 2^{tail−m}` and the materialized
-   residual `2^{tail−m}` both fit the budget at every `nuposition_index_bits` (including nv40,
+   residual `2^{tail−m}` both fit the budget at every `num_vars` (including nv40,
    where the constant currently hard-fails). At small tail, `m = 0` (materialize
    immediately).
 4. **Cap:** verifier-only ceiling; prover never depends on it.
@@ -304,7 +304,7 @@ streamed path (see "Operating point"):
 ### Invariants
 
 - **Never materialize the big tables.** No fold-side path allocates a `Vec<C>` of
-  length `2^packed_nuposition_index_bits`; no factor path allocates the flat `2^tail` weight or a
+  length `2^packed_num_vars`; no factor path allocates the flat `2^tail` weight or a
   `width × 2^{tail−m}` suffix that exceeds the budget. Fold-side peak witness
   allocation is the half-size (`2^{n-1}`) folded table; factor peak is the
   budget-bounded single-cutoff residual `d_ext × 2^{tail−m} ≤ budget` (the
@@ -313,7 +313,7 @@ streamed path (see "Operating point"):
 - **MLE caveat respected.** Prefix coordinates are extracted on the Boolean table
   and folded as `K`-coordinate tables; `λ_t` is never applied to an `L`-folded eq
   value at a non-Boolean challenge. (Verified by the flat-reference oracle below.)
-- **Byte-identical proofs and transcript** for every benchmarked mode/`nuposition_index_bits`
+- **Byte-identical proofs and transcript** for every benchmarked mode/`num_vars`
   (proof bytes, `proof_size_bytes`, transcript bytes), and the proof verifies. The
   weight equals the current factor field-exactly (Eq. `eor-prefix-suffix-weight` is
   an identity), and the streamed round-0 witness fold equals the materialized
@@ -399,7 +399,7 @@ Run release + native, all cores; also `--features zk` (the ZK prove loop in
 
 ### Performance
 
-- **Witness side:** drop one full `2^nuposition_index_bits` extension packing (pack-once), fuse
+- **Witness side:** drop one full `2^num_vars` extension packing (pack-once), fuse
   the round-0 packing into the round-0 fold; lower peak RSS, fewer memory writes;
   measurable prove-time + RSS improvement on the EOR-dominated small-field modes,
   no regression on `fp128`.

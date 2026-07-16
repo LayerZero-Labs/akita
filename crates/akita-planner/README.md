@@ -22,7 +22,7 @@ The public search entry point is `find_group_batch_schedule(&key, &policy, ring_
 same-point openings store one `PolynomialGroupLayout` in `final_group` and leave
 `precommitteds` empty:
 
-- `nuposition_index_bits`: the number of Boolean variables in the opened polynomial domain
+- `num_vars`: the number of Boolean variables in the opened polynomial domain
   (shared opening-point arity).
 - `num_polynomials`: the number of polynomials in the single commitment group,
   opened at the shared point (one claim per polynomial).
@@ -75,7 +75,7 @@ The first question determines whether the current fold is worthwhile. The second
 
 ## Root Level Search
 
-The root level starts from the original witness length `2^nuposition_index_bits`. It is the only level that sees the full root batching shape from the lookup key.
+The root level starts from the original witness length `2^num_vars`. It is the only level that sees the full root batching shape from the lookup key.
 
 At the root, the planner iterates over the configured `log_basis` range and over valid `block_index_bits` values. For each candidate it derives:
 

@@ -132,7 +132,7 @@ rm -rf /tmp/akita-recursion-targets /tmp/jolt-guest-targets
 1. **`artifact`** runs `AkitaCommitmentScheme::<64, fp128::D64OneHot>` →
    `setup_prover` → `commit` → `batched_prove` over a synthetic OneHot
    polynomial, sanity-verifies on the host, and serializes
-   `(transcript_domain, nuposition_index_bits, opening_point, opening, commitment,
+   `(transcript_domain, num_vars, opening_point, opening, commitment,
    verifier_setup, proof_shape, proof)` into a single blob via
    [`AkitaJoltInputs::write_to_bytes`](glue/src/lib.rs).
 2. **`host`** loads the blob, compiles the guest to
@@ -167,7 +167,7 @@ rm -rf /tmp/akita-recursion-targets /tmp/jolt-guest-targets
 A natural surprise: a smaller ring `D` can make on-CPU proofs smaller, but
 **D=32 is not a valid A-role fold degree** (`d_a ≥ 64`) after the ring-dim
 cutover, and historical D=32 Jolt traces were **more** expensive than D=64 at
-equal `nuposition_index_bits`. Three compounding effects explained the old D=32 penalty:
+equal `num_vars`. Three compounding effects explained the old D=32 penalty:
 
 1. **More recursion levels.** Folding nv=32 to a tractable terminal
    takes 6 levels at D=64 vs 7 at D=32. Each level adds a full

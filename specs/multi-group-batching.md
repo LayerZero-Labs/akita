@@ -237,7 +237,7 @@ pub struct PointVariableSelection {
 }
 
 pub struct PolynomialGroupLayout {
-    nuposition_index_bits: usize,
+    num_vars: usize,
     num_polynomials: usize,
 }
 
@@ -258,16 +258,16 @@ Implemented constructors and accessors:
 
 ```rust
 impl OpeningClaimsLayout {
-    pub fn new(nuposition_index_bits: usize, num_polys: usize) -> Result<Self, AkitaError>;
+    pub fn new(num_vars: usize, num_polys: usize) -> Result<Self, AkitaError>;
 
     pub fn from_group_sizes(
-        nuposition_index_bits: usize,
+        num_vars: usize,
         num_polys_per_commitment_group: &[usize],
     ) -> Result<Self, AkitaError>;
     pub fn from_groups(groups: Vec<PolynomialGroupLayout>) -> Result<Self, AkitaError>;
     pub fn check(&self) -> Result<(), AkitaError>;
 
-    pub fn max_nuposition_index_bits(&self) -> usize;
+    pub fn max_num_vars(&self) -> usize;
     pub fn groups(&self) -> &[PolynomialGroupLayout];
     pub fn num_groups(&self) -> usize;
     pub fn num_total_polynomials(&self) -> usize;
@@ -281,7 +281,7 @@ impl<'a, F: Clone, C> OpeningClaims<'a, F, C> {
         groups: Vec<PolynomialGroupClaims<'a, F, C>>,
     ) -> Result<Self, AkitaError>;
     pub fn layout(&self) -> OpeningClaimsLayout;
-    pub fn nuposition_index_bits(&self) -> usize;
+    pub fn num_vars(&self) -> usize;
     pub fn num_total_polynomials(&self) -> usize;
     pub fn num_groups(&self) -> usize;
     pub fn group_sizes(&self) -> Vec<usize>;
@@ -379,7 +379,7 @@ Keep `PolynomialGroupLayout` as the per-group entry shape:
 
 ```rust
 pub struct PolynomialGroupLayout {
-    pub nuposition_index_bits: usize,
+    pub num_vars: usize,
     pub num_polynomials: usize,
 }
 ```
@@ -387,7 +387,7 @@ pub struct PolynomialGroupLayout {
 It describes one commitment group's opening geometry:
 
 ```text
-nuposition_index_bits        = committed/opened arity for this group
+num_vars        = committed/opened arity for this group
 num_polynomials = K_g
 ```
 
@@ -443,7 +443,7 @@ binding.
 Scalar same-point schedules use:
 
 ```rust
-AkitaScheduleLookupKey::single(PolynomialGroupLayout::new(nuposition_index_bits, K))
+AkitaScheduleLookupKey::single(PolynomialGroupLayout::new(num_vars, K))
 ```
 
 That form has an empty `precommitteds` vector and delegates byte-for-byte to the
@@ -498,8 +498,8 @@ else:
 Current generated group-batch tables are emitted only for eligible one-hot,
 non-tiered families that opt in through `GeneratedFamily.emit_group_batch`.
 The emitter enumerates main keys from the normal generated family key grid
-(`num_polynomials in {1, 4}` today), sets each precommitted group's `nuposition_index_bits`
-to `main.nuposition_index_bits / 2`, and emits one- or two-precommit patterns:
+(`num_polynomials in {1, 4}` today), sets each precommitted group's `num_vars`
+to `main.num_vars / 2`, and emits one- or two-precommit patterns:
 
 ```text
 precommitted group counts: 1 or 2
@@ -516,7 +516,7 @@ Follow-up table generation can broaden the grid:
 ```text
 G in {1, 2, 4}
 K_g in {1, 2, 4} including more unequal group sizes
-nuposition_index_bits in supported family ranges
+num_vars in supported family ranges
 ```
 
 ## Conservative-Rank Configuration
@@ -768,7 +768,7 @@ For a multi-group root-direct schedule, the direct witness length is the sum of 
 group witness lengths:
 
 ```text
-sum_g K_g * 2^{nuposition_index_bits_g}
+sum_g K_g * 2^{num_vars_g}
 ```
 
 The implemented D width uses one `w_hat_g` segment per group:
@@ -893,7 +893,7 @@ opening_batch_digest
 `OpeningClaimsLayout::opening_batch_digest` uses:
 
 ```text
-nuposition_index_bits
+num_vars
 num_polynomials
 num_commitment_groups
 for each group:
@@ -910,7 +910,7 @@ B key, block geometry, and digit counts.
 `PrecommittedGroupParams` descriptor bytes currently encode:
 
 ```text
-group.nuposition_index_bits
+group.num_vars
 group.num_polynomials
 position_index_bits
 block_index_bits
@@ -975,7 +975,7 @@ digest  -> 32 raw bytes (Blake2b-256 output)
 `PrecommittedGroupParams` encodes in this fixed order:
 
 ```text
-group.nuposition_index_bits
+group.num_vars
 group.num_polynomials
 position_index_bits
 block_index_bits
@@ -997,7 +997,7 @@ The multi-group opening-batch digest in `CallSection` remains separate and uses 
 existing `opening_batch_digest` encoding over:
 
 ```text
-nuposition_index_bits
+num_vars
 num_polynomials
 num_commitment_groups
 for each group:
@@ -1059,7 +1059,7 @@ schedule are the sources of truth.
 Current setup capacity remains expressed as:
 
 ```text
-max_nuposition_index_bits
+max_num_vars
 max_num_batched_polys
 max_setup_len
 ```
@@ -1375,7 +1375,7 @@ AKITA_MODE=onehot_fp128_d64_multi_group AKITA_NUM_VARS=28 \
 Pass criteria for the spec gate:
 
 ```text
-multi-group proof bytes >= scalar [4] proof bytes for the same nuposition_index_bits
+multi-group proof bytes >= scalar [4] proof bytes for the same num_vars
 multi-group B-row time is reported separately from scalar baseline
 multi-group descriptor size > scalar descriptor size when G > 1
 DP fallback time for multi-group keys is reported even when tables miss
@@ -1460,7 +1460,7 @@ The following choices close the open questions from the first draft:
   `batched_commit` for precommitted groups, and expose `commit_final_group` for
   the final-group commitment. Do not add a separate `commit_group` handle layer
   in the initial API rollout.
-2. **Setup capacity:** keep the public setup surface on `max_nuposition_index_bits`,
+2. **Setup capacity:** keep the public setup surface on `max_num_vars`,
   `max_num_batched_polys`, and `max_setup_len` for Phase 1. Add an explicit
   group-count setup API field only if Phase 2 envelope scans show a need.
 3. **Recursive setup contribution:** explicitly delay generalization until

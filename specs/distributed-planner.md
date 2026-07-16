@@ -60,7 +60,7 @@ and `num_activated_levels = R`:
    `(key, policy)` pair.
 4. **`D = 64` presets** gain companion `_multi_chunk` generated tables whose
    **catalog identity** embeds `ChunkedWitnessCfg`; table **row keys** stay
-   `(nuposition_index_bits, num_polynomials)` like their non-chunked siblings.
+   `(num_vars, num_polynomials)` like their non-chunked siblings.
 
 **Configuration surface.** Presets declare multi-chunk witness parameters through
 [`CommitmentConfig::chunked_witness_cfg()`](../crates/akita-config/src/lib.rs).
@@ -85,7 +85,7 @@ fields on `AkitaScheduleLookupKey`.
   `generated_schedule_tables_match_find_schedule` with paired non-chunked vs
   default-config assertions on the **same** lookup keys.
 - **Lookup key unchanged.** `AkitaScheduleLookupKey` remains
-  `{ nuposition_index_bits, num_polynomials }` only. No multi-chunk dimensions are added to
+  `{ num_vars, num_polynomials }` only. No multi-chunk dimensions are added to
   the key or to [`GeneratedScheduleKey`](../crates/akita-planner/src/generated/mod.rs).
 - **Policy is the layout selector.** `find_schedule(key, policy, …)` and
   `resolve_schedule(key, policy, …)` price chunked layout iff
@@ -420,7 +420,7 @@ if mc.num_activated_levels > MAX_RECURSION_DEPTH { // depth bound (planner-owned
 ```
 
 There is **no** lookup-key coupling: `key.validate()` stays the existing
-two-field check (`nuposition_index_bits > 0`, `num_polynomials > 0`).
+two-field check (`num_vars > 0`, `num_polynomials > 0`).
 
 #### 4. `PlannerPolicy` (`akita-planner/src/lib.rs`)
 
@@ -511,13 +511,13 @@ Unit tests in `akita-types` compare against the chunk offset arithmetic from
 
 ```rust
 pub struct AkitaScheduleLookupKey {
-    pub nuposition_index_bits: usize,
+    pub num_vars: usize,
     pub num_polynomials: usize,
 }
 ```
 
 **Do not** add multi-chunk dimensions to the key. Table emission for multi-chunk
-families enumerates the **same** `(nuposition_index_bits, num_polynomials)` pairs as their
+families enumerates the **same** `(num_vars, num_polynomials)` pairs as their
 non-chunked siblings (via `AkitaScheduleLookupKey::new_from_opening_batch` /
 existing family key lists). Multi-chunk vs non-chunked schedules differ because
 the **policy** passed to `find_schedule` differs, and because each shipped table
@@ -586,7 +586,7 @@ current_lb)`. Extend **`SuffixCtx`**:
 struct SuffixCtx<'a> {
     policy: &'a PlannerPolicy,
     ring_challenge_config: RingChallengeConfigFn<'a>,
-    nuposition_index_bits: usize,
+    num_vars: usize,
     key: AkitaScheduleLookupKey,
     // `key` and `policy` are already present today; no new field is needed
     // because the absolute level is the existing `level` argument to
@@ -675,11 +675,11 @@ For each new multi-chunk family:
 2. **`schedule_feature`**: e.g. `fp128-d64-onehot-multi-chunk` (new feature flags
    on `akita-schedules` / `akita-config`).
 3. **`family_keys`**: **same enumeration** as the non-chunked sibling
-   (`nuposition_index_bits` / `num_polynomials` ranges unchanged). Example:
+   (`num_vars` / `num_polynomials` ranges unchanged). Example:
 
    ```rust
    let policy = policy_of::<D64OneHotMultiChunk>();
-   // keys: AkitaScheduleLookupKey::new(nuposition_index_bits, num_polys) — identical to D64OneHot
+   // keys: AkitaScheduleLookupKey::new(num_vars, num_polys) — identical to D64OneHot
    ```
 
 4. **`EmitSpec.policy`**: full `PlannerPolicy` including
@@ -761,7 +761,7 @@ Non-zk only in this spec phase.
      runtime_schedule      find_schedule / resolve_schedule
               │                    │
      AkitaScheduleLookupKey         │
-     (nuposition_index_bits, num_polynomials)   │  chunks_at_level(L) selects chunked vs single
+     (num_vars, num_polynomials)   │  chunks_at_level(L) selects chunked vs single
               └──────────┬───────────┘
                          ▼
               ┌────────────────────────────────────────┐
@@ -811,7 +811,7 @@ Non-zk only in this spec phase.
 - [ ] `find_schedule` with `policy.witness_chunk =
   `ChunkedWitnessCfg::d64_production()` (`W8R2`) produces
   `LevelParams.witness_chunk.num_chunks == 8` on fold levels `0..=2` and
-  `== 1` from level `3` onward for a smoke `nuposition_index_bits` key.
+  `== 1` from level `3` onward for a smoke `num_vars` key.
 - [ ] Root DP skips `(log_basis, block_index_bits)` whose `live_block_count % 8 != 0` when
   `num_chunks = 8`.
 - [ ] Two `_multi_chunk` D64 modules emitted (`onehot`, `full`);
@@ -829,7 +829,7 @@ Non-zk only in this spec phase.
 
 1. **Unit (`akita-types`)** — witness width helper vs explicit chunk stride math;
    cutover level output width `<` purely chunked width for `num_chunks > 1`.
-2. **Unit (`akita-planner/schedule_params`)** — small `nuposition_index_bits` brute schedule
+2. **Unit (`akita-planner/schedule_params`)** — small `num_vars` brute schedule
    with `policy.witness_chunk.num_chunks = 8` is deterministic; setting
    `witness_chunk: ChunkedWitnessCfg::default()` on the same policy matches the
    golden non-chunked schedule for the same key.
@@ -841,12 +841,12 @@ Non-zk only in this spec phase.
 
 ### Performance
 
-- **Proof size:** Multi-chunk schedules at the same `nuposition_index_bits` carry more witness
+- **Proof size:** Multi-chunk schedules at the same `num_vars` carry more witness
   bytes when `num_chunks > 1`, driven by $(\texttt{num\_chunks} - 1)$ extra
   $\widehat z$ segments per multi-chunk level and longer sum-checks. The planner
   reports this in `Schedule.total_bytes`; it does not search for smaller proofs.
 - **Table size:** Two new D64 modules with the **same row count** as their
-  non-chunked siblings (one entry per `(nuposition_index_bits, num_polynomials)`); schedules
+  non-chunked siblings (one entry per `(num_vars, num_polynomials)`); schedules
   differ because emission runs DP with a multi-chunk `PlannerPolicy.witness_chunk`.
 - **DP runtime:** Root loop skips more `block_index_bits` candidates due to divisibility;
   negligible vs existing exhaustive search.
