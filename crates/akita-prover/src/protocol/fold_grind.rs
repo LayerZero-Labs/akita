@@ -80,27 +80,16 @@ fn coeff_within_digit_bounds(coeff: i32, ctx: &FoldGrindAcceptanceCtx) -> bool {
 }
 
 fn accepts_fold_witness<F: CanonicalField, const D: usize>(
-    contract: &FoldWitnessGrindContract,
+    ctx: &FoldGrindAcceptanceCtx,
     witness: &DecomposeFoldWitness<F>,
     z_folded_centered_per_chunk: &[Vec<[i32; D]>],
-    witness_linf_cap: u128,
-    digit_negative_abs_bound: u128,
-    digit_positive_bound: u128,
-    tail_t_vectors: Option<usize>,
 ) -> bool {
-    let ctx = fold_grind_acceptance_ctx(
-        contract,
-        witness_linf_cap,
-        digit_negative_abs_bound,
-        digit_positive_bound,
-        tail_t_vectors,
-    );
     for coeff in z_folded_centered_per_chunk
         .iter()
         .flat_map(|chunk| chunk.iter())
         .flat_map(|coeffs| coeffs.iter())
     {
-        if !coeff_within_digit_bounds(*coeff, &ctx) {
+        if !coeff_within_digit_bounds(*coeff, ctx) {
             return false;
         }
         if ctx.check_grind_cap && u128::from(coeff.unsigned_abs()) > ctx.witness_linf_cap {
@@ -210,17 +199,23 @@ pub(crate) struct FoldGrindGroup<'params, 'poly, P> {
     pub(crate) params: &'params dyn LevelParamsLike,
 }
 
+impl<P> Copy for FoldGrindGroup<'_, '_, P> {}
+
+impl<P> Clone for FoldGrindGroup<'_, '_, P> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
 pub(crate) struct FoldGrindGroupOutput<F: FieldCore> {
     pub(crate) witness: DecomposeFoldWitness<F>,
     pub(crate) centered_per_chunk: Vec<Vec<Vec<i32>>>,
     pub(crate) challenges: Challenges,
 }
 
-struct FoldGrindGroupPlan {
-    contract: FoldWitnessGrindContract,
-    witness_linf_cap: u128,
-    digit_negative_abs_bound: u128,
-    digit_positive_bound: u128,
+struct PreparedFoldGrindGroup<'params, 'poly, P> {
+    input: FoldGrindGroup<'params, 'poly, P>,
+    acceptance: FoldGrindAcceptanceCtx,
     point_indices: Vec<usize>,
 }
 
@@ -312,9 +307,7 @@ fn sample_multi_group_fold_decompose_witnesses_at_dim<F, P, B, T, const D: usize
     prepared: Option<&B::PreparedSetup>,
     transcript: &mut T,
     root_lp: &LevelParams,
-    groups: &[FoldGrindGroup<'_, '_, P>],
-    plans: &[FoldGrindGroupPlan],
-    tail_t_vectors: Option<usize>,
+    groups: &[PreparedFoldGrindGroup<'_, '_, P>],
     probe_nonces: &[u32],
 ) -> Result<(Vec<FoldGrindGroupOutput<F>>, u32), AkitaError>
 where
@@ -326,9 +319,9 @@ where
         + for<'a> OpeningFoldKernel<P::OpeningView<'a>, F, D>,
     T: Transcript<F> + ProverTranscriptGrind<F>,
 {
-    if groups.len() != plans.len() || groups.is_empty() {
+    if groups.is_empty() {
         return Err(AkitaError::InvalidSetup(
-            "fold grind group plans do not match the opening batch".to_string(),
+            "fold grind batch has no groups".to_string(),
         ));
     }
     let ring_d = root_lp.role_dims().d_a();
@@ -337,7 +330,8 @@ where
         let mut candidate_outputs = Vec::with_capacity(groups.len());
         {
             let mut preview = PreviewFoldDraw::new(transcript);
-            for (group, plan) in groups.iter().zip(plans) {
+            for prepared_group in groups {
+                let group = &prepared_group.input;
                 let challenges = preview.draw_folding_challenges(
                     ring_d,
                     group.group_index,
@@ -353,19 +347,12 @@ where
                     prepared,
                     &challenges,
                     group.polys,
-                    &plan.point_indices,
+                    &prepared_group.point_indices,
                     root_lp,
                     group.params,
                 )?;
-                if !accepts_fold_witness::<F, D>(
-                    &plan.contract,
-                    &witness,
-                    &z_per_chunk,
-                    plan.witness_linf_cap,
-                    plan.digit_negative_abs_bound,
-                    plan.digit_positive_bound,
-                    tail_t_vectors,
-                ) {
+                if !accepts_fold_witness::<F, D>(&prepared_group.acceptance, &witness, &z_per_chunk)
+                {
                     return Ok(None);
                 }
                 let centered_per_chunk = z_per_chunk
@@ -383,7 +370,8 @@ where
     })?;
 
     let mut live = LiveFoldDraw::<F, T>::new(transcript);
-    for (group, output) in groups.iter().zip(candidate_outputs.iter_mut()) {
+    for (prepared_group, output) in groups.iter().zip(candidate_outputs.iter_mut()) {
+        let group = &prepared_group.input;
         let challenges = live.draw_folding_challenges(
             ring_d,
             group.group_index,
@@ -443,7 +431,7 @@ where
             "fold grind groups do not match the batch contract".to_string(),
         ));
     }
-    let mut plans = Vec::with_capacity(groups.len());
+    let mut prepared_groups = Vec::with_capacity(groups.len());
     for (expected_group_index, (group, group_contract)) in
         groups.iter().zip(contract.group_contracts()).enumerate()
     {
@@ -479,17 +467,21 @@ where
                 group.params.log_basis(),
                 delta_fold,
             );
-        plans.push(FoldGrindGroupPlan {
-            contract: *group_contract,
-            witness_linf_cap,
-            digit_negative_abs_bound,
-            digit_positive_bound,
+        prepared_groups.push(PreparedFoldGrindGroup {
+            input: *group,
+            acceptance: fold_grind_acceptance_ctx(
+                group_contract,
+                witness_linf_cap,
+                digit_negative_abs_bound,
+                digit_positive_bound,
+                tail_t_vectors,
+            ),
             point_indices: (0..group.polys.len()).collect(),
         });
     }
-    let group_geometries = groups
+    let group_geometries = prepared_groups
         .iter()
-        .map(|group| (group.params, group.polys.len()))
+        .map(|group| (group.input.params, group.input.polys.len()))
         .collect::<Vec<_>>();
     let probe_nonces =
         grind_probe_nonces(&contract, &binding, transcript, root_lp, &group_geometries)?;
@@ -504,9 +496,7 @@ where
                 prepared,
                 transcript,
                 root_lp,
-                groups,
-                &plans,
-                tail_t_vectors,
+                &prepared_groups,
                 &probe_nonces,
             )
         }
@@ -588,14 +578,11 @@ mod tests {
         );
         let chunks = vec![witness.centered_coeffs_owned::<D>()];
         let (neg_bound, pos_bound) = akita_types::sis::fold_witness_representable_linf_bounds(4, 2);
+        let acceptance = fold_grind_acceptance_ctx(&contract, cap, neg_bound, pos_bound, Some(1));
         assert!(!accepts_fold_witness::<F, D>(
-            &contract,
+            &acceptance,
             &witness,
             &chunks,
-            cap,
-            neg_bound,
-            pos_bound,
-            Some(1),
         ));
     }
 
@@ -615,8 +602,11 @@ mod tests {
         );
         let chunks = vec![vec![[33, 0, 0, 0]], vec![[-12; D]]];
         let (neg_bound, pos_bound) = akita_types::sis::fold_witness_representable_linf_bounds(4, 2);
+        let acceptance = fold_grind_acceptance_ctx(&contract, cap, neg_bound, pos_bound, None);
         assert!(!accepts_fold_witness::<F, D>(
-            &contract, &witness, &chunks, cap, neg_bound, pos_bound, None,
+            &acceptance,
+            &witness,
+            &chunks
         ));
     }
 
@@ -637,8 +627,11 @@ mod tests {
         let (neg_bound, pos_bound) = akita_types::sis::fold_witness_representable_linf_bounds(6, 2);
         assert_eq!(neg_bound, 2080);
         assert_eq!(pos_bound, 2015);
+        let acceptance = fold_grind_acceptance_ctx(&contract, 2080, neg_bound, pos_bound, None);
         assert!(!accepts_fold_witness::<F, D>(
-            &contract, &witness, &chunks, 2080, neg_bound, pos_bound, None,
+            &acceptance,
+            &witness,
+            &chunks
         ));
     }
 }
