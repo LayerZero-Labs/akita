@@ -1,4 +1,4 @@
-use akita_algebra::offset_eq::eq_eval_at_index;
+use akita_algebra::offset_eq::{eq_eval_at_index, OffsetEqWindow};
 use akita_algebra::ring::scalar_powers;
 use akita_field::{AkitaError, FieldCore, MulBase};
 
@@ -105,6 +105,7 @@ impl<E: FieldCore> SetupIndexWeightEvaluator<E> {
     }
 
     /// Evaluate `setup_index_weight~(rho_setup_idx)` exactly.
+    #[tracing::instrument(skip_all, name = "stage3_setup_index_weight")]
     pub fn evaluate(&self, rho_setup_idx: &[E]) -> Result<E, AkitaError> {
         let setup_idx_bits = self.setup_idx_bits()?;
         if rho_setup_idx.len() != setup_idx_bits {
@@ -114,11 +115,19 @@ impl<E: FieldCore> SetupIndexWeightEvaluator<E> {
             });
         }
 
+        // Build bounded equality windows once and share them across every role
+        // and every strided address in the inner sums. The setup-index and
+        // opening addresses are each visited O(setup columns) times per level,
+        // so recomputing a full O(bits) equality product per address dominated
+        // the recursive-mode verifier (setup-product stage 3).
+        let setup_window = OffsetEqWindow::new(rho_setup_idx)?;
+        let x_window = OffsetEqWindow::new(&self.x_challenges)?;
+
         let mut acc = E::zero();
         for group in self.layout.groups() {
-            acc += self.evaluate_d_role(group, rho_setup_idx)?;
-            acc += self.evaluate_b_role(group, rho_setup_idx)?;
-            acc += self.evaluate_a_role(group, rho_setup_idx)?;
+            acc += self.evaluate_d_role(group, &setup_window, &x_window)?;
+            acc += self.evaluate_b_role(group, &setup_window, &x_window)?;
+            acc += self.evaluate_a_role(group, &setup_window, &x_window)?;
         }
         Ok(acc)
     }
@@ -134,7 +143,8 @@ impl<E: FieldCore> SetupIndexWeightEvaluator<E> {
     fn evaluate_d_role(
         &self,
         group: &SetupContributionGroupInputs,
-        rho_setup_idx: &[E],
+        setup_window: &OffsetEqWindow<E>,
+        x_window: &OffsetEqWindow<E>,
     ) -> Result<E, AkitaError> {
         if self.d_rows == 0 || self.d_physical_cols == 0 {
             return Ok(E::zero());
@@ -206,8 +216,8 @@ impl<E: FieldCore> SetupIndexWeightEvaluator<E> {
                                 self.layout.opening_source_len(),
                                 physical_address,
                             )?;
-                            pair += eq_eval_at_index(rho_setup_idx, setup_address)
-                                * eq_eval_at_index(&self.x_challenges, opening_address);
+                            pair +=
+                                setup_window.eval(setup_address) * x_window.eval(opening_address);
                         }
                         acc += row_weight * scale * pair;
                     }
@@ -220,7 +230,8 @@ impl<E: FieldCore> SetupIndexWeightEvaluator<E> {
     fn evaluate_b_role(
         &self,
         group: &SetupContributionGroupInputs,
-        rho_setup_idx: &[E],
+        setup_window: &OffsetEqWindow<E>,
+        x_window: &OffsetEqWindow<E>,
     ) -> Result<E, AkitaError> {
         if group.n_b == 0 {
             return Ok(E::zero());
@@ -287,8 +298,8 @@ impl<E: FieldCore> SetupIndexWeightEvaluator<E> {
                                 self.layout.opening_source_len(),
                                 physical_address,
                             )?;
-                            pair += eq_eval_at_index(rho_setup_idx, setup_address)
-                                * eq_eval_at_index(&self.x_challenges, opening_address);
+                            pair +=
+                                setup_window.eval(setup_address) * x_window.eval(opening_address);
                         }
                         acc += row_weight * scale * pair;
                     }
@@ -301,7 +312,8 @@ impl<E: FieldCore> SetupIndexWeightEvaluator<E> {
     fn evaluate_a_role(
         &self,
         group: &SetupContributionGroupInputs,
-        rho_setup_idx: &[E],
+        setup_window: &OffsetEqWindow<E>,
+        x_window: &OffsetEqWindow<E>,
     ) -> Result<E, AkitaError> {
         if group.n_a == 0 {
             return Ok(E::zero());
@@ -359,8 +371,8 @@ impl<E: FieldCore> SetupIndexWeightEvaluator<E> {
                                 self.layout.opening_source_len(),
                                 physical_address,
                             )?;
-                            pair += eq_eval_at_index(rho_setup_idx, setup_address)
-                                * eq_eval_at_index(&self.x_challenges, opening_address);
+                            pair +=
+                                setup_window.eval(setup_address) * x_window.eval(opening_address);
                         }
                         acc -= row_weight * scale * fold * pair;
                     }

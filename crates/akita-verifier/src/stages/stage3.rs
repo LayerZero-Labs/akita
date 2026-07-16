@@ -336,13 +336,18 @@ where
     let setup_view = setup.shared_matrix().ring_view::<D>(1, setup_eval_len)?;
     let setup_entries = setup_view.as_slice();
 
-    let mut acc = E::zero();
-    for setup_idx in 0..required {
-        let entry = setup_entries
-            .get(setup_idx)
-            .ok_or(AkitaError::InvalidProof)?;
-        let ring_eval = eval_ring_at_pows_fast(entry, eq_y);
-        acc += eq_setup_idx.eval_at(setup_idx)? * ring_eval;
-    }
-    Ok(acc)
+    // Scan the selected setup prefix once. Each entry contracts the ring with
+    // `eq_y` and the setup-index equality; the scan is `O(required · D)` and is
+    // the dominant recursive-mode verifier cost, so evaluate it in parallel.
+    let _span = tracing::info_span!("stage3_setup_mle_scan", required).entered();
+    let terms = cfg_into_iter!(0..required)
+        .map(|setup_idx| -> Result<E, AkitaError> {
+            let entry = setup_entries
+                .get(setup_idx)
+                .ok_or(AkitaError::InvalidProof)?;
+            let ring_eval = eval_ring_at_pows_fast(entry, eq_y);
+            Ok(eq_setup_idx.eval_at(setup_idx)? * ring_eval)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(terms.into_iter().fold(E::zero(), |acc, value| acc + value))
 }

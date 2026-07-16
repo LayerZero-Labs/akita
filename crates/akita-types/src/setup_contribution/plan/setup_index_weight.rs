@@ -1,5 +1,5 @@
 use super::*;
-use akita_algebra::offset_eq::eq_eval_at_index;
+use akita_algebra::offset_eq::OffsetEqWindow;
 use akita_algebra::ring::scalar_powers;
 
 impl<E: FieldCore> SetupContributionPlan<E> {
@@ -48,12 +48,20 @@ impl<E: FieldCore> SetupContributionPlan<E> {
             });
         }
         let scales = self.projection_scales(alpha);
-        let mut acc = E::zero();
-        for setup_idx in 0..geometry.required() {
-            acc += eq_eval_at_index(rho_setup_idx, setup_idx)
-                * self.setup_index_weight_at(setup_idx, &scales)?;
-        }
-        Ok(acc)
+        // Share one bounded equality window across every packed setup position
+        // instead of recomputing a full-width equality product per index, and
+        // evaluate the (independent) per-position terms in parallel. This is the
+        // fallback used at the root level when groups do not share a fold gadget
+        // (e.g. multi-group with precommitted singletons), and it was the
+        // dominant recursive-mode verifier cost there.
+        let _span = tracing::info_span!("stage3_setup_index_weight_mle").entered();
+        let eq_window = OffsetEqWindow::new(rho_setup_idx)?;
+        let terms = cfg_into_iter!(0..geometry.required())
+            .map(|setup_idx| -> Result<E, AkitaError> {
+                Ok(eq_window.eval(setup_idx) * self.setup_index_weight_at(setup_idx, &scales)?)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(terms.into_iter().fold(E::zero(), |acc, value| acc + value))
     }
 
     fn projection_scales(&self, alpha: E) -> [Vec<E>; 3] {
