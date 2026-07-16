@@ -71,12 +71,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "akita-error"
+version = "0.1.0"
+dependencies = [
+ "jolt-field 0.1.0 (git+https://github.com/Acentelles/jolt.git?rev=09b2f7b6ddd9427c756b781c39530a6c005e332d)",
+ "thiserror",
+]
+
+[[package]]
 name = "akita-field"
 version = "0.1.0"
 dependencies = [
  "akita-serialization",
  "allocative",
- "jolt-field",
+ "jolt-field 0.1.0 (git+https://github.com/a16z/jolt?rev=2509bdcea9bb3e8978bb578380383ef06dbbada7)",
  "jolt-transcript",
  "num-traits",
  "rand 0.8.6",
@@ -159,6 +167,7 @@ dependencies = [
 name = "akita-serialization"
 version = "0.1.0"
 dependencies = [
+ "jolt-field 0.1.0 (git+https://github.com/Acentelles/jolt.git?rev=09b2f7b6ddd9427c756b781c39530a6c005e332d)",
  "proptest",
  "thiserror",
 ]
@@ -930,13 +939,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "jolt-field"
+version = "0.1.0"
+source = "git+https://github.com/Acentelles/jolt.git?rev=09b2f7b6ddd9427c756b781c39530a6c005e332d#09b2f7b6ddd9427c756b781c39530a6c005e332d"
+dependencies = [
+ "num-traits",
+ "rand 0.8.6",
+ "rand_core 0.6.4",
+ "serde",
+ "thiserror",
+]
+
+[[package]]
 name = "jolt-transcript"
 version = "0.1.0"
 source = "git+https://github.com/a16z/jolt?rev=2509bdcea9bb3e8978bb578380383ef06dbbada7#2509bdcea9bb3e8978bb578380383ef06dbbada7"
 dependencies = [
  "blake2 0.11.0-rc.6",
  "digest 0.11.3",
- "jolt-field",
+ "jolt-field 0.1.0 (git+https://github.com/a16z/jolt?rev=2509bdcea9bb3e8978bb578380383ef06dbbada7)",
  "sha3 0.11.0",
 ]
 

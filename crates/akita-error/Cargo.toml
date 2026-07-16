@@ -1,0 +1,15 @@
+[package]
+name = "akita-error"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.95"
+license = "Apache-2.0 OR MIT"
+description = "Protocol errors shared by Akita crates"
+repository = "https://github.com/LayerZero-Labs/akita"
+
+[dependencies]
+jolt-field = { version = "=0.1.0", git = "https://github.com/Acentelles/jolt.git", rev = "09b2f7b6ddd9427c756b781c39530a6c005e332d", default-features = false, features = ["solinas"] }
+thiserror = "2.0"
+
+[lints]
+workspace = true
