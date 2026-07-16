@@ -758,10 +758,10 @@ def extract_summary(
             # Benchmark runs parse both the PR binary and its merge-base binary.
             # Normalize the pre-cutover geometry names used by the merge base.
             position_index_bits = int(
-                kvs["position_index_bits"] if "position_index_bits" in kvs else kvs["m_vars"]
+                kvs.get("position_index_bits", kvs.get("position_bits", kvs.get("m_vars")))
             )
             block_index_bits = int(
-                kvs["block_index_bits"] if "block_index_bits" in kvs else kvs["r_vars"]
+                kvs.get("block_index_bits", kvs.get("block_bits", kvs.get("r_vars")))
             )
             legacy_d = int(kvs["d"])
             num_live_ring_elements_per_claim = int(

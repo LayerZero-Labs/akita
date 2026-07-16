@@ -161,6 +161,24 @@ class ProfileBenchReportTests(unittest.TestCase):
         self.assertEqual(level["block_index_domain_size"], 8)
         self.assertEqual((level["d_a"], level["d_b"], level["d_d"]), (64, 64, 64))
 
+    def test_planned_fold_level_normalizes_position_bits_merge_base_geometry(self) -> None:
+        from scripts.profile_bench_report import extract_summary
+
+        log = (
+            'INFO planned fold level label=onehot_fp128_d64 level=0 d=64 n_a=2 n_b=3 n_d=4 '
+            'challenge_l1_mass=8 log_basis=5 position_bits=7 block_bits=3 '
+            'num_blocks=8 block_len=128 delta_commit=4 delta_open=5 '
+            'delta_fold=6 current_w_len=1024 next_w_len=2048 level_bytes=4096\n'
+        )
+
+        summary = extract_summary(log, mode="onehot_fp128_d64", num_vars=24, num_polys=1)
+        level = summary["planned_levels"][0]
+
+        self.assertEqual(level["position_index_bits"], 7)
+        self.assertEqual(level["block_index_bits"], 3)
+        self.assertEqual(level["num_positions_per_block"], 128)
+        self.assertEqual(level["num_live_blocks"], 1)
+
     def test_rendered_schedule_uses_names_and_main_deltas(self) -> None:
         from scripts.profile_bench_report import extract_summary, render_planned_levels
 

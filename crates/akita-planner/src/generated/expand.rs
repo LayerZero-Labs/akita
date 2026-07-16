@@ -353,12 +353,18 @@ impl GeneratedFoldStep {
                     .to_string(),
             ));
         }
-        if !current_w_len.is_multiple_of(ring_d) {
+        if current_w_len == 0 || (!is_root && !current_w_len.is_multiple_of(ring_d)) {
             return Err(AkitaError::InvalidSetup(
                 "witness length is not divisible by the ring dimension".to_string(),
             ));
         }
-        let num_live_ring_elements_per_claim = current_w_len / ring_d;
+        // Root-direct inputs may be shorter than one ring and are zero-padded
+        // inside that ring. Recursive witnesses are ring-aligned by contract.
+        let num_live_ring_elements_per_claim = if is_root {
+            current_w_len.div_ceil(ring_d)
+        } else {
+            current_w_len / ring_d
+        };
         let derived_num_live_blocks =
             num_live_ring_elements_per_claim.div_ceil(num_positions_per_block);
         if derived_num_live_blocks != num_live_blocks {

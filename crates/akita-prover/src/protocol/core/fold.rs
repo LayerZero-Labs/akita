@@ -1023,26 +1023,6 @@ fn remap_trace_table<E: FieldCore>(
     Ok(TraceTable::ring_dense(destination))
 }
 
-#[cfg(test)]
-mod trace_remap_tests {
-    use super::*;
-    use akita_field::Fp32;
-
-    type F = Fp32<251>;
-
-    #[test]
-    fn nonidentity_trace_remap_keeps_only_live_prefix() {
-        let source = (0..12).map(F::from_u64).collect::<Vec<_>>();
-        let remapped = remap_trace_table(TraceTable::ring_dense(source.clone()), 3, 4, 6, 2, 12)
-            .expect("valid trace remap")
-            .into_ring_dense()
-            .expect("dense trace");
-
-        assert_eq!(remapped, source);
-        assert_eq!(remapped.len(), 12);
-    }
-}
-
 #[allow(clippy::too_many_arguments)]
 fn prove_stage2<F, E, T>(
     level: usize,
@@ -1209,5 +1189,25 @@ mod transcript_schedule_tests {
             squeezes_logical_label(transcript.events(), labels::CHALLENGE_SUMCHECK_BATCH),
             "intermediate fold must squeeze stage-2 batch challenge before trace weighting"
         );
+    }
+}
+
+#[cfg(test)]
+mod trace_remap_tests {
+    use super::*;
+    use akita_field::Fp32;
+
+    type F = Fp32<251>;
+
+    #[test]
+    fn nonidentity_trace_remap_keeps_only_live_prefix() {
+        let source = (0..12).map(F::from_u64).collect::<Vec<_>>();
+        let remapped = remap_trace_table(TraceTable::ring_dense(source.clone()), 3, 4, 6, 2, 12)
+            .expect("valid trace remap")
+            .into_ring_dense()
+            .expect("dense trace");
+
+        assert_eq!(remapped, source);
+        assert_eq!(remapped.len(), 12);
     }
 }

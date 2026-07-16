@@ -758,13 +758,10 @@ fn validate_block_geometry(
                 )
             })?;
     if fold_level == 0 {
-        if !current_w_len.is_multiple_of(policy.ring_dimension) {
-            return Err(AkitaError::InvalidSetup(format!(
-                "generated root witness length {current_w_len} is not divisible by ring dimension {}",
-                policy.ring_dimension
-            )));
-        }
-        let num_live_ring_elements_per_claim = current_w_len / policy.ring_dimension;
+        // A small root-direct polynomial may occupy only a prefix of its first
+        // ring. Count that padded ring as live source storage; recursive
+        // witnesses remain exactly ring-aligned below.
+        let num_live_ring_elements_per_claim = current_w_len.div_ceil(policy.ring_dimension);
         let derived_num_live_blocks =
             num_live_ring_elements_per_claim.div_ceil(num_positions_per_block);
         if num_live_blocks != derived_num_live_blocks {
@@ -776,10 +773,11 @@ fn validate_block_geometry(
         if position_index_bits
             .checked_add(block_index_bits)
             .and_then(|n| n.checked_add(alpha))
-            != Some(key.num_vars())
+            != Some(key.num_vars().max(alpha))
         {
             return Err(AkitaError::InvalidSetup(
-                "generated root geometry variable split disagrees with key".to_string(),
+                "generated root geometry variable split disagrees with padded key domain"
+                    .to_string(),
             ));
         }
         return Ok(());
