@@ -863,23 +863,35 @@ pub fn high_eq_window<F: FieldCore>(
 /// of the full point width.
 pub const OFFSET_EQ_LOW_BITS_CAP: usize = 16;
 
+/// Hard cap on the number of high bits materialized by [`OffsetEqWindow`].
+///
+/// When the high remainder has at most this many bits, the high equality table
+/// `eq_high[j] = eq(high_challenges, j)` is materialized so that each `eval`
+/// costs two table lookups and a single multiply. The cap bounds the high table
+/// at `2^16` field elements; wider high remainders fall back to on-demand
+/// `O(high_bits)` evaluation.
+pub const OFFSET_EQ_HIGH_BITS_CAP: usize = 16;
+
 /// Bounded checked equality-window evaluator.
 ///
 /// An `n`-coordinate equality point is split into a low block of at most
 /// [`OFFSET_EQ_LOW_BITS_CAP`] bits and a high remainder. The low equality table
 /// `eq_low[i] = eq(low_challenges, i)` is materialized once (at most
-/// `2^low_bits` elements); the high factor is evaluated on demand. Evaluating a
-/// single address then costs one bounded low lookup plus an `O(high_bits)` high
-/// evaluation instead of `O(n)`, and the low table is shared across every
-/// address in a canonical interval.
+/// `2^low_bits` elements). When the high remainder is at most
+/// [`OFFSET_EQ_HIGH_BITS_CAP`] bits, its equality table `eq_high` is materialized
+/// as well, so each `eval` is two bounded lookups and one multiply — removing the
+/// per-address `O(high_bits)` factor. Wider high remainders fall back to
+/// on-demand high evaluation. Either way the low table (and, when present, the
+/// high table) is shared across every address in a canonical interval.
 ///
 /// This obeys the verifier no-panic contract: construction validates and caps
-/// the low width, the low lookup is always in range by construction, and no
-/// unbounded allocation is performed.
+/// both table widths, the lookups are range-checked, and no unbounded
+/// allocation is performed.
 pub struct OffsetEqWindow<'a, F: FieldCore> {
     low_bits: usize,
     low_mask: usize,
     eq_low: Vec<F>,
+    eq_high: Option<Vec<F>>,
     high_challenges: &'a [F],
 }
 
@@ -909,11 +921,22 @@ impl<'a, F: FieldCore> OffsetEqWindow<'a, F> {
         } else {
             (1usize << low_bits) - 1
         };
+        let high_challenges = &challenges[low_bits..];
+        // Materialize the high table too when it stays within the bounded cap.
+        // This makes every `eval` a pair of lookups instead of recomputing an
+        // `O(high_bits)` equality product per address, which dominated the
+        // verifier setup-weight builders.
+        let eq_high = if high_challenges.len() <= OFFSET_EQ_HIGH_BITS_CAP {
+            Some(crate::eq_poly::EqPolynomial::evals(high_challenges)?)
+        } else {
+            None
+        };
         Ok(Self {
             low_bits,
             low_mask,
             eq_low,
-            high_challenges: &challenges[low_bits..],
+            eq_high,
+            high_challenges,
         })
     }
 
@@ -930,7 +953,14 @@ impl<'a, F: FieldCore> OffsetEqWindow<'a, F> {
         if eq_low.is_zero() {
             return F::zero();
         }
-        eq_low * eq_eval_at_index(self.high_challenges, index >> self.low_bits)
+        let high = index >> self.low_bits;
+        let eq_high = match &self.eq_high {
+            // A high index beyond the materialized table is out of the equality
+            // domain, so it contributes zero (matching `eq_eval_at_index`).
+            Some(table) => table.get(high).copied().unwrap_or_else(F::zero),
+            None => eq_eval_at_index(self.high_challenges, high),
+        };
+        eq_low * eq_high
     }
 }
 

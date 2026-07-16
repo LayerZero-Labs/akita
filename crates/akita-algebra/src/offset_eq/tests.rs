@@ -3,6 +3,7 @@ use crate::eq_poly::EqPolynomial;
 use crate::RandomSampling;
 use akita_field::Fp64;
 use rand::rngs::StdRng;
+use rand::RngCore;
 use rand::SeedableRng;
 
 type F = Fp64<4294967197>;
@@ -52,6 +53,47 @@ fn offset_eq_window_caps_low_table_and_crosses_boundary() {
             eq_eval_at_index(&challenges, index),
             "index={index}"
         );
+    }
+}
+
+#[test]
+fn offset_eq_window_precomputed_high_table_matches_scalar_eq() {
+    let mut rng = StdRng::seed_from_u64(0x11165);
+    // Widths in (16, 32] exercise the bounded high table: low is capped at 16
+    // bits and the high remainder (1..=16 bits) is materialized, so `eval`
+    // becomes two lookups. Sample rather than sweep the full domain.
+    for n in [17usize, 20, 24, 28, 32] {
+        let challenges: Vec<F> = (0..n).map(|_| F::random(&mut rng)).collect();
+        let window = OffsetEqWindow::new(&challenges).unwrap();
+        // The high remainder is bounded, so the high table is materialized.
+        assert!(
+            window.eq_high.is_some(),
+            "n={n} should precompute high table"
+        );
+        let domain = 1u128 << n;
+        let mut probes: Vec<usize> = vec![
+            0,
+            1,
+            (1 << OFFSET_EQ_LOW_BITS_CAP) - 1,
+            1 << OFFSET_EQ_LOW_BITS_CAP,
+            (1 << OFFSET_EQ_LOW_BITS_CAP) + 1,
+            (domain - 1) as usize,
+        ];
+        for _ in 0..64 {
+            probes.push((rng.next_u64() as u128 % domain) as usize);
+        }
+        // Out-of-domain probes must return zero like the scalar oracle.
+        if domain < u128::from(u64::MAX) {
+            probes.push(domain as usize);
+            probes.push((domain + 5) as usize);
+        }
+        for index in probes {
+            assert_eq!(
+                window.eval(index),
+                eq_eval_at_index(&challenges, index),
+                "n={n} index={index}"
+            );
+        }
     }
 }
 
