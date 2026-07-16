@@ -51,7 +51,7 @@ fn make_case(num_live_blocks: usize, blocks_per_chunk: usize) -> SetupIndexWeigh
     let n_b = 2;
     let n_d = 2;
     let log_basis = 4;
-    let mut level_params = LevelParams::params_only(
+    let level_params = LevelParams::params_only(
         SisModulusProfileId::Q128OffsetA7F7,
         D,
         log_basis,
