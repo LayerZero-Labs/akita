@@ -760,27 +760,34 @@ def extract_summary(
             position_index_bits = int(
                 kvs["position_index_bits"] if "position_index_bits" in kvs else kvs["m_vars"]
             )
-            block_index_bits = int(kvs["block_index_bits"] if "block_index_bits" in kvs else kvs["r_vars"])
-            positions_per_block = int(
-                kvs["positions_per_block"]
-                if "positions_per_block" in kvs
-                else kvs["fold_position_count"]
+            block_index_bits = int(
+                kvs["block_index_bits"] if "block_index_bits" in kvs else kvs["r_vars"]
             )
-            live_block_count = int(
-                kvs["live_block_count"]
-                if "live_block_count" in kvs
-                else kvs["live_fold_count"]
-            )
+            legacy_d = int(kvs["d"])
             live_ring_elements_per_claim = int(
                 kvs.get(
                     "live_ring_elements_per_claim",
-                    int(kvs["current_w_len"]) // int(kvs["d"]),
+                    int(kvs["current_w_len"]) // legacy_d,
+                )
+            )
+            # Legacy traces exposed the Boolean-domain bit split plus
+            # `block_len`/`num_blocks`; despite their names, those latter
+            # values did not carry today's exact-live geometry. Reconstruct
+            # the new semantics from the authoritative live source length and
+            # domain bits so main/head deltas compare like with like.
+            positions_per_block = int(
+                kvs.get("positions_per_block", 1 << position_index_bits)
+            )
+            live_block_count = int(
+                kvs.get(
+                    "live_block_count",
+                    (live_ring_elements_per_claim + positions_per_block - 1)
+                    // positions_per_block,
                 )
             )
             block_index_domain_size = int(
                 kvs.get("block_index_domain_size", 1 << block_index_bits)
             )
-            legacy_d = int(kvs["d"])
             planned_levels[level] = {
                 "level": level,
                 "d_a": int(kvs.get("d_a", legacy_d)),

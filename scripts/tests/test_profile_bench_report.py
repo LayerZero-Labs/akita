@@ -146,7 +146,7 @@ class ProfileBenchReportTests(unittest.TestCase):
         log = (
             'INFO planned fold level label=onehot_fp128_d64 level=0 d=64 n_a=2 n_b=3 n_d=4 '
             'challenge_l1_mass=8 log_basis=5 m_vars=7 r_vars=3 '
-            'live_fold_count=8 fold_position_count=128 delta_commit=4 delta_open=5 '
+            'num_blocks=8 block_len=2 delta_commit=4 delta_open=5 '
             'delta_fold=6 current_w_len=1024 next_w_len=2048 level_bytes=4096\n'
         )
 
@@ -156,7 +156,7 @@ class ProfileBenchReportTests(unittest.TestCase):
         self.assertEqual(level["position_index_bits"], 7)
         self.assertEqual(level["block_index_bits"], 3)
         self.assertEqual(level["positions_per_block"], 128)
-        self.assertEqual(level["live_block_count"], 8)
+        self.assertEqual(level["live_block_count"], 1)
         self.assertEqual(level["live_ring_elements_per_claim"], 16)
         self.assertEqual(level["block_index_domain_size"], 8)
         self.assertEqual((level["d_a"], level["d_b"], level["d_d"]), (64, 64, 64))
