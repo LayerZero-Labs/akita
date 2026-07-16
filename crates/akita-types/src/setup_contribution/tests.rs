@@ -822,6 +822,7 @@ fn z_setup_weight_oracle_uses_physical_addresses() {
         .collect::<Vec<_>>();
     let fold_gadget = gadget_row_scalars::<F>(depth_fold, 4);
     let mut got = vec![F::zero(); fold_position_count * depth_commit];
+    let eq_window = akita_algebra::offset_eq::OffsetEqWindow::new(&point).unwrap();
     setup_z_col_weights(
         &layout,
         opening_source_len,
@@ -829,7 +830,7 @@ fn z_setup_weight_oracle_uses_physical_addresses() {
         fold_position_count,
         depth_commit,
         depth_fold,
-        &point,
+        &eq_window,
         &fold_gadget,
         &mut got,
     )

@@ -1,4 +1,4 @@
-use akita_algebra::offset_eq::eq_eval_at_index;
+use akita_algebra::offset_eq::OffsetEqWindow;
 use akita_field::parallel::*;
 use akita_field::{AkitaError, FieldCore, MulBase};
 
@@ -12,7 +12,7 @@ pub(crate) fn setup_e_col_weights<E: FieldCore>(
     live_fold_count: usize,
     num_claims: usize,
     depth_open: usize,
-    full_vec_randomness: &[E],
+    eq_window: &OffsetEqWindow<E>,
 ) -> Result<Vec<E>, AkitaError> {
     let e_cols = checked_mul3(
         num_claims,
@@ -31,7 +31,7 @@ pub(crate) fn setup_e_col_weights<E: FieldCore>(
                 layout.e_index(unit, num_claims, depth_open, claim, block, digit)?;
             let opening_index =
                 crate::checked_opening_source_index(opening_source_len, witness_index)?;
-            Ok(eq_eval_at_index(full_vec_randomness, opening_index))
+            Ok(eq_window.eval(opening_index))
         })
         .collect()
 }
@@ -49,7 +49,7 @@ pub(crate) fn setup_t_col_weights<E: FieldCore>(
     num_vectors: usize,
     active_vectors: usize,
     vector_base: usize,
-    full_vec_randomness: &[E],
+    eq_window: &OffsetEqWindow<E>,
 ) -> Result<Vec<E>, AkitaError> {
     let expected_cols_per_vector = checked_mul3(
         live_fold_count,
@@ -92,7 +92,7 @@ pub(crate) fn setup_t_col_weights<E: FieldCore>(
             )?;
             let opening_index =
                 crate::checked_opening_source_index(opening_source_len, witness_index)?;
-            Ok(eq_eval_at_index(full_vec_randomness, opening_index))
+            Ok(eq_window.eval(opening_index))
         })
         .collect()
 }
@@ -106,7 +106,7 @@ pub(crate) fn setup_z_col_weights<F, E>(
     fold_position_count: usize,
     depth_commit: usize,
     depth_fold: usize,
-    full_vec_randomness: &[E],
+    eq_window: &OffsetEqWindow<E>,
     fold_gadget: &[F],
     z_weights: &mut [E],
 ) -> Result<(), AkitaError>
@@ -148,7 +148,7 @@ where
                     )?;
                     let opening_index =
                         crate::checked_opening_source_index(opening_source_len, witness_index)?;
-                    weight -= eq_eval_at_index(full_vec_randomness, opening_index).mul_base(fold);
+                    weight -= eq_window.eval(opening_index).mul_base(fold);
                 }
             }
             *dst += weight;

@@ -112,6 +112,14 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                 actual: static_plan.groups.len(),
             });
         }
+        // Build the bounded equality window once and share it across every E/T/Z
+        // column weight. Each canonical column address then costs one bounded
+        // low-table lookup plus a short high evaluation instead of a full
+        // `O(col_bits+ring_bits)` equality product recomputed per column, which
+        // was the dominant verifier setup-plan cost after the digit-innermost
+        // cutover (root cause 4). The `_eq_low`/`_z_block_low_eq` parameters are
+        // subsumed by this window.
+        let eq_window = akita_algebra::offset_eq::OffsetEqWindow::new(full_vec_randomness)?;
         let dynamic_groups = static_plan
             .groups
             .iter()
@@ -126,7 +134,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                         group.live_fold_count,
                         group.num_claims,
                         group.depth_open,
-                        full_vec_randomness,
+                        &eq_window,
                     )?
                 };
                 let t_eq_slice = {
@@ -142,7 +150,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                         group.num_claims,
                         group.num_claims,
                         0,
-                        full_vec_randomness,
+                        &eq_window,
                     )?
                 };
                 let fold_gadget_storage;
@@ -173,7 +181,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                         group.fold_position_count,
                         group.depth_commit,
                         group.depth_fold,
-                        full_vec_randomness,
+                        &eq_window,
                         fold_gadget,
                         &mut z_eq_slice,
                     )?;
