@@ -4,7 +4,7 @@ use akita_field::{AkitaError, FieldCore, MulBase};
 
 use crate::{
     SetupContributionGroupInputs, SetupContributionLayout, SetupContributionPlan,
-    SetupContributionPlanInputs, SetupProjectionGeometry,
+    SetupContributionStatic, SetupProjectionGeometry,
 };
 
 /// Succinct evaluator for the setup-index weight multilinear extension.
@@ -40,7 +40,7 @@ impl<E: FieldCore> SetupIndexWeightEvaluator<E> {
     /// `setup_ring_dim` is the base ring dimension used by the setup prefix.
     #[allow(clippy::too_many_arguments)]
     pub fn new<F>(
-        inputs: &SetupContributionPlanInputs<E>,
+        static_plan: &SetupContributionStatic<E>,
         plan: &SetupContributionPlan<E>,
         layout: &SetupContributionLayout,
         tau1: &[E],
@@ -59,11 +59,11 @@ impl<E: FieldCore> SetupIndexWeightEvaluator<E> {
         }
         let geometry = plan.projection_geometry();
         geometry.ensure_evaluation_budget()?;
-        validate_tau_domain(tau1, inputs.rows)?;
+        validate_tau_domain(tau1, static_plan.rows())?;
 
         let d_rows = plan.d_rows;
         let d_physical_cols = plan.d_physical_cols;
-        let d_row_start = inputs.rows.checked_sub(d_rows).ok_or_else(|| {
+        let d_row_start = static_plan.rows().checked_sub(d_rows).ok_or_else(|| {
             AkitaError::InvalidSetup("setup D rows exceed relation row count".into())
         })?;
         let a_projection = setup_role_projection(alpha, geometry, geometry.a_ratio(), "A")?;
@@ -146,13 +146,10 @@ impl<E: FieldCore> SetupIndexWeightEvaluator<E> {
         if self.d_rows == 0 || self.d_physical_cols == 0 {
             return Ok(E::zero());
         }
-        let active_cols = checked_mul3(
-            group.num_claims,
-            group.num_blocks,
-            group.depth_open,
-            "setup D active width overflow",
-        )?;
-        let d_col_range = self.layout.d_col_range(group.group_id)?;
+        let num_blocks = group.num_blocks(&self.layout)?;
+        let depth_open = group.depth_open(&self.layout)?;
+        let active_cols = group.d_active_cols(&self.layout)?;
+        let d_col_range = self.layout.get_d_col_range(group.group_id)?;
         if d_col_range.len() != active_cols || d_col_range.end > self.d_physical_cols {
             return Err(AkitaError::InvalidSetup(
                 "setup D active range exceeds physical width".into(),
@@ -166,24 +163,23 @@ impl<E: FieldCore> SetupIndexWeightEvaluator<E> {
             .units_for_group(group.group_id)?;
         for claim in 0..group.num_claims {
             for unit in &units {
-                let setup_col = group
-                    .num_blocks
+                let setup_col = num_blocks
                     .checked_mul(claim)
                     .and_then(|base| base.checked_add(unit.global_block_start()))
-                    .and_then(|base| base.checked_mul(group.depth_open))
+                    .and_then(|base| base.checked_mul(depth_open))
                     .and_then(|local| d_col_range.start.checked_add(local))
                     .ok_or_else(|| AkitaError::InvalidSetup("setup D address overflow".into()))?;
                 let witness_index = self.layout.witness_layout().e_index(
                     unit,
                     group.num_claims,
-                    group.depth_open,
+                    depth_open,
                     claim,
                     unit.global_block_start(),
                     0,
                 )?;
                 let len = unit
                     .live_block_count()
-                    .checked_mul(group.depth_open)
+                    .checked_mul(depth_open)
                     .ok_or_else(|| AkitaError::InvalidSetup("setup D span overflow".into()))?;
                 validate_opening_span(
                     self.layout.opening_source_len(),
@@ -224,12 +220,16 @@ impl<E: FieldCore> SetupIndexWeightEvaluator<E> {
         group: &SetupContributionGroupInputs,
         rho_setup_idx: &[E],
     ) -> Result<E, AkitaError> {
-        if group.n_b == 0 {
+        let num_blocks = group.num_blocks(&self.layout)?;
+        let depth_open = group.depth_open(&self.layout)?;
+        let n_a = group.n_a(&self.layout)?;
+        let n_b = group.n_b(&self.layout)?;
+        if n_b == 0 {
             return Ok(E::zero());
         }
         let t_cols = group
             .num_claims
-            .checked_mul(group.t_cols_per_vector)
+            .checked_mul(group.t_cols_per_vector(&self.layout)?)
             .ok_or_else(|| AkitaError::InvalidSetup("setup B width overflow".into()))?;
         let mut acc = E::zero();
         let units = self
@@ -238,18 +238,17 @@ impl<E: FieldCore> SetupIndexWeightEvaluator<E> {
             .units_for_group(group.group_id)?;
         for claim in 0..group.num_claims {
             for unit in &units {
-                let setup_col = group
-                    .num_blocks
+                let setup_col = num_blocks
                     .checked_mul(claim)
                     .and_then(|base| base.checked_add(unit.global_block_start()))
-                    .and_then(|base| base.checked_mul(group.n_a))
-                    .and_then(|base| base.checked_mul(group.depth_open))
+                    .and_then(|base| base.checked_mul(n_a))
+                    .and_then(|base| base.checked_mul(depth_open))
                     .ok_or_else(|| AkitaError::InvalidSetup("setup B address overflow".into()))?;
                 let witness_index = self.layout.witness_layout().t_index(
                     unit,
                     group.num_claims,
-                    group.n_a,
-                    group.depth_open,
+                    n_a,
+                    depth_open,
                     claim,
                     unit.global_block_start(),
                     0,
@@ -257,8 +256,8 @@ impl<E: FieldCore> SetupIndexWeightEvaluator<E> {
                 )?;
                 let len = checked_mul3(
                     unit.live_block_count(),
-                    group.n_a,
-                    group.depth_open,
+                    n_a,
+                    depth_open,
                     "setup B span overflow",
                 )?;
                 validate_opening_span(
@@ -268,7 +267,7 @@ impl<E: FieldCore> SetupIndexWeightEvaluator<E> {
                     1,
                     "witness B address overflow",
                 )?;
-                for row in 0..group.n_b {
+                for row in 0..n_b {
                     let row_weight = eq_eval_at_index(&self.tau1, group.b_row_start + row);
                     for (lane, &scale) in self.b_projection.scales.iter().enumerate() {
                         let setup_index = projected_setup_offset(
@@ -300,12 +299,14 @@ impl<E: FieldCore> SetupIndexWeightEvaluator<E> {
         group: &SetupContributionGroupInputs,
         rho_setup_idx: &[E],
     ) -> Result<E, AkitaError> {
-        if group.n_a == 0 {
+        let block_len = group.block_len(&self.layout)?;
+        let depth_commit = group.depth_commit(&self.layout)?;
+        let n_a = group.n_a(&self.layout)?;
+        if n_a == 0 {
             return Ok(E::zero());
         }
-        let z_cols = group
-            .block_len
-            .checked_mul(group.depth_commit)
+        let z_cols = block_len
+            .checked_mul(depth_commit)
             .ok_or_else(|| AkitaError::InvalidSetup("setup A width overflow".into()))?;
         let units = self
             .layout
@@ -317,8 +318,8 @@ impl<E: FieldCore> SetupIndexWeightEvaluator<E> {
             for (fold_digit, &fold) in self.fold_gadget.iter().enumerate().take(group.depth_fold) {
                 let witness_index = self.layout.witness_layout().z_index(
                     unit,
-                    group.block_len,
-                    group.depth_commit,
+                    block_len,
+                    depth_commit,
                     group.depth_fold,
                     0,
                     0,
@@ -331,7 +332,7 @@ impl<E: FieldCore> SetupIndexWeightEvaluator<E> {
                     group.depth_fold,
                     "witness A address overflow",
                 )?;
-                for row in 0..group.n_a {
+                for row in 0..n_a {
                     let row_weight = eq_eval_at_index(&self.tau1, group.a_row_start + row);
                     for (lane, &scale) in self.a_projection.scales.iter().enumerate() {
                         let setup_index = projected_setup_offset(

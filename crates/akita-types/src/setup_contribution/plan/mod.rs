@@ -31,18 +31,15 @@ pub use types::{
     SetupContributionGroupInputs, SetupContributionLayout, SetupContributionPlan,
     SetupContributionStatic,
 };
-pub(crate) use types::{
-    SetupContributionGroupPlan, SetupContributionGroupStatic, SetupDColumnLayout,
-};
+pub(crate) use types::{SetupContributionGroupPlan, SetupContributionGroupStatic};
 
 use super::geometry::SetupProjectionGroupGeometry;
 use super::weights::{setup_e_col_weights, setup_t_col_weights, setup_z_col_weights};
-use super::{
-    checked_slice, push_role_boundaries, SetupContributionPlanInputs, SetupProjectionGeometry,
-};
+use super::{checked_slice, push_role_boundaries, SetupProjectionGeometry};
 use crate::dispatch_for_field;
-use crate::layout::{CommitmentRingDims, RingMatrixView};
+use crate::layout::{CommitmentRingDims, LevelParams, RelationMatrixRowLayout, RingMatrixView};
 use crate::proof::AkitaExpandedSetup;
+use crate::OpeningClaimsLayout;
 use akita_field::parallel::*;
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, MulBase, MulBaseUnreduced};
 

@@ -1,16 +1,10 @@
-//! Challenge-free setup product geometry: footprint sizing and envelope guards.
-//!
-//! [`setup_required_for_inputs`] derives the packed-scan footprint (`required`)
-//! without fold challenges so NTT sizing, prefix offload, and envelope checks
-//! do not depend on `tau1`.
+//! Challenge-free setup product geometry: projection sizing and envelope guards.
 
 use akita_algebra::offset_eq::MAX_COMPACT_STRIDE_TERMS;
 use akita_field::{AkitaError, FieldCore};
 
-use super::SetupContributionPlanInputs;
-use crate::layout::{validate_role_dims, CommitmentRingDims, RelationMatrixRowLayout};
+use crate::layout::{validate_role_dims, CommitmentRingDims};
 use crate::proof::AkitaExpandedSetup;
-use crate::schedule::Schedule;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct SetupProjectionGroupGeometry {
@@ -324,118 +318,6 @@ fn checked_role_ratios(
     ))
 }
 
-/// Required setup ring rows for one level (challenge-free).
-///
-/// # Errors
-///
-/// Returns an error when layout parameters are inconsistent with the canonical
-/// M-row packing used by setup sumcheck.
-pub fn setup_required_for_inputs<E: FieldCore>(
-    inputs: &SetupContributionPlanInputs<E>,
-    role_dims: CommitmentRingDims,
-) -> Result<usize, AkitaError> {
-    if inputs.num_blocks == 0 {
-        return Err(AkitaError::InvalidSetup(
-            "num_blocks must be positive".into(),
-        ));
-    }
-    if inputs.block_len == 0
-        || inputs.depth_open == 0
-        || inputs.depth_commit == 0
-        || inputs.depth_fold == 0
-    {
-        return Err(AkitaError::InvalidSetup(
-            "setup evaluator layout has zero width".into(),
-        ));
-    }
-    if inputs.num_polys_per_group.len() != inputs.num_groups {
-        return Err(AkitaError::InvalidSize {
-            expected: inputs.num_groups,
-            actual: inputs.num_polys_per_group.len(),
-        });
-    }
-
-    let z_range = inputs.inner_width;
-    let expected_z_range = inputs
-        .block_len
-        .checked_mul(inputs.depth_commit)
-        .ok_or_else(|| AkitaError::InvalidSetup("Z width overflow".into()))?;
-    if z_range != expected_z_range {
-        return Err(AkitaError::InvalidSize {
-            expected: expected_z_range,
-            actual: z_range,
-        });
-    }
-
-    let n_d_active = match inputs.relation_matrix_row_layout {
-        RelationMatrixRowLayout::WithDBlock => inputs.n_d,
-        RelationMatrixRowLayout::WithoutDBlock => 0,
-    };
-    // Canonical row layout: consistency (1) | A | B | D.
-    let b_rows_total = inputs
-        .n_b
-        .checked_mul(inputs.num_groups)
-        .ok_or_else(|| AkitaError::InvalidSetup("B row count overflow".into()))?;
-    let b_row_start = 1usize
-        .checked_add(inputs.n_a)
-        .ok_or_else(|| AkitaError::InvalidSetup("B row start overflow".into()))?;
-    let d_row_start = b_row_start
-        .checked_add(b_rows_total)
-        .ok_or_else(|| AkitaError::InvalidSetup("D row start overflow".into()))?;
-    let a_end = d_row_start
-        .checked_add(n_d_active)
-        .ok_or_else(|| AkitaError::InvalidSetup("D row end overflow".into()))?;
-    if a_end > inputs.rows {
-        return Err(AkitaError::InvalidSetup(
-            "relation-matrix row weights are inconsistent with setup evaluator layout".into(),
-        ));
-    }
-
-    let b_per_claim_e = inputs
-        .num_blocks
-        .checked_mul(inputs.depth_open)
-        .ok_or_else(|| AkitaError::InvalidSetup("e-hat claim width overflow".into()))?;
-    let n_cols_e = inputs
-        .num_claims
-        .checked_mul(b_per_claim_e)
-        .ok_or_else(|| AkitaError::InvalidSetup("e-hat column width overflow".into()))?;
-    let max_group_poly_count = inputs
-        .num_polys_per_group
-        .iter()
-        .copied()
-        .max()
-        .unwrap_or(0);
-    let t_stride = inputs
-        .n_a
-        .checked_mul(inputs.depth_open)
-        .ok_or_else(|| AkitaError::InvalidSetup("T stride overflow".into()))?;
-    let t_polynomial_width = t_stride
-        .checked_mul(inputs.num_blocks)
-        .ok_or_else(|| AkitaError::InvalidSetup("T polynomial width overflow".into()))?;
-    let n_cols_t = max_group_poly_count
-        .checked_mul(t_polynomial_width)
-        .ok_or_else(|| AkitaError::InvalidSetup("T column width overflow".into()))?;
-
-    let d_footprint = n_d_active
-        .checked_mul(n_cols_e)
-        .ok_or_else(|| AkitaError::InvalidSetup("D setup footprint overflow".into()))?;
-    let a_footprint = inputs
-        .n_a
-        .checked_mul(z_range)
-        .ok_or_else(|| AkitaError::InvalidSetup("A setup footprint overflow".into()))?;
-    let b_footprint = inputs
-        .n_b
-        .checked_mul(n_cols_t)
-        .ok_or_else(|| AkitaError::InvalidSetup("B setup footprint overflow".into()))?;
-    Ok(SetupProjectionGeometry::from_role_footprints(
-        role_dims,
-        a_footprint,
-        b_footprint,
-        d_footprint,
-    )?
-    .required())
-}
-
 /// Fail-closed envelope guard: `required` inner (`d_a`) rows must fit the shared
 /// matrix prefix at `fold_ring_d`.
 ///
@@ -458,207 +340,15 @@ pub fn ensure_setup_envelope<F: FieldCore>(
     Ok(())
 }
 
-/// Active base-ring setup rows for one fold, fail-closed on envelope overflow.
-///
-/// # Errors
-///
-/// Returns [`AkitaError::InvalidSetup`] when `required` exceeds the shared matrix
-/// prefix available at `fold_ring_d`.
-pub fn setup_active_ring_elems_for_fold<F: FieldCore, E: FieldCore>(
-    expanded: &AkitaExpandedSetup<F>,
-    inputs: &SetupContributionPlanInputs<E>,
-    role_dims: CommitmentRingDims,
-) -> Result<usize, AkitaError> {
-    let required = setup_required_for_inputs(inputs, role_dims)?;
-    ensure_setup_envelope(
-        expanded,
-        required,
-        role_dims.d_a().min(role_dims.d_b()).min(role_dims.d_d()),
-    )?;
-    Ok(required)
-}
-
-/// Active inner (`d_a`) setup ring rows at `level`, fail-closed on envelope overflow.
-///
-/// # Errors
-///
-/// Returns [`AkitaError::InvalidSetup`] when `required` exceeds the shared matrix
-/// prefix available at the fold ring dimension.
-pub fn setup_active_ring_elems_at<F: FieldCore, E: FieldCore>(
-    level: usize,
-    schedule: &Schedule,
-    expanded: &AkitaExpandedSetup<F>,
-    inputs: &SetupContributionPlanInputs<E>,
-) -> Result<usize, AkitaError> {
-    let exec = schedule.get_execution_schedule(level)?;
-    setup_active_ring_elems_for_fold(expanded, inputs, exec.params.role_dims())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        gadget_row_scalars, RelationMatrixRowLayout, SetupContributionGroupInputs,
-        SetupContributionLayout, SetupContributionPlan, WitnessLayout, WitnessUnitLayout,
-    };
     use akita_field::Prime128OffsetA7F7;
 
     type F = Prime128OffsetA7F7;
 
-    fn test_scalar(value: u128) -> F {
-        F::from_canonical_u128(value)
-    }
-
-    fn single_chunk_layout_from_inputs(inputs: &SetupContributionPlanInputs<F>) -> WitnessLayout {
-        let z_len = inputs.block_len * inputs.depth_commit * inputs.depth_fold;
-        let e_len = inputs.num_claims * inputs.num_blocks * inputs.depth_open;
-        let t_len = e_len * inputs.n_a;
-        let unit = WitnessUnitLayout::new_for_test(
-            0,
-            0,
-            0,
-            inputs.num_blocks,
-            0..z_len,
-            z_len..z_len + e_len,
-            z_len + e_len..z_len + e_len + t_len,
-        );
-        let cursor = z_len + e_len + t_len;
-        WitnessLayout::new_for_test(vec![unit], cursor..cursor + inputs.depth_fold.max(1))
-    }
-
-    fn prepare_single_group_plan(
-        inputs: &SetupContributionPlanInputs<F>,
-        full_vec_randomness: &[F],
-        fold_gadget: &[F],
-        layout: &WitnessLayout,
-    ) -> Result<SetupContributionPlan<F>, AkitaError> {
-        let group = SetupContributionGroupInputs::from_single_group(inputs, 0)?;
-        let layout = SetupContributionLayout::new(
-            std::sync::Arc::new(layout.clone()),
-            layout.total_len(),
-            vec![group],
-        )?;
-        let static_plan = SetupContributionPlan::prepare_static(inputs, &layout)?;
-        SetupContributionPlan::finish_plan::<F>(
-            &static_plan,
-            full_vec_randomness,
-            None,
-            None,
-            Some(fold_gadget),
-            &layout,
-            CommitmentRingDims::uniform(64),
-        )
-    }
-
-    #[test]
-    fn setup_required_for_inputs_matches_prepare_required() {
-        let block_len = 12;
-        let depth_commit = 3;
-        let depth_fold = 2;
-        let num_points = 1;
-        let z_range = block_len * depth_commit;
-        let full_vec_randomness = (0..9)
-            .map(|idx| test_scalar(101 + idx as u128))
-            .collect::<Vec<_>>();
-        let fold_gadget = gadget_row_scalars::<F>(depth_fold, 4);
-        let inputs = SetupContributionPlanInputs::<F> {
-            relation_matrix_row_layout: RelationMatrixRowLayout::WithoutDBlock,
-            rows: 2,
-            n_a: 1,
-            n_b: 0,
-            n_d: 0,
-            num_groups: num_points,
-            num_polys_per_group: vec![0],
-            num_t_vectors: 0,
-            num_claims: 1,
-            num_blocks: 4,
-            block_len,
-            depth_open: 16,
-            depth_commit,
-            depth_fold,
-            inner_width: z_range,
-            eq_tau1: vec![test_scalar(11), test_scalar(12)].into(),
-        };
-        let required =
-            setup_required_for_inputs(&inputs, CommitmentRingDims::uniform(64)).expect("required");
-        let layout = single_chunk_layout_from_inputs(&inputs);
-        let plan = prepare_single_group_plan(&inputs, &full_vec_randomness, &fold_gadget, &layout)
-            .expect("plan");
-        assert_eq!(required, plan.required());
-    }
-
-    #[test]
-    fn setup_required_for_inputs_is_challenge_free() {
-        let block_len = 12;
-        let depth_commit = 3;
-        let depth_fold = 2;
-        let z_range = block_len * depth_commit;
-        let inputs = SetupContributionPlanInputs::<F> {
-            relation_matrix_row_layout: RelationMatrixRowLayout::WithoutDBlock,
-            rows: 2,
-            n_a: 1,
-            n_b: 0,
-            n_d: 0,
-            num_groups: 1,
-            num_polys_per_group: vec![2],
-            num_t_vectors: 2,
-            num_claims: 1,
-            num_blocks: 4,
-            block_len,
-            depth_open: 16,
-            depth_commit,
-            depth_fold,
-            inner_width: z_range,
-            eq_tau1: vec![test_scalar(11), test_scalar(12)].into(),
-        };
-        let required =
-            setup_required_for_inputs(&inputs, CommitmentRingDims::uniform(64)).expect("required");
-        assert!(required > 0);
-
-        let fold_gadget = gadget_row_scalars::<F>(depth_fold, 4);
-        let mut inputs_a = inputs.clone();
-        let layout = single_chunk_layout_from_inputs(&inputs_a);
-        let plan_a = prepare_single_group_plan(
-            &inputs_a,
-            &[test_scalar(99), test_scalar(100)],
-            &fold_gadget,
-            &layout,
-        )
-        .expect("plan a");
-        inputs_a.eq_tau1 = vec![test_scalar(1); 8].into();
-        let plan_b = prepare_single_group_plan(
-            &inputs_a,
-            &[test_scalar(77), test_scalar(88)],
-            &fold_gadget,
-            &layout,
-        )
-        .expect("plan b");
-        assert_eq!(required, plan_a.required());
-        assert_eq!(plan_a.required(), plan_b.required());
-    }
-
     #[test]
     fn ensure_setup_envelope_rejects_undersized_matrix() {
-        let inputs = SetupContributionPlanInputs::<F> {
-            relation_matrix_row_layout: RelationMatrixRowLayout::WithDBlock,
-            rows: 8,
-            n_a: 2,
-            n_b: 2,
-            n_d: 1,
-            num_groups: 1,
-            num_polys_per_group: vec![1],
-            num_t_vectors: 1,
-            num_claims: 1,
-            num_blocks: 4,
-            block_len: 16,
-            depth_open: 8,
-            depth_commit: 2,
-            depth_fold: 3,
-            inner_width: 32,
-            eq_tau1: vec![].into(),
-        };
-        let required =
-            setup_required_for_inputs(&inputs, CommitmentRingDims::uniform(64)).expect("required");
         let seed = crate::AkitaSetupSeed {
             max_num_vars: 32,
             max_num_batched_polys: 1,
@@ -669,31 +359,8 @@ mod tests {
         let shared = crate::derive_public_matrix_flat::<F, 32>(1, &seed.public_matrix_seed);
         let expanded =
             crate::AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(seed, shared);
-        let err = ensure_setup_envelope(&expanded, required, 32).expect_err("undersized");
+        let err = ensure_setup_envelope(&expanded, 2, 32).expect_err("undersized");
         assert!(matches!(err, AkitaError::InvalidSetup(_)));
-    }
-
-    #[test]
-    fn setup_required_for_inputs_accepts_exact_non_pow2_fold_count() {
-        let inputs = SetupContributionPlanInputs::<F> {
-            relation_matrix_row_layout: RelationMatrixRowLayout::WithDBlock,
-            rows: 8,
-            n_a: 2,
-            n_b: 2,
-            n_d: 1,
-            num_groups: 1,
-            num_polys_per_group: vec![1],
-            num_t_vectors: 1,
-            num_claims: 1,
-            num_blocks: 3,
-            block_len: 16,
-            depth_open: 8,
-            depth_commit: 2,
-            depth_fold: 3,
-            inner_width: 32,
-            eq_tau1: vec![].into(),
-        };
-        assert!(setup_required_for_inputs(&inputs, CommitmentRingDims::uniform(64)).is_ok());
     }
 
     #[test]

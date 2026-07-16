@@ -7,39 +7,33 @@ use super::FoldWitnessLinfCapPolicy;
 /// Preview absorb label for ZK grind probe permutations (prover-only).
 pub const FOLD_GRIND_PROBE_ORDER_ABSORB: &[u8] = b"ak/a/fgpo";
 
-/// Per-fold-level grind policy: acceptance threshold and nonce cap.
+/// Per-fold-level grind policy and acceptance threshold.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct FoldWitnessGrindContract {
     /// Whether this level rerolls under a proved sub-Gaussian tail bound.
     pub policy: FoldWitnessLinfCapPolicy,
     /// Prover accepts when `centered_inf_norm <= witness_linf_cap`.
     pub witness_linf_cap: u128,
-    /// Exclusive upper bound on the wire `fold_grind_nonce`.
-    pub max_nonce_exclusive: u32,
 }
 
 impl FoldWitnessGrindContract {
     /// Reject malformed fold grind nonces before challenge replay.
     ///
     /// Deterministic `β_inf` policies forbid reroll (`nonce = 0` only).
-    /// Tail-bound-with-grind policies accept `nonce < max_nonce_exclusive`.
+    /// Tail-bound-with-grind policies accept `nonce < max_grind_attempts`.
     ///
     /// # Errors
     ///
     /// Returns [`AkitaError::InvalidProof`] when the nonce is out of policy range.
-    pub fn validate_nonce(&self, fold_grind_nonce: u32) -> Result<(), AkitaError> {
-        match self.policy {
-            FoldWitnessLinfCapPolicy::WorstCaseBetaOnly if fold_grind_nonce != 0 => {
-                Err(AkitaError::InvalidProof)
-            }
-            FoldWitnessLinfCapPolicy::TailBoundWithGrind
-            | FoldWitnessLinfCapPolicy::TensorTailBoundWithGrind
-                if fold_grind_nonce >= self.max_nonce_exclusive =>
-            {
-                Err(AkitaError::InvalidProof)
-            }
-            _ => Ok(()),
+    pub fn validate_nonce(
+        &self,
+        fold_grind_nonce: u32,
+        max_grind_attempts: u32,
+    ) -> Result<(), AkitaError> {
+        if fold_grind_nonce >= self.policy.max_nonce_exclusive(max_grind_attempts) {
+            return Err(AkitaError::InvalidProof);
         }
+        Ok(())
     }
 }
 
@@ -47,17 +41,29 @@ impl FoldWitnessGrindContract {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FoldWitnessGrindBatchContract {
     group_contracts: Vec<FoldWitnessGrindContract>,
+    max_grind_attempts: u32,
 }
 
 impl FoldWitnessGrindBatchContract {
     /// Build a nonempty batch contract.
-    pub fn new(group_contracts: Vec<FoldWitnessGrindContract>) -> Result<Self, AkitaError> {
+    pub fn new(
+        group_contracts: Vec<FoldWitnessGrindContract>,
+        max_grind_attempts: u32,
+    ) -> Result<Self, AkitaError> {
         if group_contracts.is_empty() {
             return Err(AkitaError::InvalidSetup(
                 "fold grind batch requires at least one group".to_string(),
             ));
         }
-        Ok(Self { group_contracts })
+        if max_grind_attempts == 0 {
+            return Err(AkitaError::InvalidSetup(
+                "fold grind attempt budget must be positive".to_string(),
+            ));
+        }
+        Ok(Self {
+            group_contracts,
+            max_grind_attempts,
+        })
     }
 
     /// Group-local contracts in transcript order.
@@ -70,7 +76,7 @@ impl FoldWitnessGrindBatchContract {
     pub fn max_nonce_exclusive(&self) -> u32 {
         self.group_contracts
             .iter()
-            .map(|contract| contract.max_nonce_exclusive)
+            .map(|contract| contract.policy.max_nonce_exclusive(self.max_grind_attempts))
             .min()
             .unwrap_or(0)
     }
@@ -84,8 +90,8 @@ impl FoldWitnessGrindBatchContract {
 
     /// Reject a nonce unless every group-local contract accepts it.
     pub fn validate_nonce(&self, fold_grind_nonce: u32) -> Result<(), AkitaError> {
-        self.group_contracts
-            .iter()
-            .try_for_each(|contract| contract.validate_nonce(fold_grind_nonce))
+        self.group_contracts.iter().try_for_each(|contract| {
+            contract.validate_nonce(fold_grind_nonce, self.max_grind_attempts)
+        })
     }
 }

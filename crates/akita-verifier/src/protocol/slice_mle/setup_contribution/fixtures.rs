@@ -9,7 +9,7 @@ use akita_field::{CanonicalField, Prime128OffsetA7F7};
 use akita_types::{
     gadget_row_scalars, AkitaExpandedSetup, AkitaSetupSeed, CommitmentRingDims, FlatMatrix,
     LevelParams, OpeningClaimsLayout, RelationMatrixRowLayout, SetupContributionPlan,
-    SetupContributionPlanInputs, SisModulusProfileId, WitnessLayout,
+    SisModulusProfileId, WitnessLayout,
 };
 
 use super::evaluate_setup_contribution_direct;
@@ -127,7 +127,6 @@ impl SetupContributionFixture {
     pub fn from_shape(shape: &SetupContributionShape) -> Self {
         let mut shape = shape.clone();
         let num_points = shape.num_polys_per_group.len();
-        let num_t_vectors = shape.num_polys_per_group.iter().sum();
         let total_blocks = shape.num_blocks * shape.num_claims;
         let inner_width = shape.block_len * shape.depth_commit;
 
@@ -158,7 +157,7 @@ impl SetupContributionFixture {
         shape.depth_fold = lp
             .num_digits_fold(shape.num_claims, lp.field_bits_for_cache())
             .expect("setup contribution fixture fold depth");
-        let opening_batch = OpeningClaimsLayout::new(0, shape.num_claims)
+        let opening_batch = OpeningClaimsLayout::from_group_sizes(0, &shape.num_polys_per_group)
             .expect("setup contribution fixture opening batch");
         let layout = WitnessLayout::new(&lp, &opening_batch, 1, 0, 1)
             .expect("setup contribution fixture layout");
@@ -188,26 +187,10 @@ impl SetupContributionFixture {
             FlatMatrix::from_ring_slice::<TEST_RING_DIM>(&matrix_entries),
         );
 
-        let setup_contribution_inputs = SetupContributionPlanInputs {
-            relation_matrix_row_layout: shape.relation_matrix_row_layout,
-            rows,
-            n_a: shape.n_a,
-            n_b: shape.n_b,
-            n_d: shape.n_d,
-            num_groups: 1,
-            num_polys_per_group: shape.num_polys_per_group.clone(),
-            num_t_vectors,
-            num_claims: shape.num_claims,
-            num_blocks: shape.num_blocks,
-            block_len: shape.block_len,
-            depth_open: shape.depth_open,
-            depth_commit: shape.depth_commit,
-            depth_fold: shape.depth_fold,
-            inner_width,
-            eq_tau1: (0..rows.next_power_of_two())
-                .map(|idx| test_scalar(11 + idx as u128))
-                .collect(),
-        };
+        let eq_tau1 = (0..rows.next_power_of_two())
+            .map(|idx| test_scalar(11 + idx as u128))
+            .collect::<Vec<_>>()
+            .into();
         let groups = vec![RelationMatrixGroupEvaluator {
             c_alphas: PreparedChallengeEvals::Flat(
                 (0..total_blocks)
@@ -220,23 +203,30 @@ impl SetupContributionFixture {
             group_id: 0,
             num_claims: shape.num_claims,
             num_blocks: shape.num_blocks,
-            block_len: shape.block_len,
             depth_open: shape.depth_open,
             depth_commit: shape.depth_commit,
             depth_fold: shape.depth_fold,
             log_basis: shape.log_basis,
             n_a: shape.n_a,
-            n_b: shape.n_b,
-            t_cols_per_vector: shape.n_a * shape.depth_open * shape.num_blocks,
             a_row_start: 1,
             b_row_start: 1 + shape.n_a,
         }];
         let opening_source_len = layout.total_len();
         let layout = std::sync::Arc::new(layout);
-        let setup_contribution_layout =
-            build_setup_contribution_layout(layout.clone(), opening_source_len, &groups).unwrap();
+        let setup_contribution_layout = build_setup_contribution_layout(
+            &lp,
+            &opening_batch,
+            shape.relation_matrix_row_layout,
+            layout.clone(),
+            opening_source_len,
+            &groups,
+        )
+        .unwrap();
         let setup_contribution_static = SetupContributionPlan::prepare_static(
-            &setup_contribution_inputs,
+            &lp,
+            &opening_batch,
+            shape.relation_matrix_row_layout,
+            eq_tau1,
             &setup_contribution_layout,
         )
         .unwrap();
@@ -245,7 +235,6 @@ impl SetupContributionFixture {
             groups,
             log_basis: shape.log_basis,
             setup_contribution_layout,
-            setup_contribution_inputs,
             setup_contribution_static,
             flat_context: None,
         };

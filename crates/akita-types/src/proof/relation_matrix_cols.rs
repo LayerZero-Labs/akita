@@ -9,7 +9,7 @@ use crate::layout::CommitmentRingDims;
 use crate::proof::ring_relation::RingRelationInstance;
 use crate::{
     gadget_row_scalars, r_decomp_levels, AkitaExpandedSetup, FpExtEncoding, LevelParams,
-    RelationMatrixRowLayout, SetupDColumnLayout, SetupProjectionGeometry,
+    OpeningClaimsLayout, RelationMatrixRowLayout, SetupProjectionGeometry,
 };
 use akita_algebra::eq_poly::SplitEqEvals;
 use akita_algebra::ring::{eval_flat_ring_at_pows_fast, scalar_powers};
@@ -85,6 +85,82 @@ where
         .and_then(|base| base.checked_add(physical % opening_ring_dim))
         .ok_or_else(|| AkitaError::InvalidSetup("relation weight address overflow".into()))?;
     sink(opening_index, weight)
+}
+
+fn relation_d_group_width(
+    lp: &LevelParams,
+    opening_batch: &OpeningClaimsLayout,
+    group_index: usize,
+) -> Result<usize, AkitaError> {
+    let group_lp = lp.group_params(opening_batch, group_index)?;
+    let num_claims = opening_batch.group_layout(group_index)?.num_polynomials();
+    num_claims
+        .checked_mul(group_lp.num_blocks())
+        .and_then(|n| n.checked_mul(group_lp.num_digits_open()))
+        .ok_or_else(|| AkitaError::InvalidSetup("setup D width overflow".to_string()))
+}
+
+fn relation_total_d_columns(
+    lp: &LevelParams,
+    opening_batch: &OpeningClaimsLayout,
+) -> Result<usize, AkitaError> {
+    let mut cursor = 0usize;
+    let mut seen = vec![false; opening_batch.num_groups()];
+    for group_id in opening_batch.root_group_order()? {
+        let slot = seen
+            .get_mut(group_id)
+            .ok_or_else(|| AkitaError::InvalidSetup("setup D group id out of range".into()))?;
+        if std::mem::replace(slot, true) {
+            return Err(AkitaError::InvalidSetup(
+                "setup D group id appears more than once".into(),
+            ));
+        }
+        let width = relation_d_group_width(lp, opening_batch, group_id)?;
+        let end = cursor
+            .checked_add(width)
+            .ok_or_else(|| AkitaError::InvalidSetup("setup D width overflow".into()))?;
+        cursor = end;
+    }
+    if seen.iter().any(|present| !present) {
+        return Err(AkitaError::InvalidSetup(
+            "setup D group ids are not contiguous".into(),
+        ));
+    }
+    Ok(cursor)
+}
+
+fn relation_d_column_start(
+    lp: &LevelParams,
+    opening_batch: &OpeningClaimsLayout,
+    target_group_id: usize,
+) -> Result<usize, AkitaError> {
+    let mut cursor = 0usize;
+    let mut start = None;
+    let mut seen = vec![false; opening_batch.num_groups()];
+    for group_id in opening_batch.root_group_order()? {
+        let slot = seen
+            .get_mut(group_id)
+            .ok_or_else(|| AkitaError::InvalidSetup("setup D group id out of range".into()))?;
+        if std::mem::replace(slot, true) {
+            return Err(AkitaError::InvalidSetup(
+                "setup D group id appears more than once".into(),
+            ));
+        }
+        let width = relation_d_group_width(lp, opening_batch, group_id)?;
+        let end = cursor
+            .checked_add(width)
+            .ok_or_else(|| AkitaError::InvalidSetup("setup D width overflow".into()))?;
+        if group_id == target_group_id {
+            start = Some(cursor);
+        }
+        cursor = end;
+    }
+    if seen.iter().any(|present| !present) {
+        return Err(AkitaError::InvalidSetup(
+            "setup D group ids are not contiguous".into(),
+        ));
+    }
+    start.ok_or_else(|| AkitaError::InvalidSetup("setup D group is missing".into()))
 }
 
 /// Unified relation matrix column evaluation for singleton and multi-group root relations.
@@ -289,19 +365,8 @@ where
         ));
     }
     let (b_ratio, d_ratio) = SetupProjectionGeometry::witness_subcolumn_ratios(role_dims)?;
-    let d_columns = SetupDColumnLayout::new(opening_batch.root_group_order()?.into_iter().map(
-        |group_index| {
-            let group_lp = lp.group_params(opening_batch, group_index)?;
-            let num_claims = opening_batch.group_layout(group_index)?.num_polynomials();
-            let width = num_claims
-                .checked_mul(group_lp.num_blocks())
-                .and_then(|n| n.checked_mul(group_lp.num_digits_open()))
-                .ok_or_else(|| AkitaError::InvalidSetup("setup D width overflow".to_string()))?;
-            Ok((group_index, width))
-        },
-    ))?;
-    let e_total = d_columns
-        .total_cols()
+    let d_physical_cols = relation_total_d_columns(lp, opening_batch)?;
+    let e_total = d_physical_cols
         .checked_mul(d_ratio)
         .ok_or_else(|| AkitaError::InvalidSetup("setup D width overflow".to_string()))?;
     let physical_field_len = witness_layout
@@ -358,7 +423,7 @@ where
     let consistency_weight = eq_tau1.eval_at(0)?;
 
     for group_index in 0..opening_batch.num_groups() {
-        let e_setup_offset = d_columns.range(group_index)?.start;
+        let e_setup_offset = relation_d_column_start(lp, opening_batch, group_index)?;
         let group_lp = lp.group_params(opening_batch, group_index)?;
         let group_layout = opening_batch.group_layout(group_index)?;
         let group_id = group_index;

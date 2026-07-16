@@ -43,6 +43,15 @@ impl FoldWitnessLinfCapPolicy {
     pub const fn allows_grind(self) -> bool {
         !matches!(self, Self::WorstCaseBetaOnly)
     }
+
+    #[inline]
+    #[must_use]
+    pub const fn max_nonce_exclusive(self, max_grind_attempts: u32) -> u32 {
+        match self {
+            Self::WorstCaseBetaOnly => 1,
+            Self::TailBoundWithGrind | Self::TensorTailBoundWithGrind => max_grind_attempts,
+        }
+    }
 }
 
 /// Select the fold-linf threshold policy for a stage-1 sparse family at ring

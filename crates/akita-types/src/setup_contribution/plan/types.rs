@@ -1,5 +1,8 @@
 use super::kernels::GroupSetupSegment;
-use crate::{SetupContributionPlanInputs, SetupProjectionGeometry, WitnessLayout};
+use crate::{
+    LevelParams, LevelParamsLike, OpeningClaimsLayout, RelationMatrixRowLayout,
+    SetupProjectionGeometry, WitnessLayout,
+};
 use akita_field::{AkitaError, FieldCore};
 use std::{ops::Range, sync::Arc};
 
@@ -7,82 +10,32 @@ use std::{ops::Range, sync::Arc};
 pub struct SetupContributionGroupInputs {
     pub group_id: usize,
     pub num_claims: usize,
-    pub num_blocks: usize,
-    pub block_len: usize,
-    pub depth_open: usize,
-    pub depth_commit: usize,
     pub depth_fold: usize,
-    pub log_basis: u32,
-    pub n_a: usize,
-    pub n_b: usize,
-    pub t_cols_per_vector: usize,
     pub a_row_start: usize,
     pub b_row_start: usize,
 }
 
 /// Canonical setup-side view of witness ownership and D column placement.
 ///
-/// Group descriptors contain only semantic group dimensions. This shared
-/// layout is the sole owner of the witness ranges, opening-source length, and
-/// checked relation-order D prefix ranges used by setup contributions.
+/// Group descriptors carry only relation-order anchors. This shared layout is
+/// the sole owner of the root parameters, opening-batch geometry, witness
+/// ranges, and opening-source length used to derive setup contribution
+/// geometry.
 #[derive(Clone)]
 pub struct SetupContributionLayout {
-    inner: Arc<SetupContributionLayoutInner>,
-}
-
-struct SetupContributionLayoutInner {
+    level_params: Arc<LevelParams>,
+    opening_batch: Arc<OpeningClaimsLayout>,
+    relation_matrix_row_layout: RelationMatrixRowLayout,
     witness_layout: Arc<WitnessLayout>,
     opening_source_len: usize,
     groups: Vec<SetupContributionGroupInputs>,
-    d_columns: SetupDColumnLayout,
-}
-
-#[derive(Clone)]
-pub(crate) struct SetupDColumnLayout {
-    ranges: Vec<Range<usize>>,
-    total_cols: usize,
-}
-
-impl SetupContributionGroupInputs {
-    /// Derive the semantic descriptor for a single commitment group.
-    pub fn from_single_group<E: FieldCore>(
-        inputs: &SetupContributionPlanInputs<E>,
-        fold_log_basis: u32,
-    ) -> Result<Self, AkitaError> {
-        if inputs.num_groups != 1 || inputs.num_polys_per_group.len() != 1 {
-            return Err(AkitaError::InvalidSetup(
-                "single-group setup contribution requires exactly one commitment group".into(),
-            ));
-        }
-        let a_row_start = 1usize;
-        let b_row_start = a_row_start
-            .checked_add(inputs.n_a)
-            .ok_or_else(|| AkitaError::InvalidSetup("B row start overflow".into()))?;
-        let t_cols_per_vector = inputs
-            .n_a
-            .checked_mul(inputs.depth_open)
-            .and_then(|width| width.checked_mul(inputs.num_blocks))
-            .ok_or_else(|| AkitaError::InvalidSetup("T polynomial width overflow".into()))?;
-        Ok(Self {
-            group_id: 0,
-            num_claims: inputs.num_claims,
-            num_blocks: inputs.num_blocks,
-            block_len: inputs.block_len,
-            depth_open: inputs.depth_open,
-            depth_commit: inputs.depth_commit,
-            depth_fold: inputs.depth_fold,
-            log_basis: fold_log_basis,
-            n_a: inputs.n_a,
-            n_b: inputs.n_b,
-            t_cols_per_vector,
-            a_row_start,
-            b_row_start,
-        })
-    }
 }
 
 impl SetupContributionLayout {
     pub fn new(
+        level_params: Arc<LevelParams>,
+        opening_batch: Arc<OpeningClaimsLayout>,
+        relation_matrix_row_layout: RelationMatrixRowLayout,
         witness_layout: Arc<WitnessLayout>,
         opening_source_len: usize,
         groups: Vec<SetupContributionGroupInputs>,
@@ -113,103 +66,108 @@ impl SetupContributionLayout {
             ));
         }
         for group in &groups {
-            validate_group_witness_layout(&witness_layout, group)?;
+            group.validate_against(&level_params, &opening_batch, relation_matrix_row_layout)?;
+            validate_group_witness_layout(
+                &witness_layout,
+                group.group_id,
+                group.num_blocks_for(&level_params, &opening_batch)?,
+            )?;
         }
-        let d_columns = SetupDColumnLayout::new(groups.iter().map(|group| {
-            let width = group
-                .num_claims
-                .checked_mul(group.num_blocks)
-                .and_then(|cols| cols.checked_mul(group.depth_open))
-                .ok_or_else(|| AkitaError::InvalidSetup("setup D width overflow".into()))?;
-            Ok((group.group_id, width))
-        }))?;
+        validate_setup_group_ids(&groups, witness_layout.num_groups())?;
         Ok(Self {
-            inner: Arc::new(SetupContributionLayoutInner {
-                witness_layout,
-                opening_source_len,
-                groups,
-                d_columns,
-            }),
+            level_params,
+            opening_batch,
+            relation_matrix_row_layout,
+            witness_layout,
+            opening_source_len,
+            groups,
         })
+    }
+
+    #[must_use]
+    pub fn level_params(&self) -> &LevelParams {
+        &self.level_params
+    }
+
+    #[must_use]
+    pub fn opening_batch(&self) -> &OpeningClaimsLayout {
+        &self.opening_batch
+    }
+
+    #[must_use]
+    pub const fn relation_matrix_row_layout(&self) -> RelationMatrixRowLayout {
+        self.relation_matrix_row_layout
     }
 
     #[must_use]
     pub fn witness_layout(&self) -> &WitnessLayout {
-        &self.inner.witness_layout
+        &self.witness_layout
     }
 
     #[must_use]
     pub fn opening_source_len(&self) -> usize {
-        self.inner.opening_source_len
+        self.opening_source_len
     }
 
     #[must_use]
     pub fn groups(&self) -> &[SetupContributionGroupInputs] {
-        &self.inner.groups
+        &self.groups
     }
 
-    pub fn d_col_range(&self, group_id: usize) -> Result<Range<usize>, AkitaError> {
-        self.inner.d_columns.range(group_id)
-    }
-
-    #[must_use]
-    pub fn d_physical_cols(&self) -> usize {
-        self.inner.d_columns.total_cols()
-    }
-}
-
-impl SetupDColumnLayout {
-    pub(crate) fn new<I>(groups: I) -> Result<Self, AkitaError>
-    where
-        I: IntoIterator<Item = Result<(usize, usize), AkitaError>>,
-    {
-        let groups = groups.into_iter().collect::<Result<Vec<_>, _>>()?;
-        let mut ranges = vec![0..0; groups.len()];
-        let mut seen = vec![false; groups.len()];
+    pub fn get_d_col_range(&self, group_id: usize) -> Result<Range<usize>, AkitaError> {
         let mut cursor = 0usize;
-        for (group_id, width) in groups {
-            let slot = seen
-                .get_mut(group_id)
-                .ok_or_else(|| AkitaError::InvalidSetup("setup D group id out of range".into()))?;
-            if std::mem::replace(slot, true) {
-                return Err(AkitaError::InvalidSetup(
-                    "setup D group id appears more than once".into(),
-                ));
-            }
+        for group in &self.groups {
+            let width = group.d_active_cols(self)?;
             let end = cursor
                 .checked_add(width)
                 .ok_or_else(|| AkitaError::InvalidSetup("setup D width overflow".into()))?;
-            ranges[group_id] = cursor..end;
+            if group.group_id == group_id {
+                return Ok(cursor..end);
+            }
             cursor = end;
         }
-        if seen.iter().any(|present| !present) {
-            return Err(AkitaError::InvalidSetup(
-                "setup D group ids are not contiguous".into(),
-            ));
-        }
-        Ok(Self {
-            ranges,
-            total_cols: cursor,
+        Err(AkitaError::InvalidSetup("setup D group is missing".into()))
+    }
+
+    pub fn get_total_d(&self) -> Result<usize, AkitaError> {
+        self.groups.iter().try_fold(0usize, |cursor, group| {
+            let width = group.d_active_cols(self)?;
+            cursor
+                .checked_add(width)
+                .ok_or_else(|| AkitaError::InvalidSetup("setup D width overflow".into()))
         })
     }
+}
 
-    pub(crate) fn range(&self, group_id: usize) -> Result<Range<usize>, AkitaError> {
-        self.ranges
-            .get(group_id)
-            .cloned()
-            .ok_or_else(|| AkitaError::InvalidSetup("setup D group is missing".into()))
+fn validate_setup_group_ids(
+    groups: &[SetupContributionGroupInputs],
+    num_groups: usize,
+) -> Result<(), AkitaError> {
+    let mut seen = vec![false; num_groups];
+    for group in groups {
+        let slot = seen
+            .get_mut(group.group_id)
+            .ok_or_else(|| AkitaError::InvalidSetup("setup D group id out of range".into()))?;
+        if std::mem::replace(slot, true) {
+            return Err(AkitaError::InvalidSetup(
+                "setup D group id appears more than once".into(),
+            ));
+        }
     }
-
-    pub(crate) const fn total_cols(&self) -> usize {
-        self.total_cols
+    if seen.iter().any(|present| !present) {
+        return Err(AkitaError::InvalidSetup(
+            "setup D group ids are not contiguous".into(),
+        ));
     }
+    Ok(())
 }
 
 fn validate_group_witness_layout(
     layout: &WitnessLayout,
-    group: &SetupContributionGroupInputs,
+    group_id: usize,
+    num_blocks: usize,
 ) -> Result<(), AkitaError> {
-    let units = layout.units_for_group(group.group_id)?;
+    let units = layout.units_for_group(group_id)?;
     let mut next_fold = 0usize;
     for unit in units {
         if unit.live_block_count() == 0 || unit.global_block_start() != next_fold {
@@ -221,12 +179,148 @@ fn validate_group_witness_layout(
             .checked_add(unit.live_block_count())
             .ok_or_else(|| AkitaError::InvalidSetup("setup fold coverage overflow".into()))?;
     }
-    if next_fold != group.num_blocks {
+    if next_fold != num_blocks {
         return Err(AkitaError::InvalidSetup(
             "setup group dimensions disagree with witness layout".into(),
         ));
     }
     Ok(())
+}
+
+impl SetupContributionGroupInputs {
+    fn group_params_for<'a>(
+        &self,
+        level_params: &'a LevelParams,
+        opening_batch: &'a OpeningClaimsLayout,
+    ) -> Result<&'a dyn LevelParamsLike, AkitaError> {
+        level_params.group_params(opening_batch, self.group_id)
+    }
+
+    fn validate_against(
+        &self,
+        level_params: &LevelParams,
+        opening_batch: &OpeningClaimsLayout,
+        relation_matrix_row_layout: RelationMatrixRowLayout,
+    ) -> Result<(), AkitaError> {
+        let group_layout = opening_batch.group_layout(self.group_id)?;
+        if self.num_claims != group_layout.num_polynomials() {
+            return Err(AkitaError::InvalidSetup(
+                "setup group claim count disagrees with opening batch".into(),
+            ));
+        }
+        let n_a = self.n_a_for(level_params, opening_batch)?;
+        let n_b = self.n_b_for(level_params, opening_batch)?;
+        let a_range =
+            level_params.a_row_range(opening_batch, self.group_id, relation_matrix_row_layout)?;
+        let b_range = level_params.commitment_row_range(
+            opening_batch,
+            self.group_id,
+            relation_matrix_row_layout,
+        )?;
+        if a_range.start != self.a_row_start || a_range.len() != n_a {
+            return Err(AkitaError::InvalidSetup(
+                "setup group A row range disagrees with level params".into(),
+            ));
+        }
+        if b_range.start != self.b_row_start || b_range.len() != n_b {
+            return Err(AkitaError::InvalidSetup(
+                "setup group B row range disagrees with level params".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    fn num_blocks_for(
+        &self,
+        level_params: &LevelParams,
+        opening_batch: &OpeningClaimsLayout,
+    ) -> Result<usize, AkitaError> {
+        Ok(self
+            .group_params_for(level_params, opening_batch)?
+            .num_blocks())
+    }
+
+    fn n_a_for(
+        &self,
+        level_params: &LevelParams,
+        opening_batch: &OpeningClaimsLayout,
+    ) -> Result<usize, AkitaError> {
+        Ok(self
+            .group_params_for(level_params, opening_batch)?
+            .a_rows_len())
+    }
+
+    fn n_b_for(
+        &self,
+        level_params: &LevelParams,
+        opening_batch: &OpeningClaimsLayout,
+    ) -> Result<usize, AkitaError> {
+        Ok(self
+            .group_params_for(level_params, opening_batch)?
+            .b_rows_len())
+    }
+
+    fn group_params<'a>(
+        &self,
+        layout: &'a SetupContributionLayout,
+    ) -> Result<&'a dyn LevelParamsLike, AkitaError> {
+        self.group_params_for(layout.level_params(), layout.opening_batch())
+    }
+
+    pub(crate) fn num_blocks(&self, layout: &SetupContributionLayout) -> Result<usize, AkitaError> {
+        Ok(self.group_params(layout)?.num_blocks())
+    }
+
+    pub(crate) fn block_len(&self, layout: &SetupContributionLayout) -> Result<usize, AkitaError> {
+        Ok(self.group_params(layout)?.block_len())
+    }
+
+    pub(crate) fn depth_open(&self, layout: &SetupContributionLayout) -> Result<usize, AkitaError> {
+        Ok(self.group_params(layout)?.num_digits_open())
+    }
+
+    pub(crate) fn depth_commit(
+        &self,
+        layout: &SetupContributionLayout,
+    ) -> Result<usize, AkitaError> {
+        Ok(self.group_params(layout)?.num_digits_commit())
+    }
+
+    pub(crate) fn log_basis(&self, layout: &SetupContributionLayout) -> Result<u32, AkitaError> {
+        Ok(self.group_params(layout)?.log_basis())
+    }
+
+    pub(crate) fn n_a(&self, layout: &SetupContributionLayout) -> Result<usize, AkitaError> {
+        Ok(self.group_params(layout)?.a_rows_len())
+    }
+
+    pub(crate) fn n_b(&self, layout: &SetupContributionLayout) -> Result<usize, AkitaError> {
+        Ok(self.group_params(layout)?.b_rows_len())
+    }
+
+    pub(crate) fn t_cols_per_vector(
+        &self,
+        layout: &SetupContributionLayout,
+    ) -> Result<usize, AkitaError> {
+        let n_a = self.n_a(layout)?;
+        let depth_open = self.depth_open(layout)?;
+        let num_blocks = self.num_blocks(layout)?;
+        n_a.checked_mul(depth_open)
+            .and_then(|n| n.checked_mul(num_blocks))
+            .ok_or_else(|| AkitaError::InvalidSetup("setup B vector width overflow".into()))
+    }
+
+    pub(crate) fn d_active_cols(
+        &self,
+        layout: &SetupContributionLayout,
+    ) -> Result<usize, AkitaError> {
+        let num_blocks = self.num_blocks(layout)?;
+        let depth_open = self.depth_open(layout)?;
+        self.num_claims
+            .checked_mul(num_blocks)
+            .and_then(|cols| cols.checked_mul(depth_open))
+            .ok_or_else(|| AkitaError::InvalidSetup("setup D active width overflow".into()))
+    }
 }
 
 pub struct SetupContributionPlan<E> {
@@ -256,6 +350,11 @@ impl<E: FieldCore> SetupContributionPlan<E> {
 /// Tau1-derived setup weights cached at ring-switch prepare time.
 #[derive(Clone)]
 pub struct SetupContributionStatic<E> {
+    pub(super) level_params: LevelParams,
+    pub(super) opening_batch: OpeningClaimsLayout,
+    pub(super) relation_matrix_row_layout: RelationMatrixRowLayout,
+    pub(super) rows: usize,
+    pub(super) eq_tau1: Arc<[E]>,
     pub(super) groups: Vec<SetupContributionGroupStatic<E>>,
     pub(super) d_rows: usize,
     pub(super) d_physical_cols: usize,
@@ -263,6 +362,36 @@ pub struct SetupContributionStatic<E> {
 }
 
 impl<E> SetupContributionStatic<E> {
+    /// Relation-matrix row count covered by the cached tau1 equality table.
+    #[must_use]
+    pub fn rows(&self) -> usize {
+        self.rows
+    }
+
+    /// Expanded tau1 equality table used for setup row weights.
+    #[must_use]
+    pub fn eq_tau1(&self) -> &[E] {
+        &self.eq_tau1
+    }
+
+    /// Level parameters used to prepare this static setup contribution.
+    #[must_use]
+    pub fn level_params(&self) -> &LevelParams {
+        &self.level_params
+    }
+
+    /// Opening batch layout used to prepare this static setup contribution.
+    #[must_use]
+    pub fn opening_batch(&self) -> &OpeningClaimsLayout {
+        &self.opening_batch
+    }
+
+    /// Relation row layout used to prepare this static setup contribution.
+    #[must_use]
+    pub fn relation_matrix_row_layout(&self) -> RelationMatrixRowLayout {
+        self.relation_matrix_row_layout
+    }
+
     /// Number of shared D rows in the packed setup contribution.
     #[must_use]
     pub fn d_rows(&self) -> usize {

@@ -129,7 +129,7 @@ fn accepts_fold_witness<F: CanonicalField, const D: usize>(
     true
 }
 
-fn grind_probe_nonces(
+pub(crate) fn grind_probe_nonces(
     contract: &FoldWitnessGrindBatchContract,
     binding: &FoldLinfProtocolBinding,
     transcript: &dyn FoldChallengeSeedPreview,
@@ -532,9 +532,8 @@ mod tests {
         let group_contract = FoldWitnessGrindContract {
             policy: FoldWitnessLinfCapPolicy::TailBoundWithGrind,
             witness_linf_cap: 1_000,
-            max_nonce_exclusive: 64,
         };
-        let contract = FoldWitnessGrindBatchContract::new(vec![group_contract]).unwrap();
+        let contract = FoldWitnessGrindBatchContract::new(vec![group_contract], 64).unwrap();
         let transcript = AkitaTranscript::<F>::prover(b"grind/order", b"instance");
         let mut binding = FoldLinfProtocolBinding::CURRENT;
         binding.grind_probe_order = FOLD_GRIND_PROBE_ORDER_TRANSCRIPT_SHUFFLE;
@@ -569,7 +568,6 @@ mod tests {
         let contract = FoldWitnessGrindContract {
             policy: FoldWitnessLinfCapPolicy::WorstCaseBetaOnly,
             witness_linf_cap: cap,
-            max_nonce_exclusive: 1,
         };
         let witness = DecomposeFoldWitness::from_parts::<D>(
             vec![CyclotomicRing::<F, D>::zero()],
@@ -596,7 +594,6 @@ mod tests {
         let contract = FoldWitnessGrindContract {
             policy: FoldWitnessLinfCapPolicy::TailBoundWithGrind,
             witness_linf_cap: cap,
-            max_nonce_exclusive: 8,
         };
         let witness = DecomposeFoldWitness::from_parts::<D>(
             vec![CyclotomicRing::<F, D>::zero()],
@@ -616,7 +613,6 @@ mod tests {
         let contract = FoldWitnessGrindContract {
             policy: FoldWitnessLinfCapPolicy::TailBoundWithGrind,
             witness_linf_cap: 2080,
-            max_nonce_exclusive: 8,
         };
         let witness = DecomposeFoldWitness::from_parts::<D>(
             vec![CyclotomicRing::<F, D>::zero()],

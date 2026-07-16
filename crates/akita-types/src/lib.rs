@@ -132,12 +132,9 @@ pub use schedule::{
     DirectStep, ExecutionSchedule, FoldStep, PrecommittedGroupParams, Schedule,
     ScheduleKeyPrecommitSource, Step,
 };
-pub(crate) use setup_contribution::SetupDColumnLayout;
 pub use setup_contribution::{
-    ensure_setup_envelope, prepare_setup_contribution_artifact, setup_active_ring_elems_at,
-    setup_active_ring_elems_for_fold, setup_required_for_inputs, shared_setup_fold_gadget,
-    SetupContributionArtifact, SetupContributionGroupInputs, SetupContributionLayout,
-    SetupContributionPlan, SetupContributionPlanInputs, SetupContributionStatic,
+    ensure_setup_envelope, shared_setup_fold_gadget, SetupContributionGroupInputs,
+    SetupContributionLayout, SetupContributionPlan, SetupContributionStatic,
     SetupIndexWeightEvaluator, SetupProjectionGeometry,
 };
 pub use sis::{
