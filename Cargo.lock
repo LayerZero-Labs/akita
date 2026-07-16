@@ -28,7 +28,7 @@ version = "0.1.0"
 dependencies = [
  "akita-error",
  "akita-serialization",
- "jolt-field 0.1.0 (git+https://github.com/Acentelles/jolt.git?rev=09b2f7b6ddd9427c756b781c39530a6c005e332d)",
+ "jolt-field",
  "rand 0.8.6",
  "rand_core 0.6.4",
  "rayon",
@@ -42,7 +42,7 @@ dependencies = [
  "akita-error",
  "akita-transcript",
  "criterion",
- "jolt-field 0.1.0 (git+https://github.com/Acentelles/jolt.git?rev=09b2f7b6ddd9427c756b781c39530a6c005e332d)",
+ "jolt-field",
  "sha3 0.10.9",
  "tracing",
 ]
@@ -58,7 +58,7 @@ dependencies = [
  "akita-serialization",
  "akita-transcript",
  "akita-types",
- "jolt-field 0.1.0 (git+https://github.com/Acentelles/jolt.git?rev=09b2f7b6ddd9427c756b781c39530a6c005e332d)",
+ "jolt-field",
  "tracing",
 ]
 
@@ -66,22 +66,7 @@ dependencies = [
 name = "akita-error"
 version = "0.1.0"
 dependencies = [
- "jolt-field 0.1.0 (git+https://github.com/Acentelles/jolt.git?rev=09b2f7b6ddd9427c756b781c39530a6c005e332d)",
- "thiserror",
-]
-
-[[package]]
-name = "akita-field"
-version = "0.1.0"
-dependencies = [
- "akita-serialization",
- "allocative",
- "jolt-field 0.1.0 (git+https://github.com/a16z/jolt?rev=2509bdcea9bb3e8978bb578380383ef06dbbada7)",
- "jolt-transcript",
- "num-traits",
- "rand 0.8.6",
- "rand_core 0.6.4",
- "rayon",
+ "jolt-field",
  "thiserror",
 ]
 
@@ -102,7 +87,7 @@ dependencies = [
  "akita-types",
  "akita-verifier",
  "criterion",
- "jolt-field 0.1.0 (git+https://github.com/Acentelles/jolt.git?rev=09b2f7b6ddd9427c756b781c39530a6c005e332d)",
+ "jolt-field",
  "num-bigint",
  "proptest",
  "rand 0.8.6",
@@ -120,7 +105,7 @@ dependencies = [
  "akita-challenges",
  "akita-error",
  "akita-types",
- "jolt-field 0.1.0 (git+https://github.com/Acentelles/jolt.git?rev=09b2f7b6ddd9427c756b781c39530a6c005e332d)",
+ "jolt-field",
 ]
 
 [[package]]
@@ -137,7 +122,7 @@ dependencies = [
  "akita-transcript",
  "akita-types",
  "ctr",
- "jolt-field 0.1.0 (git+https://github.com/Acentelles/jolt.git?rev=09b2f7b6ddd9427c756b781c39530a6c005e332d)",
+ "jolt-field",
  "rand 0.8.6",
  "rand_core 0.6.4",
  "rayon",
@@ -156,7 +141,7 @@ dependencies = [
 name = "akita-serialization"
 version = "0.1.0"
 dependencies = [
- "jolt-field 0.1.0 (git+https://github.com/Acentelles/jolt.git?rev=09b2f7b6ddd9427c756b781c39530a6c005e332d)",
+ "jolt-field",
  "proptest",
  "thiserror",
 ]
@@ -171,7 +156,7 @@ dependencies = [
  "akita-prover",
  "akita-serialization",
  "akita-types",
- "jolt-field 0.1.0 (git+https://github.com/Acentelles/jolt.git?rev=09b2f7b6ddd9427c756b781c39530a6c005e332d)",
+ "jolt-field",
  "tracing",
 ]
 
@@ -195,7 +180,7 @@ dependencies = [
  "akita-error",
  "akita-serialization",
  "akita-transcript",
- "jolt-field 0.1.0 (git+https://github.com/Acentelles/jolt.git?rev=09b2f7b6ddd9427c756b781c39530a6c005e332d)",
+ "jolt-field",
  "tracing",
 ]
 
@@ -205,7 +190,7 @@ version = "0.1.0"
 dependencies = [
  "akita-serialization",
  "blake2 0.10.6",
- "jolt-field 0.1.0 (git+https://github.com/Acentelles/jolt.git?rev=09b2f7b6ddd9427c756b781c39530a6c005e332d)",
+ "jolt-field",
  "spongefish",
 ]
 
@@ -220,7 +205,7 @@ dependencies = [
  "akita-sumcheck",
  "akita-transcript",
  "blake2 0.10.6",
- "jolt-field 0.1.0 (git+https://github.com/Acentelles/jolt.git?rev=09b2f7b6ddd9427c756b781c39530a6c005e332d)",
+ "jolt-field",
  "num-traits",
  "rand 0.8.6",
  "rand_core 0.6.4",
@@ -241,7 +226,7 @@ dependencies = [
  "akita-sumcheck",
  "akita-transcript",
  "akita-types",
- "jolt-field 0.1.0 (git+https://github.com/Acentelles/jolt.git?rev=09b2f7b6ddd9427c756b781c39530a6c005e332d)",
+ "jolt-field",
  "tracing",
 ]
 
@@ -250,28 +235,7 @@ name = "akita-witness"
 version = "0.1.0"
 dependencies = [
  "akita-error",
- "jolt-field 0.1.0 (git+https://github.com/Acentelles/jolt.git?rev=09b2f7b6ddd9427c756b781c39530a6c005e332d)",
-]
-
-[[package]]
-name = "allocative"
-version = "0.3.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d8cf9afc79c83d514444b55df3935d317da54b1ce3b17a133c646889cc260de8"
-dependencies = [
- "allocative_derive",
- "ctor",
-]
-
-[[package]]
-name = "allocative_derive"
-version = "0.3.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "614043c56c1173b800acb007b81fd0cbc0a0d7d717b71ba705fc2230d0760a23"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn",
+ "jolt-field",
 ]
 
 [[package]]
@@ -546,16 +510,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "ctor"
-version = "1.0.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "01334b89b69ff726750c5ce5073fc8bd860e99aa9a8fc5ca11b04730e3aee97a"
-dependencies = [
- "link-section",
- "linktime-proc-macro",
-]
-
-[[package]]
 name = "ctr"
 version = "0.9.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -765,17 +719,6 @@ checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
 [[package]]
 name = "jolt-field"
 version = "0.1.0"
-source = "git+https://github.com/a16z/jolt?rev=2509bdcea9bb3e8978bb578380383ef06dbbada7#2509bdcea9bb3e8978bb578380383ef06dbbada7"
-dependencies = [
- "num-traits",
- "rand 0.8.6",
- "rand_core 0.6.4",
- "serde",
-]
-
-[[package]]
-name = "jolt-field"
-version = "0.1.0"
 source = "git+https://github.com/Acentelles/jolt.git?rev=09b2f7b6ddd9427c756b781c39530a6c005e332d#09b2f7b6ddd9427c756b781c39530a6c005e332d"
 dependencies = [
  "num-traits",
@@ -784,17 +727,6 @@ dependencies = [
  "rayon",
  "serde",
  "thiserror",
-]
-
-[[package]]
-name = "jolt-transcript"
-version = "0.1.0"
-source = "git+https://github.com/a16z/jolt?rev=2509bdcea9bb3e8978bb578380383ef06dbbada7#2509bdcea9bb3e8978bb578380383ef06dbbada7"
-dependencies = [
- "blake2 0.11.0-rc.6",
- "digest 0.11.3",
- "jolt-field 0.1.0 (git+https://github.com/a16z/jolt?rev=2509bdcea9bb3e8978bb578380383ef06dbbada7)",
- "sha3 0.11.0",
 ]
 
 [[package]]
@@ -844,18 +776,6 @@ name = "libm"
 version = "0.2.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b6d2cec3eae94f9f509c767b45932f1ada8350c4bdb85af2fcab4a3c14807981"
-
-[[package]]
-name = "link-section"
-version = "0.18.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "24670b639492630905459a6c7d47f063d33c2d4fcd5362f6e5827c5613976c9f"
-
-[[package]]
-name = "linktime-proc-macro"
-version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8c7b0a3383c2a1002d11349c92c85a666a5fb679e96c79d782cf0dbe557fd6ee"
 
 [[package]]
 name = "linux-raw-sys"
