@@ -195,7 +195,7 @@ fn setup_matrix_envelope_for_schedule(
     schedule: &Schedule,
 ) -> Result<SetupMatrixEnvelope, AkitaError> {
     let mut envelope = SetupMatrixEnvelope { max_setup_len: 1 };
-    for params in setup_level_params_from_schedule(&schedule) {
+    for params in setup_level_params_from_schedule(schedule) {
         accumulate_matrix_envelope_for_level(&params, &mut envelope.max_setup_len)?;
     }
     Ok(envelope)
