@@ -977,7 +977,6 @@ mod tests {
                         .collect::<Vec<_>>();
                 emit_witness_z_planes(
                     &mut emitted,
-                    &layout,
                     unit,
                     params.num_positions_per_block(),
                     params.num_digits_commit(),

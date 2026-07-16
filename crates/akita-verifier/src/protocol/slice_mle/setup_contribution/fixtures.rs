@@ -29,8 +29,6 @@ pub(crate) struct SetupContributionFixture {
     pub relation_matrix_evaluator: RelationMatrixEvaluator<TestField>,
     pub setup: AkitaExpandedSetup<TestField>,
     pub full_vec_randomness: Vec<TestField>,
-    pub eq_low: Vec<TestField>,
-    pub z_block_low_eq: Vec<TestField>,
     pub alpha_pows: Vec<TestField>,
     pub fold_gadget: Vec<TestField>,
 }
@@ -256,21 +254,11 @@ impl SetupContributionFixture {
         let alpha = test_scalar(19);
         let alpha_pows = scalar_powers(alpha, TEST_RING_DIM);
         let fold_gadget = gadget_row_scalars::<TestField>(shape.depth_fold, shape.log_basis);
-        let block_index_bits = shape.num_live_blocks.trailing_zeros() as usize;
-        let eq_low = EqPolynomial::evals(&full_vec_randomness[..block_index_bits]).unwrap();
-        let z_offset_low_bits = shape.num_positions_per_block.trailing_zeros() as usize;
-        let z_block_low_eq = if z_offset_low_bits == 0 {
-            vec![TestField::one()]
-        } else {
-            EqPolynomial::evals(&full_vec_randomness[..z_offset_low_bits]).unwrap()
-        };
 
         Self {
             relation_matrix_evaluator,
             setup,
             full_vec_randomness,
-            eq_low,
-            z_block_low_eq,
             alpha_pows,
             fold_gadget,
         }
@@ -280,8 +268,6 @@ impl SetupContributionFixture {
         evaluate_setup_contribution_direct::<TestField, TestField, TEST_RING_DIM>(
             &self.relation_matrix_evaluator,
             &self.full_vec_randomness,
-            Some(&self.eq_low),
-            Some(&self.z_block_low_eq),
             &self.alpha_pows,
             &self.alpha_pows,
             &self.alpha_pows,
@@ -295,8 +281,6 @@ impl SetupContributionFixture {
         let plan = SetupContributionPlan::finish_plan::<TestField>(
             &self.relation_matrix_evaluator.setup_contribution_static,
             &self.full_vec_randomness,
-            Some(&self.eq_low),
-            Some(&self.z_block_low_eq),
             Some(&self.fold_gadget),
             &self.relation_matrix_evaluator.setup_contribution_layout,
             self.relation_matrix_evaluator.role_dims,
@@ -341,8 +325,6 @@ impl SetupContributionFixture {
         let plan = SetupContributionPlan::finish_plan::<TestField>(
             &self.relation_matrix_evaluator.setup_contribution_static,
             &self.full_vec_randomness,
-            Some(&self.eq_low),
-            Some(&self.z_block_low_eq),
             Some(&self.fold_gadget),
             &self.relation_matrix_evaluator.setup_contribution_layout,
             self.relation_matrix_evaluator.role_dims,

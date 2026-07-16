@@ -173,8 +173,7 @@ impl<E: FieldCore> SetupIndexWeightEvaluator<E> {
                     .and_then(|base| base.checked_mul(group.depth_open))
                     .and_then(|local| d_col_range.start.checked_add(local))
                     .ok_or_else(|| AkitaError::InvalidSetup("setup D address overflow".into()))?;
-                let witness_index = self.layout.witness_layout().e_index(
-                    unit,
+                let witness_index = unit.e_index(
                     group.num_claims,
                     group.depth_open,
                     claim,
@@ -245,8 +244,7 @@ impl<E: FieldCore> SetupIndexWeightEvaluator<E> {
                     .and_then(|base| base.checked_mul(group.n_a))
                     .and_then(|base| base.checked_mul(group.depth_open))
                     .ok_or_else(|| AkitaError::InvalidSetup("setup B address overflow".into()))?;
-                let witness_index = self.layout.witness_layout().t_index(
-                    unit,
+                let witness_index = unit.t_index(
                     group.num_claims,
                     group.n_a,
                     group.depth_open,
@@ -315,8 +313,7 @@ impl<E: FieldCore> SetupIndexWeightEvaluator<E> {
         let mut acc = E::zero();
         for unit in &units {
             for (fold_digit, &fold) in self.fold_gadget.iter().enumerate().take(group.depth_fold) {
-                let witness_index = self.layout.witness_layout().z_index(
-                    unit,
+                let witness_index = unit.z_index(
                     group.num_positions_per_block,
                     group.depth_commit,
                     group.depth_fold,

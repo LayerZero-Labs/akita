@@ -1230,7 +1230,6 @@ where
             .ok_or_else(|| AkitaError::InvalidSetup("terminal Z end overflow".into()))?;
         emit_witness_z_planes::<D>(
             &mut out,
-            &physical_layout,
             unit,
             lp.num_positions_per_block,
             depth_commit,
@@ -1318,7 +1317,7 @@ pub fn emit_witness_e_planes<const D: usize>(
                         (claim * source_num_live_blocks + global_block) * depth_open + digit;
                     write_witness_plane(
                         out,
-                        layout.e_index(unit, num_claims, depth_open, claim, global_block, digit)?,
+                        unit.e_index(num_claims, depth_open, claim, global_block, digit)?,
                         &flat[source],
                     )?;
                 }
@@ -1365,8 +1364,7 @@ pub fn emit_witness_t_planes<const D: usize>(
                             + digit;
                         write_witness_plane(
                             out,
-                            layout.t_index(
-                                unit,
+                            unit.t_index(
                                 num_claims,
                                 n_a,
                                 depth_open,
@@ -1388,7 +1386,6 @@ pub fn emit_witness_t_planes<const D: usize>(
 /// Emit one ownership unit's replicated Z planes at canonical addresses.
 pub fn emit_witness_z_planes<const D: usize>(
     out: &mut [i8],
-    layout: &WitnessLayout,
     unit: &WitnessUnitLayout,
     num_positions_per_block: usize,
     depth_commit: usize,
@@ -1411,8 +1408,7 @@ pub fn emit_witness_z_planes<const D: usize>(
                 let source = (position * depth_commit + commit_digit) * depth_fold + fold_digit;
                 write_witness_plane(
                     out,
-                    layout.z_index(
-                        unit,
+                    unit.z_index(
                         num_positions_per_block,
                         depth_commit,
                         depth_fold,

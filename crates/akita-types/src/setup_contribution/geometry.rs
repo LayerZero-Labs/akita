@@ -542,8 +542,6 @@ mod tests {
         SetupContributionPlan::finish_plan::<F>(
             &static_plan,
             full_vec_randomness,
-            None,
-            None,
             Some(fold_gadget),
             &layout,
             CommitmentRingDims::uniform(64),

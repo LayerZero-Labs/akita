@@ -451,14 +451,7 @@ where
                 let challenge_alpha =
                     challenges.eval_logical_at_pows::<F, E>(challenge_index, alpha_pows)?;
                 for (digit, &opening_gadget) in g_open.iter().enumerate() {
-                    let witness_col = witness_layout.e_index(
-                        unit,
-                        k_g,
-                        depth_open,
-                        claim,
-                        global_block,
-                        digit,
-                    )?;
+                    let witness_col = unit.e_index(k_g, depth_open, claim, global_block, digit)?;
                     for role_subcol in 0..d_ratio {
                         let logical_block = claim * num_live_blocks_g + global_block;
                         let d_phys_col = logical_block
@@ -520,16 +513,8 @@ where
                             .checked_mul(row_block_claim)
                             .and_then(|base| base.checked_add(digit))
                             .ok_or(AkitaError::InvalidProof)?;
-                        let witness_col = witness_layout.t_index(
-                            unit,
-                            k_g,
-                            n_a,
-                            depth_open,
-                            claim,
-                            global_block,
-                            a_idx,
-                            digit,
-                        )?;
+                        let witness_col =
+                            unit.t_index(k_g, n_a, depth_open, claim, global_block, a_idx, digit)?;
                         for role_subcol in 0..b_ratio {
                             let local_col = semantic_col
                                 .checked_mul(b_ratio)
@@ -607,8 +592,7 @@ where
                 for commit_digit in 0..depth_commit {
                     for (fold_digit, &fold) in fold_gadget.iter().enumerate() {
                         let phys_k = position * depth_commit + commit_digit;
-                        let witness_col = witness_layout.z_index(
-                            unit,
+                        let witness_col = unit.z_index(
                             num_positions_per_block_g,
                             depth_commit,
                             depth_fold,

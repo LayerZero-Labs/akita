@@ -52,14 +52,8 @@ impl TraceWeightLayout {
         let unit = self
             .witness_layout
             .unit_for_block(self.group_id, global_block)?;
-        let physical_index = self.witness_layout.e_index(
-            unit,
-            num_claims,
-            self.num_digits_open,
-            claim,
-            global_block,
-            digit,
-        )?;
+        let physical_index =
+            unit.e_index(num_claims, self.num_digits_open, claim, global_block, digit)?;
         crate::checked_opening_source_index(self.opening_source_len, physical_index)
     }
 

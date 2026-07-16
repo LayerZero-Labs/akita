@@ -611,3 +611,351 @@ fn affine_digit_interval_rejects_addresses_outside_eq_domain() {
     .unwrap_err();
     assert!(matches!(err, AkitaError::InvalidSize { .. }));
 }
+
+// ---- Reference / oracle evaluators (test-only, relocated from offset_eq.rs) ----
+
+/// Dense or factored outer weights for a compact-stride contraction.
+enum CompactOuterWeights<'a, F> {
+    /// Materialized outer weights in compact-index order.
+    Dense(&'a [F]),
+    /// Mixed-radix tensor factors, with the first factor as the fastest axis.
+    Tensor(&'a [&'a [F]]),
+}
+
+impl<F: FieldCore> CompactOuterWeights<'_, F> {
+    fn len(&self) -> Result<usize, AkitaError> {
+        match self {
+            Self::Dense(weights) => Ok(weights.len()),
+            Self::Tensor(factors) => {
+                if factors.is_empty() || factors.iter().any(|factor| factor.is_empty()) {
+                    return Err(AkitaError::InvalidInput(
+                        "compact-stride tensor factors must be non-empty".into(),
+                    ));
+                }
+                factors.iter().try_fold(1usize, |len, factor| {
+                    len.checked_mul(factor.len()).ok_or_else(|| {
+                        AkitaError::InvalidInput(
+                            "compact-stride tensor outer length overflow".into(),
+                        )
+                    })
+                })
+            }
+        }
+    }
+
+    fn value(&self, mut index: usize) -> Result<F, AkitaError> {
+        match self {
+            Self::Dense(weights) => weights
+                .get(index)
+                .copied()
+                .ok_or_else(|| AkitaError::InvalidInput("outer weight index out of range".into())),
+            Self::Tensor(factors) => {
+                let mut value = F::one();
+                for factor in *factors {
+                    let digit = index % factor.len();
+                    index /= factor.len();
+                    value *= factor[digit];
+                }
+                if index != 0 {
+                    return Err(AkitaError::InvalidInput(
+                        "tensor outer weight index out of range".into(),
+                    ));
+                }
+                Ok(value)
+            }
+        }
+    }
+}
+
+/// Evaluate one exact compact-stride equality contraction.
+///
+/// This computes
+///
+/// ```text
+/// sum_{q < Q} outer[q] * sum_{lane < L}
+///     lanes[lane] * eq(r, offset + stride*q + lane).
+/// ```
+///
+/// The equality trie is visited only over live address intervals.
+/// The traversal uses multiplication and addition only, so Boolean challenges
+/// need no special case and no inversions.
+/// Tensor outer weights are read from their factors and are never materialized.
+///
+/// # Errors
+///
+/// Returns an error for malformed geometry, arithmetic overflow, a domain that
+/// cannot be represented by `usize`, or work above [`MAX_COMPACT_STRIDE_TERMS`].
+fn eval_compact_stride_eq<F: FieldCore>(
+    challenges: &[F],
+    offset: usize,
+    stride: usize,
+    lanes: &[F],
+    outer: CompactOuterWeights<'_, F>,
+) -> Result<F, AkitaError> {
+    if stride == 0 || lanes.is_empty() || lanes.len() > stride {
+        return Err(AkitaError::InvalidInput(
+            "compact-stride geometry requires 0 < lanes <= stride".into(),
+        ));
+    }
+    if challenges.len() >= usize::BITS as usize {
+        return Err(AkitaError::InvalidSize {
+            expected: usize::BITS as usize - 1,
+            actual: challenges.len(),
+        });
+    }
+    let outer_len = outer.len()?;
+    if outer_len == 0 {
+        return Ok(F::zero());
+    }
+    let terms = outer_len
+        .checked_mul(lanes.len())
+        .ok_or_else(|| AkitaError::InvalidInput("compact-stride term count overflow".into()))?;
+    if terms > MAX_COMPACT_STRIDE_TERMS {
+        return Err(AkitaError::InvalidSize {
+            expected: MAX_COMPACT_STRIDE_TERMS,
+            actual: terms,
+        });
+    }
+    let last_outer = outer_len - 1;
+    let last = stride
+        .checked_mul(last_outer)
+        .and_then(|base| base.checked_add(lanes.len() - 1))
+        .and_then(|local| offset.checked_add(local))
+        .ok_or_else(|| AkitaError::InvalidInput("compact-stride address overflow".into()))?;
+    let domain_len = 1usize << challenges.len();
+    if offset >= domain_len {
+        return Ok(F::zero());
+    }
+    let clipped_last = last.min(domain_len - 1);
+    let mut acc = F::zero();
+    if lanes.len() == stride {
+        visit_eq_interval(
+            challenges,
+            0,
+            domain_len,
+            F::one(),
+            offset,
+            clipped_last + 1,
+            &mut |address, eq_weight| {
+                let local = address - offset;
+                let q = local / stride;
+                let lane = local % stride;
+                let outer_weight = outer.value(q)?;
+                acc += outer_weight * lanes[lane] * eq_weight;
+                Ok(())
+            },
+        )?;
+    } else {
+        for q in 0..outer_len {
+            let start = offset
+                .checked_add(stride.checked_mul(q).ok_or_else(|| {
+                    AkitaError::InvalidInput("compact-stride address overflow".into())
+                })?)
+                .ok_or_else(|| {
+                    AkitaError::InvalidInput("compact-stride address overflow".into())
+                })?;
+            if start >= domain_len {
+                break;
+            }
+            let end = start
+                .checked_add(lanes.len())
+                .ok_or_else(|| AkitaError::InvalidInput("compact-stride address overflow".into()))?
+                .min(domain_len);
+            let outer_weight = outer.value(q)?;
+            visit_eq_interval(
+                challenges,
+                0,
+                domain_len,
+                F::one(),
+                start,
+                end,
+                &mut |address, eq_weight| {
+                    acc += outer_weight * lanes[address - start] * eq_weight;
+                    Ok(())
+                },
+            )?;
+        }
+    }
+    Ok(acc)
+}
+#[allow(clippy::too_many_arguments)]
+fn visit_eq_interval<F, Visit>(
+    challenges: &[F],
+    node_start: usize,
+    node_len: usize,
+    node_weight: F,
+    live_start: usize,
+    live_end: usize,
+    visit: &mut Visit,
+) -> Result<(), AkitaError>
+where
+    F: FieldCore,
+    Visit: FnMut(usize, F) -> Result<(), AkitaError>,
+{
+    let node_end = node_start
+        .checked_add(node_len)
+        .ok_or_else(|| AkitaError::InvalidInput("equality trie range overflow".into()))?;
+    if node_end <= live_start || node_start >= live_end {
+        return Ok(());
+    }
+    if node_len == 1 {
+        return visit(node_start, node_weight);
+    }
+    let half = node_len / 2;
+    let bit = half.trailing_zeros() as usize;
+    let challenge = *challenges
+        .get(bit)
+        .ok_or_else(|| AkitaError::InvalidInput("equality trie bit out of range".into()))?;
+    visit_eq_interval(
+        challenges,
+        node_start,
+        half,
+        node_weight * (F::one() - challenge),
+        live_start,
+        live_end,
+        visit,
+    )?;
+    visit_eq_interval(
+        challenges,
+        node_start + half,
+        half,
+        node_weight * challenge,
+        live_start,
+        live_end,
+        visit,
+    )
+}
+
+/// Sparse/pruned partial multilinear evaluation of a single materialized
+/// factor over the contiguous global interval `[offset, offset + factor.len())`.
+///
+/// Computes:
+///
+/// ```text
+/// scale · Σ_{z=0}^{factor.len()-1}  eq(x_challenges, offset + z) · factor[z]
+/// ```
+///
+/// where indices `offset + z ≥ 2^n` (with `n = x_challenges.len()`) fall
+/// outside the equality domain and contribute zero.
+///
+/// This places the values in **global** index coordinates and runs the
+/// standard little-endian multilinear binding fold, pruning every parent node
+/// whose whole subtree is outside the live interval. Each live parent costs
+/// exactly one field multiplication, so the
+/// total is `Σ_k (⌊hi/2^{k+1}⌋ − ⌊lo/2^{k+1}⌋ + 1)` multiplications plus one
+/// final `scale` product.
+///
+/// # Errors
+///
+/// Returns [`AkitaError::InvalidInput`] if `offset + factor.len()` overflows
+/// `usize`.
+fn eval_offset_eq_interval<F: FieldCore>(
+    x_challenges: &[F],
+    offset: usize,
+    scale: F,
+    factor: &[F],
+) -> Result<F, AkitaError> {
+    let n = x_challenges.len();
+    if factor.is_empty() {
+        return Ok(F::zero());
+    }
+
+    // Indices at or beyond `2^n` are outside the equality domain (weight 0).
+    let in_domain = n < usize::BITS as usize;
+    if in_domain && offset >= (1usize << n) {
+        return Ok(F::zero());
+    }
+
+    let last = offset
+        .checked_add(factor.len() - 1)
+        .ok_or_else(|| AkitaError::InvalidInput("offset-eq interval overflow".to_string()))?;
+
+    let mut lo = offset;
+    let mut hi = if in_domain {
+        core::cmp::min(last, (1usize << n) - 1)
+    } else {
+        last
+    };
+
+    // Active values in global coordinates: `a[i - lo] = factor[i - offset]`.
+    let mut a: Vec<F> = factor[..=(hi - lo)].to_vec();
+
+    for &r in x_challenges.iter() {
+        let new_lo = lo >> 1;
+        let new_hi = hi >> 1;
+        let mut next = Vec::with_capacity(new_hi - new_lo + 1);
+        for p in new_lo..=new_hi {
+            let left = 2 * p;
+            let right = left + 1;
+            let has_left = left >= lo && left <= hi;
+            let has_right = right >= lo && right <= hi;
+            let val = if has_left && has_right {
+                let x0 = a[left - lo];
+                let x1 = a[right - lo];
+                x0 + r * (x1 - x0)
+            } else if has_left {
+                let x0 = a[left - lo];
+                x0 - r * x0
+            } else {
+                let x1 = a[right - lo];
+                r * x1
+            };
+            next.push(val);
+        }
+        a = next;
+        lo = new_lo;
+        hi = new_hi;
+    }
+
+    debug_assert_eq!(a.len(), 1);
+    Ok(scale * a[0])
+}
+
+/// Summarize one power-of-two inner block `values[u]` into the two carry cases
+/// induced by adding `offset_low + u`, where `offset_low < values.len()`.
+///
+/// `eq_low` must be the equality table on the low `log2(values.len())` bits.
+///
+/// # Errors
+///
+/// Returns an error if `values` is not power-of-two sized, if `eq_low` has the
+/// wrong length, or if `offset_low` does not lie inside the peeled block.
+fn summarize_pow2_block_carries<F: FieldCore>(
+    eq_low: &[F],
+    offset_low: usize,
+    values: &[F],
+) -> Result<[F; 2], AkitaError> {
+    if !values.len().is_power_of_two() {
+        return Err(AkitaError::InvalidInput(
+            "peeled inner block length must be a power of two".to_string(),
+        ));
+    }
+    if eq_low.len() != values.len() {
+        return Err(AkitaError::InvalidSize {
+            expected: values.len(),
+            actual: eq_low.len(),
+        });
+    }
+    if offset_low >= values.len() {
+        return Err(AkitaError::InvalidInput(
+            "low offset must lie inside the peeled block".to_string(),
+        ));
+    }
+
+    let inner_bits = values.len().trailing_zeros() as usize;
+    let inner_mask = values.len() - 1;
+    let mut out = [F::zero(), F::zero()];
+
+    for (u, &value) in values.iter().enumerate() {
+        let sum = offset_low + u;
+        let carry = sum >> inner_bits;
+        debug_assert!(
+            carry < 2,
+            "sum of two peeled indices must carry at most one bit"
+        );
+        let low_idx = sum & inner_mask;
+        out[carry] += value * eq_low[low_idx];
+    }
+
+    Ok(out)
+}

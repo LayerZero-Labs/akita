@@ -590,9 +590,6 @@ where
             .ok_or(AkitaError::InvalidProof)?;
     }
 
-    if d_start != num_rows - n_d_active {
-        return Err(AkitaError::InvalidProof);
-    }
     if n_d_active != 0 {
         akita_types::dispatch_for_field!(
             ProtocolDispatchSlot::Role(RingRole::Opening),
