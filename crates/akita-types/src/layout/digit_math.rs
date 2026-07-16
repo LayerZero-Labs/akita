@@ -3,7 +3,7 @@
 //!
 //! The SIS/Ajtai *leaf* primitives (digit counts, collision norms, secure-rank
 //! lookup, per-role widths) all live in [`crate::sis`]. This module holds only
-//! the gadget row scalars and the `(m, r)`-split search, which *compose* those
+//! the gadget row scalars and the `(r_pos, r_blk)`-split search, which *compose* those
 //! primitives but contain no SIS formula of their own.
 
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
@@ -36,48 +36,51 @@ pub fn gadget_row_scalars<F: FieldCore + CanonicalField>(levels: usize, log_basi
     out
 }
 
-/// Find the `(m, r)` split of `reduced_vars` that minimizes next-level witness
+/// Find the `(r_pos, r_blk)` split of `reduced_vars` that minimizes next-level witness
 /// size.
 ///
 /// # Background (Akita paper, Section 4.5)
 ///
 /// After removing the ring dimension (`α = log2(D)` variables), the remaining
-/// `reduced_vars = ℓ - α` variables are partitioned as `m + r = reduced_vars`.
-/// The witness is a matrix: `2^r` block-columns and `m_eff` rows. The witness
+/// `reduced_vars = ℓ - α` variables are partitioned as
+/// `r_pos + r_blk = reduced_vars`.
+/// The witness is a matrix: `B` exact live block-columns and `M` rows. The witness
 /// size (ring elements, dropping the split-independent quotient term) is:
 ///
 /// ```text
-///   witness_size = (1 + n_A) · δ_open · 2^r  +  δ_commit · δ_fold · m_eff
+///   witness_size = (1 + n_A) · δ_open · B  +  δ_commit · δ_fold · M
 ///              ─────────────────────────     ────────────────────────
 ///              |t̂| + |ŵ|  (opening)         |ẑ|  (folded witness)
 /// ```
 ///
-/// `n_A` is the per-`r` minimum SIS-secure A-rank for the candidate's
-/// `inner_width(r) = block_len(r) · δ_commit` (via [`crate::sis::min_secure_rank`]). The
-/// A collision is itself recomputed per `r` via
+/// `n_A` is the per-candidate minimum SIS-secure A-rank for
+/// `inner_width = M · δ_commit` (via [`crate::sis::min_secure_rank`]). The
+/// A collision is itself recomputed for every candidate via
 /// [`crate::sis::rounded_up_role_a_inf_norm`], because the committed-level
-/// weak-binding norm grows with the fold arity `num_claims · 2^r`; scoring
-/// every split against a single bucket would rank the larger-`r` splits wrong.
+/// weak-binding norm grows with the exact fold arity `num_claims · B`; scoring
+/// every split against a single bucket would rank candidates with different `B` wrong.
 ///
-/// As `r` grows, the opening term grows `~2^r` while the folding term shrinks
-/// with `m_eff`; `δ_fold` and the A collision (hence `n_A`) also grow with `r`.
+/// As `r_blk` grows, the opening term grows with exact `B` while the folding term
+/// shrinks with `M`; `δ_fold` and the A collision (hence `n_A`) also grow with `B`.
 /// There is no closed form, so all valid splits are brute-forced.
 ///
 /// # Tight z mode
 ///
-/// - `num_ring > 0`: `m_eff = ⌈num_ring / 2^r⌉` (actual occupied rows).
-/// - `num_ring = 0`: `m_eff = 2^m` (power-of-two upper bound).
+/// - `num_ring > 0`: `M = 2^r_pos` and `B = ⌈num_ring / M⌉` uses the exact live
+///   block count.
+/// - `num_ring = 0`: `M = 2^r_pos` and `B = 2^r_blk` use the root capacity.
 ///
 /// # Return value
 ///
-/// `(position_bits, block_bits, n_a)` — the chosen split plus its per-`r` SIS-secure
-/// A-rank. Callers building a `LevelParams` should use this `n_a` so the
+/// `(position_index_bits, block_index_bits, n_a)` — the chosen split plus its
+/// per-candidate SIS-secure A-rank. Callers building a `LevelParams` should use
+/// this `n_a` so the
 /// derived `b_key.col_len` matches the cost the optimizer scored.
 ///
 /// # Fallback
 ///
-/// If `reduced_vars` is too small/large to brute-force, or every `r` falls off
-/// the SIS-floor table, returns the paper's symmetric split `m = r` with
+/// If `reduced_vars` is too small/large to brute-force, or every candidate falls off
+/// the SIS-floor table, returns the paper's symmetric bit split with
 /// `n_a = 1` (a cost-estimate fallback; downstream re-derives the SIS-strict
 /// layout for selected candidates).
 ///
@@ -85,7 +88,7 @@ pub fn gadget_row_scalars<F: FieldCore + CanonicalField>(levels: usize, log_basi
 ///
 /// Panics if `log_basis` is 0 or at least 128.
 #[allow(clippy::too_many_arguments)]
-pub fn optimal_m_r_split(
+pub fn optimal_block_geometry_split(
     policy: SisSecurityPolicyId,
     sis_modulus_profile: SisModulusProfileId,
     d: u32,
@@ -114,13 +117,16 @@ pub fn optimal_m_r_split(
     let mut best: Option<(u64, usize, u32)> = None;
 
     for r in (1..reduced_vars).rev() {
-        let block_len: u64 = if num_ring > 0 {
-            num_ring.div_ceil(1usize << r) as u64
+        let num_positions_per_block = 1u64 << (reduced_vars - r);
+        let num_live_blocks = if num_ring > 0 {
+            num_ring.div_ceil(num_positions_per_block as usize)
         } else {
-            1u64 << (reduced_vars - r)
+            1usize << r
         };
 
-        let Some(inner_width) = (block_len as usize).checked_mul(delta_commit as usize) else {
+        let Some(inner_width) =
+            (num_positions_per_block as usize).checked_mul(delta_commit as usize)
+        else {
             continue;
         };
         let Some(a_collision) = rounded_up_role_a_inf_norm(
@@ -133,7 +139,7 @@ pub fn optimal_m_r_split(
             log_commit_bound == 1,
             onehot_chunk_size,
             ring_subfield_norm_bound,
-            r,
+            num_live_blocks,
             num_claims,
             inner_width as u64,
         ) else {
@@ -156,7 +162,7 @@ pub fn optimal_m_r_split(
 
         let Some(total) = fold_level_witness_scoring_cost(
             n_a,
-            r,
+            num_live_blocks,
             num_claims,
             inner_width,
             decomposition,
@@ -184,15 +190,15 @@ pub fn optimal_m_r_split(
 }
 
 /// Next-level witness scoring cost for one block geometry, matching
-/// [`optimal_m_r_split`]:
+/// [`optimal_block_geometry_split`]:
 ///
 /// ```text
-///   (1 + n_a) · δ_open · 2^r  +  δ_commit · δ_fold · m_eff
+///   (1 + n_a) · δ_open · B  +  δ_commit · δ_fold · M
 /// ```
 #[allow(clippy::too_many_arguments)]
 pub fn fold_level_witness_scoring_cost(
     n_a: usize,
-    block_bits: usize,
+    num_live_blocks: usize,
     num_claims: usize,
     inner_width: usize,
     decomposition: DecompositionParams,
@@ -208,12 +214,12 @@ pub fn fold_level_witness_scoring_cost(
     let open_bound = log_commit_bound.max(field_bits);
     let delta_open = num_digits_for_bound(open_bound, field_bits, log_basis) as u64;
     let delta_commit = num_digits_for_bound(log_commit_bound, field_bits, log_basis) as u64;
-    let block_len = inner_width.checked_div(delta_commit as usize)?;
-    if block_len == 0 {
+    let num_positions_per_block = inner_width.checked_div(delta_commit as usize)?;
+    if num_positions_per_block == 0 {
         return None;
     }
-    let num_blocks = 1u64.checked_shl(block_bits as u32)?;
-    let m_eff = block_len as u64;
+    let num_live_blocks_u64 = u64::try_from(num_live_blocks).ok()?;
+    let num_positions_per_block_u64 = num_positions_per_block as u64;
     let cap_policy =
         fold_witness_linf_cap_policy(fold_challenge_config, fold_shape, ring_dimension);
     let binding = crate::FoldLinfProtocolBinding::CURRENT;
@@ -229,7 +235,7 @@ pub fn fold_level_witness_scoring_cost(
     )
     .ok()?;
     let (decomposed_fold_digits, _) = fold_witness_digit_plan(
-        block_bits,
+        num_live_blocks,
         num_claims,
         field_bits,
         log_basis,
@@ -239,10 +245,10 @@ pub fn fold_level_witness_scoring_cost(
     )
     .ok()?;
     let per_block_cost = delta_open.saturating_add((n_a as u64).saturating_mul(delta_open));
-    let opening_cost = per_block_cost.saturating_mul(num_blocks);
+    let opening_cost = per_block_cost.saturating_mul(num_live_blocks_u64);
     let folding_cost = delta_commit
         .saturating_mul(decomposed_fold_digits as u64)
-        .saturating_mul(m_eff);
+        .saturating_mul(num_positions_per_block_u64);
     Some(opening_cost.saturating_add(folding_cost))
 }
 
@@ -252,7 +258,7 @@ mod tests {
     use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 
     #[test]
-    fn optimal_m_r_split_uses_num_claims_in_fold_digit_scoring() {
+    fn optimal_block_geometry_split_uses_num_claims_in_fold_digit_scoring() {
         use akita_challenges::{D64_PRODUCTION_PM1_COUNT, D64_PRODUCTION_PM2_COUNT};
         let fold_challenge_config = SparseChallengeConfig {
             count_pm1: D64_PRODUCTION_PM1_COUNT,

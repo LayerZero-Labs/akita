@@ -36,21 +36,21 @@ fn configure_group(group: &mut BenchmarkGroup<'_, WallTime>) {
     group.measurement_time(Duration::from_secs(3));
 }
 
-fn make_case(num_blocks: usize, blocks_per_chunk: usize) -> SetupIndexWeightBenchCase {
-    assert!(num_blocks.is_power_of_two());
+fn make_case(num_live_blocks: usize, blocks_per_chunk: usize) -> SetupIndexWeightBenchCase {
+    assert!(num_live_blocks.is_power_of_two());
     assert!(blocks_per_chunk.is_power_of_two());
-    assert!(blocks_per_chunk <= num_blocks);
-    assert_eq!(num_blocks % blocks_per_chunk, 0);
+    assert!(blocks_per_chunk <= num_live_blocks);
+    assert_eq!(num_live_blocks % blocks_per_chunk, 0);
 
     let num_claims = 2;
     let depth_open = 2;
     let depth_commit = 2;
-    let block_len = 8;
+    let num_positions_per_block = 8;
     let n_a = 2;
     let n_b = 2;
     let n_d = 2;
     let log_basis = 4;
-    let mut level_params = LevelParams::params_only(
+    let level_params = LevelParams::params_only(
         SisModulusProfileId::Q128OffsetA7F7,
         D,
         log_basis,
@@ -59,9 +59,13 @@ fn make_case(num_blocks: usize, blocks_per_chunk: usize) -> SetupIndexWeightBenc
         n_d,
         akita_challenges::SparseChallengeConfig::pm1_only(1),
     )
-    .with_decomp(block_len, num_blocks * block_len, depth_commit, depth_open)
+    .with_decomp(
+        num_positions_per_block,
+        num_live_blocks * num_positions_per_block,
+        depth_commit,
+        depth_open,
+    )
     .unwrap();
-    level_params.chunk_granule = 1;
     let depth_fold = level_params
         .num_digits_fold(num_claims, level_params.field_bits_for_cache())
         .unwrap();
@@ -69,7 +73,7 @@ fn make_case(num_blocks: usize, blocks_per_chunk: usize) -> SetupIndexWeightBenc
     let layout = WitnessLayout::new(
         &level_params,
         &opening_batch,
-        num_blocks / blocks_per_chunk,
+        num_live_blocks / blocks_per_chunk,
         1 + n_a + n_b + n_d,
         r_decomp_levels::<F>(log_basis),
     )
@@ -150,14 +154,14 @@ fn bench_setup_index_weight(c: &mut Criterion) {
     let mut group = c.benchmark_group("setup_index_weight_mle");
     configure_group(&mut group);
 
-    for num_blocks in [64usize, 256, 1024, 4096, 16384] {
+    for num_live_blocks in [64usize, 256, 1024, 4096, 16384] {
         for (layout, blocks_per_chunk) in [
-            ("single_chunk", num_blocks),
-            ("chunk64", 64usize.min(num_blocks)),
+            ("single_chunk", num_live_blocks),
+            ("chunk64", 64usize.min(num_live_blocks)),
         ] {
-            let case = make_case(num_blocks, blocks_per_chunk);
+            let case = make_case(num_live_blocks, blocks_per_chunk);
             group.bench_with_input(
-                BenchmarkId::new(format!("{layout}/packed_path"), num_blocks),
+                BenchmarkId::new(format!("{layout}/packed_path"), num_live_blocks),
                 &case,
                 |b, case| {
                     b.iter(|| {
@@ -173,7 +177,7 @@ fn bench_setup_index_weight(c: &mut Criterion) {
                 },
             );
             group.bench_with_input(
-                BenchmarkId::new(format!("{layout}/succinct_path"), num_blocks),
+                BenchmarkId::new(format!("{layout}/succinct_path"), num_live_blocks),
                 &case,
                 |b, case| {
                     b.iter(|| black_box(case.evaluator.evaluate(black_box(&case.rho)).unwrap()))

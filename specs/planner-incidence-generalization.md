@@ -37,7 +37,7 @@ The relevant existing structure is `ClaimIncidenceSummary` in
 
 It already records the canonical public routing:
 
-- `nuposition_bits`: number of variables in every opening point.
+- `num_vars`: number of variables in every opening point.
 - `num_points`: number of distinct opening points.
 - `num_groups`: number of distinct committed groups.
 - `num_claims`: number of individual `(point, group, poly)` openings.
@@ -59,7 +59,7 @@ pub struct AkitaScheduleLookupKey {
 ```
 
 This key intentionally no longer carries setup capacity. In particular,
-`max_nuposition_bits` is not a scheduler/planner key dimension after preprocessing.
+`max_num_vars` is not a scheduler/planner key dimension after preprocessing.
 Setup capacity still exists in `AkitaSetupSeed` and setup sizing policy, but
 runtime schedule selection is keyed only by actual root group geometry and any
 frozen precommit metadata.
@@ -67,7 +67,7 @@ frozen precommit metadata.
 The current key is still an interim projection. It records only:
 
 ```text
-nuposition_bits
+num_vars
 num_t_vectors
 num_w_vectors
 num_z_vectors
@@ -99,7 +99,7 @@ the protocol implementation so it matches this model.
 polynomials and their sizes.
 
 Current code assumes all polynomials in a batched commit have the same
-`nuposition_bits`, and in practice all groups in the same batch use one root layout.
+`num_vars`, and in practice all groups in the same batch use one root layout.
 Under that current assumption, the number of `t` vectors is the total number of
 polynomials across all groups:
 
@@ -111,7 +111,7 @@ If mixed polynomial sizes become supported later, the planner input should not b
 a single count. It should carry per-size buckets, for example:
 
 ```text
-[(nuposition_bits, count), ...]
+[(num_vars, count), ...]
 ```
 
 For the current cleanup, preserving the same-size invariant is acceptable.
@@ -180,7 +180,7 @@ Example:
 ```rust
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct RootPlannerProfile {
-    pub nuposition_bits: usize,
+    pub num_vars: usize,
     pub num_t_vectors: usize,
     pub num_w_vectors: usize,
     pub num_z_vectors: usize,
@@ -189,8 +189,8 @@ pub struct RootPlannerProfile {
 }
 ```
 
-The current implementation has already moved `nuposition_bits` into the schedule key
-and removed the separate scheduler `max_nuposition_bits` dimension. The next step is to
+The current implementation has already moved `num_vars` into the schedule key
+and removed the separate scheduler `max_num_vars` dimension. The next step is to
 extend the schedule key/profile so it also carries the remaining root-size inputs
 explicitly: `num_commitment_groups` and `num_public_y_rows`.
 
@@ -306,10 +306,10 @@ pub struct GeneratedScheduleTableEntry {
 }
 ```
 
-Do not reintroduce `max_nuposition_bits` here. Generated schedules are keyed by the
+Do not reintroduce `max_num_vars` here. Generated schedules are keyed by the
 actual root problem shape, not by setup capacity. A setup that supports
-`max_nuposition_bits = N` must instead size its matrix envelope over all generated or
-planner-supported runtime shapes with `nuposition_bits <= N`.
+`max_num_vars = N` must instead size its matrix envelope over all generated or
+planner-supported runtime shapes with `num_vars <= N`.
 
 Each generated fold step stores the chosen layout/search parameters:
 
@@ -317,8 +317,8 @@ Each generated fold step stores the chosen layout/search parameters:
 pub struct GeneratedFoldStep {
     pub ring_d: u32,
     pub log_basis: u32,
-    pub position_bits: u32,
-    pub block_bits: u32,
+    pub position_index_bits: u32,
+    pub block_index_bits: u32,
     pub n_a: u32,
     pub n_b: u32,
     pub n_d: u32,
@@ -348,26 +348,26 @@ the planner's actual choices while preserving exact proof-size accounting.
 
 ## Setup Capacity And Envelope Sizing
 
-`max_nuposition_bits` remains a setup-capacity concept:
+`max_num_vars` remains a setup-capacity concept:
 
-- `AkitaSetupSeed::max_nuposition_bits` bounds accepted commitment/proof inputs.
+- `AkitaSetupSeed::max_num_vars` bounds accepted commitment/proof inputs.
 - `ClaimIncidence::validate` and batched input validation reject claims whose
-  actual `nuposition_bits` exceeds setup capacity.
+  actual `num_vars` exceeds setup capacity.
 - Setup matrix sizing must conservatively cover every actual runtime shape the
   setup may serve.
 
-Because schedule lookup no longer includes `max_nuposition_bits`, setup preprocessing
+Because schedule lookup no longer includes `max_num_vars`, setup preprocessing
 must not size only the all-up shape. It must take the maximum over:
 
 ```text
-1 <= nuposition_bits' <= setup.max_nuposition_bits
+1 <= num_vars' <= setup.max_num_vars
 1 <= num_polys' <= setup.max_num_batched_polys
 1 <= num_commitment_groups' <= num_polys'
 1 <= num_points' <= min(num_polys', setup.max_num_points)
 ```
 
 This is the purpose of `proof_optimized_max_setup_matrix_size`: a smaller
-runtime `nuposition_bits` or differently multi-group batch may select a schedule with larger
+runtime `num_vars` or differently multi-group batch may select a schedule with larger
 row or stride requirements than the setup's maximum-arity case.
 
 ## Protocol Changes Needed
@@ -429,7 +429,7 @@ Add unit tests for profile derivation from incidence:
 Add planner tests:
 
 - `find_optimal_schedule` accepts the schedule/profile key without any
-  `max_nuposition_bits` dimension.
+  `max_num_vars` dimension.
 - Root witness size changes when `num_z_vectors` changes while
   `num_points`/`num_groups` stay fixed.
 - Public proof size still scales with `num_public_y_rows == num_points`.
@@ -458,10 +458,10 @@ cargo test multipoint
 
 ## Implementation Order
 
-1. Remove scheduler/planner `max_nuposition_bits` from lookup keys, generated keys, and
+1. Remove scheduler/planner `max_num_vars` from lookup keys, generated keys, and
    schedule inputs. Done.
 2. Ensure setup preprocessing sizes the matrix envelope over all actual
-   `nuposition_bits <= setup.max_nuposition_bits`. Done.
+   `num_vars <= setup.max_num_vars`. Done.
 3. Add `RootPlannerProfile` and derive it from `ClaimIncidenceSummary`.
 4. Update planner sizing functions to use the full profile, including
    `num_commitment_groups` and `num_public_y_rows`.

@@ -26,41 +26,35 @@ pub(crate) fn recursive_fold_level_params_candidate(
     reduced_vars: usize,
     log_basis: u32,
     fold_level: usize,
-    block_capacity_bits: usize,
+    block_index_bits: usize,
     requested_fold_shape: TensorChallengeShape,
 ) -> Result<Option<LevelParams>, AkitaError> {
     if reduced_vars <= 2
         || reduced_vars >= 53
-        || block_capacity_bits == 0
-        || block_capacity_bits >= reduced_vars
+        || block_index_bits == 0
+        || block_index_bits >= reduced_vars
     {
         return Ok(None);
     }
     let num_chunks = policy.chunks_at_level(fold_level);
-    let block_len = 1usize
-        .checked_shl((reduced_vars - block_capacity_bits) as u32)
+    let num_positions_per_block = 1usize
+        .checked_shl((reduced_vars - block_index_bits) as u32)
         .ok_or_else(|| {
             AkitaError::InvalidSetup("recursive candidate position count overflow".to_string())
         })?;
-    let num_blocks = num_ring_elems.div_ceil(block_len);
-    if num_blocks < num_chunks {
+    let num_live_blocks = num_ring_elems.div_ceil(num_positions_per_block);
+    if num_live_blocks < num_chunks {
         return Ok(None);
     }
-    let fold_challenge_shape = optimize_fold_challenge_shape(requested_fold_shape, num_blocks)?;
-    let chunk_granule = optimize_chunk_granule(num_blocks, num_chunks, fold_challenge_shape)?;
-    let block_bits = num_blocks
-        .checked_next_power_of_two()
-        .ok_or_else(|| {
-            AkitaError::InvalidSetup("recursive candidate block capacity overflow".to_string())
-        })?
-        .trailing_zeros() as usize;
+    let fold_challenge_shape =
+        optimize_fold_challenge_shape(requested_fold_shape, num_live_blocks)?;
     let decomp = DecompositionParams {
         log_basis,
         ..policy.decomposition
     };
     let delta_commit = num_digits_s_commit(decomp, false);
     let delta_open = num_digits_open(decomp);
-    let Some(width_s) = decomposed_s_block_ring_count(block_len, delta_commit) else {
+    let Some(width_s) = decomposed_s_block_ring_count(num_positions_per_block, delta_commit) else {
         return Ok(None);
     };
     let Some(norm_s) = rounded_up_role_a_inf_norm(
@@ -73,7 +67,7 @@ pub(crate) fn recursive_fold_level_params_candidate(
         false,
         policy.onehot_chunk_size,
         policy.ring_subfield_norm_bound,
-        block_bits,
+        num_live_blocks,
         1,
         width_s as u64,
     ) else {
@@ -94,7 +88,8 @@ pub(crate) fn recursive_fold_level_params_candidate(
     ) else {
         return Ok(None);
     };
-    let Some(width_t) = decomposed_t_ring_count(a_key.row_len(), delta_open, num_blocks, 1) else {
+    let Some(width_t) = decomposed_t_ring_count(a_key.row_len(), delta_open, num_live_blocks, 1)
+    else {
         return Ok(None);
     };
     let Ok(b_key) = AjtaiKeyParams::try_new_with_min_rank(
@@ -112,7 +107,7 @@ pub(crate) fn recursive_fold_level_params_candidate(
     ) else {
         return Ok(None);
     };
-    let Some(width_w) = decomposed_w_ring_count(delta_open, num_blocks, 1) else {
+    let Some(width_w) = decomposed_w_ring_count(delta_open, num_live_blocks, 1) else {
         return Ok(None);
     };
     let Ok(d_key) = AjtaiKeyParams::try_new_with_min_rank(
@@ -127,10 +122,9 @@ pub(crate) fn recursive_fold_level_params_candidate(
         a_key,
         b_key,
         d_key,
-        source_ring_len_per_claim: num_ring_elems,
-        block_len,
-        num_blocks,
-        chunk_granule,
+        num_live_ring_elements_per_claim: num_ring_elems,
+        num_positions_per_block,
+        num_live_blocks,
         fold_challenge_config: *ring_challenge_cfg,
         fold_challenge_shape,
         num_digits_commit: delta_commit,
@@ -191,24 +185,24 @@ pub fn suffix_opening_layout(
 #[allow(clippy::too_many_arguments)]
 fn grouped_segment_rings(
     num_polys: usize,
-    num_blocks: usize,
+    num_live_blocks: usize,
     num_chunks: usize,
-    block_len: usize,
+    num_positions_per_block: usize,
     n_a: usize,
     num_digits_commit: usize,
     num_digits_open: usize,
     num_digits_fold: usize,
 ) -> Result<usize, AkitaError> {
     let e_hat = num_polys
-        .checked_mul(num_blocks)
+        .checked_mul(num_live_blocks)
         .and_then(|n| n.checked_mul(num_digits_open))
         .ok_or_else(|| AkitaError::InvalidSetup("group e-hat witness overflow".to_string()))?;
     let t_hat = num_polys
-        .checked_mul(num_blocks)
+        .checked_mul(num_live_blocks)
         .and_then(|n| n.checked_mul(n_a))
         .and_then(|n| n.checked_mul(num_digits_open))
         .ok_or_else(|| AkitaError::InvalidSetup("group t-hat witness overflow".to_string()))?;
-    let z_hat = block_len
+    let z_hat = num_positions_per_block
         .checked_mul(num_digits_commit)
         .and_then(|n| n.checked_mul(num_digits_fold))
         .and_then(|n| n.checked_mul(num_chunks))
@@ -256,9 +250,9 @@ fn grouped_setup_prefix_next_witness_len(
 ) -> Result<usize, AkitaError> {
     let mut total = grouped_segment_rings(
         final_num_polys,
-        params.num_blocks,
+        params.num_live_blocks,
         num_chunks,
-        params.block_len,
+        params.num_positions_per_block,
         params.a_key.row_len(),
         params.num_digits_commit,
         params.num_digits_open,
@@ -267,9 +261,9 @@ fn grouped_setup_prefix_next_witness_len(
     for group in params.precommitted_group_iter() {
         let group_rings = grouped_segment_rings(
             group.layout.group.num_polynomials(),
-            group.layout.num_blocks,
+            group.layout.num_live_blocks,
             num_chunks,
-            group.layout.block_len,
+            group.layout.num_positions_per_block,
             group.a_key.row_len(),
             group.num_digits_commit,
             group.num_digits_open,
@@ -359,20 +353,21 @@ fn derive_setup_prefix_group(
     let num_digits_open_val = num_digits_open(decomp);
     let mut best: Option<(LayoutCandidateScore, PrecommittedLevelParams)> = None;
 
-    for block_bits in (0..=reduced_vars).rev() {
-        let Some(num_blocks) = 1usize.checked_shl(block_bits as u32) else {
+    for block_index_bits in (0..=reduced_vars).rev() {
+        let Some(num_live_blocks) = 1usize.checked_shl(block_index_bits as u32) else {
             continue;
         };
-        let position_bits = reduced_vars - block_bits;
-        let Some(block_len) = 1usize.checked_shl(position_bits as u32) else {
+        let position_index_bits = reduced_vars - block_index_bits;
+        let Some(num_positions_per_block) = 1usize.checked_shl(position_index_bits as u32) else {
             continue;
         };
-        let fold_shape = optimize_fold_challenge_shape(requested_fold_shape, num_blocks)?;
-        if num_blocks < num_chunks {
+        let fold_shape = optimize_fold_challenge_shape(requested_fold_shape, num_live_blocks)?;
+        if num_live_blocks < num_chunks {
             continue;
         }
-        let chunk_granule = optimize_chunk_granule(num_blocks, num_chunks, fold_shape)?;
-        let Some(width_s) = decomposed_s_block_ring_count(block_len, num_digits_commit) else {
+        let Some(width_s) =
+            decomposed_s_block_ring_count(num_positions_per_block, num_digits_commit)
+        else {
             continue;
         };
         let Some(norm_s) = rounded_up_role_a_inf_norm(
@@ -385,7 +380,7 @@ fn derive_setup_prefix_group(
             false,
             0,
             policy.ring_subfield_norm_bound,
-            block_bits,
+            num_live_blocks,
             1,
             width_s as u64,
         ) else {
@@ -407,7 +402,7 @@ fn derive_setup_prefix_group(
             continue;
         };
         let Some(width_t) =
-            decomposed_t_ring_count(a_key.row_len(), num_digits_open_val, num_blocks, 1)
+            decomposed_t_ring_count(a_key.row_len(), num_digits_open_val, num_live_blocks, 1)
         else {
             continue;
         };
@@ -424,7 +419,7 @@ fn derive_setup_prefix_group(
             l1_norm: fold_shape.effective_l1_mass(ring_challenge_cfg) as u128,
         };
         let (num_digits_fold_one, _) = fold_witness_digit_plan(
-            block_bits,
+            num_live_blocks,
             1,
             policy.decomposition.field_bits(),
             log_basis,
@@ -434,10 +429,9 @@ fn derive_setup_prefix_group(
         )?;
         let layout = PrecommittedGroupParams {
             group: PolynomialGroupLayout::singleton(prefix_num_vars),
-            source_ring_len_per_claim: ring_slots,
-            block_len,
-            num_blocks,
-            chunk_granule,
+            num_live_ring_elements_per_claim: ring_slots,
+            num_positions_per_block,
+            num_live_blocks,
             fold_challenge_shape: fold_shape,
             log_basis,
             n_a: a_key.row_len(),
@@ -453,21 +447,16 @@ fn derive_setup_prefix_group(
         };
         let physical_width = grouped_segment_rings(
             1,
-            num_blocks,
+            num_live_blocks,
             num_chunks,
-            block_len,
+            num_positions_per_block,
             params.a_key.row_len(),
             num_digits_commit,
             num_digits_open_val,
             num_digits_fold_one,
         )?;
-        let score = layout_candidate_score(
-            physical_width,
-            num_blocks,
-            num_chunks,
-            chunk_granule,
-            fold_shape,
-        )?;
+        let score =
+            layout_candidate_score(physical_width, num_live_blocks, num_chunks, fold_shape)?;
         if best
             .as_ref()
             .is_none_or(|(best_score, _)| score < *best_score)
@@ -586,9 +575,8 @@ pub(crate) fn derive_candidate_level_params(
 
         let score = layout_candidate_score(
             next_witness_len,
-            candidate_params.num_blocks,
+            candidate_params.num_live_blocks,
             num_chunks,
-            candidate_params.chunk_granule,
             candidate_params.fold_challenge_shape,
         )?;
         if best
@@ -619,7 +607,7 @@ pub(crate) fn derive_candidate_level_params(
     )))
 }
 
-/// Brute-forced root-direct commit `LevelParams` (optimal `(m, r)` split).
+/// Brute-forced root-direct commit `LevelParams` (optimal `(r_pos, r_blk)` split).
 ///
 /// Root-direct schedules ship the cleartext witness on the wire, so they
 /// don't run the relation fold (D unused). The planner brute-forces the
@@ -632,7 +620,7 @@ pub(crate) fn derive_candidate_level_params(
 /// - `a_collision` — the audited A-role SIS bucket (`2·β` base norm scaled
 ///   by the stage-1 infinity norm and the ring-subfield embedding norm).
 /// - `bd_collision = 2^lb − 1` — the B/D digit-range bucket.
-/// - `(position_bits, block_bits)` — `optimal_m_r_split` for a normal root, or `(0, 0)`
+/// - `(position_index_bits, block_index_bits)` — `optimal_block_geometry_split` for a normal root, or `(0, 0)`
 ///   for a tiny root that fits inside one padded ring element.
 /// - `(n_a, n_b, n_d)` — the tight SIS-floor ranks for the resulting
 ///   inner / outer / D-matrix widths.
@@ -644,7 +632,7 @@ pub(crate) fn derive_candidate_level_params(
 ///   step; `num_claims == 1` is the singleton root).
 ///
 /// `fold_challenge_shape` is stamped onto the committed level (the level-0
-/// shape; the `(m, r)` split itself is scored against the flat L1 mass).
+/// shape; the `(r_pos, r_blk)` split itself is scored against the flat L1 mass).
 ///
 /// Returns `Ok(None)` when any SIS-floor lookup or bound arithmetic rejects
 /// the candidate (the uncommittable edge), matching the previous
@@ -673,11 +661,11 @@ pub(crate) fn compute_root_direct_level_params(
 
     // Outer/inner variable split: brute-force the optimum for a normal root,
     // single-block `(0, 0)` for a tiny root (`num_vars <= log2(d)`). The
-    // optimizer recomputes the fold-priced A collision per `r` internally
-    // (it grows with the fold arity `num_claims · 2^r`), so it needs the
+    // optimizer recomputes the fold-priced A collision per candidate
+    // (it grows with the exact fold arity `num_claims · B`), so it needs the
     // batch factor and ring-subfield norm, not a single pre-baked bucket.
-    let (position_bits, block_bits) = if num_vars > alpha {
-        // The `(m, r)` split is scored against the flat L1 mass (the root fold
+    let (position_index_bits, block_index_bits) = if num_vars > alpha {
+        // The `(r_pos, r_blk)` split is scored against the flat L1 mass (the root fold
         // shape disambiguates the committed table, not the split search).
         let fold_challenge = akita_types::sis::FoldChallengeNorms::new(
             ring_challenge_cfg,
@@ -687,7 +675,7 @@ pub(crate) fn compute_root_direct_level_params(
         // `nonzeros = ceil(D/K)`); dense roots use the balanced-digit norms.
         let is_onehot = decomp.log_commit_bound == 1;
         let fold_witness = FoldWitnessNorms::new(log_basis, d, policy.onehot_chunk_size, is_onehot);
-        let (position_bits, block_bits, _scoring_n_a) = optimal_m_r_split(
+        let (position_index_bits, block_index_bits, _scoring_n_a) = optimal_block_geometry_split(
             policy.sis_security_policy,
             sis_modulus_profile,
             d as u32,
@@ -702,27 +690,30 @@ pub(crate) fn compute_root_direct_level_params(
             num_vars - alpha,
             0,
         );
-        (position_bits, block_bits)
+        (position_index_bits, block_index_bits)
     } else {
         (0, 0)
     };
 
-    let Some(num_blocks) = 1usize.checked_shl(block_bits as u32) else {
+    let Some(num_live_blocks) = 1usize.checked_shl(block_index_bits as u32) else {
         return Ok(None);
     };
-    let Some(block_len) = 1usize.checked_shl(position_bits as u32) else {
+    let Some(num_positions_per_block) = 1usize.checked_shl(position_index_bits as u32) else {
         return Ok(None);
     };
-    let Some(source_ring_len_per_claim) = num_blocks.checked_mul(block_len) else {
+    let Some(num_live_ring_elements_per_claim) =
+        num_live_blocks.checked_mul(num_positions_per_block)
+    else {
         return Ok(None);
     };
-    let fold_challenge_shape = optimize_fold_challenge_shape(requested_fold_shape, num_blocks)?;
+    let fold_challenge_shape =
+        optimize_fold_challenge_shape(requested_fold_shape, num_live_blocks)?;
 
     // The A/B/D keys, composed from the `akita_types::sis` primitives:
     // norm -> width -> tight SIS-secure rank -> key. `t_vectors = num_claims`
     // folds the batched-root scaling into the B/D widths (the root commits
     // `num_claims` polynomials) — no separate per-claim-then-scale pass.
-    let Some(width_s) = decomposed_s_block_ring_count(block_len, depth_commit) else {
+    let Some(width_s) = decomposed_s_block_ring_count(num_positions_per_block, depth_commit) else {
         return Ok(None);
     };
     let Some(norm_s) = rounded_up_role_a_inf_norm(
@@ -735,7 +726,7 @@ pub(crate) fn compute_root_direct_level_params(
         true,
         policy.onehot_chunk_size,
         policy.ring_subfield_norm_bound,
-        block_bits,
+        num_live_blocks,
         num_claims,
         width_s as u64,
     ) else {
@@ -757,7 +748,8 @@ pub(crate) fn compute_root_direct_level_params(
     ) else {
         return Ok(None);
     };
-    let Some(width_t) = decomposed_t_ring_count(n_a, depth_open, num_blocks, num_claims) else {
+    let Some(width_t) = decomposed_t_ring_count(n_a, depth_open, num_live_blocks, num_claims)
+    else {
         return Ok(None);
     };
     let Ok(b_key) = AjtaiKeyParams::try_new_with_min_rank(
@@ -775,7 +767,7 @@ pub(crate) fn compute_root_direct_level_params(
     ) else {
         return Ok(None);
     };
-    let Some(width_w) = decomposed_w_ring_count(depth_open, num_blocks, num_claims) else {
+    let Some(width_w) = decomposed_w_ring_count(depth_open, num_live_blocks, num_claims) else {
         return Ok(None);
     };
     let Ok(d_key) = AjtaiKeyParams::try_new_with_min_rank(
@@ -800,10 +792,9 @@ pub(crate) fn compute_root_direct_level_params(
         a_key,
         b_key,
         d_key,
-        source_ring_len_per_claim,
-        block_len,
-        num_blocks,
-        chunk_granule: 1,
+        num_live_ring_elements_per_claim,
+        num_positions_per_block,
+        num_live_blocks,
         fold_challenge_config: *ring_challenge_cfg,
         fold_challenge_shape,
         num_digits_commit: depth_commit,
@@ -836,29 +827,32 @@ pub(crate) fn scalar_root_fold_level_params_candidate(
     num_vars: usize,
     num_claims: usize,
     log_basis: u32,
-    block_bits: usize,
+    block_index_bits: usize,
     requested_fold_shape: TensorChallengeShape,
 ) -> Result<Option<LevelParams>, AkitaError> {
     let alpha = (policy.ring_dimension as u32).trailing_zeros() as usize;
     let reduced_vars = num_vars.saturating_sub(alpha);
-    if reduced_vars == 0 || block_bits >= reduced_vars {
+    if reduced_vars == 0 || block_index_bits >= reduced_vars {
         return Ok(None);
     }
-    let num_blocks = 1usize.checked_shl(block_bits as u32).ok_or_else(|| {
-        AkitaError::InvalidSetup("root candidate num_blocks overflow".to_string())
+    let num_live_blocks = 1usize.checked_shl(block_index_bits as u32).ok_or_else(|| {
+        AkitaError::InvalidSetup("root candidate num_live_blocks overflow".to_string())
     })?;
     let root_num_chunks = policy.chunks_at_level(0);
-    if num_blocks < root_num_chunks {
+    if num_live_blocks < root_num_chunks {
         return Ok(None);
     }
-    let fold_challenge_shape = optimize_fold_challenge_shape(requested_fold_shape, num_blocks)?;
-    let chunk_granule = optimize_chunk_granule(num_blocks, root_num_chunks, fold_challenge_shape)?;
-    let position_bits = reduced_vars - block_bits;
-    let block_len = 1usize.checked_shl(position_bits as u32).ok_or_else(|| {
-        AkitaError::InvalidSetup("root candidate position count overflow".to_string())
-    })?;
-    let source_ring_len_per_claim = num_blocks
-        .checked_mul(block_len)
+    let fold_challenge_shape =
+        optimize_fold_challenge_shape(requested_fold_shape, num_live_blocks)?;
+    let position_index_bits = reduced_vars - block_index_bits;
+    let num_positions_per_block =
+        1usize
+            .checked_shl(position_index_bits as u32)
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup("root candidate position count overflow".to_string())
+            })?;
+    let num_live_ring_elements_per_claim = num_live_blocks
+        .checked_mul(num_positions_per_block)
         .ok_or_else(|| AkitaError::InvalidSetup("root candidate source length overflow".into()))?;
     let level_decomp = DecompositionParams {
         log_basis,
@@ -866,7 +860,8 @@ pub(crate) fn scalar_root_fold_level_params_candidate(
     };
     let num_digits_commit = num_digits_s_commit(level_decomp, true);
     let num_digits_open = num_digits_open(level_decomp);
-    let Some(width_s) = decomposed_s_block_ring_count(block_len, num_digits_commit) else {
+    let Some(width_s) = decomposed_s_block_ring_count(num_positions_per_block, num_digits_commit)
+    else {
         return Ok(None);
     };
     let Some(norm_s) = rounded_up_role_a_inf_norm(
@@ -879,7 +874,7 @@ pub(crate) fn scalar_root_fold_level_params_candidate(
         true,
         policy.onehot_chunk_size,
         policy.ring_subfield_norm_bound,
-        block_bits,
+        num_live_blocks,
         num_claims,
         width_s as u64,
     ) else {
@@ -900,9 +895,12 @@ pub(crate) fn scalar_root_fold_level_params_candidate(
     ) else {
         return Ok(None);
     };
-    let Some(width_t) =
-        decomposed_t_ring_count(a_key.row_len(), num_digits_open, num_blocks, num_claims)
-    else {
+    let Some(width_t) = decomposed_t_ring_count(
+        a_key.row_len(),
+        num_digits_open,
+        num_live_blocks,
+        num_claims,
+    ) else {
         return Ok(None);
     };
     let Ok(b_key) = AjtaiKeyParams::try_new_with_min_rank(
@@ -920,7 +918,8 @@ pub(crate) fn scalar_root_fold_level_params_candidate(
     ) else {
         return Ok(None);
     };
-    let Some(width_w) = decomposed_w_ring_count(num_digits_open, num_blocks, num_claims) else {
+    let Some(width_w) = decomposed_w_ring_count(num_digits_open, num_live_blocks, num_claims)
+    else {
         return Ok(None);
     };
     let Ok(d_key) = AjtaiKeyParams::try_new_with_min_rank(
@@ -940,10 +939,9 @@ pub(crate) fn scalar_root_fold_level_params_candidate(
         a_key,
         b_key,
         d_key,
-        source_ring_len_per_claim,
-        block_len,
-        num_blocks,
-        chunk_granule,
+        num_live_ring_elements_per_claim,
+        num_positions_per_block,
+        num_live_blocks,
         fold_challenge_config: *ring_challenge_cfg,
         fold_challenge_shape,
         num_digits_commit,

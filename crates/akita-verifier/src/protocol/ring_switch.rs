@@ -122,7 +122,7 @@ pub(crate) struct RelationMatrixGroupEvaluator<F: FieldCore> {
     pub(crate) opening_a_evals: Vec<F>,
     pub(crate) group_id: usize,
     pub(crate) num_claims: usize,
-    pub(crate) num_blocks: usize,
+    pub(crate) num_live_blocks: usize,
     pub(crate) depth_open: usize,
     pub(crate) depth_commit: usize,
     pub(crate) depth_fold: usize,
@@ -245,14 +245,14 @@ where
     for group_index in 0..opening_batch.num_groups() {
         let group_lp = lp.group_params(opening_batch, group_index)?;
         let opening_point = relation.group_opening_point(group_index)?;
-        if opening_point.position_weights.len() != group_lp.block_len()
-            || opening_point.block_weights.len() != group_lp.num_blocks()
+        if opening_point.position_weights.len() != group_lp.num_positions_per_block()
+            || opening_point.live_block_weights.len() != group_lp.num_live_blocks()
         {
             return Err(AkitaError::InvalidProof);
         }
         let multiplier_point = relation.group_ring_multiplier_point(group_index)?;
-        if multiplier_point.position_len() != group_lp.block_len()
-            || multiplier_point.fold_len() != group_lp.num_blocks()
+        if multiplier_point.position_len() != group_lp.num_positions_per_block()
+            || multiplier_point.fold_len() != group_lp.num_live_blocks()
         {
             return Err(AkitaError::InvalidProof);
         }
@@ -421,8 +421,8 @@ where
         let group_lp = lp.group_params(opening_batch, group_index)?;
         let group_layout = opening_batch.group_layout(group_index)?;
         let k_g = group_layout.num_polynomials();
-        let num_blocks = group_lp.num_blocks();
-        let block_len = group_lp.block_len();
+        let num_live_blocks = group_lp.num_live_blocks();
+        let num_positions_per_block = group_lp.num_positions_per_block();
         let depth_open = group_lp.num_digits_open();
         let depth_commit = group_lp.num_digits_commit();
         let depth_fold = lp.num_digits_fold_for_params(group_lp, k_g, lp.field_bits_for_cache())?;
@@ -431,9 +431,11 @@ where
         let n_a = group_lp.a_rows_len();
         let n_b = group_lp.b_rows_len();
         let inner_width = group_lp.a_col_len();
-        let expected_inner_width = block_len.checked_mul(depth_commit).ok_or_else(|| {
-            AkitaError::InvalidSetup("multi-group inner width overflow".to_string())
-        })?;
+        let expected_inner_width = num_positions_per_block
+            .checked_mul(depth_commit)
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup("multi-group inner width overflow".to_string())
+            })?;
         if inner_width < expected_inner_width {
             return Err(AkitaError::InvalidSetup(
                 "multi-group A-key column width is too small".to_string(),
@@ -441,19 +443,19 @@ where
         }
 
         let opening_point = relation.group_opening_point(group_index)?;
-        if opening_point.position_weights.len() != block_len
-            || opening_point.block_weights.len() != num_blocks
+        if opening_point.position_weights.len() != num_positions_per_block
+            || opening_point.live_block_weights.len() != num_live_blocks
         {
             return Err(AkitaError::InvalidProof);
         }
         let ring_multiplier_point = relation.group_ring_multiplier_point(group_index)?;
-        if ring_multiplier_point.position_len() != block_len
-            || ring_multiplier_point.fold_len() != num_blocks
+        if ring_multiplier_point.position_len() != num_positions_per_block
+            || ring_multiplier_point.fold_len() != num_live_blocks
         {
             return Err(AkitaError::InvalidProof);
         }
 
-        let total_blocks = k_g.checked_mul(num_blocks).ok_or_else(|| {
+        let total_blocks = k_g.checked_mul(num_live_blocks).ok_or_else(|| {
             AkitaError::InvalidSetup("multi-group block count overflow".to_string())
         })?;
         let challenges = relation
@@ -467,8 +469,8 @@ where
             });
         }
         let c_alphas =
-            prepare_challenge_evals::<F, E, D>(challenges, &alpha_pows_a, k_g, num_blocks)?;
-        let opening_a_evals = (0..block_len)
+            prepare_challenge_evals::<F, E, D>(challenges, &alpha_pows_a, k_g, num_live_blocks)?;
+        let opening_a_evals = (0..num_positions_per_block)
             .map(|idx| ring_multiplier_point.eval_position_at_dyn::<E>(idx, &alpha_pows_a))
             .collect::<Result<Vec<_>, _>>()?;
 
@@ -493,7 +495,7 @@ where
             opening_a_evals,
             group_id: group_index,
             num_claims: k_g,
-            num_blocks,
+            num_live_blocks,
             depth_open,
             depth_commit,
             depth_fold,
@@ -541,7 +543,7 @@ fn prepare_challenge_evals<F, E, const D: usize>(
     challenges: &Challenges,
     alpha_pows: &[E],
     num_claims: usize,
-    num_blocks: usize,
+    num_live_blocks: usize,
 ) -> Result<PreparedChallengeEvals<E>, AkitaError>
 where
     F: FieldCore + CanonicalField,
@@ -569,11 +571,11 @@ where
                     actual: factored.num_claims,
                 });
             }
-            let blocks_per_claim = factored.blocks_per_claim()?;
-            if blocks_per_claim != num_blocks {
+            let num_live_blocks_per_claim = factored.num_live_blocks_per_claim;
+            if num_live_blocks_per_claim != num_live_blocks {
                 return Err(AkitaError::InvalidSize {
-                    expected: num_blocks,
-                    actual: blocks_per_claim,
+                    expected: num_live_blocks,
+                    actual: num_live_blocks_per_claim,
                 });
             }
             Ok(PreparedChallengeEvals::Tensor {
@@ -617,8 +619,8 @@ where
     validate_log_basis(log_basis)?;
     let depth_commit = lp.num_digits_commit;
     let depth_open = lp.num_digits_open;
-    let num_blocks = lp.num_blocks;
-    let total_blocks = num_blocks
+    let num_live_blocks = lp.num_live_blocks;
+    let total_blocks = num_live_blocks
         .checked_mul(num_claims)
         .ok_or_else(|| AkitaError::InvalidSetup("batched block count overflow".to_string()))?;
     if challenges.logical_len() != total_blocks {
@@ -627,12 +629,16 @@ where
             actual: challenges.logical_len(),
         });
     }
-    let block_len = lp.block_len;
+    let num_positions_per_block = lp.num_positions_per_block;
     let n_a = lp.a_key.row_len();
 
-    let c_alphas =
-        prepare_challenge_evals::<F, E, D>(challenges, &alpha_pows, num_claims, lp.num_blocks)?;
-    let opening_a_evals = (0..block_len)
+    let c_alphas = prepare_challenge_evals::<F, E, D>(
+        challenges,
+        &alpha_pows,
+        num_claims,
+        lp.num_live_blocks,
+    )?;
+    let opening_a_evals = (0..num_positions_per_block)
         .map(|idx| ring_multiplier_point.eval_position_at::<D, E>(idx, &alpha_pows))
         .collect::<Result<Vec<_>, _>>()?;
     let group = RelationMatrixGroupEvaluator {
@@ -640,7 +646,7 @@ where
         opening_a_evals,
         group_id: 0,
         num_claims,
-        num_blocks,
+        num_live_blocks,
         depth_open,
         depth_commit,
         depth_fold,
@@ -1024,8 +1030,23 @@ where
         .checked_mul(group.depth_open)
         .ok_or_else(|| AkitaError::InvalidSetup("T fold stride overflow".into()))?;
     let claim_factors = (0..group.num_claims)
-        .map(|claim| group.c_alphas.affine_factors::<F>(claim, group.num_blocks))
+        .map(|claim| {
+            group
+                .c_alphas
+                .affine_factors::<F>(claim, group.num_live_blocks)
+        })
         .collect::<Result<Vec<_>, _>>()?;
+    let e_digit_weights = g_open_ext
+        .iter()
+        .map(|&gadget| consistency_weight * gadget)
+        .collect::<Vec<_>>();
+    // T is laid out block-major, then A-row, then opening digit. Contract the
+    // contiguous `(A row, digit)` lane in one affine evaluation instead of
+    // rebuilding the same low equality table once per A row.
+    let t_block_weights = a_row_weights
+        .iter()
+        .flat_map(|&row_weight| g_open_ext.iter().map(move |&gadget| row_weight * gadget))
+        .collect::<Vec<_>>();
     let mut e_contribution = E::zero();
     let mut t_contribution = E::zero();
     for unit in units {
@@ -1040,43 +1061,39 @@ where
             )?;
             let e_opening_index =
                 akita_types::checked_opening_source_index(opening_source_len, e_index)?;
-            e_contribution += consistency_weight
-                * eval_affine_digit_interval(
-                    x_challenges,
-                    e_opening_index,
-                    unit.global_block_start(),
-                    unit.live_block_count(),
-                    group.depth_open,
-                    g_open_ext,
-                    &factors.high,
-                    &factors.low,
-                )?;
+            e_contribution += eval_affine_digit_interval(
+                x_challenges,
+                e_opening_index,
+                unit.global_block_start(),
+                unit.num_live_blocks(),
+                group.depth_open,
+                &e_digit_weights,
+                &factors.high,
+                &factors.low,
+            )?;
 
-            for (a_row, &row_weight) in a_row_weights.iter().enumerate() {
-                let t_index = witness_layout.t_index(
-                    unit,
-                    group.num_claims,
-                    group.n_a,
-                    group.depth_open,
-                    claim,
-                    unit.global_block_start(),
-                    a_row,
-                    0,
-                )?;
-                let t_opening_index =
-                    akita_types::checked_opening_source_index(opening_source_len, t_index)?;
-                t_contribution += row_weight
-                    * eval_affine_digit_interval(
-                        x_challenges,
-                        t_opening_index,
-                        unit.global_block_start(),
-                        unit.live_block_count(),
-                        t_fold_stride,
-                        g_open_ext,
-                        &factors.high,
-                        &factors.low,
-                    )?;
-            }
+            let t_index = witness_layout.t_index(
+                unit,
+                group.num_claims,
+                group.n_a,
+                group.depth_open,
+                claim,
+                unit.global_block_start(),
+                0,
+                0,
+            )?;
+            let t_opening_index =
+                akita_types::checked_opening_source_index(opening_source_len, t_index)?;
+            t_contribution += eval_affine_digit_interval(
+                x_challenges,
+                t_opening_index,
+                unit.global_block_start(),
+                unit.num_live_blocks(),
+                t_fold_stride,
+                &t_block_weights,
+                &factors.high,
+                &factors.low,
+            )?;
         }
     }
     Ok((e_contribution, t_contribution))

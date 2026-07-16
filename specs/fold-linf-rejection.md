@@ -296,7 +296,7 @@ Level counters (conservative for planner/prover/verifier accessors):
 
 ```text
 num_fold_coeffs = inner_width · D
-num_fold_blocks = num_claims · 2^block_bits
+num_fold_blocks = num_claims · num_live_blocks
 ```
 
 `LevelParams::fold_witness_linf_tail_bound_sq(num_claims)` and
@@ -342,7 +342,7 @@ Properties:
 
 ### Tail bound (statement)
 
-Let `num_fold_blocks = num_claims · 2^block_bits` logical blocks in one stage-1
+Let `num_fold_blocks = num_claims · num_live_blocks` exact live blocks in one stage-1
 challenge call; let `witness_linf = ‖s‖_inf` be the per-block committed-witness
 `∞`-norm (`1` one-hot, `b/2 = 2^(lb-1)` dense), and let
 `num_fold_coeffs = inner_width · D` be the number of emitted folded witness

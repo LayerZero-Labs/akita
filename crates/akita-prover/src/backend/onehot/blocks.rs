@@ -16,14 +16,14 @@ use super::*;
 #[derive(Debug, Clone)]
 pub(crate) struct FlatBlocks<E> {
     pub(super) entries: Vec<E>,
-    /// `len == num_blocks + 1`, `offsets[0] == 0`, `offsets[num_blocks] == entries.len()`.
+    /// `len == num_live_blocks + 1`, `offsets[0] == 0`, `offsets[num_live_blocks] == entries.len()`.
     pub(super) offsets: Vec<u32>,
 }
 
 impl<E> FlatBlocks<E> {
     #[inline]
-    fn with_capacity(num_blocks: usize, entry_capacity: usize) -> Self {
-        let mut offsets = Vec::with_capacity(num_blocks + 1);
+    fn with_capacity(num_live_blocks: usize, entry_capacity: usize) -> Self {
+        let mut offsets = Vec::with_capacity(num_live_blocks + 1);
         offsets.push(0);
         Self {
             entries: Vec::with_capacity(entry_capacity),
@@ -33,16 +33,16 @@ impl<E> FlatBlocks<E> {
 
     /// Number of blocks.
     #[inline]
-    pub(crate) fn num_blocks(&self) -> usize {
+    pub(crate) fn num_live_blocks(&self) -> usize {
         self.offsets.len() - 1
     }
 
     /// Slice of entries for block `i`.
     pub(crate) fn block(&self, i: usize) -> &[E] {
-        let num_blocks = self.num_blocks();
+        let num_live_blocks = self.num_live_blocks();
         assert!(
-            i < num_blocks,
-            "FlatBlocks::block: block index {i} out of range for {num_blocks} blocks"
+            i < num_live_blocks,
+            "FlatBlocks::block: block index {i} out of range for {num_live_blocks} blocks"
         );
         let lo = self.offsets[i] as usize;
         let hi = self.offsets[i + 1] as usize;
@@ -54,10 +54,15 @@ impl<E> FlatBlocks<E> {
     }
 
     #[inline]
-    fn advance_to_block(&mut self, current_block: &mut usize, block_idx: usize, num_blocks: usize) {
+    fn advance_to_block(
+        &mut self,
+        current_block: &mut usize,
+        block_idx: usize,
+        num_live_blocks: usize,
+    ) {
         debug_assert!(
-            block_idx <= num_blocks,
-            "FlatBlocks: block index {block_idx} out of range for {num_blocks} blocks"
+            block_idx <= num_live_blocks,
+            "FlatBlocks: block index {block_idx} out of range for {num_live_blocks} blocks"
         );
         while *current_block < block_idx {
             self.offsets.push(self.entries.len() as u32);
@@ -70,22 +75,22 @@ impl<E> FlatBlocks<E> {
         &mut self,
         current_block: &mut usize,
         block_idx: usize,
-        num_blocks: usize,
+        num_live_blocks: usize,
         entry: E,
     ) {
         debug_assert!(
-            block_idx < num_blocks,
-            "FlatBlocks: block index {block_idx} out of range for {num_blocks} blocks"
+            block_idx < num_live_blocks,
+            "FlatBlocks: block index {block_idx} out of range for {num_live_blocks} blocks"
         );
-        self.advance_to_block(current_block, block_idx, num_blocks);
+        self.advance_to_block(current_block, block_idx, num_live_blocks);
         self.entries.push(entry);
     }
 
-    fn finish_build(mut self, current_block: usize, num_blocks: usize) -> Self {
+    fn finish_build(mut self, current_block: usize, num_live_blocks: usize) -> Self {
         let mut current_block = current_block;
-        self.advance_to_block(&mut current_block, num_blocks, num_blocks);
-        debug_assert_eq!(self.offsets.len(), num_blocks + 1);
-        debug_assert_eq!(self.offsets[num_blocks] as usize, self.entries.len());
+        self.advance_to_block(&mut current_block, num_live_blocks, num_live_blocks);
+        debug_assert_eq!(self.offsets.len(), num_live_blocks + 1);
+        debug_assert_eq!(self.offsets[num_live_blocks] as usize, self.entries.len());
         self
     }
 
@@ -106,21 +111,21 @@ impl FlatBlocks<MultiChunkEntry> {
     /// # Errors
     ///
     /// Returns an error only if the internal offsets vector (bounded by
-    /// `num_blocks + 1`) overflows `u32::MAX`.
+    /// `num_live_blocks + 1`) overflows `u32::MAX`.
     pub(crate) fn from_indices<I: OneHotIndex>(
         onehot_k: usize,
         indices: &[Option<I>],
-        block_len: usize,
+        num_positions_per_block: usize,
         d: usize,
-        num_blocks: usize,
+        num_live_blocks: usize,
     ) -> Result<Self, AkitaError> {
         assert!(
             onehot_k < d && d.is_multiple_of(onehot_k),
             "FlatBlocks::<MultiChunkEntry>::from_indices: K={onehot_k} and D={d} must satisfy K < D with K | D"
         );
         assert!(
-            u32::try_from(block_len).is_ok(),
-            "FlatBlocks::<MultiChunkEntry>::from_indices: block_len={block_len} must fit in u32"
+            u32::try_from(num_positions_per_block).is_ok(),
+            "FlatBlocks::<MultiChunkEntry>::from_indices: num_positions_per_block={num_positions_per_block} must fit in u32"
         );
         assert!(
             d <= usize::from(u16::MAX) + 1,
@@ -134,7 +139,8 @@ impl FlatBlocks<MultiChunkEntry> {
             indices.len()
         );
         let total_entries = indices.iter().filter(|opt| opt.is_some()).count();
-        let mut blocks = FlatBlocks::<MultiChunkEntry>::with_capacity(num_blocks, total_entries);
+        let mut blocks =
+            FlatBlocks::<MultiChunkEntry>::with_capacity(num_live_blocks, total_entries);
         let mut current_block = 0usize;
 
         for (ring_elem_idx, ring_chunks) in indices.chunks(chunks_per_ring).enumerate() {
@@ -164,8 +170,8 @@ impl FlatBlocks<MultiChunkEntry> {
                 continue;
             }
 
-            let block_idx = ring_elem_idx / block_len;
-            let pos_in_block = (ring_elem_idx % block_len) as u32;
+            let block_idx = ring_elem_idx / num_positions_per_block;
+            let pos_in_block = (ring_elem_idx % num_positions_per_block) as u32;
             assert!(
                 block_idx >= current_block,
                 "multi-chunk onehot: entries must be non-decreasing in block index"
@@ -173,12 +179,12 @@ impl FlatBlocks<MultiChunkEntry> {
             blocks.push_entry(
                 &mut current_block,
                 block_idx,
-                num_blocks,
+                num_live_blocks,
                 MultiChunkEntry::new(pos_in_block, nonzero_coeffs),
             );
         }
 
-        Ok(blocks.finish_build(current_block, num_blocks))
+        Ok(blocks.finish_build(current_block, num_live_blocks))
     }
 }
 
@@ -191,8 +197,8 @@ impl FlatBlocks<SingleChunkEntry> {
     ///
     /// Like [`FlatBlocks::<MultiChunkEntry>::from_indices`],
     /// this constructor assumes its caller has already validated the
-    /// structural preconditions: `K >= D && D | K`, `block_len` is a
-    /// power of two, `block_len <=
+    /// structural preconditions: `K >= D && D | K`, `num_positions_per_block` is a
+    /// power of two, `num_positions_per_block <=
     /// u32::MAX` and `D <= 65536`, and every `Some(idx)` entry in
     /// `indices` is in `[0, onehot_k)`. In production the sole caller is
     /// [`OneHotPoly::build_blocks_inner`].
@@ -200,21 +206,21 @@ impl FlatBlocks<SingleChunkEntry> {
     /// # Errors
     ///
     /// Returns an error only if the internal offsets vector (bounded by
-    /// `num_blocks + 1`) overflows `u32::MAX`.
+    /// `num_live_blocks + 1`) overflows `u32::MAX`.
     pub(crate) fn from_indices<I: OneHotIndex>(
         onehot_k: usize,
         indices: &[Option<I>],
-        block_len: usize,
+        num_positions_per_block: usize,
         d: usize,
-        num_blocks: usize,
+        num_live_blocks: usize,
     ) -> Result<Self, AkitaError> {
         debug_assert!(
             onehot_k >= d && onehot_k.is_multiple_of(d),
             "FlatBlocks::<SingleChunkEntry>::from_indices: K={onehot_k} and D={d} must satisfy K >= D with D | K"
         );
         debug_assert!(
-            u32::try_from(block_len).is_ok(),
-            "FlatBlocks::<SingleChunkEntry>::from_indices: block_len={block_len} must fit in u32"
+            u32::try_from(num_positions_per_block).is_ok(),
+            "FlatBlocks::<SingleChunkEntry>::from_indices: num_positions_per_block={num_positions_per_block} must fit in u32"
         );
         debug_assert!(
             d <= usize::from(u16::MAX) + 1,
@@ -222,7 +228,8 @@ impl FlatBlocks<SingleChunkEntry> {
         );
 
         let total_entries = indices.iter().filter(|opt| opt.is_some()).count();
-        let mut blocks = FlatBlocks::<SingleChunkEntry>::with_capacity(num_blocks, total_entries);
+        let mut blocks =
+            FlatBlocks::<SingleChunkEntry>::with_capacity(num_live_blocks, total_entries);
         let mut current_block = 0usize;
 
         for (chunk_idx, opt) in indices.iter().copied().enumerate() {
@@ -241,8 +248,8 @@ impl FlatBlocks<SingleChunkEntry> {
                 .ok_or_else(|| AkitaError::InvalidInput("field position overflow".into()))?;
             let ring_elem_idx = field_pos / d;
             let coeff_idx = (field_pos % d) as u16;
-            let block_idx = ring_elem_idx / block_len;
-            let pos_in_block = (ring_elem_idx % block_len) as u32;
+            let block_idx = ring_elem_idx / num_positions_per_block;
+            let pos_in_block = (ring_elem_idx % num_positions_per_block) as u32;
             debug_assert!(
                 block_idx >= current_block,
                 "single-chunk onehot: entries must be non-decreasing in block index"
@@ -250,12 +257,12 @@ impl FlatBlocks<SingleChunkEntry> {
             blocks.push_entry(
                 &mut current_block,
                 block_idx,
-                num_blocks,
+                num_live_blocks,
                 SingleChunkEntry::new(pos_in_block, coeff_idx),
             );
         }
 
-        Ok(blocks.finish_build(current_block, num_blocks))
+        Ok(blocks.finish_build(current_block, num_live_blocks))
     }
 }
 
@@ -267,10 +274,10 @@ pub(crate) enum OneHotBlocks {
 
 impl OneHotBlocks {
     #[inline]
-    pub(crate) fn num_blocks(&self) -> usize {
+    pub(crate) fn num_live_blocks(&self) -> usize {
         match self {
-            OneHotBlocks::SingleChunk(blocks) => blocks.num_blocks(),
-            OneHotBlocks::MultiChunk(blocks) => blocks.num_blocks(),
+            OneHotBlocks::SingleChunk(blocks) => blocks.num_live_blocks(),
+            OneHotBlocks::MultiChunk(blocks) => blocks.num_live_blocks(),
         }
     }
 

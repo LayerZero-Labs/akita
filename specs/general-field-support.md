@@ -37,7 +37,7 @@ fallback. Generated production fp32/fp64 schedule tables are now family-bound
 by SIS modulus, include extension-opening-reduction proof bytes in planned
 accounting, price the small-field `psi` embedding norm bound in SIS A-role
 collisions, and cover separate full-field and one-hot configs for fp32
-`D = 64,128,256,512` plus fp64 `D = 32,64,128,256` through `nuposition_bits <= 32`
+`D = 64,128,256,512` plus fp64 `D = 32,64,128,256` through `num_vars <= 32`
 for singleton and same-point `np=4` shapes. fp32 `D=32` remains a tuning-only
 candidate under the current rank-4 SIS floor table.
 

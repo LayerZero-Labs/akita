@@ -565,10 +565,9 @@ mod tests {
                 let commitment_params = PrecommittedLevelParams {
                     layout: PrecommittedGroupParams {
                         group: PolynomialGroupLayout::singleton(TEST_D.trailing_zeros() as usize),
-                        source_ring_len_per_claim: 1,
-                        block_len: 1,
-                        num_blocks: 1,
-                        chunk_granule: 1,
+                        num_live_ring_elements_per_claim: 1,
+                        num_positions_per_block: 1,
+                        num_live_blocks: 1,
                         fold_challenge_shape: akita_types::TensorChallengeShape::Flat,
                         log_basis: 1,
                         n_a: 1,
@@ -745,7 +744,7 @@ mod tests {
                         .expect("singleton opening batch"),
                 )
                 .unwrap();
-                let num_coeffs = lp.num_blocks * lp.block_len;
+                let num_coeffs = lp.num_live_blocks * lp.num_positions_per_block;
                 let coeffs = vec![CyclotomicRing::<TestF, TEST_D>::zero(); num_coeffs];
                 let poly = DensePoly::<TestF>::from_ring_coeffs(coeffs);
 

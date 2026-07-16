@@ -195,8 +195,9 @@ mod tests {
         GeneratedFoldStep {
             ring_d: lp.ring_dimension as u32,
             log_basis: lp.log_basis,
-            position_bits: lp.position_bits() as u32,
-            block_bits: lp.block_bits() as u32,
+            position_index_bits: lp.position_index_bits() as u32,
+            block_index_bits: lp.block_index_bits() as u32,
+            num_live_blocks: lp.num_live_blocks as u32,
             n_a: lp.a_key.row_len() as u32,
             n_b: lp.b_key.row_len() as u32,
             n_d: lp.d_key.row_len() as u32,
@@ -408,6 +409,30 @@ mod tests {
 
         assert!(
             matches!(err, AkitaError::InvalidSetup(ref msg) if msg.contains("b-rank mismatch")),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn validate_generated_entry_rejects_inexact_num_live_blocks() {
+        let key = PolynomialGroupLayout::new(30, 1);
+        let policy = flat_policy();
+        let schedule = find_single_schedule(key, &policy).expect("find schedule");
+        let mut steps = generated_steps_from_schedule(&schedule);
+        mutate_first_generated_fold_step(&mut steps, |fold| fold.num_live_blocks -= 1);
+        let entry = generated_entry_from_steps(key, steps);
+
+        let err = validate_generated_schedule_entry(
+            &entry,
+            &AkitaScheduleLookupKey::single(key),
+            &policy,
+            &ring_challenge_config,
+            &fold_shape,
+        )
+        .expect_err("inexact live block count must be rejected");
+
+        assert!(
+            matches!(err, AkitaError::InvalidSetup(ref msg) if msg.contains("live block")),
             "unexpected error: {err}"
         );
     }

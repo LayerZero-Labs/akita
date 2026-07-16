@@ -22,13 +22,13 @@ pub(in crate::protocol::core) struct TraceTarget<E: FieldCore> {
 pub(in crate::protocol::core) fn multiplier_ring_weights<F: FieldCore, const D: usize>(
     point: &RingMultiplierOpeningPoint<F>,
 ) -> Result<MultiplierWeightSlices<'_, F, D>, AkitaError> {
-    let block_weights = point.fold_rings_trusted::<D>()?.ok_or_else(|| {
+    let live_block_weights = point.fold_rings_trusted::<D>()?.ok_or_else(|| {
         AkitaError::InvalidInput("ring multiplier must carry fold weights".to_string())
     })?;
     let position_weights = point.position_rings_trusted::<D>()?.ok_or_else(|| {
         AkitaError::InvalidInput("ring multiplier must carry position weights".to_string())
     })?;
-    Ok((block_weights, position_weights))
+    Ok((live_block_weights, position_weights))
 }
 
 fn evaluate_poly_at_multiplier_point<F, Q, B, const D: usize>(
@@ -36,7 +36,7 @@ fn evaluate_poly_at_multiplier_point<F, Q, B, const D: usize>(
     prepared: Option<&B::PreparedSetup>,
     poly: &Q,
     point: &RingMultiplierOpeningPoint<F>,
-    block_len: usize,
+    num_positions_per_block: usize,
 ) -> Result<(CyclotomicRing<F, D>, Vec<CyclotomicRing<F, D>>), AkitaError>
 where
     F: FieldCore + CanonicalField,
@@ -45,16 +45,16 @@ where
 {
     let plan = if let Some(base_point) = point.as_base() {
         OpeningFoldPlan::Base {
-            block_weights: &base_point.block_weights,
+            live_block_weights: &base_point.live_block_weights,
             position_weights: &base_point.position_weights,
-            block_len,
+            num_positions_per_block,
         }
     } else {
-        let (block_weights, position_weights) = multiplier_ring_weights(point)?;
+        let (live_block_weights, position_weights) = multiplier_ring_weights(point)?;
         OpeningFoldPlan::Ring {
-            block_weights,
+            live_block_weights,
             position_weights,
-            block_len,
+            num_positions_per_block,
         }
     };
     let OpeningFoldOutput { eval, folded } =
@@ -67,7 +67,7 @@ pub(in crate::protocol::core) fn evaluate_claims_at_prepared_point<F, E, Q, B, c
     prepared: Option<&B::PreparedSetup>,
     polys: &[&Q],
     prepared_point: &PreparedOpeningPoint<F, E>,
-    block_len: usize,
+    num_positions_per_block: usize,
 ) -> Result<FoldedClaimEvals<F, D>, AkitaError>
 where
     F: FieldCore + CanonicalField,
@@ -84,7 +84,7 @@ where
             prepared,
             *poly,
             &prepared_point.ring_multiplier_point,
-            block_len,
+            num_positions_per_block,
         )?;
         folded_rings.push(folded_ring);
         folded_blocks.push(folded_block);
@@ -226,12 +226,12 @@ where
 
 /// Build the root stage-2 trace table (operation adapter).
 ///
-/// `ring_d` / `num_blocks` are extracted level numbers; `layout` was derived by
+/// `ring_d` / `num_live_blocks` are extracted level numbers; `layout` was derived by
 /// the caller from the level geometry.
 #[allow(clippy::too_many_arguments)]
 pub(in crate::protocol::core) fn build_root_stage2_trace_table<F, E>(
     ring_d: usize,
-    num_blocks: usize,
+    num_live_blocks: usize,
     layout: &akita_types::TraceWeightLayout,
     opening_batch: &OpeningClaimsLayout,
     prepared_point: &PreparedOpeningPoint<F, E>,
@@ -250,7 +250,7 @@ where
         ring_d,
         |D| {
             let public_weights = trace_public_weights_root_terms::<F, E, D>(
-                num_blocks,
+                num_live_blocks,
                 opening_batch,
                 prepared_point,
                 row_coefficients,

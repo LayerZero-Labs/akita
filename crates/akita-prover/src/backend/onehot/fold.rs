@@ -3,7 +3,7 @@ use super::*;
 pub(super) fn fold_onehot_block<E, F, const D: usize>(
     entries: &[E],
     scalars: &[F],
-    block_len: usize,
+    num_positions_per_block: usize,
 ) -> CyclotomicRing<F, D>
 where
     E: OneHotEntry,
@@ -13,7 +13,7 @@ where
 
     for entry in entries {
         let pos = entry.pos_in_block();
-        if pos < scalars.len() && pos < block_len {
+        if pos < scalars.len() && pos < num_positions_per_block {
             let s = scalars[pos];
             for &ci in entry.coeffs() {
                 coeffs_acc[ci as usize] += s;
@@ -27,7 +27,7 @@ where
 pub(super) fn fold_onehot_block_ring<E, F, const D: usize>(
     entries: &[E],
     scalars: &[CyclotomicRing<F, D>],
-    block_len: usize,
+    num_positions_per_block: usize,
 ) -> CyclotomicRing<F, D>
 where
     E: OneHotEntry,
@@ -37,7 +37,7 @@ where
 
     for entry in entries {
         let pos = entry.pos_in_block();
-        if pos < scalars.len() && pos < block_len {
+        if pos < scalars.len() && pos < num_positions_per_block {
             for &ci in entry.coeffs() {
                 scalars[pos].shift_accumulate_into(&mut acc, ci as usize);
             }

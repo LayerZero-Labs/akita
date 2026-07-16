@@ -11,6 +11,24 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage1Prover<E> {
         col_bits: usize,
         ring_bits: usize,
     ) -> Result<Self, AkitaError> {
+        Self::new_owned(
+            std::sync::Arc::from(w_evals_compact),
+            tau0,
+            b,
+            live_x_cols,
+            col_bits,
+            ring_bits,
+        )
+    }
+
+    pub(crate) fn new_owned(
+        w_evals_compact: std::sync::Arc<[i8]>,
+        tau0: &[E],
+        b: usize,
+        live_x_cols: usize,
+        col_bits: usize,
+        ring_bits: usize,
+    ) -> Result<Self, AkitaError> {
         if b < 2 {
             return Err(AkitaError::InvalidInput("b must be at least 2".to_string()));
         }
@@ -48,10 +66,9 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage1Prover<E> {
                 actual: tau0.len(),
             });
         }
-        let s_table = build_compact_s_table(w_evals_compact);
-
         Ok(Self {
-            s_table: STable::Compact(s_table),
+            s_table: STable::Compact,
+            w_evals_compact,
             split_eq: GruenSplitEq::new(tau0)?,
             range_precomp: RangeAffineFromSPrecomp::new(b),
             live_x_cols,
@@ -68,6 +85,10 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage1Prover<E> {
         })
     }
 
+    pub(crate) fn take_w_evals_compact(&mut self) -> std::sync::Arc<[i8]> {
+        std::mem::take(&mut self.w_evals_compact)
+    }
+
     /// Return the fully folded virtual-polynomial claim `S(stage1_point)`.
     ///
     /// # Panics
@@ -80,7 +101,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage1Prover<E> {
                 assert_eq!(s_full.len(), 1, "s_table not fully folded");
                 s_full[0]
             }
-            STable::Compact(_) => panic!("s_table remained compact after final fold"),
+            STable::Compact => panic!("s_table remained compact after final fold"),
         }
     }
 
@@ -152,7 +173,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage1Prover<E> {
                 .expect("two-round prefix requested without cached tau");
             let ring_bits = self.num_vars - self.col_bits;
             let s_compact = match &self.s_table {
-                STable::Compact(s_compact) => s_compact,
+                STable::Compact => self.w_evals_compact.as_ref(),
                 STable::Full(_) => panic!("two-round prefix can only build from compact table"),
             };
             let proof = build_stage1_bivariate_skip_proof_from_s_compact(

@@ -8,9 +8,9 @@ type TensorRootCache<F> = Arc<Mutex<HashMap<LayoutCacheKey, Arc<SparseRingPoly<F
 /// per chunk of size `onehot_k`.
 ///
 /// The polynomial is stored layout-agnostically as the flat list of hot
-/// indices supplied at construction. Each op takes `block_len` at call time
-/// and the per-block bucketing is materialized lazily per `(ring_d, block_len)`.
-/// That mirrors how [`DensePoly`](crate::DensePoly) accepts `block_len` per op
+/// indices supplied at construction. Each op takes `num_positions_per_block` at call time
+/// and the per-block bucketing is materialized lazily per `(ring_d, num_positions_per_block)`.
+/// That mirrors how [`DensePoly`](crate::DensePoly) accepts `num_positions_per_block` per op
 /// and keeps `OneHotPoly` free of the commit-layout parameters it used to bake
 /// in at construction.
 ///
@@ -29,7 +29,7 @@ pub struct OneHotPoly<F: FieldCore, I: OneHotIndex = usize> {
     /// Ring-element count at the CONSTRUCTION dimension; metadata, not
     /// authority — kernels validate at their own dimension.
     pub(crate) total_ring_elems: usize,
-    /// Cached per-block layouts keyed by `(ring_d, block_len)`.
+    /// Cached per-block layouts keyed by `(ring_d, num_positions_per_block)`.
     pub(crate) block_cache: OneHotBlockCache,
     /// Cached tensor-projected sparse root polynomials keyed by `(ring_d, width)`.
     pub(crate) tensor_root_cache: TensorRootCache<F>,
@@ -47,7 +47,7 @@ impl<F: FieldCore, I: OneHotIndex> OneHotPoly<F, I> {
     /// dimension at entry.
     ///
     /// The commit-layout split (how blocks are tiled within the polynomial)
-    /// is no longer baked in at construction. Each op receives `block_len`
+    /// is no longer baked in at construction. Each op receives `num_positions_per_block`
     /// from the caller and the per-block representation is materialized on
     /// demand.
     ///
@@ -160,13 +160,13 @@ impl<F: FieldCore, I: OneHotIndex> OneHotPoly<F, I> {
     }
 
     /// Return cached per-block storage, building it on first call for the
-    /// requested `(ring_d, block_len)` view.
+    /// requested `(ring_d, num_positions_per_block)` view.
     pub(super) fn blocks_for(
         &self,
         ring_d: usize,
-        block_len: usize,
+        num_positions_per_block: usize,
     ) -> Result<Arc<OneHotBlocks>, AkitaError> {
-        let key = (ring_d, block_len);
+        let key = (ring_d, num_positions_per_block);
         if let Some(blocks) = self
             .block_cache
             .lock()
@@ -176,10 +176,10 @@ impl<F: FieldCore, I: OneHotIndex> OneHotPoly<F, I> {
             return Ok(Arc::clone(blocks));
         }
         // Slow path: build blocks and install them. Validate `ring_d` and
-        // `block_len` *before* building so the error path is cheap.
-        if block_len == 0 || !block_len.is_power_of_two() {
+        // `num_positions_per_block` *before* building so the error path is cheap.
+        if num_positions_per_block == 0 || !num_positions_per_block.is_power_of_two() {
             return Err(AkitaError::InvalidInput(format!(
-                "block_len={block_len} must be a nonzero power of two"
+                "num_positions_per_block={num_positions_per_block} must be a nonzero power of two"
             )));
         }
         let field_len = 1usize
@@ -202,8 +202,9 @@ impl<F: FieldCore, I: OneHotIndex> OneHotPoly<F, I> {
         }
         let built = {
             let _span =
-                tracing::debug_span!("OneHotPoly::build_blocks", ring_d, block_len).entered();
-            self.build_blocks_inner(ring_d, block_len, ring_elems_at_d)?
+                tracing::debug_span!("OneHotPoly::build_blocks", ring_d, num_positions_per_block)
+                    .entered();
+            self.build_blocks_inner(ring_d, num_positions_per_block, ring_elems_at_d)?
         };
         let mut cache = self
             .block_cache
@@ -258,10 +259,10 @@ impl<F: FieldCore, I: OneHotIndex> OneHotPoly<F, I> {
         let onehot_k = self.onehot_k;
         let head_mask = width - 1;
         let inner_len = low_eq.len();
-        let num_blocks = high_eq.len();
+        let num_live_blocks = high_eq.len();
         let zero = E::zero();
         debug_assert_eq!(inner_len, 1usize << inner_bits);
-        debug_assert_eq!(self.indices.len(), num_blocks * inner_len);
+        debug_assert_eq!(self.indices.len(), num_live_blocks * inner_len);
 
         // Partition the outer blocks into contiguous ranges so the heavy
         // scatter is parallel; each range accumulates an independent per-`raw`
@@ -271,10 +272,10 @@ impl<F: FieldCore, I: OneHotIndex> OneHotPoly<F, I> {
         let target_ranges = rayon::current_num_threads().max(1) * 4;
         #[cfg(not(feature = "parallel"))]
         let target_ranges = 1usize;
-        let range_len = num_blocks.div_ceil(target_ranges.max(1)).max(1);
-        let ranges = (0..num_blocks)
+        let range_len = num_live_blocks.div_ceil(target_ranges.max(1)).max(1);
+        let ranges = (0..num_live_blocks)
             .step_by(range_len)
-            .map(|start| (start, (start + range_len).min(num_blocks)))
+            .map(|start| (start, (start + range_len).min(num_live_blocks)))
             .collect::<Vec<_>>();
 
         let partial_buckets = cfg_into_iter!(ranges)
@@ -515,18 +516,18 @@ impl<F: FieldCore, I: OneHotIndex> OneHotPoly<F, I> {
     pub(super) fn build_blocks_inner(
         &self,
         ring_d: usize,
-        block_len: usize,
+        num_positions_per_block: usize,
         ring_elems_at_d: usize,
     ) -> Result<OneHotBlocks, AkitaError> {
-        // `blocks_for` has already validated that `block_len` is a nonzero
+        // `blocks_for` has already validated that `num_positions_per_block` is a nonzero
         // power of two and that
         // K and `ring_d` are nicely matched; `OneHotPoly::new` has validated
         // that every per-chunk index is in range. Here we only need to
-        // compute `num_blocks` for the flat-layout offsets array and check
-        // that `block_len` and `ring_d` fit in the packed entry field widths.
-        if u32::try_from(block_len).is_err() {
+        // compute `num_live_blocks` for the flat-layout offsets array and check
+        // that `num_positions_per_block` and `ring_d` fit in the packed entry field widths.
+        if u32::try_from(num_positions_per_block).is_err() {
             return Err(AkitaError::InvalidInput(format!(
-                "block_len={block_len} exceeds u32::MAX and cannot be packed into an entry"
+                "num_positions_per_block={num_positions_per_block} exceeds u32::MAX and cannot be packed into an entry"
             )));
         }
         // Coefficient indices inside a ring element are `< ring_d` and get
@@ -538,7 +539,7 @@ impl<F: FieldCore, I: OneHotIndex> OneHotPoly<F, I> {
                 "D={ring_d} exceeds 65536 and cannot be packed into SingleChunkEntry::coeff_idx / MultiChunkEntry::nonzero_coeffs (both `u16`)"
             )));
         }
-        let num_blocks = ring_elems_at_d.div_ceil(block_len);
+        let num_live_blocks = ring_elems_at_d.div_ceil(num_positions_per_block);
 
         // The single-chunk (one-hot-chunk-per-ring-element) layout
         // applies when K >= D && D | K; otherwise fall back to the
@@ -548,9 +549,9 @@ impl<F: FieldCore, I: OneHotIndex> OneHotPoly<F, I> {
                 FlatBlocks::<SingleChunkEntry>::from_indices(
                     self.onehot_k,
                     &self.indices,
-                    block_len,
+                    num_positions_per_block,
                     ring_d,
-                    num_blocks,
+                    num_live_blocks,
                 )?,
             ))
         } else {
@@ -558,9 +559,9 @@ impl<F: FieldCore, I: OneHotIndex> OneHotPoly<F, I> {
                 FlatBlocks::<MultiChunkEntry>::from_indices(
                     self.onehot_k,
                     &self.indices,
-                    block_len,
+                    num_positions_per_block,
                     ring_d,
-                    num_blocks,
+                    num_live_blocks,
                 )?,
             ))
         }

@@ -16,8 +16,8 @@ mod stage2_compact;
 mod tests;
 
 pub use build::{
-    build_trace_weight_table_field_block_weights, build_trace_weight_table_field_terms,
-    build_trace_weight_table_ring_block_weights, build_trace_weight_table_ring_terms,
+    build_trace_weight_table_field_live_block_weights, build_trace_weight_table_field_terms,
+    build_trace_weight_table_ring_live_block_weights, build_trace_weight_table_ring_terms,
 };
 pub use eval::{
     eval_trace_terms_closed, eval_trace_weight_at_point, TraceFieldBlockOpening,

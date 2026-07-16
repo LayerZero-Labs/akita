@@ -302,6 +302,7 @@ pub(crate) fn report_crt_profile(label: &str, profile: PreparedCrtNttProfile) {
         label,
         crt_profile = profile.profile_id,
         crt_num_primes = profile.num_primes,
+        crt_prime_modulus_bits = profile.prime_modulus_bits,
         crt_limb_bits = profile.limb_bits,
         max_i8_log_basis = profile.max_i8_log_basis,
         balanced_digit_safe_width = profile.balanced_digit_safe_width,
@@ -309,9 +310,10 @@ pub(crate) fn report_crt_profile(label: &str, profile: PreparedCrtNttProfile) {
         "CRT NTT profile"
     );
     eprintln!(
-        "[{label}] CRT NTT profile: profile={}, K={}, limb_bits={}, max_i8_log_basis={}, balanced_digit_safe_width={}, raw_i8_safe_width={}",
+        "[{label}] CRT NTT profile: profile={}, primes={}, prime_modulus_bits={}, signed_storage_bits={}, max_i8_log_basis={}, balanced_digit_safe_width={}, raw_i8_safe_width={}",
         profile.profile_id,
         profile.num_primes,
+        profile.prime_modulus_bits,
         profile.limb_bits,
         profile.max_i8_log_basis,
         profile.balanced_digit_safe_width,
@@ -347,25 +349,30 @@ pub(crate) fn emit_runtime_schedule_summary(
         .enumerate()
     {
         let lp = &level.params;
+        let role_dims = lp.role_dims();
         let num_claims = if level_idx == 0 { root_num_claims } else { 1 };
         tracing::info!(
             label,
             level = level_idx,
             d = lp.ring_dimension,
+            d_a = role_dims.d_a(),
+            d_b = role_dims.d_b(),
+            d_d = role_dims.d_d(),
             n_a = lp.a_key.row_len(),
             n_b = lp.b_key.row_len(),
             n_d = lp.d_key.row_len(),
             challenge_l1_mass = lp.challenge_l1_mass(),
             log_basis = lp.log_basis,
-            position_bits = lp.position_bits(),
-            block_bits = lp.block_bits(),
-            num_blocks = lp.num_blocks,
-            block_len = lp.block_len,
+            position_index_bits = lp.position_index_bits(),
+            block_index_bits = lp.block_index_bits(),
+            num_live_ring_elements_per_claim = lp.num_live_ring_elements_per_claim,
+            num_live_blocks = lp.num_live_blocks,
+            block_index_domain_size = lp.block_index_domain_size().unwrap_or(0),
+            num_positions_per_block = lp.num_positions_per_block,
             delta_commit = lp.num_digits_commit,
             delta_open = lp.num_digits_open,
             delta_fold = lp.num_digits_fold(num_claims, field_bits).unwrap_or(0),
             current_w_len = level.current_w_len,
-            next_w_ring = level.next_w_len / lp.ring_dimension,
             next_w_len = level.next_w_len,
             level_bytes = level.level_bytes,
             "planned fold level"
@@ -807,15 +814,6 @@ pub(crate) fn print_batched_proof_summary<FF, E, const D: usize>(
     // line item only counts the per-level non-witness bytes.
     let akita_levels_total = root_total + recursive_steps_total - tail_total;
     let accounted_total = akita_levels_total + tail_total;
-    let framing_total = proof
-        .size()
-        .checked_sub(accounted_total)
-        .unwrap_or_else(|| {
-            panic!(
-                "[{label}] proof accounting exceeded total: accounted={accounted_total}, total={}",
-                proof.size()
-            )
-        });
     // Total fold levels = 1 root + every entry in `proof.steps` (which
     // already includes the terminal step in the multi-fold case).
     // `num_fold_levels()` counts intermediate-only steps and would
@@ -833,15 +831,13 @@ pub(crate) fn print_batched_proof_summary<FF, E, const D: usize>(
         accounted_bytes = accounted_total,
         akita_fold_bytes = akita_levels_total,
         tail_bytes = tail_total,
-        proof_framing_bytes = framing_total,
         "proof summary"
     );
     eprintln!(
-        "[{label}] proof: total={} bytes, akita_fold={} bytes, tail={} bytes, framing={} bytes, levels={}",
+        "[{label}] proof: total={} bytes, akita_fold={} bytes, tail={} bytes, levels={}",
         proof.size(),
         akita_levels_total,
         tail_total,
-        framing_total,
         fold_levels,
     );
     assert_eq!(
@@ -865,10 +861,12 @@ pub(crate) fn print_batched_proof_summary<FF, E, const D: usize>(
 
 pub(crate) fn print_layout(layout: &LevelParams, num_claims: usize, field_bits: u32) {
     tracing::debug!(
-        position_bits = layout.position_bits(),
-        block_bits = layout.block_bits(),
-        num_blocks = layout.num_blocks,
-        block_len = layout.block_len,
+        position_index_bits = layout.position_index_bits(),
+        block_index_bits = layout.block_index_bits(),
+        num_live_ring_elements_per_claim = layout.num_live_ring_elements_per_claim,
+        num_live_blocks = layout.num_live_blocks,
+        block_index_domain_size = layout.block_index_domain_size().unwrap_or(0),
+        num_positions_per_block = layout.num_positions_per_block,
         delta_commit = layout.num_digits_commit,
         delta_open = layout.num_digits_open,
         delta_fold = layout.num_digits_fold(num_claims, field_bits).unwrap_or(0),

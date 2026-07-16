@@ -382,11 +382,11 @@ mod tests {
             Vec::new(),
             RingOpeningPoint {
                 position_weights: vec![TestF::one()],
-                block_weights: vec![TestF::one()],
+                live_block_weights: vec![TestF::one()],
             },
             RingMultiplierOpeningPoint::from_base(&RingOpeningPoint {
                 position_weights: vec![TestF::one()],
-                block_weights: vec![TestF::one()],
+                live_block_weights: vec![TestF::one()],
             }),
             CyclotomicRing::<TestF, D>::zero(),
         );

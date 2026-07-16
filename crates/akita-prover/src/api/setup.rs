@@ -301,10 +301,9 @@ mod tests {
         let commitment_params = PrecommittedLevelParams {
             layout: PrecommittedGroupParams {
                 group: PolynomialGroupLayout::singleton(6),
-                source_ring_len_per_claim: 1,
-                block_len: 1,
-                num_blocks: 1,
-                chunk_granule: 1,
+                num_live_ring_elements_per_claim: 1,
+                num_positions_per_block: 1,
+                num_live_blocks: 1,
                 fold_challenge_shape: akita_challenges::TensorChallengeShape::Flat,
                 log_basis: 1,
                 n_a: 1,

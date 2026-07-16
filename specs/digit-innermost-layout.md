@@ -37,22 +37,22 @@ r_hat[relation row][quotient digit]
 
 Digits remain tightly packed. Akita does not insert zero digits to make a digit count a power of two.
 
-For distributed proving, each group divides its exact live block prefix into contiguous chunk ranges. Internal boundaries are aligned to a chosen power of two granule. A final residual range remains live and tight. Each group and chunk unit contains `[z_hat | e_hat | t_hat]`. One shared `r_hat` tail follows all units.
+For distributed proving, each group divides its exact live block prefix into balanced contiguous chunk ranges. Any residual blocks are assigned one at a time to the earliest chunks, with no padding. Each group and chunk unit contains `[z_hat | e_hat | t_hat]`. One shared `r_hat` tail follows all units.
 
 ## Current state
 
 ### PR #294 implementation status
 
 Slices 1 through 8 are implemented on the PR branch. Root and recursive paths
-share exact `N`, power-of-two `L`, exact live `F`, digit-innermost source order,
+share exact `N`, power-of-two `M`, exact live `B`, digit-innermost source order,
 and canonical group-by-chunk witness ranges. Tensor factors remain sparse and
 factored, partial final rows are live, and group-local challenge geometry is
 transcript-bound. Setup, relation, trace, recursive, and terminal consumers use
 the same range authority.
 
-The planner independently enumerates `block_len` choices, `chunk_granule` values, and
-tensor low-factor widths. It prices exact physical witness width, compact
-structured verifier work, and chunk imbalance. Generated schedules have been
+The planner independently enumerates `num_positions_per_block` choices and
+tensor low-factor widths. It prices exact physical witness width, exact live-block
+work, and the canonical balanced chunk layout. Generated schedules have been
 regenerated from those rules. Multi-group plus multi-chunk is no longer rejected.
 
 The full historical verification matrix in this record remains a release/CI
@@ -106,48 +106,48 @@ This cutover does not redesign the mixed ring projection algebra. It keeps the p
 
 Three namespaces govern naming in this spec.
 
-1. **Source opening.** `N` (`source_ring_len_per_claim`), `L` (`block_len`), `F` (`num_blocks`), `block_idx`, `position`, `block_bits`, `position_bits`, `block_weights`, `block_capacity`.
-2. **Distributed layout.** `num_chunks`, `chunk_index`, `chunk_granule`, `WitnessUnit = (group, chunk)`.
+1. **Source opening.** `N` (`num_live_ring_elements_per_claim`), `M` (`num_positions_per_block`), `B` (`num_live_blocks`), `block_idx`, `position`, `block_index_bits`, `position_index_bits`, `live_block_weights`, `block_index_domain_size`.
+2. **Distributed layout.** `num_chunks`, `chunk_index`, `WitnessUnit = (group, chunk)`.
 3. **Protocol recursion.** Unchanged: `fold_level`, fold challenge, `fold_grind`, `fold_high` / `fold_low`, `depth_fold`, `fold_digit`.
 
 For one commitment group `g`, define the following source-opening values.
 
 ```text
-N_g       exact live source ring elements per claim (source_ring_len_per_claim)
-L_g       positions in one source block (block_len)
-F_g       exact live blocks per claim (num_blocks)
-F_cap_g   Boolean block capacity (block_capacity)
+N_g       exact live source ring elements per claim (num_live_ring_elements_per_claim)
+M_g       positions in one source block (num_positions_per_block)
+B_g       exact live blocks per claim (num_live_blocks)
+B_dom_g   Boolean block-index domain size (block_index_domain_size)
 C_g       number of claims in the group
 
-L_g       = 2^m_g
-F_g       = ceil(N_g / L_g)
-F_cap_g   = next_power_of_two(F_g)
+M_g       = 2^r_pos_g
+B_g       = ceil(N_g / M_g)
+B_dom_g   = next_power_of_two(B_g)
 ```
 
-`N_g`, `L_g`, and `F_g` are semantic values. `F_cap_g` and both bit counts are derived values.
+`N_g` and `M_g` are authoritative semantic values. `B_g`, `B_dom_g`, and both bit counts are derived values.
 
 The constructor checks:
 
 ```text
 N_g > 0
-L_g > 0
-L_g is a power of two
-F_g = ceil(N_g / L_g)
-F_cap_g = next_power_of_two(F_g)
+M_g > 0
+M_g is a power of two in the current Boolean layout
+B_g = ceil(N_g / M_g)
+B_dom_g = next_power_of_two(B_g)
 ```
 
 The live source condition is:
 
 ```text
-0 <= block_idx < F_g
-0 <= position < L_g
-block_idx * L_g + position < N_g
+0 <= block_idx < B_g
+0 <= position < M_g
+block_idx * M_g + position < N_g
 ```
 
 The last live block may contain a zero suffix.
 
 ```text
-N = 13, L = 4, F = 4, block_capacity = 4
+N = 13, M = 4, B = 4, block_index_domain_size = 4
 
 block_idx = 0: [  0   1   2   3 ]
 block_idx = 1: [  4   5   6   7 ]
@@ -155,10 +155,10 @@ block_idx = 2: [  8   9  10  11 ]
 block_idx = 3: [ 12   .   .   . ]
 ```
 
-If `F_g` is not a power of two, the remaining capacity blocks are absent from physical storage and are zero in the Boolean domain.
+If `B_g` is not a power of two, the remaining domain points are absent from physical storage and are zero in the Boolean domain.
 
 ```text
-N = 19, L = 4, F = 5, block_capacity = 8
+N = 19, M = 4, B = 5, block_index_domain_size = 8
 
 live blocks:       0  1  2  3  4
 capacity only:                    5  6  7
@@ -167,35 +167,35 @@ capacity only:                    5  6  7
 There is no virtual position stride. The physical source address and the multilinear address are both:
 
 ```text
-address(block_idx, position) = block_idx * L_g + position
+address(block_idx, position) = block_idx * M_g + position
 ```
 
-Because `L_g` is a power of two, the equality polynomial factors directly.
+Because the current Boolean layout requires `M_g` to be a power of two, the equality polynomial factors directly.
 
 ```text
-eq(r, block_idx * L_g + position)
+eq(r, block_idx * M_g + position)
     = eq(r_position, position) * eq(r_block, block_idx)
 ```
 
 The variable order is:
 
 ```text
-[ position_bits | block_bits ]
+[ position_index_bits | block_index_bits ]
      low bits         high bits
 ```
 
-The high Boolean domain has `log2(block_capacity_g)` variables. Evaluators consume only the live prefix `0 .. F_g`.
+The high Boolean domain has `log2(block_index_domain_size_g)` variables. Evaluators consume only the live prefix `0 .. B_g`.
 
 ## Fold equation
 
 Let `w_g[c, block_idx, position]` be the source value for claim `c`, block index `block_idx`, and position `position`. Let `gamma_g[c, block_idx]` be the sampled fold coefficient.
 
 ```text
-z_g[position] = sum over c < C_g and block_idx < F_g of
+z_g[position] = sum over c < C_g and block_idx < B_g of
                 gamma_g[c, block_idx] * w_g[c, block_idx, position]
 ```
 
-For the partial last block, `w_g[c, block_idx, position]` is zero when `block_idx * L_g + position >= N_g`.
+For the partial last block, `w_g[c, block_idx, position]` is zero when `block_idx * M_g + position >= N_g`.
 
 The fold coefficient is a small ring challenge. The opening equality weight is not multiplied into `z_g` before decomposition. This preserves the fold infinity norm contract.
 
@@ -210,23 +210,22 @@ The cutover must reuse the current parameter model.
 ```text
 field                    meaning
 
-source_ring_len_per_claim   N_g
-block_len                   L_g
-num_blocks                  F_g
-block_capacity              F_cap_g (derived)
-chunk_granule               S_g
-position_bits                      derive log2(L_g) as position_bits
-block_bits                      derive log2(block_capacity_g) as block_bits
+num_live_ring_elements_per_claim   N_g
+num_positions_per_block                   M_g
+num_live_blocks                      B_g (derived)
+block_index_domain_size               B_dom_g (derived)
+position_index_bits                   derive log2(M_g) as position_index_bits
+block_index_bits                      derive log2(block_index_domain_size_g) as block_index_bits
 fold_challenge_shape        group local Flat or Tensor { fold_low_len }
 ```
 
 Do not keep deprecated aliases.
 
-`LevelParams::with_decomp` must change its orientation. Given a power of two `L` and an exact source length `N`, it derives `F = ceil(N / L)`. It must not start from a power of two `F` and derive a tight `L`.
+`LevelParams::with_decomp` takes an exact source length `N` and a power-of-two `M` for the current Boolean layout, then derives `B = ceil(N / M)`. It must not start from a power-of-two block-domain size and derive a tight `M`.
 
 ### `PrecommittedLevelParams`
 
-`PrecommittedLevelParams` remains the group local parameter object for each precommitted root group. It must carry the same group local source-opening and distributed-layout fields as `LevelParams`, including the challenge shape and `chunk_granule`.
+`PrecommittedLevelParams` remains the group local parameter object for each precommitted root group. It must carry the same group local source-opening fields and challenge shape as `LevelParams`.
 
 Extend `LevelParamsLike` with the final group local accessors. Remove accessors for stored values that become derived.
 
@@ -247,7 +246,7 @@ pub struct WitnessUnitLayout {
     pub group_index: usize,
     pub chunk_index: usize,
     pub global_block_start: usize,
-    pub live_block_count: usize,
+    pub num_live_blocks: usize,
     pub z_range: Range<usize>,
     pub e_range: Range<usize>,
     pub t_range: Range<usize>,
@@ -302,12 +301,12 @@ group 1
 shared:    [ r ]
 ```
 
-For one unit, let `s_j` be its `global_block_start` and let `F_j` be its `live_block_count`.
+For one unit, let `s_j` be its `global_block_start` and let `F_j` be its `num_live_blocks`.
 
 Its exact segment lengths are:
 
 ```text
-Z_g  = L_g * delta_c_g * delta_f_g
+Z_g  = M_g * delta_c_g * delta_f_g
 E_gj = C_g * F_j * delta_o_g
 T_gj = C_g * F_j * n_A_g * delta_o_g
 ```
@@ -413,51 +412,23 @@ If a digit count happens to be a power of two, an evaluator may use a simpler in
 
 ## Chunk ownership
 
-Let `num_chunks` be the number of chunks for the level. Let `S_g` be a power of two `chunk_granule` for group `g`.
+Let `num_chunks` be the number of chunks for the level.
 
 ```text
-S_g > 0
-S_g is a power of two
-num_chunks * S_g <= F_g
+0 < num_chunks <= B_g
+q = floor(B_g / num_chunks)
+r = B_g mod num_chunks
 ```
 
-The planner may choose `S_g = 1`. This always gives exact balancing when `F_g >= num_chunks`.
-
-Split the full granules first.
+The first `r` chunks receive `q + 1` blocks. The remaining chunks receive `q` blocks.
 
 ```text
-A = floor(F_g / S_g)       full granules
-R = F_g mod S_g            residual live blocks
-q = floor(A / num_chunks)
-v = A mod num_chunks
-```
-
-The first `v` chunks receive `q + 1` full granules. The remaining chunks receive `q` full granules. The final chunk also receives the residual `R`.
-
-```text
-F_j = full_granules_j * S_g
-F_(num_chunks - 1) += R
+F_j = q + 1 when j < r, otherwise q
 s_0 = 0
 s_j = sum of F_i for i < j
 ```
 
-This produces contiguous ranges. Every internal boundary is aligned to `S_g`. Only the final chunk may have a non multiple of `S_g` count. The difference between the largest and smallest chunk is at most `S_g` after the larger full granule counts are placed first.
-
-The physical witness contains no chunk padding.
-
-The verifier benefit from `S_g` applies only to structured weights. If a local block index is written as:
-
-```text
-u = S_g * v + q
-```
-
-then a factored evaluator can use a low table of size `S_g` and a high table of size about `F_j / S_g`. Its rough state and evaluation cost is:
-
-```text
-delta * (S_g + ceil(F_j / S_g))
-```
-
-The balanced choice is near `sqrt(F_j)`. The planner must enumerate nearby powers of two and include load imbalance in the cost. It must not claim an `S_g` block reduction for flat independent challenges.
+This produces contiguous ranges that exactly cover `[0, B_g)`. Their sizes differ by at most one, and the physical witness contains no chunk padding. Structured evaluators receive each exact range and handle unaligned first and last rows as edge intervals.
 
 ## Opening point
 
@@ -466,15 +437,15 @@ Delete `BlockOrder`. Rename the fields of `RingOpeningPoint` so they state the a
 ```rust
 pub struct RingOpeningPoint<F> {
     pub position_weights: Vec<F>,
-    pub block_weights: Vec<F>,
+    pub live_block_weights: Vec<F>,
 }
 ```
 
-`position_weights` has exactly `L_g` entries.
+`position_weights` has exactly `M_g` entries.
 
-`block_weights` contains the exact live prefix of length `F_g`. The Boolean challenge still has `log2(block_capacity_g)` high coordinates. Use a prefix equality evaluator instead of materializing and retaining the zero capacity suffix.
+`live_block_weights` contains the exact live prefix of length `B_g`. The Boolean challenge still has `log2(block_index_domain_size_g)` high coordinates. Use a prefix equality evaluator instead of materializing and retaining the zero capacity suffix.
 
-`ring_opening_point_from_field` takes the group block geometry. It splits the point after `log2(L_g)` low coordinates. It rejects any other point length.
+`ring_opening_point_from_field` takes the group block geometry. It splits the point after `log2(M_g)` low coordinates. It rejects any other point length.
 
 Delete the compact to virtual address conversion. Every equality weight uses the compact physical source address.
 
@@ -495,11 +466,11 @@ The tensor low length `Q_g` must be a power of two.
 
 ```text
 Q_g = fold_low_len
-H_g = ceil(F_g / Q_g)
+H_g = ceil(B_g / Q_g)
 block_idx = Q_g * h + q
 ```
 
-Only indices with `block_idx < F_g` are live. `H_g` is exact and may be any positive integer. The final high row may use only a prefix of the low factor.
+Only indices with `block_idx < B_g` are live. `H_g` is exact and may be any positive integer. The final high row may use only a prefix of the low factor.
 
 ### Names and storage
 
@@ -510,26 +481,26 @@ Repurpose `TensorChallenges` as follows.
 ```text
 fold_high                  C_g * H_g sparse challenges
 fold_low                   C_g * Q_g sparse challenges
-num_blocks                 F_g
+num_live_blocks                 B_g
 fold_low_len               Q_g
 num_claims                 C_g
 ```
 
 Derive `H_g`. Do not store both `H_g` and values from which it is derived.
 
-`Challenges::num_blocks_per_claim()` returns `F_g`, not `H_g * Q_g`.
+`Challenges::num_live_blocks_per_claim()` returns `B_g`, not `H_g * Q_g`.
 
-`Challenges::logical_len()` returns `C_g * F_g`.
+`Challenges::logical_len()` returns `C_g * B_g`.
 
 Do not cache or materialize the `H_g * Q_g` products in the runtime challenge object.
 
 ### Transcript
 
-The transcript binds the group index, `F_g`, challenge shape, and `Q_g` before challenge sampling.
+The transcript binds the group index, `B_g`, challenge shape, and `Q_g` before challenge sampling.
 
 For a tensor challenge, sample fold high first. Absorb its canonical digest. Then sample fold low. The existing sampling order may remain, but all labels and comments must use high and low names.
 
-Flat sampling draws exactly `C_g * F_g` sparse challenges.
+Flat sampling draws exactly `C_g * B_g` sparse challenges.
 
 Tensor sampling draws exactly `C_g * (H_g + Q_g)` sparse challenges.
 
@@ -579,7 +550,7 @@ delta * (H_g + Q_g)
 
 plus small state and the sparse ring support work. The last partial row adds at most one extra low prefix evaluation.
 
-For a flat challenge, reading the independent live challenge values costs at least `F_g`.
+For a flat challenge, reading the independent live challenge values costs at least `B_g`.
 
 ## Trace evaluation
 
@@ -601,7 +572,7 @@ The `t_hat` interval uses the same address rule with the A row inside the block 
 The evaluator must handle:
 
 * a nonzero `global_block_start` `s_j`;
-* an exact local `live_block_count` `F_j`;
+* an exact local `num_live_blocks` `F_j`;
 * a tight digit count;
 * a nonzero physical segment offset;
 * a structured block equality weight;
@@ -639,11 +610,10 @@ For multi group roots, D columns concatenate group `e_hat` columns in relation o
 
 Each group owns:
 
-* `N_g`, `L_g`, `F_g`, and derived `block_capacity_g`;
+* `N_g`, `M_g`, `B_g`, and derived `block_index_domain_size_g`;
 * its digit counts;
 * its fold challenge shape;
 * its tensor low length when tensor mode is active;
-* its `chunk_granule`;
 * its `z_hat`, `e_hat`, and `t_hat` units.
 
 The root relation is a direct sum of group fold relations plus the existing shared terms.
@@ -669,12 +639,11 @@ The current `reject_multi_group_multi_chunk` check is deleted only when emission
 The planner chooses these values independently for every group and active level.
 
 ```text
-L_g   power of two block_len
-S_g   power of two chunk_granule
+M_g   power of two num_positions_per_block
 Q_g   power of two tensor low length, when tensor mode is active
 ```
 
-The planner derives `F_g` from `N_g` and `L_g`. It does not round `F_g` up for physical width formulas.
+The planner derives `B_g` from `N_g` and `M_g`. It does not round `B_g` up for physical width formulas.
 
 The cost model includes:
 
@@ -689,9 +658,7 @@ The cost model includes:
 * proof bytes and setup widths;
 * the selected number of active distributed levels.
 
-The planner must not force `S_g = Q_g`. If both are active, their common low alignment is the smaller power of two. A boundary that cuts a larger low row is handled as an edge interval.
-
-The planner should enumerate nearby powers of two instead of using one fixed root rule. A square root granule is the natural balanced candidate, but it is not always best once `num_chunks`, replicated `z_hat`, tensor mode, and exact residual load are priced.
+Chunk ownership is independent of `Q_g`. A boundary that cuts a tensor low row is handled as an edge interval.
 
 ## Transcript and serialization
 
@@ -699,18 +666,17 @@ This is a breaking cutover. Do not add a version branch, old enum variant, conve
 
 Bind all protocol affecting final fields in the schedule or instance descriptor. This includes:
 
-* exact source length (`source_ring_len_per_claim`);
-* `block_len`;
-* exact live block count (`num_blocks`);
+* exact source length (`num_live_ring_elements_per_claim`);
+* `num_positions_per_block`;
+* exact live block count (`num_live_blocks`);
 * `num_chunks` and active levels;
-* group local `chunk_granule`;
 * group local challenge shape;
 * tensor low length;
 * digit counts;
 * relation row layout;
 * mixed role ring dimensions.
 
-Derived values such as `block_capacity`, high tensor length, and bit counts need not be serialized twice. The verifier derives them and rejects overflow or inconsistency.
+Derived values such as `block_index_domain_size`, high tensor length, and bit counts need not be serialized twice. The verifier derives them and rejects overflow or inconsistency.
 
 Proof labels and event order remain unchanged unless the high and low rename requires a label version change. If labels change, update prover, verifier, transcript tests, and the transcript hardening spec in the same slice.
 
@@ -743,18 +709,18 @@ Compare all of the following with the same cases.
 
 Cases must include:
 
-* `F = 1`;
-* a power of two `F`;
-* a non power of two `F`;
+* `B = 1`;
+* a power-of-two `B`;
+* a non-power-of-two `B`;
 * a partial last source block;
 * digit counts 1, 3, 5, and a power of two;
-* tensor `F` smaller than, equal to, and larger than `Q`;
+* tensor `B` smaller than, equal to, and larger than `Q`;
 * one partial final tensor row;
 * one chunk;
 * two, four, and eight chunks;
 * a nonzero `global_block_start`;
 * a residual chunk;
-* multiple groups with different `L`, `F`, digits, and challenge shapes;
+* multiple groups with different `M`, `B`, digits, and challenge shapes;
 * mixed A, B, and D ring dimensions;
 * malformed geometry and work limit rejection.
 
@@ -763,12 +729,12 @@ Cases must include:
 * [ ] This file is the normative design record for PR #294.
 * [ ] `BlockOrder`, row major versus column major dispatch, and all old layout branches are deleted.
 * [ ] `OpeningBlockLayout` and its virtual address mapping are deleted.
-* [ ] Root and recursive folds use power of two `block_len` and exact live `num_blocks`.
-* [ ] `LevelParams` and `PrecommittedLevelParams` store `source_ring_len_per_claim`, `block_len`, `num_blocks`, and `chunk_granule` with the same group local meanings.
-* [ ] `block_capacity` and bit counts are derived instead of stored twice.
+* [ ] Root and recursive folds use power of two `num_positions_per_block` and exact live `num_live_blocks`.
+* [ ] `LevelParams` and `PrecommittedLevelParams` store `num_live_ring_elements_per_claim`, `num_positions_per_block`, and `num_live_blocks` with the same group local meanings.
+* [ ] `block_index_domain_size` and bit counts are derived instead of stored twice.
 * [ ] `WitnessLayout` is the only physical range authority.
 * [ ] `WitnessChunkLengths` and `TraceChunkLayout` are deleted.
-* [ ] Every witness unit records a group, a chunk, an exact `global_block_start`, an exact `live_block_count`, and checked `z`, `e`, and `t` ranges.
+* [ ] Every witness unit records a group, a chunk, an exact `global_block_start`, an exact `num_live_blocks`, and checked `z`, `e`, and `t` ranges.
 * [ ] Digits remain tight for `z_hat`, `e_hat`, `t_hat`, and `r_hat`.
 * [ ] Tensor challenges use fold high and fold low names.
 * [ ] Tensor high length may be non power of two and the final row may be partial.
@@ -779,7 +745,7 @@ Cases must include:
 * [ ] Multi group plus multi chunk uses the product layout and no longer takes the old rejection path.
 * [ ] One shared `r_hat` tail follows all groups and chunks.
 * [ ] Setup, relation, trace, terminal, and recursive code consume the same group and chunk ranges.
-* [ ] Planner width formulas use exact `num_blocks`, and Boolean formulas use derived `block_capacity`.
+* [ ] Planner width formulas use exact `num_live_blocks`, and Boolean formulas use derived `block_index_domain_size`.
 * [ ] Schedule and transcript descriptors bind every protocol affecting choice once.
 * [ ] Malformed verifier inputs return `AkitaError` without panic.
 * [ ] Generated schedules are regenerated with explained drift.
@@ -808,10 +774,10 @@ crates/akita-challenges/src/tensor.rs
 
 Steps:
 
-1. Replace stored `position_bits` and `block_bits` with derived methods.
-2. Add `source_ring_len_per_claim` and `chunk_granule` to both group parameter forms.
-3. Rename geometry fields to `block_len` and `num_blocks`.
-4. Make `with_decomp` derive `num_blocks` from `source_ring_len_per_claim` and power of two `block_len`.
+1. Replace stored `position_index_bits` and `block_index_bits` with derived methods.
+2. Add `num_live_ring_elements_per_claim` to both group parameter forms.
+3. Rename geometry fields to `num_positions_per_block` and `num_live_blocks`.
+4. Make `with_decomp` derive `num_live_blocks` from `num_live_ring_elements_per_claim` and power of two `num_positions_per_block`.
 5. Change challenge shape to `Tensor { fold_low_len }`.
 6. Put challenge shape on each precommitted group.
 7. Update descriptor bytes and schedule identity.
@@ -834,9 +800,9 @@ crates/akita-verifier/src/protocol/core/suffix.rs
 Steps:
 
 1. Delete `BlockOrder` and all dispatch on it.
-2. Rename opening point fields to `position_weights` and `block_weights`.
-3. Split opening variables at `log2(block_len)` and evaluate only the live `num_blocks` high prefix.
-4. Rewrite fold kernels around `source = block_idx * block_len + position` with a partial last block.
+2. Rename opening point fields to `position_weights` and `live_block_weights`.
+3. Split opening variables at `log2(num_positions_per_block)` and evaluate only the live `num_live_blocks` high prefix.
+4. Rewrite fold kernels around `source = block_idx * num_positions_per_block + position` with a partial last block.
 5. Delete `OpeningBlockLayout` and all compact to virtual address conversion.
 6. Update root, recursive, and terminal fold parity tests.
 
@@ -855,7 +821,7 @@ Steps:
 
 1. Replace `WitnessChunkLayout` with the group and chunk unit record.
 2. Delete `WitnessChunkLengths` and parallel vectors.
-3. Resolve granule aligned exact chunk ranges.
+3. Resolve balanced exact chunk ranges.
 4. Resolve multi group by multi chunk units in relation order.
 5. Emit each unit as `[z_hat | e_hat | t_hat]` with one final `r_hat`.
 6. Move the useful independent oracle tests out of the PR only contract module, then delete that module if it has no production role.
@@ -876,7 +842,7 @@ crates/akita-verifier/src/stages/stage1.rs
 Steps:
 
 1. Rename left and right fields, labels, and helpers to fold high and fold low.
-2. Store live `num_blocks` and low `Q`; derive high `H`.
+2. Store live `num_live_blocks` and low `Q`; derive high `H`.
 3. Sample exact flat and tensor counts.
 4. Support one partial final low row.
 5. Remove tensor product materialization from runtime challenge paths.
@@ -943,7 +909,7 @@ crates/akita-types/src/proof/terminal_witness.rs
 Steps:
 
 1. Make recursive witness construction consume canonical unit ranges.
-2. Preserve tight digits and exact live `num_blocks` at the next handoff.
+2. Preserve tight digits and exact live `num_live_blocks` at the next handoff.
 3. Make setup prefix source and materialization consume the same ranges.
 4. Keep direct and terminal folds scalar and use the canonical single group emission path.
 5. Delete column major recursive helpers, duplicate terminal index formulas, and the old setup recursion module.
@@ -966,8 +932,8 @@ specs/distributed-verifier-row-eval.md
 
 Steps:
 
-1. Enumerate `block_len`, `chunk_granule`, and `Q` independently.
-2. Price exact physical widths, structured verifier work, and chunk imbalance.
+1. Enumerate `num_positions_per_block` and `Q` independently.
+2. Price exact physical widths, live-block verifier work, and balanced chunk ownership.
 3. Regenerate every affected schedule table.
 4. Delete the old block-order note and replace the book page with the final geometry.
 5. Mark superseded layout sections in older live specs.

@@ -109,7 +109,7 @@ search is deterministic but not cheap at scale (CI drift tests today spend hundr
 of seconds re-running DP across all shipped keys).
 
 **Generated schedule tables** store the DP output in compact form
-(`GeneratedFoldStep`: `ring_d`, `log_basis`, `position_bits`, `block_bits`, `n_a`, `n_b`,
+(`GeneratedFoldStep`: `ring_d`, `log_basis`, `position_index_bits`, `block_index_bits`, `n_a`, `n_b`,
 `n_d`, optional tier fields). At runtime `schedule_from_entry` expands a table row
 into full `LevelParams` and a `Schedule` with correct proof-size accounting.
 
@@ -234,7 +234,7 @@ per key through `schedule_from_entry` (table hit) instead of re-running full
 - **Multipoint or general incidence schedule keys.** Removed by
   [`single-point-opening-batch.md`](single-point-opening-batch.md). Do not revive
   `RootPlannerProfile` / `ClaimIncidenceSummary` for planner input in this refactor.
-- **Mixed `natural_nuposition_bits` per slot in one batch.** Future work if a caller exists;
+- **Mixed `natural_num_vars` per slot in one batch.** Future work if a caller exists;
   not part of this cutover.
 - **Mandatory catalogs for library users.** Opt-in only; `None` + DP is supported.
 - **Moving Akita shipped tables out of the Akita repo.** Tables stay on `main` in
@@ -533,15 +533,15 @@ Validation derives the expected identity as follows:
 
 - Policy fields copy directly from `PlannerPolicy`.
 - `zk_enabled` is `cfg!(feature = "zk")` in `akita-planner`.
-- `root_fold_shape` is evaluated with `AkitaScheduleInputs { nuposition_bits: key.nuposition_bits,
-  level: 0, current_w_len: 1usize.checked_shl(key.nuposition_bits as u32)? }`.
+- `root_fold_shape` is evaluated with `AkitaScheduleInputs { num_vars: key.num_vars,
+  level: 0, current_w_len: 1usize.checked_shl(key.num_vars as u32)? }`.
 - `ring_dimensions` are the distinct ring degrees represented by the compact table,
   including fold steps and root-direct commit payloads. The emitter stores them sorted
   and deduplicated.
 - `ring_challenge_config_digest` is a deterministic non-cryptographic digest over
   `(d, ring_challenge_config(d)?)` for those ring dimensions. The digest is only a
   wiring guard, not a security primitive.
-- `key_count` and `key_digest` cover the sorted generated keys, including `nuposition_bits`,
+- `key_count` and `key_digest` cover the sorted generated keys, including `num_vars`,
   `num_t_vectors`, `num_w_vectors`, `num_z_vectors`, and generated
   `num_commitment_groups`. This prevents a same-policy `[1, 4]` catalog from looking
   identical to a Jolt `[1, 38]` catalog.
@@ -635,7 +635,7 @@ existing `CommitmentConfig` hook name.
 
 ### Schedule lookup keys (same-point only)
 
-Production folded path uses `OpeningClaimsLayout::new(padded_nuposition_bits, num_polys)?`
+Production folded path uses `OpeningClaimsLayout::new(padded_num_vars, num_polys)?`
 and `AkitaScheduleLookupKey::from_layout(&layout)?`:
 
 ```text
@@ -650,7 +650,7 @@ roots build an explicit key with `final_group` and `precommitteds`.
 
 **Generated table enumeration** (`family_keys` in emitter) crosses:
 
-- `nuposition_bits` in `[min_nuposition_bits, max_nuposition_bits]`
+- `num_vars` in `[min_num_vars, max_num_vars]`
 - `num_polys` in per-family list (e.g. `[1, 4]` default; Jolt may ship `[1, 38]`)
 
 The current `family_keys` helper hardcodes `[1, 4]`. This refactor moves that list
@@ -814,7 +814,7 @@ pub struct EmitSpec {
 
 The CLI path adapts `ALL_GENERATED_FAMILIES` into `EmitSpec` values. `EmitSpec` takes
 concrete keys as the source of truth; helper constructors such as `ScheduleKeyEnvelope`
-may build those keys from `nuposition_bits: 18..=32` and `num_polys: [1, 38]`, but the emitter
+may build those keys from `num_vars: 18..=32` and `num_polys: [1, 38]`, but the emitter
 itself consumes only the concrete key list. Jolt runs the same planner emitter library
 with an explicit `PlannerPolicy` and hook functions, writing `jolt-schedules/`.
 
@@ -940,7 +940,7 @@ measure binary footprint.
 2. Crate `jolt-schedules` is data-only and depends on `akita-planner` for generated
    table types. It does not depend on `akita-config` or `akita-schedules`.
 3. Generate `jolt_fp128_d64_onehot.rs` with explicit keys:
-   `nuposition_bits` envelope × `num_polys` e.g. `[1, 38]`).
+   `num_vars` envelope × `num_polys` e.g. `[1, 38]`).
 4. Jolt invokes the planner emitter library through `EmitSpec`, with an explicit
    `PlannerPolicy` and hooks, not `akita_config::generated_families::ALL_GENERATED_FAMILIES`.
 5. `JoltD64OneHot::schedule_catalog()` returns

@@ -146,7 +146,7 @@ impl<E: FieldCore> SetupIndexWeightEvaluator<E> {
         if self.d_rows == 0 || self.d_physical_cols == 0 {
             return Ok(E::zero());
         }
-        let num_blocks = group.num_blocks(&self.layout)?;
+        let num_live_blocks = group.num_live_blocks(&self.layout)?;
         let depth_open = group.depth_open(&self.layout)?;
         let active_cols = group.d_active_cols(&self.layout)?;
         let d_col_range = self.layout.get_d_col_range(group.group_id)?;
@@ -163,7 +163,7 @@ impl<E: FieldCore> SetupIndexWeightEvaluator<E> {
             .units_for_group(group.group_id)?;
         for claim in 0..group.num_claims {
             for unit in &units {
-                let setup_col = num_blocks
+                let setup_col = num_live_blocks
                     .checked_mul(claim)
                     .and_then(|base| base.checked_add(unit.global_block_start()))
                     .and_then(|base| base.checked_mul(depth_open))
@@ -178,7 +178,7 @@ impl<E: FieldCore> SetupIndexWeightEvaluator<E> {
                     0,
                 )?;
                 let len = unit
-                    .live_block_count()
+                    .num_live_blocks()
                     .checked_mul(depth_open)
                     .ok_or_else(|| AkitaError::InvalidSetup("setup D span overflow".into()))?;
                 validate_opening_span(
@@ -220,7 +220,7 @@ impl<E: FieldCore> SetupIndexWeightEvaluator<E> {
         group: &SetupContributionGroupInputs,
         rho_setup_idx: &[E],
     ) -> Result<E, AkitaError> {
-        let num_blocks = group.num_blocks(&self.layout)?;
+        let num_live_blocks = group.num_live_blocks(&self.layout)?;
         let depth_open = group.depth_open(&self.layout)?;
         let n_a = group.n_a(&self.layout)?;
         let n_b = group.n_b(&self.layout)?;
@@ -229,7 +229,7 @@ impl<E: FieldCore> SetupIndexWeightEvaluator<E> {
         }
         let t_cols = group
             .num_claims
-            .checked_mul(group.t_cols_per_vector(&self.layout)?)
+            .checked_mul(group.t_vector_width(&self.layout)?)
             .ok_or_else(|| AkitaError::InvalidSetup("setup B width overflow".into()))?;
         let mut acc = E::zero();
         let units = self
@@ -238,7 +238,7 @@ impl<E: FieldCore> SetupIndexWeightEvaluator<E> {
             .units_for_group(group.group_id)?;
         for claim in 0..group.num_claims {
             for unit in &units {
-                let setup_col = num_blocks
+                let setup_col = num_live_blocks
                     .checked_mul(claim)
                     .and_then(|base| base.checked_add(unit.global_block_start()))
                     .and_then(|base| base.checked_mul(n_a))
@@ -255,7 +255,7 @@ impl<E: FieldCore> SetupIndexWeightEvaluator<E> {
                     0,
                 )?;
                 let len = checked_mul3(
-                    unit.live_block_count(),
+                    unit.num_live_blocks(),
                     n_a,
                     depth_open,
                     "setup B span overflow",
@@ -299,13 +299,13 @@ impl<E: FieldCore> SetupIndexWeightEvaluator<E> {
         group: &SetupContributionGroupInputs,
         rho_setup_idx: &[E],
     ) -> Result<E, AkitaError> {
-        let block_len = group.block_len(&self.layout)?;
+        let num_positions_per_block = group.num_positions_per_block(&self.layout)?;
         let depth_commit = group.depth_commit(&self.layout)?;
         let n_a = group.n_a(&self.layout)?;
         if n_a == 0 {
             return Ok(E::zero());
         }
-        let z_cols = block_len
+        let z_cols = num_positions_per_block
             .checked_mul(depth_commit)
             .ok_or_else(|| AkitaError::InvalidSetup("setup A width overflow".into()))?;
         let units = self
@@ -318,7 +318,7 @@ impl<E: FieldCore> SetupIndexWeightEvaluator<E> {
             for (fold_digit, &fold) in self.fold_gadget.iter().enumerate().take(group.depth_fold) {
                 let witness_index = self.layout.witness_layout().z_index(
                     unit,
-                    block_len,
+                    num_positions_per_block,
                     depth_commit,
                     group.depth_fold,
                     0,

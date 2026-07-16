@@ -450,10 +450,9 @@ fn write_generated_schedule_key(h: &mut Fnv64, key: PolynomialGroupLayout) {
 
 fn write_generated_precommitted_group_key(h: &mut Fnv64, key: &PrecommittedGroupParams) {
     write_generated_schedule_key(h, key.group);
-    h.write_u64(key.source_ring_len_per_claim as u64);
-    h.write_u64(key.block_len as u64);
-    h.write_u64(key.num_blocks as u64);
-    h.write_u64(key.chunk_granule as u64);
+    h.write_u64(key.num_live_ring_elements_per_claim as u64);
+    h.write_u64(key.num_positions_per_block as u64);
+    h.write_u64(key.num_live_blocks as u64);
     match key.fold_challenge_shape {
         TensorChallengeShape::Flat => h.write_u64(0),
         TensorChallengeShape::Tensor { fold_low_len } => {
@@ -572,10 +571,9 @@ mod tests {
     fn sample_group_batch_entry() -> GeneratedScheduleTableEntry {
         static PRECOMMITTED: [PrecommittedGroupParams; 1] = [PrecommittedGroupParams {
             group: PolynomialGroupLayout::new(8, 1),
-            source_ring_len_per_claim: 2,
-            block_len: 2,
-            num_blocks: 1,
-            chunk_granule: 1,
+            num_live_ring_elements_per_claim: 2,
+            num_positions_per_block: 2,
+            num_live_blocks: 1,
             fold_challenge_shape: TensorChallengeShape::Flat,
             log_basis: 2,
             n_a: 1,

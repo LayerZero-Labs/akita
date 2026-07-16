@@ -70,7 +70,7 @@ impl SetupContributionLayout {
             validate_group_witness_layout(
                 &witness_layout,
                 group.group_id,
-                group.num_blocks_for(&level_params, &opening_batch)?,
+                group.num_live_blocks_for(&level_params, &opening_batch)?,
             )?;
         }
         validate_setup_group_ids(&groups, witness_layout.num_groups())?;
@@ -165,21 +165,21 @@ fn validate_setup_group_ids(
 fn validate_group_witness_layout(
     layout: &WitnessLayout,
     group_id: usize,
-    num_blocks: usize,
+    num_live_blocks: usize,
 ) -> Result<(), AkitaError> {
     let units = layout.units_for_group(group_id)?;
     let mut next_fold = 0usize;
     for unit in units {
-        if unit.live_block_count() == 0 || unit.global_block_start() != next_fold {
+        if unit.num_live_blocks() == 0 || unit.global_block_start() != next_fold {
             return Err(AkitaError::InvalidSetup(
                 "setup witness units do not form a contiguous fold tiling".into(),
             ));
         }
         next_fold = next_fold
-            .checked_add(unit.live_block_count())
+            .checked_add(unit.num_live_blocks())
             .ok_or_else(|| AkitaError::InvalidSetup("setup fold coverage overflow".into()))?;
     }
-    if next_fold != num_blocks {
+    if next_fold != num_live_blocks {
         return Err(AkitaError::InvalidSetup(
             "setup group dimensions disagree with witness layout".into(),
         ));
@@ -230,14 +230,14 @@ impl SetupContributionGroupInputs {
         Ok(())
     }
 
-    fn num_blocks_for(
+    fn num_live_blocks_for(
         &self,
         level_params: &LevelParams,
         opening_batch: &OpeningClaimsLayout,
     ) -> Result<usize, AkitaError> {
         Ok(self
             .group_params_for(level_params, opening_batch)?
-            .num_blocks())
+            .num_live_blocks())
     }
 
     fn n_a_for(
@@ -267,12 +267,18 @@ impl SetupContributionGroupInputs {
         self.group_params_for(layout.level_params(), layout.opening_batch())
     }
 
-    pub(crate) fn num_blocks(&self, layout: &SetupContributionLayout) -> Result<usize, AkitaError> {
-        Ok(self.group_params(layout)?.num_blocks())
+    pub(crate) fn num_live_blocks(
+        &self,
+        layout: &SetupContributionLayout,
+    ) -> Result<usize, AkitaError> {
+        Ok(self.group_params(layout)?.num_live_blocks())
     }
 
-    pub(crate) fn block_len(&self, layout: &SetupContributionLayout) -> Result<usize, AkitaError> {
-        Ok(self.group_params(layout)?.block_len())
+    pub(crate) fn num_positions_per_block(
+        &self,
+        layout: &SetupContributionLayout,
+    ) -> Result<usize, AkitaError> {
+        Ok(self.group_params(layout)?.num_positions_per_block())
     }
 
     pub(crate) fn depth_open(&self, layout: &SetupContributionLayout) -> Result<usize, AkitaError> {
@@ -298,15 +304,15 @@ impl SetupContributionGroupInputs {
         Ok(self.group_params(layout)?.b_rows_len())
     }
 
-    pub(crate) fn t_cols_per_vector(
+    pub(crate) fn t_vector_width(
         &self,
         layout: &SetupContributionLayout,
     ) -> Result<usize, AkitaError> {
         let n_a = self.n_a(layout)?;
         let depth_open = self.depth_open(layout)?;
-        let num_blocks = self.num_blocks(layout)?;
+        let num_live_blocks = self.num_live_blocks(layout)?;
         n_a.checked_mul(depth_open)
-            .and_then(|n| n.checked_mul(num_blocks))
+            .and_then(|n| n.checked_mul(num_live_blocks))
             .ok_or_else(|| AkitaError::InvalidSetup("setup B vector width overflow".into()))
     }
 
@@ -314,10 +320,10 @@ impl SetupContributionGroupInputs {
         &self,
         layout: &SetupContributionLayout,
     ) -> Result<usize, AkitaError> {
-        let num_blocks = self.num_blocks(layout)?;
+        let num_live_blocks = self.num_live_blocks(layout)?;
         let depth_open = self.depth_open(layout)?;
         self.num_claims
-            .checked_mul(num_blocks)
+            .checked_mul(num_live_blocks)
             .and_then(|cols| cols.checked_mul(depth_open))
             .ok_or_else(|| AkitaError::InvalidSetup("setup D active width overflow".into()))
     }

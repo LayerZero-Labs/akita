@@ -33,19 +33,19 @@ impl<E: FieldCore> SetupContributionPlan<E> {
         let static_groups = groups
             .iter()
             .map(|group| {
-                let num_blocks = group.num_blocks(layout)?;
-                let block_len = group.block_len(layout)?;
+                let num_live_blocks = group.num_live_blocks(layout)?;
+                let num_positions_per_block = group.num_positions_per_block(layout)?;
                 let depth_open = group.depth_open(layout)?;
                 let depth_commit = group.depth_commit(layout)?;
                 let n_a = group.n_a(layout)?;
                 let n_b = group.n_b(layout)?;
-                let t_cols_per_vector = group.t_cols_per_vector(layout)?;
+                let t_vector_width = group.t_vector_width(layout)?;
                 let d_col_range = layout.get_d_col_range(group.group_id)?;
                 let t_cols = group
                     .num_claims
-                    .checked_mul(t_cols_per_vector)
+                    .checked_mul(t_vector_width)
                     .ok_or_else(|| AkitaError::InvalidSetup("setup B width overflow".into()))?;
-                let z_cols = block_len
+                let z_cols = num_positions_per_block
                     .checked_mul(depth_commit)
                     .ok_or_else(|| AkitaError::InvalidSetup("setup Z range overflow".into()))?;
                 let a_row_weights: std::sync::Arc<[E]> =
@@ -58,7 +58,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                         .into();
                 let e_cols = group
                     .num_claims
-                    .checked_mul(num_blocks)
+                    .checked_mul(num_live_blocks)
                     .and_then(|cols| cols.checked_mul(depth_open))
                     .ok_or_else(|| {
                         AkitaError::InvalidSetup("setup E active width overflow".into())
@@ -136,20 +136,20 @@ impl<E: FieldCore> SetupContributionPlan<E> {
             .iter()
             .zip(groups)
             .map(|(static_group, group)| {
-                let num_blocks = group.num_blocks(layout)?;
-                let block_len = group.block_len(layout)?;
+                let num_live_blocks = group.num_live_blocks(layout)?;
+                let num_positions_per_block = group.num_positions_per_block(layout)?;
                 let depth_open = group.depth_open(layout)?;
                 let depth_commit = group.depth_commit(layout)?;
                 let log_basis = group.log_basis(layout)?;
                 let n_a = group.n_a(layout)?;
-                let t_cols_per_vector = group.t_cols_per_vector(layout)?;
+                let t_vector_width = group.t_vector_width(layout)?;
                 let e_eq_slice = {
                     let _span = tracing::info_span!("setup_prepare_e_weights").entered();
                     setup_e_col_weights::<E>(
                         layout.witness_layout(),
                         layout.opening_source_len(),
                         group.group_id,
-                        num_blocks,
+                        num_live_blocks,
                         group.num_claims,
                         depth_open,
                         &eq_window,
@@ -161,10 +161,10 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                         layout.witness_layout(),
                         layout.opening_source_len(),
                         group.group_id,
-                        num_blocks,
+                        num_live_blocks,
                         depth_open,
                         n_a,
-                        t_cols_per_vector,
+                        t_vector_width,
                         group.num_claims,
                         group.num_claims,
                         0,
@@ -185,7 +185,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                         crate::gadget_row_scalars::<F>(group.depth_fold, log_basis);
                     &fold_gadget_storage
                 };
-                let z_range = block_len
+                let z_range = num_positions_per_block
                     .checked_mul(depth_commit)
                     .ok_or_else(|| AkitaError::InvalidSetup("setup Z range overflow".into()))?;
                 let mut z_eq_slice = vec![E::zero(); z_range];
@@ -195,7 +195,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                         layout.witness_layout(),
                         layout.opening_source_len(),
                         group.group_id,
-                        block_len,
+                        num_positions_per_block,
                         depth_commit,
                         group.depth_fold,
                         &eq_window,
@@ -282,18 +282,22 @@ fn validate_static_inputs<E: FieldCore>(
         level_params.num_digits_fold(num_polynomials, level_params.field_bits_for_cache())?;
     let depth_commit = level_params.num_digits_commit;
     let depth_open = level_params.num_digits_open;
-    if level_params.num_blocks == 0 {
+    if level_params.num_live_blocks == 0 {
         return Err(AkitaError::InvalidSetup(
-            "num_blocks must be positive".into(),
+            "num_live_blocks must be positive".into(),
         ));
     }
-    if level_params.block_len == 0 || depth_commit == 0 || depth_open == 0 || depth_fold == 0 {
+    if level_params.num_positions_per_block == 0
+        || depth_commit == 0
+        || depth_open == 0
+        || depth_fold == 0
+    {
         return Err(AkitaError::InvalidSetup(
             "setup evaluator layout has zero width".into(),
         ));
     }
     let inner_width = level_params
-        .block_len
+        .num_positions_per_block
         .checked_mul(depth_commit)
         .ok_or_else(|| AkitaError::InvalidSetup("inner width overflow".into()))?;
     if level_params.a_key.col_len() < inner_width {
@@ -304,7 +308,7 @@ fn validate_static_inputs<E: FieldCore>(
     let expected_b_width = num_polynomials
         .checked_mul(level_params.a_key.row_len())
         .and_then(|width| width.checked_mul(depth_open))
-        .and_then(|width| width.checked_mul(level_params.num_blocks))
+        .and_then(|width| width.checked_mul(level_params.num_live_blocks))
         .ok_or_else(|| AkitaError::InvalidSetup("B-matrix width overflow".into()))?;
     if level_params.b_key.col_len() < expected_b_width {
         return Err(AkitaError::InvalidSetup(

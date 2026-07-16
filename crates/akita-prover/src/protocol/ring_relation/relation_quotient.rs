@@ -79,7 +79,7 @@ where
     let tensor_blocks_per_claim = match challenges {
         Challenges::Tensor { factored } => {
             factored.validate::<D>()?;
-            Some(factored.blocks_per_claim()?)
+            Some(factored.num_live_blocks_per_claim)
         }
         Challenges::Sparse { .. } => None,
     };
@@ -99,9 +99,9 @@ where
                     challenges: sparse, ..
                 } => add_sparse_ring_product_high_half::<F, D>(&mut acc, &sparse[i], &ring),
                 Challenges::Tensor { factored } => {
-                    let blocks_per_claim = tensor_blocks_per_claim.unwrap_or(0);
-                    let claim_idx = i / blocks_per_claim;
-                    let local_idx = i % blocks_per_claim;
+                    let num_live_blocks_per_claim = tensor_blocks_per_claim.unwrap_or(0);
+                    let claim_idx = i / num_live_blocks_per_claim;
+                    let local_idx = i % num_live_blocks_per_claim;
                     let high_idx =
                         claim_idx * factored.fold_high_len() + (local_idx / factored.fold_low_len);
                     let low_idx =
@@ -254,21 +254,21 @@ fn centered_i32_ring<F: FieldCore + FromPrimitiveInt, const D: usize>(
 fn cyclic_consistency_z_product<F, const D: usize>(
     ring_multiplier_point: &RingMultiplierOpeningPoint<F>,
     z_folded_centered: &[[i32; D]],
-    block_len: usize,
+    num_positions_per_block: usize,
     depth_commit: usize,
     log_basis: u32,
 ) -> Result<(CyclotomicRing<F, D>, CyclotomicRing<F, D>), AkitaError>
 where
     F: FieldCore + CanonicalField + FromPrimitiveInt,
 {
-    let inner_width = block_len
+    let inner_width = num_positions_per_block
         .checked_mul(depth_commit)
         .ok_or_else(|| AkitaError::InvalidSetup("z inner width overflow".to_string()))?;
     if inner_width == 0 || z_folded_centered.len() != inner_width {
         return Err(AkitaError::InvalidInput(format!(
-            "ring-multiplier z layout mismatch: z_folded_len={} block_len={} depth_commit={} expected={}",
+            "ring-multiplier z layout mismatch: z_folded_len={} num_positions_per_block={} depth_commit={} expected={}",
             z_folded_centered.len(),
-            block_len,
+            num_positions_per_block,
             depth_commit,
             inner_width
         )));
@@ -278,13 +278,13 @@ where
     let mut reduced = CyclotomicRing::<F, D>::zero();
 
     {
-        if ring_multiplier_point.position_len() < block_len {
+        if ring_multiplier_point.position_len() < num_positions_per_block {
             return Err(AkitaError::InvalidInput(format!(
-                "ring-multiplier a length mismatch: actual={} expected_at_least={block_len}",
+                "ring-multiplier a length mismatch: actual={} expected_at_least={num_positions_per_block}",
                 ring_multiplier_point.position_len()
             )));
         }
-        for block_idx in 0..block_len {
+        for block_idx in 0..num_positions_per_block {
             let mut z_block = CyclotomicRing::<F, D>::zero();
             for (digit_idx, &g) in g_commit.iter().enumerate() {
                 let z_idx = block_idx * depth_commit + digit_idx;
@@ -373,7 +373,7 @@ where
         let num_digits_open = group.params.num_digits_open();
         let n_a = group.params.a_rows_len();
         let n_b = group.params.b_rows_len();
-        let blocks_per_claim = group.params.num_blocks();
+        let num_live_blocks_per_claim = group.params.num_live_blocks();
         let inner_width = group.params.a_col_len();
         validate_i8_setup_log_basis(log_basis, "for multi-group relation quotient")?;
         if group_layout.num_polynomials() == 0 {
@@ -381,7 +381,7 @@ where
         }
         let expected_blocks = group_layout
             .num_polynomials()
-            .checked_mul(blocks_per_claim)
+            .checked_mul(num_live_blocks_per_claim)
             .ok_or(AkitaError::InvalidProof)?;
         let opening_ratio = role_dims
             .d_a()
@@ -480,7 +480,7 @@ where
             let (consistency_z_cyclic, consistency_z_reduced) = cyclic_consistency_z_product::<F, D>(
                 ring_multiplier_point,
                 &group.z_centered,
-                group.params.block_len(),
+                group.params.num_positions_per_block(),
                 group.params.num_digits_commit(),
                 log_basis,
             )?;
@@ -507,9 +507,9 @@ where
         }
         for (a_idx, row_idx) in a_range.enumerate() {
             let mut quotient = parallel_high_half_accumulate::<F, _, D>(challenges, |i| {
-                let claim_idx = i / blocks_per_claim;
-                let block_idx = i % blocks_per_claim;
-                let inner_idx = claim_idx * blocks_per_claim + block_idx;
+                let claim_idx = i / num_live_blocks_per_claim;
+                let block_idx = i % num_live_blocks_per_claim;
+                let inner_idx = claim_idx * num_live_blocks_per_claim + block_idx;
                 recomposed_inner_rows[inner_idx].get(a_idx).copied()
             })?;
             let a_q = a_quotients[a_idx].coefficients();
