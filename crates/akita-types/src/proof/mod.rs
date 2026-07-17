@@ -101,7 +101,7 @@ pub use tail_segments::{
     terminal_golomb_grind_tail_t_vectors, validate_segment_typed_z_payload,
     z_fold_decoded_from_segment, z_fold_encoding_stats_from_segment, SegmentTypedWitness,
     SegmentTypedWitnessGroupParts, SegmentTypedWitnessShape, TailSegmentGroupLayout,
-    TailSegmentLayout,
+    TailSegmentLayout, TerminalQuotientMode,
 };
 pub use terminal_witness::{RelationOnlyStage2Inputs, TerminalWitnessTranscriptParts};
 

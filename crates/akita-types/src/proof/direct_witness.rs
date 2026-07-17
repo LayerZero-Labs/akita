@@ -1,7 +1,7 @@
 use super::*;
 use crate::proof::tail_segments::{
     expand_segment_typed_to_i8_digits, tail_segment_layout_from_groups, SegmentTypedWitness,
-    SegmentTypedWitnessShape,
+    SegmentTypedWitnessShape, TerminalQuotientMode,
 };
 use crate::{LevelParams, LevelParamsLike};
 
@@ -125,7 +125,13 @@ pub fn segment_typed_witness_shape_from_groups<'a>(
     groups: impl IntoIterator<Item = (&'a dyn LevelParamsLike, usize, usize, usize)>,
     num_segments: usize,
 ) -> Result<CleartextWitnessShape, AkitaError> {
-    let layout = tail_segment_layout_from_groups(terminal_lp, groups, num_segments, field_bits)?;
+    let layout = tail_segment_layout_from_groups(
+        terminal_lp,
+        groups,
+        num_segments,
+        field_bits,
+        TerminalQuotientMode::Include,
+    )?;
     Ok(CleartextWitnessShape::SegmentTyped(
         SegmentTypedWitnessShape { layout },
     ))

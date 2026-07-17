@@ -38,6 +38,7 @@ fn scalar_group_layout(
         )],
         num_commitment_groups,
         field_bits,
+        TerminalQuotientMode::Include,
     )
 }
 
@@ -62,6 +63,36 @@ fn segment_typed_z_budget_uses_golomb_rate_not_packed_digit_width() {
         8,
     );
     assert_ne!(z_bytes, packed_z);
+}
+
+#[test]
+fn direct_terminal_layout_omits_all_quotient_fields_and_planes() {
+    let lp = test_lp();
+    let field_bits = F::modulus_bits();
+    let groups = || [(&lp as &dyn LevelParamsLike, 1usize, 1usize, 1usize)];
+    let included = tail_segment_layout_from_groups(
+        &lp,
+        groups(),
+        1,
+        field_bits,
+        TerminalQuotientMode::Include,
+    )
+    .expect("quotient-backed terminal layout");
+    let omitted =
+        tail_segment_layout_from_groups(&lp, groups(), 1, field_bits, TerminalQuotientMode::Omit)
+            .expect("direct terminal layout");
+
+    let rows = lp
+        .relation_matrix_row_count_for(1, RelationMatrixRowLayout::WithoutDBlock)
+        .expect("terminal relation rows");
+    let quotient_planes = rows * compute_num_digits_full_field(field_bits, lp.log_basis);
+    assert_eq!(included.r_field_elems, rows * lp.ring_dimension);
+    assert_eq!(omitted.r_field_elems, 0);
+    assert_eq!(
+        included.logical_num_elems - omitted.logical_num_elems,
+        quotient_planes * lp.ring_dimension
+    );
+    assert_eq!(included.groups, omitted.groups);
 }
 
 #[test]

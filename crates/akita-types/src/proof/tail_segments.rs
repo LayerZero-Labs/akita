@@ -40,6 +40,15 @@ pub struct TailSegmentLayout {
     pub logical_num_elems: usize,
 }
 
+/// Whether a transparent terminal witness carries quotient rows for stage 2.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TerminalQuotientMode {
+    /// Quotient-backed terminal stage 2 (`z | e | t | r`).
+    Include,
+    /// Direct reduced ring checks (`z | e | t`).
+    Omit,
+}
+
 /// Per-group terminal segment geometry.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TailSegmentGroupLayout {
@@ -690,6 +699,7 @@ pub fn tail_segment_layout_from_groups<'a>(
     groups: impl IntoIterator<Item = (&'a dyn LevelParamsLike, usize, usize, usize)>,
     num_commitment_groups: usize,
     field_bits: u32,
+    quotient_mode: TerminalQuotientMode,
 ) -> Result<TailSegmentLayout, AkitaError> {
     let d = lp.ring_dimension;
     if d == 0 {
@@ -760,11 +770,14 @@ pub fn tail_segment_layout_from_groups<'a>(
             .and_then(|n| n.checked_add(t_plane_rings))
             .ok_or_else(|| AkitaError::InvalidSetup("tail logical plane overflow".to_string()))?;
     }
-    let r_plane_rings = lp
-        .relation_matrix_row_count_for(
+    let quotient_rows = match quotient_mode {
+        TerminalQuotientMode::Include => lp.relation_matrix_row_count_for(
             num_commitment_groups,
             RelationMatrixRowLayout::WithoutDBlock,
-        )?
+        )?,
+        TerminalQuotientMode::Omit => 0,
+    };
+    let r_plane_rings = quotient_rows
         .checked_mul(compute_num_digits_full_field(field_bits, lp.log_basis))
         .ok_or_else(|| AkitaError::InvalidSetup("tail r plane count overflow".to_string()))?;
     let total_plane_rings = total_plane_rings
@@ -773,11 +786,7 @@ pub fn tail_segment_layout_from_groups<'a>(
     let logical_num_elems = total_plane_rings
         .checked_mul(d)
         .ok_or_else(|| AkitaError::InvalidSetup("tail logical elem overflow".to_string()))?;
-    let r_field_elems = lp
-        .relation_matrix_row_count_for(
-            num_commitment_groups,
-            RelationMatrixRowLayout::WithoutDBlock,
-        )?
+    let r_field_elems = quotient_rows
         .checked_mul(d)
         .ok_or_else(|| AkitaError::InvalidSetup("tail r field count overflow".to_string()))?;
     Ok(TailSegmentLayout {
@@ -976,8 +985,13 @@ where
         })
         .collect::<Vec<_>>();
     let field_bits = F::modulus_bits();
-    let layout =
-        tail_segment_layout_from_groups(lp, group_shapes, num_commitment_groups, field_bits)?;
+    let layout = tail_segment_layout_from_groups(
+        lp,
+        group_shapes,
+        num_commitment_groups,
+        field_bits,
+        TerminalQuotientMode::Include,
+    )?;
     let mut z_payloads = Vec::with_capacity(groups.len());
     let mut e_coeffs = Vec::new();
     let mut t_coeffs = Vec::new();
@@ -1128,6 +1142,7 @@ where
         )],
         num_commitment_groups,
         field_bits,
+        TerminalQuotientMode::Include,
     )?;
     if !expected_layout.admits_realized(&witness.layout) {
         return Err(AkitaError::InvalidProof);
