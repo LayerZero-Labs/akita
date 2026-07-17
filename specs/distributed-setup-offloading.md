@@ -140,9 +140,15 @@ the same planner, walker, prover, and verifier, and are mostly orthogonal:
   (`build_witness_carry_term`,
   `crates/akita-prover/src/protocol/sumcheck/akita_stage3/mod.rs`) re-expresses
   the *flat* next-witness opening `W(stage2_point)` from `logical_w` and is
-  chunk-agnostic; the setup-product term (`prepare_setup_contribution_artifact`,
-  `crates/akita-types/src/setup_contribution/relation.rs`) is chunk-aware and
-  validates `chunk_layout.num_chunks_for_group(g) == lp.witness_chunk.num_chunks`.
+  chunk-agnostic; the setup-product term (built by `build_setup_product_term`
+  → `prepare_setup_sumcheck_terms`,
+  `crates/akita-prover/src/protocol/sumcheck/akita_stage3/mod.rs`, over the
+  `SetupContributionPlan` in `crates/akita-types/src/setup_contribution/plan/`)
+  is chunk-aware and validates
+  `chunk_layout.num_chunks_for_group(g) == lp.witness_chunk.num_chunks`
+  ("multi-group witness layout does not match root group order"), with the
+  matching verifier check in
+  `crates/akita-verifier/src/protocol/ring_switch.rs`.
 
 The only hard incompatibility guard is `reject_mixed_d_multi_chunk`
 (`crates/akita-verifier/src/protocol/ring_switch.rs`): multi-chunk requires
@@ -348,10 +354,12 @@ chunked.
   chunked fold is the flat concatenation the carry term expects (it is the same
   flat next witness, whose *layout* is chunked but whose *values* are the folded
   responses), so the assertion holds.
-- `build_setup_product_term` → `prepare_setup_contribution_artifact`
-  (`crates/akita-types/src/setup_contribution/relation.rs`) with the multi-group
-  chunk-consistency check must accept both the level-0 chunked multi-group root
-  and the level-1 chunked two-group suffix.
+- `build_setup_product_term` → `prepare_setup_sumcheck_terms`
+  (`crates/akita-prover/src/protocol/sumcheck/akita_stage3/mod.rs`) with the
+  multi-group chunk-consistency check (the "multi-group witness layout does not
+  match root group order" guard) must accept both the level-0 chunked
+  multi-group root and the level-1 chunked two-group suffix. The verifier's copy
+  of that guard lives in `crates/akita-verifier/src/protocol/ring_switch.rs`.
 - Verifier Stage-3: `verify_batched_stage3` /
   `SetupIndexWeightEvaluator::evaluate`
   (`crates/akita-verifier/src/stages/stage3.rs`,
@@ -471,7 +479,9 @@ cycles saved by offloading vs the extra chunked-witness bytes.
 - `crates/akita-prover/src/protocol/ring_switch/coeffs.rs`
 - `crates/akita-verifier/src/protocol/ring_switch.rs`
 - `crates/akita-verifier/src/stages/stage3.rs`
-- `crates/akita-types/src/setup_contribution/relation.rs`
+- `crates/akita-types/src/setup_contribution/plan/` (setup-contribution plan; the
+  former `relation.rs`/`inputs.rs` were folded into `plan/` and
+  `prepare_setup_sumcheck_terms` by refactor PR #305)
 - `crates/akita-types/src/witness.rs`
 - `crates/akita-config/src/setup_prefix_slots.rs`
 - `crates/akita-setup/src/recursive_prefixes.rs`
