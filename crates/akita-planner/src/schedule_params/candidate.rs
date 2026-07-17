@@ -566,13 +566,14 @@ pub(crate) fn derive_candidate_level_params(
             RelationMatrixRowLayout::WithDBlock,
             num_chunks,
         )?;
-        let next_witness_len_terminal = planned_next_witness_len(
-            policy.decomposition.field_bits(),
+        let terminal_shape = segment_typed_witness_shape_from_groups(
             &candidate_params,
+            policy.decomposition.field_bits(),
+            [(&candidate_params as &dyn LevelParamsLike, 1, 1, 1)],
             1,
-            RelationMatrixRowLayout::WithoutDBlock,
-            num_chunks,
+            akita_types::TerminalQuotientMode::Omit,
         )?;
+        let next_witness_len_terminal = terminal_shape.logical_num_elems();
 
         let score = layout_candidate_score(
             next_witness_len,

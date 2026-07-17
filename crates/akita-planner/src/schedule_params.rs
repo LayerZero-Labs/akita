@@ -20,7 +20,7 @@ use akita_types::{
     direct_witness_bytes, extension_opening_reduction_level_bytes, level_proof_bytes,
     padded_setup_prefix_len, segment_typed_witness_shape_from_groups,
     w_ring_element_count_for_chunks, AkitaScheduleInputs, ChunkedWitnessCfg, CleartextWitnessShape,
-    CommitmentRingDims, DecompositionParams, DirectStep, FoldStep, LevelParams,
+    CommitmentRingDims, DecompositionParams, DirectStep, FoldStep, LevelParams, LevelParamsLike,
     OpeningClaimsLayout, PolynomialGroupLayout, PrecommittedGroupParams, PrecommittedLevelParams,
     RelationMatrixRowLayout, Schedule, SetupContributionMode, Step, WitnessLayout,
     SETUP_OFFLOAD_D_SETUP,
