@@ -923,6 +923,7 @@ where
                 &artifacts.r,
                 lp,
                 opening_batch.num_groups(),
+                akita_types::TerminalQuotientMode::Include,
             )?;
             if segment.layout != scheduled_shape.layout {
                 return Err(AkitaError::InvalidSetup(

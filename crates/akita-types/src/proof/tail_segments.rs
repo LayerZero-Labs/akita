@@ -932,6 +932,7 @@ pub fn build_segment_typed_witness<F>(
     num_t_vectors: usize,
     num_z_segments: usize,
     num_commitment_groups: usize,
+    quotient_mode: TerminalQuotientMode,
 ) -> Result<SegmentTypedWitness<F>, AkitaError>
 where
     F: FieldCore + CanonicalField + HalvingField + AkitaSerialize,
@@ -950,6 +951,7 @@ where
         r,
         lp,
         num_commitment_groups,
+        quotient_mode,
     )
 }
 
@@ -959,6 +961,7 @@ pub fn build_segment_typed_witness_from_groups<F>(
     r: &RingVec<F>,
     lp: &LevelParams,
     num_commitment_groups: usize,
+    quotient_mode: TerminalQuotientMode,
 ) -> Result<SegmentTypedWitness<F>, AkitaError>
 where
     F: FieldCore + CanonicalField + HalvingField + AkitaSerialize,
@@ -968,10 +971,18 @@ where
             "segment-typed witness ring dimension mismatch".to_string(),
         ));
     }
-    if !r.can_decode_vec(ring_d) {
-        return Err(AkitaError::InvalidInput(
-            "segment-typed r segment ring layout mismatch".to_string(),
-        ));
+    match quotient_mode {
+        TerminalQuotientMode::Include if !r.can_decode_vec(ring_d) => {
+            return Err(AkitaError::InvalidInput(
+                "segment-typed r segment ring layout mismatch".to_string(),
+            ));
+        }
+        TerminalQuotientMode::Omit if r.coeff_len() != 0 => {
+            return Err(AkitaError::InvalidInput(
+                "direct terminal witness must omit the r segment".to_string(),
+            ));
+        }
+        TerminalQuotientMode::Include | TerminalQuotientMode::Omit => {}
     }
     let group_shapes = groups
         .iter()
@@ -990,7 +1001,7 @@ where
         group_shapes,
         num_commitment_groups,
         field_bits,
-        TerminalQuotientMode::Include,
+        quotient_mode,
     )?;
     let mut z_payloads = Vec::with_capacity(groups.len());
     let mut e_coeffs = Vec::new();

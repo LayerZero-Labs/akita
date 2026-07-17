@@ -96,6 +96,68 @@ fn direct_terminal_layout_omits_all_quotient_fields_and_planes() {
 }
 
 #[test]
+fn direct_terminal_builder_requires_and_preserves_empty_quotient_segment() {
+    let lp = test_lp();
+    let field_bits = F::modulus_bits();
+    let layout = tail_segment_layout_from_groups(
+        &lp,
+        [(&lp as &dyn LevelParamsLike, 1usize, 1usize, 1usize)],
+        1,
+        field_bits,
+        TerminalQuotientMode::Omit,
+    )
+    .expect("direct terminal layout");
+    let group_layout = layout.groups[0];
+    let e_folded = RingVec::from_coeffs(vec![F::zero(); group_layout.e_field_elems]);
+    let recomposed_inner_rows = vec![RingVec::from_coeffs(vec![
+        F::zero();
+        group_layout.t_field_elems
+    ])];
+    let z_folded_centered_flat = vec![0i32; group_layout.z_coords];
+    let group = SegmentTypedWitnessGroupParts {
+        params: &lp,
+        num_w_vectors: 1,
+        num_t_vectors: 1,
+        num_z_segments: 1,
+        e_folded: &e_folded,
+        recomposed_inner_rows: &recomposed_inner_rows,
+        z_folded_centered_flat: &z_folded_centered_flat,
+    };
+    let empty_r = RingVec::from_coeffs(Vec::new());
+    let witness = build_segment_typed_witness_from_groups(
+        lp.ring_dimension,
+        &[group],
+        &empty_r,
+        &lp,
+        1,
+        TerminalQuotientMode::Omit,
+    )
+    .expect("direct terminal witness");
+
+    assert_eq!(witness.layout, layout);
+    assert_eq!(witness.r_fields.coeff_len(), 0);
+
+    let nonempty_r = RingVec::from_coeffs(vec![F::zero(); lp.ring_dimension]);
+    assert!(build_segment_typed_witness_from_groups(
+        lp.ring_dimension,
+        &[SegmentTypedWitnessGroupParts {
+            params: &lp,
+            num_w_vectors: 1,
+            num_t_vectors: 1,
+            num_z_segments: 1,
+            e_folded: &e_folded,
+            recomposed_inner_rows: &recomposed_inner_rows,
+            z_folded_centered_flat: &z_folded_centered_flat,
+        }],
+        &nonempty_r,
+        &lp,
+        1,
+        TerminalQuotientMode::Omit,
+    )
+    .is_err());
+}
+
+#[test]
 fn segment_typed_wire_round_trip_with_scheduled_z_budget() {
     use akita_field::CanonicalField;
     use akita_serialization::{AkitaDeserialize, AkitaSerialize, Compress, Validate};
