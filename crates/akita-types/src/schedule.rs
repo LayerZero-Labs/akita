@@ -87,11 +87,14 @@ pub struct PrecommittedGroupParams {
     pub log_basis_inner: u32,
     /// Gadget basis selected for the standalone B/`t_hat` digits.
     pub log_basis_outer: u32,
-    /// A-role row count selected for the committed inner rows.
+    /// Conservative A-role row count frozen at precommit time.
     pub n_a: usize,
-    /// Conservative B-role row count used by the standalone precommit.
-    /// Frozen B rank for the outer decomposition.
+    /// Conservative A-role collision bucket frozen at precommit time.
+    pub a_coeff_linf_bound: u128,
+    /// Conservative B-role row count frozen at precommit time.
     pub n_b: usize,
+    /// Conservative B-role collision bucket frozen at precommit time.
+    pub b_coeff_linf_bound: u128,
 }
 
 impl PrecommittedGroupParams {
@@ -106,7 +109,9 @@ impl PrecommittedGroupParams {
             log_basis_inner: params.log_basis_inner,
             log_basis_outer: params.log_basis_outer,
             n_a: params.a_key.row_len(),
+            a_coeff_linf_bound: params.a_key.coeff_linf_bound(),
             n_b: params.b_key.row_len(),
+            b_coeff_linf_bound: params.b_key.coeff_linf_bound(),
         }
     }
 
@@ -128,7 +133,9 @@ impl PrecommittedGroupParams {
         push_u32(bytes, self.log_basis_inner);
         push_u32(bytes, self.log_basis_outer);
         push_usize(bytes, self.n_a);
+        crate::descriptor_bytes::push_u128(bytes, self.a_coeff_linf_bound);
         push_usize(bytes, self.n_b);
+        crate::descriptor_bytes::push_u128(bytes, self.b_coeff_linf_bound);
     }
 
     /// Validate that this layout is a well-formed standalone commitment group.
@@ -140,9 +147,14 @@ impl PrecommittedGroupParams {
                 self.group.num_polynomials()
             )));
         }
-        if self.n_a == 0 || self.n_b == 0 {
+        if self.n_a == 0
+            || self.n_b == 0
+            || self.a_coeff_linf_bound == 0
+            || self.b_coeff_linf_bound == 0
+        {
             return Err(AkitaError::InvalidSetup(
-                "commitment group layout requires nonzero A and B rows".to_string(),
+                "commitment group layout requires nonzero conservative A/B rows and bounds"
+                    .to_string(),
             ));
         }
         if self.log_basis_inner == 0 {

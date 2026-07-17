@@ -7,6 +7,10 @@
 use crate::{policy_of, CommitmentConfig};
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::AkitaError;
+use akita_types::sis::{
+    decomposed_t_ring_count, rounded_up_collision_inf_norm, rounded_up_role_a_inf_norm,
+    AjtaiKeyParams, SisMatrixRole, SisTableKey,
+};
 use akita_types::{
     AkitaScheduleInputs, AkitaScheduleLookupKey, DecompositionParams, LevelParams,
     OpeningClaimsLayout, PolynomialGroupLayout, PrecommittedGroupParams, Schedule,
@@ -120,7 +124,95 @@ pub(crate) fn conservative_commit_params<Cfg: CommitmentConfig>(
     key: &PolynomialGroupLayout,
 ) -> Result<LevelParams, AkitaError> {
     let schedule = conservative_commit_schedule::<Cfg>(key)?;
-    Ok(root_commit_params(&schedule, "conservative commit schedule")?.clone())
+    let params = root_commit_params(&schedule, "conservative commit schedule")?.clone();
+    widen_conservative_commit_params::<Cfg>(params)
+}
+
+fn widen_conservative_commit_params<Cfg: CommitmentConfig>(
+    mut params: LevelParams,
+) -> Result<LevelParams, AkitaError> {
+    let policy = policy_of::<Cfg>();
+    let witness_decomposition = DecompositionParams {
+        log_basis: params.log_basis_inner,
+        ..policy.decomposition
+    };
+    let inner_width = params.a_key.col_len();
+    let mut conservative_a_rows = 0usize;
+    let mut conservative_a_bound = 0u128;
+    let mut conservative_b_bound = 0u128;
+
+    for log_basis_open in policy.basis_range.0..=policy.basis_range.1 {
+        let a_bound = rounded_up_role_a_inf_norm(
+            policy.sis_security_policy,
+            policy.sis_modulus_profile,
+            policy.ring_dimension,
+            witness_decomposition,
+            log_basis_open,
+            &params.fold_challenge_config,
+            params.fold_challenge_shape,
+            true,
+            policy.onehot_chunk_size,
+            policy.ring_subfield_norm_bound,
+            params.num_live_blocks,
+            1,
+            inner_width as u64,
+        )
+        .ok_or_else(|| AkitaError::InvalidSetup("no conservative A-role norm".to_string()))?;
+        let a_key = AjtaiKeyParams::try_new_with_min_rank(
+            SisTableKey {
+                policy: policy.sis_security_policy,
+                table_digest: policy.sis_table_digest,
+                modulus_profile: policy.sis_modulus_profile,
+                role: SisMatrixRole::A,
+                ring_dimension: policy.ring_dimension as u32,
+                coeff_linf_bound: a_bound,
+            },
+            inner_width,
+        )?;
+        conservative_a_rows = conservative_a_rows.max(a_key.row_len());
+        conservative_a_bound = conservative_a_bound.max(a_bound);
+
+        let b_bound = rounded_up_collision_inf_norm(
+            policy.sis_security_policy,
+            policy.sis_modulus_profile,
+            SisMatrixRole::B,
+            policy.ring_dimension,
+            log_basis_open,
+        )
+        .ok_or_else(|| AkitaError::InvalidSetup("no conservative B-role norm".to_string()))?;
+        conservative_b_bound = conservative_b_bound.max(b_bound);
+    }
+
+    params.a_key = AjtaiKeyParams::try_new(
+        policy.sis_security_policy,
+        policy.sis_table_digest,
+        policy.sis_modulus_profile,
+        SisMatrixRole::A,
+        conservative_a_rows,
+        inner_width,
+        conservative_a_bound,
+        policy.ring_dimension,
+    )?;
+    let outer_width = decomposed_t_ring_count(
+        conservative_a_rows,
+        params.num_digits_outer,
+        params.num_live_blocks,
+        1,
+    )
+    .ok_or_else(|| AkitaError::InvalidSetup("conservative B width overflow".to_string()))?;
+    params.b_key = AjtaiKeyParams::try_new_with_min_rank(
+        SisTableKey {
+            policy: policy.sis_security_policy,
+            table_digest: policy.sis_table_digest,
+            modulus_profile: policy.sis_modulus_profile,
+            role: SisMatrixRole::B,
+            ring_dimension: policy.ring_dimension as u32,
+            coeff_linf_bound: conservative_b_bound,
+        },
+        outer_width,
+    )?;
+    params.stamp_role_dims_from_keys();
+    Ok(params)
 }
 
 pub(crate) fn conservative_commit_schedule<Cfg: CommitmentConfig>(

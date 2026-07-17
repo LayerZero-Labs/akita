@@ -373,7 +373,7 @@ impl LevelParams {
         )
     }
 
-    /// Per-row folded-witness norms using group-local fresh-opening gadget geometry.
+    /// Per-row folded-witness norms using group-local source gadget geometry.
     #[inline]
     pub fn fold_witness_norms_for_params(
         &self,
@@ -381,7 +381,7 @@ impl LevelParams {
     ) -> crate::sis::FoldWitnessNorms {
         let is_onehot = self.onehot_chunk_size > 0;
         crate::sis::FoldWitnessNorms::new(
-            params.log_basis_open(),
+            params.log_basis_inner(),
             self.ring_dimension,
             if is_onehot { self.onehot_chunk_size } else { 1 },
             is_onehot,
@@ -955,6 +955,12 @@ impl LevelParams {
         opening_batch: &OpeningClaimsLayout,
     ) -> Result<usize, AkitaError> {
         opening_batch.check()?;
+        if self.log_basis_open < self.log_basis_inner || self.log_basis_open < self.log_basis_outer
+        {
+            return Err(AkitaError::InvalidSetup(
+                "certified opening basis must dominate level inner/outer bases".to_string(),
+            ));
+        }
         if opening_batch.num_groups() != self.group_count() {
             return Err(AkitaError::InvalidSetup(
                 "opening group count does not match level params".to_string(),
@@ -964,6 +970,7 @@ impl LevelParams {
             let group_params = self
                 .precommitted_group_params(group_index)
                 .ok_or(AkitaError::InvalidProof)?;
+            group_params.validate()?;
             let group_layout = opening_batch.group_layout(group_index)?;
             if *group_layout != group_params.layout.group {
                 return Err(AkitaError::InvalidSetup(

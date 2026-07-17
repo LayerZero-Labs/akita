@@ -81,7 +81,7 @@ fn bench_dense_root_matvec_full_nv25_d32(c: &mut Criterion) {
                 inner_width,
                 black_box(&block_slices),
                 layout.num_digits_inner,
-                layout.log_basis,
+                layout.log_basis_inner,
             ))
             .unwrap()
         })
@@ -95,7 +95,7 @@ fn bench_dense_root_matvec_full_nv25_d32(c: &mut Criterion) {
                     inner_width,
                     black_box(&block_slices),
                     layout.num_digits_inner,
-                    layout.log_basis,
+                    layout.log_basis_inner,
                 ))
                 .unwrap()
             })
@@ -112,7 +112,7 @@ fn bench_dense_root_matvec_full_nv25_d32(c: &mut Criterion) {
                     block,
                     digit_block,
                     layout.num_digits_inner,
-                    layout.log_basis,
+                    layout.log_basis_inner,
                 );
             }
             let digit_block_slices: Vec<&[[i8; D]]> =
@@ -122,7 +122,7 @@ fn bench_dense_root_matvec_full_nv25_d32(c: &mut Criterion) {
                 n_a,
                 inner_width,
                 black_box(&digit_block_slices),
-                layout.log_basis,
+                layout.log_basis_inner,
             ))
             .unwrap()
         })

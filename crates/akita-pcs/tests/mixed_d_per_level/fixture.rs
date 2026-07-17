@@ -148,6 +148,7 @@ fn expand_envelope_witness_at_ring_d(
         sis_modulus_profile,
         target_ring_d,
         witness_decomp,
+        log_basis_open,
         &ring_challenge_cfg,
         fold_shape,
         is_root,

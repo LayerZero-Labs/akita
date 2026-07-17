@@ -654,7 +654,7 @@ where
         depth_open,
         depth_fold,
         log_basis_inner: lp.log_basis_inner,
-        log_basis_outer: log_basis,
+        log_basis_outer: lp.log_basis_outer,
         log_basis_open: log_basis,
         n_a,
         a_row_start: 1,

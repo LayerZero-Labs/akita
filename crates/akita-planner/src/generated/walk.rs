@@ -713,22 +713,14 @@ fn expand_multi_group_root_fold_step(
     }
 }
 
-fn validate_log_basis(log_basis: u32, policy: &PlannerPolicy) -> Result<(), AkitaError> {
-    let (min, max) = policy.basis_range;
-    if log_basis < min || log_basis > max {
-        return Err(AkitaError::InvalidSetup(format!(
-            "generated fold step log_basis={log_basis} outside policy range [{min}, {max}]"
-        )));
-    }
-    Ok(())
-}
-
 fn validate_step_bases(step: &GeneratedFoldStep, policy: &PlannerPolicy) -> Result<(), AkitaError> {
-    if !(policy.decomposition.log_commit_bound == 1 && step.log_basis_inner == 1) {
-        validate_log_basis(step.log_basis_inner, policy)?;
-    }
-    validate_log_basis(step.log_basis_outer, policy)?;
-    validate_log_basis(step.log_basis_open, policy)
+    super::validate_certified_bases(
+        step.log_basis_inner,
+        step.log_basis_outer,
+        step.log_basis_open,
+        policy,
+        "generated fold step",
+    )
 }
 
 fn validate_block_geometry(

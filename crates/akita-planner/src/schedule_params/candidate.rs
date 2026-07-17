@@ -15,13 +15,6 @@ fn sis_key(
     }
 }
 
-fn root_witness_log_basis(policy: &PlannerPolicy, log_basis: u32) -> u32 {
-    if policy.decomposition.log_commit_bound == 1 {
-        1
-    } else {
-        log_basis
-    }
-}
 /// Build one recursive-fold candidate for an explicit ring-element bucket and
 /// split. Setup certification uses the maximum current length in each
 /// `ceil(log2(ring_elems))` bucket, which dominates every shorter member for
@@ -70,6 +63,7 @@ pub(crate) fn recursive_fold_level_params_candidate(
         policy.sis_modulus_profile,
         policy.ring_dimension,
         decomp,
+        decomp.log_basis,
         ring_challenge_cfg,
         fold_challenge_shape,
         false,
@@ -355,6 +349,11 @@ fn derive_setup_prefix_group(
             "setup prefix length must be a multiple of the ring dimension".to_string(),
         ));
     }
+    if log_basis_outer != log_basis_open {
+        return Err(AkitaError::InvalidSetup(
+            "setup-prefix checkpoint requires one consuming inner/outer/open basis".to_string(),
+        ));
+    }
     let ring_slots = n_prefix / policy.ring_dimension;
     let reduced_vars = checked_power_of_two_vars(ring_slots, "setup prefix ring slots")?;
     let prefix_num_vars = checked_power_of_two_vars(n_prefix, "setup prefix field length")?;
@@ -372,135 +371,131 @@ fn derive_setup_prefix_group(
     let num_digits_open_val = num_digits_open(open_decomp);
     let mut best: Option<(LayoutCandidateScore, PrecommittedLevelParams)> = None;
 
-    // This is one additional bounded axis, not a Cartesian search over all
-    // three roles: the consuming fold fixes outer/open, while the setup-prefix
-    // source independently scans A/inner and immediately prunes infeasible
-    // SIS widths for each block split.
-    for log_basis_inner in policy.basis_range.0..=policy.basis_range.1 {
-        let inner_decomp = DecompositionParams {
-            log_basis: log_basis_inner,
-            ..policy.decomposition
+    // The current protocol has one Stage-1 range polynomial. Until role-specific
+    // range proofs exist, setup-prefix source, commitment, and opening digits use
+    // the consuming fold's certified basis and only block geometry is searched.
+    let log_basis_inner = log_basis_open;
+    let inner_decomp = DecompositionParams {
+        log_basis: log_basis_inner,
+        ..policy.decomposition
+    };
+    let num_digits_inner = num_digits_setup_prefix_commit(inner_decomp);
+    for block_index_bits in (0..=reduced_vars).rev() {
+        let Some(num_live_blocks) = 1usize.checked_shl(block_index_bits as u32) else {
+            continue;
         };
-        let num_digits_inner = num_digits_setup_prefix_commit(inner_decomp);
-        for block_index_bits in (0..=reduced_vars).rev() {
-            let Some(num_live_blocks) = 1usize.checked_shl(block_index_bits as u32) else {
-                continue;
-            };
-            let position_index_bits = reduced_vars - block_index_bits;
-            let Some(num_positions_per_block) = 1usize.checked_shl(position_index_bits as u32)
-            else {
-                continue;
-            };
-            let fold_shape = optimize_fold_challenge_shape(requested_fold_shape, num_live_blocks)?;
-            if num_live_blocks < num_chunks {
-                continue;
-            }
-            let Some(width_s) =
-                decomposed_s_block_ring_count(num_positions_per_block, num_digits_inner)
-            else {
-                continue;
-            };
-            let Some(norm_s) = rounded_up_role_a_inf_norm(
-                policy.sis_security_policy,
-                family,
-                d,
-                inner_decomp,
-                ring_challenge_cfg,
-                fold_shape,
-                false,
-                0,
-                policy.ring_subfield_norm_bound,
-                num_live_blocks,
-                1,
-                width_s as u64,
-            ) else {
-                continue;
-            };
-            let Ok(a_key) = AjtaiKeyParams::try_new_with_min_rank(
-                sis_key(policy, akita_types::SisMatrixRole::A, norm_s),
-                width_s,
-            ) else {
-                continue;
-            };
-            let Some(norm_t) = rounded_up_collision_inf_norm(
-                policy.sis_security_policy,
-                family,
-                akita_types::SisMatrixRole::B,
-                d,
-                log_basis_outer,
-            ) else {
-                continue;
-            };
-            let Some(width_t) =
-                decomposed_t_ring_count(a_key.row_len(), num_digits_outer, num_live_blocks, 1)
-            else {
-                continue;
-            };
-            let Ok(b_key) = AjtaiKeyParams::try_new_with_min_rank(
-                sis_key(policy, akita_types::SisMatrixRole::B, norm_t),
-                width_t,
-            ) else {
-                continue;
-            };
-            let fold_linf_cap_config = FoldWitnessLinfCapConfig::for_fold_level(
-                ring_challenge_cfg,
-                fold_shape,
-                d,
-                width_s,
-            )?;
-            let challenge = FoldChallengeNorms {
-                infinity_norm: fold_shape.effective_infinity_norm(ring_challenge_cfg) as u128,
-                l1_norm: fold_shape.effective_l1_mass(ring_challenge_cfg) as u128,
-            };
-            let (num_digits_fold_one, _) = fold_witness_digit_plan(
-                num_live_blocks,
-                1,
-                policy.decomposition.field_bits(),
-                log_basis_open,
-                challenge,
-                FoldWitnessNorms::new(log_basis_inner, d, 1, false),
-                &fold_linf_cap_config,
-            )?;
-            let layout = PrecommittedGroupParams {
-                group: PolynomialGroupLayout::singleton(prefix_num_vars),
-                num_live_ring_elements_per_claim: ring_slots,
-                num_positions_per_block,
-                num_live_blocks,
-                fold_challenge_shape: fold_shape,
-                log_basis_inner,
-                log_basis_outer,
-                n_a: a_key.row_len(),
-                n_b: b_key.row_len(),
-            };
-            let params = PrecommittedLevelParams {
-                layout,
-                a_key,
-                b_key,
-                log_basis_open,
-                num_digits_inner,
-                num_digits_outer,
-                num_digits_open: num_digits_open_val,
-                num_digits_fold_one,
-            };
-            let physical_width = grouped_segment_rings(
-                1,
-                num_live_blocks,
-                num_chunks,
-                num_positions_per_block,
-                params.a_key.row_len(),
-                num_digits_inner,
-                num_digits_outer,
-                num_digits_open_val,
-                num_digits_fold_one,
-            )?;
-            let score =
-                layout_candidate_score(physical_width, num_live_blocks, num_chunks, fold_shape)?;
-            if best
-                .as_ref()
-                .is_none_or(|(best_score, _)| score < *best_score)
-            {
-                best = Some((score, params));
-            }
+        let position_index_bits = reduced_vars - block_index_bits;
+        let Some(num_positions_per_block) = 1usize.checked_shl(position_index_bits as u32) else {
+            continue;
+        };
+        let fold_shape = optimize_fold_challenge_shape(requested_fold_shape, num_live_blocks)?;
+        if num_live_blocks < num_chunks {
+            continue;
+        }
+        let Some(width_s) =
+            decomposed_s_block_ring_count(num_positions_per_block, num_digits_inner)
+        else {
+            continue;
+        };
+        let Some(norm_s) = rounded_up_role_a_inf_norm(
+            policy.sis_security_policy,
+            family,
+            d,
+            inner_decomp,
+            log_basis_open,
+            ring_challenge_cfg,
+            fold_shape,
+            false,
+            0,
+            policy.ring_subfield_norm_bound,
+            num_live_blocks,
+            1,
+            width_s as u64,
+        ) else {
+            continue;
+        };
+        let Ok(a_key) = AjtaiKeyParams::try_new_with_min_rank(
+            sis_key(policy, akita_types::SisMatrixRole::A, norm_s),
+            width_s,
+        ) else {
+            continue;
+        };
+        let Some(norm_t) = rounded_up_collision_inf_norm(
+            policy.sis_security_policy,
+            family,
+            akita_types::SisMatrixRole::B,
+            d,
+            log_basis_open,
+        ) else {
+            continue;
+        };
+        let Some(width_t) =
+            decomposed_t_ring_count(a_key.row_len(), num_digits_outer, num_live_blocks, 1)
+        else {
+            continue;
+        };
+        let Ok(b_key) = AjtaiKeyParams::try_new_with_min_rank(
+            sis_key(policy, akita_types::SisMatrixRole::B, norm_t),
+            width_t,
+        ) else {
+            continue;
+        };
+        let fold_linf_cap_config =
+            FoldWitnessLinfCapConfig::for_fold_level(ring_challenge_cfg, fold_shape, d, width_s)?;
+        let challenge = FoldChallengeNorms {
+            infinity_norm: fold_shape.effective_infinity_norm(ring_challenge_cfg) as u128,
+            l1_norm: fold_shape.effective_l1_mass(ring_challenge_cfg) as u128,
+        };
+        let (num_digits_fold_one, _) = fold_witness_digit_plan(
+            num_live_blocks,
+            1,
+            policy.decomposition.field_bits(),
+            log_basis_open,
+            challenge,
+            FoldWitnessNorms::new(log_basis_inner, d, 1, false),
+            &fold_linf_cap_config,
+        )?;
+        let layout = PrecommittedGroupParams {
+            group: PolynomialGroupLayout::singleton(prefix_num_vars),
+            num_live_ring_elements_per_claim: ring_slots,
+            num_positions_per_block,
+            num_live_blocks,
+            fold_challenge_shape: fold_shape,
+            log_basis_inner,
+            log_basis_outer,
+            n_a: a_key.row_len(),
+            a_coeff_linf_bound: a_key.coeff_linf_bound(),
+            n_b: b_key.row_len(),
+            b_coeff_linf_bound: b_key.coeff_linf_bound(),
+        };
+        let params = PrecommittedLevelParams {
+            layout,
+            a_key,
+            b_key,
+            log_basis_open,
+            num_digits_inner,
+            num_digits_outer,
+            num_digits_open: num_digits_open_val,
+            num_digits_fold_one,
+        };
+        let physical_width = grouped_segment_rings(
+            1,
+            num_live_blocks,
+            num_chunks,
+            num_positions_per_block,
+            params.a_key.row_len(),
+            num_digits_inner,
+            num_digits_outer,
+            num_digits_open_val,
+            num_digits_fold_one,
+        )?;
+        let score =
+            layout_candidate_score(physical_width, num_live_blocks, num_chunks, fold_shape)?;
+        if best
+            .as_ref()
+            .is_none_or(|(best_score, _)| score < *best_score)
+        {
+            best = Some((score, params));
         }
     }
 
@@ -694,7 +689,7 @@ pub(crate) fn compute_root_direct_level_params(
         log_basis,
         ..decomp
     };
-    let log_basis_inner = root_witness_log_basis(policy, log_basis);
+    let log_basis_inner = log_basis;
     let witness_decomp = DecompositionParams {
         log_basis: log_basis_inner,
         ..decomp
@@ -767,6 +762,7 @@ pub(crate) fn compute_root_direct_level_params(
         sis_modulus_profile,
         d,
         witness_decomp,
+        log_basis,
         ring_challenge_cfg,
         fold_challenge_shape,
         true,
@@ -908,7 +904,7 @@ pub(crate) fn scalar_root_fold_level_params_candidate(
         ..policy.decomposition
     };
     let witness_decomp = DecompositionParams {
-        log_basis: root_witness_log_basis(policy, log_basis),
+        log_basis,
         ..policy.decomposition
     };
     let num_digits_inner = num_digits_inner(witness_decomp, true);
@@ -922,6 +918,7 @@ pub(crate) fn scalar_root_fold_level_params_candidate(
         policy.sis_modulus_profile,
         policy.ring_dimension,
         witness_decomp,
+        log_basis,
         ring_challenge_cfg,
         fold_challenge_shape,
         true,

@@ -45,6 +45,13 @@ impl PrecommittedLevelParams {
                 "precommitted semantic bases and digit depths must be nonzero".to_string(),
             ));
         }
+        if self.log_basis_open < self.layout.log_basis_inner
+            || self.log_basis_open < self.layout.log_basis_outer
+        {
+            return Err(AkitaError::InvalidSetup(
+                "certified opening basis must dominate precommitted inner/outer bases".to_string(),
+            ));
+        }
         let expected_a_width = self
             .layout
             .num_positions_per_block
@@ -57,13 +64,18 @@ impl PrecommittedLevelParams {
             .and_then(|width| width.checked_mul(self.layout.num_live_blocks))
             .and_then(|width| width.checked_mul(self.layout.group.num_polynomials()))
             .ok_or_else(|| AkitaError::InvalidSetup("precommitted B width overflow".to_string()))?;
-        if self.a_key.sis_table_key().role != crate::sis::SisMatrixRole::A
+        if self.layout.n_a != self.a_key.row_len()
+            || self.layout.a_coeff_linf_bound != self.a_key.coeff_linf_bound()
+            || self.layout.n_b != self.b_key.row_len()
+            || self.layout.b_coeff_linf_bound != self.b_key.coeff_linf_bound()
+            || self.a_key.sis_table_key().role != crate::sis::SisMatrixRole::A
             || self.a_key.col_len() != expected_a_width
             || self.b_key.sis_table_key().role != crate::sis::SisMatrixRole::B
             || self.b_key.col_len() != expected_b_width
         {
             return Err(AkitaError::InvalidSetup(
-                "precommitted A/B keys do not match semantic digit depths".to_string(),
+                "precommitted A/B keys do not match frozen ranks, bounds, or digit depths"
+                    .to_string(),
             ));
         }
         Ok(())

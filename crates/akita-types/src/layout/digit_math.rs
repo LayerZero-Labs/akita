@@ -136,6 +136,7 @@ pub fn optimal_block_geometry_split(
             sis_modulus_profile,
             d as usize,
             decomposition,
+            decomposition.log_basis,
             fold_challenge_config,
             fold_challenge_shape,
             log_commit_bound == 1,

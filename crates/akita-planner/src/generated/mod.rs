@@ -298,7 +298,9 @@ fn precommitted_group_key_eq(
         && generated.log_basis_inner == layout.log_basis_inner
         && generated.log_basis_outer == layout.log_basis_outer
         && generated.n_a == layout.n_a
+        && generated.a_coeff_linf_bound == layout.a_coeff_linf_bound
         && generated.n_b == layout.n_b
+        && generated.b_coeff_linf_bound == layout.b_coeff_linf_bound
 }
 
 /// Returns an error when the generated key does not match the runtime key.
@@ -313,4 +315,31 @@ pub(crate) fn validate_entry_key(
             "generated schedule key mismatch".to_string(),
         ))
     }
+}
+
+pub(crate) fn validate_certified_bases(
+    log_basis_inner: u32,
+    log_basis_outer: u32,
+    log_basis_open: u32,
+    policy: &crate::PlannerPolicy,
+    context: &str,
+) -> Result<(), akita_field::AkitaError> {
+    let (min, max) = policy.basis_range;
+    for (role, basis) in [
+        ("inner", log_basis_inner),
+        ("outer", log_basis_outer),
+        ("open", log_basis_open),
+    ] {
+        if basis < min || basis > max {
+            return Err(akita_field::AkitaError::InvalidSetup(format!(
+                "{context} {role} basis {basis} outside policy range [{min}, {max}]"
+            )));
+        }
+    }
+    if log_basis_open < log_basis_inner || log_basis_open < log_basis_outer {
+        return Err(akita_field::AkitaError::InvalidSetup(format!(
+            "{context} certified open basis must dominate inner and outer bases"
+        )));
+    }
+    Ok(())
 }

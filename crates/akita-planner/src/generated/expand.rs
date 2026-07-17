@@ -80,6 +80,13 @@ impl GeneratedSetupPrefixGroup {
         ring_challenge_cfg: &SparseChallengeConfig,
         fold_shape: TensorChallengeShape,
     ) -> Result<PrecommittedLevelParams, AkitaError> {
+        super::validate_certified_bases(
+            self.log_basis_inner,
+            self.log_basis_outer,
+            self.log_basis_open,
+            policy,
+            "generated setup-prefix group",
+        )?;
         let d = policy.ring_dimension;
         let sis_modulus_profile = policy.sis_modulus_profile;
         let sis_policy = policy.sis_security_policy;
@@ -98,7 +105,7 @@ impl GeneratedSetupPrefixGroup {
             ));
         }
         let prefix_num_vars = n_prefix.trailing_zeros() as usize;
-        let layout = PrecommittedGroupParams {
+        let mut layout = PrecommittedGroupParams {
             group: PolynomialGroupLayout::singleton(prefix_num_vars),
             num_live_ring_elements_per_claim,
             num_positions_per_block,
@@ -107,7 +114,9 @@ impl GeneratedSetupPrefixGroup {
             log_basis_inner: self.log_basis_inner,
             log_basis_outer: self.log_basis_outer,
             n_a: self.n_a as usize,
+            a_coeff_linf_bound: 1,
             n_b: self.n_b as usize,
+            b_coeff_linf_bound: 1,
         };
         let inner_decomp = DecompositionParams {
             log_basis: self.log_basis_inner,
@@ -144,6 +153,7 @@ impl GeneratedSetupPrefixGroup {
             sis_modulus_profile,
             d,
             inner_decomp,
+            self.log_basis_open,
             ring_challenge_cfg,
             fold_shape,
             false,
@@ -165,7 +175,7 @@ impl GeneratedSetupPrefixGroup {
             sis_modulus_profile,
             akita_types::SisMatrixRole::B,
             d,
-            self.log_basis_outer,
+            self.log_basis_open,
         )
         .ok_or_else(|| no_layout("B"))?;
         let outer_width =
@@ -197,6 +207,8 @@ impl GeneratedSetupPrefixGroup {
             b_bucket,
             d,
         )?;
+        layout.a_coeff_linf_bound = a_bucket;
+        layout.b_coeff_linf_bound = b_bucket;
         let fold_linf_cap_config = FoldWitnessLinfCapConfig::for_fold_level(
             ring_challenge_cfg,
             fold_shape,
@@ -417,6 +429,7 @@ impl GeneratedFoldStep {
             sis_modulus_profile,
             ring_d,
             witness_decomp,
+            self.log_basis_open,
             &ring_challenge_cfg,
             fold_shape,
             is_root,
@@ -710,6 +723,7 @@ impl GeneratedFoldStep {
             sis_modulus_profile,
             ring_d,
             witness_decomp,
+            self.log_basis_open,
             &ring_challenge_cfg,
             fold_shape,
             true,

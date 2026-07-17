@@ -503,7 +503,9 @@ fn group_batch_key_rejects_precommitted_num_vars_above_main() {
             log_basis_inner: 1,
             log_basis_outer: 2,
             n_a: 3,
+            a_coeff_linf_bound: 1,
             n_b: 4,
+            b_coeff_linf_bound: 1,
         }],
     };
 
@@ -526,7 +528,9 @@ fn group_batch_key_rejects_precommitted_num_vars_above_half_main() {
             log_basis_inner: 1,
             log_basis_outer: 2,
             n_a: 3,
+            a_coeff_linf_bound: 1,
             n_b: 4,
+            b_coeff_linf_bound: 1,
         }],
     };
 
@@ -548,7 +552,9 @@ fn group_batch_key_allows_mixed_polynomial_counts() {
             log_basis_inner: 1,
             log_basis_outer: 2,
             n_a: 3,
+            a_coeff_linf_bound: 1,
             n_b: 4,
+            b_coeff_linf_bound: 1,
         }],
     };
 
@@ -569,7 +575,9 @@ fn validate_frozen_precommit_rejects_geometry_mismatch() {
         log_basis_inner: 1,
         log_basis_outer: 2,
         n_a: 3,
+        a_coeff_linf_bound: 1,
         n_b: 4,
+        b_coeff_linf_bound: 1,
     };
     let err = layout
         .validate_frozen_precommit(64)

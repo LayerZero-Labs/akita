@@ -537,7 +537,9 @@ mod tests {
                 log_basis_inner: 1,
                 log_basis_outer: 1,
                 n_a: 1,
+                a_coeff_linf_bound: 1,
                 n_b: 1,
+                b_coeff_linf_bound: 1,
             },
             a_key: crate::AjtaiKeyParams::new_unchecked(
                 crate::sis::DEFAULT_SIS_SECURITY_POLICY,
