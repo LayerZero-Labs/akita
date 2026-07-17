@@ -60,12 +60,12 @@ fn sample_multi_group_root_params() -> (LevelParams, OpeningClaimsLayout) {
 }
 
 #[test]
-fn shared_d_digit_basis_covers_every_group() {
+fn shared_d_digit_basis_uses_root_opening_basis() {
     let (mut grouped, _) = sample_multi_group_root_params();
     grouped.log_basis = 3;
     grouped.precommitted_groups[0].layout.log_basis_commit = 6;
 
-    assert_eq!(grouped.shared_d_digit_log_basis(), 6);
+    assert_eq!(grouped.shared_d_digit_log_basis(), 3);
     assert_eq!(shared_d_digit_log_basis(5, &[]), 5);
 }
 

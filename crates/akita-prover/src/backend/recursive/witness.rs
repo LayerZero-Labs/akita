@@ -447,7 +447,7 @@ where
                 num_positions_per_block: plan.num_positions_per_block,
                 num_live_blocks,
                 num_digits_commit: plan.num_digits_commit,
-                log_basis: plan.log_basis,
+                log_basis: plan.log_basis_witness,
                 known_balanced_log_basis: self.known_balanced_log_basis,
             },
         )?;

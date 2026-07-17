@@ -44,7 +44,9 @@ pub struct CommitInnerPlan {
     pub num_digits_commit: usize,
     /// Number of balanced digits used when opening (recomposition width).
     pub num_digits_open: usize,
-    /// Logarithm of the gadget basis.
+    /// Logarithm of the committed source-witness gadget basis.
+    pub log_basis_witness: u32,
+    /// Logarithm of the committed `t_hat` gadget basis.
     pub log_basis: u32,
 }
 
@@ -56,6 +58,7 @@ impl CommitInnerPlan {
             num_positions_per_block: params.num_positions_per_block,
             num_digits_commit: params.num_digits_commit,
             num_digits_open: params.num_digits_open,
+            log_basis_witness: params.log_basis_witness,
             log_basis: params.log_basis,
         }
     }

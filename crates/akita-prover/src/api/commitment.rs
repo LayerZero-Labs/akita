@@ -143,6 +143,10 @@ where
             "commit params require nonzero digit depths".to_string(),
         ));
     }
+    validate_i8_setup_log_basis(
+        params.log_basis_witness,
+        "for i8 witness commitment decomposition",
+    )?;
     validate_i8_setup_log_basis(params.log_basis, "for i8 commitment decomposition")?;
     let dims = params.role_dims();
     validate_role_dims(dims)?;

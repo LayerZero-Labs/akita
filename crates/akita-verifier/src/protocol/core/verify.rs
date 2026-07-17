@@ -198,15 +198,42 @@ fn decompose_rows_i8<F, const D: usize>(
     rows: &[CyclotomicRing<F, D>],
     num_digits: usize,
     log_basis: u32,
-) -> Vec<[i8; D]>
+) -> Result<Vec<[i8; D]>, AkitaError>
 where
     F: FieldCore + CanonicalField,
 {
+    if num_digits == 1 && log_basis == 1 {
+        return signed_unit_rows_i8(rows);
+    }
+
     let mut out = vec![[0i8; D]; rows.len() * num_digits];
     for (dst_chunk, row) in out.chunks_mut(num_digits).zip(rows.iter()) {
         row.balanced_decompose_pow2_i8_into(dst_chunk, log_basis);
     }
-    out
+    Ok(out)
+}
+
+fn signed_unit_rows_i8<F, const D: usize>(
+    rows: &[CyclotomicRing<F, D>],
+) -> Result<Vec<[i8; D]>, AkitaError>
+where
+    F: FieldCore + CanonicalField,
+{
+    let q = (-F::one()).to_canonical_u128() + 1;
+    rows.iter()
+        .map(|row| {
+            let mut digits = [0i8; D];
+            for (dst, coeff) in digits.iter_mut().zip(row.coeffs.iter()) {
+                *dst = match coeff.to_canonical_u128() {
+                    0 => 0,
+                    1 => 1,
+                    value if value == q - 1 => -1,
+                    _ => return Err(AkitaError::InvalidProof),
+                };
+            }
+            Ok(digits)
+        })
+        .collect()
 }
 
 fn direct_decomposed_inner_rows<F, const D: usize>(
@@ -253,13 +280,13 @@ where
             block,
             params.num_digits_witness(),
             params.log_basis_witness(),
-        );
+        )?;
         let t_rows = mat_vec_mul_i8_plain::<F, D>(&a_rows, &block_digits);
         out.extend(decompose_rows_i8(
             &t_rows,
             params.num_digits_commit(),
             params.log_basis_commit(),
-        ));
+        )?);
     }
 
     Ok(out)

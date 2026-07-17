@@ -377,7 +377,7 @@ where
             plan.n_a,
             plan.num_positions_per_block,
             plan.num_digits_commit,
-            plan.log_basis,
+            plan.log_basis_witness,
         )?;
         let decomposed_inner_rows =
             decompose_commit_blocks_into::<F, D>(&t, plan.num_digits_open, plan.log_basis)?;
