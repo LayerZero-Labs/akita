@@ -5,8 +5,8 @@
 | Author(s)     | Alberto Centelles |
 | Created       | 2026-07-15     |
 | Status        | active         |
-| PR            |                |
-| Supersedes    | [`akita-field-refactor.md`](archive/2026-Q3/akita-field-refactor.md) |
+| PR            | [Jolt PR A #1684](https://github.com/a16z/jolt/pull/1684); Akita PR B TBD; Jolt PR C TBD |
+| Supersedes    | [`specs/akita-field-refactor.md`](archive/2026-Q3/akita-field-refactor.md) |
 | Superseded-by |                |
 | Book-chapter  |                |
 
@@ -26,7 +26,9 @@ crate or an Akita compatibility wrapper.
 
 `jolt-akita` remains a substantive PCS integration crate. It may translate
 transcripts, configuration, setup, batching, serialization errors, and Jolt's
-PCS-facing abstractions, but it must not define or wrap field identities.
+PCS-facing abstractions, but it must not define or wrap field identities. Its
+public `AkitaField` name is retained only as a transparent alias for the
+concrete field fixed by `AkitaScheme`; it creates no second type identity.
 
 ## Intent
 
@@ -47,8 +49,10 @@ both repositories importing the same Rust types and traits directly.
   `akita-field` implementation or a reduced Akita-only backend would defeat the
   audit objective.
 - There is no `crates/jolt-akita` field facade and no Akita re-export crate.
-  Downstream imports are changed to `jolt_field::...` as part of one coordinated
-  breaking cutover.
+  Akita imports are changed to `jolt_field::...` as part of one coordinated
+  breaking cutover. `jolt_akita::AkitaField` remains available as the
+  transparent semantic name for the field fixed by `AkitaScheme`, not as a
+  wrapper or compatibility identity.
 - `jolt-akita` remains only for PCS integration that cannot naturally live in
   either primitive crate.
 - Akita's serialization format and optimized serialization implementation are
@@ -77,9 +81,10 @@ both repositories importing the same Rust types and traits directly.
 - Verifier-reachable shared code obeys Akita's no-panic contract: malformed
   input is rejected with `AkitaError` or `SerializationError`, not a panic,
   unchecked index, or unbounded allocation.
-- A `jolt-field` release used by Akita and Jolt is immutable during its audit
-  window. Both repositories resolve exactly the same package identity and
-  version.
+- The `jolt-field` source used by Akita is immutable during its audit window:
+  either a released package or a full upstream Jolt Git revision. Its contents
+  match the audited Jolt workspace member. Every resolved integration graph
+  contains exactly one `jolt-field` Cargo package identity.
 - Moving code across repositories preserves audit provenance. The landing PR
   records the originating Akita commit and a source-to-destination file map.
 - The broad Jolt `Field` capability is a programming convenience, not a claim
@@ -94,6 +99,9 @@ both repositories importing the same Rust types and traits directly.
   transcript challenge derivation.
 - Adding a wrapper crate, re-export facade, compatibility type alias, or newtype
   solely to preserve old `akita_field` import paths.
+- Removing the existing `jolt_akita::AkitaField` semantic alias. Retaining that
+  transparent alias does not preserve an `akita_field` path or create a second
+  field identity.
 - Moving Akita PCS policy, setup generation, transcript scheduling, proof
   batching, or verifier logic into `jolt-field`.
 - Removing `jolt-akita`; it remains the Jolt-to-Akita PCS integration boundary.
@@ -112,10 +120,11 @@ both repositories importing the same Rust types and traits directly.
   safety comments, and arithmetic derivations.
 - [x] Every Akita crate imports shared field types and traits from `jolt_field`;
   `akita-field` is removed from the workspace and filesystem.
-- [x] Akita's `compat/jolt.rs`, Jolt's reverse `src/akita.rs` adapter, and their
+- [ ] Akita's `compat/jolt.rs`, Jolt's reverse `src/akita.rs` adapter, and their
   bootstrap features/dependencies are deleted after the coordinated cutover.
 - [x] No field wrapper, pass-through implementation, or re-export facade remains
-  in Akita or `jolt-akita`.
+  in Akita or `jolt-akita`. The public `jolt_akita::AkitaField` name is a
+  transparent alias for `jolt_field::Prime128OffsetA7F7`, not a facade.
 - [x] `AkitaError` remains Akita-owned and is moved out of the deleted field
   crate without introducing a dependency cycle.
 - [x] `jolt-field` does not depend on `akita-serialization`. Existing
@@ -129,18 +138,24 @@ both repositories importing the same Rust types and traits directly.
   feature builds. Enabling one backend does not silently select another.
 - [ ] NEON, AVX2, and AVX-512 scalar/packed parity tests pass on representative
   hardware or their established CI runners.
-- [x] A package-identity check demonstrates that an integrated Jolt+Akita build
+- [ ] A package-identity check demonstrates that an integrated Jolt+Akita build
   contains one resolved `jolt-field` package ID and no `akita-field` package.
+- [ ] PR C derives the headerless commitment decode coefficient count from the
+  validated statement and canonical Akita schedule, without adding
+  `backend_num_coeffs` to `AkitaCommitment` or changing the commitment bytes or
+  transcript.
 - [ ] Existing field microbenchmarks show no unexplained regression greater
   than 2% in median hot-operation latency or throughput on the same compiler and
   hardware.
 - [x] Jolt's landing PR records the originating Akita revision and an auditable
   mapping from each moved source/test/benchmark file to its new location.
 
-The implementation remains `active` until the stacked repositories replace
-their sibling path dependencies with the released or immutable Git package,
-the architecture-specific CI runners report NEON/AVX2/AVX-512 parity, and the
-same-machine microbenchmark comparison and complete host/zk CI matrices pass.
+The implementation remains `active` until Jolt PR A lands, Akita replaces its
+temporary PR-head fork pin with the released package or immutable upstream Git
+revision, PR C removes the remaining bootstrap adapter and resolves the final
+integrated graph to one `jolt-field` identity, the architecture-specific CI
+runners report NEON/AVX2/AVX-512 parity, and the same-machine microbenchmark
+comparison and complete host/zk CI matrices pass.
 
 ### Testing Strategy
 
@@ -214,14 +229,14 @@ must be exactly unchanged.
 After the final cutover, dependency direction is:
 
 ```text
-                       registry `jolt-field`
-                         /              \
-                        v                v
-                  Jolt crates       Akita primitive/protocol crates
-                        \                /
-                         v              v
-                            `jolt-akita`
-                         (PCS integration only)
+                  immutable `jolt-field` source
+                    /                   \
+                   v                     v
+       Jolt workspace member      Akita primitive/protocol crates
+                   \                     /
+                    v                   v
+                         `jolt-akita`
+                      (PCS integration only)
 
 Akita serialization crates ---> `jolt-field`
 Akita protocol crates -------> Akita error owner
@@ -282,10 +297,10 @@ The intended feature surface is:
 | `parallel` | Rayon-backed parallel helpers where supported |
 | `allocative` | allocation instrumentation implementations |
 
-The library default should be empty unless Jolt-wide compatibility requires a
-staged change. In all cases, backend features are additive: `bn254,solinas`
-must compile together and neither feature changes the identity or semantics of
-types exported by the other. SIMD selection continues to use target-feature
+The library default remains `bn254` during this cutover to preserve Jolt's
+existing feature behavior. Backend features are additive: `bn254,solinas` must
+compile together and neither feature changes the identity or semantics of types
+exported by the other. SIMD selection continues to use target-feature
 configuration rather than Cargo features.
 
 Do not add an empty `binary` feature during this migration. The future GF(2)
@@ -339,45 +354,70 @@ from `jolt-field` to it.
 - invoking Akita proving and verification APIs;
 - translating Akita serialization and protocol errors into Jolt-facing errors.
 
-It must not own field traits, field types, arithmetic implementations, aliases,
-or pass-through field helpers. Once both sides use the same `jolt-field` types,
-field compatibility code in `jolt-akita` is deleted rather than simplified into
-another forwarding layer.
+It must not own field traits, field types, arithmetic implementations, or
+pass-through field helpers. It retains `jolt_akita::AkitaField` as the public
+semantic name for the field fixed by `AkitaScheme`; that name is transparently
+identical to `jolt_field::Prime128OffsetA7F7` and carries no implementation.
+Once both sides use the same `jolt-field` types, field compatibility code in
+`jolt-akita` is deleted rather than simplified into another forwarding layer.
+
+Akita's optimized commitment encoding is headerless and therefore requires a
+coefficient count as deserialization context. PR C derives that count from the
+validated Jolt statement and the same canonical Akita commitment schedule used
+by the verifier, with checked arithmetic. `AkitaCommitment` must not serialize
+an attacker-supplied `backend_num_coeffs` field or absorb a new coefficient
+count into the Jolt transcript. This preserves the pre-cutover wrapper bytes
+and Fiat-Shamir schedule while bounding decoder allocation from trusted shape.
 
 ### Package Identity and Release
 
-`jolt-field` is published as a standalone registry package. During development,
-Jolt may use a workspace path plus an exact version, while Akita pins that exact
-registry version. A temporary root `[patch]` or Git revision is allowed only as
-bootstrap machinery for stacked cross-repository PRs; it is removed from the
-final audited graph.
+Akita consumes `jolt-field` from either a standalone registry release or an
+immutable full upstream Jolt Git revision. During stacked review it temporarily
+pins commit `09b2f7b6ddd9427c756b781c39530a6c005e332d` on the contributor fork,
+the head used by Jolt PR A #1684. That fork pin is replaced with the upstream
+merge revision or a released package identity once PR A lands.
 
-The package version is frozen for the audit window. Any arithmetic or
-serialization-affecting change after the freeze requires a new version and an
-explicit audit delta. CI inspects Cargo metadata and fails if the integrated
-graph resolves more than one `jolt-field` package identity.
+Jolt itself uses the local `crates/jolt-field` workspace member. When Jolt later
+consumes the migrated Akita revision, PR C must use a root Cargo source patch or
+an equivalent resolution mechanism to map Akita's immutable `jolt-field`
+dependency to that workspace member. The mechanism is final integration wiring,
+not a field facade, and the resolved Jolt graph must contain one package
+identity. A graph containing both the local workspace member and a Git or
+registry copy is invalid.
+
+The package release or Git revision is frozen for the audit window. Any
+arithmetic or serialization-affecting change after the freeze requires a new
+immutable identity and an explicit audit delta. CI inspects Cargo metadata and
+fails if the integrated graph resolves more than one `jolt-field` package
+identity.
 
 ### Cross-Repository Landing Sequence
 
-The migration cannot be atomic across two repositories, so it lands in three
-reviewable phases.
+The migration cannot be atomic across two repositories. It uses three code PRs
+with an immutable field-identity checkpoint between PR A and PR B.
 
-1. **Jolt foundation.** Add the Solinas stack and reconciled traits to
-   `jolt-field`, with provenance, tests, feature matrix, package-identity gate,
-   and a publishable dependency graph. A temporary reverse Akita adapter or
-   pinned bootstrap dependency may remain only to keep the current
-   `jolt-akita` revision buildable.
-2. **Akita cutover.** Pin the new `jolt-field`, move serialization impls and
+1. **Jolt foundation.** Jolt PR A #1684 adds the Solinas stack and reconciled
+   traits to `jolt-field`, with provenance, tests, feature matrix, and an
+   intermediate package-identity gate. It retains the reverse Akita adapter and
+   unpublished optional bootstrap dependencies so the existing `jolt-akita`
+   revision remains buildable; registry packaging is therefore deferred.
+2. **Freeze the field identity.** Land PR A, then select its full upstream Git
+   revision or publish the standalone package. Akita must not cut over to a
+   mutable branch, sibling path, or contributor-fork identity intended only for
+   review.
+3. **Akita cutover.** Pin the frozen `jolt-field`, move serialization impls and
    `AkitaError` to their proper Akita owners, change every consumer to direct
    `jolt_field` imports, pass golden compatibility tests, remove `akita-field`,
    and update the crate graph and book.
-3. **Jolt cleanup.** Pin the migrated Akita revision, delete Jolt's reverse
-   Akita adapter and all bootstrap dependencies/features, then run the full
-   integrated Jolt matrix and freeze the audit version.
+4. **Jolt cleanup.** Pin the migrated Akita revision, map its `jolt-field`
+   source back to Jolt's workspace member, derive commitment decode context
+   without changing wrapper bytes or transcript scheduling, delete Jolt's
+   reverse Akita adapter and all bootstrap dependencies/features, and run the
+   full integrated Jolt matrix.
 
 Temporary compatibility code is named in the phase-one PR description and has
-a deletion issue/PR linked before phase one merges. It must not survive phase
-three or be published as part of the final package surface.
+a deletion issue/PR linked before phase one merges. It must not survive the
+Jolt cleanup phase or be published as part of the final package surface.
 
 ### Alternatives Considered
 
@@ -442,16 +482,19 @@ Recommended implementation checklist:
    mechanically moving concrete types.
 3. Move code with history-preserving commits where practical. Keep mechanical
    relocation separate from trait reconciliation and optimizations.
-4. Make `jolt-field` independent of all Akita crates and pass its standalone
-   feature/architecture matrix.
-5. Relocate Akita serialization implementations and `AkitaError`; add golden
+4. Make the moved `jolt-field` implementation independent of Akita crates and
+   pass its standalone feature/architecture matrix while retaining only the
+   documented PR A bootstrap edge.
+5. Land PR A and freeze an immutable upstream Git revision or registry release
+   before changing Akita's production dependency.
+6. Relocate Akita serialization implementations and `AkitaError`; add golden
    compatibility fixtures before deleting their old definitions.
-6. Cut every Akita consumer directly to `jolt_field`, then delete
+7. Cut every Akita consumer directly to `jolt_field`, then delete
    `akita-field` and all compatibility modules in one change set.
-7. Run both repository matrices, compare benchmarks and bytes, inspect Cargo
-   metadata for duplicate package IDs, and remove bootstrap configuration.
-8. Freeze and publish the audited `jolt-field` version, then update the spec and
-   durable documentation.
+8. In PR C, pin migrated Akita, unify Cargo package identity, derive bounded
+   commitment decode context without changing Jolt bytes or transcript state,
+   remove bootstrap configuration, run both repository matrices, compare
+   benchmarks and bytes, and update the spec and durable documentation.
 
 The highest-risk areas are trait-default semantic drift, orphan-rule constraints
 around Akita serialization, accidentally changing extension coefficient order,
@@ -460,7 +503,7 @@ crate deletion, not deferred to cleanup.
 
 ## References
 
-- [`akita-field-refactor.md`](archive/2026-Q3/akita-field-refactor.md) - former Akita
+- [`specs/akita-field-refactor.md`](archive/2026-Q3/akita-field-refactor.md) — former Akita
   field organization and trait inventory.
 - [`specs/cross-repo-field-microbench.md`](cross-repo-field-microbench.md) —
   existing arithmetic benchmark matrix and SIMD measurement guidance.
