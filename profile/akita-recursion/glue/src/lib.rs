@@ -454,13 +454,13 @@ where
     ) -> Result<AkitaVerifierSetup<F>, SerializationError> {
         let (seed, shared_matrix) = Self::decode_seed_and_matrix(rest)?;
         let prefix_slots = Self::decode_prefix_slots(rest)?;
-        Ok(AkitaVerifierSetup {
-            expanded: Arc::new(AkitaExpandedSetup::from_verified_parts(
+        Ok(AkitaVerifierSetup::from_parts(
+            Arc::new(AkitaExpandedSetup::from_verified_parts(
                 seed,
                 shared_matrix,
             )?),
             prefix_slots,
-        })
+        ))
     }
 
     /// Strictly decode the bundle from bytes produced by [`Self::write_to_bytes`].
@@ -486,12 +486,12 @@ where
     ) -> Result<AkitaVerifierSetup<F>, SerializationError> {
         let (seed, shared_matrix) = Self::decode_seed_and_matrix(rest)?;
         let prefix_slots = Self::decode_prefix_slots(rest)?;
-        Ok(AkitaVerifierSetup {
-            expanded: Arc::new(
+        Ok(AkitaVerifierSetup::from_parts(
+            Arc::new(
                 AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(seed, shared_matrix),
             ),
             prefix_slots,
-        })
+        ))
     }
 
     /// Decode a host-produced recursion artifact while trusting the cached
