@@ -52,6 +52,7 @@ mod fold;
 mod root_fold;
 mod suffix;
 mod terminal_direct;
+mod terminal_ntt;
 use root_fold::verify_root;
 
 pub use verify::batched_verify;

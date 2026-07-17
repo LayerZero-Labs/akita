@@ -113,10 +113,10 @@ impl<F: FieldCore> AkitaProverSetup<F> {
     pub fn verifier_setup(&self) -> Result<AkitaVerifierSetup<F>, AkitaError> {
         let mut prefix_slots = SetupPrefixVerifierRegistry::new();
         prefix_slots.replace_from_prover_registry(&self.prefix_slots)?;
-        Ok(AkitaVerifierSetup {
-            expanded: self.expanded.clone(),
+        Ok(AkitaVerifierSetup::from_parts(
+            self.expanded.clone(),
             prefix_slots,
-        })
+        ))
     }
 
     /// Wrap an already-validated [`AkitaExpandedSetup`] in a prover setup.

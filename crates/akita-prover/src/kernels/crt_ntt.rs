@@ -1,91 +1,14 @@
 //! Protocol-facing CRT+NTT parameter dispatch and matrix caching.
 
 use akita_algebra::ntt::prime::PrimeWidth;
-use akita_algebra::ntt::tables::{
-    q128_primes, validate_profile_crt_ring_degree, Q128_MAX_RING_D, Q128_MODULUS, Q128_NUM_PRIMES,
-    Q32_MAX_RING_D, Q32_MODULUS, Q32_NUM_PRIMES, Q32_PRIMES, Q64_MAX_RING_D, Q64_MODULUS,
-    Q64_NUM_PRIMES, Q64_PRIMES,
-};
+use akita_algebra::ntt::tables::{Q128_NUM_PRIMES, Q32_NUM_PRIMES, Q64_NUM_PRIMES};
 use akita_algebra::ring::{CrtNttParamSet, CyclotomicCrtNtt};
 #[allow(unused_imports)]
 use akita_field::parallel::*;
-use akita_field::{cfg_iter, AkitaError, CanonicalField, FieldCore, PseudoMersenneField};
-use akita_field::{Prime128Offset159, Prime128Offset2355, Prime128OffsetA7F7};
-use akita_types::ntt_ring_degree_supported_for_field;
+use akita_field::{cfg_iter, AkitaError, CanonicalField, FieldCore};
 
+pub use akita_types::{select_crt_ntt_params, ProtocolCrtNttParams};
 use akita_types::{NttCacheKey, RingMatrixView};
-
-/// Supported protocol CRT+NTT parameter families.
-#[derive(Clone)]
-#[allow(missing_docs, clippy::large_enum_variant)]
-pub enum ProtocolCrtNttParams<const D: usize> {
-    Q32(CrtNttParamSet<i32, Q32_NUM_PRIMES, D>),
-    Q64(CrtNttParamSet<i32, Q64_NUM_PRIMES, D>),
-    Q128(CrtNttParamSet<i32, Q128_NUM_PRIMES, D>),
-}
-
-/// Select a CRT+NTT parameter set from field modulus and ring degree.
-///
-/// Dispatch policy:
-/// - `q <= 2^32-99`, `D` in fp32 NTT tier band: Q32 (K=2)
-/// - `q <= 2^64-59`, `D` in fp64 NTT tier band: Q64 (K=3)
-/// - listed fp128 moduli, `D` in fp128 NTT tier band: Q128 (K=5)
-/// - profile CRT caps apply at `D >= 64`; smaller B/D degrees skip caps
-///
-/// # Errors
-///
-/// Returns an error if `D` is unsupported or no CRT/NTT parameter family
-/// matches the field modulus.
-pub fn select_crt_ntt_params<F: CanonicalField, const D: usize>(
-) -> Result<ProtocolCrtNttParams<D>, AkitaError> {
-    if !ntt_ring_degree_supported_for_field::<F>(D) {
-        let tier = akita_types::protocol_dispatch_tier::<F>();
-        return Err(AkitaError::InvalidSetup(format!(
-            "CRT+NTT ring degree {D} outside tier band [{}, {}] for this field",
-            akita_types::ntt_min_ring_d(tier),
-            akita_types::ntt_max_ring_d(tier),
-        )));
-    }
-
-    let modulus = akita_types::field_modulus::<F>();
-    let split_only_q128_modulus =
-        u128::MAX - (<Prime128Offset159 as PseudoMersenneField>::MODULUS_OFFSET - 1);
-    let ntt_q128_modulus =
-        u128::MAX - (<Prime128Offset2355 as PseudoMersenneField>::MODULUS_OFFSET - 1);
-    let a7f7_q128_modulus =
-        u128::MAX - (<Prime128OffsetA7F7 as PseudoMersenneField>::MODULUS_OFFSET - 1);
-
-    if modulus <= Q32_MODULUS as u128 {
-        if D >= 64 {
-            validate_profile_crt_ring_degree(D, Q32_MAX_RING_D)?;
-        }
-        return Ok(ProtocolCrtNttParams::Q32(CrtNttParamSet::new(Q32_PRIMES)));
-    }
-
-    if modulus <= Q64_MODULUS as u128 {
-        if D >= 64 {
-            validate_profile_crt_ring_degree(D, Q64_MAX_RING_D)?;
-        }
-        return Ok(ProtocolCrtNttParams::Q64(CrtNttParamSet::new(Q64_PRIMES)));
-    }
-
-    if modulus == Q128_MODULUS
-        || modulus == split_only_q128_modulus
-        || modulus == ntt_q128_modulus
-        || modulus == a7f7_q128_modulus
-    {
-        if D >= 64 {
-            validate_profile_crt_ring_degree(D, Q128_MAX_RING_D)?;
-        }
-        return Ok(ProtocolCrtNttParams::Q128(CrtNttParamSet::new(
-            q128_primes(),
-        )));
-    }
-
-    Err(AkitaError::InvalidSetup(format!(
-        "no CRT+NTT parameter set for modulus {modulus} and D={D}; supported ranges: <= {Q64_MODULUS} (with Q32/Q64 dispatch) or q in {{{Q128_MODULUS}, {split_only_q128_modulus}, {ntt_q128_modulus}, {a7f7_q128_modulus}}}"
-    )))
-}
 
 /// Pre-converted CRT+NTT cache for a flat 1D matrix, keyed by parameter family.
 ///

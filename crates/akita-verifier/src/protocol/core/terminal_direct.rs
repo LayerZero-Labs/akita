@@ -1,6 +1,6 @@
 //! Deterministic terminal checks over the revealed segment-typed witness.
 
-use super::direct_ring_arithmetic::{decompose_rows_i8, mat_vec_mul_i8};
+use super::direct_ring_arithmetic::decompose_rows_i8;
 use akita_algebra::CyclotomicRing;
 use akita_challenges::{Challenges, SparseChallenge};
 use akita_field::{
@@ -8,7 +8,7 @@ use akita_field::{
 };
 use akita_types::{
     decode_terminal_z_golomb_payload_with_cap, dispatch_for_field,
-    recover_ring_subfield_inner_product, AkitaExpandedSetup, CleartextWitnessProof, FpExtEncoding,
+    recover_ring_subfield_inner_product, AkitaVerifierSetup, CleartextWitnessProof, FpExtEncoding,
     LevelParams, LevelParamsLike, PreparedOpeningPoint, RelationMatrixRowLayout,
     RingRelationInstance, RingVec,
 };
@@ -105,14 +105,15 @@ where
 
 #[tracing::instrument(skip_all, name = "terminal_direct_a_rows")]
 fn check_a_rows<F, const D: usize>(
-    setup: &AkitaExpandedSetup<F>,
+    setup: &AkitaVerifierSetup<F>,
     t: &[CyclotomicRing<F, D>],
-    z: &[CyclotomicRing<F, D>],
+    z: &[[i64; D]],
     challenges: &[CyclotomicRing<F, D>],
     params: &dyn LevelParamsLike,
+    prepared_prefix_len: usize,
 ) -> Result<(), AkitaError>
 where
-    F: FieldCore + CanonicalField,
+    F: FieldCore + CanonicalField + FromPrimitiveInt,
 {
     let n_a = params.a_rows_len();
     if t.len()
@@ -123,9 +124,7 @@ where
     {
         return Err(AkitaError::InvalidProof);
     }
-    let a = setup
-        .shared_matrix()
-        .ring_view::<D>(n_a, params.a_col_len())?;
+    let rhs = super::terminal_ntt::centered_rows(setup, n_a, z, prepared_prefix_len)?;
     for row_index in 0..n_a {
         let lhs = challenges
             .iter()
@@ -133,7 +132,7 @@ where
             .try_fold(CyclotomicRing::zero(), |sum, (challenge, rows)| {
                 Ok::<_, AkitaError>(sum + (*challenge * rows[row_index]))
             })?;
-        if lhs != ring_dot(a.row(row_index)?, z)? {
+        if lhs != *rhs.get(row_index).ok_or(AkitaError::InvalidProof)? {
             return Err(AkitaError::InvalidProof);
         }
     }
@@ -142,10 +141,11 @@ where
 
 #[tracing::instrument(skip_all, name = "terminal_direct_b_rows")]
 fn check_b_rows<F, const D_A: usize, const D_B: usize>(
-    setup: &AkitaExpandedSetup<F>,
+    setup: &AkitaVerifierSetup<F>,
     t: &[CyclotomicRing<F, D_A>],
     expected: &[CyclotomicRing<F, D_B>],
     params: &dyn LevelParamsLike,
+    prepared_prefix_len: usize,
 ) -> Result<(), AkitaError>
 where
     F: FieldCore + CanonicalField,
@@ -159,11 +159,13 @@ where
     if !remainder.is_empty() || outer_digits.len() != params.b_col_len() {
         return Err(AkitaError::InvalidProof);
     }
-    let b = setup
-        .shared_matrix()
-        .ring_view::<D_B>(params.b_rows_len(), params.b_col_len())?;
-    let rows = b.rows().collect::<Vec<_>>();
-    let actual = mat_vec_mul_i8(&rows, outer_digits)?;
+    let actual = super::terminal_ntt::digit_rows(
+        setup,
+        params.b_rows_len(),
+        outer_digits,
+        params.log_basis(),
+        prepared_prefix_len,
+    )?;
     (actual.as_slice() == expected)
         .then_some(())
         .ok_or(AkitaError::InvalidProof)
@@ -172,7 +174,7 @@ where
 /// Check reduced consistency, A, and B rows for a quotient-free terminal witness.
 #[tracing::instrument(skip_all, name = "terminal_direct_ring_relations")]
 pub(super) fn verify_terminal_ring_relations<F>(
-    setup: &AkitaExpandedSetup<F>,
+    setup: &AkitaVerifierSetup<F>,
     relation: &RingRelationInstance<F>,
     lp: &LevelParams,
     commitment_rows: &RingVec<F>,
@@ -190,6 +192,30 @@ where
         return Err(AkitaError::InvalidProof);
     }
     let order = relation.opening_batch().root_group_order()?;
+    let mut max_a_prefix_len = 0usize;
+    let mut max_b_prefix_len = 0usize;
+    for &group_index in &order {
+        let params = lp.group_params(relation.opening_batch(), group_index)?;
+        max_a_prefix_len = max_a_prefix_len.max(
+            params
+                .a_rows_len()
+                .checked_mul(params.a_col_len())
+                .ok_or(AkitaError::InvalidProof)?,
+        );
+        max_b_prefix_len = max_b_prefix_len.max(
+            params
+                .b_rows_len()
+                .checked_mul(params.b_col_len())
+                .ok_or(AkitaError::InvalidProof)?,
+        );
+    }
+    let (prepared_a_prefix_len, prepared_b_prefix_len) =
+        if relation.role_dims().d_a() == relation.role_dims().d_b() {
+            let shared = max_a_prefix_len.max(max_b_prefix_len);
+            (shared, shared)
+        } else {
+            (max_a_prefix_len, max_b_prefix_len)
+        };
     let mut e_offset = 0usize;
     let mut t_offset = 0usize;
     let mut commitment_offset = 0usize;
@@ -266,6 +292,16 @@ where
                     cap,
                     Some(group_layout.z_payload_bytes),
                 )?;
+                let z_centered = {
+                    if !z_values.len().is_multiple_of(D_A) {
+                        return Err(AkitaError::InvalidProof);
+                    }
+                    let (rings, remainder) = z_values.as_chunks::<D_A>();
+                    if !remainder.is_empty() {
+                        return Err(AkitaError::InvalidProof);
+                    }
+                    rings
+                };
                 let z = decode_centered_rings::<F, D_A>(&z_values)?;
                 let challenges = challenge_rings::<F, D_A>(
                     relation
@@ -321,7 +357,14 @@ where
                 };
                 consistency_lhs += folded;
                 consistency_rhs += reduced;
-                check_a_rows::<F, D_A>(setup, &t, &z, &challenges, params)?;
+                check_a_rows::<F, D_A>(
+                    setup,
+                    &t,
+                    z_centered,
+                    &challenges,
+                    params,
+                    prepared_a_prefix_len,
+                )?;
 
                 dispatch_for_field!(
                     akita_types::ProtocolDispatchSlot::Role(akita_types::RingRole::Outer),
@@ -341,7 +384,13 @@ where
                                 .get(commitment_offset..end)
                                 .ok_or(AkitaError::InvalidProof)?,
                         )?;
-                        check_b_rows::<F, D_A, D_B>(setup, &t, &expected, params)?;
+                        check_b_rows::<F, D_A, D_B>(
+                            setup,
+                            &t,
+                            &expected,
+                            params,
+                            prepared_b_prefix_len,
+                        )?;
                         commitment_offset = end;
                         Ok::<(), AkitaError>(())
                     }

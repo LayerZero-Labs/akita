@@ -472,10 +472,10 @@ mod tests {
         assert_eq!(decoded, prover_setup.expanded.as_ref().clone());
         assert_eq!(decoded.seed().max_num_batched_polys, 3);
 
-        let derived_verifier = AkitaVerifierSetup {
-            expanded: Arc::new(decoded.clone()),
-            prefix_slots: SetupPrefixVerifierRegistry::new(),
-        };
+        let derived_verifier = AkitaVerifierSetup::from_parts(
+            Arc::new(decoded.clone()),
+            SetupPrefixVerifierRegistry::new(),
+        );
         assert_eq!(derived_verifier, verifier_setup);
     }
 

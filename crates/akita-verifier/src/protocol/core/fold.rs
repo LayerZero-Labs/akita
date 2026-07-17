@@ -814,7 +814,7 @@ where
             .ok_or(AkitaError::InvalidProof)?;
         transcript.absorb_and_record_bytes(ABSORB_TERMINAL_W_REMAINDER, &replay.remainder);
         super::terminal_direct::verify_terminal_ring_relations(
-            &setup.expanded,
+            setup,
             &relation_instance,
             prepared.lp,
             commitment_rows,
