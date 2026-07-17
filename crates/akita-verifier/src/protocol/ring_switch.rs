@@ -1,7 +1,7 @@
 //! Verifier-side ring-switch replay.
 
 use akita_algebra::eq_poly::EqPolynomial;
-use akita_algebra::offset_eq::{eval_affine_digit_interval_fast, OffsetEqWindow};
+use akita_algebra::offset_eq::{eval_affine_digit_interval, OffsetEqWindow};
 use akita_algebra::ring::scalar_powers;
 use akita_challenges::Challenges;
 use akita_field::{
@@ -1093,7 +1093,7 @@ where
             )?;
             let e_opening_index =
                 akita_types::checked_opening_source_index(opening_source_len, e_index)?;
-            e_contribution += eval_affine_digit_interval_fast(
+            e_contribution += eval_affine_digit_interval(
                 x_challenges,
                 e_opening_index,
                 unit.global_block_start(),
@@ -1115,7 +1115,7 @@ where
             )?;
             let t_opening_index =
                 akita_types::checked_opening_source_index(opening_source_len, t_index)?;
-            t_contribution += eval_affine_digit_interval_fast(
+            t_contribution += eval_affine_digit_interval(
                 x_challenges,
                 t_opening_index,
                 unit.global_block_start(),

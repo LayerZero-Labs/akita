@@ -55,10 +55,12 @@ impl<F: FieldCore> AffineWeight<F> for F {
 ///
 /// `Q` must be a power of two. The implementation splits the equality point at
 /// `log2(Q)`, summarizes the low factor into at most `outer_stride + 1` carry
-/// states, and reuses that summary for every complete high row. Unaligned first
-/// and last rows are handled as exact low-factor subwindows, so distributed
-/// chunks and a partial final tensor row do not enumerate the Cartesian
-/// high-by-low domain. Boolean challenges require no inversion.
+/// states, and reuses that summary for every complete high row. Guarded
+/// geometric-prefix and carry-bucketed contractions accelerate eligible
+/// layouts and transparently fall back to the general row contraction.
+/// Unaligned first and last rows are handled as exact low-factor subwindows, so
+/// distributed chunks and a partial final tensor row do not enumerate the
+/// Cartesian high-by-low domain. Boolean challenges require no inversion.
 ///
 /// # Errors
 ///
@@ -90,50 +92,6 @@ where
         digit_weights,
         high_weights,
         low_weights,
-        false,
-    )
-}
-
-/// Verifier-only fast variant of [`eval_affine_digit_interval`].
-///
-/// Computes the **identical** sum, but contracts the fold-high rows with a
-/// bounded high-equality table and a carry-bucketed inner product instead of the
-/// base kernel's `rows * carry_count` on-demand `eq` evaluations. Concretely the
-/// dominant high term drops from `O(rows * carry_count * high_bits)` to
-/// `O(rows + carry_count^2)` table lookups, removing the digit/carry factor from
-/// the fold-high dimension. The low carry-summary and every address are shared
-/// with the base kernel, so results match [`eval_affine_digit_interval`]
-/// bit-for-bit; it transparently falls back to the base row loop when the high
-/// domain is smaller than the carry window or the row count is too small to
-/// amortize the table setup.
-///
-/// This is intended for the verifier's structured relation-matrix evaluation.
-/// It does not change the prover's witness layout or decomposition path.
-#[allow(clippy::too_many_arguments)]
-pub fn eval_affine_digit_interval_fast<F, A>(
-    challenges: &[F],
-    base_offset: usize,
-    outer_start: usize,
-    live_len: usize,
-    outer_stride: usize,
-    digit_weights: &[F],
-    high_weights: &[A],
-    low_weights: &[A],
-) -> Result<A, AkitaError>
-where
-    F: FieldCore,
-    A: AffineWeight<F>,
-{
-    eval_affine_digit_interval_impl(
-        challenges,
-        base_offset,
-        outer_start,
-        live_len,
-        outer_stride,
-        digit_weights,
-        high_weights,
-        low_weights,
-        true,
     )
 }
 
@@ -147,7 +105,6 @@ fn eval_affine_digit_interval_impl<F, A>(
     digit_weights: &[F],
     high_weights: &[A],
     low_weights: &[A],
-    fast: bool,
 ) -> Result<A, AkitaError>
 where
     F: FieldCore,
@@ -258,7 +215,6 @@ where
     let mut out = template.zero_like();
     if prefix_span != 0 {
         accumulate_affine_rows(
-            fast,
             &mut out,
             low_challenges,
             high_challenges,
@@ -276,7 +232,6 @@ where
     }
     if full_rows != 0 {
         accumulate_affine_rows(
-            fast,
             &mut out,
             low_challenges,
             high_challenges,
@@ -294,7 +249,6 @@ where
     }
     if suffix_span != 0 {
         accumulate_affine_rows(
-            fast,
             &mut out,
             low_challenges,
             high_challenges,
@@ -315,7 +269,6 @@ where
 
 #[allow(clippy::too_many_arguments)]
 fn accumulate_affine_rows<F, A>(
-    fast: bool,
     out: &mut A,
     low_challenges: &[F],
     high_challenges: &[F],
@@ -368,31 +321,27 @@ where
     } else {
         None
     };
-    // Fast path (verifier): when the digit weights are geometric — the gadget
+    // Guarded production path: when the digit weights are geometric — the gadget
     // vector `g^d`, as used by the E/opening lane — and the digit window fits in
     // one low block, the per-`low` digit sum is a geometric-weighted contiguous
     // window of the low equality table, so the whole `low * digit` summary
     // factors through one prefix scan in `O(low_len)` instead of
     // `O(low_len * digit_count)`. Non-geometric weights (e.g. the flattened T
     // lane) fall back to the dense double loop, which stays bit-identical.
-    let geometric = if fast {
-        match &eq_low_table {
-            Some(table) => build_geometric_low_summaries(
-                template,
-                table,
-                address_low,
-                outer_stride,
-                low_len,
-                low_start,
-                low_end,
-                digit_weights,
-                low_weights,
-                carry_count,
-            )?,
-            None => None,
-        }
-    } else {
-        None
+    let geometric = match &eq_low_table {
+        Some(table) => build_geometric_low_summaries(
+            template,
+            table,
+            address_low,
+            outer_stride,
+            low_len,
+            low_start,
+            low_end,
+            digit_weights,
+            low_weights,
+            carry_count,
+        )?,
+        None => None,
     };
     let summaries = match geometric {
         Some(built) => built,
@@ -432,23 +381,21 @@ where
         }
     };
 
-    // Verifier fast path: contract the high rows with a bounded high-equality
+    // Guarded production path: contract the high rows with a bounded high-equality
     // table and carry-bucketing (O(rows + carry_count^2)) instead of the
     // `rows * carry_count` on-demand `eq` loop below. Returns `false` when the
     // geometry is ineligible, in which case we fall through to the base loop.
-    if fast
-        && accumulate_high_rows_bucketed(
-            out,
-            high_challenges,
-            first_address,
-            outer_stride,
-            low_challenges.len(),
-            high_weights,
-            first_high,
-            rows,
-            &summaries,
-        )?
-    {
+    if accumulate_high_rows_bucketed(
+        out,
+        high_challenges,
+        first_address,
+        outer_stride,
+        low_challenges.len(),
+        high_weights,
+        first_high,
+        rows,
+        &summaries,
+    )? {
         return Ok(());
     }
 

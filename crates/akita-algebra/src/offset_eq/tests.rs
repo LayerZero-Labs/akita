@@ -961,7 +961,7 @@ fn summarize_pow2_block_carries<F: FieldCore>(
 }
 
 #[test]
-fn affine_digit_interval_fast_matches_reference_and_base() {
+fn affine_digit_interval_matches_reference() {
     let mut rng = StdRng::seed_from_u64(0xF00D_1234);
     // (low_len Q, high_len, outer_start, live_len, digits, stride, base, challenge_bits)
     // Small cases hit the fallback; large cases (rows >= 8) hit the bucketed path.
@@ -994,18 +994,7 @@ fn affine_digit_interval_fast_matches_reference_and_base() {
             &high,
             &low,
         );
-        let base_v = eval_affine_digit_interval(
-            &challenges,
-            base,
-            outer_start,
-            live_len,
-            stride,
-            &digit_weights,
-            &high,
-            &low,
-        )
-        .unwrap();
-        let fast_v = eval_affine_digit_interval_fast(
+        let got = eval_affine_digit_interval(
             &challenges,
             base,
             outer_start,
@@ -1025,15 +1014,14 @@ fn affine_digit_interval_fast_matches_reference_and_base() {
             stride,
             base,
         );
-        assert_eq!(base_v, expected, "base mismatch {tag:?}");
-        assert_eq!(fast_v, expected, "fast mismatch {tag:?}");
+        assert_eq!(got, expected, "canonical evaluator mismatch {tag:?}");
     }
 }
 
 #[test]
-fn affine_digit_interval_fast_matches_boolean_challenges() {
+fn affine_digit_interval_matches_boolean_challenges() {
     // Boolean challenges, enough rows to trigger the bucketed path; verifies the
-    // no-inversion split-eq path agrees with the base kernel bit-for-bit.
+    // no-inversion split-eq path agrees with the dense reference bit-for-bit.
     let mut rng = StdRng::seed_from_u64(0xB001_F00D);
     let challenges: Vec<F> = (0..20)
         .map(|_| {
@@ -1058,7 +1046,7 @@ fn affine_digit_interval_fast_matches_boolean_challenges() {
             &high,
             &low,
         );
-        let fast_v = eval_affine_digit_interval_fast(
+        let got = eval_affine_digit_interval(
             &challenges,
             base,
             outer_start,
@@ -1070,13 +1058,13 @@ fn affine_digit_interval_fast_matches_boolean_challenges() {
         )
         .unwrap();
         assert_eq!(
-            fast_v, expected,
-            "boolean fast mismatch {outer_start} {live_len} {base}"
+            got, expected,
+            "boolean canonical mismatch {outer_start} {live_len} {base}"
         );
     }
 }
 
-// Micro-benchmark: base vs fast kernel across digit counts, at balanced folds.
+// Micro-benchmark the canonical kernel across digit counts at balanced folds.
 // Run with:  cargo test -p akita-algebra --release affine_digit_interval_bench -- --ignored --nocapture
 #[test]
 #[ignore]
@@ -1089,7 +1077,7 @@ fn affine_digit_interval_bench() {
     let bits = 26usize;
     let iters = 20;
     eprintln!("\n Q={q} H={h} B={live_len} challenge_bits={bits}  (median of {iters} runs)");
-    eprintln!(" delta | base (ms) | fast (ms) | speedup");
+    eprintln!(" delta | canonical (ms)");
     for &delta in &[4usize, 8, 16, 32, 64] {
         let stride = delta;
         let challenges = random_vec(&mut rng, bits);
@@ -1097,47 +1085,25 @@ fn affine_digit_interval_bench() {
         let high = random_vec(&mut rng, h);
         let low = random_vec(&mut rng, q);
 
-        let time = |fast: bool| -> (f64, F) {
-            let mut best = f64::INFINITY;
-            let mut val = F::zero();
-            for _ in 0..iters {
-                let start = Instant::now();
-                val = if fast {
-                    eval_affine_digit_interval_fast(
-                        &challenges,
-                        0,
-                        0,
-                        live_len,
-                        stride,
-                        &digit_weights,
-                        &high,
-                        &low,
-                    )
-                    .unwrap()
-                } else {
-                    eval_affine_digit_interval(
-                        &challenges,
-                        0,
-                        0,
-                        live_len,
-                        stride,
-                        &digit_weights,
-                        &high,
-                        &low,
-                    )
-                    .unwrap()
-                };
-                best = best.min(start.elapsed().as_secs_f64() * 1e3);
-            }
-            (best, val)
-        };
-        let (base_ms, base_v) = time(false);
-        let (fast_ms, fast_v) = time(true);
-        assert_eq!(base_v, fast_v, "bench parity delta={delta}");
-        eprintln!(
-            " {delta:>5} | {base_ms:>9.3} | {fast_ms:>9.3} | {:>6.2}x",
-            base_ms / fast_ms
-        );
+        let mut best = f64::INFINITY;
+        for _ in 0..iters {
+            let start = Instant::now();
+            std::hint::black_box(
+                eval_affine_digit_interval(
+                    &challenges,
+                    0,
+                    0,
+                    live_len,
+                    stride,
+                    &digit_weights,
+                    &high,
+                    &low,
+                )
+                .unwrap(),
+            );
+            best = best.min(start.elapsed().as_secs_f64() * 1e3);
+        }
+        eprintln!(" {delta:>5} | {best:>14.3}");
     }
 }
 
@@ -1155,10 +1121,10 @@ fn geometric_digit_vec(base: F, ratio: F, len: usize) -> Vec<F> {
 }
 
 #[test]
-fn affine_digit_interval_fast_matches_geometric_digits() {
+fn affine_digit_interval_matches_geometric_digits() {
     // Geometric digit weights exercise the prefix-scan low summary (step 2).
     // Cases with digits <= low_len activate it; digits > low_len fall back —
-    // both must match the dense reference and the base kernel.
+    // both must match the dense test-only reference.
     let mut rng = StdRng::seed_from_u64(0x6E03_E17A);
     let ratio = F::from_u64(7);
     let cases: &[AffineDigitCase] = &[
@@ -1190,18 +1156,7 @@ fn affine_digit_interval_fast_matches_geometric_digits() {
             &high,
             &low,
         );
-        let base_v = eval_affine_digit_interval(
-            &challenges,
-            base,
-            outer_start,
-            live_len,
-            stride,
-            &digit_weights,
-            &high,
-            &low,
-        )
-        .unwrap();
-        let fast_v = eval_affine_digit_interval_fast(
+        let got = eval_affine_digit_interval(
             &challenges,
             base,
             outer_start,
@@ -1221,14 +1176,13 @@ fn affine_digit_interval_fast_matches_geometric_digits() {
             stride,
             base,
         );
-        assert_eq!(base_v, expected, "base mismatch (geom) {tag:?}");
-        assert_eq!(fast_v, expected, "fast mismatch (geom) {tag:?}");
+        assert_eq!(got, expected, "canonical evaluator mismatch (geom) {tag:?}");
     }
 }
 
-// Geometric-digit microbenchmark: captures step (1) (high bucketing) AND step
-// (2) (prefix low summary). Compare against affine_digit_interval_bench (random
-// digits, step (1) only) to isolate step (2)'s contribution.
+// Geometric-digit microbenchmark: captures step (1) (high bucketing) and step
+// (2) (prefix low summary). The random-digit benchmark above exercises step (1)
+// without the geometric prefix path.
 // Run: cargo test -p akita-algebra --release affine_digit_interval_bench_geometric -- --ignored --nocapture
 #[test]
 #[ignore]
@@ -1242,53 +1196,31 @@ fn affine_digit_interval_bench_geometric() {
     let iters = 20;
     let ratio = F::from_u64(7);
     eprintln!("\n GEOMETRIC digits  Q={q} H={h} B={live_len}  (median of {iters} runs)");
-    eprintln!(" delta | base (ms) | fast (ms) | speedup");
+    eprintln!(" delta | canonical (ms)");
     for &delta in &[4usize, 8, 16, 32, 64, 128, 256] {
         let stride = delta;
         let challenges = random_vec(&mut rng, bits);
         let digit_weights = geometric_digit_vec(F::from_u64(3), ratio, delta);
         let high = random_vec(&mut rng, h);
         let low = random_vec(&mut rng, q);
-        let time = |fast: bool| -> (f64, F) {
-            let mut best = f64::INFINITY;
-            let mut val = F::zero();
-            for _ in 0..iters {
-                let start = Instant::now();
-                val = if fast {
-                    eval_affine_digit_interval_fast(
-                        &challenges,
-                        0,
-                        0,
-                        live_len,
-                        stride,
-                        &digit_weights,
-                        &high,
-                        &low,
-                    )
-                    .unwrap()
-                } else {
-                    eval_affine_digit_interval(
-                        &challenges,
-                        0,
-                        0,
-                        live_len,
-                        stride,
-                        &digit_weights,
-                        &high,
-                        &low,
-                    )
-                    .unwrap()
-                };
-                best = best.min(start.elapsed().as_secs_f64() * 1e3);
-            }
-            (best, val)
-        };
-        let (base_ms, base_v) = time(false);
-        let (fast_ms, fast_v) = time(true);
-        assert_eq!(base_v, fast_v, "bench parity delta={delta}");
-        eprintln!(
-            " {delta:>5} | {base_ms:>9.3} | {fast_ms:>9.3} | {:>6.2}x",
-            base_ms / fast_ms
-        );
+        let mut best = f64::INFINITY;
+        for _ in 0..iters {
+            let start = Instant::now();
+            std::hint::black_box(
+                eval_affine_digit_interval(
+                    &challenges,
+                    0,
+                    0,
+                    live_len,
+                    stride,
+                    &digit_weights,
+                    &high,
+                    &low,
+                )
+                .unwrap(),
+            );
+            best = best.min(start.elapsed().as_secs_f64() * 1e3);
+        }
+        eprintln!(" {delta:>5} | {best:>14.3}");
     }
 }
