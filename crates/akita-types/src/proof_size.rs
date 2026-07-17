@@ -170,7 +170,7 @@ mod tests {
             field_bits,
             [(lp as &dyn crate::LevelParamsLike, num_claims, num_claims, 1)],
             1,
-            crate::TerminalQuotientMode::Include,
+            crate::TerminalQuotientMode::Omit,
         )
         .expect("segment-typed witness shape");
         let CleartextWitnessShape::SegmentTyped(ref segment_shape) = shape else {

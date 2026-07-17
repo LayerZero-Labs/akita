@@ -123,20 +123,17 @@ impl<F: FieldCore> RingSwitchTerminalGroupArtifacts<F> {
 /// roots retain every group in root witness order plus one shared quotient tail.
 pub struct RingSwitchTerminalArtifacts<F: FieldCore> {
     pub groups: Vec<RingSwitchTerminalGroupArtifacts<F>>,
-    pub r: RingVec<F>,
     ring_dim: usize,
 }
 
 impl<F: FieldCore> RingSwitchTerminalArtifacts<F> {
     pub(crate) fn from_parts<const D: usize>(
         groups: Vec<RingSwitchTerminalGroupArtifacts<F>>,
-        r: RelationQuotientOutput<F>,
-    ) -> Result<Self, AkitaError> {
-        Ok(Self {
+    ) -> Self {
+        Self {
             groups,
-            r: r.into_padded_ring_vec::<D>()?,
             ring_dim: D,
-        })
+        }
     }
 
     /// Stored ring dimension (coefficients per ring element).
@@ -154,29 +151,17 @@ impl<F: FieldCore> RingSwitchTerminalArtifacts<F> {
                 self.ring_dim
             )));
         }
-        if !self.r.can_decode_vec(D) {
-            return Err(AkitaError::InvalidSize {
-                expected: D,
-                actual: self.r.coeff_len(),
-            });
-        }
         for group in &self.groups {
             group.ensure_ring_dim::<D>()?;
         }
         Ok(())
     }
-
-    /// Borrow relation quotient `r` rows after [`Self::ensure_ring_dim`].
-    pub fn r_trusted<const D: usize>(&self) -> Result<&[CyclotomicRing<F, D>], AkitaError> {
-        self.ensure_ring_dim::<D>()?;
-        Ok(self.r.as_ring_slice_trusted::<D>())
-    }
 }
 
 /// Output of [`ring_switch_build_w`].
-pub struct RingSwitchBuildOutput<F: FieldCore> {
-    pub w: RecursiveWitnessFlat,
-    pub terminal_artifacts: Option<RingSwitchTerminalArtifacts<F>>,
+pub enum RingSwitchBuildOutput<F: FieldCore> {
+    Intermediate(RecursiveWitnessFlat),
+    Terminal(RingSwitchTerminalArtifacts<F>),
 }
 
 pub(crate) struct PreparedRingSwitchGroup<'a, F: FieldCore, const D: usize> {
@@ -413,7 +398,6 @@ where
                 fold_grind_nonce: _,
             } = witness;
             let opening_batch = instance.opening_batch();
-            let is_multi_group = groups.len() > 1;
             if groups.len() != opening_batch.num_groups() {
                 return Err(AkitaError::InvalidInput(
                     "ring-switch witness count does not match opening batch".to_string(),
@@ -454,19 +438,28 @@ where
                     z_folded_centered_per_chunk,
                 });
             }
-            // Only the singleton suffix retains terminal artifacts; multi-group folds
-            // are never terminal.
-            if is_multi_group && retain_terminal_artifacts {
-                return Err(AkitaError::InvalidInput(
-                    "multi-group root ring-switch does not produce terminal artifacts".to_string(),
-                ));
-            }
             validate_chunked_witness_cfg(lp)?;
             for group_index in 0..opening_batch.num_groups() {
                 instance
                     .group_ring_multiplier_point(group_index)?
                     .ensure_ring_dim::<D>()?;
             }
+            if retain_terminal_artifacts {
+                let mut terminal_groups = Vec::with_capacity(order.len());
+                for &group_index in &order {
+                    let group = owned.get(group_index).ok_or(AkitaError::InvalidProof)?;
+                    terminal_groups.push(RingSwitchTerminalGroupArtifacts::from_parts::<D>(
+                        group_index,
+                        group.e_folded.clone(),
+                        group.recomposed_inner_rows.clone(),
+                        group.z_centered.clone(),
+                    ));
+                }
+                return Ok(RingSwitchBuildOutput::Terminal(
+                    RingSwitchTerminalArtifacts::from_parts::<D>(terminal_groups),
+                ));
+            }
+
             let witness_layout = instance.segment_layout(lp, None)?;
 
             // Shared relation quotient `r`: its consistency row (summed over all
@@ -529,24 +522,6 @@ where
                 });
             }
 
-            let terminal_artifacts = if retain_terminal_artifacts {
-                let mut terminal_groups = Vec::with_capacity(order.len());
-                for &group_index in &order {
-                    let group = owned.get(group_index).ok_or(AkitaError::InvalidProof)?;
-                    terminal_groups.push(RingSwitchTerminalGroupArtifacts::from_parts::<D>(
-                        group_index,
-                        group.e_folded.clone(),
-                        group.recomposed_inner_rows.clone(),
-                        group.z_centered.clone(),
-                    ));
-                }
-                Some(RingSwitchTerminalArtifacts::from_parts::<D>(
-                    terminal_groups,
-                    r,
-                )?)
-            } else {
-                None
-            };
             // Every segment of the generated witness is balanced, but grouped
             // roots may mix decomposition bases. The whole-buffer certificate
             // must therefore carry the widest emitted basis: using only the
@@ -555,14 +530,13 @@ where
                 .iter()
                 .map(|group| group.params.log_basis())
                 .fold(lp.log_basis, u32::max);
-            Ok(RingSwitchBuildOutput {
-                w: RecursiveWitnessFlat::from_witness_layout::<D>(
+            Ok(RingSwitchBuildOutput::Intermediate(
+                RecursiveWitnessFlat::from_witness_layout::<D>(
                     out,
                     &witness_layout,
                     known_balanced_log_basis,
                 )?,
-                terminal_artifacts,
-            })
+            ))
         }
     )
 }

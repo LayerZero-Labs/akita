@@ -572,44 +572,59 @@ where
     .map_err(|err| {
         AkitaError::InvalidInput(format!("ring-switch witness build failed: {err:?}"))
     })?;
-    let logical_w = build_output.w;
-    scheduled.validate_next_w_len(logical_w.len())?;
-    let next_commitment = if is_terminal_fold {
-        None
-    } else {
-        let _span = tracing::info_span!("commit_w_level", level).entered();
-        Some(crate::commit_w::<Cfg, C>(
-            &scheduled.next_params,
-            expanded,
-            stack.commit(),
-            &logical_w,
-        )?)
+    if is_terminal_fold {
+        let RingSwitchBuildOutput::Terminal(terminal_artifacts) = build_output else {
+            return Err(AkitaError::InvalidProof);
+        };
+        let (_, final_witness) = bind_next_witness_for_ring_switch::<F, T>(
+            transcript,
+            true,
+            lp,
+            None,
+            Some(scheduled.next_params.log_basis),
+            Some(terminal_artifacts),
+            terminal_direct_witness_shape,
+            prepared_fold.instance.opening_batch(),
+        )
+        .map_err(|err| {
+            AkitaError::InvalidInput(format!("terminal witness binding failed: {err:?}"))
+        })?;
+        let final_witness = final_witness.ok_or(AkitaError::InvalidProof)?;
+        let proof = TerminalLevelProof {
+            extension_opening_reduction: prepared_fold.extension_opening_reduction,
+            fold_grind_nonce,
+            stage2: AkitaStage2Proof::Terminal(AkitaTerminalStage2Proof {
+                relation: akita_types::TerminalRelationProof::DirectRingRelations,
+                final_witness,
+            }),
+        };
+        return Ok(FoldProveOutput::Terminal(Box::new(proof)));
+    }
+    let RingSwitchBuildOutput::Intermediate(logical_w) = build_output else {
+        return Err(AkitaError::InvalidProof);
     };
+    scheduled.validate_next_w_len(logical_w.len())?;
+    let _span = tracing::info_span!("commit_w_level", level).entered();
+    let next_commitment = Some(crate::commit_w::<Cfg, C>(
+        &scheduled.next_params,
+        expanded,
+        stack.commit(),
+        &logical_w,
+    )?);
+    drop(_span);
     let (next_commitment, final_witness) = bind_next_witness_for_ring_switch::<F, T>(
         transcript,
-        is_terminal_fold,
+        false,
         lp,
         next_commitment,
-        if is_terminal_fold {
-            Some(scheduled.next_params.log_basis)
-        } else {
-            None
-        },
-        build_output.terminal_artifacts,
+        None,
+        None,
         terminal_direct_witness_shape,
         prepared_fold.instance.opening_batch(),
     )
     .map_err(|err| AkitaError::InvalidInput(format!("next witness binding failed: {err:?}")))?;
-    let relation_matrix_row_layout = if is_terminal_fold {
-        RelationMatrixRowLayout::WithoutDBlock
-    } else {
-        RelationMatrixRowLayout::WithDBlock
-    };
-    let next_opening_ring_dim = if is_terminal_fold {
-        ring_d
-    } else {
-        scheduled.next_params.d_a()
-    };
+    let relation_matrix_row_layout = RelationMatrixRowLayout::WithDBlock;
+    let next_opening_ring_dim = scheduled.next_params.d_a();
     if !logical_w.len().is_multiple_of(next_opening_ring_dim) {
         return Err(AkitaError::InvalidProof);
     }
@@ -917,13 +932,14 @@ where
                     })
                 })
                 .collect::<Result<Vec<_>, AkitaError>>()?;
+            let empty_r = RingVec::from_coeffs(Vec::new());
             let segment = build_segment_typed_witness_from_groups::<F>(
                 artifacts.ring_dim(),
                 &group_parts,
-                &artifacts.r,
+                &empty_r,
                 lp,
                 opening_batch.num_groups(),
-                akita_types::TerminalQuotientMode::Include,
+                akita_types::TerminalQuotientMode::Omit,
             )?;
             if segment.layout != scheduled_shape.layout {
                 return Err(AkitaError::InvalidSetup(

@@ -5,7 +5,8 @@ use crate::protocol::extension_opening_reduction::{
     SPARSE_TENSOR_FACTOR_MAX_LAZY_ROUNDS,
 };
 use crate::protocol::ring_switch::{
-    ring_switch_build_w, ring_switch_finalize, NextWitnessCommitment, RingSwitchOutput,
+    ring_switch_build_w, ring_switch_finalize, NextWitnessCommitment, RingSwitchBuildOutput,
+    RingSwitchOutput,
 };
 use crate::protocol::sumcheck::AkitaStage3Prover;
 use crate::protocol::sumcheck::{AkitaStage1Prover, AkitaStage2Prover};
@@ -46,8 +47,8 @@ use akita_types::{
     trace_public_weights_recursive, trace_public_weights_root_terms,
     trace_weight_layout_from_segment, AkitaBatchedProof, AkitaBatchedRootProof,
     AkitaCommitmentHint, AkitaExpandedSetup, AkitaIntermediateStage2Proof, AkitaLevelProof,
-    AkitaStage1Proof, AkitaStage2Proof, BasisMode, CleartextWitnessProof, Commitment,
-    ExecutionSchedule, ExtensionOpeningReductionProof, LevelParams, OpeningClaims,
+    AkitaStage1Proof, AkitaStage2Proof, AkitaTerminalStage2Proof, BasisMode, CleartextWitnessProof,
+    Commitment, ExecutionSchedule, ExtensionOpeningReductionProof, LevelParams, OpeningClaims,
     OpeningClaimsLayout, PreparedOpeningPoint, RelationMatrixRowLayout, RingMultiplierOpeningPoint,
     RingVec, RingView, Schedule, SetupContributionMode, SetupPrefixProverRegistry,
     SetupSumcheckProof, Step, TerminalLevelProof, TraceTable,

@@ -95,7 +95,7 @@ mod tests {
     use akita_prover::compute::{OpeningFoldKernel, OpeningFoldPlan, RootOpeningSource};
     use akita_prover::protocol::ring_switch::{
         build_w_evals_compact, compute_relation_matrix_col_evals, compute_relation_weight_evals,
-        ring_switch_build_w,
+        ring_switch_build_w, RingSwitchBuildOutput,
     };
     use akita_prover::{
         ComputeBackendSetup, CpuBackend, DensePoly, ProverOpeningData, RingRelationProver,
@@ -363,14 +363,13 @@ mod tests {
         let build_output =
             ring_switch_build_w::<F, CpuBackend>(&instance, witness, &op_ctx, &lp, false)
                 .expect("ring-switch witness");
-        let opening_source_len = build_output.w.len() / D;
-        let (w_compact, _col_bits, _ring_bits) = build_w_evals_compact(
-            build_output.w.as_i8_digits().into(),
-            D,
-            1,
-            opening_source_len,
-        )
-        .expect("compact witness");
+        let RingSwitchBuildOutput::Intermediate(w) = build_output else {
+            panic!("expected recursive witness");
+        };
+        let opening_source_len = w.len() / D;
+        let (w_compact, _col_bits, _ring_bits) =
+            build_w_evals_compact(w.as_i8_digits().into(), D, 1, opening_source_len)
+                .expect("compact witness");
 
         let alpha = F::from_u64(29);
         let alpha_evals_y = scalar_powers(alpha, D);
@@ -513,14 +512,13 @@ mod tests {
         let build_output =
             ring_switch_build_w::<F, CpuBackend>(&instance, witness, &op_ctx, &lp, false)
                 .expect("ring-switch witness");
-        let opening_source_len = build_output.w.len() / D;
-        let (w_compact, _col_bits, _ring_bits) = build_w_evals_compact(
-            build_output.w.as_i8_digits().into(),
-            D,
-            1,
-            opening_source_len,
-        )
-        .expect("compact witness");
+        let RingSwitchBuildOutput::Intermediate(w) = build_output else {
+            panic!("expected recursive witness");
+        };
+        let opening_source_len = w.len() / D;
+        let (w_compact, _col_bits, _ring_bits) =
+            build_w_evals_compact(w.as_i8_digits().into(), D, 1, opening_source_len)
+                .expect("compact witness");
 
         let alpha = F::from_u64(17);
         let alpha_evals_y = scalar_powers(alpha, D);
@@ -1121,11 +1119,8 @@ mod tests {
     }
 
     #[test]
-    fn segment_typed_expand_matches_logical_w() {
-        use akita_types::{
-            build_segment_typed_witness, expand_segment_typed_to_i8_digits,
-            ring_opening_point_from_field, BasisMode,
-        };
+    fn terminal_build_stops_before_quotient_and_recursive_witness() {
+        use akita_types::{build_segment_typed_witness, ring_opening_point_from_field, BasisMode};
 
         type F = fp128::Field;
         type Cfg = fp128::D128Full;
@@ -1215,31 +1210,27 @@ mod tests {
         let build_output =
             ring_switch_build_w::<F, CpuBackend>(&instance, witness, &op_ctx, &level_params, true)
                 .expect("ring-switch witness");
-        let logical_digits = build_output.w.as_i8_digits();
-        let artifacts = build_output
-            .terminal_artifacts
-            .expect("terminal artifacts retained");
+        let RingSwitchBuildOutput::Terminal(artifacts) = build_output else {
+            panic!("expected direct terminal artifacts");
+        };
         artifacts.ensure_ring_dim::<D>().expect("ring dim");
         let group = artifacts.groups.first().expect("single terminal group");
+        let empty_r = RingVec::from_coeffs(Vec::new());
         let segment = build_segment_typed_witness::<F>(
             artifacts.ring_dim(),
             &group.e_folded,
             &group.recomposed_inner_rows,
             group.z_folded_centered_flat(),
-            &artifacts.r,
+            &empty_r,
             &level_params,
             1,
             1,
             1,
             1,
-            akita_types::TerminalQuotientMode::Include,
+            akita_types::TerminalQuotientMode::Omit,
         )
         .expect("segment witness");
-        let expanded = expand_segment_typed_to_i8_digits::<D, F>(&segment, &level_params, 1)
-            .expect("expand segment typed");
-        assert_eq!(
-            expanded, logical_digits,
-            "segment-typed expand must match ring_switch_build_w digit stream"
-        );
+        assert_eq!(segment.layout.r_field_elems, 0);
+        assert_eq!(segment.r_fields.coeff_len(), 0);
     }
 }

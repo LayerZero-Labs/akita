@@ -292,7 +292,7 @@ impl CommitmentConfig for Fp32RingSubfieldRootFoldCfg {
                 1,
             )],
             1,
-            akita_types::TerminalQuotientMode::Include,
+            akita_types::TerminalQuotientMode::Omit,
         )?;
         let direct_bytes =
             akita_types::direct_witness_bytes(Self::Field::modulus_bits(), &witness_shape);
@@ -392,7 +392,7 @@ impl CommitmentConfig for Fp32RingSubfieldOuterFallbackCfg {
                 1,
             )],
             1,
-            akita_types::TerminalQuotientMode::Include,
+            akita_types::TerminalQuotientMode::Omit,
         )?;
         let direct_bytes =
             akita_types::direct_witness_bytes(Self::Field::modulus_bits(), &witness_shape);

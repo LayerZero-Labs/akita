@@ -163,21 +163,6 @@ impl<F: FieldCore> RelationQuotientOutput<F> {
     pub(crate) fn rows(&self) -> &[RelationQuotientRow<F>] {
         &self.rows
     }
-
-    pub(crate) fn into_padded_ring_vec<const D: usize>(self) -> Result<RingVec<F>, AkitaError> {
-        let mut coeffs = Vec::with_capacity(self.rows.len() * D);
-        for row in self.rows {
-            if row.coeffs.len() > D || !D.is_multiple_of(row.ring_dim) {
-                return Err(AkitaError::InvalidSize {
-                    expected: D,
-                    actual: row.coeffs.len(),
-                });
-            }
-            coeffs.extend_from_slice(&row.coeffs);
-            coeffs.resize(coeffs.len() + (D - row.coeffs.len()), F::zero());
-        }
-        Ok(RingVec::from_coeffs(coeffs))
-    }
 }
 
 impl<F: FieldCore> RelationQuotientRow<F> {

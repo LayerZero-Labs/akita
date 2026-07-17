@@ -87,7 +87,7 @@ fn make_terminal_direct_step(
                 1,
             )],
             1,
-            akita_types::TerminalQuotientMode::Include,
+            akita_types::TerminalQuotientMode::Omit,
         )?,
     };
     let direct_bytes = direct_witness_bytes(field_bits, &witness_shape);
