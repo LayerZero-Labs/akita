@@ -81,6 +81,78 @@ where
     F: FieldCore,
     A: AffineWeight<F>,
 {
+    eval_affine_digit_interval_impl(
+        challenges,
+        base_offset,
+        outer_start,
+        live_len,
+        outer_stride,
+        digit_weights,
+        high_weights,
+        low_weights,
+        false,
+    )
+}
+
+/// Verifier-only fast variant of [`eval_affine_digit_interval`].
+///
+/// Computes the **identical** sum, but contracts the fold-high rows with a
+/// bounded high-equality table and a carry-bucketed inner product instead of the
+/// base kernel's `rows * carry_count` on-demand `eq` evaluations. Concretely the
+/// dominant high term drops from `O(rows * carry_count * high_bits)` to
+/// `O(rows + carry_count^2)` table lookups, removing the digit/carry factor from
+/// the fold-high dimension. The low carry-summary and every address are shared
+/// with the base kernel, so results match [`eval_affine_digit_interval`]
+/// bit-for-bit; it transparently falls back to the base row loop when the high
+/// domain is smaller than the carry window or the row count is too small to
+/// amortize the table setup.
+///
+/// This is intended for the verifier's structured relation-matrix evaluation.
+/// It does not change the prover's witness layout or decomposition path.
+#[allow(clippy::too_many_arguments)]
+pub fn eval_affine_digit_interval_fast<F, A>(
+    challenges: &[F],
+    base_offset: usize,
+    outer_start: usize,
+    live_len: usize,
+    outer_stride: usize,
+    digit_weights: &[F],
+    high_weights: &[A],
+    low_weights: &[A],
+) -> Result<A, AkitaError>
+where
+    F: FieldCore,
+    A: AffineWeight<F>,
+{
+    eval_affine_digit_interval_impl(
+        challenges,
+        base_offset,
+        outer_start,
+        live_len,
+        outer_stride,
+        digit_weights,
+        high_weights,
+        low_weights,
+        true,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn eval_affine_digit_interval_impl<F, A>(
+    challenges: &[F],
+    base_offset: usize,
+    outer_start: usize,
+    live_len: usize,
+    outer_stride: usize,
+    digit_weights: &[F],
+    high_weights: &[A],
+    low_weights: &[A],
+    fast: bool,
+) -> Result<A, AkitaError>
+where
+    F: FieldCore,
+    A: AffineWeight<F>,
+{
     let template = high_weights
         .first()
         .or_else(|| low_weights.first())
@@ -186,6 +258,7 @@ where
     let mut out = template.zero_like();
     if prefix_span != 0 {
         accumulate_affine_rows(
+            fast,
             &mut out,
             low_challenges,
             high_challenges,
@@ -203,6 +276,7 @@ where
     }
     if full_rows != 0 {
         accumulate_affine_rows(
+            fast,
             &mut out,
             low_challenges,
             high_challenges,
@@ -220,6 +294,7 @@ where
     }
     if suffix_span != 0 {
         accumulate_affine_rows(
+            fast,
             &mut out,
             low_challenges,
             high_challenges,
@@ -240,6 +315,7 @@ where
 
 #[allow(clippy::too_many_arguments)]
 fn accumulate_affine_rows<F, A>(
+    fast: bool,
     out: &mut A,
     low_challenges: &[F],
     high_challenges: &[F],
@@ -320,6 +396,26 @@ where
         }
     }
 
+    // Verifier fast path: contract the high rows with a bounded high-equality
+    // table and carry-bucketing (O(rows + carry_count^2)) instead of the
+    // `rows * carry_count` on-demand `eq` loop below. Returns `false` when the
+    // geometry is ineligible, in which case we fall through to the base loop.
+    if fast
+        && accumulate_high_rows_bucketed(
+            out,
+            high_challenges,
+            first_address,
+            outer_stride,
+            low_challenges.len(),
+            high_weights,
+            first_high,
+            rows,
+            &summaries,
+        )?
+    {
+        return Ok(());
+    }
+
     for row in 0..rows {
         let high_index = first_high
             .checked_add(row)
@@ -351,6 +447,123 @@ where
         }
     }
     Ok(())
+}
+
+/// Minimum full-row count before the bucketed high contraction is worth its
+/// table setup. Below this the base row loop is cheaper.
+const FAST_HIGH_ROWS_MIN: usize = 8;
+
+/// Contract the fold-high rows against the shared low carry summaries using a
+/// bounded high-equality table and carry-bucketing.
+///
+/// For each row `r` the base kernel adds
+/// `high[first_high + r] * summaries[carry] * eq(high_challenges, h0 + stride*r + carry)`
+/// over every `carry in 0..summaries.len()`, where `h0 = first_address >> low_bits`.
+/// Because the equality point splits at `log2(next_pow2(carry_count))`, each row's
+/// carry window straddles at most two high-table blocks, so the whole double loop
+/// factors into: (1) one pass over rows that buckets `high[r] * eq_hi(block)` by
+/// the row's low-window position, and (2) one `carry_count * window` combine.
+/// Total `O(rows + carry_count^2)` field ops with `O(1)` table lookups, versus
+/// the base `O(rows * carry_count * high_bits)`.
+///
+/// Returns `Ok(true)` when it handled the rows, or `Ok(false)` when the geometry
+/// is ineligible (high domain smaller than the carry window, or too few rows to
+/// amortize setup) and the caller should use the base loop. The result is
+/// bit-identical to the base loop for every eligible input.
+#[allow(clippy::too_many_arguments)]
+fn accumulate_high_rows_bucketed<F, A>(
+    out: &mut A,
+    high_challenges: &[F],
+    first_address: usize,
+    outer_stride: usize,
+    low_bits: usize,
+    high_weights: &[A],
+    first_high: usize,
+    rows: usize,
+    summaries: &[A],
+) -> Result<bool, AkitaError>
+where
+    F: FieldCore,
+    A: AffineWeight<F>,
+{
+    let carry_count = summaries.len();
+    if rows < FAST_HIGH_ROWS_MIN || carry_count == 0 {
+        return Ok(false);
+    }
+    let template = summaries
+        .first()
+        .ok_or_else(|| AkitaError::InvalidInput("affine summaries empty".into()))?;
+
+    // Split the high equality point so the carry window fits inside the low part.
+    let window = carry_count.next_power_of_two();
+    let window_bits = window.trailing_zeros() as usize;
+    if window_bits > high_challenges.len() {
+        // High domain is smaller than the carry window; base loop is cheap here.
+        return Ok(false);
+    }
+    let low_hi = &high_challenges[..window_bits];
+    let high_hi = &high_challenges[window_bits..];
+    let eq_low_hi = crate::eq_poly::EqPolynomial::evals(low_hi)?; // length == window
+    let split_high = crate::eq_poly::SplitEqEvals::new(high_hi)?;
+    let high_domain: usize = if high_hi.len() >= usize::BITS as usize {
+        usize::MAX
+    } else {
+        1usize << high_hi.len()
+    };
+    let eval_high = |block: usize| -> Result<F, AkitaError> {
+        if block < high_domain {
+            split_high.eval_at(block)
+        } else {
+            Ok(F::zero())
+        }
+    };
+
+    let h0 = first_address >> low_bits;
+    let window_mask = window - 1;
+    // Bucket each row by its low-window position, split into the "no carry into
+    // the next high block" bucket (`bucket0`) and the "carries" bucket (`bucket1`).
+    let mut bucket0 = vec![template.zero_like(); window];
+    let mut bucket1 = vec![template.zero_like(); window];
+    for row in 0..rows {
+        let high_index = first_high
+            .checked_add(row)
+            .ok_or_else(|| AkitaError::InvalidInput("affine high index overflow".into()))?;
+        let high_factor = high_weights
+            .get(high_index)
+            .ok_or_else(|| AkitaError::InvalidInput("affine high factor out of range".into()))?;
+        let address_high = h0
+            .checked_add(
+                outer_stride
+                    .checked_mul(row)
+                    .ok_or_else(|| AkitaError::InvalidInput("affine high address overflow".into()))?,
+            )
+            .ok_or_else(|| AkitaError::InvalidInput("affine high address overflow".into()))?;
+        let low_pos = address_high & window_mask;
+        let block = address_high >> window_bits;
+        let eq_block0 = eval_high(block)?;
+        let eq_block1 = eval_high(
+            block
+                .checked_add(1)
+                .ok_or_else(|| AkitaError::InvalidInput("affine high block overflow".into()))?,
+        )?;
+        bucket0[low_pos].add_scaled(high_factor, eq_block0);
+        bucket1[low_pos].add_scaled(high_factor, eq_block1);
+    }
+
+    // Combine: out += Σ_carry (Σ_pos bucket[pos] * eq_low_hi[(pos+carry) mod window]) * summaries[carry].
+    for (carry, summary) in summaries.iter().enumerate() {
+        let mut phi = template.zero_like();
+        for pos in 0..window {
+            let shifted = pos + carry;
+            if shifted < window {
+                phi.add_scaled(&bucket0[pos], eq_low_hi[shifted]);
+            } else {
+                phi.add_scaled(&bucket1[pos], eq_low_hi[shifted - window]);
+            }
+        }
+        out.add_scaled(&phi.multiply(summary), F::one());
+    }
+    Ok(true)
 }
 
 /// Evaluate an exact contraction between two affine equality-address streams.

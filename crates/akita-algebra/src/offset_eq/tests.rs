@@ -959,3 +959,120 @@ fn summarize_pow2_block_carries<F: FieldCore>(
 
     Ok(out)
 }
+
+#[test]
+fn affine_digit_interval_fast_matches_reference_and_base() {
+    let mut rng = StdRng::seed_from_u64(0xF00D_1234);
+    // (low_len Q, high_len, outer_start, live_len, digits, stride, base, challenge_bits)
+    // Small cases hit the fallback; large cases (rows >= 8) hit the bucketed path.
+    let cases: &[(usize, usize, usize, usize, usize, usize, usize, usize)] = &[
+        (1, 7, 0, 7, 1, 1, 3, 12),
+        (4, 4, 1, 11, 3, 5, 9, 12),
+        (8, 3, 5, 13, 5, 17, 6, 12),
+        (16, 2, 15, 17, 4, 8, 31, 12),
+        (4, 64, 0, 256, 3, 3, 0, 20),
+        (4, 64, 1, 200, 3, 3, 7, 20),
+        (8, 32, 3, 250, 5, 5, 6, 20),
+        (8, 20, 0, 160, 16, 16, 0, 22),
+        (16, 16, 5, 240, 8, 8, 11, 22),
+        (2, 100, 0, 200, 4, 4, 3, 20),
+        (32, 16, 10, 480, 7, 7, 40, 22),
+        (4, 64, 2, 254, 32, 32, 9, 24),
+    ];
+    for &(low_len, high_len, outer_start, live_len, digits, stride, base, bits) in cases {
+        let challenges = random_vec(&mut rng, bits);
+        let digit_weights = random_vec(&mut rng, digits);
+        let high = random_vec(&mut rng, high_len);
+        let low = random_vec(&mut rng, low_len);
+        let expected = reference_affine_digit_interval(
+            &challenges, base, outer_start, live_len, stride, &digit_weights, &high, &low,
+        );
+        let base_v = eval_affine_digit_interval(
+            &challenges, base, outer_start, live_len, stride, &digit_weights, &high, &low,
+        )
+        .unwrap();
+        let fast_v = eval_affine_digit_interval_fast(
+            &challenges, base, outer_start, live_len, stride, &digit_weights, &high, &low,
+        )
+        .unwrap();
+        let tag = (low_len, high_len, outer_start, live_len, digits, stride, base);
+        assert_eq!(base_v, expected, "base mismatch {tag:?}");
+        assert_eq!(fast_v, expected, "fast mismatch {tag:?}");
+    }
+}
+
+#[test]
+fn affine_digit_interval_fast_matches_boolean_challenges() {
+    // Boolean challenges, enough rows to trigger the bucketed path; verifies the
+    // no-inversion split-eq path agrees with the base kernel bit-for-bit.
+    let mut rng = StdRng::seed_from_u64(0xB001_F00D);
+    let challenges: Vec<F> = (0..20)
+        .map(|_| if rng.next_u32() & 1 == 1 { F::one() } else { F::zero() })
+        .collect();
+    let digit_weights = random_vec(&mut rng, 5);
+    let high = random_vec(&mut rng, 64);
+    let low = random_vec(&mut rng, 4);
+    for &(outer_start, live_len, base) in &[(0usize, 256usize, 0usize), (3, 250, 6), (1, 200, 9)] {
+        let expected = reference_affine_digit_interval(
+            &challenges, base, outer_start, live_len, 5, &digit_weights, &high, &low,
+        );
+        let fast_v = eval_affine_digit_interval_fast(
+            &challenges, base, outer_start, live_len, 5, &digit_weights, &high, &low,
+        )
+        .unwrap();
+        assert_eq!(fast_v, expected, "boolean fast mismatch {outer_start} {live_len} {base}");
+    }
+}
+
+// Micro-benchmark: base vs fast kernel across digit counts, at balanced folds.
+// Run with:  cargo test -p akita-algebra --release affine_digit_interval_bench -- --ignored --nocapture
+#[test]
+#[ignore]
+fn affine_digit_interval_bench() {
+    use std::time::Instant;
+    let mut rng = StdRng::seed_from_u64(0xBEEF_CAFE);
+    let q = 512usize; // fold_low
+    let h = 512usize; // fold_high
+    let live_len = q * h; // B = Q*H
+    let bits = 26usize;
+    let iters = 20;
+    eprintln!(
+        "\n Q={q} H={h} B={live_len} challenge_bits={bits}  (median of {iters} runs)"
+    );
+    eprintln!(" delta | base (ms) | fast (ms) | speedup");
+    for &delta in &[4usize, 8, 16, 32, 64] {
+        let stride = delta;
+        let challenges = random_vec(&mut rng, bits);
+        let digit_weights = random_vec(&mut rng, delta);
+        let high = random_vec(&mut rng, h);
+        let low = random_vec(&mut rng, q);
+
+        let time = |fast: bool| -> (f64, F) {
+            let mut best = f64::INFINITY;
+            let mut val = F::zero();
+            for _ in 0..iters {
+                let start = Instant::now();
+                val = if fast {
+                    eval_affine_digit_interval_fast(
+                        &challenges, 0, 0, live_len, stride, &digit_weights, &high, &low,
+                    )
+                    .unwrap()
+                } else {
+                    eval_affine_digit_interval(
+                        &challenges, 0, 0, live_len, stride, &digit_weights, &high, &low,
+                    )
+                    .unwrap()
+                };
+                best = best.min(start.elapsed().as_secs_f64() * 1e3);
+            }
+            (best, val)
+        };
+        let (base_ms, base_v) = time(false);
+        let (fast_ms, fast_v) = time(true);
+        assert_eq!(base_v, fast_v, "bench parity delta={delta}");
+        eprintln!(
+            " {delta:>5} | {base_ms:>9.3} | {fast_ms:>9.3} | {:>6.2}x",
+            base_ms / fast_ms
+        );
+    }
+}
