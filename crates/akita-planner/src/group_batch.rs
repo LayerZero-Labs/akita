@@ -1153,14 +1153,37 @@ mod tests {
     }
 
     #[test]
-    fn mixed_basis_d128_root_keeps_commit_basis_and_prices_d_at_root_open_basis() {
+    fn mixed_basis_root_rejects_open_basis_above_frozen_without_recertified_bounds() {
+        let mut precommit_policy = flat_policy();
+        precommit_policy.ring_dimension = 128;
+        precommit_policy.decomposition.log_basis = 2;
+        precommit_policy.basis_range = (2, 2);
+        let pre_key = PolynomialGroupLayout::new(20, 1);
+        let frozen = precommitted_from_policy(pre_key, &precommit_policy);
+
+        let mut root_policy = precommit_policy;
+        root_policy.decomposition.log_open_bound = Some(128);
+        root_policy.decomposition.log_basis = 3;
+        root_policy.basis_range = (3, 3);
+        let key = AkitaScheduleLookupKey {
+            final_group: PolynomialGroupLayout::new(40, 2),
+            precommitteds: vec![frozen],
+        };
+        let err = find_group_batch_schedule(&key, &root_policy, ring_challenge_config, fold_shape)
+            .expect_err("higher root opening basis must not reuse lower certified bounds");
+        assert!(err
+            .to_string()
+            .contains("precommitted group A bound is below the selected opening requirement"));
+    }
+
+    #[test]
+    fn mixed_basis_root_rejects_open_basis_below_frozen_precommit() {
         let mut precommit_policy = flat_policy();
         precommit_policy.ring_dimension = 128;
         precommit_policy.decomposition.log_basis = 3;
         precommit_policy.basis_range = (3, 3);
         let pre_key = PolynomialGroupLayout::new(20, 1);
         let frozen = precommitted_from_policy(pre_key, &precommit_policy);
-        assert_eq!(frozen.log_basis_outer, 3);
 
         let mut root_policy = precommit_policy;
         root_policy.decomposition.log_open_bound = Some(128);
@@ -1170,31 +1193,11 @@ mod tests {
             final_group: PolynomialGroupLayout::new(40, 2),
             precommitteds: vec![frozen],
         };
-        let schedule =
-            find_group_batch_schedule(&key, &root_policy, ring_challenge_config, fold_shape)
-                .expect("mixed-basis D128 root schedule");
-        let Step::Fold(root) = schedule.steps.first().expect("mixed-basis root step") else {
-            panic!("expected mixed-basis root fold");
-        };
-
-        assert_eq!(root.params.log_basis_open, 2);
-        let precommitted_group = root
-            .params
-            .precommitted_groups
-            .first()
-            .expect("precommitted group");
-        assert_eq!(precommitted_group.layout.log_basis_outer, 3);
-        assert_eq!(precommitted_group.log_basis_open, 2);
-        assert_eq!(root.params.shared_d_digit_log_basis(), 2);
-        let expected_d_bound = rounded_up_collision_inf_norm(
-            root_policy.sis_security_policy,
-            root_policy.sis_modulus_profile,
-            akita_types::SisMatrixRole::D,
-            root_policy.ring_dimension,
-            2,
-        )
-        .expect("D128 basis-2 D bound");
-        assert_eq!(root.params.d_key.coeff_linf_bound(), expected_d_bound);
+        let err = find_group_batch_schedule(&key, &root_policy, ring_challenge_config, fold_shape)
+            .expect_err("opening basis below frozen precommit must be rejected");
+        assert!(err
+            .to_string()
+            .contains("certified opening basis must dominate precommitted inner/outer bases"));
     }
 
     #[test]
