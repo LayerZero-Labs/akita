@@ -60,7 +60,7 @@ where
             let Some((last, rest)) = proof.steps.split_last() else {
                 return Err(AkitaError::InvalidProof);
             };
-            if !matches!(last, AkitaLevelProof::Terminal { .. })
+            if !matches!(last, AkitaLevelProof::Terminal(_))
                 || rest
                     .iter()
                     .any(|step| !matches!(step, AkitaLevelProof::Intermediate { .. }))
@@ -581,7 +581,7 @@ where
                 .steps
                 .last()
                 .and_then(|step| match step {
-                    AkitaLevelProof::Terminal { .. } => Some(step),
+                    AkitaLevelProof::Terminal(_) => Some(step),
                     AkitaLevelProof::Intermediate { .. } => None,
                 })
                 .ok_or(AkitaError::InvalidProof)?;

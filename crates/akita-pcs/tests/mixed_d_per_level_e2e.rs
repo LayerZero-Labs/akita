@@ -380,6 +380,16 @@ fn mixed_d_per_level_prove_verify_replay_and_malformed_rejections() {
             let _: AkitaError = err;
         }
 
+        // A value-level commitment-row tamper must fail the terminal B relation.
+        {
+            let mut commitment = fixture.commitment.clone();
+            let mut coeffs = commitment.0.coeffs().to_vec();
+            coeffs[0] += F::one();
+            commitment.0 = RingVec::from_coeffs(coeffs);
+            verify_mixed(&fixture, &fixture.proof, &commitment)
+                .expect_err("tampered commitment row must be rejected");
+        }
+
         // Root fold `next_w_commitment` length: size it at the wrong level's
         // ring dimension footprint.
         {
@@ -477,6 +487,26 @@ fn mixed_d_per_level_prove_verify_replay_and_malformed_rejections() {
                 truncate_ring_vec(&mut segment.e_fields, len.saturating_sub(1));
                 verify_mixed(&fixture, &proof, &fixture.commitment)
                     .expect_err("wrong-length terminal e_fields must be rejected");
+            }
+        }
+
+        // Terminal t segment is the direct A/B boundary and must be bound.
+        {
+            let mut proof = fixture.proof.clone();
+            let terminal = proof
+                .steps
+                .last_mut()
+                .and_then(AkitaLevelProof::as_terminal_mut)
+                .expect("fixture must end in a terminal step");
+            let witness = terminal
+                .final_witness_mut()
+                .expect("terminal step must carry final witness");
+            if let CleartextWitnessProof::SegmentTyped(segment) = witness {
+                let mut coeffs = segment.t_fields.coeffs().to_vec();
+                coeffs[0] += F::one();
+                segment.t_fields = RingVec::from_coeffs(coeffs);
+                verify_mixed(&fixture, &proof, &fixture.commitment)
+                    .expect_err("tampered terminal t_fields must be rejected");
             }
         }
     });

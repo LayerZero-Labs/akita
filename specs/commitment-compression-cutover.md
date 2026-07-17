@@ -848,7 +848,7 @@ Expected implementation surface:
 - Tail witness:
   - terminal direct witness includes the terminal `t` state needed by the
     verifier;
-  - `tail_segment_layout` computes `r_field_elems` from the terminal row count;
+  - `tail_segment_layout` contains only the terminal `z`, `e`, and `t` segments;
   - terminal witness shape and byte estimates include `t`, not final `u`.
 - Prover:
   - penultimate fold no longer computes/absorbs/sends next-witness `u`;

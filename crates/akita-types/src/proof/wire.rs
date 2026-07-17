@@ -284,18 +284,8 @@ impl<F: FieldCore + CanonicalField + AkitaSerialize, E: FieldCore + AkitaSeriali
                     .next_w_eval()
                     .serialize_with_mode(&mut writer, compress)
             }
-            AkitaLevelProof::Terminal {
-                extension_opening_reduction,
-                fold_grind_nonce,
-                final_witness,
-            } => {
-                serialize_terminal_fold_wire_prefix(
-                    &mut writer,
-                    extension_opening_reduction.as_ref(),
-                    *fold_grind_nonce,
-                    compress,
-                )?;
-                final_witness.serialize_with_mode(&mut writer, compress)
+            AkitaLevelProof::Terminal(terminal) => {
+                terminal.serialize_with_mode(&mut writer, compress)
             }
         }
     }
@@ -332,16 +322,7 @@ impl<F: FieldCore + CanonicalField + AkitaSerialize, E: FieldCore + AkitaSeriali
                     + stage2.next_w_commitment.serialized_size(compress)
                     + stage2.next_w_eval().serialized_size(compress)
             }
-            AkitaLevelProof::Terminal {
-                extension_opening_reduction,
-                fold_grind_nonce: _,
-                final_witness,
-            } => {
-                terminal_fold_wire_prefix_serialized_size(
-                    extension_opening_reduction.as_ref(),
-                    compress,
-                ) + final_witness.serialized_size(compress)
-            }
+            AkitaLevelProof::Terminal(terminal) => terminal.serialized_size(compress),
         }
     }
 }
@@ -376,17 +357,7 @@ impl<F: FieldCore + Valid, E: FieldCore + Valid> Valid for AkitaLevelProof<F, E>
                 stage2.next_w_commitment.check()?;
                 stage2.next_w_eval().check()
             }
-            AkitaLevelProof::Terminal {
-                extension_opening_reduction,
-                fold_grind_nonce: _,
-                final_witness,
-            } => {
-                if let Some(reduction) = extension_opening_reduction {
-                    reduction.partials.check()?;
-                    reduction.sumcheck.check()?;
-                }
-                final_witness.check()
-            }
+            AkitaLevelProof::Terminal(terminal) => terminal.check(),
         }
     }
 }
@@ -811,7 +782,7 @@ impl<F: FieldCore + Valid, E: FieldCore + Valid> Valid for AkitaBatchedProof<F, 
         }
         match &self.root {
             AkitaBatchedRootProof::Fold(_) => {
-                let Some(AkitaLevelProof::Terminal { .. }) = self.steps.last() else {
+                let Some(AkitaLevelProof::Terminal(_)) = self.steps.last() else {
                     return Err(SerializationError::InvalidData(
                         "fold-rooted batched Akita proof must terminate with a terminal step"
                             .to_string(),
@@ -894,11 +865,7 @@ impl<
                                 validate,
                                 shape,
                             )?;
-                            AkitaLevelProof::Terminal {
-                                extension_opening_reduction: terminal.extension_opening_reduction,
-                                fold_grind_nonce: terminal.fold_grind_nonce,
-                                final_witness: terminal.final_witness,
-                            }
+                            AkitaLevelProof::Terminal(terminal)
                         }
                     };
                     steps.push(step);

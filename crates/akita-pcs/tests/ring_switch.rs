@@ -1215,22 +1215,20 @@ mod tests {
         };
         artifacts.ensure_ring_dim::<D>().expect("ring dim");
         let group = artifacts.groups.first().expect("single terminal group");
-        let empty_r = RingVec::from_coeffs(Vec::new());
         let segment = build_segment_typed_witness::<F>(
             artifacts.ring_dim(),
             &group.e_folded,
             &group.recomposed_inner_rows,
             group.z_folded_centered_flat(),
-            &empty_r,
             &level_params,
             1,
             1,
             1,
-            1,
-            akita_types::TerminalQuotientMode::Omit,
         )
         .expect("segment witness");
-        assert_eq!(segment.layout.r_field_elems, 0);
-        assert_eq!(segment.r_fields.coeff_len(), 0);
+        assert_eq!(segment.layout.ring_dimension, D);
+        assert!(!segment.z_payloads.is_empty());
+        assert!(!segment.e_fields.coeffs().is_empty());
+        assert!(!segment.t_fields.coeffs().is_empty());
     }
 }

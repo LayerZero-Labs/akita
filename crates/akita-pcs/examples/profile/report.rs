@@ -52,13 +52,10 @@ pub(crate) fn emit_proof_tail_report<FF, E>(
         let z_wire_bytes = TAIL_Z_LENGTH_PREFIX_BYTES.saturating_add(z_golomb_bytes);
         let e_field_elems = segment.e_fields.coeff_len();
         let t_field_elems = segment.t_fields.coeff_len();
-        let r_field_elems = segment.r_fields.coeff_len();
         let e_ring_elems = e_field_elems / ring_dim.max(1);
         let t_ring_elems = t_field_elems / ring_dim.max(1);
-        let r_ring_elems = r_field_elems / ring_dim.max(1);
         let e_bytes = e_field_elems.saturating_mul(field_sz);
         let t_bytes = t_field_elems.saturating_mul(field_sz);
-        let r_bytes = r_field_elems.saturating_mul(field_sz);
         let z_budget_bytes = schedule_terminal_direct_witness_shape(schedule)
             .ok()
             .and_then(|shape| match shape {
@@ -106,11 +103,8 @@ pub(crate) fn emit_proof_tail_report<FF, E>(
             tail_e_ring_elems = e_ring_elems,
             tail_t_field_elems = t_field_elems,
             tail_t_ring_elems = t_ring_elems,
-            tail_r_field_elems = r_field_elems,
-            tail_r_ring_elems = r_ring_elems,
             tail_e_bytes = e_bytes,
             tail_t_bytes = t_bytes,
-            tail_r_bytes = r_bytes,
             z_witness_linf_cap,
             z_rice_low_bits_wire,
             z_rice_low_bits_cap,
@@ -166,9 +160,6 @@ pub(crate) fn emit_proof_tail_report<FF, E>(
         );
         eprintln!(
             "[{label}]     t: {t_bytes} B, field_coeffs={t_field_elems}, ring_elems={t_ring_elems}",
-        );
-        eprintln!(
-            "[{label}]     r: {r_bytes} B, field_coeffs={r_field_elems}, ring_elems={r_ring_elems}",
         );
         if std::env::var("AKITA_Z_GOLOMB_SWEEP").ok().as_deref() == Some("1") {
             emit_z_golomb_k_sweep(label, segment, schedule, field_bits, z_golomb_bytes);
@@ -439,7 +430,7 @@ where
             AkitaLevelProof::Intermediate { .. } => {
                 stage3_sumcheck_size(step.stage3_sumcheck_proof())
             }
-            AkitaLevelProof::Terminal { .. } => 0,
+            AkitaLevelProof::Terminal(_) => 0,
         })
         .sum();
     root_bytes + step_bytes
@@ -604,7 +595,6 @@ where
 {
     let (extension_opening_partials_size, extension_opening_sumcheck_size) =
         extension_opening_reduction_sizes(level.extension_opening_reduction());
-    let stage2_sumcheck_size = 0;
     let final_witness_size = level.final_witness().serialized_size(Compress::No);
     let fold_grind_nonce_size = fold_grind_nonce_wire_bytes();
     let grind_nonce = level.fold_grind_nonce_value();
@@ -615,8 +605,8 @@ where
     let total = full - final_witness_size;
 
     // Only the fields structurally present in `TerminalLevelProof` are
-    // emitted: optional extension-opening reduction, the
-    // stage-2 sumcheck, and `final_witness`. The intermediate-level
+    // emitted: optional extension-opening reduction and `final_witness`.
+    // The intermediate-level
     // fields (`v`, `stage1_*`, `stage3_sumcheck`, `next_w_*`) are absent at
     // terminal and therefore omitted from the tracing payload; downstream
     // parsers default missing keys to zero.
@@ -629,7 +619,6 @@ where
         extension_opening_sumcheck_bytes = extension_opening_sumcheck_size,
         fold_grind_nonce_bytes = fold_grind_nonce_size,
         grind_nonce,
-        stage2_sumcheck_bytes = stage2_sumcheck_size,
         final_witness_bytes = final_witness_size,
         root_variant = root_variant,
         "proof fold level"
@@ -646,14 +635,12 @@ where
     eprintln!("[{label}]     extension_opening_partials={extension_opening_partials_size} bytes");
     eprintln!("[{label}]     extension_opening_sumcheck={extension_opening_sumcheck_size} bytes");
     eprintln!("[{label}]     fold_grind_nonce={fold_grind_nonce_size} bytes");
-    eprintln!("[{label}]     stage2_sumcheck={stage2_sumcheck_size} bytes");
     eprintln!("[{label}]     final_witness={final_witness_size} bytes (absorbed via transcript)");
     assert_eq!(
         full,
         extension_opening_partials_size
             + extension_opening_sumcheck_size
             + fold_grind_nonce_size
-            + stage2_sumcheck_size
             + final_witness_size
     );
     total
@@ -836,7 +823,7 @@ pub(crate) fn print_batched_proof_summary<FF, E, const D: usize>(
             AkitaLevelProof::Intermediate { .. } => {
                 print_akita_level_breakdown::<FF, E, D>(label, level_idx, step);
             }
-            AkitaLevelProof::Terminal { .. } => {
+            AkitaLevelProof::Terminal(_) => {
                 print_terminal_level_breakdown::<FF, E, _, D>(label, level_idx, step, "fold");
             }
         }

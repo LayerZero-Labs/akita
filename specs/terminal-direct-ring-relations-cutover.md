@@ -4,7 +4,7 @@
 | --- | --- |
 | Base | PR #294 (`refactor/universal-digit-fast-layout`) |
 | Branch | `quang/terminal-direct-ring-relations` |
-| Status | implementation scaffold |
+| Status | implemented |
 | Supersedes | the implementation plan in PR #141 |
 
 ## Goal
@@ -110,9 +110,9 @@ path:
   final claim;
 - apply the existing recursive/root trace scales.
 
-Segment-typed witnesses must use the existing checked `logical_i8_digits`
-expansion and trace-table primitives. Do not use the root-direct
-`FieldElements`-only opening helper.
+Segment-typed witnesses use the checked direct trace evaluator over revealed
+`e`; they do not reconstruct the removed stage-2 logical digit stream. Do not
+use the root-direct `FieldElements`-only opening helper.
 
 ## Transcript
 
@@ -158,12 +158,8 @@ row counts, ring dimensions, and arithmetic overflow reject with
 
 For the transparent terminal:
 
-```text
-r_field_elems = 0
-r logical digit planes = 0
-```
-
-The realized tail is `SegmentTyped(z, e, t)`. The intermediate recursive
+The realized tail is structurally `SegmentTyped(z, e, t)`, with no quotient
+field or quotient-mode tag. The intermediate recursive
 `WitnessLayout` continues to own a mandatory shared `r_range`; do not make all
 recursive witness layouts optional merely to express the terminal cutover.
 

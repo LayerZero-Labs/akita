@@ -543,12 +543,24 @@ where
                 terminal_num_polynomials,
                 1,
             )],
-            1,
-            akita_types::TerminalQuotientMode::Omit,
         )?;
         let direct_bytes = direct_witness_bytes(field_bits, &witness_shape);
+        let current_w_len = witness_shape.logical_num_elems();
+        if let Some(terminal_fold) = mixed_folds.last_mut() {
+            let challenge_field_bits = field_bits * policy_of::<SuffixCfg>().chal_ext_degree as u32;
+            terminal_fold.next_w_len = current_w_len;
+            terminal_fold.level_bytes = level_proof_bytes(
+                field_bits,
+                challenge_field_bits,
+                &terminal_fold.params,
+                None,
+                current_w_len,
+                1,
+                RelationMatrixRowLayout::WithoutDBlock,
+            );
+        }
         DirectStep {
-            current_w_len: terminal_current_w_len,
+            current_w_len,
             witness_shape,
             direct_bytes,
             params: None,

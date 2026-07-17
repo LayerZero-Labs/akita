@@ -219,7 +219,7 @@ fn batched_total_fold_levels<FF: CanonicalField, E: FieldCore>(
         .filter(|step| {
             matches!(
                 step,
-                AkitaLevelProof::Intermediate { .. } | AkitaLevelProof::Terminal { .. }
+                AkitaLevelProof::Intermediate { .. } | AkitaLevelProof::Terminal(_)
             )
         })
         .count();

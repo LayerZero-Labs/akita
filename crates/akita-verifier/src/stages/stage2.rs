@@ -159,123 +159,13 @@ where
             E::zero()
         };
 
-        // Terminal levels run with `batching_coeff = 0`, which zeros the
-        // virtual half regardless of `stage1_point` / `w_eval`. Skip the
-        // EqPolynomial eval and the `w * (w + 1)` round in that case.
+        // A zero batching challenge removes the virtual term. Avoid the
+        // unnecessary EqPolynomial evaluation in that degenerate case.
         if self.batching_coeff.is_zero() {
             return Ok(relation_oracle + trace_oracle);
         }
         let eq_val = EqPolynomial::mle(&self.stage1_point, challenges)?;
         let virtual_oracle = eq_val * w_eval * (w_eval + E::one());
         Ok(self.batching_coeff * virtual_oracle + relation_oracle + trace_oracle)
-    }
-}
-
-#[cfg(any())]
-mod tests {
-    use super::{cleartext_source_eval, Stage2CleartextSource};
-    use akita_field::{AkitaError, FieldCore};
-    use akita_field::{FpExt2, NegOneNr, Prime128Offset275};
-    use akita_sumcheck::multilinear_eval;
-
-    type F = Prime128Offset275;
-    type E = FpExt2<F, NegOneNr>;
-    const D: usize = 4;
-
-    fn build_w_evals<F: FieldCore>(
-        w: &[F],
-        d: usize,
-    ) -> Result<(Vec<F>, usize, usize), AkitaError> {
-        if !w.len().is_multiple_of(d) {
-            return Err(AkitaError::InvalidSize {
-                expected: d,
-                actual: w.len(),
-            });
-        }
-        let ring_bits = d.trailing_zeros() as usize;
-        let num_ring_elems = w.len() / d;
-        let col_bits = num_ring_elems.next_power_of_two().trailing_zeros() as usize;
-        let x_len = 1usize << col_bits;
-        let n = x_len << ring_bits;
-
-        let mut out = vec![F::zero(); n];
-        out[..w.len()].copy_from_slice(w);
-        Ok((out, col_bits, ring_bits))
-    }
-
-    #[test]
-    fn logical_digits_eval_matches_materialized_table() {
-        let d = 4usize;
-        let w_digits = vec![3, -1, 2, 0, -2, 1, 4, -3, 1, 0, -4, 2];
-        let w_field: Vec<F> = w_digits
-            .iter()
-            .map(|&digit| F::from_i64(digit as i64))
-            .collect();
-        let (w_evals, col_bits, ring_bits) =
-            build_w_evals(&w_field, d).expect("valid witness shape");
-        let challenges = vec![
-            F::from_u64(2),
-            F::from_u64(5),
-            F::from_u64(7),
-            F::from_u64(11),
-        ];
-        let expected = multilinear_eval(&w_evals, &challenges).expect("matching table shape");
-        let source = Stage2CleartextSource::LogicalDigits(std::borrow::Cow::Borrowed(&w_digits));
-        let actual = cleartext_source_eval::<F, F, 4>(
-            w_digits.len(),
-            &source,
-            &challenges,
-            col_bits,
-            ring_bits,
-        )
-        .expect("valid logical digits");
-        assert_eq!(actual, expected);
-    }
-
-    #[test]
-    fn field_witness_eval_lifts_base_witness_to_extension_challenges() {
-        let field_witness = vec![
-            F::from_u64(3),
-            F::from_u64(5),
-            F::from_u64(7),
-            F::from_u64(11),
-        ];
-        let challenges = vec![
-            E::new(F::from_u64(2), F::from_u64(3)),
-            E::new(F::from_u64(5), F::from_u64(7)),
-        ];
-
-        let lifted_witness: Vec<E> = field_witness
-            .iter()
-            .copied()
-            .map(|x| E::new(x, F::zero()))
-            .collect();
-        let expected =
-            multilinear_eval(&lifted_witness, &challenges).expect("matching extension table shape");
-        let source = Stage2CleartextSource::FieldElements(&field_witness);
-        let actual =
-            cleartext_source_eval::<F, E, D>(field_witness.len(), &source, &challenges, 1, 1)
-                .expect("valid witness");
-
-        assert_eq!(actual, expected);
-    }
-
-    #[test]
-    fn logical_digits_eval_rejects_challenge_dimension_mismatch() {
-        let w_digits = vec![1i8, -1, 0, 2];
-        let source = Stage2CleartextSource::LogicalDigits(std::borrow::Cow::Borrowed(&w_digits));
-        let err = cleartext_source_eval::<F, E, D>(1, &source, &[E::zero()], 1, 1)
-            .expect_err("wrong arity");
-        assert!(matches!(err, AkitaError::InvalidSize { .. }));
-    }
-
-    #[test]
-    fn logical_digits_eval_rejects_length_mismatch() {
-        let w_digits = vec![1i8, -1, 0, 2];
-        let challenges = vec![E::zero(), E::zero()];
-        let source = Stage2CleartextSource::LogicalDigits(std::borrow::Cow::Borrowed(&w_digits));
-        let err = cleartext_source_eval::<F, E, D>(8, &source, &challenges, 1, 1)
-            .expect_err("witness length mismatch");
-        assert!(matches!(err, AkitaError::InvalidProof));
     }
 }

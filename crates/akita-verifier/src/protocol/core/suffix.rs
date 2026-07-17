@@ -305,7 +305,7 @@ where
     let fold_grind_nonce = proof.fold_grind_nonce();
     let v_storage = match proof {
         AkitaLevelProof::Intermediate { v, .. } => v.clone(),
-        AkitaLevelProof::Terminal { .. } => RingVec::from_coeffs(Vec::new()),
+        AkitaLevelProof::Terminal(_) => RingVec::from_coeffs(Vec::new()),
     };
     let commitment_rows =
         suffix_commitment_rows(setup, lp, &opening_batch, current_state.commitment)?;
@@ -446,7 +446,7 @@ where
                     setup_prefix_opening,
                 };
             }
-            AkitaLevelProof::Terminal { .. } => {
+            AkitaLevelProof::Terminal(_) => {
                 let terminal_proof = step;
                 if !current_state.commitment.can_decode_vec(commit_d) {
                     return Err(AkitaError::InvalidProof);

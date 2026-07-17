@@ -153,8 +153,6 @@ fn walk_scalar_generated_schedule_entry(
                             num_polynomials,
                             1,
                         )],
-                        1,
-                        akita_types::TerminalQuotientMode::Omit,
                     )?;
                     let len = shape.logical_num_elems();
                     terminal_witness_field_len = Some(len);
@@ -290,8 +288,6 @@ fn walk_scalar_generated_schedule_entry(
                             num_polynomials,
                             1,
                         )],
-                        1,
-                        akita_types::TerminalQuotientMode::Omit,
                     )?;
                     (witness_shape, len, None)
                 };
@@ -421,8 +417,6 @@ fn walk_multi_group_generated_schedule_entry(
                         &lp,
                         field_bits,
                         [(&lp as &dyn akita_types::LevelParamsLike, 1, 1, 1)],
-                        1,
-                        akita_types::TerminalQuotientMode::Omit,
                     )?;
                     let len = shape.logical_num_elems();
                     terminal_witness_field_len = Some(len);
@@ -551,8 +545,6 @@ fn walk_multi_group_generated_schedule_entry(
                         terminal_lp,
                         field_bits,
                         [(terminal_lp as &dyn akita_types::LevelParamsLike, 1, 1, 1)],
-                        1,
-                        akita_types::TerminalQuotientMode::Omit,
                     )?;
                     (witness_shape, len, None)
                 };

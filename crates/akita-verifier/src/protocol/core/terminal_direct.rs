@@ -9,7 +9,8 @@ use akita_field::{
 use akita_types::{
     decode_terminal_z_golomb_payload_with_cap, dispatch_for_field,
     recover_ring_subfield_inner_product, AkitaExpandedSetup, CleartextWitnessProof, FpExtEncoding,
-    LevelParams, LevelParamsLike, PreparedOpeningPoint, RingRelationInstance, RingVec,
+    LevelParams, LevelParamsLike, PreparedOpeningPoint, RelationMatrixRowLayout,
+    RingRelationInstance, RingVec,
 };
 
 fn sparse_challenge_ring<F, const D: usize>(
@@ -181,8 +182,6 @@ where
         .as_segment_typed()
         .ok_or(AkitaError::InvalidProof)?;
     if witness.layout.ring_dimension != relation.role_dims().d_a()
-        || witness.layout.r_field_elems != 0
-        || witness.r_fields.coeff_len() != 0
         || witness.layout.groups.len() != relation.opening_batch().num_groups()
     {
         return Err(AkitaError::InvalidProof);
@@ -209,6 +208,24 @@ where
                     .opening_batch()
                     .group_layout(group_index)?
                     .num_polynomials();
+                let a_range = lp.a_row_range(
+                    relation.opening_batch(),
+                    group_index,
+                    RelationMatrixRowLayout::WithoutDBlock,
+                )?;
+                let b_range = lp.commitment_row_range(
+                    relation.opening_batch(),
+                    group_index,
+                    RelationMatrixRowLayout::WithoutDBlock,
+                )?;
+                if a_range.len() != params.a_rows_len()
+                    || b_range.len() != params.b_rows_len()
+                    || b_range.start != a_range.end
+                {
+                    return Err(AkitaError::InvalidSetup(
+                        "terminal direct row ranges do not match group matrix heights".to_string(),
+                    ));
+                }
                 let num_blocks = num_polynomials
                     .checked_mul(params.num_live_blocks())
                     .ok_or(AkitaError::InvalidProof)?;
@@ -298,8 +315,8 @@ where
                     F,
                     relation.role_dims().d_b(),
                     |D_B| {
-                        let commitment_coeffs = params
-                            .b_rows_len()
+                        let commitment_coeffs = b_range
+                            .len()
                             .checked_mul(D_B)
                             .ok_or(AkitaError::InvalidProof)?;
                         let end = commitment_offset

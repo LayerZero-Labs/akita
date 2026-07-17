@@ -136,11 +136,8 @@ fn fold_grind_nonce_wire_roundtrip_and_oversized_nonce_rejected() {
         if let AkitaBatchedRootProof::Fold(fold) = &mut roundtrip.root {
             fold.fold_grind_nonce = MAX_FOLD_GRIND_ATTEMPTS;
         }
-        if let Some(akita_types::AkitaLevelProof::Terminal {
-            fold_grind_nonce, ..
-        }) = roundtrip.steps.last_mut()
-        {
-            *fold_grind_nonce = MAX_FOLD_GRIND_ATTEMPTS;
+        if let Some(akita_types::AkitaLevelProof::Terminal(terminal)) = roundtrip.steps.last_mut() {
+            terminal.fold_grind_nonce = MAX_FOLD_GRIND_ATTEMPTS;
         }
 
         let mut verifier_transcript = AkitaTranscript::<F>::new(b"fold-linf/onehot");

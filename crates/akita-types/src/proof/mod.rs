@@ -94,21 +94,20 @@ pub use tail_segments::{
     build_segment_typed_witness, build_segment_typed_witness_from_groups,
     decode_terminal_z_golomb_payload, decode_terminal_z_golomb_payload_with_cap,
     e_folded_segment_bytes, emit_witness_e_planes, emit_witness_r_planes, emit_witness_t_planes,
-    emit_witness_z_planes, expand_segment_typed_to_i8_digits,
-    segment_typed_witness_upper_bound_bytes, segment_typed_z_payload_bytes,
+    emit_witness_z_planes, segment_typed_witness_upper_bound_bytes, segment_typed_z_payload_bytes,
     tail_golomb_rice_z_params, tail_segment_layout_from_groups,
     tail_segment_multiplicities_from_layout, tail_segment_multiplicities_from_layout_for_params,
     terminal_golomb_grind_tail_t_vectors, validate_segment_typed_z_payload,
     z_fold_decoded_from_segment, z_fold_encoding_stats_from_segment, SegmentTypedWitness,
     SegmentTypedWitnessGroupParts, SegmentTypedWitnessShape, TailSegmentGroupLayout,
-    TailSegmentLayout, TerminalQuotientMode,
+    TailSegmentLayout,
 };
 pub use terminal_witness::{RelationOnlyStage2Inputs, TerminalWitnessTranscriptParts};
 
 use crate::EXTENSION_OPENING_REDUCTION_DEGREE;
 use akita_algebra::CyclotomicRing;
 use akita_field::AkitaError;
-use akita_field::{CanonicalField, FieldCore, HalvingField};
+use akita_field::{CanonicalField, FieldCore};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize, DEFAULT_MAX_SEQUENCE_LEN};
 use akita_serialization::{Compress, SerializationError};
 use akita_serialization::{Valid, Validate};

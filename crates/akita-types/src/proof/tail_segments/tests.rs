@@ -25,7 +25,6 @@ fn scalar_group_layout(
     num_w_vectors: usize,
     num_t_vectors: usize,
     num_z_segments: usize,
-    num_commitment_groups: usize,
     field_bits: u32,
 ) -> Result<TailSegmentLayout, AkitaError> {
     tail_segment_layout_from_groups(
@@ -36,9 +35,7 @@ fn scalar_group_layout(
             num_t_vectors,
             num_z_segments,
         )],
-        num_commitment_groups,
         field_bits,
-        TerminalQuotientMode::Include,
     )
 }
 
@@ -54,7 +51,7 @@ fn recompose_and_split_digits_round_trip() {
 fn segment_typed_z_budget_uses_golomb_rate_not_packed_digit_width() {
     let lp = test_lp();
     let field_bits = F::modulus_bits();
-    let layout = scalar_group_layout(&lp, 1, 1, 1, 1, field_bits).unwrap();
+    let layout = scalar_group_layout(&lp, 1, 1, 1, field_bits).unwrap();
     let z_bytes = segment_typed_z_payload_bytes(&lp, &layout, 1).unwrap();
     let group = layout.groups[0];
     let depth_fold = lp.num_digits_fold(1, field_bits).unwrap();
@@ -66,45 +63,27 @@ fn segment_typed_z_budget_uses_golomb_rate_not_packed_digit_width() {
 }
 
 #[test]
-fn direct_terminal_layout_omits_all_quotient_fields_and_planes() {
-    let lp = test_lp();
-    let field_bits = F::modulus_bits();
-    let groups = || [(&lp as &dyn LevelParamsLike, 1usize, 1usize, 1usize)];
-    let included = tail_segment_layout_from_groups(
-        &lp,
-        groups(),
-        1,
-        field_bits,
-        TerminalQuotientMode::Include,
-    )
-    .expect("quotient-backed terminal layout");
-    let omitted =
-        tail_segment_layout_from_groups(&lp, groups(), 1, field_bits, TerminalQuotientMode::Omit)
-            .expect("direct terminal layout");
-
-    let rows = lp
-        .relation_matrix_row_count_for(1, RelationMatrixRowLayout::WithoutDBlock)
-        .expect("terminal relation rows");
-    let quotient_planes = rows * compute_num_digits_full_field(field_bits, lp.log_basis);
-    assert_eq!(included.r_field_elems, rows * lp.ring_dimension);
-    assert_eq!(omitted.r_field_elems, 0);
-    assert_eq!(
-        included.logical_num_elems - omitted.logical_num_elems,
-        quotient_planes * lp.ring_dimension
-    );
-    assert_eq!(included.groups, omitted.groups);
-}
-
-#[test]
-fn direct_terminal_builder_requires_and_preserves_empty_quotient_segment() {
+fn direct_terminal_layout_contains_only_z_e_t_planes() {
     let lp = test_lp();
     let field_bits = F::modulus_bits();
     let layout = tail_segment_layout_from_groups(
         &lp,
         [(&lp as &dyn LevelParamsLike, 1usize, 1usize, 1usize)],
-        1,
         field_bits,
-        TerminalQuotientMode::Omit,
+    )
+    .expect("direct terminal layout");
+    assert_eq!(layout.groups.len(), 1);
+    assert_eq!(layout.logical_num_elems % lp.ring_dimension, 0);
+}
+
+#[test]
+fn direct_terminal_builder_constructs_z_e_t_segments() {
+    let lp = test_lp();
+    let field_bits = F::modulus_bits();
+    let layout = tail_segment_layout_from_groups(
+        &lp,
+        [(&lp as &dyn LevelParamsLike, 1usize, 1usize, 1usize)],
+        field_bits,
     )
     .expect("direct terminal layout");
     let group_layout = layout.groups[0];
@@ -123,38 +102,10 @@ fn direct_terminal_builder_requires_and_preserves_empty_quotient_segment() {
         recomposed_inner_rows: &recomposed_inner_rows,
         z_folded_centered_flat: &z_folded_centered_flat,
     };
-    let empty_r = RingVec::from_coeffs(Vec::new());
-    let witness = build_segment_typed_witness_from_groups(
-        lp.ring_dimension,
-        &[group],
-        &empty_r,
-        &lp,
-        1,
-        TerminalQuotientMode::Omit,
-    )
-    .expect("direct terminal witness");
+    let witness = build_segment_typed_witness_from_groups(lp.ring_dimension, &[group], &lp)
+        .expect("direct terminal witness");
 
     assert_eq!(witness.layout, layout);
-    assert_eq!(witness.r_fields.coeff_len(), 0);
-
-    let nonempty_r = RingVec::from_coeffs(vec![F::zero(); lp.ring_dimension]);
-    assert!(build_segment_typed_witness_from_groups(
-        lp.ring_dimension,
-        &[SegmentTypedWitnessGroupParts {
-            params: &lp,
-            num_w_vectors: 1,
-            num_t_vectors: 1,
-            num_z_segments: 1,
-            e_folded: &e_folded,
-            recomposed_inner_rows: &recomposed_inner_rows,
-            z_folded_centered_flat: &z_folded_centered_flat,
-        }],
-        &nonempty_r,
-        &lp,
-        1,
-        TerminalQuotientMode::Omit,
-    )
-    .is_err());
 }
 
 #[test]
@@ -164,7 +115,7 @@ fn segment_typed_wire_round_trip_with_scheduled_z_budget() {
 
     let lp = test_lp();
     let field_bits = F::modulus_bits();
-    let layout = scalar_group_layout(&lp, 1, 1, 1, 1, field_bits).unwrap();
+    let layout = scalar_group_layout(&lp, 1, 1, 1, field_bits).unwrap();
     let scheduled_z_bytes = segment_typed_z_payload_bytes(&lp, &layout, 1).unwrap();
     assert!(
         scheduled_z_bytes > 16,
@@ -187,7 +138,6 @@ fn segment_typed_wire_round_trip_with_scheduled_z_budget() {
         z_payloads: vec![z_payload],
         e_fields: RingVec::from_coeffs(vec![F::zero(); group.e_field_elems]),
         t_fields: RingVec::from_coeffs(vec![F::zero(); group.t_field_elems]),
-        r_fields: RingVec::from_coeffs(vec![F::zero(); layout.r_field_elems]),
     };
     let scheduled_shape = SegmentTypedWitnessShape { layout };
     let mut bytes = Vec::new();
@@ -207,7 +157,7 @@ fn segment_typed_wire_round_trip_with_scheduled_z_budget() {
 #[test]
 fn terminal_e_absorb_matches_emitted_field_segment() {
     let lp = test_lp();
-    let layout = scalar_group_layout(&lp, 1, 1, 1, 1, F::modulus_bits()).unwrap();
+    let layout = scalar_group_layout(&lp, 1, 1, 1, F::modulus_bits()).unwrap();
     let group = layout.groups[0];
     let e_fields = RingVec::from_coeffs(
         (0..group.e_field_elems)
@@ -219,7 +169,6 @@ fn terminal_e_absorb_matches_emitted_field_segment() {
         z_payloads: vec![vec![0]],
         e_fields: e_fields.clone(),
         t_fields: RingVec::from_coeffs(vec![F::zero(); group.t_field_elems]),
-        r_fields: RingVec::from_coeffs(vec![F::zero(); layout.r_field_elems]),
     };
 
     assert_eq!(
@@ -250,27 +199,6 @@ fn decode_terminal_z_rejects_trailing_zero_byte_padding() {
     let mut payload = golomb_rice_encode_vec(&[-2i64, 1, 0], rice_low_bits, zigzag_w).unwrap();
     payload.push(0x00);
     assert!(decode_terminal_z_golomb_payload(&payload, 3, &lp, 1, None).is_err());
-}
-
-#[test]
-fn expand_segment_typed_rejects_inadmissible_z_payload() {
-    use crate::golomb_rice::golomb_rice_encode_vec;
-
-    let lp = test_lp();
-    let field_bits = F::modulus_bits();
-    let layout = scalar_group_layout(&lp, 1, 1, 1, 1, field_bits).unwrap();
-    let (rice_low_bits, zigzag_w) = tail_golomb_rice_z_params(&lp, 1).unwrap();
-    let cap = lp.fold_witness_linf_cap_for_claims(1).unwrap();
-    let z_payload = golomb_rice_encode_vec(&[cap as i64 + 1], rice_low_bits, zigzag_w).unwrap();
-    let group = layout.groups[0];
-    let witness = SegmentTypedWitness {
-        layout: layout.clone(),
-        z_payloads: vec![z_payload],
-        e_fields: RingVec::from_coeffs(vec![F::zero(); group.e_field_elems]),
-        t_fields: RingVec::from_coeffs(vec![F::zero(); group.t_field_elems]),
-        r_fields: RingVec::from_coeffs(vec![F::zero(); layout.r_field_elems]),
-    };
-    assert!(expand_segment_typed_to_i8_digits::<8, F>(&witness, &lp, 1).is_err());
 }
 
 #[path = "test_support.rs"]

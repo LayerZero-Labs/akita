@@ -177,7 +177,7 @@ The transparent tail witness becomes an ordered list of typed segments, replacin
 pub enum TailSegmentModel {
     /// Norm-bounded folded-response integers; Golomb-Rice with wire `rice_low_bits = wire_rice_low_bits(cap)`.
     Gaussian { rice_low_bits: u32 },
-    /// Full field/base coefficients for one ring element (e_folded, t, r).
+    /// Full field/base coefficients for one ring element (`e_folded` or `t`).
     RawField,
 }
 ```
@@ -194,17 +194,16 @@ The legacy `RingRelationInstance::segment_layout` plane counts (`crates/akita-ty
 z_coords       = num_z_segments * num_positions_per_block * num_digits_commit * D   (Golomb integers; one per base-field slot in folded z)
 e_field_elems  = num_live_blocks * num_w_vectors * D                       (RawField; one ring element per block → D coeffs)
 t_field_elems  = n_a * num_live_blocks * num_t_vectors * D                   (RawField)
-r_field_elems  = relation_matrix_row_count_for(WithoutDBlock) * D                   (RawField; until PR #141 r-drop)
 ```
 
-`z_coords` is the Golomb element count. `e_field_elems`, `t_field_elems`, and `r_field_elems` are base-field coefficient counts for `RawField` serialization.
+`z_coords` is the Golomb element count. `e_field_elems` and `t_field_elems` are base-field coefficient counts for `RawField` serialization.
 The legacy `PackedDigits` layout in `build_w_coeffs` (`coeffs.rs`) is the source for S3's byte-neutral framing, but S2 removes the legacy `t_hat`, `û_concat`, and `r_hat` planes from the final terminal policy.
-Segments appear in wire order `z ‖ e ‖ t ‖ r`; `r_hat` planes are absent under PR #141 direct mode.
+Segments appear in wire order `z ‖ e ‖ t`. Terminal quotient rows and their digit planes do not exist.
 Multipoint layouts scale `z_coords` with `num_z_segments`.
 
 This mirrors the existing headerless, shape-driven decode (the shape supplies counts and the `z` payload upper bound). `CleartextWitnessShape::SegmentTyped` and `CleartextWitnessProof::SegmentTyped` ship in #190.
 
-The verifier decodes `z` via Golomb–Rice into centered integers and expands to balanced digit planes; decodes `e`/`t`/`r` as raw field coefficients and **decomposes** `e`/`t` to digit planes on the verifier side for the existing row layout (`expand_segment_typed_to_i8_digits`). The wire never carries `e_hat` digit planes for `e`; it carries `e_folded` field elements.
+The verifier decodes `z` via Golomb–Rice into centered ring elements and decodes `e`/`t` as raw field coefficients. It checks consistency and the A/B ring equations directly; only `t` is decomposed for the B matrix multiplication. The wire never carries `e_hat` digit planes for `e`; it carries `e_folded` field elements.
 
 ### Golomb-Rice for the Gaussian z segment
 

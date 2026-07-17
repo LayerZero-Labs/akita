@@ -1,7 +1,6 @@
 use super::*;
 use crate::proof::tail_segments::{
-    expand_segment_typed_to_i8_digits, tail_segment_layout_from_groups, SegmentTypedWitness,
-    SegmentTypedWitnessShape, TerminalQuotientMode,
+    tail_segment_layout_from_groups, SegmentTypedWitness, SegmentTypedWitnessShape,
 };
 use crate::{LevelParams, LevelParamsLike};
 
@@ -51,27 +50,6 @@ impl<F: FieldCore> CleartextWitnessProof<F> {
         match self {
             Self::FieldElements(field_elems) => field_elems.coeff_len(),
             Self::SegmentTyped(witness) => witness.layout.logical_num_elems,
-        }
-    }
-
-    /// Decode the logical digit stream for stage-2 replay.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`AkitaError::InvalidProof`] when the witness cannot be decoded.
-    pub fn logical_i8_digits<const D: usize>(
-        &self,
-        lp: &LevelParams,
-        num_segments: usize,
-    ) -> Result<Vec<i8>, AkitaError>
-    where
-        F: CanonicalField + HalvingField,
-    {
-        match self {
-            Self::SegmentTyped(witness) => {
-                expand_segment_typed_to_i8_digits::<D, F>(witness, lp, num_segments)
-            }
-            Self::FieldElements(_) => Err(AkitaError::InvalidProof),
         }
     }
 
@@ -132,16 +110,8 @@ pub fn segment_typed_witness_shape_from_groups<'a>(
     terminal_lp: &LevelParams,
     field_bits: u32,
     groups: impl IntoIterator<Item = (&'a dyn LevelParamsLike, usize, usize, usize)>,
-    num_segments: usize,
-    quotient_mode: TerminalQuotientMode,
 ) -> Result<CleartextWitnessShape, AkitaError> {
-    let layout = tail_segment_layout_from_groups(
-        terminal_lp,
-        groups,
-        num_segments,
-        field_bits,
-        quotient_mode,
-    )?;
+    let layout = tail_segment_layout_from_groups(terminal_lp, groups, field_bits)?;
     Ok(CleartextWitnessShape::SegmentTyped(
         SegmentTypedWitnessShape { layout },
     ))

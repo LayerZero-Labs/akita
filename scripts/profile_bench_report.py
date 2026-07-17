@@ -307,11 +307,8 @@ TAIL_SUMMARY_INT_FIELDS = (
     "tail_e_ring_elems",
     "tail_t_field_elems",
     "tail_t_ring_elems",
-    "tail_r_field_elems",
-    "tail_r_ring_elems",
     "tail_e_bytes",
     "tail_t_bytes",
-    "tail_r_bytes",
     "z_rice_low_bits_wire",
     "z_rice_low_bits_cap",
     "z_coords",
@@ -429,7 +426,6 @@ def render_tail_encoding(current: dict[str, object]) -> None:
             "tail_t_field_elems",
             "tail_t_ring_elems",
         ),
-        ("Quotient-tail (`r`)", "tail_r_bytes", "tail_r_field_elems", "tail_r_ring_elems"),
     ):
         seg_bytes = current.get(bytes_key)
         field_coeffs = current.get(field_key)
@@ -445,15 +441,14 @@ def render_tail_encoding(current: dict[str, object]) -> None:
 
     if all(
         current.get(key) is not None
-        for key in ("tail_z_bytes", "tail_e_bytes", "tail_t_bytes", "tail_r_bytes")
+        for key in ("tail_z_bytes", "tail_e_bytes", "tail_t_bytes")
     ):
         wire_total = (
             int(current["tail_z_bytes"])
             + int(current["tail_e_bytes"])
             + int(current["tail_t_bytes"])
-            + int(current["tail_r_bytes"])
         )
-        print(f"  - Wire total (z+e+t+r): `{fmt_bytes(float(wire_total))} bytes`")
+        print(f"  - Wire total (z+e+t): `{fmt_bytes(float(wire_total))} bytes`")
 
     z_budget = current.get("tail_z_budget_bytes")
     z_slack = current.get("tail_z_slack_bytes")

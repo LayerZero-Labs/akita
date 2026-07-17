@@ -309,13 +309,7 @@ pub(crate) fn terminal_witness_shape_for_opening_layout(
         let group_polys = opening_layout.group_layout(group_index)?.num_polynomials();
         group_shapes.push((group_lp, group_polys, group_polys, 1));
     }
-    segment_typed_witness_shape_from_groups(
-        terminal_lp,
-        field_bits,
-        group_shapes,
-        opening_layout.num_groups(),
-        akita_types::TerminalQuotientMode::Omit,
-    )
+    segment_typed_witness_shape_from_groups(terminal_lp, field_bits, group_shapes)
 }
 
 fn derive_setup_prefix_group(
@@ -570,8 +564,6 @@ pub(crate) fn derive_candidate_level_params(
             &candidate_params,
             policy.decomposition.field_bits(),
             [(&candidate_params as &dyn LevelParamsLike, 1, 1, 1)],
-            1,
-            akita_types::TerminalQuotientMode::Omit,
         )?;
         let next_witness_len_terminal = terminal_shape.logical_num_elems();
 

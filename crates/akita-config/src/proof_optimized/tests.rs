@@ -581,8 +581,6 @@ fn recursive_setup_envelope_counts_setup_prefix_d_segment() {
             params,
             128,
             [(params as &dyn LevelParamsLike, 1, 1, 1)],
-            1,
-            akita_types::TerminalQuotientMode::Omit,
         )
         .expect("segment-typed witness shape");
         let CleartextWitnessShape::SegmentTyped(shape) = &witness_shape else {

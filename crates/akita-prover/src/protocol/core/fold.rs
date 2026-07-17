@@ -889,15 +889,8 @@ where
             })
         })
         .collect::<Result<Vec<_>, AkitaError>>()?;
-    let empty_r = RingVec::from_coeffs(Vec::new());
-    let segment = build_segment_typed_witness_from_groups::<F>(
-        artifacts.ring_dim(),
-        &group_parts,
-        &empty_r,
-        lp,
-        opening_batch.num_groups(),
-        akita_types::TerminalQuotientMode::Omit,
-    )?;
+    let segment =
+        build_segment_typed_witness_from_groups::<F>(artifacts.ring_dim(), &group_parts, lp)?;
     if segment.layout != scheduled_shape.layout {
         return Err(AkitaError::InvalidSetup(
             "segment-typed witness layout does not match schedule".to_string(),
@@ -1098,59 +1091,6 @@ where
             }))
         }
         SetupContributionMode::Direct => Ok(None),
-    }
-}
-
-#[cfg(all(test, feature = "logging-transcript"))]
-mod transcript_schedule_tests {
-    use super::*;
-    use akita_field::{Fp32, FpExt2, NegOneNr};
-    use akita_transcript::{
-        is_ext_limb_label, labels, AkitaTranscript, LoggingTranscript, Transcript, TranscriptEvent,
-    };
-
-    type F = Fp32<251>;
-    type E = FpExt2<F, NegOneNr>;
-
-    fn sample_stage2_batching_coeff<T: Transcript<F>>(
-        transcript: &mut T,
-        is_terminal_fold: bool,
-    ) -> E {
-        if is_terminal_fold {
-            E::zero()
-        } else {
-            sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_SUMCHECK_BATCH)
-        }
-    }
-
-    fn squeezes_logical_label(events: &[TranscriptEvent], base: &[u8]) -> bool {
-        events.iter().any(|event| {
-            matches!(event, TranscriptEvent::Squeeze { label, .. }
-                if label.as_slice() == base || is_ext_limb_label(label, base))
-        })
-    }
-
-    #[test]
-    fn terminal_fold_skips_stage2_batch_challenge() {
-        let mut transcript = LoggingTranscript::wrap(AkitaTranscript::<F>::new(b"fold/terminal"));
-        let batching = sample_stage2_batching_coeff(&mut transcript, true);
-        assert!(batching.is_zero());
-        assert!(
-            !squeezes_logical_label(transcript.events(), labels::CHALLENGE_SUMCHECK_BATCH),
-            "terminal fold must not squeeze stage-2 batch challenge for trace weighting"
-        );
-    }
-
-    #[test]
-    fn intermediate_fold_squeezes_stage2_batch_challenge() {
-        let mut transcript =
-            LoggingTranscript::wrap(AkitaTranscript::<F>::new(b"fold/intermediate"));
-        let batching = sample_stage2_batching_coeff(&mut transcript, false);
-        assert!(!batching.is_zero());
-        assert!(
-            squeezes_logical_label(transcript.events(), labels::CHALLENGE_SUMCHECK_BATCH),
-            "intermediate fold must squeeze stage-2 batch challenge before trace weighting"
-        );
     }
 }
 

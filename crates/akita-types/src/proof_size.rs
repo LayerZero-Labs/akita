@@ -168,8 +168,6 @@ mod tests {
             lp,
             field_bits,
             [(lp as &dyn crate::LevelParamsLike, num_claims, num_claims, 1)],
-            1,
-            crate::TerminalQuotientMode::Omit,
         )
         .expect("segment-typed witness shape");
         let CleartextWitnessShape::SegmentTyped(ref segment_shape) = shape else {
@@ -187,7 +185,6 @@ mod tests {
             z_payloads: vec![z_payload],
             e_fields: RingVec::from_coeffs(vec![F::zero(); group.e_field_elems]),
             t_fields: RingVec::from_coeffs(vec![F::zero(); group.t_field_elems]),
-            r_fields: RingVec::from_coeffs(vec![F::zero(); layout.r_field_elems]),
         };
         (CleartextWitnessProof::SegmentTyped(witness), shape)
     }

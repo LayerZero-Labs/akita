@@ -300,8 +300,6 @@ fn find_schedule_inner(
                     key.num_polynomials(),
                     1,
                 )],
-                1,
-                akita_types::TerminalQuotientMode::Omit,
             )?;
             let next_w_len_terminal = terminal_shape.logical_num_elems();
             let initial_witness_len_bits = witness_len
