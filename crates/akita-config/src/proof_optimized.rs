@@ -164,14 +164,6 @@ fn setup_envelope_scan_layouts<Cfg: CommitmentConfig>(
                     &[precommitted, precommitted],
                     main_group,
                 )?);
-                let precommitted_num_vars = main_num_vars / 2;
-                if precommitted_num_vars != 0 && precommitted_num_vars != max_num_vars {
-                    let precommitted = PolynomialGroupLayout::new(precommitted_num_vars, 1);
-                    layouts.push(OpeningClaimsLayout::from_root_groups(
-                        &[precommitted, precommitted],
-                        main_group,
-                    )?);
-                }
             }
         }
     }
