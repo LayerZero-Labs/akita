@@ -371,7 +371,8 @@ fn run() -> Result<(), String> {
     .map_err(|err| format!("batched_prove failed: {err}"))?;
     tracing::info!(elapsed_s = t0.elapsed().as_secs_f64(), "prove complete");
 
-    let verifier_setup = AkitaCommitmentScheme::<Cfg>::setup_verifier(&prover_setup);
+    let verifier_setup = AkitaCommitmentScheme::<Cfg>::setup_verifier(&prover_setup)
+        .map_err(|err| format!("setup_verifier failed: {err}"))?;
 
     // Sanity check: the proof should verify with the same domain label.
     let t0 = Instant::now();
