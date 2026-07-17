@@ -121,6 +121,7 @@ where
             .len()
             .checked_mul(n_a)
             .ok_or(AkitaError::InvalidProof)?
+        || z.len() != params.a_col_len()
     {
         return Err(AkitaError::InvalidProof);
     }
