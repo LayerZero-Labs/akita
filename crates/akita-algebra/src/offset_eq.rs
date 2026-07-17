@@ -368,33 +368,69 @@ where
     } else {
         None
     };
-    let mut summaries = vec![template.zero_like(); carry_count];
-    for low in low_start..low_end {
-        let low_factor = low_weights
-            .get(low)
-            .ok_or_else(|| AkitaError::InvalidInput("affine low factor out of range".into()))?;
-        let low_delta = outer_stride
-            .checked_mul(low - low_start)
-            .ok_or_else(|| AkitaError::InvalidInput("affine low address overflow".into()))?;
-        for (digit, &digit_weight) in digit_weights.iter().enumerate() {
-            let shifted = address_low
-                .checked_add(low_delta)
-                .and_then(|value| value.checked_add(digit))
-                .ok_or_else(|| AkitaError::InvalidInput("affine low address overflow".into()))?;
-            let carry = shifted / low_len;
-            let low_index = shifted & low_mask;
-            let eq_low = match &eq_low_table {
-                Some(table) => table.get(low_index).copied().ok_or_else(|| {
-                    AkitaError::InvalidInput("affine low index out of range".into())
-                })?,
-                None => eq_eval_at_index(low_challenges, low_index),
-            };
-            summaries
-                .get_mut(carry)
-                .ok_or_else(|| AkitaError::InvalidInput("affine carry out of range".into()))?
-                .add_scaled(low_factor, digit_weight * eq_low);
+    // Fast path (verifier): when the digit weights are geometric — the gadget
+    // vector `g^d`, as used by the E/opening lane — and the digit window fits in
+    // one low block, the per-`low` digit sum is a geometric-weighted contiguous
+    // window of the low equality table, so the whole `low * digit` summary
+    // factors through one prefix scan in `O(low_len)` instead of
+    // `O(low_len * digit_count)`. Non-geometric weights (e.g. the flattened T
+    // lane) fall back to the dense double loop, which stays bit-identical.
+    let geometric = if fast {
+        match &eq_low_table {
+            Some(table) => build_geometric_low_summaries(
+                template,
+                table,
+                address_low,
+                outer_stride,
+                low_len,
+                low_start,
+                low_end,
+                digit_weights,
+                low_weights,
+                carry_count,
+            )?,
+            None => None,
         }
-    }
+    } else {
+        None
+    };
+    let summaries = match geometric {
+        Some(built) => built,
+        None => {
+            let mut summaries = vec![template.zero_like(); carry_count];
+            for low in low_start..low_end {
+                let low_factor = low_weights.get(low).ok_or_else(|| {
+                    AkitaError::InvalidInput("affine low factor out of range".into())
+                })?;
+                let low_delta = outer_stride.checked_mul(low - low_start).ok_or_else(|| {
+                    AkitaError::InvalidInput("affine low address overflow".into())
+                })?;
+                for (digit, &digit_weight) in digit_weights.iter().enumerate() {
+                    let shifted = address_low
+                        .checked_add(low_delta)
+                        .and_then(|value| value.checked_add(digit))
+                        .ok_or_else(|| {
+                            AkitaError::InvalidInput("affine low address overflow".into())
+                        })?;
+                    let carry = shifted / low_len;
+                    let low_index = shifted & low_mask;
+                    let eq_low = match &eq_low_table {
+                        Some(table) => table.get(low_index).copied().ok_or_else(|| {
+                            AkitaError::InvalidInput("affine low index out of range".into())
+                        })?,
+                        None => eq_eval_at_index(low_challenges, low_index),
+                    };
+                    summaries
+                        .get_mut(carry)
+                        .ok_or_else(|| {
+                            AkitaError::InvalidInput("affine carry out of range".into())
+                        })?
+                        .add_scaled(low_factor, digit_weight * eq_low);
+                }
+            }
+            summaries
+        }
+    };
 
     // Verifier fast path: contract the high rows with a bounded high-equality
     // table and carry-bucketing (O(rows + carry_count^2)) instead of the
@@ -447,6 +483,130 @@ where
         }
     }
     Ok(())
+}
+
+/// Build the low carry summaries via a geometric prefix scan.
+///
+/// When the digit weights are geometric — `digit_weights[k] == digit_weights[0] * r^k`,
+/// which holds for the gadget vector `g^k` used by the E/opening lane — and the
+/// digit window fits inside one low block (`digit_count <= low_len`), the inner
+/// digit sum for each `low` is a geometric-weighted contiguous window of the low
+/// equality table. A single prefix `P[t] = Σ_{u<t} r^u eq_low[u]` then yields
+/// each window (and its at-most-one block wrap) in `O(1)`, dropping the summary
+/// cost from `O(low_len * digit_count)` to `O(low_len + digit_count)`.
+///
+/// Returns `None` (caller falls back to the dense loop) when the weights are not
+/// geometric, the ratio or leading weight is zero, the window spans more than one
+/// block, or the span is too short to amortize the prefix setup. The `Some`
+/// result is bit-identical to the dense loop. The single field inversion is of
+/// the public gadget ratio (never a challenge), so the no-challenge-inversion
+/// contract is preserved.
+#[allow(clippy::too_many_arguments)]
+fn build_geometric_low_summaries<F, A>(
+    template: &A,
+    eq_low: &[F],
+    address_low: usize,
+    outer_stride: usize,
+    low_len: usize,
+    low_start: usize,
+    low_end: usize,
+    digit_weights: &[F],
+    low_weights: &[A],
+    carry_count: usize,
+) -> Result<Option<Vec<A>>, AkitaError>
+where
+    F: FieldCore,
+    A: AffineWeight<F>,
+{
+    let delta = digit_weights.len();
+    // Require the window to fit one block, the table to match, and the span to be
+    // long enough that the O(low_len) prefix setup beats the dense O(span*delta).
+    if delta == 0
+        || delta > low_len
+        || eq_low.len() != low_len
+        || low_end.saturating_sub(low_start).saturating_mul(delta) < low_len
+    {
+        return Ok(None);
+    }
+    let d0 = digit_weights[0];
+    if d0.is_zero() {
+        return Ok(None);
+    }
+    // Ratio r (= digit[1]/digit[0] for delta >= 2; unused for delta == 1).
+    let r = if delta >= 2 {
+        match d0.inverse() {
+            Some(d0_inv) => digit_weights[1] * d0_inv,
+            None => return Ok(None),
+        }
+    } else {
+        F::one()
+    };
+    if r.is_zero() {
+        return Ok(None);
+    }
+    // Forward powers r^0..r^{low_len}; confirm the weights really are geometric.
+    let mut rpow = vec![F::one(); low_len + 1];
+    for k in 1..=low_len {
+        rpow[k] = rpow[k - 1] * r;
+    }
+    for (k, &weight) in digit_weights.iter().enumerate() {
+        if weight != d0 * rpow[k] {
+            return Ok(None);
+        }
+    }
+    let r_inv = match r.inverse() {
+        Some(inv) => inv,
+        None => return Ok(None),
+    };
+    // Inverse powers r^{-0}..r^{-(low_len-1)} for the window-start anchor.
+    let mut rinvpow = vec![F::one(); low_len];
+    for s in 1..low_len {
+        rinvpow[s] = rinvpow[s - 1] * r_inv;
+    }
+    // Prefix P[t] = Σ_{u<t} r^u eq_low[u].
+    let mut prefix = vec![F::zero(); low_len + 1];
+    for u in 0..low_len {
+        prefix[u + 1] = prefix[u] + rpow[u] * eq_low[u];
+    }
+
+    let low_mask = low_len - 1;
+    let mut summaries = vec![template.zero_like(); carry_count];
+    for low in low_start..low_end {
+        let low_factor = low_weights
+            .get(low)
+            .ok_or_else(|| AkitaError::InvalidInput("affine low factor out of range".into()))?;
+        let start =
+            address_low
+                .checked_add(outer_stride.checked_mul(low - low_start).ok_or_else(|| {
+                    AkitaError::InvalidInput("affine low address overflow".into())
+                })?)
+                .ok_or_else(|| AkitaError::InvalidInput("affine low address overflow".into()))?;
+        let carry = start / low_len;
+        let s = start & low_mask;
+        let count1 = delta.min(low_len - s);
+        // No-wrap window [s, s+count1): digits 0..count1 stay in block `carry`.
+        // Σ_d digit[0] r^d eq_low[s+d] = digit[0] * r^{-s} * (P[s+count1] - P[s]).
+        let seg = prefix[s + count1] - prefix[s];
+        let val = d0 * rinvpow[s] * seg;
+        summaries
+            .get_mut(carry)
+            .ok_or_else(|| AkitaError::InvalidInput("affine carry out of range".into()))?
+            .add_scaled(low_factor, val);
+        if count1 < delta {
+            // Wrap window: digits count1..delta land at the start of block carry+1.
+            // Σ_{d>=count1} digit[0] r^d eq_low[d-count1] = digit[0] * r^{count1} * P[delta-count1].
+            let seg = prefix[delta - count1];
+            let val = d0 * rpow[count1] * seg;
+            let carry = carry
+                .checked_add(1)
+                .ok_or_else(|| AkitaError::InvalidInput("affine carry overflow".into()))?;
+            summaries
+                .get_mut(carry)
+                .ok_or_else(|| AkitaError::InvalidInput("affine carry out of range".into()))?
+                .add_scaled(low_factor, val);
+        }
+    }
+    Ok(Some(summaries))
 }
 
 /// Minimum full-row count before the bucketed high contraction is worth its
@@ -533,9 +693,9 @@ where
             .ok_or_else(|| AkitaError::InvalidInput("affine high factor out of range".into()))?;
         let address_high = h0
             .checked_add(
-                outer_stride
-                    .checked_mul(row)
-                    .ok_or_else(|| AkitaError::InvalidInput("affine high address overflow".into()))?,
+                outer_stride.checked_mul(row).ok_or_else(|| {
+                    AkitaError::InvalidInput("affine high address overflow".into())
+                })?,
             )
             .ok_or_else(|| AkitaError::InvalidInput("affine high address overflow".into()))?;
         let low_pos = address_high & window_mask;
