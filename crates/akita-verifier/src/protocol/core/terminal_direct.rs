@@ -103,6 +103,7 @@ where
         .collect())
 }
 
+#[tracing::instrument(skip_all, name = "terminal_direct_a_rows")]
 fn check_a_rows<F, const D: usize>(
     setup: &AkitaExpandedSetup<F>,
     t: &[CyclotomicRing<F, D>],
@@ -139,6 +140,7 @@ where
     Ok(())
 }
 
+#[tracing::instrument(skip_all, name = "terminal_direct_b_rows")]
 fn check_b_rows<F, const D_A: usize, const D_B: usize>(
     setup: &AkitaExpandedSetup<F>,
     t: &[CyclotomicRing<F, D_A>],
@@ -168,6 +170,7 @@ where
 }
 
 /// Check reduced consistency, A, and B rows for a quotient-free terminal witness.
+#[tracing::instrument(skip_all, name = "terminal_direct_ring_relations")]
 pub(super) fn verify_terminal_ring_relations<F>(
     setup: &AkitaExpandedSetup<F>,
     relation: &RingRelationInstance<F>,
@@ -276,36 +279,46 @@ where
                 if e.len() != num_blocks || t.len() != expected_t_len {
                     return Err(AkitaError::InvalidProof);
                 }
-                let multiplier = relation.group_ring_multiplier_point(group_index)?;
-                let folded = ring_dot(&challenges, &e)?;
-                let gadget = akita_types::gadget_row_scalars::<F>(
-                    params.num_digits_commit(),
-                    params.log_basis(),
-                );
-                let mut reduced = CyclotomicRing::zero();
-                for position in 0..params.num_positions_per_block() {
-                    let start = position
-                        .checked_mul(params.num_digits_commit())
-                        .ok_or(AkitaError::InvalidProof)?;
-                    let mut z_value = CyclotomicRing::zero();
-                    for digit in 0..params.num_digits_commit() {
-                        let index = start.checked_add(digit).ok_or(AkitaError::InvalidProof)?;
-                        z_value += z
-                            .get(index)
-                            .ok_or(AkitaError::InvalidProof)?
-                            .scale(gadget.get(digit).ok_or(AkitaError::InvalidProof)?);
+                let (folded, reduced) = {
+                    let _span = tracing::info_span!(
+                        "terminal_direct_consistency",
+                        group_index,
+                        num_blocks,
+                        num_positions = params.num_positions_per_block()
+                    )
+                    .entered();
+                    let multiplier = relation.group_ring_multiplier_point(group_index)?;
+                    let folded = ring_dot(&challenges, &e)?;
+                    let gadget = akita_types::gadget_row_scalars::<F>(
+                        params.num_digits_commit(),
+                        params.log_basis(),
+                    );
+                    let mut reduced = CyclotomicRing::zero();
+                    for position in 0..params.num_positions_per_block() {
+                        let start = position
+                            .checked_mul(params.num_digits_commit())
+                            .ok_or(AkitaError::InvalidProof)?;
+                        let mut z_value = CyclotomicRing::zero();
+                        for digit in 0..params.num_digits_commit() {
+                            let index = start.checked_add(digit).ok_or(AkitaError::InvalidProof)?;
+                            z_value += z
+                                .get(index)
+                                .ok_or(AkitaError::InvalidProof)?
+                                .scale(gadget.get(digit).ok_or(AkitaError::InvalidProof)?);
+                        }
+                        if let Some(scale) = multiplier.position_constant_coeff(position) {
+                            reduced += z_value.scale(&scale);
+                        } else {
+                            reduced += *multiplier
+                                .position_rings_trusted::<D_A>()?
+                                .ok_or(AkitaError::InvalidProof)?
+                                .get(position)
+                                .ok_or(AkitaError::InvalidProof)?
+                                * z_value;
+                        }
                     }
-                    if let Some(scale) = multiplier.position_constant_coeff(position) {
-                        reduced += z_value.scale(&scale);
-                    } else {
-                        reduced += *multiplier
-                            .position_rings_trusted::<D_A>()?
-                            .ok_or(AkitaError::InvalidProof)?
-                            .get(position)
-                            .ok_or(AkitaError::InvalidProof)?
-                            * z_value;
-                    }
-                }
+                    (folded, reduced)
+                };
                 consistency_lhs += folded;
                 consistency_rhs += reduced;
                 check_a_rows::<F, D_A>(setup, &t, &z, &challenges, params)?;
@@ -353,6 +366,7 @@ where
 
 /// Check the public opening directly against the revealed folded `e` segment.
 #[allow(clippy::too_many_arguments)]
+#[tracing::instrument(skip_all, name = "terminal_direct_trace")]
 pub(super) fn verify_terminal_trace<F, E>(
     relation: &RingRelationInstance<F>,
     lp: &LevelParams,

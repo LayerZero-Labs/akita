@@ -235,6 +235,9 @@ where
     let row_coefficients = vec![E::one(); opening_batch.num_total_polynomials()];
     let requires_extension_reduction =
         <E as ExtField<F>>::EXT_DEGREE != 1 && lp.setup_prefix.is_none();
+    let terminal_eor_span = scheduled
+        .is_terminal
+        .then(|| tracing::info_span!("terminal_direct_eor").entered());
     let FoldEorReplay {
         prepared_points,
         reduction_challenges: _,
@@ -251,6 +254,7 @@ where
         requires_extension_reduction,
         transcript,
     )?;
+    drop(terminal_eor_span);
     if proof.extension_opening_reduction().is_some() && opening_batch.num_groups() != 1 {
         return Err(AkitaError::InvalidProof);
     }

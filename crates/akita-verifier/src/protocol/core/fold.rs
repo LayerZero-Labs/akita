@@ -801,6 +801,13 @@ where
     )?;
     relation_instance.check_v_shape_for_level(prepared.lp)?;
     if let Some(final_witness) = prepared.final_witness {
+        let _terminal_span = tracing::info_span!(
+            "verify_terminal_direct_fold",
+            d_a = role_dims.d_a(),
+            d_b = role_dims.d_b(),
+            groups = num_groups
+        )
+        .entered();
         let replay = prepared
             .terminal_replay
             .as_ref()
