@@ -102,6 +102,15 @@ pub enum CleartextWitnessShape {
 }
 
 impl CleartextWitnessShape {
+    /// Number of logical field elements represented by this shape.
+    #[must_use]
+    pub fn logical_num_elems(&self) -> usize {
+        match self {
+            Self::FieldElements(len) => *len,
+            Self::SegmentTyped(shape) => shape.layout.logical_num_elems,
+        }
+    }
+
     /// Whether `realized` is admitted by the scheduled witness shape.
     ///
     /// Segment-typed tails may serialize the Golomb `z` segment at its exact

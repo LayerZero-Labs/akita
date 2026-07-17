@@ -245,17 +245,11 @@ where
         AkitaBatchedRootProof::ZeroFold { .. } => return Err(AkitaError::InvalidProof),
     };
     let terminal_replay = match proof {
-        AkitaBatchedRootProof::Terminal(terminal) => {
-            let final_witness = terminal
-                .stage2
-                .final_witness()
-                .ok_or(AkitaError::InvalidProof)?;
-            Some(prepare_terminal_witness_replay::<F, T>(
-                transcript,
-                final_witness,
-                w_len,
-            )?)
-        }
+        AkitaBatchedRootProof::Terminal(terminal) => Some(prepare_terminal_witness_replay::<F, T>(
+            transcript,
+            terminal.final_witness(),
+            w_len,
+        )?),
         AkitaBatchedRootProof::Fold(_) => None,
         AkitaBatchedRootProof::ZeroFold { .. } => return Err(AkitaError::InvalidProof),
     };
@@ -288,6 +282,9 @@ where
         w_len,
         stage1: stage1_proof,
         stage2,
+        final_witness: proof
+            .as_terminal_root()
+            .map(|terminal| terminal.final_witness()),
         next_w_commitment,
         next_ring_dim: matches!(proof, AkitaBatchedRootProof::Fold(_))
             .then_some(next_fold_level_params.role_dims().d_b()),
@@ -470,6 +467,7 @@ where
         w_len,
         stage1: stage1_proof,
         stage2,
+        final_witness: None,
         next_w_commitment,
         next_ring_dim: Some(next_fold_level_params.role_dims().d_b()),
         next_witness_ring_dim: Some(next_fold_level_params.role_dims().d_a()),

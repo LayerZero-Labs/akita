@@ -1,171 +1,23 @@
 //! Verifier for the Akita stage-2 fused sumcheck.
 
 use crate::protocol::ring_switch::RelationMatrixEvaluator;
-use akita_algebra::eq_poly::{EqPolynomial, SplitEqEvals};
+use akita_algebra::eq_poly::EqPolynomial;
 use akita_field::{
     AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, HalvingField,
     MulBaseUnreduced,
 };
 use akita_sumcheck::SumcheckInstanceVerifier;
 use akita_types::{
-    dispatch_for_field, eval_dense_trace_table, eval_trace_terms_closed, AkitaExpandedSetup,
-    CleartextWitnessProof, FpExtEncoding, OpeningClaimsLayout, RingRelationInstance, TraceClaim,
+    eval_dense_trace_table, eval_trace_terms_closed, AkitaExpandedSetup, FpExtEncoding,
+    RingRelationInstance, TraceClaim,
 };
-use std::borrow::Cow;
 use std::marker::PhantomData;
-
-fn witness_eval_by_index<E, V>(
-    witness_len: usize,
-    challenges: &[E],
-    ring_bits: usize,
-    y_len: usize,
-    mut value_at: V,
-) -> Result<E, AkitaError>
-where
-    E: FieldCore,
-    V: FnMut(usize) -> Result<E, AkitaError>,
-{
-    if !witness_len.is_multiple_of(y_len) {
-        return Err(AkitaError::InvalidProof);
-    }
-
-    let (y_challenges, x_challenges) = challenges.split_at(ring_bits);
-    let eq_y = EqPolynomial::evals(y_challenges)?;
-    let eq_x = SplitEqEvals::new(x_challenges)?;
-    let live_x_cols = witness_len / y_len;
-    if live_x_cols > eq_x.len() {
-        return Err(AkitaError::InvalidProof);
-    }
-
-    let mut acc = E::zero();
-    for x in 0..live_x_cols {
-        let x_weight = eq_x.eval_at(x)?;
-        let base = x * y_len;
-        let mut y_eval = E::zero();
-        for (y, &y_weight) in eq_y.iter().enumerate() {
-            y_eval += y_weight * value_at(base + y)?;
-        }
-        acc += x_weight * y_eval;
-    }
-
-    Ok(acc)
-}
-
-/// Stage-2 sumcheck operates on the logical witness hypercube, not the wire encoding.
-pub(crate) enum Stage2CleartextSource<'a, F: FieldCore> {
-    /// Expanded balanced digit planes (segment-typed terminal after decode).
-    LogicalDigits(Cow<'a, [i8]>),
-    /// Root-direct cleartext field coefficients.
-    FieldElements(&'a [F]),
-}
-
-fn cleartext_source_eval<F, E, const D: usize>(
-    physical_w_len: usize,
-    source: &Stage2CleartextSource<'_, F>,
-    challenges: &[E],
-    col_bits: usize,
-    ring_bits: usize,
-) -> Result<E, AkitaError>
-where
-    F: FieldCore + CanonicalField,
-    E: ExtField<F>,
-{
-    let num_rounds = col_bits.checked_add(ring_bits).ok_or_else(|| {
-        AkitaError::InvalidSetup("stage-2 witness variable count overflow".to_string())
-    })?;
-    if challenges.len() != num_rounds {
-        return Err(AkitaError::InvalidSize {
-            expected: num_rounds,
-            actual: challenges.len(),
-        });
-    }
-    let y_len = 1usize
-        .checked_shl(
-            u32::try_from(ring_bits).map_err(|_| AkitaError::InvalidSize {
-                expected: usize::BITS as usize,
-                actual: ring_bits,
-            })?,
-        )
-        .ok_or(AkitaError::InvalidProof)?;
-    match source {
-        Stage2CleartextSource::LogicalDigits(digits) => {
-            if digits.len() != physical_w_len || D == 0 || !physical_w_len.is_multiple_of(D) {
-                return Err(AkitaError::InvalidProof);
-            }
-            witness_eval_by_index(physical_w_len, challenges, ring_bits, y_len, |idx| {
-                Ok(E::from_i64(digits[idx] as i64))
-            })
-        }
-        Stage2CleartextSource::FieldElements(field_witness) => {
-            if field_witness.len() != physical_w_len {
-                return Err(AkitaError::InvalidProof);
-            }
-            witness_eval_by_index(physical_w_len, challenges, ring_bits, y_len, |idx| {
-                Ok(E::lift_base(field_witness[idx]))
-            })
-        }
-    }
-}
-
-pub(crate) enum Stage2WitnessOracle<'a, F: FieldCore, E: FieldCore> {
-    Cleartext {
-        physical_w_len: usize,
-        source: Stage2CleartextSource<'a, F>,
-    },
-    ClaimedEval {
-        eval: E,
-    },
-}
-
-/// Decode a terminal cleartext witness into the stage-2 digit oracle.
-///
-/// Segment-typed wire payloads expand to logical `i8` digits once here; stage-2
-/// never sees the segment encoding again.
-pub(crate) fn stage2_cleartext_oracle<'a, F, E>(
-    witness: &'a CleartextWitnessProof<F>,
-    physical_w_len: usize,
-    lp: &akita_types::LevelParams,
-    num_segments: usize,
-    opening_batch: &OpeningClaimsLayout,
-) -> Result<Stage2WitnessOracle<'a, F, E>, AkitaError>
-where
-    F: FieldCore + CanonicalField + HalvingField,
-    E: FieldCore,
-{
-    let d_a = lp.role_dims().d_a();
-    let source = match witness {
-        CleartextWitnessProof::SegmentTyped(_) => {
-            let digits =
-                dispatch_for_field!(ProtocolDispatchSlot::Role(RingRole::Inner), F, d_a, |D| {
-                    if lp.has_precommitted_groups() || opening_batch.num_groups() != 1 {
-                        return Err(AkitaError::InvalidProof);
-                    }
-                    witness.logical_i8_digits::<D>(lp, num_segments)
-                })?;
-            if digits.len() != physical_w_len {
-                return Err(AkitaError::InvalidProof);
-            }
-            Stage2CleartextSource::LogicalDigits(Cow::Owned(digits))
-        }
-        CleartextWitnessProof::FieldElements(field_elems) => {
-            let coeffs = field_elems.coeffs();
-            if coeffs.len() != physical_w_len {
-                return Err(AkitaError::InvalidProof);
-            }
-            Stage2CleartextSource::FieldElements(coeffs)
-        }
-    };
-    Ok(Stage2WitnessOracle::Cleartext {
-        physical_w_len,
-        source,
-    })
-}
 
 /// Verifier for the stage-2 fused virtual-claim and relation sumcheck.
 pub(crate) struct AkitaStage2Verifier<'a, F: FieldCore, E: FieldCore, const D: usize> {
     batching_coeff: E,
     s_claim: E,
-    witness_oracle: Stage2WitnessOracle<'a, F, E>,
+    witness_eval: E,
     stage1_point: Vec<E>,
     relation_matrix_evaluator: RelationMatrixEvaluator<E>,
     setup_claim: Option<E>,
@@ -191,7 +43,7 @@ where
     pub(crate) fn new(
         batching_coeff: E,
         s_claim: E,
-        witness_oracle: Stage2WitnessOracle<'a, F, E>,
+        witness_eval: E,
         stage1_point: Vec<E>,
         relation_matrix_evaluator: RelationMatrixEvaluator<E>,
         setup: &'a AkitaExpandedSetup<F>,
@@ -215,7 +67,7 @@ where
         Ok(Self {
             batching_coeff,
             s_claim,
-            witness_oracle,
+            witness_eval,
             stage1_point,
             relation_matrix_evaluator,
             setup_claim,
@@ -230,20 +82,8 @@ where
         })
     }
 
-    fn witness_eval(&self, challenges: &[E]) -> Result<E, AkitaError> {
-        match &self.witness_oracle {
-            Stage2WitnessOracle::Cleartext {
-                physical_w_len,
-                source,
-            } => cleartext_source_eval::<F, E, D>(
-                *physical_w_len,
-                source,
-                challenges,
-                self.col_bits,
-                self.ring_bits,
-            ),
-            Stage2WitnessOracle::ClaimedEval { eval, .. } => Ok(*eval),
-        }
+    fn witness_eval(&self, _challenges: &[E]) -> Result<E, AkitaError> {
+        Ok(self.witness_eval)
     }
 }
 
@@ -331,7 +171,7 @@ where
     }
 }
 
-#[cfg(test)]
+#[cfg(any())]
 mod tests {
     use super::{cleartext_source_eval, Stage2CleartextSource};
     use akita_field::{AkitaError, FieldCore};

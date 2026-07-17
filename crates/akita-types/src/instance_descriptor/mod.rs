@@ -7,10 +7,8 @@
 //!
 //! ## Descriptor version policy
 //!
-//! `AKITA_INSTANCE_DESCRIPTOR_VERSION` stays at **`1`** during active protocol
-//! development. Setup-section field changes (for example
-//! `FoldLinfProtocolBinding` extensions) land without bumping this constant;
-//! integrators must pin exact crate revisions.
+//! The version changes when the transcript schedule changes. Version 2 removes
+//! terminal ring-switch and stage-2 challenges after the revealed tail.
 
 mod fold_linf_binding;
 #[cfg(test)]
@@ -36,7 +34,7 @@ use std::collections::BTreeSet;
 use std::io::{Read, Write};
 
 /// Descriptor schema version for the in-development transcript preamble.
-pub const AKITA_INSTANCE_DESCRIPTOR_VERSION: u32 = 1;
+pub const AKITA_INSTANCE_DESCRIPTOR_VERSION: u32 = 2;
 
 /// Fixed-size Blake2b digest used inside the descriptor.
 pub type DescriptorDigest = [u8; 32];

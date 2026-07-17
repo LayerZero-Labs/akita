@@ -74,21 +74,9 @@ impl Valid for ExtensionOpeningReductionShape {
 /// Shape descriptor for deserializing a [`TerminalLevelProof`] without
 /// headers.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum TerminalRelationProofShape {
-    /// Shape of the quotient-backed terminal stage-2 sumcheck.
-    RingSwitchSumcheck(SumcheckProofShape),
-    /// Direct reduced ring checks carry no relation-proof bytes.
-    DirectRingRelations,
-}
-
-/// Shape descriptor for deserializing a [`TerminalLevelProof`] without
-/// headers.
-#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TerminalLevelProofShape {
     /// Shape of the optional extension-opening reduction payload.
     pub extension_opening_reduction: Option<ExtensionOpeningReductionShape>,
-    /// Shape of the terminal relation proof.
-    pub relation: TerminalRelationProofShape,
     /// Shape of the terminal cleartext witness.
     pub final_witness: CleartextWitnessShape,
 }
@@ -167,9 +155,6 @@ pub(super) fn level_proof_shape<F: FieldCore, E: FieldCore>(
     stage2: &AkitaStage2Proof<F, E>,
     stage3_sumcheck_proof: Option<&SetupSumcheckProof<E>>,
 ) -> LevelProofShape {
-    let stage2 = stage2
-        .as_intermediate()
-        .expect("level proof shape requires intermediate stage-2 proof");
     LevelProofShape {
         extension_opening_reduction: extension_opening_reduction
             .map(ExtensionOpeningReductionProof::shape),
@@ -485,12 +470,6 @@ impl Valid for TerminalLevelProofShape {
         if let Some(reduction) = &self.extension_opening_reduction {
             reduction.check()?;
         }
-        if let TerminalRelationProofShape::RingSwitchSumcheck(sumcheck) = &self.relation {
-            checked_shape_sequence_len(sumcheck.len())?;
-            for &degree in sumcheck {
-                checked_shape_len(degree)?;
-            }
-        }
         self.final_witness.check()?;
         Ok(())
     }
@@ -513,15 +492,6 @@ impl AkitaSerialize for TerminalLevelProofShape {
                 .sumcheck
                 .serialize_with_mode(&mut writer, compress)?;
         }
-        match &self.relation {
-            TerminalRelationProofShape::RingSwitchSumcheck(sumcheck) => {
-                0u8.serialize_with_mode(&mut writer, compress)?;
-                sumcheck.serialize_with_mode(&mut writer, compress)?;
-            }
-            TerminalRelationProofShape::DirectRingRelations => {
-                1u8.serialize_with_mode(&mut writer, compress)?;
-            }
-        }
         self.final_witness
             .serialize_with_mode(&mut writer, compress)?;
         Ok(())
@@ -536,14 +506,7 @@ impl AkitaSerialize for TerminalLevelProofShape {
                     reduction.partials.serialized_size(compress)
                         + reduction.sumcheck.serialized_size(compress)
                 });
-        let relation_size = 0u8.serialized_size(compress)
-            + match &self.relation {
-                TerminalRelationProofShape::RingSwitchSumcheck(sumcheck) => {
-                    sumcheck.serialized_size(compress)
-                }
-                TerminalRelationProofShape::DirectRingRelations => 0,
-            };
-        reduction_size + relation_size + self.final_witness.serialized_size(compress)
+        reduction_size + self.final_witness.serialized_size(compress)
     }
 }
 
@@ -564,24 +527,10 @@ impl AkitaDeserialize for TerminalLevelProofShape {
         } else {
             None
         };
-        let relation = match u8::deserialize_with_mode(&mut reader, compress, validate, &())? {
-            0 => TerminalRelationProofShape::RingSwitchSumcheck(deserialize_shape_vec(
-                &mut reader,
-                compress,
-                validate,
-            )?),
-            1 => TerminalRelationProofShape::DirectRingRelations,
-            other => {
-                return Err(SerializationError::InvalidData(format!(
-                    "unknown terminal relation proof shape tag {other}"
-                )))
-            }
-        };
         let final_witness =
             CleartextWitnessShape::deserialize_with_mode(&mut reader, compress, validate, &())?;
         let out = Self {
             extension_opening_reduction,
-            relation,
             final_witness,
         };
         if matches!(validate, Validate::Yes) {

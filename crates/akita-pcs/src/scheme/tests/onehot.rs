@@ -1004,24 +1004,6 @@ fn batched_onehot_roundtrip_matches_public_shape_context() {
                             expected_terminal.extension_opening_reduction,
                             actual_terminal.extension_opening_reduction
                         );
-                        match (
-                            &expected_terminal.relation,
-                            &actual_terminal.relation,
-                        ) {
-                            (
-                                akita_types::TerminalRelationProofShape::RingSwitchSumcheck(
-                                    expected_sumcheck,
-                                ),
-                                akita_types::TerminalRelationProofShape::RingSwitchSumcheck(
-                                    actual_sumcheck,
-                                ),
-                            ) => assert_eq!(
-                                expected_sumcheck.len(),
-                                actual_sumcheck.len(),
-                                "terminal stage-2 round count"
-                            ),
-                            (expected, actual) => assert_eq!(expected, actual),
-                        }
                         assert!(
                             expected_terminal
                                 .final_witness
@@ -1043,7 +1025,6 @@ fn batched_onehot_roundtrip_matches_public_shape_context() {
                 expected_terminal.extension_opening_reduction,
                 actual_terminal.extension_opening_reduction
             );
-            assert_eq!(expected_terminal.relation, actual_terminal.relation);
             assert!(
                 expected_terminal
                     .final_witness

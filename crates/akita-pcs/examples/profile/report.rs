@@ -462,10 +462,7 @@ where
         extension_opening_reduction_sizes(level.extension_opening_reduction());
     let v_size = level.v().serialized_size(Compress::No);
     let total = level.serialized_size(Compress::No);
-    let stage2_intermediate = level
-        .stage2()
-        .as_intermediate()
-        .expect("Akita level proof must carry intermediate stage-2 proof");
+    let stage2_intermediate = level.stage2();
 
     eprintln!("[{label}]   akita_fold L{level_idx}: total={total} bytes");
     eprintln!(
@@ -553,7 +550,6 @@ trait TerminalProofView<FF: FieldCore, E: FieldCore>: AkitaSerialize {
     fn extension_opening_reduction(
         &self,
     ) -> Option<&akita_types::ExtensionOpeningReductionProof<E>>;
-    fn stage2(&self) -> &akita_types::AkitaStage2Proof<FF, E>;
     fn final_witness(&self) -> &CleartextWitnessProof<FF>;
     fn fold_grind_nonce_value(&self) -> u32;
 }
@@ -565,10 +561,6 @@ impl<FF: FieldCore + CanonicalField + AkitaSerialize, E: FieldCore + AkitaSerial
         &self,
     ) -> Option<&akita_types::ExtensionOpeningReductionProof<E>> {
         self.extension_opening_reduction.as_ref()
-    }
-
-    fn stage2(&self) -> &akita_types::AkitaStage2Proof<FF, E> {
-        &self.stage2
     }
 
     fn final_witness(&self) -> &CleartextWitnessProof<FF> {
@@ -589,13 +581,8 @@ impl<FF: FieldCore + CanonicalField + AkitaSerialize, E: FieldCore + AkitaSerial
         self.extension_opening_reduction()
     }
 
-    fn stage2(&self) -> &akita_types::AkitaStage2Proof<FF, E> {
-        self.stage2()
-    }
-
     fn final_witness(&self) -> &CleartextWitnessProof<FF> {
-        self.stage2()
-            .final_witness()
+        self.final_witness()
             .expect("terminal Akita level proof must carry final witness")
     }
 
@@ -617,10 +604,7 @@ where
 {
     let (extension_opening_partials_size, extension_opening_sumcheck_size) =
         extension_opening_reduction_sizes(level.extension_opening_reduction());
-    let stage2_sumcheck_size = level
-        .stage2()
-        .sumcheck()
-        .map_or(0, |proof| proof.serialized_size(Compress::No));
+    let stage2_sumcheck_size = 0;
     let final_witness_size = level.final_witness().serialized_size(Compress::No);
     let fold_grind_nonce_size = fold_grind_nonce_wire_bytes();
     let grind_nonce = level.fold_grind_nonce_value();
@@ -708,10 +692,7 @@ where
     let v_size = fold.v.serialized_size(Compress::No);
     let total = fold.serialized_size(Compress::No);
     let stage1 = &fold.stage1;
-    let stage2_intermediate = fold
-        .stage2
-        .as_intermediate()
-        .expect("fold root proof must carry intermediate stage-2 proof");
+    let stage2_intermediate = &fold.stage2;
     let stage1_sumcheck_size = stage1
         .stages
         .iter()

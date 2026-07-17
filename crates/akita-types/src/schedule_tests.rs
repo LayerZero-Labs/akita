@@ -4,10 +4,10 @@ use crate::proof::{segment_typed_witness_shape_from_groups, SegmentTypedWitness}
 use crate::tail_golomb_rice_z_params;
 use crate::{
     direct_witness_bytes, extension_opening_reduction_proof_bytes, level_proof_bytes,
-    stage1_tree_stage_shapes, sumcheck_rounds, AkitaBatchedRootProof, AkitaIntermediateStage2Proof,
-    AkitaLevelProof, AkitaStage1Proof, AkitaStage1StageProof, AkitaStage2Proof,
-    CleartextWitnessProof, ExtensionOpeningReductionProof, RelationMatrixRowLayout, RingVec,
-    SisModulusProfileId, TerminalLevelProof, EXTENSION_OPENING_REDUCTION_DEGREE,
+    stage1_tree_stage_shapes, sumcheck_rounds, AkitaBatchedRootProof, AkitaLevelProof,
+    AkitaStage1Proof, AkitaStage1StageProof, AkitaStage2Proof, CleartextWitnessProof,
+    ExtensionOpeningReductionProof, RelationMatrixRowLayout, RingVec, SisModulusProfileId,
+    TerminalLevelProof, EXTENSION_OPENING_REDUCTION_DEGREE,
 };
 use akita_algebra::CyclotomicRing;
 use akita_challenges::SparseChallengeConfig;
@@ -248,11 +248,11 @@ fn exact_level_proof_bytes<F: FieldCore + CanonicalField + AkitaSerialize>(
         v: RingVec::from_coeffs(vec![F::zero(); current_coeffs]),
         fold_grind_nonce: 0,
         stage1: dummy_stage1_proof(rounds, b),
-        stage2: AkitaStage2Proof::Intermediate(AkitaIntermediateStage2Proof {
+        stage2: AkitaStage2Proof {
             sumcheck_proof: dummy_sumcheck(rounds, 3),
             next_w_commitment: RingVec::from_coeffs(vec![F::zero(); next_commit_coeffs]),
             next_w_eval: F::zero(),
-        }),
+        },
         stage3_sumcheck_proof: None,
     };
     Ok(proof.serialized_size(Compress::No))
@@ -320,13 +320,11 @@ fn planned_terminal_level_bytes_match_terminal_payload_at_all_bases() {
         )
         .with_decomp(1, 1, 1, 1)
         .unwrap();
-        let rounds = sumcheck_rounds(D, next_w_len);
 
         let (final_witness, witness_shape) = segment_typed_final_witness(&lp, num_claims);
         let final_witness_bytes_runtime = final_witness.serialized_size(Compress::No);
         let terminal_proof = TerminalLevelProof::<F, F>::new_with_extension_opening_reduction(
             None,
-            dummy_sumcheck(rounds, 3),
             final_witness,
             0,
         );

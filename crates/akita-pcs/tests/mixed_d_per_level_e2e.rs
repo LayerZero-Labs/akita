@@ -27,8 +27,7 @@ use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_transcript::AkitaTranscript;
 use akita_types::{
     validate_schedule_ring_dims, AkitaBatchedProof, AkitaBatchedRootProof, AkitaLevelProof,
-    AkitaStage2Proof, CleartextWitnessProof, OpeningClaimsLayout, RingVec, Schedule,
-    SetupContributionMode, Step,
+    CleartextWitnessProof, OpeningClaimsLayout, RingVec, Schedule, SetupContributionMode, Step,
 };
 use common::*;
 use mixed_d_per_level_fixture::mixed_d_per_level_schedule;
@@ -388,10 +387,7 @@ fn mixed_d_per_level_prove_verify_replay_and_malformed_rejections() {
             let AkitaBatchedRootProof::Fold(root) = &mut proof.root else {
                 panic!("fixture root must be a fold proof");
             };
-            let stage2 = root
-                .stage2
-                .as_intermediate_mut()
-                .expect("root fold stage2 must be intermediate");
+            let stage2 = &mut root.stage2;
             let len = stage2.next_w_commitment.coeffs().len();
             truncate_ring_vec(&mut stage2.next_w_commitment, len / (ENVELOPE_D / SUFFIX_D));
             verify_mixed(&fixture, &proof, &fixture.commitment)
@@ -410,9 +406,7 @@ fn mixed_d_per_level_prove_verify_replay_and_malformed_rejections() {
             let AkitaLevelProof::Intermediate { stage2, .. } = &mut proof.steps[idx] else {
                 unreachable!();
             };
-            let AkitaStage2Proof::Intermediate(inner) = stage2 else {
-                panic!("intermediate level {level} must carry intermediate stage2");
-            };
+            let inner = stage2;
             let len = inner.next_w_commitment.coeffs().len();
             // Rescale the commitment as if it had been produced at the wrong
             // level's ring dimension.
@@ -452,7 +446,6 @@ fn mixed_d_per_level_prove_verify_replay_and_malformed_rejections() {
                 .and_then(AkitaLevelProof::as_terminal_mut)
                 .expect("fixture must end in a terminal step");
             let witness = terminal
-                .stage2_mut()
                 .final_witness_mut()
                 .expect("terminal step must carry final witness");
             match witness {
@@ -477,7 +470,6 @@ fn mixed_d_per_level_prove_verify_replay_and_malformed_rejections() {
                 .and_then(AkitaLevelProof::as_terminal_mut)
                 .expect("fixture must end in a terminal step");
             let witness = terminal
-                .stage2_mut()
                 .final_witness_mut()
                 .expect("terminal step must carry final witness");
             if let CleartextWitnessProof::SegmentTyped(segment) = witness {

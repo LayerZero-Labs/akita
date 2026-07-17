@@ -26,7 +26,7 @@ pub struct AkitaStage1Proof<F: FieldCore> {
 
 /// Intermediate-stage payload for stage 2 of a fold level.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AkitaIntermediateStage2Proof<F: FieldCore, E: FieldCore> {
+pub struct AkitaStage2Proof<F: FieldCore, E: FieldCore> {
     /// Stage-2 fused sumcheck proof.
     pub sumcheck_proof: SumcheckProof<E>,
     /// Commitment to the next witness `w`
@@ -36,119 +36,10 @@ pub struct AkitaIntermediateStage2Proof<F: FieldCore, E: FieldCore> {
     pub next_w_eval: E,
 }
 
-impl<F: FieldCore, E: FieldCore> AkitaIntermediateStage2Proof<F, E> {
+impl<F: FieldCore, E: FieldCore> AkitaStage2Proof<F, E> {
     /// Wire value for the next-witness evaluation claim at stage 2.
     pub fn next_w_eval(&self) -> E {
         self.next_w_eval
-    }
-}
-
-/// Proof of the terminal ring relation.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum TerminalRelationProof<E: FieldCore> {
-    /// Existing quotient-backed terminal stage-2 sumcheck.
-    RingSwitchSumcheck(SumcheckProof<E>),
-    /// Direct reduced ring checks; carries no relation-proof bytes.
-    DirectRingRelations,
-}
-
-impl<E: FieldCore> TerminalRelationProof<E> {
-    /// Borrow the quotient-backed sumcheck when this is the legacy terminal relation.
-    pub fn sumcheck(&self) -> Option<&SumcheckProof<E>> {
-        match self {
-            Self::RingSwitchSumcheck(proof) => Some(proof),
-            Self::DirectRingRelations => None,
-        }
-    }
-}
-
-/// Terminal-stage payload for a fold level.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AkitaTerminalStage2Proof<F: FieldCore, E: FieldCore> {
-    /// Terminal relation proof. Direct relations carry no stage-2 bytes.
-    pub relation: TerminalRelationProof<E>,
-    /// Terminal witness, absorbed via `ABSORB_NEXT_LEVEL_WITNESS_BINDING` in place of
-    /// `next_w_commitment`.
-    pub final_witness: CleartextWitnessProof<F>,
-}
-
-impl<F: FieldCore, E: FieldCore> AkitaTerminalStage2Proof<F, E> {
-    /// Borrow the terminal cleartext witness.
-    pub fn final_witness(&self) -> &CleartextWitnessProof<F> {
-        &self.final_witness
-    }
-}
-
-/// Proof payload for stage 2 of a fold level.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum AkitaStage2Proof<F: FieldCore, E: FieldCore> {
-    /// Intermediate stage-2 payload with a recursive next-witness claim.
-    Intermediate(AkitaIntermediateStage2Proof<F, E>),
-    /// Terminal stage-2 payload with a cleartext final witness.
-    Terminal(AkitaTerminalStage2Proof<F, E>),
-}
-
-impl<F: FieldCore, E: FieldCore> AkitaStage2Proof<F, E> {
-    /// Borrow the intermediate stage-2 payload.
-    pub fn as_intermediate(&self) -> Option<&AkitaIntermediateStage2Proof<F, E>> {
-        match self {
-            Self::Intermediate(proof) => Some(proof),
-            Self::Terminal(_) => None,
-        }
-    }
-
-    /// Mutably borrow the intermediate stage-2 payload.
-    pub fn as_intermediate_mut(&mut self) -> Option<&mut AkitaIntermediateStage2Proof<F, E>> {
-        match self {
-            Self::Intermediate(proof) => Some(proof),
-            Self::Terminal(_) => None,
-        }
-    }
-
-    /// Borrow the terminal stage-2 payload.
-    pub fn as_terminal(&self) -> Option<&AkitaTerminalStage2Proof<F, E>> {
-        match self {
-            Self::Intermediate(_) => None,
-            Self::Terminal(proof) => Some(proof),
-        }
-    }
-
-    /// Mutably borrow the terminal stage-2 payload.
-    pub fn as_terminal_mut(&mut self) -> Option<&mut AkitaTerminalStage2Proof<F, E>> {
-        match self {
-            Self::Intermediate(_) => None,
-            Self::Terminal(proof) => Some(proof),
-        }
-    }
-
-    /// Borrow the stage-2 sumcheck proof when this proof uses one.
-    pub fn sumcheck(&self) -> Option<&SumcheckProof<E>> {
-        match self {
-            Self::Intermediate(proof) => Some(&proof.sumcheck_proof),
-            Self::Terminal(proof) => proof.relation.sumcheck(),
-        }
-    }
-
-    /// Wire value for the next-witness evaluation claim on intermediate levels.
-    ///
-    /// # Panics
-    ///
-    /// Panics if called on a terminal stage-2 proof.
-    pub fn next_w_eval(&self) -> E {
-        self.as_intermediate()
-            .expect("next_w_eval() called on terminal stage-2 proof")
-            .next_w_eval()
-    }
-
-    /// Borrow the terminal cleartext witness.
-    pub fn final_witness(&self) -> Option<&CleartextWitnessProof<F>> {
-        self.as_terminal()
-            .map(AkitaTerminalStage2Proof::final_witness)
-    }
-
-    /// Mutably borrow the terminal cleartext witness.
-    pub fn final_witness_mut(&mut self) -> Option<&mut CleartextWitnessProof<F>> {
-        self.as_terminal_mut().map(|proof| &mut proof.final_witness)
     }
 }
 
@@ -232,10 +123,8 @@ pub enum AkitaLevelProof<F: FieldCore, E: FieldCore> {
         extension_opening_reduction: Option<ExtensionOpeningReductionProof<E>>,
         /// Accepted Fiat-Shamir grind nonce for fold-l∞ rejection (0 under deterministic policy).
         fold_grind_nonce: u32,
-        /// Terminal stage-2 payload.
-        stage2: AkitaStage2Proof<F, E>,
-        /// Scheduled final witness length in field elements.
-        final_w_len: usize,
+        /// Quotient-free terminal witness checked directly by the verifier.
+        final_witness: CleartextWitnessProof<F>,
     },
 }
 
@@ -269,11 +158,11 @@ impl<F: FieldCore, E: FieldCore> AkitaLevelProof<F, E> {
         Self::new::<D>(
             v,
             stage1,
-            AkitaStage2Proof::Intermediate(AkitaIntermediateStage2Proof {
+            AkitaStage2Proof {
                 sumcheck_proof: stage2_sumcheck_proof,
                 next_w_commitment: next_w_commitment.into_compact(),
                 next_w_eval,
-            }),
+            },
         )
     }
 
@@ -293,11 +182,11 @@ impl<F: FieldCore, E: FieldCore> AkitaLevelProof<F, E> {
             v: RingVec::from_ring_elems(&v).into_compact(),
             fold_grind_nonce: 0,
             stage1,
-            stage2: AkitaStage2Proof::Intermediate(AkitaIntermediateStage2Proof {
+            stage2: AkitaStage2Proof {
                 sumcheck_proof: stage2_sumcheck_proof,
                 next_w_commitment: next_w_commitment.into_compact(),
                 next_w_eval,
-            }),
+            },
             stage3_sumcheck_proof: None,
         }
     }
@@ -306,19 +195,13 @@ impl<F: FieldCore, E: FieldCore> AkitaLevelProof<F, E> {
     #[allow(clippy::too_many_arguments)]
     pub fn new_terminal_with_extension_opening_reduction(
         extension_opening_reduction: Option<ExtensionOpeningReductionProof<E>>,
-        stage2_sumcheck: SumcheckProof<E>,
         final_witness: CleartextWitnessProof<F>,
-        final_w_len: usize,
         fold_grind_nonce: u32,
     ) -> Self {
         Self::Terminal {
             extension_opening_reduction,
             fold_grind_nonce,
-            stage2: AkitaStage2Proof::Terminal(AkitaTerminalStage2Proof {
-                relation: TerminalRelationProof::RingSwitchSumcheck(stage2_sumcheck),
-                final_witness,
-            }),
-            final_w_len,
+            final_witness,
         }
     }
 
@@ -428,14 +311,16 @@ impl<F: FieldCore, E: FieldCore> AkitaLevelProof<F, E> {
     /// Borrow the stage-2 payload.
     pub fn stage2(&self) -> &AkitaStage2Proof<F, E> {
         match self {
-            Self::Intermediate { stage2, .. } | Self::Terminal { stage2, .. } => stage2,
+            Self::Intermediate { stage2, .. } => stage2,
+            Self::Terminal { .. } => panic!("stage2() called on terminal level proof"),
         }
     }
 
     /// Mutably borrow the stage-2 payload.
     pub fn stage2_mut(&mut self) -> &mut AkitaStage2Proof<F, E> {
         match self {
-            Self::Intermediate { stage2, .. } | Self::Terminal { stage2, .. } => stage2,
+            Self::Intermediate { stage2, .. } => stage2,
+            Self::Terminal { .. } => panic!("stage2_mut() called on terminal level proof"),
         }
     }
 
@@ -498,11 +383,7 @@ impl<F: FieldCore, E: FieldCore> AkitaLevelProof<F, E> {
 
     /// Commitment to the next witness `w`.
     pub fn next_w_commitment(&self) -> &RingVec<F> {
-        &self
-            .stage2()
-            .as_intermediate()
-            .expect("next_w_commitment() called on terminal stage-2 proof")
-            .next_w_commitment
+        &self.stage2().next_w_commitment
     }
 
     /// Borrow the next witness commitment if this is an intermediate level.
@@ -518,10 +399,18 @@ impl<F: FieldCore, E: FieldCore> AkitaLevelProof<F, E> {
         self.stage2().next_w_eval()
     }
 
-    /// Scheduled terminal final witness length.
-    pub fn final_w_len(&self) -> Option<usize> {
+    /// Borrow the terminal cleartext witness.
+    pub fn final_witness(&self) -> Option<&CleartextWitnessProof<F>> {
         match self {
-            Self::Terminal { final_w_len, .. } => Some(*final_w_len),
+            Self::Terminal { final_witness, .. } => Some(final_witness),
+            Self::Intermediate { .. } => None,
+        }
+    }
+
+    /// Mutably borrow the terminal cleartext witness.
+    pub fn final_witness_mut(&mut self) -> Option<&mut CleartextWitnessProof<F>> {
+        match self {
+            Self::Terminal { final_witness, .. } => Some(final_witness),
             Self::Intermediate { .. } => None,
         }
     }
@@ -584,7 +473,7 @@ impl<F: FieldCore, E: FieldCore> AkitaLevelProof<F, E> {
     pub fn terminal_shape(&self) -> TerminalLevelProofShape {
         let Self::Terminal {
             extension_opening_reduction,
-            stage2,
+            final_witness,
             ..
         } = self
         else {
@@ -594,23 +483,7 @@ impl<F: FieldCore, E: FieldCore> AkitaLevelProof<F, E> {
             extension_opening_reduction: extension_opening_reduction
                 .as_ref()
                 .map(ExtensionOpeningReductionProof::shape),
-            relation: match &stage2
-                .as_terminal()
-                .expect("terminal level proof must carry terminal relation proof")
-                .relation
-            {
-                TerminalRelationProof::RingSwitchSumcheck(proof) => {
-                    TerminalRelationProofShape::RingSwitchSumcheck(sumcheck_shape(proof))
-                }
-                TerminalRelationProof::DirectRingRelations => {
-                    TerminalRelationProofShape::DirectRingRelations
-                }
-            },
-            final_witness: self
-                .stage2()
-                .final_witness()
-                .expect("terminal level proof must carry final witness")
-                .shape(),
+            final_witness: final_witness.shape(),
         }
     }
 
@@ -638,8 +511,8 @@ pub struct TerminalLevelProof<F: FieldCore, E: FieldCore> {
     pub extension_opening_reduction: Option<ExtensionOpeningReductionProof<E>>,
     /// Accepted Fiat-Shamir grind nonce for fold-l∞ rejection (0 under deterministic policy).
     pub fold_grind_nonce: u32,
-    /// Terminal stage-2 payload.
-    pub stage2: AkitaStage2Proof<F, E>,
+    /// Quotient-free terminal witness checked directly by the verifier.
+    pub final_witness: CleartextWitnessProof<F>,
 }
 
 impl<F: FieldCore, E: FieldCore> TerminalLevelProof<F, E> {
@@ -649,25 +522,24 @@ impl<F: FieldCore, E: FieldCore> TerminalLevelProof<F, E> {
     /// not use extension-opening reduction.
     pub fn new_with_extension_opening_reduction(
         extension_opening_reduction: Option<ExtensionOpeningReductionProof<E>>,
-        stage2_sumcheck: SumcheckProof<E>,
         final_witness: CleartextWitnessProof<F>,
         fold_grind_nonce: u32,
     ) -> Self {
         Self {
             extension_opening_reduction,
             fold_grind_nonce,
-            stage2: AkitaStage2Proof::Terminal(AkitaTerminalStage2Proof {
-                relation: TerminalRelationProof::RingSwitchSumcheck(stage2_sumcheck),
-                final_witness,
-            }),
+            final_witness,
         }
     }
 
     /// Borrow the terminal cleartext witness.
     pub fn final_witness(&self) -> &CleartextWitnessProof<F> {
-        self.stage2
-            .final_witness()
-            .expect("final_witness() called on intermediate stage-2 proof")
+        &self.final_witness
+    }
+
+    /// Mutably borrow the terminal cleartext witness.
+    pub fn final_witness_mut(&mut self) -> &mut CleartextWitnessProof<F> {
+        &mut self.final_witness
     }
 
     /// Derive the [`TerminalLevelProofShape`] for this terminal-level proof.
@@ -677,19 +549,6 @@ impl<F: FieldCore, E: FieldCore> TerminalLevelProof<F, E> {
                 .extension_opening_reduction
                 .as_ref()
                 .map(ExtensionOpeningReductionProof::shape),
-            relation: match &self
-                .stage2
-                .as_terminal()
-                .expect("terminal level proof must carry terminal relation proof")
-                .relation
-            {
-                TerminalRelationProof::RingSwitchSumcheck(proof) => {
-                    TerminalRelationProofShape::RingSwitchSumcheck(sumcheck_shape(proof))
-                }
-                TerminalRelationProof::DirectRingRelations => {
-                    TerminalRelationProofShape::DirectRingRelations
-                }
-            },
             final_witness: self.final_witness().shape(),
         }
     }
@@ -889,23 +748,17 @@ impl<F: FieldCore, E: FieldCore> AkitaBatchedRootProof<F, E> {
     /// Borrow the root next-witness commitment for fold proofs.
     pub fn fold_next_w_commitment(&self) -> Result<Option<&RingVec<F>>, AkitaError> {
         match self {
-            Self::Fold(fold) => Ok(Some(
-                &fold
-                    .stage2
-                    .as_intermediate()
-                    .ok_or(AkitaError::InvalidProof)?
-                    .next_w_commitment,
-            )),
+            Self::Fold(fold) => Ok(Some(&fold.stage2.next_w_commitment)),
             Self::Terminal(_) => Ok(None),
             Self::ZeroFold { .. } => Err(AkitaError::InvalidProof),
         }
     }
 
-    /// Borrow root stage-2 for fold and terminal-root proofs.
-    pub fn fold_stage2(&self) -> Result<&AkitaStage2Proof<F, E>, AkitaError> {
+    /// Borrow root stage-2 for fold proofs.
+    pub fn fold_stage2(&self) -> Result<Option<&AkitaStage2Proof<F, E>>, AkitaError> {
         match self {
-            Self::Fold(fold) => Ok(&fold.stage2),
-            Self::Terminal(terminal) => Ok(&terminal.stage2),
+            Self::Fold(fold) => Ok(Some(&fold.stage2)),
+            Self::Terminal(_) => Ok(None),
             Self::ZeroFold { .. } => Err(AkitaError::InvalidProof),
         }
     }
@@ -964,8 +817,6 @@ impl<F: FieldCore, E: FieldCore> AkitaBatchedRootProof<F, E> {
             .as_fold()
             .expect("next_w_commitment() called on a non-fold root proof")
             .stage2
-            .as_intermediate()
-            .expect("next_w_commitment() called on terminal stage-2 proof")
             .next_w_commitment
     }
 
@@ -1025,7 +876,6 @@ impl<F: FieldCore, E: FieldCore> AkitaBatchedProof<F, E> {
                 .last()
                 .and_then(AkitaLevelProof::as_terminal)
                 .expect("fold-rooted Akita proof must terminate with a terminal step")
-                .stage2()
                 .final_witness()
                 .expect("terminal Akita level proof must carry final witness"),
             AkitaBatchedRootProof::ZeroFold { .. } => {

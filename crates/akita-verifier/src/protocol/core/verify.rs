@@ -548,10 +548,7 @@ where
             if total_fold_levels != 1 {
                 return Err(AkitaError::InvalidProof);
             }
-            let final_witness = terminal
-                .stage2
-                .final_witness()
-                .ok_or(AkitaError::InvalidProof)?;
+            let final_witness = terminal.final_witness();
             if !terminal_direct
                 .witness_shape
                 .admits_realized(&final_witness.shape())
@@ -590,7 +587,6 @@ where
                 .ok_or(AkitaError::InvalidProof)?;
             if !terminal_direct.witness_shape.admits_realized(
                 &terminal_step
-                    .stage2()
                     .final_witness()
                     .ok_or(AkitaError::InvalidProof)?
                     .shape(),
@@ -600,10 +596,7 @@ where
 
             let first_recursive_params =
                 scheduled_next_level_params(schedule, 1).map_err(|_| AkitaError::InvalidProof)?;
-            let root_stage2 = fold_root
-                .stage2
-                .as_intermediate()
-                .ok_or(AkitaError::InvalidProof)?;
+            let root_stage2 = &fold_root.stage2;
             let (root_challenges, setup_prefix_opening) = verify_root::<F, E, T>(
                 &proof.root,
                 setup,

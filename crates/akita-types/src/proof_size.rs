@@ -70,11 +70,11 @@ pub fn level_proof_bytes(
 ) -> usize {
     let base_elem_bytes = field_bytes(base_field_bits);
     let challenge_elem_bytes = field_bytes(challenge_field_bits);
-    let rounds = sumcheck_rounds(lp.ring_dimension, next_w_len);
-    let sumcheck = sumcheck_bytes(rounds, 3, challenge_elem_bytes);
     match layout {
-        RelationMatrixRowLayout::WithoutDBlock => FOLD_GRIND_NONCE_BYTES + sumcheck,
+        RelationMatrixRowLayout::WithoutDBlock => FOLD_GRIND_NONCE_BYTES,
         RelationMatrixRowLayout::WithDBlock => {
+            let rounds = sumcheck_rounds(lp.ring_dimension, next_w_len);
+            let sumcheck = sumcheck_bytes(rounds, 3, challenge_elem_bytes);
             let next_lp = next_lp
                 .expect("level_proof_bytes(WithDBlock) requires next_lp; caller must pass Some");
             let v_bytes =
@@ -152,10 +152,9 @@ mod tests {
     use crate::proof::{segment_typed_witness_shape_from_groups, SegmentTypedWitness};
     use crate::tail_golomb_rice_z_params;
     use crate::{
-        direct_witness_bytes, AkitaIntermediateStage2Proof, AkitaLevelProof, AkitaStage1Proof,
-        AkitaStage1StageProof, AkitaStage2Proof, CleartextWitnessProof, CleartextWitnessShape,
-        RingVec, SetupSumcheckProof, SisModulusProfileId, TerminalLevelProof,
-        SETUP_SUMCHECK_DEGREE,
+        direct_witness_bytes, AkitaLevelProof, AkitaStage1Proof, AkitaStage1StageProof,
+        AkitaStage2Proof, CleartextWitnessProof, CleartextWitnessShape, RingVec,
+        SetupSumcheckProof, SisModulusProfileId, TerminalLevelProof, SETUP_SUMCHECK_DEGREE,
     };
 
     type F = Prime128OffsetA7F7;
@@ -286,11 +285,11 @@ mod tests {
             v: RingVec::from_coeffs(vec![F::zero(); current_coeffs]),
             fold_grind_nonce: 0,
             stage1: dummy_stage1_proof(rounds, b),
-            stage2: AkitaStage2Proof::Intermediate(AkitaIntermediateStage2Proof {
+            stage2: AkitaStage2Proof {
                 sumcheck_proof: dummy_sumcheck(rounds, 3),
                 next_w_commitment: RingVec::from_coeffs(vec![F::zero(); next_commit_coeffs]),
                 next_w_eval: F::zero(),
-            }),
+            },
             stage3_sumcheck_proof: stage3_setup_ring_len.map(|setup_ring_len| {
                 dummy_stage3_proof::<F>(lp.ring_dimension, setup_ring_len, next_w_len)
             }),
@@ -448,13 +447,11 @@ mod tests {
             )
             .with_decomp(1, 1, 1, 1)
             .unwrap();
-            let rounds = sumcheck_rounds(D, next_w_len);
 
             let (final_witness, witness_shape) = segment_typed_final_witness(&lp, num_claims);
             let final_witness_bytes_runtime = final_witness.serialized_size(Compress::No);
             let terminal_proof = TerminalLevelProof::<F, F>::new_with_extension_opening_reduction(
                 None,
-                dummy_sumcheck(rounds, 3),
                 final_witness,
                 0,
             );

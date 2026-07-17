@@ -9,16 +9,15 @@ use akita_field::{
     RandomSampling,
 };
 use akita_transcript::labels::{
-    ABSORB_NEXT_LEVEL_WITNESS_BINDING, ABSORB_TERMINAL_W_REMAINDER, CHALLENGE_RING_SWITCH,
-    CHALLENGE_TAU0, CHALLENGE_TAU1,
+    ABSORB_NEXT_LEVEL_WITNESS_BINDING, CHALLENGE_RING_SWITCH, CHALLENGE_TAU0, CHALLENGE_TAU1,
 };
 use akita_transcript::{sample_ext_challenge, Transcript};
 use akita_types::{
     eval_relation_weight_at_point, gadget_row_scalars, r_decomp_levels, shared_setup_fold_gadget,
     validate_role_dispatch, AkitaExpandedSetup, CommitmentRingDims, FpExtEncoding, LevelParams,
     OpeningClaimsLayout, RelationMatrixRowLayout, RingMultiplierOpeningPoint, RingRelationInstance,
-    RingRole, RingVec, SetupContributionGroupInputs, SetupContributionPlan,
-    TerminalWitnessTranscriptParts, WitnessLayout, WitnessUnitLayout,
+    RingRole, RingVec, SetupContributionGroupInputs, SetupContributionPlan, WitnessLayout,
+    WitnessUnitLayout,
 };
 use std::sync::Arc;
 
@@ -68,21 +67,6 @@ impl<E: FieldCore> RingSwitchVerifyCoreOutput<E> {
             col_bits: self.col_bits,
             ring_bits: self.ring_bits,
             tau0,
-            tau1: self.tau1,
-            b: self.b,
-            alpha: self.alpha,
-        })
-    }
-
-    fn into_terminal_as_output(self) -> Result<RingSwitchVerifyOutput<E>, AkitaError> {
-        if self.tau0.is_some() {
-            return Err(AkitaError::InvalidProof);
-        }
-        Ok(RingSwitchVerifyOutput {
-            relation_matrix_evaluator: self.relation_matrix_evaluator,
-            col_bits: self.col_bits,
-            ring_bits: self.ring_bits,
-            tau0: Vec::new(),
             tau1: self.tau1,
             b: self.b,
             alpha: self.alpha,
@@ -184,39 +168,6 @@ where
         RelationMatrixRowLayout::WithDBlock,
     )?
     .into_intermediate()
-}
-
-/// Terminal variant of [`ring_switch_verifier`].
-///
-/// This owns the required terminal final-witness remainder absorb before
-/// sampling ring-switch challenges.
-///
-/// # Errors
-///
-/// Returns an error if the claim shape is invalid, opening-point routing is
-/// inconsistent, transcript-bound challenge data has the wrong size, or
-/// relation-matrix evaluator preparation fails.
-#[tracing::instrument(skip_all, name = "ring_switch_verifier_terminal")]
-#[inline(never)]
-pub(crate) fn ring_switch_verifier_terminal<F, E, T, const D: usize>(
-    replay: &RingSwitchReplay<'_, F, E>,
-    w_len: usize,
-    transcript: &mut T,
-    terminal_parts: &TerminalWitnessTranscriptParts,
-) -> Result<RingSwitchVerifyOutput<E>, AkitaError>
-where
-    F: FieldCore + CanonicalField + RandomSampling,
-    E: FpExtEncoding<F> + FromPrimitiveInt + MulBaseUnreduced<F>,
-    T: Transcript<F>,
-{
-    transcript.absorb_and_record_bytes(ABSORB_TERMINAL_W_REMAINDER, &terminal_parts.remainder);
-    ring_switch_verifier_core::<F, E, T, D>(
-        replay,
-        w_len,
-        transcript,
-        RelationMatrixRowLayout::WithoutDBlock,
-    )?
-    .into_terminal_as_output()
 }
 
 #[tracing::instrument(skip_all, name = "ring_switch_verifier_core")]

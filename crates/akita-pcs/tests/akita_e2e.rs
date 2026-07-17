@@ -79,7 +79,7 @@ where
         .steps
         .iter()
         .rev()
-        .find(|step| step.final_w_len().is_some())
+        .find(|step| step.final_witness().is_some())
         .map_or_else(
             || proof.root.serialized_size(Compress::No),
             |step| step.serialized_size(Compress::No),
@@ -363,15 +363,12 @@ fn terminal_witness_mut<FField: FieldCore, E: FieldCore>(
     proof: &mut AkitaBatchedProof<FField, E>,
 ) -> &mut akita_types::CleartextWitnessProof<FField> {
     match &mut proof.root {
-        akita_types::AkitaBatchedRootProof::Terminal(terminal) => terminal
-            .stage2
-            .final_witness_mut()
-            .expect("terminal root proof must carry terminal stage-2 proof"),
+        akita_types::AkitaBatchedRootProof::Terminal(terminal) => terminal.final_witness_mut(),
         akita_types::AkitaBatchedRootProof::Fold(_) => proof
             .steps
             .last_mut()
             .and_then(akita_types::AkitaLevelProof::as_terminal_mut)
-            .and_then(|terminal| terminal.stage2_mut().final_witness_mut())
+            .and_then(akita_types::AkitaLevelProof::final_witness_mut)
             .expect("fold-rooted proof must end in a terminal step"),
         akita_types::AkitaBatchedRootProof::ZeroFold { .. } => {
             panic!("terminal tamper test requires a folded terminal proof")
@@ -1374,11 +1371,7 @@ fn batched_onehot_same_point_rejects_tampered_root_stage1_s_claim() {
                 fold.stage1.s_claim += F::from_canonical_u128_reduced(1);
             }
             akita_types::AkitaBatchedRootProof::Terminal(ref mut terminal) => {
-                match terminal
-                    .stage2
-                    .final_witness_mut()
-                    .expect("terminal root proof must carry terminal stage-2 proof")
-                {
+                match terminal.final_witness_mut() {
                     akita_types::CleartextWitnessProof::SegmentTyped(segment) => {
                         segment.z_payloads[0][0] ^= 1;
                     }

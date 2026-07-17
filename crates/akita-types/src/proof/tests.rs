@@ -106,43 +106,6 @@ fn level_shape_deserialization_rejects_vector_length_before_allocation() {
     ));
 }
 
-#[test]
-fn terminal_shape_deserialization_validates_shape() {
-    let mut bytes = Vec::new();
-    false.serialize_compressed(&mut bytes).unwrap(); // extension_opening_reduction
-    0u8.serialize_compressed(&mut bytes).unwrap(); // ring-switch sumcheck relation
-    (MAX_PROOF_SHAPE_SEQUENCE_LEN as u64 + 1)
-        .serialize_compressed(&mut bytes)
-        .unwrap(); // stage2_sumcheck
-
-    let err = TerminalLevelProofShape::deserialize_compressed(&bytes[..], &())
-        .expect_err("oversized terminal sumcheck shape must be rejected");
-    assert!(matches!(
-        err,
-        SerializationError::LengthLimitExceeded { .. }
-    ));
-}
-
-#[test]
-fn terminal_level_proof_deserialization_validates_context_shape() {
-    let shape = TerminalLevelProofShape {
-        extension_opening_reduction: None,
-        relation: TerminalRelationProofShape::RingSwitchSumcheck(vec![
-            0;
-            MAX_PROOF_SHAPE_SEQUENCE_LEN
-                + 1
-        ]),
-        final_witness: CleartextWitnessShape::FieldElements(0),
-    };
-
-    let err = TerminalLevelProof::<F, F>::deserialize_compressed(&[][..], &shape)
-        .expect_err("oversized terminal proof context shape must be rejected");
-    assert!(matches!(
-        err,
-        SerializationError::LengthLimitExceeded { .. }
-    ));
-}
-
 fn tiny_stage1() -> AkitaStage1Proof<F> {
     AkitaStage1Proof {
         stages: Vec::new(),
@@ -151,14 +114,14 @@ fn tiny_stage1() -> AkitaStage1Proof<F> {
 }
 
 fn tiny_stage2<const D: usize>() -> AkitaStage2Proof<F, F> {
-    AkitaStage2Proof::Intermediate(AkitaIntermediateStage2Proof {
+    AkitaStage2Proof {
         sumcheck_proof: SumcheckProof {
             round_polys: Vec::new(),
         },
         next_w_commitment: RingVec::from_ring_elems(&[CyclotomicRing::<F, D>::zero()])
             .into_compact(),
         next_w_eval: F::zero(),
-    })
+    }
 }
 
 fn tiny_reduction() -> ExtensionOpeningReductionProof<F> {
@@ -231,12 +194,6 @@ fn extension_opening_reduction_none_is_zero_proof_wire_bytes() {
     assert_eq!(decoded_with_reduction, with_reduction);
 }
 
-fn tiny_terminal_stage2() -> SumcheckProof<F> {
-    SumcheckProof {
-        round_polys: Vec::new(),
-    }
-}
-
 #[test]
 fn terminal_level_proof_serde_round_trip() {
     let final_witness = CleartextWitnessProof::FieldElements(RingVec::from_coeffs(vec![
@@ -246,12 +203,8 @@ fn terminal_level_proof_serde_round_trip() {
         F::from_u64(2),
     ]));
 
-    let without_reduction = TerminalLevelProof::new_with_extension_opening_reduction(
-        None,
-        tiny_terminal_stage2(),
-        final_witness.clone(),
-        7,
-    );
+    let without_reduction =
+        TerminalLevelProof::new_with_extension_opening_reduction(None, final_witness.clone(), 7);
     assert!(without_reduction.extension_opening_reduction.is_none());
     assert!(without_reduction
         .shape()
@@ -277,7 +230,6 @@ fn terminal_level_proof_serde_round_trip() {
 
     let with_reduction = TerminalLevelProof::new_with_extension_opening_reduction(
         Some(tiny_reduction()),
-        tiny_terminal_stage2(),
         final_witness,
         0,
     );
@@ -305,16 +257,8 @@ fn direct_terminal_relation_proof_serde_round_trip() {
     let proof = TerminalLevelProof {
         extension_opening_reduction: None,
         fold_grind_nonce: 3,
-        stage2: AkitaStage2Proof::Terminal(AkitaTerminalStage2Proof {
-            relation: TerminalRelationProof::DirectRingRelations,
-            final_witness,
-        }),
+        final_witness,
     };
-    assert_eq!(
-        proof.shape().relation,
-        TerminalRelationProofShape::DirectRingRelations
-    );
-    assert!(proof.stage2.sumcheck().is_none());
 
     let mut bytes = Vec::new();
     proof

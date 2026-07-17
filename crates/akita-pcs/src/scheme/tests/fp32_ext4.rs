@@ -507,39 +507,6 @@ fn fp32_ext4_root_fold_roundtrip_uses_extension_gamma() {
     )
     .unwrap();
 
-    let mut malformed_stage2 = proof.clone();
-    let terminal = match &mut malformed_stage2.root {
-        akita_types::AkitaBatchedRootProof::Terminal(terminal) => terminal,
-        akita_types::AkitaBatchedRootProof::Fold(_) => panic!("fixture should be terminal-rooted"),
-        akita_types::AkitaBatchedRootProof::ZeroFold { .. } => {
-            panic!("fixture should not be root-direct")
-        }
-    };
-    let sumcheck_proof = terminal
-        .stage2
-        .sumcheck()
-        .expect("terminal test proof uses ring-switch sumcheck")
-        .clone();
-    terminal.stage2 =
-        akita_types::AkitaStage2Proof::Intermediate(akita_types::AkitaIntermediateStage2Proof {
-            sumcheck_proof,
-            next_w_commitment: akita_types::RingVec::from_coeffs(Vec::<SmallF>::new()),
-            next_w_eval: SmallE::zero(),
-        });
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let mut verifier_transcript =
-            AkitaTranscript::<SmallF>::new(b"test/fp32-ring-subfield-root-fold");
-        SmallScheme::batched_verify(
-            &malformed_stage2,
-            &verifier_setup,
-            &mut verifier_transcript,
-            verifier_claims_at_vars(&point[..], NUM_VARS, &openings[..], &commitments[0]),
-            BasisMode::Lagrange,
-            akita_types::SetupContributionMode::Direct,
-        )
-    }));
-    assert!(matches!(result, Ok(Err(AkitaError::InvalidProof))));
-
     let wrong_openings = [opening + SmallE::one()];
     let mut verifier_transcript =
         AkitaTranscript::<SmallF>::new(b"test/fp32-ring-subfield-root-fold");

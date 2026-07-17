@@ -291,8 +291,19 @@ fn find_schedule_inner(
                 })
             };
             let next_w_len = next_withness_len_impl(RelationMatrixRowLayout::WithDBlock)?;
-            let next_w_len_terminal =
-                next_withness_len_impl(RelationMatrixRowLayout::WithoutDBlock)?;
+            let terminal_shape = segment_typed_witness_shape_from_groups(
+                &candidate_params,
+                field_bits,
+                [(
+                    &candidate_params as &dyn akita_types::LevelParamsLike,
+                    key.num_polynomials(),
+                    key.num_polynomials(),
+                    1,
+                )],
+                1,
+                akita_types::TerminalQuotientMode::Omit,
+            )?;
+            let next_w_len_terminal = terminal_shape.logical_num_elems();
             let initial_witness_len_bits = witness_len
                 .checked_mul(field_bits as usize)
                 .ok_or_else(|| {

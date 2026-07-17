@@ -46,12 +46,12 @@ use akita_types::{
     tensor_reduction_claim_from_rows, tensor_row_partials_from_columns,
     trace_public_weights_recursive, trace_public_weights_root_terms,
     trace_weight_layout_from_segment, AkitaBatchedProof, AkitaBatchedRootProof,
-    AkitaCommitmentHint, AkitaExpandedSetup, AkitaIntermediateStage2Proof, AkitaLevelProof,
-    AkitaStage1Proof, AkitaStage2Proof, AkitaTerminalStage2Proof, BasisMode, CleartextWitnessProof,
-    Commitment, ExecutionSchedule, ExtensionOpeningReductionProof, LevelParams, OpeningClaims,
-    OpeningClaimsLayout, PreparedOpeningPoint, RelationMatrixRowLayout, RingMultiplierOpeningPoint,
-    RingVec, RingView, Schedule, SetupContributionMode, SetupPrefixProverRegistry,
-    SetupSumcheckProof, Step, TerminalLevelProof, TraceTable,
+    AkitaCommitmentHint, AkitaExpandedSetup, AkitaLevelProof, AkitaStage1Proof, AkitaStage2Proof,
+    BasisMode, CleartextWitnessProof, Commitment, ExecutionSchedule,
+    ExtensionOpeningReductionProof, LevelParams, OpeningClaims, OpeningClaimsLayout,
+    PreparedOpeningPoint, RelationMatrixRowLayout, RingMultiplierOpeningPoint, RingVec, RingView,
+    Schedule, SetupContributionMode, SetupPrefixProverRegistry, SetupSumcheckProof, Step,
+    TerminalLevelProof, TraceTable,
 };
 use std::sync::Arc;
 

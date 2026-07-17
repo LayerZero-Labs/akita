@@ -273,12 +273,9 @@ where
     }
 
     let w_len = scheduled.next_w_len;
-    let terminal_replay = if proof.final_w_len().is_some() {
-        let final_w_len = proof.final_w_len().ok_or(AkitaError::InvalidProof)?;
-        let final_witness = proof
-            .stage2()
-            .final_witness()
-            .ok_or(AkitaError::InvalidProof)?;
+    let final_witness = proof.final_witness();
+    let terminal_replay = if let Some(final_witness) = final_witness {
+        let final_w_len = final_witness.num_elems();
         if final_witness.as_segment_typed().is_none() {
             return Err(AkitaError::InvalidProof);
         }
@@ -293,7 +290,7 @@ where
     let stage1_proof = proof.stage1_proof();
     let next_w_commitment = proof.next_w_commitment_opt();
     let stage3 = proof.stage3_for_mode(lp.setup_contribution_mode, next_fold_level_params)?;
-    let stage2 = proof.stage2();
+    let stage2 = proof.as_intermediate().map(AkitaLevelProof::stage2);
     let (trace_eval_target, trace_eval_scale) = match eor_trace_final.as_ref() {
         Some((final_claim, factors_by_point)) => (
             *final_claim,
@@ -339,6 +336,7 @@ where
         w_len,
         stage1: stage1_proof,
         stage2,
+        final_witness,
         next_w_commitment,
         next_ring_dim: (!scheduled.is_terminal).then_some(scheduled.next_params.role_dims().d_b()),
         next_witness_ring_dim: (!scheduled.is_terminal)
@@ -454,8 +452,9 @@ where
                     return Err(AkitaError::InvalidProof);
                 }
                 if terminal_proof
-                    .final_w_len()
+                    .final_witness()
                     .ok_or(AkitaError::InvalidProof)?
+                    .num_elems()
                     != next_w_len
                 {
                     return Err(AkitaError::InvalidProof);

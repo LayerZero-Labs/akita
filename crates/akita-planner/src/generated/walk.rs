@@ -144,13 +144,19 @@ fn walk_scalar_generated_schedule_entry(
                     ));
                 }
                 let (next_w_len, next_lp, layout) = if is_terminal {
-                    let len = planned_next_witness_len(
-                        field_bits,
+                    let shape = segment_typed_witness_shape_from_groups(
                         &lp,
-                        num_polynomials,
-                        RelationMatrixRowLayout::WithoutDBlock,
-                        lp.witness_chunk.num_chunks,
+                        field_bits,
+                        [(
+                            &lp as &dyn akita_types::LevelParamsLike,
+                            num_polynomials,
+                            num_polynomials,
+                            1,
+                        )],
+                        1,
+                        akita_types::TerminalQuotientMode::Omit,
                     )?;
+                    let len = shape.logical_num_elems();
                     terminal_witness_field_len = Some(len);
                     (len, None, RelationMatrixRowLayout::WithoutDBlock)
                 } else {
@@ -411,13 +417,14 @@ fn walk_multi_group_generated_schedule_entry(
                 }
 
                 let (next_w_len, next_lp, layout) = if is_terminal {
-                    let len = planned_next_witness_len(
-                        field_bits,
+                    let shape = segment_typed_witness_shape_from_groups(
                         &lp,
+                        field_bits,
+                        [(&lp as &dyn akita_types::LevelParamsLike, 1, 1, 1)],
                         1,
-                        RelationMatrixRowLayout::WithoutDBlock,
-                        lp.witness_chunk.num_chunks,
+                        akita_types::TerminalQuotientMode::Omit,
                     )?;
+                    let len = shape.logical_num_elems();
                     terminal_witness_field_len = Some(len);
                     (len, None, RelationMatrixRowLayout::WithoutDBlock)
                 } else {

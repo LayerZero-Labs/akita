@@ -8,10 +8,10 @@ mod direct_ring_arithmetic;
 mod extension_opening_reduction;
 mod verify;
 use crate::protocol::ring_switch::{
-    ring_switch_verifier, ring_switch_verifier_terminal, RingSwitchReplay, RingSwitchVerifyOutput,
+    ring_switch_verifier, RingSwitchReplay, RingSwitchVerifyOutput,
 };
 use crate::stages::stage1::{derive_multi_group_stage1_challenges, AkitaStage1Verifier};
-use crate::stages::stage2::{stage2_cleartext_oracle, AkitaStage2Verifier, Stage2WitnessOracle};
+use crate::stages::stage2::AkitaStage2Verifier;
 use crate::stages::SetupSumcheckVerifier;
 use akita_field::{
     AkitaError, CanonicalField, ExtField, FieldCore, FrobeniusExtField, FromPrimitiveInt,
@@ -22,7 +22,7 @@ use akita_sumcheck::SumcheckInstanceVerifierExt;
 use akita_transcript::labels::{
     ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS, ABSORB_STAGE2_NEXT_W_EVAL,
     ABSORB_STAGE3_NEXT_W_EVAL, ABSORB_SUMCHECK_S_CLAIM, ABSORB_TERMINAL_E_HAT,
-    CHALLENGE_SUMCHECK_BATCH, CHALLENGE_SUMCHECK_ROUND,
+    ABSORB_TERMINAL_W_REMAINDER, CHALLENGE_SUMCHECK_BATCH, CHALLENGE_SUMCHECK_ROUND,
 };
 use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
 use akita_types::derive_tensor_extension_opening_claim_from_partials;
@@ -51,6 +51,7 @@ use extension_opening_reduction::verify_extension_opening_reduction_sumcheck;
 mod fold;
 mod root_fold;
 mod suffix;
+mod terminal_direct;
 use root_fold::verify_root;
 
 pub use verify::batched_verify;

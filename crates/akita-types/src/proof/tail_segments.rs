@@ -613,7 +613,7 @@ pub fn decode_terminal_z_golomb_payload(
     decode_terminal_z_golomb_payload_with_cap(payload, z_coords, cap, budget_bytes)
 }
 
-fn decode_terminal_z_golomb_payload_with_cap(
+pub fn decode_terminal_z_golomb_payload_with_cap(
     payload: &[u8],
     z_coords: usize,
     cap: u128,

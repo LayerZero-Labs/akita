@@ -19,7 +19,6 @@ use akita_types::{
 use akita_types::{scheduled_next_level_params, LevelParams};
 use akita_types::{
     AkitaBatchedProofShape, AkitaProofStepShape, LevelProofShape, RingVec, TerminalLevelProofShape,
-    TerminalRelationProofShape,
 };
 use akita_types::{
     AkitaCommitmentHint, Commitment, OpeningClaims, OpeningClaimsLayout, PointVariableSelection,
@@ -68,41 +67,10 @@ fn should_stop_batched_folding(w_len: usize, prev_w_len: usize) -> bool {
 /// Terminal stage-2 sumcheck round degrees can depend on Fiat-Shamir challenges
 /// (e.g. structurally zero leading cubic on the first round). Copy them from
 /// the proved shape so deserialization uses the on-wire widths.
-fn sync_terminal_stage2_sumcheck_from_proof(
-    expected: &mut AkitaBatchedProofShape,
-    proof: &AkitaBatchedProof<OneHotF, OneHotF>,
-) {
-    let actual = proof.shape();
-    match (expected, actual) {
-        (
-            AkitaBatchedProofShape::Fold { step_shapes, .. },
-            AkitaBatchedProofShape::Fold {
-                step_shapes: actual_steps,
-                ..
-            },
-        ) => {
-            let Some(AkitaProofStepShape::Terminal(terminal)) = step_shapes.last_mut() else {
-                return;
-            };
-            let Some(AkitaProofStepShape::Terminal(actual_terminal)) = actual_steps.last() else {
-                return;
-            };
-            terminal.relation = actual_terminal.relation.clone();
-        }
-        (
-            AkitaBatchedProofShape::Terminal(terminal),
-            AkitaBatchedProofShape::Terminal(actual_terminal),
-        ) => {
-            terminal.relation = actual_terminal.relation.clone();
-        }
-        _ => {}
-    }
-}
-
 fn expected_same_point_batched_shape(
     max_num_vars: usize,
     num_claims: usize,
-    proof: &AkitaBatchedProof<OneHotF, OneHotF>,
+    _proof: &AkitaBatchedProof<OneHotF, OneHotF>,
 ) -> AkitaBatchedProofShape {
     let opening_batch =
         akita_types::OpeningClaimsLayout::new(max_num_vars, num_claims).expect("opening_batch");
@@ -117,21 +85,12 @@ fn expected_same_point_batched_shape(
     // 1-fold schedule: the root IS the terminal fold. Emit a terminal-rooted
     // shape with no recursive-suffix steps.
     if num_fold_levels == 1 {
-        let mut stage2_sumcheck = vec![3; root_rounds];
-        let fold_basis = 1usize << root_step.params.log_basis;
-        let ring_bits = root_step.params.ring_dimension.trailing_zeros() as usize;
-        if root_rounds >= 2 && ring_bits >= 2 && matches!(fold_basis, 4 | 8) {
-            stage2_sumcheck[0] = 2;
-        }
-        let mut shape = AkitaBatchedProofShape::Terminal(TerminalLevelProofShape {
+        return AkitaBatchedProofShape::Terminal(TerminalLevelProofShape {
             extension_opening_reduction: None,
-            relation: TerminalRelationProofShape::RingSwitchSumcheck(stage2_sumcheck),
             final_witness: akita_types::schedule_terminal_direct_witness_shape(&schedule)
                 .expect("1-fold schedule should end in a direct step")
                 .clone(),
         });
-        sync_terminal_stage2_sumcheck_from_proof(&mut shape, proof);
-        return shape;
     }
 
     let next_level_params = scheduled_next_level_params(&schedule, 1).unwrap();
@@ -190,40 +149,17 @@ fn expected_same_point_batched_shape(
     terminal_scheduled
         .validate_current_w_len(current_w_len)
         .expect("scheduled terminal fold current witness length");
-    let terminal_params = terminal_scheduled.params;
-    // The terminal recursive fold ships its `w` in cleartext under
-    // RelationMatrixRowLayout::Terminal (D-block omitted from per-row `r` quotients), so
-    // the expected packed-digit witness shape uses the terminal-layout ring
-    // count instead of the intermediate `WithDBlock` layout.
-    let terminal_next_w_len = akita_types::w_ring_element_count_with_counts_for_layout::<OneHotF>(
-        &terminal_params,
-        1,
-        1,
-        akita_types::RelationMatrixRowLayout::WithoutDBlock,
-    )
-    .expect("terminal-layout witness count")
-        * terminal_params.ring_dimension;
-    let terminal_rounds = batched_shape_rounds(terminal_params.ring_dimension, terminal_next_w_len);
-    let mut terminal_stage2 = vec![3; terminal_rounds];
-    let fold_basis = 1usize << terminal_params.log_basis;
-    let ring_bits = terminal_params.ring_dimension.trailing_zeros() as usize;
-    if terminal_rounds >= 2 && ring_bits >= 2 && matches!(fold_basis, 4 | 8) {
-        terminal_stage2[0] = 2;
-    }
     step_shapes.push(AkitaProofStepShape::Terminal(TerminalLevelProofShape {
         extension_opening_reduction: None,
-        relation: TerminalRelationProofShape::RingSwitchSumcheck(terminal_stage2),
         final_witness: akita_types::schedule_terminal_direct_witness_shape(&schedule)
             .expect("terminal direct witness shape")
             .clone(),
     }));
 
-    let mut shape = AkitaBatchedProofShape::Fold {
+    AkitaBatchedProofShape::Fold {
         root_shape,
         step_shapes,
-    };
-    sync_terminal_stage2_sumcheck_from_proof(&mut shape, proof);
-    shape
+    }
 }
 
 fn prover_claims<'a, E: FieldCore, P, CommitF: FieldCore>(

@@ -257,11 +257,6 @@ impl<F: FieldCore + CanonicalField + AkitaSerialize, E: FieldCore + AkitaSeriali
                 stage2,
                 stage3_sumcheck_proof,
             } => {
-                let stage2 = stage2.as_intermediate().ok_or_else(|| {
-                    SerializationError::InvalidData(
-                        "Akita level proof must carry intermediate stage-2 proof".to_string(),
-                    )
-                })?;
                 serialize_intermediate_fold_wire_prefix(
                     &mut writer,
                     extension_opening_reduction.as_ref(),
@@ -292,26 +287,15 @@ impl<F: FieldCore + CanonicalField + AkitaSerialize, E: FieldCore + AkitaSeriali
             AkitaLevelProof::Terminal {
                 extension_opening_reduction,
                 fold_grind_nonce,
-                stage2,
-                ..
+                final_witness,
             } => {
-                let stage2 = stage2.as_terminal().ok_or_else(|| {
-                    SerializationError::InvalidData(
-                        "terminal level proof must carry terminal stage-2 proof".to_string(),
-                    )
-                })?;
                 serialize_terminal_fold_wire_prefix(
                     &mut writer,
                     extension_opening_reduction.as_ref(),
                     *fold_grind_nonce,
                     compress,
                 )?;
-                if let TerminalRelationProof::RingSwitchSumcheck(sumcheck) = &stage2.relation {
-                    sumcheck.serialize_with_mode(&mut writer, compress)?;
-                }
-                stage2
-                    .final_witness
-                    .serialize_with_mode(&mut writer, compress)
+                final_witness.serialize_with_mode(&mut writer, compress)
             }
         }
     }
@@ -325,9 +309,6 @@ impl<F: FieldCore + CanonicalField + AkitaSerialize, E: FieldCore + AkitaSeriali
                 stage2,
                 stage3_sumcheck_proof,
             } => {
-                let stage2 = stage2
-                    .as_intermediate()
-                    .expect("Akita level proof must carry intermediate stage-2 proof");
                 let base = intermediate_fold_wire_prefix_serialized_size(
                     extension_opening_reduction.as_ref(),
                     v,
@@ -354,20 +335,12 @@ impl<F: FieldCore + CanonicalField + AkitaSerialize, E: FieldCore + AkitaSeriali
             AkitaLevelProof::Terminal {
                 extension_opening_reduction,
                 fold_grind_nonce: _,
-                stage2,
-                ..
+                final_witness,
             } => {
-                let stage2 = stage2
-                    .as_terminal()
-                    .expect("terminal level proof must carry terminal stage-2 proof");
                 terminal_fold_wire_prefix_serialized_size(
                     extension_opening_reduction.as_ref(),
                     compress,
-                ) + stage2
-                    .relation
-                    .sumcheck()
-                    .map_or(0, |proof| proof.serialized_size(compress))
-                    + stage2.final_witness.serialized_size(compress)
+                ) + final_witness.serialized_size(compress)
             }
         }
     }
@@ -394,11 +367,6 @@ impl<F: FieldCore + Valid, E: FieldCore + Valid> Valid for AkitaLevelProof<F, E>
                     stage.child_claims.check()?;
                 }
                 stage1.s_claim.check()?;
-                let stage2 = stage2.as_intermediate().ok_or_else(|| {
-                    SerializationError::InvalidData(
-                        "Akita level proof must carry intermediate stage-2 proof".to_string(),
-                    )
-                })?;
                 stage2.sumcheck_proof.check()?;
                 if let Some(stage3_sumcheck) = stage3_sumcheck_proof {
                     stage3_sumcheck.claim.check()?;
@@ -411,22 +379,13 @@ impl<F: FieldCore + Valid, E: FieldCore + Valid> Valid for AkitaLevelProof<F, E>
             AkitaLevelProof::Terminal {
                 extension_opening_reduction,
                 fold_grind_nonce: _,
-                stage2,
-                ..
+                final_witness,
             } => {
                 if let Some(reduction) = extension_opening_reduction {
                     reduction.partials.check()?;
                     reduction.sumcheck.check()?;
                 }
-                let stage2 = stage2.as_terminal().ok_or_else(|| {
-                    SerializationError::InvalidData(
-                        "terminal level proof must carry terminal stage-2 proof".to_string(),
-                    )
-                })?;
-                if let TerminalRelationProof::RingSwitchSumcheck(sumcheck) = &stage2.relation {
-                    sumcheck.check()?;
-                }
-                stage2.final_witness.check()
+                final_witness.check()
             }
         }
     }
@@ -493,7 +452,7 @@ impl<
             validate,
             ctx.stage3_sumcheck.as_ref(),
         )?;
-        let stage2 = AkitaStage2Proof::Intermediate(AkitaIntermediateStage2Proof {
+        let stage2 = AkitaStage2Proof {
             sumcheck_proof: stage2_sumcheck_proof,
             next_w_commitment: RingVec::deserialize_with_mode(
                 &mut reader,
@@ -502,7 +461,7 @@ impl<
                 &ctx.next_commit_coeffs,
             )?,
             next_w_eval: E::deserialize_with_mode(&mut reader, compress, validate, &())?,
-        });
+        };
         let out = Self::Intermediate {
             extension_opening_reduction,
             v,
@@ -526,38 +485,21 @@ impl<F: FieldCore + CanonicalField + AkitaSerialize, E: FieldCore + AkitaSeriali
         mut writer: W,
         compress: Compress,
     ) -> Result<(), SerializationError> {
-        let stage2 = self.stage2.as_terminal().ok_or_else(|| {
-            SerializationError::InvalidData(
-                "terminal level proof must carry terminal stage-2 proof".to_string(),
-            )
-        })?;
         serialize_terminal_fold_wire_prefix(
             &mut writer,
             self.extension_opening_reduction.as_ref(),
             self.fold_grind_nonce,
             compress,
         )?;
-        if let TerminalRelationProof::RingSwitchSumcheck(sumcheck) = &stage2.relation {
-            sumcheck.serialize_with_mode(&mut writer, compress)?;
-        }
-        stage2
-            .final_witness
+        self.final_witness
             .serialize_with_mode(&mut writer, compress)
     }
 
     fn serialized_size(&self, compress: Compress) -> usize {
-        let stage2 = self
-            .stage2
-            .as_terminal()
-            .expect("terminal level proof must carry terminal stage-2 proof");
         terminal_fold_wire_prefix_serialized_size(
             self.extension_opening_reduction.as_ref(),
             compress,
-        ) + stage2
-            .relation
-            .sumcheck()
-            .map_or(0, |proof| proof.serialized_size(compress))
-            + stage2.final_witness.serialized_size(compress)
+        ) + self.final_witness.serialized_size(compress)
     }
 }
 
@@ -567,15 +509,7 @@ impl<F: FieldCore + Valid, E: FieldCore + Valid> Valid for TerminalLevelProof<F,
             reduction.partials.check()?;
             reduction.sumcheck.check()?;
         }
-        let stage2 = self.stage2.as_terminal().ok_or_else(|| {
-            SerializationError::InvalidData(
-                "terminal level proof must carry terminal stage-2 proof".to_string(),
-            )
-        })?;
-        if let TerminalRelationProof::RingSwitchSumcheck(sumcheck) = &stage2.relation {
-            sumcheck.check()?;
-        }
-        stage2.final_witness.check()
+        self.final_witness.check()
     }
 }
 
@@ -599,19 +533,6 @@ impl<
                 validate,
                 ctx.extension_opening_reduction.as_ref(),
             )?;
-        let relation = match &ctx.relation {
-            TerminalRelationProofShape::RingSwitchSumcheck(shape) => {
-                TerminalRelationProof::RingSwitchSumcheck(SumcheckProof::deserialize_with_mode(
-                    &mut reader,
-                    compress,
-                    validate,
-                    shape,
-                )?)
-            }
-            TerminalRelationProofShape::DirectRingRelations => {
-                TerminalRelationProof::DirectRingRelations
-            }
-        };
         let final_witness = CleartextWitnessProof::deserialize_with_mode(
             &mut reader,
             compress,
@@ -621,10 +542,7 @@ impl<
         let out = Self {
             extension_opening_reduction,
             fold_grind_nonce,
-            stage2: AkitaStage2Proof::Terminal(AkitaTerminalStage2Proof {
-                relation,
-                final_witness,
-            }),
+            final_witness,
         };
         if matches!(validate, Validate::Yes) {
             out.check()?;
@@ -641,11 +559,7 @@ impl<F: FieldCore + CanonicalField + AkitaSerialize, E: FieldCore + AkitaSeriali
         mut writer: W,
         compress: Compress,
     ) -> Result<(), SerializationError> {
-        let stage2 = self.stage2.as_intermediate().ok_or_else(|| {
-            SerializationError::InvalidData(
-                "fold root proof must carry intermediate stage-2 proof".to_string(),
-            )
-        })?;
+        let stage2 = &self.stage2;
         serialize_intermediate_fold_wire_prefix(
             &mut writer,
             self.extension_opening_reduction.as_ref(),
@@ -677,10 +591,7 @@ impl<F: FieldCore + CanonicalField + AkitaSerialize, E: FieldCore + AkitaSeriali
     }
 
     fn serialized_size(&self, compress: Compress) -> usize {
-        let stage2 = self
-            .stage2
-            .as_intermediate()
-            .expect("fold root proof must carry intermediate stage-2 proof");
+        let stage2 = &self.stage2;
         intermediate_fold_wire_prefix_serialized_size(
             self.extension_opening_reduction.as_ref(),
             &self.v,
@@ -718,11 +629,7 @@ impl<F: FieldCore + Valid, E: FieldCore + Valid> Valid for AkitaBatchedFoldRoot<
             stage.child_claims.check()?;
         }
         self.stage1.s_claim.check()?;
-        let stage2 = self.stage2.as_intermediate().ok_or_else(|| {
-            SerializationError::InvalidData(
-                "fold root proof must carry intermediate stage-2 proof".to_string(),
-            )
-        })?;
+        let stage2 = &self.stage2;
         stage2.sumcheck_proof.check()?;
         if let Some(stage3_sumcheck) = &self.stage3_sumcheck_proof {
             stage3_sumcheck.claim.check()?;
@@ -795,7 +702,7 @@ impl<
             validate,
             ctx.stage3_sumcheck.as_ref(),
         )?;
-        let stage2 = AkitaStage2Proof::Intermediate(AkitaIntermediateStage2Proof {
+        let stage2 = AkitaStage2Proof {
             sumcheck_proof: stage2_sumcheck_proof,
             next_w_commitment: RingVec::deserialize_with_mode(
                 &mut reader,
@@ -804,7 +711,7 @@ impl<
                 &ctx.next_commit_coeffs,
             )?,
             next_w_eval: E::deserialize_with_mode(&mut reader, compress, validate, &())?,
-        });
+        };
         let out = Self {
             extension_opening_reduction,
             v,
@@ -987,12 +894,10 @@ impl<
                                 validate,
                                 shape,
                             )?;
-                            let final_w_len = terminal.final_witness().num_elems();
                             AkitaLevelProof::Terminal {
                                 extension_opening_reduction: terminal.extension_opening_reduction,
                                 fold_grind_nonce: terminal.fold_grind_nonce,
-                                stage2: terminal.stage2,
-                                final_w_len,
+                                final_witness: terminal.final_witness,
                             }
                         }
                     };

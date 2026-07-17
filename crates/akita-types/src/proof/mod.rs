@@ -50,10 +50,9 @@ pub use direct_witness::{
 };
 pub use hints::AkitaCommitmentHint;
 pub use levels::{
-    AkitaBatchedFoldRoot, AkitaBatchedProof, AkitaBatchedRootProof, AkitaIntermediateStage2Proof,
-    AkitaLevelProof, AkitaStage1Proof, AkitaStage1StageProof, AkitaStage2Proof,
-    AkitaTerminalStage2Proof, ExtensionOpeningReductionProof, SetupSumcheckProof,
-    TerminalLevelProof, TerminalRelationProof,
+    AkitaBatchedFoldRoot, AkitaBatchedProof, AkitaBatchedRootProof, AkitaLevelProof,
+    AkitaStage1Proof, AkitaStage1StageProof, AkitaStage2Proof, ExtensionOpeningReductionProof,
+    SetupSumcheckProof, TerminalLevelProof,
 };
 pub use relation::{
     assemble_relation_rhs, evaluation_trace_row_weight, generate_relation_rhs,
@@ -83,7 +82,7 @@ pub use setup_prefix::{
 pub use shapes::{
     AkitaBatchedProofShape, AkitaProofStepShape, AkitaStage1StageShape,
     ExtensionOpeningReductionShape, LevelProofShape, SetupProductSumcheckShape,
-    TerminalLevelProofShape, TerminalRelationProofShape, SETUP_SUMCHECK_DEGREE,
+    TerminalLevelProofShape, SETUP_SUMCHECK_DEGREE,
 };
 pub use stage1::{
     absorb_interstage_claims, combine_polys, eval_poly, linear_combination,
@@ -93,10 +92,11 @@ pub use stage1::{
 };
 pub use tail_segments::{
     build_segment_typed_witness, build_segment_typed_witness_from_groups,
-    decode_terminal_z_golomb_payload, e_folded_segment_bytes, emit_witness_e_planes,
-    emit_witness_r_planes, emit_witness_t_planes, emit_witness_z_planes,
-    expand_segment_typed_to_i8_digits, segment_typed_witness_upper_bound_bytes,
-    segment_typed_z_payload_bytes, tail_golomb_rice_z_params, tail_segment_layout_from_groups,
+    decode_terminal_z_golomb_payload, decode_terminal_z_golomb_payload_with_cap,
+    e_folded_segment_bytes, emit_witness_e_planes, emit_witness_r_planes, emit_witness_t_planes,
+    emit_witness_z_planes, expand_segment_typed_to_i8_digits,
+    segment_typed_witness_upper_bound_bytes, segment_typed_z_payload_bytes,
+    tail_golomb_rice_z_params, tail_segment_layout_from_groups,
     tail_segment_multiplicities_from_layout, tail_segment_multiplicities_from_layout_for_params,
     terminal_golomb_grind_tail_t_vectors, validate_segment_typed_z_payload,
     z_fold_decoded_from_segment, z_fold_encoding_stats_from_segment, SegmentTypedWitness,

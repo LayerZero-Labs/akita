@@ -202,12 +202,10 @@ where
     let terminal = terminal_result;
 
     let mut steps = intermediate_levels;
-    let final_w_len = terminal.final_witness().num_elems();
     steps.push(AkitaLevelProof::Terminal {
         extension_opening_reduction: terminal.extension_opening_reduction,
         fold_grind_nonce: terminal.fold_grind_nonce,
-        stage2: terminal.stage2,
-        final_w_len,
+        final_witness: terminal.final_witness,
     });
 
     Ok(RecursiveSuffixOutcome {
