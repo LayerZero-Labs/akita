@@ -463,7 +463,7 @@ mod tests {
     use crate::layout::PrecommittedLevelParams;
     use crate::{
         emit_witness_e_planes, emit_witness_r_planes, emit_witness_t_planes, emit_witness_z_planes,
-        PolynomialGroupLayout,
+        AjtaiKeyParams, PolynomialGroupLayout,
     };
     use akita_challenges::{SparseChallenge, SparseChallengeConfig};
     use akita_field::Fp32;
@@ -478,6 +478,30 @@ mod tests {
 
     fn flatten_markers(markers: impl IntoIterator<Item = [i8; 2]>) -> Vec<i8> {
         markers.into_iter().flatten().collect()
+    }
+
+    fn certify_test_sis_bounds(lp: &mut LevelParams) {
+        const BOUND: u128 = 1;
+        lp.a_key = AjtaiKeyParams::new_unchecked(
+            lp.a_key.security_policy(),
+            lp.a_key.sis_table_key().table_digest,
+            lp.a_key.sis_modulus_profile(),
+            crate::sis::SisMatrixRole::A,
+            lp.a_key.row_len(),
+            lp.a_key.col_len(),
+            BOUND,
+            lp.ring_dimension,
+        );
+        lp.b_key = AjtaiKeyParams::new_unchecked(
+            lp.b_key.security_policy(),
+            lp.b_key.sis_table_key().table_digest,
+            lp.b_key.sis_modulus_profile(),
+            crate::sis::SisMatrixRole::B,
+            lp.b_key.row_len(),
+            lp.b_key.col_len(),
+            BOUND,
+            lp.ring_dimension,
+        );
     }
 
     fn fold_challenge_config() -> SparseChallengeConfig {
@@ -782,7 +806,7 @@ mod tests {
         )
         .with_decomp(4, 16, 2, 2, 2)
         .expect("multi-group main params");
-        let precommit_lp = LevelParams::params_only(
+        let mut precommit_lp = LevelParams::params_only(
             crate::SisModulusProfileId::Q128OffsetA7F7,
             D,
             3,
@@ -793,9 +817,10 @@ mod tests {
         )
         .with_decomp(4, 16, 2, 2, 2)
         .expect("multi-group precommit params");
+        certify_test_sis_bounds(&mut precommit_lp);
         let precommit = PrecommittedLevelParams {
             layout: PrecommittedGroupParams::from_params(
-                PolynomialGroupLayout::new(4, 3),
+                PolynomialGroupLayout::new(4, 1),
                 &precommit_lp,
             ),
             a_key: precommit_lp.a_key.clone(),
@@ -809,7 +834,7 @@ mod tests {
         let mut multi_group_lp = lp;
         multi_group_lp.precommitted_groups = vec![precommit];
         let batch = OpeningClaimsLayout::from_root_groups(
-            &[PolynomialGroupLayout::new(4, 3)],
+            &[PolynomialGroupLayout::new(4, 1)],
             PolynomialGroupLayout::new(4, 1),
         )
         .expect("multi-group opening batch");
@@ -831,12 +856,15 @@ mod tests {
         let ring_multiplier_final = RingMultiplierOpeningPoint::from_base(&opening_point_final);
         let instance = RingRelationInstance::<F>::new(
             RelationMatrixRowLayout::WithDBlock,
-            vec![test_challenges(&lp, 3), test_challenges(&lp, 1)],
+            vec![test_challenges(&lp, 1), test_challenges(&lp, 1)],
             vec![opening_point_pre, opening_point_final],
             vec![ring_multiplier_pre, ring_multiplier_final],
             opening_batch.clone(),
-            vec![F::one(); 4],
-            RingVec::from_ring_elems::<D>(&vec![CyclotomicRing::one(); 4]),
+            vec![F::one(); opening_batch.num_total_polynomials()],
+            RingVec::from_ring_elems::<D>(&vec![
+                CyclotomicRing::one();
+                opening_batch.num_total_polynomials()
+            ]),
             RingVec::from_ring_elems::<D>(&vec![CyclotomicRing::zero(); relation_rhs_rows]),
             RingVec::from_ring_elems::<D>(&vec![CyclotomicRing::zero(); lp.d_key.row_len()]),
             CommitmentRingDims::uniform(D),
@@ -891,14 +919,15 @@ mod tests {
         let opening_point_final = opening_point(&lp);
         let ring_multiplier_pre = RingMultiplierOpeningPoint::from_base(&opening_point_pre);
         let ring_multiplier_final = RingMultiplierOpeningPoint::from_base(&opening_point_final);
+        let gamma_len = opening_batch.num_total_polynomials();
         let instance = RingRelationInstance::<F>::new(
             RelationMatrixRowLayout::WithDBlock,
-            vec![test_challenges(&lp, 3), test_challenges(&lp, 1)],
+            vec![test_challenges(&lp, 1), test_challenges(&lp, 1)],
             vec![opening_point_pre, opening_point_final],
             vec![ring_multiplier_pre, ring_multiplier_final],
             opening_batch,
-            vec![F::one(); 4],
-            RingVec::from_ring_elems::<D>(&vec![CyclotomicRing::one(); 4]),
+            vec![F::one(); gamma_len],
+            RingVec::from_ring_elems::<D>(&vec![CyclotomicRing::one(); gamma_len]),
             RingVec::from_ring_elems::<D>(&vec![CyclotomicRing::zero(); relation_rhs_rows]),
             RingVec::from_ring_elems::<D>(&vec![CyclotomicRing::zero(); lp.d_key.row_len()]),
             CommitmentRingDims::uniform(D),
