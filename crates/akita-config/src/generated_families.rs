@@ -316,6 +316,27 @@ macro_rules! family_row {
                 <$cfg as CommitmentConfig>::fold_challenge_shape_at_level,
         }
     };
+    // Recursion adapter families: like `group_batch`, but grouped keys come from
+    // the fixed recursive profiling shape rather than the generic per-`Cfg` grid.
+    (recursive, $module:literal, $const:literal, $feat:literal, $min:expr, $max:expr, $cfg:ty) => {
+        GeneratedFamily {
+            module_name: $module,
+            const_name: $const,
+            schedule_feature: $feat,
+            min_num_vars: $min,
+            max_num_vars: $max,
+            num_polys: DEFAULT_NUM_POLYS,
+            regen: regen::<$cfg>,
+            regen_group_batch: regen_group_batch::<$cfg>,
+            emit_group_batch: true,
+            group_batch_keys: recursive_profile_group_batch_keys,
+            table_backed: table_backed::<$cfg>,
+            policy: family_policy::<$cfg>,
+            ring_challenge_config: <$cfg as CommitmentConfig>::ring_challenge_config,
+            fold_challenge_shape_at_level:
+                <$cfg as CommitmentConfig>::fold_challenge_shape_at_level,
+        }
+    };
     ($module:literal, $const:literal, $feat:literal, $min:expr, $max:expr, $cfg:ty) => {
         GeneratedFamily {
             module_name: $module,
@@ -413,46 +434,27 @@ pub const ALL_GENERATED_FAMILIES: &[GeneratedFamily] = &[
         50,
         fp128::D64OneHot
     ),
-    GeneratedFamily {
-        module_name: "fp128_d64_onehot_recursive",
-        const_name: "FP128_D64_ONEHOT_RECURSIVE_SCHEDULES",
-        schedule_feature: "fp128-d64-onehot-recursive",
-        min_num_vars: 1,
-        max_num_vars: 50,
-        num_polys: DEFAULT_NUM_POLYS,
-        regen: regen::<RecursiveCommitmentConfig<fp128::D64OneHot>>,
-        regen_group_batch: regen_group_batch::<RecursiveCommitmentConfig<fp128::D64OneHot>>,
-        emit_group_batch: true,
-        group_batch_keys: recursive_profile_group_batch_keys,
-        table_backed: table_backed::<RecursiveCommitmentConfig<fp128::D64OneHot>>,
-        policy: family_policy::<RecursiveCommitmentConfig<fp128::D64OneHot>>,
-        ring_challenge_config:
-            <RecursiveCommitmentConfig<fp128::D64OneHot> as CommitmentConfig>::ring_challenge_config,
-        fold_challenge_shape_at_level:
-            <RecursiveCommitmentConfig<fp128::D64OneHot> as CommitmentConfig>::fold_challenge_shape_at_level,
-    },
+    family_row!(
+        recursive,
+        "fp128_d64_onehot_recursive",
+        "FP128_D64_ONEHOT_RECURSIVE_SCHEDULES",
+        "fp128-d64-onehot-recursive",
+        1,
+        50,
+        RecursiveCommitmentConfig<fp128::D64OneHot>
+    ),
     // Recursive setup offloading combined with the 8-chunk (production
     // distributed-prover) witness layout. `D64OneHotMultiChunk` is the W8R2
     // preset (8 chunks x 2 leading levels); shares the recursive profiling key.
-    GeneratedFamily {
-        module_name: "fp128_d64_onehot_recursive_multi_chunk_w8r2",
-        const_name: "FP128_D64_ONEHOT_RECURSIVE_MULTI_CHUNK_W8R2_SCHEDULES",
-        schedule_feature: "fp128-d64-onehot-recursive-multi-chunk-w8r2",
-        min_num_vars: 1,
-        max_num_vars: 50,
-        num_polys: DEFAULT_NUM_POLYS,
-        regen: regen::<RecursiveCommitmentConfig<fp128::D64OneHotMultiChunk>>,
-        regen_group_batch:
-            regen_group_batch::<RecursiveCommitmentConfig<fp128::D64OneHotMultiChunk>>,
-        emit_group_batch: true,
-        group_batch_keys: recursive_profile_group_batch_keys,
-        table_backed: table_backed::<RecursiveCommitmentConfig<fp128::D64OneHotMultiChunk>>,
-        policy: family_policy::<RecursiveCommitmentConfig<fp128::D64OneHotMultiChunk>>,
-        ring_challenge_config:
-            <RecursiveCommitmentConfig<fp128::D64OneHotMultiChunk> as CommitmentConfig>::ring_challenge_config,
-        fold_challenge_shape_at_level:
-            <RecursiveCommitmentConfig<fp128::D64OneHotMultiChunk> as CommitmentConfig>::fold_challenge_shape_at_level,
-    },
+    family_row!(
+        recursive,
+        "fp128_d64_onehot_recursive_multi_chunk_w8r2",
+        "FP128_D64_ONEHOT_RECURSIVE_MULTI_CHUNK_W8R2_SCHEDULES",
+        "fp128-d64-onehot-recursive-multi-chunk-w8r2",
+        1,
+        50,
+        RecursiveCommitmentConfig<fp128::D64OneHotMultiChunk>
+    ),
     family_row!(
         "fp128_d64_full",
         "FP128_D64_FULL_SCHEDULES",
