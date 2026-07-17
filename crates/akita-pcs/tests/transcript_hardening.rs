@@ -143,88 +143,40 @@ fn assert_terminal_order_panics(events: Vec<TranscriptEvent>, expected: &str) {
 
 #[test]
 fn terminal_event_order_rejects_malformed_windows() {
-    for (expected, events) in [
+    for (expected, forbidden) in [
         (
-            "terminal transcript window must not squeeze tau0",
-            vec![
-                absorb_event(labels::ABSORB_TERMINAL_E_HAT),
-                squeeze_event(labels::CHALLENGE_SPARSE_CHALLENGE),
-                absorb_event(labels::ABSORB_TERMINAL_W_REMAINDER),
-                squeeze_event(ext_limb_label(labels::CHALLENGE_RING_SWITCH, 0)),
-                squeeze_event(ext_limb_label(labels::CHALLENGE_TAU1, 0)),
-                squeeze_event(labels::CHALLENGE_SUMCHECK_ROUND),
-                squeeze_event(ext_limb_label(labels::CHALLENGE_TAU0, 0)),
-            ],
+            "terminal must not squeeze alpha",
+            labels::CHALLENGE_RING_SWITCH,
+        ),
+        ("terminal must not squeeze tau1", labels::CHALLENGE_TAU1),
+        (
+            "terminal must not squeeze stage-2 rounds",
+            labels::CHALLENGE_SUMCHECK_ROUND,
         ),
         (
-            "terminal stage-2 sumcheck must not precede tau1",
-            vec![
-                absorb_event(labels::ABSORB_TERMINAL_E_HAT),
-                squeeze_event(labels::CHALLENGE_SPARSE_CHALLENGE),
-                absorb_event(labels::ABSORB_TERMINAL_W_REMAINDER),
-                squeeze_event(labels::CHALLENGE_RING_SWITCH),
-                squeeze_event(labels::CHALLENGE_SUMCHECK_ROUND),
-                squeeze_event(labels::CHALLENGE_TAU1),
-                squeeze_event(labels::CHALLENGE_SUMCHECK_ROUND),
-            ],
+            "terminal must not squeeze stage-2 batching",
+            labels::CHALLENGE_SUMCHECK_BATCH,
         ),
-        (
-            "terminal alpha must not precede witness remainder",
-            vec![
-                absorb_event(labels::ABSORB_TERMINAL_E_HAT),
-                squeeze_event(labels::CHALLENGE_SPARSE_CHALLENGE),
-                squeeze_event(labels::CHALLENGE_RING_SWITCH),
-                absorb_event(labels::ABSORB_TERMINAL_W_REMAINDER),
-                squeeze_event(labels::CHALLENGE_RING_SWITCH),
-                squeeze_event(labels::CHALLENGE_TAU1),
-                squeeze_event(labels::CHALLENGE_SUMCHECK_ROUND),
-            ],
-        ),
-        (
-            "terminal tau1 must not precede alpha",
-            vec![
-                absorb_event(labels::ABSORB_TERMINAL_E_HAT),
-                squeeze_event(labels::CHALLENGE_SPARSE_CHALLENGE),
-                absorb_event(labels::ABSORB_TERMINAL_W_REMAINDER),
-                squeeze_event(labels::CHALLENGE_TAU1),
-                squeeze_event(labels::CHALLENGE_RING_SWITCH),
-                squeeze_event(labels::CHALLENGE_TAU1),
-                squeeze_event(labels::CHALLENGE_SUMCHECK_ROUND),
-            ],
-        ),
-        (
-            "terminal tau1 limbs must be contiguous before stage-2 sumcheck",
-            vec![
-                absorb_event(labels::ABSORB_TERMINAL_E_HAT),
-                squeeze_event(labels::CHALLENGE_SPARSE_CHALLENGE),
-                absorb_event(labels::ABSORB_TERMINAL_W_REMAINDER),
-                squeeze_event(ext_limb_label(labels::CHALLENGE_RING_SWITCH, 0)),
-                squeeze_event(ext_limb_label(labels::CHALLENGE_TAU1, 0)),
-                squeeze_event(labels::CHALLENGE_SUMCHECK_ROUND),
-                squeeze_event(ext_limb_label(labels::CHALLENGE_TAU1, 1)),
-            ],
-        ),
+        ("terminal must not squeeze tau0", labels::CHALLENGE_TAU0),
     ] {
+        let events = vec![
+            absorb_event(labels::ABSORB_TERMINAL_E_HAT),
+            squeeze_event(labels::CHALLENGE_SPARSE_CHALLENGE),
+            absorb_event(labels::ABSORB_TERMINAL_W_REMAINDER),
+            squeeze_event(ext_limb_label(forbidden, 0)),
+        ];
         assert_terminal_order_panics(events, expected);
     }
 }
 
 fn final_witness_mut(proof: &mut AkitaBatchedProof<F, F>) -> &mut CleartextWitnessProof<F> {
     match &mut proof.root {
-        AkitaBatchedRootProof::Terminal(terminal) => terminal
-            .stage2
-            .final_witness_mut()
-            .expect("terminal root proof must carry terminal stage-2 proof"),
+        AkitaBatchedRootProof::Terminal(terminal) => terminal.final_witness_mut(),
         AkitaBatchedRootProof::Fold(_) => proof
             .steps
             .last_mut()
             .and_then(AkitaLevelProof::as_terminal_mut)
-            .map(|terminal| {
-                terminal
-                    .stage2_mut()
-                    .final_witness_mut()
-                    .expect("terminal step proof must carry terminal stage-2 proof")
-            })
+            .and_then(AkitaLevelProof::final_witness_mut)
             .expect("fold-rooted proof must end in a terminal step"),
         AkitaBatchedRootProof::ZeroFold { .. } => {
             panic!("terminal tamper test requires a folded terminal proof")
@@ -411,8 +363,7 @@ fn terminal_direct_witness_shape_mismatch_rejects_deserialization() {
         };
         // Segment-typed tails admit exact `z` payloads up to the scheduled
         // upper bound; a *tighter* budget than the encoded payload must reject.
-        shape.layout.groups[0].z_payload_bytes =
-            shape.layout.groups[0].z_payload_bytes.saturating_sub(1);
+        shape.layout.groups[0].z_payload_bytes = 0;
 
         AkitaBatchedProof::<F, F>::deserialize_compressed(&bytes[..], &bad_shape)
             .expect_err("terminal direct-witness shape mismatch must reject");
