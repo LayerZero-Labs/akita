@@ -50,30 +50,60 @@ fn laid_out_sample_lp() -> LevelParams {
         .unwrap()
 }
 
+fn certify_test_sis_bounds(lp: &mut LevelParams) {
+    const BOUND: u128 = 1;
+    lp.a_key = AjtaiKeyParams::new_unchecked(
+        lp.a_key.security_policy(),
+        lp.a_key.sis_table_key().table_digest,
+        lp.a_key.sis_modulus_profile(),
+        crate::sis::SisMatrixRole::A,
+        lp.a_key.row_len(),
+        lp.a_key.col_len(),
+        BOUND,
+        lp.ring_dimension,
+    );
+    lp.b_key = AjtaiKeyParams::new_unchecked(
+        lp.b_key.security_policy(),
+        lp.b_key.sis_table_key().table_digest,
+        lp.b_key.sis_modulus_profile(),
+        crate::sis::SisMatrixRole::B,
+        lp.b_key.row_len(),
+        lp.b_key.col_len(),
+        BOUND,
+        lp.ring_dimension,
+    );
+}
+
 fn sample_multi_group_root_params() -> (LevelParams, OpeningClaimsLayout) {
     use crate::schedule::PrecommittedGroupParams;
     let lp = sample_params_only()
         .with_layout(&sample_layout_lp(), 128)
         .unwrap();
-    let precommit_lp = sample_params_only()
+    let mut precommit_lp = sample_params_only()
         .with_layout(&sample_layout_lp(), 128)
         .unwrap();
+    certify_test_sis_bounds(&mut precommit_lp);
+    let a_key = precommit_lp.a_key.clone();
+    let b_key = AjtaiKeyParams::new_unchecked(
+        precommit_lp.b_key.security_policy(),
+        precommit_lp.b_key.sis_table_key().table_digest,
+        precommit_lp.b_key.sis_modulus_profile(),
+        precommit_lp.b_key.sis_table_key().role,
+        5,
+        precommit_lp.b_key.col_len(),
+        precommit_lp.b_key.coeff_linf_bound(),
+        precommit_lp.ring_dimension,
+    );
+    let mut layout = PrecommittedGroupParams::from_params(
+        PolynomialGroupLayout::new(4, 1),
+        &precommit_lp,
+    );
+    layout.n_b = b_key.row_len();
+    layout.b_coeff_linf_bound = b_key.coeff_linf_bound();
     let precommit = PrecommittedLevelParams {
-        layout: PrecommittedGroupParams::from_params(
-            PolynomialGroupLayout::new(4, 1),
-            &precommit_lp,
-        ),
-        a_key: precommit_lp.a_key.clone(),
-        b_key: AjtaiKeyParams::new_unchecked(
-            precommit_lp.b_key.security_policy(),
-            precommit_lp.b_key.sis_table_key().table_digest,
-            precommit_lp.b_key.sis_modulus_profile(),
-            precommit_lp.b_key.sis_table_key().role,
-            5,
-            precommit_lp.b_key.col_len(),
-            precommit_lp.b_key.coeff_linf_bound(),
-            precommit_lp.ring_dimension,
-        ),
+        layout,
+        a_key,
+        b_key,
         log_basis_open: precommit_lp.log_basis_open,
         num_digits_inner: precommit_lp.num_digits_inner,
         num_digits_outer: precommit_lp.num_digits_outer,
