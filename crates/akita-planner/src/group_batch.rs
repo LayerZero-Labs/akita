@@ -1418,6 +1418,7 @@ mod tests {
     #[test]
     fn recursive_fold_successor_carries_only_setup_prefix_group() {
         let mut policy = flat_policy();
+        policy.decomposition.log_basis = 4;
         policy.basis_range = (4, 4);
         policy.recursive_setup_planning = true;
         let pre_key = PolynomialGroupLayout::new(20, 1);

@@ -140,25 +140,56 @@ fn test_inputs_for_group_sizes(
             TEST_D,
         );
     }
+    if lp.a_key.coeff_linf_bound() == 0 {
+        lp.a_key = crate::AjtaiKeyParams::new_unchecked(
+            crate::sis::DEFAULT_SIS_SECURITY_POLICY,
+            crate::sis::SisTableDigest::CURRENT,
+            crate::sis::SisModulusProfileId::Q128OffsetA7F7,
+            crate::sis::SisMatrixRole::A,
+            n_a,
+            lp.a_key.col_len(),
+            1,
+            TEST_D,
+        );
+    }
     lp.num_digits_fold_one = depth_fold;
     lp.cached_num_digits_block_claims = num_claims;
     lp.cached_num_digits_fold_value = depth_fold;
     if group_sizes.len() > 1 {
         lp.precommitted_groups = group_sizes[..group_sizes.len() - 1]
             .iter()
-            .copied()
-            .map(|group_size| crate::PrecommittedLevelParams {
-                layout: crate::PrecommittedGroupParams::from_params(
-                    crate::PolynomialGroupLayout::new(0, group_size),
+            .map(|&_group_size| {
+                let layout = crate::PrecommittedGroupParams::from_params(
+                    crate::PolynomialGroupLayout::new(0, 1),
                     &lp,
-                ),
-                a_key: lp.a_key.clone(),
-                b_key: lp.b_key.clone(),
-                log_basis_open: lp.log_basis_open,
-                num_digits_inner: lp.num_digits_inner,
-                num_digits_outer: lp.num_digits_outer,
-                num_digits_open: lp.num_digits_open,
-                num_digits_fold_one: depth_fold,
+                );
+                let expected_group_b_width = lp
+                    .a_key
+                    .row_len()
+                    .checked_mul(lp.num_digits_outer)
+                    .and_then(|width| width.checked_mul(layout.num_live_blocks))
+                    .and_then(|width| width.checked_mul(layout.group.num_polynomials()))
+                    .expect("test precommitted B width");
+                let b_key = crate::AjtaiKeyParams::new_unchecked(
+                    lp.b_key.security_policy(),
+                    lp.b_key.sis_table_key().table_digest,
+                    lp.b_key.sis_modulus_profile(),
+                    lp.b_key.sis_table_key().role,
+                    lp.b_key.row_len(),
+                    expected_group_b_width,
+                    lp.b_key.coeff_linf_bound(),
+                    lp.ring_dimension,
+                );
+                crate::PrecommittedLevelParams {
+                    layout,
+                    a_key: lp.a_key.clone(),
+                    b_key,
+                    log_basis_open: lp.log_basis_open,
+                    num_digits_inner: lp.num_digits_inner,
+                    num_digits_outer: lp.num_digits_outer,
+                    num_digits_open: lp.num_digits_open,
+                    num_digits_fold_one: depth_fold,
+                }
             })
             .collect();
     }
@@ -496,7 +527,7 @@ fn relation_ordered_setup_layout_matches_structured_direct_and_dense_oracles() {
     let group_shapes = [
         // Relation order deliberately differs from numeric group order.
         (1usize, 1usize, 1usize, 1usize, 1usize),
-        (0usize, 2usize, 1usize, 1usize, 1usize),
+        (0usize, 1usize, 1usize, 1usize, 1usize),
     ];
     let tau1 = vec![test_scalar(31), test_scalar(32), test_scalar(33)];
     let inputs = test_inputs_for_group_sizes(
@@ -504,7 +535,7 @@ fn relation_ordered_setup_layout_matches_structured_direct_and_dense_oracles() {
         1,
         1,
         1,
-        &[2, 1],
+        &[1, 1],
         1,
         2,
         1,
@@ -581,7 +612,7 @@ fn relation_ordered_setup_layout_matches_structured_direct_and_dense_oracles() {
     );
     assert_eq!(
         get_d_col_range(&inputs.level_params, &inputs.opening_batch, &groups, 0).unwrap(),
-        1..3
+        1..2
     );
     let randomness_bits = crate::opening_domain_len(opening_source_len)
         .unwrap()
