@@ -38,11 +38,11 @@
         "crates/akita-types/src/layout/opening_point.rs"
       ],
       "consider_updating": [
-        "book/src/how/proving/opening-points-block-order.md",
+        "book/src/how/proving/opening-points-layout.md",
         "book/src/usage/commitment-api.md",
         "book/src/how/architecture.md",
         "specs/single-point-opening-batch.md",
-        "docs/block-order.md"
+        "specs/digit-innermost-layout.md"
       ]
     },
     {

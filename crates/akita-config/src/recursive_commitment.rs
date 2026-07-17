@@ -85,11 +85,6 @@ impl<Cfg: CommitmentConfig> CommitmentConfig for RecursiveCommitmentConfig<Cfg> 
                 "recursive setup planning requires D64".to_string(),
             ));
         }
-        if Cfg::chunked_witness_cfg().uses_multi_chunk() {
-            return Err(AkitaError::InvalidSetup(
-                "recursive setup planning does not support multi-chunk witnesses".to_string(),
-            ));
-        }
         if key.precommitteds.is_empty() {
             return Cfg::runtime_schedule(key);
         }

@@ -16,7 +16,7 @@ fn test_lp() -> LevelParams {
         2,
         SparseChallengeConfig::pm1_only(3),
     )
-    .with_decomp(3, 2, 2, 3, 0)
+    .with_decomp(8, 32, 2, 3)
     .expect("tail segment test params")
 }
 
@@ -44,8 +44,8 @@ fn scalar_group_layout(
 #[test]
 fn recompose_and_split_digits_round_trip() {
     let digits = vec![-2i8, 1, 0];
-    let value = recompose_balanced_i8_digits(&digits, 3);
-    let back = balanced_digits_from_i64(value, digits.len(), 3);
+    let value = test_support::recompose_balanced_i8_digits(&digits, 3);
+    let back = test_support::balanced_digits_from_i64(value, digits.len(), 3);
     assert_eq!(back, digits);
 }
 
@@ -79,7 +79,7 @@ fn segment_typed_wire_round_trip_with_scheduled_z_budget() {
     );
     let (rice_low_bits, zigzag_w_z) = tail_golomb_rice_z_params(&lp, 1).unwrap();
     let centered = [[-3i32, 0, 1, 2, -1, 4, 0, 0]; 2];
-    let z_payload = encode_z_segment_from_centered(
+    let z_payload = test_support::encode_z_segment_from_centered(
         &centered,
         1,
         lp.num_digits_commit,
@@ -109,6 +109,30 @@ fn segment_typed_wire_round_trip_with_scheduled_z_budget() {
     )
     .expect("deserialize with scheduled z budget");
     assert_eq!(decoded, witness);
+}
+
+#[test]
+fn terminal_e_absorb_matches_emitted_field_segment() {
+    let lp = test_lp();
+    let layout = scalar_group_layout(&lp, 1, 1, 1, 1, F::modulus_bits()).unwrap();
+    let group = layout.groups[0];
+    let e_fields = RingVec::from_coeffs(
+        (0..group.e_field_elems)
+            .map(|index| F::from_canonical_u128_reduced(index as u128 + 1))
+            .collect(),
+    );
+    let witness = SegmentTypedWitness {
+        layout: layout.clone(),
+        z_payloads: vec![vec![0]],
+        e_fields: e_fields.clone(),
+        t_fields: RingVec::from_coeffs(vec![F::zero(); group.t_field_elems]),
+        r_fields: RingVec::from_coeffs(vec![F::zero(); layout.r_field_elems]),
+    };
+
+    assert_eq!(
+        witness.terminal_transcript_parts().unwrap().e_hat,
+        e_folded_segment_bytes(&e_fields).unwrap(),
+    );
 }
 
 #[test]
@@ -155,3 +179,6 @@ fn expand_segment_typed_rejects_inadmissible_z_payload() {
     };
     assert!(expand_segment_typed_to_i8_digits::<8, F>(&witness, &lp, 1).is_err());
 }
+
+#[path = "test_support.rs"]
+mod test_support;

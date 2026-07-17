@@ -3,8 +3,10 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GeneratedSetupPrefixGroup {
     pub natural_len: u32,
-    pub m_vars: u32,
-    pub r_vars: u32,
+    pub num_live_ring_elements_per_claim: u32,
+    pub num_positions_per_block: u32,
+    pub num_live_blocks: u32,
+    pub fold_challenge_shape: akita_challenges::TensorChallengeShape,
     pub n_a: u32,
     pub n_b: u32,
 }
@@ -13,8 +15,10 @@ pub struct GeneratedSetupPrefixGroup {
 pub struct GeneratedFoldStep {
     pub ring_d: u32,
     pub log_basis: u32,
-    pub m_vars: u32,
-    pub r_vars: u32,
+    pub position_index_bits: u32,
+    pub block_index_bits: u32,
+    /// Exact number of live blocks `B`; may be smaller than `2^block_index_bits`.
+    pub num_live_blocks: u32,
     pub n_a: u32,
     /// Stored first-tier `B` rank.
     pub n_b: u32,
@@ -230,12 +234,32 @@ fn precommitted_groups_cmp(
 
 fn precommitted_group_sort_key(
     key: &akita_types::PrecommittedGroupParams,
-) -> (usize, usize, usize, usize, u32, usize, usize) {
+) -> (
+    usize,
+    usize,
+    usize,
+    usize,
+    usize,
+    u8,
+    usize,
+    u32,
+    usize,
+    usize,
+) {
     (
         key.group.num_vars(),
         key.group.num_polynomials(),
-        key.m_vars,
-        key.r_vars,
+        key.num_live_ring_elements_per_claim,
+        key.num_positions_per_block,
+        key.num_live_blocks,
+        match key.fold_challenge_shape {
+            akita_challenges::TensorChallengeShape::Flat => 0,
+            akita_challenges::TensorChallengeShape::Tensor { .. } => 1,
+        },
+        match key.fold_challenge_shape {
+            akita_challenges::TensorChallengeShape::Flat => 0,
+            akita_challenges::TensorChallengeShape::Tensor { fold_low_len } => fold_low_len,
+        },
         key.log_basis,
         key.n_a,
         key.conservative_n_b,
@@ -260,8 +284,10 @@ fn precommitted_group_key_eq(
     layout: &akita_types::PrecommittedGroupParams,
 ) -> bool {
     generated.group == layout.group
-        && generated.m_vars == layout.m_vars
-        && generated.r_vars == layout.r_vars
+        && generated.num_live_ring_elements_per_claim == layout.num_live_ring_elements_per_claim
+        && generated.num_positions_per_block == layout.num_positions_per_block
+        && generated.num_live_blocks == layout.num_live_blocks
+        && generated.fold_challenge_shape == layout.fold_challenge_shape
         && generated.log_basis == layout.log_basis
         && generated.n_a == layout.n_a
         && generated.conservative_n_b == layout.conservative_n_b

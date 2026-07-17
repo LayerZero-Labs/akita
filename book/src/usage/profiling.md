@@ -37,8 +37,10 @@ Compare ring degrees with
 | `AKITA_PROFILE_LOG` | `trace` | `tracing` filter |
 | `AKITA_PROFILE_ANSI` | `1` | Colored log output |
 | `AKITA_PROFILE_SPAN_CLOSES` | `1` | Log span close events |
+| `AKITA_PROFILE_PROVE_THREADS` | `RAYON_NUM_THREADS` or Rayon default | Global prove pool size (`0` = Rayon default) |
+| `AKITA_PROFILE_VERIFY_THREADS` | `RAYON_NUM_THREADS` or Rayon default | Verify pool when it differs from prove (`0` = Rayon default) |
 | `AKITA_ALLOW_DEBUG_PROFILE` | unset | Bypass `--release` guard |
-| `RAYON_NUM_THREADS` | Rayon default | Cap parallel threads |
+| `RAYON_NUM_THREADS` | Rayon default | Fallback when profile thread vars are unset |
 
 Implementation: `crates/akita-pcs/examples/profile/main.rs`.
 Disable parallel: `cargo run --no-default-features --release --example profile`.

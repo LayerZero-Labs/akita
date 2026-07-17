@@ -14,7 +14,7 @@ fn sample_params_only() -> LevelParams {
 }
 
 fn sample_layout_lp() -> LevelParams {
-    sample_params_only().with_decomp(4, 2, 2, 2, 0).unwrap()
+    sample_params_only().with_decomp(16, 64, 2, 2).unwrap()
 }
 
 fn laid_out_sample_lp() -> LevelParams {
@@ -47,8 +47,6 @@ fn sample_multi_group_root_params() -> (LevelParams, OpeningClaimsLayout) {
             precommit_lp.b_key.coeff_linf_bound(),
             precommit_lp.ring_dimension,
         ),
-        num_blocks: precommit_lp.num_blocks,
-        block_len: precommit_lp.block_len,
         num_digits_commit: precommit_lp.num_digits_commit,
         num_digits_open: precommit_lp.num_digits_open,
         num_digits_fold_one: precommit_lp.num_digits_fold_one,
@@ -57,6 +55,50 @@ fn sample_multi_group_root_params() -> (LevelParams, OpeningClaimsLayout) {
     grouped.precommitted_groups = vec![precommit];
     let batch = OpeningClaimsLayout::from_group_sizes(4, &[1, 1]).expect("layout");
     (grouped, batch)
+}
+
+#[test]
+fn shared_d_digit_basis_covers_every_group() {
+    let (mut grouped, _) = sample_multi_group_root_params();
+    grouped.log_basis = 3;
+    grouped.precommitted_groups[0].layout.log_basis = 6;
+
+    assert_eq!(grouped.shared_d_digit_log_basis(), 6);
+    assert_eq!(shared_d_digit_log_basis(5, &[]), 5);
+}
+
+#[test]
+fn with_decomp_derives_exact_live_block_geometry() {
+    let lp = sample_params_only().with_decomp(8, 17, 2, 2).unwrap();
+
+    assert_eq!(lp.num_live_ring_elements_per_claim, 17);
+    assert_eq!(lp.num_positions_per_block, 8);
+    assert_eq!(lp.num_live_blocks, 3);
+    assert_eq!(lp.position_index_bits(), 3);
+    assert_eq!(lp.block_index_bits(), 2);
+    assert_eq!(lp.block_index_domain_size().unwrap(), 4);
+    assert_eq!(lp.n_ring_elems().unwrap(), 17);
+
+    assert!(sample_params_only().with_decomp(3, 17, 2, 2).is_err());
+}
+
+#[test]
+fn root_group_fold_linf_config_uses_group_local_tensor_shape() {
+    let (mut lp, batch) = sample_multi_group_root_params();
+    lp.precommitted_groups[0].layout.fold_challenge_shape =
+        TensorChallengeShape::Tensor { fold_low_len: 2 };
+
+    let precommitted = lp.group_params(&batch, 0).unwrap();
+    let final_group = lp.group_params(&batch, 1).unwrap();
+    let precommitted_config = lp
+        .fold_witness_linf_cap_config_for_params(precommitted)
+        .unwrap();
+    let final_config = lp
+        .fold_witness_linf_cap_config_for_params(final_group)
+        .unwrap();
+
+    assert_eq!(precommitted_config.tensor_fold_low_len, 2);
+    assert_eq!(final_config.tensor_fold_low_len, 0);
 }
 
 #[test]
@@ -71,8 +113,11 @@ fn with_layout_keeps_self_ranks() {
     assert_eq!(lp.a_key.row_len(), 2);
     assert_eq!(lp.b_key.row_len(), 4);
     assert_eq!(lp.d_key.row_len(), 3);
-    assert_eq!(lp.num_blocks, layout_lp.num_blocks);
-    assert_eq!(lp.block_len, layout_lp.block_len);
+    assert_eq!(lp.num_live_blocks, layout_lp.num_live_blocks);
+    assert_eq!(
+        lp.num_positions_per_block,
+        layout_lp.num_positions_per_block
+    );
     assert_eq!(lp.challenge_l1_mass(), 3);
     assert_eq!(lp.num_digits_commit, layout_lp.num_digits_commit);
     assert_eq!(lp.num_digits_open, layout_lp.num_digits_open);
@@ -106,9 +151,12 @@ fn derived_log_values() {
     let layout_lp = sample_layout_lp();
     let lp = sample_params_only().with_layout(&layout_lp, 128).unwrap();
 
-    assert_eq!(lp.log_num_blocks(), layout_lp.r_vars);
-    assert_eq!(lp.log_block_len(), layout_lp.m_vars);
-    assert_eq!(lp.outer_vars(), layout_lp.m_vars + layout_lp.r_vars);
+    assert_eq!(lp.block_index_bits(), layout_lp.block_index_bits());
+    assert_eq!(lp.position_index_bits(), layout_lp.position_index_bits());
+    assert_eq!(
+        lp.outer_vars(),
+        layout_lp.position_index_bits() + layout_lp.block_index_bits()
+    );
 }
 
 #[test]
@@ -172,7 +220,7 @@ fn canonical_row_offsets_match_open_coded_layout() {
     }
 }
 
-#[path = "tests/params_precommitted_group_tests.rs"]
+#[path = "params_precommitted_group_tests.rs"]
 mod precommitted_group_tests;
-#[path = "tests/params_relation_row_tests.rs"]
+#[path = "params_relation_row_tests.rs"]
 mod relation_row_tests;

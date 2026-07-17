@@ -9,7 +9,7 @@
 
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::AkitaError;
-use akita_types::layout::digit_math::optimal_m_r_split;
+use akita_types::layout::digit_math::optimal_block_geometry_split;
 use akita_types::sis::{
     decomposed_s_block_ring_count, decomposed_t_ring_count, decomposed_w_ring_count,
     fold_witness_digit_plan, num_digits_open, num_digits_s_commit, num_digits_setup_prefix_commit,
@@ -22,7 +22,8 @@ use akita_types::{
     w_ring_element_count_for_chunks, AkitaScheduleInputs, ChunkedWitnessCfg, CleartextWitnessShape,
     CommitmentRingDims, DecompositionParams, DirectStep, FoldStep, LevelParams,
     OpeningClaimsLayout, PolynomialGroupLayout, PrecommittedGroupParams, PrecommittedLevelParams,
-    RelationMatrixRowLayout, Schedule, SetupContributionMode, Step, SETUP_OFFLOAD_D_SETUP,
+    RelationMatrixRowLayout, Schedule, SetupContributionMode, Step, WitnessLayout,
+    SETUP_OFFLOAD_D_SETUP,
 };
 
 use crate::PlannerPolicy;
@@ -63,6 +64,87 @@ pub(crate) fn validate_policy_witness_chunk(policy: &PlannerPolicy) -> Result<()
 /// Stage-1 sparse-challenge closure shared by the planner entry points.
 pub(crate) type RingChallengeConfigFn<'a> =
     &'a dyn Fn(usize) -> Result<akita_challenges::SparseChallengeConfig, AkitaError>;
+
+pub(crate) type LayoutCandidateScore = (usize, usize, usize, usize);
+
+/// Resolve the tensor low length independently from the num_positions_per_block split.
+/// A tensor-enabled policy selects the shape family; the planner enumerates
+/// every power-of-two low length through the Boolean block-index domain size and chooses
+/// the minimum exact `Q + ceil(F/Q)` verifier work.
+pub(crate) fn optimize_fold_challenge_shape(
+    requested: TensorChallengeShape,
+    num_live_blocks: usize,
+) -> Result<TensorChallengeShape, AkitaError> {
+    if num_live_blocks == 0 {
+        return Err(AkitaError::InvalidSetup(
+            "fold-shape optimization requires a positive num_live_blocks".to_string(),
+        ));
+    }
+    if matches!(requested, TensorChallengeShape::Flat) {
+        return Ok(TensorChallengeShape::Flat);
+    }
+
+    let capacity = num_live_blocks.checked_next_power_of_two().ok_or_else(|| {
+        AkitaError::InvalidSetup("tensor low-length capacity overflow".to_string())
+    })?;
+    let mut best = None;
+    let mut low_len = 1usize;
+    loop {
+        let high_len = num_live_blocks.div_ceil(low_len);
+        let work = high_len
+            .checked_add(low_len)
+            .ok_or_else(|| AkitaError::InvalidSetup("tensor verifier-work overflow".to_string()))?;
+        if best.is_none_or(|(best_work, best_low)| (work, low_len) < (best_work, best_low)) {
+            best = Some((work, low_len));
+        }
+        if low_len == capacity {
+            break;
+        }
+        low_len = low_len.checked_mul(2).ok_or_else(|| {
+            AkitaError::InvalidSetup("tensor low-length enumeration overflow".to_string())
+        })?;
+    }
+    let (_, fold_low_len) = best.ok_or_else(|| {
+        AkitaError::InvalidSetup("tensor low-length enumeration was empty".to_string())
+    })?;
+    Ok(TensorChallengeShape::Tensor { fold_low_len })
+}
+
+/// Combine exact physical width, challenge-factor work, chunk evaluator work,
+/// and load imbalance when comparing `M` candidates. All terms count ring or
+/// scalar work units; exact physical width remains an explicit tie-breaker.
+pub(crate) fn layout_candidate_score(
+    physical_width: usize,
+    num_live_blocks: usize,
+    num_chunks: usize,
+    fold_shape: TensorChallengeShape,
+) -> Result<LayoutCandidateScore, AkitaError> {
+    let challenge_work = match fold_shape {
+        TensorChallengeShape::Flat => num_live_blocks,
+        TensorChallengeShape::Tensor { fold_low_len } => fold_low_len
+            .checked_add(num_live_blocks.div_ceil(fold_low_len))
+            .ok_or_else(|| AkitaError::InvalidSetup("challenge-work overflow".to_string()))?,
+    };
+    let chunk_ranges = WitnessLayout::resolve_chunk_block_ranges(num_live_blocks, num_chunks)?;
+    let min_load = chunk_ranges
+        .iter()
+        .map(|range| range.len())
+        .min()
+        .ok_or_else(|| AkitaError::InvalidSetup("balanced chunk geometry is empty".to_string()))?;
+    let max_load = chunk_ranges
+        .iter()
+        .map(|range| range.len())
+        .max()
+        .ok_or_else(|| AkitaError::InvalidSetup("balanced chunk geometry is empty".to_string()))?;
+    let chunk_work = num_live_blocks;
+    let imbalance = max_load - min_load;
+    let combined = physical_width
+        .checked_add(challenge_work)
+        .and_then(|cost| cost.checked_add(chunk_work))
+        .and_then(|cost| cost.checked_add(imbalance))
+        .ok_or_else(|| AkitaError::InvalidSetup("layout candidate score overflow".to_string()))?;
+    Ok((combined, physical_width, chunk_work, imbalance))
+}
 
 // Suffix-DP depth cap. Schedules in our working parameter range never need
 // more than this many recursive fold levels; deeper search only blows up
@@ -111,6 +193,7 @@ fn find_schedule_inner(
     let suffix_ctx = SuffixCtx {
         policy,
         ring_challenge_cfg: &ring_challenge_cfg,
+        fold_challenge_shape_at_level: fold_shape,
         num_vars: key.num_vars(),
         key,
     };
@@ -166,22 +249,29 @@ fn find_schedule_inner(
         });
     }
 
-    let min_r_vars: usize = if reduced_vars >= 3 { 1 } else { 0 };
-    let max_r_vars: usize = (reduced_vars - 1).min(usize::BITS as usize - 1);
+    let min_block_index_bits: usize = if reduced_vars >= 3 { 1 } else { 0 };
+    let max_block_index_bits: usize = (reduced_vars - 1).min(usize::BITS as usize - 1);
 
     // Chunk count of the witness committed at the root fold (absolute level 0).
     let root_num_chunks = policy.chunks_at_level(0);
 
-    let (min_log_basis, max_log_basis) = policy.basis_range;
+    let (configured_min_log_basis, max_log_basis) = policy.basis_range;
+    let min_log_basis = configured_min_log_basis
+        .max(policy.decomposition.log_basis)
+        .max(if policy.decomposition.field_bits() < 128 {
+            5
+        } else {
+            0
+        });
     for candidate_log_basis in min_log_basis..=max_log_basis {
-        for r_vars in (min_r_vars..=max_r_vars).rev() {
+        for block_index_bits in (min_block_index_bits..=max_block_index_bits).rev() {
             let Some(candidate_params) = scalar_root_fold_level_params_candidate(
                 policy,
                 &ring_challenge_cfg,
                 key.num_vars(),
                 key.num_polynomials(),
                 candidate_log_basis,
-                r_vars,
+                block_index_bits,
                 fold_challenge_shape,
             )?
             else {
@@ -309,4 +399,31 @@ fn find_schedule_inner(
         steps: best_steps,
         total_bytes: best_cost,
     })
+}
+
+#[cfg(test)]
+mod geometry_tests {
+    use super::*;
+
+    #[test]
+    fn tensor_low_length_is_selected_independently() {
+        assert_eq!(
+            optimize_fold_challenge_shape(TensorChallengeShape::Tensor { fold_low_len: 1 }, 13,)
+                .unwrap(),
+            TensorChallengeShape::Tensor { fold_low_len: 4 },
+        );
+    }
+
+    #[test]
+    fn balanced_chunk_geometry_prices_exact_work_and_residual_imbalance() {
+        let flat = TensorChallengeShape::Flat;
+        assert_eq!(
+            layout_candidate_score(100, 13, 3, flat).unwrap(),
+            (127, 100, 13, 1)
+        );
+        assert_eq!(
+            layout_candidate_score(100, 12, 3, flat).unwrap(),
+            (124, 100, 12, 0)
+        );
+    }
 }

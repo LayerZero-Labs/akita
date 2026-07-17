@@ -366,7 +366,8 @@ where
         &root_scheduled,
         basis,
         setup_contribution_mode,
-    )?;
+    )
+    .map_err(|err| AkitaError::InvalidInput(format!("root prove failed: {err:?}")))?;
     let next_state = root.next_state;
     let root = AkitaBatchedRootProof::new(root.level_proof);
 
@@ -378,7 +379,8 @@ where
         next_state,
         schedule,
         setup_contribution_mode,
-    )?;
+    )
+    .map_err(|err| AkitaError::InvalidInput(format!("suffix prove failed: {err:?}")))?;
     Ok((
         AkitaBatchedProof {
             root,

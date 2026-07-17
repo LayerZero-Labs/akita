@@ -50,7 +50,6 @@ fn logged_dense_round_trip(num_vars: usize, shape_index: usize, basis_mode: Basi
 
     let (commitment, hint) =
         Scheme::batched_commit(&setup, &polys, &stack).expect("batched commit");
-
     let mut prover_transcript =
         LoggingTranscript::wrap(AkitaTranscript::<F>::new(b"hardening/proptest"));
     let proof = Scheme::batched_prove(

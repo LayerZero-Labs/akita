@@ -77,7 +77,7 @@ Schedule types in `crates/akita-types/src/schedule.rs` are renamed and unified:
 | Type | Role |
 |------|------|
 | `PolynomialGroupLayout` | per-group opening/schedule dimensions (shared with opening layout) |
-| `PrecommittedGroupParams` | frozen standalone precommit metadata (`m_vars`, `r_vars`, basis, row counts) |
+| `PrecommittedGroupParams` | frozen standalone precommit metadata (`position_index_bits`, `block_index_bits`, basis, row counts) |
 | `AkitaScheduleLookupKey` | multi-group-root schedule lookup key |
 
 Wire as `pub mod opening_claims` from `lib.rs`; re-export the public types at the
@@ -115,8 +115,8 @@ pub struct PolynomialGroupLayout {
 /// Frozen metadata from a standalone precommit (params, not layout).
 pub struct PrecommittedGroupParams {
     pub group: PolynomialGroupLayout,
-    pub m_vars: usize,
-    pub r_vars: usize,
+    pub position_index_bits: usize,
+    pub block_index_bits: usize,
     pub log_basis: u32,
     pub n_a: usize,
     pub conservative_n_b: usize,
@@ -703,7 +703,7 @@ There is **no** `group_point_vars` on `OpeningClaimsLayout`.
                           ▼
               AkitaScheduleLookupKey
               ├─ final_group: PolynomialGroupLayout
-              └─ precommitteds: [PrecommittedGroupParams { group, m_vars, ... }]
+              └─ precommitteds: [PrecommittedGroupParams { group, position_index_bits, ... }]
                           │
                           ▼
               GeneratedScheduleTableEntry / GeneratedGroupBatchScheduleTableEntry

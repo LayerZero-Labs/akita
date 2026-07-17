@@ -1,13 +1,13 @@
 #![allow(missing_docs)]
 
 use akita_challenges::{
-    sample_sparse_challenges, tensor_left_digest, ChallengeLabels, ChallengeShape, Challenges,
-    FoldDraw, LiveFoldDraw, PreviewFoldDraw, SparseChallenge, SparseChallengeConfig,
-    TensorChallenges,
+    fold_challenge_sample_label, fold_high_digest, sample_sparse_challenges, ChallengeLabels,
+    ChallengeShape, Challenges, FoldDraw, LiveFoldDraw, PreviewFoldDraw, SparseChallenge,
+    SparseChallengeConfig, TensorChallenges,
 };
 use akita_field::{CanonicalField, FieldCore, Fp64};
 use akita_transcript::labels::{
-    ABSORB_TENSOR_FOLD_LEFT, CHALLENGE_TENSOR_FOLD_LEFT, CHALLENGE_TENSOR_FOLD_RIGHT,
+    ABSORB_FOLD_HIGH, ABSORB_SPARSE_CHALLENGE, CHALLENGE_FOLD_HIGH, CHALLENGE_FOLD_LOW,
     CHALLENGE_WITNESS_FOLD, DOMAIN_AKITA_PROTOCOL,
 };
 use akita_transcript::{AkitaTranscript, Transcript};
@@ -16,15 +16,31 @@ use akita_transcript::{AkitaTranscript, Transcript};
 fn fold_challenge_labels() -> ChallengeLabels<'static> {
     ChallengeLabels {
         flat: CHALLENGE_WITNESS_FOLD,
-        tensor_left: CHALLENGE_TENSOR_FOLD_LEFT,
-        tensor_left_digest: ABSORB_TENSOR_FOLD_LEFT,
-        tensor_right: CHALLENGE_TENSOR_FOLD_RIGHT,
+        fold_high: CHALLENGE_FOLD_HIGH,
+        fold_high_digest: ABSORB_FOLD_HIGH,
+        fold_low: CHALLENGE_FOLD_LOW,
     }
 }
 
 type F = Fp64<4294967197>;
 
 const D: usize = 32;
+
+#[derive(Default)]
+struct RecordingFoldDraw {
+    absorb_labels: Vec<Vec<u8>>,
+}
+
+impl FoldDraw for RecordingFoldDraw {
+    fn absorb(&mut self, label: &[u8], _payload: &[u8]) {
+        self.absorb_labels.push(label.to_vec());
+    }
+
+    fn absorb_and_squeeze(&mut self, label: &[u8], _payload: &[u8]) -> Vec<u8> {
+        self.absorb_labels.push(label.to_vec());
+        vec![0; 32]
+    }
+}
 
 /// Local helper: count non-zero positions in a sparse challenge.
 fn hamming_weight(c: &SparseChallenge) -> usize {
@@ -110,13 +126,13 @@ fn eval_dense_at_pows<F: FieldCore, const D: usize>(coeffs: &[F; D], alpha_pows:
 }
 
 fn tensor_product_eval<F: FieldCore + CanonicalField, const D: usize>(
-    left: &SparseChallenge,
-    right: &SparseChallenge,
+    fold_high: &SparseChallenge,
+    fold_low: &SparseChallenge,
     alpha_pows: &[F],
 ) -> F {
     let product = dense_negacyclic_mul(
-        &sparse_challenge_to_dense::<F, D>(left).unwrap(),
-        &sparse_challenge_to_dense::<F, D>(right).unwrap(),
+        &sparse_challenge_to_dense::<F, D>(fold_high).unwrap(),
+        &sparse_challenge_to_dense::<F, D>(fold_low).unwrap(),
     );
     eval_dense_at_pows(&product, alpha_pows)
 }
@@ -288,10 +304,11 @@ fn tensor_sampling_uses_two_vectors() {
     let challenges = LiveFoldDraw::<F, _>::new(&mut transcript)
         .draw_folding_challenges(
             TD,
+            0,
             8,
             2,
             &cfg,
-            &ChallengeShape::Tensor,
+            &ChallengeShape::Tensor { fold_low_len: 4 },
             fold_challenge_labels(),
             0,
         )
@@ -303,11 +320,88 @@ fn tensor_sampling_uses_two_vectors() {
     else {
         panic!("expected tensor challenges");
     };
-    assert_eq!(tensor.left_len, 2);
-    assert_eq!(tensor.right_len, 4);
-    assert_eq!(tensor.left.len(), 4);
-    assert_eq!(tensor.right.len(), 8);
+    assert_eq!(tensor.fold_high_len(), 2);
+    assert_eq!(tensor.fold_low_len, 4);
+    assert_eq!(tensor.fold_high.len(), 4);
+    assert_eq!(tensor.fold_low.len(), 8);
     assert_eq!(tensor.total_blocks().unwrap(), 16);
+}
+
+#[test]
+fn tensor_sampling_keeps_only_the_exact_live_block_prefix() {
+    const TD: usize = 8;
+    let cfg = SparseChallengeConfig::pm1_only(2);
+    let mut transcript = AkitaTranscript::<F>::new(DOMAIN_AKITA_PROTOCOL);
+    transcript.append_field(b"seed", &F::from_u64(9));
+
+    let challenges = LiveFoldDraw::<F, _>::new(&mut transcript)
+        .draw_folding_challenges(
+            TD,
+            0,
+            5,
+            2,
+            &cfg,
+            &ChallengeShape::Tensor { fold_low_len: 4 },
+            fold_challenge_labels(),
+            0,
+        )
+        .unwrap();
+
+    let Challenges::Tensor { factored } = challenges else {
+        panic!("expected tensor challenges");
+    };
+    assert_eq!(factored.num_live_blocks_per_claim, 5);
+    assert_eq!(factored.fold_high_len(), 2);
+    assert_eq!(factored.fold_high.len(), 4);
+    assert_eq!(factored.fold_low.len(), 8);
+    assert_eq!(factored.total_blocks().unwrap(), 10);
+
+    let alpha_pows = scalar_powers::<F, TD>(F::from_u64(13));
+    let bulk = factored.evals_at_pows::<F, F>(&alpha_pows).unwrap();
+    assert_eq!(bulk.len(), 10);
+    for (logical_index, &expected) in bulk.iter().enumerate() {
+        assert_eq!(
+            factored
+                .eval_logical_at_pows::<F, F>(logical_index, &alpha_pows)
+                .unwrap(),
+            expected
+        );
+    }
+    assert!(factored
+        .eval_logical_at_pows::<F, F>(bulk.len(), &alpha_pows)
+        .is_err());
+    assert!(factored
+        .eval_logical_at_pows::<F, F>(0, &[F::one()])
+        .is_err());
+}
+
+#[test]
+fn fold_sampling_binds_group_index_and_group_local_shape() {
+    const TD: usize = 8;
+    let cfg = SparseChallengeConfig::pm1_only(2);
+    let draw = |group_index, shape| {
+        let mut transcript = AkitaTranscript::<F>::new(DOMAIN_AKITA_PROTOCOL);
+        transcript.append_field(b"seed", &F::from_u64(0x4242));
+        LiveFoldDraw::<F, _>::new(&mut transcript)
+            .draw_folding_challenges(
+                TD,
+                group_index,
+                5,
+                1,
+                &cfg,
+                &shape,
+                fold_challenge_labels(),
+                0,
+            )
+            .unwrap()
+    };
+
+    let flat_group_zero = draw(0, ChallengeShape::Flat);
+    let flat_group_one = draw(1, ChallengeShape::Flat);
+    let tensor_group_zero = draw(0, ChallengeShape::Tensor { fold_low_len: 4 });
+
+    assert_ne!(flat_group_zero, flat_group_one);
+    assert_ne!(flat_group_zero, tensor_group_zero);
 }
 
 #[test]
@@ -320,7 +414,7 @@ fn tensor_effective_l2_sq_max_is_deterministic_product_envelope() {
     assert_eq!(d64.challenge_l2_sq_max(), 71);
     assert_eq!(ChallengeShape::Flat.effective_l2_sq_max(&d64), 71);
     assert_eq!(
-        ChallengeShape::Tensor.effective_l2_sq_max(&d64),
+        ChallengeShape::Tensor { fold_low_len: 4 }.effective_l2_sq_max(&d64),
         51u128 * 51 * 71
     );
 
@@ -329,7 +423,7 @@ fn tensor_effective_l2_sq_max_is_deterministic_product_envelope() {
     assert_eq!(d128.challenge_l2_sq_max(), 31);
     assert_eq!(ChallengeShape::Flat.effective_l2_sq_max(&d128), 31);
     assert_eq!(
-        ChallengeShape::Tensor.effective_l2_sq_max(&d128),
+        ChallengeShape::Tensor { fold_low_len: 4 }.effective_l2_sq_max(&d128),
         31u128 * 31 * 31
     );
 
@@ -338,13 +432,13 @@ fn tensor_effective_l2_sq_max_is_deterministic_product_envelope() {
     assert_eq!(d256.challenge_l2_sq_max(), 23);
     assert_eq!(ChallengeShape::Flat.effective_l2_sq_max(&d256), 23);
     assert_eq!(
-        ChallengeShape::Tensor.effective_l2_sq_max(&d256),
+        ChallengeShape::Tensor { fold_low_len: 4 }.effective_l2_sq_max(&d256),
         23u128 * 23 * 23
     );
 }
 
 #[test]
-fn tensor_sampling_absorbs_left_digest_before_right() {
+fn tensor_sampling_absorbs_fold_high_digest_before_fold_low() {
     const TD: usize = 8;
     let cfg = SparseChallengeConfig::pm1_only(2);
 
@@ -353,10 +447,11 @@ fn tensor_sampling_absorbs_left_digest_before_right() {
     let sampled = LiveFoldDraw::<F, _>::new(&mut sampled_transcript)
         .draw_folding_challenges(
             TD,
+            0,
             8,
             2,
             &cfg,
-            &ChallengeShape::Tensor,
+            &ChallengeShape::Tensor { fold_low_len: 4 },
             fold_challenge_labels(),
             0,
         )
@@ -370,22 +465,26 @@ fn tensor_sampling_absorbs_left_digest_before_right() {
 
     let mut manual_transcript = AkitaTranscript::<F>::new(DOMAIN_AKITA_PROTOCOL);
     manual_transcript.append_field(b"seed", &F::from_u64(0x5151));
-    let left = sample_sparse_challenges::<F, _>(
+    let shape = ChallengeShape::Tensor { fold_low_len: 4 };
+    let high_label = fold_challenge_sample_label(CHALLENGE_FOLD_HIGH, 0, 8, 2, shape).unwrap();
+    let fold_high = sample_sparse_challenges::<F, _>(
         &mut manual_transcript,
-        CHALLENGE_TENSOR_FOLD_LEFT,
+        &high_label,
         TD,
-        sampled.left.len(),
+        sampled.fold_high.len(),
         &cfg,
         0,
     )
     .unwrap();
-    let left_digest = tensor_left_digest(&left, sampled.left_len, sampled.num_claims, TD).unwrap();
-    manual_transcript.append_bytes(ABSORB_TENSOR_FOLD_LEFT, &left_digest);
-    let right = sample_sparse_challenges::<F, _>(
+    let high_digest =
+        fold_high_digest(&fold_high, sampled.fold_high_len(), sampled.num_claims, TD).unwrap();
+    manual_transcript.append_bytes(ABSORB_FOLD_HIGH, &high_digest);
+    let low_label = fold_challenge_sample_label(CHALLENGE_FOLD_LOW, 0, 8, 2, shape).unwrap();
+    let fold_low = sample_sparse_challenges::<F, _>(
         &mut manual_transcript,
-        CHALLENGE_TENSOR_FOLD_RIGHT,
+        &low_label,
         TD,
-        sampled.right.len(),
+        sampled.fold_low.len(),
         &cfg,
         0,
     )
@@ -394,30 +493,64 @@ fn tensor_sampling_absorbs_left_digest_before_right() {
     // The right factor must be sampled after absorbing the left digest.
     let mut nodigest_transcript = AkitaTranscript::<F>::new(DOMAIN_AKITA_PROTOCOL);
     nodigest_transcript.append_field(b"seed", &F::from_u64(0x5151));
-    let _nodigest_left = sample_sparse_challenges::<F, _>(
+    let _nodigest_high = sample_sparse_challenges::<F, _>(
         &mut nodigest_transcript,
-        CHALLENGE_TENSOR_FOLD_LEFT,
+        &high_label,
         TD,
-        sampled.left.len(),
+        sampled.fold_high.len(),
         &cfg,
         0,
     )
     .unwrap();
-    let nodigest_right = sample_sparse_challenges::<F, _>(
+    let nodigest_low = sample_sparse_challenges::<F, _>(
         &mut nodigest_transcript,
-        CHALLENGE_TENSOR_FOLD_RIGHT,
+        &low_label,
         TD,
-        sampled.right.len(),
+        sampled.fold_low.len(),
         &cfg,
         0,
     )
     .unwrap();
 
-    assert_eq!(sampled.left, left);
-    assert_eq!(sampled.right, right);
+    assert_eq!(sampled.fold_high, fold_high);
+    assert_eq!(sampled.fold_low, fold_low);
     assert_ne!(
-        sampled.right, nodigest_right,
-        "right challenges must be bound to the tensor-left output digest"
+        sampled.fold_low, nodigest_low,
+        "fold-low challenges must be bound to the fold-high output digest"
+    );
+}
+
+#[test]
+fn tensor_sampling_uses_fold_high_digest_label() {
+    const TD: usize = 8;
+    let cfg = SparseChallengeConfig::pm1_only(2);
+    let labels = ChallengeLabels {
+        flat: b"flat",
+        fold_high: b"fold-high",
+        fold_high_digest: b"fold-high-digest",
+        fold_low: b"fold-low",
+    };
+    let mut draw = RecordingFoldDraw::default();
+
+    draw.draw_folding_challenges(
+        TD,
+        0,
+        5,
+        1,
+        &cfg,
+        &ChallengeShape::Tensor { fold_low_len: 4 },
+        labels,
+        0,
+    )
+    .unwrap();
+
+    assert_eq!(
+        draw.absorb_labels,
+        vec![
+            ABSORB_SPARSE_CHALLENGE.to_vec(),
+            labels.fold_high_digest.to_vec(),
+            ABSORB_SPARSE_CHALLENGE.to_vec(),
+        ]
     );
 }
 
@@ -431,10 +564,11 @@ fn tensor_preview_matches_live_sample_without_advancing_transcript() {
     let previewed = PreviewFoldDraw::new(&transcript)
         .draw_folding_challenges(
             TD,
+            0,
             8,
             2,
             &cfg,
-            &ChallengeShape::Tensor,
+            &ChallengeShape::Tensor { fold_low_len: 4 },
             fold_challenge_labels(),
             7,
         )
@@ -442,10 +576,11 @@ fn tensor_preview_matches_live_sample_without_advancing_transcript() {
     let live = LiveFoldDraw::<F, _>::new(&mut transcript)
         .draw_folding_challenges(
             TD,
+            0,
             8,
             2,
             &cfg,
-            &ChallengeShape::Tensor,
+            &ChallengeShape::Tensor { fold_low_len: 4 },
             fold_challenge_labels(),
             7,
         )
@@ -455,14 +590,14 @@ fn tensor_preview_matches_live_sample_without_advancing_transcript() {
 }
 
 #[test]
-fn tensor_left_digest_rejects_duplicate_positions() {
+fn fold_high_digest_rejects_duplicate_positions() {
     const TD: usize = 8;
-    let left = vec![SparseChallenge {
+    let fold_high = vec![SparseChallenge {
         positions: vec![0, 0],
         coeffs: vec![1, -1],
     }];
 
-    let err = tensor_left_digest(&left, 1, 1, TD).unwrap_err();
+    let err = fold_high_digest(&fold_high, 1, 1, TD).unwrap_err();
 
     assert!(matches!(err, akita_field::AkitaError::InvalidInput(msg) if msg.contains("unique")));
 }
@@ -476,35 +611,77 @@ fn tensor_lazy_evals_match_ring_product_reference() {
     let challenges = LiveFoldDraw::<F, _>::new(&mut transcript)
         .draw_folding_challenges(
             TD,
+            0,
             8,
             1,
             &cfg,
-            &ChallengeShape::Tensor,
+            &ChallengeShape::Tensor { fold_low_len: 4 },
             fold_challenge_labels(),
             0,
         )
         .unwrap();
 
     let alpha_pows = scalar_powers::<F, TD>(F::from_u64(5));
-    let lazy = challenges.evals_at_pows::<F, F>(&alpha_pows).unwrap();
+    let bulk = challenges.evals_at_pows::<F, F>(&alpha_pows).unwrap();
     let Challenges::Tensor { factored } = &challenges else {
         panic!("expected tensor challenges");
     };
     let expected = (0..factored.total_blocks().unwrap())
         .map(|block_idx| {
-            let (_, _, left, right) = factored.factors_for_logical_block(block_idx).unwrap();
-            tensor_product_eval::<F, TD>(left, right, &alpha_pows)
+            let (_, _, fold_high, fold_low) =
+                factored.factors_for_logical_block(block_idx).unwrap();
+            tensor_product_eval::<F, TD>(fold_high, fold_low, &alpha_pows)
         })
         .collect::<Vec<_>>();
 
-    assert_eq!(lazy, expected);
+    let singular = (0..challenges.logical_len())
+        .map(|logical_index| challenges.eval_logical_at_pows::<F, F>(logical_index, &alpha_pows))
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+
+    assert_eq!(bulk, expected);
+    assert_eq!(singular, expected);
+}
+
+#[test]
+fn tensor_public_evals_reject_malformed_low_length() {
+    const TD: usize = 8;
+    let alpha_pows = scalar_powers::<F, TD>(F::from_u64(5));
+
+    for fold_low_len in [0, 3] {
+        let tensor = TensorChallenges {
+            fold_high: Vec::new(),
+            fold_low: Vec::new(),
+            num_live_blocks_per_claim: 1,
+            fold_low_len,
+            num_claims: 1,
+        };
+        let err = tensor.evals_at_pows::<F, F>(&alpha_pows).unwrap_err();
+        assert!(
+            matches!(err, akita_field::AkitaError::InvalidInput(msg) if msg.contains("power-of-two low length"))
+        );
+
+        let high_weights = vec![F::zero(); tensor.fold_high_len()];
+        let low_weights = vec![F::zero(); fold_low_len];
+        let err = tensor
+            .eval_factored_aggregate_at_pows::<F, F, TD>(
+                0,
+                &high_weights,
+                &low_weights,
+                &alpha_pows,
+            )
+            .unwrap_err();
+        assert!(
+            matches!(err, akita_field::AkitaError::InvalidInput(msg) if msg.contains("power-of-two low length"))
+        );
+    }
 }
 
 #[test]
 fn tensor_factored_aggregate_matches_ring_product_reference() {
     const TD: usize = 8;
     let tensor = TensorChallenges {
-        left: vec![
+        fold_high: vec![
             SparseChallenge {
                 positions: vec![0, 6],
                 coeffs: vec![2, -1],
@@ -522,7 +699,7 @@ fn tensor_factored_aggregate_matches_ring_product_reference() {
                 coeffs: vec![1, -3],
             },
         ],
-        right: vec![
+        fold_low: vec![
             SparseChallenge {
                 positions: vec![0],
                 coeffs: vec![1],
@@ -556,8 +733,8 @@ fn tensor_factored_aggregate_matches_ring_product_reference() {
                 coeffs: vec![3, 1],
             },
         ],
-        left_len: 2,
-        right_len: 4,
+        num_live_blocks_per_claim: 8,
+        fold_low_len: 4,
         num_claims: 2,
     };
     let claim_idx = 1;
@@ -573,12 +750,74 @@ fn tensor_factored_aggregate_matches_ring_product_reference() {
     let mut expected = F::zero();
     for (p, &u) in u_weights.iter().enumerate() {
         for (q, &v) in v_weights.iter().enumerate() {
-            let block_idx =
-                claim_idx * tensor.left_len * tensor.right_len + p * tensor.right_len + q;
-            let (_, _, left, right) = tensor.factors_for_logical_block(block_idx).unwrap();
-            expected += u * v * tensor_product_eval::<F, TD>(left, right, &alpha_pows);
+            let block_idx = claim_idx * tensor.fold_high_len() * tensor.fold_low_len
+                + p * tensor.fold_low_len
+                + q;
+            let (_, _, fold_high, fold_low) = tensor.factors_for_logical_block(block_idx).unwrap();
+            expected += u * v * tensor_product_eval::<F, TD>(fold_high, fold_low, &alpha_pows);
         }
     }
+
+    assert_eq!(got, expected);
+}
+
+#[test]
+fn tensor_factored_aggregate_excludes_partial_final_low_row_suffix() {
+    const TD: usize = 8;
+    let tensor = TensorChallenges {
+        fold_high: vec![
+            SparseChallenge {
+                positions: vec![0, 6],
+                coeffs: vec![1, -1],
+            },
+            SparseChallenge {
+                positions: vec![1, 7],
+                coeffs: vec![2, 1],
+            },
+        ],
+        fold_low: vec![
+            SparseChallenge {
+                positions: vec![0],
+                coeffs: vec![1],
+            },
+            SparseChallenge {
+                positions: vec![2],
+                coeffs: vec![-1],
+            },
+            SparseChallenge {
+                positions: vec![4],
+                coeffs: vec![2],
+            },
+            SparseChallenge {
+                positions: vec![6],
+                coeffs: vec![1],
+            },
+        ],
+        num_live_blocks_per_claim: 5,
+        fold_low_len: 4,
+        num_claims: 1,
+    };
+    let u_weights = [F::from_u64(3), F::from_u64(5)];
+    let v_weights = [
+        F::from_u64(7),
+        F::from_u64(11),
+        F::from_u64(13),
+        F::from_u64(17),
+    ];
+    let alpha_pows = scalar_powers::<F, TD>(F::from_u64(19));
+
+    let got = tensor
+        .eval_factored_aggregate_at_pows::<F, F, TD>(0, &u_weights, &v_weights, &alpha_pows)
+        .unwrap();
+
+    let expected = (0..tensor.num_live_blocks_per_claim).fold(F::zero(), |acc, local_block| {
+        let high_idx = local_block / tensor.fold_low_len;
+        let low_idx = local_block % tensor.fold_low_len;
+        let (_, _, high, low) = tensor.factors_for_logical_block(local_block).unwrap();
+        acc + u_weights[high_idx]
+            * v_weights[low_idx]
+            * tensor_product_eval::<F, TD>(high, low, &alpha_pows)
+    });
 
     assert_eq!(got, expected);
 }
@@ -587,7 +826,7 @@ fn tensor_factored_aggregate_matches_ring_product_reference() {
 fn tensor_evals_at_pows_match_ring_product_reference() {
     const TD: usize = 8;
     let tensor = TensorChallenges {
-        left: vec![
+        fold_high: vec![
             SparseChallenge {
                 positions: vec![0, 3],
                 coeffs: vec![1, -2],
@@ -597,7 +836,7 @@ fn tensor_evals_at_pows_match_ring_product_reference() {
                 coeffs: vec![2, 1],
             },
         ],
-        right: vec![
+        fold_low: vec![
             SparseChallenge {
                 positions: vec![1, 6],
                 coeffs: vec![-1, 2],
@@ -607,8 +846,8 @@ fn tensor_evals_at_pows_match_ring_product_reference() {
                 coeffs: vec![3, -1],
             },
         ],
-        left_len: 2,
-        right_len: 2,
+        num_live_blocks_per_claim: 4,
+        fold_low_len: 2,
         num_claims: 1,
     };
     let alpha_pows = scalar_powers::<F, TD>(F::from_u64(13));
@@ -616,8 +855,8 @@ fn tensor_evals_at_pows_match_ring_product_reference() {
     let got = tensor.evals_at_pows::<F, F>(&alpha_pows).unwrap();
     let expected = (0..tensor.total_blocks().unwrap())
         .map(|block_idx| {
-            let (_, _, left, right) = tensor.factors_for_logical_block(block_idx).unwrap();
-            tensor_product_eval::<F, TD>(left, right, &alpha_pows)
+            let (_, _, fold_high, fold_low) = tensor.factors_for_logical_block(block_idx).unwrap();
+            tensor_product_eval::<F, TD>(fold_high, fold_low, &alpha_pows)
         })
         .collect::<Vec<_>>();
 
@@ -631,16 +870,16 @@ fn tensor_product_only_formula_is_not_exact_for_generic_alpha() {
     // aggregate must differ from the bare product of evaluations.
     const TD: usize = 2;
     let tensor = TensorChallenges {
-        left: vec![SparseChallenge {
+        fold_high: vec![SparseChallenge {
             positions: vec![1],
             coeffs: vec![1],
         }],
-        right: vec![SparseChallenge {
+        fold_low: vec![SparseChallenge {
             positions: vec![1],
             coeffs: vec![1],
         }],
-        left_len: 1,
-        right_len: 1,
+        num_live_blocks_per_claim: 1,
+        fold_low_len: 1,
         num_claims: 1,
     };
     let alpha = F::from_u64(5);
@@ -650,8 +889,12 @@ fn tensor_product_only_formula_is_not_exact_for_generic_alpha() {
     let exact = tensor
         .eval_factored_aggregate_at_pows::<F, F, TD>(0, &weights, &weights, &alpha_pows)
         .unwrap();
-    let product_only = tensor.left[0].eval_at_pows::<F, F>(&alpha_pows).unwrap()
-        * tensor.right[0].eval_at_pows::<F, F>(&alpha_pows).unwrap();
+    let product_only = tensor.fold_high[0]
+        .eval_at_pows::<F, F>(&alpha_pows)
+        .unwrap()
+        * tensor.fold_low[0]
+            .eval_at_pows::<F, F>(&alpha_pows)
+            .unwrap();
 
     assert_eq!(exact, -F::one());
     assert_ne!(exact, product_only);
@@ -663,16 +906,16 @@ fn tensor_exact_aggregate_collapses_to_product_at_negacyclic_root() {
     // exact aggregate degenerates to the bare product of evaluations.
     const TD: usize = 2;
     let tensor = TensorChallenges {
-        left: vec![SparseChallenge {
+        fold_high: vec![SparseChallenge {
             positions: vec![1],
             coeffs: vec![1],
         }],
-        right: vec![SparseChallenge {
+        fold_low: vec![SparseChallenge {
             positions: vec![1],
             coeffs: vec![1],
         }],
-        left_len: 1,
-        right_len: 1,
+        num_live_blocks_per_claim: 1,
+        fold_low_len: 1,
         num_claims: 1,
     };
     let alpha = F::from_u64(983_270_775);
@@ -684,8 +927,12 @@ fn tensor_exact_aggregate_collapses_to_product_at_negacyclic_root() {
     let exact = tensor
         .eval_factored_aggregate_at_pows::<F, F, TD>(0, &weights, &weights, &alpha_pows)
         .unwrap();
-    let product_only = tensor.left[0].eval_at_pows::<F, F>(&alpha_pows).unwrap()
-        * tensor.right[0].eval_at_pows::<F, F>(&alpha_pows).unwrap();
+    let product_only = tensor.fold_high[0]
+        .eval_at_pows::<F, F>(&alpha_pows)
+        .unwrap()
+        * tensor.fold_low[0]
+            .eval_at_pows::<F, F>(&alpha_pows)
+            .unwrap();
 
     assert_eq!(exact, product_only);
 }

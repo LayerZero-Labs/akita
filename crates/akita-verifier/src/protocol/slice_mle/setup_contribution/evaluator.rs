@@ -1,5 +1,5 @@
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, MulBaseUnreduced};
-use akita_types::{AkitaExpandedSetup, SetupContributionPlan};
+use akita_types::AkitaExpandedSetup;
 
 use crate::protocol::ring_switch::RelationMatrixEvaluator;
 
@@ -7,8 +7,6 @@ use crate::protocol::ring_switch::RelationMatrixEvaluator;
 pub(crate) fn evaluate_setup_contribution_direct<F, E, const D: usize>(
     relation_matrix_evaluator: &RelationMatrixEvaluator<E>,
     full_vec_randomness: &[E],
-    eq_low: Option<&[E]>,
-    z_block_low_eq: Option<&[E]>,
     alpha_pows_a: &[E],
     alpha_pows_b: &[E],
     alpha_pows_d: &[E],
@@ -31,13 +29,9 @@ where
         alpha_pows_b,
         alpha_pows_d,
     )?;
-    let plan = SetupContributionPlan::finish_plan::<F>(
-        &relation_matrix_evaluator.setup_contribution_static,
+    let plan = relation_matrix_evaluator.setup_contribution_plan::<F>(
         full_vec_randomness,
-        eq_low,
-        z_block_low_eq,
         (!fold_gadget.is_empty()).then_some(fold_gadget),
-        &relation_matrix_evaluator.setup_contribution_groups,
     )?;
     plan.evaluate_direct::<F>(setup, alpha_pows_a, alpha_pows_b, alpha_pows_d)
 }

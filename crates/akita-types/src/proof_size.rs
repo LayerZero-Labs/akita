@@ -322,7 +322,7 @@ mod tests {
                 2,
                 fold_challenge_config,
             )
-            .with_decomp(0, 0, 1, 1, 0)
+            .with_decomp(1, 1, 1, 1)
             .unwrap();
             assert_eq!(
                 level_proof_bytes(
@@ -398,7 +398,7 @@ mod tests {
                 2,
                 fold_challenge_config,
             )
-            .with_decomp(0, 0, 1, 1, 0)
+            .with_decomp(1, 1, 1, 1)
             .unwrap();
 
             let direct_bytes =
@@ -445,7 +445,7 @@ mod tests {
                 2,
                 fold_challenge_config,
             )
-            .with_decomp(0, 0, 1, 1, 0)
+            .with_decomp(1, 1, 1, 1)
             .unwrap();
             let rounds = sumcheck_rounds(D, next_w_len);
 

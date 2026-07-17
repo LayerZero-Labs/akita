@@ -252,7 +252,10 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage1Prover<E> {
 
     #[inline]
     #[tracing::instrument(skip_all, name = "AkitaStage1Prover::compute_round_compact_prefix_x")]
-    pub(super) fn compute_round_compact_prefix_x(&self, s_compact: &[i16]) -> EqFactoredUniPoly<E> {
+    pub(super) fn compute_round_compact_prefix_x<S: CompactSValue>(
+        &self,
+        s_compact: &[S],
+    ) -> EqFactoredUniPoly<E> {
         debug_assert!(self.rounds_completed < self.col_bits);
         debug_assert_eq!(
             s_compact.len(),
@@ -289,9 +292,9 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage1Prover<E> {
                             let j_low = (j_base + pair_x) & (num_first - 1);
                             let e_in = e_first[j_low];
                             let left = 2 * pair_x;
-                            let s0_i = row[left];
+                            let s0_i = row[left].compact_s();
                             let s1_i = if left + 1 < self.live_x_cols {
-                                row[left + 1]
+                                row[left + 1].compact_s()
                             } else {
                                 0
                             };
@@ -345,9 +348,9 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage1Prover<E> {
                             let j_low = (j_base + pair_x) & (num_first - 1);
                             let e_in = e_first[j_low];
                             let left = 2 * pair_x;
-                            let s0_i = row[left];
+                            let s0_i = row[left].compact_s();
                             let s1_i = if left + 1 < self.live_x_cols {
-                                row[left + 1]
+                                row[left + 1].compact_s()
                             } else {
                                 0
                             };
@@ -401,9 +404,9 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage1Prover<E> {
                             let j_low = (j_base + pair_x) & (num_first - 1);
                             let e_in = e_first[j_low];
                             let left = 2 * pair_x;
-                            let s0_i = row[left];
+                            let s0_i = row[left].compact_s();
                             let s1_i = if left + 1 < self.live_x_cols {
-                                row[left + 1]
+                                row[left + 1].compact_s()
                             } else {
                                 0
                             };
@@ -564,8 +567,8 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage1Prover<E> {
     }
 
     #[tracing::instrument(skip_all, name = "AkitaStage1Prover::fold_s_compact_prefix_x")]
-    pub(super) fn fold_s_compact_prefix_x(
-        s_compact: &[i16],
+    pub(super) fn fold_s_compact_prefix_x<S: CompactSValue>(
+        s_compact: &[S],
         live_x_cols: usize,
         y_len: usize,
         fold_lut: &CompactPairFoldLut<E>,
@@ -582,11 +585,11 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage1Prover<E> {
                 for (pair_x, dst) in row_out.iter_mut().enumerate() {
                     let left = 2 * pair_x;
                     let s_1 = if left + 1 < live_x_cols {
-                        row[left + 1]
+                        row[left + 1].compact_s()
                     } else {
                         0
                     };
-                    *dst = fold_lut.fold(row[left], s_1);
+                    *dst = fold_lut.fold(row[left].compact_s(), s_1);
                 }
             });
 
@@ -597,11 +600,11 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage1Prover<E> {
             for (pair_x, dst) in row_out.iter_mut().enumerate() {
                 let left = 2 * pair_x;
                 let s_1 = if left + 1 < live_x_cols {
-                    row[left + 1]
+                    row[left + 1].compact_s()
                 } else {
                     0
                 };
-                *dst = fold_lut.fold(row[left], s_1);
+                *dst = fold_lut.fold(row[left].compact_s(), s_1);
             }
         }
 

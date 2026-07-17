@@ -26,7 +26,7 @@ computation — is currently spread across at least four files in two crates:
 - `crates/akita-types/src/layout/digit_math.rs` (`num_digits_for_bound`,
   `compute_num_digits*`, `ring_product_infinity_norm_bound`,
   `witness_block_l1_norm`, `fold_witness_norms`, `compute_num_digits_fold_with_claims`,
-  `optimal_m_r_split`) and `crates/akita-types/src/layout/sis_derivation.rs`
+  `optimal_block_geometry_split`) and `crates/akita-types/src/layout/sis_derivation.rs`
   (`decomp_depths`, `level_layout_from_params`, `recursive_level_layout_from_params`).
 
 The same A-role collision formula already exists in **two** copies
@@ -210,14 +210,14 @@ pub fn rounded_up_norm_t(sis_modulus_profile: SisModulusProfileId, d: usize, log
 pub fn rounded_up_norm_w(sis_modulus_profile: SisModulusProfileId, d: usize, log_basis: u32) -> Option<u32>;
 
 /// Folded witness `z = Σ c_i·s_i`: the L∞ bound
-/// `β = num_claims · 2^r_vars · min(||c||_inf·||s||_1, ||c||_1·||s||_inf)`.
+/// `β = num_claims · 2^block_index_bits · min(||c||_inf·||s||_1, ||c||_1·||s||_inf)`.
 /// `z` is *not* Ajtai-committed, so this is the raw bound (no SIS bucket); it
 /// feeds the next-level fold digit count in `decomposition_digits`.
 pub fn rounded_up_norm_z(
     decomposition: DecompositionParams,
     fold_challenge_config: &SparseChallengeConfig,
     fold_shape: TensorChallengeShape,
-    r_vars: usize,
+    block_index_bits: usize,
     num_claims: usize,
     d: usize,
     onehot_chunk_size: usize,
@@ -256,13 +256,13 @@ pub fn num_digits_fold(beta: u128, field_bits: u32, log_basis: u32) -> usize;
 pub fn decomp_depths(decomposition: DecompositionParams) -> (usize, usize);
 
 // --- per-role committed widths (ring-element column counts) ---
-/// A width: `block_len · δ_commit`.
-pub fn decomposed_s_block_ring_count(block_len: usize, num_digits_commit: usize) -> Option<usize>;
-/// B width: `n_a · δ_open · num_blocks · t_vectors`.
-pub fn decomposed_t_ring_count(n_a: usize, num_digits_open: usize, num_blocks: usize, t_vectors: usize)
+/// A width: `num_positions_per_block · δ_commit`.
+pub fn decomposed_s_block_ring_count(num_positions_per_block: usize, num_digits_commit: usize) -> Option<usize>;
+/// B width: `n_a · δ_open · num_live_blocks · t_vectors`.
+pub fn decomposed_t_ring_count(n_a: usize, num_digits_open: usize, num_live_blocks: usize, t_vectors: usize)
     -> Option<usize>;
-/// D width: `δ_open · num_blocks · t_vectors`.
-pub fn decomposed_w_ring_count(num_digits_open: usize, num_blocks: usize, t_vectors: usize)
+/// D width: `δ_open · num_live_blocks · t_vectors`.
+pub fn decomposed_w_ring_count(num_digits_open: usize, num_live_blocks: usize, t_vectors: usize)
     -> Option<usize>;
 ```
 
@@ -281,14 +281,14 @@ use akita_types::sis::*;
 let norm_s   = rounded_up_norm_s(family, d, decomp, &stage1, fold_shape, is_root, onehot_k, nu)
     .ok_or(/* InvalidSetup */)?;
 let d_commit = num_digits_s_commit(decomp, log_basis, is_root);
-let width_s  = decomposed_s_block_ring_count(block_len, d_commit).ok_or(..)?;
+let width_s  = decomposed_s_block_ring_count(num_positions_per_block, d_commit).ok_or(..)?;
 let n_a      = min_secure_rank(family, d as u32, norm_s, width_s as u64).ok_or(..)?;
 let a_key    = AjtaiKeyParams::try_new(family, n_a, width_s, norm_s, d)?;
 
 // B key
 let norm_t   = rounded_up_norm_t(family, d, log_basis).ok_or(..)?;
 let d_open   = num_digits_open(decomp, log_basis);
-let width_t  = decomposed_t_ring_count(n_a, d_open, num_blocks, t_vectors).ok_or(..)?;
+let width_t  = decomposed_t_ring_count(n_a, d_open, num_live_blocks, t_vectors).ok_or(..)?;
 let n_b      = min_secure_rank(family, d as u32, norm_t, width_t as u64).ok_or(..)?;
 let b_key    = AjtaiKeyParams::try_new(family, n_b, width_t, norm_t, d)?;
 
@@ -318,7 +318,7 @@ formula, only the wiring above). See Open Questions on inline vs. one helper.
 | `akita-types/src/sis_offline.rs` | (file) | **delete** once emptied |
 | `akita-types/src/layout/digit_math.rs` | `compute_num_digits*`, `num_digits_for_bound`, `balanced_digit_max`, `ring_product_infinity_norm_bound`, `witness_block_l1_norm`, `fold_witness_norms`, `FoldWitnessNorms`, `FoldChallengeNorms`, `compute_num_digits_fold_with_claims` | **move** → `sis/` (`decomposition_digits.rs` + `norm_bound.rs`) |
 | `akita-types/src/layout/digit_math.rs` | `gadget_row_scalars` | **stays** in `layout` (field/gadget helper, not SIS) |
-| `akita-types/src/layout/digit_math.rs` | `optimal_m_r_split` | **move** → `akita-planner` (a planning *search*, not a leaf primitive; uses only `sis` primitives) |
+| `akita-types/src/layout/digit_math.rs` | `optimal_block_geometry_split` | **move** → `akita-planner` (a planning *search*, not a leaf primitive; uses only `sis` primitives) |
 | `akita-types/src/layout/sis_derivation.rs` | `decomp_depths` | **move** → `sis/decomposition_digits.rs` |
 | `akita-types/src/layout/sis_derivation.rs` | `level_layout_from_params`, `recursive_level_layout_from_params` | **keep as orchestration**, rewired onto `sis` (these build `LevelParams`; see Open Questions on relocation) |
 | `akita-planner/src/ajtai_params.rs` | `WitnessType`, `binding_norm`, `decomposed_num_digits`, `ajtai_{a,b,d}_width_bucket`, `compute_ajtai_key_params_{a,b,d}`, `compute_all_ajtai_keys_params`, `key_with_secure_rank` | **delete** the whole file; replace call sites with the 3-step pattern (optionally one `build_level_ajtai_keys` helper) |
@@ -412,11 +412,11 @@ again inside `AjtaiKeyParams::try_new`); net lookups are unchanged or fewer.
    fold digit count directly from `decomposition_digits.rs`? β is more composable
    (the prover's abort check also needs β, not just the digit count), so the spec
    leans to β in `norm_bound.rs`.
-2. **Orchestration home.** Move `optimal_m_r_split` + the `*_layout_from_params`
+2. **Orchestration home.** Move `optimal_block_geometry_split` + the `*_layout_from_params`
    builders + the old `sis_derived_*` assembly to `akita-planner` (recommended,
    bigger diff, concentrates all planning/derivation in the planner), or keep the
    layout builders in `akita-types/layout` rewired onto `sis` (smaller diff)?
-   Either way, `optimal_m_r_split` is a *search* and should leave the `sis`
+   Either way, `optimal_block_geometry_split` is a *search* and should leave the `sis`
    module.
 3. **`akita_types::sis_floor` path.** Delete it and migrate the ~6 importers to
    `akita_types::sis::{...}` (recommended), or keep a thin re-export shim?

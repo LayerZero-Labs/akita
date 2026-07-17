@@ -27,7 +27,7 @@ use crate::CommitmentConfig;
 /// not a singleton).
 ///
 /// Tests, benches, and the `profile` example use this to pre-size per-poly
-/// inputs (e.g. `OneHotPoly`) so the `block_len` / `num_blocks` line up with
+/// inputs (e.g. `OneHotPoly`) so the `num_positions_per_block` / `num_live_blocks` line up with
 /// what `Scheme::commit` will use under the batched layout. Production
 /// callers always go through `Cfg::get_params_for_batched_commitment(&opening_batch)`
 /// instead.
@@ -50,8 +50,8 @@ where
             num_vars,
             num_polynomials,
             total_bytes = schedule.total_bytes,
-            root_m = layout.log_block_len(),
-            root_r = layout.log_num_blocks(),
+            root_m = layout.position_index_bits(),
+            root_r = layout.block_index_bits(),
             root_lb = layout.log_basis,
             "batched root split: read from runtime schedule"
         );

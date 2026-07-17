@@ -109,7 +109,7 @@ search is deterministic but not cheap at scale (CI drift tests today spend hundr
 of seconds re-running DP across all shipped keys).
 
 **Generated schedule tables** store the DP output in compact form
-(`GeneratedFoldStep`: `ring_d`, `log_basis`, `m_vars`, `r_vars`, `n_a`, `n_b`,
+(`GeneratedFoldStep`: `ring_d`, `log_basis`, `position_index_bits`, `block_index_bits`, `n_a`, `n_b`,
 `n_d`, optional tier fields). At runtime `schedule_from_entry` expands a table row
 into full `LevelParams` and a `Schedule` with correct proof-size accounting.
 

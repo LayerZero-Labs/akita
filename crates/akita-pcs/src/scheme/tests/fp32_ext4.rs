@@ -125,7 +125,7 @@ struct Fp32RingSubfieldOuterFallbackCfg;
 /// `new_unchecked` so the layout carries real buckets instead of the
 /// `0` `params_only` default. The fixture scales batched B/D widths
 /// via [`scale_batched_root_layout_unchecked`] because it is synthetic.
-fn fp32_ext4_root_lp(m_vars: usize) -> LevelParams {
+fn fp32_ext4_root_lp(position_index_bits: usize) -> LevelParams {
     use akita_types::{AjtaiKeyParams, DEFAULT_SIS_SECURITY_POLICY};
     let sis_modulus_profile = akita_types::SisModulusProfileId::Q32Offset99;
     // fp32 inner dispatch starts at D=64; fixtures pin uniform D=64.
@@ -171,7 +171,10 @@ fn fp32_ext4_root_lp(m_vars: usize) -> LevelParams {
         bd_bucket,
         d,
     );
-    params.with_decomp(m_vars, 0, 12, 12, 0).unwrap()
+    let num_positions_per_block = 1usize << position_index_bits;
+    params
+        .with_decomp(num_positions_per_block, num_positions_per_block, 12, 12)
+        .unwrap()
 }
 
 impl Fp32RingSubfieldRootFoldCfg {

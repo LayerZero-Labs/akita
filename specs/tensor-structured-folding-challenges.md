@@ -12,7 +12,7 @@
 This branch implements the tensor-structured folding-challenge optimization:
 witness folding challenges can be sampled as a tensor product of two sparse
 challenge vectors instead of as one independent sparse challenge per logical
-block. For a level with `B = 2^r` witness blocks, the tensor path samples
+block. For a level with exact live block count `B`, the tensor path samples
 `left_len + right_len ~= 2 * sqrt(B)` sparse challenges per claim and interprets
 the logical block challenge as `c_{p,q} = left_p * right_q` in
 `Z[X] / (X^D + 1)`. Relative to `main`, this branch adds the shared
@@ -66,7 +66,7 @@ benchmark matrix.
    first, a canonical SHA3-256 digest of the left vector and shape is absorbed,
    and the right vector is sampled from the updated transcript.
    `tensor_sampling_absorbs_left_digest_before_right` protects this invariant.
-3. Sampled tensor dimensions come from `tensor_split(num_blocks)`, which splits
+3. Sampled tensor dimensions come from `tensor_split(num_live_blocks)`, which splits
    `2^r` into balanced dimensions `2^{floor(r/2)}` and `2^{ceil(r/2)}`. The
    lower-level `TensorChallenges` container stores explicit left/right lengths
    and validates power-of-two dimensions, vector lengths, and product size, but
@@ -195,8 +195,8 @@ against the same transcript domain.
 ### Performance
 
 The optimization target is to reduce the verifier's challenge-dependent work
-from `O(B)` to `O(sqrt(B))` per claim, where `B = 2^r` is the number of block
-challenges at the level. In the concrete implementation, the savings apply
+from `O(B)` to `O(sqrt(B))` per claim, where `B` is the exact number of live
+block challenges at the level. In the concrete implementation, the savings apply
 where the verifier can keep the tensor factors and contract separable row
 weights directly:
 
@@ -206,8 +206,8 @@ tensor: sample left_len + right_len sparse factors per claim and contract
         weighted aggregates through the factored API
 ```
 
-For an even split, `left_len = right_len = sqrt(B)`. For an odd `r`, the split
-is balanced as `2^{floor(r/2)} x 2^{ceil(r/2)}`.
+The low factor remains a power of two; the high factor has length
+`ceil(B / fold_low_len)`, so the final tensor row may be only partially live.
 The factored verifier path is still an exact negacyclic evaluation: each
 aggregate includes a `D`-coefficient product and wrap correction. Since the
 implemented preset fixes `D = 64`, this is a constant-size correction at the
@@ -249,10 +249,10 @@ QuadraticEquation::new_prover
 sample_folding_challenges(shape = Flat | Tensor)
         |
         +-- Flat:
-        |     sample num_claims * num_blocks SparseChallenge values
+        |     sample num_claims * num_live_blocks SparseChallenge values
         |
         +-- Tensor:
-              split num_blocks = left_len * right_len
+              split num_live_blocks = left_len * right_len
               sample left[claim, p]
               absorb tensor_left_digest(left, D, num_claims, left_len)
               sample right[claim, q]
@@ -268,9 +268,9 @@ Challenges enum
 
 `ChallengeShape` is a selector, not sampled state. `Challenges` is the runtime
 state. The flat variant stores `Vec<SparseChallenge>` with explicit
-`num_blocks_per_claim` and `num_claims`. The tensor variant stores
+`num_live_blocks_per_claim` and `num_claims`. The tensor variant stores
 `TensorChallenges { left, right, left_len, right_len, num_claims }`. Sampling
-uses the balanced `tensor_split(num_blocks)` shape; explicit tensor containers
+uses the balanced `tensor_split(num_live_blocks)` shape; explicit tensor containers
 may carry any power-of-two factorization whose product matches the expected
 block count.
 
@@ -285,7 +285,7 @@ keeps that product implicit and contracts/evaluates it from the factors.
 Flat sampling:
 
 ```text
-sample_sparse_challenges(CHALLENGE_WITNESS_FOLD, num_claims * num_blocks)
+sample_sparse_challenges(CHALLENGE_WITNESS_FOLD, num_claims * num_live_blocks)
 ```
 
 Tensor sampling:
@@ -393,7 +393,7 @@ PreparedChallengeEvals::Tensor { challenges: TensorChallenges, alpha_pows: Vec<E
 
 The flat path stores `c_i(alpha)` for every logical challenge. The tensor path
 stores the factored challenges and alpha powers, validates that
-`left_len * right_len == lp.num_blocks`, and defers contraction until row
+`left_len * right_len == lp.num_live_blocks`, and defers contraction until row
 evaluation.
 
 Structured W/T row replay needs block-carry summaries of the form:
@@ -432,13 +432,13 @@ challenge_l1_mass =
 This feeds the existing fold decomposition formulas:
 
 ```text
-beta = challenge_l1_mass * num_claims * 2^(r_vars + log_basis - 1)
+beta = challenge_l1_mass * num_claims * 2^(block_index_bits + log_basis - 1)
 ```
 
 The implemented tensor preset relies on generated schedule tables. When
 materializing a generated fold entry, `akita-derive` stamps the configured
 fold shape onto the generated level params before deriving the singleton root
-layout, so that singleton fold digits and the `(m_vars, r_vars)` split observe
+layout, so that singleton fold digits and the `(position_index_bits, block_index_bits)` split observe
 `omega^2` for tensor roots.
 
 One current limitation is intentionally reflected in this spec:

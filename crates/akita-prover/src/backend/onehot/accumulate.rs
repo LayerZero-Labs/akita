@@ -2,7 +2,7 @@ use super::*;
 
 /// Accumulates one-hot decompose-fold rows in compressed position order.
 ///
-/// The returned vector has `block_len` rows. Callers expand each row across
+/// The returned vector has `num_positions_per_block` rows. Callers expand each row across
 /// `num_digits` later, inserting zero rows for higher digit planes.
 ///
 /// `blocks` is a slice-of-slices view over per-block entries. Both
@@ -12,8 +12,8 @@ use super::*;
 pub(super) fn onehot_accumulate<E, const D: usize>(
     blocks: &[&[E]],
     challenges: &[SparseChallenge],
-    num_blocks: usize,
-    block_len: usize,
+    num_live_blocks: usize,
+    num_positions_per_block: usize,
 ) -> Vec<[i32; D]>
 where
     E: OneHotEntry,
@@ -23,21 +23,21 @@ where
     #[cfg(not(feature = "parallel"))]
     let num_threads = 1;
 
-    let actual_threads = num_threads.min(block_len).max(1);
-    let pos_chunk = block_len.div_ceil(actual_threads);
+    let actual_threads = num_threads.min(num_positions_per_block).max(1);
+    let pos_chunk = num_positions_per_block.div_ceil(actual_threads);
 
     let chunks: Vec<Vec<[i32; D]>> = cfg_into_iter!(0..actual_threads)
         .map(|tid| {
             let pos_start = tid * pos_chunk;
-            if pos_start >= block_len {
+            if pos_start >= num_positions_per_block {
                 return Vec::new();
             }
-            let pos_end = (pos_start + pos_chunk).min(block_len);
+            let pos_end = (pos_start + pos_chunk).min(num_positions_per_block);
             let len = pos_end - pos_start;
             let mut acc = vec![[0i32; D]; len];
             let mut rotated = vec![[0i16; D]; D];
 
-            for (block_idx, challenge) in challenges.iter().enumerate().take(num_blocks) {
+            for (block_idx, challenge) in challenges.iter().enumerate().take(num_live_blocks) {
                 let entries = blocks[block_idx];
                 let lo = entries.partition_point(|entry| entry.pos_in_block() < pos_start);
                 let hi = entries.partition_point(|entry| entry.pos_in_block() < pos_end);
@@ -72,39 +72,54 @@ where
 pub(super) fn onehot_accumulate_tensor<E, const D: usize>(
     blocks: &[&[E]],
     tensor: &TensorChallengeSet,
-    _num_blocks: usize,
-    block_len: usize,
+    num_live_blocks: usize,
+    num_positions_per_block: usize,
 ) -> Result<Vec<[i64; D]>, AkitaError>
 where
     E: OneHotEntry,
 {
+    let tensor_blocks = tensor.total_blocks()?;
+    if tensor_blocks != num_live_blocks {
+        return Err(AkitaError::InvalidSize {
+            expected: num_live_blocks,
+            actual: tensor_blocks,
+        });
+    }
+    if blocks.len() != num_live_blocks {
+        return Err(AkitaError::InvalidSize {
+            expected: num_live_blocks,
+            actual: blocks.len(),
+        });
+    }
     #[cfg(feature = "parallel")]
     let num_threads = rayon::current_num_threads();
     #[cfg(not(feature = "parallel"))]
     let num_threads = 1;
 
-    let actual_threads = num_threads.min(block_len).max(1);
-    let pos_chunk = block_len.div_ceil(actual_threads);
+    let actual_threads = num_threads.min(num_positions_per_block).max(1);
+    let pos_chunk = num_positions_per_block.div_ceil(actual_threads);
 
     let chunks: Vec<Vec<[i64; D]>> = cfg_into_iter!(0..actual_threads)
         .map(|tid| {
             let pos_start = tid * pos_chunk;
-            if pos_start >= block_len {
+            if pos_start >= num_positions_per_block {
                 return Ok(Vec::new());
             }
-            let pos_end = (pos_start + pos_chunk).min(block_len);
+            let pos_end = (pos_start + pos_chunk).min(num_positions_per_block);
             let len = pos_end - pos_start;
             let mut acc = vec![[0i64; D]; len];
             let mut tmp = vec![[0i64; D]; len];
             let mut rotated = vec![[0i64; D]; D];
 
             for claim_idx in 0..tensor.num_claims {
-                for left_idx in 0..tensor.left_len {
+                for high_idx in 0..tensor.fold_high_len() {
                     tmp.fill([0i64; D]);
-                    for right_idx in 0..tensor.right_len {
-                        let block_idx = claim_idx * tensor.left_len * tensor.right_len
-                            + left_idx * tensor.right_len
-                            + right_idx;
+                    for low_idx in 0..tensor.fold_low_len {
+                        let local_block = high_idx * tensor.fold_low_len + low_idx;
+                        if local_block >= tensor.num_live_blocks_per_claim {
+                            break;
+                        }
+                        let block_idx = claim_idx * tensor.num_live_blocks_per_claim + local_block;
                         let entries = blocks[block_idx];
                         let lo = entries.partition_point(|entry| entry.pos_in_block() < pos_start);
                         let hi = entries.partition_point(|entry| entry.pos_in_block() < pos_end);
@@ -112,8 +127,8 @@ where
                             continue;
                         }
 
-                        let right = &tensor.right[claim_idx * tensor.right_len + right_idx];
-                        fill_rotated_sparse_challenge_i64::<D>(&mut rotated, right);
+                        let fold_low = &tensor.fold_low[claim_idx * tensor.fold_low_len + low_idx];
+                        fill_rotated_sparse_challenge_i64::<D>(&mut rotated, fold_low);
 
                         for entry in &entries[lo..hi] {
                             let dst = &mut tmp[entry.pos_in_block() - pos_start];
@@ -125,9 +140,10 @@ where
                             }
                         }
                     }
-                    let left = &tensor.left[claim_idx * tensor.left_len + left_idx];
+                    let fold_high =
+                        &tensor.fold_high[claim_idx * tensor.fold_high_len() + high_idx];
                     for (src, dst) in tmp.iter().zip(acc.iter_mut()) {
-                        sparse_i64_mul_acc_i64::<D>(src, left, dst);
+                        sparse_i64_mul_acc_i64::<D>(src, fold_high, dst);
                     }
                 }
             }

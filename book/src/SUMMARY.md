@@ -21,7 +21,7 @@
   - [Setup and commitment](./how/commitment.md)
   - [Transcript and instance binding](./how/transcript.md)
   - [The proving protocol](./how/proving/proving.md)
-    - [Opening points and block order](./how/proving/opening-points-block-order.md)
+    - [Opening points and digit-innermost layout](./how/proving/opening-points-layout.md)
     - [Root fold and ring switching](./how/proving/root-fold-ring-switch.md)
     - [Sumcheck stages](./how/proving/sumcheck-stages.md)
     - [Extension-opening reduction](./how/proving/extension-opening-reduction.md)

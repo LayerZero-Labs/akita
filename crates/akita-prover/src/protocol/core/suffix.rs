@@ -183,7 +183,13 @@ where
             } else {
                 None
             },
-        )?;
+        )
+        .map_err(|err| {
+            AkitaError::InvalidInput(format!(
+                "suffix fold level {level} d_a={} failed: {err:?}",
+                role_dims.d_a()
+            ))
+        })?;
         if is_terminal_level {
             break out.get_terminal()?;
         }
@@ -281,7 +287,11 @@ where
     let role_dims = level_params.role_dims();
     let commit_d = role_dims.d_b();
     if !commitment.can_decode_vec(commit_d) {
-        return Err(AkitaError::InvalidProof);
+        return Err(AkitaError::InvalidInput(format!(
+            "suffix commitment length {} is not decodable at B-role dimension {}",
+            commitment.coeffs().len(),
+            commit_d,
+        )));
     }
     // D-free suffix hint: the cache carries the flat `AkitaCommitmentHint<F>`
     // directly (Slice A re-homed the recomposed rows), so there is no typed
@@ -320,7 +330,7 @@ where
         RecursiveFoldSource::setup_prefix(Arc::clone(expanded), Arc::new(slot.clone()))
     });
     let setup_polys_storage = setup_source_storage.as_ref().map(|source| [source]);
-    let (fold_claims, eor_opening_batch, protocol_point) =
+    let (block_claims, eor_opening_batch, protocol_point) =
         ProverOpeningData::new_recursive_suffix_fold(
             opening_point,
             recursive_num_vars,
@@ -336,11 +346,10 @@ where
         .into_iter()
         .chain(std::iter::once(&logical_witness_source))
         .collect::<Vec<_>>();
-
     prepare_fold_inner::<F, E, T, _, _, C, O, TS, R>(
         stack,
         needs_extension_reduction,
-        fold_claims,
+        block_claims,
         &logical_polys,
         &eor_opening_batch,
         true,
@@ -350,10 +359,10 @@ where
         level_params,
         alpha,
         BasisMode::Lagrange,
-        BlockOrder::ColumnMajor,
         relation_matrix_row_layout,
         terminal_tail_t_vectors,
     )
+    .map_err(|err| AkitaError::InvalidInput(format!("suffix fold preparation failed: {err:?}")))
 }
 
 #[cfg(test)]
@@ -372,12 +381,12 @@ mod tests {
         let prepared_point = PreparedOpeningPoint::from_parts::<D>(
             Vec::new(),
             RingOpeningPoint {
-                a: vec![TestF::one()],
-                b: vec![TestF::one()],
+                position_weights: vec![TestF::one()],
+                live_block_weights: vec![TestF::one()],
             },
             RingMultiplierOpeningPoint::from_base(&RingOpeningPoint {
-                a: vec![TestF::one()],
-                b: vec![TestF::one()],
+                position_weights: vec![TestF::one()],
+                live_block_weights: vec![TestF::one()],
             }),
             CyclotomicRing::<TestF, D>::zero(),
         );
@@ -410,6 +419,9 @@ mod tests {
             Err(err) => err,
         };
 
-        assert!(matches!(err, AkitaError::InvalidProof));
+        assert!(
+            matches!(err, AkitaError::InvalidProof),
+            "unexpected error: {err:?}"
+        );
     }
 }

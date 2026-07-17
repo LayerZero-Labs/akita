@@ -530,8 +530,10 @@ mod tests {
         crate::PrecommittedLevelParams {
             layout: crate::PrecommittedGroupParams {
                 group: crate::PolynomialGroupLayout::singleton(n_prefix.trailing_zeros() as usize),
-                m_vars: 0,
-                r_vars: 0,
+                num_live_ring_elements_per_claim: n_prefix / d_setup,
+                num_positions_per_block: 1,
+                num_live_blocks: n_prefix / d_setup,
+                fold_challenge_shape: akita_challenges::TensorChallengeShape::Flat,
                 log_basis: 1,
                 n_a: 1,
                 conservative_n_b: 1,
@@ -556,8 +558,6 @@ mod tests {
                 1,
                 d_setup,
             ),
-            num_blocks: 1,
-            block_len: n_prefix / d_setup,
             num_digits_commit: 1,
             num_digits_open: 1,
             num_digits_fold_one: 1,

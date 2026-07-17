@@ -1,15 +1,15 @@
 //! Verifier for the Akita stage-2 fused sumcheck.
 
 use crate::protocol::ring_switch::RelationMatrixEvaluator;
-use akita_algebra::eq_poly::EqPolynomial;
+use akita_algebra::eq_poly::{EqPolynomial, SplitEqEvals};
 use akita_field::{
     AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, HalvingField,
     MulBaseUnreduced,
 };
-use akita_sumcheck::{multilinear_eval, SumcheckInstanceVerifier};
+use akita_sumcheck::SumcheckInstanceVerifier;
 use akita_types::{
     dispatch_for_field, eval_dense_trace_table, eval_trace_terms_closed, AkitaExpandedSetup,
-    CleartextWitnessProof, FpExtEncoding, OpeningClaimsLayout, TraceClaim,
+    CleartextWitnessProof, FpExtEncoding, OpeningClaimsLayout, RingRelationInstance, TraceClaim,
 };
 use std::borrow::Cow;
 use std::marker::PhantomData;
@@ -31,14 +31,15 @@ where
 
     let (y_challenges, x_challenges) = challenges.split_at(ring_bits);
     let eq_y = EqPolynomial::evals(y_challenges)?;
-    let eq_x = EqPolynomial::evals(x_challenges)?;
+    let eq_x = SplitEqEvals::new(x_challenges)?;
     let live_x_cols = witness_len / y_len;
     if live_x_cols > eq_x.len() {
         return Err(AkitaError::InvalidProof);
     }
 
     let mut acc = E::zero();
-    for (x, &x_weight) in eq_x.iter().take(live_x_cols).enumerate() {
+    for x in 0..live_x_cols {
+        let x_weight = eq_x.eval_at(x)?;
         let base = x * y_len;
         let mut y_eval = E::zero();
         for (y, &y_weight) in eq_y.iter().enumerate() {
@@ -136,43 +137,10 @@ where
         CleartextWitnessProof::SegmentTyped(_) => {
             let digits =
                 dispatch_for_field!(ProtocolDispatchSlot::Role(RingRole::Inner), F, d_a, |D| {
-                    if !lp.precommitted_groups.is_empty() {
+                    if lp.has_precommitted_groups() || opening_batch.num_groups() != 1 {
                         return Err(AkitaError::InvalidProof);
                     }
-                    if lp.setup_prefix.is_some() {
-                        let order = opening_batch.root_group_order()?;
-                        let mut groups = Vec::with_capacity(order.len());
-                        for &group_index in &order {
-                            let params = lp.group_params(opening_batch, group_index)?;
-                            let layout_index = groups.len();
-                            witness
-                                .as_segment_typed()
-                                .ok_or(AkitaError::InvalidProof)?
-                                .layout
-                                .groups
-                                .get(layout_index)
-                                .ok_or(AkitaError::InvalidProof)?;
-                            let (num_w_vectors, num_t_vectors, num_z_segments) =
-                                akita_types::tail_segment_multiplicities_from_layout_for_params(
-                                    params,
-                                    lp.ring_dimension,
-                                    &witness
-                                        .as_segment_typed()
-                                        .ok_or(AkitaError::InvalidProof)?
-                                        .layout,
-                                    layout_index,
-                                )?;
-                            groups.push((params, num_w_vectors, num_t_vectors, num_z_segments));
-                        }
-                        akita_types::expand_segment_typed_to_i8_digits_for_groups::<D, F>(
-                            witness.as_segment_typed().ok_or(AkitaError::InvalidProof)?,
-                            lp,
-                            groups,
-                            F::modulus_bits(),
-                        )
-                    } else {
-                        witness.logical_i8_digits::<D>(lp, num_segments)
-                    }
+                    witness.logical_i8_digits::<D>(lp, num_segments)
                 })?;
             if digits.len() != physical_w_len {
                 return Err(AkitaError::InvalidProof);
@@ -199,10 +167,10 @@ pub(crate) struct AkitaStage2Verifier<'a, F: FieldCore, E: FieldCore, const D: u
     s_claim: E,
     witness_oracle: Stage2WitnessOracle<'a, F, E>,
     stage1_point: Vec<E>,
-    alpha_evals_y: Vec<E>,
     relation_matrix_evaluator: RelationMatrixEvaluator<E>,
     setup_claim: Option<E>,
     setup: &'a AkitaExpandedSetup<F>,
+    relation_instance: &'a RingRelationInstance<F>,
     alpha: E,
     col_bits: usize,
     ring_bits: usize,
@@ -225,12 +193,12 @@ where
         s_claim: E,
         witness_oracle: Stage2WitnessOracle<'a, F, E>,
         stage1_point: Vec<E>,
-        alpha_evals_y: Vec<E>,
         relation_matrix_evaluator: RelationMatrixEvaluator<E>,
-        setup_claim: Option<E>,
         setup: &'a AkitaExpandedSetup<F>,
-        relation_claim: E,
+        relation_instance: &'a RingRelationInstance<F>,
         alpha: E,
+        setup_claim: Option<E>,
+        relation_claim: E,
         col_bits: usize,
         ring_bits: usize,
         trace: Option<TraceClaim<F, E, D>>,
@@ -244,29 +212,15 @@ where
                 actual: stage1_point.len(),
             });
         }
-        let expected_alpha_len = 1usize
-            .checked_shl(
-                u32::try_from(ring_bits).map_err(|_| AkitaError::InvalidSize {
-                    expected: usize::BITS as usize,
-                    actual: ring_bits,
-                })?,
-            )
-            .ok_or(AkitaError::InvalidProof)?;
-        if alpha_evals_y.len() != expected_alpha_len {
-            return Err(AkitaError::InvalidSize {
-                expected: expected_alpha_len,
-                actual: alpha_evals_y.len(),
-            });
-        }
         Ok(Self {
             batching_coeff,
             s_claim,
             witness_oracle,
             stage1_point,
-            alpha_evals_y,
             relation_matrix_evaluator,
             setup_claim,
             setup,
+            relation_instance,
             alpha,
             col_bits,
             ring_bits,
@@ -290,15 +244,6 @@ where
             ),
             Stage2WitnessOracle::ClaimedEval { eval, .. } => Ok(*eval),
         }
-    }
-
-    fn evaluate_relation_matrix(&self, x_challenges: &[E]) -> Result<E, AkitaError> {
-        self.relation_matrix_evaluator.eval_at_point::<F, D>(
-            x_challenges,
-            self.setup,
-            self.alpha,
-            self.setup_claim,
-        )
     }
 }
 
@@ -331,12 +276,14 @@ where
         };
 
         let (y_challenges, x_challenges) = challenges.split_at(self.ring_bits);
-        let alpha_val = multilinear_eval(&self.alpha_evals_y, y_challenges)?;
-        let row_val = {
-            let _span = tracing::info_span!("stage2_relation_matrix_eval").entered();
-            self.evaluate_relation_matrix(x_challenges)?
-        };
-        let relation_oracle = w_eval * alpha_val * row_val;
+        let relation_weight = self.relation_matrix_evaluator.eval_flat_at_point::<F, D>(
+            challenges,
+            self.setup,
+            self.relation_instance,
+            self.alpha,
+            self.setup_claim,
+        )?;
+        let relation_oracle = w_eval * relation_weight;
         let trace_oracle = if let Some(trace) = &self.trace {
             // Scalar/recursive folds use one layout; multi-group roots use one
             // closed-form batch per group because their e-hat segments have
@@ -344,6 +291,7 @@ where
             let trace_weight = if let Some(dense_evals) = &trace.dense_evals {
                 eval_dense_trace_table::<E>(dense_evals, y_challenges, x_challenges)?
             } else if !trace.trace_term_batches.is_empty() {
+                let (trace_y, trace_x) = challenges.split_at(trace.layout.ring_bits);
                 trace
                     .trace_term_batches
                     .iter()
@@ -351,17 +299,18 @@ where
                         Ok::<E, AkitaError>(
                             acc + eval_trace_terms_closed::<F, E, D>(
                                 &batch.layout,
-                                y_challenges,
-                                x_challenges,
+                                trace_y,
+                                trace_x,
                                 &batch.terms,
                             )?,
                         )
                     })?
             } else {
+                let (trace_y, trace_x) = challenges.split_at(trace.layout.ring_bits);
                 eval_trace_terms_closed::<F, E, D>(
                     &trace.layout,
-                    y_challenges,
-                    x_challenges,
+                    trace_y,
+                    trace_x,
                     &trace.trace_terms,
                 )?
             };

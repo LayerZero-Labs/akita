@@ -22,6 +22,7 @@ impl<E: FieldCore> SetupContributionGroupPlan<E> {
         &self,
         setup_view: &RingMatrixView<'_, F, BASE_D>,
         base_pows: &[E],
+        d_weights: &[E],
         a_projection: &RoleProjection<E>,
         b_projection: &RoleProjection<E>,
         d_projection: &RoleProjection<E>,
@@ -47,7 +48,7 @@ impl<E: FieldCore> SetupContributionGroupPlan<E> {
         }
 
         if a_projection.is_identity() && b_projection.is_identity() && d_projection.is_identity() {
-            let (_, segments) = self.packed_segments(d_rows, d_physical_cols)?;
+            let (_, segments) = self.packed_segments(d_weights, d_rows, d_physical_cols)?;
             let sum = cfg_fold_reduce!(
                 0..segments.len(),
                 E::zero,
@@ -82,11 +83,12 @@ impl<E: FieldCore> SetupContributionGroupPlan<E> {
             a_projection,
             b_projection,
             d_projection,
+            d_weights,
             d_rows,
             d_physical_cols,
             required,
         )?;
-        let d_weights = ProjectedRoleWeights::new(&self.d_weights, d_projection);
+        let d_weights = ProjectedRoleWeights::new(d_weights, d_projection);
         let b_weights = ProjectedRoleWeights::new(&self.b_weights, b_projection);
         let a_row_weights = ProjectedRoleWeights::new(&self.a_row_weights, a_projection);
 
@@ -126,11 +128,12 @@ impl<E: FieldCore> SetupContributionGroupPlan<E> {
         a_projection: &RoleProjection<E>,
         b_projection: &RoleProjection<E>,
         d_projection: &RoleProjection<E>,
+        d_weights: &[E],
         d_rows: usize,
         d_physical_cols: usize,
         required: usize,
     ) -> Result<BaseRingSegments<'a, E>, AkitaError> {
-        let (_, segments) = self.packed_segments(d_rows, d_physical_cols)?;
+        let (_, segments) = self.packed_segments(d_weights, d_rows, d_physical_cols)?;
         if a_projection.is_identity() && b_projection.is_identity() && d_projection.is_identity() {
             return Ok(BaseRingSegments::Borrowed(segments));
         }
@@ -139,6 +142,7 @@ impl<E: FieldCore> SetupContributionGroupPlan<E> {
             a_projection,
             b_projection,
             d_projection,
+            d_weights,
             d_rows,
             d_physical_cols,
             required,
@@ -152,6 +156,7 @@ impl<E: FieldCore> SetupContributionGroupPlan<E> {
         a_projection: &RoleProjection<E>,
         b_projection: &RoleProjection<E>,
         d_projection: &RoleProjection<E>,
+        d_weights: &[E],
         d_rows: usize,
         d_physical_cols: usize,
         required: usize,
@@ -175,7 +180,7 @@ impl<E: FieldCore> SetupContributionGroupPlan<E> {
             &mut endpoints,
             d_rows,
             d_physical_cols,
-            self.e_col_offset,
+            self.d_col_range.start,
             self.e_eq_slice.len(),
             d_projection.ratio(),
         )?;
@@ -196,10 +201,6 @@ impl<E: FieldCore> SetupContributionGroupPlan<E> {
         endpoints.sort_unstable();
         endpoints.dedup();
 
-        let e_end = self
-            .e_col_offset
-            .checked_add(self.e_eq_slice.len())
-            .ok_or_else(|| AkitaError::InvalidSetup("setup D active columns overflow".into()))?;
         let segments = (0..endpoints.len().saturating_sub(1))
             .filter_map(|idx| {
                 let lo = endpoints[idx];
@@ -214,19 +215,15 @@ impl<E: FieldCore> SetupContributionGroupPlan<E> {
                         false
                     } else {
                         let d_col = d_idx % d_physical_cols;
-                        d_col >= self.e_col_offset && d_col < e_end
+                        self.d_col_range.contains(&d_col)
                     };
                 let d_row = if has_d { d_idx / d_physical_cols } else { 0 };
                 let d_start_abs = if has_d {
-                    d_row * d_physical_cols + self.e_col_offset
+                    d_row * d_physical_cols + self.d_col_range.start
                 } else {
                     0
                 };
-                let d_weight = if has_d {
-                    self.d_weights[d_row]
-                } else {
-                    E::zero()
-                };
+                let d_weight = if has_d { d_weights[d_row] } else { E::zero() };
 
                 let b_idx = lo >> b_projection.shift;
                 let has_b = self.t_cols != 0 && b_idx < b_required;

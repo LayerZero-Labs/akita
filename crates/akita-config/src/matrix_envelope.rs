@@ -86,7 +86,7 @@ fn include_matrix(
     Ok(())
 }
 
-/// Include the rounded prefix storage and A/B footprints for one setup-prefix slot.
+/// Include the padded prefix storage and A/B footprints for one setup-prefix slot.
 ///
 /// The D footprint is not slot-local: it uses the consuming fold's shared
 /// `d_key` over the main group plus every precommitted/setup-prefix `e_hat`
@@ -95,15 +95,18 @@ fn include_matrix(
 /// # Errors
 ///
 /// Returns [`AkitaError::InvalidSetup`] when the slot shape overflows `usize` or
-/// has an invalid padded length.
+/// has an invalid setup dimension.
 pub(crate) fn inflate_envelope_for_setup_prefix_slot(
     envelope: &mut SetupMatrixEnvelope,
     slot: &SetupPrefixSlotId,
 ) -> Result<(), AkitaError> {
     let n_prefix = slot.n_prefix()?;
-    let prefix_ring_len = n_prefix.checked_div(slot.d_setup).ok_or_else(|| {
-        AkitaError::InvalidSetup("setup-prefix slot has invalid padded length".to_string())
-    })?;
+    if slot.d_setup == 0 || !n_prefix.is_multiple_of(slot.d_setup) {
+        return Err(AkitaError::InvalidSetup(
+            "setup-prefix slot has invalid setup dimension".to_string(),
+        ));
+    }
+    let prefix_ring_len = n_prefix / slot.d_setup;
     let params = &slot.commitment_params;
     envelope.max_setup_len = envelope.max_setup_len.max(prefix_ring_len);
     include_matrix(

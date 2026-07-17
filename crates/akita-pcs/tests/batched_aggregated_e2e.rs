@@ -33,7 +33,7 @@ use common::*;
 const DENSE_ONEHOT_K: usize = DENSE_D;
 
 fn make_dense_cfg_onehot_poly(layout: &LevelParams, seed: u64) -> OneHotPoly<F, u8> {
-    let total_ring = layout.num_blocks * layout.block_len;
+    let total_ring = layout.num_live_blocks * layout.num_positions_per_block;
     let mut rng = StdRng::seed_from_u64(seed);
     let indices: Vec<Option<u8>> = (0..total_ring)
         .map(|_| Some(rng.gen_range(0..DENSE_ONEHOT_K) as u8))

@@ -79,21 +79,6 @@ pub(super) use dispatch_segment_roles;
 
 impl<E: FieldCore> GroupSetupSegment<E> {
     #[inline(always)]
-    pub(super) fn weight_at(&self, setup_idx: usize, e_eq: &[E], t_eq: &[E], z_eq: &[E]) -> E {
-        let mut weight = E::zero();
-        if self.has_d {
-            weight += self.d_weight_at(setup_idx, e_eq);
-        }
-        if self.has_b {
-            weight += self.b_weight_at(setup_idx, t_eq);
-        }
-        if self.has_a {
-            weight += self.a_row_weight_at(setup_idx, z_eq);
-        }
-        weight
-    }
-
-    #[inline(always)]
     pub(super) fn typed_weight_at<const HAS_D: bool, const HAS_B: bool, const HAS_A: bool>(
         &self,
         setup_idx: usize,
@@ -160,13 +145,14 @@ impl<E: FieldCore> RoleProjection<E> {
 pub(super) fn role_projection<E: FieldCore>(
     alpha_pows: &[E],
     base_pows: &[E],
+    expected_ratio: usize,
 ) -> Option<RoleProjection<E>> {
     let base_d = base_pows.len();
     if base_d == 0 || !alpha_pows.len().is_multiple_of(base_d) {
         return None;
     }
     let ratio = alpha_pows.len() / base_d;
-    if ratio == 0 || !ratio.is_power_of_two() {
+    if ratio != expected_ratio {
         return None;
     }
     if ratio == 1 {

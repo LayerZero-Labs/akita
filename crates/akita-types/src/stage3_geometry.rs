@@ -127,7 +127,7 @@ impl BatchedStage3Geometry {
     }
 
     /// Coordinate routing for a setup-prefix group in the next suffix opening batch.
-    pub fn setup_prefix_column_major_point_vars(
+    pub fn setup_prefix_point_vars(
         setup_prefix_point_len: usize,
         setup_prefix_id: &SetupPrefixSlotId,
         offset: usize,
@@ -140,9 +140,18 @@ impl BatchedStage3Geometry {
         }
         let ring_bits = setup_prefix_id.d_setup.trailing_zeros() as usize;
         let params = &setup_prefix_id.commitment_params;
+        let position_index_bits = params.layout.num_positions_per_block.trailing_zeros() as usize;
+        let block_index_bits = params
+            .layout
+            .num_live_blocks
+            .checked_next_power_of_two()
+            .map(|capacity| capacity.trailing_zeros() as usize)
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup("setup-prefix block-index domain size overflow".into())
+            })?;
         let expected = ring_bits
-            .checked_add(params.layout.r_vars)
-            .and_then(|n| n.checked_add(params.layout.m_vars))
+            .checked_add(position_index_bits)
+            .and_then(|n| n.checked_add(block_index_bits))
             .ok_or_else(|| AkitaError::InvalidSetup("setup-prefix point length overflow".into()))?;
         if setup_prefix_point_len != expected {
             return Err(AkitaError::InvalidPointDimension {
@@ -150,13 +159,10 @@ impl BatchedStage3Geometry {
                 actual: setup_prefix_point_len,
             });
         }
-        let mut indices = Vec::with_capacity(expected);
-        indices.extend(offset..offset + ring_bits);
-        indices.extend(
-            offset + ring_bits + params.layout.m_vars
-                ..offset + ring_bits + params.layout.m_vars + params.layout.r_vars,
-        );
-        indices.extend(offset + ring_bits..offset + ring_bits + params.layout.m_vars);
+        let end = offset
+            .checked_add(expected)
+            .ok_or_else(|| AkitaError::InvalidSetup("setup-prefix point range overflow".into()))?;
+        let indices = (offset..end).collect();
         PointVariableSelection::new(indices, shared_point_len)
     }
 
@@ -218,16 +224,16 @@ mod tests {
             commitment_params: PrecommittedLevelParams {
                 layout: PrecommittedGroupParams {
                     group: PolynomialGroupLayout::singleton(8),
-                    m_vars: 2,
-                    r_vars: 1,
+                    num_live_ring_elements_per_claim: 8,
+                    num_positions_per_block: 4,
+                    num_live_blocks: 2,
+                    fold_challenge_shape: akita_challenges::TensorChallengeShape::Flat,
                     log_basis: 3,
                     n_a: 1,
                     conservative_n_b: 1,
                 },
                 a_key,
                 b_key,
-                num_blocks: 1,
-                block_len: 1,
                 num_digits_commit: 1,
                 num_digits_open: 1,
                 num_digits_fold_one: 1,
@@ -288,10 +294,10 @@ mod tests {
     }
 
     #[test]
-    fn setup_prefix_column_major_point_vars_match_existing_order() {
+    fn setup_prefix_point_vars_follow_exact_physical_order() {
         let id = test_prefix_id();
-        let selection = BatchedStage3Geometry::setup_prefix_column_major_point_vars(8, &id, 1, 10)
-            .expect("selection");
-        assert_eq!(selection.indices(), &[1, 2, 3, 4, 5, 8, 6, 7]);
+        let selection =
+            BatchedStage3Geometry::setup_prefix_point_vars(8, &id, 1, 10).expect("selection");
+        assert_eq!(selection.indices(), &[1, 2, 3, 4, 5, 6, 7, 8]);
     }
 }

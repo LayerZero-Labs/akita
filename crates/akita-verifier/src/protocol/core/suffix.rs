@@ -19,12 +19,11 @@ pub(super) struct SuffixVerifierState<'a, F: FieldCore, E: FieldCore> {
 
 fn prepare_suffix_group_points<F, E>(
     protocol_point: &[E],
-    fold_claims: &OpeningClaims<'_, E>,
+    block_claims: &OpeningClaims<'_, E>,
     lp: &LevelParams,
     opening_batch: &OpeningClaimsLayout,
     role_d_a: usize,
     alpha_bits: usize,
-    block_order: BlockOrder,
 ) -> Result<Vec<PreparedOpeningPoint<F, E>>, AkitaError>
 where
     F: FieldCore + CanonicalField,
@@ -39,12 +38,12 @@ where
             for group_index in 0..opening_batch.num_groups() {
                 let group_lp = lp.group_params(opening_batch, group_index)?;
                 let target_len = alpha_bits
-                    .checked_add(group_lp.m_vars())
-                    .and_then(|n| n.checked_add(group_lp.r_vars()))
+                    .checked_add(group_lp.position_index_bits())
+                    .and_then(|n| n.checked_add(group_lp.block_index_bits()))
                     .ok_or_else(|| {
                         AkitaError::InvalidSetup("group opening point length overflow".to_string())
                     })?;
-                let point_vars = fold_claims.group_point_vars(group_index)?;
+                let point_vars = block_claims.group_point_vars(group_index)?;
                 if point_vars.num_vars() != target_len {
                     return Err(AkitaError::InvalidInput(format!(
                         "suffix group point width mismatch: group={group_index}, \
@@ -67,10 +66,9 @@ where
                 prepared_points.push(prepare_opening_point::<F, E, D>(
                     &group_protocol_point,
                     BasisMode::Lagrange,
-                    group_lp.m_vars(),
-                    group_lp.r_vars(),
+                    group_lp.num_positions_per_block(),
+                    group_lp.num_live_blocks(),
                     alpha_bits,
-                    block_order,
                 )?);
             }
             Ok(prepared_points)
@@ -150,7 +148,6 @@ fn prepare_fold_replay<'a, F, E, T>(
     transcript: &mut T,
     current_state: &'a SuffixVerifierState<'a, F, E>,
     scheduled: &'a ExecutionSchedule,
-    block_order: BlockOrder,
     _setup_contribution_mode: SetupContributionMode,
 ) -> Result<PreparedFoldReplay<'a, F, E>, AkitaError>
 where
@@ -183,7 +180,7 @@ where
         transcript,
     )?;
     let recursive_num_vars = lp.recursive_opening_num_vars()?;
-    let fold_claims = match (
+    let block_claims = match (
         &current_state.setup_prefix_opening,
         lp.setup_prefix.as_ref(),
     ) {
@@ -192,7 +189,7 @@ where
                 setup_prefix_point,
                 current_state.opening_point.as_slice(),
             )?;
-            let setup_point_vars = BatchedStage3Geometry::setup_prefix_column_major_point_vars(
+            let setup_point_vars = BatchedStage3Geometry::setup_prefix_point_vars(
                 setup_prefix_point.len(),
                 setup_prefix_id,
                 setup_offset,
@@ -223,10 +220,10 @@ where
         }
         _ => return Err(AkitaError::InvalidProof),
     };
-    let opening_batch = fold_claims.layout()?;
+    let opening_batch = block_claims.layout()?;
     let openings = (0..opening_batch.num_groups())
         .flat_map(|group_index| {
-            fold_claims
+            block_claims
                 .group_evaluations(group_index)
                 .map(|evals| evals.to_vec())
                 .unwrap_or_default()
@@ -245,13 +242,12 @@ where
         ..
     } = verify_fold_eor::<F, E, T>(
         proof.extension_opening_reduction(),
-        fold_claims.point(),
+        block_claims.point(),
         &openings,
         &row_coefficients,
         &opening_batch,
         current_state.basis,
         lp,
-        block_order,
         requires_extension_reduction,
         transcript,
     )?;
@@ -262,13 +258,12 @@ where
         prepared_points
     } else {
         prepare_suffix_group_points::<F, E>(
-            fold_claims.point(),
-            &fold_claims,
+            block_claims.point(),
+            &block_claims,
             lp,
             &opening_batch,
             role_dims.d_a(),
             alpha_bits,
-            block_order,
         )?
     };
     for prepared_point in &prepared_points {
@@ -287,15 +282,10 @@ where
         if final_witness.as_segment_typed().is_none() {
             return Err(AkitaError::InvalidProof);
         }
-        let layout = TerminalWitnessSegmentLayout {
-            e_hat_digit_offset: 0,
-            e_hat_digit_count: 1,
-        };
         Some(prepare_terminal_witness_replay::<F, T>(
             transcript,
             final_witness,
             final_w_len,
-            layout,
         )?)
     } else {
         None
@@ -322,6 +312,14 @@ where
     };
     let commitment_rows =
         suffix_commitment_rows(setup, lp, &opening_batch, current_state.commitment)?;
+    let next_opening_ring_dim = if scheduled.is_terminal {
+        lp.role_dims().d_a()
+    } else {
+        scheduled.next_params.role_dims().d_a()
+    };
+    if !w_len.is_multiple_of(next_opening_ring_dim) {
+        return Err(AkitaError::InvalidProof);
+    }
     Ok(PreparedFoldReplay {
         lp,
         relation_matrix_row_layout,
@@ -343,6 +341,9 @@ where
         stage2,
         next_w_commitment,
         next_ring_dim: (!scheduled.is_terminal).then_some(scheduled.next_params.role_dims().d_b()),
+        next_witness_ring_dim: (!scheduled.is_terminal)
+            .then_some(scheduled.next_params.role_dims().d_a()),
+        next_opening_source_len: w_len / next_opening_ring_dim,
         terminal_replay,
         stage3,
         trace_prepared_points: Some(prepared_points),
@@ -351,7 +352,6 @@ where
         trace_eval_scale,
         trace_claim_scales: None,
         trace_basis: current_state.basis,
-        block_order,
     })
 }
 
@@ -396,7 +396,7 @@ where
         let _carried_setup_prefix = &current_state.setup_prefix_opening;
         let role_dims = current_lp.role_dims();
         let commit_d = role_dims.d_b();
-        let witness_d = role_dims.d_a();
+        let opening_d = role_dims.d_d();
         match step {
             AkitaLevelProof::Intermediate { .. } => {
                 let level_proof = step;
@@ -404,7 +404,7 @@ where
                     return Err(AkitaError::InvalidProof);
                 }
                 if !current_state.commitment.can_decode_vec(commit_d)
-                    || !level_proof.v().can_decode_vec(witness_d)
+                    || !level_proof.v().can_decode_vec(opening_d)
                 {
                     return Err(AkitaError::InvalidProof);
                 }
@@ -420,7 +420,6 @@ where
                         transcript,
                         &current_state,
                         &scheduled,
-                        BlockOrder::ColumnMajor,
                         setup_contribution_mode,
                     )?;
                     verify_fold::<F, E, T>(setup, transcript, prepared).map_err(|err| {
@@ -467,7 +466,6 @@ where
                     transcript,
                     &current_state,
                     &scheduled,
-                    BlockOrder::ColumnMajor,
                     setup_contribution_mode,
                 )?;
                 verify_fold::<F, E, T>(setup, transcript, prepared).map_err(|err| {

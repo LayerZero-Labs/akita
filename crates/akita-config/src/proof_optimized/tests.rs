@@ -291,7 +291,7 @@ fn fallback_root_direct_schedule_binds_real_opening_batch_commit_params() {
 }
 
 #[test]
-fn multi_group_multi_chunk_schedule_rejects_at_effective_schedule_boundary() {
+fn multi_group_multi_chunk_schedule_resolves_at_effective_schedule_boundary() {
     type Cfg = fp128::D64OneHotMultiChunkW2R2;
     let opening_batch = OpeningClaimsLayout::from_groups(vec![
         PolynomialGroupLayout::new(8, 1),
@@ -300,13 +300,11 @@ fn multi_group_multi_chunk_schedule_rejects_at_effective_schedule_boundary() {
     .expect("multi-group opening batch");
     let point = vec![fp128::Field::zero(); opening_batch.max_num_vars()];
 
-    let err = crate::effective_batched_schedule::<Cfg>(&opening_batch, &point)
-        .expect_err("multi-group multi-chunk schedule must reject");
-
-    assert!(
-        err.to_string().contains("multi-chunk witness layout"),
-        "unexpected error: {err}"
-    );
+    let schedule = crate::effective_batched_schedule::<Cfg>(&opening_batch, &point)
+        .expect("canonical group-by-chunk layout must resolve");
+    schedule
+        .validate_structure()
+        .expect("resolved grouped chunk schedule must validate");
 }
 
 #[test]
@@ -322,6 +320,33 @@ fn setup_matrix_envelope_covers_multi_group_batch_schedules() {
     assert!(setup_envelope.max_setup_len >= multi_group_same_point.max_setup_len);
 }
 
+#[test]
+fn recursive_setup_envelope_covers_selected_exact_group_batch_keys() {
+    type Cfg = crate::RecursiveCommitmentConfig<fp128::D64OneHot>;
+
+    let candidates =
+        crate::generated_families::recursive_group_batch_candidates_for_capacity::<Cfg>(32, 4)
+            .expect("selected recursive setup keys");
+    assert!(
+        !candidates.is_empty(),
+        "recursive setup profile must select exact multi-group keys"
+    );
+
+    let setup_envelope =
+        proof_optimized_max_setup_matrix_size::<Cfg>(32, 4).expect("recursive setup envelope");
+    for key in candidates {
+        let schedule = Cfg::runtime_schedule(key.clone()).expect("selected exact-key schedule");
+        let required =
+            setup_matrix_envelope_for_schedule(&schedule).expect("selected exact-key envelope");
+        assert!(
+            setup_envelope.max_setup_len >= required.max_setup_len,
+            "capacity envelope {} must cover selected-key requirement {} for {key:?}",
+            setup_envelope.max_setup_len,
+            required.max_setup_len,
+        );
+    }
+}
+
 fn expected_runtime_root_setup_len(lp: &LevelParams, opening_batch: &OpeningClaimsLayout) -> usize {
     if lp.has_precommitted_groups() {
         return expected_multi_group_runtime_root_setup_len(lp, opening_batch);
@@ -332,7 +357,7 @@ fn expected_runtime_root_setup_len(lp: &LevelParams, opening_batch: &OpeningClai
         lp.a_key.col_len(),
         lp.b_key.row_len(),
         opening_batch.num_total_polynomials(),
-        lp.num_blocks,
+        lp.num_live_blocks,
         lp.num_digits_open,
     );
     expected_root_setup_len(lp.d_key.row_len(), d_width, a_len, b_len)
@@ -343,13 +368,13 @@ fn expected_group_setup_footprint(
     a_width: usize,
     b_rows: usize,
     num_polys: usize,
-    num_blocks: usize,
+    num_live_blocks: usize,
     num_digits_open: usize,
 ) -> (usize, usize, usize) {
     let a_len = a_rows * a_width;
-    let d_width = num_polys * num_blocks * num_digits_open;
-    let t_cols_per_vector = a_rows * num_digits_open * num_blocks;
-    let b_len = b_rows * num_polys * t_cols_per_vector;
+    let d_width = num_polys * num_live_blocks * num_digits_open;
+    let t_vector_width = a_rows * num_digits_open * num_live_blocks;
+    let b_len = b_rows * num_polys * t_vector_width;
     (a_len, b_len, d_width)
 }
 
@@ -377,7 +402,7 @@ fn expected_multi_group_runtime_root_setup_len(
         lp.a_key.col_len(),
         lp.b_key.row_len(),
         final_group.num_polynomials(),
-        lp.num_blocks,
+        lp.num_live_blocks,
         lp.num_digits_open,
     );
 
@@ -387,7 +412,7 @@ fn expected_multi_group_runtime_root_setup_len(
             group.a_key.col_len(),
             group.b_key.row_len(),
             group.layout.group.num_polynomials(),
-            group.num_blocks,
+            group.layout.num_live_blocks,
             group.num_digits_open,
         );
         max_a_len = max_a_len.max(a_len);
@@ -472,19 +497,19 @@ fn proof_optimized_setup_includes_arbitrary_precommit_group_sizes() {
     type Cfg = fp128::D64OneHot;
 
     let layout = OpeningClaimsLayout::from_root_groups(
-        &[PolynomialGroupLayout::new(12, 1)],
-        PolynomialGroupLayout::new(11, 1),
+        &[PolynomialGroupLayout::new(10, 1)],
+        PolynomialGroupLayout::new(20, 1),
     )
-    .expect("larger precommitted group layout");
+    .expect("max precommitted group layout");
     let runtime = setup_matrix_envelope_for_shape::<Cfg>(&layout)
         .expect("runtime setup envelope")
-        .expect("larger precommitted group should be schedulable");
+        .expect("max precommitted group should be schedulable");
     let setup_envelope =
-        super::proof_optimized_max_setup_matrix_size::<Cfg>(12, 1).expect("setup envelope");
+        super::proof_optimized_max_setup_matrix_size::<Cfg>(20, 1).expect("setup envelope");
 
     assert!(
         setup_envelope.max_setup_len >= runtime.max_setup_len,
-        "setup envelope must cover precommitted groups that are larger than the final group"
+        "setup envelope must cover multi-group roots at the precommitted num_vars ceiling"
     );
 }
 
@@ -493,8 +518,8 @@ fn grouped_root_runtime_setup_uses_per_group_roles_and_summed_d_width() {
     type Cfg = fp128::D64OneHot;
 
     let layout = OpeningClaimsLayout::from_root_groups(
-        &[PolynomialGroupLayout::new(24, 1)],
-        PolynomialGroupLayout::new(20, 1),
+        &[PolynomialGroupLayout::new(10, 1)],
+        PolynomialGroupLayout::new(24, 1),
     )
     .expect("grouped root layout");
     let key = super::proof_optimized_schedule_key::<Cfg>(&layout).expect("grouped root key");
@@ -518,7 +543,7 @@ fn grouped_root_runtime_setup_uses_per_group_roles_and_summed_d_width() {
         .map(|group| group.d_segment_width().expect("precommitted D width"))
         .sum();
     let expected_d_width =
-        final_group.num_polynomials() * root_params.num_blocks * root_params.num_digits_open
+        final_group.num_polynomials() * root_params.num_live_blocks * root_params.num_digits_open
             + precommitted_d_width;
     assert_eq!(
         root_params.d_key.col_len(),
@@ -530,23 +555,24 @@ fn grouped_root_runtime_setup_uses_per_group_roles_and_summed_d_width() {
 #[test]
 fn recursive_setup_envelope_counts_setup_prefix_d_segment() {
     use akita_types::{
-        active_setup_field_len, padded_setup_prefix_len, segment_typed_witness_shape_from_groups,
+        padded_setup_prefix_len, segment_typed_witness_shape_from_groups,
         setup_prefix_precommitted_params, setup_prefix_slot_id, AjtaiKeyParams,
         CleartextWitnessShape, DecompositionParams, DirectStep, FoldStep, LevelParamsLike,
         SetupContributionMode, Step, SETUP_OFFLOAD_D_SETUP,
     };
 
     fn scalar_level_params() -> LevelParams {
+        let full_field_digits = akita_types::sis::compute_num_digits_full_field(128, 2);
         LevelParams::params_only(
             akita_types::SisModulusProfileId::Q128OffsetA7F7,
             SETUP_OFFLOAD_D_SETUP,
+            2,
+            2,
             3,
-            2,
-            2,
             2,
             SparseChallengeConfig::pm1_only(3),
         )
-        .with_decomp(2, 2, 2, 2, 0)
+        .with_decomp(2, 3, full_field_digits, 2)
         .expect("scalar params")
     }
 
@@ -594,12 +620,11 @@ fn recursive_setup_envelope_counts_setup_prefix_d_segment() {
         );
     }
 
-    fn recursive_schedule(layout: &OpeningClaimsLayout) -> Schedule {
+    fn recursive_schedule(_layout: &OpeningClaimsLayout) -> Schedule {
         let mut root = scalar_level_params();
         root.setup_contribution_mode = SetupContributionMode::Recursive;
 
-        let natural_len =
-            active_setup_field_len(&root, layout, SETUP_OFFLOAD_D_SETUP).expect("natural len");
+        let natural_len = 129usize;
         let n_prefix = padded_setup_prefix_len(natural_len);
         let mut successor = scalar_level_params();
         successor.setup_prefix = Some(setup_prefix_slot_id(
@@ -681,7 +706,7 @@ fn recursive_setup_envelope_counts_setup_prefix_d_segment() {
         }
     }
 
-    let layout = OpeningClaimsLayout::new(8, 1).expect("recursive opening layout");
+    let layout = OpeningClaimsLayout::new(5, 1).expect("recursive opening layout");
     let schedule =
         SyntheticRecursiveCfg::get_params_for_prove(&layout).expect("synthetic recursive schedule");
     schedule
@@ -920,8 +945,8 @@ fn assert_generated_batched_roots_are_scaled<Cfg: CommitmentConfig>(table: Gener
         checked_folded_entry = true;
         let root_lp = &root.params;
         let singleton_outer_width =
-            root_lp.a_key.row_len() * root_lp.num_digits_open * root_lp.num_blocks;
-        let singleton_d_width = root_lp.num_digits_open * root_lp.num_blocks;
+            root_lp.a_key.row_len() * root_lp.num_digits_open * root_lp.num_live_blocks;
+        let singleton_d_width = root_lp.num_digits_open * root_lp.num_live_blocks;
         assert_eq!(
             root_lp.outer_width(),
             singleton_outer_width * entry.final_group.num_polynomials(),
@@ -1061,7 +1086,7 @@ fn batched_onehot_4x30_plan_keeps_terminal_witness_bounded() {
 }
 
 #[test]
-fn tight_block_len_is_no_larger_than_pow2() {
+fn power_of_two_positions_cover_exact_source() {
     for num_vars in [14, 20, 30] {
         let schedule = fp128::D64Full::runtime_schedule(AkitaScheduleLookupKey::single(
             PolynomialGroupLayout::singleton(num_vars),
@@ -1069,20 +1094,21 @@ fn tight_block_len_is_no_larger_than_pow2() {
         .expect("planner should succeed");
         for (level_idx, fold) in schedule.fold_steps().enumerate() {
             let lp = &fold.params;
-            let pow2_block = 1usize << lp.m_vars;
+            let pow2_block = 1usize << lp.position_index_bits();
             assert!(
-                lp.block_len <= pow2_block,
-                "block_len {} should be <= 2^m_vars {} at level {level_idx} (num_vars={num_vars})",
-                lp.block_len,
+                lp.num_positions_per_block <= pow2_block,
+                "num_positions_per_block {} should be <= 2^position_index_bits {} at level {level_idx} (num_vars={num_vars})",
+                lp.num_positions_per_block,
                 pow2_block,
             );
             if level_idx > 0 {
                 let num_ring = fold.current_w_len / lp.ring_dimension;
-                let expected_tight = num_ring.div_ceil(lp.num_blocks);
+                let expected_position_count =
+                    num_ring.div_ceil(lp.num_live_blocks).next_power_of_two();
                 assert_eq!(
-                    lp.block_len, expected_tight,
-                    "recursive level {level_idx} should use tight block_len = ceil({num_ring} / {})",
-                    lp.num_blocks
+                    lp.num_positions_per_block, expected_position_count,
+                    "recursive level {level_idx} should use the least power-of-two num_positions_per_block covering ceil({num_ring} / {})",
+                    lp.num_live_blocks
                 );
             }
         }

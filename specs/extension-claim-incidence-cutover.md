@@ -25,7 +25,7 @@ Make extension-valued claims expressible at the public prover/verifier boundary 
 
 - The public commit/prove/verify input shape moves to `Cfg::ClaimField`. Internal commitments, recursive witnesses, ring proof payloads, and digit decomposition stay over `Cfg::Field`.
 - At the PR #69 boundary, challenge sampling at the folded-root boundary routed through `Cfg::ChallengeField` via an explicit degree-one sampler bridge. PR #71 Part 1 removes that sampler and moves stage proof scalars to `Cfg::ChallengeField`; PR #71 Part 2 owns true extension-valued opening materialization.
-- The verifier-side stage-2 relation and deferred M-eval source become generic over a proof scalar `E`, with the live folded root still instantiating `E = F`.
+- The verifier-side stage-2 relation and deferred M-eval source become generic over a proof scalar `E`, with the live blocked root still instantiating `E = F`.
 - Live proof orchestration rejects true extension-valued folded roots until the Phase 4 embedding lands. The K=1 specialization is exercised end-to-end on fp128.
 
 ### Invariants

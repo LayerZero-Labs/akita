@@ -5,12 +5,18 @@
 | --------- | ---------------------------------- |
 | Author(s) |                                    |
 | Created   | 2026-06-17                         |
-| Status    | folded multi-group roots implemented; chunking guarded |
+| Status    | implemented; layout portions superseded by digit-innermost geometry |
 | PR        |                                    |
 | Book      | configuration chapter              |
 
 
 ## Summary
+
+> **Layout supersession (2026-07-15).** The group semantics in this record
+> remain useful, but its chunking restrictions and duplicated witness-range
+> formulas are superseded by [`digit-innermost-layout.md`](digit-innermost-layout.md).
+> Multi-group and multi-chunk witnesses now use the canonical product
+> `WitnessLayout`, with one shared quotient tail.
 
 Akita currently supports batching several polynomials inside one commitment
 object. This spec defines the first production model for batching several
@@ -403,8 +409,8 @@ pub struct AkitaScheduleLookupKey {
 
 pub struct PrecommittedGroupParams {
     pub group: PolynomialGroupLayout,
-    pub m_vars: usize,
-    pub r_vars: usize,
+    pub position_index_bits: usize,
+    pub block_index_bits: usize,
     pub log_basis: u32,
     pub n_a: usize,
     pub conservative_n_b: usize,
@@ -542,7 +548,7 @@ For a group committed before the final multi-group proof is known:
 3. Require a one-hot root layout in the conservative precommit path.
 4. Freeze the fields that determine the committed `t_hat_g` shape:
    ```text
-   key, m_vars, r_vars, log_basis = l_g, n_a
+   key, position_index_bits, block_index_bits, log_basis = l_g, n_a
    ```
 5. Pick the highest allowed root basis:
    ```text
@@ -617,8 +623,8 @@ pub struct GroupRootParams {
     pub layout: PrecommittedGroupParams,
     pub a_key: AjtaiKeyParams,
     pub b_key: AjtaiKeyParams,
-    pub num_blocks: usize,
-    pub block_len: usize,
+    pub num_live_blocks: usize,
+    pub num_positions_per_block: usize,
     pub num_digits_commit: usize,
     pub num_digits_open: usize,
     pub num_digits_fold_one: usize,
@@ -629,10 +635,10 @@ pub struct LevelParams {
     pub a_key: AjtaiKeyParams,
     pub b_key: AjtaiKeyParams,
     pub d_key: AjtaiKeyParams,
-    pub num_blocks: usize,
-    pub block_len: usize,
-    pub m_vars: usize,
-    pub r_vars: usize,
+    pub num_live_blocks: usize,
+    pub num_positions_per_block: usize,
+    pub position_index_bits: usize,
+    pub block_index_bits: usize,
     pub log_basis: u32,
     // ...
     pub precommitted_groups: Vec<GroupRootParams>,
@@ -742,9 +748,9 @@ singleton recursive suffix).
 For each group, the planner prices:
 
 ```text
-e_hat_g = num_blocks_g * num_digits_open_g
-t_hat_g = K_g * num_blocks_g * n_a_g * num_digits_open_g
-z_hat_g = block_len_g * num_digits_commit_g * num_digits_fold_g
+e_hat_g = num_live_blocks_g * num_digits_open_g
+t_hat_g = K_g * num_live_blocks_g * n_a_g * num_digits_open_g
+z_hat_g = num_positions_per_block_g * num_digits_commit_g * num_digits_fold_g
 ```
 
 For a folded multi-group root, the multi-group root's next recursive witness ring count
@@ -768,7 +774,7 @@ sum_g K_g * 2^{num_vars_g}
 The implemented D width uses one `w_hat_g` segment per group:
 
 ```text
-d_width = decomposed_w_ring_count(main.num_digits_open, main.num_blocks, 1)
+d_width = decomposed_w_ring_count(main.num_digits_open, main.num_live_blocks, 1)
         + sum_precommitted group.d_segment_width()
 ```
 
@@ -906,8 +912,8 @@ B key, block geometry, and digit counts.
 ```text
 group.num_vars
 group.num_polynomials
-m_vars
-r_vars
+position_index_bits
+block_index_bits
 log_basis
 n_a
 conservative_n_b
@@ -971,8 +977,8 @@ digest  -> 32 raw bytes (Blake2b-256 output)
 ```text
 group.num_vars
 group.num_polynomials
-m_vars
-r_vars
+position_index_bits
+block_index_bits
 log_basis
 n_a
 conservative_n_b

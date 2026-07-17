@@ -94,7 +94,8 @@ mod tests {
     use akita_prover::backend::DenseView;
     use akita_prover::compute::{OpeningFoldKernel, OpeningFoldPlan, RootOpeningSource};
     use akita_prover::protocol::ring_switch::{
-        build_w_evals_compact, compute_relation_matrix_col_evals, ring_switch_build_w,
+        build_w_evals_compact, compute_relation_matrix_col_evals, compute_relation_weight_evals,
+        ring_switch_build_w,
     };
     use akita_prover::{
         ComputeBackendSetup, CpuBackend, DensePoly, ProverOpeningData, RingRelationProver,
@@ -104,9 +105,9 @@ mod tests {
     use akita_types::relation_claim_from_rows;
     use akita_types::witness::ChunkedWitnessCfg;
     use akita_types::{
-        r_decomp_levels, ring_opening_point_from_field, AkitaCommitmentHint, BasisMode, BlockOrder,
-        Commitment, OpeningClaims, PointVariableSelection, PolynomialGroupClaims,
-        RelationMatrixRowLayout, RingMultiplierOpeningPoint, RingVec,
+        r_decomp_levels, ring_opening_point_from_field, AkitaCommitmentHint, BasisMode, Commitment,
+        OpeningClaims, PointVariableSelection, PolynomialGroupClaims, RelationMatrixRowLayout,
+        RingMultiplierOpeningPoint, RingVec,
     };
     use akita_verifier::{prepare_relation_matrix_evaluator, RingSwitchReplay};
     use rand::rngs::StdRng;
@@ -115,7 +116,7 @@ mod tests {
 
     use akita_pcs::{FieldCore, FromPrimitiveInt, RandomSampling};
 
-    fn prover_fold_claims<'a, F: FieldCore + Clone, P>(
+    fn prover_block_claims<'a, F: FieldCore + Clone, P>(
         point: &'a [F],
         polynomials: &'a [&'a P],
         commitment: &'a Commitment<F>,
@@ -224,30 +225,24 @@ mod tests {
 
     fn direct_relation_claim<F: FieldCore + FromPrimitiveInt>(
         w_compact: &[i8],
-        alpha_evals_y: &[F],
-        relation_matrix_col_evals: &[F],
-        live_x_cols: usize,
+        relation_weight_evals: &[F],
     ) -> F {
-        (0..live_x_cols).fold(F::zero(), |acc_x, x| {
-            let column_start = x * alpha_evals_y.len();
-            let y_eval = alpha_evals_y
-                .iter()
-                .enumerate()
-                .fold(F::zero(), |acc_y, (y, &alpha)| {
-                    acc_y + F::from_i64(w_compact[column_start + y] as i64) * alpha
-                });
-            acc_x + y_eval * relation_matrix_col_evals[x]
-        })
+        w_compact
+            .iter()
+            .zip(relation_weight_evals)
+            .fold(F::zero(), |acc, (&w, &weight)| {
+                acc + F::from_i64(i64::from(w)) * weight
+            })
     }
 
     fn nonconstant_ring_multiplier_point<F, const D: usize>(
-        block_len: usize,
-        num_blocks: usize,
+        num_positions_per_block: usize,
+        num_live_blocks: usize,
     ) -> RingMultiplierOpeningPoint<F>
     where
         F: FieldCore + FromPrimitiveInt,
     {
-        let a = (0..block_len)
+        let a = (0..num_positions_per_block)
             .map(|idx| {
                 CyclotomicRing::<F, D>::from_coefficients(from_fn(|k| {
                     if k % 17 == idx % 17 {
@@ -258,7 +253,7 @@ mod tests {
                 }))
             })
             .collect();
-        let b = (0..num_blocks)
+        let b = (0..num_live_blocks)
             .map(|idx| {
                 CyclotomicRing::<F, D>::from_coefficients(from_fn(|k| {
                     if k % 19 == idx % 19 {
@@ -309,28 +304,29 @@ mod tests {
         let outer_point = &point[alpha_bits..];
         let ring_opening_point = ring_opening_point_from_field(
             outer_point,
-            lp.r_vars,
-            lp.m_vars,
+            lp.num_positions_per_block,
+            lp.num_live_blocks,
             BasisMode::Lagrange,
-            BlockOrder::RowMajor,
         )
         .expect("ring opening point");
-        let ring_multiplier_point =
-            nonconstant_ring_multiplier_point::<F, D>(lp.block_len, lp.num_blocks);
+        let ring_multiplier_point = nonconstant_ring_multiplier_point::<F, D>(
+            lp.num_positions_per_block,
+            lp.num_live_blocks,
+        );
         let opening = OpeningFoldKernel::<DenseView<'_, F, D>, F, D>::evaluate_and_fold(
             &CpuBackend,
             None,
             poly.opening_view().expect("opening view"),
             OpeningFoldPlan::Ring {
-                eval_outer_scalars: ring_multiplier_point
-                    .b_rings_trusted::<D>()
+                live_block_weights: ring_multiplier_point
+                    .fold_rings_trusted::<D>()
                     .expect("nonconstant test point has ring b weights")
                     .expect("ring b weights"),
-                fold_scalars: ring_multiplier_point
-                    .a_rings_trusted::<D>()
+                position_weights: ring_multiplier_point
+                    .position_rings_trusted::<D>()
                     .expect("nonconstant test point has ring a weights")
                     .expect("ring a weights"),
-                block_len: lp.block_len,
+                num_positions_per_block: lp.num_positions_per_block,
             },
         )
         .expect("evaluate_and_fold_ring");
@@ -347,14 +343,14 @@ mod tests {
             akita_prover::OperationCtx::new(&CpuBackend, &prepared, setup.expanded.as_ref())
                 .expect("operation ctx");
         let poly_refs: [&DensePoly<F>; 1] = [&poly];
-        let fold_claims = prover_fold_claims(&point, &poly_refs, &commitment, batched_hint);
+        let block_claims = prover_block_claims(&point, &poly_refs, &commitment, batched_hint);
         let (instance, witness) =
             RingRelationProver::new::<F, F, _, DensePoly<F>, CpuBackend, CpuBackend>(
                 &op_ctx,
                 &op_ctx,
                 ring_opening_point,
                 ring_multiplier_point.clone(),
-                fold_claims,
+                block_claims,
                 vec![RingVec::from_ring_elems(&e_folded)],
                 lp.clone(),
                 &mut transcript,
@@ -367,9 +363,14 @@ mod tests {
         let build_output =
             ring_switch_build_w::<F, CpuBackend>(&instance, witness, &op_ctx, &lp, false)
                 .expect("ring-switch witness");
-        let (w_compact, _col_bits, ring_bits) =
-            build_w_evals_compact(build_output.w.as_i8_digits(), D, 1).expect("compact witness");
-        let live_x_cols = w_compact.len() >> ring_bits;
+        let opening_source_len = build_output.w.len() / D;
+        let (w_compact, _col_bits, _ring_bits) = build_w_evals_compact(
+            build_output.w.as_i8_digits().into(),
+            D,
+            1,
+            opening_source_len,
+        )
+        .expect("compact witness");
 
         let alpha = F::from_u64(29);
         let alpha_evals_y = scalar_powers(alpha, D);
@@ -393,7 +394,7 @@ mod tests {
                     }
                 })
                 .collect();
-            let relation_matrix_col_evals = compute_relation_matrix_col_evals::<F, F>(
+            let relation_matrix_col_evals = compute_relation_weight_evals::<F, F>(
                 &setup.expanded,
                 &instance,
                 alpha,
@@ -403,14 +404,11 @@ mod tests {
                 &tau1,
                 &[F::one()],
                 RelationMatrixRowLayout::WithDBlock,
+                opening_source_len,
+                D,
             )
             .expect("m evals");
-            let got = direct_relation_claim(
-                &w_compact,
-                &alpha_evals_y,
-                &relation_matrix_col_evals,
-                live_x_cols,
-            );
+            let got = direct_relation_claim(&w_compact, &relation_matrix_col_evals);
             let expected = relation_claim_from_rows::<F, D>(
                 &tau1,
                 alpha,
@@ -465,10 +463,9 @@ mod tests {
         let outer_point = &point[alpha_bits..];
         let ring_opening_point = ring_opening_point_from_field(
             outer_point,
-            lp.r_vars,
-            lp.m_vars,
+            lp.num_positions_per_block,
+            lp.num_live_blocks,
             BasisMode::Lagrange,
-            BlockOrder::RowMajor,
         )
         .expect("ring opening point");
         let ring_multiplier_point = RingMultiplierOpeningPoint::from_base(&ring_opening_point);
@@ -477,9 +474,9 @@ mod tests {
             None,
             poly.opening_view().expect("opening view"),
             OpeningFoldPlan::Base {
-                eval_outer_scalars: &ring_opening_point.b,
-                fold_scalars: &ring_opening_point.a,
-                block_len: lp.block_len,
+                live_block_weights: &ring_opening_point.live_block_weights,
+                position_weights: &ring_opening_point.position_weights,
+                num_positions_per_block: lp.num_positions_per_block,
             },
         )
         .expect("evaluate_and_fold");
@@ -496,14 +493,14 @@ mod tests {
             akita_prover::OperationCtx::new(&CpuBackend, &prepared, setup.expanded.as_ref())
                 .expect("operation ctx");
         let poly_refs: [&DensePoly<F>; 1] = [&poly];
-        let fold_claims = prover_fold_claims(&point, &poly_refs, &commitment, batched_hint);
+        let block_claims = prover_block_claims(&point, &poly_refs, &commitment, batched_hint);
         let (instance, witness) =
             RingRelationProver::new::<F, F, _, DensePoly<F>, CpuBackend, CpuBackend>(
                 &op_ctx,
                 &op_ctx,
                 ring_opening_point,
                 ring_multiplier_point.clone(),
-                fold_claims,
+                block_claims,
                 vec![RingVec::from_ring_elems(&e_folded)],
                 lp.clone(),
                 &mut transcript,
@@ -516,9 +513,14 @@ mod tests {
         let build_output =
             ring_switch_build_w::<F, CpuBackend>(&instance, witness, &op_ctx, &lp, false)
                 .expect("ring-switch witness");
-        let (w_compact, _col_bits, ring_bits) =
-            build_w_evals_compact(build_output.w.as_i8_digits(), D, 1).expect("compact witness");
-        let live_x_cols = w_compact.len() >> ring_bits;
+        let opening_source_len = build_output.w.len() / D;
+        let (w_compact, _col_bits, _ring_bits) = build_w_evals_compact(
+            build_output.w.as_i8_digits().into(),
+            D,
+            1,
+            opening_source_len,
+        )
+        .expect("compact witness");
 
         let alpha = F::from_u64(17);
         let alpha_evals_y = scalar_powers(alpha, D);
@@ -542,7 +544,7 @@ mod tests {
                     }
                 })
                 .collect();
-            let relation_matrix_col_evals = compute_relation_matrix_col_evals::<F, F>(
+            let relation_matrix_col_evals = compute_relation_weight_evals::<F, F>(
                 &setup.expanded,
                 &instance,
                 alpha,
@@ -552,14 +554,11 @@ mod tests {
                 &tau1,
                 &[F::one()],
                 RelationMatrixRowLayout::WithDBlock,
+                opening_source_len,
+                D,
             )
             .expect("m evals");
-            let got = direct_relation_claim(
-                &w_compact,
-                &alpha_evals_y,
-                &relation_matrix_col_evals,
-                live_x_cols,
-            );
+            let got = direct_relation_claim(&w_compact, &relation_matrix_col_evals);
             let expected = relation_claim_from_rows::<F, D>(
                 &tau1,
                 alpha,
@@ -572,6 +571,178 @@ mod tests {
             )
             .unwrap();
             assert_eq!(got, expected, "row {row} mismatch");
+        }
+    }
+
+    /// Fix 2 correctness: for uniform ring geometry the compact per-column
+    /// relation `M(x)` produced by `compute_relation_matrix_col_evals` must
+    /// reconstruct the dense flattened relation exactly as
+    /// `R(x, y) = M(x) * alpha^y`. Checked at a random alpha (spec test 3) and
+    /// at `alpha = 0` (spec test 4), where `alpha^y` collapses to the y=0
+    /// selector so only coefficient zero survives.
+    #[test]
+    fn uniform_col_relation_reconstructs_flattened_builder() {
+        type F = fp128::Field;
+        type Cfg = fp128::D128Full;
+        const D: usize = Cfg::D;
+        const NV: usize = 12;
+
+        let opening_batch =
+            akita_types::OpeningClaimsLayout::new(NV, 1).expect("singleton opening batch");
+        let lp = Cfg::get_params_for_batched_commitment(&opening_batch).expect("lp");
+        assert_eq!(
+            lp.role_dims(),
+            akita_types::CommitmentRingDims::uniform(D),
+            "test config must have uniform role dims for the column builder"
+        );
+
+        let mut rng = StdRng::seed_from_u64(0x00c0_1de5);
+        let evals: Vec<F> = (0..(1usize << NV))
+            .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
+            .collect();
+        let poly = DensePoly::<F>::from_field_evals(NV, D, &evals).expect("dense poly");
+        let point: Vec<F> = (0..NV)
+            .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
+            .collect();
+
+        let setup = AkitaCommitmentScheme::<Cfg>::setup_prover(NV, 1).unwrap();
+        let prepared = CpuBackend.prepare_setup(&setup).unwrap();
+        let stack = akita_prover::UniformProverStack::uniform(
+            &CpuBackend,
+            &prepared,
+            setup.expanded.as_ref(),
+        )
+        .expect("stack");
+        let (commitment, batched_hint) = AkitaCommitmentScheme::<Cfg>::commit::<_, _>(
+            &setup,
+            std::slice::from_ref(&poly),
+            &stack,
+        )
+        .expect("commitment");
+
+        let alpha_bits = D.trailing_zeros() as usize;
+        let outer_point = &point[alpha_bits..];
+        let ring_opening_point = ring_opening_point_from_field(
+            outer_point,
+            lp.num_positions_per_block,
+            lp.num_live_blocks,
+            BasisMode::Lagrange,
+        )
+        .expect("ring opening point");
+        let ring_multiplier_point = RingMultiplierOpeningPoint::from_base(&ring_opening_point);
+        let opening = OpeningFoldKernel::<DenseView<'_, F, D>, F, D>::evaluate_and_fold(
+            &CpuBackend,
+            None,
+            poly.opening_view().expect("opening view"),
+            OpeningFoldPlan::Base {
+                live_block_weights: &ring_opening_point.live_block_weights,
+                position_weights: &ring_opening_point.position_weights,
+                num_positions_per_block: lp.num_positions_per_block,
+            },
+        )
+        .expect("evaluate_and_fold");
+        let e_folded = opening.folded;
+
+        let mut transcript = AkitaTranscript::<F>::new(b"ring-switch-uniform-col-equiv");
+        commitment
+            .append_to_transcript(ABSORB_COMMITMENT, D, &mut transcript)
+            .expect("commitment transcript");
+        for pt in &point {
+            transcript.append_field(ABSORB_EVALUATION_CLAIMS, pt);
+        }
+        let op_ctx =
+            akita_prover::OperationCtx::new(&CpuBackend, &prepared, setup.expanded.as_ref())
+                .expect("operation ctx");
+        let poly_refs: [&DensePoly<F>; 1] = [&poly];
+        let block_claims = prover_block_claims(&point, &poly_refs, &commitment, batched_hint);
+        let (instance, _witness) =
+            RingRelationProver::new::<F, F, _, DensePoly<F>, CpuBackend, CpuBackend>(
+                &op_ctx,
+                &op_ctx,
+                ring_opening_point,
+                ring_multiplier_point,
+                block_claims,
+                vec![RingVec::from_ring_elems(&e_folded)],
+                lp.clone(),
+                &mut transcript,
+                RingVec::from_single(&CyclotomicRing::<F, D>::one()),
+                RelationMatrixRowLayout::WithDBlock,
+                None,
+            )
+            .expect("ring relation");
+
+        // Boolean X capacity strictly exceeding the live column prefix is the
+        // interesting regime (spec test 2): the committed opening domain is
+        // padded to a power of two, so `x_cap * D > physical live length`.
+        let witness_layout = instance.segment_layout(&lp, None).expect("segment layout");
+        let opening_source_len = witness_layout.total_len();
+        let x_cap = akita_types::opening_domain_len(opening_source_len).expect("x capacity");
+        assert!(
+            x_cap >= opening_source_len,
+            "x capacity must cover the live prefix"
+        );
+
+        let num_i = lp
+            .relation_row_index_num_vars_for_layout(
+                RelationMatrixRowLayout::WithDBlock,
+                &opening_batch,
+            )
+            .expect("tau1 vars");
+
+        for alpha in [F::from_u64(0x9e37_79b9), F::zero()] {
+            let alpha_evals_y = scalar_powers(alpha, D);
+            let tau1: Vec<F> = (0..num_i)
+                .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
+                .collect();
+
+            let flat = compute_relation_weight_evals::<F, F>(
+                &setup.expanded,
+                &instance,
+                alpha,
+                &alpha_evals_y,
+                lp.role_dims(),
+                &lp,
+                &tau1,
+                &[F::one()],
+                RelationMatrixRowLayout::WithDBlock,
+                opening_source_len,
+                D,
+            )
+            .expect("flattened relation");
+            let col = compute_relation_matrix_col_evals::<F, F>(
+                &setup.expanded,
+                &instance,
+                alpha,
+                &alpha_evals_y,
+                lp.role_dims(),
+                &lp,
+                &tau1,
+                &[F::one()],
+                RelationMatrixRowLayout::WithDBlock,
+                opening_source_len,
+                D,
+            )
+            .expect("column relation");
+
+            assert_eq!(
+                col.len(),
+                x_cap,
+                "column relation length must be 2^col_bits"
+            );
+            assert_eq!(
+                flat.len(),
+                x_cap * D,
+                "flattened relation length must be 2^(col_bits+ring_bits)"
+            );
+            for x in 0..x_cap {
+                for y in 0..D {
+                    assert_eq!(
+                        flat[x * D + y],
+                        col[x] * alpha_evals_y[y],
+                        "R(x,y) != M(x)*alpha^y at alpha={alpha:?} x={x} y={y}"
+                    );
+                }
+            }
         }
     }
 
@@ -651,10 +822,9 @@ mod tests {
         let outer_point = &point[alpha_bits..];
         let ring_opening_point = ring_opening_point_from_field(
             outer_point,
-            level_params.r_vars,
-            level_params.m_vars,
+            level_params.num_positions_per_block,
+            level_params.num_live_blocks,
             BasisMode::Lagrange,
-            BlockOrder::RowMajor,
         )
         .expect("ring opening point");
         let ring_multiplier_point = RingMultiplierOpeningPoint::from_base(&ring_opening_point);
@@ -663,9 +833,9 @@ mod tests {
             None,
             poly.opening_view().expect("opening view"),
             OpeningFoldPlan::Base {
-                eval_outer_scalars: &ring_opening_point.b,
-                fold_scalars: &ring_opening_point.a,
-                block_len: level_params.block_len,
+                live_block_weights: &ring_opening_point.live_block_weights,
+                position_weights: &ring_opening_point.position_weights,
+                num_positions_per_block: level_params.num_positions_per_block,
             },
         )
         .expect("evaluate_and_fold");
@@ -682,14 +852,14 @@ mod tests {
             akita_prover::OperationCtx::new(&CpuBackend, &prepared, setup.expanded.as_ref())
                 .expect("operation ctx");
         let poly_refs: [&DensePoly<F>; 1] = [&poly];
-        let fold_claims = prover_fold_claims(&point, &poly_refs, &commitment, batched_hint);
+        let block_claims = prover_block_claims(&point, &poly_refs, &commitment, batched_hint);
         let (instance, witness) =
             RingRelationProver::new::<F, F, _, DensePoly<F>, CpuBackend, CpuBackend>(
                 &op_ctx,
                 &op_ctx,
                 ring_opening_point.clone(),
                 ring_multiplier_point.clone(),
-                fold_claims,
+                block_claims,
                 vec![RingVec::from_ring_elems(&e_folded)],
                 level_params.clone(),
                 &mut transcript,
@@ -716,8 +886,10 @@ mod tests {
         let tau1: Vec<F> = (0..num_i)
             .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
             .collect();
+        let witness_layout = instance.segment_layout(&level_params, None).unwrap();
+        let opening_source_len = witness_layout.total_len();
 
-        let relation_matrix_col_evals = compute_relation_matrix_col_evals::<F, F>(
+        let relation_weight_evals = compute_relation_weight_evals::<F, F>(
             &setup.expanded,
             &instance,
             alpha,
@@ -727,8 +899,14 @@ mod tests {
             &tau1,
             &[F::one()],
             RelationMatrixRowLayout::WithDBlock,
+            opening_source_len,
+            D,
         )
-        .expect("m evals (materialized)");
+        .expect("relation weight evals (materialized)");
+        let relation_matrix_col_evals: Vec<F> = relation_weight_evals
+            .chunks_exact(D)
+            .map(|coefficients| coefficients[0])
+            .collect();
 
         let x_challenges: Vec<F> = (0..relation_matrix_col_evals.len().trailing_zeros() as usize)
             .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
@@ -739,9 +917,12 @@ mod tests {
 
         let gamma = [F::one()];
         let replay = RingSwitchReplay {
+            setup: &setup.expanded,
             relation: &instance,
             row_coefficients: &gamma,
             lp: &level_params,
+            opening_source_len,
+            opening_ring_dim: D,
         };
         let prepared = prepare_relation_matrix_evaluator::<F, F, D>(&replay, alpha, &tau1, None)
             .expect("prepare_relation_matrix_evaluator");
@@ -755,94 +936,144 @@ mod tests {
             "RelationMatrixEvaluator::eval_at_point must match materialized multilinear_eval"
         );
 
-        // ----- Chunked layout ground truth (W ∈ powers of two | num_blocks) --
-        // The chunked relation's column-MLE has the *same per-cell values* as
-        // the single-chunk `relation_matrix_col_evals`, only repositioned into the
-        // `[z|e_j|t_j]…[r]` layout (z replicated, e/t partitioned by global
-        // block). Rearranging the trusted single-chunk vector therefore yields
-        // an independent reference for the verifier's chunked `eval_at_point`.
-        let num_blocks = level_params.num_blocks;
-        let block_len = level_params.block_len;
-        let depth_open = level_params.num_digits_open;
-        let depth_commit = level_params.num_digits_commit;
+        // ----- Chunked layout ground truth (W ∈ powers of two | num_live_blocks) --
+        // The chunked relation's column-MLE has the same per-cell values as the
+        // single-unit vector, repositioned by the canonical witness descriptor.
+        // Each ownership unit receives its e/t block window and one replicated z
+        // segment; the r tail remains shared.
+        let num_live_blocks = level_params.num_live_blocks;
+        let group_id = 0;
+        let single_layout = instance
+            .segment_layout(&level_params, None)
+            .expect("single-unit witness layout");
+        let single_unit = single_layout
+            .units_for_group(group_id)
+            .expect("single-unit group")[0]
+            .clone();
+        let group_params = level_params
+            .group_params(instance.opening_batch(), group_id)
+            .expect("single group params");
+        let num_claims = instance
+            .opening_batch()
+            .group_layout(group_id)
+            .expect("single group layout")
+            .num_polynomials();
+        let num_positions_per_block = group_params.num_positions_per_block();
+        let depth_commit = group_params.num_digits_commit();
+        let depth_open = group_params.num_digits_open();
         let depth_fold = level_params
-            .num_digits_fold(1, <F as akita_field::CanonicalField>::modulus_bits())
-            .unwrap();
-        let n_a = level_params.a_key.row_len();
-        let num_claims = 1usize;
-        let num_t_vectors = 1usize;
-        let z_len = depth_fold * depth_commit * block_len;
-        let e_len = depth_open * num_claims * num_blocks;
-        let t_len = depth_open * n_a * num_t_vectors * num_blocks;
-        let r_tail_len = rows * r_decomp_levels::<F>(level_params.log_basis);
-
-        // Single-chunk segments (z ‖ e ‖ t ‖ r).
-        let z_seg = relation_matrix_col_evals[0..z_len].to_vec();
-        let e_seg = relation_matrix_col_evals[z_len..z_len + e_len].to_vec();
-        let t_seg = relation_matrix_col_evals[z_len + e_len..z_len + e_len + t_len].to_vec();
-        let r_off1 = z_len + e_len + t_len;
-        let r_seg = relation_matrix_col_evals[r_off1..r_off1 + r_tail_len].to_vec();
+            .num_digits_fold_for_params(
+                group_params,
+                num_claims,
+                level_params.field_bits_for_cache(),
+            )
+            .expect("single group fold depth");
+        let n_a = group_params.a_rows_len();
+        let quotient_depth = r_decomp_levels::<F>(level_params.log_basis);
 
         let chunk_counts: Vec<usize> = (0..)
             .map(|k| 1usize << k)
-            .take_while(|&w| w <= num_blocks)
-            .filter(|&w| num_blocks % w == 0)
+            .take_while(|&w| w <= num_live_blocks)
+            .filter(|&w| num_live_blocks % w == 0)
             .collect();
         assert!(
             chunk_counts.iter().any(|&w| w > 1),
-            "fixture must have num_blocks > 1 to exercise chunking (num_blocks={num_blocks})"
+            "fixture must have num_live_blocks > 1 to exercise chunking (num_live_blocks={num_live_blocks})"
         );
         for w in chunk_counts.into_iter().filter(|&w| w > 1) {
-            let bpc = num_blocks / w;
-            let mut chunked: Vec<F> = Vec::new();
-            for j in 0..w {
-                // z_j: replicated full single-chunk fold response.
-                chunked.extend_from_slice(&z_seg);
-                // e_j: window of the block axis, order (digit, claim, block).
-                for dig in 0..depth_open {
-                    for claim in 0..num_claims {
-                        for bl in 0..bpc {
-                            let gb = j * bpc + bl;
-                            let src = (dig * num_claims + claim) * num_blocks + gb;
-                            chunked.push(e_seg[src]);
+            let mut lp_w = level_params.clone();
+            lp_w.witness_chunk = ChunkedWitnessCfg {
+                num_chunks: w,
+                num_activated_levels: 1,
+            };
+            let chunk_layout = instance
+                .segment_layout(&lp_w, None)
+                .expect("chunked witness layout");
+            let mut chunked = vec![F::zero(); chunk_layout.total_len().next_power_of_two()];
+            for unit in chunk_layout
+                .units_for_group(group_id)
+                .expect("chunked group")
+            {
+                for position in 0..num_positions_per_block {
+                    for commit_digit in 0..depth_commit {
+                        for fold_digit in 0..depth_fold {
+                            let source = single_unit
+                                .z_index(
+                                    num_positions_per_block,
+                                    depth_commit,
+                                    depth_fold,
+                                    position,
+                                    commit_digit,
+                                    fold_digit,
+                                )
+                                .expect("single z index");
+                            let target = unit
+                                .z_index(
+                                    num_positions_per_block,
+                                    depth_commit,
+                                    depth_fold,
+                                    position,
+                                    commit_digit,
+                                    fold_digit,
+                                )
+                                .expect("chunked z index");
+                            chunked[target] = relation_matrix_col_evals[source];
                         }
                     }
                 }
-                // t_j: window of the block axis, order (a_row, digit, t_vector, block).
-                for a_idx in 0..n_a {
-                    for digit in 0..depth_open {
-                        for tvec in 0..num_t_vectors {
-                            for bl in 0..bpc {
-                                let compound = a_idx * depth_open + digit;
-                                let gb = j * bpc + bl;
-                                let src = compound * (num_t_vectors * num_blocks)
-                                    + tvec * num_blocks
-                                    + gb;
-                                chunked.push(t_seg[src]);
+                for claim in 0..num_claims {
+                    for block in unit.global_block_range() {
+                        for digit in 0..depth_open {
+                            let source = single_unit
+                                .e_index(num_claims, depth_open, claim, block, digit)
+                                .expect("single e index");
+                            let target = unit
+                                .e_index(num_claims, depth_open, claim, block, digit)
+                                .expect("chunked e index");
+                            chunked[target] = relation_matrix_col_evals[source];
+                            for a_row in 0..n_a {
+                                let source = single_unit
+                                    .t_index(
+                                        num_claims, n_a, depth_open, claim, block, a_row, digit,
+                                    )
+                                    .expect("single t index");
+                                let target = unit
+                                    .t_index(
+                                        num_claims, n_a, depth_open, claim, block, a_row, digit,
+                                    )
+                                    .expect("chunked t index");
+                                chunked[target] = relation_matrix_col_evals[source];
                             }
                         }
                     }
                 }
             }
-            // Single shared r̂ tail after the last chunk.
-            chunked.extend_from_slice(&r_seg);
-            let x_len_w = chunked.len().next_power_of_two();
-            chunked.resize(x_len_w, F::zero());
+            for row in 0..rows {
+                for digit in 0..quotient_depth {
+                    let source = single_layout
+                        .r_index(quotient_depth, row, digit)
+                        .expect("single r index");
+                    let target = chunk_layout
+                        .r_index(quotient_depth, row, digit)
+                        .expect("chunked r index");
+                    chunked[target] = relation_matrix_col_evals[source];
+                }
+            }
+            let x_len_w = chunked.len();
+            let opening_source_len_w = chunk_layout.total_len();
 
             let x_challenges_w: Vec<F> = (0..x_len_w.trailing_zeros() as usize)
                 .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
                 .collect();
             let expected_w = multilinear_eval(&chunked, &x_challenges_w).expect("multilinear_eval");
 
-            let mut lp_w = level_params.clone();
-            lp_w.witness_chunk = ChunkedWitnessCfg {
-                num_chunks: w,
-                num_activated_levels: 1,
-            };
             let replay_w = RingSwitchReplay {
+                setup: &setup.expanded,
                 relation: &instance,
                 row_coefficients: &gamma,
                 lp: &lp_w,
+                opening_source_len: opening_source_len_w,
+                opening_ring_dim: D,
             };
             let prepared_w =
                 prepare_relation_matrix_evaluator::<F, F, D>(&replay_w, alpha, &tau1, None)
@@ -858,7 +1089,7 @@ mod tests {
             // Prover-side cross-check: the chunked grouped M evaluator must emit
             // exactly the rearranged column layout, and its multilinear eval must
             // match the verifier's chunked row eval.
-            let prover_chunked = compute_relation_matrix_col_evals::<F, F>(
+            let prover_chunked_weights = compute_relation_weight_evals::<F, F>(
                 &setup.expanded,
                 &instance,
                 alpha,
@@ -868,8 +1099,14 @@ mod tests {
                 &tau1,
                 &[F::one()],
                 RelationMatrixRowLayout::WithDBlock,
+                opening_source_len_w,
+                D,
             )
-            .expect("chunked m evals (prover)");
+            .expect("chunked relation weight evals (prover)");
+            let prover_chunked: Vec<F> = prover_chunked_weights
+                .chunks_exact(D)
+                .map(|coefficients| coefficients[0])
+                .collect();
             assert_eq!(
                 prover_chunked, chunked,
                 "prover chunked grouped M evals must equal the rearranged column layout for W={w}"
@@ -887,7 +1124,7 @@ mod tests {
     fn segment_typed_expand_matches_logical_w() {
         use akita_types::{
             build_segment_typed_witness, expand_segment_typed_to_i8_digits,
-            ring_opening_point_from_field, BasisMode, BlockOrder,
+            ring_opening_point_from_field, BasisMode,
         };
 
         type F = fp128::Field;
@@ -928,10 +1165,9 @@ mod tests {
         let outer_point = &point[alpha_bits..];
         let ring_opening_point = ring_opening_point_from_field(
             outer_point,
-            level_params.r_vars,
-            level_params.m_vars,
+            level_params.num_positions_per_block,
+            level_params.num_live_blocks,
             BasisMode::Lagrange,
-            BlockOrder::RowMajor,
         )
         .expect("ring opening point");
         let ring_multiplier_point = RingMultiplierOpeningPoint::from_base(&ring_opening_point);
@@ -940,9 +1176,9 @@ mod tests {
             None,
             poly.opening_view().expect("opening view"),
             OpeningFoldPlan::Base {
-                eval_outer_scalars: &ring_opening_point.b,
-                fold_scalars: &ring_opening_point.a,
-                block_len: level_params.block_len,
+                live_block_weights: &ring_opening_point.live_block_weights,
+                position_weights: &ring_opening_point.position_weights,
+                num_positions_per_block: level_params.num_positions_per_block,
             },
         )
         .expect("evaluate_and_fold");
@@ -959,14 +1195,14 @@ mod tests {
             akita_prover::OperationCtx::new(&CpuBackend, &prepared, setup.expanded.as_ref())
                 .expect("operation ctx");
         let poly_refs: [&DensePoly<F>; 1] = [&poly];
-        let fold_claims = prover_fold_claims(&point, &poly_refs, &commitment, batched_hint);
+        let block_claims = prover_block_claims(&point, &poly_refs, &commitment, batched_hint);
         let (instance, witness) =
             RingRelationProver::new::<F, F, _, DensePoly<F>, CpuBackend, CpuBackend>(
                 &op_ctx,
                 &op_ctx,
                 ring_opening_point,
                 ring_multiplier_point,
-                fold_claims,
+                block_claims,
                 vec![RingVec::from_ring_elems(&e_folded)],
                 level_params.clone(),
                 &mut transcript,

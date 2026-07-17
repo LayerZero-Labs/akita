@@ -26,10 +26,14 @@ witness — one eighth when $N=3$.
 ## Setup: partitioning the witness
 
 We spell the design out in the single-opening case (one opening point
-$\mathbf r$, one commitment, one committed slot). Write $\mu = m + r$ and reshape
-the coefficient table into $B := 2^r$ blocks of $M := 2^m$ ring elements,
-$\mathbf f_i \in R_q^M$ for $i \in \{0,1\}^r$. The opening point induces the inner
-evaluation vector $\mathbf a \in R_q^M$ and the block vector $\mathbf b \in R_q^B$,
+$\mathbf r$, one commitment, one committed slot). Let $N$ be the exact number
+of live source ring elements, choose $M := 2^{r_{\mathsf{pos}}}$ positions per
+block, and set $B := \lceil N/M\rceil$. The block-index Boolean domain has size
+$B_{\mathsf{dom}} := 2^{r_{\mathsf{blk}}} = \operatorname{nextpow2}(B)$, but only
+the prefix $[B]$ is live. Reshape the coefficient table into $B$ blocks
+$\mathbf f_i \in R_q^M$, padding only the final block when $M \nmid N$. The opening
+point induces the inner evaluation vector $\mathbf a \in R_q^M$ and the live block
+vector $\mathbf b \in R_q^B$,
 and the evaluation is
 $F(\mathbf r) = \mathbf b^\top[\mathbf a^\top\mathbf f_1,\dots,\mathbf f_B]$.
 
