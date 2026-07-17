@@ -72,8 +72,8 @@ fn family_catalog_is_linked(family: &GeneratedFamily) -> bool {
             <akita_config::RecursiveCommitmentConfig<fp128::D64OneHot> as CommitmentConfig>::schedule_catalog()
                 .is_some()
         }
-        "fp128_d64_onehot_recursive_multi_chunk_w4r2" => {
-            <akita_config::RecursiveCommitmentConfig<fp128::D64OneHotMultiChunkW4R2> as CommitmentConfig>::schedule_catalog()
+        "fp128_d64_onehot_recursive_multi_chunk_w8r2" => {
+            <akita_config::RecursiveCommitmentConfig<fp128::D64OneHotMultiChunk> as CommitmentConfig>::schedule_catalog()
                 .is_some()
         }
         "fp128_d64_full" => fp128::D64Full::schedule_catalog().is_some(),
@@ -149,8 +149,8 @@ fn family_catalog(
         "fp128_d64_onehot_recursive" => prepare_family_catalog::<
             akita_config::RecursiveCommitmentConfig<fp128::D64OneHot>,
         >(family.module_name, keys),
-        "fp128_d64_onehot_recursive_multi_chunk_w4r2" => prepare_family_catalog::<
-            akita_config::RecursiveCommitmentConfig<fp128::D64OneHotMultiChunkW4R2>,
+        "fp128_d64_onehot_recursive_multi_chunk_w8r2" => prepare_family_catalog::<
+            akita_config::RecursiveCommitmentConfig<fp128::D64OneHotMultiChunk>,
         >(family.module_name, keys),
         "fp128_d64_full" => prepare_family_catalog::<fp128::D64Full>(family.module_name, keys),
         "fp128_d64_onehot_tensor" => prepare_family_catalog::<
@@ -213,8 +213,8 @@ fn assert_family_group_batch_table_hit(family: &GeneratedFamily, keys: &[AkitaSc
         "fp128_d64_onehot_recursive" => assert_group_batch_table_hits::<
             akita_config::RecursiveCommitmentConfig<fp128::D64OneHot>,
         >(family.module_name, keys),
-        "fp128_d64_onehot_recursive_multi_chunk_w4r2" => assert_group_batch_table_hits::<
-            akita_config::RecursiveCommitmentConfig<fp128::D64OneHotMultiChunkW4R2>,
+        "fp128_d64_onehot_recursive_multi_chunk_w8r2" => assert_group_batch_table_hits::<
+            akita_config::RecursiveCommitmentConfig<fp128::D64OneHotMultiChunk>,
         >(family.module_name, keys),
         "fp128_d64_full" => {
             assert_group_batch_table_hits::<fp128::D64Full>(family.module_name, keys)
@@ -285,8 +285,8 @@ fn resolve_family_group_batch_schedule(
         "fp128_d64_onehot_recursive" => table_backed_group_batch_schedule::<
             akita_config::RecursiveCommitmentConfig<fp128::D64OneHot>,
         >(key),
-        "fp128_d64_onehot_recursive_multi_chunk_w4r2" => table_backed_group_batch_schedule::<
-            akita_config::RecursiveCommitmentConfig<fp128::D64OneHotMultiChunkW4R2>,
+        "fp128_d64_onehot_recursive_multi_chunk_w8r2" => table_backed_group_batch_schedule::<
+            akita_config::RecursiveCommitmentConfig<fp128::D64OneHotMultiChunk>,
         >(key),
         "fp128_d64_full" => table_backed_group_batch_schedule::<fp128::D64Full>(key),
         "fp128_d64_onehot_tensor" => {

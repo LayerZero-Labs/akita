@@ -141,6 +141,15 @@ pub(crate) fn conservative_commit_schedule<Cfg: CommitmentConfig>(
     let mut policy = policy_of::<Cfg>();
     policy.basis_range = (min_basis, min_basis);
     policy.decomposition.log_basis = min_basis;
+    // A precommitted group is a pre-existing, independently formed commitment;
+    // the distributed multi-chunk layout only refines the *fold* witness, not how
+    // an earlier commitment was formed. Freeze precommits single-chunk so a
+    // multi-chunk base config (e.g. the W8R2 preset used for recursive
+    // setup-offloading) produces the same frozen params as its single-chunk
+    // sibling. Otherwise the frozen precommit diverges from the shipped
+    // (single-chunk-frozen) recursive catalog key and the multi-group planner
+    // can fall back to an invalid grouped root-direct.
+    policy.witness_chunk = akita_types::ChunkedWitnessCfg::default();
     let mut schedule = akita_planner::find_group_batch_schedule(
         &AkitaScheduleLookupKey::single(*key),
         &policy,

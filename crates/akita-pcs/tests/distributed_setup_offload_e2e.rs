@@ -1,13 +1,14 @@
 //! End-to-end coverage for the mixed distributed (multi-chunk) + recursive
 //! setup-offload profile.
 //!
-//! This test uses `RecursiveCommitmentConfig<fp128::D64OneHotMultiChunkW4R2>`
-//! (the `fp128_d64_onehot_recursive_multi_chunk_w4r2` family): two precommitted
-//! singleton groups at `nv=16` and a two-polynomial final group at `nv=32`. That
-//! schedule combines the `W4R2` chunked witness layout (4 chunks on the two
-//! leading fold levels) with recursive setup offloading (Stage-3 setup-product
-//! sum-check and a carried setup-prefix opening), so a successful proof exercises
-//! the mix: chunked folds that also run the offloaded setup-contribution path.
+//! This test uses `RecursiveCommitmentConfig<fp128::D64OneHotMultiChunk>` (the
+//! production `W8R2` preset, `fp128_d64_onehot_recursive_multi_chunk_w8r2`
+//! family): two precommitted singleton groups at `nv=16` and a two-polynomial
+//! final group at `nv=32`. That schedule combines the `W8R2` chunked witness
+//! layout (8 chunks on the two leading fold levels) with recursive setup
+//! offloading (Stage-3 setup-product sum-check and a carried setup-prefix
+//! opening), so a successful proof exercises the mix: chunked folds that also
+//! run the offloaded setup-contribution path.
 
 #![allow(missing_docs)]
 
@@ -26,7 +27,7 @@ use akita_types::{
 };
 use common::*;
 
-const TRANSCRIPT_DOMAIN: &[u8] = b"distributed_setup_offload_e2e/w4r2";
+const TRANSCRIPT_DOMAIN: &[u8] = b"distributed_setup_offload_e2e/w8r2";
 const PRE_NV: usize = 16;
 const FINAL_NV: usize = 32;
 const PRE_GROUPS: usize = 2;
@@ -34,8 +35,8 @@ const PRE_GROUP_SIZE: usize = 1;
 const FINAL_GROUP_SIZE: usize = 2;
 const TOTAL_GROUP_SIZE: usize = PRE_GROUPS * PRE_GROUP_SIZE + FINAL_GROUP_SIZE;
 
-/// Base preset carrying the `W4R2` chunked witness layout.
-type MultiChunkBase = fp128::D64OneHotMultiChunkW4R2;
+/// Base preset carrying the production `W8R2` chunked witness layout.
+type MultiChunkBase = fp128::D64OneHotMultiChunk;
 /// The mix config: recursive setup offloading over the chunked base.
 type MixCfg = RecursiveCommitmentConfig<MultiChunkBase>;
 /// Conservative adapter used to freeze the precommitted singleton groups. The

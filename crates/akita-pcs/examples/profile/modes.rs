@@ -187,6 +187,10 @@ const PROFILE_CI_MODES: &[ProfileMode] = &[
         run: run_profile_onehot_fp128_d64_multi_group_recursive,
     },
     ProfileMode {
+        name: "onehot_fp128_d64_multi_group_recursive_multi_chunk_w8r2",
+        run: run_profile_onehot_fp128_d64_multi_group_recursive_multi_chunk_w8r2,
+    },
+    ProfileMode {
         name: "onehot_fp128_d64_tensor",
         run: run_profile_onehot_fp128_d64_tensor,
     },
@@ -227,8 +231,8 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
         run: run_profile_onehot_fp128_d64_multi_group_recursive,
     },
     ProfileMode {
-        name: "onehot_fp128_d64_multi_group_recursive_multi_chunk_w4r2",
-        run: run_profile_onehot_fp128_d64_multi_group_recursive_multi_chunk_w4r2,
+        name: "onehot_fp128_d64_multi_group_recursive_multi_chunk_w8r2",
+        run: run_profile_onehot_fp128_d64_multi_group_recursive_multi_chunk_w8r2,
     },
     ProfileMode {
         name: "dense_fp128_d128",
@@ -304,7 +308,7 @@ const EXCLUDED_FROM_ALL_SWEEP: &[&str] = &[
     "onehot_fp128_d64_multi_chunk_w4r2",
     "onehot_fp128_d64_multi_chunk_w8r2",
     "onehot_fp128_d64_multi_group_recursive",
-    "onehot_fp128_d64_multi_group_recursive_multi_chunk_w4r2",
+    "onehot_fp128_d64_multi_group_recursive_multi_chunk_w8r2",
     // D128+ presets are heavy and/or runtime-DP-backed; keep them out of the
     // default `all` smoke sweep (they are still selectable by explicit
     // `AKITA_MODE=` and drive the profile-bench matrix).
@@ -402,29 +406,29 @@ fn run_profile_onehot_fp128_d64_multi_group_recursive(nv: usize, num_polys: usiz
     );
 }
 
-#[cfg(not(feature = "profile-ci"))]
-fn run_profile_onehot_fp128_d64_multi_group_recursive_multi_chunk_w4r2(
+fn run_profile_onehot_fp128_d64_multi_group_recursive_multi_chunk_w8r2(
     nv: usize,
     num_polys: usize,
 ) {
-    // Base preset carries the W4R2 chunked witness layout; the recursive adapter
-    // (applied inside `run_recursive_multi_group_onehot`) adds setup offloading.
-    type Cfg = fp128::D64OneHotMultiChunkW4R2;
+    // `D64OneHotMultiChunk` is the production W8R2 preset (8 chunks x 2 leading
+    // levels); the recursive adapter (applied inside
+    // `run_recursive_multi_group_onehot`) adds setup offloading.
+    type Cfg = fp128::D64OneHotMultiChunk;
     assert_eq!(
         nv, 32,
-        "onehot_fp128_d64_multi_group_recursive_multi_chunk_w4r2 fixes the main group at 32 variables"
+        "onehot_fp128_d64_multi_group_recursive_multi_chunk_w8r2 fixes the main group at 32 variables"
     );
     assert_eq!(
         num_polys, 4,
-        "onehot_fp128_d64_multi_group_recursive_multi_chunk_w4r2 opens two precommitted singleton groups plus two main polynomials"
+        "onehot_fp128_d64_multi_group_recursive_multi_chunk_w8r2 opens two precommitted singleton groups plus two main polynomials"
     );
     let prime = fp128_prime_label();
     tracing::info!(
-        "=== onehot_fp128_d64_multi_group_recursive_multi_chunk_w4r2 (fp128, {}, D=64, two precommitted 16-var singleton groups + 32-var main group with 2 polynomials, recursive setup offloading + W4R2 chunked witness: num_chunks=4 x 2 leading levels) ===",
+        "=== onehot_fp128_d64_multi_group_recursive_multi_chunk_w8r2 (fp128, {}, D=64, two precommitted 16-var singleton groups + 32-var main group with 2 polynomials, recursive setup offloading + W8R2 chunked witness: num_chunks=8 x 2 leading levels) ===",
         prime
     );
     run_recursive_multi_group_onehot::<F, { Cfg::D }, Cfg>(
-        "onehot_fp128_d64_multi_group_recursive_multi_chunk_w4r2",
+        "onehot_fp128_d64_multi_group_recursive_multi_chunk_w8r2",
         16,
         32,
         2,

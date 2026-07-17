@@ -9,7 +9,7 @@ use akita_types::{
 };
 #[cfg(any(
     feature = "schedules-fp128-d64-onehot-recursive",
-    feature = "schedules-fp128-d64-onehot-recursive-multi-chunk-w4r2"
+    feature = "schedules-fp128-d64-onehot-recursive-multi-chunk-w8r2"
 ))]
 use std::any::TypeId;
 use std::marker::PhantomData;
@@ -77,12 +77,12 @@ impl<Cfg: CommitmentConfig> CommitmentConfig for RecursiveCommitmentConfig<Cfg> 
                 return Some(akita_schedules::fp128_d64_onehot_recursive_table());
             }
         }
-        #[cfg(feature = "schedules-fp128-d64-onehot-recursive-multi-chunk-w4r2")]
+        #[cfg(feature = "schedules-fp128-d64-onehot-recursive-multi-chunk-w8r2")]
         {
             if TypeId::of::<Cfg>()
-                == TypeId::of::<crate::proof_optimized::fp128::D64OneHotMultiChunkW4R2>()
+                == TypeId::of::<crate::proof_optimized::fp128::D64OneHotMultiChunk>()
             {
-                return Some(akita_schedules::fp128_d64_onehot_recursive_multi_chunk_w4r2_table());
+                return Some(akita_schedules::fp128_d64_onehot_recursive_multi_chunk_w8r2_table());
             }
         }
         None
