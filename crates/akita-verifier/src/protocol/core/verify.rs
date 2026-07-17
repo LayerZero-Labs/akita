@@ -212,7 +212,7 @@ where
             &[]
         };
         let block_digits = decompose_rows_i8(block, params.num_digits_commit(), params.log_basis());
-        let t_rows = mat_vec_mul_i8::<F, D>(&a_rows, &block_digits);
+        let t_rows = mat_vec_mul_i8::<F, D>(&a_rows, &block_digits)?;
         out.extend(decompose_rows_i8(
             &t_rows,
             params.num_digits_open(),
@@ -246,7 +246,7 @@ where
         .shared_matrix()
         .ring_view::<D>(params.b_rows_len(), outer_input.len())?;
     let b_rows: Vec<_> = b_matrix.rows().collect();
-    let u = mat_vec_mul_i8::<F, D>(&b_rows, &outer_input);
+    let u = mat_vec_mul_i8::<F, D>(&b_rows, &outer_input)?;
     Ok(RingCommitment { u })
 }
 
