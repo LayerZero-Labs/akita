@@ -41,14 +41,8 @@ pub(crate) fn group_root_params_from_layout(
     layout: &PrecommittedGroupParams,
     policy: &PlannerPolicy,
     ring_challenge_config: RingChallengeConfigFn<'_>,
-    conservative_b_rank: bool,
 ) -> Result<PrecommittedLevelParams, AkitaError> {
-    if conservative_b_rank {
-        layout.validate_frozen_precommit(policy.ring_dimension)?;
-    } else {
-        layout.validate()?;
-        layout.validate_root_geometry(policy.ring_dimension)?;
-    }
+    layout.validate_frozen_precommit(policy.ring_dimension)?;
 
     let ring_challenge_cfg = ring_challenge_config(policy.ring_dimension)?;
     let d = policy.ring_dimension;
@@ -107,11 +101,7 @@ pub(crate) fn group_root_params_from_layout(
         d,
     )?;
 
-    let b_norm_basis = if conservative_b_rank {
-        policy.basis_range.1
-    } else {
-        layout.log_basis
-    };
+    let b_norm_basis = policy.basis_range.1;
     let norm_t = rounded_up_collision_inf_norm(
         policy.sis_security_policy,
         family,
@@ -132,16 +122,13 @@ pub(crate) fn group_root_params_from_layout(
         width_t as u64,
     )
     .ok_or_else(|| AkitaError::InvalidSetup("no multi-group B-role rank".to_string()))?;
-    let n_b = if conservative_b_rank {
-        if layout.conservative_n_b < min_n_b {
-            return Err(AkitaError::InvalidSetup(
-                "precommitted group conservative B rank is below multi-group root requirement"
-                    .to_string(),
-            ));
-        }
-        layout.conservative_n_b
+    let n_b = if layout.conservative_n_b < min_n_b {
+        return Err(AkitaError::InvalidSetup(
+            "precommitted group conservative B rank is below multi-group root requirement"
+                .to_string(),
+        ));
     } else {
-        min_n_b
+        layout.conservative_n_b
     };
     let b_key = AjtaiKeyParams::try_new(
         policy.sis_security_policy,
@@ -221,7 +208,7 @@ pub(crate) fn multi_group_root_precommitted_groups(
     let precommitted_groups = key
         .precommitteds
         .iter()
-        .map(|layout| group_root_params_from_layout(layout, policy, ring_challenge_config, true))
+        .map(|layout| group_root_params_from_layout(layout, policy, ring_challenge_config))
         .collect::<Result<Vec<_>, _>>()?;
     let mut precommitted_d_width = 0usize;
     for group in &precommitted_groups {
@@ -972,7 +959,7 @@ mod tests {
         };
         let ring_cfg = ring_challenge_config(policy.ring_dimension).expect("ring challenge");
 
-        let error = group_root_params_from_layout(&malformed, &policy, &|_| Ok(ring_cfg), true)
+        let error = group_root_params_from_layout(&malformed, &policy, &|_| Ok(ring_cfg))
             .expect_err("malformed non-tiny geometry must propagate");
 
         assert!(error.to_string().contains("geometry does not match"));

@@ -8,29 +8,22 @@
 //! challenge point, while the direct verifier scans the packed setup with the
 //! same segment partition.
 
+use crate::{LevelParams, OpeningClaimsLayout};
 use akita_field::{AkitaError, CanonicalField, FieldCore};
 
 mod geometry;
-mod inputs;
 mod plan;
-mod relation;
 mod setup_index_weight_evaluator;
 mod weights;
 
 #[cfg(test)]
 mod tests;
 
-pub use geometry::{
-    ensure_setup_envelope, setup_active_ring_elems_at, setup_active_ring_elems_for_fold,
-    setup_required_for_inputs, SetupProjectionGeometry,
-};
-pub use inputs::SetupContributionPlanInputs;
-pub(crate) use plan::SetupDColumnLayout;
-pub use plan::{
-    SetupContributionGroupInputs, SetupContributionLayout, SetupContributionPlan,
-    SetupContributionStatic,
-};
-pub use relation::{prepare_setup_contribution_artifact, SetupContributionArtifact};
+pub use geometry::{ensure_setup_envelope, SetupProjectionGeometry};
+pub(crate) use plan::get_d_col_range;
+#[cfg(test)]
+pub(crate) use plan::validate_setup_inputs;
+pub use plan::{SetupContributionGroupInputs, SetupContributionPlan};
 pub use setup_index_weight_evaluator::SetupIndexWeightEvaluator;
 
 /// Shared fold gadget when every setup-contribution group uses the same basis.
@@ -39,13 +32,17 @@ pub use setup_index_weight_evaluator::SetupIndexWeightEvaluator;
 /// `gadget[..group.depth_fold]`. Return `None` only when the basis differs and
 /// callers must derive per-group gadgets.
 pub fn shared_setup_fold_gadget<F: FieldCore + CanonicalField>(
+    level_params: &LevelParams,
+    opening_batch: &OpeningClaimsLayout,
     groups: &[SetupContributionGroupInputs],
 ) -> Option<Vec<F>> {
     let first = groups.first()?;
-    if !groups
-        .iter()
-        .all(|group| group.log_basis == first.log_basis)
-    {
+    let first_log_basis = first.log_basis(level_params, opening_batch).ok()?;
+    if !groups.iter().all(|group| {
+        group
+            .log_basis(level_params, opening_batch)
+            .is_ok_and(|log_basis| log_basis == first_log_basis)
+    }) {
         return None;
     }
     let max_depth = groups
@@ -53,7 +50,7 @@ pub fn shared_setup_fold_gadget<F: FieldCore + CanonicalField>(
         .map(|group| group.depth_fold)
         .max()
         .unwrap_or(first.depth_fold);
-    Some(crate::gadget_row_scalars::<F>(max_depth, first.log_basis))
+    Some(crate::gadget_row_scalars::<F>(max_depth, first_log_basis))
 }
 
 pub(crate) fn push_role_boundaries(

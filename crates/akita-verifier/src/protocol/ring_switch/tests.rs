@@ -4,7 +4,8 @@ use akita_algebra::ring::scalar_powers;
 use akita_challenges::{SparseChallenge, SparseChallengeConfig, TensorChallenges};
 use akita_field::Fp32;
 use akita_types::{
-    OpeningClaimsLayout, RelationMatrixRowLayout, SetupContributionPlanInputs, SisModulusProfileId,
+    OpeningClaimsLayout, RelationMatrixRowLayout, SetupContributionGroupInputs,
+    SetupContributionPlan, SisModulusProfileId,
 };
 
 type F = Fp32<251>;
@@ -31,11 +32,37 @@ fn ring_switch_prepare_rejects_zero_num_live_blocks() {
         1,
         fold_challenge_config(),
     );
-    let err = match SetupContributionPlanInputs::<F>::from_level_params(
-        &lp,
-        &[1],
-        RelationMatrixRowLayout::WithDBlock,
+    let opening_batch = OpeningClaimsLayout::new(0, 1).expect("opening batch");
+    let valid_lp = LevelParams::params_only(
+        SisModulusProfileId::Q32Offset99,
+        D,
+        2,
         1,
+        1,
+        1,
+        fold_challenge_config(),
+    )
+    .with_decomp(1, 1, 1, 1)
+    .unwrap();
+    let witness_layout = WitnessLayout::new(&valid_lp, &opening_batch, 1, 4, 1).unwrap();
+    let setup_groups = vec![SetupContributionGroupInputs {
+        group_id: 0,
+        num_claims: 1,
+        depth_fold: 1,
+        a_row_start: 1,
+        b_row_start: 2,
+    }];
+    let err = match SetupContributionPlan::prepare::<F>(
+        &lp,
+        &opening_batch,
+        RelationMatrixRowLayout::WithDBlock,
+        vec![F::one(); 4].into(),
+        &witness_layout,
+        3,
+        &setup_groups,
+        &[],
+        None,
+        CommitmentRingDims::uniform(D),
     ) {
         Ok(_) => panic!("zero num_live_blocks should be rejected"),
         Err(err) => err,
@@ -97,14 +124,11 @@ fn tensor_et_intervals_match_dense_oracle_across_residual_shards() {
         group_id: 0,
         num_claims: 2,
         num_live_blocks: 7,
-        num_positions_per_block: 4,
         depth_open: 3,
         depth_commit: 1,
         depth_fold: 1,
         log_basis: 2,
         n_a: 2,
-        n_b: 1,
-        t_vector_width: 42,
         a_row_start: 1,
         b_row_start: 3,
     };

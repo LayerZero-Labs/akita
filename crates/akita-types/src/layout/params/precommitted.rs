@@ -73,6 +73,7 @@ pub trait LevelParamsLike {
     fn a_rows_len(&self) -> usize;
     fn a_col_len(&self) -> usize;
     fn b_rows_len(&self) -> usize;
+    fn b_col_len(&self) -> usize;
     fn num_live_ring_elements_per_claim(&self) -> usize;
     fn num_positions_per_block(&self) -> usize;
     fn num_live_blocks(&self) -> usize;
@@ -96,6 +97,10 @@ impl LevelParamsLike for LevelParams {
 
     fn b_rows_len(&self) -> usize {
         self.b_key.row_len()
+    }
+
+    fn b_col_len(&self) -> usize {
+        self.b_key.col_len()
     }
 
     fn num_live_ring_elements_per_claim(&self) -> usize {
@@ -150,6 +155,10 @@ impl LevelParamsLike for PrecommittedLevelParams {
 
     fn b_rows_len(&self) -> usize {
         self.b_key.row_len()
+    }
+
+    fn b_col_len(&self) -> usize {
+        self.b_key.col_len()
     }
 
     fn num_live_ring_elements_per_claim(&self) -> usize {

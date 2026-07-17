@@ -12,14 +12,14 @@ use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::ring::scalar_powers;
 use akita_algebra::uni_poly::UniPoly;
 use akita_field::parallel::*;
-use akita_field::{AkitaError, CanonicalField, FieldCore, FromPrimitiveInt, LiftBase};
+use akita_field::{AkitaError, CanonicalField, FieldCore, FromPrimitiveInt, LiftBase, MulBase};
 use akita_serialization::AkitaSerialize;
 use akita_sumcheck::{SumcheckInstanceProver, SumcheckInstanceProverExt, SumcheckProof};
 use akita_transcript::{labels::ABSORB_SETUP_PREFIX_SLOT, Transcript};
 use akita_types::{
-    ensure_setup_envelope, prepare_setup_contribution_artifact, select_setup_prefix_slot,
-    shared_setup_fold_gadget, AkitaExpandedSetup, BatchedStage3Geometry, FpExtEncoding,
-    LevelParams, RingRelationInstance, SetupContributionPlan, SetupPrefixProverRegistry,
+    ensure_setup_envelope, select_setup_prefix_slot, shared_setup_fold_gadget, AkitaExpandedSetup,
+    BatchedStage3Geometry, FpExtEncoding, LevelParams, RingRelationInstance,
+    SetupContributionGroupInputs, SetupContributionPlan, SetupPrefixProverRegistry,
     SetupProjectionGeometry, SETUP_OFFLOAD_D_SETUP, SETUP_SUMCHECK_DEGREE,
 };
 use product_table::FactoredProductTerm;
@@ -487,20 +487,84 @@ fn prepare_setup_sumcheck_terms<F, E>(
 ) -> Result<(SetupProjectionGeometry, Vec<E>, Vec<E>), AkitaError>
 where
     F: FieldCore + CanonicalField,
-    E: FpExtEncoding<F> + FromPrimitiveInt + LiftBase<F>,
+    E: FpExtEncoding<F> + FromPrimitiveInt + LiftBase<F> + MulBase<F>,
 {
-    let setup_artifact =
-        prepare_setup_contribution_artifact::<F, E>(relation, lp, tau1, None, None)?;
-    let fold_gadget = shared_setup_fold_gadget::<F>(setup_artifact.layout.groups());
-    let plan = SetupContributionPlan::finish_plan::<F>(
-        &setup_artifact.static_plan,
-        x_challenges,
-        fold_gadget.as_deref(),
-        &setup_artifact.layout,
-        relation.role_dims(),
-    )?;
+    let plan = prepare_setup_contribution_plan::<F, E>(relation, lp, tau1, x_challenges)?;
     let geometry = plan.projection_geometry();
     let alpha_pows = scalar_powers(alpha, geometry.alpha_power_len());
     let setup_index_weight = plan.materialize_setup_index_weights(alpha)?;
     Ok((geometry, setup_index_weight, alpha_pows.to_vec()))
+}
+
+/// Build the stage-3 setup-contribution plan from local prover inputs.
+fn prepare_setup_contribution_plan<F, E>(
+    relation: &RingRelationInstance<F>,
+    lp: &LevelParams,
+    tau1: &[E],
+    x_challenges: &[E],
+) -> Result<SetupContributionPlan<E>, AkitaError>
+where
+    F: FieldCore + CanonicalField,
+    E: FieldCore + LiftBase<F> + MulBase<F>,
+{
+    let opening_batch = relation.opening_batch();
+    let relation_matrix_row_layout = relation.relation_matrix_row_layout();
+    let chunk_layout = relation.segment_layout(lp, None)?;
+    let rows =
+        lp.relation_matrix_row_count_for(opening_batch.num_groups(), relation_matrix_row_layout)?;
+    let eq_tau1: Arc<[E]> = EqPolynomial::evals_prefix(tau1, rows)?.into();
+
+    lp.validate_opening_batch(opening_batch)?;
+    let order = opening_batch.root_group_order()?;
+    if order.iter().any(|&group_index| {
+        chunk_layout.num_chunks_for_group(group_index) != lp.witness_chunk.num_chunks
+    }) {
+        return Err(AkitaError::InvalidSetup(
+            "multi-group witness layout does not match root group order".to_string(),
+        ));
+    }
+
+    let mut groups = Vec::with_capacity(order.len());
+    for &group_index in &order {
+        let group_lp = lp.group_params(opening_batch, group_index)?;
+        let group_layout = opening_batch.group_layout(group_index)?;
+        let num_claims = group_layout.num_polynomials();
+        let n_a = group_lp.a_rows_len();
+        let n_b = group_lp.b_rows_len();
+        let a_range = lp.a_row_range(opening_batch, group_index, relation_matrix_row_layout)?;
+        let b_range =
+            lp.commitment_row_range(opening_batch, group_index, relation_matrix_row_layout)?;
+        if a_range.len() != n_a || b_range.len() != n_b {
+            return Err(AkitaError::InvalidSetup(
+                "multi-group row ranges do not match group matrix heights".to_string(),
+            ));
+        }
+        groups.push(SetupContributionGroupInputs {
+            group_id: group_index,
+            num_claims,
+            depth_fold: lp.num_digits_fold_for_params(
+                group_lp,
+                num_claims,
+                lp.field_bits_for_cache(),
+            )?,
+            a_row_start: a_range.start,
+            b_row_start: b_range.start,
+        });
+    }
+
+    let opening_source_len = chunk_layout.total_len();
+    let fold_gadget = shared_setup_fold_gadget::<F>(lp, opening_batch, &groups);
+    let plan = SetupContributionPlan::prepare::<F>(
+        lp,
+        opening_batch,
+        relation_matrix_row_layout,
+        eq_tau1,
+        &chunk_layout,
+        opening_source_len,
+        &groups,
+        x_challenges,
+        fold_gadget.as_deref(),
+        relation.role_dims(),
+    )?;
+    Ok(plan)
 }
