@@ -264,8 +264,8 @@ class ProfileBenchReportTests(unittest.TestCase):
         report = output.getvalue()
 
         self.assertEqual(report.count("+100.00% vs main"), 6)
-        self.assertIn("32 variables", report)
-        self.assertIn("ring dimension 64 for A, B, and D", report)
+        self.assertIn("nv32Onehot256", report)
+        self.assertIn("D=64", report)
         self.assertNotIn("Proof B", report)
         self.assertNotIn("Setup Mode", report)
 
