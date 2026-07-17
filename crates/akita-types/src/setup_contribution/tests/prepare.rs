@@ -2,12 +2,13 @@ use super::*;
 
 #[test]
 fn prepare_accepts_exact_non_pow2_fold_count() {
-    let mut lp = LevelParams::log_basis_stub(3);
+    let mut lp = LevelParams::open_basis_stub(3);
     lp.ring_dimension = 64;
     lp.role_dims = crate::CommitmentRingDims::uniform(64);
     lp.num_live_blocks = 3;
     lp.num_positions_per_block = 8;
-    lp.num_digits_commit = 2;
+    lp.num_digits_inner = 2;
+    lp.num_digits_outer = 3;
     lp.num_digits_open = 3;
     lp.a_key = crate::AjtaiKeyParams::new_unchecked(
         crate::sis::DEFAULT_SIS_SECURITY_POLICY,

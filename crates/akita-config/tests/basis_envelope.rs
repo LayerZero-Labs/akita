@@ -20,11 +20,15 @@ fn d64_onehot_schedule_stays_within_basis_envelope() {
             Err(_) => continue,
         };
         let within_window = schedule.steps.iter().all(|step| match step {
-            Step::Fold(fold) => fold.params.log_basis <= 6,
+            Step::Fold(fold) => {
+                fold.params.log_basis_inner <= 6
+                    && fold.params.log_basis_outer <= 6
+                    && fold.params.log_basis_open <= 6
+            }
             Step::Direct(direct) => match &direct.witness_shape {
                 akita_types::CleartextWitnessShape::FieldElements(_) => true,
                 akita_types::CleartextWitnessShape::SegmentTyped(shape) => {
-                    shape.layout.log_basis <= 6
+                    shape.layout.log_basis_open <= 6
                 }
             },
         });

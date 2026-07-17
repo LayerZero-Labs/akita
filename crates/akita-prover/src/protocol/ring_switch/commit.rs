@@ -70,7 +70,7 @@ where
                 num_ring_elems,
                 num_live_blocks = commit_params.num_live_blocks,
                 num_positions_per_block = commit_params.num_positions_per_block,
-                depth_commit = commit_params.num_digits_commit,
+                depth_commit = commit_params.num_digits_inner,
                 depth_open = commit_params.num_digits_open,
                 position_index_bits = commit_params.position_index_bits(),
                 block_index_bits = commit_params.block_index_bits(),
@@ -86,8 +86,8 @@ where
                 &inner,
                 commit_params.num_live_blocks,
                 commit_params.a_key.row_len(),
-                commit_params.num_digits_open,
-                commit_params.log_basis,
+                commit_params.num_digits_outer,
+                commit_params.log_basis_outer,
             )?;
 
             Ok::<_, AkitaError>((packed_witness, inner.decomposed_inner_rows))
@@ -110,7 +110,7 @@ where
                 prepared,
                 commit_params.b_key.row_len(),
                 outer_input,
-                commit_params.log_basis,
+                commit_params.log_basis_outer,
             )?;
             if u.len() != commit_params.b_key.row_len() {
                 return Err(AkitaError::InvalidProof);

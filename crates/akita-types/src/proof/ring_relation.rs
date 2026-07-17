@@ -42,13 +42,14 @@ pub fn ring_relation_segment_lengths<F: FieldCore + CanonicalField>(
         ));
     }
     let depth_open = lp.num_digits_open;
-    let depth_commit = lp.num_digits_commit;
+    let depth_inner = lp.num_digits_inner;
+    let depth_outer = lp.num_digits_outer;
     let RingRelationOpeningCounts {
         num_claims,
         num_t_vectors,
     } = opening_counts;
     let depth_fold = lp.num_digits_fold(num_t_vectors, lp.field_bits_for_cache())?;
-    if depth_open == 0 || depth_commit == 0 || depth_fold == 0 {
+    if depth_open == 0 || depth_inner == 0 || depth_outer == 0 || depth_fold == 0 {
         return Err(AkitaError::InvalidSetup(
             "prepared ring-switch layout has zero width".to_string(),
         ));
@@ -63,12 +64,12 @@ pub fn ring_relation_segment_lengths<F: FieldCore + CanonicalField>(
     let e_len = depth_open
         .checked_mul(total_blocks)
         .ok_or_else(|| AkitaError::InvalidSetup("e-hat segment length overflow".to_string()))?;
-    let t_len = depth_open
+    let t_len = depth_outer
         .checked_mul(lp.a_key.row_len())
         .and_then(|len| len.checked_mul(t_total_blocks))
         .ok_or_else(|| AkitaError::InvalidSetup("T segment length overflow".to_string()))?;
     let z_len = depth_fold
-        .checked_mul(depth_commit)
+        .checked_mul(depth_inner)
         .and_then(|len| len.checked_mul(lp.num_positions_per_block))
         .ok_or_else(|| AkitaError::InvalidSetup("Z segment length overflow".to_string()))?;
 
@@ -436,7 +437,7 @@ impl<F: FieldCore + CanonicalField> RingRelationInstance<F> {
         // not materialized in the quotient witness's shared `r` tail.
         let relation_rhs_rows =
             crate::proof::relation::relation_rhs_row_count(&relation_rhs_layout);
-        let r_levels = r_decomp_levels::<F>(lp.log_basis);
+        let r_levels = r_decomp_levels::<F>(lp.log_basis_open);
         let layout = WitnessLayout::new(
             lp,
             &self.opening_batch,
@@ -500,7 +501,7 @@ mod tests {
             1,
             fold_challenge_config(),
         )
-        .with_decomp(4, 8, 1, 2)
+        .with_decomp(4, 8, 1, 2, 2)
         .expect("test params")
     }
 
@@ -557,7 +558,7 @@ mod tests {
             1,
             fold_challenge_config(),
         )
-        .with_decomp(4, 1usize << (2 + block_index_bits), 1, 2)
+        .with_decomp(4, 1usize << (2 + block_index_bits), 1, 2, 2)
         .expect("test params")
     }
 
@@ -779,7 +780,7 @@ mod tests {
             3,
             fold_challenge_config(),
         )
-        .with_decomp(4, 16, 2, 2)
+        .with_decomp(4, 16, 2, 2, 2)
         .expect("multi-group main params");
         let precommit_lp = LevelParams::params_only(
             crate::SisModulusProfileId::Q128OffsetA7F7,
@@ -790,7 +791,7 @@ mod tests {
             3,
             fold_challenge_config(),
         )
-        .with_decomp(4, 16, 2, 2)
+        .with_decomp(4, 16, 2, 2, 2)
         .expect("multi-group precommit params");
         let precommit = PrecommittedLevelParams {
             layout: PrecommittedGroupParams::from_params(
@@ -799,9 +800,9 @@ mod tests {
             ),
             a_key: precommit_lp.a_key.clone(),
             b_key: precommit_lp.b_key.clone(),
-            log_basis_open: precommit_lp.log_basis,
-            num_digits_witness: precommit_lp.num_digits_commit,
-            num_digits_commit: precommit_lp.num_digits_open,
+            log_basis_open: precommit_lp.log_basis_open,
+            num_digits_inner: precommit_lp.num_digits_inner,
+            num_digits_outer: precommit_lp.num_digits_outer,
             num_digits_open: precommit_lp.num_digits_open,
             num_digits_fold_one: precommit_lp.num_digits_fold_one,
         };
@@ -849,7 +850,7 @@ mod tests {
         // Group-major: one ownership unit per group, each holding a contiguous
         // `[z_g | e_g | t_g]` stride; only the shared `r` tail follows all units.
         assert_eq!(layout.units().len(), num_groups);
-        let r_len_total = relation_rhs_rows * r_decomp_levels::<F>(lp.log_basis);
+        let r_len_total = relation_rhs_rows * r_decomp_levels::<F>(lp.log_basis_open);
 
         let mut base = 0usize;
         for (p, unit) in layout.units().iter().enumerate() {
@@ -939,8 +940,8 @@ mod tests {
                 .expect("group layout")
                 .num_polynomials();
             let num_live_blocks = params.num_live_blocks();
-            let depth_witness = params.num_digits_witness();
-            let depth_commit = params.num_digits_commit();
+            let depth_witness = params.num_digits_inner();
+            let depth_commit = params.num_digits_outer();
             let depth_open = params.num_digits_open();
             let n_a = params.a_rows_len();
             let e_source = (0..num_claims * num_live_blocks * depth_open)
@@ -1031,7 +1032,7 @@ mod tests {
                 );
             }
         }
-        let quotient_depth = r_decomp_levels::<F>(lp.log_basis);
+        let quotient_depth = r_decomp_levels::<F>(lp.log_basis_open);
         let r_source = (0..layout.r_range().len())
             .map(|index| marker(900 + index))
             .collect::<Vec<_>>();

@@ -14,7 +14,34 @@ fn sample_params_only() -> LevelParams {
 }
 
 fn sample_layout_lp() -> LevelParams {
-    sample_params_only().with_decomp(16, 64, 2, 2).unwrap()
+    sample_params_only().with_decomp(16, 64, 2, 2, 2).unwrap()
+}
+
+#[test]
+fn distinct_semantic_depths_size_a_b_and_d_independently() {
+    let mut params = sample_params_only();
+    params.log_basis_inner = 2;
+    params.log_basis_outer = 3;
+    params.log_basis_open = 4;
+    let params = params
+        .with_decomp(8, 17, 5, 4, 3)
+        .expect("distinct semantic decomposition");
+    let blocks = 17usize.div_ceil(8);
+    assert_eq!(params.a_key.col_len(), 8 * 5, "A uses inner depth");
+    assert_eq!(
+        params.b_key.col_len(),
+        params.a_key.row_len() * 4 * blocks,
+        "B uses outer depth"
+    );
+    assert_eq!(params.d_key.col_len(), 3 * blocks, "D uses open depth");
+    assert_eq!(
+        (
+            params.log_basis_inner,
+            params.log_basis_outer,
+            params.log_basis_open,
+        ),
+        (2, 3, 4)
+    );
 }
 
 fn laid_out_sample_lp() -> LevelParams {
@@ -47,9 +74,9 @@ fn sample_multi_group_root_params() -> (LevelParams, OpeningClaimsLayout) {
             precommit_lp.b_key.coeff_linf_bound(),
             precommit_lp.ring_dimension,
         ),
-        log_basis_open: precommit_lp.log_basis,
-        num_digits_witness: precommit_lp.num_digits_commit,
-        num_digits_commit: precommit_lp.num_digits_open,
+        log_basis_open: precommit_lp.log_basis_open,
+        num_digits_inner: precommit_lp.num_digits_inner,
+        num_digits_outer: precommit_lp.num_digits_outer,
         num_digits_open: precommit_lp.num_digits_open,
         num_digits_fold_one: precommit_lp.num_digits_fold_one,
     };
@@ -62,8 +89,8 @@ fn sample_multi_group_root_params() -> (LevelParams, OpeningClaimsLayout) {
 #[test]
 fn shared_d_digit_basis_uses_root_opening_basis() {
     let (mut grouped, _) = sample_multi_group_root_params();
-    grouped.log_basis = 3;
-    grouped.precommitted_groups[0].layout.log_basis_commit = 6;
+    grouped.log_basis_open = 3;
+    grouped.precommitted_groups[0].layout.log_basis_outer = 6;
 
     assert_eq!(grouped.shared_d_digit_log_basis(), 3);
     assert_eq!(shared_d_digit_log_basis(5, &[]), 5);
@@ -71,7 +98,7 @@ fn shared_d_digit_basis_uses_root_opening_basis() {
 
 #[test]
 fn with_decomp_derives_exact_live_block_geometry() {
-    let lp = sample_params_only().with_decomp(8, 17, 2, 2).unwrap();
+    let lp = sample_params_only().with_decomp(8, 17, 2, 2, 2).unwrap();
 
     assert_eq!(lp.num_live_ring_elements_per_claim, 17);
     assert_eq!(lp.num_positions_per_block, 8);
@@ -81,7 +108,7 @@ fn with_decomp_derives_exact_live_block_geometry() {
     assert_eq!(lp.block_index_domain_size().unwrap(), 4);
     assert_eq!(lp.n_ring_elems().unwrap(), 17);
 
-    assert!(sample_params_only().with_decomp(3, 17, 2, 2).is_err());
+    assert!(sample_params_only().with_decomp(3, 17, 2, 2, 2).is_err());
 }
 
 #[test]
@@ -111,7 +138,9 @@ fn with_layout_keeps_self_ranks() {
     let lp = params.with_layout(&layout_lp, 128).unwrap();
 
     assert_eq!(lp.ring_dimension, 64);
-    assert_eq!(lp.log_basis, layout_lp.log_basis);
+    assert_eq!(lp.log_basis_inner, layout_lp.log_basis_inner);
+    assert_eq!(lp.log_basis_outer, layout_lp.log_basis_outer);
+    assert_eq!(lp.log_basis_open, layout_lp.log_basis_open);
     assert_eq!(lp.a_key.row_len(), 2);
     assert_eq!(lp.b_key.row_len(), 4);
     assert_eq!(lp.d_key.row_len(), 3);
@@ -121,7 +150,8 @@ fn with_layout_keeps_self_ranks() {
         layout_lp.num_positions_per_block
     );
     assert_eq!(lp.challenge_l1_mass(), 3);
-    assert_eq!(lp.num_digits_commit, layout_lp.num_digits_commit);
+    assert_eq!(lp.num_digits_inner, layout_lp.num_digits_inner);
+    assert_eq!(lp.num_digits_outer, layout_lp.num_digits_outer);
     assert_eq!(lp.num_digits_open, layout_lp.num_digits_open);
 }
 

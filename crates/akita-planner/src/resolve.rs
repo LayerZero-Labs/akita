@@ -194,7 +194,9 @@ mod tests {
     fn generated_fold_step(lp: &LevelParams) -> GeneratedFoldStep {
         GeneratedFoldStep {
             ring_d: lp.ring_dimension as u32,
-            log_basis: lp.log_basis,
+            log_basis_inner: lp.log_basis_inner,
+            log_basis_outer: lp.log_basis_outer,
+            log_basis_open: lp.log_basis_open,
             position_index_bits: lp.position_index_bits() as u32,
             block_index_bits: lp.block_index_bits() as u32,
             num_live_blocks: lp.num_live_blocks as u32,
@@ -411,6 +413,47 @@ mod tests {
             matches!(err, AkitaError::InvalidSetup(ref msg) if msg.contains("b-rank mismatch")),
             "unexpected error: {err}"
         );
+    }
+
+    #[test]
+    fn generated_step_rejects_malformed_inner_outer_and_open_bases() {
+        let key = PolynomialGroupLayout::new(30, 1);
+        let policy = flat_policy();
+        let schedule = find_single_schedule(key, &policy).expect("find schedule");
+
+        for (role, mutate) in [
+            (
+                "inner",
+                (|fold: &mut GeneratedFoldStep| fold.log_basis_inner = 7)
+                    as fn(&mut GeneratedFoldStep),
+            ),
+            (
+                "outer",
+                (|fold: &mut GeneratedFoldStep| fold.log_basis_outer = 7)
+                    as fn(&mut GeneratedFoldStep),
+            ),
+            (
+                "open",
+                (|fold: &mut GeneratedFoldStep| fold.log_basis_open = 7)
+                    as fn(&mut GeneratedFoldStep),
+            ),
+        ] {
+            let mut steps = generated_steps_from_schedule(&schedule);
+            mutate_first_generated_fold_step(&mut steps, mutate);
+            let entry = generated_entry_from_steps(key, steps);
+            let err = validate_generated_schedule_entry(
+                &entry,
+                &AkitaScheduleLookupKey::single(key),
+                &policy,
+                &ring_challenge_config,
+                &fold_shape,
+            )
+            .expect_err("mismatched semantic basis must be rejected");
+            assert!(
+                matches!(err, AkitaError::InvalidSetup(ref msg) if msg.contains("outside policy")),
+                "unexpected {role} error: {err}"
+            );
+        }
     }
 
     #[test]

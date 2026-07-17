@@ -15,7 +15,7 @@ fn sample_level_params() -> LevelParams {
         2,
         SparseChallengeConfig::pm1_only(3),
     )
-    .with_decomp(4, 32, 2, 2)
+    .with_decomp(4, 32, 2, 2, 2)
     .expect("sample level params")
 }
 
@@ -98,9 +98,9 @@ fn fold_linf_descriptor_canonical_digest_pinned() {
         (
             229,
             [
-                0x96, 0x3b, 0xee, 0x61, 0xdc, 0x6d, 0x41, 0x66, 0x9c, 0x00, 0xb5, 0x43, 0xc1, 0x1c,
-                0x46, 0x6e, 0x1e, 0x5b, 0x85, 0xb9, 0x6a, 0x99, 0xa4, 0xf7, 0x95, 0xda, 0x1f, 0xb1,
-                0x6a, 0x4b, 0xd5, 0x6d,
+                0x2a, 0xf0, 0xde, 0xf4, 0x73, 0xf4, 0xde, 0x9e, 0xef, 0x0d, 0x79, 0xd7, 0x14, 0xb3,
+                0x86, 0x9b, 0xa3, 0x50, 0xcf, 0x69, 0x1d, 0xc0, 0xcb, 0xed, 0x22, 0x47, 0x67, 0x63,
+                0x41, 0xde, 0x6f, 0xbd,
             ]
         ),
         "update pinned digest when descriptor setup-section bindings change"
@@ -120,6 +120,36 @@ fn fold_linf_binding_is_part_of_setup_section() {
 }
 
 #[test]
+fn effective_schedule_digest_binds_all_semantic_bases() {
+    let mut baseline = sample_level_params();
+    baseline.log_basis_inner = 2;
+    baseline.log_basis_outer = 3;
+    baseline.log_basis_open = 4;
+    let schedule = |params| Schedule {
+        steps: vec![Step::Fold(FoldStep {
+            params,
+            current_w_len: 256,
+            next_w_len: 256,
+            level_bytes: 123,
+        })],
+        total_bytes: 123,
+    };
+    let baseline_digest = digest_effective_schedule(&schedule(baseline.clone()));
+    for mutate in [
+        (|params: &mut LevelParams| params.log_basis_inner += 1) as fn(&mut LevelParams),
+        (|params: &mut LevelParams| params.log_basis_outer += 1) as fn(&mut LevelParams),
+        (|params: &mut LevelParams| params.log_basis_open += 1) as fn(&mut LevelParams),
+    ] {
+        let mut altered = baseline.clone();
+        mutate(&mut altered);
+        assert_ne!(
+            baseline_digest,
+            digest_effective_schedule(&schedule(altered))
+        );
+    }
+}
+
+#[test]
 fn effective_schedule_digest_binds_tail_bound_with_grind_policy() {
     let certified = LevelParams::params_only(
         SisModulusProfileId::Q128OffsetA7F7,
@@ -133,7 +163,7 @@ fn effective_schedule_digest_binds_tail_bound_with_grind_policy() {
             count_pm2: 12,
         },
     )
-    .with_decomp(16, 64, 2, 2)
+    .with_decomp(16, 64, 2, 2, 2)
     .expect("certified params");
     let worst_case_only = LevelParams::params_only(
         SisModulusProfileId::Q128OffsetA7F7,
@@ -144,7 +174,7 @@ fn effective_schedule_digest_binds_tail_bound_with_grind_policy() {
         3,
         SparseChallengeConfig::pm1_only(31),
     )
-    .with_decomp(16, 64, 2, 2)
+    .with_decomp(16, 64, 2, 2, 2)
     .expect("worst-case-only params");
     assert_eq!(
         certified.fold_witness_linf_cap_policy(),

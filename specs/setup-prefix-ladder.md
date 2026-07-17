@@ -162,7 +162,7 @@ power-of-two `num_live_blocks` divisor of `ring_slots` such that the normal Akit
 commitment dimensions fit:
 
 ```text
-num_positions_per_block * num_digits_commit <= a_key.col_len()
+num_positions_per_block * num_digits_inner <= a_key.col_len()
 num_live_blocks * a_key.row_len() * num_digits_open <= b_key.col_len()
 ```
 

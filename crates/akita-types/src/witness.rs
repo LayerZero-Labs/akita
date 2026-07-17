@@ -244,8 +244,8 @@ impl WitnessLayout {
             let params = lp.group_params(opening_batch, group_index)?;
             let group = opening_batch.group_layout(group_index)?;
             let num_claims = group.num_polynomials();
-            let depth_witness = params.num_digits_witness();
-            let depth_commit = params.num_digits_commit();
+            let depth_witness = params.num_digits_inner();
+            let depth_commit = params.num_digits_outer();
             let depth_open = params.num_digits_open();
             let depth_fold =
                 lp.num_digits_fold_for_params(params, num_claims, lp.field_bits_for_cache())?;
@@ -739,7 +739,7 @@ mod tests {
             1,
             akita_challenges::SparseChallengeConfig::pm1_only(1),
         )
-        .with_decomp(4, 25, 2, 2)
+        .with_decomp(4, 25, 2, 2, 2)
         .expect("test params");
         let opening_batch = OpeningClaimsLayout::new(0, 2).expect("opening batch");
         let layout =

@@ -101,7 +101,7 @@ pub struct RelationMatrixEvaluator<F: FieldCore> {
     pub(crate) role_dims: CommitmentRingDims,
     pub(crate) groups: Vec<RelationMatrixGroupEvaluator<F>>,
     /// Batch-wide basis used by the shared r-tail.
-    pub(crate) log_basis: u32,
+    pub(crate) log_basis_open: u32,
     pub(crate) eq_tau1: Arc<[F]>,
     pub(crate) flat_context: Option<FlatRelationContext<F>>,
 }
@@ -129,8 +129,8 @@ pub(crate) struct RelationMatrixGroupEvaluator<F: FieldCore> {
     pub(crate) depth_commit: usize,
     pub(crate) depth_open: usize,
     pub(crate) depth_fold: usize,
-    pub(crate) log_basis_witness: u32,
-    pub(crate) log_basis_commit: u32,
+    pub(crate) log_basis_inner: u32,
+    pub(crate) log_basis_outer: u32,
     pub(crate) log_basis_open: u32,
     pub(crate) n_a: usize,
     pub(crate) a_row_start: usize,
@@ -324,7 +324,7 @@ where
         tau0,
         tau1,
         b: 1usize
-            .checked_shl(lp.log_basis)
+            .checked_shl(lp.log_basis_open)
             .ok_or_else(|| AkitaError::InvalidSetup("basis size overflow".to_string()))?,
         alpha,
     })
@@ -428,15 +428,15 @@ where
         let k_g = group_layout.num_polynomials();
         let num_live_blocks = group_lp.num_live_blocks();
         let num_positions_per_block = group_lp.num_positions_per_block();
-        let depth_witness = group_lp.num_digits_witness();
-        let depth_commit = group_lp.num_digits_commit();
+        let depth_witness = group_lp.num_digits_inner();
+        let depth_commit = group_lp.num_digits_outer();
         let depth_open = group_lp.num_digits_open();
         let depth_fold = lp.num_digits_fold_for_params(group_lp, k_g, lp.field_bits_for_cache())?;
-        let log_basis_witness = group_lp.log_basis_witness();
-        let log_basis_commit = group_lp.log_basis_commit();
+        let log_basis_inner = group_lp.log_basis_inner();
+        let log_basis_outer = group_lp.log_basis_outer();
         let log_basis_open = group_lp.log_basis_open();
-        validate_log_basis(log_basis_witness)?;
-        validate_log_basis(log_basis_commit)?;
+        validate_log_basis(log_basis_inner)?;
+        validate_log_basis(log_basis_outer)?;
         validate_log_basis(log_basis_open)?;
         let n_a = group_lp.a_rows_len();
         let n_b = group_lp.b_rows_len();
@@ -510,8 +510,8 @@ where
             depth_commit,
             depth_open,
             depth_fold,
-            log_basis_witness,
-            log_basis_commit,
+            log_basis_inner,
+            log_basis_outer,
             log_basis_open,
             n_a,
             a_row_start: a_range.start,
@@ -524,7 +524,7 @@ where
     Ok(RelationMatrixEvaluator {
         role_dims: relation.role_dims(),
         groups,
-        log_basis: lp.log_basis,
+        log_basis_open: lp.log_basis_open,
         eq_tau1,
         flat_context: Some(FlatRelationContext {
             level_params: lp.clone(),
@@ -615,11 +615,11 @@ where
         return Err(AkitaError::InvalidProof);
     }
 
-    let log_basis = lp.log_basis;
+    let log_basis = lp.log_basis_open;
     validate_log_basis(log_basis)?;
-    validate_log_basis(lp.log_basis_witness)?;
-    let depth_witness = lp.num_digits_commit;
-    let depth_commit = lp.num_digits_open;
+    validate_log_basis(lp.log_basis_inner)?;
+    let depth_witness = lp.num_digits_inner;
+    let depth_commit = lp.num_digits_outer;
     let depth_open = lp.num_digits_open;
     let num_live_blocks = lp.num_live_blocks;
     let total_blocks = num_live_blocks
@@ -653,8 +653,8 @@ where
         depth_commit,
         depth_open,
         depth_fold,
-        log_basis_witness: lp.log_basis_witness,
-        log_basis_commit: log_basis,
+        log_basis_inner: lp.log_basis_inner,
+        log_basis_outer: log_basis,
         log_basis_open: log_basis,
         n_a,
         a_row_start: 1,
@@ -668,7 +668,7 @@ where
     Ok(RelationMatrixEvaluator {
         role_dims: lp.role_dims,
         groups,
-        log_basis,
+        log_basis_open: log_basis,
         eq_tau1,
         flat_context: Some(FlatRelationContext {
             level_params: lp.clone(),
@@ -895,7 +895,7 @@ impl<E: FieldCore> RelationMatrixEvaluator<E> {
         let mut e_structured_contribution = E::zero();
         let mut t_structured_contribution = E::zero();
         let mut z_structured_contribution = E::zero();
-        let shared_open_log_basis = self.log_basis;
+        let shared_open_log_basis = self.log_basis_open;
         validate_log_basis(shared_open_log_basis)?;
         let r_depth = r_decomp_levels::<F>(shared_open_log_basis);
         let (max_depth_open, max_depth_fold) =
@@ -946,21 +946,19 @@ impl<E: FieldCore> RelationMatrixEvaluator<E> {
             let x_eq_window = OffsetEqWindow::new(x_challenges)?;
             for (group_index, group) in self.groups.iter().enumerate() {
                 let units = self.group_units(context, group)?;
-                validate_log_basis(group.log_basis_witness)?;
-                validate_log_basis(group.log_basis_commit)?;
+                validate_log_basis(group.log_basis_inner)?;
+                validate_log_basis(group.log_basis_outer)?;
 
                 let group_g_open_ext = shared_gadget_ext
                     .get(..group.depth_open)
                     .ok_or(AkitaError::InvalidProof)?;
-                let g_t_commit =
-                    gadget_row_scalars::<F>(group.depth_commit, group.log_basis_commit);
+                let g_t_commit = gadget_row_scalars::<F>(group.depth_commit, group.log_basis_outer);
                 let g_t_commit_ext = g_t_commit
                     .iter()
                     .copied()
                     .map(E::lift_base)
                     .collect::<Vec<_>>();
-                let g_witness =
-                    gadget_row_scalars::<F>(group.depth_witness, group.log_basis_witness);
+                let g_witness = gadget_row_scalars::<F>(group.depth_witness, group.log_basis_inner);
 
                 let consistency_weight = self.eq_tau1[0];
                 let a_row_end = group

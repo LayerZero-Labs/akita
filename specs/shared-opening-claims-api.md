@@ -119,7 +119,7 @@ pub struct PrecommittedGroupParams {
     pub block_index_bits: usize,
     pub log_basis: u32,
     pub n_a: usize,
-    pub conservative_n_b: usize,
+    pub n_b: usize,
 }
 
 pub struct AkitaScheduleLookupKey {

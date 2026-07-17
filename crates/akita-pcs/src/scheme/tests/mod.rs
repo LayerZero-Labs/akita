@@ -117,7 +117,7 @@ fn expected_same_point_batched_shape(
     // shape with no recursive-suffix steps.
     if num_fold_levels == 1 {
         let mut stage2_sumcheck = vec![3; root_rounds];
-        let fold_basis = 1usize << root_step.params.log_basis;
+        let fold_basis = 1usize << root_step.params.log_basis_open;
         let ring_bits = root_step.params.ring_dimension.trailing_zeros() as usize;
         if root_rounds >= 2 && ring_bits >= 2 && matches!(fold_basis, 4 | 8) {
             stage2_sumcheck[0] = 2;
@@ -137,7 +137,10 @@ fn expected_same_point_batched_shape(
     let root_shape = LevelProofShape {
         extension_opening_reduction: None,
         v_coeffs: root_step.params.d_key.row_len() * root_step.params.ring_dimension,
-        stage1_stages: stage1_tree_stage_shapes(root_rounds, 1usize << root_step.params.log_basis),
+        stage1_stages: stage1_tree_stage_shapes(
+            root_rounds,
+            1usize << root_step.params.log_basis_open,
+        ),
         stage2_sumcheck_proof: vec![3; root_rounds],
         stage3_sumcheck: None,
         next_commit_coeffs: next_level_params.b_key.row_len() * next_level_params.ring_dimension,
@@ -170,7 +173,7 @@ fn expected_same_point_batched_shape(
         step_shapes.push(AkitaProofStepShape::Intermediate(LevelProofShape {
             extension_opening_reduction: None,
             v_coeffs: level_params.d_key.row_len() * level_params.ring_dimension,
-            stage1_stages: stage1_tree_stage_shapes(rounds, 1usize << level_params.log_basis),
+            stage1_stages: stage1_tree_stage_shapes(rounds, 1usize << level_params.log_basis_open),
             stage2_sumcheck_proof: vec![3; rounds],
             stage3_sumcheck: None,
             next_commit_coeffs: next_level_params.b_key.row_len()
@@ -204,7 +207,7 @@ fn expected_same_point_batched_shape(
         * terminal_params.ring_dimension;
     let terminal_rounds = batched_shape_rounds(terminal_params.ring_dimension, terminal_next_w_len);
     let mut terminal_stage2 = vec![3; terminal_rounds];
-    let fold_basis = 1usize << terminal_params.log_basis;
+    let fold_basis = 1usize << terminal_params.log_basis_open;
     let ring_bits = terminal_params.ring_dimension.trailing_zeros() as usize;
     if terminal_rounds >= 2 && ring_bits >= 2 && matches!(fold_basis, 4 | 8) {
         terminal_stage2[0] = 2;

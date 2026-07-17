@@ -572,7 +572,7 @@ fn recursive_setup_envelope_counts_setup_prefix_d_segment() {
             2,
             SparseChallengeConfig::pm1_only(3),
         )
-        .with_decomp(2, 3, full_field_digits, 2)
+        .with_decomp(2, 3, full_field_digits, 2, 2)
         .expect("scalar params")
     }
 
@@ -866,12 +866,17 @@ fn assert_level_has_crt_i8_capacity<Cfg: CommitmentConfig>(
     level: &LevelParams,
 ) {
     assert!(
-        (1..=MAX_I8_LOG_BASIS).contains(&level.log_basis),
-        "generated schedule uses log_basis={} outside the i8 kernel contract for {} key={key:?}",
-        level.log_basis,
+        [
+            level.log_basis_inner,
+            level.log_basis_outer,
+            level.log_basis_open
+        ]
+        .into_iter()
+        .all(|basis| (1..=MAX_I8_LOG_BASIS).contains(&basis)),
+        "generated schedule uses semantic basis outside the i8 kernel contract for {} key={key:?}",
         std::any::type_name::<Cfg>()
     );
-    let balanced_digit_bound = 1u64 << (level.log_basis - 1);
+    let balanced_digit_bound = 1u64 << (level.log_basis_open - 1);
     let (profile_id, _product) = crt_product_for_small_field_cfg::<Cfg>();
     for (role, rhs_abs_bound) in [
         ("schedule balanced digit", balanced_digit_bound),

@@ -1,17 +1,14 @@
 //! Conservative one-hot commitment config adapter.
 //!
 //! This adapter is for staggered workflows that need ordinary commit calls to
-//! use a B rank conservative for a later multi-group root whose final basis is not
-//! known at precommit time.
+//! freeze the A/source and B/outer commitment layout before the final multi-group
+//! root is known.
 
 use crate::{policy_of, CommitmentConfig};
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::AkitaError;
-use akita_types::sis::{
-    min_secure_rank, rounded_up_collision_inf_norm, SisSecurityPolicyId, SisTableKey,
-};
 use akita_types::{
-    AjtaiKeyParams, AkitaScheduleInputs, AkitaScheduleLookupKey, DecompositionParams, LevelParams,
+    AkitaScheduleInputs, AkitaScheduleLookupKey, DecompositionParams, LevelParams,
     OpeningClaimsLayout, PolynomialGroupLayout, PrecommittedGroupParams, Schedule,
     SetupMatrixEnvelope, SisModulusProfileId, Step,
 };
@@ -140,67 +137,12 @@ pub(crate) fn conservative_commit_schedule<Cfg: CommitmentConfig>(
     let mut policy = policy_of::<Cfg>();
     policy.basis_range = (min_basis, min_basis);
     policy.decomposition.log_basis = min_basis;
-    let mut schedule = akita_planner::find_group_batch_schedule(
+    akita_planner::find_group_batch_schedule(
         &AkitaScheduleLookupKey::single(*key),
         &policy,
         Cfg::ring_challenge_config,
         Cfg::fold_challenge_shape_at_level,
-    )?;
-    let params = root_commit_params_mut(&mut schedule, "conservative commit schedule")?;
-    widen_conservative_commit_params::<Cfg>(params, policy.sis_security_policy)?;
-    Ok(schedule)
-}
-
-fn widen_conservative_commit_params<Cfg: CommitmentConfig>(
-    params: &mut LevelParams,
-    sis_security_policy: SisSecurityPolicyId,
-) -> Result<(), AkitaError> {
-    let (min_basis, max_basis) = Cfg::basis_range();
-    if params.log_basis != min_basis {
-        return Err(AkitaError::InvalidSetup(
-            "conservative commit planner did not use the minimum configured log_basis".to_string(),
-        ));
-    }
-
-    let conservative_norm = rounded_up_collision_inf_norm(
-        sis_security_policy,
-        Cfg::sis_modulus_profile(),
-        akita_types::SisMatrixRole::B,
-        Cfg::D,
-        max_basis,
     )
-    .ok_or_else(|| {
-        AkitaError::InvalidSetup(
-            "no conservative B-role norm for conservative commitment".to_string(),
-        )
-    })?;
-    let conservative_n_b = min_secure_rank(
-        SisTableKey {
-            policy: sis_security_policy,
-            table_digest: akita_types::sis::SisTableDigest::CURRENT,
-            modulus_profile: Cfg::sis_modulus_profile(),
-            role: akita_types::SisMatrixRole::B,
-            ring_dimension: Cfg::D as u32,
-            coeff_linf_bound: conservative_norm,
-        },
-        params.b_key.col_len() as u64,
-    )
-    .ok_or_else(|| {
-        AkitaError::InvalidSetup(
-            "no conservative B-role rank for conservative commitment".to_string(),
-        )
-    })?;
-    params.b_key = AjtaiKeyParams::try_new(
-        sis_security_policy,
-        akita_types::sis::SisTableDigest::CURRENT,
-        Cfg::sis_modulus_profile(),
-        akita_types::SisMatrixRole::B,
-        conservative_n_b,
-        params.b_key.col_len(),
-        conservative_norm,
-        Cfg::D,
-    )?;
-    Ok(())
 }
 
 fn root_commit_params<'a>(
@@ -210,19 +152,6 @@ fn root_commit_params<'a>(
     match schedule.steps.first() {
         Some(Step::Fold(root_step)) => Ok(&root_step.params),
         Some(Step::Direct(direct)) => direct.params.as_ref().ok_or_else(|| {
-            AkitaError::InvalidSetup(format!("root-direct {context} is missing commit params"))
-        }),
-        None => Err(AkitaError::InvalidSetup(format!("{context} has no steps"))),
-    }
-}
-
-fn root_commit_params_mut<'a>(
-    schedule: &'a mut Schedule,
-    context: &str,
-) -> Result<&'a mut LevelParams, AkitaError> {
-    match schedule.steps.first_mut() {
-        Some(Step::Fold(root_step)) => Ok(&mut root_step.params),
-        Some(Step::Direct(direct)) => direct.params.as_mut().ok_or_else(|| {
             AkitaError::InvalidSetup(format!("root-direct {context} is missing commit params"))
         }),
         None => Err(AkitaError::InvalidSetup(format!("{context} has no steps"))),

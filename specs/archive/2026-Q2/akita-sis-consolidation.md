@@ -247,7 +247,7 @@ digit count here.
 pub fn num_digits_for_bound(log_bound: u32, field_bits: u32, log_basis: u32) -> usize;
 
 /// δ_commit for the committed witness `s` (level-dependent commit bound).
-pub fn num_digits_witness(decomposition: DecompositionParams, log_basis: u32, is_root: bool) -> usize;
+pub fn num_digits_inner(decomposition: DecompositionParams, log_basis: u32, is_root: bool) -> usize;
 /// δ_open for `t̂` / `ŵ` (opened at the field level).
 pub fn num_digits_open(decomposition: DecompositionParams, log_basis: u32) -> usize;
 /// δ_fold for the folded witness `z`, from `rounded_up_norm_z`'s β.
@@ -280,7 +280,7 @@ use akita_types::sis::*;
 // A key
 let norm_s   = rounded_up_norm_s(family, d, decomp, &stage1, fold_shape, is_root, onehot_k, nu)
     .ok_or(/* InvalidSetup */)?;
-let d_commit = num_digits_witness(decomp, log_basis, is_root);
+let d_commit = num_digits_inner(decomp, log_basis, is_root);
 let width_s  = decomposed_s_block_ring_count(num_positions_per_block, d_commit).ok_or(..)?;
 let n_a      = min_secure_rank(family, d as u32, norm_s, width_s as u64).ok_or(..)?;
 let a_key    = AjtaiKeyParams::try_new(family, n_a, width_s, norm_s, d)?;

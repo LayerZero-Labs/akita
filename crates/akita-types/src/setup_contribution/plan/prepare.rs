@@ -250,8 +250,8 @@ fn validate_static_inputs<E: FieldCore>(
     for group_index in 0..num_groups {
         let group_layout = opening_batch.group_layout(group_index)?;
         let group_params = level_params.group_params(opening_batch, group_index)?;
-        let depth_witness = group_params.num_digits_witness();
-        let depth_commit = group_params.num_digits_commit();
+        let depth_witness = group_params.num_digits_inner();
+        let depth_commit = group_params.num_digits_outer();
         let depth_open = group_params.num_digits_open();
         let num_positions_per_block = group_params.num_positions_per_block();
         let num_live_blocks = group_params.num_live_blocks();

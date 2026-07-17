@@ -460,10 +460,10 @@ fn write_generated_precommitted_group_key(h: &mut Fnv64, key: &PrecommittedGroup
             h.write_u64(fold_low_len as u64);
         }
     }
-    h.write_u64(u64::from(key.log_basis_witness));
-    h.write_u64(u64::from(key.log_basis_commit));
+    h.write_u64(u64::from(key.log_basis_inner));
+    h.write_u64(u64::from(key.log_basis_outer));
     h.write_u64(key.n_a as u64);
-    h.write_u64(key.conservative_n_b as u64);
+    h.write_u64(key.n_b as u64);
 }
 
 pub fn ring_challenge_config_digest(
@@ -576,10 +576,10 @@ mod tests {
             num_positions_per_block: 2,
             num_live_blocks: 1,
             fold_challenge_shape: TensorChallengeShape::Flat,
-            log_basis_witness: 1,
-            log_basis_commit: 2,
+            log_basis_inner: 1,
+            log_basis_outer: 2,
             n_a: 1,
-            conservative_n_b: 1,
+            n_b: 1,
         }];
         GeneratedScheduleTableEntry {
             final_group: PolynomialGroupLayout::new(16, 1),

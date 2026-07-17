@@ -30,7 +30,8 @@ use crate::{
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TailSegmentLayout {
     pub ring_dimension: usize,
-    pub log_basis: u32,
+    /// D-matrix basis used for terminal e/r decomposition.
+    pub log_basis_open: u32,
     /// Per-group terminal segments in witness order. Scalar/single-group tails
     /// are represented as exactly one group.
     pub groups: Vec<TailSegmentGroupLayout>,
@@ -83,7 +84,7 @@ impl TailSegmentLayout {
     /// schedule digest and [`AkitaSerialize`].
     pub(crate) fn append_descriptor_bytes(&self, bytes: &mut Vec<u8>) {
         push_usize(bytes, self.ring_dimension);
-        push_u32(bytes, self.log_basis);
+        push_u32(bytes, self.log_basis_open);
         push_usize(bytes, self.groups.len());
         for group in &self.groups {
             push_usize(bytes, group.z_coords);
@@ -118,7 +119,7 @@ impl TailSegmentLayout {
     #[must_use]
     pub fn admits_realized(&self, realized: &Self) -> bool {
         self.ring_dimension == realized.ring_dimension
-            && self.log_basis == realized.log_basis
+            && self.log_basis_open == realized.log_basis_open
             && self.r_field_elems == realized.r_field_elems
             && self.logical_num_elems == realized.logical_num_elems
             && self.groups.len() == realized.groups.len()
@@ -166,7 +167,8 @@ impl AkitaSerialize for TailSegmentLayout {
     ) -> Result<(), SerializationError> {
         self.ring_dimension
             .serialize_with_mode(&mut writer, compress)?;
-        self.log_basis.serialize_with_mode(&mut writer, compress)?;
+        self.log_basis_open
+            .serialize_with_mode(&mut writer, compress)?;
         self.groups.serialize_with_mode(&mut writer, compress)?;
         self.r_field_elems
             .serialize_with_mode(&mut writer, compress)?;
@@ -177,7 +179,7 @@ impl AkitaSerialize for TailSegmentLayout {
 
     fn serialized_size(&self, compress: Compress) -> usize {
         self.ring_dimension.serialized_size(compress)
-            + self.log_basis.serialized_size(compress)
+            + self.log_basis_open.serialized_size(compress)
             + self.groups.serialized_size(compress)
             + self.r_field_elems.serialized_size(compress)
             + self.logical_num_elems.serialized_size(compress)
@@ -237,7 +239,7 @@ impl AkitaDeserialize for TailSegmentLayout {
         _ctx: &(),
     ) -> Result<Self, SerializationError> {
         let ring_dimension = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
-        let log_basis = u32::deserialize_with_mode(&mut reader, compress, validate, &())?;
+        let log_basis_open = u32::deserialize_with_mode(&mut reader, compress, validate, &())?;
         let groups = Vec::<TailSegmentGroupLayout>::deserialize_with_mode(
             &mut reader,
             compress,
@@ -248,7 +250,7 @@ impl AkitaDeserialize for TailSegmentLayout {
         let logical_num_elems = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
         let out = Self {
             ring_dimension,
-            log_basis,
+            log_basis_open,
             groups,
             r_field_elems,
             logical_num_elems,
@@ -680,7 +682,7 @@ pub fn z_fold_encoding_stats_from_segment<F: FieldCore>(
         witness_linf_cap,
         zigzag_w,
         depth_fold,
-        lp.log_basis,
+        lp.log_basis_open,
         witness.z_payloads.first().map_or(0, Vec::len),
     )
 }
@@ -706,8 +708,8 @@ pub fn tail_segment_layout_from_groups<'a>(
     let mut group_layouts = Vec::with_capacity(groups.len());
     let mut total_plane_rings = 0usize;
     for (params, num_w_vectors, num_t_vectors, num_z_segments) in groups {
-        let depth_witness = params.num_digits_witness();
-        let depth_commit = params.num_digits_commit();
+        let depth_witness = params.num_digits_inner();
+        let depth_commit = params.num_digits_outer();
         let depth_open = params.num_digits_open();
         let depth_fold = lp.num_digits_fold_for_params(params, num_t_vectors, field_bits)?;
         if depth_witness == 0 || depth_commit == 0 || depth_open == 0 || depth_fold == 0 {
@@ -766,7 +768,7 @@ pub fn tail_segment_layout_from_groups<'a>(
             num_commitment_groups,
             RelationMatrixRowLayout::WithoutDBlock,
         )?
-        .checked_mul(compute_num_digits_full_field(field_bits, lp.log_basis))
+        .checked_mul(compute_num_digits_full_field(field_bits, lp.log_basis_open))
         .ok_or_else(|| AkitaError::InvalidSetup("tail r plane count overflow".to_string()))?;
     let total_plane_rings = total_plane_rings
         .checked_add(r_plane_rings)
@@ -783,7 +785,7 @@ pub fn tail_segment_layout_from_groups<'a>(
         .ok_or_else(|| AkitaError::InvalidSetup("tail r field count overflow".to_string()))?;
     Ok(TailSegmentLayout {
         ring_dimension: d,
-        log_basis: lp.log_basis,
+        log_basis_open: lp.log_basis_open,
         groups: group_layouts,
         r_field_elems,
         logical_num_elems,
@@ -837,7 +839,7 @@ pub fn tail_segment_multiplicities_from_layout_for_params(
 
     let z_unit = params
         .num_positions_per_block()
-        .checked_mul(params.num_digits_witness())
+        .checked_mul(params.num_digits_inner())
         .and_then(|n| n.checked_mul(d))
         .ok_or_else(|| AkitaError::InvalidSetup("tail z unit overflow".to_string()))?;
     if !group.z_coords.is_multiple_of(z_unit) {
@@ -1001,7 +1003,7 @@ where
         let cap =
             lp.fold_witness_linf_cap_for_params(group.params, group.num_t_vectors, field_bits)?;
         golomb_rice_flat_admit_terminal_wire(&z_centered_i64, cap)?;
-        let depth_witness = group.params.num_digits_witness();
+        let depth_witness = group.params.num_digits_inner();
         let inner_width = group.params.num_positions_per_block() * depth_witness;
         let row_count = group.z_folded_centered_flat.len() / ring_d;
         if inner_width == 0 || !row_count.is_multiple_of(inner_width) {
@@ -1137,9 +1139,9 @@ where
         return Err(AkitaError::InvalidProof);
     }
 
-    let log_basis = lp.log_basis;
+    let log_basis = lp.log_basis_open;
     let depth_open = lp.num_digits_open;
-    let depth_commit = lp.num_digits_commit;
+    let depth_commit = lp.num_digits_inner;
     let num_digits_fold = lp.num_digits_fold(num_t_vectors, field_bits)?;
     let levels = compute_num_digits_full_field(field_bits, log_basis);
     let group_layout = witness

@@ -45,7 +45,7 @@ pub fn shared_setup_fold_gadget<F: FieldCore + CanonicalField>(
     let _ = opening_batch;
     Some(crate::gadget_row_scalars::<F>(
         max_depth,
-        level_params.log_basis,
+        level_params.log_basis_open,
     ))
 }
 

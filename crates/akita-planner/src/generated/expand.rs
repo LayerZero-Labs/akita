@@ -24,8 +24,8 @@ use crate::schedule_params::optimize_fold_challenge_shape;
 use crate::PlannerPolicy;
 use akita_types::sis::{
     decomposed_s_block_ring_count, decomposed_t_ring_count, decomposed_w_ring_count,
-    fold_witness_digit_plan, min_secure_rank, num_digits_open, num_digits_setup_prefix_commit,
-    num_digits_witness, rounded_up_collision_inf_norm, rounded_up_role_a_inf_norm,
+    fold_witness_digit_plan, min_secure_rank, num_digits_inner, num_digits_open,
+    num_digits_setup_prefix_commit, rounded_up_collision_inf_norm, rounded_up_role_a_inf_norm,
     FoldChallengeNorms, FoldWitnessLinfCapConfig, FoldWitnessNorms, SisTableKey,
 };
 use akita_types::{
@@ -73,21 +73,12 @@ fn require_exact_rank(
     Ok(())
 }
 
-fn root_witness_log_basis(policy: &PlannerPolicy, is_root: bool, log_basis: u32) -> u32 {
-    if is_root && policy.decomposition.log_commit_bound == 1 {
-        1
-    } else {
-        log_basis
-    }
-}
-
 impl GeneratedSetupPrefixGroup {
     fn expand_to_precommitted_group(
         self,
         policy: &PlannerPolicy,
         ring_challenge_cfg: &SparseChallengeConfig,
         fold_shape: TensorChallengeShape,
-        log_basis: u32,
     ) -> Result<PrecommittedLevelParams, AkitaError> {
         let d = policy.ring_dimension;
         let sis_modulus_profile = policy.sis_modulus_profile;
@@ -113,26 +104,31 @@ impl GeneratedSetupPrefixGroup {
             num_positions_per_block,
             num_live_blocks,
             fold_challenge_shape: self.fold_challenge_shape,
-            log_basis_witness: log_basis,
-            log_basis_commit: log_basis,
+            log_basis_inner: self.log_basis_inner,
+            log_basis_outer: self.log_basis_outer,
             n_a: self.n_a as usize,
-            conservative_n_b: self.n_b as usize,
+            n_b: self.n_b as usize,
         };
-        // TODO(setup-prefix-witness-basis): generated setup-prefix metadata
-        // currently has only the commit/open `log_basis`, so expansion must
-        // reconstruct witness digits with that same basis. Once the planner
-        // brute-forces an independent `log_basis_witness`, persist it in
-        // `GeneratedSetupPrefixGroup` and use it for A-role width/norm checks.
-        let decomp = DecompositionParams {
-            log_basis,
+        let inner_decomp = DecompositionParams {
+            log_basis: self.log_basis_inner,
             ..policy.decomposition
         };
-        let num_digits_commit = num_digits_setup_prefix_commit(decomp);
-        let num_digits_open_val = num_digits_open(decomp);
+        let outer_decomp = DecompositionParams {
+            log_basis: self.log_basis_outer,
+            ..policy.decomposition
+        };
+        let open_decomp = DecompositionParams {
+            log_basis: self.log_basis_open,
+            ..policy.decomposition
+        };
+        let num_digits_inner = num_digits_setup_prefix_commit(inner_decomp);
+        let num_digits_outer = num_digits_open(outer_decomp);
+        let num_digits_open_val = num_digits_open(open_decomp);
         let no_layout = |role: &str| {
             AkitaError::InvalidSetup(format!(
                 "no audited setup-prefix {role}-role layout for generated schedule \
-                 (profile={sis_modulus_profile:?}, d={d}, log_basis={log_basis})"
+                 (profile={sis_modulus_profile:?}, d={d}, inner={}, outer={}, open={})",
+                self.log_basis_inner, self.log_basis_outer, self.log_basis_open
             ))
         };
         layout.validate_root_geometry(d)?;
@@ -141,13 +137,13 @@ impl GeneratedSetupPrefixGroup {
                 "generated setup-prefix challenge shape mismatch".into(),
             ));
         }
-        let inner_width = decomposed_s_block_ring_count(num_positions_per_block, num_digits_commit)
+        let inner_width = decomposed_s_block_ring_count(num_positions_per_block, num_digits_inner)
             .ok_or_else(|| no_layout("A"))?;
         let a_bucket = rounded_up_role_a_inf_norm(
             sis_policy,
             sis_modulus_profile,
             d,
-            decomp,
+            inner_decomp,
             ring_challenge_cfg,
             fold_shape,
             false,
@@ -169,11 +165,11 @@ impl GeneratedSetupPrefixGroup {
             sis_modulus_profile,
             akita_types::SisMatrixRole::B,
             d,
-            log_basis,
+            self.log_basis_outer,
         )
         .ok_or_else(|| no_layout("B"))?;
         let outer_width =
-            decomposed_t_ring_count(self.n_a as usize, num_digits_open_val, num_live_blocks, 1)
+            decomposed_t_ring_count(self.n_a as usize, num_digits_outer, num_live_blocks, 1)
                 .ok_or_else(|| no_layout("B"))?;
         require_exact_rank(
             "setup-prefix b",
@@ -215,18 +211,18 @@ impl GeneratedSetupPrefixGroup {
             num_live_blocks,
             1,
             policy.decomposition.field_bits(),
-            log_basis,
+            self.log_basis_open,
             challenge,
-            FoldWitnessNorms::new(log_basis, d, 1, false),
+            FoldWitnessNorms::new(self.log_basis_inner, d, 1, false),
             &fold_linf_cap_config,
         )?;
         Ok(PrecommittedLevelParams {
             layout,
             a_key,
             b_key,
-            log_basis_open: log_basis,
-            num_digits_witness: num_digits_commit,
-            num_digits_commit: num_digits_open_val,
+            log_basis_open: self.log_basis_open,
+            num_digits_inner,
+            num_digits_outer,
             num_digits_open: num_digits_open_val,
             num_digits_fold_one,
         })
@@ -334,7 +330,9 @@ impl GeneratedFoldStep {
             )));
         }
         let is_root = fold_level == 0;
-        let log_basis = self.log_basis;
+        let log_basis_inner = self.log_basis_inner;
+        let log_basis_outer = self.log_basis_outer;
+        let log_basis_open = self.log_basis_open;
         let sis_modulus_profile = policy.sis_modulus_profile;
         let sis_policy = policy.sis_security_policy;
 
@@ -392,23 +390,27 @@ impl GeneratedFoldStep {
         let no_layout = |role: &str| {
             AkitaError::InvalidSetup(format!(
                 "no audited {role}-role layout for generated schedule \
-                 (profile={sis_modulus_profile:?}, d={ring_d}, log_basis={log_basis})"
+                 (profile={sis_modulus_profile:?}, d={ring_d}, inner={log_basis_inner}, outer={log_basis_outer}, open={log_basis_open})"
             ))
         };
-        let decomp = DecompositionParams {
-            log_basis,
+        let outer_decomp = DecompositionParams {
+            log_basis: log_basis_outer,
             ..policy.decomposition
         };
-        let log_basis_witness = root_witness_log_basis(policy, is_root, log_basis);
         let witness_decomp = DecompositionParams {
-            log_basis: log_basis_witness,
+            log_basis: log_basis_inner,
+            ..policy.decomposition
+        };
+        let open_decomp = DecompositionParams {
+            log_basis: log_basis_open,
             ..policy.decomposition
         };
         let ring_challenge_cfg = ring_challenge_config(ring_d)?;
-        let num_digits_commit = num_digits_witness(witness_decomp, is_root);
-        let num_digits_open_val = num_digits_open(decomp);
+        let num_digits_inner = num_digits_inner(witness_decomp, is_root);
+        let num_digits_outer = num_digits_open(outer_decomp);
+        let num_digits_open_val = num_digits_open(open_decomp);
 
-        let inner_width = decomposed_s_block_ring_count(num_positions_per_block, num_digits_commit)
+        let inner_width = decomposed_s_block_ring_count(num_positions_per_block, num_digits_inner)
             .ok_or_else(|| no_layout("A"))?;
         let a_bucket = rounded_up_role_a_inf_norm(
             sis_policy,
@@ -442,12 +444,12 @@ impl GeneratedFoldStep {
             sis_modulus_profile,
             akita_types::SisMatrixRole::B,
             ring_d,
-            log_basis,
+            log_basis_outer,
         )
         .ok_or_else(|| no_layout("B"))?;
         let outer_width = decomposed_t_ring_count(
             self.n_a as usize,
-            num_digits_open_val,
+            num_digits_outer,
             num_live_blocks,
             num_claims,
         )
@@ -458,19 +460,15 @@ impl GeneratedFoldStep {
             sis_modulus_profile,
             akita_types::SisMatrixRole::D,
             ring_d,
-            log_basis,
+            log_basis_open,
         )
         .ok_or_else(|| no_layout("D"))?;
         let main_d_width =
             decomposed_w_ring_count(num_digits_open_val, num_live_blocks, num_claims)
                 .ok_or_else(|| no_layout("D"))?;
         let setup_prefix = if let Some(group) = setup_prefix_group {
-            let commitment_params = group.expand_to_precommitted_group(
-                policy,
-                &ring_challenge_cfg,
-                fold_shape,
-                log_basis,
-            )?;
+            let commitment_params =
+                group.expand_to_precommitted_group(policy, &ring_challenge_cfg, fold_shape)?;
             let n_prefix = 1usize
                 .checked_shl(commitment_params.layout.group.num_vars() as u32)
                 .ok_or_else(|| {
@@ -538,8 +536,9 @@ impl GeneratedFoldStep {
         // of the panicking `new`).
         let params = LevelParams {
             ring_dimension: ring_d,
-            log_basis,
-            log_basis_witness,
+            log_basis_inner,
+            log_basis_outer,
+            log_basis_open,
             a_key: AjtaiKeyParams::try_new(
                 sis_policy,
                 policy.sis_table_digest,
@@ -575,7 +574,8 @@ impl GeneratedFoldStep {
             num_positions_per_block,
             fold_challenge_config: ring_challenge_cfg,
             fold_challenge_shape: fold_shape,
-            num_digits_commit,
+            num_digits_inner,
+            num_digits_outer,
             num_digits_open,
             onehot_chunk_size,
             fold_linf_cap_config: akita_types::sis::FoldWitnessLinfCapConfig::worst_case_beta_only(
@@ -650,7 +650,9 @@ impl GeneratedFoldStep {
             ));
         }
 
-        let log_basis = self.log_basis;
+        let log_basis_inner = self.log_basis_inner;
+        let log_basis_outer = self.log_basis_outer;
+        let log_basis_open = self.log_basis_open;
         let sis_modulus_profile = policy.sis_modulus_profile;
         let sis_policy = policy.sis_security_policy;
         let position_index_bits = self.position_index_bits as usize;
@@ -681,23 +683,27 @@ impl GeneratedFoldStep {
         let no_layout = |role: &str| {
             AkitaError::InvalidSetup(format!(
                 "no audited {role}-role layout for generated multi-group root \
-                 (profile={sis_modulus_profile:?}, d={ring_d}, log_basis={log_basis})"
+                 (profile={sis_modulus_profile:?}, d={ring_d}, inner={log_basis_inner}, outer={log_basis_outer}, open={log_basis_open})"
             ))
         };
-        let decomp = DecompositionParams {
-            log_basis,
+        let outer_decomp = DecompositionParams {
+            log_basis: log_basis_outer,
             ..policy.decomposition
         };
-        let log_basis_witness = root_witness_log_basis(policy, true, log_basis);
         let witness_decomp = DecompositionParams {
-            log_basis: log_basis_witness,
+            log_basis: log_basis_inner,
+            ..policy.decomposition
+        };
+        let open_decomp = DecompositionParams {
+            log_basis: log_basis_open,
             ..policy.decomposition
         };
         let ring_challenge_cfg = ring_challenge_config(ring_d)?;
-        let num_digits_commit = num_digits_witness(witness_decomp, true);
-        let num_digits_open_val = num_digits_open(decomp);
+        let num_digits_inner = num_digits_inner(witness_decomp, true);
+        let num_digits_outer = num_digits_open(outer_decomp);
+        let num_digits_open_val = num_digits_open(open_decomp);
 
-        let inner_width = decomposed_s_block_ring_count(num_positions_per_block, num_digits_commit)
+        let inner_width = decomposed_s_block_ring_count(num_positions_per_block, num_digits_inner)
             .ok_or_else(|| no_layout("A"))?;
         let a_bucket = rounded_up_role_a_inf_norm(
             sis_policy,
@@ -731,12 +737,12 @@ impl GeneratedFoldStep {
             sis_modulus_profile,
             akita_types::SisMatrixRole::B,
             ring_d,
-            log_basis,
+            log_basis_outer,
         )
         .ok_or_else(|| no_layout("B"))?;
         let outer_width = decomposed_t_ring_count(
             self.n_a as usize,
-            num_digits_open_val,
+            num_digits_outer,
             num_live_blocks,
             main_num_polys,
         )
@@ -750,7 +756,7 @@ impl GeneratedFoldStep {
             .ok_or_else(|| {
                 AkitaError::InvalidSetup("generated multi-group D width overflow".into())
             })?;
-        let d_log_basis = shared_d_digit_log_basis(log_basis, &precommitted_groups);
+        let d_log_basis = shared_d_digit_log_basis(log_basis_open, &precommitted_groups);
         let d_bucket = rounded_up_collision_inf_norm(
             sis_policy,
             sis_modulus_profile,
@@ -768,8 +774,9 @@ impl GeneratedFoldStep {
 
         let params = LevelParams {
             ring_dimension: ring_d,
-            log_basis,
-            log_basis_witness,
+            log_basis_inner,
+            log_basis_outer,
+            log_basis_open,
             a_key: AjtaiKeyParams::try_new(
                 sis_policy,
                 policy.sis_table_digest,
@@ -809,7 +816,8 @@ impl GeneratedFoldStep {
             num_positions_per_block,
             fold_challenge_config: ring_challenge_cfg,
             fold_challenge_shape: fold_shape,
-            num_digits_commit,
+            num_digits_inner,
+            num_digits_outer,
             num_digits_open: num_digits_open_val,
             onehot_chunk_size,
             fold_linf_cap_config: akita_types::sis::FoldWitnessLinfCapConfig::worst_case_beta_only(

@@ -173,7 +173,7 @@ fn fp32_ext4_root_lp(position_index_bits: usize) -> LevelParams {
     );
     let num_positions_per_block = 1usize << position_index_bits;
     params
-        .with_decomp(num_positions_per_block, num_positions_per_block, 12, 12)
+        .with_decomp(num_positions_per_block, num_positions_per_block, 12, 12, 12)
         .unwrap()
 }
 

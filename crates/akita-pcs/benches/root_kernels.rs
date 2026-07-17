@@ -80,7 +80,7 @@ fn bench_dense_root_matvec_full_nv25_d32(c: &mut Criterion) {
                 n_a,
                 inner_width,
                 black_box(&block_slices),
-                layout.num_digits_commit,
+                layout.num_digits_inner,
                 layout.log_basis,
             ))
             .unwrap()
@@ -94,7 +94,7 @@ fn bench_dense_root_matvec_full_nv25_d32(c: &mut Criterion) {
                     &ntt_shared,
                     inner_width,
                     black_box(&block_slices),
-                    layout.num_digits_commit,
+                    layout.num_digits_inner,
                     layout.log_basis,
                 ))
                 .unwrap()
@@ -103,7 +103,7 @@ fn bench_dense_root_matvec_full_nv25_d32(c: &mut Criterion) {
     );
     let mut digit_blocks: Vec<Vec<[i8; D]>> = block_slices
         .iter()
-        .map(|block| vec![[0i8; D]; block.len() * layout.num_digits_commit])
+        .map(|block| vec![[0i8; D]; block.len() * layout.num_digits_inner])
         .collect();
     group.bench_function("dense_root_predecomp_digit_matvec_full_nv25_d32", |b| {
         b.iter(|| {
@@ -111,7 +111,7 @@ fn bench_dense_root_matvec_full_nv25_d32(c: &mut Criterion) {
                 decompose_rows_i8_into(
                     block,
                     digit_block,
-                    layout.num_digits_commit,
+                    layout.num_digits_inner,
                     layout.log_basis,
                 );
             }

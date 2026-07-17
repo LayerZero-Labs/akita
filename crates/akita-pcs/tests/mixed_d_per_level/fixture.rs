@@ -11,7 +11,7 @@ use akita_planner::generated::{table_entry, GeneratedFoldStep, GeneratedStep};
 use akita_planner::PlannerPolicy;
 use akita_types::sis::{
     decomposed_s_block_ring_count, decomposed_t_ring_count, decomposed_w_ring_count,
-    min_secure_rank, num_digits_open, num_digits_witness, rounded_up_collision_inf_norm,
+    min_secure_rank, num_digits_inner, num_digits_open, rounded_up_collision_inf_norm,
     rounded_up_role_a_inf_norm, SisMatrixRole, SisTableDigest, SisTableKey,
 };
 use akita_types::{
@@ -86,7 +86,9 @@ fn expand_envelope_witness_at_ring_d(
         ));
     }
     let is_root = fold_level == 0;
-    let log_basis = step.log_basis;
+    let log_basis_inner = step.log_basis_inner;
+    let log_basis_outer = step.log_basis_outer;
+    let log_basis_open = step.log_basis_open;
     let sis_modulus_profile = policy.sis_modulus_profile;
     let sis_policy = policy.sis_security_policy;
     let position_index_bits = block_m_vars.unwrap_or(step.position_index_bits as usize);
@@ -120,26 +122,26 @@ fn expand_envelope_witness_at_ring_d(
     let no_layout = |role: &str| {
         AkitaError::InvalidSetup(format!(
             "no audited {role}-role layout for mixed-D schedule \
-             (family={sis_modulus_profile:?}, d={target_ring_d}, log_basis={log_basis})"
+             (family={sis_modulus_profile:?}, d={target_ring_d}, inner={log_basis_inner}, outer={log_basis_outer}, open={log_basis_open})"
         ))
     };
-    let decomp = DecompositionParams {
-        log_basis,
+    let outer_decomp = DecompositionParams {
+        log_basis: log_basis_outer,
         ..policy.decomposition
     };
-    let log_basis_witness = if is_root && policy.decomposition.log_commit_bound == 1 {
-        1
-    } else {
-        log_basis
-    };
     let witness_decomp = DecompositionParams {
-        log_basis: log_basis_witness,
+        log_basis: log_basis_inner,
+        ..policy.decomposition
+    };
+    let open_decomp = DecompositionParams {
+        log_basis: log_basis_open,
         ..policy.decomposition
     };
     let ring_challenge_cfg = ring_challenge_config(target_ring_d)?;
-    let num_digits_commit = num_digits_witness(witness_decomp, is_root);
-    let num_digits_open_val = num_digits_open(decomp);
-    let inner_width = decomposed_s_block_ring_count(num_positions_per_block, num_digits_commit)
+    let num_digits_inner = num_digits_inner(witness_decomp, is_root);
+    let num_digits_outer = num_digits_open(outer_decomp);
+    let num_digits_open_val = num_digits_open(open_decomp);
+    let inner_width = decomposed_s_block_ring_count(num_positions_per_block, num_digits_inner)
         .ok_or_else(|| no_layout("A"))?;
     let a_bucket = rounded_up_role_a_inf_norm(
         sis_policy,
@@ -173,18 +175,17 @@ fn expand_envelope_witness_at_ring_d(
         sis_modulus_profile,
         SisMatrixRole::B,
         target_ring_d,
-        log_basis,
+        log_basis_outer,
     )
     .ok_or_else(|| no_layout("B"))?;
-    let outer_width =
-        decomposed_t_ring_count(n_a, num_digits_open_val, num_live_blocks, num_claims)
-            .ok_or_else(|| no_layout("B"))?;
+    let outer_width = decomposed_t_ring_count(n_a, num_digits_outer, num_live_blocks, num_claims)
+        .ok_or_else(|| no_layout("B"))?;
     let d_bucket = rounded_up_collision_inf_norm(
         sis_policy,
         sis_modulus_profile,
         SisMatrixRole::D,
         target_ring_d,
-        log_basis,
+        log_basis_open,
     )
     .ok_or_else(|| no_layout("D"))?;
     let d_matrix_width = decomposed_w_ring_count(num_digits_open_val, num_live_blocks, num_claims)
@@ -220,8 +221,9 @@ fn expand_envelope_witness_at_ring_d(
     };
     let mut params = LevelParams {
         ring_dimension: target_ring_d,
-        log_basis,
-        log_basis_witness,
+        log_basis_inner,
+        log_basis_outer,
+        log_basis_open,
         a_key: AjtaiKeyParams::try_new(
             sis_policy,
             SisTableDigest::CURRENT,
@@ -257,7 +259,8 @@ fn expand_envelope_witness_at_ring_d(
         num_positions_per_block,
         fold_challenge_config: ring_challenge_cfg,
         fold_challenge_shape: fold_shape,
-        num_digits_commit,
+        num_digits_inner,
+        num_digits_outer,
         num_digits_open: num_digits_open_val,
         onehot_chunk_size,
         fold_linf_cap_config: akita_types::sis::FoldWitnessLinfCapConfig::worst_case_beta_only(),

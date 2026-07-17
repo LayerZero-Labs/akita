@@ -286,7 +286,7 @@ fn push_unique_schedule_key(
     candidate: AkitaScheduleLookupKey,
 ) {
     // Full-key equality: same group shapes with different frozen precommit
-    // metadata (log_basis / n_a / conservative_n_b) stay distinct.
+    // metadata (semantic bases / n_a / n_b) stay distinct.
     if !keys.contains(&candidate) {
         keys.push(candidate);
     }

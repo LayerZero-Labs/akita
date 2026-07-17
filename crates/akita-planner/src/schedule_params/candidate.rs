@@ -60,7 +60,7 @@ pub(crate) fn recursive_fold_level_params_candidate(
         log_basis,
         ..policy.decomposition
     };
-    let delta_commit = num_digits_witness(decomp, false);
+    let delta_commit = num_digits_inner(decomp, false);
     let delta_open = num_digits_open(decomp);
     let Some(width_s) = decomposed_s_block_ring_count(num_positions_per_block, delta_commit) else {
         return Ok(None);
@@ -126,8 +126,9 @@ pub(crate) fn recursive_fold_level_params_candidate(
     };
     let mut params = LevelParams {
         ring_dimension: policy.ring_dimension,
-        log_basis,
-        log_basis_witness: log_basis,
+        log_basis_inner: log_basis,
+        log_basis_outer: log_basis,
+        log_basis_open: log_basis,
         a_key,
         b_key,
         d_key,
@@ -136,7 +137,8 @@ pub(crate) fn recursive_fold_level_params_candidate(
         num_live_blocks,
         fold_challenge_config: *ring_challenge_cfg,
         fold_challenge_shape,
-        num_digits_commit: delta_commit,
+        num_digits_inner: delta_commit,
+        num_digits_outer: delta_open,
         num_digits_open: delta_open,
         onehot_chunk_size: 0,
         fold_linf_cap_config: FoldWitnessLinfCapConfig::worst_case_beta_only(),
@@ -198,7 +200,8 @@ fn grouped_segment_rings(
     num_chunks: usize,
     num_positions_per_block: usize,
     n_a: usize,
-    num_digits_commit: usize,
+    num_digits_inner: usize,
+    num_digits_outer: usize,
     num_digits_open: usize,
     num_digits_fold: usize,
 ) -> Result<usize, AkitaError> {
@@ -209,10 +212,10 @@ fn grouped_segment_rings(
     let t_hat = num_polys
         .checked_mul(num_live_blocks)
         .and_then(|n| n.checked_mul(n_a))
-        .and_then(|n| n.checked_mul(num_digits_open))
+        .and_then(|n| n.checked_mul(num_digits_outer))
         .ok_or_else(|| AkitaError::InvalidSetup("group t-hat witness overflow".to_string()))?;
     let z_hat = num_positions_per_block
-        .checked_mul(num_digits_commit)
+        .checked_mul(num_digits_inner)
         .and_then(|n| n.checked_mul(num_digits_fold))
         .and_then(|n| n.checked_mul(num_chunks))
         .ok_or_else(|| AkitaError::InvalidSetup("group z-hat witness overflow".to_string()))?;
@@ -263,7 +266,8 @@ fn grouped_setup_prefix_next_witness_len(
         num_chunks,
         params.num_positions_per_block,
         params.a_key.row_len(),
-        params.num_digits_commit,
+        params.num_digits_inner,
+        params.num_digits_outer,
         params.num_digits_open,
         params.num_digits_fold(final_num_polys, field_bits)?,
     )?;
@@ -274,7 +278,8 @@ fn grouped_setup_prefix_next_witness_len(
             num_chunks,
             group.layout.num_positions_per_block,
             group.a_key.row_len(),
-            group.num_digits_commit,
+            group.num_digits_inner,
+            group.num_digits_outer,
             group.num_digits_open,
             group.num_digits_fold_one,
         )?;
@@ -288,7 +293,7 @@ fn grouped_setup_prefix_next_witness_len(
     let r_count = r_rows
         .checked_mul(akita_types::sis::compute_num_digits_full_field(
             field_bits,
-            params.log_basis,
+            params.log_basis_open,
         ))
         .ok_or_else(|| AkitaError::InvalidSetup("grouped r-tail witness overflow".to_string()))?;
     let rings = total
@@ -330,7 +335,8 @@ fn derive_setup_prefix_group(
     policy: &PlannerPolicy,
     ring_challenge_cfg: &SparseChallengeConfig,
     requested_fold_shape: TensorChallengeShape,
-    log_basis: u32,
+    log_basis_outer: u32,
+    log_basis_open: u32,
     n_prefix: usize,
     num_chunks: usize,
 ) -> Result<Option<PrecommittedLevelParams>, AkitaError> {
@@ -354,131 +360,147 @@ fn derive_setup_prefix_group(
     let prefix_num_vars = checked_power_of_two_vars(n_prefix, "setup prefix field length")?;
     let family = policy.sis_modulus_profile;
     let d = policy.ring_dimension;
-    // TODO(setup-prefix-witness-basis): recursive setup-prefix groups currently
-    // tie the source-witness decomposition basis to the commit/open candidate
-    // `log_basis`. When recursive setup planning supports an independent
-    // `log_basis_witness`, brute-force that axis separately and price the
-    // A-role width/norm from the witness-basis digit count.
-    let decomp = DecompositionParams {
-        log_basis,
+    let outer_decomp = DecompositionParams {
+        log_basis: log_basis_outer,
         ..policy.decomposition
     };
-    let num_digits_commit = num_digits_setup_prefix_commit(decomp);
-    let num_digits_open_val = num_digits_open(decomp);
+    let open_decomp = DecompositionParams {
+        log_basis: log_basis_open,
+        ..policy.decomposition
+    };
+    let num_digits_outer = num_digits_open(outer_decomp);
+    let num_digits_open_val = num_digits_open(open_decomp);
     let mut best: Option<(LayoutCandidateScore, PrecommittedLevelParams)> = None;
 
-    for block_index_bits in (0..=reduced_vars).rev() {
-        let Some(num_live_blocks) = 1usize.checked_shl(block_index_bits as u32) else {
-            continue;
+    // This is one additional bounded axis, not a Cartesian search over all
+    // three roles: the consuming fold fixes outer/open, while the setup-prefix
+    // source independently scans A/inner and immediately prunes infeasible
+    // SIS widths for each block split.
+    for log_basis_inner in policy.basis_range.0..=policy.basis_range.1 {
+        let inner_decomp = DecompositionParams {
+            log_basis: log_basis_inner,
+            ..policy.decomposition
         };
-        let position_index_bits = reduced_vars - block_index_bits;
-        let Some(num_positions_per_block) = 1usize.checked_shl(position_index_bits as u32) else {
-            continue;
-        };
-        let fold_shape = optimize_fold_challenge_shape(requested_fold_shape, num_live_blocks)?;
-        if num_live_blocks < num_chunks {
-            continue;
-        }
-        let Some(width_s) =
-            decomposed_s_block_ring_count(num_positions_per_block, num_digits_commit)
-        else {
-            continue;
-        };
-        let Some(norm_s) = rounded_up_role_a_inf_norm(
-            policy.sis_security_policy,
-            family,
-            d,
-            decomp,
-            ring_challenge_cfg,
-            fold_shape,
-            false,
-            0,
-            policy.ring_subfield_norm_bound,
-            num_live_blocks,
-            1,
-            width_s as u64,
-        ) else {
-            continue;
-        };
-        let Ok(a_key) = AjtaiKeyParams::try_new_with_min_rank(
-            sis_key(policy, akita_types::SisMatrixRole::A, norm_s),
-            width_s,
-        ) else {
-            continue;
-        };
-        let Some(norm_t) = rounded_up_collision_inf_norm(
-            policy.sis_security_policy,
-            family,
-            akita_types::SisMatrixRole::B,
-            d,
-            log_basis,
-        ) else {
-            continue;
-        };
-        let Some(width_t) =
-            decomposed_t_ring_count(a_key.row_len(), num_digits_open_val, num_live_blocks, 1)
-        else {
-            continue;
-        };
-        let Ok(b_key) = AjtaiKeyParams::try_new_with_min_rank(
-            sis_key(policy, akita_types::SisMatrixRole::B, norm_t),
-            width_t,
-        ) else {
-            continue;
-        };
-        let fold_linf_cap_config =
-            FoldWitnessLinfCapConfig::for_fold_level(ring_challenge_cfg, fold_shape, d, width_s)?;
-        let challenge = FoldChallengeNorms {
-            infinity_norm: fold_shape.effective_infinity_norm(ring_challenge_cfg) as u128,
-            l1_norm: fold_shape.effective_l1_mass(ring_challenge_cfg) as u128,
-        };
-        let (num_digits_fold_one, _) = fold_witness_digit_plan(
-            num_live_blocks,
-            1,
-            policy.decomposition.field_bits(),
-            log_basis,
-            challenge,
-            FoldWitnessNorms::new(log_basis, d, 1, false),
-            &fold_linf_cap_config,
-        )?;
-        let layout = PrecommittedGroupParams {
-            group: PolynomialGroupLayout::singleton(prefix_num_vars),
-            num_live_ring_elements_per_claim: ring_slots,
-            num_positions_per_block,
-            num_live_blocks,
-            fold_challenge_shape: fold_shape,
-            log_basis_witness: log_basis,
-            log_basis_commit: log_basis,
-            n_a: a_key.row_len(),
-            conservative_n_b: b_key.row_len(),
-        };
-        let params = PrecommittedLevelParams {
-            layout,
-            a_key,
-            b_key,
-            log_basis_open: log_basis,
-            num_digits_witness: num_digits_commit,
-            num_digits_commit: num_digits_open_val,
-            num_digits_open: num_digits_open_val,
-            num_digits_fold_one,
-        };
-        let physical_width = grouped_segment_rings(
-            1,
-            num_live_blocks,
-            num_chunks,
-            num_positions_per_block,
-            params.a_key.row_len(),
-            num_digits_commit,
-            num_digits_open_val,
-            num_digits_fold_one,
-        )?;
-        let score =
-            layout_candidate_score(physical_width, num_live_blocks, num_chunks, fold_shape)?;
-        if best
-            .as_ref()
-            .is_none_or(|(best_score, _)| score < *best_score)
-        {
-            best = Some((score, params));
+        let num_digits_inner = num_digits_setup_prefix_commit(inner_decomp);
+        for block_index_bits in (0..=reduced_vars).rev() {
+            let Some(num_live_blocks) = 1usize.checked_shl(block_index_bits as u32) else {
+                continue;
+            };
+            let position_index_bits = reduced_vars - block_index_bits;
+            let Some(num_positions_per_block) = 1usize.checked_shl(position_index_bits as u32)
+            else {
+                continue;
+            };
+            let fold_shape = optimize_fold_challenge_shape(requested_fold_shape, num_live_blocks)?;
+            if num_live_blocks < num_chunks {
+                continue;
+            }
+            let Some(width_s) =
+                decomposed_s_block_ring_count(num_positions_per_block, num_digits_inner)
+            else {
+                continue;
+            };
+            let Some(norm_s) = rounded_up_role_a_inf_norm(
+                policy.sis_security_policy,
+                family,
+                d,
+                inner_decomp,
+                ring_challenge_cfg,
+                fold_shape,
+                false,
+                0,
+                policy.ring_subfield_norm_bound,
+                num_live_blocks,
+                1,
+                width_s as u64,
+            ) else {
+                continue;
+            };
+            let Ok(a_key) = AjtaiKeyParams::try_new_with_min_rank(
+                sis_key(policy, akita_types::SisMatrixRole::A, norm_s),
+                width_s,
+            ) else {
+                continue;
+            };
+            let Some(norm_t) = rounded_up_collision_inf_norm(
+                policy.sis_security_policy,
+                family,
+                akita_types::SisMatrixRole::B,
+                d,
+                log_basis_outer,
+            ) else {
+                continue;
+            };
+            let Some(width_t) =
+                decomposed_t_ring_count(a_key.row_len(), num_digits_outer, num_live_blocks, 1)
+            else {
+                continue;
+            };
+            let Ok(b_key) = AjtaiKeyParams::try_new_with_min_rank(
+                sis_key(policy, akita_types::SisMatrixRole::B, norm_t),
+                width_t,
+            ) else {
+                continue;
+            };
+            let fold_linf_cap_config = FoldWitnessLinfCapConfig::for_fold_level(
+                ring_challenge_cfg,
+                fold_shape,
+                d,
+                width_s,
+            )?;
+            let challenge = FoldChallengeNorms {
+                infinity_norm: fold_shape.effective_infinity_norm(ring_challenge_cfg) as u128,
+                l1_norm: fold_shape.effective_l1_mass(ring_challenge_cfg) as u128,
+            };
+            let (num_digits_fold_one, _) = fold_witness_digit_plan(
+                num_live_blocks,
+                1,
+                policy.decomposition.field_bits(),
+                log_basis_open,
+                challenge,
+                FoldWitnessNorms::new(log_basis_inner, d, 1, false),
+                &fold_linf_cap_config,
+            )?;
+            let layout = PrecommittedGroupParams {
+                group: PolynomialGroupLayout::singleton(prefix_num_vars),
+                num_live_ring_elements_per_claim: ring_slots,
+                num_positions_per_block,
+                num_live_blocks,
+                fold_challenge_shape: fold_shape,
+                log_basis_inner,
+                log_basis_outer,
+                n_a: a_key.row_len(),
+                n_b: b_key.row_len(),
+            };
+            let params = PrecommittedLevelParams {
+                layout,
+                a_key,
+                b_key,
+                log_basis_open,
+                num_digits_inner,
+                num_digits_outer,
+                num_digits_open: num_digits_open_val,
+                num_digits_fold_one,
+            };
+            let physical_width = grouped_segment_rings(
+                1,
+                num_live_blocks,
+                num_chunks,
+                num_positions_per_block,
+                params.a_key.row_len(),
+                num_digits_inner,
+                num_digits_outer,
+                num_digits_open_val,
+                num_digits_fold_one,
+            )?;
+            let score =
+                layout_candidate_score(physical_width, num_live_blocks, num_chunks, fold_shape)?;
+            if best
+                .as_ref()
+                .is_none_or(|(best_score, _)| score < *best_score)
+            {
+                best = Some((score, params));
+            }
         }
     }
 
@@ -527,6 +549,7 @@ pub(crate) fn derive_candidate_level_params(
                 policy,
                 ring_challenge_cfg,
                 requested_fold_shape,
+                log_basis,
                 log_basis,
                 n_prefix,
                 num_chunks,
@@ -671,14 +694,14 @@ pub(crate) fn compute_root_direct_level_params(
         log_basis,
         ..decomp
     };
-    let log_basis_witness = root_witness_log_basis(policy, log_basis);
+    let log_basis_inner = root_witness_log_basis(policy, log_basis);
     let witness_decomp = DecompositionParams {
-        log_basis: log_basis_witness,
+        log_basis: log_basis_inner,
         ..decomp
     };
     // Root-direct commits against `log_commit_bound` (the root form of
-    // `num_digits_witness`) and opens at `log_open_bound`.
-    let depth_commit = num_digits_witness(witness_decomp, true);
+    // `num_digits_inner`) and opens at `log_open_bound`.
+    let depth_commit = num_digits_inner(witness_decomp, true);
     let depth_open = num_digits_open(level_decomp);
 
     // Outer/inner variable split: brute-force the optimum for a normal root,
@@ -697,7 +720,7 @@ pub(crate) fn compute_root_direct_level_params(
         // `nonzeros = ceil(D/K)`); dense roots use the balanced-digit norms.
         let is_onehot = decomp.log_commit_bound == 1;
         let fold_witness =
-            FoldWitnessNorms::new(log_basis_witness, d, policy.onehot_chunk_size, is_onehot);
+            FoldWitnessNorms::new(log_basis_inner, d, policy.onehot_chunk_size, is_onehot);
         let (position_index_bits, block_index_bits, _scoring_n_a) = optimal_block_geometry_split(
             policy.sis_security_policy,
             sis_modulus_profile,
@@ -811,8 +834,9 @@ pub(crate) fn compute_root_direct_level_params(
 
     let mut root_direct_params = LevelParams {
         ring_dimension: d,
-        log_basis,
-        log_basis_witness,
+        log_basis_inner,
+        log_basis_outer: log_basis,
+        log_basis_open: log_basis,
         a_key,
         b_key,
         d_key,
@@ -821,7 +845,8 @@ pub(crate) fn compute_root_direct_level_params(
         num_live_blocks,
         fold_challenge_config: *ring_challenge_cfg,
         fold_challenge_shape,
-        num_digits_commit: depth_commit,
+        num_digits_inner: depth_commit,
+        num_digits_outer: depth_open,
         num_digits_open: depth_open,
         onehot_chunk_size,
         fold_linf_cap_config: FoldWitnessLinfCapConfig::worst_case_beta_only(),
@@ -886,9 +911,9 @@ pub(crate) fn scalar_root_fold_level_params_candidate(
         log_basis: root_witness_log_basis(policy, log_basis),
         ..policy.decomposition
     };
-    let num_digits_commit = num_digits_witness(witness_decomp, true);
+    let num_digits_inner = num_digits_inner(witness_decomp, true);
     let num_digits_open = num_digits_open(level_decomp);
-    let Some(width_s) = decomposed_s_block_ring_count(num_positions_per_block, num_digits_commit)
+    let Some(width_s) = decomposed_s_block_ring_count(num_positions_per_block, num_digits_inner)
     else {
         return Ok(None);
     };
@@ -963,8 +988,9 @@ pub(crate) fn scalar_root_fold_level_params_candidate(
     };
     let mut params = (LevelParams {
         ring_dimension: policy.ring_dimension,
-        log_basis,
-        log_basis_witness: witness_decomp.log_basis,
+        log_basis_inner: witness_decomp.log_basis,
+        log_basis_outer: log_basis,
+        log_basis_open: log_basis,
         a_key,
         b_key,
         d_key,
@@ -973,7 +999,8 @@ pub(crate) fn scalar_root_fold_level_params_candidate(
         num_live_blocks,
         fold_challenge_config: *ring_challenge_cfg,
         fold_challenge_shape,
-        num_digits_commit,
+        num_digits_inner,
+        num_digits_outer: num_digits_open,
         num_digits_open,
         onehot_chunk_size,
         fold_linf_cap_config: FoldWitnessLinfCapConfig::worst_case_beta_only(),
@@ -1009,7 +1036,7 @@ mod tests {
             2,
             fold_challenge_config,
         )
-        .with_decomp(2, 2, 2, 2)
+        .with_decomp(2, 2, 2, 2, 2)
         .expect("grouped params");
         let precommitted = LevelParams::params_only(
             SisModulusProfileId::Q128OffsetA7F7,
@@ -1020,7 +1047,7 @@ mod tests {
             2,
             fold_challenge_config,
         )
-        .with_decomp(2, 2, 2, 2)
+        .with_decomp(2, 2, 2, 2, 2)
         .expect("precommitted params");
         params.precommitted_groups = vec![PrecommittedLevelParams {
             layout: PrecommittedGroupParams::from_params(
@@ -1029,9 +1056,9 @@ mod tests {
             ),
             a_key: precommitted.a_key.clone(),
             b_key: precommitted.b_key.clone(),
-            log_basis_open: precommitted.log_basis,
-            num_digits_witness: precommitted.num_digits_commit,
-            num_digits_commit: precommitted.num_digits_open,
+            log_basis_open: precommitted.log_basis_open,
+            num_digits_inner: precommitted.num_digits_inner,
+            num_digits_outer: precommitted.num_digits_outer,
             num_digits_open: precommitted.num_digits_open,
             num_digits_fold_one: precommitted.num_digits_fold_one,
         }];

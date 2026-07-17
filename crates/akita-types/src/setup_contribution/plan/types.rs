@@ -239,7 +239,7 @@ impl SetupContributionGroupInputs {
     ) -> Result<usize, AkitaError> {
         Ok(self
             .group_params_for(level_params, opening_batch)?
-            .num_digits_witness())
+            .num_digits_inner())
     }
 
     pub(crate) fn depth_commit(
@@ -249,7 +249,7 @@ impl SetupContributionGroupInputs {
     ) -> Result<usize, AkitaError> {
         Ok(self
             .group_params_for(level_params, opening_batch)?
-            .num_digits_commit())
+            .num_digits_outer())
     }
 
     pub(crate) fn depth_open(

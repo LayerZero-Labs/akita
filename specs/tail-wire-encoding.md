@@ -191,7 +191,7 @@ Let `D = ring_dimension`.
 The legacy `RingRelationInstance::segment_layout` plane counts (`crates/akita-types/src/proof/ring_relation.rs:226-237`) count digit **planes** for the packed-digit layout. The segment-typed wire uses different units per segment:
 
 ```text
-z_coords       = num_z_segments * num_positions_per_block * num_digits_commit * D   (Golomb integers; one per base-field slot in folded z)
+z_coords       = num_z_segments * num_positions_per_block * num_digits_inner * D   (Golomb integers; one per base-field slot in folded z)
 e_field_elems  = num_live_blocks * num_w_vectors * D                       (RawField; one ring element per block → D coeffs)
 t_field_elems  = n_a * num_live_blocks * num_t_vectors * D                   (RawField)
 r_field_elems  = relation_matrix_row_count_for(WithoutDBlock) * D                   (RawField; until PR #141 r-drop)

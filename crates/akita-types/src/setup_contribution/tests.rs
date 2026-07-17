@@ -48,7 +48,7 @@ impl TestSetupInputs {
         self.level_params.num_digits_open
     }
     fn depth_commit(&self) -> usize {
-        self.level_params.num_digits_commit
+        self.level_params.num_digits_inner
     }
     fn depth_fold(&self) -> Result<usize, AkitaError> {
         self.level_params.num_digits_fold(
@@ -120,6 +120,7 @@ fn test_inputs_for_group_sizes(
         num_live_blocks * num_positions_per_block,
         depth_commit,
         depth_open,
+        depth_open,
     )
     .expect("test level params");
     let expected_b_width = num_claims
@@ -153,9 +154,9 @@ fn test_inputs_for_group_sizes(
                 ),
                 a_key: lp.a_key.clone(),
                 b_key: lp.b_key.clone(),
-                log_basis_open: lp.log_basis,
-                num_digits_witness: lp.num_digits_commit,
-                num_digits_commit: lp.num_digits_open,
+                log_basis_open: lp.log_basis_open,
+                num_digits_inner: lp.num_digits_inner,
+                num_digits_outer: lp.num_digits_outer,
                 num_digits_open: lp.num_digits_open,
                 num_digits_fold_one: depth_fold,
             })

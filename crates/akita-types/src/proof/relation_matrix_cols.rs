@@ -354,7 +354,7 @@ where
         });
     }
     let n_d_active = lp.n_d_active_for(relation_matrix_row_layout);
-    let levels = r_decomp_levels::<F>(lp.log_basis);
+    let levels = r_decomp_levels::<F>(lp.log_basis_open);
     let witness_layout = instance.segment_layout(lp, None)?;
     let expected_r_len = rows.checked_mul(levels).ok_or_else(|| {
         AkitaError::InvalidSetup("relation quotient witness width overflow".to_string())
@@ -452,12 +452,12 @@ where
         if challenges.logical_len() != total_blocks {
             return Err(AkitaError::InvalidProof);
         }
-        let depth_witness = group_lp.num_digits_witness();
-        let depth_commit = group_lp.num_digits_commit();
+        let depth_witness = group_lp.num_digits_inner();
+        let depth_commit = group_lp.num_digits_outer();
         let depth_open = group_lp.num_digits_open();
         let depth_fold = lp.num_digits_fold_for_params(group_lp, k_g, lp.field_bits_for_cache())?;
-        let log_basis_witness = group_lp.log_basis_witness();
-        let log_basis_commit = group_lp.log_basis_commit();
+        let log_basis_inner = group_lp.log_basis_inner();
+        let log_basis_outer = group_lp.log_basis_outer();
         let log_basis_open = group_lp.log_basis_open();
         let n_a = group_lp.a_rows_len();
         let n_b = group_lp.b_rows_len();
@@ -498,11 +498,11 @@ where
             .into_iter()
             .map(E::lift_base)
             .collect();
-        let t_commit_gadget: Vec<E> = gadget_row_scalars::<F>(depth_commit, log_basis_commit)
+        let t_commit_gadget: Vec<E> = gadget_row_scalars::<F>(depth_commit, log_basis_outer)
             .into_iter()
             .map(E::lift_base)
             .collect();
-        let witness_gadget: Vec<E> = gadget_row_scalars::<F>(depth_witness, log_basis_witness)
+        let witness_gadget: Vec<E> = gadget_row_scalars::<F>(depth_witness, log_basis_inner)
             .into_iter()
             .map(E::lift_base)
             .collect();
@@ -696,7 +696,7 @@ where
             }
         }
     }
-    let r_gadget: Vec<E> = gadget_row_scalars::<F>(levels, lp.log_basis)
+    let r_gadget: Vec<E> = gadget_row_scalars::<F>(levels, lp.log_basis_open)
         .into_iter()
         .map(E::lift_base)
         .collect();

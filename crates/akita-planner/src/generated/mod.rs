@@ -7,6 +7,9 @@ pub struct GeneratedSetupPrefixGroup {
     pub num_positions_per_block: u32,
     pub num_live_blocks: u32,
     pub fold_challenge_shape: akita_challenges::TensorChallengeShape,
+    pub log_basis_inner: u32,
+    pub log_basis_outer: u32,
+    pub log_basis_open: u32,
     pub n_a: u32,
     pub n_b: u32,
 }
@@ -14,7 +17,9 @@ pub struct GeneratedSetupPrefixGroup {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GeneratedFoldStep {
     pub ring_d: u32,
-    pub log_basis: u32,
+    pub log_basis_inner: u32,
+    pub log_basis_outer: u32,
+    pub log_basis_open: u32,
     pub position_index_bits: u32,
     pub block_index_bits: u32,
     /// Exact number of live blocks `B`; may be smaller than `2^block_index_bits`.
@@ -261,10 +266,10 @@ fn precommitted_group_sort_key(
             akita_challenges::TensorChallengeShape::Flat => 0,
             akita_challenges::TensorChallengeShape::Tensor { fold_low_len } => fold_low_len,
         },
-        key.log_basis_witness,
-        key.log_basis_commit,
+        key.log_basis_inner,
+        key.log_basis_outer,
         key.n_a,
-        key.conservative_n_b,
+        key.n_b,
     )
 }
 
@@ -290,10 +295,10 @@ fn precommitted_group_key_eq(
         && generated.num_positions_per_block == layout.num_positions_per_block
         && generated.num_live_blocks == layout.num_live_blocks
         && generated.fold_challenge_shape == layout.fold_challenge_shape
-        && generated.log_basis_witness == layout.log_basis_witness
-        && generated.log_basis_commit == layout.log_basis_commit
+        && generated.log_basis_inner == layout.log_basis_inner
+        && generated.log_basis_outer == layout.log_basis_outer
         && generated.n_a == layout.n_a
-        && generated.conservative_n_b == layout.conservative_n_b
+        && generated.n_b == layout.n_b
 }
 
 /// Returns an error when the generated key does not match the runtime key.

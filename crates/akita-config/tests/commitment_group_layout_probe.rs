@@ -8,9 +8,6 @@ use akita_config::proof_optimized::fp128;
 use akita_config::{policy_of, CommitmentConfig};
 use akita_field::AkitaError;
 use akita_planner::{find_group_batch_schedule, PlannerPolicy};
-use akita_types::sis::{
-    min_secure_rank, rounded_up_collision_inf_norm, SisMatrixRole, SisTableDigest, SisTableKey,
-};
 use akita_types::{AkitaScheduleLookupKey, LevelParams, PolynomialGroupLayout, Step};
 
 type Cfg = fp128::D64OneHot;
@@ -18,10 +15,11 @@ type Cfg = fp128::D64OneHot;
 struct LayoutSummary {
     position_index_bits: usize,
     block_index_bits: usize,
-    log_basis: u32,
+    log_basis_inner: u32,
+    log_basis_outer: u32,
+    log_basis_open: u32,
     n_a: usize,
-    n_b_at_layout_basis: usize,
-    conservative_n_b: usize,
+    n_b: usize,
     t_hat_g: usize,
 }
 
@@ -35,11 +33,7 @@ fn root_params(schedule: &akita_types::Schedule) -> Result<&LevelParams, AkitaEr
     }
 }
 
-fn layout_summary(
-    policy: &PlannerPolicy,
-    num_vars: usize,
-    max_basis: u32,
-) -> Result<LayoutSummary, AkitaError> {
+fn layout_summary(policy: &PlannerPolicy, num_vars: usize) -> Result<LayoutSummary, AkitaError> {
     let key = PolynomialGroupLayout::new(num_vars, 1);
     let schedule = find_group_batch_schedule(
         &AkitaScheduleLookupKey::single(key),
@@ -48,40 +42,20 @@ fn layout_summary(
         Cfg::fold_challenge_shape_at_level,
     )?;
     let params = root_params(&schedule)?;
-    let b_width = params.b_key.col_len();
-    let norm_at_lmax = rounded_up_collision_inf_norm(
-        policy.sis_security_policy,
-        Cfg::sis_modulus_profile(),
-        SisMatrixRole::B,
-        Cfg::D,
-        max_basis,
-    )
-    .ok_or_else(|| AkitaError::InvalidSetup("B norm overflow".to_string()))?;
-    let conservative_n_b = min_secure_rank(
-        SisTableKey {
-            policy: policy.sis_security_policy,
-            table_digest: SisTableDigest::CURRENT,
-            modulus_profile: Cfg::sis_modulus_profile(),
-            role: SisMatrixRole::B,
-            ring_dimension: Cfg::D as u32,
-            coeff_linf_bound: norm_at_lmax,
-        },
-        b_width as u64,
-    )
-    .ok_or_else(|| AkitaError::InvalidSetup("B rank lookup failed".to_string()))?;
     let t_hat_g = params
         .num_live_blocks
         .checked_mul(params.a_key.row_len())
-        .and_then(|n| n.checked_mul(params.num_digits_open))
+        .and_then(|n| n.checked_mul(params.num_digits_outer))
         .ok_or_else(|| AkitaError::InvalidSetup("t_hat_g overflow".to_string()))?;
 
     Ok(LayoutSummary {
         position_index_bits: params.position_index_bits(),
         block_index_bits: params.block_index_bits(),
-        log_basis: params.log_basis,
+        log_basis_inner: params.log_basis_inner,
+        log_basis_outer: params.log_basis_outer,
+        log_basis_open: params.log_basis_open,
         n_a: params.a_key.row_len(),
-        n_b_at_layout_basis: params.b_key.row_len(),
-        conservative_n_b,
+        n_b: params.b_key.row_len(),
         t_hat_g,
     })
 }
@@ -89,16 +63,17 @@ fn layout_summary(
 fn print_layout(result: Result<LayoutSummary, AkitaError>) {
     match result {
         Ok(layout) => print!(
-            ",ok,{},{},{},{},{},{},{}",
+            ",ok,{},{},{},{},{},{},{},{}",
             layout.position_index_bits,
             layout.block_index_bits,
-            layout.log_basis,
+            layout.log_basis_inner,
+            layout.log_basis_outer,
+            layout.log_basis_open,
             layout.n_a,
-            layout.n_b_at_layout_basis,
-            layout.conservative_n_b,
+            layout.n_b,
             layout.t_hat_g
         ),
-        Err(err) => print!(",error:{err:?},,,,,,,",),
+        Err(err) => print!(",error:{err:?},,,,,,,,,",),
     }
 }
 
@@ -113,14 +88,14 @@ fn print_commitment_group_layout_probe() -> Result<(), AkitaError> {
     println!("cfg=fp128::D64OneHot K_g=1 min_basis={min_basis} max_basis={max_basis}");
     println!(
         "num_vars,\
-limited_status,limited_m,limited_r,limited_log_basis,limited_n_a,limited_b_width,limited_n_b_at_basis,limited_conservative_n_b,limited_t_hat_g,\
-full_status,full_m,full_r,full_log_basis,full_n_a,full_b_width,full_n_b_at_basis,full_conservative_n_b,full_t_hat_g"
+limited_status,limited_m,limited_r,limited_log_basis_inner,limited_log_basis_outer,limited_log_basis_open,limited_n_a,limited_n_b,limited_t_hat_g,\
+full_status,full_m,full_r,full_log_basis_inner,full_log_basis_outer,full_log_basis_open,full_n_a,full_n_b,full_t_hat_g"
     );
 
     for num_vars in 20..=60 {
         print!("{num_vars}");
-        print_layout(layout_summary(&limited_policy, num_vars, max_basis));
-        print_layout(layout_summary(&full_policy, num_vars, max_basis));
+        print_layout(layout_summary(&limited_policy, num_vars));
+        print_layout(layout_summary(&full_policy, num_vars));
         println!();
     }
 

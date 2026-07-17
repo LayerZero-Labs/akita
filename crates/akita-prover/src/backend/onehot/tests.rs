@@ -687,14 +687,14 @@ fn counting_column_sweep_matches_per_block_reference() {
     let mut rng = StdRng::seed_from_u64(0x51ee_7eed);
     let n_a = 2;
     let num_positions_per_block = 4;
-    let num_digits_commit = 3;
+    let num_digits_inner = 3;
     // The production sweep threshold is 32 blocks per worker.
     const BLOCKS_PER_THREAD: usize = 33;
     #[cfg(feature = "parallel")]
     let num_live_blocks = rayon::current_num_threads() * BLOCKS_PER_THREAD;
     #[cfg(not(feature = "parallel"))]
     let num_live_blocks = BLOCKS_PER_THREAD;
-    let active_a_cols = num_positions_per_block * num_digits_commit;
+    let active_a_cols = num_positions_per_block * num_digits_inner;
     let a_matrix: Vec<Vec<CyclotomicRing<F, D>>> = (0..n_a)
         .map(|_| {
             (0..active_a_cols)
@@ -723,13 +723,11 @@ fn counting_column_sweep_matches_per_block_reference() {
         &block_views,
         n_a,
         active_a_cols,
-        num_digits_commit,
+        num_digits_inner,
     );
     let expected = buckets
         .iter()
-        .map(|entries| {
-            inner_ajtai_multi_chunk_t_only::<F, D>(&a_matrix, entries, num_digits_commit)
-        })
+        .map(|entries| inner_ajtai_multi_chunk_t_only::<F, D>(&a_matrix, entries, num_digits_inner))
         .collect::<Vec<_>>();
 
     assert_eq!(got, expected);
@@ -784,15 +782,12 @@ fn multi_chunk_onehot_large_block_uses_safe_accumulator_path() {
     assert!(total_shift_accumulates > MAX_WIDE_SHIFT_ACCUMULATIONS);
 
     let n_a = 1;
-    let num_digits_commit = 1;
+    let num_digits_inner = 1;
     let num_positions_per_block = num_entries;
 
     let max_coeff = F::from_canonical_u128_reduced((1u128 << 24) - 4);
     let dense_ring = CyclotomicRing::from_coefficients([max_coeff; D]);
-    let a_matrix = [vec![
-        dense_ring;
-        num_positions_per_block * num_digits_commit
-    ]];
+    let a_matrix = [vec![dense_ring; num_positions_per_block * num_digits_inner]];
 
     let nonzero_coeffs: Vec<u16> = (0..coeffs_per_entry as u16).collect();
     let bucket: Vec<MultiChunkEntry> = (0..num_positions_per_block)
@@ -802,7 +797,7 @@ fn multi_chunk_onehot_large_block_uses_safe_accumulator_path() {
 
     let a_flat = FlatMatrix::from_ring_slice(&a_matrix[0]);
     let a_view = a_flat
-        .ring_view::<D>(n_a, num_positions_per_block * num_digits_commit)
+        .ring_view::<D>(n_a, num_positions_per_block * num_digits_inner)
         .unwrap();
 
     let views: Vec<&[MultiChunkEntry]> = (0..multi_chunk_blocks.num_live_blocks())
@@ -813,10 +808,10 @@ fn multi_chunk_onehot_large_block_uses_safe_accumulator_path() {
         &a_view,
         &views,
         n_a,
-        num_positions_per_block * num_digits_commit,
-        num_digits_commit,
+        num_positions_per_block * num_digits_inner,
+        num_digits_inner,
     );
-    let reference = inner_ajtai_multi_chunk_t_only::<F, D>(&a_matrix, &bucket, num_digits_commit);
+    let reference = inner_ajtai_multi_chunk_t_only::<F, D>(&a_matrix, &bucket, num_digits_inner);
 
     assert_eq!(got.len(), 1, "single-block test: expected one output row");
     assert_eq!(
@@ -832,7 +827,7 @@ fn multi_chunk_onehot_single_entry_overflow_splits_coeffs() {
     const D: usize = 64;
 
     let n_a = 1;
-    let num_digits_commit = 1;
+    let num_digits_inner = 1;
     let max_coeff = F::from_canonical_u128_reduced((1u128 << 24) - 4);
     let dense_ring = CyclotomicRing::from_coefficients([max_coeff; D]);
     let a_matrix = [vec![dense_ring]];
@@ -845,16 +840,16 @@ fn multi_chunk_onehot_single_entry_overflow_splits_coeffs() {
         .collect();
 
     let a_flat = FlatMatrix::from_ring_slice(&a_matrix[0]);
-    let a_view = a_flat.ring_view::<D>(n_a, num_digits_commit).unwrap();
+    let a_view = a_flat.ring_view::<D>(n_a, num_digits_inner).unwrap();
 
     let got = column_sweep_ajtai_onehot::<MultiChunkEntry, F, D>(
         &a_view,
         &views,
         n_a,
-        num_digits_commit,
-        num_digits_commit,
+        num_digits_inner,
+        num_digits_inner,
     );
-    let reference = inner_ajtai_multi_chunk_t_only::<F, D>(&a_matrix, &bucket, num_digits_commit);
+    let reference = inner_ajtai_multi_chunk_t_only::<F, D>(&a_matrix, &bucket, num_digits_inner);
 
     assert_eq!(got[0], reference);
 }

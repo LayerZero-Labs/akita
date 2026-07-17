@@ -146,6 +146,7 @@ impl SetupContributionFixture {
             shape.num_live_blocks * shape.num_positions_per_block,
             shape.depth_commit,
             shape.depth_open,
+            shape.depth_open,
         )
         .expect("setup contribution fixture params");
         let expected_b_width = shape
@@ -223,8 +224,8 @@ impl SetupContributionFixture {
             depth_commit: shape.depth_commit,
             depth_open: shape.depth_open,
             depth_fold: shape.depth_fold,
-            log_basis_witness: shape.log_basis,
-            log_basis_commit: shape.log_basis,
+            log_basis_inner: shape.log_basis,
+            log_basis_outer: shape.log_basis,
             log_basis_open: shape.log_basis,
             n_a: shape.n_a,
             a_row_start: 1,
@@ -235,7 +236,7 @@ impl SetupContributionFixture {
         let relation_matrix_evaluator = RelationMatrixEvaluator {
             role_dims: CommitmentRingDims::uniform(TEST_RING_DIM),
             groups,
-            log_basis: shape.log_basis,
+            log_basis_open: shape.log_basis,
             eq_tau1,
             flat_context: Some(FlatRelationContext {
                 level_params: lp,

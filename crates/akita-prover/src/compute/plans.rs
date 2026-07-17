@@ -71,16 +71,16 @@ pub enum DenseCommitInput<'a, F: FieldCore, const D: usize> {
         /// Per-block digit slices.
         digit_block_slices: Vec<&'a [[i8; D]]>,
         /// Logarithm of the gadget basis used to produce the cached digits.
-        log_basis: u32,
+        log_basis_inner: u32,
     },
     /// Ring coefficients need backend-side digit decomposition.
     CoeffBlocks {
         /// Per-block coefficient slices.
         block_slices: Vec<&'a [CyclotomicRing<F, D>]>,
         /// Number of balanced digits used for the A-side commit.
-        num_digits_commit: usize,
+        num_digits_inner: usize,
         /// Logarithm of the gadget basis.
-        log_basis: u32,
+        log_basis_inner: u32,
     },
 }
 
@@ -112,7 +112,7 @@ pub struct OneHotCommitRowsPlan<'a> {
     /// Number of ring-element positions in each root block.
     pub num_positions_per_block: usize,
     /// Number of balanced digits used for the A-side commit.
-    pub num_digits_commit: usize,
+    pub num_digits_inner: usize,
     /// Per-block one-hot entries.
     pub(crate) blocks: OneHotCommitBlocks<'a>,
 }
@@ -132,7 +132,7 @@ pub struct SparseRingCommitRowsPlan<'a> {
     /// Number of ring-element positions in each root block.
     pub num_positions_per_block: usize,
     /// Number of balanced digits used for the A-side commit.
-    pub num_digits_commit: usize,
+    pub num_digits_inner: usize,
     /// Per-block sparse signed coefficients.
     pub(crate) blocks: FlatBlockTable<'a, SparseRingBlockEntry>,
 }
@@ -156,9 +156,9 @@ pub struct RecursiveWitnessCommitRowsPlan<'a, const D: usize> {
     /// Number of logical blocks.
     pub num_live_blocks: usize,
     /// Number of balanced digits used for the A-side commit.
-    pub num_digits_commit: usize,
+    pub num_digits_inner: usize,
     /// Logarithm of the gadget basis.
-    pub log_basis: u32,
+    pub log_basis_inner: u32,
     /// Known source digit basis, when construction proves every coefficient is
     /// balanced for that basis. A commit basis at least this large can skip a
     /// redundant full witness range scan.
@@ -181,8 +181,10 @@ pub struct RingSwitchRelationRowsPlan<'a, const D: usize> {
     pub z_segment: &'a [[i32; D]],
     /// Infinity norm of the full centered `z_folded_rings` witness.
     pub z_folded_centered_inf_norm: u32,
-    /// Logarithm of the gadget basis used to produce `e_hat` and `t_hat`.
-    pub log_basis: u32,
+    /// Logarithm of the D/opening gadget basis used to produce `e_hat`.
+    pub log_basis_open: u32,
+    /// Logarithm of the B/outer gadget basis used to produce `t_hat`.
+    pub log_basis_outer: u32,
 }
 
 /// Additional public-row quotient operation input.

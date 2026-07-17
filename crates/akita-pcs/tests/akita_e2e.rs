@@ -989,7 +989,7 @@ fn full_d64_adaptive_mixed_basis_roundtrip_and_serialization() {
                 .as_segment_typed()
                 .expect("terminal witness should be segment-typed")
                 .layout
-                .log_basis,
+                .log_basis_open,
             schedule_terminal_log_basis::<Cfg>(&plan)
         );
 
@@ -1125,7 +1125,7 @@ fn adaptive_onehot_direct_tail_uses_terminal_schedule_basis() {
                 .as_segment_typed()
                 .expect("terminal witness should be segment-typed")
                 .layout
-                .log_basis,
+                .log_basis_open,
             schedule_terminal_log_basis::<Cfg>(&plan)
         );
 

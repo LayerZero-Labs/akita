@@ -220,7 +220,7 @@ fn walk_scalar_generated_schedule_entry(
                         .as_ref()
                         .map(|commit| {
                             validate_block_geometry(commit, key, policy, 0, expected_root_w_len)?;
-                            validate_log_basis(commit.log_basis, policy)?;
+                            validate_step_bases(commit, policy)?;
                             let fold_shape = fold_challenge_shape_at_level(AkitaScheduleInputs {
                                 num_vars: key.num_vars(),
                                 level: 0,
@@ -388,7 +388,7 @@ fn walk_multi_group_generated_schedule_entry(
                             key,
                             policy,
                             ring_challenge_config,
-                            fold.log_basis,
+                            fold.log_basis_open,
                         )?;
                     validate_expanded_precommitted_groups(key, &precommitted_groups)?;
                     expand_multi_group_root_fold_step(
@@ -520,7 +520,7 @@ fn walk_multi_group_generated_schedule_entry(
                                     key,
                                     policy,
                                     ring_challenge_config,
-                                    commit.log_basis,
+                                    commit.log_basis_open,
                                 )?;
                             validate_expanded_precommitted_groups(key, &precommitted_groups)?;
                             Some(commit.expand_to_multi_group_root_level_params(
@@ -630,7 +630,7 @@ fn expand_validated_fold_level(
         .fold_step()
         .ok_or_else(|| AkitaError::InvalidSetup("generated expected a fold step".to_string()))?;
     validate_block_geometry(fold, key, policy, fold_level, current_w_len)?;
-    validate_log_basis(fold.log_basis, policy)?;
+    validate_step_bases(fold, policy)?;
     let inputs = AkitaScheduleInputs {
         num_vars: key.num_vars(),
         level: fold_level,
@@ -721,6 +721,14 @@ fn validate_log_basis(log_basis: u32, policy: &PlannerPolicy) -> Result<(), Akit
         )));
     }
     Ok(())
+}
+
+fn validate_step_bases(step: &GeneratedFoldStep, policy: &PlannerPolicy) -> Result<(), AkitaError> {
+    if !(policy.decomposition.log_commit_bound == 1 && step.log_basis_inner == 1) {
+        validate_log_basis(step.log_basis_inner, policy)?;
+    }
+    validate_log_basis(step.log_basis_outer, policy)?;
+    validate_log_basis(step.log_basis_open, policy)
 }
 
 fn validate_block_geometry(
@@ -836,9 +844,12 @@ fn validate_expanded_level_params(
             "expanded generated level has mismatched block geometry".to_string(),
         ));
     }
-    if lp.log_basis != step.log_basis {
+    if lp.log_basis_inner != step.log_basis_inner
+        || lp.log_basis_outer != step.log_basis_outer
+        || lp.log_basis_open != step.log_basis_open
+    {
         return Err(AkitaError::InvalidSetup(
-            "expanded generated level has mismatched log_basis".to_string(),
+            "expanded generated level has mismatched semantic basis".to_string(),
         ));
     }
     if fold_level > 0 && lp.onehot_chunk_size != 0 {
