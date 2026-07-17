@@ -272,6 +272,7 @@ class ProfileBenchReportTests(unittest.TestCase):
         self.assertIn("Prepared NTT cache size", report)
         self.assertIn("4.0 MiB", report)
         self.assertIn("8.0 MiB", report)
+        self.assertIn("4,096 bytes", report)
         self.assertIn("nv32Onehot256", report)
         self.assertIn("D=64", report)
         self.assertNotIn("Proof B", report)
@@ -328,6 +329,8 @@ class ProfileBenchReportTests(unittest.TestCase):
             "setup_contribution_mode": "direct",
             "exit_code": 0,
             "setup_s": 2.0,
+            "setup_vector_bytes": 4 * 1024 * 1024,
+            "setup_ntt_cache_bytes": 8 * 1024 * 1024,
             "commit_s": 3.0,
             "prove_total_s": 4.0,
             "verify_total_s": 0.005,
@@ -363,6 +366,8 @@ class ProfileBenchReportTests(unittest.TestCase):
 
         self.assertIn("Delta versus main", report)
         self.assertIn("unchanged", report)
+        self.assertIn("4.0<br><sub>4,194,304 bytes</sub>", report)
+        self.assertIn("8.0<br><sub>8,388,608 bytes</sub>", report)
         self.assertIn("A ring dimension", report)
         self.assertIn("Proof size by fold level", report)
         self.assertNotIn("Proof framing", report)

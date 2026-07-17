@@ -1399,6 +1399,13 @@ def fmt_bytes(value: float) -> str:
     return f"{int(round(value)):,}"
 
 
+def fmt_mib_with_exact_bytes(value_bytes: float) -> str:
+    return (
+        f"{fmt_mib_from_bytes(value_bytes)}<br>"
+        f"<sub>{fmt_bytes(value_bytes)} bytes</sub>"
+    )
+
+
 def fmt_count(value: float) -> str:
     return f"{int(round(value)):,}"
 
@@ -1432,8 +1439,8 @@ REPORT_METRICS = [
     Metric("verify_total_s", "Verify", "ms", fmt_milliseconds),
     Metric("max_rss_kib", "Peak process RSS", "MiB", fmt_mib),
     Metric("setup_ring_elements", "Setup ring elements", "ring elements", fmt_count),
-    Metric("setup_vector_bytes", "Setup vector", "MiB", fmt_mib_from_bytes),
-    Metric("setup_ntt_cache_bytes", "Prepared NTT cache", "MiB", fmt_mib_from_bytes),
+    Metric("setup_vector_bytes", "Setup vector", "MiB", fmt_mib_with_exact_bytes),
+    Metric("setup_ntt_cache_bytes", "Prepared NTT cache", "MiB", fmt_mib_with_exact_bytes),
     Metric("proof_size_bytes", "Proof size", "bytes", fmt_bytes),
     Metric("akita_fold_bytes", "Recursive fold payload", "bytes", fmt_bytes),
     Metric("tail_bytes", "Final-witness tail", "bytes", fmt_bytes),
@@ -1672,8 +1679,8 @@ def render_matrix_summary(
                 current,
                 baseline,
                 "proof_size_bytes",
-                lambda value: f"{value / 1024.0:.1f}",
-                " KiB",
+                fmt_bytes,
+                " bytes",
                 main_baseline is not None,
             ),
         ]
