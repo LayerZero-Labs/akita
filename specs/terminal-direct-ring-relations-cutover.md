@@ -55,6 +55,25 @@ that trace check is unsound.
 The terminal verifier performs two checks over the same transcript-bound
 cleartext witness.
 
+### Extension-opening reduction remains independent
+
+When the current fold requires extension-opening reduction (EOR), its partials
+and sumcheck remain in the terminal proof. EOR proves that the original
+extension-field opening claims reduce to the packed protocol point and final
+claim consumed by the ring fold. Revealing the terminal `z`, `e`, and `t`
+segments does not reveal the pre-reduction polynomial table, so the verifier
+cannot reconstruct this reduction from the terminal witness alone.
+
+EOR is verified before direct terminal relations exactly as it is before an
+intermediate fold. The direct trace-opening check uses:
+
+- the EOR final claim as its target and the EOR equality-factor evaluation as
+  its scale when EOR is present;
+- the ordinary batched opening target and unit scale otherwise.
+
+Only the terminal relation sumcheck is removed. The EOR sumcheck is neither a
+relation quotient check nor redundant with revealing the terminal witness.
+
 ### 1. Reduced ring relations
 
 For every physical terminal row, check:
@@ -171,6 +190,12 @@ Intermediate construction remains on the current `ring_switch_build_w` and
 branches that leave impossible quotient/stage-2 values in common output
 structs.
 
+The cut must occur before `compute_multi_group_relation_quotient`, recursive
+digit-witness allocation, `ring_switch_finalize`, and stage-2 trace-table
+construction. Terminal construction returns only checked group artifacts and
+the cleartext witness; it must not manufacture empty recursive-witness,
+quotient, evaluator, or sumcheck objects to satisfy the intermediate API.
+
 ## Verifier Ownership
 
 Add one canonical checker under `akita-verifier::protocol::core`. It accepts
@@ -186,6 +211,34 @@ The entry points may prepare different opening-incidence inputs, but must call
 the same row checker. Reduced cyclotomic helpers may be shared with the
 root-direct verifier; row construction and checked segment slicing must not be
 duplicated between the two terminal surfaces.
+
+### Arithmetic and cache boundary
+
+The first implementation uses the same checked plain cyclotomic mat-vec kernel
+as root-direct commitment verification. This kernel consumes
+`FlatMatrix::ring_view` slices from the seed-validated expanded verifier setup;
+it does not accept caller-supplied matrix storage or duplicate A/B setup
+derivation. The terminal checker dispatches A and B products at their own role
+dimensions and uses canonical `LevelParams` row/column sizes.
+
+Do not make `akita-verifier` depend on `akita-prover` to reuse its compute
+backend. The prover NTT cache currently stores both negacyclic and cyclic
+transforms of the full shared matrix and is intentionally much larger than the
+coefficient setup. Direct verification needs only negacyclic products over the
+exact A/B prefixes; copying that cache into `AkitaVerifierSetup` would inflate
+memory and verifier code without establishing a measured need.
+
+Benchmark the checked plain kernel first. If it is material, factor a
+negacyclic-only prepared-matrix primitive into a shared lower-level crate and
+place its derived, non-serialized cache in a separate prepared-verifier
+artifact. Its identity must bind the setup envelope, ring dimension, and exact
+matrix-view length, and its reported size must count only the warmed A/B slots.
+The serialized `AkitaVerifierSetup` remains the canonical seed-derived setup,
+not a container for derived acceleration state.
+
+This keeps the trusted arithmetic surface to one direct mat-vec primitive,
+already exercised by root-direct verification, plus the terminal-specific row
+orchestration and trace check.
 
 ## Planner And Proof Size
 

@@ -1,3 +1,4 @@
+use super::direct_ring_arithmetic::{decompose_rows_i8, mat_vec_mul_i8};
 use super::suffix::{verify_suffix, SuffixVerifierState};
 use super::*;
 // Top-level batched verifier orchestration once a schedule is selected.
@@ -170,44 +171,6 @@ where
     )
 }
 
-pub(crate) fn mat_vec_mul_i8_plain<F, const D: usize>(
-    matrix_rows: &[&[CyclotomicRing<F, D>]],
-    digits: &[[i8; D]],
-) -> Vec<CyclotomicRing<F, D>>
-where
-    F: FieldCore + CanonicalField,
-{
-    matrix_rows
-        .iter()
-        .map(|row| {
-            row.iter().zip(digits.iter()).fold(
-                CyclotomicRing::<F, D>::zero(),
-                |acc, (entry, digit)| {
-                    let digit_ring = CyclotomicRing::from_coefficients(from_fn(|idx| {
-                        F::from_i64(digit[idx] as i64)
-                    }));
-                    acc + (*entry * digit_ring)
-                },
-            )
-        })
-        .collect()
-}
-
-fn decompose_rows_i8<F, const D: usize>(
-    rows: &[CyclotomicRing<F, D>],
-    num_digits: usize,
-    log_basis: u32,
-) -> Vec<[i8; D]>
-where
-    F: FieldCore + CanonicalField,
-{
-    let mut out = vec![[0i8; D]; rows.len() * num_digits];
-    for (dst_chunk, row) in out.chunks_mut(num_digits).zip(rows.iter()) {
-        row.balanced_decompose_pow2_i8_into(dst_chunk, log_basis);
-    }
-    out
-}
-
 fn direct_decomposed_inner_rows<F, const D: usize>(
     witness_rings: &[CyclotomicRing<F, D>],
     setup: &AkitaVerifierSetup<F>,
@@ -249,7 +212,7 @@ where
             &[]
         };
         let block_digits = decompose_rows_i8(block, params.num_digits_commit(), params.log_basis());
-        let t_rows = mat_vec_mul_i8_plain::<F, D>(&a_rows, &block_digits);
+        let t_rows = mat_vec_mul_i8::<F, D>(&a_rows, &block_digits);
         out.extend(decompose_rows_i8(
             &t_rows,
             params.num_digits_open(),
@@ -283,7 +246,7 @@ where
         .shared_matrix()
         .ring_view::<D>(params.b_rows_len(), outer_input.len())?;
     let b_rows: Vec<_> = b_matrix.rows().collect();
-    let u = mat_vec_mul_i8_plain::<F, D>(&b_rows, &outer_input);
+    let u = mat_vec_mul_i8::<F, D>(&b_rows, &outer_input);
     Ok(RingCommitment { u })
 }
 

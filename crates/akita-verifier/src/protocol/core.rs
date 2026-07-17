@@ -4,6 +4,7 @@
 //! in `verify`, `root_fold`, and `suffix`. Schedule/config dispatch stays with
 //! the scheme crate until the verifier-facing config boundary is extracted.
 
+mod direct_ring_arithmetic;
 mod extension_opening_reduction;
 mod verify;
 use crate::protocol::ring_switch::{
