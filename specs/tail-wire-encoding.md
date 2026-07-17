@@ -36,7 +36,7 @@ The feature introduces or modifies:
 - A **canonical, total Golomb-Rice codec** (`akita-types`, verifier-reachable, no-panic) with zigzag sign mapping and standard unary+remainder Rice encoding only. Decode rejects unary runs longer than [`golomb_rice_max_quotient_for_cap`](crates/akita-types/src/golomb_rice.rs). **#190 applies it to `z` only.**
 - A per-level **fold `‖z‖_inf` cap accessor** via [`LevelParams::fold_witness_linf_cap_for_claims`](crates/akita-types/src/layout/params.rs) and the deterministic cap→wire low-bits rules in [`tail_golomb_rice_low_bits`](crates/akita-types/src/tail_golomb_rice_low_bits.rs) for the folded-response `z` segment.
 - **Terminal `t`-state cutover** *(umbrella S2, deferred)*: the penultimate fold stops sending outer `u = B * t_hat` and binds inner `t = A * w_terminal` as the terminal public state.
-- **`r`-elision and terminal-stage-2 elision** *(umbrella S1, deferred)* via PR #141 direct-terminal mode. **#190 still carries `r` on the wire** as a raw field segment.
+- **`r`-elision and terminal-stage-2 elision** *(umbrella S1, deferred)* via the [terminal direct ring relations cutover](terminal-direct-ring-relations-cutover.md). **#190 still carries `r` on the wire** as a raw field segment.
 - **Descriptor binding** *(umbrella S5, deferred)* of the tail-encoding policy in `AkitaInstanceDescriptor`. **#190** updates planner proof-size accounting and regenerates non-zk shipped tables under segment-typed sizing.
 
 ### Invariants
