@@ -265,9 +265,14 @@ pub fn recursive_group_batch_candidates_for_capacity<Cfg: CommitmentConfig>(
     }
 
     // Explicit profiling keys stay selected even when the recursive catalog
-    // feature is off or the table has not been regenerated yet.
+    // feature is off or the table has not been regenerated yet. The plain
+    // recursive adapter and its multi-chunk (distributed-prover) companion share
+    // the same profiling key shape; they differ only in the chunked witness
+    // layout the policy prices.
     if std::any::TypeId::of::<Cfg>()
         == std::any::TypeId::of::<RecursiveCommitmentConfig<fp128::D64OneHot>>()
+        || std::any::TypeId::of::<Cfg>()
+            == std::any::TypeId::of::<RecursiveCommitmentConfig<fp128::D64OneHotMultiChunkW4R2>>()
     {
         for candidate in recursive_d64_onehot_profile_keys()? {
             if key_within_setup_capacity(&candidate, max_num_vars, max_num_batched_polys) {
@@ -425,6 +430,29 @@ pub const ALL_GENERATED_FAMILIES: &[GeneratedFamily] = &[
             <RecursiveCommitmentConfig<fp128::D64OneHot> as CommitmentConfig>::ring_challenge_config,
         fold_challenge_shape_at_level:
             <RecursiveCommitmentConfig<fp128::D64OneHot> as CommitmentConfig>::fold_challenge_shape_at_level,
+    },
+    // Recursive setup-offloading combined with the 4-chunk (distributed-prover)
+    // witness layout. Shares the recursive profiling key(s); the schedules differ
+    // from `fp128_d64_onehot_recursive` because the policy prices the chunked
+    // witness on the leading (activated) fold levels.
+    GeneratedFamily {
+        module_name: "fp128_d64_onehot_recursive_multi_chunk_w4r2",
+        const_name: "FP128_D64_ONEHOT_RECURSIVE_MULTI_CHUNK_W4R2_SCHEDULES",
+        schedule_feature: "fp128-d64-onehot-recursive-multi-chunk-w4r2",
+        min_num_vars: 1,
+        max_num_vars: 50,
+        num_polys: DEFAULT_NUM_POLYS,
+        regen: regen::<RecursiveCommitmentConfig<fp128::D64OneHotMultiChunkW4R2>>,
+        regen_group_batch:
+            regen_group_batch::<RecursiveCommitmentConfig<fp128::D64OneHotMultiChunkW4R2>>,
+        emit_group_batch: true,
+        group_batch_keys: recursive_profile_group_batch_keys,
+        table_backed: table_backed::<RecursiveCommitmentConfig<fp128::D64OneHotMultiChunkW4R2>>,
+        policy: family_policy::<RecursiveCommitmentConfig<fp128::D64OneHotMultiChunkW4R2>>,
+        ring_challenge_config:
+            <RecursiveCommitmentConfig<fp128::D64OneHotMultiChunkW4R2> as CommitmentConfig>::ring_challenge_config,
+        fold_challenge_shape_at_level:
+            <RecursiveCommitmentConfig<fp128::D64OneHotMultiChunkW4R2> as CommitmentConfig>::fold_challenge_shape_at_level,
     },
     family_row!(
         "fp128_d64_full",
