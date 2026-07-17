@@ -544,6 +544,7 @@ where
                 1,
             )],
             1,
+            akita_types::TerminalQuotientMode::Include,
         )?;
         let direct_bytes = direct_witness_bytes(field_bits, &witness_shape);
         DirectStep {

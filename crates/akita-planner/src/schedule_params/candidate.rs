@@ -314,6 +314,7 @@ pub(crate) fn terminal_witness_shape_for_opening_layout(
         field_bits,
         group_shapes,
         opening_layout.num_groups(),
+        akita_types::TerminalQuotientMode::Include,
     )
 }
 

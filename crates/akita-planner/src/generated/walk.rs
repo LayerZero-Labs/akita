@@ -285,6 +285,7 @@ fn walk_scalar_generated_schedule_entry(
                             1,
                         )],
                         1,
+                        akita_types::TerminalQuotientMode::Include,
                     )?;
                     (witness_shape, len, None)
                 };
@@ -544,6 +545,7 @@ fn walk_multi_group_generated_schedule_entry(
                         field_bits,
                         [(terminal_lp as &dyn akita_types::LevelParamsLike, 1, 1, 1)],
                         1,
+                        akita_types::TerminalQuotientMode::Include,
                     )?;
                     (witness_shape, len, None)
                 };

@@ -124,13 +124,14 @@ pub fn segment_typed_witness_shape_from_groups<'a>(
     field_bits: u32,
     groups: impl IntoIterator<Item = (&'a dyn LevelParamsLike, usize, usize, usize)>,
     num_segments: usize,
+    quotient_mode: TerminalQuotientMode,
 ) -> Result<CleartextWitnessShape, AkitaError> {
     let layout = tail_segment_layout_from_groups(
         terminal_lp,
         groups,
         num_segments,
         field_bits,
-        TerminalQuotientMode::Include,
+        quotient_mode,
     )?;
     Ok(CleartextWitnessShape::SegmentTyped(
         SegmentTypedWitnessShape { layout },

@@ -118,7 +118,8 @@ pub use proof::{
     SetupPrefixProverRegistry, SetupPrefixPublicCommitment, SetupPrefixSlot, SetupPrefixSlotId,
     SetupPrefixVerifierRegistry, SetupPrefixVerifierSlot, SetupProductSumcheckShape,
     SetupSumcheckProof, TailSegmentGroupLayout, TailSegmentLayout, TerminalLevelProof,
-    TerminalLevelProofShape, TerminalWitnessTranscriptParts, MAX_SETUP_MATRIX_FIELD_ELEMENTS,
+    TerminalLevelProofShape, TerminalQuotientMode, TerminalRelationProof,
+    TerminalRelationProofShape, TerminalWitnessTranscriptParts, MAX_SETUP_MATRIX_FIELD_ELEMENTS,
     MULTI_GROUP_ROOT_DENSE_UNSUPPORTED, SETUP_OFFLOAD_D_SETUP, SETUP_OFFLOAD_MIN_PREFIX_FIELD_LEN,
     SETUP_SUMCHECK_DEGREE,
 };

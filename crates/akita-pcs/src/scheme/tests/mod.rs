@@ -19,6 +19,7 @@ use akita_types::{
 use akita_types::{scheduled_next_level_params, LevelParams};
 use akita_types::{
     AkitaBatchedProofShape, AkitaProofStepShape, LevelProofShape, RingVec, TerminalLevelProofShape,
+    TerminalRelationProofShape,
 };
 use akita_types::{
     AkitaCommitmentHint, Commitment, OpeningClaims, OpeningClaimsLayout, PointVariableSelection,
