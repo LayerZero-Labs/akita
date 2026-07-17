@@ -302,15 +302,14 @@ mod fold_grind_nonce_tests {
             SparseChallengeConfig::pm1_only(31),
             TensorChallengeShape::Tensor { fold_low_len: 2 },
         );
-        let contract = lp
-            .fold_witness_grind_contract(1, FoldLinfProtocolBinding::CURRENT.max_grind_attempts)
-            .expect("contract");
+        let contract = lp.fold_witness_grind_contract(1).expect("contract");
         assert_eq!(
             contract.policy,
             akita_types::sis::FoldWitnessLinfCapPolicy::WorstCaseBetaOnly
         );
-        assert!(contract.validate_nonce(0).is_ok());
-        assert!(contract.validate_nonce(1).is_err());
+        let max_grind_attempts = FoldLinfProtocolBinding::CURRENT.max_grind_attempts;
+        assert!(contract.validate_nonce(0, max_grind_attempts).is_ok());
+        assert!(contract.validate_nonce(1, max_grind_attempts).is_err());
     }
 
     #[test]
@@ -322,17 +321,15 @@ mod fold_grind_nonce_tests {
             },
             TensorChallengeShape::Flat,
         );
-        let contract = lp
-            .fold_witness_grind_contract(1, FoldLinfProtocolBinding::CURRENT.max_grind_attempts)
-            .expect("contract");
+        let contract = lp.fold_witness_grind_contract(1).expect("contract");
         assert_eq!(
             contract.policy,
             akita_types::sis::FoldWitnessLinfCapPolicy::TailBoundWithGrind
         );
-        let cap = contract.max_nonce_exclusive;
-        assert!(contract.validate_nonce(0).is_ok());
-        assert!(contract.validate_nonce(cap - 1).is_ok());
-        assert!(contract.validate_nonce(cap).is_err());
+        let cap = FoldLinfProtocolBinding::CURRENT.max_grind_attempts;
+        assert!(contract.validate_nonce(0, cap).is_ok());
+        assert!(contract.validate_nonce(cap - 1, cap).is_ok());
+        assert!(contract.validate_nonce(cap, cap).is_err());
     }
 
     #[test]
@@ -344,16 +341,14 @@ mod fold_grind_nonce_tests {
             },
             TensorChallengeShape::Tensor { fold_low_len: 2 },
         );
-        let contract = lp
-            .fold_witness_grind_contract(1, FoldLinfProtocolBinding::CURRENT.max_grind_attempts)
-            .expect("contract");
+        let contract = lp.fold_witness_grind_contract(1).expect("contract");
         assert_eq!(
             contract.policy,
             akita_types::sis::FoldWitnessLinfCapPolicy::TensorTailBoundWithGrind
         );
-        let cap = contract.max_nonce_exclusive;
-        assert!(contract.validate_nonce(0).is_ok());
-        assert!(contract.validate_nonce(cap - 1).is_ok());
-        assert!(contract.validate_nonce(cap).is_err());
+        let cap = FoldLinfProtocolBinding::CURRENT.max_grind_attempts;
+        assert!(contract.validate_nonce(0, cap).is_ok());
+        assert!(contract.validate_nonce(cap - 1, cap).is_ok());
+        assert!(contract.validate_nonce(cap, cap).is_err());
     }
 }

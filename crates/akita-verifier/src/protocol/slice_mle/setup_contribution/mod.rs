@@ -5,6 +5,4 @@ mod evaluator;
 pub(crate) use evaluator::evaluate_setup_contribution_direct;
 
 #[cfg(test)]
-mod fixtures;
-#[cfg(test)]
 mod tests;

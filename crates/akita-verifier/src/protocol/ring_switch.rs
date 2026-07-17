@@ -14,12 +14,11 @@ use akita_transcript::labels::{
 };
 use akita_transcript::{sample_ext_challenge, Transcript};
 use akita_types::{
-    eval_relation_weight_at_point, gadget_row_scalars, r_decomp_levels, validate_role_dispatch,
-    AkitaExpandedSetup, CommitmentRingDims, FpExtEncoding, LevelParams, RelationMatrixRowLayout,
-    RingMultiplierOpeningPoint, RingRelationInstance, RingRole, RingVec,
-    SetupContributionGroupInputs, SetupContributionLayout, SetupContributionPlan,
-    SetupContributionPlanInputs, SetupContributionStatic, TerminalWitnessTranscriptParts,
-    WitnessLayout, WitnessUnitLayout,
+    eval_relation_weight_at_point, gadget_row_scalars, r_decomp_levels, shared_setup_fold_gadget,
+    validate_role_dispatch, AkitaExpandedSetup, CommitmentRingDims, FpExtEncoding, LevelParams,
+    OpeningClaimsLayout, RelationMatrixRowLayout, RingMultiplierOpeningPoint, RingRelationInstance,
+    RingRole, RingVec, SetupContributionGroupInputs, SetupContributionPlan,
+    TerminalWitnessTranscriptParts, WitnessLayout, WitnessUnitLayout,
 };
 use std::sync::Arc;
 
@@ -103,19 +102,20 @@ pub struct RelationMatrixEvaluator<F: FieldCore> {
     pub(crate) groups: Vec<RelationMatrixGroupEvaluator<F>>,
     /// Batch-wide basis used by the shared r-tail.
     pub(crate) log_basis: u32,
-    pub(crate) setup_contribution_layout: SetupContributionLayout,
-    pub(crate) setup_contribution_inputs: SetupContributionPlanInputs<F>,
-    pub(crate) setup_contribution_static: SetupContributionStatic<F>,
+    pub(crate) eq_tau1: Arc<[F]>,
     pub(crate) flat_context: Option<FlatRelationContext<F>>,
 }
 
 #[derive(Clone)]
 pub(crate) struct FlatRelationContext<F: FieldCore> {
-    level_params: LevelParams,
-    row_coefficients: Vec<F>,
-    tau1: Vec<F>,
-    relation_matrix_row_layout: RelationMatrixRowLayout,
-    opening_ring_dim: usize,
+    pub(crate) level_params: LevelParams,
+    pub(crate) opening_batch: OpeningClaimsLayout,
+    pub(crate) witness_layout: Arc<WitnessLayout>,
+    pub(crate) opening_source_len: usize,
+    pub(crate) row_coefficients: Vec<F>,
+    pub(crate) tau1: Vec<F>,
+    pub(crate) relation_matrix_row_layout: RelationMatrixRowLayout,
+    pub(crate) opening_ring_dim: usize,
 }
 
 #[derive(Clone)]
@@ -125,14 +125,11 @@ pub(crate) struct RelationMatrixGroupEvaluator<F: FieldCore> {
     pub(crate) group_id: usize,
     pub(crate) num_claims: usize,
     pub(crate) num_live_blocks: usize,
-    pub(crate) num_positions_per_block: usize,
     pub(crate) depth_open: usize,
     pub(crate) depth_commit: usize,
     pub(crate) depth_fold: usize,
     pub(crate) log_basis: u32,
     pub(crate) n_a: usize,
-    pub(crate) n_b: usize,
-    pub(crate) t_vector_width: usize,
     pub(crate) a_row_start: usize,
     pub(crate) b_row_start: usize,
 }
@@ -357,15 +354,13 @@ where
     }
     reject_mixed_d_multi_chunk::<D>(lp.role_dims(), &layout, "prepare_relation_matrix_evaluator")?;
     let opening_batch = relation.opening_batch();
-    let num_polys = opening_batch.num_total_polynomials();
-    let depth_fold = lp.num_digits_fold(num_polys, F::modulus_bits())?;
     let rows = lp.relation_matrix_row_count_for(
         opening_batch.num_groups(),
         relation.relation_matrix_row_layout(),
     )?;
     if lp.has_precommitted_groups() {
         return prepare_relation_matrix_evaluator_multi_group::<F, E, D>(
-            replay, alpha, tau1, layout, depth_fold, rows,
+            replay, alpha, tau1, layout, rows,
         );
     }
     let challenges = relation
@@ -379,13 +374,12 @@ where
         alpha,
         lp,
         tau1,
-        num_polys,
+        opening_batch,
         replay.row_coefficients,
         relation.relation_matrix_row_layout(),
         layout,
         replay.opening_source_len,
         replay.opening_ring_dim,
-        depth_fold,
         rows,
     )
 }
@@ -396,7 +390,6 @@ fn prepare_relation_matrix_evaluator_multi_group<F, E, const D: usize>(
     alpha: E,
     tau1: &[E],
     layout: WitnessLayout,
-    depth_fold: usize,
     rows: usize,
 ) -> Result<RelationMatrixEvaluator<E>, AkitaError>
 where
@@ -483,12 +476,6 @@ where
             .map(|idx| ring_multiplier_point.eval_position_at_dyn::<E>(idx, &alpha_pows_a))
             .collect::<Result<Vec<_>, _>>()?;
 
-        let t_vector_width = n_a
-            .checked_mul(depth_open)
-            .and_then(|len| len.checked_mul(num_live_blocks))
-            .ok_or_else(|| {
-                AkitaError::InvalidSetup("multi-group B vector width overflow".to_string())
-            })?;
         let a_range = lp.a_row_range(
             opening_batch,
             group_index,
@@ -511,55 +498,28 @@ where
             group_id: group_index,
             num_claims: k_g,
             num_live_blocks,
-            num_positions_per_block,
             depth_open,
             depth_commit,
             depth_fold,
             log_basis,
             n_a,
-            n_b,
-            t_vector_width,
             a_row_start: a_range.start,
             b_row_start: b_range.start,
         });
     }
 
-    let setup_contribution_inputs = SetupContributionPlanInputs {
-        relation_matrix_row_layout: relation.relation_matrix_row_layout(),
-        rows,
-        n_a: lp.a_key.row_len(),
-        n_b: lp.b_key.row_len(),
-        n_d: lp.d_key.row_len(),
-        num_groups: opening_batch.num_groups(),
-        num_polys_per_group: opening_batch.group_sizes(),
-        num_t_vectors: opening_batch.num_total_polynomials(),
-        num_claims: opening_batch.num_total_polynomials(),
-        num_live_blocks: lp.num_live_blocks,
-        num_positions_per_block: lp.num_positions_per_block,
-        depth_open: lp.num_digits_open,
-        depth_commit: lp.num_digits_commit,
-        depth_fold,
-        inner_width: lp.a_key.col_len(),
-        eq_tau1: eq_tau1.clone(),
-    };
-
     let layout = Arc::new(layout);
-    let setup_contribution_layout =
-        build_setup_contribution_layout(layout.clone(), replay.opening_source_len, &groups)?;
-    let setup_contribution_static = SetupContributionPlan::prepare_static(
-        &setup_contribution_inputs,
-        &setup_contribution_layout,
-    )?;
 
     Ok(RelationMatrixEvaluator {
         role_dims: relation.role_dims(),
         groups,
         log_basis: lp.log_basis,
-        setup_contribution_layout,
-        setup_contribution_inputs,
-        setup_contribution_static,
+        eq_tau1,
         flat_context: Some(FlatRelationContext {
             level_params: lp.clone(),
+            opening_batch: opening_batch.clone(),
+            witness_layout: layout,
+            opening_source_len: replay.opening_source_len,
             row_coefficients: replay.row_coefficients.to_vec(),
             tau1: tau1.to_vec(),
             relation_matrix_row_layout: relation.relation_matrix_row_layout(),
@@ -622,13 +582,12 @@ fn prepare_relation_matrix_evaluator_inner<F, E, const D: usize>(
     alpha: E,
     lp: &LevelParams,
     tau1: &[E],
-    num_polys: usize,
+    opening_batch: &OpeningClaimsLayout,
     gamma: &[E],
     relation_matrix_row_layout: RelationMatrixRowLayout,
     layout: WitnessLayout,
     opening_source_len: usize,
     opening_ring_dim: usize,
-    depth_fold: usize,
     rows: usize,
 ) -> Result<RelationMatrixEvaluator<E>, AkitaError>
 where
@@ -636,13 +595,8 @@ where
     E: FpExtEncoding<F> + FromPrimitiveInt + MulBase<F> + MulBaseUnreduced<F>,
 {
     validate_role_dispatch::<D>(lp.role_dims, RingRole::Inner)?;
-    let setup_contribution_inputs = SetupContributionPlanInputs::from_level_params(
-        lp,
-        &[num_polys],
-        relation_matrix_row_layout,
-        depth_fold,
-    )?
-    .with_eq_tau1_from_tau(tau1, rows)?;
+    let num_polys = opening_batch.num_total_polynomials();
+    let depth_fold = lp.num_digits_fold(num_polys, lp.field_bits_for_cache())?;
     reject_mixed_d_multi_chunk::<D>(lp.role_dims, &layout, "prepare_relation_matrix_evaluator")?;
     let alpha_pows = scalar_powers(alpha, D);
     let num_claims = gamma.len();
@@ -676,47 +630,35 @@ where
     let opening_a_evals = (0..num_positions_per_block)
         .map(|idx| ring_multiplier_point.eval_position_at::<D, E>(idx, &alpha_pows))
         .collect::<Result<Vec<_>, _>>()?;
-    let n_b = lp.b_key.row_len();
-    let t_vector_width = n_a
-        .checked_mul(depth_open)
-        .and_then(|len| len.checked_mul(num_live_blocks))
-        .ok_or_else(|| AkitaError::InvalidSetup("B vector width overflow".to_string()))?;
     let group = RelationMatrixGroupEvaluator {
         c_alphas,
         opening_a_evals,
         group_id: 0,
         num_claims,
         num_live_blocks,
-        num_positions_per_block,
         depth_open,
         depth_commit,
         depth_fold,
         log_basis,
         n_a,
-        n_b,
-        t_vector_width,
         a_row_start: 1,
         b_row_start: 1 + n_a,
     };
 
     let groups = vec![group];
     let layout = Arc::new(layout);
-    let setup_contribution_layout =
-        build_setup_contribution_layout(layout.clone(), opening_source_len, &groups)?;
-    let setup_contribution_static = SetupContributionPlan::prepare_static(
-        &setup_contribution_inputs,
-        &setup_contribution_layout,
-    )?;
+    let eq_tau1: std::sync::Arc<[E]> = EqPolynomial::evals_prefix(tau1, rows)?.into();
 
     Ok(RelationMatrixEvaluator {
         role_dims: lp.role_dims,
         groups,
         log_basis,
-        setup_contribution_layout,
-        setup_contribution_inputs,
-        setup_contribution_static,
+        eq_tau1,
         flat_context: Some(FlatRelationContext {
             level_params: lp.clone(),
+            opening_batch: opening_batch.clone(),
+            witness_layout: layout,
+            opening_source_len,
             row_coefficients: gamma.to_vec(),
             tau1: tau1.to_vec(),
             relation_matrix_row_layout,
@@ -739,32 +681,19 @@ fn reject_mixed_d_multi_chunk<const D: usize>(
     Ok(())
 }
 
-pub(crate) fn build_setup_contribution_layout<F: FieldCore>(
-    layout: Arc<WitnessLayout>,
-    opening_source_len: usize,
+pub(crate) fn setup_contribution_group_inputs<F: FieldCore>(
     groups: &[RelationMatrixGroupEvaluator<F>],
-) -> Result<SetupContributionLayout, AkitaError> {
-    let setup_groups = groups
+) -> Vec<SetupContributionGroupInputs> {
+    groups
         .iter()
-        .map(|group| {
-            Ok(SetupContributionGroupInputs {
-                group_id: group.group_id,
-                num_claims: group.num_claims,
-                num_live_blocks: group.num_live_blocks,
-                num_positions_per_block: group.num_positions_per_block,
-                depth_open: group.depth_open,
-                depth_commit: group.depth_commit,
-                depth_fold: group.depth_fold,
-                log_basis: group.log_basis,
-                n_a: group.n_a,
-                n_b: group.n_b,
-                t_vector_width: group.t_vector_width,
-                a_row_start: group.a_row_start,
-                b_row_start: group.b_row_start,
-            })
+        .map(|group| SetupContributionGroupInputs {
+            group_id: group.group_id,
+            num_claims: group.num_claims,
+            depth_fold: group.depth_fold,
+            a_row_start: group.a_row_start,
+            b_row_start: group.b_row_start,
         })
-        .collect::<Result<Vec<_>, AkitaError>>()?;
-    SetupContributionLayout::new(layout, opening_source_len, setup_groups)
+        .collect()
 }
 
 struct SetupContributionEqCache<F> {
@@ -772,24 +701,16 @@ struct SetupContributionEqCache<F> {
 }
 
 fn precompute_setup_contribution_eq_cache<F>(
-    setup_groups: &[SetupContributionGroupInputs],
-) -> Result<SetupContributionEqCache<F>, AkitaError>
+    level_params: &LevelParams,
+    opening_batch: &OpeningClaimsLayout,
+    groups: &[SetupContributionGroupInputs],
+) -> SetupContributionEqCache<F>
 where
     F: FieldCore + CanonicalField,
 {
-    let mut cache = SetupContributionEqCache { fold_gadget: None };
-    let Some(first) = setup_groups.first() else {
-        return Ok(cache);
-    };
-
-    if setup_groups
-        .iter()
-        .all(|group| group.depth_fold == first.depth_fold && group.log_basis == first.log_basis)
-    {
-        cache.fold_gadget = Some(gadget_row_scalars::<F>(first.depth_fold, first.log_basis));
+    SetupContributionEqCache {
+        fold_gadget: shared_setup_fold_gadget(level_params, opening_batch, groups),
     }
-
-    Ok(cache)
 }
 
 impl<E: FieldCore> RelationMatrixEvaluator<E> {
@@ -833,19 +754,102 @@ impl<E: FieldCore> RelationMatrixEvaluator<E> {
             &context.tau1,
             &context.row_coefficients,
             context.relation_matrix_row_layout,
-            self.setup_contribution_layout.opening_source_len(),
+            context.opening_source_len,
             context.opening_ring_dim,
             point,
         )
     }
 
-    fn group_units(
+    pub(crate) fn setup_contribution_inputs(&self) -> Vec<SetupContributionGroupInputs> {
+        setup_contribution_group_inputs(&self.groups)
+    }
+
+    pub(crate) fn setup_contribution_fold_gadget<F>(&self) -> Result<Option<Vec<F>>, AkitaError>
+    where
+        F: FieldCore + CanonicalField,
+    {
+        let context = self.flat_context.as_ref().ok_or(AkitaError::InvalidProof)?;
+        let setup_groups = self.setup_contribution_inputs();
+        Ok(shared_setup_fold_gadget(
+            &context.level_params,
+            &context.opening_batch,
+            &setup_groups,
+        ))
+    }
+
+    pub(crate) fn setup_contribution_plan<F>(
         &self,
+        x_challenges: &[E],
+        fold_gadget: Option<&[F]>,
+    ) -> Result<SetupContributionPlan<E>, AkitaError>
+    where
+        F: FieldCore + CanonicalField,
+        E: MulBase<F>,
+    {
+        let context = self.flat_context.as_ref().ok_or(AkitaError::InvalidProof)?;
+        let setup_groups = self.setup_contribution_inputs();
+        SetupContributionPlan::prepare::<F>(
+            &context.level_params,
+            &context.opening_batch,
+            context.relation_matrix_row_layout,
+            self.eq_tau1.clone(),
+            &context.witness_layout,
+            context.opening_source_len,
+            &setup_groups,
+            x_challenges,
+            fold_gadget,
+            self.role_dims,
+        )
+    }
+
+    pub(crate) fn setup_index_weight_evaluator<F>(
+        &self,
+        plan: &SetupContributionPlan<E>,
+        tau1: &[E],
+        x_challenges: &[E],
+        fold_gadget: &[F],
+        alpha: E,
+    ) -> Result<akita_types::SetupIndexWeightEvaluator<E>, AkitaError>
+    where
+        F: FieldCore,
+        E: MulBase<F>,
+    {
+        let context = self.flat_context.as_ref().ok_or(AkitaError::InvalidProof)?;
+        let setup_groups = self.setup_contribution_inputs();
+        akita_types::SetupIndexWeightEvaluator::new::<F>(
+            plan,
+            &context.level_params,
+            &context.opening_batch,
+            context.relation_matrix_row_layout,
+            &context.witness_layout,
+            context.opening_source_len,
+            &setup_groups,
+            tau1,
+            x_challenges,
+            fold_gadget,
+            alpha,
+        )
+    }
+
+    pub(crate) fn setup_rows(&self) -> Result<usize, AkitaError> {
+        let context = self.flat_context.as_ref().ok_or(AkitaError::InvalidProof)?;
+        context.level_params.relation_matrix_row_count_for(
+            context.opening_batch.num_groups(),
+            context.relation_matrix_row_layout,
+        )
+    }
+
+    pub(crate) fn opening_source_len(&self) -> Result<usize, AkitaError> {
+        let context = self.flat_context.as_ref().ok_or(AkitaError::InvalidProof)?;
+        Ok(context.opening_source_len)
+    }
+
+    fn group_units<'a>(
+        &self,
+        context: &'a FlatRelationContext<E>,
         group: &RelationMatrixGroupEvaluator<E>,
-    ) -> Result<Vec<&WitnessUnitLayout>, AkitaError> {
-        self.setup_contribution_layout
-            .witness_layout()
-            .units_for_group(group.group_id)
+    ) -> Result<Vec<&'a WitnessUnitLayout>, AkitaError> {
+        context.witness_layout.units_for_group(group.group_id)
     }
 
     /// Evaluate the relation matrix at a point at the supplied point.
@@ -866,6 +870,7 @@ impl<E: FieldCore> RelationMatrixEvaluator<E> {
         F: FieldCore + CanonicalField,
         E: FpExtEncoding<F> + FromPrimitiveInt + MulBase<F> + MulBaseUnreduced<F>,
     {
+        let context = self.flat_context.as_ref().ok_or(AkitaError::InvalidProof)?;
         let _ring_bits = validate_ring_dispatch::<D>()?;
         validate_role_dispatch::<D>(self.role_dims, RingRole::Inner)?;
         let d_b = self.role_dims.d_b();
@@ -891,8 +896,12 @@ impl<E: FieldCore> RelationMatrixEvaluator<E> {
         let mut e_structured_contribution = E::zero();
         let mut t_structured_contribution = E::zero();
         let mut z_structured_contribution = E::zero();
-        let setup_eq_cache =
-            precompute_setup_contribution_eq_cache::<F>(self.setup_contribution_layout.groups())?;
+        let setup_groups = self.setup_contribution_inputs();
+        let setup_eq_cache = precompute_setup_contribution_eq_cache::<F>(
+            &context.level_params,
+            &context.opening_batch,
+            &setup_groups,
+        );
         let setup_fold_gadget = setup_eq_cache.fold_gadget;
 
         // In direct setup mode, build the setup-contribution plan up front. Its
@@ -904,12 +913,9 @@ impl<E: FieldCore> RelationMatrixEvaluator<E> {
         // and the structured Z contribution falls back to a direct evaluation.
         let setup_plan = if setup_claim.is_none() {
             let fold_gadget = setup_fold_gadget.as_deref().unwrap_or(&[]);
-            Some(SetupContributionPlan::finish_plan::<F>(
-                &self.setup_contribution_static,
+            Some(self.setup_contribution_plan::<F>(
                 x_challenges,
                 (!fold_gadget.is_empty()).then_some(fold_gadget),
-                &self.setup_contribution_layout,
-                self.role_dims,
             )?)
         } else {
             None
@@ -920,27 +926,26 @@ impl<E: FieldCore> RelationMatrixEvaluator<E> {
             // Bounded equality window for the serial Z fallback (tensor mode).
             let x_eq_window = OffsetEqWindow::new(x_challenges)?;
             for (group_index, group) in self.groups.iter().enumerate() {
-                let units = self.group_units(group)?;
+                let units = self.group_units(context, group)?;
                 validate_log_basis(group.log_basis)?;
 
                 let g_open = gadget_row_scalars::<F>(group.depth_open, group.log_basis);
                 let g_open_ext = g_open.iter().copied().map(E::lift_base).collect::<Vec<_>>();
                 let g_commit = gadget_row_scalars::<F>(group.depth_commit, group.log_basis);
 
-                let consistency_weight = self.setup_contribution_inputs.eq_tau1[0];
+                let consistency_weight = self.eq_tau1[0];
                 let a_row_end = group
                     .a_row_start
                     .checked_add(group.n_a)
                     .ok_or_else(|| AkitaError::InvalidSetup("A rows overflow".into()))?;
                 let a_row_weights = self
-                    .setup_contribution_inputs
                     .eq_tau1
                     .get(group.a_row_start..a_row_end)
                     .ok_or(AkitaError::InvalidProof)?;
                 let (e_contribution, t_contribution) = evaluate_group_et_contributions::<F, E>(
                     group,
                     &units,
-                    self.setup_contribution_layout.opening_source_len(),
+                    context.opening_source_len,
                     x_challenges,
                     consistency_weight,
                     a_row_weights,
@@ -979,6 +984,9 @@ impl<E: FieldCore> RelationMatrixEvaluator<E> {
                             &fold_gadget_storage
                         }
                     };
+                    let fold_gadget = fold_gadget
+                        .get(..group.depth_fold)
+                        .ok_or(AkitaError::InvalidProof)?;
                     for unit in units {
                         for (position, &opening_a) in group.opening_a_evals.iter().enumerate() {
                             for (commit_digit, &commit) in g_commit.iter().enumerate() {
@@ -994,7 +1002,7 @@ impl<E: FieldCore> RelationMatrixEvaluator<E> {
                                     )?;
                                     let z_opening_index =
                                         akita_types::checked_opening_source_index(
-                                            self.setup_contribution_layout.opening_source_len(),
+                                            context.opening_source_len,
                                             z_index,
                                         )?;
                                     z_weight -=
@@ -1024,7 +1032,7 @@ impl<E: FieldCore> RelationMatrixEvaluator<E> {
                 gadget_row_scalars::<F>(r_decomp_levels::<F>(self.log_basis), self.log_basis);
             let alpha_pow_d = *alpha_pows_d.get(d_d - 1).ok_or(AkitaError::InvalidProof)?;
             let denom = alpha_pow_d * alpha + E::one();
-            let offset_r = self.setup_contribution_layout.witness_layout().r_offset();
+            let offset_r = context.witness_layout.r_offset();
             compute_r_contribution(self, x_challenges, offset_r, denom, &r_gadget)?
         };
 

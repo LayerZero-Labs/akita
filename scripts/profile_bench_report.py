@@ -1536,30 +1536,69 @@ def optional_value_with_main_delta(
     return value_with_main_delta(value, baseline_value, formatter, unit, compare_to_main)
 
 
-def human_case_label(summary: dict[str, object]) -> str:
-    field_family = str(summary.get("field_family", "field"))
-    field_match = re.fullmatch(r"fp(\d+)", field_family)
-    field_label = f"{field_match.group(1)}-bit field" if field_match else field_family
-    parts = [
-        field_label,
-        str(summary.get("workload_label", "workload")),
-        f"{summary['num_vars']} variables",
-    ]
-    num_polys = int(summary.get("num_polys", 1))
-    if num_polys > 1:
-        parts.append(f"{num_polys} polynomials")
+def field_family_bits(field_family: object) -> int | None:
+    match = re.fullmatch(r"fp(\d+)", str(field_family))
+    return int(match.group(1)) if match else None
+
+
+def field_family_sort_key(case: dict[str, object]) -> int:
+    """Order report rows by field width so fp32/fp64 lead and every fp128 case
+    groups together. Non-`fp<bits>` families sort last; ties keep input order
+    because Python's sort is stable."""
+    bits = field_family_bits(case.get("field_family", ""))
+    return bits if bits is not None else 1 << 30
+
+
+def config_variant_token(config: object) -> str:
+    """Camel-case variant tag from the config string, dropping the leading ring
+    dimension and any `recursive` word. The setup-contribution mode has its own
+    report column, so recursion is not encoded in the workload name."""
+    remainder = re.sub(r"^\s*D\d+\s*", "", str(config), flags=re.IGNORECASE)
+    tokens: list[str] = []
+    for word in remainder.split():
+        if word.lower() == "recursive":
+            continue
+        if any(char.isdigit() for char in word):
+            tokens.append(word.upper())
+        else:
+            tokens.append("".join(part.capitalize() for part in word.split("-")))
+    return "".join(tokens)
+
+
+def ring_dim_segment(summary: dict[str, object]) -> str | None:
+    """Render the ring-dimension segment. A/B/D are equal in every current
+    schedule, so collapse to `D=<n>`; keep a defensive per-role form so a future
+    mismatch is never silently hidden."""
     planned_levels = summary.get("planned_levels")
     if isinstance(planned_levels, list) and planned_levels:
         first = planned_levels[0]
-        dims = (int(first["d_a"]), int(first["d_b"]), int(first["d_d"]))
-        if len(set(dims)) == 1:
-            parts.append(f"ring dimension {dims[0]} for A, B, and D")
-        else:
-            parts.append(
-                f"A ring dimension {dims[0]}, B ring dimension {dims[1]}, "
-                f"D ring dimension {dims[2]}"
-            )
-    return "; ".join(parts)
+        d_a, d_b, d_d = int(first["d_a"]), int(first["d_b"]), int(first["d_d"])
+        if d_a == d_b == d_d:
+            return f"D={d_a}"
+        return f"D_a={d_a}D_b={d_b}D_d={d_d}"
+    match = re.match(r"D(\d+)", str(summary.get("config", "")), flags=re.IGNORECASE)
+    if match:
+        return f"D={match.group(1)}"
+    return None
+
+
+def human_case_label(summary: dict[str, object]) -> str:
+    field_family = str(summary.get("field_family", "field"))
+    bits = field_family_bits(field_family)
+    field_segment = f"Fp{bits}" if bits is not None else field_family
+    workload = str(summary.get("workload", "dense"))
+    workload_token = f"Onehot{ONEHOT_ARITY}" if workload == "onehot" else "Dense"
+    segments = [field_segment, f"nv{int(summary['num_vars'])}{workload_token}"]
+    num_polys = int(summary.get("num_polys", 1))
+    if num_polys > 1:
+        segments.append(f"Batched{num_polys}")
+    ring_segment = ring_dim_segment(summary)
+    if ring_segment is not None:
+        segments.append(ring_segment)
+    variant = config_variant_token(summary.get("config", ""))
+    if variant:
+        segments.append(variant)
+    return " - ".join(segments)
 
 
 def render_matrix_summary(
@@ -1893,6 +1932,7 @@ def validate_case_consistency(summary: dict[str, object]) -> None:
 def render_report(args: argparse.Namespace) -> int:
     summary_path = pathlib.Path(args.summary)
     current_cases = load_case_summaries(summary_path)
+    current_cases.sort(key=field_family_sort_key)
     raw_summary = load_summary(summary_path)
     warmups = int(raw_summary.get("warmups", 0) or 0)
 

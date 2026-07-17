@@ -4,9 +4,8 @@ use akita_algebra::eq_poly::EqPolynomial;
 use akita_field::Prime128OffsetA7F7;
 use akita_types::{
     gadget_row_scalars, r_decomp_levels, CommitmentRingDims, LevelParams, OpeningClaimsLayout,
-    RelationMatrixRowLayout, SetupContributionGroupInputs, SetupContributionLayout,
-    SetupContributionPlan, SetupContributionPlanInputs, SetupIndexWeightEvaluator,
-    SisModulusProfileId, WitnessLayout,
+    RelationMatrixRowLayout, SetupContributionGroupInputs, SetupContributionPlan,
+    SetupIndexWeightEvaluator, SisModulusProfileId, WitnessLayout,
 };
 use criterion::measurement::WallTime;
 use criterion::{
@@ -71,7 +70,6 @@ fn make_case(num_live_blocks: usize, blocks_per_chunk: usize) -> SetupIndexWeigh
         .num_digits_fold(num_claims, level_params.field_bits_for_cache())
         .unwrap();
     let opening_batch = OpeningClaimsLayout::new(0, num_claims).unwrap();
-    let z_range = num_positions_per_block * depth_commit;
     let layout = WitnessLayout::new(
         &level_params,
         &opening_batch,
@@ -81,65 +79,44 @@ fn make_case(num_live_blocks: usize, blocks_per_chunk: usize) -> SetupIndexWeigh
     )
     .unwrap();
 
-    let rows = 1 + n_a + n_b + n_d;
     let tau1 = (0..3)
         .map(|idx| test_scalar(31 + idx as u128))
         .collect::<Vec<_>>();
-    let inputs = SetupContributionPlanInputs {
-        relation_matrix_row_layout: RelationMatrixRowLayout::WithDBlock,
-        rows,
-        n_a,
-        n_b,
-        n_d,
-        num_groups: 1,
-        num_polys_per_group: vec![num_claims],
-        num_t_vectors: num_claims,
-        num_claims,
-        num_live_blocks,
-        num_positions_per_block,
-        depth_open,
-        depth_commit,
-        depth_fold,
-        inner_width: z_range,
-        eq_tau1: EqPolynomial::evals(&tau1).unwrap().into(),
-    };
+    let eq_tau1 = EqPolynomial::evals(&tau1).unwrap().into();
     let opening_source_len = layout.total_len();
-    let group = SetupContributionGroupInputs {
+    let groups = vec![SetupContributionGroupInputs {
         group_id: 0,
         num_claims,
-        num_live_blocks,
-        num_positions_per_block,
-        depth_open,
-        depth_commit,
         depth_fold,
-        log_basis,
-        n_a,
-        n_b,
-        t_vector_width: n_a * depth_open * num_live_blocks,
         a_row_start: 1,
         b_row_start: 1 + n_a,
-    };
-    let setup_layout =
-        SetupContributionLayout::new(std::sync::Arc::new(layout), opening_source_len, vec![group])
-            .unwrap();
-    let static_plan = SetupContributionPlan::prepare_static(&inputs, &setup_layout).unwrap();
+    }];
     let full_vec_randomness = (0..24)
         .map(|idx| test_scalar(101 + idx as u128))
         .collect::<Vec<_>>();
     let fold_gadget = gadget_row_scalars::<F>(depth_fold, log_basis);
     let alpha = test_scalar(3);
-    let plan = SetupContributionPlan::finish_plan::<F>(
-        &static_plan,
+    let plan = SetupContributionPlan::prepare::<F>(
+        &level_params,
+        &opening_batch,
+        RelationMatrixRowLayout::WithDBlock,
+        eq_tau1,
+        &layout,
+        opening_source_len,
+        &groups,
         &full_vec_randomness,
         Some(&fold_gadget),
-        &setup_layout,
         CommitmentRingDims::uniform(D),
     )
     .unwrap();
     let evaluator = SetupIndexWeightEvaluator::new::<F>(
-        &inputs,
         &plan,
-        &setup_layout,
+        &level_params,
+        &opening_batch,
+        RelationMatrixRowLayout::WithDBlock,
+        &layout,
+        opening_source_len,
+        &groups,
         &tau1,
         &full_vec_randomness,
         &fold_gadget,

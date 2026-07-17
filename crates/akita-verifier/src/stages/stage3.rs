@@ -12,10 +12,9 @@ use akita_transcript::labels::{
 };
 use akita_transcript::{sample_ext_challenge, Transcript};
 use akita_types::{
-    dispatch_for_field, ensure_setup_envelope, select_setup_prefix_slot, shared_setup_fold_gadget,
-    AkitaExpandedSetup, AkitaVerifierSetup, BatchedStage3Geometry, LevelParams,
-    SetupContributionPlan, SetupIndexWeightEvaluator, SetupSumcheckProof, SETUP_OFFLOAD_D_SETUP,
-    SETUP_SUMCHECK_DEGREE,
+    dispatch_for_field, ensure_setup_envelope, select_setup_prefix_slot, AkitaExpandedSetup,
+    AkitaVerifierSetup, BatchedStage3Geometry, LevelParams, SetupContributionPlan,
+    SetupIndexWeightEvaluator, SetupSumcheckProof, SETUP_OFFLOAD_D_SETUP, SETUP_SUMCHECK_DEGREE,
 };
 
 /// Verifier counterpart to `AkitaStage3Prover`: replays the setup product
@@ -52,26 +51,16 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
         F: FieldCore + CanonicalField,
         E: ExtField<F>,
     {
-        let role_dims = relation_matrix_evaluator.role_dims;
-        let fold_gadget = shared_setup_fold_gadget::<F>(
-            relation_matrix_evaluator.setup_contribution_layout.groups(),
-        );
-        let plan = SetupContributionPlan::finish_plan::<F>(
-            &relation_matrix_evaluator.setup_contribution_static,
-            x_challenges,
-            fold_gadget.as_deref(),
-            &relation_matrix_evaluator.setup_contribution_layout,
-            role_dims,
-        )?;
+        let fold_gadget = relation_matrix_evaluator.setup_contribution_fold_gadget::<F>()?;
+        let plan = relation_matrix_evaluator
+            .setup_contribution_plan::<F>(x_challenges, fold_gadget.as_deref())?;
         let geometry = plan.projection_geometry();
         let alpha_pows = scalar_powers(alpha, geometry.alpha_power_len());
         let setup_index_weight_evaluator = fold_gadget
             .as_deref()
             .map(|fold_gadget| {
-                SetupIndexWeightEvaluator::new::<F>(
-                    &relation_matrix_evaluator.setup_contribution_inputs,
+                relation_matrix_evaluator.setup_index_weight_evaluator::<F>(
                     &plan,
-                    &relation_matrix_evaluator.setup_contribution_layout,
                     tau1,
                     x_challenges,
                     fold_gadget,

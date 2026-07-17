@@ -527,19 +527,12 @@ impl LevelParams {
     pub fn fold_witness_grind_contract(
         &self,
         num_claims: usize,
-        max_grind_attempts: u32,
     ) -> Result<crate::sis::FoldWitnessGrindContract, AkitaError> {
         let policy = self.fold_witness_linf_cap_policy();
-        let max_nonce_exclusive = match policy {
-            crate::sis::FoldWitnessLinfCapPolicy::WorstCaseBetaOnly => 1,
-            crate::sis::FoldWitnessLinfCapPolicy::TailBoundWithGrind
-            | crate::sis::FoldWitnessLinfCapPolicy::TensorTailBoundWithGrind => max_grind_attempts,
-        };
         let witness_linf_cap = self.fold_witness_linf_cap_for_claims(num_claims)?;
         Ok(crate::sis::FoldWitnessGrindContract {
             policy,
             witness_linf_cap,
-            max_nonce_exclusive,
         })
     }
 
@@ -570,20 +563,12 @@ impl LevelParams {
                 &cap_config,
             )?;
             let policy = cap_config.policy;
-            let max_nonce_exclusive = match policy {
-                crate::sis::FoldWitnessLinfCapPolicy::WorstCaseBetaOnly => 1,
-                crate::sis::FoldWitnessLinfCapPolicy::TailBoundWithGrind
-                | crate::sis::FoldWitnessLinfCapPolicy::TensorTailBoundWithGrind => {
-                    max_grind_attempts
-                }
-            };
             contracts.push(crate::sis::FoldWitnessGrindContract {
                 policy,
                 witness_linf_cap,
-                max_nonce_exclusive,
             });
         }
-        crate::sis::FoldWitnessGrindBatchContract::new(contracts)
+        crate::sis::FoldWitnessGrindBatchContract::new(contracts, max_grind_attempts)
     }
 
     /// Domain-separated preview absorb payload for one fold-level grind search.
