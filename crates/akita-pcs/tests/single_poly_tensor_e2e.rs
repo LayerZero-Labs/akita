@@ -49,7 +49,8 @@ fn run_single_onehot_tensor(nv: usize) {
             setup.expanded.as_ref(),
         )
         .expect("stack");
-        let verifier_setup = AkitaCommitmentScheme::<D64OneHotTensor>::setup_verifier(&setup);
+        let verifier_setup = AkitaCommitmentScheme::<D64OneHotTensor>::setup_verifier(&setup)
+            .expect("verifier setup");
         let commit_input = std::slice::from_ref(&poly);
         let (commitment, hint) =
             AkitaCommitmentScheme::<D64OneHotTensor>::commit::<_, _>(&setup, commit_input, &stack)
@@ -123,7 +124,8 @@ fn run_single_dense_tensor(nv: usize) {
             setup.expanded.as_ref(),
         )
         .expect("stack");
-        let verifier_setup = AkitaCommitmentScheme::<D64OneHotTensor>::setup_verifier(&setup);
+        let verifier_setup = AkitaCommitmentScheme::<D64OneHotTensor>::setup_verifier(&setup)
+            .expect("verifier setup");
         let commit_input = std::slice::from_ref(&poly);
         let (commitment, hint) =
             AkitaCommitmentScheme::<D64OneHotTensor>::commit::<_, _>(&setup, commit_input, &stack)

@@ -71,7 +71,7 @@ fn heterogeneous_delegating_clusters_batched_prove_and_verify() {
     assert_eq!(stack.tensor().backend() as *const _, &tensor as *const _);
     assert_eq!(stack.ring_switch().backend() as *const _, &ring as *const _);
 
-    let verifier_setup = Scheme::setup_verifier(&setup);
+    let verifier_setup = Scheme::setup_verifier(&setup).expect("verifier setup");
     let commit_stack = UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
         .expect("commit stack");
     let (commitment, hint) = akita_prover::commit::<Cfg, DensePoly<F>, CpuBackend>(

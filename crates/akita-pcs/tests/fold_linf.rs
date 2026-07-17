@@ -55,7 +55,7 @@ fn prove_tail_bound_with_grind_onehot_fixture(num_vars: usize, seed: u64) -> Tai
     let stack =
         akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
             .expect("stack");
-    let verifier_setup = Scheme::setup_verifier(&setup);
+    let verifier_setup = Scheme::setup_verifier(&setup).expect("verifier setup");
     let (commitment, hint) =
         Scheme::commit::<_, _>(&setup, std::slice::from_ref(&poly), &stack).expect("commit");
 
@@ -213,7 +213,7 @@ fn logging_transcript_event_stream_equality_tail_bound_with_grind() {
             setup.expanded.as_ref(),
         )
         .expect("stack");
-        let verifier_setup = Scheme::setup_verifier(&setup);
+        let verifier_setup = Scheme::setup_verifier(&setup).expect("verifier setup");
         let (commitment, hint) =
             Scheme::commit::<_, _>(&setup, std::slice::from_ref(&poly), &stack).expect("commit");
 

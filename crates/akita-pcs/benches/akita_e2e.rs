@@ -143,7 +143,8 @@ fn bench_dense_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField 
     let commitments = [commitment];
     let openings = [opening];
 
-    let verifier_setup = AkitaCommitmentScheme::<Cfg>::setup_verifier(&setup);
+    let verifier_setup =
+        AkitaCommitmentScheme::<Cfg>::setup_verifier(&setup).expect("verifier setup");
 
     for (mode, mode_label) in setup_contribution_modes() {
         group.bench_function(format!("prove/{mode_label}"), |b| {
@@ -299,7 +300,8 @@ fn bench_onehot_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField
     let commitments = [commitment];
     let openings = [opening];
 
-    let verifier_setup = AkitaCommitmentScheme::<Cfg>::setup_verifier(&setup);
+    let verifier_setup =
+        AkitaCommitmentScheme::<Cfg>::setup_verifier(&setup).expect("verifier setup");
 
     for (mode, mode_label) in setup_contribution_modes() {
         group.bench_function(format!("prove/{mode_label}"), |b| {

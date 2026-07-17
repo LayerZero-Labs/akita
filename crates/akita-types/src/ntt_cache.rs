@@ -408,8 +408,8 @@ impl core::fmt::Debug for VerifierNttCache {
 }
 
 impl VerifierNttCache {
-    /// Return a cached entry or build and atomically install it.
-    pub(crate) fn get_or_try_insert(
+    /// Build and atomically install a setup-preprocessed entry when needed.
+    pub(crate) fn prepare(
         &self,
         key: NttCacheKey,
         build: impl FnOnce() -> Result<VerifierNttSlotAny, AkitaError>,
@@ -447,6 +447,26 @@ impl VerifierNttCache {
         Ok(built)
     }
 
+    /// Return the smallest prepared entry covering `key` without doing work.
+    pub(crate) fn get(&self, key: NttCacheKey) -> Result<Arc<VerifierNttSlotAny>, AkitaError> {
+        self.slots
+            .lock()
+            .map_err(|_| AkitaError::InvalidSetup("verifier NTT cache lock poisoned".into()))?
+            .iter()
+            .filter(|(candidate, _)| {
+                candidate.ring_d == key.ring_d
+                    && candidate.num_ring_elements >= key.num_ring_elements
+            })
+            .min_by_key(|(candidate, _)| candidate.num_ring_elements)
+            .map(|(_, slot)| Arc::clone(slot))
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup(format!(
+                    "verifier setup was not preprocessed for D={} matrix prefix {}",
+                    key.ring_d, key.num_ring_elements
+                ))
+            })
+    }
+
     /// Total prepared verifier cache bytes.
     pub(crate) fn cache_bytes(&self) -> Result<usize, AkitaError> {
         Ok(self
@@ -463,6 +483,19 @@ impl VerifierNttCache {
 mod tests {
     use super::*;
     use akita_field::Prime128Offset275;
+
+    #[test]
+    fn verifier_cache_lookup_fails_closed_without_preprocessing() {
+        let cache = VerifierNttCache::default();
+        let err = cache
+            .get(NttCacheKey {
+                ring_d: 64,
+                num_ring_elements: 1,
+            })
+            .expect_err("verification must not populate an empty cache");
+        assert!(matches!(err, AkitaError::InvalidSetup(_)));
+        assert_eq!(cache.cache_bytes().expect("cache bytes"), 0);
+    }
 
     #[test]
     fn q128_d64_centered_z_capacity_matches_profile_tail() {

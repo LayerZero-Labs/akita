@@ -529,9 +529,16 @@ fn run_prove<
         );
     }
 
+    let t_verifier_setup = Instant::now();
+    let verifier_setup = pools
+        .in_verify(|| AkitaCommitmentScheme::<Cfg>::setup_verifier(setup).expect("verifier setup"));
+    report_timing(
+        label,
+        "verifier_setup",
+        t_verifier_setup.elapsed().as_secs_f64(),
+    );
     let t0 = Instant::now();
     pools.in_verify(|| {
-        let verifier_setup = AkitaCommitmentScheme::<Cfg>::setup_verifier(setup);
         let mut verifier_transcript = AkitaTranscript::<FF>::new(b"profile");
         match AkitaCommitmentScheme::<Cfg>::batched_verify(
             &proof,
@@ -937,9 +944,17 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
         );
     }
 
+    let t_verifier_setup = Instant::now();
+    let verifier_setup = pools.in_verify(|| {
+        AkitaCommitmentScheme::<Cfg>::setup_verifier(&setup).expect("verifier setup")
+    });
+    report_timing(
+        label,
+        "verifier_setup",
+        t_verifier_setup.elapsed().as_secs_f64(),
+    );
     let t0 = Instant::now();
     pools.in_verify(|| {
-        let verifier_setup = AkitaCommitmentScheme::<Cfg>::setup_verifier(&setup);
         let mut verifier_transcript = AkitaTranscript::<FF>::new(b"profile");
         match AkitaCommitmentScheme::<Cfg>::batched_verify(
             &proof,
@@ -1221,9 +1236,17 @@ pub(crate) fn run_recursive_multi_group_onehot<FF, const D: usize, Cfg>(
         .expect("final verifier group"),
     );
 
+    let t_verifier_setup = Instant::now();
+    let verifier_setup = pools.in_verify(|| {
+        AkitaCommitmentScheme::<ProofCfg<Cfg>>::setup_verifier(&setup).expect("verifier setup")
+    });
+    report_timing(
+        label,
+        "verifier_setup",
+        t_verifier_setup.elapsed().as_secs_f64(),
+    );
     let t_verify = Instant::now();
     pools.in_verify(|| {
-        let verifier_setup = AkitaCommitmentScheme::<ProofCfg<Cfg>>::setup_verifier(&setup);
         let mut verifier_transcript = AkitaTranscript::<FF>::new(b"profile");
         match AkitaCommitmentScheme::<ProofCfg<Cfg>>::batched_verify(
             &proof,

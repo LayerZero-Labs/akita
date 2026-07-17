@@ -74,12 +74,32 @@ where
         })
     }
 
-    /// Derive verifier setup from prover setup.
-    #[must_use]
-    pub fn setup_verifier(setup: &AkitaProverSetup<Cfg::Field>) -> AkitaVerifierSetup<Cfg::Field> {
-        setup
-            .verifier_setup()
-            .expect("prover setup must convert to verifier setup")
+    /// Derive and preprocess verifier setup from prover setup.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AkitaError::InvalidSetup`] when setup conversion, capacity
+    /// planning, or verifier cache preprocessing fails.
+    pub fn setup_verifier(
+        setup: &AkitaProverSetup<Cfg::Field>,
+    ) -> Result<AkitaVerifierSetup<Cfg::Field>, AkitaError> {
+        let verifier_setup = setup.verifier_setup()?;
+        Self::preprocess_verifier_setup(&verifier_setup)?;
+        Ok(verifier_setup)
+    }
+
+    /// Materialize verifier-only derived caches once, before proof verification.
+    ///
+    /// Call this after deserializing an [`AkitaVerifierSetup`].
+    pub fn preprocess_verifier_setup(
+        setup: &AkitaVerifierSetup<Cfg::Field>,
+    ) -> Result<(), AkitaError> {
+        let seed = setup.expanded.seed();
+        let keys = akita_config::verifier_ntt_cache_keys_for_capacity::<Cfg>(
+            seed.max_num_vars,
+            seed.max_num_batched_polys,
+        )?;
+        setup.prepare_verifier_ntt_prefixes(&keys)
     }
 
     /// Validate the field tower against the config schedule policy ring dimension.

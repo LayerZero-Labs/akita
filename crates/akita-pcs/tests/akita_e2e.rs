@@ -264,7 +264,8 @@ where
     let stack =
         akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
             .expect("stack");
-    let verifier_setup = AkitaCommitmentScheme::<Cfg>::setup_verifier(&setup);
+    let verifier_setup =
+        AkitaCommitmentScheme::<Cfg>::setup_verifier(&setup).expect("verifier setup");
     let (commitment, hint) =
         AkitaCommitmentScheme::<Cfg>::commit::<_, _>(&setup, std::slice::from_ref(&poly), &stack)
             .unwrap();
@@ -468,7 +469,8 @@ fn chunked_multi_chunk_prove_verify() {
             "chunked proof level count must match the schedule"
         );
 
-        let verifier_setup = AkitaCommitmentScheme::<Cfg>::setup_verifier(&setup);
+        let verifier_setup =
+            AkitaCommitmentScheme::<Cfg>::setup_verifier(&setup).expect("verifier setup");
         let mut verifier_transcript = AkitaTranscript::<F>::new(b"akita_chunked_e2e");
         let openings = [expected_opening];
         let verify_result = AkitaCommitmentScheme::<Cfg>::batched_verify(
@@ -566,7 +568,8 @@ fn full_d64_prove_verify() {
         .expect("schedule plan");
         assert_eq!(total_fold_levels, plan.num_fold_levels());
 
-        let verifier_setup = AkitaCommitmentScheme::<Cfg>::setup_verifier(&setup);
+        let verifier_setup =
+            AkitaCommitmentScheme::<Cfg>::setup_verifier(&setup).expect("verifier setup");
         let mut verifier_transcript = AkitaTranscript::<F>::new(b"akita_e2e");
         let verify_start = Instant::now();
         let verify_result = AkitaCommitmentScheme::<Cfg>::batched_verify(
@@ -704,7 +707,8 @@ fn trace_internalization_rejects_tampered_recursive_fold_handle() {
             setup.expanded.as_ref(),
         )
         .expect("stack");
-        let verifier_setup = AkitaCommitmentScheme::<Cfg>::setup_verifier(&setup);
+        let verifier_setup =
+            AkitaCommitmentScheme::<Cfg>::setup_verifier(&setup).expect("verifier setup");
         let (commitment, hint) =
             AkitaCommitmentScheme::<Cfg>::commit::<_, _>(&setup, &polys, &stack).unwrap();
         let commitments = [commitment];
@@ -874,7 +878,8 @@ fn full_d64_tiny_root_direct_roundtrip_and_serialization() {
             setup.expanded.as_ref(),
         )
         .expect("stack");
-        let verifier_setup = AkitaCommitmentScheme::<Cfg>::setup_verifier(&setup);
+        let verifier_setup =
+            AkitaCommitmentScheme::<Cfg>::setup_verifier(&setup).expect("verifier setup");
         let (commitment, hint) = AkitaCommitmentScheme::<Cfg>::commit::<_, _>(
             &setup,
             std::slice::from_ref(&poly),
@@ -1056,7 +1061,8 @@ fn adaptive_onehot_direct_tail_uses_terminal_schedule_basis() {
             setup.expanded.as_ref(),
         )
         .expect("stack");
-        let verifier_setup = AkitaCommitmentScheme::<Cfg>::setup_verifier(&setup);
+        let verifier_setup =
+            AkitaCommitmentScheme::<Cfg>::setup_verifier(&setup).expect("verifier setup");
         let (commitment, hint) = AkitaCommitmentScheme::<Cfg>::commit::<_, _>(
             &setup,
             std::slice::from_ref(&onehot_poly),
@@ -1210,7 +1216,8 @@ fn batched_onehot_same_point_round_trip() {
             setup.expanded.as_ref(),
         )
         .expect("stack");
-        let verifier_setup = AkitaCommitmentScheme::<Cfg>::setup_verifier(&setup);
+        let verifier_setup =
+            AkitaCommitmentScheme::<Cfg>::setup_verifier(&setup).expect("verifier setup");
         let commit_group = [poly_a.clone(), poly_b.clone()];
         let (commitment, hint) =
             AkitaCommitmentScheme::<Cfg>::commit::<_, _>(&setup, &commit_group, &stack).unwrap();
@@ -1337,7 +1344,8 @@ fn batched_onehot_same_point_rejects_tampered_root_stage1_s_claim() {
             setup.expanded.as_ref(),
         )
         .expect("stack");
-        let verifier_setup = AkitaCommitmentScheme::<Cfg>::setup_verifier(&setup);
+        let verifier_setup =
+            AkitaCommitmentScheme::<Cfg>::setup_verifier(&setup).expect("verifier setup");
         let (commitment, hint) =
             AkitaCommitmentScheme::<Cfg>::commit::<_, _>(&setup, &polys, &stack).unwrap();
         let commitments = [commitment];

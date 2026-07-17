@@ -498,7 +498,8 @@ fn multi_group_root_round_trip_onehot<TestCfg>(
     .expect("deserialize multi-group proof");
     assert_eq!(decoded, proof);
 
-    let verifier_setup = AkitaCommitmentScheme::<TestCfg>::setup_verifier(&setup);
+    let verifier_setup =
+        AkitaCommitmentScheme::<TestCfg>::setup_verifier(&setup).expect("verifier setup");
     let mut verifier_groups = Vec::new();
     for (group_idx, openings) in pre_openings.iter().enumerate() {
         verifier_groups.push(
@@ -662,7 +663,7 @@ fn multi_group_root_folded_two_group_onehot_round_trips() {
     .expect("deserialize multi-group proof");
     assert_eq!(decoded, proof);
 
-    let verifier_setup = RegularCommitter::setup_verifier(&setup);
+    let verifier_setup = RegularCommitter::setup_verifier(&setup).expect("verifier setup");
     let verify_claims = || {
         OpeningClaims::from_groups(
             point.clone(),
@@ -876,7 +877,7 @@ fn multi_group_root_folded_three_group_onehot_round_trips() {
     .expect("deserialize multi-group proof");
     assert_eq!(decoded, proof);
 
-    let verifier_setup = RegularCommitter::setup_verifier(&setup);
+    let verifier_setup = RegularCommitter::setup_verifier(&setup).expect("verifier setup");
     let verify_claims = OpeningClaims::from_groups(
         point.clone(),
         vec![
@@ -946,7 +947,7 @@ fn batched_onehot_roundtrip_matches_public_shape_context() {
     let stack =
         akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
             .expect("stack");
-    let verifier_setup = OneHotScheme::setup_verifier(&setup);
+    let verifier_setup = OneHotScheme::setup_verifier(&setup).expect("verifier setup");
     let (commitment, hint) =
         OneHotScheme::commit::<_, _>(&setup, &polys, &stack).expect("batched onehot commit");
     let commitments = [commitment];

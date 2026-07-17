@@ -60,7 +60,7 @@ fn batched_root_direct_fast_path_round_trip() {
     let stack =
         akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
             .expect("stack");
-    let verifier_setup = Scheme::setup_verifier(&setup);
+    let verifier_setup = Scheme::setup_verifier(&setup).expect("verifier setup");
     let (commitment, hint) = Scheme::commit::<_, _>(&setup, &polys, &stack).unwrap();
     let commitments = [commitment];
     let hints = vec![hint];
@@ -152,7 +152,7 @@ fn batched_root_direct_rejects_wrong_opening() {
     let stack =
         akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
             .expect("stack");
-    let verifier_setup = Scheme::setup_verifier(&setup);
+    let verifier_setup = Scheme::setup_verifier(&setup).expect("verifier setup");
     let (commitment, hint) = Scheme::commit::<_, _>(&setup, &polys, &stack).unwrap();
     let commitments = [commitment];
     let hints = vec![hint];
@@ -207,7 +207,7 @@ fn batched_verify_accepts_consistent_openings_and_rejects_bad_inputs() {
     let stack =
         akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
             .expect("stack");
-    let verifier_setup = Scheme::setup_verifier(&setup);
+    let verifier_setup = Scheme::setup_verifier(&setup).expect("verifier setup");
     let poly_group = [&poly_a, &poly_b];
     let (commitment, hint) =
         Scheme::commit::<_, _>(&setup, &[poly_a.clone(), poly_b.clone()], &stack).unwrap();

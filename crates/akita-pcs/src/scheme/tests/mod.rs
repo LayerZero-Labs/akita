@@ -229,7 +229,7 @@ fn make_verify_fixture(num_vars: usize) -> VerifyFixture {
     let stack =
         akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
             .expect("stack");
-    let verifier_setup = Scheme::setup_verifier(&setup);
+    let verifier_setup = Scheme::setup_verifier(&setup).expect("verifier setup");
     let (commitment, hint) =
         Scheme::commit::<_, _>(&setup, std::slice::from_ref(&poly), &stack).unwrap();
 

@@ -56,7 +56,7 @@ fn event_stream_equality_small() {
             setup.expanded.as_ref(),
         )
         .expect("stack");
-        let verifier_setup = Scheme::setup_verifier(&setup);
+        let verifier_setup = Scheme::setup_verifier(&setup).expect("verifier setup");
         let (commitment, hint) =
             Scheme::commit(&setup, std::slice::from_ref(&poly), &stack).expect("commit");
 
@@ -241,7 +241,7 @@ fn assert_terminal_tamper_rejected_at_num_vars(num_vars: usize, tamper: Terminal
             setup.expanded.as_ref(),
         )
         .expect("stack");
-        let verifier_setup = Scheme::setup_verifier(&setup);
+        let verifier_setup = Scheme::setup_verifier(&setup).expect("verifier setup");
         let (commitment, hint) =
             Scheme::commit(&setup, std::slice::from_ref(&poly), &stack).expect("commit");
 

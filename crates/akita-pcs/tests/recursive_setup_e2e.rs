@@ -224,7 +224,7 @@ fn generated_recursive_onehot_profile_proves_with_setup_offload() {
         )
         .expect("deserialize generated-profile proof");
 
-        let verifier_setup = setup.verifier_setup().expect("verifier setup");
+        let verifier_setup = RecursiveOneHotScheme::setup_verifier(&setup).expect("verifier setup");
         let mut verifier_groups = Vec::new();
         for (group_idx, openings) in pre_openings.iter().enumerate() {
             verifier_groups.push(

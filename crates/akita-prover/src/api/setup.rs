@@ -106,6 +106,10 @@ impl<F: FieldCore> AkitaProverSetup<F> {
 
     /// Derive a verifier setup from this prover setup.
     ///
+    /// This copies protocol-independent setup state only. Before verification,
+    /// run the config-aware verifier preprocessing exposed by `akita-pcs` so
+    /// terminal matrix prefixes are materialized for the setup capacity.
+    ///
     /// # Errors
     ///
     /// Returns an error if prover prefix-slot metadata cannot be converted into

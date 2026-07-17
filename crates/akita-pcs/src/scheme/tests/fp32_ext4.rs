@@ -455,7 +455,7 @@ fn fp32_ext4_root_fold_roundtrip_uses_extension_gamma() {
     let stack =
         akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
             .expect("stack");
-    let verifier_setup = SmallScheme::setup_verifier(&setup);
+    let verifier_setup = SmallScheme::setup_verifier(&setup).expect("verifier setup");
     let (commitment, hint) =
         SmallScheme::commit::<_, _>(&setup, std::slice::from_ref(&poly), &stack).unwrap();
 
@@ -577,7 +577,7 @@ fn fp32_ext4_outer_extension_uses_root_tensor_projection() {
     let stack =
         akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
             .expect("stack");
-    let verifier_setup = SmallScheme::setup_verifier(&setup);
+    let verifier_setup = SmallScheme::setup_verifier(&setup).expect("verifier setup");
     let poly_refs = [&poly_a, &poly_b];
     let (commitment, hint) =
         SmallScheme::commit::<_, _>(&setup, &[poly_a.clone(), poly_b.clone()], &stack).unwrap();
@@ -684,7 +684,7 @@ fn fp32_ext4_extension_rejects_tampered_reduction_partial() {
     let stack =
         akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
             .expect("stack");
-    let verifier_setup = SmallScheme::setup_verifier(&setup);
+    let verifier_setup = SmallScheme::setup_verifier(&setup).expect("verifier setup");
     let poly_refs = [&poly_a, &poly_b];
     let (commitment, hint) =
         SmallScheme::commit::<_, _>(&setup, &[poly_a.clone(), poly_b.clone()], &stack).unwrap();
@@ -774,7 +774,7 @@ fn fp32_ext4_batched_extension_uses_root_tensor_projection() {
     let stack =
         akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
             .expect("stack");
-    let verifier_setup = SmallScheme::setup_verifier(&setup);
+    let verifier_setup = SmallScheme::setup_verifier(&setup).expect("verifier setup");
     let polys = [poly.clone(), poly];
     let poly_refs = [&polys[0], &polys[1]];
     let (commitment, hint) = SmallScheme::commit::<_, _>(&setup, &polys, &stack).unwrap();

@@ -127,7 +127,8 @@ where
     let stack =
         akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
             .expect("stack");
-    let verifier_setup = AkitaCommitmentScheme::<Cfg>::setup_verifier(&setup);
+    let verifier_setup =
+        AkitaCommitmentScheme::<Cfg>::setup_verifier(&setup).expect("verifier setup");
 
     let (commitment, hint) =
         AkitaCommitmentScheme::<Cfg>::commit::<_, _>(&setup, std::slice::from_ref(&poly), &stack)
@@ -211,7 +212,8 @@ where
     let stack =
         akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
             .expect("stack");
-    let verifier_setup = AkitaCommitmentScheme::<Cfg>::setup_verifier(&setup);
+    let verifier_setup =
+        AkitaCommitmentScheme::<Cfg>::setup_verifier(&setup).expect("verifier setup");
 
     let (commitment, hint) =
         AkitaCommitmentScheme::<Cfg>::commit::<_, _>(&setup, std::slice::from_ref(&poly), &stack)
@@ -292,7 +294,8 @@ fn run_dense_batched_e2e<Cfg, const D: usize>(
     let stack =
         akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
             .expect("stack");
-    let verifier_setup = AkitaCommitmentScheme::<Cfg>::setup_verifier(&setup);
+    let verifier_setup =
+        AkitaCommitmentScheme::<Cfg>::setup_verifier(&setup).expect("verifier setup");
 
     let poly_refs: Vec<&DensePoly<F>> = polys.iter().collect();
     let (commitment, hint) = AkitaCommitmentScheme::<Cfg>::commit::<_, _>(&setup, &polys, &stack)
@@ -385,7 +388,8 @@ fn run_onehot_batched_e2e<Cfg, const D: usize>(
     let stack =
         akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
             .expect("stack");
-    let verifier_setup = AkitaCommitmentScheme::<Cfg>::setup_verifier(&setup);
+    let verifier_setup =
+        AkitaCommitmentScheme::<Cfg>::setup_verifier(&setup).expect("verifier setup");
 
     let poly_refs: Vec<&OneHotPoly<F, usize>> = polys.iter().collect();
     let (commitment, hint) = AkitaCommitmentScheme::<Cfg>::commit::<_, _>(&setup, &polys, &stack)

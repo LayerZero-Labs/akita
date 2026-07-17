@@ -776,29 +776,30 @@ fn assert_plan_matches_runtime_w_sizes_for_key<Cfg: CommitmentConfig>(key: Polyn
         Cfg::runtime_schedule(AkitaScheduleLookupKey::single(key)).expect("planner should succeed");
     let num_fold_levels = schedule.num_fold_levels();
     for (idx, fold) in schedule.fold_steps().enumerate() {
-        // The last fold in a fold-then-direct schedule is the terminal
-        // recursive fold and ships its W in cleartext under
-        // RelationMatrixRowLayout::Terminal (drops the D-block from the per-row `r`
-        // quotients), so its `next_w_len` is smaller than what the
-        // intermediate-layout helper would report.
         let is_terminal_fold = idx + 1 == num_fold_levels;
-        let layout = if is_terminal_fold {
-            akita_types::RelationMatrixRowLayout::WithoutDBlock
+        let runtime_next_w_len = if is_terminal_fold {
+            // Terminal W is quotient-free. Its canonical shape is the Direct
+            // successor materialized by the planner, not an M-matrix row count.
+            akita_types::schedule_terminal_direct_witness_shape(&schedule)
+                .expect("fold schedule must end in a direct witness")
+                .logical_num_elems()
         } else {
-            akita_types::RelationMatrixRowLayout::WithDBlock
+            // Root-level batched witnesses fan out over the key's polynomial
+            // count; recursive levels collapse back to singleton-by-construction.
+            let (num_polynomials, num_public_rows) = if idx == 0 {
+                (key.num_polynomials(), 1)
+            } else {
+                (1, 1)
+            };
+            akita_types::w_ring_element_count_with_counts_for_layout::<Cfg::Field>(
+                &fold.params,
+                num_polynomials,
+                num_public_rows,
+                akita_types::RelationMatrixRowLayout::WithDBlock,
+            )
+            .expect("valid planned witness")
+                * fold.params.ring_dimension
         };
-        // Root-level batched witnesses fan out over the key's polynomial
-        // count; recursive levels collapse back to singleton-by-construction.
-        let (num_polynomials, num_public_rows) = if idx == 0 {
-            (key.num_polynomials(), 1)
-        } else {
-            (1, 1)
-        };
-        let runtime_next_w_len = akita_types::w_ring_element_count_with_counts_for_layout::<
-            Cfg::Field,
-        >(&fold.params, num_polynomials, num_public_rows, layout)
-        .expect("valid planned witness")
-            * fold.params.ring_dimension;
         assert_eq!(
             runtime_next_w_len, fold.next_w_len,
             "planner/runtime next_w_len mismatch at level {idx} for key={key:?}",
@@ -1251,4 +1252,17 @@ fn tensor_onehot_preset_keeps_d64_onehot_chunk_size() {
         fp128::D64OneHot::onehot_chunk_size(),
         "tensor verifier preset must preserve the D64 one-hot witness sparsity envelope"
     );
+}
+
+#[test]
+fn verifier_ntt_capacity_scan_rejects_hostile_metadata_before_planning() {
+    let vars_err =
+        verifier_ntt_cache_keys_for_capacity::<fp128::D64OneHot>(usize::BITS as usize, 1)
+            .expect_err("unrepresentable polynomial variable count must fail closed");
+    assert!(matches!(vars_err, AkitaError::InvalidSetup(_)));
+
+    let oversized_batch = MAX_VERIFIER_SETUP_SCHEDULE_SCANS / 32 + 1;
+    let work_err = verifier_ntt_cache_keys_for_capacity::<fp128::D64OneHot>(32, oversized_batch)
+        .expect_err("oversized setup schedule scan must fail closed");
+    assert!(matches!(work_err, AkitaError::InvalidSetup(_)));
 }

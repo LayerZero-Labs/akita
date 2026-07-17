@@ -13,7 +13,7 @@ fn verify_passes_for_consistent_opening() {
     let stack =
         akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
             .expect("stack");
-    let verifier_setup = Scheme::setup_verifier(&setup);
+    let verifier_setup = Scheme::setup_verifier(&setup).expect("verifier setup");
 
     let (commitment, hint) =
         Scheme::commit::<_, _>(&setup, std::slice::from_ref(&poly), &stack).unwrap();
@@ -66,7 +66,7 @@ fn verify_rejects_wrong_opening() {
     let stack =
         akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
             .expect("stack");
-    let verifier_setup = Scheme::setup_verifier(&setup);
+    let verifier_setup = Scheme::setup_verifier(&setup).expect("verifier setup");
 
     let (commitment, hint) =
         Scheme::commit::<_, _>(&setup, std::slice::from_ref(&poly), &stack).unwrap();
@@ -240,7 +240,7 @@ fn monomial_basis_prove_verify_round_trip() {
     let stack =
         akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
             .expect("stack");
-    let verifier_setup = Scheme::setup_verifier(&setup);
+    let verifier_setup = Scheme::setup_verifier(&setup).expect("verifier setup");
 
     let (commitment, hint) =
         Scheme::commit::<_, _>(&setup, std::slice::from_ref(&poly), &stack).unwrap();
@@ -304,7 +304,7 @@ fn tiny_d64_root_direct_helpers_accept_valid_proof() {
     let stack =
         akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
             .expect("stack");
-    let verifier_setup = DirectScheme::setup_verifier(&setup);
+    let verifier_setup = DirectScheme::setup_verifier(&setup).expect("verifier setup");
     let (commitment, hint) =
         DirectScheme::commit::<_, _>(&setup, std::slice::from_ref(&poly), &stack).unwrap();
 

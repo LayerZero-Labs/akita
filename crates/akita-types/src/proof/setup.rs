@@ -126,7 +126,27 @@ impl<F: FieldCore> AkitaVerifierSetup<F> {
 }
 
 impl<F: FieldCore + CanonicalField> AkitaVerifierSetup<F> {
-    /// Return an exact or covering negacyclic prefix derived from this setup's matrix.
+    /// Prepare the required negacyclic matrix prefixes during verifier setup.
+    pub fn prepare_verifier_ntt_prefixes(
+        &self,
+        keys: &[crate::NttCacheKey],
+    ) -> Result<(), AkitaError> {
+        for &key in keys {
+            if key.num_ring_elements == 0 {
+                return Err(AkitaError::InvalidSetup(
+                    "verifier NTT prefix must contain at least one ring element".into(),
+                ));
+            }
+            self.verifier_ntt.prepare(key, || {
+                crate::ntt_cache::build_verifier_ntt_slot_for_key(&self.expanded, key)
+            })?;
+        }
+        Ok(())
+    }
+
+    /// Return a setup-preprocessed exact or covering negacyclic prefix.
+    ///
+    /// This is deliberately lookup-only: verification must not build caches.
     pub fn prepared_verifier_ntt_prefix<const D: usize>(
         &self,
         num_ring_elements: usize,
@@ -135,9 +155,7 @@ impl<F: FieldCore + CanonicalField> AkitaVerifierSetup<F> {
             ring_d: D,
             num_ring_elements,
         };
-        self.verifier_ntt.get_or_try_insert(key, || {
-            crate::ntt_cache::build_verifier_ntt_slot_for_key(&self.expanded, key)
-        })
+        self.verifier_ntt.get(key)
     }
 }
 

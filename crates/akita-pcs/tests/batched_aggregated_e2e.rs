@@ -71,7 +71,8 @@ mod non_zk_aggregated_cases {
                 setup.expanded.as_ref(),
             )
             .expect("stack");
-            let verifier_setup = AkitaCommitmentScheme::<OneHotCfg>::setup_verifier(&setup);
+            let verifier_setup =
+                AkitaCommitmentScheme::<OneHotCfg>::setup_verifier(&setup).expect("verifier setup");
 
             let (commitment, hint) =
                 AkitaCommitmentScheme::<OneHotCfg>::commit::<_, _>(&setup, &polys, &stack)
@@ -163,7 +164,8 @@ mod non_zk_aggregated_cases {
                 setup.expanded.as_ref(),
             )
             .expect("stack");
-            let verifier_setup = AkitaCommitmentScheme::<DenseCfg>::setup_verifier(&setup);
+            let verifier_setup =
+                AkitaCommitmentScheme::<DenseCfg>::setup_verifier(&setup).expect("verifier setup");
 
             let (commitments, hints) =
                 AkitaCommitmentScheme::<DenseCfg>::commit::<_, _>(&setup, &polys, &stack)
@@ -287,7 +289,8 @@ fn aggregated_mixed_dense_and_onehot_under_dense_cfg() {
             setup.expanded.as_ref(),
         )
         .expect("stack");
-        let verifier_setup = AkitaCommitmentScheme::<DenseCfg>::setup_verifier(&setup);
+        let verifier_setup =
+            AkitaCommitmentScheme::<DenseCfg>::setup_verifier(&setup).expect("verifier setup");
 
         let (commitment, hint) =
             AkitaCommitmentScheme::<DenseCfg>::commit::<_, _>(&setup, &polys, &stack)

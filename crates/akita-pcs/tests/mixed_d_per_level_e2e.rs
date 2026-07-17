@@ -205,7 +205,7 @@ fn prove_mixed_fixture() -> MixedDFixture {
     let stack =
         akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
             .expect("stack");
-    let verifier_setup = Scheme::setup_verifier(&setup);
+    let verifier_setup = Scheme::setup_verifier(&setup).expect("verifier setup");
     let (commitment, hint) =
         Scheme::commit(&setup, std::slice::from_ref(&poly), &stack).expect("commit");
 
@@ -586,7 +586,7 @@ fn mixed_d_schedule_with_non_dividing_level_dim_is_rejected() {
             setup.expanded.as_ref(),
         )
         .expect("stack");
-        let verifier_setup = BadScheme::setup_verifier(&setup);
+        let verifier_setup = BadScheme::setup_verifier(&setup).expect("verifier setup");
         let (commitment, hint) =
             BadScheme::commit(&setup, std::slice::from_ref(&poly), &stack).expect("commit");
 
