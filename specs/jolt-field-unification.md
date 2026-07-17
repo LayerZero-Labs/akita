@@ -6,7 +6,7 @@
 | Created       | 2026-07-15     |
 | Status        | active         |
 | PR            |                |
-| Supersedes    | [`specs/akita-field-refactor.md`](akita-field-refactor.md) |
+| Supersedes    | [`akita-field-refactor.md`](archive/2026-Q3/akita-field-refactor.md) |
 | Superseded-by |                |
 | Book-chapter  |                |
 
@@ -460,7 +460,7 @@ crate deletion, not deferred to cleanup.
 
 ## References
 
-- [`specs/akita-field-refactor.md`](akita-field-refactor.md) — current Akita
+- [`akita-field-refactor.md`](archive/2026-Q3/akita-field-refactor.md) - former Akita
   field organization and trait inventory.
 - [`specs/cross-repo-field-microbench.md`](cross-repo-field-microbench.md) —
   existing arithmetic benchmark matrix and SIMD measurement guidance.

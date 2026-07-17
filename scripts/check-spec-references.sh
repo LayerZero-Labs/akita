@@ -63,7 +63,6 @@ live_specs=(
   specs/planner-incidence-generalization.md
   specs/multi-group-batching.md
   specs/akita-pcs-crate-decomposition.md
-  specs/akita-field-refactor.md
   specs/crt-ntt-prime-profiles.md
   specs/eor-sumcheck-prover-acceleration.md
   specs/cross-repo-field-microbench.md
