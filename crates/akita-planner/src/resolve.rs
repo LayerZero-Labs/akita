@@ -169,7 +169,7 @@ mod tests {
             ring_subfield_norm_bound: 1,
             claim_ext_degree: 4,
             chal_ext_degree: 4,
-            basis_range: (3, 4),
+            basis_range: (3, 3),
             onehot_chunk_size: 1,
             witness_chunk: ChunkedWitnessCfg::default(),
             recursive_setup_planning: false,
@@ -582,12 +582,11 @@ mod tests {
         assert_eq!(validated, materialized.total_bytes);
     }
 
-    fn multi_group_sample_key() -> AkitaScheduleLookupKey {
+    fn multi_group_sample_key(policy: &PlannerPolicy) -> AkitaScheduleLookupKey {
         let pre_key = PolynomialGroupLayout::new(10, 1);
-        let policy = flat_policy();
         let pre = PrecommittedGroupParams::from_params(
             pre_key,
-            find_single_schedule(pre_key, &policy)
+            find_single_schedule(pre_key, policy)
                 .expect("precommit schedule")
                 .steps
                 .first()
@@ -616,8 +615,8 @@ mod tests {
 
     #[test]
     fn validate_generated_multi_group_entry_accepts_materialized_dp_schedule() {
-        let key = multi_group_sample_key();
         let policy = flat_policy();
+        let key = multi_group_sample_key(&policy);
         let schedule = find_group_batch_schedule(&key, &policy, ring_challenge_config, fold_shape)
             .expect("multi-group schedule");
         let entry =
@@ -635,9 +634,9 @@ mod tests {
 
     #[test]
     fn resolve_group_batch_schedule_falls_back_on_stale_grouped_terminal_table_hit() {
-        let key = multi_group_sample_key();
         let mut policy = flat_policy();
         policy.decomposition.log_open_bound = Some(128);
+        let key = multi_group_sample_key(&policy);
         let regenerated =
             find_group_batch_schedule(&key, &policy, ring_challenge_config, fold_shape)
                 .expect("multi-group schedule");
