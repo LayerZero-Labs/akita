@@ -350,7 +350,6 @@ fn bump_flat_ring_vec<FField: FieldCore>(flat: &mut akita_types::RingVec<FField>
 
 fn mutate_terminal_e_hat_digit<FField: FieldCore>(
     witness: &mut akita_types::CleartextWitnessProof<FField>,
-    _layout: akita_types::TerminalWitnessSegmentLayout,
 ) {
     match witness {
         akita_types::CleartextWitnessProof::SegmentTyped(segment) => {
@@ -675,7 +674,7 @@ fn trace_internalization_rejects_tampered_recursive_fold_handle() {
 
         let opening_batch = akita_types::OpeningClaimsLayout::new(NV, 2).expect("opening_batch");
         let layout = Cfg::get_params_for_batched_commitment(&opening_batch).expect("layout");
-        let total_field = (layout.num_blocks * layout.block_len)
+        let total_field = (layout.num_live_blocks * layout.num_positions_per_block)
             .checked_mul(D)
             .expect("total field size overflow");
         let total_chunks = total_field / ONEHOT_K;
@@ -756,22 +755,8 @@ fn trace_internalization_rejects_tampered_terminal_e_hat_digit() {
 
         let (verifier_setup, commitment, proof, opening_point, opening, _layout) =
             make_dense_fixture::<F, D, Cfg>(FULL_TEST_NV, b"akita_e2e/terminal-trace-tamper");
-        let schedule = Cfg::runtime_schedule(AkitaScheduleLookupKey::single(
-            PolynomialGroupLayout::singleton(FULL_TEST_NV),
-        ))
-        .expect("runtime schedule");
-        let terminal_params = schedule
-            .fold_steps()
-            .last()
-            .expect("folded fixture should have a terminal fold")
-            .params
-            .clone();
-        let terminal_layout =
-            akita_types::terminal_witness_segment_layout(&terminal_params, 1, 1, F::modulus_bits())
-                .expect("terminal layout");
-
         let mut malformed = proof.clone();
-        mutate_terminal_e_hat_digit(terminal_witness_mut(&mut malformed), terminal_layout);
+        mutate_terminal_e_hat_digit(terminal_witness_mut(&mut malformed));
 
         let commitments = [commitment];
         let openings = [opening];
@@ -1049,7 +1034,7 @@ fn adaptive_onehot_direct_tail_uses_terminal_schedule_basis() {
 
         let nv = ONEHOT_TEST_NV;
         let layout = singleton_layout::<Cfg>(nv);
-        let total_field = (layout.num_blocks * layout.block_len)
+        let total_field = (layout.num_live_blocks * layout.num_positions_per_block)
             .checked_mul(D)
             .expect("total field size overflow");
         let total_chunks = total_field / ONEHOT_K;
@@ -1176,7 +1161,25 @@ fn batched_onehot_same_point_round_trip() {
         let nv = NV;
         let opening_batch = akita_types::OpeningClaimsLayout::new(nv, 2).expect("opening_batch");
         let layout = Cfg::get_params_for_batched_commitment(&opening_batch).expect("layout");
-        let total_field = (layout.num_blocks * layout.block_len)
+        let plan = Cfg::runtime_schedule(AkitaScheduleLookupKey::single(
+            PolynomialGroupLayout::singleton(NV),
+        ))
+        .expect("runtime schedule");
+        let fold_steps = plan.fold_steps().collect::<Vec<_>>();
+        assert!(
+            fold_steps.windows(2).any(|steps| {
+                steps.iter().all(|step| {
+                    let params = &step.params;
+                    params.num_live_ring_elements_per_claim % params.num_positions_per_block != 0
+                        && params.num_live_blocks
+                            == params
+                                .num_live_ring_elements_per_claim
+                                .div_ceil(params.num_positions_per_block)
+                })
+            }),
+            "fixture must cross two consecutive production folds with exact partial final rows"
+        );
+        let total_field = (layout.num_live_blocks * layout.num_positions_per_block)
             .checked_mul(D)
             .expect("total field size overflow");
         let total_chunks = total_field / ONEHOT_K;
@@ -1241,6 +1244,18 @@ fn batched_onehot_same_point_round_trip() {
         let mut cursor = std::io::Cursor::new(serialized);
         let decoded = AkitaBatchedProof::<F, F>::deserialize_compressed(&mut cursor, &proof_shape)
             .expect("deserialize batched onehot proof");
+        let terminal = decoded
+            .final_witness()
+            .as_segment_typed()
+            .expect("recursive proof must terminate in a segment-typed witness");
+        assert_eq!(
+            terminal.layout.groups.len(),
+            1,
+            "terminal consumer must retain one canonical scalar group"
+        );
+        terminal
+            .terminal_transcript_parts()
+            .expect("terminal witness must split into canonical transcript segments");
 
         let mut verifier_transcript = AkitaTranscript::<F>::new(b"akita_e2e/batched-onehot");
         let opening_groups = [&openings[..]];
@@ -1291,7 +1306,7 @@ fn batched_onehot_same_point_rejects_tampered_root_stage1_s_claim() {
         let nv = ONEHOT_TEST_NV;
         let layout =
             akita_batched_root_layout::<Cfg>(nv, SAME_POINT_ONEHOT_BATCH_SIZE).expect("layout");
-        let total_field = (layout.num_blocks * layout.block_len)
+        let total_field = (layout.num_live_blocks * layout.num_positions_per_block)
             .checked_mul(D)
             .expect("total field size overflow");
         let total_chunks = total_field / ONEHOT_K;

@@ -34,20 +34,20 @@ pub(crate) use coeffs::PreparedRingSwitchGroup;
 pub use coeffs::RingSwitchTerminalArtifacts;
 pub use coeffs::{ring_switch_build_w, RingSwitchBuildOutput};
 pub use commit::{commit_w, NextWitnessCommitment};
-pub use evals::{build_w_evals_compact, compute_relation_matrix_col_evals};
+pub use evals::{
+    build_w_evals_compact, compute_relation_matrix_col_evals, compute_relation_weight_evals,
+};
 pub use finalize::ring_switch_finalize;
 
 /// D-agnostic output of the ring switch protocol, containing everything
 /// needed for sumchecks and level chaining.
 pub struct RingSwitchOutput<E: FieldCore> {
     /// Compact evaluation table of w, stored as x-outer/y-inner slices.
-    pub w_evals_compact: Vec<i8>,
-    /// Physical x width before zero-extension to the next power of two.
+    pub w_evals_compact: std::sync::Arc<[i8]>,
+    /// Exact live x-column count; the remaining Boolean x domain is an implicit zero suffix.
     pub live_x_cols: usize,
-    /// Evaluation table of M_alpha(x) (tau1-weighted).
-    pub relation_matrix_col_evals: Vec<E>,
-    /// Evaluation table of alpha powers (y dimension).
-    pub alpha_evals_y: Vec<E>,
+    /// Tau1-weighted relation table over the full Boolean coefficient domain.
+    pub relation_weight_evals: Vec<E>,
     /// Number of upper variable bits.
     pub col_bits: usize,
     /// Number of lower variable bits.

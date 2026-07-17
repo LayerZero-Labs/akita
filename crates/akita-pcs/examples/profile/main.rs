@@ -1,6 +1,7 @@
 #![allow(missing_docs)]
 
 mod modes;
+mod parallel;
 mod report;
 mod workload;
 
@@ -28,11 +29,7 @@ fn env_usize(name: &str, default: usize) -> usize {
 }
 
 fn main() {
-    #[cfg(feature = "parallel")]
-    rayon::ThreadPoolBuilder::new()
-        .stack_size(64 * 1024 * 1024)
-        .build_global()
-        .ok();
+    parallel::ProfileThreadPools::init();
 
     if cfg!(debug_assertions) && env::var("AKITA_ALLOW_DEBUG_PROFILE").as_deref() != Ok("1") {
         eprintln!("examples/profile must be run with --release for meaningful timings.");

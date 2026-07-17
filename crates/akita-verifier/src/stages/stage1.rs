@@ -15,28 +15,12 @@ use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
 use akita_types::eval_poly;
 use akita_types::proof::append_flat_coefficients;
 use akita_types::{
-    combine_polys, linear_combination, sis::FoldWitnessGrindContract,
-    stage1_interstage_batch_weights, stage1_leaf_coeffs, stage1_stage_count,
-    stage1_tree_product_stage_arities, validate_stage1_tree_basis, AkitaStage1Proof, LevelParams,
-    OpeningClaimsLayout, RelationMatrixRowLayout,
+    combine_polys, linear_combination, stage1_interstage_batch_weights, stage1_leaf_coeffs,
+    stage1_stage_count, stage1_tree_product_stage_arities, validate_stage1_tree_basis,
+    AkitaStage1Proof, LevelParams, OpeningClaimsLayout, RelationMatrixRowLayout,
 };
 
 type Stage1VerifyOutput<E> = Vec<E>;
-
-/// Reject malformed fold grind nonces before challenge replay.
-///
-/// Worst-case-β-only policies forbid reroll (`nonce = 0` only). Tail-bound-with-grind
-/// policies accept `nonce < contract.max_nonce_exclusive`.
-///
-/// # Errors
-///
-/// Returns [`AkitaError::InvalidProof`] when the nonce is out of policy range.
-pub(crate) fn validate_fold_grind_nonce(
-    contract: &FoldWitnessGrindContract,
-    fold_grind_nonce: u32,
-) -> Result<(), AkitaError> {
-    contract.validate_nonce(fold_grind_nonce)
-}
 
 /// Absorb the prover's `v` rows once, then sample one [`Challenges`] set per
 /// commitment group in `OpeningClaims` order.
@@ -44,10 +28,11 @@ pub(crate) fn validate_fold_grind_nonce(
 /// This mirrors the prover's multi-group [`RingRelationProver`] live sampling: the
 /// D-block `v = D · concat_g(ê_g)` is absorbed a single time (it spans every
 /// group; the terminal layout drops the D-block so the absorb is skipped on
-/// both sides), then each group samples with its own `num_blocks`/`K_g` under
-/// the shared root `fold_challenge_config`/`fold_challenge_shape` and the shared
+/// both sides), then each group samples with its own `num_live_blocks`/`K_g` under
+/// the shared root `fold_challenge_config`, each group's local challenge shape,
+/// and the shared
 /// accepted grind nonce. A scalar batch (`num_groups == 1`) samples a single
-/// `Challenges` set with `lp.num_blocks`/`num_total_polynomials`.
+/// `Challenges` set with `lp.num_live_blocks`/`num_total_polynomials`.
 ///
 /// # Errors
 ///
@@ -56,7 +41,8 @@ pub(crate) fn validate_fold_grind_nonce(
 pub(crate) fn derive_multi_group_stage1_challenges<F, T>(
     transcript: &mut T,
     v_coeffs: &[F],
-    ring_d: usize,
+    v_ring_d: usize,
+    challenge_ring_d: usize,
     opening_batch: &OpeningClaimsLayout,
     lp: &LevelParams,
     relation_matrix_row_layout: RelationMatrixRowLayout,
@@ -70,7 +56,7 @@ where
         relation_matrix_row_layout,
         RelationMatrixRowLayout::WithDBlock
     ) {
-        append_flat_coefficients(ABSORB_PROVER_V, v_coeffs, ring_d, transcript)?;
+        append_flat_coefficients(ABSORB_PROVER_V, v_coeffs, v_ring_d, transcript)?;
     }
     let labels = witness_fold_challenge_labels();
     let mut group_challenges = Vec::with_capacity(opening_batch.num_groups());
@@ -79,11 +65,12 @@ where
         let k_g = opening_batch.group_layout(group_index)?.num_polynomials();
         group_challenges.push(
             LiveFoldDraw::<F, T>::new(transcript).draw_folding_challenges(
-                ring_d,
-                group_lp.num_blocks(),
+                challenge_ring_d,
+                group_index,
+                group_lp.num_live_blocks(),
                 k_g,
                 &lp.fold_challenge_config,
-                &lp.fold_challenge_shape,
+                &group_lp.fold_challenge_shape(),
                 labels,
                 grind_nonce,
             )?,
@@ -303,7 +290,7 @@ mod fold_grind_nonce_tests {
             3,
             fold_challenge_config,
         )
-        .with_decomp(4, 2, 2, 2, 0)
+        .with_decomp(16, 64, 2, 2)
         .expect("level params")
         .with_fold_challenge_shape(fold_shape)
         .expect("fold challenge shape")
@@ -313,17 +300,16 @@ mod fold_grind_nonce_tests {
     fn worst_case_beta_only_rejects_nonzero_nonce() {
         let lp = sample_level_params(
             SparseChallengeConfig::pm1_only(31),
-            TensorChallengeShape::Tensor,
+            TensorChallengeShape::Tensor { fold_low_len: 2 },
         );
-        let contract = lp
-            .fold_witness_grind_contract(1, FoldLinfProtocolBinding::CURRENT.max_grind_attempts)
-            .expect("contract");
+        let contract = lp.fold_witness_grind_contract(1).expect("contract");
         assert_eq!(
             contract.policy,
             akita_types::sis::FoldWitnessLinfCapPolicy::WorstCaseBetaOnly
         );
-        assert!(validate_fold_grind_nonce(&contract, 0).is_ok());
-        assert!(validate_fold_grind_nonce(&contract, 1).is_err());
+        let max_grind_attempts = FoldLinfProtocolBinding::CURRENT.max_grind_attempts;
+        assert!(contract.validate_nonce(0, max_grind_attempts).is_ok());
+        assert!(contract.validate_nonce(1, max_grind_attempts).is_err());
     }
 
     #[test]
@@ -335,17 +321,15 @@ mod fold_grind_nonce_tests {
             },
             TensorChallengeShape::Flat,
         );
-        let contract = lp
-            .fold_witness_grind_contract(1, FoldLinfProtocolBinding::CURRENT.max_grind_attempts)
-            .expect("contract");
+        let contract = lp.fold_witness_grind_contract(1).expect("contract");
         assert_eq!(
             contract.policy,
             akita_types::sis::FoldWitnessLinfCapPolicy::TailBoundWithGrind
         );
-        let cap = contract.max_nonce_exclusive;
-        assert!(validate_fold_grind_nonce(&contract, 0).is_ok());
-        assert!(validate_fold_grind_nonce(&contract, cap - 1).is_ok());
-        assert!(validate_fold_grind_nonce(&contract, cap).is_err());
+        let cap = FoldLinfProtocolBinding::CURRENT.max_grind_attempts;
+        assert!(contract.validate_nonce(0, cap).is_ok());
+        assert!(contract.validate_nonce(cap - 1, cap).is_ok());
+        assert!(contract.validate_nonce(cap, cap).is_err());
     }
 
     #[test]
@@ -355,18 +339,16 @@ mod fold_grind_nonce_tests {
                 count_pm1: 30,
                 count_pm2: 12,
             },
-            TensorChallengeShape::Tensor,
+            TensorChallengeShape::Tensor { fold_low_len: 2 },
         );
-        let contract = lp
-            .fold_witness_grind_contract(1, FoldLinfProtocolBinding::CURRENT.max_grind_attempts)
-            .expect("contract");
+        let contract = lp.fold_witness_grind_contract(1).expect("contract");
         assert_eq!(
             contract.policy,
             akita_types::sis::FoldWitnessLinfCapPolicy::TensorTailBoundWithGrind
         );
-        let cap = contract.max_nonce_exclusive;
-        assert!(validate_fold_grind_nonce(&contract, 0).is_ok());
-        assert!(validate_fold_grind_nonce(&contract, cap - 1).is_ok());
-        assert!(validate_fold_grind_nonce(&contract, cap).is_err());
+        let cap = FoldLinfProtocolBinding::CURRENT.max_grind_attempts;
+        assert!(contract.validate_nonce(0, cap).is_ok());
+        assert!(contract.validate_nonce(cap - 1, cap).is_ok());
+        assert!(contract.validate_nonce(cap, cap).is_err());
     }
 }

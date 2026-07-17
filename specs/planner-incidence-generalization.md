@@ -317,8 +317,8 @@ Each generated fold step stores the chosen layout/search parameters:
 pub struct GeneratedFoldStep {
     pub ring_d: u32,
     pub log_basis: u32,
-    pub m_vars: u32,
-    pub r_vars: u32,
+    pub position_index_bits: u32,
+    pub block_index_bits: u32,
     pub n_a: u32,
     pub n_b: u32,
     pub n_d: u32,

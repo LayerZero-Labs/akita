@@ -217,16 +217,27 @@ fn walk_scalar_generated_schedule_entry(
                 let (witness_shape, direct_current_w_len, params) = if fold_level == 0 {
                     let params = direct
                         .commit
+                        .as_ref()
                         .map(|commit| {
-                            let commit_step = GeneratedStep::Fold(commit);
-                            expand_validated_fold_level(
-                                &commit_step,
-                                key,
+                            validate_block_geometry(commit, key, policy, 0, expected_root_w_len)?;
+                            validate_log_basis(commit.log_basis, policy)?;
+                            let fold_shape = fold_challenge_shape_at_level(AkitaScheduleInputs {
+                                num_vars: key.num_vars(),
+                                level: 0,
+                                current_w_len: expected_root_w_len,
+                            });
+                            let lp = commit.expand_to_root_direct_commit_params(
                                 policy,
                                 ring_challenge_config,
-                                fold_challenge_shape_at_level,
-                                0,
                                 expected_root_w_len,
+                                fold_shape,
+                                key.num_polynomials(),
+                            )?;
+                            validate_expanded_level_params(
+                                &lp,
+                                commit,
+                                policy,
+                                0,
                                 key.num_polynomials(),
                             )
                         })
@@ -366,14 +377,9 @@ fn walk_multi_group_generated_schedule_entry(
                 } else {
                     fold_challenge_shape_at_level(inputs)
                 };
-                let lp = if fold_level == 0 {
+                let mut lp = if fold_level == 0 {
                     let (precommitted_groups, precommitted_d_width) =
-                        multi_group_root_precommitted_groups(
-                            key,
-                            policy,
-                            ring_challenge_config,
-                            fold_shape,
-                        )?;
+                        multi_group_root_precommitted_groups(key, policy, ring_challenge_config)?;
                     validate_expanded_precommitted_groups(key, &precommitted_groups)?;
                     expand_multi_group_root_fold_step(
                         step,
@@ -396,6 +402,7 @@ fn walk_multi_group_generated_schedule_entry(
                     )?
                 };
 
+                lp.witness_chunk = policy.witness_chunk_for_level(fold_level);
                 if is_terminal && lp.has_precommitted_groups() {
                     return Err(AkitaError::InvalidSetup(
                         "grouped terminal fold must be followed by another fold".to_string(),
@@ -439,7 +446,7 @@ fn walk_multi_group_generated_schedule_entry(
                         level: fold_level + 1,
                         current_w_len: len,
                     };
-                    let next_lp = expand_fold_step(
+                    let mut next_lp = expand_fold_step(
                         next,
                         policy,
                         ring_challenge_config,
@@ -448,6 +455,7 @@ fn walk_multi_group_generated_schedule_entry(
                         fold_challenge_shape_at_level(next_inputs),
                         1,
                     )?;
+                    next_lp.witness_chunk = policy.witness_chunk_for_level(fold_level + 1);
                     (len, Some(next_lp), RelationMatrixRowLayout::WithDBlock)
                 };
 
@@ -502,7 +510,6 @@ fn walk_multi_group_generated_schedule_entry(
                                     key,
                                     policy,
                                     ring_challenge_config,
-                                    fold_shape,
                                 )?;
                             validate_expanded_precommitted_groups(key, &precommitted_groups)?;
                             Some(commit.expand_to_multi_group_root_level_params(
@@ -611,7 +618,7 @@ fn expand_validated_fold_level(
     let fold = step
         .fold_step()
         .ok_or_else(|| AkitaError::InvalidSetup("generated expected a fold step".to_string()))?;
-    validate_fold_geometry(fold, key, policy, fold_level, current_w_len)?;
+    validate_block_geometry(fold, key, policy, fold_level, current_w_len)?;
     validate_log_basis(fold.log_basis, policy)?;
     let inputs = AkitaScheduleInputs {
         num_vars: key.num_vars(),
@@ -705,7 +712,7 @@ fn validate_log_basis(log_basis: u32, policy: &PlannerPolicy) -> Result<(), Akit
     Ok(())
 }
 
-fn validate_fold_geometry(
+fn validate_block_geometry(
     step: &GeneratedFoldStep,
     key: PolynomialGroupLayout,
     policy: &PlannerPolicy,
@@ -723,33 +730,54 @@ fn validate_fold_geometry(
             "generated schedule policy ring dimension must be a nonzero power of two".to_string(),
         ));
     }
-    let r_vars = step.r_vars as usize;
-    let m_vars = step.m_vars as usize;
-    let num_blocks = 1usize.checked_shl(step.r_vars).ok_or_else(|| {
-        AkitaError::InvalidSetup("generated schedule 2^r_vars overflows usize".to_string())
+    let block_index_bits = step.block_index_bits as usize;
+    let position_index_bits = step.position_index_bits as usize;
+    let block_index_domain_size = 1usize.checked_shl(step.block_index_bits).ok_or_else(|| {
+        AkitaError::InvalidSetup(
+            "generated schedule 2^block_index_bits overflows usize".to_string(),
+        )
     })?;
-    let block_len = 1usize.checked_shl(step.m_vars).ok_or_else(|| {
-        AkitaError::InvalidSetup("generated schedule 2^m_vars overflows usize".to_string())
-    })?;
-    let ring_capacity = num_blocks
-        .checked_mul(block_len)
-        .and_then(|n| n.checked_mul(policy.ring_dimension))
-        .ok_or_else(|| AkitaError::InvalidSetup("generated root capacity overflow".to_string()))?;
-
+    let num_live_blocks = step.num_live_blocks as usize;
+    if num_live_blocks == 0
+        || num_live_blocks > block_index_domain_size
+        || num_live_blocks
+            .checked_next_power_of_two()
+            .is_none_or(|domain| domain != block_index_domain_size)
+    {
+        return Err(AkitaError::InvalidSetup(
+            "generated schedule exact live block count disagrees with block-index domain"
+                .to_string(),
+        ));
+    }
+    let num_positions_per_block =
+        1usize
+            .checked_shl(step.position_index_bits)
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup(
+                    "generated schedule 2^position_index_bits overflows usize".to_string(),
+                )
+            })?;
     if fold_level == 0 {
-        if ring_capacity < current_w_len {
+        // A small root-direct polynomial may occupy only a prefix of its first
+        // ring. Count that padded ring as live source storage; recursive
+        // witnesses remain exactly ring-aligned below.
+        let num_live_ring_elements_per_claim = current_w_len.div_ceil(policy.ring_dimension);
+        let derived_num_live_blocks =
+            num_live_ring_elements_per_claim.div_ceil(num_positions_per_block);
+        if num_live_blocks != derived_num_live_blocks {
             return Err(AkitaError::InvalidSetup(format!(
-                "generated root geometry under-covers witness: capacity={ring_capacity}, witness={current_w_len}"
+                "generated root exact live block mismatch: stored={num_live_blocks}, derived={derived_num_live_blocks}"
             )));
         }
         let alpha = policy.ring_dimension.trailing_zeros() as usize;
-        if m_vars
-            .checked_add(r_vars)
+        if position_index_bits
+            .checked_add(block_index_bits)
             .and_then(|n| n.checked_add(alpha))
-            .is_none_or(|bits| bits < key.num_vars())
+            != Some(key.num_vars().max(alpha))
         {
             return Err(AkitaError::InvalidSetup(
-                "generated root geometry has too few variables for key".to_string(),
+                "generated root geometry variable split disagrees with padded key domain"
+                    .to_string(),
             ));
         }
         return Ok(());
@@ -768,9 +796,15 @@ fn validate_fold_geometry(
         })?
         .max(1)
         .trailing_zeros() as usize;
-    if m_vars.checked_add(r_vars) != Some(reduced_vars) {
+    if position_index_bits.checked_add(block_index_bits) != Some(reduced_vars) {
         return Err(AkitaError::InvalidSetup(format!(
-            "generated recursive geometry mismatch at level {fold_level}: m_vars={m_vars}, r_vars={r_vars}, reduced_vars={reduced_vars}"
+            "generated recursive geometry mismatch at level {fold_level}: position_index_bits={position_index_bits}, block_index_bits={block_index_bits}, reduced_vars={reduced_vars}"
+        )));
+    }
+    let derived_num_live_blocks = num_ring_elems.div_ceil(num_positions_per_block);
+    if num_live_blocks != derived_num_live_blocks {
+        return Err(AkitaError::InvalidSetup(format!(
+            "generated recursive exact live block mismatch at level {fold_level}: stored={num_live_blocks}, derived={derived_num_live_blocks}"
         )));
     }
     Ok(())
@@ -783,15 +817,10 @@ fn validate_expanded_level_params(
     fold_level: usize,
     num_claims: usize,
 ) -> Result<LevelParams, AkitaError> {
-    let expected_num_blocks = 1usize.checked_shl(step.r_vars).ok_or_else(|| {
-        AkitaError::InvalidSetup("generated schedule 2^r_vars overflows usize".to_string())
-    })?;
-    if lp.num_blocks != expected_num_blocks {
-        return Err(AkitaError::InvalidSetup(
-            "expanded generated level has mismatched num_blocks".to_string(),
-        ));
-    }
-    if lp.m_vars != step.m_vars as usize || lp.r_vars != step.r_vars as usize {
+    if lp.position_index_bits() != step.position_index_bits as usize
+        || lp.block_index_bits() != step.block_index_bits as usize
+        || lp.num_live_blocks != step.num_live_blocks as usize
+    {
         return Err(AkitaError::InvalidSetup(
             "expanded generated level has mismatched block geometry".to_string(),
         ));

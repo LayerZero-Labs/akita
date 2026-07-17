@@ -26,8 +26,8 @@ use akita_prover::{
 use akita_recursion_glue::AkitaJoltInputs;
 use akita_transcript::AkitaTranscript;
 use akita_types::{
-    reduce_inner_opening_to_ring_element, ring_opening_point_from_field, BasisMode, BlockOrder,
-    LevelParams, OpeningClaims, OpeningClaimsLayout, PointVariableSelection, PolynomialGroupClaims,
+    reduce_inner_opening_to_ring_element, ring_opening_point_from_field, BasisMode, LevelParams,
+    OpeningClaims, OpeningClaimsLayout, PointVariableSelection, PolynomialGroupClaims,
     SetupContributionMode,
 };
 use akita_verifier::batched_verify;
@@ -101,8 +101,8 @@ where
 {
     let alpha_bits = D.trailing_zeros() as usize;
     let target_num_vars = alpha_bits
-        .checked_add(layout.m_vars)
-        .and_then(|n| n.checked_add(layout.r_vars))
+        .checked_add(layout.position_index_bits())
+        .and_then(|n| n.checked_add(layout.block_index_bits()))
         .ok_or_else(|| "opening point target arity overflow".to_string())?;
     if point.len() > target_num_vars {
         return Err(format!(
@@ -117,10 +117,9 @@ where
     let reduced_point = &padded_point[alpha_bits..];
     let ring_opening_point = ring_opening_point_from_field(
         reduced_point,
-        layout.r_vars,
-        layout.m_vars,
+        layout.num_positions_per_block,
+        layout.num_live_blocks,
         basis,
-        BlockOrder::RowMajor,
     )
     .map_err(|err| format!("opening point shape should match layout: {err}"))?;
 
@@ -130,9 +129,9 @@ where
         poly.opening_view()
             .map_err(|err| format!("opening view: {err}"))?,
         OpeningFoldPlan::Base {
-            eval_outer_scalars: &ring_opening_point.b,
-            fold_scalars: &ring_opening_point.a,
-            block_len: layout.block_len,
+            live_block_weights: &ring_opening_point.live_block_weights,
+            position_weights: &ring_opening_point.position_weights,
+            num_positions_per_block: layout.num_positions_per_block,
         },
     )
     .map_err(|err| format!("opening fold: {err}"))?;
@@ -273,7 +272,7 @@ fn run() -> Result<(), String> {
     )
     .expect("layout");
     let alpha_bits = D.trailing_zeros() as usize;
-    let required_vars = layout.m_vars + layout.r_vars + alpha_bits;
+    let required_vars = layout.position_index_bits() + layout.block_index_bits() + alpha_bits;
     // Both `main` (`required_vars <= nv`, layout fits in nv) and
     // `opening_from_poly` (`point.len() <= target_num_vars`, i.e.
     // `nv <= required_vars`) need to hold simultaneously, which means
@@ -282,19 +281,16 @@ fn run() -> Result<(), String> {
     if required_vars != nv {
         return Err(format!(
             "OneHot D={D} layout at nv={nv} expects exactly {required_vars} variables \
-             (alpha_bits={alpha_bits} + m_vars={} + r_vars={}); pick an AKITA_NUM_VARS that matches the layout",
-            layout.m_vars, layout.r_vars
+             (alpha_bits={alpha_bits} + position_index_bits={} + block_index_bits={}); pick an AKITA_NUM_VARS that matches the layout",
+            layout.position_index_bits(), layout.block_index_bits()
         ));
     }
 
     // The example reuses the deterministic seed from `examples/profile.rs`
     // for reproducibility.
     let mut rng = StdRng::seed_from_u64(0xbeef_cafe);
-    let total_ring = layout
-        .num_blocks
-        .checked_mul(layout.block_len)
-        .ok_or_else(|| "total ring size overflow".to_string())?;
-    let total_field = total_ring
+    let total_field = layout
+        .num_live_ring_elements_per_claim
         .checked_mul(D)
         .ok_or_else(|| "total field size overflow".to_string())?;
     let total_chunks = total_field / onehot_k;

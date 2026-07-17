@@ -80,11 +80,8 @@ impl<F: FieldCore> CleartextWitnessProof<F> {
     /// # Errors
     ///
     /// Returns [`AkitaError::InvalidProof`] when the witness is not segment-typed
-    /// or the descriptor-bound terminal segment is invalid.
-    pub fn terminal_transcript_parts(
-        &self,
-        _layout: TerminalWitnessSegmentLayout,
-    ) -> Result<TerminalWitnessTranscriptParts, AkitaError>
+    /// or its canonical terminal segments cannot be encoded.
+    pub fn terminal_transcript_parts(&self) -> Result<TerminalWitnessTranscriptParts, AkitaError>
     where
         F: CanonicalField + AkitaSerialize,
     {

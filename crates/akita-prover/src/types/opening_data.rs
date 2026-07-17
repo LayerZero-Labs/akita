@@ -353,13 +353,13 @@ where
             ) => {
                 let (shared_point, setup_offset) =
                     BatchedStage3Geometry::shared_suffix_point(&setup_prefix_point, opening_point)?;
-                let setup_point_vars = BatchedStage3Geometry::setup_prefix_column_major_point_vars(
+                let setup_point_vars = BatchedStage3Geometry::setup_prefix_point_vars(
                     setup_prefix_point.len(),
                     &setup_slot.id,
                     setup_offset,
                     shared_point.len(),
                 )?;
-                let fold_claims = Self::new_recursive_suffix_with_setup_prefix(
+                let block_claims = Self::new_recursive_suffix_with_setup_prefix(
                     shared_point.clone(),
                     setup_point_vars.clone(),
                     opening_point.len(),
@@ -377,10 +377,10 @@ where
                     Some(setup_point_vars),
                     opening_point.len(),
                 )?;
-                Ok((fold_claims, eor_claims, shared_point))
+                Ok((block_claims, eor_claims, shared_point))
             }
             (None, None, None) => {
-                let fold_claims = Self::new_recursive_suffix_source(
+                let block_claims = Self::new_recursive_suffix_source(
                     opening_point,
                     recursive_num_vars,
                     witness_polys,
@@ -391,7 +391,7 @@ where
                     None,
                     opening_point.len(),
                 )?;
-                Ok((fold_claims, eor_claims, opening_point.to_vec()))
+                Ok((block_claims, eor_claims, opening_point.to_vec()))
             }
             _ => Err(AkitaError::InvalidInput(
                 "setup-prefix suffix inputs are incomplete".to_string(),

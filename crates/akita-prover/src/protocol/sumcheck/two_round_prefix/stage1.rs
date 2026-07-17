@@ -156,8 +156,9 @@ pub(crate) fn build_stage1_bivariate_skip_proof_from_m_compact<
 )]
 pub(crate) fn build_stage1_bivariate_skip_proof_from_s_compact<
     E: FieldCore + FromPrimitiveInt + HasUnreducedOps,
+    S: crate::protocol::sumcheck::akita_stage1::CompactSValue,
 >(
-    s_compact: &[i16],
+    s_compact: &[S],
     tau0: &[E],
     b: usize,
     live_x_cols: usize,
@@ -196,10 +197,10 @@ pub(crate) fn build_stage1_bivariate_skip_proof_from_s_compact<
                     for (y_quad, &eq_y_weight) in eq_y_suffix.iter().take(y_quads).enumerate() {
                         let base = 4 * y_quad;
                         let lookup_idx = stage1_b4_lookup_index_from_digits([
-                            stage1_b4_s_digit_from_m_compact_s(col[base]),
-                            stage1_b4_s_digit_from_m_compact_s(col[base + 1]),
-                            stage1_b4_s_digit_from_m_compact_s(col[base + 2]),
-                            stage1_b4_s_digit_from_m_compact_s(col[base + 3]),
+                            stage1_b4_s_digit_from_m_compact_s(col[base].compact_s()),
+                            stage1_b4_s_digit_from_m_compact_s(col[base + 1].compact_s()),
+                            stage1_b4_s_digit_from_m_compact_s(col[base + 2].compact_s()),
+                            stage1_b4_s_digit_from_m_compact_s(col[base + 3].compact_s()),
                         ]);
                         let weight = eq_x_weight * eq_y_weight;
                         accum_lookup_vector_signed(
@@ -240,10 +241,10 @@ pub(crate) fn build_stage1_bivariate_skip_proof_from_s_compact<
                     for (y_quad, &eq_y_weight) in eq_y_suffix.iter().take(y_quads).enumerate() {
                         let base = 4 * y_quad;
                         let lookup_idx = stage1_b8_lookup_index_from_digits([
-                            stage1_b8_s_digit_from_m_compact_s(col[base]),
-                            stage1_b8_s_digit_from_m_compact_s(col[base + 1]),
-                            stage1_b8_s_digit_from_m_compact_s(col[base + 2]),
-                            stage1_b8_s_digit_from_m_compact_s(col[base + 3]),
+                            stage1_b8_s_digit_from_m_compact_s(col[base].compact_s()),
+                            stage1_b8_s_digit_from_m_compact_s(col[base + 1].compact_s()),
+                            stage1_b8_s_digit_from_m_compact_s(col[base + 2].compact_s()),
+                            stage1_b8_s_digit_from_m_compact_s(col[base + 3].compact_s()),
                         ]);
                         let weight = eq_x_weight * eq_y_weight;
                         accum_lookup_vector_signed(

@@ -4,11 +4,12 @@ impl<E: FieldCore> SetupContributionGroupPlan<E> {
     #[cfg(test)]
     pub(crate) fn refresh_segments(
         &mut self,
+        d_weights: &[E],
         d_rows: usize,
         d_physical_cols: usize,
     ) -> Result<(), AkitaError> {
         let (required, segments) = build_packed_segments(
-            self.e_col_offset,
+            self.d_col_range.start,
             self.e_eq_slice.len(),
             self.t_cols,
             self.z_cols,
@@ -16,7 +17,7 @@ impl<E: FieldCore> SetupContributionGroupPlan<E> {
             self.n_b,
             &self.a_row_weights,
             &self.b_weights,
-            &self.d_weights,
+            d_weights,
             d_rows,
             d_physical_cols,
         )?;
@@ -27,15 +28,17 @@ impl<E: FieldCore> SetupContributionGroupPlan<E> {
 
     pub(super) fn packed_segments(
         &self,
+        d_weights: &[E],
         d_rows: usize,
         d_physical_cols: usize,
     ) -> Result<(usize, &[GroupSetupSegment<E>]), AkitaError> {
-        debug_assert_eq!(self.d_weights.len(), d_rows);
+        debug_assert_eq!(d_weights.len(), d_rows);
         debug_assert_eq!(self.a_row_weights.len(), self.n_a);
         debug_assert_eq!(self.b_weights.len(), self.n_b);
         debug_assert_eq!(self.t_eq_slice.len(), self.t_cols);
         debug_assert_eq!(self.z_eq_slice.len(), self.z_cols);
-        debug_assert!(self.e_col_offset.saturating_add(self.e_eq_slice.len()) <= d_physical_cols);
+        debug_assert_eq!(self.d_col_range.len(), self.e_eq_slice.len());
+        debug_assert!(self.d_col_range.end <= d_physical_cols);
         debug_assert_eq!(
             self.required,
             setup_group_required(
@@ -74,7 +77,7 @@ fn setup_group_required(
 
 #[allow(clippy::too_many_arguments)]
 pub(super) fn build_packed_segments<E: FieldCore>(
-    e_col_offset: usize,
+    d_col_start: usize,
     e_eq_len: usize,
     t_cols: usize,
     z_cols: usize,
@@ -104,7 +107,7 @@ pub(super) fn build_packed_segments<E: FieldCore>(
             actual: b_weights.len(),
         });
     }
-    let e_end = e_col_offset
+    let e_end = d_col_start
         .checked_add(e_eq_len)
         .ok_or_else(|| AkitaError::InvalidSetup("setup D footprint overflow".into()))?;
     if e_end > d_physical_cols {
@@ -131,7 +134,7 @@ pub(super) fn build_packed_segments<E: FieldCore>(
         &mut endpoints,
         d_rows,
         d_physical_cols,
-        e_col_offset,
+        d_col_start,
         e_eq_len,
     )?;
     push_role_boundaries(&mut endpoints, n_b, t_cols, "B")?;
@@ -151,11 +154,11 @@ pub(super) fn build_packed_segments<E: FieldCore>(
                 false
             } else {
                 let d_col = lo % d_physical_cols;
-                d_col >= e_col_offset && d_col < e_end
+                d_col >= d_col_start && d_col < e_end
             };
             let d_row = if has_d { lo / d_physical_cols } else { 0 };
             let d_start_abs = if has_d {
-                d_row * d_physical_cols + e_col_offset
+                d_row * d_physical_cols + d_col_start
             } else {
                 0
             };
@@ -199,42 +202,6 @@ pub(super) fn build_packed_segments<E: FieldCore>(
         .collect();
 
     Ok((required, segments))
-}
-
-pub(super) fn validate_group_chunk_layout(
-    group: &SetupContributionGroupInputs,
-    num_groups: usize,
-) -> Result<(), AkitaError> {
-    if group.chunks.is_empty()
-        || group.blocks_per_chunk == 0
-        || !group.blocks_per_chunk.is_power_of_two()
-    {
-        return Err(AkitaError::InvalidSetup(
-            "malformed setup witness chunk layout".into(),
-        ));
-    }
-    if group
-        .chunks
-        .len()
-        .checked_mul(group.blocks_per_chunk)
-        .ok_or_else(|| AkitaError::InvalidSetup("setup chunk block coverage overflow".into()))?
-        != group.num_blocks
-    {
-        return Err(AkitaError::InvalidSetup(
-            "setup witness chunk windows do not tile num_blocks".into(),
-        ));
-    }
-    if group.chunks.len() > 1 && num_groups != 1 {
-        // This is an intentional product-surface limit, not a verifier panic
-        // guard: multi-chunk witness layouts are currently only enabled for
-        // the singleton recursive suffix. Keep the rejection here so direct
-        // callers cannot build an ambiguous multi-chunk, multi-group setup
-        // plan before the schedule/proof boundary has learned that shape.
-        return Err(AkitaError::InvalidSetup(
-            "multi-chunk setup contribution requires exactly one commitment group".into(),
-        ));
-    }
-    Ok(())
 }
 
 #[inline(always)]

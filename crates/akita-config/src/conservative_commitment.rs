@@ -52,7 +52,21 @@ impl<Cfg: CommitmentConfig> CommitmentConfig for ConservativeCommitmentConfig<Cf
         max_num_vars: usize,
         max_num_batched_polys: usize,
     ) -> Result<SetupMatrixEnvelope, AkitaError> {
-        Cfg::max_setup_matrix_size(max_num_vars, max_num_batched_polys)
+        if max_num_batched_polys == 0 {
+            return Err(AkitaError::InvalidSetup(
+                "max_num_batched_polys must be at least 1".to_string(),
+            ));
+        }
+        let mut envelope = SetupMatrixEnvelope { max_setup_len: 1 };
+        for num_polys in 1..=max_num_batched_polys {
+            let opening_batch = OpeningClaimsLayout::new(max_num_vars, num_polys)?;
+            let params = Self::get_params_for_batched_commitment(&opening_batch)?;
+            crate::matrix_envelope::accumulate_matrix_envelope_for_level(
+                &params,
+                &mut envelope.max_setup_len,
+            )?;
+        }
+        Ok(envelope)
     }
 
     fn basis_range() -> (u32, u32) {

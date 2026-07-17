@@ -27,11 +27,10 @@ mod tail_segments;
 #[cfg(test)]
 mod tests;
 mod wire;
-
 pub use crate::opening_claims::{
     sample_public_row_coefficients, should_reject_multi_group_root, OpeningClaims,
     OpeningClaimsLayout, PointVariableSelection, PolynomialGroupClaims, PolynomialGroupLayout,
-    MULTI_GROUP_ROOT_DENSE_UNSUPPORTED, MULTI_GROUP_ROOT_MULTI_CHUNK_UNSUPPORTED,
+    MULTI_GROUP_ROOT_DENSE_UNSUPPORTED,
 };
 pub use batch::{
     append_batched_commitments_to_transcript, append_claim_values_to_transcript,
@@ -62,10 +61,11 @@ pub use relation::{
     relation_claim_from_rows_extension, relation_rhs_coeff_len, relation_rhs_layout_for,
     relation_rhs_row_count, RelationGroupRows, RelationRhsLayout,
 };
-pub use relation_matrix_cols::compute_relation_matrix_col_evals;
+pub use relation_matrix_cols::{
+    compute_relation_matrix_col_evals, compute_relation_weight_evals, eval_relation_weight_at_point,
+};
 pub use ring_relation::{
-    multi_group_ring_relation_segment_lengths, ring_relation_segment_lengths,
-    MultiGroupRingRelationSegmentLengths, RingRelationInstance, RingRelationOpeningCounts,
+    ring_relation_segment_lengths, RingRelationInstance, RingRelationOpeningCounts,
     RingRelationSegmentLengths,
 };
 pub use scheme::{CommitmentVerifier, OpeningPoints};
@@ -93,9 +93,9 @@ pub use stage1::{
 };
 pub use tail_segments::{
     build_segment_typed_witness, build_segment_typed_witness_from_groups,
-    decode_terminal_z_golomb_payload, e_folded_segment_bytes, emit_witness_planes_block_inner,
-    emit_witness_z_folded_planes_inner, expand_segment_typed_to_i8_digits,
-    expand_segment_typed_to_i8_digits_for_groups, segment_typed_witness_upper_bound_bytes,
+    decode_terminal_z_golomb_payload, e_folded_segment_bytes, emit_witness_e_planes,
+    emit_witness_r_planes, emit_witness_t_planes, emit_witness_z_planes,
+    expand_segment_typed_to_i8_digits, segment_typed_witness_upper_bound_bytes,
     segment_typed_z_payload_bytes, tail_golomb_rice_z_params, tail_segment_layout_from_groups,
     tail_segment_multiplicities_from_layout, tail_segment_multiplicities_from_layout_for_params,
     terminal_golomb_grind_tail_t_vectors, validate_segment_typed_z_payload,
@@ -103,11 +103,7 @@ pub use tail_segments::{
     SegmentTypedWitnessGroupParts, SegmentTypedWitnessShape, TailSegmentGroupLayout,
     TailSegmentLayout,
 };
-pub use terminal_witness::{
-    i8_digits_to_bytes, terminal_e_hat_bytes_from_blocks, terminal_witness_segment_layout,
-    terminal_witness_segment_layout_from_counts, terminal_witness_transcript_parts,
-    RelationOnlyStage2Inputs, TerminalWitnessSegmentLayout, TerminalWitnessTranscriptParts,
-};
+pub use terminal_witness::{RelationOnlyStage2Inputs, TerminalWitnessTranscriptParts};
 
 use crate::EXTENSION_OPENING_REDUCTION_DEGREE;
 use akita_algebra::CyclotomicRing;

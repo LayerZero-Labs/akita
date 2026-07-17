@@ -32,6 +32,7 @@ pub mod trace_weight;
 pub mod transcript;
 pub mod witness;
 
+pub use akita_challenges::TensorChallengeShape;
 pub use config::{DecompositionParams, SetupContributionMode};
 pub use extension_opening_reduction::{
     check_extension_opening_reduction_output, checked_table_len,
@@ -63,12 +64,13 @@ pub use instance_descriptor::{
     FOLD_GRIND_PROBE_ORDER_TRANSCRIPT_SHUFFLE,
 };
 pub use layout::{
-    basis_weights, block_rings_at_opening, direct_witness_bytes,
-    extension_opening_reduction_level_bytes, extension_opening_reduction_proof_bytes, field_bytes,
-    gadget_row_scalars, lagrange_weights, monomial_weights, packed_digits_bytes,
-    padded_boolean_opening_vars, planned_next_w_len, planned_w_ring_element_count,
-    proof_ring_vec_bytes, reduce_inner_opening_to_ring_element, ring_opening_point_from_field,
-    sumcheck_rounds, validate_role_dims, validate_schedule_ring_dims, BasisMode, BlockOrder,
+    basis_weights, basis_weights_prefix, block_rings_at_opening, checked_opening_source_index,
+    direct_witness_bytes, extension_opening_reduction_level_bytes,
+    extension_opening_reduction_proof_bytes, field_bytes, gadget_row_scalars, lagrange_weights,
+    monomial_weights, opening_domain_len, packed_digits_bytes, padded_boolean_opening_vars,
+    planned_next_w_len, planned_w_ring_element_count, proof_ring_vec_bytes,
+    reduce_inner_opening_to_ring_element, ring_opening_point_from_field, shared_d_digit_log_basis,
+    sumcheck_rounds, validate_role_dims, validate_schedule_ring_dims, BasisMode,
     CommitmentRingDims, FlatMatrix, LevelParams, LevelParamsLike, PrecommittedLevelParams,
     RelationMatrixRowLayout, RingMatrixView, RingOpeningPoint, RingRole, MAX_FOLD_LEVELS,
     MIN_A_ROLE_FOLD_CHALLENGE_RING_D, SUPPORTED_CHALLENGE_RING_DIMS, SUPPORTED_RING_DIMS,
@@ -84,23 +86,20 @@ pub use proof::{
     active_setup_field_len, append_batched_commitments_to_transcript,
     append_claim_values_to_transcript, assemble_relation_rhs, build_segment_typed_witness,
     build_segment_typed_witness_from_groups, compute_relation_matrix_col_evals,
-    decode_terminal_z_golomb_payload, derive_public_matrix_flat, e_folded_segment_bytes,
-    emit_witness_planes_block_inner, emit_witness_z_folded_planes_inner,
-    expand_segment_typed_to_i8_digits, expand_segment_typed_to_i8_digits_for_groups,
-    folded_root_supports_opening_shape, generate_relation_rhs, i8_digits_to_bytes,
-    padded_scalar_batch_num_vars, padded_setup_prefix_len, prepare_opening_point,
-    relation_claim_from_layout_extension, relation_claim_from_rows,
-    relation_claim_from_rows_extension, relation_rhs_coeff_len, relation_rhs_layout_for,
-    relation_rhs_row_count, ring_relation_segment_lengths,
+    compute_relation_weight_evals, decode_terminal_z_golomb_payload, derive_public_matrix_flat,
+    e_folded_segment_bytes, emit_witness_e_planes, emit_witness_r_planes, emit_witness_t_planes,
+    emit_witness_z_planes, eval_relation_weight_at_point, expand_segment_typed_to_i8_digits,
+    folded_root_supports_opening_shape, generate_relation_rhs, padded_scalar_batch_num_vars,
+    padded_setup_prefix_len, prepare_opening_point, relation_claim_from_layout_extension,
+    relation_claim_from_rows, relation_claim_from_rows_extension, relation_rhs_coeff_len,
+    relation_rhs_layout_for, relation_rhs_row_count, ring_relation_segment_lengths,
     ring_subfield_packed_extension_opening_point, root_tensor_projection_enabled,
     sample_public_matrix_seed, sample_public_row_coefficients,
     segment_typed_witness_shape_from_groups, segment_typed_witness_upper_bound_bytes,
     segment_typed_z_payload_bytes, select_setup_prefix_slot, setup_prefix_precommitted_params,
     setup_prefix_slot_id, should_reject_multi_group_root, tail_golomb_rice_z_params,
     tail_segment_layout_from_groups, tail_segment_multiplicities_from_layout,
-    tail_segment_multiplicities_from_layout_for_params, terminal_e_hat_bytes_from_blocks,
-    terminal_golomb_grind_tail_t_vectors, terminal_witness_segment_layout,
-    terminal_witness_segment_layout_from_counts, terminal_witness_transcript_parts,
+    tail_segment_multiplicities_from_layout_for_params, terminal_golomb_grind_tail_t_vectors,
     validate_batched_inputs, validate_public_matrix_matches_seed,
     validate_scalar_point_matches_poly_arity, validate_segment_typed_z_payload,
     z_fold_decoded_from_segment, z_fold_encoding_stats_from_segment, AkitaBatchedFoldRoot,
@@ -119,10 +118,9 @@ pub use proof::{
     SetupPrefixProverRegistry, SetupPrefixPublicCommitment, SetupPrefixSlot, SetupPrefixSlotId,
     SetupPrefixVerifierRegistry, SetupPrefixVerifierSlot, SetupProductSumcheckShape,
     SetupSumcheckProof, TailSegmentGroupLayout, TailSegmentLayout, TerminalLevelProof,
-    TerminalLevelProofShape, TerminalWitnessSegmentLayout, TerminalWitnessTranscriptParts,
-    MAX_SETUP_MATRIX_FIELD_ELEMENTS, MULTI_GROUP_ROOT_DENSE_UNSUPPORTED,
-    MULTI_GROUP_ROOT_MULTI_CHUNK_UNSUPPORTED, SETUP_OFFLOAD_D_SETUP,
-    SETUP_OFFLOAD_MIN_PREFIX_FIELD_LEN, SETUP_SUMCHECK_DEGREE,
+    TerminalLevelProofShape, TerminalWitnessTranscriptParts, MAX_SETUP_MATRIX_FIELD_ELEMENTS,
+    MULTI_GROUP_ROOT_DENSE_UNSUPPORTED, SETUP_OFFLOAD_D_SETUP, SETUP_OFFLOAD_MIN_PREFIX_FIELD_LEN,
+    SETUP_SUMCHECK_DEGREE,
 };
 pub use proof_size::{level_proof_bytes, FOLD_GRIND_NONCE_BYTES};
 pub use schedule::{
@@ -135,11 +133,8 @@ pub use schedule::{
     ScheduleKeyPrecommitSource, Step,
 };
 pub use setup_contribution::{
-    ensure_setup_envelope, prepare_setup_contribution_artifact, setup_active_ring_elems_at,
-    setup_active_ring_elems_for_fold, setup_required_for_inputs, shared_setup_fold_gadget,
-    stage3_offload_natural_field_len, SetupContributionArtifact, SetupContributionGroupInputs,
-    SetupContributionPlan, SetupContributionPlanInputs, SetupContributionStatic,
-    SetupIndexWeightEvaluator,
+    ensure_setup_envelope, shared_setup_fold_gadget, SetupContributionGroupInputs,
+    SetupContributionPlan, SetupIndexWeightEvaluator, SetupProjectionGeometry,
 };
 pub use sis::{
     AjtaiKeyParams, ScalarCutoff, SisMatrixRole, SisModulusProfileId, SisRoleCell,
@@ -155,12 +150,11 @@ pub use trace_weight::{
     build_trace_claim_root, build_trace_table_scaled, ensure_trace_stage2_supported,
     eval_dense_trace_table, eval_trace_terms_closed, root_trace_block_opening,
     trace_public_weights_recursive, trace_public_weights_root_terms, trace_terms_recursive,
-    trace_terms_root, trace_weight_layout_from_segment, TraceChunkLayout, TraceClaim,
-    TraceFieldBlockOpening, TraceOpeningAtPoint, TracePublicWeights, TraceRingBlockOpening,
-    TraceSparseColumn, TraceTable, TraceTerm, TraceWeightLayout,
+    trace_terms_root, trace_weight_layout_from_segment, TraceClaim, TraceFieldBlockOpening,
+    TraceOpeningAtPoint, TracePublicWeights, TraceRingBlockOpening, TraceSparseColumn, TraceTable,
+    TraceTerm, TraceTermBatch, TraceWeightLayout,
 };
 pub use transcript::AppendToTranscript;
 pub use witness::{
-    ChunkedWitnessCfg, MultiChunkProfileId, WitnessChunkLayout, WitnessChunkLengths, WitnessLayout,
-    MAX_WITNESS_CHUNKS,
+    ChunkedWitnessCfg, MultiChunkProfileId, WitnessLayout, WitnessUnitLayout, MAX_WITNESS_CHUNKS,
 };

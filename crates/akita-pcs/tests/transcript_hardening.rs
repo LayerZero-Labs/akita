@@ -5,16 +5,14 @@ use akita_prover::{ComputeBackendSetup, CpuBackend};
 
 mod common;
 
-use akita_field::CanonicalField;
 use akita_pcs::AkitaCommitmentScheme;
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_transcript::{
     ext_limb_label, labels, AkitaTranscript, LoggingTranscript, Transcript, TranscriptEvent,
 };
 use akita_types::{
-    terminal_witness_segment_layout, AkitaBatchedProof, AkitaBatchedProofShape,
-    AkitaBatchedRootProof, AkitaLevelProof, CleartextWitnessProof, CleartextWitnessShape,
-    TerminalWitnessSegmentLayout,
+    AkitaBatchedProof, AkitaBatchedProofShape, AkitaBatchedRootProof, AkitaLevelProof,
+    CleartextWitnessProof, CleartextWitnessShape,
 };
 use common::*;
 
@@ -243,7 +241,7 @@ enum TerminalTamper {
 }
 
 impl TerminalTamper {
-    fn apply(self, witness: &mut CleartextWitnessProof<F>, _layout: TerminalWitnessSegmentLayout) {
+    fn apply(self, witness: &mut CleartextWitnessProof<F>) {
         match witness {
             CleartextWitnessProof::SegmentTyped(segment) => match self {
                 Self::EHatDigit => {
@@ -315,10 +313,7 @@ fn assert_terminal_tamper_rejected_at_num_vars(num_vars: usize, tamper: Terminal
             akita_types::SetupContributionMode::Direct,
         )
         .expect("prove");
-        let terminal_layout = terminal_witness_segment_layout(&layout, 1, 1, F::modulus_bits())
-            .expect("terminal layout");
-
-        tamper.apply(final_witness_mut(&mut proof), terminal_layout);
+        tamper.apply(final_witness_mut(&mut proof));
 
         let mut verifier_transcript = AkitaTranscript::<F>::new(b"hardening/terminal-tamper");
         Scheme::batched_verify(

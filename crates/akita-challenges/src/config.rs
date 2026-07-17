@@ -10,11 +10,12 @@
 /// Minimum min-entropy (bits) for every ring fold sparse-challenge transcript draw.
 ///
 /// Flat folds sample one such draw per logical block. Tensor folds sample
-/// independent left and right factor vectors; each factor is one draw and is
-/// reused across many logical blocks (`c_{p,q} = left_p · right_q`). Soundness
-/// therefore requires **each draw** to clear this floor, not merely the product
-/// `left ⊗ right` summed to 128 bits (a 64+64 split would pass a sum rule but
-/// leave each factor brute-forceable).
+/// independent fold-high and fold-low factor vectors; each factor is one draw
+/// and is reused across many logical blocks
+/// (`c_{p,q} = fold_high_p · fold_low_q`). Soundness therefore requires
+/// **each draw** to clear this floor, not merely the product
+/// `fold_high ⊗ fold_low` summed to 128 bits (a 64+64 split would pass a sum
+/// rule but leave each factor brute-forceable).
 pub const MIN_FOLD_CHALLENGE_ENTROPY_BITS: u32 = 128;
 
 /// Production D=64 signed sparse ±1 count (LaBRADOR-aligned).

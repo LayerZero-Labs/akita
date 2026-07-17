@@ -1,6 +1,6 @@
 use akita_algebra::CyclotomicRing;
 use akita_challenges::{SparseChallenge, TensorChallenges};
-use akita_field::FieldCore;
+use akita_field::{AkitaError, FieldCore};
 use akita_types::LevelParams;
 
 // ===========================================================================
@@ -38,8 +38,8 @@ use akita_types::LevelParams;
 pub struct CommitInnerPlan {
     /// Number of A rows to produce.
     pub n_a: usize,
-    /// Root block length in ring elements.
-    pub block_len: usize,
+    /// Number of ring-element positions in each root block.
+    pub num_positions_per_block: usize,
     /// Number of balanced digits used for the A-side commit.
     pub num_digits_commit: usize,
     /// Number of balanced digits used when opening (recomposition width).
@@ -53,7 +53,7 @@ impl CommitInnerPlan {
     pub fn from_level(params: &LevelParams) -> Self {
         Self {
             n_a: params.a_key.row_len(),
-            block_len: params.block_len,
+            num_positions_per_block: params.num_positions_per_block,
             num_digits_commit: params.num_digits_commit,
             num_digits_open: params.num_digits_open,
             log_basis: params.log_basis,
@@ -71,21 +71,70 @@ pub enum OpeningFoldPlan<'a, F: FieldCore, const D: usize> {
     /// Base multiplier point: scalar fold weights.
     Base {
         /// Outer evaluation scalars applied to the folded blocks.
-        eval_outer_scalars: &'a [F],
+        live_block_weights: &'a [F],
         /// Per-block fold scalars.
-        fold_scalars: &'a [F],
-        /// Block length in ring elements.
-        block_len: usize,
+        position_weights: &'a [F],
+        /// Number of ring-element positions in each block.
+        num_positions_per_block: usize,
     },
     /// Ring multiplier point: ring-element fold weights.
     Ring {
         /// Outer evaluation ring multipliers applied to the folded blocks.
-        eval_outer_scalars: &'a [CyclotomicRing<F, D>],
+        live_block_weights: &'a [CyclotomicRing<F, D>],
         /// Per-block fold ring multipliers.
-        fold_scalars: &'a [CyclotomicRing<F, D>],
-        /// Block length in ring elements.
-        block_len: usize,
+        position_weights: &'a [CyclotomicRing<F, D>],
+        /// Number of ring-element positions in each block.
+        num_positions_per_block: usize,
     },
+}
+
+impl<F: FieldCore, const D: usize> OpeningFoldPlan<'_, F, D> {
+    pub(crate) fn num_positions_per_block(self) -> usize {
+        match self {
+            Self::Base {
+                num_positions_per_block,
+                ..
+            }
+            | Self::Ring {
+                num_positions_per_block,
+                ..
+            } => num_positions_per_block,
+        }
+    }
+
+    /// Validate exact position and live-fold weight lengths at a kernel boundary.
+    pub(crate) fn validate(self, num_live_blocks: usize) -> Result<(), AkitaError> {
+        let (fold_len, position_len, num_positions_per_block) = match self {
+            Self::Base {
+                live_block_weights,
+                position_weights,
+                num_positions_per_block,
+            } => (
+                live_block_weights.len(),
+                position_weights.len(),
+                num_positions_per_block,
+            ),
+            Self::Ring {
+                live_block_weights,
+                position_weights,
+                num_positions_per_block,
+            } => (
+                live_block_weights.len(),
+                position_weights.len(),
+                num_positions_per_block,
+            ),
+        };
+        if !num_positions_per_block.is_power_of_two()
+            || num_live_blocks == 0
+            || position_len != num_positions_per_block
+            || fold_len != num_live_blocks
+        {
+            return Err(AkitaError::InvalidInput(
+                "opening fold weights do not match exact L/F geometry".to_string(),
+            ));
+        }
+        Ok(())
+    }
 }
 
 /// Fused evaluate-and-fold output.
@@ -102,8 +151,8 @@ pub struct OpeningFoldOutput<F: FieldCore, const D: usize> {
 pub struct DecomposeFoldPlan<'a> {
     /// Sparse fold challenges, outermost first.
     pub challenges: &'a [SparseChallenge],
-    /// Block length in ring elements.
-    pub block_len: usize,
+    /// Number of ring-element positions in each block.
+    pub num_positions_per_block: usize,
     /// Number of balanced digits.
     pub num_digits: usize,
     /// Logarithm of the gadget basis.
@@ -121,8 +170,8 @@ pub enum DecomposeFoldBatchPlan<'a> {
     Sparse {
         /// Sparse fold challenges, outermost first.
         challenges: &'a [SparseChallenge],
-        /// Block length in ring elements.
-        block_len: usize,
+        /// Number of ring-element positions in each block.
+        num_positions_per_block: usize,
         /// Number of balanced digits.
         num_digits: usize,
         /// Logarithm of the gadget basis.
@@ -132,8 +181,8 @@ pub enum DecomposeFoldBatchPlan<'a> {
     Tensor {
         /// Tensor-structured fold challenges.
         tensor: &'a TensorChallenges,
-        /// Block length in ring elements.
-        block_len: usize,
+        /// Number of ring-element positions in each block.
+        num_positions_per_block: usize,
         /// Number of balanced digits.
         num_digits: usize,
         /// Logarithm of the gadget basis.

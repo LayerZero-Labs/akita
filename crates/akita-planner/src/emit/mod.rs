@@ -50,8 +50,9 @@ fn fold_step_from_params(p: &LevelParams) -> GeneratedFoldStep {
     GeneratedFoldStep {
         ring_d: p.ring_dimension as u32,
         log_basis: p.log_basis,
-        m_vars: p.log_block_len() as u32,
-        r_vars: p.log_num_blocks() as u32,
+        position_index_bits: p.position_index_bits() as u32,
+        block_index_bits: p.block_index_bits() as u32,
+        num_live_blocks: p.num_live_blocks as u32,
         n_a: p.a_key.row_len() as u32,
         n_b: p.b_key.row_len() as u32,
         n_d: p.d_key.row_len() as u32,
@@ -69,8 +70,11 @@ fn setup_prefix_group_from_params(
             let group = &setup_prefix.commitment_params;
             GeneratedSetupPrefixGroup {
                 natural_len: setup_prefix.natural_len as u32,
-                m_vars: group.layout.m_vars as u32,
-                r_vars: group.layout.r_vars as u32,
+                num_live_ring_elements_per_claim: group.layout.num_live_ring_elements_per_claim
+                    as u32,
+                num_positions_per_block: group.layout.num_positions_per_block as u32,
+                num_live_blocks: group.layout.num_live_blocks as u32,
+                fold_challenge_shape: group.layout.fold_challenge_shape,
                 n_a: group.a_key.row_len() as u32,
                 n_b: group.b_key.row_len() as u32,
             }
@@ -119,11 +123,14 @@ fn emit_key(key: PolynomialGroupLayout) -> String {
 }
 
 fn emit_precommitted_group_key(layout: &PrecommittedGroupParams) -> String {
+    let challenge_shape = emit_root_fold_shape(layout.fold_challenge_shape);
     format!(
-        "PrecommittedGroupParams {{ group: {}, m_vars: {}, r_vars: {}, log_basis: {}, n_a: {}, conservative_n_b: {} }}",
+        "PrecommittedGroupParams {{ group: {}, num_live_ring_elements_per_claim: {}, num_positions_per_block: {}, num_live_blocks: {}, fold_challenge_shape: {}, log_basis: {}, n_a: {}, conservative_n_b: {} }}",
         emit_key(layout.group),
-        layout.m_vars,
-        layout.r_vars,
+        layout.num_live_ring_elements_per_claim,
+        layout.num_positions_per_block,
+        layout.num_live_blocks,
+        challenge_shape,
         layout.log_basis,
         layout.n_a,
         layout.conservative_n_b,
@@ -148,8 +155,15 @@ fn emit_compact_fold_struct(p: &LevelParams) -> String {
     let fold = fold_step_from_params(p);
     format!(
         "GeneratedFoldStep {{ \
-         ring_d: {}, log_basis: {}, m_vars: {}, r_vars: {}, n_a: {}, n_b: {}, n_d: {} }}",
-        fold.ring_d, fold.log_basis, fold.m_vars, fold.r_vars, fold.n_a, fold.n_b, fold.n_d,
+         ring_d: {}, log_basis: {}, position_index_bits: {}, block_index_bits: {}, num_live_blocks: {}, n_a: {}, n_b: {}, n_d: {} }}",
+        fold.ring_d,
+        fold.log_basis,
+        fold.position_index_bits,
+        fold.block_index_bits,
+        fold.num_live_blocks,
+        fold.n_a,
+        fold.n_b,
+        fold.n_d,
     )
 }
 
@@ -163,8 +177,14 @@ fn emit_setup_contribution_mode(mode: SetupContributionMode) -> &'static str {
 fn emit_setup_prefix_group(group: Option<GeneratedSetupPrefixGroup>) -> String {
     match group {
         Some(group) => format!(
-            "Some(GeneratedSetupPrefixGroup {{ natural_len: {}, m_vars: {}, r_vars: {}, n_a: {}, n_b: {} }})",
-            group.natural_len, group.m_vars, group.r_vars, group.n_a, group.n_b
+            "Some(GeneratedSetupPrefixGroup {{ natural_len: {}, num_live_ring_elements_per_claim: {}, num_positions_per_block: {}, num_live_blocks: {}, fold_challenge_shape: {}, n_a: {}, n_b: {} }})",
+            group.natural_len,
+            group.num_live_ring_elements_per_claim,
+            group.num_positions_per_block,
+            group.num_live_blocks,
+            emit_root_fold_shape(group.fold_challenge_shape),
+            group.n_a,
+            group.n_b,
         ),
         None => "None".to_string(),
     }
@@ -253,10 +273,12 @@ fn format_bytes(bytes: [u8; 32]) -> String {
     format!("[{}]", values.collect::<Vec<_>>().join(", "))
 }
 
-fn emit_root_fold_shape(shape: TensorChallengeShape) -> &'static str {
+fn emit_root_fold_shape(shape: TensorChallengeShape) -> String {
     match shape {
-        TensorChallengeShape::Flat => "TensorChallengeShape::Flat",
-        TensorChallengeShape::Tensor => "TensorChallengeShape::Tensor",
+        TensorChallengeShape::Flat => "TensorChallengeShape::Flat".to_string(),
+        TensorChallengeShape::Tensor { fold_low_len } => {
+            format!("TensorChallengeShape::Tensor {{ fold_low_len: {fold_low_len} }}")
+        }
     }
 }
 

@@ -1,7 +1,8 @@
-use akita_algebra::offset_eq::eq_eval_at_index;
+use akita_algebra::offset_eq::{eval_affine_digit_interval, AffineWeight};
 use akita_algebra::CyclotomicRing;
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, Invertible};
 use std::marker::PhantomData;
+use std::sync::Arc;
 
 use crate::field_reduction::trace_open_folded_ring_mle_dot;
 use crate::{gadget_row_scalars, lagrange_weights, BasisMode, FpExtEncoding};
@@ -12,7 +13,7 @@ use super::layout::TraceWeightLayout;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TraceFieldBlockOpening<F: FieldCore, const D: usize> {
     pub block_offset: usize,
-    pub block_weights: Vec<F>,
+    pub live_block_weights: Vec<F>,
     pub inner_opening_ring: CyclotomicRing<F, D>,
 }
 
@@ -130,12 +131,12 @@ where
     let mut out = E::zero();
 
     for term in terms {
-        layout.validate_trace_term_block_range(term.block_offset, term.block_weights.len())?;
+        layout.validate_trace_term_block_range(term.block_offset, term.live_block_weights.len())?;
         let mut col_factor = E::zero();
-        for (local_block, &block_weight) in term.block_weights.iter().enumerate() {
+        for (local_block, &block_weight) in term.live_block_weights.iter().enumerate() {
             let block = term.block_offset + local_block;
             for (plane, &gadget) in gadget_row.iter().enumerate() {
-                let col = layout.opening_digit_col_index(block, plane);
+                let col = layout.opening_digit_col_index(block, plane)?;
                 col_factor +=
                     eq_weight_at_index(col_point, col) * E::lift_base(block_weight) * gadget;
             }
@@ -186,7 +187,7 @@ where
             let block = term.block_offset + local_block;
             let mut col_factor = E::zero();
             for (plane, &gadget) in gadget_row.iter().enumerate() {
-                let col = layout.opening_digit_col_index(block, plane);
+                let col = layout.opening_digit_col_index(block, plane)?;
                 col_factor += eq_weight_at_index(col_point, col) * gadget;
             }
             if col_factor.is_zero() {
@@ -223,14 +224,16 @@ where
 ///   every block multiplier.
 /// - `basis`: the opening basis that fixes those per-bit weights.
 /// - `packed_inner_point`: the ψ-packed inner opening over `F`.
-/// - `block_offset`: where this claim's `2^{r_pc}` blocks start inside the
-///   (possibly claim-batched) block row.
+/// - `block_offset`: where this claim's exact live block run starts inside the
+///   (possibly claim-batched) block row. `b_open` addresses the enclosing
+///   power-of-two capacity; the layout supplies the exact live run length.
 /// - `coefficient`: the public scalar applied to this term (per-claim row
 ///   weight times any end-of-round tensor factor), in `E`.
 ///
-/// [`eval_trace_terms_closed`] evaluates the fused trace MLE from these in
-/// `O(num_digits_open · (r_pc · K³ + col_bits) + D² / K)` per term, i.e. one
-/// `Tr_H` per claim, with no dependence on the number of fold blocks.
+/// [`eval_trace_terms_closed`] evaluates the fused trace MLE from balanced
+/// high/low factors in `O((H + Q) · poly(K, num_digits_open, col_bits) + D²/K)`
+/// per term, where `H · Q` is the block-index domain size. It performs one `Tr_H` per
+/// claim and never materializes or enumerates the Cartesian block domain.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TraceTerm<F: FieldCore, E: FieldCore, const D: usize> {
     pub block_offset: usize,
@@ -302,6 +305,38 @@ where
     out
 }
 
+#[derive(Clone)]
+struct TraceAffineWeight<F: FieldCore, E: FieldCore> {
+    coordinates: Vec<E>,
+    gamma: Arc<Vec<Vec<Vec<F>>>>,
+}
+
+impl<F, E> AffineWeight<E> for TraceAffineWeight<F, E>
+where
+    F: FieldCore,
+    E: ExtField<F> + FieldCore,
+{
+    fn zero_like(&self) -> Self {
+        Self {
+            coordinates: vec![E::zero(); self.coordinates.len()],
+            gamma: Arc::clone(&self.gamma),
+        }
+    }
+
+    fn add_scaled(&mut self, factor: &Self, scale: E) {
+        for (slot, &value) in self.coordinates.iter_mut().zip(&factor.coordinates) {
+            *slot += value * scale;
+        }
+    }
+
+    fn multiply(&self, rhs: &Self) -> Self {
+        Self {
+            coordinates: cstar_mul::<F, E>(&self.coordinates, &rhs.coordinates, &self.gamma),
+            gamma: Arc::clone(&self.gamma),
+        }
+    }
+}
+
 /// Lifted ring-subfield coordinates of the two per-bit block weights `w_t(0)`
 /// and `w_t(1)` for opening coordinate `b` under `basis`.
 fn block_weight_coords<F, E>(b: E, basis: BasisMode, k: usize) -> (Vec<E>, Vec<E>)
@@ -321,74 +356,10 @@ where
     (lift(w0), lift(w1))
 }
 
-/// Fold the block weights over one opening-digit plane into ring-subfield
-/// coordinates: returns `Σ_j eq(col_point, off + j) · coords(b_j)` for
-/// `j ∈ [0, 2^{r_pc})`, where `b_j = ∏_t w_t(j_t)` is the basis weight and
-/// `coords` are the ring-subfield coordinates the ψ-embedding respects.
-///
-/// The column index `off + j` mixes the block index `j` with the plane offset
-/// `off`, so the low `r_pc` bits can carry into the high bits. A two-state
-/// carry DP over the block bits handles this in `O(r_pc · K³)`: state `S_c`
-/// accumulates `(∏ eq-bit) ⊛ (⊛ coords)` for paths whose low bits carry `c`
-/// into bit `r_pc`; the high bits then contribute `eq(col_high, off≫r_pc + c)`.
-#[allow(clippy::too_many_arguments)]
-fn fold_blocks_for_plane<F, E>(
-    col_low: &[E],
-    col_high: &[E],
-    bit_coords: &[(Vec<E>, Vec<E>)],
-    off: usize,
-    k: usize,
-    gamma: &[Vec<Vec<F>>],
-) -> Vec<E>
-where
-    F: FieldCore,
-    E: ExtField<F> + FieldCore,
-{
-    let r_pc = col_low.len();
-    let off_low = off & ((1usize << r_pc) - 1);
-    let off_high = off >> r_pc;
-
-    // `state[c]` holds the running `E^K` accumulator for carry `c`. The empty
-    // product is the coordinate-algebra identity (`unit_0`) with eq weight 1.
-    let mut state = [vec![E::zero(); k], vec![E::zero(); k]];
-    state[0][0] = E::one();
-    for (t, (cw0, cw1)) in bit_coords.iter().enumerate() {
-        let off_bit = (off_low >> t) & 1;
-        let r = col_low[t];
-        let one_minus_r = E::one() - r;
-        let mut next = [vec![E::zero(); k], vec![E::zero(); k]];
-        for (carry_in, state_row) in state.iter().enumerate() {
-            if state_row.iter().all(|value| value.is_zero()) {
-                continue;
-            }
-            for (j_bit, cw) in [(0usize, cw0), (1usize, cw1)] {
-                let sum = off_bit + j_bit + carry_in;
-                let result_bit = sum & 1;
-                let carry_out = sum >> 1;
-                let eq_bit = if result_bit == 1 { r } else { one_minus_r };
-                let folded = cstar_mul::<F, E>(state_row, cw, gamma);
-                for (slot, value) in next[carry_out].iter_mut().zip(folded) {
-                    *slot += eq_bit * value;
-                }
-            }
-        }
-        state = next;
-    }
-
-    let eq_high_0 = eq_eval_at_index(col_high, off_high);
-    let eq_high_1 = eq_eval_at_index(col_high, off_high + 1);
-    (0..k)
-        .map(|m| state[0][m] * eq_high_0 + state[1][m] * eq_high_1)
-        .collect()
-}
-
-/// Ring-subfield coordinates of the product of high-bit block weights selecting
-/// chunk `chunk`: `⊛_{s} coords(w_s(chunk_s))` over the high block bits `b_high`.
-/// For `k = 1` this is the scalar `∏_s w_s(chunk_s)`; the empty product (no high
-/// bits) is the coordinate-algebra identity.
-fn high_chunk_weight_coords<F, E>(
-    b_high: &[E],
-    chunk: usize,
+/// Ring-subfield coordinates of one block's basis weight.
+fn block_weight_at_index_coords<F, E>(
+    block_point: &[E],
+    block: usize,
     basis: BasisMode,
     k: usize,
     gamma: &[Vec<Vec<F>>],
@@ -399,9 +370,9 @@ where
 {
     let mut acc = vec![E::zero(); k];
     acc[0] = E::one();
-    for (s, &b) in b_high.iter().enumerate() {
+    for (s, &b) in block_point.iter().enumerate() {
         let (cw0, cw1) = block_weight_coords::<F, E>(b, basis, k);
-        let bit = (chunk >> s) & 1;
+        let bit = (block >> s) & 1;
         let cw = if bit == 1 { &cw1 } else { &cw0 };
         acc = cstar_mul::<F, E>(&acc, cw, gamma);
     }
@@ -439,7 +410,7 @@ where
     let gadget_row = lift_gadget_row::<F, E>(&gadget_scalars);
     let ring_eq = lagrange_weights(ring_point)?;
     // Structure constants of the ring-subfield basis (`[[[1]]]` when `k == 1`).
-    let gamma = ring_subfield_struct_consts::<F, E>(k);
+    let gamma = Arc::new(ring_subfield_struct_consts::<F, E>(k));
 
     let mut out = E::zero();
     for term in terms {
@@ -449,107 +420,98 @@ where
                 "trace term block-opening width exceeds column dimension".to_string(),
             ));
         }
-        let block_span = 1usize.checked_shl(r_pc as u32).ok_or_else(|| {
+        let block_index_domain_size = 1usize.checked_shl(r_pc as u32).ok_or_else(|| {
             AkitaError::InvalidInput("trace term block span overflow".to_string())
         })?;
+        let block_span = layout
+            .witness_layout
+            .group_num_live_blocks(layout.group_id)?;
+        if block_span > block_index_domain_size {
+            return Err(AkitaError::InvalidInput(
+                "trace term num_live_blocks exceeds block-opening capacity".to_string(),
+            ));
+        }
         layout.validate_trace_term_block_range(term.block_offset, block_span)?;
+        if !term.block_offset.is_multiple_of(block_span) {
+            return Err(AkitaError::InvalidInput(
+                "trace term must begin at a claim boundary".to_string(),
+            ));
+        }
 
-        // `V = Σ_plane gadget[plane] · Σ_j eq(col, col(j, plane)) · coords(b_j)`.
-        // Single-chunk: blocks map to contiguous columns `base + plane·num_blocks
-        // + j`. Multi-chunk: the block axis splits into a chunk (high bits) and a
-        // block-local window (low bits) at distinct chunk offsets, so we fold the
-        // low bits per chunk and weight each chunk by its high-bit block weight.
+        let low_bits = r_pc / 2;
+        let low_len = 1usize.checked_shl(low_bits as u32).ok_or_else(|| {
+            AkitaError::InvalidInput("trace low-factor length overflow".to_string())
+        })?;
+        let high_len = 1usize
+            .checked_shl((r_pc - low_bits) as u32)
+            .ok_or_else(|| {
+                AkitaError::InvalidInput("trace high-factor length overflow".to_string())
+            })?;
+        let factor_count = low_len.checked_add(high_len).ok_or_else(|| {
+            AkitaError::InvalidInput("trace affine-factor count overflow".to_string())
+        })?;
+        if factor_count > akita_algebra::offset_eq::MAX_COMPACT_STRIDE_TERMS {
+            return Err(AkitaError::InvalidSize {
+                expected: akita_algebra::offset_eq::MAX_COMPACT_STRIDE_TERMS,
+                actual: factor_count,
+            });
+        }
+        let mut low_weights = Vec::new();
+        low_weights.try_reserve_exact(low_len).map_err(|_| {
+            AkitaError::InvalidInput("trace low-factor allocation failed".to_string())
+        })?;
+        for low in 0..low_len {
+            low_weights.push(TraceAffineWeight {
+                coordinates: block_weight_at_index_coords::<F, E>(
+                    &term.b_open[..low_bits],
+                    low,
+                    term.basis,
+                    k,
+                    &gamma,
+                ),
+                gamma: Arc::clone(&gamma),
+            });
+        }
+        let mut high_weights = Vec::new();
+        high_weights.try_reserve_exact(high_len).map_err(|_| {
+            AkitaError::InvalidInput("trace high-factor allocation failed".to_string())
+        })?;
+        for high in 0..high_len {
+            high_weights.push(TraceAffineWeight {
+                coordinates: block_weight_at_index_coords::<F, E>(
+                    &term.b_open[low_bits..],
+                    high,
+                    term.basis,
+                    k,
+                    &gamma,
+                ),
+                gamma: Arc::clone(&gamma),
+            });
+        }
+
+        // `V = Σ_plane gadget[plane] · Σ_j eq(col, e_index(j, plane)) · coords(b_j)`.
+        // The descriptor owns the physical E address for every logical block.
         let mut v = vec![E::zero(); k];
-        if layout.chunk.num_chunks <= 1 {
-            let base = layout
-                .opening_digit_offset
-                .checked_add(term.block_offset)
-                .ok_or_else(|| {
-                    AkitaError::InvalidInput("trace term column base overflow".to_string())
-                })?;
-            let col_low = &col_point[..r_pc];
-            let col_high = &col_point[r_pc..];
-            let bit_coords: Vec<(Vec<E>, Vec<E>)> = term
-                .b_open
-                .iter()
-                .map(|&b| block_weight_coords::<F, E>(b, term.basis, k))
-                .collect();
-            for (plane, &gadget) in gadget_row.iter().enumerate() {
-                let off = plane
-                    .checked_mul(layout.num_blocks)
-                    .and_then(|plane_offset| plane_offset.checked_add(base))
-                    .ok_or_else(|| {
-                        AkitaError::InvalidInput("trace term column index overflow".to_string())
-                    })?;
-                let plane_fold =
-                    fold_blocks_for_plane::<F, E>(col_low, col_high, &bit_coords, off, k, &gamma);
-                for (slot, value) in v.iter_mut().zip(plane_fold) {
-                    *slot += gadget * value;
-                }
-            }
-        } else {
-            let c = &layout.chunk;
-            let rb_low = c.blocks_per_chunk.trailing_zeros() as usize;
-            let rb_high = c.num_chunks.trailing_zeros() as usize;
-            if rb_low + rb_high != r_pc {
-                return Err(AkitaError::InvalidInput(
-                    "trace term block bits do not match chunked block axis".to_string(),
-                ));
-            }
-            let claim = term
+        for unit in layout.witness_layout.units_for_group(layout.group_id)? {
+            let block = term
                 .block_offset
-                .checked_div(c.num_blocks_global)
-                .unwrap_or(0);
-            let plane_stride = c.num_claims * c.blocks_per_chunk;
-            let claim_base = claim * c.blocks_per_chunk;
-            let b_low = &term.b_open[..rb_low];
-            let b_high = &term.b_open[rb_low..];
-            let bit_coords: Vec<(Vec<E>, Vec<E>)> = b_low
-                .iter()
-                .map(|&b| block_weight_coords::<F, E>(b, term.basis, k))
-                .collect();
-            let col_low = &col_point[..rb_low];
-            let col_high = &col_point[rb_low..];
-            for chunk in 0..c.num_chunks {
-                let high_w = high_chunk_weight_coords::<F, E>(b_high, chunk, term.basis, k, &gamma);
-                if high_w.iter().all(|x| x.is_zero()) {
-                    continue;
-                }
-                let chunk_offset_e = chunk
-                    .checked_mul(c.chunk_stride)
-                    .and_then(|o| o.checked_add(layout.opening_digit_offset))
-                    .and_then(|o| o.checked_add(claim_base))
-                    .ok_or_else(|| {
-                        AkitaError::InvalidInput("chunked trace column base overflow".to_string())
-                    })?;
-                let mut v_chunk = vec![E::zero(); k];
-                for (plane, &gadget) in gadget_row.iter().enumerate() {
-                    let off = plane
-                        .checked_mul(plane_stride)
-                        .and_then(|p| p.checked_add(chunk_offset_e))
-                        .ok_or_else(|| {
-                            AkitaError::InvalidInput(
-                                "chunked trace column index overflow".to_string(),
-                            )
-                        })?;
-                    let plane_fold = fold_blocks_for_plane::<F, E>(
-                        col_low,
-                        col_high,
-                        &bit_coords,
-                        off,
-                        k,
-                        &gamma,
-                    );
-                    for (slot, value) in v_chunk.iter_mut().zip(plane_fold) {
-                        *slot += gadget * value;
-                    }
-                }
-                // Weight this chunk by its high-bit block weight (coordinate-algebra
-                // product), then accumulate into the term's folded `V`.
-                let combined = cstar_mul::<F, E>(&high_w, &v_chunk, &gamma);
-                for (slot, value) in v.iter_mut().zip(combined) {
-                    *slot += value;
-                }
+                .checked_add(unit.global_block_start())
+                .ok_or_else(|| {
+                    AkitaError::InvalidInput("trace term block index overflow".to_string())
+                })?;
+            let base = layout.opening_digit_col_index(block, 0)?;
+            let contribution = eval_affine_digit_interval(
+                col_point,
+                base,
+                unit.global_block_start(),
+                unit.num_live_blocks(),
+                layout.num_digits_open,
+                &gadget_row,
+                &high_weights,
+                &low_weights,
+            )?;
+            for (slot, &value) in v.iter_mut().zip(&contribution.coordinates) {
+                *slot += value;
             }
         }
 

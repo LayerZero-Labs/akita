@@ -5,8 +5,7 @@ use akita_types::{
     active_setup_field_len, direct_witness_bytes, extension_opening_reduction_level_bytes,
     level_proof_bytes, padded_setup_prefix_len, segment_typed_witness_shape_from_groups,
     DirectStep, FoldStep, LevelParams, OpeningClaimsLayout, PolynomialGroupLayout,
-    RelationMatrixRowLayout, SetupContributionMode, Step, SETUP_OFFLOAD_D_SETUP,
-    SETUP_OFFLOAD_MIN_PREFIX_FIELD_LEN,
+    RelationMatrixRowLayout, SetupContributionMode, Step, SETUP_OFFLOAD_MIN_PREFIX_FIELD_LEN,
 };
 
 use crate::PlannerPolicy;
@@ -160,6 +159,8 @@ pub(crate) type ScheduleMemo = HashMap<(usize, usize, usize, u32, usize), Suffix
 pub(crate) struct SuffixCtx<'a> {
     pub(crate) policy: &'a PlannerPolicy,
     pub(crate) ring_challenge_cfg: &'a akita_challenges::SparseChallengeConfig,
+    pub(crate) fold_challenge_shape_at_level:
+        &'a dyn Fn(akita_types::AkitaScheduleInputs) -> akita_challenges::TensorChallengeShape,
     pub(crate) num_vars: usize,
     pub(crate) key: PolynomialGroupLayout,
 }
@@ -211,6 +212,7 @@ pub(crate) fn derive_optimal_suffix_schedule(
     let SuffixCtx {
         policy,
         ring_challenge_cfg,
+        fold_challenge_shape_at_level,
         num_vars,
         key,
     } = *ctx;
@@ -222,6 +224,11 @@ pub(crate) fn derive_optimal_suffix_schedule(
         incoming_setup_prefix,
     } = state;
     let memo_key = state.memo_key();
+    let requested_fold_shape = fold_challenge_shape_at_level(akita_types::AkitaScheduleInputs {
+        num_vars,
+        level,
+        current_w_len: current_witness_len,
+    });
     if depth <= MAX_RECURSION_DEPTH {
         if let Some(cached) = memo.get(&memo_key) {
             return Ok(cached.clone());
@@ -237,6 +244,7 @@ pub(crate) fn derive_optimal_suffix_schedule(
         current_lb,
         level,
         None,
+        requested_fold_shape,
     )?
     .is_some()
     {
@@ -257,7 +265,14 @@ pub(crate) fn derive_optimal_suffix_schedule(
     }
 
     let mut best_fold_per_lb: BTreeMap<u32, FoldSuffix> = BTreeMap::new();
-    let (min_log_basis, max_log_basis) = policy.basis_range;
+    let (configured_min_log_basis, max_log_basis) = policy.basis_range;
+    let min_log_basis = configured_min_log_basis
+        .max(policy.decomposition.log_basis)
+        .max(if policy.decomposition.field_bits() < 128 {
+            5
+        } else {
+            0
+        });
     for lb in min_log_basis..=max_log_basis {
         if lb < current_lb {
             continue;
@@ -270,6 +285,7 @@ pub(crate) fn derive_optimal_suffix_schedule(
                 lb,
                 level,
                 incoming_setup_prefix,
+                requested_fold_shape,
             )?
         else {
             continue;
@@ -293,11 +309,7 @@ pub(crate) fn derive_optimal_suffix_schedule(
 
         let current_opening_layout =
             suffix_opening_layout(current_witness_len, incoming_setup_prefix)?;
-        let natural_len = active_setup_field_len(
-            &candidate_params,
-            &current_opening_layout,
-            SETUP_OFFLOAD_D_SETUP,
-        )?;
+        let natural_len = active_setup_field_len(&candidate_params, &current_opening_layout)?;
         let n_prefix = padded_setup_prefix_len(natural_len);
         let recursion_threshold_met = policy.recursive_setup_planning
             && level <= 1

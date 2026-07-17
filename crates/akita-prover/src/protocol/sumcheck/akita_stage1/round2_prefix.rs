@@ -20,26 +20,29 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage1Prover<E> {
     }
 
     #[inline(always)]
-    pub(super) fn stage1_b4_quad_lookup_index_from_row(row: &[i16], base: usize) -> usize {
+    pub(super) fn stage1_b4_quad_lookup_index_from_row<S: CompactSValue>(
+        row: &[S],
+        base: usize,
+    ) -> usize {
         let d0 = row
             .get(base)
             .copied()
-            .map(stage1_b4_s_digit_from_m_compact_s)
+            .map(|value| stage1_b4_s_digit_from_m_compact_s(value.compact_s()))
             .unwrap_or(0);
         let d1 = row
             .get(base + 1)
             .copied()
-            .map(stage1_b4_s_digit_from_m_compact_s)
+            .map(|value| stage1_b4_s_digit_from_m_compact_s(value.compact_s()))
             .unwrap_or(0);
         let d2 = row
             .get(base + 2)
             .copied()
-            .map(stage1_b4_s_digit_from_m_compact_s)
+            .map(|value| stage1_b4_s_digit_from_m_compact_s(value.compact_s()))
             .unwrap_or(0);
         let d3 = row
             .get(base + 3)
             .copied()
-            .map(stage1_b4_s_digit_from_m_compact_s)
+            .map(|value| stage1_b4_s_digit_from_m_compact_s(value.compact_s()))
             .unwrap_or(0);
         d0 | (d1 << 1) | (d2 << 2) | (d3 << 3)
     }
@@ -65,26 +68,29 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage1Prover<E> {
     }
 
     #[inline(always)]
-    pub(super) fn stage1_b8_quad_lookup_index_from_row(row: &[i16], base: usize) -> usize {
+    pub(super) fn stage1_b8_quad_lookup_index_from_row<S: CompactSValue>(
+        row: &[S],
+        base: usize,
+    ) -> usize {
         let d0 = row
             .get(base)
             .copied()
-            .map(stage1_b8_s_digit_from_m_compact_s)
+            .map(|value| stage1_b8_s_digit_from_m_compact_s(value.compact_s()))
             .unwrap_or(0);
         let d1 = row
             .get(base + 1)
             .copied()
-            .map(stage1_b8_s_digit_from_m_compact_s)
+            .map(|value| stage1_b8_s_digit_from_m_compact_s(value.compact_s()))
             .unwrap_or(0);
         let d2 = row
             .get(base + 2)
             .copied()
-            .map(stage1_b8_s_digit_from_m_compact_s)
+            .map(|value| stage1_b8_s_digit_from_m_compact_s(value.compact_s()))
             .unwrap_or(0);
         let d3 = row
             .get(base + 3)
             .copied()
-            .map(stage1_b8_s_digit_from_m_compact_s)
+            .map(|value| stage1_b8_s_digit_from_m_compact_s(value.compact_s()))
             .unwrap_or(0);
         d0 | (d1 << 2) | (d2 << 4) | (d3 << 6)
     }
@@ -110,8 +116,8 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage1Prover<E> {
     }
 
     #[tracing::instrument(skip_all, name = "AkitaStage1Prover::fold_s_compact_to_round2")]
-    pub(super) fn fold_s_compact_to_round2(
-        s_compact: &[i16],
+    pub(super) fn fold_s_compact_to_round2<S: CompactSValue>(
+        s_compact: &[S],
         live_x_cols: usize,
         y_len: usize,
         r0: E,
@@ -125,10 +131,10 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage1Prover<E> {
             for (quad_y, dst) in col_out.iter_mut().enumerate() {
                 let base = 4 * quad_y;
                 *dst = Self::direct_fold_s_quad_to_round2(
-                    col[base],
-                    col[base + 1],
-                    col[base + 2],
-                    col[base + 3],
+                    col[base].compact_s(),
+                    col[base + 1].compact_s(),
+                    col[base + 2].compact_s(),
+                    col[base + 3].compact_s(),
                     r0,
                     r1,
                 );
@@ -141,9 +147,9 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage1Prover<E> {
         skip_all,
         name = "AkitaStage1Prover::fuse_compact_to_round2_and_compute_round"
     )]
-    pub(super) fn fuse_compact_to_round2_and_compute_round(
+    pub(super) fn fuse_compact_to_round2_and_compute_round<S: CompactSValue>(
         &self,
-        s_compact: &[i16],
+        s_compact: &[S],
         r0: E,
         r1: E,
     ) -> (Vec<E>, EqFactoredUniPoly<E>) {
@@ -161,10 +167,6 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage1Prover<E> {
         let quad_fold_lut = match self.b {
             4 => Self::build_round2_s_lookup_b4(r0, r1),
             _ => Self::build_round2_s_lookup_b8(r0, r1),
-        };
-        let quad_index_fn: fn(&[i16], usize) -> usize = match self.b {
-            4 => Self::stage1_b4_quad_lookup_index_from_row,
-            _ => Self::stage1_b8_quad_lookup_index_from_row,
         };
 
         let range_pc = &self.range_precomp;
@@ -194,8 +196,14 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage1Prover<E> {
                         let e_in = e_first[j_low];
                         let top_y = 2 * pair_y;
                         let top_base = 8 * pair_y;
-                        let s0 = quad_fold_lut[quad_index_fn(col, top_base)];
-                        let s1 = quad_fold_lut[quad_index_fn(col, top_base + 4)];
+                        let s0 = quad_fold_lut[match self.b {
+                            4 => Self::stage1_b4_quad_lookup_index_from_row(col, top_base),
+                            _ => Self::stage1_b8_quad_lookup_index_from_row(col, top_base),
+                        }];
+                        let s1 = quad_fold_lut[match self.b {
+                            4 => Self::stage1_b4_quad_lookup_index_from_row(col, top_base + 4),
+                            _ => Self::stage1_b8_quad_lookup_index_from_row(col, top_base + 4),
+                        }];
                         col_out[top_y] = s0;
                         col_out[top_y + 1] = s1;
                         compute_entry_coeffs_from_s(
@@ -254,8 +262,14 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage1Prover<E> {
                         let e_in = e_first[j_low];
                         let top_y = 2 * pair_y;
                         let top_base = 8 * pair_y;
-                        let s0 = quad_fold_lut[quad_index_fn(col, top_base)];
-                        let s1 = quad_fold_lut[quad_index_fn(col, top_base + 4)];
+                        let s0 = quad_fold_lut[match self.b {
+                            4 => Self::stage1_b4_quad_lookup_index_from_row(col, top_base),
+                            _ => Self::stage1_b8_quad_lookup_index_from_row(col, top_base),
+                        }];
+                        let s1 = quad_fold_lut[match self.b {
+                            4 => Self::stage1_b4_quad_lookup_index_from_row(col, top_base + 4),
+                            _ => Self::stage1_b8_quad_lookup_index_from_row(col, top_base + 4),
+                        }];
                         col_out[top_y] = s0;
                         col_out[top_y + 1] = s1;
                         compute_entry_coeffs_from_s(

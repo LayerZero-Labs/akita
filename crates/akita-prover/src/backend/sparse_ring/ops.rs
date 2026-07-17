@@ -56,7 +56,7 @@ where
     F: FieldCore,
 {
     fn num_ring_elems(&self) -> usize {
-        (1usize << self.num_vars) / D
+        (1usize << self.num_vars).div_ceil(D)
     }
 
     fn num_vars(&self) -> usize {
@@ -161,23 +161,27 @@ where
         source: SparseRingView<'_, F, D>,
         plan: OpeningFoldPlan<'_, F, D>,
     ) -> Result<OpeningFoldOutput<F, D>, AkitaError> {
+        let blocks = source.poly.blocks_for(D, plan.num_positions_per_block())?;
+        plan.validate(blocks.num_live_blocks())?;
         let (eval, folded) = match plan {
             OpeningFoldPlan::Base {
-                eval_outer_scalars,
-                fold_scalars,
-                block_len,
-            } => source
-                .poly
-                .evaluate_and_fold::<D>(eval_outer_scalars, fold_scalars, block_len),
+                live_block_weights,
+                position_weights,
+                num_positions_per_block,
+            } => source.poly.evaluate_and_fold::<D>(
+                live_block_weights,
+                position_weights,
+                num_positions_per_block,
+            ),
             OpeningFoldPlan::Ring {
-                eval_outer_scalars,
-                fold_scalars,
-                block_len,
-            } => {
-                source
-                    .poly
-                    .evaluate_and_fold_ring::<D>(eval_outer_scalars, fold_scalars, block_len)
-            }
+                live_block_weights,
+                position_weights,
+                num_positions_per_block,
+            } => source.poly.evaluate_and_fold_ring::<D>(
+                live_block_weights,
+                position_weights,
+                num_positions_per_block,
+            ),
         };
         Ok(OpeningFoldOutput { eval, folded })
     }
@@ -190,7 +194,7 @@ where
     ) -> Result<DecomposeFoldWitness<F>, AkitaError> {
         Ok(source.poly.decompose_fold::<D>(
             plan.challenges,
-            plan.block_len,
+            plan.num_positions_per_block,
             plan.num_digits,
             plan.log_basis,
         ))
@@ -212,13 +216,13 @@ where
             DecomposeFoldBatchPlan::Sparse { .. } => Ok(BatchDecomposeFoldOutcome::FallbackPerPoly),
             DecomposeFoldBatchPlan::Tensor {
                 tensor,
-                block_len,
+                num_positions_per_block,
                 num_digits,
                 log_basis,
             } => match SparseRingPoly::decompose_fold_tensor_batched::<D>(
                 source.polys,
                 tensor,
-                block_len,
+                num_positions_per_block,
                 num_digits,
                 log_basis,
             )? {

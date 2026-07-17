@@ -11,10 +11,11 @@ use crate::compute::plans::{
 };
 use crate::kernels::crt_ntt::{build_ntt_slot, NttCacheMap, NttSlotCache};
 use crate::kernels::linear::{
-    fused_split_eq_quotients_prover_bounds, mat_vec_mul_ntt_dense_digits_i8_trusted,
-    mat_vec_mul_ntt_i8_dense, mat_vec_mul_ntt_i8_dense_single_row, mat_vec_mul_ntt_i8_strided,
-    mat_vec_mul_ntt_raw_i8_strided, mat_vec_mul_ntt_single_i8, mat_vec_mul_ntt_single_i8_cyclic,
-    selected_crt_i8_capacity_profile, CrtI8CapacityProfile,
+    digit_blocks_are_balanced, fused_split_eq_quotients_prover_bounds,
+    mat_vec_mul_ntt_dense_digits_i8_trusted, mat_vec_mul_ntt_digits_i8, mat_vec_mul_ntt_i8,
+    mat_vec_mul_ntt_i8_dense, mat_vec_mul_ntt_i8_dense_single_row, mat_vec_mul_ntt_raw_digits_i8,
+    mat_vec_mul_ntt_single_i8, mat_vec_mul_ntt_single_i8_cyclic, selected_crt_i8_capacity_profile,
+    CrtI8CapacityProfile,
 };
 use akita_algebra::CyclotomicRing;
 use akita_field::unreduced::{HasWide, ReduceTo};
@@ -50,7 +51,9 @@ pub struct PreparedCrtNttProfile {
     pub profile_id: &'static str,
     /// Number of CRT primes in the selected profile.
     pub num_primes: usize,
-    /// Signed limb width used by the CRT NTT representation.
+    /// Maximum bit length of a CRT prime modulus.
+    pub prime_modulus_bits: u32,
+    /// Signed storage width used by the CRT NTT representation.
     pub limb_bits: u32,
     /// Largest balanced i8 log basis accepted by prover i8 kernels.
     pub max_i8_log_basis: u32,
@@ -65,6 +68,7 @@ impl From<CrtI8CapacityProfile> for PreparedCrtNttProfile {
         Self {
             profile_id: profile.profile_id,
             num_primes: profile.num_primes,
+            prime_modulus_bits: profile.prime_modulus_bits,
             limb_bits: profile.limb_bits,
             max_i8_log_basis: profile.max_i8_log_basis,
             balanced_digit_safe_width: profile.balanced_digit_safe_width,
@@ -393,7 +397,7 @@ where
         F::Wide: AdditiveGroup + From<F> + ReduceTo<F>,
     {
         let active_a_cols = plan
-            .block_len
+            .num_positions_per_block
             .checked_mul(plan.num_digits_commit)
             .ok_or_else(|| AkitaError::InvalidSetup("active A width overflow".to_string()))?;
         let a_view = prepared
@@ -432,7 +436,7 @@ where
         F::Wide: AdditiveGroup + From<F> + ReduceTo<F>,
     {
         let active_a_cols = plan
-            .block_len
+            .num_positions_per_block
             .checked_mul(plan.num_digits_commit)
             .ok_or_else(|| AkitaError::InvalidSetup("active A width overflow".to_string()))?;
         let a_view = prepared
@@ -446,7 +450,7 @@ where
             &a_rows,
             &plan.blocks.block_slices()?,
             plan.n_a,
-            plan.block_len,
+            plan.num_positions_per_block,
             plan.num_digits_commit,
         ))
     }
@@ -457,20 +461,32 @@ where
         plan: RecursiveWitnessCommitRowsPlan<'_, D>,
     ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError> {
         let row_width = plan
-            .block_len
+            .num_positions_per_block
             .checked_mul(plan.num_digits_commit)
             .ok_or_else(|| AkitaError::InvalidSetup("recursive A width overflow".to_string()))?;
         if plan.num_digits_commit == 1 {
-            prepared.with_shared_ntt::<D, _>(|ntt| {
-                mat_vec_mul_ntt_raw_i8_strided(
-                    ntt,
-                    plan.n_rows,
-                    row_width,
-                    plan.coeffs,
-                    plan.num_blocks,
-                    plan.block_len,
-                )
-            })
+            let blocks = plan
+                .coeffs
+                .chunks(plan.num_positions_per_block)
+                .collect::<Vec<_>>();
+            // The `num_digits_commit == 1` recursive witness is a raw signed-i8
+            // coefficient stream. Degree-one fields yield balanced gadget digits
+            // (fast predecomposed-digit kernel), but extension-field tensor
+            // base-lift packing sums gadget digits and can push coefficients
+            // past the balanced range; those must commit through the general
+            // raw ring mat-vec instead of the balanced-digit LUT kernel.
+            let known_balanced = plan
+                .known_balanced_log_basis
+                .is_some_and(|source_log_basis| plan.log_basis >= source_log_basis);
+            if known_balanced || digit_blocks_are_balanced(&blocks, row_width, plan.log_basis) {
+                prepared.with_shared_ntt::<D, _>(|ntt| {
+                    mat_vec_mul_ntt_digits_i8(ntt, plan.n_rows, row_width, &blocks, plan.log_basis)
+                })
+            } else {
+                prepared.with_shared_ntt::<D, _>(|ntt| {
+                    mat_vec_mul_ntt_raw_digits_i8(ntt, plan.n_rows, row_width, &blocks)
+                })
+            }
         } else {
             let ring_elems: Vec<CyclotomicRing<F, D>> = plan
                 .coeffs
@@ -480,14 +496,15 @@ where
                     CyclotomicRing::from_coefficients(coeffs)
                 })
                 .collect();
+            let blocks = ring_elems
+                .chunks(plan.num_positions_per_block)
+                .collect::<Vec<_>>();
             prepared.with_shared_ntt::<D, _>(|ntt| {
-                mat_vec_mul_ntt_i8_strided(
+                mat_vec_mul_ntt_i8(
                     ntt,
                     plan.n_rows,
                     row_width,
-                    &ring_elems,
-                    plan.num_blocks,
-                    plan.block_len,
+                    &blocks,
                     plan.num_digits_commit,
                     plan.log_basis,
                 )

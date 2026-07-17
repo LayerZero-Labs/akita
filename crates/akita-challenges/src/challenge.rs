@@ -15,6 +15,27 @@
 
 use akita_field::{AkitaError, FieldCore, FromPrimitiveInt, MulBase};
 
+#[inline]
+pub(crate) fn accumulate_small_signed<F, E>(acc: &mut E, value: E, coeff: i64)
+where
+    F: FieldCore + FromPrimitiveInt,
+    E: FieldCore + MulBase<F>,
+{
+    match coeff {
+        1 => *acc += value,
+        -1 => *acc -= value,
+        2 => {
+            *acc += value;
+            *acc += value;
+        }
+        -2 => {
+            *acc -= value;
+            *acc -= value;
+        }
+        _ => *acc += value.mul_base(F::from_i64(coeff)),
+    }
+}
+
 /// Sparse polynomial in `F[X]/(X^D+1)` represented by its non-zero terms.
 ///
 /// Sampler invariants:
@@ -117,7 +138,7 @@ impl SparseChallenge {
                     "sparse challenge coefficients must be non-zero".to_string(),
                 ));
             }
-            acc += alpha_pows[idx].mul_base(F::from_i64(coeff as i64));
+            accumulate_small_signed::<F, E>(&mut acc, alpha_pows[idx], i64::from(coeff));
         }
         Ok(acc)
     }

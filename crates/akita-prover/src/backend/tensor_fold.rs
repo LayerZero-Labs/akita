@@ -1,12 +1,29 @@
 use akita_challenges::{SparseChallenge, TensorChallenges as TensorChallengeSet};
 use akita_field::AkitaError;
 
+#[inline]
+fn accumulate_small_signed_i64(dst: &mut i64, value: i64, coeff: i64) {
+    match coeff {
+        1 => *dst += value,
+        -1 => *dst -= value,
+        2 => {
+            *dst += value;
+            *dst += value;
+        }
+        -2 => {
+            *dst -= value;
+            *dst -= value;
+        }
+        _ => *dst += coeff * value,
+    }
+}
+
 pub(crate) fn validate_tensor_blocks<const D: usize>(
     tensor: &TensorChallengeSet,
     expected_blocks: usize,
 ) -> Result<usize, AkitaError> {
     tensor.validate::<D>()?;
-    let blocks_per_claim = tensor.blocks_per_claim()?;
+    let num_live_blocks_per_claim = tensor.num_live_blocks_per_claim;
     let actual_blocks = tensor.total_blocks()?;
     if actual_blocks != expected_blocks {
         return Err(AkitaError::InvalidSize {
@@ -14,7 +31,7 @@ pub(crate) fn validate_tensor_blocks<const D: usize>(
             actual: actual_blocks,
         });
     }
-    Ok(blocks_per_claim)
+    Ok(num_live_blocks_per_claim)
 }
 
 pub(crate) fn sparse_i8_mul_acc_i64<const D: usize>(
@@ -27,10 +44,10 @@ pub(crate) fn sparse_i8_mul_acc_i64<const D: usize>(
         let split = D - p;
         let coeff = i64::from(coeff);
         for i in 0..split {
-            acc[i + p] += coeff * i64::from(digit_plane[i]);
+            accumulate_small_signed_i64(&mut acc[i + p], i64::from(digit_plane[i]), coeff);
         }
         for i in split..D {
-            acc[i - split] -= coeff * i64::from(digit_plane[i]);
+            accumulate_small_signed_i64(&mut acc[i - split], i64::from(digit_plane[i]), -coeff);
         }
     }
 }
@@ -45,10 +62,10 @@ pub(crate) fn sparse_i64_mul_acc_i64<const D: usize>(
         let split = D - p;
         let coeff = i64::from(coeff);
         for i in 0..split {
-            acc[i + p] += coeff * input[i];
+            accumulate_small_signed_i64(&mut acc[i + p], input[i], coeff);
         }
         for i in split..D {
-            acc[i - split] -= coeff * input[i];
+            accumulate_small_signed_i64(&mut acc[i - split], input[i], -coeff);
         }
     }
 }

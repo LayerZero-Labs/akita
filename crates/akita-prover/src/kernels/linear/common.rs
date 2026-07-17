@@ -90,6 +90,29 @@ pub(super) fn balanced_digit_abs_bound(log_basis: u32) -> u64 {
     1u64 << (log_basis - 1)
 }
 
+/// Whether every coefficient across `blocks` (fold-major) is a balanced gadget
+/// digit for `log_basis`, i.e. lies in `[-2^(log_basis-1), 2^(log_basis-1))`.
+///
+/// A `num_digits_commit == 1` recursive witness is a raw signed-i8 coefficient
+/// stream: degree-one fields yield balanced digits (the fast predecomposed
+/// digit commit applies), but extension-field tensor base-lift packing sums
+/// gadget digits and can exceed this range, requiring the general raw ring
+/// mat-vec. This predicate selects between the two.
+#[inline]
+pub(crate) fn digit_blocks_are_balanced<const D: usize>(
+    blocks: &[&[[i8; D]]],
+    num_cols: usize,
+    log_basis: u32,
+) -> bool {
+    if !is_i8_log_basis(log_basis) {
+        return false;
+    }
+    let bound = balanced_digit_abs_bound(log_basis);
+    blocks
+        .iter()
+        .all(|block| digit_rows_within_digit_bound(block, num_cols.min(block.len()), bound))
+}
+
 #[inline]
 pub(super) fn digit_rows_within_digit_bound<const D: usize>(
     rows: &[[i8; D]],
@@ -119,8 +142,19 @@ pub(super) fn validate_digit_rows_for_log_basis<const D: usize>(
     {
         Ok(())
     } else {
+        let offending = rows
+            .iter()
+            .take(len)
+            .enumerate()
+            .flat_map(|(row, coeffs)| {
+                coeffs
+                    .iter()
+                    .enumerate()
+                    .map(move |(col, &coeff)| (row, col, coeff))
+            })
+            .find(|&(_, _, coeff)| !(-bound..bound).contains(&i16::from(coeff)));
         Err(AkitaError::InvalidInput(format!(
-            "predecomposed digit row contains a coefficient outside the balanced log_basis range {context}"
+            "predecomposed digit row contains a coefficient outside the balanced log_basis range {context}: log_basis={log_basis}, offending={offending:?}"
         )))
     }
 }

@@ -1359,7 +1359,7 @@ and load-bearing:
 
 - `JoltPackedPoly` becomes a custom `RootCommitSource` `S`. Its traversal is exactly
   the per-block sparse iterator `for_each_block(block_idx) -> {(pos_in_block,
-  coeff_idx)}` plus `num_blocks` / `block_len` and a density hint. The
+  coeff_idx)}` plus `num_live_blocks` / `num_positions_per_block` and a density hint. The
   `PackedBitLayout` mapping stays inside the source, because the layout is a property
   of how this particular mega-poly is concatenated, not a backend concern.
 - The CpuBackend `commit_inner` kernel owns the strategy zoo currently inlined in the

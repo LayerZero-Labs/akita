@@ -82,7 +82,7 @@ use std::mem;
 use std::time::Instant;
 
 enum WTable<E: FieldCore> {
-    Compact(Vec<i8>),
+    Compact(std::sync::Arc<[i8]>),
     Full(Vec<E>),
 }
 
@@ -242,7 +242,7 @@ mod y_prefix;
 impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
     // Fused relation (`alpha * m`) + optional trace-weight addend for one witness
     // corner. `witness_idx0/1` are flat indices into the Boolean `w` table
-    // (column-major: `col * y_len + ring_slot`). Y-round kernels pass `2*j` and
+    // (`col * y_len + ring_slot`). Y-round kernels pass `2*j` and
     // `2*j+1`; x-prefix fusion passes column-relative indices directly.
 
     #[inline]

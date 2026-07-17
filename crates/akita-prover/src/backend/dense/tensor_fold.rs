@@ -16,7 +16,7 @@ use akita_field::{AkitaError, CanonicalField, FieldCore};
 pub(super) fn decompose_fold_batched_tensor_dense<F, const D: usize>(
     polys: &[&DensePoly<F>],
     tensor: &TensorChallengeSet,
-    block_len: usize,
+    num_positions_per_block: usize,
     num_digits: usize,
     log_basis: u32,
 ) -> Result<Option<DecomposeFoldWitness<F>>, AkitaError>
@@ -28,11 +28,11 @@ where
     }
 
     let q = (-F::one()).to_canonical_u128() + 1;
-    let blocks_per_claim = validate_tensor_blocks::<D>(
+    let num_live_blocks_per_claim = validate_tensor_blocks::<D>(
         tensor,
         polys
             .len()
-            .checked_mul(tensor.blocks_per_claim()?)
+            .checked_mul(tensor.num_live_blocks_per_claim)
             .ok_or_else(|| AkitaError::InvalidSetup("tensor challenge count overflow".into()))?,
     )?;
     let accum_i64 = if let Some(digit_planes) = polys
@@ -44,8 +44,8 @@ where
         accumulate_cached_digit_planes_tensor::<D>(
             &digit_planes,
             tensor,
-            blocks_per_claim,
-            block_len,
+            num_live_blocks_per_claim,
+            num_positions_per_block,
             num_digits,
         )?
     } else {
@@ -67,8 +67,8 @@ where
         balanced_ring_decompose_fold_tensor_partitioned::<F, D>(
             &coeff_slices,
             tensor,
-            blocks_per_claim,
-            block_len,
+            num_live_blocks_per_claim,
+            num_positions_per_block,
             num_digits,
             &params,
         )?
@@ -85,19 +85,19 @@ where
 fn accumulate_cached_digit_planes_tensor<const D: usize>(
     digit_planes_by_poly: &[&[[i8; D]]],
     tensor: &TensorChallengeSet,
-    blocks_per_claim: usize,
-    block_len: usize,
+    num_live_blocks_per_claim: usize,
+    num_positions_per_block: usize,
     num_digits: usize,
 ) -> Result<Vec<[i64; D]>, AkitaError> {
-    if block_len == 0 || num_digits == 0 {
+    if num_positions_per_block == 0 || num_digits == 0 {
         return Err(AkitaError::InvalidInput(
-            "dense cached tensor decompose-fold requires non-zero block_len and num_digits"
+            "dense cached tensor decompose-fold requires non-zero num_positions_per_block and num_digits"
                 .to_string(),
         ));
     }
     let expected_blocks = digit_planes_by_poly
         .len()
-        .checked_mul(blocks_per_claim)
+        .checked_mul(num_live_blocks_per_claim)
         .ok_or_else(|| AkitaError::InvalidSetup("tensor challenge count overflow".to_string()))?;
     validate_tensor_blocks::<D>(tensor, expected_blocks)?;
 
@@ -106,15 +106,15 @@ fn accumulate_cached_digit_planes_tensor<const D: usize>(
     #[cfg(not(feature = "parallel"))]
     let num_threads = 1;
 
-    let actual_threads = num_threads.min(block_len.max(1)).max(1);
-    let elem_chunk = block_len.div_ceil(actual_threads);
+    let actual_threads = num_threads.min(num_positions_per_block.max(1)).max(1);
+    let elem_chunk = num_positions_per_block.div_ceil(actual_threads);
     let chunks = cfg_into_iter!(0..actual_threads)
         .map(|tid| {
             let elem_start = tid * elem_chunk;
-            if elem_start >= block_len {
+            if elem_start >= num_positions_per_block {
                 return Ok(Vec::new());
             }
-            let elem_end = (elem_start + elem_chunk).min(block_len);
+            let elem_end = (elem_start + elem_chunk).min(num_positions_per_block);
             let mut acc = vec![[0i64; D]; (elem_end - elem_start) * num_digits];
             let mut tmp = vec![[0i64; D]; (elem_end - elem_start) * num_digits];
 
@@ -123,14 +123,14 @@ fn accumulate_cached_digit_planes_tensor<const D: usize>(
                 .enumerate()
                 .take(tensor.num_claims)
             {
-                for left_idx in 0..tensor.left_len {
+                for high_idx in 0..tensor.fold_high_len() {
                     tmp.fill([0i64; D]);
-                    for right_idx in 0..tensor.right_len {
-                        let local_block_idx = left_idx * tensor.right_len + right_idx;
-                        let right = &tensor.right[claim_idx * tensor.right_len + right_idx];
+                    for low_idx in 0..tensor.fold_low_len {
+                        let local_block_idx = high_idx * tensor.fold_low_len + low_idx;
+                        let fold_low = &tensor.fold_low[claim_idx * tensor.fold_low_len + low_idx];
 
                         for elem_idx in elem_start..elem_end {
-                            let ring_idx = local_block_idx * block_len + elem_idx;
+                            let ring_idx = local_block_idx * num_positions_per_block + elem_idx;
                             let plane_base = ring_idx * num_digits;
                             if plane_base >= digit_planes.len() {
                                 continue;
@@ -143,15 +143,16 @@ fn accumulate_cached_digit_planes_tensor<const D: usize>(
                                 };
                                 sparse_i8_mul_acc_i64::<D>(
                                     digit_plane,
-                                    right,
+                                    fold_low,
                                     &mut tmp[out_base + digit_idx],
                                 );
                             }
                         }
                     }
-                    let left = &tensor.left[claim_idx * tensor.left_len + left_idx];
+                    let fold_high =
+                        &tensor.fold_high[claim_idx * tensor.fold_high_len() + high_idx];
                     for (src, dst) in tmp.iter().zip(acc.iter_mut()) {
-                        sparse_i64_mul_acc_i64::<D>(src, left, dst);
+                        sparse_i64_mul_acc_i64::<D>(src, fold_high, dst);
                     }
                 }
             }
@@ -166,19 +167,20 @@ fn accumulate_cached_digit_planes_tensor<const D: usize>(
 fn balanced_ring_decompose_fold_tensor_partitioned<F: CanonicalField, const D: usize>(
     poly_coeffs: &[&[CyclotomicRing<F, D>]],
     tensor: &TensorChallengeSet,
-    blocks_per_claim: usize,
-    block_len: usize,
+    num_live_blocks_per_claim: usize,
+    num_positions_per_block: usize,
     num_digits: usize,
     p: &DecomposeParams,
 ) -> Result<Vec<[i64; D]>, AkitaError> {
-    if block_len == 0 || num_digits == 0 {
+    if num_positions_per_block == 0 || num_digits == 0 {
         return Err(AkitaError::InvalidInput(
-            "dense tensor decompose-fold requires non-zero block_len and num_digits".to_string(),
+            "dense tensor decompose-fold requires non-zero num_positions_per_block and num_digits"
+                .to_string(),
         ));
     }
     let expected_blocks = poly_coeffs
         .len()
-        .checked_mul(blocks_per_claim)
+        .checked_mul(num_live_blocks_per_claim)
         .ok_or_else(|| AkitaError::InvalidSetup("tensor challenge count overflow".to_string()))?;
     validate_tensor_blocks::<D>(tensor, expected_blocks)?;
 
@@ -187,30 +189,31 @@ fn balanced_ring_decompose_fold_tensor_partitioned<F: CanonicalField, const D: u
     #[cfg(not(feature = "parallel"))]
     let num_threads = 1;
 
-    let actual_threads = num_threads.min(block_len.max(1)).max(1);
-    let elem_chunk = block_len.div_ceil(actual_threads);
+    let actual_threads = num_threads.min(num_positions_per_block.max(1)).max(1);
+    let elem_chunk = num_positions_per_block.div_ceil(actual_threads);
     let chunks = cfg_into_iter!(0..actual_threads)
         .map(|tid| {
             let elem_start = tid * elem_chunk;
-            if elem_start >= block_len {
+            if elem_start >= num_positions_per_block {
                 return Ok(Vec::new());
             }
-            let elem_end = (elem_start + elem_chunk).min(block_len);
+            let elem_end = (elem_start + elem_chunk).min(num_positions_per_block);
             let mut acc = vec![[0i64; D]; (elem_end - elem_start) * num_digits];
             let mut tmp = vec![[0i64; D]; (elem_end - elem_start) * num_digits];
             let mut digit_buf = vec![[0i8; D]; num_digits];
 
             for (claim_idx, coeffs) in poly_coeffs.iter().enumerate().take(tensor.num_claims) {
-                for left_idx in 0..tensor.left_len {
+                for high_idx in 0..tensor.fold_high_len() {
                     tmp.fill([0i64; D]);
-                    for right_idx in 0..tensor.right_len {
-                        let local_block_idx = left_idx * tensor.right_len + right_idx;
-                        let right = &tensor.right[claim_idx * tensor.right_len + right_idx];
-                        let coeff_start = local_block_idx * block_len + elem_start;
+                    for low_idx in 0..tensor.fold_low_len {
+                        let local_block_idx = high_idx * tensor.fold_low_len + low_idx;
+                        let fold_low = &tensor.fold_low[claim_idx * tensor.fold_low_len + low_idx];
+                        let coeff_start = local_block_idx * num_positions_per_block + elem_start;
                         if coeff_start >= coeffs.len() {
                             continue;
                         }
-                        let coeff_end = (local_block_idx * block_len + elem_end).min(coeffs.len());
+                        let coeff_end = (local_block_idx * num_positions_per_block + elem_end)
+                            .min(coeffs.len());
                         if coeff_start >= coeff_end {
                             continue;
                         }
@@ -223,15 +226,16 @@ fn balanced_ring_decompose_fold_tensor_partitioned<F: CanonicalField, const D: u
                             for digit_idx in 0..num_digits {
                                 sparse_i8_mul_acc_i64::<D>(
                                     &digit_buf[digit_idx],
-                                    right,
+                                    fold_low,
                                     &mut tmp[base + digit_idx],
                                 );
                             }
                         }
                     }
-                    let left = &tensor.left[claim_idx * tensor.left_len + left_idx];
+                    let fold_high =
+                        &tensor.fold_high[claim_idx * tensor.fold_high_len() + high_idx];
                     for (src, dst) in tmp.iter().zip(acc.iter_mut()) {
-                        sparse_i64_mul_acc_i64::<D>(src, left, dst);
+                        sparse_i64_mul_acc_i64::<D>(src, fold_high, dst);
                     }
                 }
             }

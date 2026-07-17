@@ -9,7 +9,6 @@ use akita_prover::{DensePoly, OneHotPoly, ProverOpeningData};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_transcript::AkitaTranscript;
 use akita_types::stage1_tree_stage_shapes;
-use akita_types::BlockOrder;
 use akita_types::ExtensionOpeningReductionProof;
 use akita_types::RelationMatrixRowLayout;
 use akita_types::Step;
@@ -285,7 +284,7 @@ type VerifyFixture = (
 fn make_verify_fixture(num_vars: usize) -> VerifyFixture {
     let alpha = D.trailing_zeros() as usize;
     let layout = singleton_layout::<Cfg>(num_vars);
-    let full_num_vars = layout.m_vars + layout.r_vars + alpha;
+    let full_num_vars = layout.position_index_bits() + layout.block_index_bits() + alpha;
 
     let (poly, evals) = make_dense_poly(full_num_vars);
     let setup = Scheme::setup_prover(full_num_vars, 1).unwrap();
@@ -347,8 +346,10 @@ fn debug_random_point(nv: usize) -> Vec<OneHotF> {
 }
 
 fn debug_make_onehot_poly(layout: &LevelParams, seed: u64) -> OneHotPoly<OneHotF, u8> {
-    let total_ring = layout.num_blocks * layout.block_len;
-    let num_vars = layout.m_vars + layout.r_vars + ONEHOT_D.trailing_zeros() as usize;
+    let total_ring = layout.num_live_blocks * layout.num_positions_per_block;
+    let num_vars = layout.position_index_bits()
+        + layout.block_index_bits()
+        + ONEHOT_D.trailing_zeros() as usize;
     // `total_ring` ring elements of degree D cover `2^num_vars` field elements,
     // grouped into `2^num_vars / K` one-hot chunks.
     let total_field = total_ring * ONEHOT_D;
@@ -369,16 +370,18 @@ where
     CpuBackend: OpeningFoldKernel<P::OpeningView<'a>, OneHotF, ONEHOT_D>,
 {
     let alpha_bits = ONEHOT_D.trailing_zeros() as usize;
-    assert_eq!(point.len(), alpha_bits + layout.m_vars + layout.r_vars);
+    assert_eq!(
+        point.len(),
+        alpha_bits + layout.position_index_bits() + layout.block_index_bits()
+    );
 
     let inner_point = &point[..alpha_bits];
     let reduced_point = &point[alpha_bits..];
     let ring_opening_point = ring_opening_point_from_field(
         reduced_point,
-        layout.r_vars,
-        layout.m_vars,
+        layout.num_positions_per_block,
+        layout.num_live_blocks,
         BasisMode::Lagrange,
-        BlockOrder::RowMajor,
     )
     .expect("opening point shape should match layout");
 
@@ -387,9 +390,9 @@ where
         None,
         poly.opening_view().expect("opening view"),
         OpeningFoldPlan::Base {
-            eval_outer_scalars: &ring_opening_point.b,
-            fold_scalars: &ring_opening_point.a,
-            block_len: layout.block_len,
+            live_block_weights: &ring_opening_point.live_block_weights,
+            position_weights: &ring_opening_point.position_weights,
+            num_positions_per_block: layout.num_positions_per_block,
         },
     )
     .expect("evaluate_and_fold");

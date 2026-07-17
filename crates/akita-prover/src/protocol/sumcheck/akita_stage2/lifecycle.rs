@@ -6,7 +6,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
     #[tracing::instrument(skip_all, name = "AkitaStage2Prover::new")]
     pub(crate) fn new(
         batching_coeff: E,
-        w_evals_compact: Vec<i8>,
+        w_evals_compact: impl Into<std::sync::Arc<[i8]>>,
         stage1_point: &[E],
         s_claim: E,
         b: usize,
@@ -19,6 +19,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
         trace_table: Option<TraceTable<E>>,
         trace_opening_claim: E,
     ) -> Result<Self, AkitaError> {
+        let w_evals_compact = w_evals_compact.into();
         let num_vars = col_bits.checked_add(ring_bits).ok_or_else(|| {
             AkitaError::InvalidInput("stage-2 challenge width overflow".to_string())
         })?;
@@ -72,6 +73,31 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
         }
         if let Some(trace) = &trace_table {
             trace.validate_len(witness_len)?;
+        }
+
+        // Self-consistency check: the materialized relation-weight table must
+        // reproduce `relation_claim` (which is established independently by
+        // `relation_claim_from_layout_extension` and bound into the sumcheck
+        // input claim). This is a full-domain `O(x_len * y_len)` pass, so it is
+        // gated to debug/test builds and never runs in release proving.
+        #[cfg(debug_assertions)]
+        {
+            let relation_boolean_sum = w_evals_compact
+                .chunks_exact(y_len)
+                .zip(&relation_matrix_col_evals)
+                .fold(E::zero(), |acc, (column, &weight)| {
+                    acc + column.iter().zip(&alpha_evals_y).fold(
+                        E::zero(),
+                        |column_acc, (&w, &alpha)| {
+                            column_acc + weight * alpha * E::from_i64(i64::from(w))
+                        },
+                    )
+                });
+            if relation_boolean_sum != relation_claim {
+                return Err(AkitaError::InvalidInput(
+                    "materialized relation-weight table does not match the relation claim".into(),
+                ));
+            }
         }
 
         let relation_trace_claim = relation_claim + trace_opening_claim;

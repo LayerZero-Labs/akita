@@ -96,7 +96,7 @@ Mixed-dimension execution is exercised end-to-end by
 | `PlanPolicy` | Value-typed inputs to `akita_types::schedule_plan_from_table` |
 | `PlannerPolicy` | `Cfg`-free projection of a preset for `akita_planner::find_group_batch_schedule`; derive via `akita_config::policy_of::<Cfg>()` |
 | `DensePoly`, `OneHotPoly`, `AkitaPolyOps` | Polynomial backends consumed by the scheme |
-| `BlockOrder` | Root-vs-recursive opening split convention ([`docs/block-order.md`](../../../docs/block-order.md)) |
+| `WitnessLayout`, `WitnessUnitLayout` | Canonical digit-innermost group-and-chunk ranges ([opening layout](./proving/opening-points-layout.md)) |
 | `AkitaBatchedProof`, `AkitaLevelProof`, `AkitaProofStep` | Serialized proof structure (singleton openings are the 1×1 batched case) |
 | `OpeningClaims` / `OpeningClaimsLayout` | Public single-point opening claims and layout-only batch geometry for prove/verify, setup, and schedule lookup ([`specs/shared-opening-claims-api.md`](../../../specs/shared-opening-claims-api.md)) |
 | `AkitaTranscript`, `Transcript` | Spongefish-backed Fiat-Shamir layer |

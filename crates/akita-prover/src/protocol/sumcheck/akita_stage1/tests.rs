@@ -257,7 +257,7 @@ fn stage1_fused_round2_transition_matches_two_pass_reference() {
 
         match &prover.s_table {
             STable::Full(s_full) => assert_eq!(s_full, &expected_s_full),
-            STable::Compact(_) => {
+            STable::Compact => {
                 panic!("expected fused stage1 transition to materialize full table")
             }
         }
@@ -310,7 +310,7 @@ fn stage1_later_full_prefix_fusion_matches_two_pass_reference() {
 
         let current_s_full = match &expected.s_table {
             STable::Full(s_full) => s_full.clone(),
-            STable::Compact(_) => panic!("expected later prefix state to be full"),
+            STable::Compact => panic!("expected later prefix state to be full"),
         };
         let current_y_len = current_s_full.len() / expected.live_x_cols;
         let expected_next_s_full = AkitaStage1Prover::<F>::fold_s_full_prefix_x(
@@ -329,7 +329,7 @@ fn stage1_later_full_prefix_fusion_matches_two_pass_reference() {
 
         match &prover.s_table {
             STable::Full(s_full) => assert_eq!(s_full, &expected_next_s_full),
-            STable::Compact(_) => panic!("expected fused later prefix stage to stay full"),
+            STable::Compact => panic!("expected fused later prefix stage to stay full"),
         }
         assert_eq!(prover.cached_round_poly.as_ref(), Some(&expected_round3));
     }
@@ -380,7 +380,7 @@ fn stage1_sparse_x_y_fusion_matches_two_pass_reference() {
 
         let current_s_full = match &expected.s_table {
             STable::Full(s_full) => s_full.clone(),
-            STable::Compact(_) => panic!("expected sparse-x/y state to be full"),
+            STable::Compact => panic!("expected sparse-x/y state to be full"),
         };
         let current_y_len = current_s_full.len() / expected.live_x_cols;
         let expected_next_s_full = AkitaStage1Prover::<F>::fold_s_full_sparse_x_y(
@@ -397,7 +397,7 @@ fn stage1_sparse_x_y_fusion_matches_two_pass_reference() {
 
         match &prover.s_table {
             STable::Full(s_full) => assert_eq!(s_full, &expected_next_s_full),
-            STable::Compact(_) => panic!("expected sparse-x/y fusion to stay full"),
+            STable::Compact => panic!("expected sparse-x/y fusion to stay full"),
         }
         assert_eq!(prover.cached_round_poly.as_ref(), Some(&expected_round3));
     }

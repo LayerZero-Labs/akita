@@ -1,11 +1,12 @@
 //! Tensor-shaped sparse-challenge sampling.
 //!
-//! For protocols that sample a length-`num_blocks` sparse-challenge vector per
-//! claim, the tensor variant samples two factor vectors of length
-//! `√num_blocks` and presents the logical fold challenge at block `(p, q)` as
-//! the negacyclic tensor product `left[p] · right[q]`. This shrinks transcript
-//! challenge sampling from `O(num_blocks)` to `O(√num_blocks)` per claim
-//! while leaving the downstream fold semantics unchanged through structured
+//! For protocols that sample a length-`num_live_blocks` sparse-challenge vector per
+//! claim, the tensor variant samples two factor vectors — `fold_high` of length
+//! `ceil(num_live_blocks / fold_low_len)` and `fold_low` of length `fold_low_len` —
+//! and presents the logical fold challenge at block `fold_low_len * h + q` as the
+//! negacyclic tensor product `fold_high[h] · fold_low[q]`. This shrinks transcript
+//! challenge sampling from `O(num_live_blocks)` to `O(fold_high_len + fold_low_len)`
+//! per claim while leaving the downstream fold semantics unchanged through structured
 //! evaluation and factor-aware prover kernels.
 //!
 //! Sampling labels are taken as a [`ChallengeLabels`] parameter so callers can
@@ -15,15 +16,16 @@
 //! [`ChallengeShape`] is only the flat-vs-tensor selector,
 //! [`ChallengeLabels`] is the transcript metadata for one sampling round,
 //! [`FoldingChallenges`] is the sampled runtime container, and
-//! [`TensorChallenges`] is the factored tensor state whose left/right lengths
+//! [`TensorChallenges`] is the factored tensor state whose fold-high/fold-low lengths
 //! are part of the invariant.
 
+use crate::challenge::accumulate_small_signed;
 use crate::{SparseChallenge, SparseChallengeConfig};
 use akita_field::{AkitaError, FieldCore, FromPrimitiveInt, MulBase};
 use akita_transcript::labels;
 use sha3::{Digest, Sha3_256};
 
-const TENSOR_LEFT_DIGEST_DOMAIN: &[u8] = b"akita/tensor-left-digest/v1";
+const FOLD_HIGH_DIGEST_DOMAIN: &[u8] = b"akita/fold-high-digest/v1";
 
 /// Configuration selector for a tensor-vs-flat sparse-challenge round.
 ///
@@ -35,9 +37,11 @@ pub enum ChallengeShape {
     /// Sample one independent challenge for every logical block.
     #[default]
     Flat,
-    /// Split each logical block index into two balanced dimensions and sample
-    /// independent left/right challenge vectors.
-    Tensor,
+    /// Factor each live block index as `fold_low_len * high + low`.
+    Tensor {
+        /// Number of low-factor challenges per claim. Must be a power of two.
+        fold_low_len: usize,
+    },
 }
 
 impl ChallengeShape {
@@ -51,7 +55,7 @@ impl ChallengeShape {
     pub fn effective_l1_mass(&self, cfg: &SparseChallengeConfig) -> usize {
         match self {
             Self::Flat => cfg.l1_norm(),
-            Self::Tensor => cfg.l1_norm().saturating_mul(cfg.l1_norm()),
+            Self::Tensor { .. } => cfg.l1_norm().saturating_mul(cfg.l1_norm()),
         }
     }
 
@@ -68,7 +72,7 @@ impl ChallengeShape {
         let inf = cfg.infinity_norm() as usize;
         match self {
             Self::Flat => inf,
-            Self::Tensor => cfg.l1_norm().saturating_mul(inf),
+            Self::Tensor { .. } => cfg.l1_norm().saturating_mul(inf),
         }
     }
 
@@ -89,7 +93,7 @@ impl ChallengeShape {
         let challenge_l2_sq_max = cfg.challenge_l2_sq_max();
         match self {
             Self::Flat => challenge_l2_sq_max,
-            Self::Tensor => (cfg.l1_norm() as u128)
+            Self::Tensor { .. } => (cfg.l1_norm() as u128)
                 .saturating_mul(cfg.l1_norm() as u128)
                 .saturating_mul(challenge_l2_sq_max),
         }
@@ -98,22 +102,21 @@ impl ChallengeShape {
 
 /// Factored tensor sparse challenges for one folding round.
 ///
-/// `left` and `right` are laid out per claim: claim `c`'s left factor occupies
-/// `left[c * left_len .. (c + 1) * left_len]` and similarly for `right`. The
-/// logical challenge at block `(p, q)` of claim `c` is the tensor product
-/// `left[c, p] · right[c, q]`. Keeping this as the tensor-only payload makes
+/// `fold_high` and `fold_low` are laid out per claim. The logical challenge at
+/// live block `f = fold_low_len * h + q` is the tensor product
+/// `fold_high[c, h] · fold_low[c, q]`. Keeping this as the tensor-only payload makes
 /// the factorization invariant explicit for callers that can evaluate weighted
 /// aggregates without expanding every logical block.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TensorChallenges {
-    /// Left vector entries, grouped by claim.
-    pub left: Vec<SparseChallenge>,
-    /// Right vector entries, grouped by claim.
-    pub right: Vec<SparseChallenge>,
-    /// Number of left entries per claim.
-    pub left_len: usize,
-    /// Number of right entries per claim.
-    pub right_len: usize,
+    /// High-factor entries, grouped by claim.
+    pub fold_high: Vec<SparseChallenge>,
+    /// Low-factor entries, grouped by claim.
+    pub fold_low: Vec<SparseChallenge>,
+    /// Exact number of live blocks per claim.
+    pub num_live_blocks_per_claim: usize,
+    /// Number of low-factor entries per claim.
+    pub fold_low_len: usize,
     /// Number of claims represented by this tensor challenge family.
     pub num_claims: usize,
 }
@@ -123,18 +126,18 @@ pub struct TensorChallenges {
 /// challenge-domain methods such as [`Self::evals_at_pows`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Challenges {
-    /// Flat challenge vector indexed as `claim * num_blocks + block`.
+    /// Flat challenge vector indexed as `claim * num_live_blocks + block`.
     Sparse {
         /// Per-(claim, block) sparse challenges.
         challenges: Vec<SparseChallenge>,
-        /// Number of (claim, block) entries packed into one claim.
-        num_blocks_per_claim: usize,
+        /// Exact number of live blocks packed into one claim.
+        num_live_blocks_per_claim: usize,
         /// Number of claims represented by this vector.
         num_claims: usize,
     },
     /// Tensor-factored challenges.
     Tensor {
-        /// Factored left/right sparse challenges (one factor pair per claim).
+        /// Factored fold-high/fold-low sparse challenges.
         factored: TensorChallenges,
     },
 }
@@ -142,19 +145,19 @@ pub enum Challenges {
 /// Transcript labels consumed by [`crate::FoldDraw::draw_folding_challenges`].
 ///
 /// Bundling them in a struct keeps the call sites self-describing and prevents
-/// accidental left/right swaps. Callers pick label byte strings appropriate
+/// accidental fold-high/fold-low swaps. Callers pick label byte strings appropriate
 /// for their protocol stage.
 #[derive(Debug, Clone, Copy)]
 pub struct ChallengeLabels<'a> {
     /// Label used for the flat shape's single sampling step.
     pub flat: &'a [u8],
-    /// Label used for sampling the tensor shape's left factor.
-    pub tensor_left: &'a [u8],
-    /// Label under which the canonical digest of the sampled left factor is
-    /// absorbed back into the transcript before sampling the right factor.
-    pub tensor_left_digest: &'a [u8],
-    /// Label used for sampling the tensor shape's right factor.
-    pub tensor_right: &'a [u8],
+    /// Label used for sampling the tensor shape's fold-high factor.
+    pub fold_high: &'a [u8],
+    /// Label under which the canonical digest of the sampled fold-high factor is
+    /// absorbed back into the transcript before sampling the fold-low factor.
+    pub fold_high_digest: &'a [u8],
+    /// Label used for sampling the tensor shape's fold-low factor.
+    pub fold_low: &'a [u8],
 }
 
 /// Canonical witness-fold challenge transcript labels.
@@ -163,9 +166,9 @@ pub struct ChallengeLabels<'a> {
 pub fn witness_fold_challenge_labels() -> ChallengeLabels<'static> {
     ChallengeLabels {
         flat: labels::CHALLENGE_WITNESS_FOLD,
-        tensor_left: labels::CHALLENGE_TENSOR_FOLD_LEFT,
-        tensor_left_digest: labels::ABSORB_TENSOR_FOLD_LEFT,
-        tensor_right: labels::CHALLENGE_TENSOR_FOLD_RIGHT,
+        fold_high: labels::CHALLENGE_FOLD_HIGH,
+        fold_high_digest: labels::ABSORB_FOLD_HIGH,
+        fold_low: labels::CHALLENGE_FOLD_LOW,
     }
 }
 
@@ -176,13 +179,13 @@ impl Challenges {
     /// # Errors
     ///
     /// Returns an error if `challenges.len()` does not match
-    /// `num_blocks_per_claim * num_claims`.
+    /// `num_live_blocks_per_claim * num_claims`.
     pub fn from_sparse(
         challenges: Vec<SparseChallenge>,
-        num_blocks_per_claim: usize,
+        num_live_blocks_per_claim: usize,
         num_claims: usize,
     ) -> Result<Self, AkitaError> {
-        let expected = num_blocks_per_claim
+        let expected = num_live_blocks_per_claim
             .checked_mul(num_claims)
             .ok_or_else(|| AkitaError::InvalidSetup("challenge count overflow".to_string()))?;
         if challenges.len() != expected {
@@ -193,13 +196,12 @@ impl Challenges {
         }
         Ok(Self::Sparse {
             challenges,
-            num_blocks_per_claim,
+            num_live_blocks_per_claim,
             num_claims,
         })
     }
 
-    /// Construct tensor challenges from factored left/right vectors,
-    /// eagerly materializing the per-block product cache.
+    /// Construct tensor challenges from factored fold-high/fold-low vectors.
     ///
     /// # Errors
     ///
@@ -224,7 +226,7 @@ impl Challenges {
     #[inline]
     #[must_use]
     pub fn logical_len(&self) -> usize {
-        self.num_claims() * self.num_blocks_per_claim()
+        self.num_claims() * self.num_live_blocks_per_claim()
     }
 
     /// Number of claims represented by this challenge set.
@@ -240,23 +242,57 @@ impl Challenges {
     /// Number of logical block challenges per claim.
     #[inline]
     #[must_use]
-    pub fn num_blocks_per_claim(&self) -> usize {
+    pub fn num_live_blocks_per_claim(&self) -> usize {
         match self {
             Self::Sparse {
-                num_blocks_per_claim,
+                num_live_blocks_per_claim,
                 ..
-            } => *num_blocks_per_claim,
-            Self::Tensor { factored, .. } => factored.left_len * factored.right_len,
+            } => *num_live_blocks_per_claim,
+            Self::Tensor { factored, .. } => factored.num_live_blocks_per_claim,
+        }
+    }
+
+    /// Evaluate one logical challenge at the precomputed `alpha`-powers.
+    ///
+    /// Tensor challenges remain factored and evaluate only the requested
+    /// fold-high/fold-low pair.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `logical_index` is out of range, `alpha_pows` is
+    /// malformed, or the selected sparse challenges are invalid.
+    pub fn eval_logical_at_pows<F, E>(
+        &self,
+        logical_index: usize,
+        alpha_pows: &[E],
+    ) -> Result<E, AkitaError>
+    where
+        F: FieldCore + FromPrimitiveInt,
+        E: FieldCore + MulBase<F>,
+    {
+        match self {
+            Self::Sparse { challenges, .. } => challenges
+                .get(logical_index)
+                .ok_or_else(|| {
+                    AkitaError::InvalidInput(format!(
+                        "challenge index {logical_index} out of range for {} challenges",
+                        challenges.len()
+                    ))
+                })?
+                .eval_at_pows::<F, E>(alpha_pows),
+            Self::Tensor { factored } => {
+                factored.eval_logical_at_pows::<F, E>(logical_index, alpha_pows)
+            }
         }
     }
 
     /// Evaluate every logical challenge at the precomputed `alpha`-powers,
-    /// in claim-major flat order. This is the boundary used by the prover's
-    /// dense `compute_relation_matrix_col_evals` path.
+    /// in claim-major flat order.
     ///
-    /// For the sparse variant this is the canonical per-block evaluation
-    /// loop; for the tensor variant it uses the factored aggregate
-    /// formulation that avoids materializing every logical block.
+    /// This bulk compatibility API returns one field element per logical
+    /// challenge. Runtime paths that need one entry should use
+    /// [`Self::eval_logical_at_pows`] to avoid materializing the full tensor
+    /// product vector.
     ///
     /// # Errors
     ///
@@ -278,7 +314,7 @@ impl Challenges {
 
     /// Slice this challenge set down to the subset whose claim indices
     /// appear in `claim_indices`, returning a fresh `Challenges` of length
-    /// `claim_indices.len() * num_blocks_per_claim`.
+    /// `claim_indices.len() * num_live_blocks_per_claim`.
     ///
     /// Used by `RingRelationProver::new` to chunk the global challenge
     /// vector by opening point before handing each chunk to the poly
@@ -295,19 +331,22 @@ impl Challenges {
         match self {
             Self::Sparse {
                 challenges,
-                num_blocks_per_claim,
+                num_live_blocks_per_claim,
                 ..
             } => {
-                let mut selected = Vec::with_capacity(claim_indices.len() * num_blocks_per_claim);
+                let mut selected =
+                    Vec::with_capacity(claim_indices.len() * num_live_blocks_per_claim);
                 for &claim_idx in claim_indices {
                     let start = claim_idx
-                        .checked_mul(*num_blocks_per_claim)
+                        .checked_mul(*num_live_blocks_per_claim)
                         .ok_or_else(|| {
                             AkitaError::InvalidSetup("challenge offset overflow".to_string())
                         })?;
-                    let end = start.checked_add(*num_blocks_per_claim).ok_or_else(|| {
-                        AkitaError::InvalidSetup("challenge offset overflow".to_string())
-                    })?;
+                    let end = start
+                        .checked_add(*num_live_blocks_per_claim)
+                        .ok_or_else(|| {
+                            AkitaError::InvalidSetup("challenge offset overflow".to_string())
+                        })?;
                     selected.extend_from_slice(challenges.get(start..end).ok_or(
                         AkitaError::InvalidSize {
                             expected: end,
@@ -315,12 +354,13 @@ impl Challenges {
                         },
                     )?);
                 }
-                Self::from_sparse(selected, *num_blocks_per_claim, claim_indices.len())
+                Self::from_sparse(selected, *num_live_blocks_per_claim, claim_indices.len())
             }
             Self::Tensor { factored, .. } => {
                 factored.validate_lengths()?;
-                let mut left = Vec::with_capacity(claim_indices.len() * factored.left_len);
-                let mut right = Vec::with_capacity(claim_indices.len() * factored.right_len);
+                let fold_high_len = factored.fold_high_len();
+                let mut fold_high = Vec::with_capacity(claim_indices.len() * fold_high_len);
+                let mut fold_low = Vec::with_capacity(claim_indices.len() * factored.fold_low_len);
                 for &claim_idx in claim_indices {
                     if claim_idx >= factored.num_claims {
                         return Err(AkitaError::InvalidInput(format!(
@@ -328,20 +368,20 @@ impl Challenges {
                             factored.num_claims
                         )));
                     }
-                    let left_start = claim_idx * factored.left_len;
-                    let right_start = claim_idx * factored.right_len;
-                    left.extend_from_slice(
-                        &factored.left[left_start..left_start + factored.left_len],
+                    let high_start = claim_idx * fold_high_len;
+                    let low_start = claim_idx * factored.fold_low_len;
+                    fold_high.extend_from_slice(
+                        &factored.fold_high[high_start..high_start + fold_high_len],
                     );
-                    right.extend_from_slice(
-                        &factored.right[right_start..right_start + factored.right_len],
+                    fold_low.extend_from_slice(
+                        &factored.fold_low[low_start..low_start + factored.fold_low_len],
                     );
                 }
                 Self::from_tensor::<D>(TensorChallenges {
-                    left,
-                    right,
-                    left_len: factored.left_len,
-                    right_len: factored.right_len,
+                    fold_high,
+                    fold_low,
+                    num_live_blocks_per_claim: factored.num_live_blocks_per_claim,
+                    fold_low_len: factored.fold_low_len,
                     num_claims: claim_indices.len(),
                 })
             }
@@ -350,11 +390,22 @@ impl Challenges {
 }
 
 impl TensorChallenges {
+    /// Exact number of high-factor entries per claim.
+    #[inline]
+    #[must_use]
+    pub fn fold_high_len(&self) -> usize {
+        if self.fold_low_len == 0 {
+            0
+        } else {
+            self.num_live_blocks_per_claim.div_ceil(self.fold_low_len)
+        }
+    }
+
     /// Validate the tensor challenge shape and all sparse challenge factors.
     ///
     /// # Errors
     ///
-    /// Returns an error if left/right vector lengths do not match
+    /// Returns an error if fold-high/fold-low vector lengths do not match
     /// `num_claims * len`, dimensions are not powers of two, the total block
     /// count overflows, or any sparse factor is malformed for ring dimension
     /// `D`.
@@ -369,28 +420,18 @@ impl TensorChallenges {
     /// Returns an error under the same conditions as [`Self::validate`] with
     /// ring dimension `ring_d`.
     pub fn validate_dyn(&self, ring_d: usize) -> Result<(), AkitaError> {
-        if !self.left_len.is_power_of_two() || !self.right_len.is_power_of_two() {
+        if self.num_live_blocks_per_claim == 0 || !self.fold_low_len.is_power_of_two() {
             return Err(AkitaError::InvalidInput(
-                "tensor challenge dimensions must be powers of two".to_string(),
+                "tensor challenges require positive num_live_blocks and a power-of-two low length"
+                    .to_string(),
             ));
         }
         self.total_blocks()?;
         self.validate_lengths()?;
-        for challenge in self.left.iter().chain(self.right.iter()) {
+        for challenge in self.fold_high.iter().chain(self.fold_low.iter()) {
             challenge.validate_dyn(ring_d)?;
         }
         Ok(())
-    }
-
-    /// Number of logical block challenges represented by one claim.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if `left_len * right_len` overflows.
-    pub fn blocks_per_claim(&self) -> Result<usize, AkitaError> {
-        self.left_len
-            .checked_mul(self.right_len)
-            .ok_or_else(|| AkitaError::InvalidSetup("tensor challenge count overflow".to_string()))
     }
 
     /// Total logical block challenges across all claims.
@@ -400,7 +441,7 @@ impl TensorChallenges {
     /// Returns an error if count arithmetic overflows.
     pub fn total_blocks(&self) -> Result<usize, AkitaError> {
         self.num_claims
-            .checked_mul(self.blocks_per_claim()?)
+            .checked_mul(self.num_live_blocks_per_claim)
             .ok_or_else(|| AkitaError::InvalidSetup("tensor challenge count overflow".to_string()))
     }
 
@@ -414,16 +455,17 @@ impl TensorChallenges {
         &self,
         block_idx: usize,
     ) -> Result<(usize, usize, &SparseChallenge, &SparseChallenge), AkitaError> {
-        if !self.left_len.is_power_of_two() || !self.right_len.is_power_of_two() {
+        if self.num_live_blocks_per_claim == 0 || !self.fold_low_len.is_power_of_two() {
             return Err(AkitaError::InvalidInput(
-                "tensor challenge dimensions must be powers of two".to_string(),
+                "tensor challenges require positive num_live_blocks and a power-of-two low length"
+                    .to_string(),
             ));
         }
         self.validate_lengths()?;
-        let blocks_per_claim = self.blocks_per_claim()?;
+        let num_live_blocks_per_claim = self.num_live_blocks_per_claim;
         let total_blocks = self
             .num_claims
-            .checked_mul(blocks_per_claim)
+            .checked_mul(num_live_blocks_per_claim)
             .ok_or_else(|| {
                 AkitaError::InvalidSetup("tensor challenge count overflow".to_string())
             })?;
@@ -433,19 +475,58 @@ impl TensorChallenges {
             )));
         }
 
-        let claim_idx = block_idx / blocks_per_claim;
-        let local_idx = block_idx % blocks_per_claim;
-        let left_idx = claim_idx * self.left_len + (local_idx / self.right_len);
-        let right_idx = claim_idx * self.right_len + (local_idx % self.right_len);
-        let left = self.left.get(left_idx).ok_or(AkitaError::InvalidSize {
-            expected: left_idx + 1,
-            actual: self.left.len(),
+        let claim_idx = block_idx / num_live_blocks_per_claim;
+        let local_idx = block_idx % num_live_blocks_per_claim;
+        let fold_high_len = self.fold_high_len();
+        let high_idx = claim_idx * fold_high_len + (local_idx / self.fold_low_len);
+        let low_idx = claim_idx * self.fold_low_len + (local_idx % self.fold_low_len);
+        let high = self
+            .fold_high
+            .get(high_idx)
+            .ok_or(AkitaError::InvalidSize {
+                expected: high_idx + 1,
+                actual: self.fold_high.len(),
+            })?;
+        let low = self.fold_low.get(low_idx).ok_or(AkitaError::InvalidSize {
+            expected: low_idx + 1,
+            actual: self.fold_low.len(),
         })?;
-        let right = self.right.get(right_idx).ok_or(AkitaError::InvalidSize {
-            expected: right_idx + 1,
-            actual: self.right.len(),
-        })?;
-        Ok((claim_idx, local_idx, left, right))
+        Ok((claim_idx, local_idx, high, low))
+    }
+
+    /// Evaluate one reduced tensor product in claim-major logical block order.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `block_idx`, the tensor shape, `alpha_pows`, or the
+    /// selected sparse factors are invalid.
+    pub fn eval_logical_at_pows<F, E>(
+        &self,
+        block_idx: usize,
+        alpha_pows: &[E],
+    ) -> Result<E, AkitaError>
+    where
+        F: FieldCore + FromPrimitiveInt,
+        E: FieldCore + MulBase<F>,
+    {
+        let ring_d = alpha_pows.len();
+        if ring_d < 2 {
+            return Err(AkitaError::InvalidInput(
+                "tensor evaluation requires D >= 2".to_string(),
+            ));
+        }
+        let (_, _, high, low) = self.factors_for_logical_block(block_idx)?;
+        let high_eval = high.eval_at_pows::<F, E>(alpha_pows)?;
+        let low_eval = low.eval_at_pows::<F, E>(alpha_pows)?;
+        let alpha_pow_d_plus_one = alpha_pows[ring_d - 1] * alpha_pows[1] + E::one();
+        reduced_tensor_product_eval_at_pows::<F, E>(
+            high,
+            low,
+            high_eval,
+            low_eval,
+            alpha_pows,
+            alpha_pow_d_plus_one,
+        )
     }
 
     /// Evaluate reduced tensor products in logical block order.
@@ -468,36 +549,39 @@ impl TensorChallenges {
                 "tensor evaluation requires D >= 2".to_string(),
             ));
         }
-        self.validate_lengths()?;
+        self.validate_dyn(ring_d)?;
 
         // For `α ∈ E`, `α^D + 1 ∈ E` is the negacyclic-reduction scalar.
         // Tensor products commute with this reduction up to subtraction of a
         // quotient contribution; we precompute the scalar once and reuse it.
         let alpha_pow_d_plus_one = alpha_pows[ring_d - 1] * alpha_pows[1] + E::one();
-        let mut out = Vec::with_capacity(self.num_claims * self.left_len * self.right_len);
+        let fold_high_len = self.fold_high_len();
+        let mut out = Vec::with_capacity(self.num_claims * self.num_live_blocks_per_claim);
         for claim_idx in 0..self.num_claims {
-            let left_start = claim_idx * self.left_len;
-            let right_start = claim_idx * self.right_len;
-            let left = &self.left[left_start..left_start + self.left_len];
-            let right = &self.right[right_start..right_start + self.right_len];
-            let left_evals = left
+            let high_start = claim_idx * fold_high_len;
+            let low_start = claim_idx * self.fold_low_len;
+            let high = &self.fold_high[high_start..high_start + fold_high_len];
+            let low = &self.fold_low[low_start..low_start + self.fold_low_len];
+            let high_evals = high
                 .iter()
                 .map(|challenge| challenge.eval_at_pows::<F, E>(alpha_pows))
                 .collect::<Result<Vec<_>, _>>()?;
-            let right_evals = right
+            let low_evals = low
                 .iter()
                 .map(|challenge| challenge.eval_at_pows::<F, E>(alpha_pows))
                 .collect::<Result<Vec<_>, _>>()?;
 
-            for (p, left_challenge) in left.iter().enumerate() {
-                for (q, right_challenge) in right.iter().enumerate() {
-                    let quotient_eval = tensor_product_quotient_eval::<F, E>(
-                        left_challenge,
-                        right_challenge,
-                        alpha_pows,
-                    )?;
-                    out.push(left_evals[p] * right_evals[q] - alpha_pow_d_plus_one * quotient_eval);
-                }
+            for local_idx in 0..self.num_live_blocks_per_claim {
+                let h = local_idx / self.fold_low_len;
+                let q = local_idx % self.fold_low_len;
+                out.push(reduced_tensor_product_eval_at_pows::<F, E>(
+                    &high[h],
+                    &low[q],
+                    high_evals[h],
+                    low_evals[q],
+                    alpha_pows,
+                    alpha_pow_d_plus_one,
+                )?);
             }
         }
         Ok(out)
@@ -506,13 +590,13 @@ impl TensorChallenges {
     /// Evaluate one weighted tensor aggregate exactly at a ring-switch point.
     ///
     /// This is the factored aggregate API. Unlike
-    /// [`Self::evals_at_pows`], it consumes separable left/right weights and
+    /// [`Self::evals_at_pows`], it consumes separable fold-high/fold-low weights and
     /// returns a single aggregate for one claim.
     ///
     /// Computes
     ///
     /// ```text
-    /// Σ_{p,q} u[p] · v[q] · eval(reduce(L_p · R_q), α)
+    /// Σ_{p,q : p · Q + q < F} u[p] · v[q] · eval(reduce(H_p · L_q), α)
     /// ```
     ///
     /// without materializing every reduced tensor product. The negacyclic
@@ -546,15 +630,17 @@ impl TensorChallenges {
                 actual: ring_d,
             });
         }
-        if u_weights.len() != self.left_len {
+        self.validate_dyn(ring_d)?;
+        let fold_high_len = self.fold_high_len();
+        if u_weights.len() != fold_high_len {
             return Err(AkitaError::InvalidSize {
-                expected: self.left_len,
+                expected: fold_high_len,
                 actual: u_weights.len(),
             });
         }
-        if v_weights.len() != self.right_len {
+        if v_weights.len() != self.fold_low_len {
             return Err(AkitaError::InvalidSize {
-                expected: self.right_len,
+                expected: self.fold_low_len,
                 actual: v_weights.len(),
             });
         }
@@ -564,22 +650,20 @@ impl TensorChallenges {
                 self.num_claims
             )));
         }
-        self.validate_lengths()?;
-
         let alpha_pow_d_plus_one = alpha_pows[ring_d - 1] * alpha_pows[1] + E::one();
-        let left_start = claim_idx * self.left_len;
-        let right_start = claim_idx * self.right_len;
+        let high_start = claim_idx * fold_high_len;
+        let low_start = claim_idx * self.fold_low_len;
 
         // Build the weighted dense factors in E directly so the product
-        // evaluation never materializes a length-O(left_len · right_len) buffer.
-        let mut left_bar = [E::zero(); D];
-        let mut right_bar = [E::zero(); D];
+        // evaluation never materializes a length-O(fold_high_len · fold_low_len) buffer.
+        let mut high_bar = [E::zero(); D];
+        let mut low_bar = [E::zero(); D];
 
         for (p, &weight) in u_weights.iter().enumerate() {
             if !weight.is_zero() {
                 accumulate_sparse_scaled::<F, E, D>(
-                    &mut left_bar,
-                    &self.left[left_start + p],
+                    &mut high_bar,
+                    &self.fold_high[high_start + p],
                     weight,
                 )?;
             }
@@ -587,64 +671,103 @@ impl TensorChallenges {
         for (q, &weight) in v_weights.iter().enumerate() {
             if !weight.is_zero() {
                 accumulate_sparse_scaled::<F, E, D>(
-                    &mut right_bar,
-                    &self.right[right_start + q],
+                    &mut low_bar,
+                    &self.fold_low[low_start + q],
                     weight,
                 )?;
             }
         }
 
-        let product_eval =
-            eval_dense_at_pows(&left_bar, alpha_pows) * eval_dense_at_pows(&right_bar, alpha_pows);
-        let mut quotient_eval = E::zero();
-        for (i, &left_coeff) in left_bar.iter().enumerate() {
-            if left_coeff.is_zero() {
-                continue;
-            }
-            for (j, &right_coeff) in right_bar.iter().enumerate() {
-                if right_coeff.is_zero() {
-                    continue;
-                }
-                if i + j >= D {
-                    quotient_eval += left_coeff * right_coeff * alpha_pows[i + j - D];
-                }
-            }
+        let aggregate = eval_dense_negacyclic_product_at_pows(
+            &high_bar,
+            &low_bar,
+            alpha_pows,
+            alpha_pow_d_plus_one,
+        );
+
+        let final_low_len = self.num_live_blocks_per_claim % self.fold_low_len;
+        if final_low_len == 0 {
+            return Ok(aggregate);
         }
 
-        Ok(product_eval - alpha_pow_d_plus_one * quotient_eval)
+        // The full factored product includes the padded suffix of the final
+        // high row. Subtract that single separable rectangle to retain exactly
+        // the live prefix without expanding one product per fold.
+        let final_high_idx = fold_high_len - 1;
+        let mut final_high_bar = [E::zero(); D];
+        let final_high_weight = u_weights[final_high_idx];
+        if !final_high_weight.is_zero() {
+            accumulate_sparse_scaled::<F, E, D>(
+                &mut final_high_bar,
+                &self.fold_high[high_start + final_high_idx],
+                final_high_weight,
+            )?;
+        }
+        let mut padded_low_bar = [E::zero(); D];
+        for (q, &weight) in v_weights.iter().enumerate().skip(final_low_len) {
+            if !weight.is_zero() {
+                accumulate_sparse_scaled::<F, E, D>(
+                    &mut padded_low_bar,
+                    &self.fold_low[low_start + q],
+                    weight,
+                )?;
+            }
+        }
+        let padded_suffix = eval_dense_negacyclic_product_at_pows(
+            &final_high_bar,
+            &padded_low_bar,
+            alpha_pows,
+            alpha_pow_d_plus_one,
+        );
+
+        Ok(aggregate - padded_suffix)
     }
 
     fn validate_lengths(&self) -> Result<(), AkitaError> {
-        let expected_left = self
+        let expected_high = self
             .num_claims
-            .checked_mul(self.left_len)
-            .ok_or_else(|| AkitaError::InvalidSetup("tensor-left count overflow".to_string()))?;
-        if self.left.len() != expected_left {
+            .checked_mul(self.fold_high_len())
+            .ok_or_else(|| AkitaError::InvalidSetup("fold-high count overflow".to_string()))?;
+        if self.fold_high.len() != expected_high {
             return Err(AkitaError::InvalidSize {
-                expected: expected_left,
-                actual: self.left.len(),
+                expected: expected_high,
+                actual: self.fold_high.len(),
             });
         }
-        let expected_right = self
+        let expected_low = self
             .num_claims
-            .checked_mul(self.right_len)
-            .ok_or_else(|| AkitaError::InvalidSetup("tensor-right count overflow".to_string()))?;
-        if self.right.len() != expected_right {
+            .checked_mul(self.fold_low_len)
+            .ok_or_else(|| AkitaError::InvalidSetup("fold-low count overflow".to_string()))?;
+        if self.fold_low.len() != expected_low {
             return Err(AkitaError::InvalidSize {
-                expected: expected_right,
-                actual: self.right.len(),
+                expected: expected_low,
+                actual: self.fold_low.len(),
             });
         }
         Ok(())
     }
 }
 
-// Helper for `TensorChallenges::evals_at_pows`. This computes only the
-// negacyclic wrap correction for one left/right pair; the caller combines it
-// with `eval(left) * eval(right)` to produce one logical block evaluation.
+fn reduced_tensor_product_eval_at_pows<F, E>(
+    high: &SparseChallenge,
+    low: &SparseChallenge,
+    high_eval: E,
+    low_eval: E,
+    alpha_pows: &[E],
+    alpha_pow_d_plus_one: E,
+) -> Result<E, AkitaError>
+where
+    F: FieldCore + FromPrimitiveInt,
+    E: FieldCore + MulBase<F>,
+{
+    let quotient_eval = tensor_product_quotient_eval::<F, E>(high, low, alpha_pows)?;
+    Ok(high_eval * low_eval - alpha_pow_d_plus_one * quotient_eval)
+}
+
+// Compute only the negacyclic wrap correction for one fold-high/fold-low pair.
 fn tensor_product_quotient_eval<F, E>(
-    left: &SparseChallenge,
-    right: &SparseChallenge,
+    high: &SparseChallenge,
+    low: &SparseChallenge,
     alpha_pows: &[E],
 ) -> Result<E, AkitaError>
 where
@@ -652,17 +775,21 @@ where
     E: FieldCore + MulBase<F>,
 {
     let ring_d = alpha_pows.len();
-    left.validate_dyn(ring_d)?;
-    right.validate_dyn(ring_d)?;
+    high.validate_dyn(ring_d)?;
+    low.validate_dyn(ring_d)?;
     let mut quotient_eval = E::zero();
-    for (&left_pos, &left_coeff) in left.positions.iter().zip(left.coeffs.iter()) {
-        let left_idx = left_pos as usize;
-        for (&right_pos, &right_coeff) in right.positions.iter().zip(right.coeffs.iter()) {
-            let right_idx = right_pos as usize;
-            let degree = left_idx + right_idx;
+    for (&high_pos, &high_coeff) in high.positions.iter().zip(high.coeffs.iter()) {
+        let high_idx = high_pos as usize;
+        for (&low_pos, &low_coeff) in low.positions.iter().zip(low.coeffs.iter()) {
+            let low_idx = low_pos as usize;
+            let degree = high_idx + low_idx;
             if degree >= ring_d {
-                let term = i64::from(left_coeff) * i64::from(right_coeff);
-                quotient_eval += alpha_pows[degree - ring_d].mul_base(F::from_i64(term));
+                let term = i64::from(high_coeff) * i64::from(low_coeff);
+                accumulate_small_signed::<F, E>(
+                    &mut quotient_eval,
+                    alpha_pows[degree - ring_d],
+                    term,
+                );
             }
         }
     }
@@ -670,7 +797,7 @@ where
 }
 
 // Helpers for `eval_factored_aggregate_at_pows`, which evaluates one weighted
-// claim aggregate directly from the left/right tensor factors.
+// claim aggregate directly from the fold-high/fold-low tensor factors.
 fn accumulate_sparse_scaled<F, E, const D: usize>(
     out: &mut [E],
     challenge: &SparseChallenge,
@@ -690,7 +817,7 @@ where
 
     for (&pos, &coeff) in challenge.positions.iter().zip(challenge.coeffs.iter()) {
         let idx = pos as usize;
-        out[idx] += scale.mul_base(F::from_i64(coeff as i64));
+        accumulate_small_signed::<F, E>(&mut out[idx], scale, i64::from(coeff));
     }
     Ok(())
 }
@@ -702,80 +829,88 @@ fn eval_dense_at_pows<E: FieldCore>(coeffs: &[E], alpha_pows: &[E]) -> E {
         .fold(E::zero(), |acc, (&coeff, &power)| acc + coeff * power)
 }
 
-/// Split `num_blocks = 2^r` into balanced tensor dimensions.
-///
-/// # Errors
-///
-/// Returns an error if `num_blocks` is not a power of two.
-#[inline]
-pub fn tensor_split(num_blocks: usize) -> Result<(usize, usize), AkitaError> {
-    if !num_blocks.is_power_of_two() {
-        return Err(AkitaError::InvalidInput(
-            "tensor challenges require a power-of-two block count".to_string(),
-        ));
+fn eval_dense_negacyclic_product_at_pows<E: FieldCore, const D: usize>(
+    high: &[E; D],
+    low: &[E; D],
+    alpha_pows: &[E],
+    alpha_pow_d_plus_one: E,
+) -> E {
+    let product_eval = eval_dense_at_pows(high, alpha_pows) * eval_dense_at_pows(low, alpha_pows);
+    let mut quotient_eval = E::zero();
+    for (i, &high_coeff) in high.iter().enumerate() {
+        if high_coeff.is_zero() {
+            continue;
+        }
+        for (j, &low_coeff) in low.iter().enumerate() {
+            if low_coeff.is_zero() || i + j < D {
+                continue;
+            }
+            quotient_eval += high_coeff * low_coeff * alpha_pows[i + j - D];
+        }
     }
-    let r = num_blocks.trailing_zeros() as usize;
-    let left_bits = r / 2;
-    let right_bits = r - left_bits;
-    Ok((1usize << left_bits, 1usize << right_bits))
+    product_eval - alpha_pow_d_plus_one * quotient_eval
 }
 
 /// Total sparse challenges drawn in one fold round.
 ///
-/// Flat: `num_blocks · num_claims` with `num_blocks = 2^{r_vars}`.
-/// Tensor: `num_claims · (left_len + right_len)` after [`tensor_split`].
+/// Flat: `num_live_blocks · num_claims`.
+/// Tensor: `num_claims · (ceil(num_live_blocks / fold_low_len) + fold_low_len)`.
 #[inline]
 pub fn fold_sparse_challenge_sample_count(
     shape: ChallengeShape,
-    r_vars: usize,
+    num_live_blocks: usize,
     num_claims: usize,
 ) -> Option<usize> {
-    let num_blocks = 1usize.checked_shl(r_vars as u32)?;
     match shape {
-        ChallengeShape::Flat => num_blocks.checked_mul(num_claims),
-        ChallengeShape::Tensor => {
-            let (left_len, right_len) = tensor_split(num_blocks).ok()?;
-            left_len.checked_add(right_len)?.checked_mul(num_claims)
+        ChallengeShape::Flat => num_live_blocks.checked_mul(num_claims),
+        ChallengeShape::Tensor { fold_low_len } => {
+            if num_live_blocks == 0 || !fold_low_len.is_power_of_two() {
+                return None;
+            }
+            let fold_high_len = num_live_blocks.div_ceil(fold_low_len);
+            fold_high_len
+                .checked_add(fold_low_len)?
+                .checked_mul(num_claims)
         }
     }
 }
 
-/// Compute the canonical digest absorbed between tensor-left and tensor-right
+/// Compute the canonical digest absorbed between fold-high and fold-low
 /// challenge sampling.
 ///
-/// Binding the right vector's transcript challenge to the exact left vector
-/// blocks any adaptive ground-out attempt on the right factor.
+/// Binding the fold-low vector's transcript challenge to the exact fold-high vector
+/// blocks any adaptive ground-out attempt on the fold-low factor.
 ///
 /// # Errors
 ///
-/// Returns an error if the tensor-left vector length is inconsistent with the
+/// Returns an error if the fold-high vector length is inconsistent with the
 /// supplied shape or if any sparse challenge violates structural invariants.
-pub fn tensor_left_digest(
-    left: &[SparseChallenge],
-    left_len: usize,
+pub fn fold_high_digest(
+    fold_high: &[SparseChallenge],
+    fold_high_len: usize,
     num_claims: usize,
     ring_d: usize,
 ) -> Result<[u8; 32], AkitaError> {
-    let expected = left_len
+    let expected = fold_high_len
         .checked_mul(num_claims)
-        .ok_or_else(|| AkitaError::InvalidSetup("tensor-left digest count overflow".to_string()))?;
-    if left.len() != expected {
+        .ok_or_else(|| AkitaError::InvalidSetup("fold-high digest count overflow".to_string()))?;
+    if fold_high.len() != expected {
         return Err(AkitaError::InvalidSize {
             expected,
-            actual: left.len(),
+            actual: fold_high.len(),
         });
     }
 
     let mut hasher = Sha3_256::new();
-    hasher.update(TENSOR_LEFT_DIGEST_DOMAIN);
+    hasher.update(FOLD_HIGH_DIGEST_DOMAIN);
     // Byte-critical: same little-endian u64 encoding of the ring dimension as
     // the former `(D as u64)`; identical bytes for equal values.
     hasher.update((ring_d as u64).to_le_bytes());
     hasher.update((num_claims as u64).to_le_bytes());
-    hasher.update((left_len as u64).to_le_bytes());
-    hasher.update((left.len() as u64).to_le_bytes());
+    hasher.update((fold_high_len as u64).to_le_bytes());
+    hasher.update((fold_high.len() as u64).to_le_bytes());
 
-    for challenge in left {
+    for challenge in fold_high {
         challenge.validate_dyn(ring_d)?;
         hasher.update((challenge.positions.len() as u64).to_le_bytes());
 

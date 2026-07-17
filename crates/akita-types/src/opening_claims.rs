@@ -15,10 +15,6 @@ use std::collections::BTreeSet;
 pub const MULTI_GROUP_ROOT_DENSE_UNSUPPORTED: &str =
     "dense polynomial multi-group root batching is not supported; see specs/multi-group-batching.md";
 
-/// Multi-chunk witness layout cannot combine with precommitted commitment groups.
-pub const MULTI_GROUP_ROOT_MULTI_CHUNK_UNSUPPORTED: &str =
-    "multi-chunk witness layout with precommitted groups is not supported; see specs/multi-group-batching.md";
-
 /// Return the multi-group-root rejection message, if the layout should be rejected.
 pub fn should_reject_multi_group_root(
     layout: &OpeningClaimsLayout,
