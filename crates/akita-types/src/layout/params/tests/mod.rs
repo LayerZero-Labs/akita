@@ -94,10 +94,8 @@ fn sample_multi_group_root_params() -> (LevelParams, OpeningClaimsLayout) {
         precommit_lp.b_key.coeff_linf_bound(),
         precommit_lp.ring_dimension,
     );
-    let mut layout = PrecommittedGroupParams::from_params(
-        PolynomialGroupLayout::new(4, 1),
-        &precommit_lp,
-    );
+    let mut layout =
+        PrecommittedGroupParams::from_params(PolynomialGroupLayout::new(4, 1), &precommit_lp);
     layout.n_b = b_key.row_len();
     layout.b_coeff_linf_bound = b_key.coeff_linf_bound();
     let precommit = PrecommittedLevelParams {
