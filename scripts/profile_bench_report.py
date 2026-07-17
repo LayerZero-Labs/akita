@@ -1610,6 +1610,8 @@ def render_matrix_summary(
         "Workload",
         "Setup contribution",
         "Setup and preparation",
+        "Setup vector size",
+        "Prepared NTT cache size",
         "Commit",
         "Prove",
         "Verify",
@@ -1627,6 +1629,22 @@ def render_matrix_summary(
             code_text(current.get("setup_contribution_mode", "direct")),
             optional_value_with_main_delta(
                 current, baseline, "setup_s", fmt_seconds, " s", main_baseline is not None
+            ),
+            optional_value_with_main_delta(
+                current,
+                baseline,
+                "setup_vector_bytes",
+                fmt_mib_from_bytes,
+                " MiB",
+                main_baseline is not None,
+            ),
+            optional_value_with_main_delta(
+                current,
+                baseline,
+                "setup_ntt_cache_bytes",
+                fmt_mib_from_bytes,
+                " MiB",
+                main_baseline is not None,
             ),
             optional_value_with_main_delta(
                 current, baseline, "commit_s", fmt_seconds, " s", main_baseline is not None

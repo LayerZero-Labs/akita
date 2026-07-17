@@ -239,6 +239,8 @@ class ProfileBenchReportTests(unittest.TestCase):
                 "num_polys": 1,
                 "exit_code": 0,
                 "setup_s": 2.0,
+                "setup_vector_bytes": 4 * 1024 * 1024,
+                "setup_ntt_cache_bytes": 8 * 1024 * 1024,
                 "commit_s": 4.0,
                 "prove_total_s": 6.0,
                 "verify_total_s": 0.008,
@@ -250,6 +252,8 @@ class ProfileBenchReportTests(unittest.TestCase):
         baseline = dict(current)
         for key in (
             "setup_s",
+            "setup_vector_bytes",
+            "setup_ntt_cache_bytes",
             "commit_s",
             "prove_total_s",
             "verify_total_s",
@@ -263,7 +267,11 @@ class ProfileBenchReportTests(unittest.TestCase):
             render_matrix_summary([current], {str(current["case_id"]): baseline})
         report = output.getvalue()
 
-        self.assertEqual(report.count("+100.00% vs main"), 6)
+        self.assertEqual(report.count("+100.00% vs main"), 8)
+        self.assertIn("Setup vector size", report)
+        self.assertIn("Prepared NTT cache size", report)
+        self.assertIn("4.0 MiB", report)
+        self.assertIn("8.0 MiB", report)
         self.assertIn("nv32Onehot256", report)
         self.assertIn("D=64", report)
         self.assertNotIn("Proof B", report)
