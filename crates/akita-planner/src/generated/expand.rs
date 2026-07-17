@@ -24,8 +24,8 @@ use crate::schedule_params::optimize_fold_challenge_shape;
 use crate::PlannerPolicy;
 use akita_types::sis::{
     decomposed_s_block_ring_count, decomposed_t_ring_count, decomposed_w_ring_count,
-    fold_witness_digit_plan, min_secure_rank, num_digits_open, num_digits_s_commit,
-    num_digits_setup_prefix_commit, rounded_up_collision_inf_norm, rounded_up_role_a_inf_norm,
+    fold_witness_digit_plan, min_secure_rank, num_digits_open, num_digits_setup_prefix_commit,
+    num_digits_witness, rounded_up_collision_inf_norm, rounded_up_role_a_inf_norm,
     FoldChallengeNorms, FoldWitnessLinfCapConfig, FoldWitnessNorms, SisTableKey,
 };
 use akita_types::{
@@ -73,6 +73,14 @@ fn require_exact_rank(
     Ok(())
 }
 
+fn root_witness_log_basis(policy: &PlannerPolicy, is_root: bool, log_basis: u32) -> u32 {
+    if is_root && policy.decomposition.log_commit_bound == 1 {
+        1
+    } else {
+        log_basis
+    }
+}
+
 impl GeneratedSetupPrefixGroup {
     fn expand_to_precommitted_group(
         self,
@@ -105,10 +113,16 @@ impl GeneratedSetupPrefixGroup {
             num_positions_per_block,
             num_live_blocks,
             fold_challenge_shape: self.fold_challenge_shape,
-            log_basis,
+            log_basis_witness: log_basis,
+            log_basis_commit: log_basis,
             n_a: self.n_a as usize,
             conservative_n_b: self.n_b as usize,
         };
+        // TODO(setup-prefix-witness-basis): generated setup-prefix metadata
+        // currently has only the commit/open `log_basis`, so expansion must
+        // reconstruct witness digits with that same basis. Once the planner
+        // brute-forces an independent `log_basis_witness`, persist it in
+        // `GeneratedSetupPrefixGroup` and use it for A-role width/norm checks.
         let decomp = DecompositionParams {
             log_basis,
             ..policy.decomposition
@@ -210,7 +224,9 @@ impl GeneratedSetupPrefixGroup {
             layout,
             a_key,
             b_key,
-            num_digits_commit,
+            log_basis_open: log_basis,
+            num_digits_witness: num_digits_commit,
+            num_digits_commit: num_digits_open_val,
             num_digits_open: num_digits_open_val,
             num_digits_fold_one,
         })
@@ -383,8 +399,13 @@ impl GeneratedFoldStep {
             log_basis,
             ..policy.decomposition
         };
+        let log_basis_witness = root_witness_log_basis(policy, is_root, log_basis);
+        let witness_decomp = DecompositionParams {
+            log_basis: log_basis_witness,
+            ..policy.decomposition
+        };
         let ring_challenge_cfg = ring_challenge_config(ring_d)?;
-        let num_digits_commit = num_digits_s_commit(decomp, is_root);
+        let num_digits_commit = num_digits_witness(witness_decomp, is_root);
         let num_digits_open_val = num_digits_open(decomp);
 
         let inner_width = decomposed_s_block_ring_count(num_positions_per_block, num_digits_commit)
@@ -393,7 +414,7 @@ impl GeneratedFoldStep {
             sis_policy,
             sis_modulus_profile,
             ring_d,
-            decomp,
+            witness_decomp,
             &ring_challenge_cfg,
             fold_shape,
             is_root,
@@ -518,6 +539,7 @@ impl GeneratedFoldStep {
         let params = LevelParams {
             ring_dimension: ring_d,
             log_basis,
+            log_basis_witness,
             a_key: AjtaiKeyParams::try_new(
                 sis_policy,
                 policy.sis_table_digest,
@@ -666,8 +688,13 @@ impl GeneratedFoldStep {
             log_basis,
             ..policy.decomposition
         };
+        let log_basis_witness = root_witness_log_basis(policy, true, log_basis);
+        let witness_decomp = DecompositionParams {
+            log_basis: log_basis_witness,
+            ..policy.decomposition
+        };
         let ring_challenge_cfg = ring_challenge_config(ring_d)?;
-        let num_digits_commit = num_digits_s_commit(decomp, true);
+        let num_digits_commit = num_digits_witness(witness_decomp, true);
         let num_digits_open_val = num_digits_open(decomp);
 
         let inner_width = decomposed_s_block_ring_count(num_positions_per_block, num_digits_commit)
@@ -676,7 +703,7 @@ impl GeneratedFoldStep {
             sis_policy,
             sis_modulus_profile,
             ring_d,
-            decomp,
+            witness_decomp,
             &ring_challenge_cfg,
             fold_shape,
             true,
@@ -742,6 +769,7 @@ impl GeneratedFoldStep {
         let params = LevelParams {
             ring_dimension: ring_d,
             log_basis,
+            log_basis_witness,
             a_key: AjtaiKeyParams::try_new(
                 sis_policy,
                 policy.sis_table_digest,

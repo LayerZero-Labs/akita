@@ -29,28 +29,24 @@ pub use setup_index_weight_evaluator::SetupIndexWeightEvaluator;
 /// Shared fold gadget when every setup-contribution group uses the same basis.
 ///
 /// Groups may have different fold depths: each group uses the prefix
-/// `gadget[..group.depth_fold]`. Return `None` only when the basis differs and
-/// callers must derive per-group gadgets.
+/// `gadget[..group.depth_fold]`. All fresh folded-response digits use the root
+/// opening basis.
 pub fn shared_setup_fold_gadget<F: FieldCore + CanonicalField>(
     level_params: &LevelParams,
     opening_batch: &OpeningClaimsLayout,
     groups: &[SetupContributionGroupInputs],
 ) -> Option<Vec<F>> {
     let first = groups.first()?;
-    let first_log_basis = first.log_basis(level_params, opening_batch).ok()?;
-    if !groups.iter().all(|group| {
-        group
-            .log_basis(level_params, opening_batch)
-            .is_ok_and(|log_basis| log_basis == first_log_basis)
-    }) {
-        return None;
-    }
     let max_depth = groups
         .iter()
         .map(|group| group.depth_fold)
         .max()
         .unwrap_or(first.depth_fold);
-    Some(crate::gadget_row_scalars::<F>(max_depth, first_log_basis))
+    let _ = opening_batch;
+    Some(crate::gadget_row_scalars::<F>(
+        max_depth,
+        level_params.log_basis,
+    ))
 }
 
 pub(crate) fn push_role_boundaries(

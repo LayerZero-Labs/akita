@@ -113,37 +113,37 @@ pub(crate) static FP128_D128_ONEHOT_SCHEDULES: &[GeneratedScheduleTableEntry] = 
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 6, block_index_bits: 3, num_live_blocks: 8, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(16, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(8, 1), num_live_ring_elements_per_claim: 2, num_positions_per_block: 2, num_live_blocks: 1, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 1, conservative_n_b: 1 }], steps: &[
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(16, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(8, 1), num_live_ring_elements_per_claim: 2, num_positions_per_block: 2, num_live_blocks: 1, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 1, conservative_n_b: 1 }], steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 7, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(16, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(8, 1), num_live_ring_elements_per_claim: 2, num_positions_per_block: 2, num_live_blocks: 1, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 1, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(8, 1), num_live_ring_elements_per_claim: 2, num_positions_per_block: 2, num_live_blocks: 1, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 1, conservative_n_b: 1 }], steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 7, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 5, n_a: 2, n_b: 1, n_d: 1 }),
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(16, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(8, 1), num_live_ring_elements_per_claim: 2, num_positions_per_block: 2, num_live_blocks: 1, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 1, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(8, 1), num_live_ring_elements_per_claim: 2, num_positions_per_block: 2, num_live_blocks: 1, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 1, conservative_n_b: 1 }], steps: &[
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 5, position_index_bits: 7, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(16, 2), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(8, 1), num_live_ring_elements_per_claim: 2, num_positions_per_block: 2, num_live_blocks: 1, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 1, conservative_n_b: 1 }], steps: &[
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(16, 2), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(8, 1), num_live_ring_elements_per_claim: 2, num_positions_per_block: 2, num_live_blocks: 1, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 1, conservative_n_b: 1 }], steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 8, block_index_bits: 1, num_live_blocks: 2, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 5, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(16, 2), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(8, 1), num_live_ring_elements_per_claim: 2, num_positions_per_block: 2, num_live_blocks: 1, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 1, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(8, 1), num_live_ring_elements_per_claim: 2, num_positions_per_block: 2, num_live_blocks: 1, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 1, conservative_n_b: 1 }], steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 1, num_live_blocks: 2, n_a: 2, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(16, 2), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(8, 1), num_live_ring_elements_per_claim: 2, num_positions_per_block: 2, num_live_blocks: 1, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 1, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(8, 1), num_live_ring_elements_per_claim: 2, num_positions_per_block: 2, num_live_blocks: 1, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 1, conservative_n_b: 1 }], steps: &[
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 5, position_index_bits: 8, block_index_bits: 1, num_live_blocks: 2, n_a: 2, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 5, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
     GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(16, 4), precommitteds: &[], steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 1, num_live_blocks: 2, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(16, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(8, 1), num_live_ring_elements_per_claim: 2, num_positions_per_block: 2, num_live_blocks: 1, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 1, conservative_n_b: 1 }], steps: &[
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(16, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(8, 1), num_live_ring_elements_per_claim: 2, num_positions_per_block: 2, num_live_blocks: 1, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 1, conservative_n_b: 1 }], steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 5, position_index_bits: 8, block_index_bits: 1, num_live_blocks: 2, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 6, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(16, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(8, 1), num_live_ring_elements_per_claim: 2, num_positions_per_block: 2, num_live_blocks: 1, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 1, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(8, 1), num_live_ring_elements_per_claim: 2, num_positions_per_block: 2, num_live_blocks: 1, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 1, conservative_n_b: 1 }], steps: &[
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(16, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(8, 1), num_live_ring_elements_per_claim: 2, num_positions_per_block: 2, num_live_blocks: 1, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 1, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(8, 1), num_live_ring_elements_per_claim: 2, num_positions_per_block: 2, num_live_blocks: 1, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 1, conservative_n_b: 1 }], steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 1, num_live_blocks: 2, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 6, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
@@ -153,22 +153,22 @@ pub(crate) static FP128_D128_ONEHOT_SCHEDULES: &[GeneratedScheduleTableEntry] = 
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 5, position_index_bits: 7, block_index_bits: 3, num_live_blocks: 8, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(17, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(8, 1), num_live_ring_elements_per_claim: 2, num_positions_per_block: 2, num_live_blocks: 1, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 1, conservative_n_b: 1 }], steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 9, block_index_bits: 1, num_live_blocks: 2, n_a: 2, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
-        GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
-    ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(17, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(8, 1), num_live_ring_elements_per_claim: 2, num_positions_per_block: 2, num_live_blocks: 1, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 1, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(8, 1), num_live_ring_elements_per_claim: 2, num_positions_per_block: 2, num_live_blocks: 1, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 1, conservative_n_b: 1 }], steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
-        GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
-    ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(17, 2), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(8, 1), num_live_ring_elements_per_claim: 2, num_positions_per_block: 2, num_live_blocks: 1, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 1, conservative_n_b: 1 }], steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 9, block_index_bits: 1, num_live_blocks: 2, n_a: 2, n_b: 1, n_d: 1 }),
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(17, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(8, 1), num_live_ring_elements_per_claim: 2, num_positions_per_block: 2, num_live_blocks: 1, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 1, conservative_n_b: 1 }], steps: &[
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 8, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 5, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(17, 2), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(8, 1), num_live_ring_elements_per_claim: 2, num_positions_per_block: 2, num_live_blocks: 1, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 1, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(8, 1), num_live_ring_elements_per_claim: 2, num_positions_per_block: 2, num_live_blocks: 1, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 1, conservative_n_b: 1 }], steps: &[
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(17, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(8, 1), num_live_ring_elements_per_claim: 2, num_positions_per_block: 2, num_live_blocks: 1, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 1, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(8, 1), num_live_ring_elements_per_claim: 2, num_positions_per_block: 2, num_live_blocks: 1, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 1, conservative_n_b: 1 }], steps: &[
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 9, block_index_bits: 1, num_live_blocks: 2, n_a: 2, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
+        GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
+    ] },
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(17, 2), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(8, 1), num_live_ring_elements_per_claim: 2, num_positions_per_block: 2, num_live_blocks: 1, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 1, conservative_n_b: 1 }], steps: &[
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 9, block_index_bits: 1, num_live_blocks: 2, n_a: 2, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
+        GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
+    ] },
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(17, 2), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(8, 1), num_live_ring_elements_per_claim: 2, num_positions_per_block: 2, num_live_blocks: 1, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 1, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(8, 1), num_live_ring_elements_per_claim: 2, num_positions_per_block: 2, num_live_blocks: 1, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 1, conservative_n_b: 1 }], steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 9, block_index_bits: 1, num_live_blocks: 2, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 5, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
@@ -179,14 +179,14 @@ pub(crate) static FP128_D128_ONEHOT_SCHEDULES: &[GeneratedScheduleTableEntry] = 
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 5, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(17, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(8, 1), num_live_ring_elements_per_claim: 2, num_positions_per_block: 2, num_live_blocks: 1, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 1, conservative_n_b: 1 }], steps: &[
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(17, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(8, 1), num_live_ring_elements_per_claim: 2, num_positions_per_block: 2, num_live_blocks: 1, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 1, conservative_n_b: 1 }], steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 9, block_index_bits: 1, num_live_blocks: 2, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 4, num_live_blocks: 9, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 5, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(17, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(8, 1), num_live_ring_elements_per_claim: 2, num_positions_per_block: 2, num_live_blocks: 1, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 1, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(8, 1), num_live_ring_elements_per_claim: 2, num_positions_per_block: 2, num_live_blocks: 1, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 1, conservative_n_b: 1 }], steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 5, position_index_bits: 8, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(17, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(8, 1), num_live_ring_elements_per_claim: 2, num_positions_per_block: 2, num_live_blocks: 1, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 1, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(8, 1), num_live_ring_elements_per_claim: 2, num_positions_per_block: 2, num_live_blocks: 1, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 1, conservative_n_b: 1 }], steps: &[
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 9, block_index_bits: 1, num_live_blocks: 2, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 4, num_live_blocks: 9, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 5, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
@@ -195,26 +195,26 @@ pub(crate) static FP128_D128_ONEHOT_SCHEDULES: &[GeneratedScheduleTableEntry] = 
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 9, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(18, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(9, 1), num_live_ring_elements_per_claim: 4, num_positions_per_block: 2, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 1, conservative_n_b: 1 }], steps: &[
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(18, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(9, 1), num_live_ring_elements_per_claim: 4, num_positions_per_block: 2, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 1, conservative_n_b: 1 }], steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 9, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 5, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(18, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(9, 1), num_live_ring_elements_per_claim: 4, num_positions_per_block: 2, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 1, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(9, 1), num_live_ring_elements_per_claim: 4, num_positions_per_block: 2, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 1, conservative_n_b: 1 }], steps: &[
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(18, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(9, 1), num_live_ring_elements_per_claim: 4, num_positions_per_block: 2, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 1, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(9, 1), num_live_ring_elements_per_claim: 4, num_positions_per_block: 2, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 1, conservative_n_b: 1 }], steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 9, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 6, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(18, 2), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(9, 1), num_live_ring_elements_per_claim: 4, num_positions_per_block: 2, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 1, conservative_n_b: 1 }], steps: &[
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(18, 2), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(9, 1), num_live_ring_elements_per_claim: 4, num_positions_per_block: 2, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 1, conservative_n_b: 1 }], steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 9, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 4, num_live_blocks: 9, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 5, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(18, 2), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(9, 1), num_live_ring_elements_per_claim: 4, num_positions_per_block: 2, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 1, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(9, 1), num_live_ring_elements_per_claim: 4, num_positions_per_block: 2, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 1, conservative_n_b: 1 }], steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 10, block_index_bits: 1, num_live_blocks: 2, n_a: 2, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 8, n_a: 2, n_b: 1, n_d: 1 }),
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(18, 2), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(9, 1), num_live_ring_elements_per_claim: 4, num_positions_per_block: 2, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 1, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(9, 1), num_live_ring_elements_per_claim: 4, num_positions_per_block: 2, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 1, conservative_n_b: 1 }], steps: &[
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 5, position_index_bits: 9, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 4, num_live_blocks: 9, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 5, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
@@ -224,16 +224,16 @@ pub(crate) static FP128_D128_ONEHOT_SCHEDULES: &[GeneratedScheduleTableEntry] = 
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 5, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(18, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(9, 1), num_live_ring_elements_per_claim: 4, num_positions_per_block: 2, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 1, conservative_n_b: 1 }], steps: &[
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(18, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(9, 1), num_live_ring_elements_per_claim: 4, num_positions_per_block: 2, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 1, conservative_n_b: 1 }], steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 9, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 4, num_live_blocks: 12, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 6, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(18, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(9, 1), num_live_ring_elements_per_claim: 4, num_positions_per_block: 2, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 1, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(9, 1), num_live_ring_elements_per_claim: 4, num_positions_per_block: 2, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 1, conservative_n_b: 1 }], steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 5, position_index_bits: 9, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 4, num_live_blocks: 12, n_a: 2, n_b: 1, n_d: 1 }),
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(18, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(9, 1), num_live_ring_elements_per_claim: 4, num_positions_per_block: 2, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 1, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(9, 1), num_live_ring_elements_per_claim: 4, num_positions_per_block: 2, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 1, conservative_n_b: 1 }], steps: &[
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 9, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 4, num_live_blocks: 13, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 6, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
@@ -244,28 +244,28 @@ pub(crate) static FP128_D128_ONEHOT_SCHEDULES: &[GeneratedScheduleTableEntry] = 
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(19, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(9, 1), num_live_ring_elements_per_claim: 4, num_positions_per_block: 2, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 1, conservative_n_b: 1 }], steps: &[
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(19, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(9, 1), num_live_ring_elements_per_claim: 4, num_positions_per_block: 2, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 1, conservative_n_b: 1 }], steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 9, block_index_bits: 3, num_live_blocks: 8, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 4, num_live_blocks: 9, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 5, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(19, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(9, 1), num_live_ring_elements_per_claim: 4, num_positions_per_block: 2, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 1, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(9, 1), num_live_ring_elements_per_claim: 4, num_positions_per_block: 2, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 1, conservative_n_b: 1 }], steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 10, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 8, n_a: 2, n_b: 1, n_d: 1 }),
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(19, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(9, 1), num_live_ring_elements_per_claim: 4, num_positions_per_block: 2, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 1, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(9, 1), num_live_ring_elements_per_claim: 4, num_positions_per_block: 2, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 1, conservative_n_b: 1 }], steps: &[
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 5, position_index_bits: 9, block_index_bits: 3, num_live_blocks: 8, n_a: 2, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 4, num_live_blocks: 9, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 5, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(19, 2), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(9, 1), num_live_ring_elements_per_claim: 4, num_positions_per_block: 2, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 1, conservative_n_b: 1 }], steps: &[
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(19, 2), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(9, 1), num_live_ring_elements_per_claim: 4, num_positions_per_block: 2, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 1, conservative_n_b: 1 }], steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 9, block_index_bits: 3, num_live_blocks: 8, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 4, num_live_blocks: 12, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 6, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(19, 2), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(9, 1), num_live_ring_elements_per_claim: 4, num_positions_per_block: 2, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 1, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(9, 1), num_live_ring_elements_per_claim: 4, num_positions_per_block: 2, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 1, conservative_n_b: 1 }], steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 5, position_index_bits: 9, block_index_bits: 3, num_live_blocks: 8, n_a: 2, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 4, num_live_blocks: 12, n_a: 2, n_b: 1, n_d: 1 }),
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(19, 2), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(9, 1), num_live_ring_elements_per_claim: 4, num_positions_per_block: 2, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 1, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(9, 1), num_live_ring_elements_per_claim: 4, num_positions_per_block: 2, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 1, conservative_n_b: 1 }], steps: &[
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 9, block_index_bits: 3, num_live_blocks: 8, n_a: 2, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 4, num_live_blocks: 13, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 6, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
@@ -277,7 +277,7 @@ pub(crate) static FP128_D128_ONEHOT_SCHEDULES: &[GeneratedScheduleTableEntry] = 
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(19, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(9, 1), num_live_ring_elements_per_claim: 4, num_positions_per_block: 2, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 1, conservative_n_b: 1 }], steps: &[
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(19, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(9, 1), num_live_ring_elements_per_claim: 4, num_positions_per_block: 2, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 1, conservative_n_b: 1 }], steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 10, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 9, block_index_bits: 4, num_live_blocks: 12, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 4, num_live_blocks: 13, n_a: 2, n_b: 1, n_d: 1 }),
@@ -285,7 +285,7 @@ pub(crate) static FP128_D128_ONEHOT_SCHEDULES: &[GeneratedScheduleTableEntry] = 
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(19, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(9, 1), num_live_ring_elements_per_claim: 4, num_positions_per_block: 2, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 1, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(9, 1), num_live_ring_elements_per_claim: 4, num_positions_per_block: 2, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 1, conservative_n_b: 1 }], steps: &[
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(19, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(9, 1), num_live_ring_elements_per_claim: 4, num_positions_per_block: 2, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 1, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(9, 1), num_live_ring_elements_per_claim: 4, num_positions_per_block: 2, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 1, conservative_n_b: 1 }], steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 10, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 9, block_index_bits: 4, num_live_blocks: 12, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 4, num_live_blocks: 13, n_a: 2, n_b: 1, n_d: 1 }),
@@ -299,21 +299,21 @@ pub(crate) static FP128_D128_ONEHOT_SCHEDULES: &[GeneratedScheduleTableEntry] = 
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 5, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(20, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(10, 1), num_live_ring_elements_per_claim: 8, num_positions_per_block: 4, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 1, conservative_n_b: 1 }], steps: &[
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(20, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(10, 1), num_live_ring_elements_per_claim: 8, num_positions_per_block: 4, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 1, conservative_n_b: 1 }], steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 9, block_index_bits: 4, num_live_blocks: 16, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 4, num_live_blocks: 12, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 6, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(20, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(10, 1), num_live_ring_elements_per_claim: 8, num_positions_per_block: 4, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 1, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(10, 1), num_live_ring_elements_per_claim: 8, num_positions_per_block: 4, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 1, conservative_n_b: 1 }], steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 5, position_index_bits: 9, block_index_bits: 4, num_live_blocks: 16, n_a: 2, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 4, num_live_blocks: 12, n_a: 2, n_b: 1, n_d: 1 }),
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(20, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(10, 1), num_live_ring_elements_per_claim: 8, num_positions_per_block: 4, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 1, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(10, 1), num_live_ring_elements_per_claim: 8, num_positions_per_block: 4, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 1, conservative_n_b: 1 }], steps: &[
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 9, block_index_bits: 4, num_live_blocks: 16, n_a: 2, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 4, num_live_blocks: 13, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 6, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(20, 2), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(10, 1), num_live_ring_elements_per_claim: 8, num_positions_per_block: 4, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 1, conservative_n_b: 1 }], steps: &[
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(20, 2), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(10, 1), num_live_ring_elements_per_claim: 8, num_positions_per_block: 4, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 1, conservative_n_b: 1 }], steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 10, block_index_bits: 3, num_live_blocks: 8, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 9, block_index_bits: 4, num_live_blocks: 12, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 4, num_live_blocks: 13, n_a: 2, n_b: 1, n_d: 1 }),
@@ -321,7 +321,7 @@ pub(crate) static FP128_D128_ONEHOT_SCHEDULES: &[GeneratedScheduleTableEntry] = 
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(20, 2), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(10, 1), num_live_ring_elements_per_claim: 8, num_positions_per_block: 4, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 1, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(10, 1), num_live_ring_elements_per_claim: 8, num_positions_per_block: 4, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 1, conservative_n_b: 1 }], steps: &[
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(20, 2), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(10, 1), num_live_ring_elements_per_claim: 8, num_positions_per_block: 4, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 1, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(10, 1), num_live_ring_elements_per_claim: 8, num_positions_per_block: 4, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 1, conservative_n_b: 1 }], steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 10, block_index_bits: 3, num_live_blocks: 8, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 9, block_index_bits: 4, num_live_blocks: 12, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 4, num_live_blocks: 13, n_a: 2, n_b: 1, n_d: 1 }),
@@ -336,14 +336,14 @@ pub(crate) static FP128_D128_ONEHOT_SCHEDULES: &[GeneratedScheduleTableEntry] = 
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 5, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(20, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(10, 1), num_live_ring_elements_per_claim: 8, num_positions_per_block: 4, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 1, conservative_n_b: 1 }], steps: &[
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(20, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(10, 1), num_live_ring_elements_per_claim: 8, num_positions_per_block: 4, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 1, conservative_n_b: 1 }], steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 10, block_index_bits: 3, num_live_blocks: 8, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 9, block_index_bits: 4, num_live_blocks: 16, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 4, num_live_blocks: 9, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 5, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(20, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(10, 1), num_live_ring_elements_per_claim: 8, num_positions_per_block: 4, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 1, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(10, 1), num_live_ring_elements_per_claim: 8, num_positions_per_block: 4, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 1, conservative_n_b: 1 }], steps: &[
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(20, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(10, 1), num_live_ring_elements_per_claim: 8, num_positions_per_block: 4, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 1, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(10, 1), num_live_ring_elements_per_claim: 8, num_positions_per_block: 4, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 1, conservative_n_b: 1 }], steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 10, block_index_bits: 3, num_live_blocks: 8, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 9, block_index_bits: 4, num_live_blocks: 16, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 4, num_live_blocks: 9, n_a: 2, n_b: 1, n_d: 1 }),
@@ -357,7 +357,7 @@ pub(crate) static FP128_D128_ONEHOT_SCHEDULES: &[GeneratedScheduleTableEntry] = 
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(21, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(10, 1), num_live_ring_elements_per_claim: 8, num_positions_per_block: 4, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 1, conservative_n_b: 1 }], steps: &[
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(21, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(10, 1), num_live_ring_elements_per_claim: 8, num_positions_per_block: 4, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 1, conservative_n_b: 1 }], steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 10, block_index_bits: 4, num_live_blocks: 16, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 9, block_index_bits: 4, num_live_blocks: 12, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 4, num_live_blocks: 13, n_a: 2, n_b: 1, n_d: 1 }),
@@ -365,7 +365,7 @@ pub(crate) static FP128_D128_ONEHOT_SCHEDULES: &[GeneratedScheduleTableEntry] = 
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(21, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(10, 1), num_live_ring_elements_per_claim: 8, num_positions_per_block: 4, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 1, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(10, 1), num_live_ring_elements_per_claim: 8, num_positions_per_block: 4, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 1, conservative_n_b: 1 }], steps: &[
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(21, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(10, 1), num_live_ring_elements_per_claim: 8, num_positions_per_block: 4, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 1, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(10, 1), num_live_ring_elements_per_claim: 8, num_positions_per_block: 4, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 1, conservative_n_b: 1 }], steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 10, block_index_bits: 4, num_live_blocks: 16, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 9, block_index_bits: 4, num_live_blocks: 12, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 4, num_live_blocks: 13, n_a: 2, n_b: 1, n_d: 1 }),
@@ -373,14 +373,14 @@ pub(crate) static FP128_D128_ONEHOT_SCHEDULES: &[GeneratedScheduleTableEntry] = 
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(21, 2), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(10, 1), num_live_ring_elements_per_claim: 8, num_positions_per_block: 4, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 1, conservative_n_b: 1 }], steps: &[
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(21, 2), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(10, 1), num_live_ring_elements_per_claim: 8, num_positions_per_block: 4, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 1, conservative_n_b: 1 }], steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 10, block_index_bits: 4, num_live_blocks: 16, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 9, block_index_bits: 4, num_live_blocks: 16, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 4, num_live_blocks: 9, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 5, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(21, 2), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(10, 1), num_live_ring_elements_per_claim: 8, num_positions_per_block: 4, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 1, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(10, 1), num_live_ring_elements_per_claim: 8, num_positions_per_block: 4, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 1, conservative_n_b: 1 }], steps: &[
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(21, 2), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(10, 1), num_live_ring_elements_per_claim: 8, num_positions_per_block: 4, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 1, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(10, 1), num_live_ring_elements_per_claim: 8, num_positions_per_block: 4, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 1, conservative_n_b: 1 }], steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 10, block_index_bits: 4, num_live_blocks: 16, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 9, block_index_bits: 4, num_live_blocks: 16, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 4, num_live_blocks: 9, n_a: 2, n_b: 1, n_d: 1 }),
@@ -394,14 +394,14 @@ pub(crate) static FP128_D128_ONEHOT_SCHEDULES: &[GeneratedScheduleTableEntry] = 
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 5, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(21, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(10, 1), num_live_ring_elements_per_claim: 8, num_positions_per_block: 4, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 1, conservative_n_b: 1 }], steps: &[
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(21, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(10, 1), num_live_ring_elements_per_claim: 8, num_positions_per_block: 4, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 1, conservative_n_b: 1 }], steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 11, block_index_bits: 3, num_live_blocks: 8, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 9, block_index_bits: 4, num_live_blocks: 15, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 4, num_live_blocks: 9, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 5, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(21, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(10, 1), num_live_ring_elements_per_claim: 8, num_positions_per_block: 4, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 1, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(10, 1), num_live_ring_elements_per_claim: 8, num_positions_per_block: 4, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 1, conservative_n_b: 1 }], steps: &[
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(21, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(10, 1), num_live_ring_elements_per_claim: 8, num_positions_per_block: 4, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 1, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(10, 1), num_live_ring_elements_per_claim: 8, num_positions_per_block: 4, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 1, conservative_n_b: 1 }], steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 11, block_index_bits: 3, num_live_blocks: 8, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 9, block_index_bits: 4, num_live_blocks: 16, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 4, num_live_blocks: 9, n_a: 2, n_b: 1, n_d: 1 }),
@@ -415,28 +415,28 @@ pub(crate) static FP128_D128_ONEHOT_SCHEDULES: &[GeneratedScheduleTableEntry] = 
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 5, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(22, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(11, 1), num_live_ring_elements_per_claim: 16, num_positions_per_block: 8, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 1, conservative_n_b: 1 }], steps: &[
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(22, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(11, 1), num_live_ring_elements_per_claim: 16, num_positions_per_block: 8, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 1, conservative_n_b: 1 }], steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 10, block_index_bits: 5, num_live_blocks: 32, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 9, block_index_bits: 4, num_live_blocks: 16, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 4, num_live_blocks: 9, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 5, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(22, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(11, 1), num_live_ring_elements_per_claim: 16, num_positions_per_block: 8, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 1, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(11, 1), num_live_ring_elements_per_claim: 16, num_positions_per_block: 8, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 1, conservative_n_b: 1 }], steps: &[
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(22, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(11, 1), num_live_ring_elements_per_claim: 16, num_positions_per_block: 8, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 1, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(11, 1), num_live_ring_elements_per_claim: 16, num_positions_per_block: 8, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 1, conservative_n_b: 1 }], steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 10, block_index_bits: 5, num_live_blocks: 32, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 9, block_index_bits: 4, num_live_blocks: 16, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 4, num_live_blocks: 9, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 5, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(22, 2), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(11, 1), num_live_ring_elements_per_claim: 16, num_positions_per_block: 8, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 1, conservative_n_b: 1 }], steps: &[
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(22, 2), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(11, 1), num_live_ring_elements_per_claim: 16, num_positions_per_block: 8, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 1, conservative_n_b: 1 }], steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 11, block_index_bits: 4, num_live_blocks: 16, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 9, block_index_bits: 4, num_live_blocks: 15, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 4, num_live_blocks: 9, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 5, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(22, 2), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(11, 1), num_live_ring_elements_per_claim: 16, num_positions_per_block: 8, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 1, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(11, 1), num_live_ring_elements_per_claim: 16, num_positions_per_block: 8, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 1, conservative_n_b: 1 }], steps: &[
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(22, 2), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(11, 1), num_live_ring_elements_per_claim: 16, num_positions_per_block: 8, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 1, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(11, 1), num_live_ring_elements_per_claim: 16, num_positions_per_block: 8, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 1, conservative_n_b: 1 }], steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 11, block_index_bits: 4, num_live_blocks: 16, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 9, block_index_bits: 4, num_live_blocks: 16, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 4, num_live_blocks: 9, n_a: 2, n_b: 1, n_d: 1 }),
@@ -451,7 +451,7 @@ pub(crate) static FP128_D128_ONEHOT_SCHEDULES: &[GeneratedScheduleTableEntry] = 
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(22, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(11, 1), num_live_ring_elements_per_claim: 16, num_positions_per_block: 8, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 1, conservative_n_b: 1 }], steps: &[
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(22, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(11, 1), num_live_ring_elements_per_claim: 16, num_positions_per_block: 8, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 1, conservative_n_b: 1 }], steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 11, block_index_bits: 4, num_live_blocks: 16, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 10, block_index_bits: 4, num_live_blocks: 15, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 4, num_live_blocks: 13, n_a: 2, n_b: 1, n_d: 1 }),
@@ -459,7 +459,7 @@ pub(crate) static FP128_D128_ONEHOT_SCHEDULES: &[GeneratedScheduleTableEntry] = 
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(22, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(11, 1), num_live_ring_elements_per_claim: 16, num_positions_per_block: 8, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 1, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(11, 1), num_live_ring_elements_per_claim: 16, num_positions_per_block: 8, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 1, conservative_n_b: 1 }], steps: &[
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(22, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(11, 1), num_live_ring_elements_per_claim: 16, num_positions_per_block: 8, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 1, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(11, 1), num_live_ring_elements_per_claim: 16, num_positions_per_block: 8, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 1, conservative_n_b: 1 }], steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 11, block_index_bits: 4, num_live_blocks: 16, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 10, block_index_bits: 4, num_live_blocks: 15, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 4, num_live_blocks: 13, n_a: 2, n_b: 1, n_d: 1 }),
@@ -474,21 +474,21 @@ pub(crate) static FP128_D128_ONEHOT_SCHEDULES: &[GeneratedScheduleTableEntry] = 
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 5, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(23, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(11, 1), num_live_ring_elements_per_claim: 16, num_positions_per_block: 8, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 1, conservative_n_b: 1 }], steps: &[
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(23, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(11, 1), num_live_ring_elements_per_claim: 16, num_positions_per_block: 8, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 1, conservative_n_b: 1 }], steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 11, block_index_bits: 5, num_live_blocks: 32, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 9, block_index_bits: 4, num_live_blocks: 15, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 4, num_live_blocks: 9, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 5, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(23, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(11, 1), num_live_ring_elements_per_claim: 16, num_positions_per_block: 8, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 1, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(11, 1), num_live_ring_elements_per_claim: 16, num_positions_per_block: 8, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 1, conservative_n_b: 1 }], steps: &[
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(23, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(11, 1), num_live_ring_elements_per_claim: 16, num_positions_per_block: 8, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 1, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(11, 1), num_live_ring_elements_per_claim: 16, num_positions_per_block: 8, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 1, conservative_n_b: 1 }], steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 11, block_index_bits: 5, num_live_blocks: 32, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 9, block_index_bits: 4, num_live_blocks: 16, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 4, num_live_blocks: 9, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 5, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(23, 2), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(11, 1), num_live_ring_elements_per_claim: 16, num_positions_per_block: 8, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 1, conservative_n_b: 1 }], steps: &[
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(23, 2), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(11, 1), num_live_ring_elements_per_claim: 16, num_positions_per_block: 8, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 1, conservative_n_b: 1 }], steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 11, block_index_bits: 5, num_live_blocks: 32, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 10, block_index_bits: 4, num_live_blocks: 15, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 4, num_live_blocks: 13, n_a: 2, n_b: 1, n_d: 1 }),
@@ -496,7 +496,7 @@ pub(crate) static FP128_D128_ONEHOT_SCHEDULES: &[GeneratedScheduleTableEntry] = 
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(23, 2), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(11, 1), num_live_ring_elements_per_claim: 16, num_positions_per_block: 8, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 1, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(11, 1), num_live_ring_elements_per_claim: 16, num_positions_per_block: 8, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 1, conservative_n_b: 1 }], steps: &[
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(23, 2), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(11, 1), num_live_ring_elements_per_claim: 16, num_positions_per_block: 8, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 1, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(11, 1), num_live_ring_elements_per_claim: 16, num_positions_per_block: 8, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 1, conservative_n_b: 1 }], steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 11, block_index_bits: 5, num_live_blocks: 32, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 10, block_index_bits: 4, num_live_blocks: 15, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 4, num_live_blocks: 13, n_a: 2, n_b: 1, n_d: 1 }),
@@ -505,24 +505,24 @@ pub(crate) static FP128_D128_ONEHOT_SCHEDULES: &[GeneratedScheduleTableEntry] = 
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
     GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(23, 4), precommitteds: &[], steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 5, position_index_bits: 11, block_index_bits: 5, num_live_blocks: 32, n_a: 2, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 5, position_index_bits: 12, block_index_bits: 4, num_live_blocks: 16, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 10, block_index_bits: 4, num_live_blocks: 14, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 4, num_live_blocks: 13, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 6, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(23, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(11, 1), num_live_ring_elements_per_claim: 16, num_positions_per_block: 8, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 1, conservative_n_b: 1 }], steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 5, position_index_bits: 11, block_index_bits: 5, num_live_blocks: 32, n_a: 2, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 10, block_index_bits: 4, num_live_blocks: 15, n_a: 2, n_b: 1, n_d: 1 }),
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(23, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(11, 1), num_live_ring_elements_per_claim: 16, num_positions_per_block: 8, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 1, conservative_n_b: 1 }], steps: &[
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 5, position_index_bits: 12, block_index_bits: 4, num_live_blocks: 16, n_a: 2, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 10, block_index_bits: 4, num_live_blocks: 14, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 4, num_live_blocks: 13, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 6, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(23, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(11, 1), num_live_ring_elements_per_claim: 16, num_positions_per_block: 8, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 1, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(11, 1), num_live_ring_elements_per_claim: 16, num_positions_per_block: 8, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 1, conservative_n_b: 1 }], steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 5, position_index_bits: 11, block_index_bits: 5, num_live_blocks: 32, n_a: 2, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 10, block_index_bits: 4, num_live_blocks: 15, n_a: 2, n_b: 1, n_d: 1 }),
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(23, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(11, 1), num_live_ring_elements_per_claim: 16, num_positions_per_block: 8, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 1, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(11, 1), num_live_ring_elements_per_claim: 16, num_positions_per_block: 8, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 1, conservative_n_b: 1 }], steps: &[
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 5, position_index_bits: 12, block_index_bits: 4, num_live_blocks: 16, n_a: 2, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 10, block_index_bits: 4, num_live_blocks: 14, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 4, num_live_blocks: 13, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 6, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
@@ -536,7 +536,7 @@ pub(crate) static FP128_D128_ONEHOT_SCHEDULES: &[GeneratedScheduleTableEntry] = 
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(24, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(12, 1), num_live_ring_elements_per_claim: 32, num_positions_per_block: 16, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(24, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(12, 1), num_live_ring_elements_per_claim: 32, num_positions_per_block: 16, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 11, block_index_bits: 6, num_live_blocks: 64, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 10, block_index_bits: 4, num_live_blocks: 15, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 4, num_live_blocks: 13, n_a: 2, n_b: 1, n_d: 1 }),
@@ -544,7 +544,7 @@ pub(crate) static FP128_D128_ONEHOT_SCHEDULES: &[GeneratedScheduleTableEntry] = 
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(24, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(12, 1), num_live_ring_elements_per_claim: 32, num_positions_per_block: 16, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(12, 1), num_live_ring_elements_per_claim: 32, num_positions_per_block: 16, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(24, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(12, 1), num_live_ring_elements_per_claim: 32, num_positions_per_block: 16, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(12, 1), num_live_ring_elements_per_claim: 32, num_positions_per_block: 16, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 11, block_index_bits: 6, num_live_blocks: 64, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 10, block_index_bits: 4, num_live_blocks: 16, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 4, num_live_blocks: 13, n_a: 2, n_b: 1, n_d: 1 }),
@@ -552,146 +552,146 @@ pub(crate) static FP128_D128_ONEHOT_SCHEDULES: &[GeneratedScheduleTableEntry] = 
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(24, 2), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(12, 1), num_live_ring_elements_per_claim: 32, num_positions_per_block: 16, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 5, position_index_bits: 11, block_index_bits: 6, num_live_blocks: 64, n_a: 2, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 10, block_index_bits: 4, num_live_blocks: 15, n_a: 2, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 4, num_live_blocks: 13, n_a: 2, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 6, n_a: 2, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
-        GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
-    ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(24, 2), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(12, 1), num_live_ring_elements_per_claim: 32, num_positions_per_block: 16, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(12, 1), num_live_ring_elements_per_claim: 32, num_positions_per_block: 16, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 5, position_index_bits: 11, block_index_bits: 6, num_live_blocks: 64, n_a: 2, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 10, block_index_bits: 4, num_live_blocks: 15, n_a: 2, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 4, num_live_blocks: 13, n_a: 2, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 6, n_a: 2, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
-        GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
-    ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(24, 4), precommitteds: &[], steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 12, block_index_bits: 5, num_live_blocks: 32, n_a: 2, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 10, block_index_bits: 5, num_live_blocks: 29, n_a: 3, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 9, block_index_bits: 4, num_live_blocks: 14, n_a: 2, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 4, num_live_blocks: 9, n_a: 2, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 5, n_a: 2, n_b: 1, n_d: 1 }),
-        GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
-    ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(24, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(12, 1), num_live_ring_elements_per_claim: 32, num_positions_per_block: 16, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 12, block_index_bits: 5, num_live_blocks: 32, n_a: 2, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 10, block_index_bits: 5, num_live_blocks: 29, n_a: 3, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 9, block_index_bits: 4, num_live_blocks: 14, n_a: 2, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 4, num_live_blocks: 9, n_a: 2, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 5, n_a: 2, n_b: 1, n_d: 1 }),
-        GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
-    ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(24, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(12, 1), num_live_ring_elements_per_claim: 32, num_positions_per_block: 16, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(12, 1), num_live_ring_elements_per_claim: 32, num_positions_per_block: 16, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 12, block_index_bits: 5, num_live_blocks: 32, n_a: 2, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 10, block_index_bits: 5, num_live_blocks: 30, n_a: 3, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 9, block_index_bits: 4, num_live_blocks: 14, n_a: 2, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 4, num_live_blocks: 9, n_a: 2, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 5, n_a: 2, n_b: 1, n_d: 1 }),
-        GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
-    ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(25, 1), precommitteds: &[], steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 5, position_index_bits: 11, block_index_bits: 7, num_live_blocks: 128, n_a: 2, n_b: 1, n_d: 1 }),
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(24, 2), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(12, 1), num_live_ring_elements_per_claim: 32, num_positions_per_block: 16, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 5, position_index_bits: 12, block_index_bits: 5, num_live_blocks: 32, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 10, block_index_bits: 4, num_live_blocks: 14, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 4, num_live_blocks: 13, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 6, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(25, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(12, 1), num_live_ring_elements_per_claim: 32, num_positions_per_block: 16, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 5, position_index_bits: 11, block_index_bits: 7, num_live_blocks: 128, n_a: 2, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 10, block_index_bits: 4, num_live_blocks: 15, n_a: 2, n_b: 1, n_d: 1 }),
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(24, 2), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(12, 1), num_live_ring_elements_per_claim: 32, num_positions_per_block: 16, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(12, 1), num_live_ring_elements_per_claim: 32, num_positions_per_block: 16, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 5, position_index_bits: 12, block_index_bits: 5, num_live_blocks: 32, n_a: 2, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 10, block_index_bits: 4, num_live_blocks: 14, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 4, num_live_blocks: 13, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 6, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(25, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(12, 1), num_live_ring_elements_per_claim: 32, num_positions_per_block: 16, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(12, 1), num_live_ring_elements_per_claim: 32, num_positions_per_block: 16, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 5, position_index_bits: 11, block_index_bits: 7, num_live_blocks: 128, n_a: 2, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 10, block_index_bits: 4, num_live_blocks: 15, n_a: 2, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 4, num_live_blocks: 13, n_a: 2, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 6, n_a: 2, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
-        GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
-    ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(25, 2), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(12, 1), num_live_ring_elements_per_claim: 32, num_positions_per_block: 16, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 12, block_index_bits: 6, num_live_blocks: 64, n_a: 2, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 10, block_index_bits: 5, num_live_blocks: 29, n_a: 3, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 9, block_index_bits: 4, num_live_blocks: 14, n_a: 2, n_b: 1, n_d: 1 }),
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(24, 4), precommitteds: &[], steps: &[
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 12, block_index_bits: 5, num_live_blocks: 32, n_a: 3, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 10, block_index_bits: 6, num_live_blocks: 34, n_a: 3, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 9, block_index_bits: 4, num_live_blocks: 15, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 4, num_live_blocks: 9, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 5, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(25, 2), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(12, 1), num_live_ring_elements_per_claim: 32, num_positions_per_block: 16, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(12, 1), num_live_ring_elements_per_claim: 32, num_positions_per_block: 16, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 12, block_index_bits: 6, num_live_blocks: 64, n_a: 2, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 10, block_index_bits: 5, num_live_blocks: 30, n_a: 3, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 9, block_index_bits: 4, num_live_blocks: 14, n_a: 2, n_b: 1, n_d: 1 }),
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(24, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(12, 1), num_live_ring_elements_per_claim: 32, num_positions_per_block: 16, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 12, block_index_bits: 5, num_live_blocks: 32, n_a: 3, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 10, block_index_bits: 6, num_live_blocks: 35, n_a: 3, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 9, block_index_bits: 4, num_live_blocks: 16, n_a: 2, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 4, num_live_blocks: 9, n_a: 2, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 5, n_a: 2, n_b: 1, n_d: 1 }),
+        GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
+    ] },
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(24, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(12, 1), num_live_ring_elements_per_claim: 32, num_positions_per_block: 16, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(12, 1), num_live_ring_elements_per_claim: 32, num_positions_per_block: 16, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 12, block_index_bits: 5, num_live_blocks: 32, n_a: 3, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 10, block_index_bits: 6, num_live_blocks: 35, n_a: 3, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 9, block_index_bits: 4, num_live_blocks: 16, n_a: 2, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 4, num_live_blocks: 9, n_a: 2, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 5, n_a: 2, n_b: 1, n_d: 1 }),
+        GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
+    ] },
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(25, 1), precommitteds: &[], steps: &[
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 5, position_index_bits: 12, block_index_bits: 6, num_live_blocks: 64, n_a: 2, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 10, block_index_bits: 4, num_live_blocks: 14, n_a: 2, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 4, num_live_blocks: 13, n_a: 2, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 6, n_a: 2, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
+        GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
+    ] },
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(25, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(12, 1), num_live_ring_elements_per_claim: 32, num_positions_per_block: 16, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 5, position_index_bits: 12, block_index_bits: 6, num_live_blocks: 64, n_a: 2, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 10, block_index_bits: 4, num_live_blocks: 14, n_a: 2, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 4, num_live_blocks: 13, n_a: 2, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 6, n_a: 2, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
+        GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
+    ] },
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(25, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(12, 1), num_live_ring_elements_per_claim: 32, num_positions_per_block: 16, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(12, 1), num_live_ring_elements_per_claim: 32, num_positions_per_block: 16, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 5, position_index_bits: 12, block_index_bits: 6, num_live_blocks: 64, n_a: 2, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 10, block_index_bits: 4, num_live_blocks: 14, n_a: 2, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 4, num_live_blocks: 13, n_a: 2, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 6, n_a: 2, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
+        GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
+    ] },
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(25, 2), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(12, 1), num_live_ring_elements_per_claim: 32, num_positions_per_block: 16, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 12, block_index_bits: 6, num_live_blocks: 64, n_a: 3, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 10, block_index_bits: 6, num_live_blocks: 35, n_a: 3, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 9, block_index_bits: 4, num_live_blocks: 16, n_a: 2, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 4, num_live_blocks: 9, n_a: 2, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 5, n_a: 2, n_b: 1, n_d: 1 }),
+        GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
+    ] },
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(25, 2), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(12, 1), num_live_ring_elements_per_claim: 32, num_positions_per_block: 16, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(12, 1), num_live_ring_elements_per_claim: 32, num_positions_per_block: 16, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 12, block_index_bits: 6, num_live_blocks: 64, n_a: 3, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 10, block_index_bits: 6, num_live_blocks: 35, n_a: 3, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 9, block_index_bits: 4, num_live_blocks: 16, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 4, num_live_blocks: 9, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 5, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
     GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(25, 4), precommitteds: &[], steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 13, block_index_bits: 5, num_live_blocks: 32, n_a: 2, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 10, block_index_bits: 6, num_live_blocks: 41, n_a: 3, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 9, block_index_bits: 5, num_live_blocks: 17, n_a: 2, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 13, block_index_bits: 5, num_live_blocks: 32, n_a: 3, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 5, position_index_bits: 10, block_index_bits: 6, num_live_blocks: 46, n_a: 3, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 9, block_index_bits: 4, num_live_blocks: 16, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 4, num_live_blocks: 9, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 5, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(25, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(12, 1), num_live_ring_elements_per_claim: 32, num_positions_per_block: 16, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 13, block_index_bits: 5, num_live_blocks: 32, n_a: 2, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 10, block_index_bits: 6, num_live_blocks: 41, n_a: 3, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 9, block_index_bits: 5, num_live_blocks: 17, n_a: 2, n_b: 1, n_d: 1 }),
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(25, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(12, 1), num_live_ring_elements_per_claim: 32, num_positions_per_block: 16, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 13, block_index_bits: 5, num_live_blocks: 32, n_a: 3, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 5, position_index_bits: 10, block_index_bits: 6, num_live_blocks: 47, n_a: 3, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 9, block_index_bits: 4, num_live_blocks: 16, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 4, num_live_blocks: 9, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 5, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(25, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(12, 1), num_live_ring_elements_per_claim: 32, num_positions_per_block: 16, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(12, 1), num_live_ring_elements_per_claim: 32, num_positions_per_block: 16, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 13, block_index_bits: 5, num_live_blocks: 32, n_a: 2, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 10, block_index_bits: 6, num_live_blocks: 42, n_a: 3, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 9, block_index_bits: 5, num_live_blocks: 17, n_a: 2, n_b: 1, n_d: 1 }),
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(25, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(12, 1), num_live_ring_elements_per_claim: 32, num_positions_per_block: 16, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(12, 1), num_live_ring_elements_per_claim: 32, num_positions_per_block: 16, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 13, block_index_bits: 5, num_live_blocks: 32, n_a: 3, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 5, position_index_bits: 10, block_index_bits: 6, num_live_blocks: 47, n_a: 3, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 9, block_index_bits: 4, num_live_blocks: 16, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 4, num_live_blocks: 9, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 5, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
     GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(26, 1), precommitteds: &[], steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 12, block_index_bits: 7, num_live_blocks: 128, n_a: 2, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 10, block_index_bits: 5, num_live_blocks: 29, n_a: 3, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 9, block_index_bits: 4, num_live_blocks: 14, n_a: 2, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 12, block_index_bits: 7, num_live_blocks: 128, n_a: 3, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 10, block_index_bits: 6, num_live_blocks: 34, n_a: 3, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 9, block_index_bits: 4, num_live_blocks: 15, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 4, num_live_blocks: 9, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 5, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(26, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(13, 1), num_live_ring_elements_per_claim: 64, num_positions_per_block: 32, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 12, block_index_bits: 7, num_live_blocks: 128, n_a: 2, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 10, block_index_bits: 5, num_live_blocks: 29, n_a: 3, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 9, block_index_bits: 4, num_live_blocks: 14, n_a: 2, n_b: 1, n_d: 1 }),
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(26, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(13, 1), num_live_ring_elements_per_claim: 64, num_positions_per_block: 32, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 12, block_index_bits: 7, num_live_blocks: 128, n_a: 3, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 10, block_index_bits: 6, num_live_blocks: 35, n_a: 3, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 9, block_index_bits: 4, num_live_blocks: 16, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 4, num_live_blocks: 9, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 5, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(26, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(13, 1), num_live_ring_elements_per_claim: 64, num_positions_per_block: 32, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(13, 1), num_live_ring_elements_per_claim: 64, num_positions_per_block: 32, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 12, block_index_bits: 7, num_live_blocks: 128, n_a: 2, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 10, block_index_bits: 5, num_live_blocks: 30, n_a: 3, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 9, block_index_bits: 4, num_live_blocks: 14, n_a: 2, n_b: 1, n_d: 1 }),
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(26, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(13, 1), num_live_ring_elements_per_claim: 64, num_positions_per_block: 32, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(13, 1), num_live_ring_elements_per_claim: 64, num_positions_per_block: 32, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 12, block_index_bits: 7, num_live_blocks: 128, n_a: 3, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 10, block_index_bits: 6, num_live_blocks: 35, n_a: 3, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 9, block_index_bits: 4, num_live_blocks: 16, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 4, num_live_blocks: 9, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 5, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(26, 2), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(13, 1), num_live_ring_elements_per_claim: 64, num_positions_per_block: 32, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 13, block_index_bits: 6, num_live_blocks: 64, n_a: 2, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 10, block_index_bits: 6, num_live_blocks: 41, n_a: 3, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 9, block_index_bits: 5, num_live_blocks: 17, n_a: 2, n_b: 1, n_d: 1 }),
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(26, 2), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(13, 1), num_live_ring_elements_per_claim: 64, num_positions_per_block: 32, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 13, block_index_bits: 6, num_live_blocks: 64, n_a: 3, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 5, position_index_bits: 10, block_index_bits: 6, num_live_blocks: 47, n_a: 3, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 9, block_index_bits: 4, num_live_blocks: 16, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 4, num_live_blocks: 9, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 5, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(26, 2), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(13, 1), num_live_ring_elements_per_claim: 64, num_positions_per_block: 32, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(13, 1), num_live_ring_elements_per_claim: 64, num_positions_per_block: 32, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 13, block_index_bits: 6, num_live_blocks: 64, n_a: 2, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 10, block_index_bits: 6, num_live_blocks: 42, n_a: 3, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 9, block_index_bits: 5, num_live_blocks: 17, n_a: 2, n_b: 1, n_d: 1 }),
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(26, 2), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(13, 1), num_live_ring_elements_per_claim: 64, num_positions_per_block: 32, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(13, 1), num_live_ring_elements_per_claim: 64, num_positions_per_block: 32, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 13, block_index_bits: 6, num_live_blocks: 64, n_a: 3, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 5, position_index_bits: 10, block_index_bits: 6, num_live_blocks: 47, n_a: 3, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 9, block_index_bits: 4, num_live_blocks: 16, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 4, num_live_blocks: 9, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 5, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
@@ -705,7 +705,7 @@ pub(crate) static FP128_D128_ONEHOT_SCHEDULES: &[GeneratedScheduleTableEntry] = 
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(26, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(13, 1), num_live_ring_elements_per_claim: 64, num_positions_per_block: 32, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(26, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(13, 1), num_live_ring_elements_per_claim: 64, num_positions_per_block: 32, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 13, block_index_bits: 6, num_live_blocks: 64, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 11, block_index_bits: 6, num_live_blocks: 38, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 10, block_index_bits: 4, num_live_blocks: 15, n_a: 2, n_b: 1, n_d: 1 }),
@@ -714,7 +714,7 @@ pub(crate) static FP128_D128_ONEHOT_SCHEDULES: &[GeneratedScheduleTableEntry] = 
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(26, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(13, 1), num_live_ring_elements_per_claim: 64, num_positions_per_block: 32, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(13, 1), num_live_ring_elements_per_claim: 64, num_positions_per_block: 32, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(26, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(13, 1), num_live_ring_elements_per_claim: 64, num_positions_per_block: 32, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(13, 1), num_live_ring_elements_per_claim: 64, num_positions_per_block: 32, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 13, block_index_bits: 6, num_live_blocks: 64, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 11, block_index_bits: 6, num_live_blocks: 39, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 10, block_index_bits: 4, num_live_blocks: 15, n_a: 2, n_b: 1, n_d: 1 }),
@@ -724,30 +724,30 @@ pub(crate) static FP128_D128_ONEHOT_SCHEDULES: &[GeneratedScheduleTableEntry] = 
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
     GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(27, 1), precommitteds: &[], steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 13, block_index_bits: 7, num_live_blocks: 128, n_a: 2, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 10, block_index_bits: 6, num_live_blocks: 41, n_a: 3, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 9, block_index_bits: 5, num_live_blocks: 17, n_a: 2, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 13, block_index_bits: 7, num_live_blocks: 128, n_a: 3, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 5, position_index_bits: 10, block_index_bits: 6, num_live_blocks: 46, n_a: 3, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 9, block_index_bits: 4, num_live_blocks: 16, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 4, num_live_blocks: 9, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 5, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(27, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(13, 1), num_live_ring_elements_per_claim: 64, num_positions_per_block: 32, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 13, block_index_bits: 7, num_live_blocks: 128, n_a: 2, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 10, block_index_bits: 6, num_live_blocks: 41, n_a: 3, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 9, block_index_bits: 5, num_live_blocks: 17, n_a: 2, n_b: 1, n_d: 1 }),
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(27, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(13, 1), num_live_ring_elements_per_claim: 64, num_positions_per_block: 32, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 13, block_index_bits: 7, num_live_blocks: 128, n_a: 3, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 5, position_index_bits: 10, block_index_bits: 6, num_live_blocks: 47, n_a: 3, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 9, block_index_bits: 4, num_live_blocks: 16, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 4, num_live_blocks: 9, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 5, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(27, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(13, 1), num_live_ring_elements_per_claim: 64, num_positions_per_block: 32, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(13, 1), num_live_ring_elements_per_claim: 64, num_positions_per_block: 32, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 13, block_index_bits: 7, num_live_blocks: 128, n_a: 2, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 10, block_index_bits: 6, num_live_blocks: 42, n_a: 3, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 9, block_index_bits: 5, num_live_blocks: 17, n_a: 2, n_b: 1, n_d: 1 }),
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(27, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(13, 1), num_live_ring_elements_per_claim: 64, num_positions_per_block: 32, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(13, 1), num_live_ring_elements_per_claim: 64, num_positions_per_block: 32, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 13, block_index_bits: 7, num_live_blocks: 128, n_a: 3, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 5, position_index_bits: 10, block_index_bits: 6, num_live_blocks: 47, n_a: 3, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 9, block_index_bits: 4, num_live_blocks: 16, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 4, num_live_blocks: 9, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 5, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(27, 2), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(13, 1), num_live_ring_elements_per_claim: 64, num_positions_per_block: 32, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(27, 2), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(13, 1), num_live_ring_elements_per_claim: 64, num_positions_per_block: 32, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 13, block_index_bits: 7, num_live_blocks: 128, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 11, block_index_bits: 6, num_live_blocks: 38, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 10, block_index_bits: 4, num_live_blocks: 15, n_a: 2, n_b: 1, n_d: 1 }),
@@ -756,7 +756,7 @@ pub(crate) static FP128_D128_ONEHOT_SCHEDULES: &[GeneratedScheduleTableEntry] = 
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(27, 2), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(13, 1), num_live_ring_elements_per_claim: 64, num_positions_per_block: 32, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(13, 1), num_live_ring_elements_per_claim: 64, num_positions_per_block: 32, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(27, 2), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(13, 1), num_live_ring_elements_per_claim: 64, num_positions_per_block: 32, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(13, 1), num_live_ring_elements_per_claim: 64, num_positions_per_block: 32, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 13, block_index_bits: 7, num_live_blocks: 128, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 11, block_index_bits: 6, num_live_blocks: 39, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 10, block_index_bits: 4, num_live_blocks: 15, n_a: 2, n_b: 1, n_d: 1 }),
@@ -774,7 +774,7 @@ pub(crate) static FP128_D128_ONEHOT_SCHEDULES: &[GeneratedScheduleTableEntry] = 
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(27, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(13, 1), num_live_ring_elements_per_claim: 64, num_positions_per_block: 32, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(27, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(13, 1), num_live_ring_elements_per_claim: 64, num_positions_per_block: 32, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 13, block_index_bits: 7, num_live_blocks: 128, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 11, block_index_bits: 6, num_live_blocks: 60, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 10, block_index_bits: 4, num_live_blocks: 14, n_a: 2, n_b: 1, n_d: 1 }),
@@ -783,7 +783,7 @@ pub(crate) static FP128_D128_ONEHOT_SCHEDULES: &[GeneratedScheduleTableEntry] = 
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(27, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(13, 1), num_live_ring_elements_per_claim: 64, num_positions_per_block: 32, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(13, 1), num_live_ring_elements_per_claim: 64, num_positions_per_block: 32, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(27, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(13, 1), num_live_ring_elements_per_claim: 64, num_positions_per_block: 32, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(13, 1), num_live_ring_elements_per_claim: 64, num_positions_per_block: 32, num_live_blocks: 2, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 13, block_index_bits: 7, num_live_blocks: 128, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 11, block_index_bits: 6, num_live_blocks: 60, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 10, block_index_bits: 4, num_live_blocks: 14, n_a: 2, n_b: 1, n_d: 1 }),
@@ -801,7 +801,7 @@ pub(crate) static FP128_D128_ONEHOT_SCHEDULES: &[GeneratedScheduleTableEntry] = 
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(28, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(14, 1), num_live_ring_elements_per_claim: 128, num_positions_per_block: 4, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 1, conservative_n_b: 1 }], steps: &[
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(28, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(14, 1), num_live_ring_elements_per_claim: 128, num_positions_per_block: 4, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 1, conservative_n_b: 1 }], steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 13, block_index_bits: 8, num_live_blocks: 256, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 11, block_index_bits: 6, num_live_blocks: 40, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 10, block_index_bits: 4, num_live_blocks: 15, n_a: 2, n_b: 1, n_d: 1 }),
@@ -810,7 +810,7 @@ pub(crate) static FP128_D128_ONEHOT_SCHEDULES: &[GeneratedScheduleTableEntry] = 
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(28, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(14, 1), num_live_ring_elements_per_claim: 128, num_positions_per_block: 4, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 1, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(14, 1), num_live_ring_elements_per_claim: 128, num_positions_per_block: 4, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 1, conservative_n_b: 1 }], steps: &[
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(28, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(14, 1), num_live_ring_elements_per_claim: 128, num_positions_per_block: 4, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 1, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(14, 1), num_live_ring_elements_per_claim: 128, num_positions_per_block: 4, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 1, conservative_n_b: 1 }], steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 13, block_index_bits: 8, num_live_blocks: 256, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 11, block_index_bits: 6, num_live_blocks: 42, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 10, block_index_bits: 4, num_live_blocks: 16, n_a: 2, n_b: 1, n_d: 1 }),
@@ -819,18 +819,18 @@ pub(crate) static FP128_D128_ONEHOT_SCHEDULES: &[GeneratedScheduleTableEntry] = 
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(28, 2), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(14, 1), num_live_ring_elements_per_claim: 128, num_positions_per_block: 4, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 1, conservative_n_b: 1 }], steps: &[
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(28, 2), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(14, 1), num_live_ring_elements_per_claim: 128, num_positions_per_block: 4, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 1, conservative_n_b: 1 }], steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 13, block_index_bits: 8, num_live_blocks: 256, n_a: 3, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 11, block_index_bits: 6, num_live_blocks: 62, n_a: 3, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 11, block_index_bits: 6, num_live_blocks: 61, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 10, block_index_bits: 4, num_live_blocks: 14, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 4, num_live_blocks: 13, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 6, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(28, 2), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(14, 1), num_live_ring_elements_per_claim: 128, num_positions_per_block: 4, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 1, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(14, 1), num_live_ring_elements_per_claim: 128, num_positions_per_block: 4, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 1, conservative_n_b: 1 }], steps: &[
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(28, 2), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(14, 1), num_live_ring_elements_per_claim: 128, num_positions_per_block: 4, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 1, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(14, 1), num_live_ring_elements_per_claim: 128, num_positions_per_block: 4, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 1, conservative_n_b: 1 }], steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 13, block_index_bits: 8, num_live_blocks: 256, n_a: 3, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 11, block_index_bits: 6, num_live_blocks: 64, n_a: 3, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 11, block_index_bits: 6, num_live_blocks: 63, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 10, block_index_bits: 4, num_live_blocks: 15, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 4, num_live_blocks: 13, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 6, n_a: 2, n_b: 1, n_d: 1 }),
@@ -846,18 +846,18 @@ pub(crate) static FP128_D128_ONEHOT_SCHEDULES: &[GeneratedScheduleTableEntry] = 
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(28, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(14, 1), num_live_ring_elements_per_claim: 128, num_positions_per_block: 4, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 1, conservative_n_b: 1 }], steps: &[
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(28, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(14, 1), num_live_ring_elements_per_claim: 128, num_positions_per_block: 4, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 1, conservative_n_b: 1 }], steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 14, block_index_bits: 7, num_live_blocks: 128, n_a: 3, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 11, block_index_bits: 7, num_live_blocks: 78, n_a: 3, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 11, block_index_bits: 7, num_live_blocks: 77, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 10, block_index_bits: 4, num_live_blocks: 16, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 4, num_live_blocks: 13, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 6, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(28, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(14, 1), num_live_ring_elements_per_claim: 128, num_positions_per_block: 4, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 1, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(14, 1), num_live_ring_elements_per_claim: 128, num_positions_per_block: 4, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 1, conservative_n_b: 1 }], steps: &[
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(28, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(14, 1), num_live_ring_elements_per_claim: 128, num_positions_per_block: 4, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 1, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(14, 1), num_live_ring_elements_per_claim: 128, num_positions_per_block: 4, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 1, conservative_n_b: 1 }], steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 14, block_index_bits: 7, num_live_blocks: 128, n_a: 3, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 11, block_index_bits: 7, num_live_blocks: 80, n_a: 3, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 11, block_index_bits: 7, num_live_blocks: 79, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 10, block_index_bits: 5, num_live_blocks: 17, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 4, num_live_blocks: 13, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 6, n_a: 2, n_b: 1, n_d: 1 }),
@@ -873,36 +873,36 @@ pub(crate) static FP128_D128_ONEHOT_SCHEDULES: &[GeneratedScheduleTableEntry] = 
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(29, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(14, 1), num_live_ring_elements_per_claim: 128, num_positions_per_block: 4, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 1, conservative_n_b: 1 }], steps: &[
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(29, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(14, 1), num_live_ring_elements_per_claim: 128, num_positions_per_block: 4, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 1, conservative_n_b: 1 }], steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 13, block_index_bits: 9, num_live_blocks: 512, n_a: 3, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 11, block_index_bits: 6, num_live_blocks: 62, n_a: 3, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 11, block_index_bits: 6, num_live_blocks: 61, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 10, block_index_bits: 4, num_live_blocks: 14, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 4, num_live_blocks: 13, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 6, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(29, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(14, 1), num_live_ring_elements_per_claim: 128, num_positions_per_block: 4, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 1, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(14, 1), num_live_ring_elements_per_claim: 128, num_positions_per_block: 4, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 1, conservative_n_b: 1 }], steps: &[
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(29, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(14, 1), num_live_ring_elements_per_claim: 128, num_positions_per_block: 4, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 1, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(14, 1), num_live_ring_elements_per_claim: 128, num_positions_per_block: 4, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 1, conservative_n_b: 1 }], steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 13, block_index_bits: 9, num_live_blocks: 512, n_a: 3, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 11, block_index_bits: 6, num_live_blocks: 64, n_a: 3, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 11, block_index_bits: 6, num_live_blocks: 63, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 10, block_index_bits: 4, num_live_blocks: 15, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 4, num_live_blocks: 13, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 6, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(29, 2), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(14, 1), num_live_ring_elements_per_claim: 128, num_positions_per_block: 4, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 1, conservative_n_b: 1 }], steps: &[
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(29, 2), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(14, 1), num_live_ring_elements_per_claim: 128, num_positions_per_block: 4, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 1, conservative_n_b: 1 }], steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 14, block_index_bits: 8, num_live_blocks: 256, n_a: 3, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 11, block_index_bits: 7, num_live_blocks: 78, n_a: 3, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 11, block_index_bits: 7, num_live_blocks: 77, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 10, block_index_bits: 4, num_live_blocks: 16, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 4, num_live_blocks: 13, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 6, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(29, 2), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(14, 1), num_live_ring_elements_per_claim: 128, num_positions_per_block: 4, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 1, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(14, 1), num_live_ring_elements_per_claim: 128, num_positions_per_block: 4, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 1, conservative_n_b: 1 }], steps: &[
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(29, 2), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(14, 1), num_live_ring_elements_per_claim: 128, num_positions_per_block: 4, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 1, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(14, 1), num_live_ring_elements_per_claim: 128, num_positions_per_block: 4, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 1, conservative_n_b: 1 }], steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 14, block_index_bits: 8, num_live_blocks: 256, n_a: 3, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 11, block_index_bits: 7, num_live_blocks: 80, n_a: 3, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 11, block_index_bits: 7, num_live_blocks: 79, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 10, block_index_bits: 5, num_live_blocks: 17, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 4, num_live_blocks: 13, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 6, n_a: 2, n_b: 1, n_d: 1 }),
@@ -918,18 +918,18 @@ pub(crate) static FP128_D128_ONEHOT_SCHEDULES: &[GeneratedScheduleTableEntry] = 
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(29, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(14, 1), num_live_ring_elements_per_claim: 128, num_positions_per_block: 4, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 1, conservative_n_b: 1 }], steps: &[
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(29, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(14, 1), num_live_ring_elements_per_claim: 128, num_positions_per_block: 4, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 1, conservative_n_b: 1 }], steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 15, block_index_bits: 7, num_live_blocks: 128, n_a: 3, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 11, block_index_bits: 7, num_live_blocks: 83, n_a: 3, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 11, block_index_bits: 7, num_live_blocks: 82, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 10, block_index_bits: 5, num_live_blocks: 17, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 4, num_live_blocks: 13, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 6, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(29, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(14, 1), num_live_ring_elements_per_claim: 128, num_positions_per_block: 4, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 1, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(14, 1), num_live_ring_elements_per_claim: 128, num_positions_per_block: 4, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 1, conservative_n_b: 1 }], steps: &[
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(29, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(14, 1), num_live_ring_elements_per_claim: 128, num_positions_per_block: 4, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 1, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(14, 1), num_live_ring_elements_per_claim: 128, num_positions_per_block: 4, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 1, conservative_n_b: 1 }], steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 15, block_index_bits: 7, num_live_blocks: 128, n_a: 3, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 11, block_index_bits: 7, num_live_blocks: 85, n_a: 3, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 11, block_index_bits: 7, num_live_blocks: 84, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 10, block_index_bits: 5, num_live_blocks: 17, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 4, num_live_blocks: 13, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 6, n_a: 2, n_b: 1, n_d: 1 }),
@@ -945,7 +945,7 @@ pub(crate) static FP128_D128_ONEHOT_SCHEDULES: &[GeneratedScheduleTableEntry] = 
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(30, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(15, 1), num_live_ring_elements_per_claim: 256, num_positions_per_block: 8, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 1, conservative_n_b: 1 }], steps: &[
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(30, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(15, 1), num_live_ring_elements_per_claim: 256, num_positions_per_block: 8, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 14, block_index_bits: 9, num_live_blocks: 512, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 11, block_index_bits: 7, num_live_blocks: 78, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 10, block_index_bits: 4, num_live_blocks: 16, n_a: 2, n_b: 1, n_d: 1 }),
@@ -954,16 +954,16 @@ pub(crate) static FP128_D128_ONEHOT_SCHEDULES: &[GeneratedScheduleTableEntry] = 
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(30, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(15, 1), num_live_ring_elements_per_claim: 256, num_positions_per_block: 8, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 1, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(15, 1), num_live_ring_elements_per_claim: 256, num_positions_per_block: 8, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 1, conservative_n_b: 1 }], steps: &[
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(30, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(15, 1), num_live_ring_elements_per_claim: 256, num_positions_per_block: 8, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(15, 1), num_live_ring_elements_per_claim: 256, num_positions_per_block: 8, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 14, block_index_bits: 9, num_live_blocks: 512, n_a: 3, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 11, block_index_bits: 7, num_live_blocks: 80, n_a: 3, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 11, block_index_bits: 7, num_live_blocks: 81, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 10, block_index_bits: 5, num_live_blocks: 17, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 4, num_live_blocks: 13, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 6, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(30, 2), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(15, 1), num_live_ring_elements_per_claim: 256, num_positions_per_block: 8, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 1, conservative_n_b: 1 }], steps: &[
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(30, 2), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(15, 1), num_live_ring_elements_per_claim: 256, num_positions_per_block: 8, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 15, block_index_bits: 8, num_live_blocks: 256, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 11, block_index_bits: 7, num_live_blocks: 83, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 10, block_index_bits: 5, num_live_blocks: 17, n_a: 2, n_b: 1, n_d: 1 }),
@@ -972,9 +972,9 @@ pub(crate) static FP128_D128_ONEHOT_SCHEDULES: &[GeneratedScheduleTableEntry] = 
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(30, 2), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(15, 1), num_live_ring_elements_per_claim: 256, num_positions_per_block: 8, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 1, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(15, 1), num_live_ring_elements_per_claim: 256, num_positions_per_block: 8, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 1, conservative_n_b: 1 }], steps: &[
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(30, 2), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(15, 1), num_live_ring_elements_per_claim: 256, num_positions_per_block: 8, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(15, 1), num_live_ring_elements_per_claim: 256, num_positions_per_block: 8, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 15, block_index_bits: 8, num_live_blocks: 256, n_a: 3, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 11, block_index_bits: 7, num_live_blocks: 85, n_a: 3, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 11, block_index_bits: 7, num_live_blocks: 86, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 10, block_index_bits: 5, num_live_blocks: 17, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 4, num_live_blocks: 13, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 6, n_a: 2, n_b: 1, n_d: 1 }),
@@ -990,7 +990,7 @@ pub(crate) static FP128_D128_ONEHOT_SCHEDULES: &[GeneratedScheduleTableEntry] = 
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(30, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(15, 1), num_live_ring_elements_per_claim: 256, num_positions_per_block: 8, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 1, conservative_n_b: 1 }], steps: &[
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(30, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(15, 1), num_live_ring_elements_per_claim: 256, num_positions_per_block: 8, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 5, position_index_bits: 16, block_index_bits: 7, num_live_blocks: 128, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 5, position_index_bits: 11, block_index_bits: 7, num_live_blocks: 93, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 10, block_index_bits: 4, num_live_blocks: 16, n_a: 2, n_b: 1, n_d: 1 }),
@@ -999,7 +999,7 @@ pub(crate) static FP128_D128_ONEHOT_SCHEDULES: &[GeneratedScheduleTableEntry] = 
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(30, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(15, 1), num_live_ring_elements_per_claim: 256, num_positions_per_block: 8, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 1, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(15, 1), num_live_ring_elements_per_claim: 256, num_positions_per_block: 8, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 1, conservative_n_b: 1 }], steps: &[
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(30, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(15, 1), num_live_ring_elements_per_claim: 256, num_positions_per_block: 8, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(15, 1), num_live_ring_elements_per_claim: 256, num_positions_per_block: 8, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 5, position_index_bits: 16, block_index_bits: 7, num_live_blocks: 128, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 5, position_index_bits: 11, block_index_bits: 7, num_live_blocks: 95, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 10, block_index_bits: 4, num_live_blocks: 16, n_a: 2, n_b: 1, n_d: 1 }),
@@ -1017,7 +1017,7 @@ pub(crate) static FP128_D128_ONEHOT_SCHEDULES: &[GeneratedScheduleTableEntry] = 
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(31, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(15, 1), num_live_ring_elements_per_claim: 256, num_positions_per_block: 8, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 1, conservative_n_b: 1 }], steps: &[
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(31, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(15, 1), num_live_ring_elements_per_claim: 256, num_positions_per_block: 8, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 15, block_index_bits: 9, num_live_blocks: 512, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 11, block_index_bits: 7, num_live_blocks: 83, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 10, block_index_bits: 5, num_live_blocks: 17, n_a: 2, n_b: 1, n_d: 1 }),
@@ -1026,16 +1026,16 @@ pub(crate) static FP128_D128_ONEHOT_SCHEDULES: &[GeneratedScheduleTableEntry] = 
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(31, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(15, 1), num_live_ring_elements_per_claim: 256, num_positions_per_block: 8, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 1, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(15, 1), num_live_ring_elements_per_claim: 256, num_positions_per_block: 8, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 1, conservative_n_b: 1 }], steps: &[
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(31, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(15, 1), num_live_ring_elements_per_claim: 256, num_positions_per_block: 8, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(15, 1), num_live_ring_elements_per_claim: 256, num_positions_per_block: 8, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 15, block_index_bits: 9, num_live_blocks: 512, n_a: 3, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 11, block_index_bits: 7, num_live_blocks: 85, n_a: 3, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 11, block_index_bits: 7, num_live_blocks: 86, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 10, block_index_bits: 5, num_live_blocks: 17, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 4, num_live_blocks: 13, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 6, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(31, 2), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(15, 1), num_live_ring_elements_per_claim: 256, num_positions_per_block: 8, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 1, conservative_n_b: 1 }], steps: &[
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(31, 2), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(15, 1), num_live_ring_elements_per_claim: 256, num_positions_per_block: 8, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 5, position_index_bits: 16, block_index_bits: 8, num_live_blocks: 256, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 5, position_index_bits: 11, block_index_bits: 7, num_live_blocks: 93, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 10, block_index_bits: 4, num_live_blocks: 16, n_a: 2, n_b: 1, n_d: 1 }),
@@ -1044,7 +1044,7 @@ pub(crate) static FP128_D128_ONEHOT_SCHEDULES: &[GeneratedScheduleTableEntry] = 
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(31, 2), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(15, 1), num_live_ring_elements_per_claim: 256, num_positions_per_block: 8, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 1, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(15, 1), num_live_ring_elements_per_claim: 256, num_positions_per_block: 8, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 1, conservative_n_b: 1 }], steps: &[
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(31, 2), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(15, 1), num_live_ring_elements_per_claim: 256, num_positions_per_block: 8, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(15, 1), num_live_ring_elements_per_claim: 256, num_positions_per_block: 8, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 5, position_index_bits: 16, block_index_bits: 8, num_live_blocks: 256, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 5, position_index_bits: 11, block_index_bits: 7, num_live_blocks: 95, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 10, block_index_bits: 4, num_live_blocks: 16, n_a: 2, n_b: 1, n_d: 1 }),
@@ -1062,7 +1062,7 @@ pub(crate) static FP128_D128_ONEHOT_SCHEDULES: &[GeneratedScheduleTableEntry] = 
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 5, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(31, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(15, 1), num_live_ring_elements_per_claim: 256, num_positions_per_block: 8, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 1, conservative_n_b: 1 }], steps: &[
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(31, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(15, 1), num_live_ring_elements_per_claim: 256, num_positions_per_block: 8, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 15, block_index_bits: 9, num_live_blocks: 512, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 12, block_index_bits: 7, num_live_blocks: 120, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 10, block_index_bits: 6, num_live_blocks: 37, n_a: 3, n_b: 1, n_d: 1 }),
@@ -1071,7 +1071,7 @@ pub(crate) static FP128_D128_ONEHOT_SCHEDULES: &[GeneratedScheduleTableEntry] = 
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 5, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(31, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(15, 1), num_live_ring_elements_per_claim: 256, num_positions_per_block: 8, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 1, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(15, 1), num_live_ring_elements_per_claim: 256, num_positions_per_block: 8, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 1, conservative_n_b: 1 }], steps: &[
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(31, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(15, 1), num_live_ring_elements_per_claim: 256, num_positions_per_block: 8, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(15, 1), num_live_ring_elements_per_claim: 256, num_positions_per_block: 8, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 15, block_index_bits: 9, num_live_blocks: 512, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 12, block_index_bits: 7, num_live_blocks: 121, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 10, block_index_bits: 6, num_live_blocks: 37, n_a: 3, n_b: 1, n_d: 1 }),
@@ -1089,25 +1089,25 @@ pub(crate) static FP128_D128_ONEHOT_SCHEDULES: &[GeneratedScheduleTableEntry] = 
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(32, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(16, 1), num_live_ring_elements_per_claim: 512, num_positions_per_block: 16, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(32, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(16, 1), num_live_ring_elements_per_claim: 512, num_positions_per_block: 16, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 5, position_index_bits: 16, block_index_bits: 9, num_live_blocks: 512, n_a: 3, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 5, position_index_bits: 11, block_index_bits: 7, num_live_blocks: 94, n_a: 3, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 5, position_index_bits: 11, block_index_bits: 7, num_live_blocks: 93, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 10, block_index_bits: 4, num_live_blocks: 16, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 4, num_live_blocks: 13, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 6, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(32, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(16, 1), num_live_ring_elements_per_claim: 512, num_positions_per_block: 16, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(16, 1), num_live_ring_elements_per_claim: 512, num_positions_per_block: 16, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(32, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(16, 1), num_live_ring_elements_per_claim: 512, num_positions_per_block: 16, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(16, 1), num_live_ring_elements_per_claim: 512, num_positions_per_block: 16, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 5, position_index_bits: 16, block_index_bits: 9, num_live_blocks: 512, n_a: 3, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 5, position_index_bits: 11, block_index_bits: 7, num_live_blocks: 97, n_a: 3, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 10, block_index_bits: 5, num_live_blocks: 17, n_a: 2, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 5, position_index_bits: 11, block_index_bits: 7, num_live_blocks: 95, n_a: 3, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 10, block_index_bits: 4, num_live_blocks: 16, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 4, num_live_blocks: 13, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 6, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(32, 2), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(16, 1), num_live_ring_elements_per_claim: 512, num_positions_per_block: 16, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(32, 2), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(16, 1), num_live_ring_elements_per_claim: 512, num_positions_per_block: 16, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 15, block_index_bits: 10, num_live_blocks: 1024, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 12, block_index_bits: 7, num_live_blocks: 120, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 10, block_index_bits: 6, num_live_blocks: 37, n_a: 3, n_b: 1, n_d: 1 }),
@@ -1116,9 +1116,9 @@ pub(crate) static FP128_D128_ONEHOT_SCHEDULES: &[GeneratedScheduleTableEntry] = 
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 5, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(32, 2), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(16, 1), num_live_ring_elements_per_claim: 512, num_positions_per_block: 16, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(16, 1), num_live_ring_elements_per_claim: 512, num_positions_per_block: 16, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(32, 2), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(16, 1), num_live_ring_elements_per_claim: 512, num_positions_per_block: 16, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(16, 1), num_live_ring_elements_per_claim: 512, num_positions_per_block: 16, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 15, block_index_bits: 10, num_live_blocks: 1024, n_a: 3, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 12, block_index_bits: 7, num_live_blocks: 122, n_a: 3, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 12, block_index_bits: 7, num_live_blocks: 121, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 10, block_index_bits: 6, num_live_blocks: 37, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 9, block_index_bits: 4, num_live_blocks: 16, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 4, num_live_blocks: 9, n_a: 2, n_b: 1, n_d: 1 }),
@@ -1134,7 +1134,7 @@ pub(crate) static FP128_D128_ONEHOT_SCHEDULES: &[GeneratedScheduleTableEntry] = 
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 5, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(32, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(16, 1), num_live_ring_elements_per_claim: 512, num_positions_per_block: 16, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(32, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(16, 1), num_live_ring_elements_per_claim: 512, num_positions_per_block: 16, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 16, block_index_bits: 9, num_live_blocks: 512, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 12, block_index_bits: 8, num_live_blocks: 152, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 10, block_index_bits: 6, num_live_blocks: 42, n_a: 3, n_b: 1, n_d: 1 }),
@@ -1143,11 +1143,11 @@ pub(crate) static FP128_D128_ONEHOT_SCHEDULES: &[GeneratedScheduleTableEntry] = 
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 5, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(32, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(16, 1), num_live_ring_elements_per_claim: 512, num_positions_per_block: 16, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(16, 1), num_live_ring_elements_per_claim: 512, num_positions_per_block: 16, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(32, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(16, 1), num_live_ring_elements_per_claim: 512, num_positions_per_block: 16, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(16, 1), num_live_ring_elements_per_claim: 512, num_positions_per_block: 16, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 16, block_index_bits: 9, num_live_blocks: 512, n_a: 3, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 12, block_index_bits: 8, num_live_blocks: 154, n_a: 3, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 10, block_index_bits: 5, num_live_blocks: 32, n_a: 3, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 9, block_index_bits: 4, num_live_blocks: 15, n_a: 2, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 12, block_index_bits: 8, num_live_blocks: 153, n_a: 3, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 10, block_index_bits: 6, num_live_blocks: 42, n_a: 3, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 9, block_index_bits: 5, num_live_blocks: 17, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 4, num_live_blocks: 9, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 5, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
@@ -1161,7 +1161,7 @@ pub(crate) static FP128_D128_ONEHOT_SCHEDULES: &[GeneratedScheduleTableEntry] = 
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 5, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(33, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(16, 1), num_live_ring_elements_per_claim: 512, num_positions_per_block: 16, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(33, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(16, 1), num_live_ring_elements_per_claim: 512, num_positions_per_block: 16, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 15, block_index_bits: 11, num_live_blocks: 2048, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 12, block_index_bits: 7, num_live_blocks: 120, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 10, block_index_bits: 6, num_live_blocks: 37, n_a: 3, n_b: 1, n_d: 1 }),
@@ -1170,16 +1170,16 @@ pub(crate) static FP128_D128_ONEHOT_SCHEDULES: &[GeneratedScheduleTableEntry] = 
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 5, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(33, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(16, 1), num_live_ring_elements_per_claim: 512, num_positions_per_block: 16, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(16, 1), num_live_ring_elements_per_claim: 512, num_positions_per_block: 16, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(33, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(16, 1), num_live_ring_elements_per_claim: 512, num_positions_per_block: 16, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(16, 1), num_live_ring_elements_per_claim: 512, num_positions_per_block: 16, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 15, block_index_bits: 11, num_live_blocks: 2048, n_a: 3, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 12, block_index_bits: 7, num_live_blocks: 122, n_a: 3, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 12, block_index_bits: 7, num_live_blocks: 121, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 10, block_index_bits: 6, num_live_blocks: 37, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 9, block_index_bits: 4, num_live_blocks: 16, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 4, num_live_blocks: 9, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 5, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(33, 2), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(16, 1), num_live_ring_elements_per_claim: 512, num_positions_per_block: 16, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(33, 2), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(16, 1), num_live_ring_elements_per_claim: 512, num_positions_per_block: 16, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 16, block_index_bits: 10, num_live_blocks: 1024, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 12, block_index_bits: 8, num_live_blocks: 152, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 10, block_index_bits: 6, num_live_blocks: 42, n_a: 3, n_b: 1, n_d: 1 }),
@@ -1188,11 +1188,11 @@ pub(crate) static FP128_D128_ONEHOT_SCHEDULES: &[GeneratedScheduleTableEntry] = 
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 5, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(33, 2), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(16, 1), num_live_ring_elements_per_claim: 512, num_positions_per_block: 16, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(16, 1), num_live_ring_elements_per_claim: 512, num_positions_per_block: 16, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(33, 2), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(16, 1), num_live_ring_elements_per_claim: 512, num_positions_per_block: 16, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(16, 1), num_live_ring_elements_per_claim: 512, num_positions_per_block: 16, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 16, block_index_bits: 10, num_live_blocks: 1024, n_a: 3, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 12, block_index_bits: 8, num_live_blocks: 154, n_a: 3, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 10, block_index_bits: 5, num_live_blocks: 32, n_a: 3, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 9, block_index_bits: 4, num_live_blocks: 15, n_a: 2, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 12, block_index_bits: 8, num_live_blocks: 153, n_a: 3, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 10, block_index_bits: 6, num_live_blocks: 42, n_a: 3, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 9, block_index_bits: 5, num_live_blocks: 17, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 4, num_live_blocks: 9, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 5, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
@@ -1206,7 +1206,7 @@ pub(crate) static FP128_D128_ONEHOT_SCHEDULES: &[GeneratedScheduleTableEntry] = 
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 5, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(33, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(16, 1), num_live_ring_elements_per_claim: 512, num_positions_per_block: 16, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(33, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(16, 1), num_live_ring_elements_per_claim: 512, num_positions_per_block: 16, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 17, block_index_bits: 9, num_live_blocks: 512, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 13, block_index_bits: 7, num_live_blocks: 108, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 10, block_index_bits: 6, num_live_blocks: 38, n_a: 3, n_b: 1, n_d: 1 }),
@@ -1215,7 +1215,7 @@ pub(crate) static FP128_D128_ONEHOT_SCHEDULES: &[GeneratedScheduleTableEntry] = 
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 5, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(33, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(16, 1), num_live_ring_elements_per_claim: 512, num_positions_per_block: 16, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(16, 1), num_live_ring_elements_per_claim: 512, num_positions_per_block: 16, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(33, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(16, 1), num_live_ring_elements_per_claim: 512, num_positions_per_block: 16, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(16, 1), num_live_ring_elements_per_claim: 512, num_positions_per_block: 16, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 17, block_index_bits: 9, num_live_blocks: 512, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 13, block_index_bits: 7, num_live_blocks: 109, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 10, block_index_bits: 6, num_live_blocks: 38, n_a: 3, n_b: 1, n_d: 1 }),
@@ -1233,7 +1233,7 @@ pub(crate) static FP128_D128_ONEHOT_SCHEDULES: &[GeneratedScheduleTableEntry] = 
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 5, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(34, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(17, 1), num_live_ring_elements_per_claim: 1024, num_positions_per_block: 32, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(34, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(17, 1), num_live_ring_elements_per_claim: 1024, num_positions_per_block: 32, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 16, block_index_bits: 11, num_live_blocks: 2048, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 12, block_index_bits: 8, num_live_blocks: 152, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 10, block_index_bits: 6, num_live_blocks: 42, n_a: 3, n_b: 1, n_d: 1 }),
@@ -1242,16 +1242,16 @@ pub(crate) static FP128_D128_ONEHOT_SCHEDULES: &[GeneratedScheduleTableEntry] = 
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 5, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(34, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(17, 1), num_live_ring_elements_per_claim: 1024, num_positions_per_block: 32, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(17, 1), num_live_ring_elements_per_claim: 1024, num_positions_per_block: 32, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(34, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(17, 1), num_live_ring_elements_per_claim: 1024, num_positions_per_block: 32, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(17, 1), num_live_ring_elements_per_claim: 1024, num_positions_per_block: 32, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 16, block_index_bits: 11, num_live_blocks: 2048, n_a: 3, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 12, block_index_bits: 8, num_live_blocks: 154, n_a: 3, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 10, block_index_bits: 5, num_live_blocks: 32, n_a: 3, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 9, block_index_bits: 4, num_live_blocks: 15, n_a: 2, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 12, block_index_bits: 8, num_live_blocks: 153, n_a: 3, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 10, block_index_bits: 6, num_live_blocks: 42, n_a: 3, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 9, block_index_bits: 5, num_live_blocks: 17, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 4, num_live_blocks: 9, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 5, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(34, 2), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(17, 1), num_live_ring_elements_per_claim: 1024, num_positions_per_block: 32, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(34, 2), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(17, 1), num_live_ring_elements_per_claim: 1024, num_positions_per_block: 32, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 17, block_index_bits: 10, num_live_blocks: 1024, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 13, block_index_bits: 7, num_live_blocks: 108, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 10, block_index_bits: 6, num_live_blocks: 38, n_a: 3, n_b: 1, n_d: 1 }),
@@ -1260,7 +1260,7 @@ pub(crate) static FP128_D128_ONEHOT_SCHEDULES: &[GeneratedScheduleTableEntry] = 
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 5, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(34, 2), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(17, 1), num_live_ring_elements_per_claim: 1024, num_positions_per_block: 32, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(17, 1), num_live_ring_elements_per_claim: 1024, num_positions_per_block: 32, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(34, 2), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(17, 1), num_live_ring_elements_per_claim: 1024, num_positions_per_block: 32, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(17, 1), num_live_ring_elements_per_claim: 1024, num_positions_per_block: 32, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 17, block_index_bits: 10, num_live_blocks: 1024, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 13, block_index_bits: 7, num_live_blocks: 109, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 10, block_index_bits: 6, num_live_blocks: 38, n_a: 3, n_b: 1, n_d: 1 }),
@@ -1270,29 +1270,29 @@ pub(crate) static FP128_D128_ONEHOT_SCHEDULES: &[GeneratedScheduleTableEntry] = 
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
     GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(34, 4), precommitteds: &[], steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 17, block_index_bits: 10, num_live_blocks: 1024, n_a: 3, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 13, block_index_bits: 8, num_live_blocks: 151, n_a: 3, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 11, block_index_bits: 5, num_live_blocks: 29, n_a: 3, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 17, block_index_bits: 10, num_live_blocks: 1024, n_a: 4, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 13, block_index_bits: 8, num_live_blocks: 172, n_a: 3, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 11, block_index_bits: 5, num_live_blocks: 31, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 10, block_index_bits: 4, num_live_blocks: 14, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 4, num_live_blocks: 13, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 6, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(34, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(17, 1), num_live_ring_elements_per_claim: 1024, num_positions_per_block: 32, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 17, block_index_bits: 10, num_live_blocks: 1024, n_a: 3, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 13, block_index_bits: 8, num_live_blocks: 151, n_a: 3, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 11, block_index_bits: 5, num_live_blocks: 29, n_a: 3, n_b: 1, n_d: 1 }),
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(34, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(17, 1), num_live_ring_elements_per_claim: 1024, num_positions_per_block: 32, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 17, block_index_bits: 10, num_live_blocks: 1024, n_a: 4, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 13, block_index_bits: 8, num_live_blocks: 173, n_a: 3, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 11, block_index_bits: 5, num_live_blocks: 31, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 10, block_index_bits: 4, num_live_blocks: 14, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 4, num_live_blocks: 13, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 6, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(34, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(17, 1), num_live_ring_elements_per_claim: 1024, num_positions_per_block: 32, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(17, 1), num_live_ring_elements_per_claim: 1024, num_positions_per_block: 32, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 17, block_index_bits: 10, num_live_blocks: 1024, n_a: 3, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 13, block_index_bits: 8, num_live_blocks: 152, n_a: 3, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 11, block_index_bits: 5, num_live_blocks: 29, n_a: 3, n_b: 1, n_d: 1 }),
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(34, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(17, 1), num_live_ring_elements_per_claim: 1024, num_positions_per_block: 32, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(17, 1), num_live_ring_elements_per_claim: 1024, num_positions_per_block: 32, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 17, block_index_bits: 10, num_live_blocks: 1024, n_a: 4, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 13, block_index_bits: 8, num_live_blocks: 173, n_a: 3, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 11, block_index_bits: 5, num_live_blocks: 31, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 10, block_index_bits: 4, num_live_blocks: 14, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 4, num_live_blocks: 13, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 6, n_a: 2, n_b: 1, n_d: 1 }),
@@ -1308,7 +1308,7 @@ pub(crate) static FP128_D128_ONEHOT_SCHEDULES: &[GeneratedScheduleTableEntry] = 
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 5, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(35, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(17, 1), num_live_ring_elements_per_claim: 1024, num_positions_per_block: 32, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(35, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(17, 1), num_live_ring_elements_per_claim: 1024, num_positions_per_block: 32, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 17, block_index_bits: 11, num_live_blocks: 2048, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 13, block_index_bits: 7, num_live_blocks: 108, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 10, block_index_bits: 6, num_live_blocks: 38, n_a: 3, n_b: 1, n_d: 1 }),
@@ -1317,7 +1317,7 @@ pub(crate) static FP128_D128_ONEHOT_SCHEDULES: &[GeneratedScheduleTableEntry] = 
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 5, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(35, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(17, 1), num_live_ring_elements_per_claim: 1024, num_positions_per_block: 32, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(17, 1), num_live_ring_elements_per_claim: 1024, num_positions_per_block: 32, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(35, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(17, 1), num_live_ring_elements_per_claim: 1024, num_positions_per_block: 32, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(17, 1), num_live_ring_elements_per_claim: 1024, num_positions_per_block: 32, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 17, block_index_bits: 11, num_live_blocks: 2048, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 13, block_index_bits: 7, num_live_blocks: 109, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 10, block_index_bits: 6, num_live_blocks: 38, n_a: 3, n_b: 1, n_d: 1 }),
@@ -1326,20 +1326,20 @@ pub(crate) static FP128_D128_ONEHOT_SCHEDULES: &[GeneratedScheduleTableEntry] = 
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 5, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(35, 2), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(17, 1), num_live_ring_elements_per_claim: 1024, num_positions_per_block: 32, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 17, block_index_bits: 11, num_live_blocks: 2048, n_a: 3, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 13, block_index_bits: 8, num_live_blocks: 151, n_a: 3, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 11, block_index_bits: 5, num_live_blocks: 29, n_a: 3, n_b: 1, n_d: 1 }),
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(35, 2), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(17, 1), num_live_ring_elements_per_claim: 1024, num_positions_per_block: 32, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 17, block_index_bits: 11, num_live_blocks: 2048, n_a: 4, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 13, block_index_bits: 8, num_live_blocks: 173, n_a: 3, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 11, block_index_bits: 5, num_live_blocks: 31, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 10, block_index_bits: 4, num_live_blocks: 14, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 4, num_live_blocks: 13, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 6, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(35, 2), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(17, 1), num_live_ring_elements_per_claim: 1024, num_positions_per_block: 32, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(17, 1), num_live_ring_elements_per_claim: 1024, num_positions_per_block: 32, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 17, block_index_bits: 11, num_live_blocks: 2048, n_a: 3, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 13, block_index_bits: 8, num_live_blocks: 152, n_a: 3, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 11, block_index_bits: 5, num_live_blocks: 29, n_a: 3, n_b: 1, n_d: 1 }),
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(35, 2), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(17, 1), num_live_ring_elements_per_claim: 1024, num_positions_per_block: 32, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(17, 1), num_live_ring_elements_per_claim: 1024, num_positions_per_block: 32, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 17, block_index_bits: 11, num_live_blocks: 2048, n_a: 4, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 13, block_index_bits: 8, num_live_blocks: 173, n_a: 3, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 11, block_index_bits: 5, num_live_blocks: 31, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 10, block_index_bits: 4, num_live_blocks: 14, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 4, num_live_blocks: 13, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 6, n_a: 2, n_b: 1, n_d: 1 }),
@@ -1347,7 +1347,17 @@ pub(crate) static FP128_D128_ONEHOT_SCHEDULES: &[GeneratedScheduleTableEntry] = 
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
     GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(35, 4), precommitteds: &[], steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 17, block_index_bits: 11, num_live_blocks: 2048, n_a: 3, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 18, block_index_bits: 10, num_live_blocks: 1024, n_a: 4, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 13, block_index_bits: 8, num_live_blocks: 236, n_a: 3, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 11, block_index_bits: 6, num_live_blocks: 36, n_a: 3, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 10, block_index_bits: 4, num_live_blocks: 15, n_a: 2, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 4, num_live_blocks: 13, n_a: 2, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 6, n_a: 2, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
+        GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
+    ] },
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(35, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(17, 1), num_live_ring_elements_per_claim: 1024, num_positions_per_block: 32, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 18, block_index_bits: 10, num_live_blocks: 1024, n_a: 4, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 13, block_index_bits: 8, num_live_blocks: 237, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 11, block_index_bits: 6, num_live_blocks: 37, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 10, block_index_bits: 4, num_live_blocks: 15, n_a: 2, n_b: 1, n_d: 1 }),
@@ -1356,19 +1366,9 @@ pub(crate) static FP128_D128_ONEHOT_SCHEDULES: &[GeneratedScheduleTableEntry] = 
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(35, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(17, 1), num_live_ring_elements_per_claim: 1024, num_positions_per_block: 32, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 17, block_index_bits: 11, num_live_blocks: 2048, n_a: 3, n_b: 1, n_d: 1 }),
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(35, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(17, 1), num_live_ring_elements_per_claim: 1024, num_positions_per_block: 32, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(17, 1), num_live_ring_elements_per_claim: 1024, num_positions_per_block: 32, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 18, block_index_bits: 10, num_live_blocks: 1024, n_a: 4, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 13, block_index_bits: 8, num_live_blocks: 237, n_a: 3, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 11, block_index_bits: 6, num_live_blocks: 37, n_a: 3, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 10, block_index_bits: 4, num_live_blocks: 15, n_a: 2, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 4, num_live_blocks: 13, n_a: 2, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 6, n_a: 2, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
-        GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
-    ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(35, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(17, 1), num_live_ring_elements_per_claim: 1024, num_positions_per_block: 32, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(17, 1), num_live_ring_elements_per_claim: 1024, num_positions_per_block: 32, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 17, block_index_bits: 11, num_live_blocks: 2048, n_a: 3, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 13, block_index_bits: 8, num_live_blocks: 238, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 11, block_index_bits: 6, num_live_blocks: 37, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 10, block_index_bits: 4, num_live_blocks: 15, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 4, num_live_blocks: 13, n_a: 2, n_b: 1, n_d: 1 }),
@@ -1377,37 +1377,37 @@ pub(crate) static FP128_D128_ONEHOT_SCHEDULES: &[GeneratedScheduleTableEntry] = 
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
     GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(36, 1), precommitteds: &[], steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 17, block_index_bits: 12, num_live_blocks: 4096, n_a: 3, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 13, block_index_bits: 8, num_live_blocks: 151, n_a: 3, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 11, block_index_bits: 5, num_live_blocks: 29, n_a: 3, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 17, block_index_bits: 12, num_live_blocks: 4096, n_a: 4, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 13, block_index_bits: 8, num_live_blocks: 172, n_a: 3, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 11, block_index_bits: 5, num_live_blocks: 31, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 10, block_index_bits: 4, num_live_blocks: 14, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 4, num_live_blocks: 13, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 6, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(36, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(18, 1), num_live_ring_elements_per_claim: 2048, num_positions_per_block: 64, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 17, block_index_bits: 12, num_live_blocks: 4096, n_a: 3, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 13, block_index_bits: 8, num_live_blocks: 151, n_a: 3, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 11, block_index_bits: 5, num_live_blocks: 29, n_a: 3, n_b: 1, n_d: 1 }),
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(36, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(18, 1), num_live_ring_elements_per_claim: 2048, num_positions_per_block: 64, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 17, block_index_bits: 12, num_live_blocks: 4096, n_a: 4, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 13, block_index_bits: 8, num_live_blocks: 173, n_a: 3, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 11, block_index_bits: 5, num_live_blocks: 31, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 10, block_index_bits: 4, num_live_blocks: 14, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 4, num_live_blocks: 13, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 6, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(36, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(18, 1), num_live_ring_elements_per_claim: 2048, num_positions_per_block: 64, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(18, 1), num_live_ring_elements_per_claim: 2048, num_positions_per_block: 64, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 17, block_index_bits: 12, num_live_blocks: 4096, n_a: 3, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 13, block_index_bits: 8, num_live_blocks: 152, n_a: 3, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 11, block_index_bits: 5, num_live_blocks: 29, n_a: 3, n_b: 1, n_d: 1 }),
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(36, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(18, 1), num_live_ring_elements_per_claim: 2048, num_positions_per_block: 64, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(18, 1), num_live_ring_elements_per_claim: 2048, num_positions_per_block: 64, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 17, block_index_bits: 12, num_live_blocks: 4096, n_a: 4, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 13, block_index_bits: 8, num_live_blocks: 173, n_a: 3, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 11, block_index_bits: 5, num_live_blocks: 31, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 10, block_index_bits: 4, num_live_blocks: 14, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 4, num_live_blocks: 13, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 6, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(36, 2), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(18, 1), num_live_ring_elements_per_claim: 2048, num_positions_per_block: 64, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 17, block_index_bits: 12, num_live_blocks: 4096, n_a: 3, n_b: 1, n_d: 1 }),
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(36, 2), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(18, 1), num_live_ring_elements_per_claim: 2048, num_positions_per_block: 64, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 18, block_index_bits: 11, num_live_blocks: 2048, n_a: 4, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 13, block_index_bits: 8, num_live_blocks: 237, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 11, block_index_bits: 6, num_live_blocks: 37, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 10, block_index_bits: 4, num_live_blocks: 15, n_a: 2, n_b: 1, n_d: 1 }),
@@ -1416,9 +1416,9 @@ pub(crate) static FP128_D128_ONEHOT_SCHEDULES: &[GeneratedScheduleTableEntry] = 
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(36, 2), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(18, 1), num_live_ring_elements_per_claim: 2048, num_positions_per_block: 64, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(18, 1), num_live_ring_elements_per_claim: 2048, num_positions_per_block: 64, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 17, block_index_bits: 12, num_live_blocks: 4096, n_a: 3, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 13, block_index_bits: 8, num_live_blocks: 238, n_a: 3, n_b: 1, n_d: 1 }),
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(36, 2), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(18, 1), num_live_ring_elements_per_claim: 2048, num_positions_per_block: 64, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(18, 1), num_live_ring_elements_per_claim: 2048, num_positions_per_block: 64, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 18, block_index_bits: 11, num_live_blocks: 2048, n_a: 4, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 13, block_index_bits: 8, num_live_blocks: 237, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 11, block_index_bits: 6, num_live_blocks: 37, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 10, block_index_bits: 4, num_live_blocks: 15, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 4, num_live_blocks: 13, n_a: 2, n_b: 1, n_d: 1 }),
@@ -1427,29 +1427,29 @@ pub(crate) static FP128_D128_ONEHOT_SCHEDULES: &[GeneratedScheduleTableEntry] = 
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
     GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(36, 4), precommitteds: &[], steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 18, block_index_bits: 11, num_live_blocks: 2048, n_a: 3, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 13, block_index_bits: 9, num_live_blocks: 301, n_a: 3, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 11, block_index_bits: 6, num_live_blocks: 42, n_a: 3, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 18, block_index_bits: 11, num_live_blocks: 2048, n_a: 4, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 13, block_index_bits: 9, num_live_blocks: 344, n_a: 3, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 11, block_index_bits: 6, num_live_blocks: 46, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 10, block_index_bits: 4, num_live_blocks: 16, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 4, num_live_blocks: 13, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 6, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(36, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(18, 1), num_live_ring_elements_per_claim: 2048, num_positions_per_block: 64, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 18, block_index_bits: 11, num_live_blocks: 2048, n_a: 3, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 13, block_index_bits: 9, num_live_blocks: 301, n_a: 3, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 11, block_index_bits: 6, num_live_blocks: 42, n_a: 3, n_b: 1, n_d: 1 }),
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(36, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(18, 1), num_live_ring_elements_per_claim: 2048, num_positions_per_block: 64, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 18, block_index_bits: 11, num_live_blocks: 2048, n_a: 4, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 13, block_index_bits: 9, num_live_blocks: 344, n_a: 3, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 11, block_index_bits: 6, num_live_blocks: 46, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 10, block_index_bits: 4, num_live_blocks: 16, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 4, num_live_blocks: 13, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 6, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(36, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(18, 1), num_live_ring_elements_per_claim: 2048, num_positions_per_block: 64, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(18, 1), num_live_ring_elements_per_claim: 2048, num_positions_per_block: 64, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 18, block_index_bits: 11, num_live_blocks: 2048, n_a: 3, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 13, block_index_bits: 9, num_live_blocks: 302, n_a: 3, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 11, block_index_bits: 6, num_live_blocks: 42, n_a: 3, n_b: 1, n_d: 1 }),
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(36, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(18, 1), num_live_ring_elements_per_claim: 2048, num_positions_per_block: 64, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(18, 1), num_live_ring_elements_per_claim: 2048, num_positions_per_block: 64, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 18, block_index_bits: 11, num_live_blocks: 2048, n_a: 4, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 13, block_index_bits: 9, num_live_blocks: 345, n_a: 3, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 11, block_index_bits: 6, num_live_blocks: 46, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 10, block_index_bits: 4, num_live_blocks: 16, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 4, num_live_blocks: 13, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 6, n_a: 2, n_b: 1, n_d: 1 }),
@@ -1457,7 +1457,17 @@ pub(crate) static FP128_D128_ONEHOT_SCHEDULES: &[GeneratedScheduleTableEntry] = 
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
     GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(37, 1), precommitteds: &[], steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 17, block_index_bits: 13, num_live_blocks: 8192, n_a: 3, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 18, block_index_bits: 12, num_live_blocks: 4096, n_a: 4, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 13, block_index_bits: 8, num_live_blocks: 236, n_a: 3, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 11, block_index_bits: 6, num_live_blocks: 36, n_a: 3, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 10, block_index_bits: 4, num_live_blocks: 15, n_a: 2, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 4, num_live_blocks: 13, n_a: 2, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 6, n_a: 2, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
+        GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
+    ] },
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(37, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(18, 1), num_live_ring_elements_per_claim: 2048, num_positions_per_block: 64, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 18, block_index_bits: 12, num_live_blocks: 4096, n_a: 4, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 13, block_index_bits: 8, num_live_blocks: 237, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 11, block_index_bits: 6, num_live_blocks: 37, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 10, block_index_bits: 4, num_live_blocks: 15, n_a: 2, n_b: 1, n_d: 1 }),
@@ -1466,8 +1476,8 @@ pub(crate) static FP128_D128_ONEHOT_SCHEDULES: &[GeneratedScheduleTableEntry] = 
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(37, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(18, 1), num_live_ring_elements_per_claim: 2048, num_positions_per_block: 64, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 17, block_index_bits: 13, num_live_blocks: 8192, n_a: 3, n_b: 1, n_d: 1 }),
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(37, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(18, 1), num_live_ring_elements_per_claim: 2048, num_positions_per_block: 64, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(18, 1), num_live_ring_elements_per_claim: 2048, num_positions_per_block: 64, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 18, block_index_bits: 12, num_live_blocks: 4096, n_a: 4, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 13, block_index_bits: 8, num_live_blocks: 237, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 11, block_index_bits: 6, num_live_blocks: 37, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 10, block_index_bits: 4, num_live_blocks: 15, n_a: 2, n_b: 1, n_d: 1 }),
@@ -1476,30 +1486,20 @@ pub(crate) static FP128_D128_ONEHOT_SCHEDULES: &[GeneratedScheduleTableEntry] = 
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(37, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(18, 1), num_live_ring_elements_per_claim: 2048, num_positions_per_block: 64, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(18, 1), num_live_ring_elements_per_claim: 2048, num_positions_per_block: 64, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 17, block_index_bits: 13, num_live_blocks: 8192, n_a: 3, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 13, block_index_bits: 8, num_live_blocks: 238, n_a: 3, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 11, block_index_bits: 6, num_live_blocks: 37, n_a: 3, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 10, block_index_bits: 4, num_live_blocks: 15, n_a: 2, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 4, num_live_blocks: 13, n_a: 2, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 6, n_a: 2, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
-        GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
-    ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(37, 2), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(18, 1), num_live_ring_elements_per_claim: 2048, num_positions_per_block: 64, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 18, block_index_bits: 12, num_live_blocks: 4096, n_a: 3, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 13, block_index_bits: 9, num_live_blocks: 301, n_a: 3, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 11, block_index_bits: 6, num_live_blocks: 42, n_a: 3, n_b: 1, n_d: 1 }),
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(37, 2), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(18, 1), num_live_ring_elements_per_claim: 2048, num_positions_per_block: 64, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 18, block_index_bits: 12, num_live_blocks: 4096, n_a: 4, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 13, block_index_bits: 9, num_live_blocks: 344, n_a: 3, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 11, block_index_bits: 6, num_live_blocks: 46, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 10, block_index_bits: 4, num_live_blocks: 16, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 4, num_live_blocks: 13, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 6, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(37, 2), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(18, 1), num_live_ring_elements_per_claim: 2048, num_positions_per_block: 64, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(18, 1), num_live_ring_elements_per_claim: 2048, num_positions_per_block: 64, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 18, block_index_bits: 12, num_live_blocks: 4096, n_a: 3, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 13, block_index_bits: 9, num_live_blocks: 302, n_a: 3, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 11, block_index_bits: 6, num_live_blocks: 42, n_a: 3, n_b: 1, n_d: 1 }),
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(37, 2), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(18, 1), num_live_ring_elements_per_claim: 2048, num_positions_per_block: 64, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(18, 1), num_live_ring_elements_per_claim: 2048, num_positions_per_block: 64, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 18, block_index_bits: 12, num_live_blocks: 4096, n_a: 4, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 13, block_index_bits: 9, num_live_blocks: 345, n_a: 3, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 11, block_index_bits: 6, num_live_blocks: 46, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 10, block_index_bits: 4, num_live_blocks: 16, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 4, num_live_blocks: 13, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 6, n_a: 2, n_b: 1, n_d: 1 }),
@@ -1507,79 +1507,79 @@ pub(crate) static FP128_D128_ONEHOT_SCHEDULES: &[GeneratedScheduleTableEntry] = 
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
     GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(37, 4), precommitteds: &[], steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 19, block_index_bits: 11, num_live_blocks: 2048, n_a: 3, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 14, block_index_bits: 8, num_live_blocks: 215, n_a: 3, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 11, block_index_bits: 6, num_live_blocks: 51, n_a: 3, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 19, block_index_bits: 11, num_live_blocks: 2048, n_a: 4, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 14, block_index_bits: 8, num_live_blocks: 236, n_a: 3, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 11, block_index_bits: 6, num_live_blocks: 52, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 10, block_index_bits: 5, num_live_blocks: 17, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 4, num_live_blocks: 13, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 6, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(37, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(18, 1), num_live_ring_elements_per_claim: 2048, num_positions_per_block: 64, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 19, block_index_bits: 11, num_live_blocks: 2048, n_a: 3, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 14, block_index_bits: 8, num_live_blocks: 215, n_a: 3, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 11, block_index_bits: 6, num_live_blocks: 51, n_a: 3, n_b: 1, n_d: 1 }),
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(37, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(18, 1), num_live_ring_elements_per_claim: 2048, num_positions_per_block: 64, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 19, block_index_bits: 11, num_live_blocks: 2048, n_a: 4, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 14, block_index_bits: 8, num_live_blocks: 236, n_a: 3, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 11, block_index_bits: 6, num_live_blocks: 52, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 10, block_index_bits: 5, num_live_blocks: 17, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 4, num_live_blocks: 13, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 6, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(37, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(18, 1), num_live_ring_elements_per_claim: 2048, num_positions_per_block: 64, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(18, 1), num_live_ring_elements_per_claim: 2048, num_positions_per_block: 64, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 19, block_index_bits: 11, num_live_blocks: 2048, n_a: 3, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 14, block_index_bits: 8, num_live_blocks: 215, n_a: 3, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 11, block_index_bits: 6, num_live_blocks: 51, n_a: 3, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 10, block_index_bits: 5, num_live_blocks: 17, n_a: 2, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 4, num_live_blocks: 13, n_a: 2, n_b: 1, n_d: 1 }),
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(37, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(18, 1), num_live_ring_elements_per_claim: 2048, num_positions_per_block: 64, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(18, 1), num_live_ring_elements_per_claim: 2048, num_positions_per_block: 64, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 19, block_index_bits: 11, num_live_blocks: 2048, n_a: 4, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 14, block_index_bits: 8, num_live_blocks: 237, n_a: 3, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 11, block_index_bits: 6, num_live_blocks: 53, n_a: 3, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 10, block_index_bits: 4, num_live_blocks: 13, n_a: 2, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 4, num_live_blocks: 12, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 6, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
     GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(38, 1), precommitteds: &[], steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 18, block_index_bits: 13, num_live_blocks: 8192, n_a: 3, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 13, block_index_bits: 9, num_live_blocks: 301, n_a: 3, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 11, block_index_bits: 6, num_live_blocks: 42, n_a: 3, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 18, block_index_bits: 13, num_live_blocks: 8192, n_a: 4, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 13, block_index_bits: 9, num_live_blocks: 344, n_a: 3, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 11, block_index_bits: 6, num_live_blocks: 46, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 10, block_index_bits: 4, num_live_blocks: 16, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 4, num_live_blocks: 13, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 6, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(38, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(19, 1), num_live_ring_elements_per_claim: 4096, num_positions_per_block: 256, num_live_blocks: 16, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 18, block_index_bits: 13, num_live_blocks: 8192, n_a: 3, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 13, block_index_bits: 9, num_live_blocks: 301, n_a: 3, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 11, block_index_bits: 6, num_live_blocks: 42, n_a: 3, n_b: 1, n_d: 1 }),
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(38, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(19, 1), num_live_ring_elements_per_claim: 4096, num_positions_per_block: 256, num_live_blocks: 16, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 18, block_index_bits: 13, num_live_blocks: 8192, n_a: 4, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 13, block_index_bits: 9, num_live_blocks: 344, n_a: 3, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 11, block_index_bits: 6, num_live_blocks: 46, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 10, block_index_bits: 4, num_live_blocks: 16, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 4, num_live_blocks: 13, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 6, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(38, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(19, 1), num_live_ring_elements_per_claim: 4096, num_positions_per_block: 256, num_live_blocks: 16, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(19, 1), num_live_ring_elements_per_claim: 4096, num_positions_per_block: 256, num_live_blocks: 16, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 18, block_index_bits: 13, num_live_blocks: 8192, n_a: 3, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 13, block_index_bits: 9, num_live_blocks: 302, n_a: 3, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 11, block_index_bits: 6, num_live_blocks: 42, n_a: 3, n_b: 1, n_d: 1 }),
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(38, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(19, 1), num_live_ring_elements_per_claim: 4096, num_positions_per_block: 256, num_live_blocks: 16, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(19, 1), num_live_ring_elements_per_claim: 4096, num_positions_per_block: 256, num_live_blocks: 16, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 18, block_index_bits: 13, num_live_blocks: 8192, n_a: 4, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 13, block_index_bits: 9, num_live_blocks: 344, n_a: 3, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 11, block_index_bits: 6, num_live_blocks: 46, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 10, block_index_bits: 4, num_live_blocks: 16, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 4, num_live_blocks: 13, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 6, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(38, 2), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(19, 1), num_live_ring_elements_per_claim: 4096, num_positions_per_block: 256, num_live_blocks: 16, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 19, block_index_bits: 12, num_live_blocks: 4096, n_a: 3, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 14, block_index_bits: 8, num_live_blocks: 215, n_a: 3, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 11, block_index_bits: 6, num_live_blocks: 51, n_a: 3, n_b: 1, n_d: 1 }),
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(38, 2), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(19, 1), num_live_ring_elements_per_claim: 4096, num_positions_per_block: 256, num_live_blocks: 16, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 19, block_index_bits: 12, num_live_blocks: 4096, n_a: 4, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 14, block_index_bits: 8, num_live_blocks: 236, n_a: 3, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 11, block_index_bits: 6, num_live_blocks: 52, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 10, block_index_bits: 5, num_live_blocks: 17, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 4, num_live_blocks: 13, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 6, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(38, 2), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(19, 1), num_live_ring_elements_per_claim: 4096, num_positions_per_block: 256, num_live_blocks: 16, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(19, 1), num_live_ring_elements_per_claim: 4096, num_positions_per_block: 256, num_live_blocks: 16, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 19, block_index_bits: 12, num_live_blocks: 4096, n_a: 3, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 14, block_index_bits: 8, num_live_blocks: 215, n_a: 3, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 11, block_index_bits: 6, num_live_blocks: 51, n_a: 3, n_b: 1, n_d: 1 }),
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(38, 2), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(19, 1), num_live_ring_elements_per_claim: 4096, num_positions_per_block: 256, num_live_blocks: 16, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(19, 1), num_live_ring_elements_per_claim: 4096, num_positions_per_block: 256, num_live_blocks: 16, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 19, block_index_bits: 12, num_live_blocks: 4096, n_a: 4, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 14, block_index_bits: 8, num_live_blocks: 236, n_a: 3, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 11, block_index_bits: 6, num_live_blocks: 52, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 10, block_index_bits: 5, num_live_blocks: 17, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 4, num_live_blocks: 13, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 6, n_a: 2, n_b: 1, n_d: 1 }),
@@ -1596,7 +1596,7 @@ pub(crate) static FP128_D128_ONEHOT_SCHEDULES: &[GeneratedScheduleTableEntry] = 
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(38, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(19, 1), num_live_ring_elements_per_claim: 4096, num_positions_per_block: 256, num_live_blocks: 16, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(38, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(19, 1), num_live_ring_elements_per_claim: 4096, num_positions_per_block: 256, num_live_blocks: 16, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 19, block_index_bits: 12, num_live_blocks: 4096, n_a: 4, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 14, block_index_bits: 9, num_live_blocks: 376, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 11, block_index_bits: 6, num_live_blocks: 64, n_a: 3, n_b: 1, n_d: 1 }),
@@ -1606,7 +1606,7 @@ pub(crate) static FP128_D128_ONEHOT_SCHEDULES: &[GeneratedScheduleTableEntry] = 
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(38, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(19, 1), num_live_ring_elements_per_claim: 4096, num_positions_per_block: 256, num_live_blocks: 16, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(19, 1), num_live_ring_elements_per_claim: 4096, num_positions_per_block: 256, num_live_blocks: 16, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(38, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(19, 1), num_live_ring_elements_per_claim: 4096, num_positions_per_block: 256, num_live_blocks: 16, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(19, 1), num_live_ring_elements_per_claim: 4096, num_positions_per_block: 256, num_live_blocks: 16, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 19, block_index_bits: 12, num_live_blocks: 4096, n_a: 4, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 14, block_index_bits: 9, num_live_blocks: 376, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 11, block_index_bits: 6, num_live_blocks: 64, n_a: 3, n_b: 1, n_d: 1 }),
@@ -1617,36 +1617,36 @@ pub(crate) static FP128_D128_ONEHOT_SCHEDULES: &[GeneratedScheduleTableEntry] = 
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
     GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(39, 1), precommitteds: &[], steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 19, block_index_bits: 13, num_live_blocks: 8192, n_a: 3, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 14, block_index_bits: 8, num_live_blocks: 215, n_a: 3, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 11, block_index_bits: 6, num_live_blocks: 51, n_a: 3, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 19, block_index_bits: 13, num_live_blocks: 8192, n_a: 4, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 14, block_index_bits: 8, num_live_blocks: 236, n_a: 3, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 11, block_index_bits: 6, num_live_blocks: 52, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 10, block_index_bits: 5, num_live_blocks: 17, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 4, num_live_blocks: 13, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 6, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(39, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(19, 1), num_live_ring_elements_per_claim: 4096, num_positions_per_block: 256, num_live_blocks: 16, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 19, block_index_bits: 13, num_live_blocks: 8192, n_a: 3, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 14, block_index_bits: 8, num_live_blocks: 215, n_a: 3, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 11, block_index_bits: 6, num_live_blocks: 51, n_a: 3, n_b: 1, n_d: 1 }),
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(39, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(19, 1), num_live_ring_elements_per_claim: 4096, num_positions_per_block: 256, num_live_blocks: 16, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 19, block_index_bits: 13, num_live_blocks: 8192, n_a: 4, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 14, block_index_bits: 8, num_live_blocks: 236, n_a: 3, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 11, block_index_bits: 6, num_live_blocks: 52, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 10, block_index_bits: 5, num_live_blocks: 17, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 4, num_live_blocks: 13, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 6, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(39, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(19, 1), num_live_ring_elements_per_claim: 4096, num_positions_per_block: 256, num_live_blocks: 16, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(19, 1), num_live_ring_elements_per_claim: 4096, num_positions_per_block: 256, num_live_blocks: 16, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 19, block_index_bits: 13, num_live_blocks: 8192, n_a: 3, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 14, block_index_bits: 8, num_live_blocks: 215, n_a: 3, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 11, block_index_bits: 6, num_live_blocks: 51, n_a: 3, n_b: 1, n_d: 1 }),
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(39, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(19, 1), num_live_ring_elements_per_claim: 4096, num_positions_per_block: 256, num_live_blocks: 16, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(19, 1), num_live_ring_elements_per_claim: 4096, num_positions_per_block: 256, num_live_blocks: 16, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 19, block_index_bits: 13, num_live_blocks: 8192, n_a: 4, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 14, block_index_bits: 8, num_live_blocks: 236, n_a: 3, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 11, block_index_bits: 6, num_live_blocks: 52, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 10, block_index_bits: 5, num_live_blocks: 17, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 4, num_live_blocks: 13, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 6, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(39, 2), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(19, 1), num_live_ring_elements_per_claim: 4096, num_positions_per_block: 256, num_live_blocks: 16, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(39, 2), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(19, 1), num_live_ring_elements_per_claim: 4096, num_positions_per_block: 256, num_live_blocks: 16, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 19, block_index_bits: 13, num_live_blocks: 8192, n_a: 4, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 14, block_index_bits: 9, num_live_blocks: 376, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 11, block_index_bits: 6, num_live_blocks: 64, n_a: 3, n_b: 1, n_d: 1 }),
@@ -1656,7 +1656,7 @@ pub(crate) static FP128_D128_ONEHOT_SCHEDULES: &[GeneratedScheduleTableEntry] = 
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(39, 2), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(19, 1), num_live_ring_elements_per_claim: 4096, num_positions_per_block: 256, num_live_blocks: 16, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(19, 1), num_live_ring_elements_per_claim: 4096, num_positions_per_block: 256, num_live_blocks: 16, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(39, 2), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(19, 1), num_live_ring_elements_per_claim: 4096, num_positions_per_block: 256, num_live_blocks: 16, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(19, 1), num_live_ring_elements_per_claim: 4096, num_positions_per_block: 256, num_live_blocks: 16, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 19, block_index_bits: 13, num_live_blocks: 8192, n_a: 4, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 14, block_index_bits: 9, num_live_blocks: 376, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 11, block_index_bits: 6, num_live_blocks: 64, n_a: 3, n_b: 1, n_d: 1 }),
@@ -1676,7 +1676,7 @@ pub(crate) static FP128_D128_ONEHOT_SCHEDULES: &[GeneratedScheduleTableEntry] = 
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(39, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(19, 1), num_live_ring_elements_per_claim: 4096, num_positions_per_block: 256, num_live_blocks: 16, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(39, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(19, 1), num_live_ring_elements_per_claim: 4096, num_positions_per_block: 256, num_live_blocks: 16, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 20, block_index_bits: 12, num_live_blocks: 4096, n_a: 4, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 14, block_index_bits: 10, num_live_blocks: 536, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 11, block_index_bits: 7, num_live_blocks: 78, n_a: 3, n_b: 1, n_d: 1 }),
@@ -1686,7 +1686,7 @@ pub(crate) static FP128_D128_ONEHOT_SCHEDULES: &[GeneratedScheduleTableEntry] = 
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(39, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(19, 1), num_live_ring_elements_per_claim: 4096, num_positions_per_block: 256, num_live_blocks: 16, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(19, 1), num_live_ring_elements_per_claim: 4096, num_positions_per_block: 256, num_live_blocks: 16, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(39, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(19, 1), num_live_ring_elements_per_claim: 4096, num_positions_per_block: 256, num_live_blocks: 16, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(19, 1), num_live_ring_elements_per_claim: 4096, num_positions_per_block: 256, num_live_blocks: 16, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 20, block_index_bits: 12, num_live_blocks: 4096, n_a: 4, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 14, block_index_bits: 10, num_live_blocks: 536, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 11, block_index_bits: 7, num_live_blocks: 78, n_a: 3, n_b: 1, n_d: 1 }),
@@ -1706,7 +1706,7 @@ pub(crate) static FP128_D128_ONEHOT_SCHEDULES: &[GeneratedScheduleTableEntry] = 
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(40, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(20, 1), num_live_ring_elements_per_claim: 8192, num_positions_per_block: 512, num_live_blocks: 16, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(40, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(20, 1), num_live_ring_elements_per_claim: 8192, num_positions_per_block: 512, num_live_blocks: 16, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 19, block_index_bits: 14, num_live_blocks: 16384, n_a: 4, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 14, block_index_bits: 9, num_live_blocks: 376, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 11, block_index_bits: 6, num_live_blocks: 64, n_a: 3, n_b: 1, n_d: 1 }),
@@ -1716,7 +1716,7 @@ pub(crate) static FP128_D128_ONEHOT_SCHEDULES: &[GeneratedScheduleTableEntry] = 
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(40, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(20, 1), num_live_ring_elements_per_claim: 8192, num_positions_per_block: 512, num_live_blocks: 16, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(20, 1), num_live_ring_elements_per_claim: 8192, num_positions_per_block: 512, num_live_blocks: 16, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(40, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(20, 1), num_live_ring_elements_per_claim: 8192, num_positions_per_block: 512, num_live_blocks: 16, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(20, 1), num_live_ring_elements_per_claim: 8192, num_positions_per_block: 512, num_live_blocks: 16, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 19, block_index_bits: 14, num_live_blocks: 16384, n_a: 4, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 14, block_index_bits: 9, num_live_blocks: 376, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 11, block_index_bits: 6, num_live_blocks: 64, n_a: 3, n_b: 1, n_d: 1 }),
@@ -1726,7 +1726,7 @@ pub(crate) static FP128_D128_ONEHOT_SCHEDULES: &[GeneratedScheduleTableEntry] = 
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(40, 2), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(20, 1), num_live_ring_elements_per_claim: 8192, num_positions_per_block: 512, num_live_blocks: 16, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(40, 2), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(20, 1), num_live_ring_elements_per_claim: 8192, num_positions_per_block: 512, num_live_blocks: 16, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 20, block_index_bits: 13, num_live_blocks: 8192, n_a: 4, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 14, block_index_bits: 10, num_live_blocks: 536, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 11, block_index_bits: 7, num_live_blocks: 78, n_a: 3, n_b: 1, n_d: 1 }),
@@ -1736,7 +1736,7 @@ pub(crate) static FP128_D128_ONEHOT_SCHEDULES: &[GeneratedScheduleTableEntry] = 
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(40, 2), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(20, 1), num_live_ring_elements_per_claim: 8192, num_positions_per_block: 512, num_live_blocks: 16, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(20, 1), num_live_ring_elements_per_claim: 8192, num_positions_per_block: 512, num_live_blocks: 16, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(40, 2), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(20, 1), num_live_ring_elements_per_claim: 8192, num_positions_per_block: 512, num_live_blocks: 16, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(20, 1), num_live_ring_elements_per_claim: 8192, num_positions_per_block: 512, num_live_blocks: 16, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 20, block_index_bits: 13, num_live_blocks: 8192, n_a: 4, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 14, block_index_bits: 10, num_live_blocks: 536, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 11, block_index_bits: 7, num_live_blocks: 78, n_a: 3, n_b: 1, n_d: 1 }),
@@ -1756,7 +1756,7 @@ pub(crate) static FP128_D128_ONEHOT_SCHEDULES: &[GeneratedScheduleTableEntry] = 
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(40, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(20, 1), num_live_ring_elements_per_claim: 8192, num_positions_per_block: 512, num_live_blocks: 16, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(40, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(20, 1), num_live_ring_elements_per_claim: 8192, num_positions_per_block: 512, num_live_blocks: 16, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 20, block_index_bits: 13, num_live_blocks: 8192, n_a: 4, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 15, block_index_bits: 9, num_live_blocks: 376, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 5, position_index_bits: 11, block_index_bits: 7, num_live_blocks: 96, n_a: 3, n_b: 1, n_d: 1 }),
@@ -1766,7 +1766,7 @@ pub(crate) static FP128_D128_ONEHOT_SCHEDULES: &[GeneratedScheduleTableEntry] = 
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(40, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(20, 1), num_live_ring_elements_per_claim: 8192, num_positions_per_block: 512, num_live_blocks: 16, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(20, 1), num_live_ring_elements_per_claim: 8192, num_positions_per_block: 512, num_live_blocks: 16, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(40, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(20, 1), num_live_ring_elements_per_claim: 8192, num_positions_per_block: 512, num_live_blocks: 16, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(20, 1), num_live_ring_elements_per_claim: 8192, num_positions_per_block: 512, num_live_blocks: 16, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 20, block_index_bits: 13, num_live_blocks: 8192, n_a: 4, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 15, block_index_bits: 9, num_live_blocks: 376, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 5, position_index_bits: 11, block_index_bits: 7, num_live_blocks: 96, n_a: 3, n_b: 1, n_d: 1 }),
@@ -1786,7 +1786,7 @@ pub(crate) static FP128_D128_ONEHOT_SCHEDULES: &[GeneratedScheduleTableEntry] = 
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(41, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(20, 1), num_live_ring_elements_per_claim: 8192, num_positions_per_block: 512, num_live_blocks: 16, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(41, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(20, 1), num_live_ring_elements_per_claim: 8192, num_positions_per_block: 512, num_live_blocks: 16, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 20, block_index_bits: 14, num_live_blocks: 16384, n_a: 4, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 14, block_index_bits: 10, num_live_blocks: 536, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 11, block_index_bits: 7, num_live_blocks: 78, n_a: 3, n_b: 1, n_d: 1 }),
@@ -1796,7 +1796,7 @@ pub(crate) static FP128_D128_ONEHOT_SCHEDULES: &[GeneratedScheduleTableEntry] = 
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(41, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(20, 1), num_live_ring_elements_per_claim: 8192, num_positions_per_block: 512, num_live_blocks: 16, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(20, 1), num_live_ring_elements_per_claim: 8192, num_positions_per_block: 512, num_live_blocks: 16, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(41, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(20, 1), num_live_ring_elements_per_claim: 8192, num_positions_per_block: 512, num_live_blocks: 16, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(20, 1), num_live_ring_elements_per_claim: 8192, num_positions_per_block: 512, num_live_blocks: 16, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 20, block_index_bits: 14, num_live_blocks: 16384, n_a: 4, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 14, block_index_bits: 10, num_live_blocks: 536, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 11, block_index_bits: 7, num_live_blocks: 78, n_a: 3, n_b: 1, n_d: 1 }),
@@ -1806,7 +1806,7 @@ pub(crate) static FP128_D128_ONEHOT_SCHEDULES: &[GeneratedScheduleTableEntry] = 
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(41, 2), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(20, 1), num_live_ring_elements_per_claim: 8192, num_positions_per_block: 512, num_live_blocks: 16, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(41, 2), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(20, 1), num_live_ring_elements_per_claim: 8192, num_positions_per_block: 512, num_live_blocks: 16, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 20, block_index_bits: 14, num_live_blocks: 16384, n_a: 4, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 15, block_index_bits: 9, num_live_blocks: 376, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 5, position_index_bits: 11, block_index_bits: 7, num_live_blocks: 96, n_a: 3, n_b: 1, n_d: 1 }),
@@ -1816,7 +1816,7 @@ pub(crate) static FP128_D128_ONEHOT_SCHEDULES: &[GeneratedScheduleTableEntry] = 
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(41, 2), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(20, 1), num_live_ring_elements_per_claim: 8192, num_positions_per_block: 512, num_live_blocks: 16, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(20, 1), num_live_ring_elements_per_claim: 8192, num_positions_per_block: 512, num_live_blocks: 16, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(41, 2), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(20, 1), num_live_ring_elements_per_claim: 8192, num_positions_per_block: 512, num_live_blocks: 16, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(20, 1), num_live_ring_elements_per_claim: 8192, num_positions_per_block: 512, num_live_blocks: 16, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 20, block_index_bits: 14, num_live_blocks: 16384, n_a: 4, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 15, block_index_bits: 9, num_live_blocks: 376, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 5, position_index_bits: 11, block_index_bits: 7, num_live_blocks: 96, n_a: 3, n_b: 1, n_d: 1 }),
@@ -1836,7 +1836,7 @@ pub(crate) static FP128_D128_ONEHOT_SCHEDULES: &[GeneratedScheduleTableEntry] = 
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(41, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(20, 1), num_live_ring_elements_per_claim: 8192, num_positions_per_block: 512, num_live_blocks: 16, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(41, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(20, 1), num_live_ring_elements_per_claim: 8192, num_positions_per_block: 512, num_live_blocks: 16, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 21, block_index_bits: 13, num_live_blocks: 8192, n_a: 4, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 15, block_index_bits: 10, num_live_blocks: 536, n_a: 4, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 5, position_index_bits: 11, block_index_bits: 7, num_live_blocks: 106, n_a: 3, n_b: 1, n_d: 1 }),
@@ -1846,7 +1846,7 @@ pub(crate) static FP128_D128_ONEHOT_SCHEDULES: &[GeneratedScheduleTableEntry] = 
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(41, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(20, 1), num_live_ring_elements_per_claim: 8192, num_positions_per_block: 512, num_live_blocks: 16, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(20, 1), num_live_ring_elements_per_claim: 8192, num_positions_per_block: 512, num_live_blocks: 16, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(41, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(20, 1), num_live_ring_elements_per_claim: 8192, num_positions_per_block: 512, num_live_blocks: 16, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(20, 1), num_live_ring_elements_per_claim: 8192, num_positions_per_block: 512, num_live_blocks: 16, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 21, block_index_bits: 13, num_live_blocks: 8192, n_a: 4, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 15, block_index_bits: 10, num_live_blocks: 536, n_a: 4, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 5, position_index_bits: 11, block_index_bits: 7, num_live_blocks: 106, n_a: 3, n_b: 1, n_d: 1 }),
@@ -1866,7 +1866,7 @@ pub(crate) static FP128_D128_ONEHOT_SCHEDULES: &[GeneratedScheduleTableEntry] = 
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(42, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(21, 1), num_live_ring_elements_per_claim: 16384, num_positions_per_block: 1024, num_live_blocks: 16, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(42, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(21, 1), num_live_ring_elements_per_claim: 16384, num_positions_per_block: 1024, num_live_blocks: 16, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 20, block_index_bits: 15, num_live_blocks: 32768, n_a: 4, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 15, block_index_bits: 9, num_live_blocks: 376, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 5, position_index_bits: 11, block_index_bits: 7, num_live_blocks: 96, n_a: 3, n_b: 1, n_d: 1 }),
@@ -1876,7 +1876,7 @@ pub(crate) static FP128_D128_ONEHOT_SCHEDULES: &[GeneratedScheduleTableEntry] = 
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(42, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(21, 1), num_live_ring_elements_per_claim: 16384, num_positions_per_block: 1024, num_live_blocks: 16, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(21, 1), num_live_ring_elements_per_claim: 16384, num_positions_per_block: 1024, num_live_blocks: 16, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(42, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(21, 1), num_live_ring_elements_per_claim: 16384, num_positions_per_block: 1024, num_live_blocks: 16, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(21, 1), num_live_ring_elements_per_claim: 16384, num_positions_per_block: 1024, num_live_blocks: 16, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 20, block_index_bits: 15, num_live_blocks: 32768, n_a: 4, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 15, block_index_bits: 9, num_live_blocks: 376, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 5, position_index_bits: 11, block_index_bits: 7, num_live_blocks: 96, n_a: 3, n_b: 1, n_d: 1 }),
@@ -1886,7 +1886,7 @@ pub(crate) static FP128_D128_ONEHOT_SCHEDULES: &[GeneratedScheduleTableEntry] = 
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(42, 2), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(21, 1), num_live_ring_elements_per_claim: 16384, num_positions_per_block: 1024, num_live_blocks: 16, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(42, 2), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(21, 1), num_live_ring_elements_per_claim: 16384, num_positions_per_block: 1024, num_live_blocks: 16, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 21, block_index_bits: 14, num_live_blocks: 16384, n_a: 4, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 15, block_index_bits: 10, num_live_blocks: 536, n_a: 4, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 5, position_index_bits: 11, block_index_bits: 7, num_live_blocks: 106, n_a: 3, n_b: 1, n_d: 1 }),
@@ -1896,7 +1896,7 @@ pub(crate) static FP128_D128_ONEHOT_SCHEDULES: &[GeneratedScheduleTableEntry] = 
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(42, 2), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(21, 1), num_live_ring_elements_per_claim: 16384, num_positions_per_block: 1024, num_live_blocks: 16, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(21, 1), num_live_ring_elements_per_claim: 16384, num_positions_per_block: 1024, num_live_blocks: 16, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(42, 2), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(21, 1), num_live_ring_elements_per_claim: 16384, num_positions_per_block: 1024, num_live_blocks: 16, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(21, 1), num_live_ring_elements_per_claim: 16384, num_positions_per_block: 1024, num_live_blocks: 16, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 21, block_index_bits: 14, num_live_blocks: 16384, n_a: 4, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 15, block_index_bits: 10, num_live_blocks: 536, n_a: 4, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 5, position_index_bits: 11, block_index_bits: 7, num_live_blocks: 106, n_a: 3, n_b: 1, n_d: 1 }),
@@ -1916,7 +1916,7 @@ pub(crate) static FP128_D128_ONEHOT_SCHEDULES: &[GeneratedScheduleTableEntry] = 
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(42, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(21, 1), num_live_ring_elements_per_claim: 16384, num_positions_per_block: 1024, num_live_blocks: 16, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(42, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(21, 1), num_live_ring_elements_per_claim: 16384, num_positions_per_block: 1024, num_live_blocks: 16, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 21, block_index_bits: 14, num_live_blocks: 16384, n_a: 4, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 5, position_index_bits: 15, block_index_bits: 10, num_live_blocks: 751, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 5, position_index_bits: 11, block_index_bits: 7, num_live_blocks: 87, n_a: 3, n_b: 1, n_d: 1 }),
@@ -1926,7 +1926,7 @@ pub(crate) static FP128_D128_ONEHOT_SCHEDULES: &[GeneratedScheduleTableEntry] = 
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(42, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(21, 1), num_live_ring_elements_per_claim: 16384, num_positions_per_block: 1024, num_live_blocks: 16, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(21, 1), num_live_ring_elements_per_claim: 16384, num_positions_per_block: 1024, num_live_blocks: 16, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(42, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(21, 1), num_live_ring_elements_per_claim: 16384, num_positions_per_block: 1024, num_live_blocks: 16, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(21, 1), num_live_ring_elements_per_claim: 16384, num_positions_per_block: 1024, num_live_blocks: 16, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 21, block_index_bits: 14, num_live_blocks: 16384, n_a: 4, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 5, position_index_bits: 15, block_index_bits: 10, num_live_blocks: 751, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 5, position_index_bits: 11, block_index_bits: 7, num_live_blocks: 87, n_a: 3, n_b: 1, n_d: 1 }),
@@ -1946,7 +1946,7 @@ pub(crate) static FP128_D128_ONEHOT_SCHEDULES: &[GeneratedScheduleTableEntry] = 
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(43, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(21, 1), num_live_ring_elements_per_claim: 16384, num_positions_per_block: 1024, num_live_blocks: 16, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(43, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(21, 1), num_live_ring_elements_per_claim: 16384, num_positions_per_block: 1024, num_live_blocks: 16, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 21, block_index_bits: 15, num_live_blocks: 32768, n_a: 4, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 15, block_index_bits: 10, num_live_blocks: 536, n_a: 4, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 5, position_index_bits: 11, block_index_bits: 7, num_live_blocks: 106, n_a: 3, n_b: 1, n_d: 1 }),
@@ -1956,7 +1956,7 @@ pub(crate) static FP128_D128_ONEHOT_SCHEDULES: &[GeneratedScheduleTableEntry] = 
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(43, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(21, 1), num_live_ring_elements_per_claim: 16384, num_positions_per_block: 1024, num_live_blocks: 16, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(21, 1), num_live_ring_elements_per_claim: 16384, num_positions_per_block: 1024, num_live_blocks: 16, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(43, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(21, 1), num_live_ring_elements_per_claim: 16384, num_positions_per_block: 1024, num_live_blocks: 16, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(21, 1), num_live_ring_elements_per_claim: 16384, num_positions_per_block: 1024, num_live_blocks: 16, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 21, block_index_bits: 15, num_live_blocks: 32768, n_a: 4, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 15, block_index_bits: 10, num_live_blocks: 536, n_a: 4, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 5, position_index_bits: 11, block_index_bits: 7, num_live_blocks: 106, n_a: 3, n_b: 1, n_d: 1 }),
@@ -1966,7 +1966,7 @@ pub(crate) static FP128_D128_ONEHOT_SCHEDULES: &[GeneratedScheduleTableEntry] = 
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(43, 2), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(21, 1), num_live_ring_elements_per_claim: 16384, num_positions_per_block: 1024, num_live_blocks: 16, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(43, 2), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(21, 1), num_live_ring_elements_per_claim: 16384, num_positions_per_block: 1024, num_live_blocks: 16, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 21, block_index_bits: 15, num_live_blocks: 32768, n_a: 4, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 5, position_index_bits: 15, block_index_bits: 10, num_live_blocks: 751, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 5, position_index_bits: 11, block_index_bits: 7, num_live_blocks: 87, n_a: 3, n_b: 1, n_d: 1 }),
@@ -1976,7 +1976,7 @@ pub(crate) static FP128_D128_ONEHOT_SCHEDULES: &[GeneratedScheduleTableEntry] = 
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(43, 2), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(21, 1), num_live_ring_elements_per_claim: 16384, num_positions_per_block: 1024, num_live_blocks: 16, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(21, 1), num_live_ring_elements_per_claim: 16384, num_positions_per_block: 1024, num_live_blocks: 16, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(43, 2), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(21, 1), num_live_ring_elements_per_claim: 16384, num_positions_per_block: 1024, num_live_blocks: 16, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(21, 1), num_live_ring_elements_per_claim: 16384, num_positions_per_block: 1024, num_live_blocks: 16, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 21, block_index_bits: 15, num_live_blocks: 32768, n_a: 4, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 5, position_index_bits: 15, block_index_bits: 10, num_live_blocks: 751, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 5, position_index_bits: 11, block_index_bits: 7, num_live_blocks: 87, n_a: 3, n_b: 1, n_d: 1 }),
@@ -1996,7 +1996,7 @@ pub(crate) static FP128_D128_ONEHOT_SCHEDULES: &[GeneratedScheduleTableEntry] = 
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(43, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(21, 1), num_live_ring_elements_per_claim: 16384, num_positions_per_block: 1024, num_live_blocks: 16, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(43, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(21, 1), num_live_ring_elements_per_claim: 16384, num_positions_per_block: 1024, num_live_blocks: 16, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 22, block_index_bits: 14, num_live_blocks: 16384, n_a: 4, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 5, position_index_bits: 15, block_index_bits: 11, num_live_blocks: 1071, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 5, position_index_bits: 11, block_index_bits: 7, num_live_blocks: 103, n_a: 3, n_b: 1, n_d: 1 }),
@@ -2006,7 +2006,7 @@ pub(crate) static FP128_D128_ONEHOT_SCHEDULES: &[GeneratedScheduleTableEntry] = 
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(43, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(21, 1), num_live_ring_elements_per_claim: 16384, num_positions_per_block: 1024, num_live_blocks: 16, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(21, 1), num_live_ring_elements_per_claim: 16384, num_positions_per_block: 1024, num_live_blocks: 16, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(43, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(21, 1), num_live_ring_elements_per_claim: 16384, num_positions_per_block: 1024, num_live_blocks: 16, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(21, 1), num_live_ring_elements_per_claim: 16384, num_positions_per_block: 1024, num_live_blocks: 16, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 22, block_index_bits: 14, num_live_blocks: 16384, n_a: 4, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 5, position_index_bits: 15, block_index_bits: 11, num_live_blocks: 1071, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 5, position_index_bits: 11, block_index_bits: 7, num_live_blocks: 103, n_a: 3, n_b: 1, n_d: 1 }),
@@ -2026,7 +2026,7 @@ pub(crate) static FP128_D128_ONEHOT_SCHEDULES: &[GeneratedScheduleTableEntry] = 
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(44, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(22, 1), num_live_ring_elements_per_claim: 32768, num_positions_per_block: 1024, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(44, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(22, 1), num_live_ring_elements_per_claim: 32768, num_positions_per_block: 1024, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 21, block_index_bits: 16, num_live_blocks: 65536, n_a: 4, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 5, position_index_bits: 15, block_index_bits: 10, num_live_blocks: 751, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 5, position_index_bits: 11, block_index_bits: 7, num_live_blocks: 87, n_a: 3, n_b: 1, n_d: 1 }),
@@ -2036,7 +2036,7 @@ pub(crate) static FP128_D128_ONEHOT_SCHEDULES: &[GeneratedScheduleTableEntry] = 
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(44, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(22, 1), num_live_ring_elements_per_claim: 32768, num_positions_per_block: 1024, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(22, 1), num_live_ring_elements_per_claim: 32768, num_positions_per_block: 1024, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(44, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(22, 1), num_live_ring_elements_per_claim: 32768, num_positions_per_block: 1024, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(22, 1), num_live_ring_elements_per_claim: 32768, num_positions_per_block: 1024, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 21, block_index_bits: 16, num_live_blocks: 65536, n_a: 4, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 5, position_index_bits: 15, block_index_bits: 10, num_live_blocks: 751, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 5, position_index_bits: 11, block_index_bits: 7, num_live_blocks: 87, n_a: 3, n_b: 1, n_d: 1 }),
@@ -2046,7 +2046,7 @@ pub(crate) static FP128_D128_ONEHOT_SCHEDULES: &[GeneratedScheduleTableEntry] = 
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(44, 2), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(22, 1), num_live_ring_elements_per_claim: 32768, num_positions_per_block: 1024, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(44, 2), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(22, 1), num_live_ring_elements_per_claim: 32768, num_positions_per_block: 1024, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 22, block_index_bits: 15, num_live_blocks: 32768, n_a: 4, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 5, position_index_bits: 15, block_index_bits: 11, num_live_blocks: 1071, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 5, position_index_bits: 11, block_index_bits: 7, num_live_blocks: 103, n_a: 3, n_b: 1, n_d: 1 }),
@@ -2056,7 +2056,7 @@ pub(crate) static FP128_D128_ONEHOT_SCHEDULES: &[GeneratedScheduleTableEntry] = 
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(44, 2), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(22, 1), num_live_ring_elements_per_claim: 32768, num_positions_per_block: 1024, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(22, 1), num_live_ring_elements_per_claim: 32768, num_positions_per_block: 1024, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(44, 2), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(22, 1), num_live_ring_elements_per_claim: 32768, num_positions_per_block: 1024, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(22, 1), num_live_ring_elements_per_claim: 32768, num_positions_per_block: 1024, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 22, block_index_bits: 15, num_live_blocks: 32768, n_a: 4, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 5, position_index_bits: 15, block_index_bits: 11, num_live_blocks: 1071, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 5, position_index_bits: 11, block_index_bits: 7, num_live_blocks: 103, n_a: 3, n_b: 1, n_d: 1 }),
@@ -2076,7 +2076,7 @@ pub(crate) static FP128_D128_ONEHOT_SCHEDULES: &[GeneratedScheduleTableEntry] = 
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(44, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(22, 1), num_live_ring_elements_per_claim: 32768, num_positions_per_block: 1024, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(44, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(22, 1), num_live_ring_elements_per_claim: 32768, num_positions_per_block: 1024, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 5, position_index_bits: 22, block_index_bits: 15, num_live_blocks: 32768, n_a: 4, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 5, position_index_bits: 15, block_index_bits: 10, num_live_blocks: 905, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 5, position_index_bits: 11, block_index_bits: 7, num_live_blocks: 95, n_a: 3, n_b: 1, n_d: 1 }),
@@ -2086,7 +2086,7 @@ pub(crate) static FP128_D128_ONEHOT_SCHEDULES: &[GeneratedScheduleTableEntry] = 
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(44, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(22, 1), num_live_ring_elements_per_claim: 32768, num_positions_per_block: 1024, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(22, 1), num_live_ring_elements_per_claim: 32768, num_positions_per_block: 1024, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(44, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(22, 1), num_live_ring_elements_per_claim: 32768, num_positions_per_block: 1024, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(22, 1), num_live_ring_elements_per_claim: 32768, num_positions_per_block: 1024, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 5, position_index_bits: 22, block_index_bits: 15, num_live_blocks: 32768, n_a: 4, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 5, position_index_bits: 15, block_index_bits: 10, num_live_blocks: 905, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 5, position_index_bits: 11, block_index_bits: 7, num_live_blocks: 95, n_a: 3, n_b: 1, n_d: 1 }),
@@ -2106,7 +2106,7 @@ pub(crate) static FP128_D128_ONEHOT_SCHEDULES: &[GeneratedScheduleTableEntry] = 
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(45, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(22, 1), num_live_ring_elements_per_claim: 32768, num_positions_per_block: 1024, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(45, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(22, 1), num_live_ring_elements_per_claim: 32768, num_positions_per_block: 1024, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 22, block_index_bits: 16, num_live_blocks: 65536, n_a: 4, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 5, position_index_bits: 15, block_index_bits: 11, num_live_blocks: 1071, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 5, position_index_bits: 11, block_index_bits: 7, num_live_blocks: 103, n_a: 3, n_b: 1, n_d: 1 }),
@@ -2116,7 +2116,7 @@ pub(crate) static FP128_D128_ONEHOT_SCHEDULES: &[GeneratedScheduleTableEntry] = 
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(45, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(22, 1), num_live_ring_elements_per_claim: 32768, num_positions_per_block: 1024, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(22, 1), num_live_ring_elements_per_claim: 32768, num_positions_per_block: 1024, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(45, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(22, 1), num_live_ring_elements_per_claim: 32768, num_positions_per_block: 1024, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(22, 1), num_live_ring_elements_per_claim: 32768, num_positions_per_block: 1024, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 22, block_index_bits: 16, num_live_blocks: 65536, n_a: 4, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 5, position_index_bits: 15, block_index_bits: 11, num_live_blocks: 1071, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 5, position_index_bits: 11, block_index_bits: 7, num_live_blocks: 103, n_a: 3, n_b: 1, n_d: 1 }),
@@ -2126,7 +2126,7 @@ pub(crate) static FP128_D128_ONEHOT_SCHEDULES: &[GeneratedScheduleTableEntry] = 
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(45, 2), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(22, 1), num_live_ring_elements_per_claim: 32768, num_positions_per_block: 1024, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(45, 2), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(22, 1), num_live_ring_elements_per_claim: 32768, num_positions_per_block: 1024, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 5, position_index_bits: 22, block_index_bits: 16, num_live_blocks: 65536, n_a: 4, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 5, position_index_bits: 15, block_index_bits: 10, num_live_blocks: 905, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 5, position_index_bits: 11, block_index_bits: 7, num_live_blocks: 95, n_a: 3, n_b: 1, n_d: 1 }),
@@ -2136,7 +2136,7 @@ pub(crate) static FP128_D128_ONEHOT_SCHEDULES: &[GeneratedScheduleTableEntry] = 
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(45, 2), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(22, 1), num_live_ring_elements_per_claim: 32768, num_positions_per_block: 1024, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(22, 1), num_live_ring_elements_per_claim: 32768, num_positions_per_block: 1024, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(45, 2), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(22, 1), num_live_ring_elements_per_claim: 32768, num_positions_per_block: 1024, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(22, 1), num_live_ring_elements_per_claim: 32768, num_positions_per_block: 1024, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 5, position_index_bits: 22, block_index_bits: 16, num_live_blocks: 65536, n_a: 4, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 5, position_index_bits: 15, block_index_bits: 10, num_live_blocks: 905, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 5, position_index_bits: 11, block_index_bits: 7, num_live_blocks: 95, n_a: 3, n_b: 1, n_d: 1 }),
@@ -2147,30 +2147,30 @@ pub(crate) static FP128_D128_ONEHOT_SCHEDULES: &[GeneratedScheduleTableEntry] = 
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
     GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(45, 4), precommitteds: &[], steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 22, block_index_bits: 16, num_live_blocks: 65536, n_a: 4, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 16, block_index_bits: 11, num_live_blocks: 1181, n_a: 4, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 12, block_index_bits: 8, num_live_blocks: 143, n_a: 3, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 10, block_index_bits: 6, num_live_blocks: 41, n_a: 3, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 22, block_index_bits: 16, num_live_blocks: 65536, n_a: 5, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 16, block_index_bits: 11, num_live_blocks: 1353, n_a: 4, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 12, block_index_bits: 8, num_live_blocks: 152, n_a: 3, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 10, block_index_bits: 6, num_live_blocks: 42, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 9, block_index_bits: 5, num_live_blocks: 17, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 4, num_live_blocks: 9, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 5, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(45, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(22, 1), num_live_ring_elements_per_claim: 32768, num_positions_per_block: 1024, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 22, block_index_bits: 16, num_live_blocks: 65536, n_a: 4, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 16, block_index_bits: 11, num_live_blocks: 1181, n_a: 4, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 12, block_index_bits: 8, num_live_blocks: 143, n_a: 3, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 10, block_index_bits: 6, num_live_blocks: 41, n_a: 3, n_b: 1, n_d: 1 }),
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(45, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(22, 1), num_live_ring_elements_per_claim: 32768, num_positions_per_block: 1024, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 22, block_index_bits: 16, num_live_blocks: 65536, n_a: 5, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 16, block_index_bits: 11, num_live_blocks: 1353, n_a: 4, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 12, block_index_bits: 8, num_live_blocks: 152, n_a: 3, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 10, block_index_bits: 6, num_live_blocks: 42, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 9, block_index_bits: 5, num_live_blocks: 17, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 4, num_live_blocks: 9, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 5, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(45, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(22, 1), num_live_ring_elements_per_claim: 32768, num_positions_per_block: 1024, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(22, 1), num_live_ring_elements_per_claim: 32768, num_positions_per_block: 1024, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 22, block_index_bits: 16, num_live_blocks: 65536, n_a: 4, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 16, block_index_bits: 11, num_live_blocks: 1181, n_a: 4, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 12, block_index_bits: 8, num_live_blocks: 143, n_a: 3, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 10, block_index_bits: 6, num_live_blocks: 41, n_a: 3, n_b: 1, n_d: 1 }),
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(45, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(22, 1), num_live_ring_elements_per_claim: 32768, num_positions_per_block: 1024, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(22, 1), num_live_ring_elements_per_claim: 32768, num_positions_per_block: 1024, num_live_blocks: 32, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 22, block_index_bits: 16, num_live_blocks: 65536, n_a: 5, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 16, block_index_bits: 11, num_live_blocks: 1353, n_a: 4, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 12, block_index_bits: 8, num_live_blocks: 152, n_a: 3, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 10, block_index_bits: 6, num_live_blocks: 42, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 9, block_index_bits: 5, num_live_blocks: 17, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 4, num_live_blocks: 9, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 5, n_a: 2, n_b: 1, n_d: 1 }),
@@ -2186,7 +2186,7 @@ pub(crate) static FP128_D128_ONEHOT_SCHEDULES: &[GeneratedScheduleTableEntry] = 
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(46, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(23, 1), num_live_ring_elements_per_claim: 65536, num_positions_per_block: 512, num_live_blocks: 128, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(46, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(23, 1), num_live_ring_elements_per_claim: 65536, num_positions_per_block: 512, num_live_blocks: 128, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 5, position_index_bits: 22, block_index_bits: 17, num_live_blocks: 131072, n_a: 4, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 5, position_index_bits: 15, block_index_bits: 10, num_live_blocks: 905, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 5, position_index_bits: 11, block_index_bits: 7, num_live_blocks: 95, n_a: 3, n_b: 1, n_d: 1 }),
@@ -2196,7 +2196,7 @@ pub(crate) static FP128_D128_ONEHOT_SCHEDULES: &[GeneratedScheduleTableEntry] = 
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(46, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(23, 1), num_live_ring_elements_per_claim: 65536, num_positions_per_block: 512, num_live_blocks: 128, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(23, 1), num_live_ring_elements_per_claim: 65536, num_positions_per_block: 512, num_live_blocks: 128, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(46, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(23, 1), num_live_ring_elements_per_claim: 65536, num_positions_per_block: 512, num_live_blocks: 128, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(23, 1), num_live_ring_elements_per_claim: 65536, num_positions_per_block: 512, num_live_blocks: 128, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 5, position_index_bits: 22, block_index_bits: 17, num_live_blocks: 131072, n_a: 4, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 5, position_index_bits: 15, block_index_bits: 10, num_live_blocks: 906, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 5, position_index_bits: 11, block_index_bits: 7, num_live_blocks: 95, n_a: 3, n_b: 1, n_d: 1 }),
@@ -2206,210 +2206,210 @@ pub(crate) static FP128_D128_ONEHOT_SCHEDULES: &[GeneratedScheduleTableEntry] = 
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(46, 2), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(23, 1), num_live_ring_elements_per_claim: 65536, num_positions_per_block: 512, num_live_blocks: 128, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 22, block_index_bits: 17, num_live_blocks: 131072, n_a: 4, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 16, block_index_bits: 11, num_live_blocks: 1181, n_a: 4, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 12, block_index_bits: 8, num_live_blocks: 143, n_a: 3, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 10, block_index_bits: 6, num_live_blocks: 41, n_a: 3, n_b: 1, n_d: 1 }),
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(46, 2), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(23, 1), num_live_ring_elements_per_claim: 65536, num_positions_per_block: 512, num_live_blocks: 128, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 22, block_index_bits: 17, num_live_blocks: 131072, n_a: 5, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 16, block_index_bits: 11, num_live_blocks: 1353, n_a: 4, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 12, block_index_bits: 8, num_live_blocks: 152, n_a: 3, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 10, block_index_bits: 6, num_live_blocks: 42, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 9, block_index_bits: 5, num_live_blocks: 17, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 4, num_live_blocks: 9, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 5, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(46, 2), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(23, 1), num_live_ring_elements_per_claim: 65536, num_positions_per_block: 512, num_live_blocks: 128, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(23, 1), num_live_ring_elements_per_claim: 65536, num_positions_per_block: 512, num_live_blocks: 128, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 22, block_index_bits: 17, num_live_blocks: 131072, n_a: 4, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 16, block_index_bits: 11, num_live_blocks: 1181, n_a: 4, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 12, block_index_bits: 8, num_live_blocks: 143, n_a: 3, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 10, block_index_bits: 6, num_live_blocks: 41, n_a: 3, n_b: 1, n_d: 1 }),
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(46, 2), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(23, 1), num_live_ring_elements_per_claim: 65536, num_positions_per_block: 512, num_live_blocks: 128, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(23, 1), num_live_ring_elements_per_claim: 65536, num_positions_per_block: 512, num_live_blocks: 128, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 22, block_index_bits: 17, num_live_blocks: 131072, n_a: 5, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 16, block_index_bits: 11, num_live_blocks: 1353, n_a: 4, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 12, block_index_bits: 8, num_live_blocks: 152, n_a: 3, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 10, block_index_bits: 6, num_live_blocks: 42, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 9, block_index_bits: 5, num_live_blocks: 17, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 4, num_live_blocks: 9, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 5, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
     GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(46, 4), precommitteds: &[], steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 23, block_index_bits: 16, num_live_blocks: 65536, n_a: 4, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 16, block_index_bits: 11, num_live_blocks: 1501, n_a: 4, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 12, block_index_bits: 8, num_live_blocks: 159, n_a: 3, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 5, position_index_bits: 10, block_index_bits: 6, num_live_blocks: 43, n_a: 3, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 23, block_index_bits: 16, num_live_blocks: 65536, n_a: 5, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 16, block_index_bits: 11, num_live_blocks: 1673, n_a: 4, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 12, block_index_bits: 8, num_live_blocks: 168, n_a: 3, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 5, position_index_bits: 10, block_index_bits: 6, num_live_blocks: 45, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 9, block_index_bits: 4, num_live_blocks: 16, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 4, num_live_blocks: 9, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 5, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(46, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(23, 1), num_live_ring_elements_per_claim: 65536, num_positions_per_block: 512, num_live_blocks: 128, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 23, block_index_bits: 16, num_live_blocks: 65536, n_a: 4, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 16, block_index_bits: 11, num_live_blocks: 1501, n_a: 4, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 12, block_index_bits: 8, num_live_blocks: 159, n_a: 3, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 5, position_index_bits: 10, block_index_bits: 6, num_live_blocks: 43, n_a: 3, n_b: 1, n_d: 1 }),
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(46, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(23, 1), num_live_ring_elements_per_claim: 65536, num_positions_per_block: 512, num_live_blocks: 128, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 23, block_index_bits: 16, num_live_blocks: 65536, n_a: 5, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 16, block_index_bits: 11, num_live_blocks: 1673, n_a: 4, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 12, block_index_bits: 8, num_live_blocks: 168, n_a: 3, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 5, position_index_bits: 10, block_index_bits: 6, num_live_blocks: 45, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 9, block_index_bits: 4, num_live_blocks: 16, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 4, num_live_blocks: 9, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 5, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(46, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(23, 1), num_live_ring_elements_per_claim: 65536, num_positions_per_block: 512, num_live_blocks: 128, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(23, 1), num_live_ring_elements_per_claim: 65536, num_positions_per_block: 512, num_live_blocks: 128, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 23, block_index_bits: 16, num_live_blocks: 65536, n_a: 4, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 16, block_index_bits: 11, num_live_blocks: 1501, n_a: 4, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 12, block_index_bits: 8, num_live_blocks: 159, n_a: 3, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 5, position_index_bits: 10, block_index_bits: 6, num_live_blocks: 43, n_a: 3, n_b: 1, n_d: 1 }),
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(46, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(23, 1), num_live_ring_elements_per_claim: 65536, num_positions_per_block: 512, num_live_blocks: 128, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(23, 1), num_live_ring_elements_per_claim: 65536, num_positions_per_block: 512, num_live_blocks: 128, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 23, block_index_bits: 16, num_live_blocks: 65536, n_a: 5, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 16, block_index_bits: 11, num_live_blocks: 1673, n_a: 4, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 12, block_index_bits: 8, num_live_blocks: 168, n_a: 3, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 5, position_index_bits: 10, block_index_bits: 6, num_live_blocks: 45, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 9, block_index_bits: 4, num_live_blocks: 16, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 4, num_live_blocks: 9, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 5, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
     GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(47, 1), precommitteds: &[], steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 22, block_index_bits: 18, num_live_blocks: 262144, n_a: 4, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 16, block_index_bits: 11, num_live_blocks: 1181, n_a: 4, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 12, block_index_bits: 8, num_live_blocks: 143, n_a: 3, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 10, block_index_bits: 6, num_live_blocks: 41, n_a: 3, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 22, block_index_bits: 18, num_live_blocks: 262144, n_a: 5, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 16, block_index_bits: 11, num_live_blocks: 1353, n_a: 4, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 12, block_index_bits: 8, num_live_blocks: 152, n_a: 3, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 10, block_index_bits: 6, num_live_blocks: 42, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 9, block_index_bits: 5, num_live_blocks: 17, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 4, num_live_blocks: 9, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 5, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(47, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(23, 1), num_live_ring_elements_per_claim: 65536, num_positions_per_block: 512, num_live_blocks: 128, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 22, block_index_bits: 18, num_live_blocks: 262144, n_a: 4, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 16, block_index_bits: 11, num_live_blocks: 1181, n_a: 4, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 12, block_index_bits: 8, num_live_blocks: 143, n_a: 3, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 10, block_index_bits: 6, num_live_blocks: 41, n_a: 3, n_b: 1, n_d: 1 }),
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(47, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(23, 1), num_live_ring_elements_per_claim: 65536, num_positions_per_block: 512, num_live_blocks: 128, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 22, block_index_bits: 18, num_live_blocks: 262144, n_a: 5, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 16, block_index_bits: 11, num_live_blocks: 1353, n_a: 4, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 12, block_index_bits: 8, num_live_blocks: 152, n_a: 3, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 10, block_index_bits: 6, num_live_blocks: 42, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 9, block_index_bits: 5, num_live_blocks: 17, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 4, num_live_blocks: 9, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 5, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(47, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(23, 1), num_live_ring_elements_per_claim: 65536, num_positions_per_block: 512, num_live_blocks: 128, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(23, 1), num_live_ring_elements_per_claim: 65536, num_positions_per_block: 512, num_live_blocks: 128, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 22, block_index_bits: 18, num_live_blocks: 262144, n_a: 4, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 16, block_index_bits: 11, num_live_blocks: 1181, n_a: 4, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 12, block_index_bits: 8, num_live_blocks: 143, n_a: 3, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 10, block_index_bits: 6, num_live_blocks: 41, n_a: 3, n_b: 1, n_d: 1 }),
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(47, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(23, 1), num_live_ring_elements_per_claim: 65536, num_positions_per_block: 512, num_live_blocks: 128, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(23, 1), num_live_ring_elements_per_claim: 65536, num_positions_per_block: 512, num_live_blocks: 128, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 22, block_index_bits: 18, num_live_blocks: 262144, n_a: 5, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 16, block_index_bits: 11, num_live_blocks: 1353, n_a: 4, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 12, block_index_bits: 8, num_live_blocks: 152, n_a: 3, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 10, block_index_bits: 6, num_live_blocks: 42, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 9, block_index_bits: 5, num_live_blocks: 17, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 4, num_live_blocks: 9, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 5, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(47, 2), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(23, 1), num_live_ring_elements_per_claim: 65536, num_positions_per_block: 512, num_live_blocks: 128, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 23, block_index_bits: 17, num_live_blocks: 131072, n_a: 4, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 16, block_index_bits: 11, num_live_blocks: 1501, n_a: 4, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 12, block_index_bits: 8, num_live_blocks: 159, n_a: 3, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 5, position_index_bits: 10, block_index_bits: 6, num_live_blocks: 43, n_a: 3, n_b: 1, n_d: 1 }),
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(47, 2), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(23, 1), num_live_ring_elements_per_claim: 65536, num_positions_per_block: 512, num_live_blocks: 128, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 23, block_index_bits: 17, num_live_blocks: 131072, n_a: 5, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 16, block_index_bits: 11, num_live_blocks: 1673, n_a: 4, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 12, block_index_bits: 8, num_live_blocks: 168, n_a: 3, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 5, position_index_bits: 10, block_index_bits: 6, num_live_blocks: 45, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 9, block_index_bits: 4, num_live_blocks: 16, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 4, num_live_blocks: 9, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 5, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(47, 2), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(23, 1), num_live_ring_elements_per_claim: 65536, num_positions_per_block: 512, num_live_blocks: 128, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(23, 1), num_live_ring_elements_per_claim: 65536, num_positions_per_block: 512, num_live_blocks: 128, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 23, block_index_bits: 17, num_live_blocks: 131072, n_a: 4, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 16, block_index_bits: 11, num_live_blocks: 1501, n_a: 4, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 12, block_index_bits: 8, num_live_blocks: 159, n_a: 3, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 5, position_index_bits: 10, block_index_bits: 6, num_live_blocks: 43, n_a: 3, n_b: 1, n_d: 1 }),
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(47, 2), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(23, 1), num_live_ring_elements_per_claim: 65536, num_positions_per_block: 512, num_live_blocks: 128, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(23, 1), num_live_ring_elements_per_claim: 65536, num_positions_per_block: 512, num_live_blocks: 128, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 23, block_index_bits: 17, num_live_blocks: 131072, n_a: 5, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 16, block_index_bits: 11, num_live_blocks: 1673, n_a: 4, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 12, block_index_bits: 8, num_live_blocks: 168, n_a: 3, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 5, position_index_bits: 10, block_index_bits: 6, num_live_blocks: 45, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 9, block_index_bits: 4, num_live_blocks: 16, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 4, num_live_blocks: 9, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 5, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
     GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(47, 4), precommitteds: &[], steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 23, block_index_bits: 17, num_live_blocks: 131072, n_a: 4, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 16, block_index_bits: 12, num_live_blocks: 2361, n_a: 4, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 13, block_index_bits: 7, num_live_blocks: 103, n_a: 3, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 10, block_index_bits: 6, num_live_blocks: 38, n_a: 3, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 24, block_index_bits: 16, num_live_blocks: 65536, n_a: 5, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 16, block_index_bits: 12, num_live_blocks: 2313, n_a: 4, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 13, block_index_bits: 7, num_live_blocks: 101, n_a: 3, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 10, block_index_bits: 6, num_live_blocks: 37, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 9, block_index_bits: 4, num_live_blocks: 16, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 4, num_live_blocks: 9, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 5, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(47, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(23, 1), num_live_ring_elements_per_claim: 65536, num_positions_per_block: 512, num_live_blocks: 128, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 23, block_index_bits: 17, num_live_blocks: 131072, n_a: 4, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 16, block_index_bits: 12, num_live_blocks: 2361, n_a: 4, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 13, block_index_bits: 7, num_live_blocks: 103, n_a: 3, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 10, block_index_bits: 6, num_live_blocks: 38, n_a: 3, n_b: 1, n_d: 1 }),
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(47, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(23, 1), num_live_ring_elements_per_claim: 65536, num_positions_per_block: 512, num_live_blocks: 128, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 24, block_index_bits: 16, num_live_blocks: 65536, n_a: 5, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 16, block_index_bits: 12, num_live_blocks: 2313, n_a: 4, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 13, block_index_bits: 7, num_live_blocks: 101, n_a: 3, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 10, block_index_bits: 6, num_live_blocks: 37, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 9, block_index_bits: 4, num_live_blocks: 16, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 4, num_live_blocks: 9, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 5, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(47, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(23, 1), num_live_ring_elements_per_claim: 65536, num_positions_per_block: 512, num_live_blocks: 128, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(23, 1), num_live_ring_elements_per_claim: 65536, num_positions_per_block: 512, num_live_blocks: 128, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 23, block_index_bits: 17, num_live_blocks: 131072, n_a: 4, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 16, block_index_bits: 12, num_live_blocks: 2361, n_a: 4, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 13, block_index_bits: 7, num_live_blocks: 103, n_a: 3, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 10, block_index_bits: 6, num_live_blocks: 38, n_a: 3, n_b: 1, n_d: 1 }),
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(47, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(23, 1), num_live_ring_elements_per_claim: 65536, num_positions_per_block: 512, num_live_blocks: 128, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(23, 1), num_live_ring_elements_per_claim: 65536, num_positions_per_block: 512, num_live_blocks: 128, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 24, block_index_bits: 16, num_live_blocks: 65536, n_a: 5, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 16, block_index_bits: 12, num_live_blocks: 2313, n_a: 4, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 13, block_index_bits: 7, num_live_blocks: 101, n_a: 3, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 10, block_index_bits: 6, num_live_blocks: 37, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 9, block_index_bits: 4, num_live_blocks: 16, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 4, num_live_blocks: 9, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 5, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
     GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(48, 1), precommitteds: &[], steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 23, block_index_bits: 18, num_live_blocks: 262144, n_a: 4, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 16, block_index_bits: 11, num_live_blocks: 1501, n_a: 4, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 12, block_index_bits: 8, num_live_blocks: 159, n_a: 3, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 5, position_index_bits: 10, block_index_bits: 6, num_live_blocks: 43, n_a: 3, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 23, block_index_bits: 18, num_live_blocks: 262144, n_a: 5, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 16, block_index_bits: 11, num_live_blocks: 1673, n_a: 4, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 12, block_index_bits: 8, num_live_blocks: 168, n_a: 3, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 5, position_index_bits: 10, block_index_bits: 6, num_live_blocks: 45, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 9, block_index_bits: 4, num_live_blocks: 16, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 4, num_live_blocks: 9, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 5, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(48, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(24, 1), num_live_ring_elements_per_claim: 131072, num_positions_per_block: 1024, num_live_blocks: 128, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 23, block_index_bits: 18, num_live_blocks: 262144, n_a: 4, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 16, block_index_bits: 11, num_live_blocks: 1501, n_a: 4, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 12, block_index_bits: 8, num_live_blocks: 159, n_a: 3, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 5, position_index_bits: 10, block_index_bits: 6, num_live_blocks: 43, n_a: 3, n_b: 1, n_d: 1 }),
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(48, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(24, 1), num_live_ring_elements_per_claim: 131072, num_positions_per_block: 1024, num_live_blocks: 128, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 23, block_index_bits: 18, num_live_blocks: 262144, n_a: 5, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 16, block_index_bits: 11, num_live_blocks: 1673, n_a: 4, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 12, block_index_bits: 8, num_live_blocks: 168, n_a: 3, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 5, position_index_bits: 10, block_index_bits: 6, num_live_blocks: 45, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 9, block_index_bits: 4, num_live_blocks: 16, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 4, num_live_blocks: 9, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 5, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(48, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(24, 1), num_live_ring_elements_per_claim: 131072, num_positions_per_block: 1024, num_live_blocks: 128, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(24, 1), num_live_ring_elements_per_claim: 131072, num_positions_per_block: 1024, num_live_blocks: 128, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 23, block_index_bits: 18, num_live_blocks: 262144, n_a: 4, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 16, block_index_bits: 11, num_live_blocks: 1501, n_a: 4, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 12, block_index_bits: 8, num_live_blocks: 159, n_a: 3, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 5, position_index_bits: 10, block_index_bits: 6, num_live_blocks: 43, n_a: 3, n_b: 1, n_d: 1 }),
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(48, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(24, 1), num_live_ring_elements_per_claim: 131072, num_positions_per_block: 1024, num_live_blocks: 128, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(24, 1), num_live_ring_elements_per_claim: 131072, num_positions_per_block: 1024, num_live_blocks: 128, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 23, block_index_bits: 18, num_live_blocks: 262144, n_a: 5, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 16, block_index_bits: 11, num_live_blocks: 1673, n_a: 4, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 12, block_index_bits: 8, num_live_blocks: 168, n_a: 3, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 5, position_index_bits: 10, block_index_bits: 6, num_live_blocks: 45, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 9, block_index_bits: 4, num_live_blocks: 16, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 4, num_live_blocks: 9, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 5, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(48, 2), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(24, 1), num_live_ring_elements_per_claim: 131072, num_positions_per_block: 1024, num_live_blocks: 128, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 23, block_index_bits: 18, num_live_blocks: 262144, n_a: 4, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 16, block_index_bits: 12, num_live_blocks: 2361, n_a: 4, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 13, block_index_bits: 7, num_live_blocks: 103, n_a: 3, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 10, block_index_bits: 6, num_live_blocks: 38, n_a: 3, n_b: 1, n_d: 1 }),
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(48, 2), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(24, 1), num_live_ring_elements_per_claim: 131072, num_positions_per_block: 1024, num_live_blocks: 128, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 24, block_index_bits: 17, num_live_blocks: 131072, n_a: 5, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 16, block_index_bits: 12, num_live_blocks: 2313, n_a: 4, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 13, block_index_bits: 7, num_live_blocks: 101, n_a: 3, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 10, block_index_bits: 6, num_live_blocks: 37, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 9, block_index_bits: 4, num_live_blocks: 16, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 4, num_live_blocks: 9, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 5, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(48, 2), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(24, 1), num_live_ring_elements_per_claim: 131072, num_positions_per_block: 1024, num_live_blocks: 128, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(24, 1), num_live_ring_elements_per_claim: 131072, num_positions_per_block: 1024, num_live_blocks: 128, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 23, block_index_bits: 18, num_live_blocks: 262144, n_a: 4, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 16, block_index_bits: 12, num_live_blocks: 2361, n_a: 4, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 13, block_index_bits: 7, num_live_blocks: 103, n_a: 3, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 10, block_index_bits: 6, num_live_blocks: 38, n_a: 3, n_b: 1, n_d: 1 }),
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(48, 2), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(24, 1), num_live_ring_elements_per_claim: 131072, num_positions_per_block: 1024, num_live_blocks: 128, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(24, 1), num_live_ring_elements_per_claim: 131072, num_positions_per_block: 1024, num_live_blocks: 128, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 24, block_index_bits: 17, num_live_blocks: 131072, n_a: 5, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 16, block_index_bits: 12, num_live_blocks: 2313, n_a: 4, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 13, block_index_bits: 7, num_live_blocks: 101, n_a: 3, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 10, block_index_bits: 6, num_live_blocks: 37, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 9, block_index_bits: 4, num_live_blocks: 16, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 4, num_live_blocks: 9, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 5, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
     GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(48, 4), precommitteds: &[], steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 24, block_index_bits: 17, num_live_blocks: 131072, n_a: 4, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 16, block_index_bits: 12, num_live_blocks: 3001, n_a: 4, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 13, block_index_bits: 7, num_live_blocks: 119, n_a: 3, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 24, block_index_bits: 17, num_live_blocks: 131072, n_a: 5, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 17, block_index_bits: 11, num_live_blocks: 1673, n_a: 4, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 13, block_index_bits: 7, num_live_blocks: 124, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 10, block_index_bits: 6, num_live_blocks: 40, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 9, block_index_bits: 5, num_live_blocks: 17, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 4, num_live_blocks: 9, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 5, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(48, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(24, 1), num_live_ring_elements_per_claim: 131072, num_positions_per_block: 1024, num_live_blocks: 128, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 24, block_index_bits: 17, num_live_blocks: 131072, n_a: 4, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 16, block_index_bits: 12, num_live_blocks: 3001, n_a: 4, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 13, block_index_bits: 7, num_live_blocks: 119, n_a: 3, n_b: 1, n_d: 1 }),
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(48, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(24, 1), num_live_ring_elements_per_claim: 131072, num_positions_per_block: 1024, num_live_blocks: 128, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 24, block_index_bits: 17, num_live_blocks: 131072, n_a: 5, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 17, block_index_bits: 11, num_live_blocks: 1673, n_a: 4, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 13, block_index_bits: 7, num_live_blocks: 124, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 10, block_index_bits: 6, num_live_blocks: 40, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 9, block_index_bits: 5, num_live_blocks: 17, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 4, num_live_blocks: 9, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 5, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(48, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(24, 1), num_live_ring_elements_per_claim: 131072, num_positions_per_block: 1024, num_live_blocks: 128, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(24, 1), num_live_ring_elements_per_claim: 131072, num_positions_per_block: 1024, num_live_blocks: 128, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 24, block_index_bits: 17, num_live_blocks: 131072, n_a: 4, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 16, block_index_bits: 12, num_live_blocks: 3001, n_a: 4, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 13, block_index_bits: 7, num_live_blocks: 119, n_a: 3, n_b: 1, n_d: 1 }),
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(48, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(24, 1), num_live_ring_elements_per_claim: 131072, num_positions_per_block: 1024, num_live_blocks: 128, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(24, 1), num_live_ring_elements_per_claim: 131072, num_positions_per_block: 1024, num_live_blocks: 128, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 24, block_index_bits: 17, num_live_blocks: 131072, n_a: 5, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 17, block_index_bits: 11, num_live_blocks: 1673, n_a: 4, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 13, block_index_bits: 7, num_live_blocks: 124, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 10, block_index_bits: 6, num_live_blocks: 40, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 9, block_index_bits: 5, num_live_blocks: 17, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 4, num_live_blocks: 9, n_a: 2, n_b: 1, n_d: 1 }),
@@ -2417,49 +2417,49 @@ pub(crate) static FP128_D128_ONEHOT_SCHEDULES: &[GeneratedScheduleTableEntry] = 
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
     GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(49, 1), precommitteds: &[], steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 23, block_index_bits: 19, num_live_blocks: 524288, n_a: 4, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 16, block_index_bits: 12, num_live_blocks: 2361, n_a: 4, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 13, block_index_bits: 7, num_live_blocks: 103, n_a: 3, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 10, block_index_bits: 6, num_live_blocks: 38, n_a: 3, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 24, block_index_bits: 18, num_live_blocks: 262144, n_a: 5, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 16, block_index_bits: 12, num_live_blocks: 2313, n_a: 4, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 13, block_index_bits: 7, num_live_blocks: 101, n_a: 3, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 10, block_index_bits: 6, num_live_blocks: 37, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 9, block_index_bits: 4, num_live_blocks: 16, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 4, num_live_blocks: 9, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 5, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(49, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(24, 1), num_live_ring_elements_per_claim: 131072, num_positions_per_block: 1024, num_live_blocks: 128, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 23, block_index_bits: 19, num_live_blocks: 524288, n_a: 4, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 16, block_index_bits: 12, num_live_blocks: 2361, n_a: 4, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 13, block_index_bits: 7, num_live_blocks: 103, n_a: 3, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 10, block_index_bits: 6, num_live_blocks: 38, n_a: 3, n_b: 1, n_d: 1 }),
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(49, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(24, 1), num_live_ring_elements_per_claim: 131072, num_positions_per_block: 1024, num_live_blocks: 128, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 24, block_index_bits: 18, num_live_blocks: 262144, n_a: 5, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 16, block_index_bits: 12, num_live_blocks: 2313, n_a: 4, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 13, block_index_bits: 7, num_live_blocks: 101, n_a: 3, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 10, block_index_bits: 6, num_live_blocks: 37, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 9, block_index_bits: 4, num_live_blocks: 16, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 4, num_live_blocks: 9, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 5, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(49, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(24, 1), num_live_ring_elements_per_claim: 131072, num_positions_per_block: 1024, num_live_blocks: 128, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(24, 1), num_live_ring_elements_per_claim: 131072, num_positions_per_block: 1024, num_live_blocks: 128, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 23, block_index_bits: 19, num_live_blocks: 524288, n_a: 4, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 16, block_index_bits: 12, num_live_blocks: 2361, n_a: 4, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 13, block_index_bits: 7, num_live_blocks: 103, n_a: 3, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 10, block_index_bits: 6, num_live_blocks: 38, n_a: 3, n_b: 1, n_d: 1 }),
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(49, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(24, 1), num_live_ring_elements_per_claim: 131072, num_positions_per_block: 1024, num_live_blocks: 128, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(24, 1), num_live_ring_elements_per_claim: 131072, num_positions_per_block: 1024, num_live_blocks: 128, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 24, block_index_bits: 18, num_live_blocks: 262144, n_a: 5, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 16, block_index_bits: 12, num_live_blocks: 2313, n_a: 4, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 13, block_index_bits: 7, num_live_blocks: 101, n_a: 3, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 10, block_index_bits: 6, num_live_blocks: 37, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 9, block_index_bits: 4, num_live_blocks: 16, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 4, num_live_blocks: 9, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 5, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(49, 2), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(24, 1), num_live_ring_elements_per_claim: 131072, num_positions_per_block: 1024, num_live_blocks: 128, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 24, block_index_bits: 18, num_live_blocks: 262144, n_a: 4, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 16, block_index_bits: 12, num_live_blocks: 3001, n_a: 4, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 13, block_index_bits: 7, num_live_blocks: 119, n_a: 3, n_b: 1, n_d: 1 }),
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(49, 2), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(24, 1), num_live_ring_elements_per_claim: 131072, num_positions_per_block: 1024, num_live_blocks: 128, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 24, block_index_bits: 18, num_live_blocks: 262144, n_a: 5, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 17, block_index_bits: 11, num_live_blocks: 1673, n_a: 4, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 13, block_index_bits: 7, num_live_blocks: 124, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 10, block_index_bits: 6, num_live_blocks: 40, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 9, block_index_bits: 5, num_live_blocks: 17, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 4, num_live_blocks: 9, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 5, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(49, 2), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(24, 1), num_live_ring_elements_per_claim: 131072, num_positions_per_block: 1024, num_live_blocks: 128, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(24, 1), num_live_ring_elements_per_claim: 131072, num_positions_per_block: 1024, num_live_blocks: 128, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 24, block_index_bits: 18, num_live_blocks: 262144, n_a: 4, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 16, block_index_bits: 12, num_live_blocks: 3001, n_a: 4, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 13, block_index_bits: 7, num_live_blocks: 119, n_a: 3, n_b: 1, n_d: 1 }),
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(49, 2), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(24, 1), num_live_ring_elements_per_claim: 131072, num_positions_per_block: 1024, num_live_blocks: 128, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(24, 1), num_live_ring_elements_per_claim: 131072, num_positions_per_block: 1024, num_live_blocks: 128, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 24, block_index_bits: 18, num_live_blocks: 262144, n_a: 5, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 17, block_index_bits: 11, num_live_blocks: 1673, n_a: 4, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 13, block_index_bits: 7, num_live_blocks: 124, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 10, block_index_bits: 6, num_live_blocks: 40, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 9, block_index_bits: 5, num_live_blocks: 17, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 4, num_live_blocks: 9, n_a: 2, n_b: 1, n_d: 1 }),
@@ -2477,7 +2477,7 @@ pub(crate) static FP128_D128_ONEHOT_SCHEDULES: &[GeneratedScheduleTableEntry] = 
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(49, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(24, 1), num_live_ring_elements_per_claim: 131072, num_positions_per_block: 1024, num_live_blocks: 128, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(49, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(24, 1), num_live_ring_elements_per_claim: 131072, num_positions_per_block: 1024, num_live_blocks: 128, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 24, block_index_bits: 18, num_live_blocks: 262144, n_a: 5, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 17, block_index_bits: 12, num_live_blocks: 2833, n_a: 4, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 13, block_index_bits: 8, num_live_blocks: 155, n_a: 3, n_b: 1, n_d: 1 }),
@@ -2488,7 +2488,7 @@ pub(crate) static FP128_D128_ONEHOT_SCHEDULES: &[GeneratedScheduleTableEntry] = 
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(49, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(24, 1), num_live_ring_elements_per_claim: 131072, num_positions_per_block: 1024, num_live_blocks: 128, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(24, 1), num_live_ring_elements_per_claim: 131072, num_positions_per_block: 1024, num_live_blocks: 128, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(49, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(24, 1), num_live_ring_elements_per_claim: 131072, num_positions_per_block: 1024, num_live_blocks: 128, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(24, 1), num_live_ring_elements_per_claim: 131072, num_positions_per_block: 1024, num_live_blocks: 128, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 24, block_index_bits: 18, num_live_blocks: 262144, n_a: 5, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 17, block_index_bits: 12, num_live_blocks: 2833, n_a: 4, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 13, block_index_bits: 8, num_live_blocks: 155, n_a: 3, n_b: 1, n_d: 1 }),
@@ -2500,36 +2500,36 @@ pub(crate) static FP128_D128_ONEHOT_SCHEDULES: &[GeneratedScheduleTableEntry] = 
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
     GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(50, 1), precommitteds: &[], steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 24, block_index_bits: 19, num_live_blocks: 524288, n_a: 4, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 16, block_index_bits: 12, num_live_blocks: 3001, n_a: 4, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 13, block_index_bits: 7, num_live_blocks: 119, n_a: 3, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 24, block_index_bits: 19, num_live_blocks: 524288, n_a: 5, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 17, block_index_bits: 11, num_live_blocks: 1673, n_a: 4, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 13, block_index_bits: 7, num_live_blocks: 124, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 10, block_index_bits: 6, num_live_blocks: 40, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 9, block_index_bits: 5, num_live_blocks: 17, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 4, num_live_blocks: 9, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 5, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(50, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(25, 1), num_live_ring_elements_per_claim: 262144, num_positions_per_block: 2048, num_live_blocks: 128, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 24, block_index_bits: 19, num_live_blocks: 524288, n_a: 4, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 16, block_index_bits: 12, num_live_blocks: 3001, n_a: 4, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 13, block_index_bits: 7, num_live_blocks: 119, n_a: 3, n_b: 1, n_d: 1 }),
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(50, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(25, 1), num_live_ring_elements_per_claim: 262144, num_positions_per_block: 2048, num_live_blocks: 128, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 3, conservative_n_b: 1 }], steps: &[
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 24, block_index_bits: 19, num_live_blocks: 524288, n_a: 5, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 17, block_index_bits: 11, num_live_blocks: 1673, n_a: 4, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 13, block_index_bits: 7, num_live_blocks: 124, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 10, block_index_bits: 6, num_live_blocks: 40, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 9, block_index_bits: 5, num_live_blocks: 17, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 4, num_live_blocks: 9, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 5, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(50, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(25, 1), num_live_ring_elements_per_claim: 262144, num_positions_per_block: 2048, num_live_blocks: 128, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(25, 1), num_live_ring_elements_per_claim: 262144, num_positions_per_block: 2048, num_live_blocks: 128, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 24, block_index_bits: 19, num_live_blocks: 524288, n_a: 4, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 16, block_index_bits: 12, num_live_blocks: 3002, n_a: 4, n_b: 1, n_d: 1 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 13, block_index_bits: 7, num_live_blocks: 119, n_a: 3, n_b: 1, n_d: 1 }),
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(50, 1), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(25, 1), num_live_ring_elements_per_claim: 262144, num_positions_per_block: 2048, num_live_blocks: 128, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 3, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(25, 1), num_live_ring_elements_per_claim: 262144, num_positions_per_block: 2048, num_live_blocks: 128, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 3, conservative_n_b: 1 }], steps: &[
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 24, block_index_bits: 19, num_live_blocks: 524288, n_a: 5, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 17, block_index_bits: 11, num_live_blocks: 1673, n_a: 4, n_b: 1, n_d: 1 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 13, block_index_bits: 7, num_live_blocks: 124, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 4, position_index_bits: 10, block_index_bits: 6, num_live_blocks: 40, n_a: 3, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 9, block_index_bits: 5, num_live_blocks: 17, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 4, num_live_blocks: 9, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 3, num_live_blocks: 5, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(50, 2), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(25, 1), num_live_ring_elements_per_claim: 262144, num_positions_per_block: 2048, num_live_blocks: 128, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(50, 2), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(25, 1), num_live_ring_elements_per_claim: 262144, num_positions_per_block: 2048, num_live_blocks: 128, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 3, conservative_n_b: 1 }], steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 24, block_index_bits: 19, num_live_blocks: 524288, n_a: 5, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 17, block_index_bits: 12, num_live_blocks: 2833, n_a: 4, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 13, block_index_bits: 8, num_live_blocks: 155, n_a: 3, n_b: 1, n_d: 1 }),
@@ -2540,7 +2540,7 @@ pub(crate) static FP128_D128_ONEHOT_SCHEDULES: &[GeneratedScheduleTableEntry] = 
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(50, 2), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(25, 1), num_live_ring_elements_per_claim: 262144, num_positions_per_block: 2048, num_live_blocks: 128, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(25, 1), num_live_ring_elements_per_claim: 262144, num_positions_per_block: 2048, num_live_blocks: 128, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(50, 2), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(25, 1), num_live_ring_elements_per_claim: 262144, num_positions_per_block: 2048, num_live_blocks: 128, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 3, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(25, 1), num_live_ring_elements_per_claim: 262144, num_positions_per_block: 2048, num_live_blocks: 128, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 3, conservative_n_b: 1 }], steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 24, block_index_bits: 19, num_live_blocks: 524288, n_a: 5, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 17, block_index_bits: 12, num_live_blocks: 2833, n_a: 4, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 13, block_index_bits: 8, num_live_blocks: 155, n_a: 3, n_b: 1, n_d: 1 }),
@@ -2562,7 +2562,7 @@ pub(crate) static FP128_D128_ONEHOT_SCHEDULES: &[GeneratedScheduleTableEntry] = 
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(50, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(25, 1), num_live_ring_elements_per_claim: 262144, num_positions_per_block: 2048, num_live_blocks: 128, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(50, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(25, 1), num_live_ring_elements_per_claim: 262144, num_positions_per_block: 2048, num_live_blocks: 128, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 3, conservative_n_b: 1 }], steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 25, block_index_bits: 18, num_live_blocks: 262144, n_a: 5, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 17, block_index_bits: 12, num_live_blocks: 3601, n_a: 4, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 13, block_index_bits: 8, num_live_blocks: 175, n_a: 3, n_b: 1, n_d: 1 }),
@@ -2573,7 +2573,7 @@ pub(crate) static FP128_D128_ONEHOT_SCHEDULES: &[GeneratedScheduleTableEntry] = 
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 6, position_index_bits: 8, block_index_bits: 2, num_live_blocks: 4, n_a: 2, n_b: 1, n_d: 1 }),
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
-    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(50, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(25, 1), num_live_ring_elements_per_claim: 262144, num_positions_per_block: 2048, num_live_blocks: 128, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(25, 1), num_live_ring_elements_per_claim: 262144, num_positions_per_block: 2048, num_live_blocks: 128, fold_challenge_shape: TensorChallengeShape::Flat, log_basis: 2, n_a: 2, conservative_n_b: 1 }], steps: &[
+    GeneratedScheduleTableEntry { final_group: PolynomialGroupLayout::new(50, 4), precommitteds: &[PrecommittedGroupParams { group: PolynomialGroupLayout::new(25, 1), num_live_ring_elements_per_claim: 262144, num_positions_per_block: 2048, num_live_blocks: 128, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 3, conservative_n_b: 1 }, PrecommittedGroupParams { group: PolynomialGroupLayout::new(25, 1), num_live_ring_elements_per_claim: 262144, num_positions_per_block: 2048, num_live_blocks: 128, fold_challenge_shape: TensorChallengeShape::Flat, log_basis_witness: 1, log_basis_commit: 2, n_a: 3, conservative_n_b: 1 }], steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 25, block_index_bits: 18, num_live_blocks: 262144, n_a: 5, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 17, block_index_bits: 12, num_live_blocks: 3601, n_a: 4, n_b: 1, n_d: 1 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 128, log_basis: 3, position_index_bits: 13, block_index_bits: 8, num_live_blocks: 175, n_a: 3, n_b: 1, n_d: 1 }),
@@ -2607,5 +2607,5 @@ pub(crate) static CATALOG_IDENTITY: GeneratedScheduleCatalogIdentity = Generated
     ring_dimensions: CATALOG_RING_DIMENSIONS,
     ring_challenge_config_digest: 12329058664815196960,
     key_count: 310,
-    key_digest: 9492791170081806703,
+    key_digest: 18058649054530350123,
 };

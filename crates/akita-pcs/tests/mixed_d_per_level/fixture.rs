@@ -11,7 +11,7 @@ use akita_planner::generated::{table_entry, GeneratedFoldStep, GeneratedStep};
 use akita_planner::PlannerPolicy;
 use akita_types::sis::{
     decomposed_s_block_ring_count, decomposed_t_ring_count, decomposed_w_ring_count,
-    min_secure_rank, num_digits_open, num_digits_s_commit, rounded_up_collision_inf_norm,
+    min_secure_rank, num_digits_open, num_digits_witness, rounded_up_collision_inf_norm,
     rounded_up_role_a_inf_norm, SisMatrixRole, SisTableDigest, SisTableKey,
 };
 use akita_types::{
@@ -127,8 +127,17 @@ fn expand_envelope_witness_at_ring_d(
         log_basis,
         ..policy.decomposition
     };
+    let log_basis_witness = if is_root && policy.decomposition.log_commit_bound == 1 {
+        1
+    } else {
+        log_basis
+    };
+    let witness_decomp = DecompositionParams {
+        log_basis: log_basis_witness,
+        ..policy.decomposition
+    };
     let ring_challenge_cfg = ring_challenge_config(target_ring_d)?;
-    let num_digits_commit = num_digits_s_commit(decomp, is_root);
+    let num_digits_commit = num_digits_witness(witness_decomp, is_root);
     let num_digits_open_val = num_digits_open(decomp);
     let inner_width = decomposed_s_block_ring_count(num_positions_per_block, num_digits_commit)
         .ok_or_else(|| no_layout("A"))?;
@@ -136,7 +145,7 @@ fn expand_envelope_witness_at_ring_d(
         sis_policy,
         sis_modulus_profile,
         target_ring_d,
-        decomp,
+        witness_decomp,
         &ring_challenge_cfg,
         fold_shape,
         is_root,
@@ -212,6 +221,7 @@ fn expand_envelope_witness_at_ring_d(
     let mut params = LevelParams {
         ring_dimension: target_ring_d,
         log_basis,
+        log_basis_witness,
         a_key: AjtaiKeyParams::try_new(
             sis_policy,
             SisTableDigest::CURRENT,

@@ -19,7 +19,7 @@ use akita_types::{
 use crate::generated::{
     validate_entry_key, GeneratedFoldStep, GeneratedScheduleTableEntry, GeneratedStep,
 };
-use crate::group_batch::multi_group_root_precommitted_groups;
+use crate::group_batch::multi_group_root_precommitted_groups_for_open_basis;
 use crate::schedule_params::planned_next_witness_len;
 use crate::PlannerPolicy;
 
@@ -378,8 +378,18 @@ fn walk_multi_group_generated_schedule_entry(
                     fold_challenge_shape_at_level(inputs)
                 };
                 let mut lp = if fold_level == 0 {
+                    let fold = step.fold_step().ok_or_else(|| {
+                        AkitaError::InvalidSetup(
+                            "generated multi-group root step is not a fold".to_string(),
+                        )
+                    })?;
                     let (precommitted_groups, precommitted_d_width) =
-                        multi_group_root_precommitted_groups(key, policy, ring_challenge_config)?;
+                        multi_group_root_precommitted_groups_for_open_basis(
+                            key,
+                            policy,
+                            ring_challenge_config,
+                            fold.log_basis,
+                        )?;
                     validate_expanded_precommitted_groups(key, &precommitted_groups)?;
                     expand_multi_group_root_fold_step(
                         step,
@@ -506,10 +516,11 @@ fn walk_multi_group_generated_schedule_entry(
                     let params = match direct.commit {
                         Some(commit) => {
                             let (precommitted_groups, precommitted_d_width) =
-                                multi_group_root_precommitted_groups(
+                                multi_group_root_precommitted_groups_for_open_basis(
                                     key,
                                     policy,
                                     ring_challenge_config,
+                                    commit.log_basis,
                                 )?;
                             validate_expanded_precommitted_groups(key, &precommitted_groups)?;
                             Some(commit.expand_to_multi_group_root_level_params(

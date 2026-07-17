@@ -14,6 +14,14 @@ fn sis_key(
         coeff_linf_bound,
     }
 }
+
+fn root_witness_log_basis(policy: &PlannerPolicy, log_basis: u32) -> u32 {
+    if policy.decomposition.log_commit_bound == 1 {
+        1
+    } else {
+        log_basis
+    }
+}
 /// Build one recursive-fold candidate for an explicit ring-element bucket and
 /// split. Setup certification uses the maximum current length in each
 /// `ceil(log2(ring_elems))` bucket, which dominates every shorter member for
@@ -52,7 +60,7 @@ pub(crate) fn recursive_fold_level_params_candidate(
         log_basis,
         ..policy.decomposition
     };
-    let delta_commit = num_digits_s_commit(decomp, false);
+    let delta_commit = num_digits_witness(decomp, false);
     let delta_open = num_digits_open(decomp);
     let Some(width_s) = decomposed_s_block_ring_count(num_positions_per_block, delta_commit) else {
         return Ok(None);
@@ -119,6 +127,7 @@ pub(crate) fn recursive_fold_level_params_candidate(
     let mut params = LevelParams {
         ring_dimension: policy.ring_dimension,
         log_basis,
+        log_basis_witness: log_basis,
         a_key,
         b_key,
         d_key,
@@ -345,6 +354,11 @@ fn derive_setup_prefix_group(
     let prefix_num_vars = checked_power_of_two_vars(n_prefix, "setup prefix field length")?;
     let family = policy.sis_modulus_profile;
     let d = policy.ring_dimension;
+    // TODO(setup-prefix-witness-basis): recursive setup-prefix groups currently
+    // tie the source-witness decomposition basis to the commit/open candidate
+    // `log_basis`. When recursive setup planning supports an independent
+    // `log_basis_witness`, brute-force that axis separately and price the
+    // A-role width/norm from the witness-basis digit count.
     let decomp = DecompositionParams {
         log_basis,
         ..policy.decomposition
@@ -433,7 +447,8 @@ fn derive_setup_prefix_group(
             num_positions_per_block,
             num_live_blocks,
             fold_challenge_shape: fold_shape,
-            log_basis,
+            log_basis_witness: log_basis,
+            log_basis_commit: log_basis,
             n_a: a_key.row_len(),
             conservative_n_b: b_key.row_len(),
         };
@@ -441,7 +456,9 @@ fn derive_setup_prefix_group(
             layout,
             a_key,
             b_key,
-            num_digits_commit,
+            log_basis_open: log_basis,
+            num_digits_witness: num_digits_commit,
+            num_digits_commit: num_digits_open_val,
             num_digits_open: num_digits_open_val,
             num_digits_fold_one,
         };
@@ -654,9 +671,14 @@ pub(crate) fn compute_root_direct_level_params(
         log_basis,
         ..decomp
     };
+    let log_basis_witness = root_witness_log_basis(policy, log_basis);
+    let witness_decomp = DecompositionParams {
+        log_basis: log_basis_witness,
+        ..decomp
+    };
     // Root-direct commits against `log_commit_bound` (the root form of
-    // `num_digits_s_commit`) and opens at `log_open_bound`.
-    let depth_commit = num_digits_s_commit(level_decomp, true);
+    // `num_digits_witness`) and opens at `log_open_bound`.
+    let depth_commit = num_digits_witness(witness_decomp, true);
     let depth_open = num_digits_open(level_decomp);
 
     // Outer/inner variable split: brute-force the optimum for a normal root,
@@ -674,7 +696,8 @@ pub(crate) fn compute_root_direct_level_params(
         // One-hot root commits a sparse witness (`||s||_inf = 1`,
         // `nonzeros = ceil(D/K)`); dense roots use the balanced-digit norms.
         let is_onehot = decomp.log_commit_bound == 1;
-        let fold_witness = FoldWitnessNorms::new(log_basis, d, policy.onehot_chunk_size, is_onehot);
+        let fold_witness =
+            FoldWitnessNorms::new(log_basis_witness, d, policy.onehot_chunk_size, is_onehot);
         let (position_index_bits, block_index_bits, _scoring_n_a) = optimal_block_geometry_split(
             policy.sis_security_policy,
             sis_modulus_profile,
@@ -720,7 +743,7 @@ pub(crate) fn compute_root_direct_level_params(
         policy.sis_security_policy,
         sis_modulus_profile,
         d,
-        level_decomp,
+        witness_decomp,
         ring_challenge_cfg,
         fold_challenge_shape,
         true,
@@ -789,6 +812,7 @@ pub(crate) fn compute_root_direct_level_params(
     let mut root_direct_params = LevelParams {
         ring_dimension: d,
         log_basis,
+        log_basis_witness,
         a_key,
         b_key,
         d_key,
@@ -858,7 +882,11 @@ pub(crate) fn scalar_root_fold_level_params_candidate(
         log_basis,
         ..policy.decomposition
     };
-    let num_digits_commit = num_digits_s_commit(level_decomp, true);
+    let witness_decomp = DecompositionParams {
+        log_basis: root_witness_log_basis(policy, log_basis),
+        ..policy.decomposition
+    };
+    let num_digits_commit = num_digits_witness(witness_decomp, true);
     let num_digits_open = num_digits_open(level_decomp);
     let Some(width_s) = decomposed_s_block_ring_count(num_positions_per_block, num_digits_commit)
     else {
@@ -868,7 +896,7 @@ pub(crate) fn scalar_root_fold_level_params_candidate(
         policy.sis_security_policy,
         policy.sis_modulus_profile,
         policy.ring_dimension,
-        level_decomp,
+        witness_decomp,
         ring_challenge_cfg,
         fold_challenge_shape,
         true,
@@ -936,6 +964,7 @@ pub(crate) fn scalar_root_fold_level_params_candidate(
     let mut params = (LevelParams {
         ring_dimension: policy.ring_dimension,
         log_basis,
+        log_basis_witness: witness_decomp.log_basis,
         a_key,
         b_key,
         d_key,
@@ -1000,7 +1029,9 @@ mod tests {
             ),
             a_key: precommitted.a_key.clone(),
             b_key: precommitted.b_key.clone(),
-            num_digits_commit: precommitted.num_digits_commit,
+            log_basis_open: precommitted.log_basis,
+            num_digits_witness: precommitted.num_digits_commit,
+            num_digits_commit: precommitted.num_digits_open,
             num_digits_open: precommitted.num_digits_open,
             num_digits_fold_one: precommitted.num_digits_fold_one,
         }];

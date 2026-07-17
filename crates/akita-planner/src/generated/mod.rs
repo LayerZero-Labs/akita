@@ -243,6 +243,7 @@ fn precommitted_group_sort_key(
     u8,
     usize,
     u32,
+    u32,
     usize,
     usize,
 ) {
@@ -260,7 +261,8 @@ fn precommitted_group_sort_key(
             akita_challenges::TensorChallengeShape::Flat => 0,
             akita_challenges::TensorChallengeShape::Tensor { fold_low_len } => fold_low_len,
         },
-        key.log_basis,
+        key.log_basis_witness,
+        key.log_basis_commit,
         key.n_a,
         key.conservative_n_b,
     )
@@ -288,7 +290,8 @@ fn precommitted_group_key_eq(
         && generated.num_positions_per_block == layout.num_positions_per_block
         && generated.num_live_blocks == layout.num_live_blocks
         && generated.fold_challenge_shape == layout.fold_challenge_shape
-        && generated.log_basis == layout.log_basis
+        && generated.log_basis_witness == layout.log_basis_witness
+        && generated.log_basis_commit == layout.log_basis_commit
         && generated.n_a == layout.n_a
         && generated.conservative_n_b == layout.conservative_n_b
 }

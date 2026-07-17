@@ -161,7 +161,7 @@ fn fold_grind_probe_order_absorb_buf(
     push_usize(&mut buf, groups.len(), "fold grind group count")?;
     for (group_index, (params, num_claims)) in groups.iter().copied().enumerate() {
         push_usize(&mut buf, group_index, "fold grind group index")?;
-        buf.extend_from_slice(&params.log_basis().to_le_bytes());
+        buf.extend_from_slice(&params.log_basis_open().to_le_bytes());
         push_usize(
             &mut buf,
             params.num_live_ring_elements_per_claim(),
@@ -456,14 +456,14 @@ where
             group.params.num_live_blocks(),
             sizing_claims,
             root_lp.field_bits_for_cache(),
-            group.params.log_basis(),
+            group.params.log_basis_open(),
             challenge,
             witness_norms,
             &cap_config,
         )?;
         let (digit_negative_abs_bound, digit_positive_bound) =
             akita_types::sis::fold_witness_representable_linf_bounds(
-                group.params.log_basis(),
+                group.params.log_basis_open(),
                 delta_fold,
             );
         prepared_groups.push(PreparedFoldGrindGroup {

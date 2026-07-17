@@ -124,10 +124,13 @@ fn tensor_et_intervals_match_dense_oracle_across_residual_shards() {
         group_id: 0,
         num_claims: 2,
         num_live_blocks: 7,
+        depth_witness: 1,
+        depth_commit: 3,
         depth_open: 3,
-        depth_commit: 1,
         depth_fold: 1,
-        log_basis: 2,
+        log_basis_witness: 1,
+        log_basis_commit: 2,
+        log_basis_open: 2,
         n_a: 2,
         a_row_start: 1,
         b_row_start: 3,
@@ -148,6 +151,7 @@ fn tensor_et_intervals_match_dense_oracle_across_residual_shards() {
         &x_challenges,
         consistency_weight,
         &a_row_weights,
+        &gadget,
         &gadget,
     )
     .unwrap();
@@ -179,7 +183,7 @@ fn tensor_et_intervals_match_dense_oracle_across_residual_shards() {
                             .t_index(
                                 group.num_claims,
                                 group.n_a,
-                                group.depth_open,
+                                group.depth_commit,
                                 claim,
                                 global_block,
                                 a_row,

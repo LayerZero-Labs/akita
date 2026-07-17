@@ -521,7 +521,7 @@ where
             num_live_blocks,
             num_digits_open: group_lp.num_digits_open(),
             block_index_bits: num_live_blocks.next_power_of_two().trailing_zeros() as usize,
-            log_basis: group_lp.log_basis(),
+            log_basis: group_lp.log_basis_open(),
             witness_layout: layout.witness_layout.clone(),
             opening_source_len: layout.opening_source_len,
             group_id,
@@ -668,7 +668,7 @@ where
                 let inner_coeffs = inner.coefficients();
                 let gadget = crate::gadget_row_scalars::<F>(
                     group_lp.num_digits_open(),
-                    group_lp.log_basis(),
+                    group_lp.log_basis_open(),
                 );
                 for local_claim in 0..group_layout.num_polynomials() {
                     let claim_idx = claim_offset + local_claim;

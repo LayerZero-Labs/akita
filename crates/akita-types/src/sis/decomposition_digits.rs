@@ -18,7 +18,7 @@
 //!
 //! 2. **Per-role selectors** — map a [`DecompositionParams`] to the digit depth
 //!    of a specific witness role, encoding which bound applies to each:
-//!    - [`num_digits_s_commit`]: committed witness `s` (`log_commit_bound` at
+//!    - [`num_digits_witness`]: committed witness `s` (`log_commit_bound` at
 //!      the root, `log_basis` at recursive levels).
 //!    - [`num_digits_open`]: opening witnesses `t̂` / `ŵ` (`log_open_bound`).
 //!    - [`super::norm_bound::fold_witness_digit_plan`]: folded witness `z` — the
@@ -175,7 +175,7 @@ pub fn num_digits_for_bound(log_bound: u32, field_bits: u32, log_basis: u32) -> 
 /// The root commits against its configured `log_commit_bound`; a recursive
 /// level commits the balanced-digit witness, whose commit bound collapses to
 /// `log_basis`.
-pub fn num_digits_s_commit(decomposition: DecompositionParams, is_root: bool) -> usize {
+pub fn num_digits_witness(decomposition: DecompositionParams, is_root: bool) -> usize {
     let field_bits = decomposition.field_bits();
     let bound = if is_root {
         decomposition.log_commit_bound

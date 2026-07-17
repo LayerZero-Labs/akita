@@ -799,7 +799,9 @@ mod tests {
             ),
             a_key: precommit_lp.a_key.clone(),
             b_key: precommit_lp.b_key.clone(),
-            num_digits_commit: precommit_lp.num_digits_commit,
+            log_basis_open: precommit_lp.log_basis,
+            num_digits_witness: precommit_lp.num_digits_commit,
+            num_digits_commit: precommit_lp.num_digits_open,
             num_digits_open: precommit_lp.num_digits_open,
             num_digits_fold_one: precommit_lp.num_digits_fold_one,
         };
@@ -937,12 +939,14 @@ mod tests {
                 .expect("group layout")
                 .num_polynomials();
             let num_live_blocks = params.num_live_blocks();
+            let depth_witness = params.num_digits_witness();
+            let depth_commit = params.num_digits_commit();
             let depth_open = params.num_digits_open();
             let n_a = params.a_rows_len();
             let e_source = (0..num_claims * num_live_blocks * depth_open)
                 .map(|index| marker(100 * group_index + index))
                 .collect::<Vec<_>>();
-            let t_source = (0..num_claims * num_live_blocks * n_a * depth_open)
+            let t_source = (0..num_claims * num_live_blocks * n_a * depth_commit)
                 .map(|index| marker(300 * group_index + index))
                 .collect::<Vec<_>>();
             emit_witness_e_planes(
@@ -961,7 +965,7 @@ mod tests {
                 group_index,
                 num_claims,
                 n_a,
-                depth_open,
+                depth_commit,
                 &t_source,
                 num_live_blocks,
             )
@@ -971,15 +975,14 @@ mod tests {
                 .num_digits_fold_for_params(params, num_claims, lp.field_bits_for_cache())
                 .expect("fold depth");
             for unit in layout.units_for_group(group_index).expect("units") {
-                let z_source =
-                    (0..params.num_positions_per_block() * params.num_digits_commit() * depth_fold)
-                        .map(|index| marker(500 * group_index + 100 * unit.chunk_index() + index))
-                        .collect::<Vec<_>>();
+                let z_source = (0..params.num_positions_per_block() * depth_witness * depth_fold)
+                    .map(|index| marker(500 * group_index + 100 * unit.chunk_index() + index))
+                    .collect::<Vec<_>>();
                 emit_witness_z_planes(
                     &mut emitted,
                     unit,
                     params.num_positions_per_block(),
-                    params.num_digits_commit(),
+                    depth_witness,
                     depth_fold,
                     &z_source,
                 )

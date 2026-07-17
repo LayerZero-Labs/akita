@@ -89,8 +89,8 @@ where
             n_a: level_params.a_key.row_len(),
             input: DenseCommitInput::CoeffBlocks {
                 block_slices,
-                num_digits_commit: level_params.num_digits_commit,
-                log_basis: level_params.layout.log_basis,
+                num_digits_commit: level_params.num_digits_witness,
+                log_basis: level_params.layout.log_basis_witness,
             },
         },
     )?;
@@ -100,7 +100,7 @@ where
         .map(|_| {
             commit_inner_block_digit_count(
                 level_params.a_key.row_len(),
-                level_params.num_digits_open,
+                level_params.num_digits_commit,
             )
         })
         .collect::<Result<Vec<_>, _>>()?;
@@ -113,8 +113,8 @@ where
             decompose_rows_i8_into(
                 rows,
                 dst,
-                level_params.num_digits_open,
-                level_params.layout.log_basis,
+                level_params.num_digits_commit,
+                level_params.layout.log_basis_commit,
             );
             Ok(())
         })?;
@@ -126,8 +126,8 @@ where
             decompose_rows_i8_into(
                 rows,
                 dst,
-                level_params.num_digits_open,
-                level_params.layout.log_basis,
+                level_params.num_digits_commit,
+                level_params.layout.log_basis_commit,
             );
             Ok(())
         })?;
@@ -135,7 +135,7 @@ where
     let b_input_len = commit_inner_flat_digit_count(
         level_params.layout.num_live_blocks,
         level_params.a_key.row_len(),
-        level_params.num_digits_open,
+        level_params.num_digits_commit,
     )?;
     validate_commit_outer_input_nonempty(b_input_len)?;
     let mut b_input_digits = vec![[0i8; D]; b_input_len];
@@ -145,7 +145,7 @@ where
         prepared,
         level_params.b_key.row_len(),
         &b_input_digits,
-        level_params.layout.log_basis,
+        level_params.layout.log_basis_commit,
     )?;
     if u.len() != level_params.b_key.row_len() {
         return Err(AkitaError::InvalidSetup(format!(

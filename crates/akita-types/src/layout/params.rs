@@ -23,20 +23,17 @@ use descriptor::{
 };
 pub use precommitted::{LevelParamsLike, PrecommittedLevelParams};
 
-/// Largest gadget basis used by any opening-digit segment in the shared D product.
+/// Gadget basis used by opening-digit segments in the shared D product.
 ///
-/// A grouped root concatenates the main group's `e_hat` with every frozen
-/// precommitted group's `e_hat`. The D-role SIS bound and the prover's digit
-/// kernel must therefore cover the largest contributing balanced-digit range.
+/// A grouped root concatenates the main group's `e_hat` with every
+/// precommitted group's fresh `e_hat`; all fresh opening digits use the root
+/// opening basis.
 #[must_use]
 pub fn shared_d_digit_log_basis(
     main_log_basis: u32,
-    precommitted_groups: &[PrecommittedLevelParams],
+    _precommitted_groups: &[PrecommittedLevelParams],
 ) -> u32 {
-    precommitted_groups
-        .iter()
-        .map(|group| group.layout.log_basis)
-        .fold(main_log_basis, u32::max)
+    main_log_basis
 }
 
 fn empty_ajtai_key(role: crate::sis::SisMatrixRole) -> AjtaiKeyParams {
@@ -84,6 +81,8 @@ pub struct LevelParams {
     pub ring_dimension: usize,
     /// Base-2 logarithm of the gadget decomposition base.
     pub log_basis: u32,
+    /// Base-2 logarithm of the committed source-witness gadget decomposition base.
+    pub log_basis_witness: u32,
     /// Inner Ajtai matrix (A): `row_len = n_a`, `col_len = inner_width`.
     pub a_key: AjtaiKeyParams,
     /// Outer commitment matrix (B): `row_len = n_b`, `col_len = outer_width`.
@@ -202,6 +201,7 @@ impl LevelParams {
         Self {
             ring_dimension: 0,
             log_basis,
+            log_basis_witness: log_basis,
             a_key: empty_ajtai_key(crate::sis::SisMatrixRole::A),
             b_key: empty_ajtai_key(crate::sis::SisMatrixRole::B),
             d_key: empty_ajtai_key(crate::sis::SisMatrixRole::D),
@@ -246,6 +246,7 @@ impl LevelParams {
         Self {
             ring_dimension,
             log_basis,
+            log_basis_witness: log_basis,
             a_key: AjtaiKeyParams::new_unchecked(
                 crate::sis::DEFAULT_SIS_SECURITY_POLICY,
                 crate::sis::SisTableDigest::CURRENT,
@@ -357,14 +358,14 @@ impl LevelParams {
     pub fn fold_witness_norms(&self) -> crate::sis::FoldWitnessNorms {
         let is_onehot = self.onehot_chunk_size > 0;
         crate::sis::FoldWitnessNorms::new(
-            self.log_basis,
+            self.log_basis_witness,
             self.ring_dimension,
             if is_onehot { self.onehot_chunk_size } else { 1 },
             is_onehot,
         )
     }
 
-    /// Per-row folded-witness norms using group-local gadget geometry.
+    /// Per-row folded-witness norms using group-local fresh-opening gadget geometry.
     #[inline]
     pub fn fold_witness_norms_for_params(
         &self,
@@ -372,7 +373,7 @@ impl LevelParams {
     ) -> crate::sis::FoldWitnessNorms {
         let is_onehot = self.onehot_chunk_size > 0;
         crate::sis::FoldWitnessNorms::new(
-            params.log_basis(),
+            params.log_basis_open(),
             self.ring_dimension,
             if is_onehot { self.onehot_chunk_size } else { 1 },
             is_onehot,
@@ -557,7 +558,7 @@ impl LevelParams {
                 params.num_live_blocks(),
                 num_claims,
                 self.field_bits_for_cache(),
-                params.log_basis(),
+                params.log_basis_open(),
                 challenge,
                 witness_norms,
                 &cap_config,
@@ -645,7 +646,8 @@ impl LevelParams {
         Ok(decomposed_fold_digits)
     }
 
-    /// Gadget depth for a root group using group-local geometry and root policy.
+    /// Gadget depth for a root group using group-local geometry, fresh-opening
+    /// basis, and root fold policy.
     pub fn num_digits_fold_for_params(
         &self,
         params: &(impl LevelParamsLike + ?Sized),
@@ -664,7 +666,7 @@ impl LevelParams {
             params.num_live_blocks(),
             num_claims,
             field_bits,
-            params.log_basis(),
+            params.log_basis_open(),
             challenge,
             self.fold_witness_norms_for_params(params),
             &cap_config,
@@ -689,7 +691,7 @@ impl LevelParams {
             params.num_live_blocks(),
             num_claims,
             field_bits,
-            params.log_basis(),
+            params.log_basis_open(),
             challenge,
             self.fold_witness_norms_for_params(params),
             &cap_config,
@@ -806,6 +808,7 @@ impl LevelParams {
     pub(crate) fn append_descriptor_bytes(&self, bytes: &mut Vec<u8>) {
         push_usize(bytes, self.ring_dimension);
         push_u32(bytes, self.log_basis);
+        push_u32(bytes, self.log_basis_witness);
         self.a_key.append_descriptor_bytes(bytes);
         self.b_key.append_descriptor_bytes(bytes);
         self.d_key.append_descriptor_bytes(bytes);
@@ -1248,6 +1251,7 @@ impl LevelParams {
         let rebuilt = Self {
             ring_dimension: d,
             log_basis: self.log_basis,
+            log_basis_witness: self.log_basis_witness,
             a_key: AjtaiKeyParams::new_unchecked(
                 self.a_key.security_policy(),
                 self.a_key.sis_table_key().table_digest,
@@ -1321,6 +1325,7 @@ impl LevelParams {
         Self {
             ring_dimension: d,
             log_basis: other.log_basis,
+            log_basis_witness: other.log_basis_witness,
             a_key: AjtaiKeyParams::new_unchecked(
                 self.a_key.security_policy(),
                 self.a_key.sis_table_key().table_digest,

@@ -83,8 +83,10 @@ pub struct PrecommittedGroupParams {
     pub num_live_blocks: usize,
     /// Group-local flat or tensor fold challenge shape.
     pub fold_challenge_shape: akita_challenges::TensorChallengeShape,
+    /// Gadget basis selected for the standalone source-witness digits.
+    pub log_basis_witness: u32,
     /// Gadget basis selected for the standalone group commit.
-    pub log_basis: u32,
+    pub log_basis_commit: u32,
     /// A-role row count selected for the committed inner rows.
     pub n_a: usize,
     /// Conservative B-role row count used by the standalone precommit.
@@ -100,7 +102,8 @@ impl PrecommittedGroupParams {
             num_positions_per_block: params.num_positions_per_block,
             num_live_blocks: params.num_live_blocks,
             fold_challenge_shape: params.fold_challenge_shape,
-            log_basis: params.log_basis,
+            log_basis_witness: params.log_basis_witness,
+            log_basis_commit: params.log_basis,
             n_a: params.a_key.row_len(),
             conservative_n_b: params.b_key.row_len(),
         }
@@ -121,7 +124,8 @@ impl PrecommittedGroupParams {
         {
             push_usize(bytes, fold_low_len);
         }
-        push_u32(bytes, self.log_basis);
+        push_u32(bytes, self.log_basis_witness);
+        push_u32(bytes, self.log_basis_commit);
         push_usize(bytes, self.n_a);
         push_usize(bytes, self.conservative_n_b);
     }
@@ -141,9 +145,14 @@ impl PrecommittedGroupParams {
                     .to_string(),
             ));
         }
-        if self.log_basis == 0 {
+        if self.log_basis_witness == 0 {
             return Err(AkitaError::InvalidSetup(
-                "commitment group layout requires nonzero log_basis".to_string(),
+                "commitment group layout requires nonzero log_basis_witness".to_string(),
+            ));
+        }
+        if self.log_basis_commit == 0 {
+            return Err(AkitaError::InvalidSetup(
+                "commitment group layout requires nonzero log_basis_commit".to_string(),
             ));
         }
         Ok(())

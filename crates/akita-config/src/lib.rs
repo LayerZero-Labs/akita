@@ -700,7 +700,7 @@ mod conservative_precommit_tests {
         >(PolynomialGroupLayout::new(2, 1))
         .expect("precommitted group params");
         assert_eq!(precommitted.group, PolynomialGroupLayout::new(2, 1));
-        assert_ne!(precommitted.log_basis, 0);
+        assert_ne!(precommitted.log_basis_commit, 0);
         assert_ne!(precommitted.n_a, 0);
         assert_ne!(precommitted.conservative_n_b, 0);
     }

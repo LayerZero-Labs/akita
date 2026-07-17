@@ -5,16 +5,16 @@ use akita_field::AkitaError;
 use akita_types::sis::{
     compute_num_digits_full_field, decomposed_s_block_ring_count, decomposed_t_ring_count,
     decomposed_w_ring_count, fold_witness_digit_plan, min_secure_rank, num_digits_open,
-    num_digits_s_commit, rounded_up_collision_inf_norm, rounded_up_role_a_inf_norm, AjtaiKeyParams,
+    num_digits_witness, rounded_up_collision_inf_norm, rounded_up_role_a_inf_norm, AjtaiKeyParams,
     FoldChallengeNorms, FoldWitnessLinfCapConfig, FoldWitnessNorms, SisTableKey,
 };
 use akita_types::{
     active_setup_field_len, direct_witness_bytes, extension_opening_reduction_level_bytes,
-    level_proof_bytes, padded_setup_prefix_len, shared_d_digit_log_basis, AkitaScheduleInputs,
-    AkitaScheduleLookupKey, CleartextWitnessShape, CommitmentRingDims, DecompositionParams,
-    DirectStep, FoldStep, LevelParams, OpeningClaimsLayout, PolynomialGroupLayout,
-    PrecommittedGroupParams, PrecommittedLevelParams, RelationMatrixRowLayout, Schedule,
-    SetupContributionMode, Step, WitnessLayout, SETUP_OFFLOAD_MIN_PREFIX_FIELD_LEN,
+    level_proof_bytes, padded_setup_prefix_len, AkitaScheduleInputs, AkitaScheduleLookupKey,
+    CleartextWitnessShape, CommitmentRingDims, DecompositionParams, DirectStep, FoldStep,
+    LevelParams, OpeningClaimsLayout, PolynomialGroupLayout, PrecommittedGroupParams,
+    PrecommittedLevelParams, RelationMatrixRowLayout, Schedule, SetupContributionMode, Step,
+    WitnessLayout, SETUP_OFFLOAD_MIN_PREFIX_FIELD_LEN,
 };
 
 use crate::schedule_params::{
@@ -37,6 +37,15 @@ fn sis_key(
         coeff_linf_bound,
     }
 }
+
+fn root_witness_log_basis(policy: &PlannerPolicy, log_basis: u32) -> u32 {
+    if policy.decomposition.log_commit_bound == 1 {
+        1
+    } else {
+        log_basis
+    }
+}
+
 pub(crate) fn group_root_params_from_layout(
     layout: &PrecommittedGroupParams,
     policy: &PlannerPolicy,
@@ -47,22 +56,27 @@ pub(crate) fn group_root_params_from_layout(
     let ring_challenge_cfg = ring_challenge_config(policy.ring_dimension)?;
     let d = policy.ring_dimension;
     let family = policy.sis_modulus_profile;
-    let level_decomp = DecompositionParams {
-        log_basis: layout.log_basis,
+    let witness_decomp = DecompositionParams {
+        log_basis: layout.log_basis_witness,
         ..policy.decomposition
     };
-    let num_digits_commit = num_digits_s_commit(level_decomp, true);
-    let num_digits_open = num_digits_open(level_decomp);
+    let commit_decomp = DecompositionParams {
+        log_basis: layout.log_basis_commit,
+        ..policy.decomposition
+    };
+    let num_digits_witness = num_digits_witness(witness_decomp, true);
+    let num_digits_commit = num_digits_open(commit_decomp);
+    let num_digits_open = num_digits_commit;
     let num_live_blocks = layout.num_live_blocks;
     let num_positions_per_block = layout.num_positions_per_block;
     let fold_challenge_shape = layout.fold_challenge_shape;
-    let width_s = decomposed_s_block_ring_count(num_positions_per_block, num_digits_commit)
+    let width_s = decomposed_s_block_ring_count(num_positions_per_block, num_digits_witness)
         .ok_or_else(|| AkitaError::InvalidSetup("multi-group A width overflow".to_string()))?;
     let norm_s = rounded_up_role_a_inf_norm(
         policy.sis_security_policy,
         family,
         d,
-        level_decomp,
+        witness_decomp,
         &ring_challenge_cfg,
         fold_challenge_shape,
         true,
@@ -112,7 +126,7 @@ pub(crate) fn group_root_params_from_layout(
     .ok_or_else(|| AkitaError::InvalidSetup("no multi-group B-role norm".to_string()))?;
     let width_t = decomposed_t_ring_count(
         layout.n_a,
-        num_digits_open,
+        num_digits_commit,
         num_live_blocks,
         layout.group.num_polynomials(),
     )
@@ -157,7 +171,7 @@ pub(crate) fn group_root_params_from_layout(
         0
     };
     let witness = FoldWitnessNorms::new(
-        layout.log_basis,
+        layout.log_basis_witness,
         d,
         if onehot_chunk_size == 0 {
             1
@@ -170,7 +184,7 @@ pub(crate) fn group_root_params_from_layout(
         num_live_blocks,
         layout.group.num_polynomials(),
         policy.decomposition.field_bits(),
-        layout.log_basis,
+        layout.log_basis_commit,
         challenge,
         witness,
         &fold_linf_cap_config,
@@ -180,7 +194,72 @@ pub(crate) fn group_root_params_from_layout(
         layout: *layout,
         a_key,
         b_key,
+        log_basis_open: layout.log_basis_commit,
+        num_digits_witness,
         num_digits_commit,
+        num_digits_open,
+        num_digits_fold_one,
+    })
+}
+
+fn precommitted_group_with_open_basis(
+    group: &PrecommittedLevelParams,
+    policy: &PlannerPolicy,
+    ring_challenge_cfg: &SparseChallengeConfig,
+    log_basis_open: u32,
+) -> Result<PrecommittedLevelParams, AkitaError> {
+    let open_decomp = DecompositionParams {
+        log_basis: log_basis_open,
+        ..policy.decomposition
+    };
+    let num_digits_open = num_digits_open(open_decomp);
+    let onehot_chunk_size = if policy.decomposition.log_commit_bound == 1 {
+        policy.onehot_chunk_size
+    } else {
+        0
+    };
+    let challenge = FoldChallengeNorms {
+        infinity_norm: group
+            .layout
+            .fold_challenge_shape
+            .effective_infinity_norm(ring_challenge_cfg) as u128,
+        l1_norm: group
+            .layout
+            .fold_challenge_shape
+            .effective_l1_mass(ring_challenge_cfg) as u128,
+    };
+    let witness = FoldWitnessNorms::new(
+        log_basis_open,
+        policy.ring_dimension,
+        if onehot_chunk_size == 0 {
+            1
+        } else {
+            onehot_chunk_size
+        },
+        onehot_chunk_size > 0,
+    );
+    let cap_config = FoldWitnessLinfCapConfig::for_fold_level(
+        ring_challenge_cfg,
+        group.layout.fold_challenge_shape,
+        policy.ring_dimension,
+        group.a_key.col_len(),
+    )?;
+    let (num_digits_fold_one, _) = fold_witness_digit_plan(
+        group.layout.num_live_blocks,
+        group.layout.group.num_polynomials(),
+        policy.decomposition.field_bits(),
+        log_basis_open,
+        challenge,
+        witness,
+        &cap_config,
+    )?;
+    Ok(PrecommittedLevelParams {
+        layout: group.layout,
+        a_key: group.a_key.clone(),
+        b_key: group.b_key.clone(),
+        log_basis_open,
+        num_digits_witness: group.num_digits_witness,
+        num_digits_commit: group.num_digits_commit,
         num_digits_open,
         num_digits_fold_one,
     })
@@ -190,7 +269,6 @@ struct MultiGroupRootCandidateCtx<'a> {
     policy: &'a PlannerPolicy,
     ring_challenge_cfg: &'a SparseChallengeConfig,
     requested_fold_shape: TensorChallengeShape,
-    precommitted_d_width: usize,
     precommitted_groups: &'a [PrecommittedLevelParams],
 }
 
@@ -198,7 +276,7 @@ pub(crate) fn multi_group_root_precommitted_groups(
     key: &AkitaScheduleLookupKey,
     policy: &PlannerPolicy,
     ring_challenge_config: RingChallengeConfigFn<'_>,
-) -> Result<(Vec<PrecommittedLevelParams>, usize), AkitaError> {
+) -> Result<Vec<PrecommittedLevelParams>, AkitaError> {
     if key.precommitteds.is_empty() {
         return Err(AkitaError::InvalidSetup(
             "multi-group root params require at least one precommitted group".to_string(),
@@ -210,14 +288,30 @@ pub(crate) fn multi_group_root_precommitted_groups(
         .iter()
         .map(|layout| group_root_params_from_layout(layout, policy, ring_challenge_config))
         .collect::<Result<Vec<_>, _>>()?;
-    let mut precommitted_d_width = 0usize;
-    for group in &precommitted_groups {
-        precommitted_d_width = precommitted_d_width
+    Ok(precommitted_groups)
+}
+
+pub(crate) fn multi_group_root_precommitted_groups_for_open_basis(
+    key: &AkitaScheduleLookupKey,
+    policy: &PlannerPolicy,
+    ring_challenge_config: RingChallengeConfigFn<'_>,
+    log_basis_open: u32,
+) -> Result<(Vec<PrecommittedLevelParams>, usize), AkitaError> {
+    let ring_challenge_cfg = ring_challenge_config(policy.ring_dimension)?;
+    let commit_groups = multi_group_root_precommitted_groups(key, policy, ring_challenge_config)?;
+    let groups = commit_groups
+        .iter()
+        .map(|group| {
+            precommitted_group_with_open_basis(group, policy, &ring_challenge_cfg, log_basis_open)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut d_width = 0usize;
+    for group in &groups {
+        d_width = d_width
             .checked_add(group.d_segment_width()?)
             .ok_or_else(|| AkitaError::InvalidSetup("multi-group D width overflow".to_string()))?;
     }
-
-    Ok((precommitted_groups, precommitted_d_width))
+    Ok((groups, d_width))
 }
 
 fn checked_score_add(lhs: u128, rhs: u128, context: &'static str) -> Result<u128, AkitaError> {
@@ -230,23 +324,29 @@ fn checked_score_mul(lhs: u128, rhs: usize, context: &'static str) -> Result<u12
         .ok_or_else(|| AkitaError::InvalidSetup(format!("{context} overflow")))
 }
 
+#[derive(Clone, Copy)]
+struct DigitDepths {
+    witness: usize,
+    commit: usize,
+    open: usize,
+    fold: usize,
+}
+
 fn root_direct_split_cost(
     n_a: usize,
     num_live_blocks: usize,
     num_positions_per_block: usize,
-    num_digits_commit: usize,
-    num_digits_open: usize,
-    num_digits_fold: usize,
+    depths: DigitDepths,
     context: &'static str,
 ) -> Result<u128, AkitaError> {
     // Match `optimal_block_geometry_split`: opening `(1 + n_a) * delta_open * 2^r`
     // plus folded witness `delta_commit * delta_fold * 2^m`.
-    let e_hat_cost = checked_score_mul(num_digits_open as u128, num_live_blocks, context)?;
-    let t_hat_cost = checked_score_mul(num_digits_open as u128, n_a, context)?;
+    let e_hat_cost = checked_score_mul(depths.open as u128, num_live_blocks, context)?;
+    let t_hat_cost = checked_score_mul(depths.commit as u128, n_a, context)?;
     let t_hat_cost = checked_score_mul(t_hat_cost, num_live_blocks, context)?;
     let opening_cost = checked_score_add(e_hat_cost, t_hat_cost, context)?;
 
-    let z_hat_cost = checked_score_mul(num_digits_commit as u128, num_digits_fold, context)?;
+    let z_hat_cost = checked_score_mul(depths.witness as u128, depths.fold, context)?;
     let z_hat_cost = checked_score_mul(z_hat_cost, num_positions_per_block, context)?;
 
     checked_score_add(opening_cost, z_hat_cost, context)
@@ -262,9 +362,12 @@ fn multi_group_root_direct_cost_score(
         params.a_key.row_len(),
         params.num_live_blocks,
         params.num_positions_per_block,
-        params.num_digits_commit,
-        params.num_digits_open,
-        main_num_digits_fold,
+        DigitDepths {
+            witness: params.num_digits_commit,
+            commit: params.num_digits_open,
+            open: params.num_digits_open,
+            fold: main_num_digits_fold,
+        },
         "multi-group main root-direct score",
     )?;
 
@@ -273,9 +376,12 @@ fn multi_group_root_direct_cost_score(
             group.a_key.row_len(),
             group.layout.num_live_blocks,
             group.layout.num_positions_per_block,
-            group.num_digits_commit,
-            group.num_digits_open,
-            group.num_digits_fold_one,
+            DigitDepths {
+                witness: group.num_digits_witness,
+                commit: group.num_digits_commit,
+                open: group.num_digits_open,
+                fold: group.num_digits_fold_one,
+            },
             "multi-group precommitted root-direct score",
         )?;
         total = checked_score_add(total, group_cost, "multi-group root-direct score total")?;
@@ -321,7 +427,12 @@ fn multi_group_root_main_level_params_candidate(
         log_basis,
         ..decomp
     };
-    let num_digits_commit = num_digits_s_commit(level_decomp, true);
+    let log_basis_witness = root_witness_log_basis(policy, log_basis);
+    let witness_decomp = DecompositionParams {
+        log_basis: log_basis_witness,
+        ..decomp
+    };
+    let num_digits_commit = num_digits_witness(witness_decomp, true);
     let num_digits_open = num_digits_open(level_decomp);
     let Some(num_live_blocks) = 1usize.checked_shl(block_index_bits as u32) else {
         return Ok(None);
@@ -345,7 +456,7 @@ fn multi_group_root_main_level_params_candidate(
         policy.sis_security_policy,
         family,
         d,
-        level_decomp,
+        witness_decomp,
         ctx.ring_challenge_cfg,
         fold_challenge_shape,
         true,
@@ -391,16 +502,28 @@ fn multi_group_root_main_level_params_candidate(
     else {
         return Ok(None);
     };
+    let precommitted_groups = ctx
+        .precommitted_groups
+        .iter()
+        .map(|group| {
+            precommitted_group_with_open_basis(group, policy, ctx.ring_challenge_cfg, log_basis)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut precommitted_d_width = 0usize;
+    for group in &precommitted_groups {
+        precommitted_d_width = precommitted_d_width
+            .checked_add(group.d_segment_width()?)
+            .ok_or_else(|| AkitaError::InvalidSetup("multi-group D width overflow".to_string()))?;
+    }
     let d_width = main_d_width
-        .checked_add(ctx.precommitted_d_width)
+        .checked_add(precommitted_d_width)
         .ok_or_else(|| AkitaError::InvalidSetup("multi-group D width overflow".to_string()))?;
-    let d_log_basis = shared_d_digit_log_basis(log_basis, ctx.precommitted_groups);
     let Some(norm_w) = rounded_up_collision_inf_norm(
         policy.sis_security_policy,
         family,
         akita_types::SisMatrixRole::D,
         d,
-        d_log_basis,
+        log_basis,
     ) else {
         return Ok(None);
     };
@@ -419,6 +542,7 @@ fn multi_group_root_main_level_params_candidate(
     let mut params = LevelParams {
         ring_dimension: d,
         log_basis,
+        log_basis_witness,
         a_key,
         b_key,
         d_key,
@@ -438,7 +562,7 @@ fn multi_group_root_main_level_params_candidate(
         // Multi-group root-direct ships raw witnesses; chunked layout is orthogonal
         // and not used by the multi-group precommit path.
         witness_chunk: akita_types::ChunkedWitnessCfg::default(),
-        precommitted_groups: ctx.precommitted_groups.to_vec(),
+        precommitted_groups,
         setup_prefix: None,
         role_dims: CommitmentRingDims::uniform(d),
         setup_contribution_mode: SetupContributionMode::Direct,
@@ -456,7 +580,7 @@ fn compute_multi_group_root_direct_level_params(
     fold_challenge_shape: TensorChallengeShape,
 ) -> Result<Option<LevelParams>, AkitaError> {
     key.validate()?;
-    let (precommitted_groups, precommitted_d_width) =
+    let precommitted_groups =
         multi_group_root_precommitted_groups(key, policy, ring_challenge_config)?;
 
     let ring_challenge_cfg = ring_challenge_config(policy.ring_dimension)?;
@@ -466,7 +590,6 @@ fn compute_multi_group_root_direct_level_params(
         policy,
         ring_challenge_cfg: &ring_challenge_cfg,
         requested_fold_shape: fold_challenge_shape,
-        precommitted_d_width,
         precommitted_groups: &precommitted_groups,
     };
 
@@ -595,14 +718,13 @@ pub fn find_group_batch_schedule(
         return Ok(Schedule { steps, total_bytes });
     }
 
-    let (precommitted_groups, precommitted_d_width) =
+    let precommitted_groups =
         multi_group_root_precommitted_groups(key, policy, ring_challenge_config)?;
     let ring_challenge_cfg = ring_challenge_config(policy.ring_dimension)?;
     let candidate_ctx = MultiGroupRootCandidateCtx {
         policy,
         ring_challenge_cfg: &ring_challenge_cfg,
         requested_fold_shape: fold_challenge_shape,
-        precommitted_d_width,
         precommitted_groups: &precommitted_groups,
     };
     let suffix_ctx = SuffixCtx {
@@ -822,7 +944,8 @@ mod tests {
             num_positions_per_block: 1usize << position_index_bits,
             num_live_blocks: 1usize << block_index_bits,
             fold_challenge_shape: TensorChallengeShape::Flat,
-            log_basis: 3,
+            log_basis_witness: 1,
+            log_basis_commit: 3,
             n_a: 1,
             conservative_n_b: 1,
         }
@@ -953,7 +1076,8 @@ mod tests {
             num_positions_per_block: 2,
             num_live_blocks: 1,
             fold_challenge_shape: TensorChallengeShape::Flat,
-            log_basis: 3,
+            log_basis_witness: 1,
+            log_basis_commit: 3,
             n_a: 1,
             conservative_n_b: 1,
         };
@@ -1004,14 +1128,14 @@ mod tests {
     }
 
     #[test]
-    fn mixed_basis_d128_root_prices_shared_d_at_precommit_basis() {
+    fn mixed_basis_d128_root_keeps_commit_basis_and_prices_d_at_root_open_basis() {
         let mut precommit_policy = flat_policy();
         precommit_policy.ring_dimension = 128;
         precommit_policy.decomposition.log_basis = 3;
         precommit_policy.basis_range = (3, 3);
         let pre_key = PolynomialGroupLayout::new(20, 1);
         let frozen = precommitted_from_policy(pre_key, &precommit_policy);
-        assert_eq!(frozen.log_basis, 3);
+        assert_eq!(frozen.log_basis_commit, 3);
 
         let mut root_policy = precommit_policy;
         root_policy.decomposition.log_open_bound = Some(128);
@@ -1029,15 +1153,22 @@ mod tests {
         };
 
         assert_eq!(root.params.log_basis, 2);
-        assert_eq!(root.params.shared_d_digit_log_basis(), 3);
+        let precommitted_group = root
+            .params
+            .precommitted_groups
+            .first()
+            .expect("precommitted group");
+        assert_eq!(precommitted_group.layout.log_basis_commit, 3);
+        assert_eq!(precommitted_group.log_basis_open, 2);
+        assert_eq!(root.params.shared_d_digit_log_basis(), 2);
         let expected_d_bound = rounded_up_collision_inf_norm(
             root_policy.sis_security_policy,
             root_policy.sis_modulus_profile,
             akita_types::SisMatrixRole::D,
             root_policy.ring_dimension,
-            3,
+            2,
         )
-        .expect("D128 basis-3 D bound");
+        .expect("D128 basis-2 D bound");
         assert_eq!(root.params.d_key.coeff_linf_bound(), expected_d_bound);
     }
 

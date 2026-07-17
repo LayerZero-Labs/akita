@@ -47,7 +47,9 @@ fn sample_multi_group_root_params() -> (LevelParams, OpeningClaimsLayout) {
             precommit_lp.b_key.coeff_linf_bound(),
             precommit_lp.ring_dimension,
         ),
-        num_digits_commit: precommit_lp.num_digits_commit,
+        log_basis_open: precommit_lp.log_basis,
+        num_digits_witness: precommit_lp.num_digits_commit,
+        num_digits_commit: precommit_lp.num_digits_open,
         num_digits_open: precommit_lp.num_digits_open,
         num_digits_fold_one: precommit_lp.num_digits_fold_one,
     };
@@ -61,7 +63,7 @@ fn sample_multi_group_root_params() -> (LevelParams, OpeningClaimsLayout) {
 fn shared_d_digit_basis_covers_every_group() {
     let (mut grouped, _) = sample_multi_group_root_params();
     grouped.log_basis = 3;
-    grouped.precommitted_groups[0].layout.log_basis = 6;
+    grouped.precommitted_groups[0].layout.log_basis_commit = 6;
 
     assert_eq!(grouped.shared_d_digit_log_basis(), 6);
     assert_eq!(shared_d_digit_log_basis(5, &[]), 5);

@@ -706,10 +706,11 @@ pub fn tail_segment_layout_from_groups<'a>(
     let mut group_layouts = Vec::with_capacity(groups.len());
     let mut total_plane_rings = 0usize;
     for (params, num_w_vectors, num_t_vectors, num_z_segments) in groups {
-        let depth_open = params.num_digits_open();
+        let depth_witness = params.num_digits_witness();
         let depth_commit = params.num_digits_commit();
+        let depth_open = params.num_digits_open();
         let depth_fold = lp.num_digits_fold_for_params(params, num_t_vectors, field_bits)?;
-        if depth_open == 0 || depth_commit == 0 || depth_fold == 0 {
+        if depth_witness == 0 || depth_commit == 0 || depth_open == 0 || depth_fold == 0 {
             return Err(AkitaError::InvalidSetup(
                 "tail segment layout has zero digit depth".to_string(),
             ));
@@ -731,12 +732,12 @@ pub fn tail_segment_layout_from_groups<'a>(
             .ok_or_else(|| AkitaError::InvalidSetup("tail t field count overflow".to_string()))?;
         let z_coords = num_z_segments
             .checked_mul(params.num_positions_per_block())
-            .and_then(|n| n.checked_mul(depth_commit))
+            .and_then(|n| n.checked_mul(depth_witness))
             .and_then(|n| n.checked_mul(d))
             .ok_or_else(|| AkitaError::InvalidSetup("tail z coord count overflow".to_string()))?;
         let z_plane_rings = num_z_segments
             .checked_mul(params.num_positions_per_block())
-            .and_then(|n| n.checked_mul(depth_commit))
+            .and_then(|n| n.checked_mul(depth_witness))
             .and_then(|n| n.checked_mul(depth_fold))
             .ok_or_else(|| AkitaError::InvalidSetup("tail z plane count overflow".to_string()))?;
         let e_plane_rings = total_w_blocks
@@ -744,7 +745,7 @@ pub fn tail_segment_layout_from_groups<'a>(
             .ok_or_else(|| AkitaError::InvalidSetup("tail e plane count overflow".to_string()))?;
         let t_plane_rings = total_t_blocks
             .checked_mul(params.a_rows_len())
-            .and_then(|n| n.checked_mul(depth_open))
+            .and_then(|n| n.checked_mul(depth_commit))
             .ok_or_else(|| AkitaError::InvalidSetup("tail t plane count overflow".to_string()))?;
         let z_cap = lp.fold_witness_linf_cap_for_params(params, num_t_vectors, field_bits)?;
         let z_payload_bytes = z_payload_budget_from_cap(z_coords, z_cap);
@@ -836,7 +837,7 @@ pub fn tail_segment_multiplicities_from_layout_for_params(
 
     let z_unit = params
         .num_positions_per_block()
-        .checked_mul(params.num_digits_commit())
+        .checked_mul(params.num_digits_witness())
         .and_then(|n| n.checked_mul(d))
         .ok_or_else(|| AkitaError::InvalidSetup("tail z unit overflow".to_string()))?;
     if !group.z_coords.is_multiple_of(z_unit) {
@@ -1000,8 +1001,8 @@ where
         let cap =
             lp.fold_witness_linf_cap_for_params(group.params, group.num_t_vectors, field_bits)?;
         golomb_rice_flat_admit_terminal_wire(&z_centered_i64, cap)?;
-        let depth_commit = group.params.num_digits_commit();
-        let inner_width = group.params.num_positions_per_block() * depth_commit;
+        let depth_witness = group.params.num_digits_witness();
+        let inner_width = group.params.num_positions_per_block() * depth_witness;
         let row_count = group.z_folded_centered_flat.len() / ring_d;
         if inner_width == 0 || !row_count.is_multiple_of(inner_width) {
             return Err(AkitaError::InvalidInput(

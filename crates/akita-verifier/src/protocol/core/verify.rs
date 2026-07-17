@@ -86,13 +86,14 @@ fn validate_direct_group_shape<F>(
 where
     F: FieldCore + CanonicalField,
 {
-    validate_log_basis(params.log_basis())?;
+    validate_log_basis(params.log_basis_witness())?;
+    validate_log_basis(params.log_basis_commit())?;
     if params.num_live_blocks() == 0 || params.num_positions_per_block() == 0 {
         return Err(AkitaError::InvalidSetup(
             "direct witness layout requires non-zero block geometry".to_string(),
         ));
     }
-    if params.num_digits_commit() == 0 || params.num_digits_open() == 0 {
+    if params.num_digits_witness() == 0 || params.num_digits_commit() == 0 {
         return Err(AkitaError::InvalidSetup(
             "direct witness layout requires non-zero digit depths".to_string(),
         ));
@@ -113,7 +114,7 @@ where
     let b_row_len = params.b_rows_len();
     let a_required_cols = params
         .num_positions_per_block()
-        .checked_mul(params.num_digits_commit())
+        .checked_mul(params.num_digits_witness())
         .ok_or_else(|| AkitaError::InvalidSetup("direct A width overflow".to_string()))?;
     let a_required = a_row_len
         .checked_mul(a_required_cols)
@@ -121,7 +122,7 @@ where
     let per_witness_outer_cols = params
         .num_live_blocks()
         .checked_mul(a_row_len)
-        .and_then(|cols| cols.checked_mul(params.num_digits_open()))
+        .and_then(|cols| cols.checked_mul(params.num_digits_commit()))
         .ok_or_else(|| AkitaError::InvalidSetup("direct B width overflow".to_string()))?;
     let b_required_cols = witnesses
         .len()
@@ -225,7 +226,7 @@ where
     let out_capacity = params
         .num_live_blocks()
         .checked_mul(a_row_len)
-        .and_then(|len| len.checked_mul(params.num_digits_open()))
+        .and_then(|len| len.checked_mul(params.num_digits_commit()))
         .ok_or_else(|| {
             AkitaError::InvalidSetup("direct witness row capacity overflow".to_string())
         })?;
@@ -248,12 +249,16 @@ where
         } else {
             &[]
         };
-        let block_digits = decompose_rows_i8(block, params.num_digits_commit(), params.log_basis());
+        let block_digits = decompose_rows_i8(
+            block,
+            params.num_digits_witness(),
+            params.log_basis_witness(),
+        );
         let t_rows = mat_vec_mul_i8_plain::<F, D>(&a_rows, &block_digits);
         out.extend(decompose_rows_i8(
             &t_rows,
-            params.num_digits_open(),
-            params.log_basis(),
+            params.num_digits_commit(),
+            params.log_basis_commit(),
         ));
     }
 

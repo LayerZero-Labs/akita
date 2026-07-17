@@ -34,7 +34,7 @@ fn conservative_config_commit_returns_frozen_layout() {
     );
     assert_eq!(frozen_layout.num_live_blocks, layout.num_live_blocks);
     assert_eq!(
-        frozen_layout.log_basis,
+        frozen_layout.log_basis_commit,
         ConservativeOneHotCfg::basis_range().0
     );
     assert_eq!(frozen_layout.n_a, layout.a_key.row_len());
@@ -275,7 +275,7 @@ fn commit_group_returns_frozen_conservative_layout() {
         layout.num_positions_per_block
     );
     assert_eq!(frozen_layout.num_live_blocks, layout.num_live_blocks);
-    assert_eq!(frozen_layout.log_basis, layout.log_basis);
+    assert_eq!(frozen_layout.log_basis_commit, layout.log_basis);
     assert_eq!(frozen_layout.n_a, layout.a_key.row_len());
     assert_eq!(frozen_layout.conservative_n_b, layout.b_key.row_len());
     assert_eq!(commitment.rows().count(), frozen_layout.conservative_n_b);

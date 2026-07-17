@@ -228,8 +228,8 @@ where
                 DecomposeFoldBatchPlan::Sparse {
                     challenges: &point_challenges,
                     num_positions_per_block: params.num_positions_per_block(),
-                    num_digits: params.num_digits_commit(),
-                    log_basis: params.log_basis(),
+                    num_digits: params.num_digits_witness(),
+                    log_basis: params.log_basis_witness(),
                 },
             )? {
                 BatchDecomposeFoldOutcome::Fused(z_point) => Ok(z_point),
@@ -245,8 +245,8 @@ where
                                 DecomposeFoldPlan {
                                     challenges: poly_challenges,
                                     num_positions_per_block: params.num_positions_per_block(),
-                                    num_digits: params.num_digits_commit(),
-                                    log_basis: params.log_basis(),
+                                    num_digits: params.num_digits_witness(),
+                                    log_basis: params.log_basis_witness(),
                                 },
                             )
                         })
@@ -276,8 +276,8 @@ where
                 DecomposeFoldBatchPlan::Tensor {
                     tensor: &point_factored,
                     num_positions_per_block: params.num_positions_per_block(),
-                    num_digits: params.num_digits_commit(),
-                    log_basis: params.log_basis(),
+                    num_digits: params.num_digits_witness(),
+                    log_basis: params.log_basis_witness(),
                 },
             )? {
                 BatchDecomposeFoldOutcome::Fused(witness) => Ok(witness),
@@ -616,7 +616,7 @@ impl RingRelationProver {
                         decompose_e_hat::<F, D_D>(
                             &pre_folded_typed,
                             group_lp.num_digits_open(),
-                            group_lp.log_basis(),
+                            group_lp.log_basis_open(),
                         )?
                     };
                     Ok::<_, AkitaError>((

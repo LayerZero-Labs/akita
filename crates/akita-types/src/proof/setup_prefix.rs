@@ -313,7 +313,14 @@ fn serialize_precommitted_level_params<W: Write>(
     }
     params
         .layout
-        .log_basis
+        .log_basis_witness
+        .serialize_with_mode(&mut writer, compress)?;
+    params
+        .layout
+        .log_basis_commit
+        .serialize_with_mode(&mut writer, compress)?;
+    params
+        .log_basis_open
         .serialize_with_mode(&mut writer, compress)?;
     params
         .layout
@@ -325,6 +332,9 @@ fn serialize_precommitted_level_params<W: Write>(
         .serialize_with_mode(&mut writer, compress)?;
     serialize_ajtai_key(&params.a_key, &mut writer, compress)?;
     serialize_ajtai_key(&params.b_key, &mut writer, compress)?;
+    params
+        .num_digits_witness
+        .serialize_with_mode(&mut writer, compress)?;
     params
         .num_digits_commit
         .serialize_with_mode(&mut writer, compress)?;
@@ -362,11 +372,14 @@ fn deserialize_precommitted_level_params<R: Read>(
             ))
         }
     };
-    let log_basis = u32::deserialize_with_mode(&mut reader, compress, validate, &())?;
+    let log_basis_witness = u32::deserialize_with_mode(&mut reader, compress, validate, &())?;
+    let log_basis_commit = u32::deserialize_with_mode(&mut reader, compress, validate, &())?;
+    let log_basis_open = u32::deserialize_with_mode(&mut reader, compress, validate, &())?;
     let n_a = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
     let conservative_n_b = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
     let a_key = deserialize_ajtai_key(&mut reader, compress, validate)?;
     let b_key = deserialize_ajtai_key(&mut reader, compress, validate)?;
+    let num_digits_witness = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
     let num_digits_commit = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
     let num_digits_open = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
     let num_digits_fold_one = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
@@ -377,12 +390,15 @@ fn deserialize_precommitted_level_params<R: Read>(
             num_positions_per_block,
             num_live_blocks,
             fold_challenge_shape,
-            log_basis,
+            log_basis_witness,
+            log_basis_commit,
             n_a,
             conservative_n_b,
         },
         a_key,
         b_key,
+        log_basis_open,
+        num_digits_witness,
         num_digits_commit,
         num_digits_open,
         num_digits_fold_one,
@@ -415,11 +431,14 @@ fn precommitted_level_params_serialized_size(
                 fold_low_len.serialized_size(compress)
             }
         }
-        + params.layout.log_basis.serialized_size(compress)
+        + params.layout.log_basis_witness.serialized_size(compress)
+        + params.layout.log_basis_commit.serialized_size(compress)
+        + params.log_basis_open.serialized_size(compress)
         + params.layout.n_a.serialized_size(compress)
         + params.layout.conservative_n_b.serialized_size(compress)
         + ajtai_key_serialized_size(&params.a_key, compress)
         + ajtai_key_serialized_size(&params.b_key, compress)
+        + params.num_digits_witness.serialized_size(compress)
         + params.num_digits_commit.serialized_size(compress)
         + params.num_digits_open.serialized_size(compress)
         + params.num_digits_fold_one.serialized_size(compress)
@@ -1088,7 +1107,7 @@ fn active_setup_projection_geometry(
         let group_params = level_params.group_params(opening_batch, group_index)?;
         let a_width = group_params
             .num_positions_per_block()
-            .checked_mul(group_params.num_digits_commit())
+            .checked_mul(group_params.num_digits_witness())
             .ok_or_else(|| AkitaError::InvalidSetup("A setup width overflow".to_string()))?;
         let a_slots = group_params
             .a_rows_len()
@@ -1099,7 +1118,7 @@ fn active_setup_projection_geometry(
             .num_polynomials()
             .checked_mul(group_params.a_rows_len())
             .and_then(|n| n.checked_mul(group_params.num_live_blocks()))
-            .and_then(|n| n.checked_mul(group_params.num_digits_open()))
+            .and_then(|n| n.checked_mul(group_params.num_digits_commit()))
             .ok_or_else(|| AkitaError::InvalidSetup("B setup width overflow".to_string()))?;
         let b_slots = group_params
             .b_rows_len()
@@ -1178,13 +1197,16 @@ pub fn setup_prefix_precommitted_params(
                     num_positions_per_block,
                     num_live_blocks,
                     fold_challenge_shape: prefix_params.fold_challenge_shape,
-                    log_basis: prefix_params.log_basis,
+                    log_basis_witness: prefix_params.log_basis_witness,
+                    log_basis_commit: prefix_params.log_basis,
                     n_a: prefix_params.a_key.row_len(),
                     conservative_n_b: prefix_params.b_key.row_len(),
                 },
                 a_key: prefix_params.a_key.clone(),
                 b_key: prefix_params.b_key.clone(),
-                num_digits_commit: prefix_params.num_digits_commit,
+                log_basis_open: prefix_params.log_basis,
+                num_digits_witness: prefix_params.num_digits_commit,
+                num_digits_commit: prefix_params.num_digits_open,
                 num_digits_open: prefix_params.num_digits_open,
                 num_digits_fold_one: prefix_params.num_digits_fold_one,
             });

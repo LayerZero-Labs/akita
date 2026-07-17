@@ -12,7 +12,7 @@ use akita_field::AkitaError;
 use akita_types::layout::digit_math::optimal_block_geometry_split;
 use akita_types::sis::{
     decomposed_s_block_ring_count, decomposed_t_ring_count, decomposed_w_ring_count,
-    fold_witness_digit_plan, num_digits_open, num_digits_s_commit, num_digits_setup_prefix_commit,
+    fold_witness_digit_plan, num_digits_open, num_digits_setup_prefix_commit, num_digits_witness,
     rounded_up_collision_inf_norm, rounded_up_role_a_inf_norm, AjtaiKeyParams, FoldChallengeNorms,
     FoldWitnessLinfCapConfig, FoldWitnessNorms, SisTableKey,
 };

@@ -125,13 +125,14 @@ fn emit_key(key: PolynomialGroupLayout) -> String {
 fn emit_precommitted_group_key(layout: &PrecommittedGroupParams) -> String {
     let challenge_shape = emit_root_fold_shape(layout.fold_challenge_shape);
     format!(
-        "PrecommittedGroupParams {{ group: {}, num_live_ring_elements_per_claim: {}, num_positions_per_block: {}, num_live_blocks: {}, fold_challenge_shape: {}, log_basis: {}, n_a: {}, conservative_n_b: {} }}",
+        "PrecommittedGroupParams {{ group: {}, num_live_ring_elements_per_claim: {}, num_positions_per_block: {}, num_live_blocks: {}, fold_challenge_shape: {}, log_basis_witness: {}, log_basis_commit: {}, n_a: {}, conservative_n_b: {} }}",
         emit_key(layout.group),
         layout.num_live_ring_elements_per_claim,
         layout.num_positions_per_block,
         layout.num_live_blocks,
         challenge_shape,
-        layout.log_basis,
+        layout.log_basis_witness,
+        layout.log_basis_commit,
         layout.n_a,
         layout.conservative_n_b,
     )

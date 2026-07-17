@@ -153,7 +153,9 @@ fn test_inputs_for_group_sizes(
                 ),
                 a_key: lp.a_key.clone(),
                 b_key: lp.b_key.clone(),
-                num_digits_commit: lp.num_digits_commit,
+                log_basis_open: lp.log_basis,
+                num_digits_witness: lp.num_digits_commit,
+                num_digits_commit: lp.num_digits_open,
                 num_digits_open: lp.num_digits_open,
                 num_digits_fold_one: depth_fold,
             })

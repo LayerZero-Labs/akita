@@ -244,14 +244,16 @@ impl WitnessLayout {
             let params = lp.group_params(opening_batch, group_index)?;
             let group = opening_batch.group_layout(group_index)?;
             let num_claims = group.num_polynomials();
-            let depth_open = params.num_digits_open();
+            let depth_witness = params.num_digits_witness();
             let depth_commit = params.num_digits_commit();
+            let depth_open = params.num_digits_open();
             let depth_fold =
                 lp.num_digits_fold_for_params(params, num_claims, lp.field_bits_for_cache())?;
             if num_claims == 0
                 || params.num_live_blocks() == 0
                 || params.num_positions_per_block() == 0
                 || depth_open == 0
+                || depth_witness == 0
                 || depth_commit == 0
                 || depth_fold == 0
                 || params.a_rows_len() == 0
@@ -264,7 +266,7 @@ impl WitnessLayout {
                 Self::resolve_chunk_block_ranges(params.num_live_blocks(), num_chunks)?;
             let z_len = checked_mul3(
                 params.num_positions_per_block(),
-                depth_commit,
+                depth_witness,
                 depth_fold,
                 "witness Z width overflow",
             )?;
@@ -280,7 +282,7 @@ impl WitnessLayout {
                 let t_len = num_claims
                     .checked_mul(chunk_num_live_blocks)
                     .and_then(|n| n.checked_mul(params.a_rows_len()))
-                    .and_then(|n| n.checked_mul(depth_open))
+                    .and_then(|n| n.checked_mul(depth_commit))
                     .ok_or_else(|| AkitaError::InvalidSetup("witness T width overflow".into()))?;
                 let z_range = checked_range(cursor, z_len, "witness Z range overflow")?;
                 let e_range = checked_range(z_range.end, e_len, "witness E range overflow")?;

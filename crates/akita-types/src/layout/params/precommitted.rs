@@ -19,9 +19,13 @@ pub struct PrecommittedLevelParams {
     pub a_key: AjtaiKeyParams,
     /// Outer commitment matrix (B) used by this group.
     pub b_key: AjtaiKeyParams,
-    /// Gadget decomposition depth for committed coefficients.
+    /// Root-opening basis used for fresh `e_hat` and `z_hat` digits.
+    pub log_basis_open: u32,
+    /// Gadget decomposition depth for committed witness/source coefficients.
+    pub num_digits_witness: usize,
+    /// Gadget decomposition depth for committed `t_hat` values.
     pub num_digits_commit: usize,
-    /// Gadget decomposition depth for opening-side values.
+    /// Gadget decomposition depth for fresh `e_hat` values.
     pub num_digits_open: usize,
     /// Cached folded-witness digit count for a singleton group relation.
     pub num_digits_fold_one: usize,
@@ -59,6 +63,8 @@ impl PrecommittedLevelParams {
         self.layout.append_descriptor_bytes(bytes);
         self.a_key.append_descriptor_bytes(bytes);
         self.b_key.append_descriptor_bytes(bytes);
+        crate::descriptor_bytes::push_u32(bytes, self.log_basis_open);
+        push_usize(bytes, self.num_digits_witness);
         push_usize(bytes, self.num_digits_commit);
         push_usize(bytes, self.num_digits_open);
         push_usize(bytes, self.num_digits_fold_one);
@@ -80,10 +86,13 @@ pub trait LevelParamsLike {
     fn fold_challenge_shape(&self) -> TensorChallengeShape;
     fn position_index_bits(&self) -> usize;
     fn block_index_bits(&self) -> usize;
+    fn num_digits_witness(&self) -> usize;
     fn num_digits_commit(&self) -> usize;
     fn num_digits_open(&self) -> usize;
     fn num_digits_fold_one(&self) -> usize;
-    fn log_basis(&self) -> u32;
+    fn log_basis_witness(&self) -> u32;
+    fn log_basis_commit(&self) -> u32;
+    fn log_basis_open(&self) -> u32;
 }
 
 impl LevelParamsLike for LevelParams {
@@ -127,8 +136,15 @@ impl LevelParamsLike for LevelParams {
         self.block_index_bits()
     }
 
-    fn num_digits_commit(&self) -> usize {
+    fn num_digits_witness(&self) -> usize {
         self.num_digits_commit
+    }
+
+    #[allow(clippy::misnamed_getters)]
+    fn num_digits_commit(&self) -> usize {
+        // For root levels, committed `t_hat` digits use the opening-side depth.
+        // The older `LevelParams::num_digits_commit` field is the source-witness depth.
+        self.num_digits_open
     }
 
     fn num_digits_open(&self) -> usize {
@@ -139,7 +155,15 @@ impl LevelParamsLike for LevelParams {
         self.num_digits_fold_one
     }
 
-    fn log_basis(&self) -> u32 {
+    fn log_basis_commit(&self) -> u32 {
+        self.log_basis
+    }
+
+    fn log_basis_witness(&self) -> u32 {
+        self.log_basis_witness
+    }
+
+    fn log_basis_open(&self) -> u32 {
         self.log_basis
     }
 }
@@ -188,6 +212,10 @@ impl LevelParamsLike for PrecommittedLevelParams {
             .map_or(0, |capacity| capacity.trailing_zeros() as usize)
     }
 
+    fn num_digits_witness(&self) -> usize {
+        self.num_digits_witness
+    }
+
     fn num_digits_commit(&self) -> usize {
         self.num_digits_commit
     }
@@ -200,7 +228,15 @@ impl LevelParamsLike for PrecommittedLevelParams {
         self.num_digits_fold_one
     }
 
-    fn log_basis(&self) -> u32 {
-        self.layout.log_basis
+    fn log_basis_commit(&self) -> u32 {
+        self.layout.log_basis_commit
+    }
+
+    fn log_basis_witness(&self) -> u32 {
+        self.layout.log_basis_witness
+    }
+
+    fn log_basis_open(&self) -> u32 {
+        self.log_basis_open
     }
 }
