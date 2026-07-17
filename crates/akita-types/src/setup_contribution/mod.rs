@@ -8,6 +8,7 @@
 //! challenge point, while the direct verifier scans the packed setup with the
 //! same segment partition.
 
+use crate::{LevelParams, OpeningClaimsLayout};
 use akita_field::{AkitaError, CanonicalField, FieldCore};
 
 mod geometry;
@@ -19,10 +20,10 @@ mod weights;
 mod tests;
 
 pub use geometry::{ensure_setup_envelope, SetupProjectionGeometry};
-pub use plan::{
-    SetupContributionGroupInputs, SetupContributionLayout, SetupContributionPlan,
-    SetupContributionStatic,
-};
+pub(crate) use plan::get_d_col_range;
+#[cfg(test)]
+pub(crate) use plan::validate_setup_inputs;
+pub use plan::{SetupContributionGroupInputs, SetupContributionPlan};
 pub use setup_index_weight_evaluator::SetupIndexWeightEvaluator;
 
 /// Shared fold gadget when every setup-contribution group uses the same basis.
@@ -31,19 +32,20 @@ pub use setup_index_weight_evaluator::SetupIndexWeightEvaluator;
 /// `gadget[..group.depth_fold]`. Return `None` only when the basis differs and
 /// callers must derive per-group gadgets.
 pub fn shared_setup_fold_gadget<F: FieldCore + CanonicalField>(
-    layout: &SetupContributionLayout,
+    level_params: &LevelParams,
+    opening_batch: &OpeningClaimsLayout,
+    groups: &[SetupContributionGroupInputs],
 ) -> Option<Vec<F>> {
-    let first = layout.groups().first()?;
-    let first_log_basis = first.log_basis(layout).ok()?;
-    if !layout.groups().iter().all(|group| {
+    let first = groups.first()?;
+    let first_log_basis = first.log_basis(level_params, opening_batch).ok()?;
+    if !groups.iter().all(|group| {
         group
-            .log_basis(layout)
+            .log_basis(level_params, opening_batch)
             .is_ok_and(|log_basis| log_basis == first_log_basis)
     }) {
         return None;
     }
-    let max_depth = layout
-        .groups()
+    let max_depth = groups
         .iter()
         .map(|group| group.depth_fold)
         .max()

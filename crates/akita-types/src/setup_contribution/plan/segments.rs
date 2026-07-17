@@ -4,6 +4,7 @@ impl<E: FieldCore> SetupContributionGroupPlan<E> {
     #[cfg(test)]
     pub(crate) fn refresh_segments(
         &mut self,
+        d_weights: &[E],
         d_rows: usize,
         d_physical_cols: usize,
     ) -> Result<(), AkitaError> {
@@ -16,7 +17,7 @@ impl<E: FieldCore> SetupContributionGroupPlan<E> {
             self.n_b,
             &self.a_row_weights,
             &self.b_weights,
-            &self.d_weights,
+            d_weights,
             d_rows,
             d_physical_cols,
         )?;
@@ -27,10 +28,11 @@ impl<E: FieldCore> SetupContributionGroupPlan<E> {
 
     pub(super) fn packed_segments(
         &self,
+        d_weights: &[E],
         d_rows: usize,
         d_physical_cols: usize,
     ) -> Result<(usize, &[GroupSetupSegment<E>]), AkitaError> {
-        debug_assert_eq!(self.d_weights.len(), d_rows);
+        debug_assert_eq!(d_weights.len(), d_rows);
         debug_assert_eq!(self.a_row_weights.len(), self.n_a);
         debug_assert_eq!(self.b_weights.len(), self.n_b);
         debug_assert_eq!(self.t_eq_slice.len(), self.t_cols);

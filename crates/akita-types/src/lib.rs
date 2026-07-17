@@ -134,8 +134,7 @@ pub use schedule::{
 };
 pub use setup_contribution::{
     ensure_setup_envelope, shared_setup_fold_gadget, SetupContributionGroupInputs,
-    SetupContributionLayout, SetupContributionPlan, SetupContributionStatic,
-    SetupIndexWeightEvaluator, SetupProjectionGeometry,
+    SetupContributionPlan, SetupIndexWeightEvaluator, SetupProjectionGeometry,
 };
 pub use sis::{
     AjtaiKeyParams, ScalarCutoff, SisMatrixRole, SisModulusProfileId, SisRoleCell,

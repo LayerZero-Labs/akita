@@ -1,8 +1,8 @@
 //! Setup-contribution planning and evaluation.
 //!
-//! The public API has three protocol-facing operations:
-//! prepare the challenge-free plan data, finish it after challenges are known,
-//! and evaluate the resulting setup contribution. Internally, the shape is:
+//! The public API has two protocol-facing operations:
+//! prepare the plan from verifier/prover-local inputs, and evaluate the
+//! resulting setup contribution. Internally, the shape is:
 //!
 //! - `prepare`: static and challenge-dependent plan construction.
 //! - `segments`: the single packed D/B/A segment partition used by every
@@ -27,11 +27,9 @@ mod setup_index_weight;
 mod test_oracle;
 mod types;
 
-pub use types::{
-    SetupContributionGroupInputs, SetupContributionLayout, SetupContributionPlan,
-    SetupContributionStatic,
-};
-pub(crate) use types::{SetupContributionGroupPlan, SetupContributionGroupStatic};
+pub(crate) use types::SetupContributionGroupPlan;
+pub(crate) use types::{get_d_col_range, get_total_d, validate_setup_inputs};
+pub use types::{SetupContributionGroupInputs, SetupContributionPlan};
 
 use super::geometry::SetupProjectionGroupGeometry;
 use super::weights::{setup_e_col_weights, setup_t_col_weights, setup_z_col_weights};
@@ -39,7 +37,7 @@ use super::{checked_slice, push_role_boundaries, SetupProjectionGeometry};
 use crate::dispatch_for_field;
 use crate::layout::{CommitmentRingDims, LevelParams, RelationMatrixRowLayout, RingMatrixView};
 use crate::proof::AkitaExpandedSetup;
-use crate::OpeningClaimsLayout;
+use crate::{OpeningClaimsLayout, WitnessLayout};
 use akita_field::parallel::*;
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, MulBase, MulBaseUnreduced};
 

@@ -4,8 +4,8 @@ use akita_algebra::eq_poly::EqPolynomial;
 use akita_field::Prime128OffsetA7F7;
 use akita_types::{
     gadget_row_scalars, r_decomp_levels, CommitmentRingDims, LevelParams, OpeningClaimsLayout,
-    RelationMatrixRowLayout, SetupContributionGroupInputs, SetupContributionLayout,
-    SetupContributionPlan, SetupIndexWeightEvaluator, SisModulusProfileId, WitnessLayout,
+    RelationMatrixRowLayout, SetupContributionGroupInputs, SetupContributionPlan,
+    SetupIndexWeightEvaluator, SisModulusProfileId, WitnessLayout,
 };
 use criterion::measurement::WallTime;
 use criterion::{
@@ -84,47 +84,39 @@ fn make_case(num_live_blocks: usize, blocks_per_chunk: usize) -> SetupIndexWeigh
         .collect::<Vec<_>>();
     let eq_tau1 = EqPolynomial::evals(&tau1).unwrap().into();
     let opening_source_len = layout.total_len();
-    let group = SetupContributionGroupInputs {
+    let groups = vec![SetupContributionGroupInputs {
         group_id: 0,
         num_claims,
         depth_fold,
         a_row_start: 1,
         b_row_start: 1 + n_a,
-    };
-    let setup_layout = SetupContributionLayout::new(
-        std::sync::Arc::new(level_params.clone()),
-        std::sync::Arc::new(opening_batch.clone()),
-        RelationMatrixRowLayout::WithDBlock,
-        std::sync::Arc::new(layout),
-        opening_source_len,
-        vec![group],
-    )
-    .unwrap();
-    let static_plan = SetupContributionPlan::prepare_static(
-        &level_params,
-        &opening_batch,
-        RelationMatrixRowLayout::WithDBlock,
-        eq_tau1,
-        &setup_layout,
-    )
-    .unwrap();
+    }];
     let full_vec_randomness = (0..24)
         .map(|idx| test_scalar(101 + idx as u128))
         .collect::<Vec<_>>();
     let fold_gadget = gadget_row_scalars::<F>(depth_fold, log_basis);
     let alpha = test_scalar(3);
-    let plan = SetupContributionPlan::finish_plan::<F>(
-        &static_plan,
+    let plan = SetupContributionPlan::prepare::<F>(
+        &level_params,
+        &opening_batch,
+        RelationMatrixRowLayout::WithDBlock,
+        eq_tau1,
+        &layout,
+        opening_source_len,
+        &groups,
         &full_vec_randomness,
         Some(&fold_gadget),
-        &setup_layout,
         CommitmentRingDims::uniform(D),
     )
     .unwrap();
     let evaluator = SetupIndexWeightEvaluator::new::<F>(
-        &static_plan,
         &plan,
-        &setup_layout,
+        &level_params,
+        &opening_batch,
+        RelationMatrixRowLayout::WithDBlock,
+        &layout,
+        opening_source_len,
+        &groups,
         &tau1,
         &full_vec_randomness,
         &fold_gadget,

@@ -102,6 +102,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
             acc += group.evaluate_base_ring_direct::<F, BASE_D>(
                 &setup_view,
                 base_pows,
+                &self.d_weights,
                 a_projection,
                 b_projection,
                 d_projection,

@@ -18,7 +18,7 @@ where
     E: ExtField<F>,
 {
     let levels = r_gadget.len();
-    let rows = prepared.setup_contribution_static.rows();
+    let rows = prepared.setup_rows()?;
     let terms = rows.checked_mul(levels).ok_or(AkitaError::InvalidProof)?;
     if terms > MAX_COMPACT_STRIDE_TERMS {
         return Err(AkitaError::InvalidSize {
@@ -32,8 +32,7 @@ where
     let mut contribution = E::zero();
     for row_idx in 0..rows {
         let row_weight = prepared
-            .setup_contribution_static
-            .eq_tau1()
+            .eq_tau1
             .get(row_idx)
             .copied()
             .ok_or(AkitaError::InvalidProof)?;
@@ -44,7 +43,7 @@ where
                 .and_then(|local| offset_r.checked_add(local))
                 .ok_or(AkitaError::InvalidProof)?;
             let opening_index = akita_types::checked_opening_source_index(
-                prepared.setup_contribution_layout.opening_source_len(),
+                prepared.opening_source_len()?,
                 physical_index,
             )?;
             contribution -=

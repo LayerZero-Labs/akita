@@ -12,16 +12,15 @@ use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::ring::scalar_powers;
 use akita_algebra::uni_poly::UniPoly;
 use akita_field::parallel::*;
-use akita_field::{AkitaError, CanonicalField, FieldCore, FromPrimitiveInt, LiftBase};
+use akita_field::{AkitaError, CanonicalField, FieldCore, FromPrimitiveInt, LiftBase, MulBase};
 use akita_serialization::AkitaSerialize;
 use akita_sumcheck::{SumcheckInstanceProver, SumcheckInstanceProverExt, SumcheckProof};
 use akita_transcript::{labels::ABSORB_SETUP_PREFIX_SLOT, Transcript};
 use akita_types::{
     ensure_setup_envelope, select_setup_prefix_slot, shared_setup_fold_gadget, AkitaExpandedSetup,
     BatchedStage3Geometry, FpExtEncoding, LevelParams, RingRelationInstance,
-    SetupContributionGroupInputs, SetupContributionLayout, SetupContributionPlan,
-    SetupContributionStatic, SetupPrefixProverRegistry, SetupProjectionGeometry,
-    SETUP_OFFLOAD_D_SETUP, SETUP_SUMCHECK_DEGREE,
+    SetupContributionGroupInputs, SetupContributionPlan, SetupPrefixProverRegistry,
+    SetupProjectionGeometry, SETUP_OFFLOAD_D_SETUP, SETUP_SUMCHECK_DEGREE,
 };
 use product_table::FactoredProductTerm;
 use std::sync::Arc;
@@ -488,32 +487,25 @@ fn prepare_setup_sumcheck_terms<F, E>(
 ) -> Result<(SetupProjectionGeometry, Vec<E>, Vec<E>), AkitaError>
 where
     F: FieldCore + CanonicalField,
-    E: FpExtEncoding<F> + FromPrimitiveInt + LiftBase<F>,
+    E: FpExtEncoding<F> + FromPrimitiveInt + LiftBase<F> + MulBase<F>,
 {
-    let (static_plan, layout) = prepare_setup_contribution_artifact::<F, E>(relation, lp, tau1)?;
-    let fold_gadget = shared_setup_fold_gadget::<F>(&layout);
-    let plan = SetupContributionPlan::finish_plan::<F>(
-        &static_plan,
-        x_challenges,
-        fold_gadget.as_deref(),
-        &layout,
-        relation.role_dims(),
-    )?;
+    let plan = prepare_setup_contribution_plan::<F, E>(relation, lp, tau1, x_challenges)?;
     let geometry = plan.projection_geometry();
     let alpha_pows = scalar_powers(alpha, geometry.alpha_power_len());
     let setup_index_weight = plan.materialize_setup_index_weights(alpha)?;
     Ok((geometry, setup_index_weight, alpha_pows.to_vec()))
 }
 
-/// Build the stage-3 setup-contribution static plan and canonical semantic layout.
-fn prepare_setup_contribution_artifact<F, E>(
+/// Build the stage-3 setup-contribution plan from local prover inputs.
+fn prepare_setup_contribution_plan<F, E>(
     relation: &RingRelationInstance<F>,
     lp: &LevelParams,
     tau1: &[E],
-) -> Result<(SetupContributionStatic<E>, SetupContributionLayout), AkitaError>
+    x_challenges: &[E],
+) -> Result<SetupContributionPlan<E>, AkitaError>
 where
     F: FieldCore + CanonicalField,
-    E: FieldCore,
+    E: FieldCore + LiftBase<F> + MulBase<F>,
 {
     let opening_batch = relation.opening_batch();
     let relation_matrix_row_layout = relation.relation_matrix_row_layout();
@@ -561,25 +553,18 @@ where
     }
 
     let opening_source_len = chunk_layout.total_len();
-    let layout = SetupContributionLayout::new(
-        Arc::new(lp.clone()),
-        Arc::new(opening_batch.clone()),
-        relation_matrix_row_layout,
-        Arc::new(chunk_layout),
-        opening_source_len,
-        groups,
-    )?;
-    let static_plan = SetupContributionPlan::prepare_static(
+    let fold_gadget = shared_setup_fold_gadget::<F>(lp, opening_batch, &groups);
+    let plan = SetupContributionPlan::prepare::<F>(
         lp,
         opening_batch,
         relation_matrix_row_layout,
         eq_tau1,
-        &layout,
+        &chunk_layout,
+        opening_source_len,
+        &groups,
+        x_challenges,
+        fold_gadget.as_deref(),
+        relation.role_dims(),
     )?;
-    if static_plan.rows() != rows {
-        return Err(AkitaError::InvalidSetup(
-            "setup contribution row count mismatch".to_string(),
-        ));
-    }
-    Ok((static_plan, layout))
+    Ok(plan)
 }

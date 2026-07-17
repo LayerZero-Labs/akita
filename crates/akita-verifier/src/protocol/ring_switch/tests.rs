@@ -5,7 +5,7 @@ use akita_challenges::{SparseChallenge, SparseChallengeConfig, TensorChallenges}
 use akita_field::Fp32;
 use akita_types::{
     OpeningClaimsLayout, RelationMatrixRowLayout, SetupContributionGroupInputs,
-    SetupContributionLayout, SetupContributionPlan, SisModulusProfileId,
+    SetupContributionPlan, SisModulusProfileId,
 };
 
 type F = Fp32<251>;
@@ -45,27 +45,24 @@ fn ring_switch_prepare_rejects_zero_num_live_blocks() {
     .with_decomp(1, 1, 1, 1)
     .unwrap();
     let witness_layout = WitnessLayout::new(&valid_lp, &opening_batch, 1, 4, 1).unwrap();
-    let setup_layout = SetupContributionLayout::new(
-        Arc::new(valid_lp.clone()),
-        Arc::new(opening_batch.clone()),
-        RelationMatrixRowLayout::WithDBlock,
-        Arc::new(witness_layout),
-        3,
-        vec![SetupContributionGroupInputs {
-            group_id: 0,
-            num_claims: 1,
-            depth_fold: 1,
-            a_row_start: 1,
-            b_row_start: 2,
-        }],
-    )
-    .unwrap();
-    let err = match SetupContributionPlan::prepare_static(
+    let setup_groups = vec![SetupContributionGroupInputs {
+        group_id: 0,
+        num_claims: 1,
+        depth_fold: 1,
+        a_row_start: 1,
+        b_row_start: 2,
+    }];
+    let err = match SetupContributionPlan::prepare::<F>(
         &lp,
         &opening_batch,
         RelationMatrixRowLayout::WithDBlock,
         vec![F::one(); 4].into(),
-        &setup_layout,
+        &witness_layout,
+        3,
+        &setup_groups,
+        &[],
+        None,
+        CommitmentRingDims::uniform(D),
     ) {
         Ok(_) => panic!("zero num_live_blocks should be rejected"),
         Err(err) => err,

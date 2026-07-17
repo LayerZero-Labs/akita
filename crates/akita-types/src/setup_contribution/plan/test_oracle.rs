@@ -23,7 +23,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                     .shared_matrix
                     .ring_view_dyn(self.d_rows, self.d_physical_cols, d_d)?;
             for group in &self.groups {
-                for (row_idx, &row_weight) in group.d_weights.iter().enumerate() {
+                for (row_idx, &row_weight) in self.d_weights.iter().enumerate() {
                     if row_weight.is_zero() {
                         continue;
                     }

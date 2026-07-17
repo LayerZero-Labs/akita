@@ -4,13 +4,13 @@ use akita_algebra::CyclotomicRing;
 use akita_field::{CanonicalField, Prime128OffsetA7F7};
 use akita_types::{
     gadget_row_scalars, AjtaiKeyParams, AkitaExpandedSetup, AkitaSetupSeed, CommitmentRingDims,
-    FlatMatrix, LevelParams, OpeningClaimsLayout, RelationMatrixRowLayout, SetupContributionPlan,
-    SisModulusProfileId, WitnessLayout,
+    FlatMatrix, LevelParams, OpeningClaimsLayout, RelationMatrixRowLayout, SisModulusProfileId,
+    WitnessLayout,
 };
 
 use super::evaluate_setup_contribution_direct;
 use crate::protocol::ring_switch::{
-    build_setup_contribution_layout, PreparedChallengeEvals, RelationMatrixEvaluator,
+    FlatRelationContext, PreparedChallengeEvals, RelationMatrixEvaluator,
     RelationMatrixGroupEvaluator,
 };
 
@@ -203,7 +203,7 @@ impl SetupContributionFixture {
             FlatMatrix::from_ring_slice::<TEST_RING_DIM>(&matrix_entries),
         );
 
-        let eq_tau1 = (0..rows.next_power_of_two())
+        let eq_tau1: std::sync::Arc<[TestField]> = (0..rows.next_power_of_two())
             .map(|idx| test_scalar(11 + idx as u128))
             .collect::<Vec<_>>()
             .into();
@@ -229,30 +229,21 @@ impl SetupContributionFixture {
         }];
         let opening_source_len = layout.total_len();
         let layout = std::sync::Arc::new(layout);
-        let setup_contribution_layout = build_setup_contribution_layout(
-            &lp,
-            &opening_batch,
-            shape.relation_matrix_row_layout,
-            layout.clone(),
-            opening_source_len,
-            &groups,
-        )
-        .unwrap();
-        let setup_contribution_static = SetupContributionPlan::prepare_static(
-            &lp,
-            &opening_batch,
-            shape.relation_matrix_row_layout,
-            eq_tau1,
-            &setup_contribution_layout,
-        )
-        .unwrap();
         let relation_matrix_evaluator = RelationMatrixEvaluator {
             role_dims: CommitmentRingDims::uniform(TEST_RING_DIM),
             groups,
             log_basis: shape.log_basis,
-            setup_contribution_layout,
-            setup_contribution_static,
-            flat_context: None,
+            eq_tau1,
+            flat_context: Some(FlatRelationContext {
+                level_params: lp,
+                opening_batch,
+                witness_layout: layout,
+                opening_source_len,
+                row_coefficients: vec![TestField::zero(); shape.num_claims],
+                tau1: Vec::new(),
+                relation_matrix_row_layout: shape.relation_matrix_row_layout,
+                opening_ring_dim: TEST_RING_DIM,
+            }),
         };
 
         let full_vec_randomness: Vec<TestField> = (0..bits)
@@ -285,14 +276,13 @@ impl SetupContributionFixture {
     }
 
     fn materialized_contribution(&self) -> TestField {
-        let plan = SetupContributionPlan::finish_plan::<TestField>(
-            &self.relation_matrix_evaluator.setup_contribution_static,
-            &self.full_vec_randomness,
-            Some(&self.fold_gadget),
-            &self.relation_matrix_evaluator.setup_contribution_layout,
-            self.relation_matrix_evaluator.role_dims,
-        )
-        .unwrap();
+        let plan = self
+            .relation_matrix_evaluator
+            .setup_contribution_plan::<TestField>(
+                &self.full_vec_randomness,
+                Some(&self.fold_gadget),
+            )
+            .unwrap();
         let alpha = self.alpha_pows[1];
         let setup_index_weight = plan.materialize_setup_index_weights(alpha).unwrap();
         let setup_len = self
@@ -329,14 +319,13 @@ impl SetupContributionFixture {
     /// Direct MLE evaluation of the setup-index weight must equal an
     /// eq-weighted materialized `setup_index_weight`.
     fn assert_setup_index_weight_mle_matches_materialized(&self) {
-        let plan = SetupContributionPlan::finish_plan::<TestField>(
-            &self.relation_matrix_evaluator.setup_contribution_static,
-            &self.full_vec_randomness,
-            Some(&self.fold_gadget),
-            &self.relation_matrix_evaluator.setup_contribution_layout,
-            self.relation_matrix_evaluator.role_dims,
-        )
-        .unwrap();
+        let plan = self
+            .relation_matrix_evaluator
+            .setup_contribution_plan::<TestField>(
+                &self.full_vec_randomness,
+                Some(&self.fold_gadget),
+            )
+            .unwrap();
         let alpha = self.alpha_pows[1];
         let setup_index_weight = plan.materialize_setup_index_weights(alpha).unwrap();
         let setup_idx_len = plan.required().checked_next_power_of_two().unwrap();

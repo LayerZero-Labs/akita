@@ -103,7 +103,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                 let d_row = d_idx / self.d_physical_cols;
                 if group.d_col_range.contains(&d_col) {
                     weight += scales[2][setup_idx % geometry.d_ratio()]
-                        * group.d_weights[d_row]
+                        * self.d_weights[d_row]
                         * group.e_eq_slice[d_col - group.d_col_range.start];
                 }
             }
