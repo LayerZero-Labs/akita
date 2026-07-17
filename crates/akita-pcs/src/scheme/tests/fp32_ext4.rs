@@ -513,7 +513,11 @@ fn fp32_ext4_root_fold_roundtrip_uses_extension_gamma() {
             panic!("fixture should not be root-direct")
         }
     };
-    let sumcheck_proof = terminal.stage2.sumcheck().clone();
+    let sumcheck_proof = terminal
+        .stage2
+        .sumcheck()
+        .expect("terminal test proof uses ring-switch sumcheck")
+        .clone();
     terminal.stage2 =
         akita_types::AkitaStage2Proof::Intermediate(akita_types::AkitaIntermediateStage2Proof {
             sumcheck_proof,

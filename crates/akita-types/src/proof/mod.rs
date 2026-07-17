@@ -53,7 +53,7 @@ pub use levels::{
     AkitaBatchedFoldRoot, AkitaBatchedProof, AkitaBatchedRootProof, AkitaIntermediateStage2Proof,
     AkitaLevelProof, AkitaStage1Proof, AkitaStage1StageProof, AkitaStage2Proof,
     AkitaTerminalStage2Proof, ExtensionOpeningReductionProof, SetupSumcheckProof,
-    TerminalLevelProof,
+    TerminalLevelProof, TerminalRelationProof,
 };
 pub use relation::{
     assemble_relation_rhs, evaluation_trace_row_weight, generate_relation_rhs,
@@ -83,7 +83,7 @@ pub use setup_prefix::{
 pub use shapes::{
     AkitaBatchedProofShape, AkitaProofStepShape, AkitaStage1StageShape,
     ExtensionOpeningReductionShape, LevelProofShape, SetupProductSumcheckShape,
-    TerminalLevelProofShape, SETUP_SUMCHECK_DEGREE,
+    TerminalLevelProofShape, TerminalRelationProofShape, SETUP_SUMCHECK_DEGREE,
 };
 pub use stage1::{
     absorb_interstage_claims, combine_polys, eval_poly, linear_combination,

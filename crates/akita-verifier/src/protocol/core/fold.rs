@@ -660,9 +660,11 @@ where
 
     let sumcheck_challenges = {
         let _sumcheck_span = tracing::info_span!("stage2_sumcheck").entered();
-        stage2_verifier.verify::<F, T, _>(stage2.sumcheck(), transcript, |tr| {
-            sample_ext_challenge::<F, E, T>(tr, CHALLENGE_SUMCHECK_ROUND)
-        })?
+        stage2_verifier.verify::<F, T, _>(
+            stage2.sumcheck().ok_or(AkitaError::InvalidProof)?,
+            transcript,
+            |tr| sample_ext_challenge::<F, E, T>(tr, CHALLENGE_SUMCHECK_ROUND),
+        )?
     };
     if let AkitaStage2Proof::Intermediate(proof) = stage2 {
         transcript.absorb_and_record_serde(ABSORB_STAGE2_NEXT_W_EVAL, &proof.next_w_eval());

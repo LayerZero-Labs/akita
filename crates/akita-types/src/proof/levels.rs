@@ -43,11 +43,30 @@ impl<F: FieldCore, E: FieldCore> AkitaIntermediateStage2Proof<F, E> {
     }
 }
 
-/// Terminal-stage payload for stage 2 of a fold level.
+/// Proof of the terminal ring relation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TerminalRelationProof<E: FieldCore> {
+    /// Existing quotient-backed terminal stage-2 sumcheck.
+    RingSwitchSumcheck(SumcheckProof<E>),
+    /// Direct reduced ring checks; carries no relation-proof bytes.
+    DirectRingRelations,
+}
+
+impl<E: FieldCore> TerminalRelationProof<E> {
+    /// Borrow the quotient-backed sumcheck when this is the legacy terminal relation.
+    pub fn sumcheck(&self) -> Option<&SumcheckProof<E>> {
+        match self {
+            Self::RingSwitchSumcheck(proof) => Some(proof),
+            Self::DirectRingRelations => None,
+        }
+    }
+}
+
+/// Terminal-stage payload for a fold level.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AkitaTerminalStage2Proof<F: FieldCore, E: FieldCore> {
-    /// Stage-2 fused sumcheck proof.
-    pub sumcheck_proof: SumcheckProof<E>,
+    /// Terminal relation proof. Direct relations carry no stage-2 bytes.
+    pub relation: TerminalRelationProof<E>,
     /// Terminal witness, absorbed via `ABSORB_NEXT_LEVEL_WITNESS_BINDING` in place of
     /// `next_w_commitment`.
     pub final_witness: CleartextWitnessProof<F>,
@@ -102,11 +121,11 @@ impl<F: FieldCore, E: FieldCore> AkitaStage2Proof<F, E> {
         }
     }
 
-    /// Borrow the transparent stage-2 sumcheck proof.
-    pub fn sumcheck(&self) -> &SumcheckProof<E> {
+    /// Borrow the stage-2 sumcheck proof when this proof uses one.
+    pub fn sumcheck(&self) -> Option<&SumcheckProof<E>> {
         match self {
-            Self::Intermediate(proof) => &proof.sumcheck_proof,
-            Self::Terminal(proof) => &proof.sumcheck_proof,
+            Self::Intermediate(proof) => Some(&proof.sumcheck_proof),
+            Self::Terminal(proof) => proof.relation.sumcheck(),
         }
     }
 
@@ -296,7 +315,7 @@ impl<F: FieldCore, E: FieldCore> AkitaLevelProof<F, E> {
             extension_opening_reduction,
             fold_grind_nonce,
             stage2: AkitaStage2Proof::Terminal(AkitaTerminalStage2Proof {
-                sumcheck_proof: stage2_sumcheck,
+                relation: TerminalRelationProof::RingSwitchSumcheck(stage2_sumcheck),
                 final_witness,
             }),
             final_w_len,
@@ -575,7 +594,18 @@ impl<F: FieldCore, E: FieldCore> AkitaLevelProof<F, E> {
             extension_opening_reduction: extension_opening_reduction
                 .as_ref()
                 .map(ExtensionOpeningReductionProof::shape),
-            stage2_sumcheck: { sumcheck_shape(stage2.sumcheck()) },
+            relation: match &stage2
+                .as_terminal()
+                .expect("terminal level proof must carry terminal relation proof")
+                .relation
+            {
+                TerminalRelationProof::RingSwitchSumcheck(proof) => {
+                    TerminalRelationProofShape::RingSwitchSumcheck(sumcheck_shape(proof))
+                }
+                TerminalRelationProof::DirectRingRelations => {
+                    TerminalRelationProofShape::DirectRingRelations
+                }
+            },
             final_witness: self
                 .stage2()
                 .final_witness()
@@ -627,7 +657,7 @@ impl<F: FieldCore, E: FieldCore> TerminalLevelProof<F, E> {
             extension_opening_reduction,
             fold_grind_nonce,
             stage2: AkitaStage2Proof::Terminal(AkitaTerminalStage2Proof {
-                sumcheck_proof: stage2_sumcheck,
+                relation: TerminalRelationProof::RingSwitchSumcheck(stage2_sumcheck),
                 final_witness,
             }),
         }
@@ -647,7 +677,19 @@ impl<F: FieldCore, E: FieldCore> TerminalLevelProof<F, E> {
                 .extension_opening_reduction
                 .as_ref()
                 .map(ExtensionOpeningReductionProof::shape),
-            stage2_sumcheck: { sumcheck_shape(self.stage2.sumcheck()) },
+            relation: match &self
+                .stage2
+                .as_terminal()
+                .expect("terminal level proof must carry terminal relation proof")
+                .relation
+            {
+                TerminalRelationProof::RingSwitchSumcheck(proof) => {
+                    TerminalRelationProofShape::RingSwitchSumcheck(sumcheck_shape(proof))
+                }
+                TerminalRelationProof::DirectRingRelations => {
+                    TerminalRelationProofShape::DirectRingRelations
+                }
+            },
             final_witness: self.final_witness().shape(),
         }
     }

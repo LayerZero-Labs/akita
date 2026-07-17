@@ -306,9 +306,9 @@ impl<F: FieldCore + CanonicalField + AkitaSerialize, E: FieldCore + AkitaSeriali
                     *fold_grind_nonce,
                     compress,
                 )?;
-                stage2
-                    .sumcheck_proof
-                    .serialize_with_mode(&mut writer, compress)?;
+                if let TerminalRelationProof::RingSwitchSumcheck(sumcheck) = &stage2.relation {
+                    sumcheck.serialize_with_mode(&mut writer, compress)?;
+                }
                 stage2
                     .final_witness
                     .serialize_with_mode(&mut writer, compress)
@@ -363,7 +363,10 @@ impl<F: FieldCore + CanonicalField + AkitaSerialize, E: FieldCore + AkitaSeriali
                 terminal_fold_wire_prefix_serialized_size(
                     extension_opening_reduction.as_ref(),
                     compress,
-                ) + { stage2.sumcheck_proof.serialized_size(compress) }
+                ) + stage2
+                    .relation
+                    .sumcheck()
+                    .map_or(0, |proof| proof.serialized_size(compress))
                     + stage2.final_witness.serialized_size(compress)
             }
         }
@@ -420,7 +423,9 @@ impl<F: FieldCore + Valid, E: FieldCore + Valid> Valid for AkitaLevelProof<F, E>
                         "terminal level proof must carry terminal stage-2 proof".to_string(),
                     )
                 })?;
-                stage2.sumcheck_proof.check()?;
+                if let TerminalRelationProof::RingSwitchSumcheck(sumcheck) = &stage2.relation {
+                    sumcheck.check()?;
+                }
                 stage2.final_witness.check()
             }
         }
@@ -532,9 +537,9 @@ impl<F: FieldCore + CanonicalField + AkitaSerialize, E: FieldCore + AkitaSeriali
             self.fold_grind_nonce,
             compress,
         )?;
-        stage2
-            .sumcheck_proof
-            .serialize_with_mode(&mut writer, compress)?;
+        if let TerminalRelationProof::RingSwitchSumcheck(sumcheck) = &stage2.relation {
+            sumcheck.serialize_with_mode(&mut writer, compress)?;
+        }
         stage2
             .final_witness
             .serialize_with_mode(&mut writer, compress)
@@ -548,7 +553,10 @@ impl<F: FieldCore + CanonicalField + AkitaSerialize, E: FieldCore + AkitaSeriali
         terminal_fold_wire_prefix_serialized_size(
             self.extension_opening_reduction.as_ref(),
             compress,
-        ) + { stage2.sumcheck_proof.serialized_size(compress) }
+        ) + stage2
+            .relation
+            .sumcheck()
+            .map_or(0, |proof| proof.serialized_size(compress))
             + stage2.final_witness.serialized_size(compress)
     }
 }
@@ -564,7 +572,9 @@ impl<F: FieldCore + Valid, E: FieldCore + Valid> Valid for TerminalLevelProof<F,
                 "terminal level proof must carry terminal stage-2 proof".to_string(),
             )
         })?;
-        stage2.sumcheck_proof.check()?;
+        if let TerminalRelationProof::RingSwitchSumcheck(sumcheck) = &stage2.relation {
+            sumcheck.check()?;
+        }
         stage2.final_witness.check()
     }
 }
@@ -589,12 +599,19 @@ impl<
                 validate,
                 ctx.extension_opening_reduction.as_ref(),
             )?;
-        let stage2_sumcheck = SumcheckProof::deserialize_with_mode(
-            &mut reader,
-            compress,
-            validate,
-            &ctx.stage2_sumcheck,
-        )?;
+        let relation = match &ctx.relation {
+            TerminalRelationProofShape::RingSwitchSumcheck(shape) => {
+                TerminalRelationProof::RingSwitchSumcheck(SumcheckProof::deserialize_with_mode(
+                    &mut reader,
+                    compress,
+                    validate,
+                    shape,
+                )?)
+            }
+            TerminalRelationProofShape::DirectRingRelations => {
+                TerminalRelationProof::DirectRingRelations
+            }
+        };
         let final_witness = CleartextWitnessProof::deserialize_with_mode(
             &mut reader,
             compress,
@@ -605,7 +622,7 @@ impl<
             extension_opening_reduction,
             fold_grind_nonce,
             stage2: AkitaStage2Proof::Terminal(AkitaTerminalStage2Proof {
-                sumcheck_proof: stage2_sumcheck,
+                relation,
                 final_witness,
             }),
         };

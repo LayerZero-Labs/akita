@@ -86,13 +86,13 @@ fn sync_terminal_stage2_sumcheck_from_proof(
             let Some(AkitaProofStepShape::Terminal(actual_terminal)) = actual_steps.last() else {
                 return;
             };
-            terminal.stage2_sumcheck = actual_terminal.stage2_sumcheck.clone();
+            terminal.relation = actual_terminal.relation.clone();
         }
         (
             AkitaBatchedProofShape::Terminal(terminal),
             AkitaBatchedProofShape::Terminal(actual_terminal),
         ) => {
-            terminal.stage2_sumcheck = actual_terminal.stage2_sumcheck.clone();
+            terminal.relation = actual_terminal.relation.clone();
         }
         _ => {}
     }
@@ -124,7 +124,7 @@ fn expected_same_point_batched_shape(
         }
         let mut shape = AkitaBatchedProofShape::Terminal(TerminalLevelProofShape {
             extension_opening_reduction: None,
-            stage2_sumcheck,
+            relation: TerminalRelationProofShape::RingSwitchSumcheck(stage2_sumcheck),
             final_witness: akita_types::schedule_terminal_direct_witness_shape(&schedule)
                 .expect("1-fold schedule should end in a direct step")
                 .clone(),
@@ -211,7 +211,7 @@ fn expected_same_point_batched_shape(
     }
     step_shapes.push(AkitaProofStepShape::Terminal(TerminalLevelProofShape {
         extension_opening_reduction: None,
-        stage2_sumcheck: terminal_stage2,
+        relation: TerminalRelationProofShape::RingSwitchSumcheck(terminal_stage2),
         final_witness: akita_types::schedule_terminal_direct_witness_shape(&schedule)
             .expect("terminal direct witness shape")
             .clone(),

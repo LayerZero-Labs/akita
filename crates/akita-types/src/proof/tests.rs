@@ -110,6 +110,7 @@ fn level_shape_deserialization_rejects_vector_length_before_allocation() {
 fn terminal_shape_deserialization_validates_shape() {
     let mut bytes = Vec::new();
     false.serialize_compressed(&mut bytes).unwrap(); // extension_opening_reduction
+    0u8.serialize_compressed(&mut bytes).unwrap(); // ring-switch sumcheck relation
     (MAX_PROOF_SHAPE_SEQUENCE_LEN as u64 + 1)
         .serialize_compressed(&mut bytes)
         .unwrap(); // stage2_sumcheck
@@ -126,7 +127,11 @@ fn terminal_shape_deserialization_validates_shape() {
 fn terminal_level_proof_deserialization_validates_context_shape() {
     let shape = TerminalLevelProofShape {
         extension_opening_reduction: None,
-        stage2_sumcheck: vec![0; MAX_PROOF_SHAPE_SEQUENCE_LEN + 1],
+        relation: TerminalRelationProofShape::RingSwitchSumcheck(vec![
+            0;
+            MAX_PROOF_SHAPE_SEQUENCE_LEN
+                + 1
+        ]),
         final_witness: CleartextWitnessShape::FieldElements(0),
     };
 
@@ -291,6 +296,43 @@ fn terminal_level_proof_serde_round_trip() {
         .shape()
         .check()
         .expect("terminal shape with reduction passes Valid::check()");
+}
+
+#[test]
+fn direct_terminal_relation_proof_serde_round_trip() {
+    let final_witness =
+        CleartextWitnessProof::FieldElements(RingVec::from_coeffs(vec![F::one(), -F::one()]));
+    let proof = TerminalLevelProof {
+        extension_opening_reduction: None,
+        fold_grind_nonce: 3,
+        stage2: AkitaStage2Proof::Terminal(AkitaTerminalStage2Proof {
+            relation: TerminalRelationProof::DirectRingRelations,
+            final_witness,
+        }),
+    };
+    assert_eq!(
+        proof.shape().relation,
+        TerminalRelationProofShape::DirectRingRelations
+    );
+    assert!(proof.stage2.sumcheck().is_none());
+
+    let mut bytes = Vec::new();
+    proof
+        .serialize_uncompressed(&mut bytes)
+        .expect("serialize direct terminal proof");
+    assert_eq!(bytes.len(), proof.serialized_size(Compress::No));
+    let decoded = TerminalLevelProof::<F, F>::deserialize_uncompressed(&bytes[..], &proof.shape())
+        .expect("deserialize direct terminal proof");
+    assert_eq!(decoded, proof);
+
+    let mut shape_bytes = Vec::new();
+    proof
+        .shape()
+        .serialize_uncompressed(&mut shape_bytes)
+        .expect("serialize direct terminal shape");
+    let decoded_shape = TerminalLevelProofShape::deserialize_uncompressed(&shape_bytes[..], &())
+        .expect("deserialize direct terminal shape");
+    assert_eq!(decoded_shape, proof.shape());
 }
 
 /// Local reproduction of the (deleted) typed `RingSliceSerializer`: serialize a

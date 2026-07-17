@@ -617,7 +617,10 @@ where
 {
     let (extension_opening_partials_size, extension_opening_sumcheck_size) =
         extension_opening_reduction_sizes(level.extension_opening_reduction());
-    let stage2_sumcheck_size = { level.stage2().sumcheck().serialized_size(Compress::No) };
+    let stage2_sumcheck_size = level
+        .stage2()
+        .sumcheck()
+        .map_or(0, |proof| proof.serialized_size(Compress::No));
     let final_witness_size = level.final_witness().serialized_size(Compress::No);
     let fold_grind_nonce_size = fold_grind_nonce_wire_bytes();
     let grind_nonce = level.fold_grind_nonce_value();
