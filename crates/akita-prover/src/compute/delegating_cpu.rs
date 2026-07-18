@@ -66,7 +66,7 @@ macro_rules! delegate_compute_backend_setup {
                 &self,
                 prepared: &Self::PreparedSetup,
                 key: NttCacheKey,
-                f: impl FnOnce(&crate::kernels::crt_ntt::NttSlotCacheAny) -> Result<R, AkitaError>,
+                f: impl FnOnce(&akita_types::PreparedNttSlotAny) -> Result<R, AkitaError>,
             ) -> Result<R, AkitaError> {
                 CpuBackend.with_ntt_slot(prepared, key, f)
             }

@@ -9,7 +9,6 @@ use crate::compute::plans::{
     RecursiveWitnessCommitRowsPlan, RingSwitchQuotientRowsPlan, RingSwitchRelationRows,
     RingSwitchRelationRowsPlan, SparseRingCommitRowsPlan,
 };
-use crate::kernels::crt_ntt::{build_ntt_slot, NttCacheMap, NttSlotCache};
 use crate::kernels::linear::{
     digit_blocks_are_balanced, fused_split_eq_quotients_prover_bounds,
     mat_vec_mul_ntt_dense_digits_i8_trusted, mat_vec_mul_ntt_digits_i8, mat_vec_mul_ntt_i8,
@@ -20,7 +19,10 @@ use crate::kernels::linear::{
 use akita_algebra::CyclotomicRing;
 use akita_field::unreduced::{HasWide, ReduceTo};
 use akita_field::{AdditiveGroup, AkitaError, CanonicalField, FieldCore, HalvingField};
-use akita_types::{dispatch_for_field, AkitaExpandedSetup, NttCacheKey};
+use akita_types::{
+    build_prepared_ntt_slot, dispatch_for_field, AkitaExpandedSetup, NttCacheKey,
+    PreparedNttDomains, PreparedNttSlot, PreparedNttSlotAny,
+};
 use std::array::from_fn;
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
@@ -37,7 +39,7 @@ pub struct CpuBackend;
 #[derive(Debug)]
 pub struct CpuPreparedSetup<F: FieldCore> {
     expanded: Arc<AkitaExpandedSetup<F>>,
-    shared_ntt: Mutex<NttCacheMap>,
+    shared_ntt: Mutex<HashMap<NttCacheKey, Arc<PreparedNttSlotAny>>>,
     ntt_i8_capacity_by_ring_d: Mutex<HashMap<usize, CrtI8CapacityProfile>>,
     /// Keys promised at [`ComputeBackendSetup::prepare_setup`]; lazy builds outside
     /// this set emit a diagnostic warning.
@@ -84,7 +86,7 @@ impl<F: FieldCore + CanonicalField> CpuPreparedSetup<F> {
 
     pub(crate) fn with_shared_ntt<const D: usize, R>(
         &self,
-        f: impl FnOnce(&NttSlotCache<D>) -> Result<R, AkitaError>,
+        f: impl FnOnce(&PreparedNttSlot<D>) -> Result<R, AkitaError>,
     ) -> Result<R, AkitaError> {
         let key = self.envelope_ntt_key::<D>()?;
         let slot = {
@@ -131,12 +133,14 @@ impl<F: FieldCore + CanonicalField> CpuPreparedSetup<F> {
 fn build_ntt_slot_for_key<F: FieldCore + CanonicalField>(
     expanded: &AkitaExpandedSetup<F>,
     key: NttCacheKey,
-) -> Result<crate::kernels::crt_ntt::NttSlotCacheAny, AkitaError> {
+) -> Result<PreparedNttSlotAny, AkitaError> {
     dispatch_for_field!(ProtocolDispatchSlot::Ntt, F, key.ring_d, |RING_D| {
         let view = expanded
             .shared_matrix()
             .ring_view::<RING_D>(1, key.num_ring_elements)?;
-        Ok(build_ntt_slot(view)?.into())
+        let slot = build_prepared_ntt_slot(view, PreparedNttDomains::NegacyclicAndCyclic)?;
+        let any: PreparedNttSlotAny = slot.into();
+        Ok(any)
     })
 }
 
@@ -272,7 +276,7 @@ where
     ) -> Result<Self::PreparedSetup, AkitaError> {
         Ok(CpuPreparedSetup {
             expanded,
-            shared_ntt: Mutex::new(NttCacheMap::new()),
+            shared_ntt: Mutex::new(HashMap::new()),
             ntt_i8_capacity_by_ring_d: Mutex::new(HashMap::new()),
             setup_contract_ntt_keys: Mutex::new(HashSet::new()),
         })
@@ -298,7 +302,7 @@ where
         &self,
         prepared: &Self::PreparedSetup,
         key: NttCacheKey,
-        f: impl FnOnce(&crate::kernels::crt_ntt::NttSlotCacheAny) -> Result<R, AkitaError>,
+        f: impl FnOnce(&PreparedNttSlotAny) -> Result<R, AkitaError>,
     ) -> Result<R, AkitaError> {
         let slot = {
             let cache = prepared

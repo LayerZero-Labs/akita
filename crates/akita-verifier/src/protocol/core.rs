@@ -20,9 +20,10 @@ use akita_field::{
 use akita_serialization::AkitaSerialize;
 use akita_sumcheck::SumcheckInstanceVerifierExt;
 use akita_transcript::labels::{
-    ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS, ABSORB_STAGE2_NEXT_W_EVAL,
-    ABSORB_STAGE3_NEXT_W_EVAL, ABSORB_SUMCHECK_S_CLAIM, ABSORB_TERMINAL_E_HAT,
-    ABSORB_TERMINAL_W_REMAINDER, CHALLENGE_SUMCHECK_BATCH, CHALLENGE_SUMCHECK_ROUND,
+    ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS, ABSORB_NEXT_LEVEL_WITNESS_BINDING,
+    ABSORB_STAGE2_NEXT_W_EVAL, ABSORB_STAGE3_NEXT_W_EVAL, ABSORB_SUMCHECK_S_CLAIM,
+    ABSORB_TERMINAL_E_HAT, ABSORB_TERMINAL_W_REMAINDER, CHALLENGE_SUMCHECK_BATCH,
+    CHALLENGE_SUMCHECK_ROUND,
 };
 use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
 use akita_types::derive_tensor_extension_opening_claim_from_partials;
@@ -30,18 +31,18 @@ use akita_types::{
     append_claim_values_to_transcript, assemble_relation_rhs, build_trace_claim_multi_group_root,
     build_trace_claim_root, build_trace_table_scaled, dispatch_for_field,
     ensure_trace_stage2_supported, prepare_opening_point,
-    proof::relation::evaluation_trace_row_weight, relation_claim_from_layout_extension,
-    relation_rhs_layout_for, reorder_stage1_coords, ring_subfield_packed_extension_opening_point,
-    root_trace_block_opening, sample_public_row_coefficients, scheduled_next_level_params,
+    proof::relation::evaluation_trace_row_weight, raw_field_segment_bytes,
+    relation_claim_from_layout_extension, relation_rhs_layout_for, reorder_stage1_coords,
+    ring_subfield_packed_extension_opening_point, root_trace_block_opening,
+    sample_public_row_coefficients, scheduled_next_level_params,
     tensor_equality_factor_eval_at_point, trace_public_weights_recursive,
     trace_public_weights_root_terms, trace_terms_recursive, trace_weight_layout_from_segment,
     AkitaBatchedRootProof, AkitaLevelProof, AkitaStage1Proof, AkitaStage2Proof, AkitaVerifierSetup,
     BasisMode, CleartextWitnessProof, ExecutionSchedule, ExtensionOpeningReductionProof,
     FoldLinfProtocolBinding, FpExtEncoding, LevelParams, OpeningClaims, OpeningClaimsLayout,
     PointVariableSelection, PolynomialGroupClaims, PreparedOpeningPoint, RelationMatrixRowLayout,
-    RelationOnlyStage2Inputs, RingMultiplierOpeningPoint, RingOpeningPoint, RingRelationInstance,
-    RingVec, Schedule, SetupContributionMode, SetupSumcheckProof, TerminalWitnessTranscriptParts,
-    TraceClaim,
+    RingMultiplierOpeningPoint, RingOpeningPoint, RingRelationInstance, RingVec, Schedule,
+    SetupContributionMode, SetupSumcheckProof, TerminalWitnessTranscriptParts, TraceClaim,
 };
 use akita_types::{
     tensor_opening_split, tensor_reduction_claim_from_rows, tensor_row_partials_from_columns,
@@ -77,6 +78,6 @@ where
         return Err(AkitaError::InvalidProof);
     }
     let parts = final_witness.terminal_transcript_parts()?;
-    transcript.absorb_and_record_bytes(ABSORB_TERMINAL_E_HAT, &parts.e_hat);
+    transcript.absorb_and_record_bytes(ABSORB_TERMINAL_E_HAT, &parts.e_folded);
     Ok(parts)
 }

@@ -19,36 +19,37 @@ The cutover removes, at the terminal only:
 - terminal `CHALLENGE_RING_SWITCH`, `CHALLENGE_TAU1`, and stage-2 challenges;
 - the terminal stage-2 sumcheck proof and prover/verifier work.
 
-Intermediate folds are unchanged. They retain committed recursive witnesses,
-the shared quotient tail, stages 1--3, and their current transcript schedule.
-The terminal `t`-state / final-`u` cutover is a follow-on PR.
+Ordinary intermediate edges are unchanged: they retain an outer `u`, the
+shared quotient tail, and stages 1--3. The final intermediate edge into a
+suffix terminal is the one exception: it binds the following terminal
+witness's canonical inner `t` state and omits the redundant outer `u`.
 
 Akita has no backward-compatible proof decoder. This is a hard transparent
 protocol cutover, not a runtime legacy/direct toggle.
 
-## Current #294 Baseline
+## Historical #294 Baseline
 
-The terminal fold currently uses
+Before this cutover, every terminal fold used
 `RelationMatrixRowLayout::WithoutDBlock`. Its physical rows are:
 
 ```text
 consistency | A | B
 ```
 
-The cleartext terminal witness is:
+The cleartext terminal witness was:
 
 ```text
 SegmentTyped(z, e, t, r)
 ```
 
-`r` contains one raw ring element for every physical terminal relation row.
-The prover nevertheless digit-decomposes those rows into the logical witness
-used by stage 2. After binding the terminal witness, prover and verifier sample
-`alpha` and `tau1` and run a relation-only stage-2 sumcheck.
+`r` contained one raw ring element for every physical terminal relation row.
+The prover nevertheless digit-decomposed those rows into the logical witness
+used by stage 2. After binding the terminal witness, prover and verifier sampled
+`alpha` and `tau1` and ran a relation-only stage-2 sumcheck.
 
-The public opening is not a physical `y` row. It is bound by the logical
-`EvaluationTrace` row fused into stage 2. Removing stage 2 without replacing
-that trace check is unsound.
+The public opening was not a physical `y` row. It was bound by the logical
+`EvaluationTrace` row fused into stage 2. The current direct checker replaces
+that dependency with the explicit trace check below.
 
 ## Direct Terminal Statement
 
@@ -76,7 +77,7 @@ relation quotient check nor redundant with revealing the terminal witness.
 
 ### 1. Reduced ring relations
 
-For every physical terminal row, check:
+For every physical terminal row selected by the schedule, check:
 
 ```text
 M_terminal * w_terminal == y_terminal  in F[X] / (X^D + 1)
@@ -87,8 +88,15 @@ The checker must reproduce the current authoritative row semantics from
 
 - consistency row;
 - A rows;
-- B commitment rows;
+- B commitment rows for a root terminal only;
 - no D rows.
+
+A root terminal still receives the external public `u`, uses
+`WithoutDBlock = consistency | A | B`, and must retain the B equation. A suffix
+terminal receives public inner `t` from its predecessor, uses
+`WithoutCommitmentBlocks = consistency | A`, and has no `u` or B equation. The
+suffix cutover is sound because `t` replaces `u` as the public state; merely
+deleting B while continuing to accept `u` would be unsound.
 
 The checker must use role-local ring dimensions and the canonical row ranges
 from `LevelParams`. It must not infer offsets independently or route through a
@@ -116,16 +124,27 @@ use the root-direct `FieldElements`-only opening helper.
 
 ## Transcript
 
-The common prefix through the terminal witness remains unchanged:
+Both terminal forms bind raw `e_folded` before the sparse challenge, but their
+state/response split is intentionally different.
+
+For a suffix terminal, the predecessor binds canonical `t` bytes under
+`ABSORB_NEXT_LEVEL_WITNESS_BINDING` before its ring-switch challenges. The
+terminal then rebinds the same `t` as its current state under
+`ABSORB_COMMITMENT`, followed by:
 
 ```text
-terminal e bytes
+terminal t state
+terminal e_folded bytes
 sparse-challenge context and challenge
 fold challenges
-terminal witness remainder bytes
+terminal z response bytes
 ```
 
-After the remainder, the transparent terminal performs the two deterministic
+For a root terminal, the ordinary root commitment prefix already binds the
+external `u`. The terminal binds `e_folded` before the sparse challenge and
+absorbs `z || t` afterward; the retained B rows connect that `t` to `u`.
+
+After the response, the transparent terminal performs the two deterministic
 checks immediately. It does not sample terminal ring-switch aggregation,
 `tau1`, sumcheck batching, or sumcheck-round challenges.
 
@@ -163,10 +182,10 @@ field or quotient-mode tag. The intermediate recursive
 `WitnessLayout` continues to own a mandatory shared `r_range`; do not make all
 recursive witness layouts optional merely to express the terminal cutover.
 
-The terminal layout/shape derivation should take an explicit terminal relation
-policy at its owning boundary, or be replaced with a direct-only terminal
-derivation. It must not infer quotient presence from an empty payload supplied
-by the prover.
+The execution schedule owns the terminal row layout: root terminal keeps B,
+suffix terminal drops all commitment rows. The proof variant alone cannot
+derive that context. Layout/shape derivation must not infer quotient or
+commitment presence from an empty prover payload.
 
 ## Prover Ownership
 
@@ -174,7 +193,9 @@ Split terminal construction before quotient materialization:
 
 1. Build and retain the checked `z`, `e`, and `t` terminal artifacts.
 2. Build `SegmentTyped(z, e, t)` with the schedule-derived shape.
-3. Bind the canonical terminal transcript parts.
+3. Bind canonical transcript parts according to schedule topology: pre-bound
+   `t` plus post-challenge `z` for a suffix, or post-challenge `z || t` under
+   the root's retained external `u`/B statement.
 4. Do not call `compute_multi_group_relation_quotient` for the terminal.
 5. Do not emit quotient digit planes.
 6. Do not call `ring_switch_finalize` for the terminal.
@@ -214,21 +235,25 @@ The first implementation uses the same checked plain cyclotomic mat-vec kernel
 as root-direct commitment verification. This kernel consumes
 `FlatMatrix::ring_view` slices from the seed-validated expanded verifier setup;
 it does not accept caller-supplied matrix storage or duplicate A/B setup
-derivation. The terminal checker dispatches A and B products at their own role
-dimensions and uses canonical `LevelParams` row/column sizes.
+derivation. The terminal checker always dispatches A at its inner role
+dimension and, for root terminals only, dispatches B at its outer role
+dimension. It uses canonical schedule-selected row ranges and `LevelParams`
+row/column sizes.
 
 Do not make `akita-verifier` depend on `akita-prover` to reuse its compute
 backend. The prover NTT cache currently stores both negacyclic and cyclic
 transforms of the full shared matrix and is intentionally much larger than the
 coefficient setup. Direct verification needs only negacyclic products over the
-exact A/B prefixes; copying that cache into `AkitaVerifierSetup` would inflate
+exact A prefixes and, for root terminals, B prefixes; copying that cache into
+`AkitaVerifierSetup` would inflate
 memory and verifier code without establishing a measured need.
 
 Benchmark the checked plain kernel first. If it is material, factor a
 negacyclic-only prepared-matrix primitive into a shared lower-level crate and
 place its derived, non-serialized cache in a separate prepared-verifier
 artifact. Its identity must bind the setup envelope, ring dimension, and exact
-matrix-view length, and its reported size must count only the warmed A/B slots.
+matrix-view length, and its reported size must count only the warmed A and
+root-terminal B slots.
 The serialized `AkitaVerifierSetup` remains the canonical seed-derived setup,
 not a container for derived acceleration state.
 
@@ -281,6 +306,8 @@ runtime proof size must continue to equal the schedule/accounting result.
 - tamper `z`, `e`, `t`, the public commitment rows, and the trace target;
 - ordinary and extension-opening-reduction paths;
 - suffix-terminal and terminal-root proofs;
+- an exact two-fold `root -> suffix terminal` proof where tampering the
+  transcript-bound `t` rejects without a B block;
 - scalar, multipoint, mixed-ring-dimension, and multi-chunk configurations
   that can reach the terminal;
 - malformed segment/layout fuzz and no-panic coverage;

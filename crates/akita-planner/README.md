@@ -84,7 +84,8 @@ At the root, the planner iterates over the configured `log_basis` range and over
 - The B-role opening/check width.
 - The D-role prover witness width.
 - The SIS-secure ranks `n_a`, `n_b`, and `n_d`.
-- The next witness length with a D block and without a D block.
+- The ordinary recursive witness length and the quotient-free terminal witness
+  length.
 
 Batching is folded directly into the root B and D widths. A batched root does not first plan a singleton layout and scale it later; the matrix widths are sized for the actual `num_polynomials` count.
 
@@ -101,7 +102,12 @@ After that candidate is chosen, the suffix DP still performs the important globa
 - Terminate now and ship the current packed-digit witness with `Step::Direct`.
 - Fold once more and pay the current level proof bytes plus the best suffix below it.
 
-The memoized suffix state is `(level, current_witness_len, current_witness_len_terminal, current_log_basis)`. Two witness lengths are tracked because the level's outgoing layout depends on whether the successor folds again (`WithDBlock`) or terminates directly (`WithoutDBlock`).
+The memoized suffix state is `(level, current_witness_len, current_witness_len_terminal, current_log_basis)`. Two witness lengths are tracked because an ordinary recursive fold uses the full `WithDBlock` witness, while the terminal direct witness has no D/quotient tail. A root terminal retains its external-commitment B rows (`WithoutDBlock`); a suffix terminal receives transcript-bound inner `t` from its predecessor and has no commitment block (`WithoutCommitmentBlocks`).
+
+The same topology selects the outgoing binding of the preceding intermediate
+fold. Ordinary recursive edges ship outer `u`; the final edge into a suffix
+terminal binds inner `t` and contributes no duplicate `u` bytes. This is a
+schedule property, not a proof-derived layout guess.
 
 The search is capped by `MAX_RECURSION_DEPTH`. Beyond that cap, the suffix returns the direct-send branch only. In the supported parameter ranges, schedules do not need deeper recursion, and the cap keeps verifier-reachable fallback work bounded.
 
@@ -112,7 +118,14 @@ The planner uses the same byte formulas that runtime schedule expansion uses:
 - `level_proof_bytes` for a fold level.
 - `direct_witness_bytes` for a direct-send step.
 - `extension_opening_reduction_proof_bytes` for extension-field opening reductions.
-- `w_ring_element_count_with_counts_for_layout_bits` to compute next witness sizes under `WithDBlock` and `WithoutDBlock`.
+- `w_ring_element_count_with_counts_for_layout_bits` to compute witness sizes
+  under the schedule-selected row layout.
+
+`level_proof_bytes` is also schedule-shaped: it prices an outer commitment on
+ordinary recursive edges and zero outgoing-commitment bytes for the
+`TerminalInnerState` handoff. Terminal proof bodies contain only the grind
+nonce plus any extension-opening reduction; their clear witness is priced by
+`direct_witness_bytes`.
 
 This keeps generated-table expansion and DP fallback aligned. A table hit and a table miss are two ways to produce the same runtime `Schedule` shape.
 

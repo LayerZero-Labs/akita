@@ -480,21 +480,29 @@ impl<F: FieldCore + CanonicalField + AkitaSerialize> SegmentTypedWitness<F> {
         Ok(())
     }
 
-    /// Split wire bytes into transcript-bound `e` and remainder segments.
+    /// Split wire bytes into pre-challenge `e`/`t` state and the post-challenge
+    /// `z` response.
     pub fn terminal_transcript_parts(&self) -> Result<TerminalWitnessTranscriptParts, AkitaError> {
-        let e_hat = field_segment_bytes(&self.e_fields);
-        if e_hat.is_empty() {
+        let e_folded = raw_field_segment_bytes(&self.e_fields)?;
+        if e_folded.is_empty() {
             return Err(AkitaError::InvalidProof);
         }
-        let mut remainder = Vec::new();
+        let t_state = raw_field_segment_bytes(&self.t_fields)?;
+        if t_state.is_empty() {
+            return Err(AkitaError::InvalidProof);
+        }
+        let mut response = Vec::new();
         for payload in &self.z_payloads {
-            remainder.extend_from_slice(payload);
+            response.extend_from_slice(payload);
         }
-        append_field_coeffs_vec(&mut remainder, self.t_fields.coeffs())?;
-        if remainder.is_empty() {
+        if response.is_empty() {
             return Err(AkitaError::InvalidProof);
         }
-        Ok(TerminalWitnessTranscriptParts { e_hat, remainder })
+        Ok(TerminalWitnessTranscriptParts {
+            e_folded,
+            t_state,
+            response,
+        })
     }
 }
 
@@ -525,13 +533,7 @@ fn append_field_coeffs_vec<F: FieldCore + AkitaSerialize>(
     Ok(())
 }
 
-fn field_segment_bytes<F: FieldCore + AkitaSerialize>(fields: &RingVec<F>) -> Vec<u8> {
-    let mut out = Vec::new();
-    append_field_coeffs_vec(&mut out, fields.coeffs()).expect("in-memory field serialization");
-    out
-}
-
-/// Canonical transcript bytes for the terminal `e_folded` (`e`) segment.
+/// Canonical transcript bytes for a raw-field terminal segment.
 ///
 /// Both the prover terminal absorb and the verifier's decoded-witness replay
 /// route through this single routine, so the bound `e_hat` bytes are identical
@@ -540,11 +542,10 @@ fn field_segment_bytes<F: FieldCore + AkitaSerialize>(fields: &RingVec<F>) -> Ve
 /// # Errors
 ///
 /// Propagates field serialization failures as [`AkitaError::InvalidProof`].
-pub fn e_folded_segment_bytes<F>(e_folded: &RingVec<F>) -> Result<Vec<u8>, AkitaError>
+pub fn raw_field_segment_bytes<F>(fields: &RingVec<F>) -> Result<Vec<u8>, AkitaError>
 where
     F: FieldCore + CanonicalField + AkitaSerialize,
 {
-    let fields = e_folded.clone().into_compact();
     let mut out = Vec::new();
     append_field_coeffs_vec(&mut out, fields.coeffs())?;
     Ok(out)
@@ -565,7 +566,7 @@ pub fn terminal_golomb_grind_tail_t_vectors(
 ) -> Result<Option<usize>, AkitaError> {
     if !matches!(
         relation_matrix_row_layout,
-        RelationMatrixRowLayout::WithoutDBlock
+        RelationMatrixRowLayout::WithoutDBlock | RelationMatrixRowLayout::WithoutCommitmentBlocks
     ) {
         return Ok(None);
     }

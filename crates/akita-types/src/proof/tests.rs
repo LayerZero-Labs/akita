@@ -68,7 +68,7 @@ fn level_shape_validation_checks_extension_opening_reduction() {
         stage1_stages: Vec::new(),
         stage2_sumcheck_proof: Vec::new(),
         stage3_sumcheck: None,
-        next_commit_coeffs: 1,
+        next_witness_binding: NextWitnessBindingShape::OuterCommitment { coeffs: 1 },
     };
 
     let err = oversized.check().unwrap_err();
@@ -118,8 +118,9 @@ fn tiny_stage2<const D: usize>() -> AkitaStage2Proof<F, F> {
         sumcheck_proof: SumcheckProof {
             round_polys: Vec::new(),
         },
-        next_w_commitment: RingVec::from_ring_elems(&[CyclotomicRing::<F, D>::zero()])
-            .into_compact(),
+        next_witness_binding: NextWitnessBinding::OuterCommitment(
+            RingVec::from_ring_elems(&[CyclotomicRing::<F, D>::zero()]).into_compact(),
+        ),
         next_w_eval: F::zero(),
     }
 }
@@ -192,6 +193,44 @@ fn extension_opening_reduction_none_is_zero_proof_wire_bytes() {
     )
     .expect("deserialize proof with extension-opening reduction");
     assert_eq!(decoded_with_reduction, with_reduction);
+}
+
+#[test]
+fn terminal_inner_state_omits_outer_commitment_from_tag_free_proof_wire() {
+    const D: usize = 8;
+    let outer = AkitaLevelProof::new::<D>(
+        vec![CyclotomicRing::<F, D>::zero()],
+        tiny_stage1(),
+        tiny_stage2::<D>(),
+    );
+    let outer_commitment_bytes = outer
+        .next_w_commitment()
+        .expect("ordinary recursive edge carries an outer commitment")
+        .serialized_size(Compress::No);
+
+    let mut terminal_inner = outer.clone();
+    terminal_inner.stage2_mut().next_witness_binding = NextWitnessBinding::TerminalInnerState;
+    assert_eq!(terminal_inner.next_w_commitment(), None);
+    assert_eq!(
+        outer.serialized_size(Compress::No) - terminal_inner.serialized_size(Compress::No),
+        outer_commitment_bytes,
+        "the schedule-selected terminal-inner proof body must remove exactly the outer-u bytes"
+    );
+
+    let mut bytes = Vec::new();
+    terminal_inner
+        .serialize_uncompressed(&mut bytes)
+        .expect("serialize terminal-inner edge without a proof-body tag");
+    assert_eq!(bytes.len(), terminal_inner.serialized_size(Compress::No));
+
+    let shape = terminal_inner.shape();
+    assert_eq!(
+        shape.next_witness_binding,
+        NextWitnessBindingShape::TerminalInnerState
+    );
+    let decoded = AkitaLevelProof::<F, F>::deserialize_uncompressed(&bytes[..], &shape)
+        .expect("shape-driven deserialize terminal-inner edge");
+    assert_eq!(decoded, terminal_inner);
 }
 
 #[test]

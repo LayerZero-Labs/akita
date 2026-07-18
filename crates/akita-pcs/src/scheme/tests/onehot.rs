@@ -991,8 +991,8 @@ fn batched_onehot_roundtrip_matches_public_shape_context() {
                 actual_root.stage2_sumcheck_proof
             );
             assert_eq!(
-                expected_root.next_commit_coeffs,
-                actual_root.next_commit_coeffs
+                expected_root.next_witness_binding,
+                actual_root.next_witness_binding
             );
             assert_eq!(expected_steps.len(), actual_steps.len());
             for (expected_step, actual_step) in expected_steps.iter().zip(actual_steps.iter()) {

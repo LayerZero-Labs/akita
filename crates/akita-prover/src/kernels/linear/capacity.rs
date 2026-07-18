@@ -1,8 +1,8 @@
 use super::*;
-use crate::kernels::crt_ntt::{select_crt_ntt_params, ProtocolCrtNttParams};
 use crate::validation::MAX_I8_LOG_BASIS;
 use akita_algebra::ntt::tables::{Q128_NUM_PRIMES, Q32_NUM_PRIMES, Q64_NUM_PRIMES};
 use akita_types::max_safe_crt_accumulation_width;
+use akita_types::{select_crt_ntt_params, ProtocolCrtNttParams};
 
 pub(super) const BALANCED_DIGIT_RHS_MAX_ABS: u64 = 1 << (MAX_I8_LOG_BASIS - 1);
 pub(super) const I8_RHS_MAX_ABS: u64 = 128;

@@ -52,7 +52,7 @@ pub use hints::AkitaCommitmentHint;
 pub use levels::{
     AkitaBatchedFoldRoot, AkitaBatchedProof, AkitaBatchedRootProof, AkitaLevelProof,
     AkitaStage1Proof, AkitaStage1StageProof, AkitaStage2Proof, ExtensionOpeningReductionProof,
-    SetupSumcheckProof, TerminalLevelProof,
+    NextWitnessBinding, SetupSumcheckProof, TerminalLevelProof,
 };
 pub use relation::{
     assemble_relation_rhs, evaluation_trace_row_weight, generate_relation_rhs,
@@ -81,8 +81,8 @@ pub use setup_prefix::{
 };
 pub use shapes::{
     AkitaBatchedProofShape, AkitaProofStepShape, AkitaStage1StageShape,
-    ExtensionOpeningReductionShape, LevelProofShape, SetupProductSumcheckShape,
-    TerminalLevelProofShape, SETUP_SUMCHECK_DEGREE,
+    ExtensionOpeningReductionShape, LevelProofShape, NextWitnessBindingShape,
+    SetupProductSumcheckShape, TerminalLevelProofShape, SETUP_SUMCHECK_DEGREE,
 };
 pub use stage1::{
     absorb_interstage_claims, combine_polys, eval_poly, linear_combination,
@@ -92,8 +92,8 @@ pub use stage1::{
 };
 pub use tail_segments::{
     build_segment_typed_witness_from_groups, decode_terminal_z_golomb_payload,
-    decode_terminal_z_golomb_payload_with_cap, e_folded_segment_bytes, emit_witness_e_planes,
-    emit_witness_r_planes, emit_witness_t_planes, emit_witness_z_planes,
+    decode_terminal_z_golomb_payload_with_cap, emit_witness_e_planes, emit_witness_r_planes,
+    emit_witness_t_planes, emit_witness_z_planes, raw_field_segment_bytes,
     segment_typed_witness_upper_bound_bytes, segment_typed_z_payload_bytes,
     tail_golomb_rice_z_params, tail_segment_layout_from_groups,
     tail_segment_multiplicities_from_layout, tail_segment_multiplicities_from_layout_for_params,
@@ -102,7 +102,7 @@ pub use tail_segments::{
     SegmentTypedWitnessGroupParts, SegmentTypedWitnessShape, TailSegmentGroupLayout,
     TailSegmentLayout,
 };
-pub use terminal_witness::{RelationOnlyStage2Inputs, TerminalWitnessTranscriptParts};
+pub use terminal_witness::TerminalWitnessTranscriptParts;
 
 use crate::EXTENSION_OPENING_REDUCTION_DEGREE;
 use akita_algebra::CyclotomicRing;

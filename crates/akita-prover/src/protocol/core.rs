@@ -5,8 +5,8 @@ use crate::protocol::extension_opening_reduction::{
     SPARSE_TENSOR_FACTOR_MAX_LAZY_ROUNDS,
 };
 use crate::protocol::ring_switch::{
-    ring_switch_build_w, ring_switch_finalize, NextWitnessCommitment, RingSwitchBuildOutput,
-    RingSwitchOutput,
+    ring_switch_build_w, ring_switch_finalize, NextWitnessState, NextWitnessStateOutput,
+    RingSwitchBuildOutput, RingSwitchOutput,
 };
 use crate::protocol::sumcheck::AkitaStage3Prover;
 use crate::protocol::sumcheck::{AkitaStage1Prover, AkitaStage2Prover};

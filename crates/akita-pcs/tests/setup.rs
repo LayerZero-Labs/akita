@@ -252,6 +252,56 @@ where
         akita_types::SetupContributionMode::Direct,
     )
     .expect("verify");
+
+    assert!(
+        matches!(proof.root, akita_types::AkitaBatchedRootProof::Fold(_))
+            && matches!(
+                proof.steps.as_slice(),
+                [akita_types::AkitaLevelProof::Terminal(_)]
+            ),
+        "fixture must use exactly two folds: root then terminal"
+    );
+    let mut tampered = proof.clone();
+    let witness = tampered
+        .steps
+        .last_mut()
+        .and_then(akita_types::AkitaLevelProof::as_terminal_mut)
+        .expect("two-fold fixture must end in a terminal step")
+        .final_witness_mut();
+    let akita_types::CleartextWitnessProof::SegmentTyped(segment) = witness else {
+        panic!("terminal fixture must use a segment-typed witness");
+    };
+    let mut t_coeffs = segment.t_fields.coeffs().to_vec();
+    t_coeffs[0] += F::one();
+    segment.t_fields = akita_types::RingVec::from_coeffs(t_coeffs);
+    let mut verifier_transcript = AkitaTranscript::<F>::new(b"setup-tests/onehot");
+    AkitaCommitmentScheme::<Cfg>::batched_verify(
+        &tampered,
+        &verifier_setup,
+        &mut verifier_transcript,
+        verify_input(&pt[..], opening_groups[0], &commitments[0]),
+        BasisMode::Lagrange,
+        akita_types::SetupContributionMode::Direct,
+    )
+    .expect_err("tampering predecessor-bound terminal t must be rejected");
+
+    let mut wrong_binding = proof.clone();
+    let akita_types::AkitaBatchedRootProof::Fold(root) = &mut wrong_binding.root else {
+        unreachable!()
+    };
+    root.stage2.next_witness_binding = akita_types::NextWitnessBinding::OuterCommitment(
+        akita_types::RingVec::from_coeffs(Vec::new()),
+    );
+    let mut verifier_transcript = AkitaTranscript::<F>::new(b"setup-tests/onehot");
+    AkitaCommitmentScheme::<Cfg>::batched_verify(
+        &wrong_binding,
+        &verifier_setup,
+        &mut verifier_transcript,
+        verify_input(&pt[..], opening_groups[0], &commitments[0]),
+        BasisMode::Lagrange,
+        akita_types::SetupContributionMode::Direct,
+    )
+    .expect_err("schedule/proof binding mismatch must reject without panic");
 }
 
 /// Batched dense round-trip: commit `commit_batch` dense polynomials of

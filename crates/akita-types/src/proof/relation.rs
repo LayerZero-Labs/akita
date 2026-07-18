@@ -66,11 +66,18 @@ pub fn relation_rhs_layout_for(
 ) -> Result<RelationRhsLayout, AkitaError> {
     opening_batch.check()?;
     let n_d = lp.n_d_active_for(relation_matrix_row_layout);
+    let commitment_rows = |rows: usize| {
+        if LevelParams::has_commitment_block(relation_matrix_row_layout) {
+            rows
+        } else {
+            0
+        }
+    };
     if !lp.has_precommitted_groups() {
         return Ok(RelationRhsLayout::uniform(
             n_d,
             lp.a_key.row_len(),
-            lp.b_key.row_len(),
+            commitment_rows(lp.b_key.row_len()),
             0,
             opening_batch.num_groups(),
         ));
@@ -79,13 +86,13 @@ pub fn relation_rhs_layout_for(
     let mut groups = Vec::with_capacity(lp.precommitted_group_count() + 1);
     groups.push(RelationGroupRows {
         n_a: lp.a_key.row_len(),
-        commit_rows: lp.b_key.row_len(),
+        commit_rows: commitment_rows(lp.b_key.row_len()),
         b_inner_rows: 0,
     });
     for group in lp.precommitted_group_iter() {
         groups.push(RelationGroupRows {
             n_a: group.a_key.row_len(),
-            commit_rows: group.b_key.row_len(),
+            commit_rows: commitment_rows(group.b_key.row_len()),
             b_inner_rows: 0,
         });
     }

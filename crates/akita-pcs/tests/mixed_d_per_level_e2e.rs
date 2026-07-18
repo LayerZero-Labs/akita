@@ -27,7 +27,8 @@ use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_transcript::AkitaTranscript;
 use akita_types::{
     validate_schedule_ring_dims, AkitaBatchedProof, AkitaBatchedRootProof, AkitaLevelProof,
-    CleartextWitnessProof, OpeningClaimsLayout, RingVec, Schedule, SetupContributionMode, Step,
+    CleartextWitnessProof, NextWitnessBinding, OpeningClaimsLayout, RingVec, Schedule,
+    SetupContributionMode, Step,
 };
 use common::*;
 use mixed_d_per_level_fixture::mixed_d_per_level_schedule;
@@ -398,8 +399,13 @@ fn mixed_d_per_level_prove_verify_replay_and_malformed_rejections() {
                 panic!("fixture root must be a fold proof");
             };
             let stage2 = &mut root.stage2;
-            let len = stage2.next_w_commitment.coeffs().len();
-            truncate_ring_vec(&mut stage2.next_w_commitment, len / (ENVELOPE_D / SUFFIX_D));
+            let NextWitnessBinding::OuterCommitment(next_w_commitment) =
+                &mut stage2.next_witness_binding
+            else {
+                panic!("mixed-D fixture root must carry an outer commitment");
+            };
+            let len = next_w_commitment.coeffs().len();
+            truncate_ring_vec(next_w_commitment, len / (ENVELOPE_D / SUFFIX_D));
             verify_mixed(&fixture, &proof, &fixture.commitment)
                 .expect_err("wrong-dim root next_w_commitment must be rejected");
         }
@@ -417,17 +423,22 @@ fn mixed_d_per_level_prove_verify_replay_and_malformed_rejections() {
                 unreachable!();
             };
             let inner = stage2;
-            let len = inner.next_w_commitment.coeffs().len();
+            let NextWitnessBinding::OuterCommitment(next_w_commitment) =
+                &mut inner.next_witness_binding
+            else {
+                continue;
+            };
+            let len = next_w_commitment.coeffs().len();
             // Rescale the commitment as if it had been produced at the wrong
             // level's ring dimension.
             let wrong_len = len * expected_dim(level.saturating_sub(1)) / expected_dim(level + 1);
             let new_len = if wrong_len == len { len / 2 } else { wrong_len };
             if new_len >= len {
-                let mut coeffs = inner.next_w_commitment.coeffs().to_vec();
+                let mut coeffs = next_w_commitment.coeffs().to_vec();
                 coeffs.resize(new_len, F::zero());
-                inner.next_w_commitment = RingVec::from_coeffs(coeffs);
+                *next_w_commitment = RingVec::from_coeffs(coeffs);
             } else {
-                truncate_ring_vec(&mut inner.next_w_commitment, new_len);
+                truncate_ring_vec(next_w_commitment, new_len);
             }
             verify_mixed(&fixture, &proof, &fixture.commitment).expect_err(
                 "recursive fold commitment sized at the wrong level's dim must be rejected",
@@ -486,7 +497,8 @@ fn mixed_d_per_level_prove_verify_replay_and_malformed_rejections() {
             }
         }
 
-        // Terminal t segment is the direct A/B boundary and must be bound.
+        // Terminal t segment is the predecessor-bound inner state and must be
+        // linked to the response by the direct A relation.
         {
             let mut proof = fixture.proof.clone();
             let terminal = proof

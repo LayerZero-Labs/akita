@@ -103,6 +103,7 @@ fn relation_rhs_row_count_matches_level_params() {
     for layout in [
         RelationMatrixRowLayout::WithDBlock,
         RelationMatrixRowLayout::WithoutDBlock,
+        RelationMatrixRowLayout::WithoutCommitmentBlocks,
     ] {
         let rhs_layout = relation_rhs_layout_for(&lp, &batch, layout).expect("rhs layout");
         assert_eq!(
@@ -118,6 +119,7 @@ fn relation_rhs_row_count_matches_level_params() {
     for layout in [
         RelationMatrixRowLayout::WithDBlock,
         RelationMatrixRowLayout::WithoutDBlock,
+        RelationMatrixRowLayout::WithoutCommitmentBlocks,
     ] {
         let rhs_layout =
             relation_rhs_layout_for(&grouped_lp, &grouped_batch, layout).expect("rhs layout");

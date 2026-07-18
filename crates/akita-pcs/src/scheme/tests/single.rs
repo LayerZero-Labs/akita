@@ -181,11 +181,15 @@ fn folded_payload_commitments_and_digits_stay_base_field() {
         .as_fold()
         .expect("fixture should use folded root proof");
     assert_base_flat_ring_vec(&root.v);
-    assert_base_flat_ring_vec(&root.stage2.next_w_commitment);
+    if let Some(commitment) = root.stage2.next_witness_binding.outer_commitment() {
+        assert_base_flat_ring_vec(commitment);
+    }
 
     for level in proof.fold_levels() {
         assert_base_flat_ring_vec(level.v());
-        assert_base_flat_ring_vec(level.next_w_commitment());
+        if let Some(commitment) = level.next_w_commitment() {
+            assert_base_flat_ring_vec(commitment);
+        }
     }
     assert_base_direct_witness(proof.final_witness());
 }

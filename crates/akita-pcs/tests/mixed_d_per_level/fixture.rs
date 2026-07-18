@@ -478,7 +478,7 @@ where
 
         for (idx, plan) in suffix_plan.iter().enumerate() {
             let layout = if plan.is_terminal {
-                RelationMatrixRowLayout::WithoutDBlock
+                RelationMatrixRowLayout::WithoutCommitmentBlocks
             } else {
                 RelationMatrixRowLayout::WithDBlock
             };
@@ -493,8 +493,14 @@ where
                 &plan.params,
                 next_lp,
                 plan.next_w_len,
-                1,
                 layout,
+                if plan.is_terminal {
+                    akita_types::NextWitnessBindingPolicy::TerminalCleartextWitness
+                } else if suffix_plan[idx + 1].is_terminal {
+                    akita_types::NextWitnessBindingPolicy::TerminalInnerState
+                } else {
+                    akita_types::NextWitnessBindingPolicy::OuterCommitment
+                },
             );
             mixed_folds.push(FoldStep {
                 params: plan.params.clone(),
@@ -558,8 +564,8 @@ where
                 &terminal_fold.params,
                 None,
                 current_w_len,
-                1,
-                RelationMatrixRowLayout::WithoutDBlock,
+                RelationMatrixRowLayout::WithoutCommitmentBlocks,
+                akita_types::NextWitnessBindingPolicy::TerminalCleartextWitness,
             );
         }
         DirectStep {

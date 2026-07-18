@@ -76,8 +76,8 @@ pub use layout::{
     MIN_A_ROLE_FOLD_CHALLENGE_RING_D, SUPPORTED_CHALLENGE_RING_DIMS, SUPPORTED_RING_DIMS,
 };
 pub use ntt_cache::{
-    max_safe_crt_accumulation_width, select_crt_ntt_params, NttCacheKey, ProtocolCrtNttParams,
-    VerifierNttSlot, VerifierNttSlotAny,
+    build_prepared_ntt_slot, max_safe_crt_accumulation_width, select_crt_ntt_params, NttCacheKey,
+    PreparedNttDomains, PreparedNttSlot, PreparedNttSlotAny, ProtocolCrtNttParams,
 };
 pub use proof::{
     absorb_interstage_claims, combine_polys, eval_poly, linear_combination,
@@ -90,11 +90,11 @@ pub use proof::{
     append_claim_values_to_transcript, assemble_relation_rhs,
     build_segment_typed_witness_from_groups, compute_relation_matrix_col_evals,
     compute_relation_weight_evals, decode_terminal_z_golomb_payload,
-    decode_terminal_z_golomb_payload_with_cap, derive_public_matrix_flat, e_folded_segment_bytes,
-    emit_witness_e_planes, emit_witness_r_planes, emit_witness_t_planes, emit_witness_z_planes,
+    decode_terminal_z_golomb_payload_with_cap, derive_public_matrix_flat, emit_witness_e_planes,
+    emit_witness_r_planes, emit_witness_t_planes, emit_witness_z_planes,
     eval_relation_weight_at_point, folded_root_supports_opening_shape, generate_relation_rhs,
     padded_scalar_batch_num_vars, padded_setup_prefix_len, prepare_opening_point,
-    relation_claim_from_layout_extension, relation_claim_from_rows,
+    raw_field_segment_bytes, relation_claim_from_layout_extension, relation_claim_from_rows,
     relation_claim_from_rows_extension, relation_rhs_coeff_len, relation_rhs_layout_for,
     relation_rhs_row_count, ring_relation_segment_lengths,
     ring_subfield_packed_extension_opening_point, root_tensor_projection_enabled,
@@ -112,18 +112,19 @@ pub use proof::{
     AkitaStage1Proof, AkitaStage1StageProof, AkitaStage1StageShape, AkitaStage2Proof,
     AkitaVerifierSetup, CleartextWitnessProof, CleartextWitnessShape, Commitment,
     CommitmentVerifier, DigitBlockIter, DigitBlocks, DummyProof, ExtensionOpeningReductionProof,
-    ExtensionOpeningReductionShape, LevelProofShape, OpeningClaims, OpeningClaimsLayout,
-    OpeningPoints, PointVariableSelection, PolynomialGroupClaims, PolynomialGroupLayout,
-    PreparedOpeningPoint, ProverCommitmentRows, PublicMatrixSeed, RelationGroupRows,
-    RelationOnlyStage2Inputs, RelationRhsLayout, RingCommitment, RingMultiplierOpeningPoint,
-    RingRelationInstance, RingRelationOpeningCounts, RingRelationSegmentLengths, RingVec, RingView,
-    SegmentTypedWitness, SegmentTypedWitnessGroupParts, SegmentTypedWitnessShape,
-    SetupMatrixEnvelope, SetupPrefixProverRegistry, SetupPrefixPublicCommitment, SetupPrefixSlot,
-    SetupPrefixSlotId, SetupPrefixVerifierRegistry, SetupPrefixVerifierSlot,
-    SetupProductSumcheckShape, SetupSumcheckProof, TailSegmentGroupLayout, TailSegmentLayout,
-    TerminalLevelProof, TerminalLevelProofShape, TerminalWitnessTranscriptParts,
-    MAX_SETUP_MATRIX_FIELD_ELEMENTS, MULTI_GROUP_ROOT_DENSE_UNSUPPORTED, SETUP_OFFLOAD_D_SETUP,
-    SETUP_OFFLOAD_MIN_PREFIX_FIELD_LEN, SETUP_SUMCHECK_DEGREE,
+    ExtensionOpeningReductionShape, LevelProofShape, NextWitnessBinding, NextWitnessBindingShape,
+    OpeningClaims, OpeningClaimsLayout, OpeningPoints, PointVariableSelection,
+    PolynomialGroupClaims, PolynomialGroupLayout, PreparedOpeningPoint, ProverCommitmentRows,
+    PublicMatrixSeed, RelationGroupRows, RelationRhsLayout, RingCommitment,
+    RingMultiplierOpeningPoint, RingRelationInstance, RingRelationOpeningCounts,
+    RingRelationSegmentLengths, RingVec, RingView, SegmentTypedWitness,
+    SegmentTypedWitnessGroupParts, SegmentTypedWitnessShape, SetupMatrixEnvelope,
+    SetupPrefixProverRegistry, SetupPrefixPublicCommitment, SetupPrefixSlot, SetupPrefixSlotId,
+    SetupPrefixVerifierRegistry, SetupPrefixVerifierSlot, SetupProductSumcheckShape,
+    SetupSumcheckProof, TailSegmentGroupLayout, TailSegmentLayout, TerminalLevelProof,
+    TerminalLevelProofShape, TerminalWitnessTranscriptParts, MAX_SETUP_MATRIX_FIELD_ELEMENTS,
+    MULTI_GROUP_ROOT_DENSE_UNSUPPORTED, SETUP_OFFLOAD_D_SETUP, SETUP_OFFLOAD_MIN_PREFIX_FIELD_LEN,
+    SETUP_SUMCHECK_DEGREE,
 };
 pub use proof_size::{level_proof_bytes, FOLD_GRIND_NONCE_BYTES};
 pub use schedule::{
@@ -133,8 +134,8 @@ pub use schedule::{
     r_decomp_levels, root_current_w_len, root_direct_schedule, schedule_is_root_direct,
     schedule_num_fold_levels, schedule_root_fold_step, schedule_terminal_direct_witness_shape,
     scheduled_next_level_params, AkitaScheduleInputs, AkitaScheduleLookupKey, DirectStep,
-    ExecutionSchedule, FoldStep, PrecommittedGroupParams, Schedule, ScheduleKeyPrecommitSource,
-    Step,
+    ExecutionSchedule, FoldStep, NextWitnessBindingPolicy, PrecommittedGroupParams, Schedule,
+    ScheduleKeyPrecommitSource, Step,
 };
 pub use setup_contribution::{
     ensure_setup_envelope, shared_setup_fold_gadget, SetupContributionGroupInputs,

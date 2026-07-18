@@ -3,12 +3,11 @@ use crate::compute::plans::{
     RingSwitchQuotientRowsPlan, RingSwitchRelationRows, RingSwitchRelationRowsPlan,
     SparseRingCommitRowsPlan,
 };
-use crate::kernels::crt_ntt::NttSlotCacheAny;
 use crate::AkitaProverSetup;
 use akita_algebra::CyclotomicRing;
 use akita_field::unreduced::{HasWide, ReduceTo};
 use akita_field::{AdditiveGroup, AkitaError, CanonicalField, FieldCore, HalvingField};
-use akita_types::{dispatch_for_field, AkitaExpandedSetup, NttCacheKey};
+use akita_types::{dispatch_for_field, AkitaExpandedSetup, NttCacheKey, PreparedNttSlotAny};
 use std::sync::Arc;
 
 /// Shared prepared-setup contract for prover compute backends.
@@ -101,7 +100,7 @@ where
         &self,
         prepared: &Self::PreparedSetup,
         key: NttCacheKey,
-        f: impl FnOnce(&NttSlotCacheAny) -> Result<R, AkitaError>,
+        f: impl FnOnce(&PreparedNttSlotAny) -> Result<R, AkitaError>,
     ) -> Result<R, AkitaError>;
 
     /// Expanded setup used to prepare this backend context.

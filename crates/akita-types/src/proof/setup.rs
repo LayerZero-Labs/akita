@@ -125,7 +125,7 @@ impl<F: FieldCore + CanonicalField> AkitaVerifierSetup<F> {
     pub fn prepared_verifier_ntt_prefix<const D: usize>(
         &self,
         num_ring_elements: usize,
-    ) -> Result<Arc<crate::VerifierNttSlotAny>, AkitaError> {
+    ) -> Result<Arc<crate::PreparedNttSlotAny>, AkitaError> {
         let key = crate::NttCacheKey {
             ring_d: D,
             num_ring_elements,

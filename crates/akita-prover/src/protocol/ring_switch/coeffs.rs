@@ -375,6 +375,7 @@ pub fn ring_switch_build_w<F, B>(
     ring_switch_ctx: &OperationCtx<'_, F, B>,
     lp: &LevelParams,
     retain_terminal_artifacts: bool,
+    terminal_recomposed_inner_rows: Option<&[RingVec<F>]>,
 ) -> Result<RingSwitchBuildOutput<F>, AkitaError>
 where
     F: FieldCore
@@ -406,6 +407,11 @@ where
             lp.validate_opening_batch(opening_batch)?;
             let order = opening_batch.root_group_order()?;
             let mut owned = Vec::with_capacity(groups.len());
+            let cached_terminal_rows = if retain_terminal_artifacts && groups.len() == 1 {
+                terminal_recomposed_inner_rows
+            } else {
+                None
+            };
             for (group_index, group) in groups.into_iter().enumerate() {
                 group.ensure_role_dim::<D>(RingRole::Inner)?;
                 let group_lp = lp.group_params(opening_batch, group_index)?;
@@ -420,11 +426,29 @@ where
                 let e_folded = e_folded.as_ring_slice_trusted::<D>().to_vec();
                 let t_hat = hint.into_flat_parts()?;
                 t_hat.ensure_stride::<D>()?;
-                let recomposed_inner_rows = crate::compute::recompose_inner_rows::<F, D>(
-                    &t_hat,
-                    group_lp.num_digits_open(),
-                    group_lp.log_basis(),
-                )?;
+                let recomposed_inner_rows = if group_index == 0 {
+                    if let Some(rows) = cached_terminal_rows {
+                        rows.iter()
+                            .map(|block| {
+                                block
+                                    .as_ring_slice::<D>()
+                                    .map(<[CyclotomicRing<F, D>]>::to_vec)
+                            })
+                            .collect::<Result<Vec<_>, _>>()?
+                    } else {
+                        crate::compute::recompose_inner_rows::<F, D>(
+                            &t_hat,
+                            group_lp.num_digits_open(),
+                            group_lp.log_basis(),
+                        )?
+                    }
+                } else {
+                    crate::compute::recompose_inner_rows::<F, D>(
+                        &t_hat,
+                        group_lp.num_digits_open(),
+                        group_lp.log_basis(),
+                    )?
+                };
                 let z_folded_centered_per_chunk =
                     typed_z_folded_centered_per_chunk::<D>(&z_folded_centered_per_chunk)?;
                 owned.push(PreparedRingSwitchGroup {

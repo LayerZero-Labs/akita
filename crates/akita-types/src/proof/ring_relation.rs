@@ -355,7 +355,8 @@ impl<F: FieldCore + CanonicalField> RingRelationInstance<F> {
     pub fn check_v_shape_for_level(&self, lp: &LevelParams) -> Result<(), AkitaError> {
         let expected = match self.relation_matrix_row_layout {
             RelationMatrixRowLayout::WithDBlock => lp.d_key.row_len(),
-            RelationMatrixRowLayout::WithoutDBlock => 0,
+            RelationMatrixRowLayout::WithoutDBlock
+            | RelationMatrixRowLayout::WithoutCommitmentBlocks => 0,
         };
         let d_d = self.role_dims.d_d();
         let actual = if self.v.coeff_len() == 0 {

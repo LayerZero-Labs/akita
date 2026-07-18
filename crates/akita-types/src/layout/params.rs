@@ -69,8 +69,13 @@ pub enum RelationMatrixRowLayout {
     /// intermediate fold level and at the root when stage-1 runs.
     WithDBlock,
     /// Cleartext-witness layout: omit the D-block from the M-matrix. Used at
-    /// the terminal fold level where `final_witness` ships on the wire.
+    /// a root-terminal fold where the external public statement remains the
+    /// outer commitment `u`, so the B block is still load-bearing.
     WithoutDBlock,
+    /// Suffix-terminal `t`-state layout: omit both public commitment blocks.
+    /// The physical rows are exactly `consistency | A`; canonical terminal
+    /// `t` bytes replace `u` as the transcript-bound public state.
+    WithoutCommitmentBlocks,
 }
 
 /// Unified per-level parameters for one Akita recursion level.
@@ -895,8 +900,16 @@ impl LevelParams {
     pub fn n_d_active_for(&self, layout: RelationMatrixRowLayout) -> usize {
         match layout {
             RelationMatrixRowLayout::WithDBlock => self.d_key.row_len(),
-            RelationMatrixRowLayout::WithoutDBlock => 0,
+            RelationMatrixRowLayout::WithoutDBlock
+            | RelationMatrixRowLayout::WithoutCommitmentBlocks => 0,
         }
+    }
+
+    /// Whether the relation layout contains public B-commitment rows.
+    #[inline]
+    #[must_use]
+    pub const fn has_commitment_block(layout: RelationMatrixRowLayout) -> bool {
+        !matches!(layout, RelationMatrixRowLayout::WithoutCommitmentBlocks)
     }
 
     #[inline]
@@ -1005,13 +1018,21 @@ impl LevelParams {
         let mut rows = self
             .a_start()
             .checked_add(self.a_key.row_len())
-            .and_then(|n| n.checked_add(self.b_key.row_len()))
             .ok_or_else(Self::relation_matrix_row_overflow)?;
+        if Self::has_commitment_block(layout) {
+            rows = rows
+                .checked_add(self.b_key.row_len())
+                .ok_or_else(Self::relation_matrix_row_overflow)?;
+        }
         for group in self.precommitted_group_iter() {
             rows = rows
                 .checked_add(group.a_key.row_len())
-                .and_then(|n| n.checked_add(group.b_key.row_len()))
                 .ok_or_else(Self::relation_matrix_row_overflow)?;
+            if Self::has_commitment_block(layout) {
+                rows = rows
+                    .checked_add(group.b_key.row_len())
+                    .ok_or_else(Self::relation_matrix_row_overflow)?;
+            }
         }
         rows.checked_add(self.n_d_active_for(layout))
             .ok_or_else(Self::relation_matrix_row_overflow)
@@ -1023,6 +1044,7 @@ impl LevelParams {
         &self,
         opening_batch: &OpeningClaimsLayout,
         group_index: usize,
+        layout: RelationMatrixRowLayout,
     ) -> Result<usize, AkitaError> {
         let final_group_index = self.validate_opening_batch(opening_batch)?;
         if group_index > final_group_index {
@@ -1033,17 +1055,26 @@ impl LevelParams {
         }
 
         let mut start = self
-            .b_start()?
-            .checked_add(self.b_key.row_len())
+            .a_start()
+            .checked_add(self.a_key.row_len())
             .ok_or_else(Self::relation_matrix_row_overflow)?;
+        if Self::has_commitment_block(layout) {
+            start = start
+                .checked_add(self.b_key.row_len())
+                .ok_or_else(Self::relation_matrix_row_overflow)?;
+        }
         for prior_index in 0..group_index {
             let prior = self
                 .precommitted_group_params(prior_index)
                 .ok_or(AkitaError::InvalidProof)?;
             start = start
                 .checked_add(prior.a_key.row_len())
-                .and_then(|n| n.checked_add(prior.b_key.row_len()))
                 .ok_or_else(Self::relation_matrix_row_overflow)?;
+            if Self::has_commitment_block(layout) {
+                start = start
+                    .checked_add(prior.b_key.row_len())
+                    .ok_or_else(Self::relation_matrix_row_overflow)?;
+            }
         }
         Ok(start)
     }
@@ -1088,16 +1119,19 @@ impl LevelParams {
         layout: RelationMatrixRowLayout,
     ) -> Result<std::ops::Range<usize>, AkitaError> {
         let final_group_index = self.validate_opening_batch(opening_batch)?;
-        let a_start = self.group_a_start(opening_batch, group_index)?;
+        let a_start = self.group_a_start(opening_batch, group_index, layout)?;
         let n_a = self.group_a_rows(group_index, final_group_index)?;
         let n_b = self.group_b_rows(group_index, final_group_index)?;
         let start = a_start
             .checked_add(n_a)
             .ok_or_else(Self::relation_matrix_row_overflow)?;
-        let end = start
-            .checked_add(n_b)
-            .ok_or_else(Self::relation_matrix_row_overflow)?;
-        let _ = layout;
+        let end = if Self::has_commitment_block(layout) {
+            start
+                .checked_add(n_b)
+                .ok_or_else(Self::relation_matrix_row_overflow)?
+        } else {
+            start
+        };
         Ok(start..end)
     }
 
@@ -1109,12 +1143,11 @@ impl LevelParams {
         layout: RelationMatrixRowLayout,
     ) -> Result<std::ops::Range<usize>, AkitaError> {
         let final_group_index = self.validate_opening_batch(opening_batch)?;
-        let start = self.group_a_start(opening_batch, group_index)?;
+        let start = self.group_a_start(opening_batch, group_index, layout)?;
         let rows = self.group_a_rows(group_index, final_group_index)?;
         let end = start
             .checked_add(rows)
             .ok_or_else(Self::relation_matrix_row_overflow)?;
-        let _ = layout;
         Ok(start..end)
     }
 
@@ -1163,7 +1196,23 @@ impl LevelParams {
             return self.multi_group_relation_matrix_row_count_for(num_commitments, layout);
         }
         self.require_scalar_level("relation_matrix_row_count_for")?;
-        self.d_start(num_commitments)?
+        let after_a = self
+            .a_start()
+            .checked_add(self.a_key.row_len())
+            .ok_or_else(Self::relation_matrix_row_overflow)?;
+        let after_commitment = if Self::has_commitment_block(layout) {
+            let commitment_rows = self
+                .b_key
+                .row_len()
+                .checked_mul(num_commitments)
+                .ok_or_else(Self::relation_matrix_row_overflow)?;
+            after_a
+                .checked_add(commitment_rows)
+                .ok_or_else(Self::relation_matrix_row_overflow)?
+        } else {
+            after_a
+        };
+        after_commitment
             .checked_add(self.n_d_active_for(layout))
             .ok_or_else(Self::relation_matrix_row_overflow)
     }

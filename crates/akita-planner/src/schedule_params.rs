@@ -353,8 +353,8 @@ fn find_schedule_inner(
                         &candidate_params,
                         None,
                         next_w_len_terminal,
-                        1,
                         RelationMatrixRowLayout::WithoutDBlock,
+                        akita_types::NextWitnessBindingPolicy::TerminalCleartextWitness,
                     ) + eor_bytes;
                     let total = root_proof_size + suffix_cost;
                     if total < best_cost {
@@ -373,14 +373,20 @@ fn find_schedule_inner(
             }
             // Branch B: suffix at level 1 is a Fold
             for suffix_fold in suffix.best_fold_per_lb.values() {
+                let next_witness_binding =
+                    if matches!(suffix_fold.steps.get(1), Some(Step::Direct(_))) {
+                        akita_types::NextWitnessBindingPolicy::TerminalInnerState
+                    } else {
+                        akita_types::NextWitnessBindingPolicy::OuterCommitment
+                    };
                 let root_proof_size = level_proof_bytes(
                     field_bits,
                     field_bits * policy.chal_ext_degree as u32,
                     &candidate_params,
                     Some(&suffix_fold.first_fold_params),
                     next_w_len,
-                    1,
                     RelationMatrixRowLayout::WithDBlock,
+                    next_witness_binding,
                 ) + eor_bytes;
                 let total = root_proof_size + suffix_fold.total_bytes;
                 if total < best_cost {

@@ -479,9 +479,11 @@ where
         .sumcheck_proof
         .serialized_size(Compress::No);
     let stage3_sumcheck_size = stage3_sumcheck_size(level.stage3_sumcheck_proof());
-    let next_w_commitment_size = stage2_intermediate
-        .next_w_commitment
-        .serialized_size(Compress::No);
+    let next_w_commitment = stage2_intermediate.next_witness_binding.outer_commitment();
+    let next_w_commitment_size = next_w_commitment
+        .map(|commitment| commitment.serialized_size(Compress::No))
+        .unwrap_or(0);
+    let next_w_commitment_coeffs = next_w_commitment.map_or(0, akita_types::RingVec::coeff_len);
     let next_w_eval_size = stage2_intermediate
         .next_w_eval()
         .serialized_size(Compress::No);
@@ -517,7 +519,7 @@ where
     eprintln!("[{label}]     stage3_sumcheck={stage3_sumcheck_size} bytes");
     eprintln!(
         "[{label}]     next_w_commitment={next_w_commitment_size} bytes ({} coeffs)",
-        stage2_intermediate.next_w_commitment.coeff_len(),
+        next_w_commitment_coeffs,
     );
     eprintln!("[{label}]     next_w_eval={next_w_eval_size} bytes");
     assert_eq!(
@@ -650,9 +652,11 @@ where
         .sumcheck_proof
         .serialized_size(Compress::No);
     let stage3_sumcheck_size = stage3_sumcheck_size(fold.stage3_sumcheck_proof.as_ref());
-    let next_w_commitment_size = stage2_intermediate
-        .next_w_commitment
-        .serialized_size(Compress::No);
+    let next_w_commitment = stage2_intermediate.next_witness_binding.outer_commitment();
+    let next_w_commitment_size = next_w_commitment
+        .map(|commitment| commitment.serialized_size(Compress::No))
+        .unwrap_or(0);
+    let next_w_commitment_coeffs = next_w_commitment.map_or(0, akita_types::RingVec::coeff_len);
     let next_w_eval_size = stage2_intermediate
         .next_w_eval()
         .serialized_size(Compress::No);
@@ -696,7 +700,7 @@ where
     eprintln!("[{label}]     stage3_sumcheck={stage3_sumcheck_size} bytes");
     eprintln!(
         "[{label}]     next_w_commitment={next_w_commitment_size} bytes ({} coeffs)",
-        stage2_intermediate.next_w_commitment.coeff_len(),
+        next_w_commitment_coeffs,
     );
     eprintln!("[{label}]     next_w_eval={next_w_eval_size} bytes");
     assert_eq!(

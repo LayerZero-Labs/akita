@@ -532,6 +532,7 @@ where
         return Err(AkitaError::InvalidProof);
     };
     let root_lp = &root_step.params;
+    let root_execution = schedule.get_execution_schedule(0)?;
     let total_fold_levels = schedule.num_fold_levels();
     let terminal_direct = schedule
         .steps
@@ -566,6 +567,7 @@ where
                 setup_contribution_mode,
                 None,
                 root_step.next_w_len,
+                None,
             )
             .map(|_| ())?;
             Ok(())
@@ -598,6 +600,22 @@ where
             let first_recursive_params =
                 scheduled_next_level_params(schedule, 1).map_err(|_| AkitaError::InvalidProof)?;
             let root_stage2 = &fold_root.stage2;
+            let root_t_state = if matches!(
+                root_execution.next_witness_binding,
+                akita_types::NextWitnessBindingPolicy::TerminalInnerState
+            ) {
+                let witness = terminal_step
+                    .final_witness()
+                    .and_then(CleartextWitnessProof::as_segment_typed)
+                    .ok_or(AkitaError::InvalidProof)?;
+                let t_state = raw_field_segment_bytes(&witness.t_fields)?;
+                if t_state.is_empty() {
+                    return Err(AkitaError::InvalidProof);
+                }
+                Some(t_state)
+            } else {
+                None
+            };
             let (root_challenges, setup_prefix_opening) = verify_root::<F, E, T>(
                 &proof.root,
                 setup,
@@ -608,11 +626,29 @@ where
                 setup_contribution_mode,
                 Some(&first_recursive_params),
                 root_step.next_w_len,
+                root_t_state.as_deref(),
             )?;
 
             let first_level_d = first_recursive_params.role_dims().d_b();
-            if !root_stage2.next_w_commitment.can_decode_vec(first_level_d) {
-                return Err(AkitaError::InvalidProof);
+            let root_next_commitment = root_stage2.next_witness_binding.outer_commitment();
+            match root_execution.next_witness_binding {
+                akita_types::NextWitnessBindingPolicy::OuterCommitment => {
+                    if !root_next_commitment
+                        .ok_or(AkitaError::InvalidProof)?
+                        .can_decode_vec(first_level_d)
+                        || root_t_state.is_some()
+                    {
+                        return Err(AkitaError::InvalidProof);
+                    }
+                }
+                akita_types::NextWitnessBindingPolicy::TerminalInnerState => {
+                    if root_next_commitment.is_some() || root_t_state.is_none() {
+                        return Err(AkitaError::InvalidProof);
+                    }
+                }
+                akita_types::NextWitnessBindingPolicy::TerminalCleartextWitness => {
+                    return Err(AkitaError::InvalidProof);
+                }
             }
             let root_next_opening = proof
                 .root
@@ -622,7 +658,8 @@ where
             let current_state = SuffixVerifierState {
                 opening_point: root_challenges,
                 opening: root_next_opening,
-                commitment: &root_stage2.next_w_commitment,
+                commitment: root_next_commitment,
+                terminal_t_state: root_t_state,
                 basis: BasisMode::Lagrange,
                 w_len: root_step.next_w_len,
                 setup_prefix_opening,

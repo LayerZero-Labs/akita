@@ -43,47 +43,61 @@ fn stage1_proof_bytes(rounds: usize, b: usize, elem_bytes: usize) -> usize {
 /// This prices the **direct-mode** two-stage fold payload only
 /// (`SetupContributionMode::Direct`): the y/v ring blocks, the stage-1
 /// range-check tree, the fused stage-2 sumcheck, and the next-level witness
-/// commitment plus its evaluation. It deliberately **excludes** the optional
+/// binding plus its evaluation. An ordinary recursive edge ships the outer
+/// commitment; an edge into the suffix terminal reuses that terminal proof's
+/// inner `t` state and ships no duplicate commitment bytes. It deliberately
+/// **excludes** the optional
 /// recursive stage-3 setup-product sumcheck
 /// (`SetupContributionMode::Recursive`), whose per-level overhead is priced
 /// separately by [`stage3_setup_product_bytes`] and is not fed into the
 /// planner DP. The shipped schedules and the planner score the direct-mode
 /// proof; recursive observed sizes are reported on top of that baseline.
 ///
-/// `next_lp` is required on the `Intermediate` arm (it sizes the next-level
-/// witness commitment shipped on the wire) and unused on the `Terminal` arm;
-/// terminal callers pass `None`.
+/// `next_lp` is required only for an intermediate outer-commitment binding
+/// (it sizes the next-level witness commitment shipped on the wire). It is
+/// unused for a terminal-inner binding and on terminal layouts.
 ///
 /// # Panics
 ///
-/// Panics if `layout == Intermediate` and `next_lp` is `None`. This helper
-/// is offline (planner / selector / profiling) and is not on the verifier
-/// path, so the no-panic boundary does not apply.
+/// Panics if an outer-commitment binding has no `next_lp`, or if an
+/// intermediate layout is paired with a terminal-cleartext binding. This
+/// helper is offline (planner / selector / profiling) and is not on the
+/// verifier path, so the no-panic boundary does not apply.
 pub fn level_proof_bytes(
     base_field_bits: u32,
     challenge_field_bits: u32,
     lp: &LevelParams,
     next_lp: Option<&LevelParams>,
     next_w_len: usize,
-    _num_claims: usize,
     layout: RelationMatrixRowLayout,
+    next_witness_binding: crate::NextWitnessBindingPolicy,
 ) -> usize {
     let base_elem_bytes = field_bytes(base_field_bits);
     let challenge_elem_bytes = field_bytes(challenge_field_bits);
     match layout {
-        RelationMatrixRowLayout::WithoutDBlock => FOLD_GRIND_NONCE_BYTES,
+        RelationMatrixRowLayout::WithoutDBlock
+        | RelationMatrixRowLayout::WithoutCommitmentBlocks => FOLD_GRIND_NONCE_BYTES,
         RelationMatrixRowLayout::WithDBlock => {
             let rounds = sumcheck_rounds(lp.ring_dimension, next_w_len);
             let sumcheck = sumcheck_bytes(rounds, 3, challenge_elem_bytes);
-            let next_lp = next_lp
-                .expect("level_proof_bytes(WithDBlock) requires next_lp; caller must pass Some");
             let v_bytes =
                 proof_ring_vec_bytes(lp.d_key.row_len(), lp.ring_dimension, base_elem_bytes);
-            let next_commit_bytes = proof_ring_vec_bytes(
-                next_lp.b_key.row_len(),
-                next_lp.ring_dimension,
-                base_elem_bytes,
-            );
+            let next_commit_bytes = match next_witness_binding {
+                crate::NextWitnessBindingPolicy::OuterCommitment => {
+                    let next_lp = next_lp.expect(
+                        "outer-commitment level_proof_bytes requires next_lp; caller must pass Some",
+                    );
+                    proof_ring_vec_bytes(
+                        next_lp.b_key.row_len(),
+                        next_lp.ring_dimension,
+                        base_elem_bytes,
+                    )
+                }
+                crate::NextWitnessBindingPolicy::TerminalInnerState => 0,
+                crate::NextWitnessBindingPolicy::TerminalCleartextWitness => {
+                    panic!("intermediate level cannot bind a terminal cleartext witness")
+                }
+            };
             let next_eval_bytes = challenge_elem_bytes;
             let b = 1usize << lp.log_basis;
             let stage1_bytes = stage1_proof_bytes(rounds, b, challenge_elem_bytes);
@@ -259,6 +273,7 @@ mod tests {
         next_lp: &LevelParams,
         next_w_len: usize,
         stage3_setup_ring_len: Option<usize>,
+        next_witness_binding: crate::NextWitnessBindingPolicy,
     ) -> Result<usize, AkitaError> {
         let current_coeffs = lp
             .d_key
@@ -284,7 +299,22 @@ mod tests {
             stage1: dummy_stage1_proof(rounds, b),
             stage2: AkitaStage2Proof {
                 sumcheck_proof: dummy_sumcheck(rounds, 3),
-                next_w_commitment: RingVec::from_coeffs(vec![F::zero(); next_commit_coeffs]),
+                next_witness_binding: match next_witness_binding {
+                    crate::NextWitnessBindingPolicy::OuterCommitment => {
+                        crate::NextWitnessBinding::OuterCommitment(RingVec::from_coeffs(vec![
+                            F::zero();
+                            next_commit_coeffs
+                        ]))
+                    }
+                    crate::NextWitnessBindingPolicy::TerminalInnerState => {
+                        crate::NextWitnessBinding::TerminalInnerState
+                    }
+                    crate::NextWitnessBindingPolicy::TerminalCleartextWitness => {
+                        return Err(AkitaError::InvalidSetup(
+                            "intermediate proof cannot bind a terminal cleartext witness".into(),
+                        ));
+                    }
+                },
                 next_w_eval: F::zero(),
             },
             stage3_sumcheck_proof: stage3_setup_ring_len.map(|setup_ring_len| {
@@ -328,13 +358,80 @@ mod tests {
                     &lp,
                     Some(&next_lp),
                     next_w_len,
-                    1,
                     RelationMatrixRowLayout::WithDBlock,
+                    crate::NextWitnessBindingPolicy::OuterCommitment,
                 ),
-                exact_level_proof_bytes::<F>(&lp, &next_lp, next_w_len, None).unwrap(),
+                exact_level_proof_bytes::<F>(
+                    &lp,
+                    &next_lp,
+                    next_w_len,
+                    None,
+                    crate::NextWitnessBindingPolicy::OuterCommitment,
+                )
+                .unwrap(),
                 "planned level bytes should match the serialized two-stage body at log_basis={log_basis}"
             );
         }
+    }
+
+    #[test]
+    fn terminal_inner_binding_removes_exactly_the_outer_commitment_bytes() {
+        const D: usize = 64;
+        let fold_challenge_config = SparseChallengeConfig::pm1_only(3);
+        let lp = LevelParams::params_only(
+            SisModulusProfileId::Q128OffsetA7F7,
+            D,
+            4,
+            2,
+            2,
+            2,
+            fold_challenge_config,
+        )
+        .with_decomp(1, 1, 1, 1)
+        .unwrap();
+        let next_lp = LevelParams::params_only(
+            SisModulusProfileId::Q128OffsetA7F7,
+            D,
+            2,
+            2,
+            3,
+            2,
+            fold_challenge_config,
+        );
+        let next_w_len = D * 8;
+
+        let outer = level_proof_bytes(
+            128,
+            128,
+            &lp,
+            Some(&next_lp),
+            next_w_len,
+            RelationMatrixRowLayout::WithDBlock,
+            crate::NextWitnessBindingPolicy::OuterCommitment,
+        );
+        let terminal_inner = level_proof_bytes(
+            128,
+            128,
+            &lp,
+            None,
+            next_w_len,
+            RelationMatrixRowLayout::WithDBlock,
+            crate::NextWitnessBindingPolicy::TerminalInnerState,
+        );
+        let expected_outer_commitment =
+            proof_ring_vec_bytes(next_lp.b_key.row_len(), D, field_bytes(128));
+        assert_eq!(outer - terminal_inner, expected_outer_commitment);
+        assert_eq!(
+            terminal_inner,
+            exact_level_proof_bytes::<F>(
+                &lp,
+                &next_lp,
+                next_w_len,
+                None,
+                crate::NextWitnessBindingPolicy::TerminalInnerState,
+            )
+            .unwrap()
+        );
     }
 
     #[test]
@@ -398,11 +495,22 @@ mod tests {
             .with_decomp(1, 1, 1, 1)
             .unwrap();
 
-            let direct_bytes =
-                exact_level_proof_bytes::<F>(&lp, &next_lp, next_w_len, None).unwrap();
-            let recursive_bytes =
-                exact_level_proof_bytes::<F>(&lp, &next_lp, next_w_len, Some(setup_ring_len))
-                    .unwrap();
+            let direct_bytes = exact_level_proof_bytes::<F>(
+                &lp,
+                &next_lp,
+                next_w_len,
+                None,
+                crate::NextWitnessBindingPolicy::OuterCommitment,
+            )
+            .unwrap();
+            let recursive_bytes = exact_level_proof_bytes::<F>(
+                &lp,
+                &next_lp,
+                next_w_len,
+                Some(setup_ring_len),
+                crate::NextWitnessBindingPolicy::OuterCommitment,
+            )
+            .unwrap();
 
             assert_eq!(
                 level_proof_bytes(
@@ -411,8 +519,8 @@ mod tests {
                     &lp,
                     Some(&next_lp),
                     next_w_len,
-                    1,
                     RelationMatrixRowLayout::WithDBlock,
+                    crate::NextWitnessBindingPolicy::OuterCommitment,
                 ),
                 direct_bytes,
                 "direct planner bytes must exclude the stage-3 payload at log_basis={log_basis}"
@@ -463,8 +571,8 @@ mod tests {
                     &lp,
                     None,
                     next_w_len,
-                    num_claims,
                     RelationMatrixRowLayout::WithoutDBlock,
+                    crate::NextWitnessBindingPolicy::TerminalCleartextWitness,
                 ),
                 serialized_without_witness,
                 "planned terminal-level bytes should match the serialized terminal body \

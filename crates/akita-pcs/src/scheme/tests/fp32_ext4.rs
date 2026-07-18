@@ -488,6 +488,28 @@ fn fp32_ext4_root_fold_roundtrip_uses_extension_gamma() {
     )
     .unwrap();
 
+    let mut tampered = proof.clone();
+    let akita_types::AkitaBatchedRootProof::Terminal(root) = &mut tampered.root else {
+        panic!("single-fold fixture must be terminal-rooted");
+    };
+    let akita_types::CleartextWitnessProof::SegmentTyped(segment) = root.final_witness_mut() else {
+        panic!("terminal-root fixture must use a segment-typed witness");
+    };
+    let mut t_coeffs = segment.t_fields.coeffs().to_vec();
+    t_coeffs[0] += SmallF::one();
+    segment.t_fields = akita_types::RingVec::from_coeffs(t_coeffs);
+    let mut verifier_transcript =
+        AkitaTranscript::<SmallF>::new(b"test/fp32-ring-subfield-root-fold");
+    SmallScheme::batched_verify(
+        &tampered,
+        &verifier_setup,
+        &mut verifier_transcript,
+        verifier_claims_at_vars(&point[..], NUM_VARS, &openings[..], &commitments[0]),
+        BasisMode::Lagrange,
+        akita_types::SetupContributionMode::Direct,
+    )
+    .expect_err("tampering root-terminal t must fail retained B relation");
+
     let wrong_openings = [opening + SmallE::one()];
     let mut verifier_transcript =
         AkitaTranscript::<SmallF>::new(b"test/fp32-ring-subfield-root-fold");

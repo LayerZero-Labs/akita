@@ -109,6 +109,37 @@ fn direct_terminal_builder_constructs_z_e_t_segments() {
 }
 
 #[test]
+fn terminal_golomb_grind_covers_root_and_suffix_terminal_layouts() {
+    let lp = test_lp();
+    let layout = scalar_group_layout(&lp, 1, 1, 1, F::modulus_bits()).unwrap();
+    let shape = CleartextWitnessShape::SegmentTyped(SegmentTypedWitnessShape { layout });
+
+    let root = terminal_golomb_grind_tail_t_vectors(
+        &lp,
+        RelationMatrixRowLayout::WithoutDBlock,
+        Some(&shape),
+    )
+    .unwrap();
+    let suffix = terminal_golomb_grind_tail_t_vectors(
+        &lp,
+        RelationMatrixRowLayout::WithoutCommitmentBlocks,
+        Some(&shape),
+    )
+    .unwrap();
+    assert_eq!(suffix, root);
+    assert!(suffix.is_some());
+    assert_eq!(
+        terminal_golomb_grind_tail_t_vectors(
+            &lp,
+            RelationMatrixRowLayout::WithDBlock,
+            Some(&shape),
+        )
+        .unwrap(),
+        None
+    );
+}
+
+#[test]
 fn segment_typed_wire_round_trip_with_scheduled_z_budget() {
     use akita_field::CanonicalField;
     use akita_serialization::{AkitaDeserialize, AkitaSerialize, Compress, Validate};
@@ -172,9 +203,35 @@ fn terminal_e_absorb_matches_emitted_field_segment() {
     };
 
     assert_eq!(
-        witness.terminal_transcript_parts().unwrap().e_hat,
-        e_folded_segment_bytes(&e_fields).unwrap(),
+        witness.terminal_transcript_parts().unwrap().e_folded,
+        raw_field_segment_bytes(&e_fields).unwrap(),
     );
+}
+
+#[test]
+fn terminal_transcript_parts_separate_t_state_from_z_response() {
+    let lp = test_lp();
+    let layout = scalar_group_layout(&lp, 1, 1, 1, F::modulus_bits()).unwrap();
+    let group = layout.groups[0];
+    let t_fields = RingVec::from_coeffs(
+        (0..group.t_field_elems)
+            .map(|index| F::from_canonical_u128_reduced(index as u128 + 9))
+            .collect(),
+    );
+    let z = vec![3, 1, 4, 1];
+    let witness = SegmentTypedWitness {
+        layout,
+        z_payloads: vec![z.clone()],
+        e_fields: RingVec::from_coeffs(vec![F::one(); group.e_field_elems]),
+        t_fields: t_fields.clone(),
+    };
+
+    let parts = witness.terminal_transcript_parts().unwrap();
+    assert_eq!(parts.response, z);
+    assert_eq!(parts.t_state, raw_field_segment_bytes(&t_fields).unwrap());
+    let mut legacy = parts.response.clone();
+    legacy.extend_from_slice(&parts.t_state);
+    assert_eq!(parts.outer_committed_response(), legacy);
 }
 
 #[test]

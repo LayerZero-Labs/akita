@@ -5,7 +5,7 @@ use akita_algebra::{
     CenteredMontLut, CrtNttParamSet, CyclotomicCrtNtt, CyclotomicRing, DigitMontLut,
 };
 use akita_field::{AkitaError, CanonicalField, FieldCore, FromPrimitiveInt};
-use akita_types::{max_safe_crt_accumulation_width, AkitaVerifierSetup, VerifierNttSlot};
+use akita_types::{max_safe_crt_accumulation_width, AkitaVerifierSetup, PreparedNttSlot};
 
 const MAX_I8_LOG_BASIS: u32 = 6;
 const CENTERED_LUT_MAX_ABS: u64 = (1 << 16) - 1;
@@ -291,13 +291,13 @@ where
     }
     let slot = setup.prepared_verifier_ntt_prefix::<D>(prepared_prefix_len)?;
     match slot.as_d::<D>()? {
-        VerifierNttSlot::Q32 { neg, params } => {
+        PreparedNttSlot::Q32 { neg, params, .. } => {
             accumulate_i8(neg, num_rows, digits.len(), digits, log_basis, params)
         }
-        VerifierNttSlot::Q64 { neg, params } => {
+        PreparedNttSlot::Q64 { neg, params, .. } => {
             accumulate_i8(neg, num_rows, digits.len(), digits, log_basis, params)
         }
-        VerifierNttSlot::Q128 { neg, params } => {
+        PreparedNttSlot::Q128 { neg, params, .. } => {
             accumulate_i8(neg, num_rows, digits.len(), digits, log_basis, params)
         }
     }
@@ -323,13 +323,13 @@ where
     }
     let slot = setup.prepared_verifier_ntt_prefix::<D>(prepared_prefix_len)?;
     match slot.as_d::<D>()? {
-        VerifierNttSlot::Q32 { neg, params } => {
+        PreparedNttSlot::Q32 { neg, params, .. } => {
             accumulate_centered_i64(neg, num_rows, rhs.len(), rhs, params)
         }
-        VerifierNttSlot::Q64 { neg, params } => {
+        PreparedNttSlot::Q64 { neg, params, .. } => {
             accumulate_centered_i64(neg, num_rows, rhs.len(), rhs, params)
         }
-        VerifierNttSlot::Q128 { neg, params } => {
+        PreparedNttSlot::Q128 { neg, params, .. } => {
             accumulate_centered_i64(neg, num_rows, rhs.len(), rhs, params)
         }
     }

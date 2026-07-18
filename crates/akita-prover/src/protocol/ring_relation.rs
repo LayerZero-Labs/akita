@@ -39,7 +39,7 @@ where
     F: FieldCore + CanonicalField + akita_serialization::AkitaSerialize,
     T: Transcript<F>,
 {
-    let bytes = akita_types::e_folded_segment_bytes::<F>(e_folded)?;
+    let bytes = akita_types::raw_field_segment_bytes::<F>(e_folded)?;
     if bytes.is_empty() {
         return Err(AkitaError::InvalidInput(
             "terminal e_folded absorb cannot be empty".to_string(),
@@ -379,7 +379,8 @@ where
             )?;
             Ok(v)
         }
-        RelationMatrixRowLayout::WithoutDBlock => Ok(Vec::new()),
+        RelationMatrixRowLayout::WithoutDBlock
+        | RelationMatrixRowLayout::WithoutCommitmentBlocks => Ok(Vec::new()),
     }
 }
 
@@ -481,9 +482,9 @@ impl RingRelationProver {
     {
         validate_i8_setup_log_basis(lp.log_basis, "for i8 prover decomposition")?;
         validate_chunked_witness_cfg(&lp)?;
-        if matches!(
+        if !matches!(
             relation_matrix_row_layout,
-            RelationMatrixRowLayout::WithoutDBlock
+            RelationMatrixRowLayout::WithDBlock
         ) && !lp.precommitted_groups.is_empty()
         {
             return Err(AkitaError::InvalidProof);
@@ -511,19 +512,21 @@ impl RingRelationProver {
         } else {
             (0..num_groups).collect()
         };
-        for &group_index in &commit_group_order {
-            let group_commitment = block_claims
-                .opening_claims()
-                .group_commitment(group_index)?;
-            let group_rows =
-                RingView::new(group_commitment.rows().coeffs(), dims.d_b())?.num_rings();
-            let expected_rows = lp.group_commitment_rows(&opening_batch, group_index)?;
-            if group_rows != expected_rows {
-                return Err(AkitaError::InvalidInput(
-                    "batched prover received a commitment with the wrong length".to_string(),
-                ));
+        if LevelParams::has_commitment_block(relation_matrix_row_layout) {
+            for &group_index in &commit_group_order {
+                let group_commitment = block_claims
+                    .opening_claims()
+                    .group_commitment(group_index)?;
+                let group_rows =
+                    RingView::new(group_commitment.rows().coeffs(), dims.d_b())?.num_rings();
+                let expected_rows = lp.group_commitment_rows(&opening_batch, group_index)?;
+                if group_rows != expected_rows {
+                    return Err(AkitaError::InvalidInput(
+                        "batched prover received a commitment with the wrong length".to_string(),
+                    ));
+                }
+                commitment_row_coeffs.extend_from_slice(group_commitment.rows().coeffs());
             }
-            commitment_row_coeffs.extend_from_slice(group_commitment.rows().coeffs());
         }
         for group_index in 0..num_groups {
             let group_hint = block_claims.group_hint(group_index)?;
@@ -680,9 +683,9 @@ impl RingRelationProver {
                 .flat_map(|block| block.coeffs().iter().copied())
                 .collect(),
         );
-        if matches!(
+        if !matches!(
             relation_matrix_row_layout,
-            RelationMatrixRowLayout::WithoutDBlock
+            RelationMatrixRowLayout::WithDBlock
         ) {
             absorb_terminal_e_folded_fields::<F, T>(transcript, &e_folded)?;
         }

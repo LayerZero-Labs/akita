@@ -18,11 +18,9 @@ use common::*;
 
 type Scheme = AkitaCommitmentScheme<OneHotCfg>;
 
-/// Singleton onehot `num_vars` large enough that `batched_prove` keeps a root
-/// fold and segment-typed terminal direct witness. Smaller values (e.g. 10)
-/// fall back to root-direct zero-fold and never emit terminal transcript wire
-/// labels.
-const TRANSCRIPT_HARDENING_NUM_VARS: usize = 20;
+/// Singleton onehot size whose shipped schedule is exactly root fold followed
+/// by suffix terminal. This is the minimal predecessor-bound `t` handoff.
+const TRANSCRIPT_HARDENING_NUM_VARS: usize = 12;
 
 #[test]
 fn preamble_separation_changes_first_challenge() {
@@ -81,6 +79,11 @@ fn event_stream_equality_small() {
             akita_types::SetupContributionMode::Direct,
         )
         .expect("prove");
+        assert!(
+            matches!(proof.root, AkitaBatchedRootProof::Fold(_))
+                && matches!(proof.steps.as_slice(), [AkitaLevelProof::Terminal(_)]),
+            "transcript fixture must use exactly two folds"
+        );
 
         let mut verifier_transcript =
             LoggingTranscript::wrap(AkitaTranscript::<F>::new(b"hardening/onehot"));
@@ -101,8 +104,50 @@ fn event_stream_equality_small() {
         let prover_public = public_transcript_events(prover_transcript.events());
         let verifier_public = public_transcript_events(verifier_transcript.events());
         assert_eq!(prover_public, verifier_public);
-        assert_terminal_event_order_if_present(&prover_public)
+        let terminal_e = assert_terminal_event_order_if_present(&prover_public)
             .expect("terminal transcript must absorb logical e_hat");
+        let predecessor_t =
+            first_label_index(&prover_public, labels::ABSORB_NEXT_LEVEL_WITNESS_BINDING)
+                .expect("predecessor must bind terminal t");
+        let predecessor_alpha = first_label_or_extension_limb_index_after(
+            &prover_public,
+            predecessor_t + 1,
+            labels::CHALLENGE_RING_SWITCH,
+        )
+        .expect("predecessor must squeeze ring-switch challenge after binding t");
+        let terminal_t = first_label_index_after(
+            &prover_public,
+            predecessor_alpha + 1,
+            labels::ABSORB_COMMITMENT,
+        )
+        .expect("terminal must rebind carried t as its current state");
+        assert!(
+            predecessor_t < predecessor_alpha
+                && predecessor_alpha < terminal_t
+                && terminal_t < terminal_e,
+            "terminal t handoff must precede predecessor alpha and terminal e"
+        );
+        let TranscriptEvent::Absorb {
+            bytes_digest: predecessor_digest,
+            bytes_len: predecessor_len,
+            ..
+        } = &prover_public[predecessor_t]
+        else {
+            unreachable!()
+        };
+        let TranscriptEvent::Absorb {
+            bytes_digest: terminal_digest,
+            bytes_len: terminal_len,
+            ..
+        } = &prover_public[terminal_t]
+        else {
+            unreachable!()
+        };
+        assert_eq!(
+            (predecessor_digest, predecessor_len),
+            (terminal_digest, terminal_len),
+            "predecessor and terminal must bind identical canonical t bytes"
+        );
         assert!(matches!(
             prover_transcript.events().first(),
             Some(TranscriptEvent::Preamble { .. })
@@ -176,8 +221,8 @@ fn final_witness_mut(proof: &mut AkitaBatchedProof<F, F>) -> &mut CleartextWitne
             .steps
             .last_mut()
             .and_then(AkitaLevelProof::as_terminal_mut)
-            .and_then(AkitaLevelProof::final_witness_mut)
-            .expect("fold-rooted proof must end in a terminal step"),
+            .expect("fold-rooted proof must end in a terminal step")
+            .final_witness_mut(),
         AkitaBatchedRootProof::ZeroFold { .. } => {
             panic!("terminal tamper test requires a folded terminal proof")
         }

@@ -16,9 +16,10 @@ fn fused_split_eq_quotients_uses_all_cyclic_role_rows() {
         })
         .collect();
     let flat = FlatMatrix::from_ring_slice(&flat_rows);
-    let slot = build_ntt_slot(
+    let slot = build_prepared_ntt_slot(
         flat.ring_view::<D>(rows, cols)
             .expect("valid ring matrix view"),
+        PreparedNttDomains::NegacyclicAndCyclic,
     )
     .expect("Q32 dispatch should support this field and ring dimension");
 
@@ -55,9 +56,10 @@ fn fused_split_eq_q128_quotient_chunks_before_crt_wrap() {
     let row = CyclotomicRing::from_coefficients([half; D]);
     let flat_rows = vec![row; cols];
     let flat = FlatMatrix::from_ring_slice(&flat_rows);
-    let slot = build_ntt_slot(
+    let slot = build_prepared_ntt_slot(
         flat.ring_view::<D>(1, cols)
             .expect("valid ring matrix view"),
+        PreparedNttDomains::NegacyclicAndCyclic,
     )
     .expect("Q128 dispatch should support this field and ring dimension");
     let z_pre = vec![[32_768i32; D]; cols];
@@ -86,9 +88,10 @@ fn fused_split_eq_q128_quotient_falls_back_when_one_term_exceeds_crt() {
     let half = F::from_canonical_u128_reduced(modulus / 2);
     let row = CyclotomicRing::from_coefficients([half; D]);
     let flat = FlatMatrix::from_ring_slice(&[row]);
-    let slot = build_ntt_slot(
+    let slot = build_prepared_ntt_slot(
         flat.ring_view::<D>(1, cols)
             .expect("valid ring matrix view"),
+        PreparedNttDomains::NegacyclicAndCyclic,
     )
     .expect("Q128 dispatch should support this field and ring dimension");
     let z_pre = vec![[32_768i32; D]; cols];
@@ -113,9 +116,10 @@ fn fused_split_eq_uses_actual_centered_bound_when_hint_is_underreported() {
     let row = CyclotomicRing::from_coefficients([half; D]);
     let flat_rows = vec![row; cols];
     let flat = FlatMatrix::from_ring_slice(&flat_rows);
-    let slot = build_ntt_slot(
+    let slot = build_prepared_ntt_slot(
         flat.ring_view::<D>(1, cols)
             .expect("valid ring matrix view"),
+        PreparedNttDomains::NegacyclicAndCyclic,
     )
     .expect("Q128 dispatch should support this field and ring dimension");
     let z_pre = vec![[32_768i32; D]; cols];
@@ -145,9 +149,10 @@ fn fused_split_eq_q128_cyclic_i8_chunks_before_crt_wrap() {
     let row = CyclotomicRing::from_coefficients([half; D]);
     let flat_rows = vec![row; cols];
     let flat = FlatMatrix::from_ring_slice(&flat_rows);
-    let slot = build_ntt_slot(
+    let slot = build_prepared_ntt_slot(
         flat.ring_view::<D>(1, cols)
             .expect("valid ring matrix view"),
+        PreparedNttDomains::NegacyclicAndCyclic,
     )
     .expect("Q128 dispatch should support this field and ring dimension");
     let e_hat = vec![[-32i8; D]; cols];
@@ -186,9 +191,10 @@ fn fused_split_eq_quotients_uses_role_local_packed_widths() {
         })
         .collect();
     let flat = FlatMatrix::from_ring_slice(&flat_rows);
-    let slot = build_ntt_slot(
+    let slot = build_prepared_ntt_slot(
         flat.ring_view::<D>(1, total_len)
             .expect("valid packed setup prefix"),
+        PreparedNttDomains::NegacyclicAndCyclic,
     )
     .expect("Q32 dispatch should support this field and ring dimension");
 

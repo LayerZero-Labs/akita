@@ -81,6 +81,18 @@ pub struct TerminalLevelProofShape {
     pub final_witness: CleartextWitnessShape,
 }
 
+/// Shape-selected outgoing witness binding for an intermediate fold.
+///
+/// This tag is serialized only in the proof-shape descriptor. The proof body
+/// itself remains tag-free.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NextWitnessBindingShape {
+    /// Number of base-field coefficients in the outer commitment `u`.
+    OuterCommitment { coeffs: usize },
+    /// The following terminal proof owns the canonical `t` state bytes.
+    TerminalInnerState,
+}
+
 /// Shape descriptor for deserializing a [`AkitaLevelProof`] without headers.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LevelProofShape {
@@ -94,8 +106,8 @@ pub struct LevelProofShape {
     pub stage2_sumcheck_proof: SumcheckProofShape,
     /// Shape of the optional stage-3 setup product-sumcheck payload.
     pub stage3_sumcheck: Option<SetupProductSumcheckShape>,
-    /// Number of field coefficients in `next_w_commitment`.
-    pub next_commit_coeffs: usize,
+    /// Shape-selected outgoing witness binding.
+    pub next_witness_binding: NextWitnessBindingShape,
 }
 
 /// Shape descriptor for deserializing an [`AkitaBatchedProof`] without
@@ -169,7 +181,14 @@ pub(super) fn level_proof_shape<F: FieldCore, E: FieldCore>(
             .collect(),
         stage2_sumcheck_proof: sumcheck_shape(&stage2.sumcheck_proof),
         stage3_sumcheck: stage3_sumcheck_proof.map(SetupSumcheckProof::shape),
-        next_commit_coeffs: stage2.next_w_commitment.coeff_len(),
+        next_witness_binding: match &stage2.next_witness_binding {
+            NextWitnessBinding::OuterCommitment(commitment) => {
+                NextWitnessBindingShape::OuterCommitment {
+                    coeffs: commitment.coeff_len(),
+                }
+            }
+            NextWitnessBinding::TerminalInnerState => NextWitnessBindingShape::TerminalInnerState,
+        },
     }
 }
 
@@ -279,7 +298,9 @@ impl Valid for LevelProofShape {
         if let Some(shape) = &self.stage3_sumcheck {
             shape.check()?;
         }
-        checked_shape_len(self.next_commit_coeffs)?;
+        if let NextWitnessBindingShape::OuterCommitment { coeffs } = self.next_witness_binding {
+            checked_shape_len(coeffs)?;
+        }
         Ok(())
     }
 }
@@ -314,8 +335,15 @@ impl AkitaSerialize for LevelProofShape {
                 .sumcheck
                 .serialize_with_mode(&mut writer, compress)?;
         }
-        self.next_commit_coeffs
-            .serialize_with_mode(&mut writer, compress)?;
+        match self.next_witness_binding {
+            NextWitnessBindingShape::OuterCommitment { coeffs } => {
+                0u8.serialize_with_mode(&mut writer, compress)?;
+                coeffs.serialize_with_mode(&mut writer, compress)?;
+            }
+            NextWitnessBindingShape::TerminalInnerState => {
+                1u8.serialize_with_mode(&mut writer, compress)?;
+            }
+        }
         Ok(())
     }
 
@@ -337,7 +365,13 @@ impl AkitaSerialize for LevelProofShape {
                 .stage3_sumcheck
                 .as_ref()
                 .map_or(0, |shape| shape.sumcheck.serialized_size(compress))
-            + self.next_commit_coeffs.serialized_size(compress)
+            + 0u8.serialized_size(compress)
+            + match self.next_witness_binding {
+                NextWitnessBindingShape::OuterCommitment { coeffs } => {
+                    coeffs.serialized_size(compress)
+                }
+                NextWitnessBindingShape::TerminalInnerState => 0,
+            }
     }
 }
 
@@ -370,15 +404,25 @@ impl AkitaDeserialize for LevelProofShape {
         } else {
             None
         };
-        let next_commit_coeffs =
-            usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
+        let next_witness_binding =
+            match u8::deserialize_with_mode(&mut reader, compress, validate, &())? {
+                0 => NextWitnessBindingShape::OuterCommitment {
+                    coeffs: usize::deserialize_with_mode(&mut reader, compress, validate, &())?,
+                },
+                1 => NextWitnessBindingShape::TerminalInnerState,
+                tag => {
+                    return Err(SerializationError::InvalidData(format!(
+                        "invalid next-witness binding shape tag {tag}"
+                    )))
+                }
+            };
         let out = Self {
             extension_opening_reduction,
             v_coeffs,
             stage1_stages,
             stage2_sumcheck_proof: stage2_sumcheck,
             stage3_sumcheck,
-            next_commit_coeffs,
+            next_witness_binding,
         };
         if matches!(validate, Validate::Yes) {
             out.check()?;

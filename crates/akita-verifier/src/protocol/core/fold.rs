@@ -238,6 +238,8 @@ pub(in crate::protocol::core) struct PreparedFoldReplay<'a, F: FieldCore, E: Fie
     pub(in crate::protocol::core) stage2: Option<&'a AkitaStage2Proof<F, E>>,
     pub(in crate::protocol::core) final_witness: Option<&'a CleartextWitnessProof<F>>,
     pub(in crate::protocol::core) next_w_commitment: Option<&'a RingVec<F>>,
+    /// Canonical terminal `t` bytes for an intermediate edge that elides `u`.
+    pub(in crate::protocol::core) next_t_state: Option<&'a [u8]>,
     /// Schedule ring dimension of the next fold level. `Some` for
     /// intermediate levels (the dimension `next_w_commitment` is shaped at,
     /// which may differ from the current level's `D` in mixed-D schedules);
@@ -278,44 +280,25 @@ where
         .col_bits
         .checked_add(rs.ring_bits)
         .ok_or_else(|| AkitaError::InvalidSetup("stage-1 variable count overflow".to_string()))?;
-    let tau0 = if rs.tau0.is_empty() {
-        None
-    } else {
-        Some(rs.tau0.as_slice())
-    };
-    let stage1 = match (proof, tau0) {
-        (Some(proof), Some(tau0)) => Some((proof, tau0)),
-        (None, None) => None,
-        _ => return Err(AkitaError::InvalidProof),
-    };
-    if let Some((proof, tau0)) = stage1 {
-        if tau0.len() != num_rounds {
-            return Err(AkitaError::InvalidSize {
-                expected: num_rounds,
-                actual: tau0.len(),
-            });
-        }
-        let tau0_reordered = reorder_stage1_coords(tau0, rs.col_bits, rs.ring_bits);
-        let stage1_verifier = AkitaStage1Verifier::new(tau0_reordered, rs.b);
-        let stage1_point = {
-            let _sumcheck_span = tracing::info_span!("stage1_sumcheck").entered();
-            stage1_verifier.verify::<F, T>(proof, transcript)?
-        };
-        transcript.append_serde(ABSORB_SUMCHECK_S_CLAIM, &proof.s_claim);
-        let batching_coeff: E =
-            sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_SUMCHECK_BATCH);
-        return Ok(Stage1Replay {
-            batching_coeff,
-            s_claim: proof.s_claim,
-            stage1_point,
+    let proof = proof.ok_or(AkitaError::InvalidProof)?;
+    if rs.tau0.len() != num_rounds {
+        return Err(AkitaError::InvalidSize {
+            expected: num_rounds,
+            actual: rs.tau0.len(),
         });
     }
-
-    let relation_only = RelationOnlyStage2Inputs::new(num_rounds);
+    let tau0_reordered = reorder_stage1_coords(&rs.tau0, rs.col_bits, rs.ring_bits);
+    let stage1_verifier = AkitaStage1Verifier::new(tau0_reordered, rs.b);
+    let stage1_point = {
+        let _sumcheck_span = tracing::info_span!("stage1_sumcheck").entered();
+        stage1_verifier.verify::<F, T>(proof, transcript)?
+    };
+    transcript.append_serde(ABSORB_SUMCHECK_S_CLAIM, &proof.s_claim);
+    let batching_coeff: E = sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_SUMCHECK_BATCH);
     Ok(Stage1Replay {
-        batching_coeff: relation_only.batching_coeff,
-        s_claim: relation_only.s_claim,
-        stage1_point: relation_only.stage1_point,
+        batching_coeff,
+        s_claim: proof.s_claim,
+        stage1_point,
     })
 }
 
@@ -812,7 +795,12 @@ where
             .terminal_replay
             .as_ref()
             .ok_or(AkitaError::InvalidProof)?;
-        transcript.absorb_and_record_bytes(ABSORB_TERMINAL_W_REMAINDER, &replay.remainder);
+        if LevelParams::has_commitment_block(prepared.relation_matrix_row_layout) {
+            let response = replay.outer_committed_response();
+            transcript.absorb_and_record_bytes(ABSORB_TERMINAL_W_REMAINDER, &response);
+        } else {
+            transcript.absorb_and_record_bytes(ABSORB_TERMINAL_W_REMAINDER, &replay.response);
+        }
         super::terminal_direct::verify_terminal_ring_relations(
             setup,
             &relation_instance,
@@ -844,15 +832,26 @@ where
         opening_ring_dim: prepared.next_witness_ring_dim.unwrap_or(role_dims.d_a()),
     };
     let d_a = role_dims.d_a();
+    match (prepared.next_w_commitment, prepared.next_t_state) {
+        (Some(next_w_commitment), None) => {
+            let next_ring_dim = prepared.next_ring_dim.ok_or(AkitaError::InvalidProof)?;
+            if next_ring_dim == 0 || !next_w_commitment.can_decode_vec(next_ring_dim) {
+                return Err(AkitaError::InvalidProof);
+            }
+            transcript
+                .absorb_and_record_serde(ABSORB_NEXT_LEVEL_WITNESS_BINDING, next_w_commitment);
+        }
+        (None, Some(t_state)) if !t_state.is_empty() => {
+            transcript.absorb_and_record_bytes(ABSORB_NEXT_LEVEL_WITNESS_BINDING, t_state);
+        }
+        _ => return Err(AkitaError::InvalidProof),
+    }
     let rs = dispatch_for_field!(ProtocolDispatchSlot::Role(RingRole::Inner), F, d_a, |D| {
-        let next_w_commitment = prepared.next_w_commitment.ok_or(AkitaError::InvalidProof)?;
-        let next_ring_dim = prepared.next_ring_dim.ok_or(AkitaError::InvalidProof)?;
         ring_switch_verifier::<F, E, T, D>(
             &ring_switch_replay,
             prepared.w_len,
-            next_w_commitment,
-            next_ring_dim,
             transcript,
+            RelationMatrixRowLayout::WithDBlock,
         )
     })?;
     let relation_claim = relation_claim_from_layout_extension::<F, E>(

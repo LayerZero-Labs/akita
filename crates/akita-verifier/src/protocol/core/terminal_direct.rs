@@ -9,8 +9,7 @@ use akita_field::{
 use akita_types::{
     decode_terminal_z_golomb_payload_with_cap, dispatch_for_field,
     recover_ring_subfield_inner_product, AkitaVerifierSetup, CleartextWitnessProof, FpExtEncoding,
-    LevelParams, LevelParamsLike, PreparedOpeningPoint, RelationMatrixRowLayout,
-    RingRelationInstance, RingVec,
+    LevelParams, LevelParamsLike, PreparedOpeningPoint, RingRelationInstance, RingVec,
 };
 
 fn sparse_challenge_ring<F, const D: usize>(
@@ -185,6 +184,8 @@ where
     let witness = final_witness
         .as_segment_typed()
         .ok_or(AkitaError::InvalidProof)?;
+    let row_layout = relation.relation_matrix_row_layout();
+    let has_commitment_block = LevelParams::has_commitment_block(row_layout);
     if witness.layout.ring_dimension != relation.role_dims().d_a()
         || witness.layout.groups.len() != relation.opening_batch().num_groups()
     {
@@ -201,12 +202,14 @@ where
                 .checked_mul(params.a_col_len())
                 .ok_or(AkitaError::InvalidProof)?,
         );
-        max_b_prefix_len = max_b_prefix_len.max(
-            params
-                .b_rows_len()
-                .checked_mul(params.b_col_len())
-                .ok_or(AkitaError::InvalidProof)?,
-        );
+        if has_commitment_block {
+            max_b_prefix_len = max_b_prefix_len.max(
+                params
+                    .b_rows_len()
+                    .checked_mul(params.b_col_len())
+                    .ok_or(AkitaError::InvalidProof)?,
+            );
+        }
     }
     let (prepared_a_prefix_len, prepared_b_prefix_len) =
         if relation.role_dims().d_a() == relation.role_dims().d_b() {
@@ -236,18 +239,16 @@ where
                     .opening_batch()
                     .group_layout(group_index)?
                     .num_polynomials();
-                let a_range = lp.a_row_range(
-                    relation.opening_batch(),
-                    group_index,
-                    RelationMatrixRowLayout::WithoutDBlock,
-                )?;
-                let b_range = lp.commitment_row_range(
-                    relation.opening_batch(),
-                    group_index,
-                    RelationMatrixRowLayout::WithoutDBlock,
-                )?;
+                let a_range = lp.a_row_range(relation.opening_batch(), group_index, row_layout)?;
+                let b_range =
+                    lp.commitment_row_range(relation.opening_batch(), group_index, row_layout)?;
                 if a_range.len() != params.a_rows_len()
-                    || b_range.len() != params.b_rows_len()
+                    || b_range.len()
+                        != if has_commitment_block {
+                            params.b_rows_len()
+                        } else {
+                            0
+                        }
                     || b_range.start != a_range.end
                 {
                     return Err(AkitaError::InvalidSetup(
@@ -364,42 +365,45 @@ where
                     params,
                     prepared_a_prefix_len,
                 )?;
-                // Erase the inner ring degree before outer-role dispatch. Keeping
-                // `D_A` in `check_b_rows` multiplied every inner dispatch arm by
-                // every outer arm and forced optimized test binaries to compile
-                // a large cross-product of identical NTT kernels.
-                let t_digits = decompose_rows_i8(&t, params.num_digits_open(), params.log_basis())?;
-                let t_digits_flat = t_digits.as_flattened();
+                if has_commitment_block {
+                    // Erase the inner ring degree before outer-role dispatch. Keeping
+                    // `D_A` in `check_b_rows` multiplied every inner dispatch arm by
+                    // every outer arm and forced optimized test binaries to compile
+                    // a large cross-product of identical NTT kernels.
+                    let t_digits =
+                        decompose_rows_i8(&t, params.num_digits_open(), params.log_basis())?;
+                    let t_digits_flat = t_digits.as_flattened();
 
-                dispatch_for_field!(
-                    akita_types::ProtocolDispatchSlot::Role(akita_types::RingRole::Outer),
-                    F,
-                    relation.role_dims().d_b(),
-                    |D_B| {
-                        let commitment_coeffs = b_range
-                            .len()
-                            .checked_mul(D_B)
-                            .ok_or(AkitaError::InvalidProof)?;
-                        let end = commitment_offset
-                            .checked_add(commitment_coeffs)
-                            .ok_or(AkitaError::InvalidProof)?;
-                        let expected = decode_rings::<F, D_B>(
-                            commitment_rows
-                                .coeffs()
-                                .get(commitment_offset..end)
-                                .ok_or(AkitaError::InvalidProof)?,
-                        )?;
-                        check_b_rows::<F, D_B>(
-                            setup,
-                            t_digits_flat,
-                            &expected,
-                            params,
-                            prepared_b_prefix_len,
-                        )?;
-                        commitment_offset = end;
-                        Ok::<(), AkitaError>(())
-                    }
-                )?;
+                    dispatch_for_field!(
+                        akita_types::ProtocolDispatchSlot::Role(akita_types::RingRole::Outer),
+                        F,
+                        relation.role_dims().d_b(),
+                        |D_B| {
+                            let commitment_coeffs = b_range
+                                .len()
+                                .checked_mul(D_B)
+                                .ok_or(AkitaError::InvalidProof)?;
+                            let end = commitment_offset
+                                .checked_add(commitment_coeffs)
+                                .ok_or(AkitaError::InvalidProof)?;
+                            let expected = decode_rings::<F, D_B>(
+                                commitment_rows
+                                    .coeffs()
+                                    .get(commitment_offset..end)
+                                    .ok_or(AkitaError::InvalidProof)?,
+                            )?;
+                            check_b_rows::<F, D_B>(
+                                setup,
+                                t_digits_flat,
+                                &expected,
+                                params,
+                                prepared_b_prefix_len,
+                            )?;
+                            commitment_offset = end;
+                            Ok::<(), AkitaError>(())
+                        }
+                    )?;
+                }
                 e_offset = e_end;
                 t_offset = t_end;
             }
@@ -519,4 +523,194 @@ where
         return Err(AkitaError::InvalidProof);
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use akita_field::{Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59};
+
+    #[derive(Clone, Copy)]
+    enum TerminalRowRole {
+        Consistency,
+        A,
+        B,
+    }
+
+    fn cyclic_product<F: FieldCore, const D: usize>(
+        lhs: &CyclotomicRing<F, D>,
+        rhs: &CyclotomicRing<F, D>,
+    ) -> CyclotomicRing<F, D> {
+        let mut coefficients = [F::zero(); D];
+        for (lhs_index, &lhs_coefficient) in lhs.coefficients().iter().enumerate() {
+            for (rhs_index, &rhs_coefficient) in rhs.coefficients().iter().enumerate() {
+                coefficients[(lhs_index + rhs_index) % D] += lhs_coefficient * rhs_coefficient;
+            }
+        }
+        CyclotomicRing::from_coefficients(coefficients)
+    }
+
+    fn deterministic_ring<F, const D: usize>(seed: i64) -> CyclotomicRing<F, D>
+    where
+        F: FieldCore + FromPrimitiveInt,
+    {
+        CyclotomicRing::from_coefficients(std::array::from_fn(|index| {
+            let signed = ((index * 17 + seed.unsigned_abs() as usize * 11) % 19) as i64 - 9;
+            F::from_i64(if seed.is_negative() { -signed } else { signed })
+        }))
+    }
+
+    fn row_images<F, const D: usize>(
+        role: TerminalRowRole,
+    ) -> (
+        CyclotomicRing<F, D>,
+        CyclotomicRing<F, D>,
+        CyclotomicRing<F, D>,
+        CyclotomicRing<F, D>,
+    )
+    where
+        F: FieldCore + FromPrimitiveInt,
+    {
+        let role_seed = match role {
+            TerminalRowRole::Consistency => 1,
+            TerminalRowRole::A => 7,
+            TerminalRowRole::B => 13,
+        };
+        let terms = [
+            (
+                deterministic_ring::<F, D>(role_seed),
+                deterministic_ring::<F, D>(role_seed + 2),
+            ),
+            (
+                deterministic_ring::<F, D>(-(role_seed + 4)),
+                deterministic_ring::<F, D>(role_seed + 6),
+            ),
+            (
+                deterministic_ring::<F, D>(role_seed + 8),
+                deterministic_ring::<F, D>(-(role_seed + 10)),
+            ),
+        ];
+        let (mut actual_cyclic, mut actual_reduced) = terms.iter().fold(
+            (CyclotomicRing::zero(), CyclotomicRing::zero()),
+            |(cyclic, reduced), (lhs, rhs)| {
+                (cyclic + cyclic_product(lhs, rhs), reduced + (*lhs * *rhs))
+            },
+        );
+
+        // Force a non-zero quotient: X^(D-1) * X reduces to -1 in
+        // F[X]/(X^D+1), but to +1 in the cyclic convolution ring used by the
+        // legacy quotient construction.
+        let mut high = [F::zero(); D];
+        high[D - 1] = F::one();
+        let mut x = [F::zero(); D];
+        x[1] = F::one();
+        let high = CyclotomicRing::from_coefficients(high);
+        let x = CyclotomicRing::from_coefficients(x);
+        actual_cyclic += cyclic_product(&high, &x);
+        actual_reduced += high * x;
+
+        // A plain-ring RHS is also a valid product by one, and has no wrap.
+        // This makes the accepting case exercise a non-trivial legacy
+        // quotient instead of cancelling two identical quotient values.
+        let expected_reduced = actual_reduced;
+        let expected_cyclic = cyclic_product(&expected_reduced, &CyclotomicRing::one());
+        (
+            actual_cyclic,
+            actual_reduced,
+            expected_cyclic,
+            expected_reduced,
+        )
+    }
+
+    fn legacy_residual<F, const D: usize>(
+        actual_cyclic: CyclotomicRing<F, D>,
+        actual_reduced: CyclotomicRing<F, D>,
+        expected_cyclic: CyclotomicRing<F, D>,
+        expected_reduced: CyclotomicRing<F, D>,
+    ) -> CyclotomicRing<F, D>
+    where
+        F: FieldCore + HalvingField,
+    {
+        let actual_quotient = CyclotomicRing::from_coefficients(std::array::from_fn(|index| {
+            (actual_cyclic.coefficients()[index] - actual_reduced.coefficients()[index]).half()
+        }));
+        let expected_quotient = CyclotomicRing::from_coefficients(std::array::from_fn(|index| {
+            (expected_cyclic.coefficients()[index] - expected_reduced.coefficients()[index]).half()
+        }));
+        let quotient_delta = actual_quotient - expected_quotient;
+        actual_cyclic - expected_cyclic - quotient_delta - quotient_delta
+    }
+
+    fn assert_direct_matches_legacy<F, const D: usize>(role: TerminalRowRole)
+    where
+        F: FieldCore + FromPrimitiveInt + HalvingField,
+    {
+        let (actual_cyclic, actual_reduced, expected_cyclic, expected_reduced) =
+            row_images::<F, D>(role);
+
+        let direct_valid = actual_reduced - expected_reduced;
+        let legacy_valid = legacy_residual(
+            actual_cyclic,
+            actual_reduced,
+            expected_cyclic,
+            expected_reduced,
+        );
+        assert_eq!(legacy_valid, direct_valid);
+        assert_eq!(direct_valid, CyclotomicRing::zero());
+
+        let mut tampered_coefficients = *expected_reduced.coefficients();
+        tampered_coefficients[D / 2] += F::one();
+        let tampered_reduced = CyclotomicRing::from_coefficients(tampered_coefficients);
+        let tampered_cyclic = cyclic_product(&tampered_reduced, &CyclotomicRing::one());
+        let direct_tampered = actual_reduced - tampered_reduced;
+        let legacy_tampered = legacy_residual(
+            actual_cyclic,
+            actual_reduced,
+            tampered_cyclic,
+            tampered_reduced,
+        );
+        assert_eq!(legacy_tampered, direct_tampered);
+        assert_ne!(direct_tampered, CyclotomicRing::zero());
+    }
+
+    macro_rules! assert_roles {
+        ($field:ty, inner: [$($inner:literal),+], outer: [$($outer:literal),+]) => {{
+            $(
+                assert_direct_matches_legacy::<$field, $inner>(TerminalRowRole::Consistency);
+                assert_direct_matches_legacy::<$field, $inner>(TerminalRowRole::A);
+            )+
+            $(
+                assert_direct_matches_legacy::<$field, $outer>(TerminalRowRole::B);
+            )+
+        }};
+    }
+
+    #[test]
+    fn terminal_direct_rows_match_legacy_quotients_for_every_role_dimension() {
+        assert_roles!(
+            Prime128OffsetA7F7,
+            inner: [64, 128],
+            outer: [16, 32, 64, 128, 256]
+        );
+        assert_roles!(
+            Prime64Offset59,
+            inner: [64, 128, 256],
+            outer: [32, 64, 128, 256]
+        );
+        assert_roles!(
+            Prime32Offset99,
+            inner: [64, 128, 256],
+            outer: [64, 128, 256]
+        );
+    }
+
+    #[test]
+    fn terminal_direct_rows_match_legacy_quotients_for_unequal_role_extrema() {
+        assert_direct_matches_legacy::<Prime128OffsetA7F7, 128>(TerminalRowRole::A);
+        assert_direct_matches_legacy::<Prime128OffsetA7F7, 16>(TerminalRowRole::B);
+        assert_direct_matches_legacy::<Prime64Offset59, 256>(TerminalRowRole::A);
+        assert_direct_matches_legacy::<Prime64Offset59, 32>(TerminalRowRole::B);
+        assert_direct_matches_legacy::<Prime32Offset99, 256>(TerminalRowRole::A);
+        assert_direct_matches_legacy::<Prime32Offset99, 64>(TerminalRowRole::B);
+    }
 }

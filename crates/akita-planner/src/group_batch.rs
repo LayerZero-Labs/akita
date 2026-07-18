@@ -742,8 +742,8 @@ pub fn find_group_batch_schedule(
                     &fold_candidate_params,
                     Some(&suffix_fold.first_fold_params),
                     next_w_len,
-                    1,
                     RelationMatrixRowLayout::WithDBlock,
+                    akita_types::NextWitnessBindingPolicy::OuterCommitment,
                 ) + eor_bytes;
                 let total = root_proof_size + suffix_fold.total_bytes;
                 if best

@@ -16,6 +16,22 @@ pub struct AkitaScheduleInputs {
     pub current_w_len: usize,
 }
 
+/// Transcript binding used for one fold's outgoing witness state.
+///
+/// This is schedule-owned because the same intermediate proof body may either
+/// recurse through an outer commitment or hand its witness to the final
+/// suffix fold as a public inner `t` state.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NextWitnessBindingPolicy {
+    /// Bind `u = B * decompose(t)` and recurse through another committed fold.
+    OuterCommitment,
+    /// Bind canonical inner-state `t` bytes for the following suffix-terminal
+    /// fold. No outer `u` is present on this edge.
+    TerminalInnerState,
+    /// The current fold itself terminates by revealing its cleartext witness.
+    TerminalCleartextWitness,
+}
+
 /// Schedule facts for one fold level.
 #[derive(Debug, Clone)]
 pub struct ExecutionSchedule {
@@ -33,9 +49,27 @@ pub struct ExecutionSchedule {
     pub next_w_len: usize,
     /// Whether this fold hands off to the terminal direct witness.
     pub is_terminal: bool,
+    /// Transcript/wire policy for the witness state leaving this fold.
+    pub next_witness_binding: NextWitnessBindingPolicy,
 }
 
 impl ExecutionSchedule {
+    /// Canonical physical relation-row layout for this fold.
+    ///
+    /// A root-terminal fold must still open the external public `u`, so it
+    /// keeps B and drops only D. A recursive suffix terminal receives public
+    /// `t` from its predecessor and therefore has exactly `consistency | A`.
+    #[must_use]
+    pub fn relation_matrix_row_layout(&self) -> crate::RelationMatrixRowLayout {
+        if !self.is_terminal {
+            crate::RelationMatrixRowLayout::WithDBlock
+        } else if self.level == 0 {
+            crate::RelationMatrixRowLayout::WithoutDBlock
+        } else {
+            crate::RelationMatrixRowLayout::WithoutCommitmentBlocks
+        }
+    }
+
     /// Validate the witness length entering this fold.
     ///
     /// # Errors
@@ -719,6 +753,13 @@ impl Schedule {
             )));
         };
         let is_terminal = matches!(self.steps.get(level + 1), Some(Step::Direct(_)));
+        let next_witness_binding = if is_terminal {
+            NextWitnessBindingPolicy::TerminalCleartextWitness
+        } else if matches!(self.steps.get(level + 2), Some(Step::Direct(_))) {
+            NextWitnessBindingPolicy::TerminalInnerState
+        } else {
+            NextWitnessBindingPolicy::OuterCommitment
+        };
         let next_level_params = scheduled_next_level_params(self, level + 1)?;
         Ok(ExecutionSchedule {
             level,
@@ -727,6 +768,7 @@ impl Schedule {
             next_params: next_level_params,
             next_w_len: step.next_w_len,
             is_terminal,
+            next_witness_binding,
         })
     }
 

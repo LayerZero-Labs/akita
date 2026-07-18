@@ -350,8 +350,8 @@ pub(crate) fn derive_optimal_suffix_schedule(
                         &candidate_params,
                         None,
                         next_witness_len_terminal,
-                        1,
-                        RelationMatrixRowLayout::WithoutDBlock,
+                        RelationMatrixRowLayout::WithoutCommitmentBlocks,
+                        akita_types::NextWitnessBindingPolicy::TerminalCleartextWitness,
                     ) + eor_bytes;
                     let total = level_proof_size + suffix_cost;
                     let steps = vec![
@@ -414,8 +414,12 @@ pub(crate) fn derive_optimal_suffix_schedule(
                 &fold_candidate_params,
                 Some(&suffix_fold.first_fold_params),
                 next_witness_len,
-                1,
                 RelationMatrixRowLayout::WithDBlock,
+                if child_is_terminal {
+                    akita_types::NextWitnessBindingPolicy::TerminalInnerState
+                } else {
+                    akita_types::NextWitnessBindingPolicy::OuterCommitment
+                },
             ) + eor_bytes;
             let total = level_proof_size + suffix_fold.total_bytes;
             let mut steps = Vec::with_capacity(1 + suffix_fold.steps.len());

@@ -6,8 +6,8 @@ use crate::{
     direct_witness_bytes, extension_opening_reduction_proof_bytes, level_proof_bytes,
     stage1_tree_stage_shapes, sumcheck_rounds, AkitaBatchedRootProof, AkitaLevelProof,
     AkitaStage1Proof, AkitaStage1StageProof, AkitaStage2Proof, CleartextWitnessProof,
-    ExtensionOpeningReductionProof, RelationMatrixRowLayout, RingVec, SisModulusProfileId,
-    TerminalLevelProof, EXTENSION_OPENING_REDUCTION_DEGREE,
+    ExtensionOpeningReductionProof, NextWitnessBinding, RelationMatrixRowLayout, RingVec,
+    SisModulusProfileId, TerminalLevelProof, EXTENSION_OPENING_REDUCTION_DEGREE,
 };
 use akita_algebra::CyclotomicRing;
 use akita_challenges::SparseChallengeConfig;
@@ -241,7 +241,10 @@ fn exact_level_proof_bytes<F: FieldCore + CanonicalField + AkitaSerialize>(
         stage1: dummy_stage1_proof(rounds, b),
         stage2: AkitaStage2Proof {
             sumcheck_proof: dummy_sumcheck(rounds, 3),
-            next_w_commitment: RingVec::from_coeffs(vec![F::zero(); next_commit_coeffs]),
+            next_witness_binding: NextWitnessBinding::OuterCommitment(RingVec::from_coeffs(vec![
+                F::zero();
+                next_commit_coeffs
+            ])),
             next_w_eval: F::zero(),
         },
         stage3_sumcheck_proof: None,
@@ -283,8 +286,8 @@ fn planned_level_bytes_match_two_stage_payload_at_all_bases() {
                     &lp,
                     Some(&next_lp),
                     next_w_len,
-                    1,
                     RelationMatrixRowLayout::WithDBlock,
+                    NextWitnessBindingPolicy::OuterCommitment,
                 ),
                 exact_level_proof_bytes::<F>(&lp, &next_lp, next_w_len).unwrap(),
                 "planned level bytes should match the serialized two-stage body at log_basis={log_basis}"
@@ -334,8 +337,8 @@ fn planned_terminal_level_bytes_match_terminal_payload_at_all_bases() {
                 &lp,
                 None,
                 next_w_len,
-                num_claims,
                 RelationMatrixRowLayout::WithoutDBlock,
+                NextWitnessBindingPolicy::TerminalCleartextWitness,
             ),
             serialized_without_witness,
             "planned terminal-level bytes should match the serialized terminal body \
@@ -402,8 +405,8 @@ fn planned_batched_root_bytes_match_two_stage_payload_at_all_bases() {
                     &lp,
                     Some(&next_lp),
                     next_w_len,
-                    1,
                     RelationMatrixRowLayout::WithDBlock,
+                    NextWitnessBindingPolicy::OuterCommitment,
                 ),
                 root_proof.serialized_size(Compress::No),
                 "planned batched root bytes should match the serialized two-stage body at log_basis={log_basis}"

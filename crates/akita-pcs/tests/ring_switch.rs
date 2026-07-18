@@ -361,7 +361,7 @@ mod tests {
             .expect("ring relation");
 
         let build_output =
-            ring_switch_build_w::<F, CpuBackend>(&instance, witness, &op_ctx, &lp, false)
+            ring_switch_build_w::<F, CpuBackend>(&instance, witness, &op_ctx, &lp, false, None)
                 .expect("ring-switch witness");
         let RingSwitchBuildOutput::Intermediate(w) = build_output else {
             panic!("expected recursive witness");
@@ -510,7 +510,7 @@ mod tests {
             .expect("ring relation");
 
         let build_output =
-            ring_switch_build_w::<F, CpuBackend>(&instance, witness, &op_ctx, &lp, false)
+            ring_switch_build_w::<F, CpuBackend>(&instance, witness, &op_ctx, &lp, false, None)
                 .expect("ring-switch witness");
         let RingSwitchBuildOutput::Intermediate(w) = build_output else {
             panic!("expected recursive witness");
@@ -867,8 +867,15 @@ mod tests {
             )
             .expect("ring relation");
 
-        ring_switch_build_w::<F, CpuBackend>(&instance, witness, &op_ctx, &level_params, false)
-            .expect("ring-switch witness");
+        ring_switch_build_w::<F, CpuBackend>(
+            &instance,
+            witness,
+            &op_ctx,
+            &level_params,
+            false,
+            None,
+        )
+        .expect("ring-switch witness");
 
         let alpha = F::from_u64(42);
         let alpha_evals_y = scalar_powers(alpha, D);
@@ -1210,9 +1217,15 @@ mod tests {
             )
             .expect("ring relation");
 
-        let build_output =
-            ring_switch_build_w::<F, CpuBackend>(&instance, witness, &op_ctx, &level_params, true)
-                .expect("ring-switch witness");
+        let build_output = ring_switch_build_w::<F, CpuBackend>(
+            &instance,
+            witness,
+            &op_ctx,
+            &level_params,
+            true,
+            None,
+        )
+        .expect("ring-switch witness");
         let RingSwitchBuildOutput::Terminal(artifacts) = build_output else {
             panic!("expected direct terminal artifacts");
         };

@@ -185,6 +185,11 @@ fn relation_matrix_row_count_values() {
             .unwrap(),
         1 + 4 * 2 + 2
     );
+    assert_eq!(
+        lp.relation_matrix_row_count_for(2, RelationMatrixRowLayout::WithoutCommitmentBlocks,)
+            .unwrap(),
+        1 + lp.a_key.row_len()
+    );
 }
 
 #[test]
@@ -204,6 +209,7 @@ fn canonical_row_offsets_match_open_coded_layout() {
             let n_d_active = match layout {
                 RelationMatrixRowLayout::WithDBlock => n_d,
                 RelationMatrixRowLayout::WithoutDBlock => 0,
+                RelationMatrixRowLayout::WithoutCommitmentBlocks => 0,
             };
             let a_start = 1;
             let b_start = a_start + n_a;

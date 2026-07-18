@@ -24,14 +24,38 @@ pub struct AkitaStage1Proof<F: FieldCore> {
     pub s_claim: F,
 }
 
+/// Schedule-shaped outgoing witness binding for an intermediate fold.
+///
+/// The proof stream carries no variant tag. Headerless decoding obtains the
+/// variant from [`NextWitnessBindingShape`]: ordinary recursive edges carry an
+/// outer `u`, while an edge into the suffix terminal binds the `t` segment
+/// owned by the following [`TerminalLevelProof`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum NextWitnessBinding<F: FieldCore> {
+    /// Outer commitment `u = B * decompose(t)` for an ordinary recursive edge.
+    OuterCommitment(RingVec<F>),
+    /// The following terminal proof's canonical `t` segment is the state.
+    TerminalInnerState,
+}
+
+impl<F: FieldCore> NextWitnessBinding<F> {
+    /// Borrow the outer commitment when this is an ordinary recursive edge.
+    #[must_use]
+    pub fn outer_commitment(&self) -> Option<&RingVec<F>> {
+        match self {
+            Self::OuterCommitment(commitment) => Some(commitment),
+            Self::TerminalInnerState => None,
+        }
+    }
+}
+
 /// Intermediate-stage payload for stage 2 of a fold level.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AkitaStage2Proof<F: FieldCore, E: FieldCore> {
     /// Stage-2 fused sumcheck proof.
     pub sumcheck_proof: SumcheckProof<E>,
-    /// Commitment to the next witness `w`
-    /// (ring dim = next level's D, may differ from `v`).
-    pub next_w_commitment: RingVec<F>,
+    /// Schedule-shaped binding for the next witness.
+    pub next_witness_binding: NextWitnessBinding<F>,
     /// Claimed evaluation of the next witness `w` at the stage-2 challenge point.
     pub next_w_eval: E,
 }
@@ -153,7 +177,9 @@ impl<F: FieldCore, E: FieldCore> AkitaLevelProof<F, E> {
             stage1,
             AkitaStage2Proof {
                 sumcheck_proof: stage2_sumcheck_proof,
-                next_w_commitment: next_w_commitment.into_compact(),
+                next_witness_binding: NextWitnessBinding::OuterCommitment(
+                    next_w_commitment.into_compact(),
+                ),
                 next_w_eval,
             },
         )
@@ -177,7 +203,9 @@ impl<F: FieldCore, E: FieldCore> AkitaLevelProof<F, E> {
             stage1,
             stage2: AkitaStage2Proof {
                 sumcheck_proof: stage2_sumcheck_proof,
-                next_w_commitment: next_w_commitment.into_compact(),
+                next_witness_binding: NextWitnessBinding::OuterCommitment(
+                    next_w_commitment.into_compact(),
+                ),
                 next_w_eval,
             },
             stage3_sumcheck_proof: None,
@@ -202,14 +230,6 @@ impl<F: FieldCore, E: FieldCore> AkitaLevelProof<F, E> {
                 ..
             } => extension_opening_reduction.as_ref(),
             Self::Terminal(terminal) => terminal.extension_opening_reduction.as_ref(),
-        }
-    }
-
-    /// relation-matrix row layout implied by this recursive proof level.
-    pub fn relation_matrix_row_layout(&self) -> RelationMatrixRowLayout {
-        match self {
-            Self::Intermediate { .. } => RelationMatrixRowLayout::WithDBlock,
-            Self::Terminal(_) => RelationMatrixRowLayout::WithoutDBlock,
         }
     }
 
@@ -355,15 +375,10 @@ impl<F: FieldCore, E: FieldCore> AkitaLevelProof<F, E> {
         }
     }
 
-    /// Commitment to the next witness `w`.
-    pub fn next_w_commitment(&self) -> &RingVec<F> {
-        &self.stage2().next_w_commitment
-    }
-
-    /// Borrow the next witness commitment if this is an intermediate level.
-    pub fn next_w_commitment_opt(&self) -> Option<&RingVec<F>> {
+    /// Borrow the next witness's outer commitment when this level has one.
+    pub fn next_w_commitment(&self) -> Option<&RingVec<F>> {
         match self {
-            Self::Intermediate { .. } => Some(self.next_w_commitment()),
+            Self::Intermediate { stage2, .. } => stage2.next_witness_binding.outer_commitment(),
             Self::Terminal(_) => None,
         }
     }
@@ -454,13 +469,20 @@ impl<F: FieldCore, E: FieldCore> AkitaLevelProof<F, E> {
 
 /// Terminal fold-level proof.
 ///
-/// Ships `final_witness` in cleartext, absorbed into the transcript at the
-/// `ABSORB_NEXT_LEVEL_WITNESS_BINDING` position in place of the prior `next_w_commitment`.
+/// Ships `final_witness` in cleartext. Its raw `e` segment is bound before the
+/// terminal sparse challenge. At a suffix terminal, the predecessor has
+/// already bound the canonical `t` segment as its outgoing state and only the
+/// `z` response is absorbed afterward. At a root terminal, the external `u`
+/// remains public and B-checked, so the post-challenge response remains
+/// `z || t`.
+///
 /// Drops the redundant proof components at the terminal: `stage1`
-/// (segment-typed tail encodes digit range), `next_w_commitment`
+/// (segment-typed tail encodes digit range), the stage-2 outgoing binding
 /// (replaced by `final_witness`), and `next_w_eval` (verifier computes
-/// directly from `final_witness`). The terminal relation-matrix row layout also drops the
-/// D-row block, so `v` is not serialized at the terminal.
+/// directly from `final_witness`). All terminal schedules drop the D-row block,
+/// so `v` is not serialized. The schedule—not this proof variant—decides
+/// whether root-terminal B rows remain or suffix-terminal commitment rows are
+/// absent.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TerminalLevelProof<F: FieldCore, E: FieldCore> {
     /// Optional extension-opening reduction payload.
@@ -704,7 +726,7 @@ impl<F: FieldCore, E: FieldCore> AkitaBatchedRootProof<F, E> {
     /// Borrow the root next-witness commitment for fold proofs.
     pub fn fold_next_w_commitment(&self) -> Result<Option<&RingVec<F>>, AkitaError> {
         match self {
-            Self::Fold(fold) => Ok(Some(&fold.stage2.next_w_commitment)),
+            Self::Fold(fold) => Ok(fold.stage2.next_witness_binding.outer_commitment()),
             Self::Terminal(_) => Ok(None),
             Self::ZeroFold { .. } => Err(AkitaError::InvalidProof),
         }
@@ -763,17 +785,10 @@ impl<F: FieldCore, E: FieldCore> AkitaBatchedRootProof<F, E> {
             .v
     }
 
-    /// Commitment to the next witness `w` (Fold only).
-    ///
-    /// # Panics
-    ///
-    /// Panics on terminal-root and zero-fold batched proofs.
-    pub fn next_w_commitment(&self) -> &RingVec<F> {
-        &self
-            .as_fold()
-            .expect("next_w_commitment() called on a non-fold root proof")
-            .stage2
-            .next_w_commitment
+    /// Outer commitment to the next witness, when this root fold has one.
+    pub fn next_w_commitment(&self) -> Option<&RingVec<F>> {
+        self.as_fold()
+            .and_then(|fold| fold.stage2.next_witness_binding.outer_commitment())
     }
 
     /// Claimed evaluation of the next witness `w` (Fold only).

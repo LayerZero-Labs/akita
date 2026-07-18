@@ -25,6 +25,7 @@ pub(super) fn verify_root<F, E, T>(
     _setup_contribution_mode: SetupContributionMode,
     next_fold_level_params: Option<&LevelParams>,
     terminal_final_w_len: usize,
+    next_t_state: Option<&[u8]>,
 ) -> Result<FoldVerifyOutput<E>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling + HalvingField,
@@ -94,6 +95,7 @@ where
             basis,
             root_lp,
             terminal_final_w_len,
+            next_t_state,
         );
     }
     let commitment = claims
@@ -115,6 +117,7 @@ where
         basis,
         root_lp,
         terminal_final_w_len,
+        next_t_state,
     )
 }
 
@@ -138,6 +141,7 @@ fn verify_root_inner<F, E, T>(
     basis: BasisMode,
     root_lp: &LevelParams,
     terminal_final_w_len: usize,
+    next_t_state: Option<&[u8]>,
 ) -> Result<FoldVerifyOutput<E>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling + HalvingField,
@@ -285,6 +289,7 @@ where
             .as_terminal_root()
             .map(|terminal| terminal.final_witness()),
         next_w_commitment,
+        next_t_state,
         next_ring_dim: matches!(proof, AkitaBatchedRootProof::Fold(_))
             .then_some(next_fold_level_params.role_dims().d_b()),
         next_witness_ring_dim: matches!(proof, AkitaBatchedRootProof::Fold(_))
@@ -334,6 +339,7 @@ fn verify_multi_group_root_inner<F, E, T>(
     basis: BasisMode,
     root_lp: &LevelParams,
     _terminal_final_w_len: usize,
+    next_t_state: Option<&[u8]>,
 ) -> Result<FoldVerifyOutput<E>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling + HalvingField,
@@ -468,6 +474,7 @@ where
         stage2,
         final_witness: None,
         next_w_commitment,
+        next_t_state,
         next_ring_dim: Some(next_fold_level_params.role_dims().d_b()),
         next_witness_ring_dim: Some(next_fold_level_params.role_dims().d_a()),
         next_opening_source_len: w_len / next_witness_ring_dim,

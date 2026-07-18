@@ -19,6 +19,38 @@ fn multi_group_m_row_count_matches_canonical_layout() {
             .unwrap(),
         1 + n_a_final + n_b_final + n_a_pre + n_b_pre
     );
+    assert_eq!(
+        lp.relation_matrix_row_count_for(2, RelationMatrixRowLayout::WithoutCommitmentBlocks,)
+            .unwrap(),
+        1 + n_a_final + n_a_pre
+    );
+}
+
+#[test]
+fn terminal_t_state_layout_has_only_consistency_and_a_rows() {
+    let (lp, batch) = sample_multi_group_root_params();
+    let final_group = batch.root_final_group_index().expect("final group");
+    let n_a_final = lp.a_key.row_len();
+    let n_a_pre = lp.precommitted_groups[0].a_key.row_len();
+    let layout = RelationMatrixRowLayout::WithoutCommitmentBlocks;
+
+    assert_eq!(
+        lp.a_row_range(&batch, final_group, layout).unwrap(),
+        1..1 + n_a_final
+    );
+    assert_eq!(
+        lp.commitment_row_range(&batch, final_group, layout)
+            .unwrap(),
+        1 + n_a_final..1 + n_a_final
+    );
+    assert_eq!(
+        lp.a_row_range(&batch, 0, layout).unwrap(),
+        1 + n_a_final..1 + n_a_final + n_a_pre
+    );
+    assert_eq!(
+        lp.commitment_row_range(&batch, 0, layout).unwrap(),
+        1 + n_a_final + n_a_pre..1 + n_a_final + n_a_pre
+    );
 }
 
 #[test]

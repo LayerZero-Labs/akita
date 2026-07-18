@@ -45,6 +45,11 @@ pub(in crate::protocol::core) struct PreparedFold<F: FieldCore, E: FieldCore> {
     pub(in crate::protocol::core) trace_claim_scales: Option<Vec<E>>,
     pub(in crate::protocol::core) trace_scale: E,
     pub(in crate::protocol::core) row_coefficients: Option<Vec<E>>,
+    /// Canonical suffix-terminal `t` state already bound by the predecessor.
+    /// Root-terminal folds keep this absent and retain their public B rows.
+    pub(in crate::protocol::core) terminal_t_state: Option<RingVec<F>>,
+    /// Per-block terminal `t` rows retained by the predecessor's inner commit.
+    pub(in crate::protocol::core) terminal_recomposed_inner_rows: Option<Vec<RingVec<F>>>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -409,9 +414,13 @@ where
         .map_err(|err| {
             AkitaError::InvalidInput(format!("root opening preparation failed: {err:?}"))
         })?;
-    let commitment = block_claims.fold_commitment(level_params).map_err(|err| {
-        AkitaError::InvalidInput(format!("fold commitment preparation failed: {err:?}"))
-    })?;
+    let commitment = if LevelParams::has_commitment_block(relation_matrix_row_layout) {
+        block_claims.fold_commitment(level_params).map_err(|err| {
+            AkitaError::InvalidInput(format!("fold commitment preparation failed: {err:?}"))
+        })?
+    } else {
+        RingVec::from_coeffs(Vec::new())
+    };
     let (instance, witness) = RingRelationProver::new(
         opening,
         stack.ring_switch(),
@@ -472,6 +481,8 @@ where
         trace_prepared_points: Some(prepared_points),
         trace_claim_scales,
         row_coefficients,
+        terminal_t_state: None,
+        terminal_recomposed_inner_rows: None,
     })
 }
 
@@ -564,6 +575,7 @@ where
         stack.ring_switch(),
         lp,
         is_terminal_fold,
+        prepared_fold.terminal_recomposed_inner_rows.as_deref(),
     )
     .map_err(|err| {
         AkitaError::InvalidInput(format!("ring-switch witness build failed: {err:?}"))
@@ -578,6 +590,7 @@ where
             terminal_artifacts,
             terminal_direct_witness_shape,
             prepared_fold.instance.opening_batch(),
+            prepared_fold.terminal_t_state.as_ref(),
         )
         .map_err(|err| {
             AkitaError::InvalidInput(format!("terminal witness binding failed: {err:?}"))
@@ -594,21 +607,23 @@ where
     };
     scheduled.validate_next_w_len(logical_w.len())?;
     let _span = tracing::info_span!("commit_w_level", level).entered();
-    let next_commitment = Some(crate::commit_w::<Cfg, C>(
+    let next_commitment = crate::commit_w::<Cfg, C>(
         &scheduled.next_params,
         expanded,
         stack.commit(),
         &logical_w,
-    )?);
+        scheduled.next_witness_binding,
+    )?;
     drop(_span);
-    let next_commitment = next_commitment.ok_or_else(|| {
-        AkitaError::InvalidInput("intermediate fold missing next commitment".to_string())
-    })?;
-    transcript.append_serde(
-        ABSORB_NEXT_LEVEL_WITNESS_BINDING,
-        &next_commitment.commitment,
-    );
-    let next_commitment = Some(next_commitment);
+    match &next_commitment.binding {
+        NextWitnessState::OuterCommitment(commitment) => {
+            transcript.append_serde(ABSORB_NEXT_LEVEL_WITNESS_BINDING, commitment);
+        }
+        NextWitnessState::TerminalInnerState { t_state, .. } => {
+            let bytes = akita_types::raw_field_segment_bytes(t_state)?;
+            transcript.absorb_and_record_bytes(ABSORB_NEXT_LEVEL_WITNESS_BINDING, &bytes);
+        }
+    }
     let relation_matrix_row_layout = RelationMatrixRowLayout::WithDBlock;
     let next_opening_ring_dim = scheduled.next_params.d_a();
     if !logical_w.len().is_multiple_of(next_opening_ring_dim) {
@@ -801,14 +816,27 @@ where
     let stage1_proof = stage1_proof.ok_or_else(|| {
         AkitaError::InvalidInput("intermediate fold missing stage-1 proof".to_string())
     })?;
-    let NextWitnessCommitment {
+    let NextWitnessStateOutput {
         witness: packed_witness,
-        commitment: committed_commitment,
+        binding,
         hint: committed_hint,
-    } = next_commitment.ok_or_else(|| {
-        AkitaError::InvalidInput("intermediate fold did not bind a next commitment".to_string())
-    })?;
-    let w_commitment_proof = committed_commitment.clone();
+    } = next_commitment;
+    let (proof_binding, next_binding) = match binding {
+        NextWitnessState::OuterCommitment(commitment) => (
+            akita_types::NextWitnessBinding::OuterCommitment(commitment.clone().into_compact()),
+            NextWitnessState::OuterCommitment(commitment),
+        ),
+        NextWitnessState::TerminalInnerState {
+            t_state,
+            recomposed_inner_rows,
+        } => (
+            akita_types::NextWitnessBinding::TerminalInnerState,
+            NextWitnessState::TerminalInnerState {
+                t_state,
+                recomposed_inner_rows,
+            },
+        ),
+    };
     let level_proof = AkitaLevelProof::Intermediate {
         extension_opening_reduction: prepared_fold.extension_opening_reduction,
         v: prepared_fold.instance.v().clone().into_compact(),
@@ -816,7 +844,7 @@ where
         stage1: stage1_proof,
         stage2: AkitaStage2Proof {
             sumcheck_proof: stage2_sumcheck_proof,
-            next_w_commitment: w_commitment_proof.into_compact(),
+            next_witness_binding: proof_binding,
             next_w_eval: proof_w_eval,
         },
         stage3_sumcheck_proof,
@@ -832,7 +860,7 @@ where
         next_state: SuffixProverState {
             w: committed_witness,
             logical_w,
-            commitment: committed_commitment,
+            binding: next_binding,
             hint: committed_hint,
             log_basis: scheduled.next_params.log_basis,
             sumcheck_challenges: next_opening_point,
@@ -849,6 +877,7 @@ pub(in crate::protocol::core) fn bind_terminal_witness<F, T>(
     artifacts: RingSwitchTerminalArtifacts<F>,
     terminal_direct_witness_shape: Option<&CleartextWitnessShape>,
     opening_batch: &OpeningClaimsLayout,
+    bound_t_state: Option<&RingVec<F>>,
 ) -> Result<CleartextWitnessProof<F>, AkitaError>
 where
     F: FieldCore + CanonicalField + HalvingField + AkitaSerialize,
@@ -897,7 +926,15 @@ where
         ));
     }
     let parts = segment.terminal_transcript_parts()?;
-    transcript.absorb_and_record_bytes(ABSORB_TERMINAL_W_REMAINDER, &parts.remainder);
+    let response = if let Some(bound_t_state) = bound_t_state {
+        if segment.t_fields.coeffs() != bound_t_state.coeffs() {
+            return Err(AkitaError::InvalidProof);
+        }
+        parts.response
+    } else {
+        parts.outer_committed_response()
+    };
+    transcript.absorb_and_record_bytes(ABSORB_TERMINAL_W_REMAINDER, &response);
     Ok(CleartextWitnessProof::SegmentTyped(segment))
 }
 

@@ -156,7 +156,15 @@ fn walk_scalar_generated_schedule_entry(
                     )?;
                     let len = shape.logical_num_elems();
                     terminal_witness_field_len = Some(len);
-                    (len, None, RelationMatrixRowLayout::WithoutDBlock)
+                    (
+                        len,
+                        None,
+                        if fold_level == 0 {
+                            RelationMatrixRowLayout::WithoutDBlock
+                        } else {
+                            RelationMatrixRowLayout::WithoutCommitmentBlocks
+                        },
+                    )
                 } else {
                     let len = planned_next_witness_len(
                         field_bits,
@@ -189,8 +197,14 @@ fn walk_scalar_generated_schedule_entry(
                     &lp,
                     next_lp.as_ref(),
                     next_w_len,
-                    1,
                     layout,
+                    if is_terminal {
+                        akita_types::NextWitnessBindingPolicy::TerminalCleartextWitness
+                    } else if matches!(entry.steps.get(idx + 2), Some(GeneratedStep::Direct(_))) {
+                        akita_types::NextWitnessBindingPolicy::TerminalInnerState
+                    } else {
+                        akita_types::NextWitnessBindingPolicy::OuterCommitment
+                    },
                 )
                 .checked_add(extension_opening_reduction_level_bytes(
                     challenge_field_bits,
@@ -419,7 +433,15 @@ fn walk_multi_group_generated_schedule_entry(
                     )?;
                     let len = shape.logical_num_elems();
                     terminal_witness_field_len = Some(len);
-                    (len, None, RelationMatrixRowLayout::WithoutDBlock)
+                    (
+                        len,
+                        None,
+                        if fold_level == 0 {
+                            RelationMatrixRowLayout::WithoutDBlock
+                        } else {
+                            RelationMatrixRowLayout::WithoutCommitmentBlocks
+                        },
+                    )
                 } else {
                     let len = if fold_level == 0 {
                         let opening_batch = key.opening_layout()?;
@@ -460,8 +482,14 @@ fn walk_multi_group_generated_schedule_entry(
                     &lp,
                     next_lp.as_ref(),
                     next_w_len,
-                    1,
                     layout,
+                    if is_terminal {
+                        akita_types::NextWitnessBindingPolicy::TerminalCleartextWitness
+                    } else if matches!(entry.steps.get(idx + 2), Some(GeneratedStep::Direct(_))) {
+                        akita_types::NextWitnessBindingPolicy::TerminalInnerState
+                    } else {
+                        akita_types::NextWitnessBindingPolicy::OuterCommitment
+                    },
                 )
                 .checked_add(extension_opening_reduction_level_bytes(
                     challenge_field_bits,

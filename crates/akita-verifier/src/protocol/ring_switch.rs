@@ -8,15 +8,13 @@ use akita_field::{
     AkitaError, CanonicalField, FieldCore, FromPrimitiveInt, MulBase, MulBaseUnreduced,
     RandomSampling,
 };
-use akita_transcript::labels::{
-    ABSORB_NEXT_LEVEL_WITNESS_BINDING, CHALLENGE_RING_SWITCH, CHALLENGE_TAU0, CHALLENGE_TAU1,
-};
+use akita_transcript::labels::{CHALLENGE_RING_SWITCH, CHALLENGE_TAU0, CHALLENGE_TAU1};
 use akita_transcript::{sample_ext_challenge, Transcript};
 use akita_types::{
     eval_relation_weight_at_point, gadget_row_scalars, r_decomp_levels, shared_setup_fold_gadget,
     validate_role_dispatch, AkitaExpandedSetup, CommitmentRingDims, FpExtEncoding, LevelParams,
     OpeningClaimsLayout, RelationMatrixRowLayout, RingMultiplierOpeningPoint, RingRelationInstance,
-    RingRole, RingVec, SetupContributionGroupInputs, SetupContributionPlan, WitnessLayout,
+    RingRole, SetupContributionGroupInputs, SetupContributionPlan, WitnessLayout,
     WitnessUnitLayout,
 };
 use std::sync::Arc;
@@ -128,56 +126,16 @@ pub struct RingSwitchReplay<'a, F: FieldCore, E> {
     pub opening_ring_dim: usize,
 }
 
-/// Replay the verifier half of ring switching.
-///
-/// This handles the single-point relation replay for one committed polynomial
-/// bundle.
-///
-/// # Errors
-///
-/// Returns an error if the claim shape is invalid, opening-point routing is
-/// inconsistent, transcript-bound challenge data has the wrong size, or ring-switch row-eval
-/// preparation fails.
+/// Replay the verifier half of ring switching after the caller has absorbed
+/// the schedule-selected outgoing witness binding.
 #[tracing::instrument(skip_all, name = "ring_switch_verifier")]
 #[inline(never)]
 pub(crate) fn ring_switch_verifier<F, E, T, const D: usize>(
     replay: &RingSwitchReplay<'_, F, E>,
     w_len: usize,
-    w_commitment: &RingVec<F>,
-    next_ring_dim: usize,
-    transcript: &mut T,
-) -> Result<RingSwitchVerifyOutput<E>, AkitaError>
-where
-    F: FieldCore + CanonicalField + RandomSampling,
-    E: FpExtEncoding<F> + FromPrimitiveInt + MulBaseUnreduced<F>,
-    T: Transcript<F>,
-{
-    // `validate_ring_dispatch` is called inside `ring_switch_verifier_core`;
-    // the outer wrapper just performs the witness absorb before delegating.
-    // The next-witness commitment is shaped at the *next* level's schedule
-    // ring dimension, which may differ from this level's dispatch `D` in
-    // mixed-D schedules.
-    if next_ring_dim == 0 || !w_commitment.can_decode_vec(next_ring_dim) {
-        return Err(AkitaError::InvalidProof);
-    }
-    transcript.absorb_and_record_serde(ABSORB_NEXT_LEVEL_WITNESS_BINDING, w_commitment);
-    ring_switch_verifier_core::<F, E, T, D>(
-        replay,
-        w_len,
-        transcript,
-        RelationMatrixRowLayout::WithDBlock,
-    )?
-    .into_intermediate()
-}
-
-#[tracing::instrument(skip_all, name = "ring_switch_verifier_core")]
-#[inline(never)]
-fn ring_switch_verifier_core<F, E, T, const D: usize>(
-    replay: &RingSwitchReplay<'_, F, E>,
-    w_len: usize,
     transcript: &mut T,
     relation_matrix_row_layout: RelationMatrixRowLayout,
-) -> Result<RingSwitchVerifyCoreOutput<E>, AkitaError>
+) -> Result<RingSwitchVerifyOutput<E>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling,
     E: FpExtEncoding<F> + FromPrimitiveInt + MulBaseUnreduced<F>,
@@ -255,7 +213,8 @@ where
                 .map(|_| sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_TAU0))
                 .collect(),
         ),
-        RelationMatrixRowLayout::WithoutDBlock => None,
+        RelationMatrixRowLayout::WithoutDBlock
+        | RelationMatrixRowLayout::WithoutCommitmentBlocks => None,
     };
     let tau1: Vec<E> = (0..num_i)
         .map(|_| sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_TAU1))
@@ -265,7 +224,7 @@ where
     }
     let relation_matrix_evaluator =
         prepare_relation_matrix_evaluator::<F, E, D>(replay, alpha, &tau1, Some(num_ring_elems))?;
-    Ok(RingSwitchVerifyCoreOutput {
+    RingSwitchVerifyCoreOutput {
         relation_matrix_evaluator,
         col_bits,
         ring_bits,
@@ -275,7 +234,8 @@ where
             .checked_shl(lp.log_basis)
             .ok_or_else(|| AkitaError::InvalidSetup("basis size overflow".to_string()))?,
         alpha,
-    })
+    }
+    .into_intermediate()
 }
 
 /// Prepare relation-matrix evaluator state from a fixed
