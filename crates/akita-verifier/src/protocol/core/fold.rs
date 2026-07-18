@@ -626,7 +626,7 @@ where
         stage1.s_claim,
         witness_eval,
         stage1.stage1_point,
-        rs.relation_matrix_evaluator.clone(),
+        &rs.relation_matrix_evaluator,
         &setup.expanded,
         relation_instance,
         rs.alpha,
@@ -727,7 +727,7 @@ where
         d_b = role_dims.d_b(),
         d_d = role_dims.d_d(),
         groups = num_groups,
-        terminal = prepared.final_witness.is_some()
+        terminal = matches!(&prepared.payload, PreparedFoldPayload::Terminal { .. })
     )
     .entered();
     dispatch_for_field!(

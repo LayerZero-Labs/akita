@@ -7,6 +7,10 @@
 #[cfg(feature = "parallel")]
 pub use rayon::prelude::*;
 
+#[doc(hidden)]
+#[cfg(feature = "parallel")]
+pub use rayon::join as __rayon_join;
+
 /// Returns `.par_iter()` when `parallel` is enabled, `.iter()` otherwise.
 #[macro_export]
 macro_rules! cfg_iter {
@@ -74,7 +78,7 @@ macro_rules! cfg_chunks_mut {
 macro_rules! cfg_join {
     ($f_a:expr, $f_b:expr) => {{
         #[cfg(feature = "parallel")]
-        let result = rayon::join($f_a, $f_b);
+        let result = $crate::parallel::__rayon_join($f_a, $f_b);
         #[cfg(not(feature = "parallel"))]
         let result = ($f_a(), $f_b());
         result

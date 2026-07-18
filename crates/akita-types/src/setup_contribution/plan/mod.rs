@@ -33,7 +33,7 @@ pub use types::{SetupContributionGroupInputs, SetupContributionPlan};
 
 use super::geometry::SetupProjectionGroupGeometry;
 use super::weights::{setup_e_col_weights, setup_t_col_weights, setup_z_col_weights};
-use super::{checked_slice, push_role_boundaries, SetupProjectionGeometry};
+use super::{checked_slice, SetupProjectionGeometry};
 use crate::dispatch_for_field;
 use crate::layout::{CommitmentRingDims, LevelParams, RelationMatrixRowLayout, RingMatrixView};
 use crate::proof::AkitaExpandedSetup;
@@ -44,8 +44,6 @@ use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, MulBase, MulB
 #[cfg(test)]
 use kernels::evaluate_weighted_setup_row;
 use kernels::{
-    base_ring_segment_inner_sum_typed, dispatch_segment_roles,
-    identity_base_ring_segment_inner_sum_typed, role_projection, GroupSetupSegment,
-    ProjectedRoleWeights, RoleProjection,
+    base_ring_segment_inner_sum_typed, dispatch_segment_roles, role_projection, GroupSetupSegment,
+    RoleProjection,
 };
-use segments::build_packed_segments;

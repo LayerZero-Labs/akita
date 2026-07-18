@@ -217,12 +217,14 @@ where
     if rhs.len() != num_cols {
         return Err(AkitaError::InvalidProof);
     }
-    let actual_bound = rhs
-        .iter()
-        .flatten()
-        .map(|&value| value.unsigned_abs())
-        .max()
-        .unwrap_or(0);
+    let actual_bound = {
+        let _span = tracing::info_span!("terminal_ntt_a_bound_scan", columns = rhs.len()).entered();
+        rhs.iter()
+            .flatten()
+            .map(|&value| value.unsigned_abs())
+            .max()
+            .unwrap_or(0)
+    };
     if actual_bound == 0 {
         return Ok(vec![CyclotomicRing::zero(); num_rows]);
     }
@@ -243,6 +245,12 @@ where
     if centered_chunks <= balanced_planes.max(1) {
         if let Some(chunk_width) = centered_safe {
             if let Some(centered) = try_centered_i32(rhs) {
+                let _span = tracing::info_span!(
+                    "terminal_ntt_a_centered_i32",
+                    chunk_width,
+                    chunks = centered_chunks
+                )
+                .entered();
                 return centered_i32::<F, W, K, D>(
                     flat,
                     num_rows,
@@ -256,6 +264,8 @@ where
         }
     }
 
+    let _span =
+        tracing::info_span!("terminal_ntt_a_balanced_planes", planes = balanced_planes).entered();
     let planes = balanced_i64_planes(rhs);
     let mut out = vec![CyclotomicRing::<F, D>::zero(); num_rows];
     let mut scale = F::one();
@@ -296,7 +306,11 @@ where
             "verifier A cache prefix is undersized".into(),
         ));
     }
-    let slot = setup.prepared_verifier_ntt_prefix::<D>(prepared_prefix_len)?;
+    let slot = {
+        let _span = tracing::info_span!("terminal_ntt_a_cache_lookup").entered();
+        setup.prepared_verifier_ntt_prefix::<D>(prepared_prefix_len)?
+    };
+    let _span = tracing::info_span!("terminal_ntt_a_accumulate").entered();
     match slot.as_d::<D>()? {
         PreparedNttSlot::Q32 { neg, params, .. } => {
             accumulate_centered_i64(neg, num_rows, rhs.len(), rhs, params)

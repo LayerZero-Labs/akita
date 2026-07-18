@@ -21,6 +21,7 @@ pub struct SetupIndexWeightEvaluator<E> {
     x_challenges: Vec<E>,
     level_params: LevelParams,
     opening_batch: OpeningClaimsLayout,
+    relation_matrix_row_layout: RelationMatrixRowLayout,
     witness_layout: WitnessLayout,
     opening_source_len: usize,
     groups: Vec<SetupContributionGroupInputs>,
@@ -102,6 +103,7 @@ impl<E: FieldCore> SetupIndexWeightEvaluator<E> {
             x_challenges: x_challenges.to_vec(),
             level_params: level_params.clone(),
             opening_batch: opening_batch.clone(),
+            relation_matrix_row_layout,
             witness_layout: witness_layout.clone(),
             opening_source_len,
             groups: groups.to_vec(),
@@ -242,7 +244,11 @@ impl<E: FieldCore> SetupIndexWeightEvaluator<E> {
         let num_live_blocks = group.num_live_blocks(&self.level_params, &self.opening_batch)?;
         let depth_open = group.depth_open(&self.level_params, &self.opening_batch)?;
         let n_a = group.n_a(&self.level_params, &self.opening_batch)?;
-        let n_b = group.n_b(&self.level_params, &self.opening_batch)?;
+        let n_b = group.n_b(
+            &self.level_params,
+            &self.opening_batch,
+            self.relation_matrix_row_layout,
+        )?;
         if n_b == 0 {
             return Ok(E::zero());
         }

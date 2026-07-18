@@ -619,23 +619,6 @@ pub(crate) fn setup_contribution_group_inputs<F: FieldCore>(
         .collect()
 }
 
-struct SetupContributionEqCache<F> {
-    fold_gadget: Option<Vec<F>>,
-}
-
-fn precompute_setup_contribution_eq_cache<F>(
-    level_params: &LevelParams,
-    opening_batch: &OpeningClaimsLayout,
-    groups: &[SetupContributionGroupInputs],
-) -> SetupContributionEqCache<F>
-where
-    F: FieldCore + CanonicalField,
-{
-    SetupContributionEqCache {
-        fold_gadget: shared_setup_fold_gadget(level_params, opening_batch, groups),
-    }
-}
-
 impl<E: FieldCore> RelationMatrixEvaluator<E> {
     /// Evaluate the canonical relation weights directly in the flattened
     /// opening domain, without materializing its padded Boolean suffix.
@@ -820,12 +803,11 @@ impl<E: FieldCore> RelationMatrixEvaluator<E> {
         let mut t_structured_contribution = E::zero();
         let mut z_structured_contribution = E::zero();
         let setup_groups = self.setup_contribution_inputs();
-        let setup_eq_cache = precompute_setup_contribution_eq_cache::<F>(
+        let setup_fold_gadget = shared_setup_fold_gadget::<F>(
             &context.level_params,
             &context.opening_batch,
             &setup_groups,
         );
-        let setup_fold_gadget = setup_eq_cache.fold_gadget;
 
         // In direct setup mode, build the setup-contribution plan up front. Its
         // prepared Z equality slice (`z_eq_slice`, built in parallel and already

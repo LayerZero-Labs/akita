@@ -19,7 +19,7 @@ pub(crate) struct AkitaStage2Verifier<'a, F: FieldCore, E: FieldCore, const D: u
     s_claim: E,
     witness_eval: E,
     stage1_point: Vec<E>,
-    relation_matrix_evaluator: RelationMatrixEvaluator<E>,
+    relation_matrix_evaluator: &'a RelationMatrixEvaluator<E>,
     setup_claim: Option<E>,
     setup: &'a AkitaExpandedSetup<F>,
     relation_instance: &'a RingRelationInstance<F>,
@@ -45,7 +45,7 @@ where
         s_claim: E,
         witness_eval: E,
         stage1_point: Vec<E>,
-        relation_matrix_evaluator: RelationMatrixEvaluator<E>,
+        relation_matrix_evaluator: &'a RelationMatrixEvaluator<E>,
         setup: &'a AkitaExpandedSetup<F>,
         relation_instance: &'a RingRelationInstance<F>,
         alpha: E,
@@ -81,10 +81,6 @@ where
             _marker: PhantomData,
         })
     }
-
-    fn witness_eval(&self, _challenges: &[E]) -> Result<E, AkitaError> {
-        Ok(self.witness_eval)
-    }
 }
 
 impl<'a, F, E, const D: usize> SumcheckInstanceVerifier<E> for AkitaStage2Verifier<'a, F, E, D>
@@ -112,7 +108,7 @@ where
     fn expected_output_claim(&self, challenges: &[E]) -> Result<E, AkitaError> {
         let w_eval = {
             let _span = tracing::info_span!("stage2_witness_eval").entered();
-            self.witness_eval(challenges)?
+            self.witness_eval
         };
 
         let (y_challenges, x_challenges) = challenges.split_at(self.ring_bits);

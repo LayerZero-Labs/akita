@@ -20,19 +20,54 @@ pub(crate) fn setup_e_col_weights<E: FieldCore>(
         depth_open,
         "setup D columns overflow",
     )?;
-    cfg_into_iter!(0..e_cols)
-        .map(|local_col| {
-            let digit = local_col % depth_open;
-            let block_claim = local_col / depth_open;
-            let block = block_claim % num_live_blocks;
-            let claim = block_claim / num_live_blocks;
-            let unit = layout.unit_for_block(group_id, block)?;
-            let witness_index = unit.e_index(num_claims, depth_open, claim, block, digit)?;
-            let opening_index =
-                crate::checked_opening_source_index(opening_source_len, witness_index)?;
-            Ok(eq_window.eval(opening_index))
-        })
-        .collect()
+    let units = layout.units_for_group(group_id)?;
+    let mut weights = vec![E::zero(); e_cols];
+    for claim in 0..num_claims {
+        for unit in &units {
+            let unit_width = unit
+                .num_live_blocks()
+                .checked_mul(depth_open)
+                .ok_or_else(|| AkitaError::InvalidSetup("witness E unit width overflow".into()))?;
+            let expected = num_claims
+                .checked_mul(unit_width)
+                .ok_or_else(|| AkitaError::InvalidSetup("witness E shape overflow".into()))?;
+            let source_range = unit.e_range();
+            if source_range.len() != expected {
+                return Err(AkitaError::InvalidSetup(
+                    "witness E shape disagrees with resolved range".into(),
+                ));
+            }
+            let source_start = source_range
+                .start
+                .checked_add(claim.checked_mul(unit_width).ok_or_else(|| {
+                    AkitaError::InvalidSetup("witness E claim offset overflow".into())
+                })?)
+                .ok_or_else(|| AkitaError::InvalidSetup("witness E source overflow".into()))?;
+            let source_end = source_start
+                .checked_add(unit_width)
+                .ok_or_else(|| AkitaError::InvalidSetup("witness E source overflow".into()))?;
+            if source_end > source_range.end || source_end > opening_source_len {
+                return Err(AkitaError::InvalidInput(
+                    "physical opening interval out of range".into(),
+                ));
+            }
+            let block_claim = claim
+                .checked_mul(num_live_blocks)
+                .and_then(|base| base.checked_add(unit.global_block_start()))
+                .ok_or_else(|| AkitaError::InvalidSetup("setup D destination overflow".into()))?;
+            let destination_start = block_claim
+                .checked_mul(depth_open)
+                .ok_or_else(|| AkitaError::InvalidSetup("setup D destination overflow".into()))?;
+            let destination_end = destination_start
+                .checked_add(unit_width)
+                .ok_or_else(|| AkitaError::InvalidSetup("setup D destination overflow".into()))?;
+            let destination = weights
+                .get_mut(destination_start..destination_end)
+                .ok_or(AkitaError::InvalidProof)?;
+            eq_window.fill_interval(source_start, destination)?;
+        }
+    }
+    Ok(weights)
 }
 
 /// Canonical B-role column weights in `(claim, block, A_row, opening_digit)` order.
@@ -44,48 +79,68 @@ pub(crate) fn setup_t_col_weights<E: FieldCore>(
     num_live_blocks: usize,
     depth_open: usize,
     n_a: usize,
-    vector_width: usize,
-    num_vectors: usize,
-    active_vectors: usize,
-    vector_base: usize,
+    num_claims: usize,
     eq_window: &OffsetEqWindow<E>,
 ) -> Result<Vec<E>, AkitaError> {
-    let expected_vector_width = checked_mul3(
+    let vector_width = checked_mul3(
         num_live_blocks,
         n_a,
         depth_open,
         "setup B columns per vector overflow",
     )?;
-    if vector_width != expected_vector_width {
-        return Err(AkitaError::InvalidSize {
-            expected: expected_vector_width,
-            actual: vector_width,
-        });
-    }
-    let num_t_columns = num_vectors
+    let num_t_columns = num_claims
         .checked_mul(vector_width)
         .ok_or_else(|| AkitaError::InvalidSetup("setup B width overflow".into()))?;
-    cfg_into_iter!(0..num_t_columns)
-        .map(|local_col| {
-            let vector = local_col / vector_width;
-            if vector >= active_vectors {
-                return Ok(E::zero());
+    let units = layout.units_for_group(group_id)?;
+    let mut weights = vec![E::zero(); num_t_columns];
+    for claim in 0..num_claims {
+        for unit in &units {
+            let unit_width = unit
+                .num_live_blocks()
+                .checked_mul(n_a)
+                .and_then(|width| width.checked_mul(depth_open))
+                .ok_or_else(|| AkitaError::InvalidSetup("witness T unit width overflow".into()))?;
+            let expected = num_claims
+                .checked_mul(unit_width)
+                .ok_or_else(|| AkitaError::InvalidSetup("witness T shape overflow".into()))?;
+            let source_range = unit.t_range();
+            if source_range.len() != expected {
+                return Err(AkitaError::InvalidSetup(
+                    "witness T shape disagrees with resolved range".into(),
+                ));
             }
-            let digit = local_col % depth_open;
-            let rest = local_col / depth_open;
-            let a_row = rest % n_a;
-            let block = (rest / n_a) % num_live_blocks;
-            let claim = vector_base
-                .checked_add(vector)
-                .ok_or_else(|| AkitaError::InvalidSetup("setup B claim index overflow".into()))?;
-            let unit = layout.unit_for_block(group_id, block)?;
-            let witness_index =
-                unit.t_index(num_vectors, n_a, depth_open, claim, block, a_row, digit)?;
-            let opening_index =
-                crate::checked_opening_source_index(opening_source_len, witness_index)?;
-            Ok(eq_window.eval(opening_index))
-        })
-        .collect()
+            let source_start = source_range
+                .start
+                .checked_add(claim.checked_mul(unit_width).ok_or_else(|| {
+                    AkitaError::InvalidSetup("witness T claim offset overflow".into())
+                })?)
+                .ok_or_else(|| AkitaError::InvalidSetup("witness T source overflow".into()))?;
+            let source_end = source_start
+                .checked_add(unit_width)
+                .ok_or_else(|| AkitaError::InvalidSetup("witness T source overflow".into()))?;
+            if source_end > source_range.end || source_end > opening_source_len {
+                return Err(AkitaError::InvalidInput(
+                    "physical opening interval out of range".into(),
+                ));
+            }
+            let block_claim = claim
+                .checked_mul(num_live_blocks)
+                .and_then(|base| base.checked_add(unit.global_block_start()))
+                .ok_or_else(|| AkitaError::InvalidSetup("setup B destination overflow".into()))?;
+            let destination_start = block_claim
+                .checked_mul(n_a)
+                .and_then(|base| base.checked_mul(depth_open))
+                .ok_or_else(|| AkitaError::InvalidSetup("setup B destination overflow".into()))?;
+            let destination_end = destination_start
+                .checked_add(unit_width)
+                .ok_or_else(|| AkitaError::InvalidSetup("setup B destination overflow".into()))?;
+            let destination = weights
+                .get_mut(destination_start..destination_end)
+                .ok_or(AkitaError::InvalidProof)?;
+            eq_window.fill_interval(source_start, destination)?;
+        }
+    }
+    Ok(weights)
 }
 
 /// Canonical A-role column weights in `(position, commit_digit)` order.

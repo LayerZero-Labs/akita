@@ -265,7 +265,14 @@ fn finalize_test_plan(
     };
     for group in &mut plan.groups {
         group
-            .refresh_segments(&plan.d_weights, plan.d_rows, plan.d_physical_cols)
+            .refresh_segments(
+                &plan.d_weights,
+                plan.d_rows,
+                plan.d_physical_cols,
+                plan.projection_geometry.a_ratio(),
+                plan.projection_geometry.b_ratio(),
+                plan.projection_geometry.d_ratio(),
+            )
             .expect("valid cached setup scan segments");
     }
     plan

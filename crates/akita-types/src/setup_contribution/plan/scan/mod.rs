@@ -87,7 +87,15 @@ impl<E: FieldCore> SetupContributionPlan<E> {
             "setup_contribution_scan",
             required = self.projection_geometry.required(),
             groups = self.groups.len(),
-            base_d = BASE_D
+            jobs = self
+                .groups
+                .iter()
+                .map(|group| group.segments.len())
+                .sum::<usize>(),
+            base_d = BASE_D,
+            a_ratio = self.projection_geometry.a_ratio(),
+            b_ratio = self.projection_geometry.b_ratio(),
+            d_ratio = self.projection_geometry.d_ratio()
         )
         .entered();
         if base_pows.len() != BASE_D {

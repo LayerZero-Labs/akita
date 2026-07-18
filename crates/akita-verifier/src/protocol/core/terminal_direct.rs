@@ -2,14 +2,14 @@
 
 use akita_algebra::CyclotomicRing;
 use akita_challenges::{Challenges, SparseChallenge};
+use akita_field::parallel::*;
 use akita_field::{
     AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, HalvingField,
 };
 use akita_types::{
     decode_terminal_z_golomb_payload_with_cap, dispatch_for_field,
     recover_ring_subfield_inner_product, AkitaVerifierSetup, CleartextWitnessProof, FpExtEncoding,
-    LevelParams, LevelParamsLike, PreparedOpeningPoint, RelationMatrixRowLayout,
-    RingRelationInstance,
+    LevelParams, PreparedOpeningPoint, RelationMatrixRowLayout, RingRelationInstance,
 };
 
 fn sparse_challenge_ring<F, const D: usize>(
@@ -70,36 +70,12 @@ where
         }))
 }
 
-fn decode_rings<F, const D: usize>(coeffs: &[F]) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>
-where
-    F: FieldCore,
-{
-    if !coeffs.len().is_multiple_of(D) {
-        return Err(AkitaError::InvalidProof);
-    }
-    Ok(coeffs
-        .chunks_exact(D)
-        .map(CyclotomicRing::from_slice)
-        .collect())
-}
-
-fn decode_centered_rings<F, const D: usize>(
-    coeffs: &[i64],
-) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>
+#[inline]
+fn centered_ring<F, const D: usize>(coeffs: &[i64; D]) -> CyclotomicRing<F, D>
 where
     F: FieldCore + FromPrimitiveInt,
 {
-    if !coeffs.len().is_multiple_of(D) {
-        return Err(AkitaError::InvalidProof);
-    }
-    Ok(coeffs
-        .chunks_exact(D)
-        .map(|chunk| {
-            CyclotomicRing::from_coefficients(std::array::from_fn(|index| {
-                F::from_i64(chunk[index])
-            }))
-        })
-        .collect())
+    CyclotomicRing::from_coefficients(std::array::from_fn(|index| F::from_i64(coeffs[index])))
 }
 
 #[tracing::instrument(skip_all, name = "terminal_direct_a_rows")]
@@ -108,31 +84,49 @@ fn check_a_rows<F, const D: usize>(
     t: &[CyclotomicRing<F, D>],
     z: &[[i64; D]],
     challenges: &[CyclotomicRing<F, D>],
-    params: &dyn LevelParamsLike,
+    n_a: usize,
+    n_a_cols: usize,
     prepared_prefix_len: usize,
 ) -> Result<(), AkitaError>
 where
     F: FieldCore + CanonicalField + FromPrimitiveInt,
 {
-    let n_a = params.a_rows_len();
     if t.len()
         != challenges
             .len()
             .checked_mul(n_a)
             .ok_or(AkitaError::InvalidProof)?
-        || z.len() != params.a_col_len()
+        || z.len() != n_a_cols
     {
         return Err(AkitaError::InvalidProof);
     }
-    let rhs = super::terminal_ntt::centered_rows(setup, n_a, z, prepared_prefix_len)?;
-    for row_index in 0..n_a {
-        let lhs = challenges
-            .iter()
-            .zip(t.chunks_exact(n_a))
-            .try_fold(CyclotomicRing::zero(), |sum, (challenge, rows)| {
-                Ok::<_, AkitaError>(sum + (*challenge * rows[row_index]))
-            })?;
-        if lhs != *rhs.get(row_index).ok_or(AkitaError::InvalidProof)? {
+    let (rhs, lhs) = cfg_join!(
+        || super::terminal_ntt::centered_rows(setup, n_a, z, prepared_prefix_len),
+        || {
+            let _span = tracing::info_span!(
+                "terminal_direct_a_lhs",
+                rows = n_a,
+                challenges = challenges.len()
+            )
+            .entered();
+            (0..n_a)
+                .map(|row_index| {
+                    challenges.iter().zip(t.chunks_exact(n_a)).try_fold(
+                        CyclotomicRing::zero(),
+                        |sum, (challenge, rows)| {
+                            let row = rows.get(row_index).ok_or(AkitaError::InvalidProof)?;
+                            Ok::<_, AkitaError>(sum + (*challenge * *row))
+                        },
+                    )
+                })
+                .collect::<Result<Vec<_>, AkitaError>>()
+        }
+    );
+    let rhs = rhs?;
+    let lhs = lhs?;
+    let _span = tracing::info_span!("terminal_direct_a_compare", rows = n_a).entered();
+    for (actual, expected) in lhs.iter().zip(&rhs) {
+        if actual != expected {
             return Err(AkitaError::InvalidProof);
         }
     }
@@ -175,6 +169,8 @@ where
         F,
         relation.role_dims().d_a(),
         |D_A| {
+            let e_rings = witness.e_fields.as_ring_slice::<D_A>()?;
+            let t_rings = witness.t_fields.as_ring_slice::<D_A>()?;
             let mut consistency_lhs = CyclotomicRing::<F, D_A>::zero();
             let mut consistency_rhs = CyclotomicRing::<F, D_A>::zero();
             for (layout_index, &group_index) in order.iter().enumerate() {
@@ -216,20 +212,19 @@ where
                         z_coords = group_layout.z_coords
                     )
                     .entered();
-                    let e = decode_rings::<F, D_A>(
-                        witness
-                            .e_fields
-                            .coeffs()
-                            .get(e_offset..e_end)
-                            .ok_or(AkitaError::InvalidProof)?,
-                    )?;
-                    let t = decode_rings::<F, D_A>(
-                        witness
-                            .t_fields
-                            .coeffs()
-                            .get(t_offset..t_end)
-                            .ok_or(AkitaError::InvalidProof)?,
-                    )?;
+                    if !e_offset.is_multiple_of(D_A)
+                        || !e_end.is_multiple_of(D_A)
+                        || !t_offset.is_multiple_of(D_A)
+                        || !t_end.is_multiple_of(D_A)
+                    {
+                        return Err(AkitaError::InvalidProof);
+                    }
+                    let e = e_rings
+                        .get(e_offset / D_A..e_end / D_A)
+                        .ok_or(AkitaError::InvalidProof)?;
+                    let t = t_rings
+                        .get(t_offset / D_A..t_end / D_A)
+                        .ok_or(AkitaError::InvalidProof)?;
                     let cap = lp.fold_witness_linf_cap_for_params(
                         params,
                         num_polynomials,
@@ -247,6 +242,12 @@ where
                     (e, t, z_values)
                 };
                 let z_centered = {
+                    let _span = tracing::info_span!(
+                        "terminal_direct_decode_z_rings",
+                        group_index,
+                        z_coords = z_values.len()
+                    )
+                    .entered();
                     if !z_values.len().is_multiple_of(D_A) {
                         return Err(AkitaError::InvalidProof);
                     }
@@ -256,69 +257,100 @@ where
                     }
                     rings
                 };
-                let z = decode_centered_rings::<F, D_A>(&z_values)?;
-                let challenges = challenge_rings::<F, D_A>(
-                    relation
-                        .group_challenges()
-                        .get(group_index)
-                        .ok_or(AkitaError::InvalidProof)?,
-                )?;
+                let challenges = {
+                    let _span =
+                        tracing::info_span!("terminal_direct_challenges", group_index, num_blocks)
+                            .entered();
+                    challenge_rings::<F, D_A>(
+                        relation
+                            .group_challenges()
+                            .get(group_index)
+                            .ok_or(AkitaError::InvalidProof)?,
+                    )?
+                };
                 let expected_t_len = num_blocks
                     .checked_mul(params.a_rows_len())
                     .ok_or(AkitaError::InvalidProof)?;
                 if e.len() != num_blocks || t.len() != expected_t_len {
                     return Err(AkitaError::InvalidProof);
                 }
-                let (folded, reduced) = {
-                    let _span = tracing::info_span!(
-                        "terminal_direct_consistency",
-                        group_index,
-                        num_blocks,
-                        num_positions = params.num_positions_per_block()
-                    )
-                    .entered();
-                    let multiplier = relation.group_ring_multiplier_point(group_index)?;
-                    let folded = ring_dot(&challenges, &e)?;
-                    let gadget = akita_types::gadget_row_scalars::<F>(
-                        params.num_digits_commit(),
-                        params.log_basis(),
-                    );
-                    let mut reduced = CyclotomicRing::zero();
-                    for position in 0..params.num_positions_per_block() {
-                        let start = position
-                            .checked_mul(params.num_digits_commit())
-                            .ok_or(AkitaError::InvalidProof)?;
-                        let mut z_value = CyclotomicRing::zero();
-                        for digit in 0..params.num_digits_commit() {
-                            let index = start.checked_add(digit).ok_or(AkitaError::InvalidProof)?;
-                            z_value += z
-                                .get(index)
-                                .ok_or(AkitaError::InvalidProof)?
-                                .scale(gadget.get(digit).ok_or(AkitaError::InvalidProof)?);
-                        }
-                        if let Some(scale) = multiplier.position_constant_coeff(position) {
-                            reduced += z_value.scale(&scale);
-                        } else {
-                            reduced += *multiplier
-                                .position_rings_trusted::<D_A>()?
-                                .ok_or(AkitaError::InvalidProof)?
-                                .get(position)
-                                .ok_or(AkitaError::InvalidProof)?
-                                * z_value;
-                        }
+                let n_a = params.a_rows_len();
+                let n_a_cols = params.a_col_len();
+                let num_positions = params.num_positions_per_block();
+                let num_digits_commit = params.num_digits_commit();
+                let log_basis = params.log_basis();
+                let multiplier = relation.group_ring_multiplier_point(group_index)?;
+                let position_rings = multiplier.position_rings_trusted::<D_A>()?;
+                let (consistency, a_rows) = cfg_join!(
+                    || {
+                        let _span = tracing::info_span!(
+                            "terminal_direct_consistency",
+                            group_index,
+                            num_blocks,
+                            num_positions
+                        )
+                        .entered();
+                        let folded = {
+                            let _span = tracing::info_span!(
+                                "terminal_direct_consistency_fold_e",
+                                blocks = challenges.len()
+                            )
+                            .entered();
+                            ring_dot(&challenges, e)?
+                        };
+                        let reduced = {
+                            let _span = tracing::info_span!(
+                                "terminal_direct_consistency_reduce_z",
+                                positions = num_positions,
+                                digits = num_digits_commit
+                            )
+                            .entered();
+                            let gadget =
+                                akita_types::gadget_row_scalars::<F>(num_digits_commit, log_basis);
+                            let mut reduced = CyclotomicRing::zero();
+                            for position in 0..num_positions {
+                                let start = position
+                                    .checked_mul(num_digits_commit)
+                                    .ok_or(AkitaError::InvalidProof)?;
+                                let mut z_value = CyclotomicRing::zero();
+                                for digit in 0..num_digits_commit {
+                                    let index =
+                                        start.checked_add(digit).ok_or(AkitaError::InvalidProof)?;
+                                    z_value += centered_ring::<F, D_A>(
+                                        z_centered.get(index).ok_or(AkitaError::InvalidProof)?,
+                                    )
+                                    .scale(gadget.get(digit).ok_or(AkitaError::InvalidProof)?);
+                                }
+                                if let Some(scale) = multiplier.position_constant_coeff(position) {
+                                    reduced += z_value.scale(&scale);
+                                } else {
+                                    reduced += *position_rings
+                                        .ok_or(AkitaError::InvalidProof)?
+                                        .get(position)
+                                        .ok_or(AkitaError::InvalidProof)?
+                                        * z_value;
+                                }
+                            }
+                            reduced
+                        };
+                        Ok::<_, AkitaError>((folded, reduced))
+                    },
+                    || {
+                        check_a_rows::<F, D_A>(
+                            setup,
+                            t,
+                            z_centered,
+                            &challenges,
+                            n_a,
+                            n_a_cols,
+                            max_a_prefix_len,
+                        )
                     }
-                    (folded, reduced)
-                };
+                );
+                let (folded, reduced) = consistency?;
+                a_rows?;
                 consistency_lhs += folded;
                 consistency_rhs += reduced;
-                check_a_rows::<F, D_A>(
-                    setup,
-                    &t,
-                    z_centered,
-                    &challenges,
-                    params,
-                    max_a_prefix_len,
-                )?;
                 e_offset = e_end;
                 t_offset = t_end;
             }
@@ -366,6 +398,7 @@ where
         F,
         relation.role_dims().d_a(),
         |D| {
+            let e_rings = witness.e_fields.as_ring_slice::<D>()?;
             for (layout_index, &group_index) in order.iter().enumerate() {
                 let params = lp.group_params(relation.opening_batch(), group_index)?;
                 let group_layout = witness
@@ -376,13 +409,12 @@ where
                 let end = e_offset
                     .checked_add(group_layout.e_field_elems)
                     .ok_or(AkitaError::InvalidProof)?;
-                let e = decode_rings::<F, D>(
-                    witness
-                        .e_fields
-                        .coeffs()
-                        .get(e_offset..end)
-                        .ok_or(AkitaError::InvalidProof)?,
-                )?;
+                if !e_offset.is_multiple_of(D) || !end.is_multiple_of(D) {
+                    return Err(AkitaError::InvalidProof);
+                }
+                let e = e_rings
+                    .get(e_offset / D..end / D)
+                    .ok_or(AkitaError::InvalidProof)?;
                 let claim_range = relation
                     .opening_batch()
                     .root_group_claim_range(group_index)?;

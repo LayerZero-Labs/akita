@@ -6,6 +6,7 @@
 //! equality primitive shared by the kernel and direct callers.
 
 use crate::{AkitaError, FieldCore};
+use akita_field::parallel::*;
 use std::collections::BTreeMap;
 
 /// Verifier work cap for one compact-stride equality contraction.
@@ -963,6 +964,20 @@ impl<'a, F: FieldCore> OffsetEqWindow<'a, F> {
             None => eq_eval_at_index(self.high_challenges, high),
         };
         eq_low * eq_high
+    }
+
+    /// Fill a contiguous physical-index interval.
+    ///
+    /// The interval is checked once; individual entries then reuse the same
+    /// bounded equality tables without semantic address reconstruction.
+    pub fn fill_interval(&self, start: usize, output: &mut [F]) -> Result<(), AkitaError> {
+        start
+            .checked_add(output.len())
+            .ok_or_else(|| AkitaError::InvalidInput("equality interval overflow".into()))?;
+        cfg_iter_mut!(output)
+            .enumerate()
+            .for_each(|(offset, value)| *value = self.eval(start + offset));
+        Ok(())
     }
 }
 

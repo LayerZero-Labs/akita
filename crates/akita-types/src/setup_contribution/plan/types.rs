@@ -161,7 +161,7 @@ impl SetupContributionGroupInputs {
             ));
         }
         let n_a = self.n_a_for(level_params, opening_batch)?;
-        let n_b = self.n_b_for(level_params, opening_batch)?;
+        let n_b = self.n_b(level_params, opening_batch, relation_matrix_row_layout)?;
         let a_range =
             level_params.a_row_range(opening_batch, self.group_id, relation_matrix_row_layout)?;
         let b_range = level_params.commitment_row_range(
@@ -200,16 +200,6 @@ impl SetupContributionGroupInputs {
         Ok(self
             .group_params_for(level_params, opening_batch)?
             .a_rows_len())
-    }
-
-    fn n_b_for(
-        &self,
-        level_params: &LevelParams,
-        opening_batch: &OpeningClaimsLayout,
-    ) -> Result<usize, AkitaError> {
-        Ok(self
-            .group_params_for(level_params, opening_batch)?
-            .b_rows_len())
     }
 
     pub(crate) fn num_live_blocks(
@@ -276,10 +266,15 @@ impl SetupContributionGroupInputs {
         &self,
         level_params: &LevelParams,
         opening_batch: &OpeningClaimsLayout,
+        relation_matrix_row_layout: RelationMatrixRowLayout,
     ) -> Result<usize, AkitaError> {
-        Ok(self
-            .group_params_for(level_params, opening_batch)?
-            .b_rows_len())
+        if LevelParams::has_commitment_block(relation_matrix_row_layout) {
+            Ok(self
+                .group_params_for(level_params, opening_batch)?
+                .b_rows_len())
+        } else {
+            Ok(0)
+        }
     }
 
     pub(crate) fn t_vector_width(

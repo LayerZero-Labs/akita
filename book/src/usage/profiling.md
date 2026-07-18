@@ -6,11 +6,20 @@ traces, and the CI benchmark matrix.
 ## Canonical command
 
 ```bash
-AKITA_MODE=onehot_fp128_d64 AKITA_NUM_VARS=32 cargo run --release --example profile
+AKITA_MODE=onehot_fp128_d64 AKITA_NUM_VARS=32 \
+  cargo run --release --no-default-features \
+  --features parallel,profile-onehot-fp128-d64 --example profile
 ```
 
 Run from `crates/akita-pcs/`. The harness refuses debug builds unless
 `AKITA_ALLOW_DEBUG_PROFILE=1`.
+
+Always use the feature-pruned command above when profiling this path or
+measuring its binary size/codegen time. An unpruned default-feature build of
+the `profile` example retains every locally supported profile mode; it is a
+multi-mode developer artifact, not a like-for-like onehot fp128/D64 binary.
+Mixing the two build surfaces can roughly double the example binary and make a
+normal release link look like a verifier regression.
 
 ## Presets and ring degrees
 
@@ -43,7 +52,13 @@ Compare ring degrees with
 | `RAYON_NUM_THREADS` | Rayon default | Fallback when profile thread vars are unset |
 
 Implementation: `crates/akita-pcs/examples/profile/main.rs`.
-Disable parallel: `cargo run --no-default-features --release --example profile`.
+Disable parallel while retaining the same pruned workload:
+
+```bash
+AKITA_MODE=onehot_fp128_d64 AKITA_NUM_VARS=32 \
+  cargo run --release --no-default-features \
+  --features profile-onehot-fp128-d64 --example profile
+```
 
 ## CI benchmark matrix
 
