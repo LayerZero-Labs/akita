@@ -721,6 +721,15 @@ where
     let num_groups = opening_shape.num_groups();
     let commitment_rows = &prepared.commitment_rows;
     let role_dims = prepared.lp.role_dims();
+    let _fold_span = tracing::info_span!(
+        "verify_fold",
+        d_a = role_dims.d_a(),
+        d_b = role_dims.d_b(),
+        d_d = role_dims.d_d(),
+        groups = num_groups,
+        terminal = prepared.final_witness.is_some()
+    )
+    .entered();
     dispatch_for_field!(
         ProtocolDispatchSlot::Role(RingRole::Outer),
         F,
@@ -809,10 +818,13 @@ where
                 {
                     return Err(AkitaError::InvalidProof);
                 }
-                transcript.absorb_and_record_bytes(
-                    ABSORB_TERMINAL_W_REMAINDER,
-                    &terminal_replay.response,
-                );
+                {
+                    let _span = tracing::info_span!("terminal_transcript_absorb").entered();
+                    transcript.absorb_and_record_bytes(
+                        ABSORB_TERMINAL_W_REMAINDER,
+                        &terminal_replay.response,
+                    );
+                }
                 super::terminal_direct::verify_terminal_ring_relations(
                     setup,
                     &relation_instance,

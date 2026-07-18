@@ -280,6 +280,14 @@ pub(super) fn centered_rows<F, const D: usize>(
 where
     F: FieldCore + CanonicalField + FromPrimitiveInt,
 {
+    let _span = tracing::info_span!(
+        "terminal_ntt_a_product",
+        ring_d = D,
+        num_rows,
+        num_cols = rhs.len(),
+        prepared_prefix_len
+    )
+    .entered();
     let required = num_rows
         .checked_mul(rhs.len())
         .ok_or(AkitaError::InvalidProof)?;

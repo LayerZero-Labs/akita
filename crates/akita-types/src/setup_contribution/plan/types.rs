@@ -318,19 +318,23 @@ pub struct SetupContributionPlan<E> {
 }
 
 impl<E: FieldCore> SetupContributionPlan<E> {
-    /// Prepared A-role (Z) column equality slice for the group at `index` in
-    /// plan (witness relation) order, laid out as
-    /// `z_eq_slice[position * depth_commit + commit_digit]` and already
-    /// contracted over units and fold digits.
+    /// Prepared D/B/A column equality slices for the group at `index` in plan
+    /// (witness relation) order.
     ///
-    /// Exposed so the ring-switch verifier can reuse this slice for the
-    /// structured Z relation contribution instead of recomputing the same
-    /// equality evaluations, per the setup-contribution reuse in Fix 6.
+    /// The D-role slice is laid out `(claim, block, opening_digit)`, the B-role
+    /// slice `(claim, block, A_row, opening_digit)`, and the A-role slice
+    /// `(position, commit_digit)` after contraction over units and fold digits.
+    /// The direct ring-switch verifier reuses all three instead of evaluating
+    /// the same opening equality addresses a second time.
     #[must_use]
-    pub fn group_z_eq_slice(&self, index: usize) -> Option<&[E]> {
-        self.groups
-            .get(index)
-            .map(|group| group.z_eq_slice.as_slice())
+    pub fn group_column_eq_slices(&self, index: usize) -> Option<(&[E], &[E], &[E])> {
+        self.groups.get(index).map(|group| {
+            (
+                group.e_eq_slice.as_slice(),
+                group.t_eq_slice.as_slice(),
+                group.z_eq_slice.as_slice(),
+            )
+        })
     }
 }
 

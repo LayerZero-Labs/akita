@@ -240,20 +240,23 @@ where
     // dimension (`gen_ring_dim`), which is byte-identical to the const `Cfg::D`
     // the prover binds for uniform-D presets. Dispatch on the runtime value so
     // the verifier entry stays D-free; the descriptor bytes are unchanged.
-    dispatch_for_field!(
-        akita_types::ProtocolDispatchSlot::Envelope,
-        Cfg::Field,
-        setup.expanded.seed().gen_ring_dim,
-        |D| {
-            bind_transcript_instance_descriptor::<Cfg::Field, T, D, Cfg>(
-                &setup.expanded,
-                &opening_batch,
-                &schedule,
-                basis,
-                transcript,
-            )
-        }
-    )?;
+    {
+        let _span = tracing::info_span!("verifier_transcript_bind_instance").entered();
+        dispatch_for_field!(
+            akita_types::ProtocolDispatchSlot::Envelope,
+            Cfg::Field,
+            setup.expanded.seed().gen_ring_dim,
+            |D| {
+                bind_transcript_instance_descriptor::<Cfg::Field, T, D, Cfg>(
+                    &setup.expanded,
+                    &opening_batch,
+                    &schedule,
+                    basis,
+                    transcript,
+                )
+            }
+        )?;
+    }
 
     verify::<Cfg::Field, Cfg::ExtField, T>(proof, setup, transcript, claims, basis, &schedule)
 }

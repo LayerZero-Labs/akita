@@ -83,6 +83,13 @@ impl<E: FieldCore> SetupContributionPlan<E> {
         F: FieldCore,
         E: ExtField<F> + MulBaseUnreduced<F>,
     {
+        let _span = tracing::info_span!(
+            "setup_contribution_scan",
+            required = self.projection_geometry.required(),
+            groups = self.groups.len(),
+            base_d = BASE_D
+        )
+        .entered();
         if base_pows.len() != BASE_D {
             return Err(AkitaError::InvalidSize {
                 expected: BASE_D,

@@ -207,34 +207,45 @@ where
                 let t_end = t_offset
                     .checked_add(group_layout.t_field_elems)
                     .ok_or(AkitaError::InvalidProof)?;
-                let e = decode_rings::<F, D_A>(
-                    witness
-                        .e_fields
-                        .coeffs()
-                        .get(e_offset..e_end)
-                        .ok_or(AkitaError::InvalidProof)?,
-                )?;
-                let t = decode_rings::<F, D_A>(
-                    witness
-                        .t_fields
-                        .coeffs()
-                        .get(t_offset..t_end)
-                        .ok_or(AkitaError::InvalidProof)?,
-                )?;
-                let cap = lp.fold_witness_linf_cap_for_params(
-                    params,
-                    num_polynomials,
-                    F::modulus_bits(),
-                )?;
-                let z_values = decode_terminal_z_golomb_payload_with_cap(
-                    witness
-                        .z_payloads
-                        .get(layout_index)
-                        .ok_or(AkitaError::InvalidProof)?,
-                    group_layout.z_coords,
-                    cap,
-                    Some(group_layout.z_payload_bytes),
-                )?;
+                let (e, t, z_values) = {
+                    let _span = tracing::info_span!(
+                        "terminal_direct_decode",
+                        group_index,
+                        e_field_elems = group_layout.e_field_elems,
+                        t_field_elems = group_layout.t_field_elems,
+                        z_coords = group_layout.z_coords
+                    )
+                    .entered();
+                    let e = decode_rings::<F, D_A>(
+                        witness
+                            .e_fields
+                            .coeffs()
+                            .get(e_offset..e_end)
+                            .ok_or(AkitaError::InvalidProof)?,
+                    )?;
+                    let t = decode_rings::<F, D_A>(
+                        witness
+                            .t_fields
+                            .coeffs()
+                            .get(t_offset..t_end)
+                            .ok_or(AkitaError::InvalidProof)?,
+                    )?;
+                    let cap = lp.fold_witness_linf_cap_for_params(
+                        params,
+                        num_polynomials,
+                        F::modulus_bits(),
+                    )?;
+                    let z_values = decode_terminal_z_golomb_payload_with_cap(
+                        witness
+                            .z_payloads
+                            .get(layout_index)
+                            .ok_or(AkitaError::InvalidProof)?,
+                        group_layout.z_coords,
+                        cap,
+                        Some(group_layout.z_payload_bytes),
+                    )?;
+                    (e, t, z_values)
+                };
                 let z_centered = {
                     if !z_values.len().is_multiple_of(D_A) {
                         return Err(AkitaError::InvalidProof);

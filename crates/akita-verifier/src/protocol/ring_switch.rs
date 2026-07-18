@@ -4,6 +4,7 @@ use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::offset_eq::{eval_affine_digit_interval, OffsetEqWindow};
 use akita_algebra::ring::scalar_powers;
 use akita_challenges::Challenges;
+use akita_field::parallel::*;
 use akita_field::{
     AkitaError, CanonicalField, FieldCore, FromPrimitiveInt, MulBase, MulBaseUnreduced,
     RandomSampling,
@@ -147,7 +148,10 @@ where
     let num_polys = opening_batch.num_total_polynomials();
     let gamma = replay.row_coefficients;
 
-    let alpha: E = sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_RING_SWITCH);
+    let alpha: E = {
+        let _span = tracing::info_span!("ring_switch_transcript_challenges").entered();
+        sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_RING_SWITCH)
+    };
 
     let num_claims = relation.opening_batch().num_total_polynomials();
     // Validate each group's opening/multiplier point against that group's own
@@ -207,17 +211,26 @@ where
     let num_i =
         lp.relation_row_index_num_vars_for_layout(relation_matrix_row_layout, opening_batch)?;
 
-    let tau0 = match relation_matrix_row_layout {
-        RelationMatrixRowLayout::WithDBlock => Some(
-            (0..num_sc_vars)
-                .map(|_| sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_TAU0))
-                .collect(),
-        ),
-        RelationMatrixRowLayout::WithoutCommitmentBlocks => None,
+    let (tau0, tau1) = {
+        let _span = tracing::info_span!(
+            "ring_switch_transcript_challenges",
+            tau0_len = num_sc_vars,
+            tau1_len = num_i
+        )
+        .entered();
+        let tau0 = match relation_matrix_row_layout {
+            RelationMatrixRowLayout::WithDBlock => Some(
+                (0..num_sc_vars)
+                    .map(|_| sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_TAU0))
+                    .collect(),
+            ),
+            RelationMatrixRowLayout::WithoutCommitmentBlocks => None,
+        };
+        let tau1 = (0..num_i)
+            .map(|_| sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_TAU1))
+            .collect::<Vec<_>>();
+        (tau0, tau1)
     };
-    let tau1: Vec<E> = (0..num_i)
-        .map(|_| sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_TAU1))
-        .collect();
     if gamma.len() != num_claims {
         return Err(AkitaError::InvalidProof);
     }
@@ -852,15 +865,29 @@ impl<E: FieldCore> RelationMatrixEvaluator<E> {
                     .eq_tau1
                     .get(group.a_row_start..a_row_end)
                     .ok_or(AkitaError::InvalidProof)?;
-                let (e_contribution, t_contribution) = evaluate_group_et_contributions::<F, E>(
-                    group,
-                    &units,
-                    context.opening_source_len,
-                    x_challenges,
-                    consistency_weight,
-                    a_row_weights,
-                    &g_open_ext,
-                )?;
+                let (e_contribution, t_contribution) = if let Some(plan) = setup_plan.as_ref() {
+                    let (e_eq_slice, t_eq_slice, _) = plan
+                        .group_column_eq_slices(group_index)
+                        .ok_or(AkitaError::InvalidProof)?;
+                    evaluate_group_et_from_eq_slices::<F, E>(
+                        group,
+                        consistency_weight,
+                        a_row_weights,
+                        &g_open_ext,
+                        e_eq_slice,
+                        t_eq_slice,
+                    )?
+                } else {
+                    evaluate_group_et_contributions::<F, E>(
+                        group,
+                        &units,
+                        context.opening_source_len,
+                        x_challenges,
+                        consistency_weight,
+                        a_row_weights,
+                        &g_open_ext,
+                    )?
+                };
                 e_structured_contribution += e_contribution;
                 t_structured_contribution += t_contribution;
 
@@ -870,8 +897,8 @@ impl<E: FieldCore> RelationMatrixEvaluator<E> {
                     //                      · consistency · opening_a[pos] · commit_gadget[cd]
                     // The slice is already `-Σ_unit Σ_fold_digit eq · fold_gadget`,
                     // so this is a cheap contraction with no equality evaluation.
-                    let z_slice = plan
-                        .group_z_eq_slice(group_index)
+                    let (_, _, z_slice) = plan
+                        .group_column_eq_slices(group_index)
                         .ok_or(AkitaError::InvalidProof)?;
                     for (position, &opening_a) in group.opening_a_evals.iter().enumerate() {
                         for (commit_digit, &commit) in g_commit.iter().enumerate() {
@@ -932,7 +959,13 @@ impl<E: FieldCore> RelationMatrixEvaluator<E> {
         let setup_contribution = if let Some(claim) = setup_claim {
             claim
         } else {
-            let _span = tracing::info_span!("setup_contribution").entered();
+            let _span = tracing::info_span!(
+                "setup_contribution",
+                required = setup_plan
+                    .as_ref()
+                    .map_or(0, SetupContributionPlan::required)
+            )
+            .entered();
             let plan = setup_plan.as_ref().ok_or(AkitaError::InvalidProof)?;
             plan.evaluate_direct::<F>(setup, &alpha_pows_a, alpha_pows_b, alpha_pows_d)?
         };
@@ -952,6 +985,110 @@ impl<E: FieldCore> RelationMatrixEvaluator<E> {
             + setup_contribution
             + r_contribution)
     }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn evaluate_group_et_from_eq_slices<F, E>(
+    group: &RelationMatrixGroupEvaluator<E>,
+    consistency_weight: E,
+    a_row_weights: &[E],
+    g_open_ext: &[E],
+    e_eq_slice: &[E],
+    t_eq_slice: &[E],
+) -> Result<(E, E), AkitaError>
+where
+    F: FieldCore + FromPrimitiveInt,
+    E: FieldCore + MulBase<F>,
+{
+    let e_stride = group.depth_open;
+    let t_stride = group
+        .n_a
+        .checked_mul(group.depth_open)
+        .ok_or_else(|| AkitaError::InvalidSetup("T fold stride overflow".into()))?;
+    let block_claims = group
+        .num_claims
+        .checked_mul(group.num_live_blocks)
+        .ok_or_else(|| AkitaError::InvalidSetup("structured block count overflow".into()))?;
+    let expected_e = block_claims
+        .checked_mul(e_stride)
+        .ok_or_else(|| AkitaError::InvalidSetup("structured E width overflow".into()))?;
+    let expected_t = block_claims
+        .checked_mul(t_stride)
+        .ok_or_else(|| AkitaError::InvalidSetup("structured T width overflow".into()))?;
+    if e_eq_slice.len() != expected_e
+        || t_eq_slice.len() != expected_t
+        || g_open_ext.len() != group.depth_open
+        || a_row_weights.len() != group.n_a
+    {
+        return Err(AkitaError::InvalidProof);
+    }
+    let challenge_factors = (0..group.num_claims)
+        .map(|claim| {
+            group
+                .c_alphas
+                .affine_factors::<F>(claim, group.num_live_blocks)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let t_weights = a_row_weights
+        .iter()
+        .flat_map(|&row_weight| g_open_ext.iter().map(move |&gadget| row_weight * gadget))
+        .collect::<Vec<_>>();
+    let _span = tracing::info_span!(
+        "structured_et_from_setup_slices",
+        block_claims,
+        e_columns = expected_e,
+        t_columns = expected_t
+    )
+    .entered();
+    cfg_fold_reduce!(
+        0..block_claims,
+        || Ok((E::zero(), E::zero())),
+        |acc: Result<(E, E), AkitaError>, block_claim| {
+            let (mut e_acc, mut t_acc) = acc?;
+            let claim = block_claim / group.num_live_blocks;
+            let block = block_claim % group.num_live_blocks;
+            let challenge = challenge_factors
+                .get(claim)
+                .and_then(|factors| factors.low.get(block))
+                .copied()
+                .ok_or(AkitaError::InvalidProof)?;
+            let e_start = block_claim
+                .checked_mul(e_stride)
+                .ok_or(AkitaError::InvalidProof)?;
+            let e_end = e_start
+                .checked_add(e_stride)
+                .ok_or(AkitaError::InvalidProof)?;
+            let e_block = e_eq_slice
+                .get(e_start..e_end)
+                .ok_or(AkitaError::InvalidProof)?;
+            let mut e_weight = E::zero();
+            for (&eq, &gadget) in e_block.iter().zip(g_open_ext) {
+                e_weight += eq * gadget;
+            }
+            e_acc += challenge * consistency_weight * e_weight;
+
+            let t_start = block_claim
+                .checked_mul(t_stride)
+                .ok_or(AkitaError::InvalidProof)?;
+            let t_end = t_start
+                .checked_add(t_stride)
+                .ok_or(AkitaError::InvalidProof)?;
+            let t_block = t_eq_slice
+                .get(t_start..t_end)
+                .ok_or(AkitaError::InvalidProof)?;
+            let mut t_weight = E::zero();
+            for (&eq, &weight) in t_block.iter().zip(&t_weights) {
+                t_weight += eq * weight;
+            }
+            t_acc += challenge * t_weight;
+            Ok((e_acc, t_acc))
+        },
+        |lhs: Result<(E, E), AkitaError>, rhs: Result<(E, E), AkitaError>| {
+            let (lhs_e, lhs_t) = lhs?;
+            let (rhs_e, rhs_t) = rhs?;
+            Ok((lhs_e + rhs_e, lhs_t + rhs_t))
+        }
+    )
 }
 
 #[allow(clippy::too_many_arguments)]
