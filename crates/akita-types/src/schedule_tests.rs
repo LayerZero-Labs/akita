@@ -4,10 +4,10 @@ use crate::proof::{segment_typed_witness_shape_from_groups, SegmentTypedWitness}
 use crate::tail_golomb_rice_z_params;
 use crate::{
     direct_witness_bytes, extension_opening_reduction_proof_bytes, level_proof_bytes,
-    stage1_tree_stage_shapes, sumcheck_rounds, AkitaBatchedRootProof, AkitaLevelProof,
-    AkitaStage1Proof, AkitaStage1StageProof, AkitaStage2Proof, CleartextWitnessProof,
-    ExtensionOpeningReductionProof, NextWitnessBinding, RelationMatrixRowLayout, RingVec,
-    SisModulusProfileId, TerminalLevelProof, EXTENSION_OPENING_REDUCTION_DEGREE,
+    stage1_tree_stage_shapes, sumcheck_rounds, AkitaStage1Proof, AkitaStage1StageProof,
+    AkitaStage2Proof, CleartextWitnessProof, ExtensionOpeningReductionProof, FoldLevelProof,
+    NextWitnessBinding, RelationMatrixRowLayout, RingVec, SisModulusProfileId, TerminalLevelProof,
+    EXTENSION_OPENING_REDUCTION_DEGREE,
 };
 use akita_algebra::CyclotomicRing;
 use akita_challenges::SparseChallengeConfig;
@@ -121,62 +121,6 @@ fn segment_typed_final_witness(
     (CleartextWitnessProof::SegmentTyped(witness), shape)
 }
 
-#[test]
-fn root_direct_schedule_uses_field_element_payload() {
-    let dummy_commit_params = LevelParams::params_only(
-        crate::SisModulusProfileId::Q128OffsetA7F7,
-        64,
-        3,
-        1,
-        1,
-        1,
-        akita_challenges::SparseChallengeConfig::pm1_only(1),
-    );
-    let schedule =
-        root_direct_schedule(8, dummy_commit_params.clone()).expect("root-direct schedule");
-    assert_eq!(schedule.total_bytes, 0);
-
-    let [Step::Direct(step)] = schedule.steps.as_slice() else {
-        panic!("root-direct schedule should contain one direct step");
-    };
-    assert_eq!(step.current_w_len, 8);
-    assert_eq!(step.witness_shape, CleartextWitnessShape::FieldElements(8));
-    assert_eq!(step.direct_bytes, 0);
-    assert_eq!(step.params.as_ref(), Some(&dummy_commit_params));
-}
-
-#[test]
-fn root_direct_schedule_uses_multi_group_witness_len() {
-    let layout = OpeningClaimsLayout::from_groups(vec![
-        PolynomialGroupLayout::new(2, 1),
-        PolynomialGroupLayout::new(3, 2),
-        PolynomialGroupLayout::new(4, 1),
-    ])
-    .expect("multi-group layout");
-    let witness_len = layout.root_direct_witness_len().expect("witness len");
-    assert_eq!(witness_len, 4 + 16 + 16);
-
-    let dummy_commit_params = LevelParams::params_only(
-        crate::SisModulusProfileId::Q128OffsetA7F7,
-        64,
-        3,
-        1,
-        1,
-        1,
-        akita_challenges::SparseChallengeConfig::pm1_only(3),
-    );
-    let schedule =
-        root_direct_schedule(witness_len, dummy_commit_params).expect("root-direct schedule");
-    let [Step::Direct(step)] = schedule.steps.as_slice() else {
-        panic!("root-direct schedule should contain one direct step");
-    };
-    assert_eq!(step.current_w_len, witness_len);
-    assert_eq!(
-        step.witness_shape,
-        CleartextWitnessShape::FieldElements(witness_len)
-    );
-}
-
 fn dummy_sumcheck<F: FieldCore>(rounds: usize, degree: usize) -> SumcheckProof<F> {
     SumcheckProof {
         round_polys: (0..rounds)
@@ -234,7 +178,7 @@ fn exact_level_proof_bytes<F: FieldCore + CanonicalField + AkitaSerialize>(
     let rounds = sumcheck_rounds(lp.ring_dimension, next_w_len);
     let b = 1usize << lp.log_basis;
 
-    let proof = AkitaLevelProof::Intermediate {
+    let proof = FoldLevelProof {
         extension_opening_reduction: None,
         v: RingVec::from_coeffs(vec![F::zero(); current_coeffs]),
         fold_grind_nonce: 0,
@@ -287,7 +231,7 @@ fn planned_level_bytes_match_two_stage_payload_at_all_bases() {
                     Some(&next_lp),
                     next_w_len,
                     RelationMatrixRowLayout::WithDBlock,
-                    NextWitnessBindingPolicy::OuterCommitment,
+                    Some(crate::NextWitnessBindingPolicy::OuterCommitment),
                 ),
                 exact_level_proof_bytes::<F>(&lp, &next_lp, next_w_len).unwrap(),
                 "planned level bytes should match the serialized two-stage body at log_basis={log_basis}"
@@ -337,8 +281,8 @@ fn planned_terminal_level_bytes_match_terminal_payload_at_all_bases() {
                 &lp,
                 None,
                 next_w_len,
-                RelationMatrixRowLayout::WithoutDBlock,
-                NextWitnessBindingPolicy::TerminalCleartextWitness,
+                RelationMatrixRowLayout::WithoutCommitmentBlocks,
+                None,
             ),
             serialized_without_witness,
             "planned terminal-level bytes should match the serialized terminal body \
@@ -388,7 +332,7 @@ fn planned_batched_root_bytes_match_two_stage_payload_at_all_bases() {
             next_lp.b_key.row_len()
         ])
         .into_compact();
-        let level_proof = AkitaLevelProof::new_two_stage_many_with_extension_opening_reduction::<D>(
+        let level_proof = FoldLevelProof::new_two_stage_many_with_extension_opening_reduction::<D>(
             None,
             vec![CyclotomicRing::<F, D>::zero(); lp.d_key.row_len()],
             dummy_stage1_proof(rounds, b),
@@ -396,8 +340,6 @@ fn planned_batched_root_bytes_match_two_stage_payload_at_all_bases() {
             next_commitment,
             F::zero(),
         );
-        let root_proof = AkitaBatchedRootProof::new(level_proof);
-
         assert_eq!(
                 level_proof_bytes(
                     128,
@@ -406,9 +348,9 @@ fn planned_batched_root_bytes_match_two_stage_payload_at_all_bases() {
                     Some(&next_lp),
                     next_w_len,
                     RelationMatrixRowLayout::WithDBlock,
-                    NextWitnessBindingPolicy::OuterCommitment,
+                    Some(crate::NextWitnessBindingPolicy::OuterCommitment),
                 ),
-                root_proof.serialized_size(Compress::No),
+                level_proof.serialized_size(Compress::No),
                 "planned batched root bytes should match the serialized two-stage body at log_basis={log_basis}"
             );
     }

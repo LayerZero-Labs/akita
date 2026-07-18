@@ -172,7 +172,7 @@ impl SetupSection {
     ///
     /// The per-level `LevelParams` are intentionally *not* digested here: the
     /// per-proof effective schedule (`PlanSection`) already binds every
-    /// expanded `LevelParams` — including the root-direct commit layout — and
+    /// expanded fold `LevelParams`, and
     /// `setup_seed_digest` pins the shared-matrix capacity, so a separate
     /// setup-level digest would be redundant.
     ///

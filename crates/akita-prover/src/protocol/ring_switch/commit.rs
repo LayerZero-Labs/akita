@@ -52,11 +52,6 @@ where
     let terminal_inner = match binding_policy {
         NextWitnessBindingPolicy::OuterCommitment => false,
         NextWitnessBindingPolicy::TerminalInnerState => true,
-        NextWitnessBindingPolicy::TerminalCleartextWitness => {
-            return Err(AkitaError::InvalidInput(
-                "commit_w cannot bind a current-level terminal cleartext witness".into(),
-            ));
-        }
     };
     let dims = commit_params.role_dims();
     commit_ctx.ensure_envelope_ntt(expanded.as_ref(), dims.d_a())?;

@@ -8,8 +8,7 @@ use akita_prover::{ComputeBackendSetup, CpuBackend};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_transcript::AkitaTranscript;
 use akita_types::{
-    sis::MAX_FOLD_GRIND_ATTEMPTS, AkitaBatchedProof, AkitaBatchedRootProof, AkitaLevelProof,
-    AkitaVerifierSetup, Commitment,
+    sis::MAX_FOLD_GRIND_ATTEMPTS, AkitaBatchedProof, AkitaVerifierSetup, Commitment,
 };
 use common::*;
 
@@ -95,16 +94,13 @@ fn tail_bound_with_grind_onehot_e2e_prove_verify() {
     init_rayon_pool();
     run_on_large_stack(|| {
         let fixture = prove_tail_bound_with_grind_onehot_fixture(FOLD_LINF_E2E_NV, 0x51_51_00_01);
-        assert!(
-            matches!(fixture.proof.root, AkitaBatchedRootProof::Fold(_)),
-            "expected a folded root proof"
-        );
-        for step in fixture.proof.fold_levels() {
+        for step in fixture.proof.nonterminal_folds() {
             assert!(
-                step.fold_grind_nonce() < MAX_FOLD_GRIND_ATTEMPTS,
+                step.fold_grind_nonce < MAX_FOLD_GRIND_ATTEMPTS,
                 "grind nonce must stay within cap"
             );
         }
+        assert!(fixture.proof.terminal.fold_grind_nonce < MAX_FOLD_GRIND_ATTEMPTS);
     });
 }
 
@@ -133,12 +129,8 @@ fn fold_grind_nonce_wire_roundtrip_and_oversized_nonce_rejected() {
         )
         .expect("deserialized proof must verify");
 
-        if let AkitaBatchedRootProof::Fold(fold) = &mut roundtrip.root {
-            fold.fold_grind_nonce = MAX_FOLD_GRIND_ATTEMPTS;
-        }
-        if let Some(akita_types::AkitaLevelProof::Terminal(terminal)) = roundtrip.steps.last_mut() {
-            terminal.fold_grind_nonce = MAX_FOLD_GRIND_ATTEMPTS;
-        }
+        roundtrip.root.fold_grind_nonce = MAX_FOLD_GRIND_ATTEMPTS;
+        roundtrip.terminal.fold_grind_nonce = MAX_FOLD_GRIND_ATTEMPTS;
 
         let mut verifier_transcript = AkitaTranscript::<F>::new(b"fold-linf/onehot");
         let err = Scheme::batched_verify(
@@ -161,11 +153,10 @@ fn fold_recursive_handle_tamper_rejected() {
         let fixture = prove_tail_bound_with_grind_onehot_fixture(FOLD_LINF_E2E_NV, 0x51_51_00_04);
         let mut malformed = fixture.proof;
         let recursive = malformed
-            .steps
-            .iter_mut()
-            .find_map(AkitaLevelProof::as_intermediate_mut)
+            .recursive_folds
+            .first_mut()
             .expect("tail-bound-with-grind onehot should include an intermediate fold");
-        bump_flat_ring_vec(recursive.v_mut());
+        bump_flat_ring_vec(&mut recursive.v);
 
         let mut verifier_transcript = AkitaTranscript::<F>::new(b"fold-linf/onehot");
         let result = Scheme::batched_verify(

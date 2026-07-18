@@ -250,7 +250,7 @@ where
         )?;
 
         tracing::info!(
-            levels = proof.num_fold_levels() + usize::from(proof.root.as_fold().is_some()),
+            levels = proof.num_fold_levels(),
             elapsed_s = t_prove_total.elapsed().as_secs_f64(),
             "akita batched prove complete"
         );

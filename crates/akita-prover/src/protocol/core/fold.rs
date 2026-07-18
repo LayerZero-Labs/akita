@@ -612,7 +612,9 @@ where
         expanded,
         stack.commit(),
         &logical_w,
-        scheduled.next_witness_binding,
+        scheduled.next_witness_binding.ok_or_else(|| {
+            AkitaError::InvalidSetup("non-terminal fold is missing its outgoing binding".into())
+        })?,
     )?;
     drop(_span);
     match &next_commitment.binding {
@@ -837,7 +839,7 @@ where
             },
         ),
     };
-    let level_proof = AkitaLevelProof::Intermediate {
+    let level_proof = FoldLevelProof {
         extension_opening_reduction: prepared_fold.extension_opening_reduction,
         v: prepared_fold.instance.v().clone().into_compact(),
         fold_grind_nonce,

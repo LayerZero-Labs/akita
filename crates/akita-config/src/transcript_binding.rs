@@ -24,8 +24,8 @@ use akita_types::{
 /// transcript-determinism invariant holds.
 ///
 /// The per-proof effective `schedule` is digested into `PlanSection` and
-/// binds every expanded `LevelParams` — including the root-direct commit
-/// layout — so there is no separate setup-level digest to compute here.
+/// binds every expanded fold `LevelParams`, so there is no separate
+/// setup-level digest to compute here.
 ///
 /// # Errors
 ///

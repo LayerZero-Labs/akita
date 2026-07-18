@@ -6,13 +6,11 @@ The inner workings of Akita, beyond what an application developer needs. Read
 this if you are poking around the codebase, have read the lineage papers and
 want to know how things fit together in practice, or want to contribute.
 
-Lead with the end-to-end lifecycle, then branch. The single most important fact
-to surface up front: the same `batched_prove` / `batched_verify` API dispatches
-to **three proof families** based purely on the planner's schedule shape:
-
-- **ZeroFold** (root-direct) — no folding; cleartext witnesses.
-- **Terminal-root** (1-fold) — the root is the terminal level.
-- **Fold + recursive suffix** (multi-fold).
+Lead with the end-to-end lifecycle, then branch. The same `batched_prove` /
+`batched_verify` API always uses a folded schedule: a root fold, at least one
+suffix fold, and a terminal cleartext witness. Inputs for which two folds are
+not supported fail during schedule selection instead of selecting a degenerate
+proof family.
 
 This part covers, in reading order:
 

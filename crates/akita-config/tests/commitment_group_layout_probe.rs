@@ -28,10 +28,9 @@ struct LayoutSummary {
 fn root_params(schedule: &akita_types::Schedule) -> Result<&LevelParams, AkitaError> {
     match schedule.steps.first() {
         Some(Step::Fold(fold)) => Ok(&fold.params),
-        Some(Step::Direct(direct)) => direct.params.as_ref().ok_or_else(|| {
-            AkitaError::InvalidSetup("root-direct schedule has no commit params".to_string())
-        }),
-        None => Err(AkitaError::InvalidSetup("empty schedule".to_string())),
+        Some(Step::Direct(_)) | None => Err(AkitaError::InvalidSetup(
+            "schedule is missing its root fold".to_string(),
+        )),
     }
 }
 

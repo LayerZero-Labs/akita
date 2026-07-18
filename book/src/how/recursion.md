@@ -23,9 +23,10 @@ protocol change, not a serialization-only change.
 
 ## Proof anatomy
 
-The serialized structure is rooted at `AkitaBatchedProof` and
-`AkitaBatchedRootProof`, followed by `AkitaLevelProof` / `AkitaProofStep`
-records for the suffix. Each level's descriptors bind the resolved `L`, exact
-`F`, chunk count, challenge shape, and decomposition parameters.
-Singleton openings and terminal folds are ordinary one-group, one-chunk cases;
-there is no alternate block order.
+`AkitaBatchedProof` stores one `FoldLevelProof` root, zero or more recursive
+`FoldLevelProof` records, and one `TerminalLevelProof`. Supported schedules
+always contain at least two fold records, so the terminal state is bound by its
+predecessor and there is no root-terminal proof variant. Each level's
+descriptor binds the resolved `L`, exact `F`, chunk count, challenge shape, and
+decomposition parameters. Singleton openings and terminal folds are ordinary
+one-group, one-chunk cases; there is no alternate block order.

@@ -109,25 +109,18 @@ fn direct_terminal_builder_constructs_z_e_t_segments() {
 }
 
 #[test]
-fn terminal_golomb_grind_covers_root_and_suffix_terminal_layouts() {
+fn terminal_golomb_grind_covers_terminal_layout() {
     let lp = test_lp();
     let layout = scalar_group_layout(&lp, 1, 1, 1, F::modulus_bits()).unwrap();
     let shape = CleartextWitnessShape::SegmentTyped(SegmentTypedWitnessShape { layout });
 
-    let root = terminal_golomb_grind_tail_t_vectors(
-        &lp,
-        RelationMatrixRowLayout::WithoutDBlock,
-        Some(&shape),
-    )
-    .unwrap();
-    let suffix = terminal_golomb_grind_tail_t_vectors(
+    let terminal = terminal_golomb_grind_tail_t_vectors(
         &lp,
         RelationMatrixRowLayout::WithoutCommitmentBlocks,
         Some(&shape),
     )
     .unwrap();
-    assert_eq!(suffix, root);
-    assert!(suffix.is_some());
+    assert!(terminal.is_some());
     assert_eq!(
         terminal_golomb_grind_tail_t_vectors(
             &lp,

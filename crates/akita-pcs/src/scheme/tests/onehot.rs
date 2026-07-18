@@ -44,7 +44,7 @@ fn conservative_config_commit_returns_frozen_layout() {
 
 fn multi_group_root_params(schedule: &akita_types::Schedule) -> &LevelParams {
     match schedule.steps.first().expect("multi-group schedule step") {
-        Step::Direct(direct) => direct.params.as_ref().expect("multi-group root params"),
+        Step::Direct(_) => panic!("multi-group schedule must start with a fold"),
         Step::Fold(fold) => &fold.params,
     }
 }
@@ -113,7 +113,7 @@ fn conservative_config_allows_independent_precommitted_groups() {
 
 #[test]
 fn group_batch_schedule_preserves_precommitted_order() {
-    const PRE_NV: usize = 8;
+    const PRE_NV: usize = 16;
     const FINAL_NV: usize = PRE_NV * 2;
     const PRE_A_SIZE: usize = 1;
     const PRE_B_SIZE: usize = 1;
@@ -163,8 +163,11 @@ fn group_batch_schedule_preserves_precommitted_order() {
             let schedule = OneHotCfg::runtime_schedule(multi_group_key.clone())
                 .expect("multi-group runtime schedule");
             let root = multi_group_root_params(&schedule);
-            let main_params = akita_types::multi_group_root_commit_params(&schedule)
-                .expect("main multi-group commit params");
+            let main_params = schedule
+                .root_fold()
+                .expect("main multi-group root fold")
+                .params
+                .clone();
 
             assert_eq!(multi_group_key.num_commitment_groups(), 4);
             assert_eq!(
@@ -184,7 +187,7 @@ fn group_batch_schedule_preserves_precommitted_order() {
 
 #[test]
 fn group_batch_commits_precommitteds_then_double_size_final_group() {
-    const PRE_NV: usize = 8;
+    const PRE_NV: usize = 16;
     const FINAL_NV: usize = PRE_NV * 2;
     const GROUP_SIZE: usize = 1;
 
@@ -293,7 +296,7 @@ fn multi_group_root_round_trip_onehot<TestCfg>(
 ) where
     TestCfg: CommitmentConfig<Field = OneHotF, ExtField = OneHotF>,
 {
-    const PRE_NV: usize = 8;
+    const PRE_NV: usize = 16;
     const FINAL_NV: usize = PRE_NV * 2;
     let total: usize = pre_sizes.iter().sum::<usize>() + final_size;
 
@@ -475,16 +478,7 @@ fn multi_group_root_round_trip_onehot<TestCfg>(
         setup_contribution_mode,
     )
     .expect("multi-group prove");
-    assert!(!matches!(
-        proof.root,
-        akita_types::AkitaBatchedRootProof::ZeroFold { .. }
-    ));
-    if matches!(proof.root, akita_types::AkitaBatchedRootProof::Fold(_)) {
-        assert!(
-            !proof.steps.is_empty(),
-            "intermediate multi-group root must hand off to a suffix"
-        );
-    }
+    assert!(proof.num_fold_levels() >= 2);
 
     let shape = proof.shape();
     let mut bytes = Vec::new();
@@ -571,7 +565,7 @@ fn multi_group_multi_chunk_fold_round_trips() {
 
 #[test]
 fn multi_group_root_folded_two_group_onehot_round_trips() {
-    const PRE_NV: usize = 8;
+    const PRE_NV: usize = 16;
     const FINAL_NV: usize = PRE_NV * 2;
     const PRE_SIZE: usize = 1;
     const FINAL_SIZE: usize = 1;
@@ -630,7 +624,7 @@ fn multi_group_root_folded_two_group_onehot_round_trips() {
     )
     .expect("multi-group prover data");
 
-    let mut prover_transcript = AkitaTranscript::<OneHotF>::new(b"test/multi-group-root-direct");
+    let mut prover_transcript = AkitaTranscript::<OneHotF>::new(b"test/multi-group-folded");
     let proof = RegularCommitter::batched_prove(
         &setup,
         prover_claims,
@@ -640,16 +634,7 @@ fn multi_group_root_folded_two_group_onehot_round_trips() {
         akita_types::SetupContributionMode::Direct,
     )
     .expect("multi-group prove");
-    assert!(!matches!(
-        proof.root,
-        akita_types::AkitaBatchedRootProof::ZeroFold { .. }
-    ));
-    if matches!(proof.root, akita_types::AkitaBatchedRootProof::Fold(_)) {
-        assert!(
-            !proof.steps.is_empty(),
-            "intermediate multi-group root must hand off to a suffix"
-        );
-    }
+    assert!(proof.num_fold_levels() >= 2);
 
     let shape = proof.shape();
     let mut bytes = Vec::new();
@@ -684,7 +669,7 @@ fn multi_group_root_folded_two_group_onehot_round_trips() {
         )
         .expect("multi-group verifier claims")
     };
-    let mut verifier_transcript = AkitaTranscript::<OneHotF>::new(b"test/multi-group-root-direct");
+    let mut verifier_transcript = AkitaTranscript::<OneHotF>::new(b"test/multi-group-folded");
     RegularCommitter::batched_verify(
         &decoded,
         &verifier_setup,
@@ -696,7 +681,7 @@ fn multi_group_root_folded_two_group_onehot_round_trips() {
     .expect("multi-group verify");
 
     // Negative: swapping the two group commitments must reject.
-    let mut swapped_transcript = AkitaTranscript::<OneHotF>::new(b"test/multi-group-root-direct");
+    let mut swapped_transcript = AkitaTranscript::<OneHotF>::new(b"test/multi-group-folded");
     let swapped_claims = OpeningClaims::from_groups(
         point.clone(),
         vec![
@@ -729,7 +714,7 @@ fn multi_group_root_folded_two_group_onehot_round_trips() {
     );
 
     // Negative: tampering the final group's opening must reject.
-    let mut tampered_transcript = AkitaTranscript::<OneHotF>::new(b"test/multi-group-root-direct");
+    let mut tampered_transcript = AkitaTranscript::<OneHotF>::new(b"test/multi-group-folded");
     let tampered_claims = OpeningClaims::from_groups(
         point.clone(),
         vec![
@@ -764,7 +749,7 @@ fn multi_group_root_folded_two_group_onehot_round_trips() {
 
 #[test]
 fn multi_group_root_folded_three_group_onehot_round_trips() {
-    const PRE_NV: usize = 8;
+    const PRE_NV: usize = 16;
     const FINAL_NV: usize = PRE_NV * 2;
     const PRE_A_SIZE: usize = 1;
     const PRE_B_SIZE: usize = 1;
@@ -844,7 +829,7 @@ fn multi_group_root_folded_three_group_onehot_round_trips() {
     )
     .expect("multi-group prover data");
 
-    let mut prover_transcript = AkitaTranscript::<OneHotF>::new(b"test/multi-group-root-direct-3");
+    let mut prover_transcript = AkitaTranscript::<OneHotF>::new(b"test/multi-group-folded-3");
     let proof = RegularCommitter::batched_prove(
         &setup,
         prover_claims,
@@ -854,16 +839,7 @@ fn multi_group_root_folded_three_group_onehot_round_trips() {
         akita_types::SetupContributionMode::Direct,
     )
     .expect("multi-group prove");
-    assert!(!matches!(
-        proof.root,
-        akita_types::AkitaBatchedRootProof::ZeroFold { .. }
-    ));
-    if matches!(proof.root, akita_types::AkitaBatchedRootProof::Fold(_)) {
-        assert!(
-            !proof.steps.is_empty(),
-            "intermediate multi-group root must hand off to a suffix"
-        );
-    }
+    assert!(proof.num_fold_levels() >= 2);
 
     let shape = proof.shape();
     let mut bytes = Vec::new();
@@ -902,8 +878,7 @@ fn multi_group_root_folded_three_group_onehot_round_trips() {
         ],
     )
     .expect("multi-group verifier claims");
-    let mut verifier_transcript =
-        AkitaTranscript::<OneHotF>::new(b"test/multi-group-root-direct-3");
+    let mut verifier_transcript = AkitaTranscript::<OneHotF>::new(b"test/multi-group-folded-3");
     RegularCommitter::batched_verify(
         &decoded,
         &verifier_setup,
@@ -971,74 +946,33 @@ fn batched_onehot_roundtrip_matches_public_shape_context() {
 
     let expected_shape = expected_same_point_batched_shape(NV, BATCH_SIZE, &proof);
     let actual_shape = proof.shape();
-    // The expected and actual shapes must match in their root variant: either
-    // both `Fold` (multi-fold schedules) or both `Terminal` (1-fold schedules).
-    match (&expected_shape, &actual_shape) {
-        (
-            AkitaBatchedProofShape::Fold {
-                root_shape: expected_root,
-                step_shapes: expected_steps,
-            },
-            AkitaBatchedProofShape::Fold {
-                root_shape: actual_root,
-                step_shapes: actual_steps,
-            },
-        ) => {
-            assert_eq!(expected_root.v_coeffs, actual_root.v_coeffs);
-            assert_eq!(expected_root.stage1_stages, actual_root.stage1_stages);
-            assert_eq!(
-                expected_root.stage2_sumcheck_proof,
-                actual_root.stage2_sumcheck_proof
-            );
-            assert_eq!(
-                expected_root.next_witness_binding,
-                actual_root.next_witness_binding
-            );
-            assert_eq!(expected_steps.len(), actual_steps.len());
-            for (expected_step, actual_step) in expected_steps.iter().zip(actual_steps.iter()) {
-                match (expected_step, actual_step) {
-                    (
-                        AkitaProofStepShape::Terminal(expected_terminal),
-                        AkitaProofStepShape::Terminal(actual_terminal),
-                    ) => {
-                        assert_eq!(
-                            expected_terminal.extension_opening_reduction,
-                            actual_terminal.extension_opening_reduction
-                        );
-                        assert!(
-                            expected_terminal
-                                .final_witness
-                                .admits_realized(&actual_terminal.final_witness),
-                            "terminal witness shape {:?} does not admit {:?}",
-                            expected_terminal.final_witness,
-                            actual_terminal.final_witness
-                        );
-                    }
-                    _ => assert_eq!(expected_step, actual_step),
-                }
-            }
-        }
-        (
-            AkitaBatchedProofShape::Terminal(expected_terminal),
-            AkitaBatchedProofShape::Terminal(actual_terminal),
-        ) => {
-            assert_eq!(
-                expected_terminal.extension_opening_reduction,
-                actual_terminal.extension_opening_reduction
-            );
-            assert!(
-                expected_terminal
-                    .final_witness
-                    .admits_realized(&actual_terminal.final_witness),
-                "terminal witness shape {:?} does not admit {:?}",
-                expected_terminal.final_witness,
-                actual_terminal.final_witness
-            );
-        }
-        _ => panic!(
-            "expected and actual shape root variants disagree: expected={expected_shape:?}, actual={actual_shape:?}"
-        ),
-    }
+    assert_eq!(expected_shape.root.v_coeffs, actual_shape.root.v_coeffs);
+    assert_eq!(
+        expected_shape.root.stage1_stages,
+        actual_shape.root.stage1_stages
+    );
+    assert_eq!(
+        expected_shape.root.stage2_sumcheck_proof,
+        actual_shape.root.stage2_sumcheck_proof
+    );
+    assert_eq!(
+        expected_shape.root.next_witness_binding,
+        actual_shape.root.next_witness_binding
+    );
+    assert_eq!(expected_shape.recursive_folds, actual_shape.recursive_folds);
+    assert_eq!(
+        expected_shape.terminal.extension_opening_reduction,
+        actual_shape.terminal.extension_opening_reduction
+    );
+    assert!(
+        expected_shape
+            .terminal
+            .final_witness
+            .admits_realized(&actual_shape.terminal.final_witness),
+        "terminal witness shape {:?} does not admit {:?}",
+        expected_shape.terminal.final_witness,
+        actual_shape.terminal.final_witness
+    );
     let mut bytes = Vec::new();
     proof.serialize_uncompressed(&mut bytes).unwrap();
     let decoded =

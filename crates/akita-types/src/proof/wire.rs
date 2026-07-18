@@ -300,216 +300,6 @@ where
 }
 
 impl<F: FieldCore + CanonicalField + AkitaSerialize, E: FieldCore + AkitaSerialize> AkitaSerialize
-    for AkitaLevelProof<F, E>
-{
-    fn serialize_with_mode<W: Write>(
-        &self,
-        mut writer: W,
-        compress: Compress,
-    ) -> Result<(), SerializationError> {
-        match self {
-            AkitaLevelProof::Intermediate {
-                extension_opening_reduction,
-                v,
-                fold_grind_nonce,
-                stage1,
-                stage2,
-                stage3_sumcheck_proof,
-            } => {
-                serialize_intermediate_fold_wire_prefix(
-                    &mut writer,
-                    extension_opening_reduction.as_ref(),
-                    v,
-                    *fold_grind_nonce,
-                    compress,
-                )?;
-                for stage in &stage1.stages {
-                    stage
-                        .sumcheck_proof
-                        .serialize_with_mode(&mut writer, compress)?;
-                    for claim in &stage.child_claims {
-                        claim.serialize_with_mode(&mut writer, compress)?;
-                    }
-                }
-                stage1.s_claim.serialize_with_mode(&mut writer, compress)?;
-                stage2
-                    .sumcheck_proof
-                    .serialize_with_mode(&mut writer, compress)?;
-                serialize_stage3_sumcheck(stage3_sumcheck_proof.as_ref(), &mut writer, compress)?;
-                serialize_next_witness_binding(
-                    &stage2.next_witness_binding,
-                    &mut writer,
-                    compress,
-                )?;
-                stage2
-                    .next_w_eval()
-                    .serialize_with_mode(&mut writer, compress)
-            }
-            AkitaLevelProof::Terminal(terminal) => {
-                terminal.serialize_with_mode(&mut writer, compress)
-            }
-        }
-    }
-    fn serialized_size(&self, compress: Compress) -> usize {
-        match self {
-            AkitaLevelProof::Intermediate {
-                extension_opening_reduction,
-                v,
-                fold_grind_nonce: _,
-                stage1,
-                stage2,
-                stage3_sumcheck_proof,
-            } => {
-                let base = intermediate_fold_wire_prefix_serialized_size(
-                    extension_opening_reduction.as_ref(),
-                    v,
-                    compress,
-                );
-                base + stage1
-                    .stages
-                    .iter()
-                    .map(|stage| {
-                        ({ stage.sumcheck_proof.serialized_size(compress) })
-                            + stage
-                                .child_claims
-                                .iter()
-                                .map(|claim| claim.serialized_size(compress))
-                                .sum::<usize>()
-                    })
-                    .sum::<usize>()
-                    + stage1.s_claim.serialized_size(compress)
-                    + ({ stage2.sumcheck_proof.serialized_size(compress) })
-                    + stage3_sumcheck_serialized_size(stage3_sumcheck_proof.as_ref(), compress)
-                    + next_witness_binding_serialized_size(&stage2.next_witness_binding, compress)
-                    + stage2.next_w_eval().serialized_size(compress)
-            }
-            AkitaLevelProof::Terminal(terminal) => terminal.serialized_size(compress),
-        }
-    }
-}
-
-impl<F: FieldCore + Valid, E: FieldCore + Valid> Valid for AkitaLevelProof<F, E> {
-    fn check(&self) -> Result<(), SerializationError> {
-        match self {
-            AkitaLevelProof::Intermediate {
-                extension_opening_reduction,
-                v,
-                fold_grind_nonce: _,
-                stage1,
-                stage2,
-                stage3_sumcheck_proof,
-            } => {
-                if let Some(reduction) = extension_opening_reduction {
-                    reduction.partials.check()?;
-                    reduction.sumcheck.check()?;
-                }
-                v.check()?;
-                for stage in &stage1.stages {
-                    stage.sumcheck_proof.check()?;
-                    stage.child_claims.check()?;
-                }
-                stage1.s_claim.check()?;
-                stage2.sumcheck_proof.check()?;
-                if let Some(stage3_sumcheck) = stage3_sumcheck_proof {
-                    stage3_sumcheck.claim.check()?;
-                    stage3_sumcheck.next_w_eval.check()?;
-                    stage3_sumcheck.sumcheck.check()?;
-                }
-                check_next_witness_binding(&stage2.next_witness_binding)?;
-                stage2.next_w_eval().check()
-            }
-            AkitaLevelProof::Terminal(terminal) => terminal.check(),
-        }
-    }
-}
-
-impl<
-        F: FieldCore + Valid + AkitaDeserialize<Context = ()>,
-        E: FieldCore + Valid + AkitaDeserialize<Context = ()>,
-    > AkitaDeserialize for AkitaLevelProof<F, E>
-{
-    type Context = LevelProofShape;
-    fn deserialize_with_mode<R: Read>(
-        mut reader: R,
-        compress: Compress,
-        validate: Validate,
-        ctx: &LevelProofShape,
-    ) -> Result<Self, SerializationError> {
-        ctx.check()?;
-        let (extension_opening_reduction, v, fold_grind_nonce) =
-            deserialize_intermediate_fold_wire_prefix(
-                &mut reader,
-                compress,
-                validate,
-                ctx.extension_opening_reduction.as_ref(),
-                &ctx.v_coeffs,
-            )?;
-        let mut stage1_stages = Vec::new();
-        reserve_shape_len(&mut stage1_stages, ctx.stage1_stages.len())?;
-        for stage_shape in &ctx.stage1_stages {
-            let sumcheck = EqFactoredSumcheckProof::deserialize_with_mode(
-                &mut reader,
-                compress,
-                validate,
-                &stage_shape.sumcheck_proof,
-            )?;
-            let mut child_claims = Vec::new();
-            reserve_shape_len(&mut child_claims, stage_shape.child_claims)?;
-            for _ in 0..stage_shape.child_claims {
-                child_claims.push(E::deserialize_with_mode(
-                    &mut reader,
-                    compress,
-                    validate,
-                    &(),
-                )?);
-            }
-            stage1_stages.push(AkitaStage1StageProof {
-                sumcheck_proof: sumcheck,
-                child_claims,
-            });
-        }
-        let stage1 = AkitaStage1Proof {
-            stages: stage1_stages,
-            s_claim: E::deserialize_with_mode(&mut reader, compress, validate, &())?,
-        };
-        let stage2_sumcheck_proof = SumcheckProof::deserialize_with_mode(
-            &mut reader,
-            compress,
-            validate,
-            &ctx.stage2_sumcheck_proof,
-        )?;
-        let stage3_sumcheck_proof = deserialize_stage3_sumcheck(
-            &mut reader,
-            compress,
-            validate,
-            ctx.stage3_sumcheck.as_ref(),
-        )?;
-        let stage2 = AkitaStage2Proof {
-            sumcheck_proof: stage2_sumcheck_proof,
-            next_witness_binding: deserialize_next_witness_binding(
-                &mut reader,
-                compress,
-                validate,
-                ctx.next_witness_binding,
-            )?,
-            next_w_eval: E::deserialize_with_mode(&mut reader, compress, validate, &())?,
-        };
-        let out = Self::Intermediate {
-            extension_opening_reduction,
-            v,
-            fold_grind_nonce,
-            stage1,
-            stage2,
-            stage3_sumcheck_proof,
-        };
-        if matches!(validate, Validate::Yes) {
-            out.check()?;
-        }
-        Ok(out)
-    }
-}
-
-impl<F: FieldCore + CanonicalField + AkitaSerialize, E: FieldCore + AkitaSerialize> AkitaSerialize
     for TerminalLevelProof<F, E>
 {
     fn serialize_with_mode<W: Write>(
@@ -584,7 +374,7 @@ impl<
 }
 
 impl<F: FieldCore + CanonicalField + AkitaSerialize, E: FieldCore + AkitaSerialize> AkitaSerialize
-    for AkitaBatchedFoldRoot<F, E>
+    for FoldLevelProof<F, E>
 {
     fn serialize_with_mode<W: Write>(
         &self,
@@ -647,7 +437,7 @@ impl<F: FieldCore + CanonicalField + AkitaSerialize, E: FieldCore + AkitaSeriali
     }
 }
 
-impl<F: FieldCore + Valid, E: FieldCore + Valid> Valid for AkitaBatchedFoldRoot<F, E> {
+impl<F: FieldCore + Valid, E: FieldCore + Valid> Valid for FoldLevelProof<F, E> {
     fn check(&self) -> Result<(), SerializationError> {
         if let Some(reduction) = &self.extension_opening_reduction {
             reduction.partials.check()?;
@@ -674,7 +464,7 @@ impl<F: FieldCore + Valid, E: FieldCore + Valid> Valid for AkitaBatchedFoldRoot<
 impl<
         F: FieldCore + Valid + AkitaDeserialize<Context = ()>,
         E: FieldCore + Valid + AkitaDeserialize<Context = ()>,
-    > AkitaDeserialize for AkitaBatchedFoldRoot<F, E>
+    > AkitaDeserialize for FoldLevelProof<F, E>
 {
     type Context = LevelProofShape;
     fn deserialize_with_mode<R: Read>(
@@ -758,57 +548,6 @@ impl<
 }
 
 impl<F: FieldCore + CanonicalField + AkitaSerialize, E: FieldCore + AkitaSerialize> AkitaSerialize
-    for AkitaBatchedRootProof<F, E>
-{
-    fn serialize_with_mode<W: Write>(
-        &self,
-        mut writer: W,
-        compress: Compress,
-    ) -> Result<(), SerializationError> {
-        match self {
-            Self::Fold(fold) => fold.serialize_with_mode(&mut writer, compress),
-            Self::Terminal(terminal) => terminal.serialize_with_mode(&mut writer, compress),
-            Self::ZeroFold { witnesses } => {
-                for witness in witnesses {
-                    witness.serialize_with_mode(&mut writer, compress)?;
-                }
-                Ok(())
-            }
-        }
-    }
-
-    fn serialized_size(&self, compress: Compress) -> usize {
-        match self {
-            Self::Fold(fold) => fold.serialized_size(compress),
-            Self::Terminal(terminal) => terminal.serialized_size(compress),
-            Self::ZeroFold { witnesses } => {
-                let witness_size = witnesses
-                    .iter()
-                    .map(|witness| witness.serialized_size(compress))
-                    .sum::<usize>();
-
-                witness_size
-            }
-        }
-    }
-}
-
-impl<F: FieldCore + Valid, E: FieldCore + Valid> Valid for AkitaBatchedRootProof<F, E> {
-    fn check(&self) -> Result<(), SerializationError> {
-        match self {
-            Self::Fold(fold) => fold.check(),
-            Self::Terminal(terminal) => terminal.check(),
-            Self::ZeroFold { witnesses } => {
-                for witness in witnesses {
-                    witness.check()?;
-                }
-                Ok(())
-            }
-        }
-    }
-}
-
-impl<F: FieldCore + CanonicalField + AkitaSerialize, E: FieldCore + AkitaSerialize> AkitaSerialize
     for AkitaBatchedProof<F, E>
 {
     fn serialize_with_mode<W: Write>(
@@ -817,67 +556,30 @@ impl<F: FieldCore + CanonicalField + AkitaSerialize, E: FieldCore + AkitaSeriali
         compress: Compress,
     ) -> Result<(), SerializationError> {
         self.root.serialize_with_mode(&mut writer, compress)?;
-        for step in &self.steps {
-            step.serialize_with_mode(&mut writer, compress)?;
+        for fold in &self.recursive_folds {
+            fold.serialize_with_mode(&mut writer, compress)?;
         }
-        Ok(())
+        self.terminal.serialize_with_mode(&mut writer, compress)
     }
 
     fn serialized_size(&self, compress: Compress) -> usize {
         self.root.serialized_size(compress)
             + self
-                .steps
+                .recursive_folds
                 .iter()
-                .map(|step| step.serialized_size(compress))
+                .map(|fold| fold.serialized_size(compress))
                 .sum::<usize>()
+            + self.terminal.serialized_size(compress)
     }
 }
 
 impl<F: FieldCore + Valid, E: FieldCore + Valid> Valid for AkitaBatchedProof<F, E> {
     fn check(&self) -> Result<(), SerializationError> {
         self.root.check()?;
-        for step in &self.steps {
-            step.check()?;
+        for fold in &self.recursive_folds {
+            fold.check()?;
         }
-        match &self.root {
-            AkitaBatchedRootProof::Fold(_) => {
-                let Some(AkitaLevelProof::Terminal(_)) = self.steps.last() else {
-                    return Err(SerializationError::InvalidData(
-                        "fold-rooted batched Akita proof must terminate with a terminal step"
-                            .to_string(),
-                    ));
-                };
-                if self.steps[..self.steps.len().saturating_sub(1)]
-                    .iter()
-                    .any(|step| !matches!(step, AkitaLevelProof::Intermediate { .. }))
-                {
-                    return Err(SerializationError::InvalidData(
-                        "fold-rooted batched Akita proof may only contain intermediate steps before the terminal step"
-                            .to_string(),
-                    ));
-                }
-                // Headerless validity cannot infer the ring dimension from
-                // `v` alone. Schedule-shaped deserialization and verifier
-                // replay own the cross-level dimension checks.
-            }
-            AkitaBatchedRootProof::Terminal(_) => {
-                if !self.steps.is_empty() {
-                    return Err(SerializationError::InvalidData(
-                        "terminal-rooted batched proof must not carry recursive-suffix steps"
-                            .to_string(),
-                    ));
-                }
-            }
-            AkitaBatchedRootProof::ZeroFold { .. } => {
-                if !self.steps.is_empty() {
-                    return Err(SerializationError::InvalidData(
-                        "root-direct batched proof must not carry recursive-suffix steps"
-                            .to_string(),
-                    ));
-                }
-            }
-        }
-        Ok(())
+        self.terminal.check()
     }
 }
 
@@ -894,74 +596,28 @@ impl<
         ctx: &AkitaBatchedProofShape,
     ) -> Result<Self, SerializationError> {
         ctx.check()?;
-        let out = match ctx {
-            AkitaBatchedProofShape::Fold {
-                root_shape,
-                step_shapes,
-            } => {
-                let fold = AkitaBatchedFoldRoot::deserialize_with_mode(
-                    &mut reader,
-                    compress,
-                    validate,
-                    root_shape,
-                )?;
-                let mut steps = Vec::new();
-                reserve_shape_len(&mut steps, step_shapes.len())?;
-                for shape in step_shapes {
-                    let step = match shape {
-                        AkitaProofStepShape::Intermediate(shape) => {
-                            AkitaLevelProof::deserialize_with_mode(
-                                &mut reader,
-                                compress,
-                                validate,
-                                shape,
-                            )?
-                        }
-                        AkitaProofStepShape::Terminal(shape) => {
-                            let terminal = TerminalLevelProof::deserialize_with_mode(
-                                &mut reader,
-                                compress,
-                                validate,
-                                shape,
-                            )?;
-                            AkitaLevelProof::Terminal(terminal)
-                        }
-                    };
-                    steps.push(step);
-                }
-                Self {
-                    root: AkitaBatchedRootProof::Fold(fold),
-                    steps,
-                }
-            }
-            AkitaBatchedProofShape::Terminal(terminal_shape) => {
-                let terminal = TerminalLevelProof::deserialize_with_mode(
-                    &mut reader,
-                    compress,
-                    validate,
-                    terminal_shape,
-                )?;
-                Self {
-                    root: AkitaBatchedRootProof::Terminal(terminal),
-                    steps: Vec::new(),
-                }
-            }
-            AkitaBatchedProofShape::ZeroFold { witness_shapes } => {
-                let mut witnesses = Vec::new();
-                reserve_shape_len(&mut witnesses, witness_shapes.len())?;
-                for shape in witness_shapes {
-                    witnesses.push(CleartextWitnessProof::deserialize_with_mode(
-                        &mut reader,
-                        compress,
-                        validate,
-                        shape,
-                    )?);
-                }
-                Self {
-                    root: AkitaBatchedRootProof::ZeroFold { witnesses },
-                    steps: Vec::new(),
-                }
-            }
+        let root =
+            FoldLevelProof::deserialize_with_mode(&mut reader, compress, validate, &ctx.root)?;
+        let mut recursive_folds = Vec::new();
+        reserve_shape_len(&mut recursive_folds, ctx.recursive_folds.len())?;
+        for shape in &ctx.recursive_folds {
+            recursive_folds.push(FoldLevelProof::deserialize_with_mode(
+                &mut reader,
+                compress,
+                validate,
+                shape,
+            )?);
+        }
+        let terminal = TerminalLevelProof::deserialize_with_mode(
+            &mut reader,
+            compress,
+            validate,
+            &ctx.terminal,
+        )?;
+        let out = Self {
+            root,
+            recursive_folds,
+            terminal,
         };
         if matches!(validate, Validate::Yes) {
             out.check()?;

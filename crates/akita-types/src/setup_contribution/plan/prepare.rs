@@ -34,8 +34,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
         )?;
         let d_rows = match relation_matrix_row_layout {
             crate::RelationMatrixRowLayout::WithDBlock => level_params.d_key.row_len(),
-            crate::RelationMatrixRowLayout::WithoutDBlock
-            | crate::RelationMatrixRowLayout::WithoutCommitmentBlocks => 0,
+            crate::RelationMatrixRowLayout::WithoutCommitmentBlocks => 0,
         };
         let d_row_start = rows
             .checked_sub(d_rows)

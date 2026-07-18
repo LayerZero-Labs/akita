@@ -178,11 +178,8 @@ fn candidate<Cfg: CommitmentConfig>(
     preset: Fp128Preset,
     key: PolynomialGroupLayout,
 ) -> Result<Option<Fp128ScheduleSelection>, AkitaError> {
-    // A genuine planner failure (invalid key shape, witness overflow,
-    // SIS-floor gap) propagates rather than being swallowed into a missing
-    // candidate. For any valid key the DP always yields a schedule (it falls
-    // back to a root-direct cleartext schedule), so no preset is silently
-    // dropped — the caller only ever sees `Err` on a real error.
+    // Planner failures, including unsupported schedules that cannot profitably
+    // fold twice, propagate rather than being swallowed into a missing candidate.
     let schedule = Cfg::runtime_schedule(AkitaScheduleLookupKey::single(key))?;
     Ok(Some(Fp128ScheduleSelection { preset, schedule }))
 }
@@ -204,8 +201,7 @@ where
 /// The key carries singleton and multi-group batch shape data, so
 /// this helper can be used by profile tooling without manually comparing
 /// typed preset schedule tables. A genuine planner failure propagates as an
-/// error; for any valid key every preset yields a schedule (the DP falls back
-/// to a root-direct cleartext schedule), so the best one is always returned.
+/// error; supported keys yield a folded schedule for each candidate preset.
 ///
 /// # Errors
 ///

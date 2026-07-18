@@ -50,9 +50,9 @@ pub use direct_witness::{
 };
 pub use hints::AkitaCommitmentHint;
 pub use levels::{
-    AkitaBatchedFoldRoot, AkitaBatchedProof, AkitaBatchedRootProof, AkitaLevelProof,
-    AkitaStage1Proof, AkitaStage1StageProof, AkitaStage2Proof, ExtensionOpeningReductionProof,
-    NextWitnessBinding, SetupSumcheckProof, TerminalLevelProof,
+    AkitaBatchedProof, AkitaStage1Proof, AkitaStage1StageProof, AkitaStage2Proof,
+    ExtensionOpeningReductionProof, FoldLevelProof, NextWitnessBinding, SetupSumcheckProof,
+    TerminalLevelProof,
 };
 pub use relation::{
     assemble_relation_rhs, evaluation_trace_row_weight, generate_relation_rhs,
@@ -80,9 +80,9 @@ pub use setup_prefix::{
     SetupPrefixVerifierSlot, SETUP_OFFLOAD_D_SETUP, SETUP_OFFLOAD_MIN_PREFIX_FIELD_LEN,
 };
 pub use shapes::{
-    AkitaBatchedProofShape, AkitaProofStepShape, AkitaStage1StageShape,
-    ExtensionOpeningReductionShape, LevelProofShape, NextWitnessBindingShape,
-    SetupProductSumcheckShape, TerminalLevelProofShape, SETUP_SUMCHECK_DEGREE,
+    AkitaBatchedProofShape, AkitaStage1StageShape, ExtensionOpeningReductionShape, LevelProofShape,
+    NextWitnessBindingShape, SetupProductSumcheckShape, TerminalLevelProofShape,
+    SETUP_SUMCHECK_DEGREE,
 };
 pub use stage1::{
     absorb_interstage_claims, combine_polys, eval_poly, linear_combination,

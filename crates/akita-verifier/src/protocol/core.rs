@@ -37,12 +37,13 @@ use akita_types::{
     sample_public_row_coefficients, scheduled_next_level_params,
     tensor_equality_factor_eval_at_point, trace_public_weights_recursive,
     trace_public_weights_root_terms, trace_terms_recursive, trace_weight_layout_from_segment,
-    AkitaBatchedRootProof, AkitaLevelProof, AkitaStage1Proof, AkitaStage2Proof, AkitaVerifierSetup,
-    BasisMode, CleartextWitnessProof, ExecutionSchedule, ExtensionOpeningReductionProof,
-    FoldLinfProtocolBinding, FpExtEncoding, LevelParams, OpeningClaims, OpeningClaimsLayout,
-    PointVariableSelection, PolynomialGroupClaims, PreparedOpeningPoint, RelationMatrixRowLayout,
+    AkitaStage1Proof, AkitaStage2Proof, AkitaVerifierSetup, BasisMode, CleartextWitnessProof,
+    ExecutionSchedule, ExtensionOpeningReductionProof, FoldLevelProof, FoldLinfProtocolBinding,
+    FpExtEncoding, LevelParams, OpeningClaims, OpeningClaimsLayout, PointVariableSelection,
+    PolynomialGroupClaims, PreparedOpeningPoint, RelationMatrixRowLayout,
     RingMultiplierOpeningPoint, RingOpeningPoint, RingRelationInstance, RingVec, Schedule,
-    SetupContributionMode, SetupSumcheckProof, TerminalWitnessTranscriptParts, TraceClaim,
+    SetupContributionMode, SetupSumcheckProof, TerminalLevelProof, TerminalWitnessTranscriptParts,
+    TraceClaim,
 };
 use akita_types::{
     tensor_opening_split, tensor_reduction_claim_from_rows, tensor_row_partials_from_columns,

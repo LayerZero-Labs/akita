@@ -43,21 +43,6 @@ fn flat_ring_vec_checked_decoders_reject_zero_dimension() {
 }
 
 #[test]
-fn batched_proof_shape_validation_recurses_into_witness_shapes() {
-    let shape = AkitaBatchedProofShape::ZeroFold {
-        witness_shapes: vec![CleartextWitnessShape::FieldElements(
-            DEFAULT_MAX_SEQUENCE_LEN + 1,
-        )],
-    };
-
-    let err = shape.check().unwrap_err();
-    assert!(matches!(
-        err,
-        SerializationError::LengthLimitExceeded { .. }
-    ));
-}
-
-#[test]
 fn level_shape_validation_checks_extension_opening_reduction() {
     let oversized = LevelProofShape {
         extension_opening_reduction: Some(ExtensionOpeningReductionShape::standard(
@@ -139,7 +124,7 @@ fn tiny_reduction() -> ExtensionOpeningReductionProof<F> {
 #[test]
 fn extension_opening_reduction_none_is_zero_proof_wire_bytes() {
     const D: usize = 8;
-    let without_reduction = AkitaLevelProof::new::<D>(
+    let without_reduction = FoldLevelProof::new::<D>(
         vec![CyclotomicRing::<F, D>::zero()],
         tiny_stage1(),
         tiny_stage2::<D>(),
@@ -157,12 +142,12 @@ fn extension_opening_reduction_none_is_zero_proof_wire_bytes() {
     assert_eq!(bytes.len(), without_reduction.serialized_size(Compress::No));
 
     let decoded =
-        AkitaLevelProof::<F, F>::deserialize_uncompressed(&*bytes, &without_reduction.shape())
+        FoldLevelProof::<F, F>::deserialize_uncompressed(&*bytes, &without_reduction.shape())
             .expect("deserialize proof without extension-opening reduction");
     assert!(decoded.extension_opening_reduction().is_none());
     assert_eq!(decoded, without_reduction);
 
-    let with_reduction = AkitaLevelProof::new_two_stage_many_with_extension_opening_reduction::<D>(
+    let with_reduction = FoldLevelProof::new_two_stage_many_with_extension_opening_reduction::<D>(
         Some(tiny_reduction()),
         vec![CyclotomicRing::<F, D>::zero()],
         tiny_stage1(),
@@ -187,7 +172,7 @@ fn extension_opening_reduction_none_is_zero_proof_wire_bytes() {
     with_reduction
         .serialize_uncompressed(&mut bytes_with_reduction)
         .expect("serialize proof with extension-opening reduction");
-    let decoded_with_reduction = AkitaLevelProof::<F, F>::deserialize_uncompressed(
+    let decoded_with_reduction = FoldLevelProof::<F, F>::deserialize_uncompressed(
         &*bytes_with_reduction,
         &with_reduction.shape(),
     )
@@ -198,7 +183,7 @@ fn extension_opening_reduction_none_is_zero_proof_wire_bytes() {
 #[test]
 fn terminal_inner_state_omits_outer_commitment_from_tag_free_proof_wire() {
     const D: usize = 8;
-    let outer = AkitaLevelProof::new::<D>(
+    let outer = FoldLevelProof::new::<D>(
         vec![CyclotomicRing::<F, D>::zero()],
         tiny_stage1(),
         tiny_stage2::<D>(),
@@ -228,7 +213,7 @@ fn terminal_inner_state_omits_outer_commitment_from_tag_free_proof_wire() {
         shape.next_witness_binding,
         NextWitnessBindingShape::TerminalInnerState
     );
-    let decoded = AkitaLevelProof::<F, F>::deserialize_uncompressed(&bytes[..], &shape)
+    let decoded = FoldLevelProof::<F, F>::deserialize_uncompressed(&bytes[..], &shape)
         .expect("shape-driven deserialize terminal-inner edge");
     assert_eq!(decoded, terminal_inner);
 }
@@ -249,12 +234,7 @@ fn terminal_level_proof_serde_round_trip() {
         .shape()
         .extension_opening_reduction
         .is_none());
-    assert_eq!(
-        AkitaBatchedRootProof::new_terminal(without_reduction.clone())
-            .fold_grind_nonce()
-            .expect("terminal root has fold nonce"),
-        7
-    );
+    assert_eq!(without_reduction.fold_grind_nonce, 7);
 
     let mut bytes = Vec::new();
     without_reduction

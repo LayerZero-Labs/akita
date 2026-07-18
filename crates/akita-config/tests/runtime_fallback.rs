@@ -72,7 +72,7 @@ fn check_table_miss_fallback<Cfg: CommitmentConfig>(num_vars: usize) {
 fn dp_fallback_fires_for_non_shipped_keys() {
     check_table_miss_fallback::<fp128::D64OneHot>(14);
     check_table_miss_fallback::<fp128::D64Full>(16);
-    check_table_miss_fallback::<fp32::D64OneHot>(12);
+    check_table_miss_fallback::<fp32::D128OneHot>(16);
 }
 
 fn assert_policy_matches_cfg<Cfg: CommitmentConfig>() {

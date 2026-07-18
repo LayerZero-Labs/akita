@@ -60,8 +60,11 @@ fn proof_schedule_from_layout_includes_entire_batch() {
     .expect("multi-group shape");
     assert_eq!(batch.num_groups(), 2);
     let schedule = D64OneHot::get_params_for_prove(&batch).expect("multi-group schedule");
-    let root_params =
-        akita_types::multi_group_root_commit_params(&schedule).expect("multi-group root params");
+    let root_params = schedule
+        .root_fold()
+        .expect("multi-group root fold")
+        .params
+        .clone();
     assert_eq!(root_params.precommitted_groups.len(), 1);
     assert_eq!(
         root_params.precommitted_groups[0].layout.group,

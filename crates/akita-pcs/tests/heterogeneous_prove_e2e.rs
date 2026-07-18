@@ -120,10 +120,7 @@ fn heterogeneous_delegating_clusters_batched_prove_and_verify() {
     )
     .expect("heterogeneous batched prove");
 
-    assert!(
-        !proof.is_root_direct(),
-        "fixture must exercise folded recursive prove, not root-direct"
-    );
+    assert!(proof.num_fold_levels() >= 2);
 
     let mut verifier_transcript = AkitaTranscript::<F>::new(b"test/heterogeneous-batched-prove");
     Scheme::batched_verify(

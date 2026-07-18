@@ -17,8 +17,8 @@ use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::AkitaError;
 
 use crate::generated::{
-    GeneratedDirectStep, GeneratedFoldStep, GeneratedFoldStepWithSetupMetadata,
-    GeneratedScheduleTableEntry, GeneratedSetupPrefixGroup, GeneratedStep,
+    GeneratedFoldStep, GeneratedFoldStepWithSetupMetadata, GeneratedScheduleTableEntry,
+    GeneratedSetupPrefixGroup, GeneratedStep,
 };
 use crate::schedule_params::optimize_fold_challenge_shape;
 use crate::PlannerPolicy;
@@ -244,10 +244,6 @@ impl GeneratedFoldStep {
     /// it against the same width + bucket via the fallible
     /// [`AjtaiKeyParams::try_new`].
     ///
-    /// The same method expands a root-direct commit step (the
-    /// [`GeneratedDirectStep::commit`] payload): a root-direct commit is a
-    /// `fold_level == 0` expansion.
-    ///
     /// # Errors
     ///
     /// Returns an error when the stored ring dimension disagrees with the
@@ -266,30 +262,6 @@ impl GeneratedFoldStep {
             policy,
             ring_challenge_config,
             fold_level,
-            current_w_len,
-            fold_shape,
-            num_claims,
-            None,
-            SetupContributionMode::Direct,
-        )
-    }
-
-    /// Expand a root-direct commit payload (`GeneratedDirectStep::commit`).
-    ///
-    /// Root-direct commits ship the raw polynomial unchunked, matching
-    /// `compute_root_direct_level_params`.
-    pub fn expand_to_root_direct_commit_params(
-        &self,
-        policy: &PlannerPolicy,
-        ring_challenge_config: impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
-        current_w_len: usize,
-        fold_shape: TensorChallengeShape,
-        num_claims: usize,
-    ) -> Result<LevelParams, AkitaError> {
-        self.expand_to_level_params_with_setup(
-            policy,
-            ring_challenge_config,
-            0,
             current_w_len,
             fold_shape,
             num_claims,
@@ -562,10 +534,8 @@ impl GeneratedFoldStep {
             field_bits_hint: 0,
             cached_num_digits_block_claims: 0,
             cached_num_digits_fold_value: 1,
-            // The chunk layout depends on the step's role (fold vs root-direct
-            // commit), which the caller knows; default here and let the caller
-            // (`schedule_from_entry`) stamp the per-level value for fold steps so
-            // a root-direct commit stays single-chunk.
+            // The caller stamps the configured per-level chunk policy after
+            // expansion; this neutral default keeps parameter construction pure.
             witness_chunk: akita_types::ChunkedWitnessCfg::default(),
             precommitted_groups,
             setup_prefix,
@@ -857,39 +827,9 @@ impl GeneratedScheduleTableEntry {
             .count()
     }
 
-    /// Whether this entry uses the root-direct fast path (its first step is
-    /// a `Direct`).
-    pub fn is_root_direct(&self) -> bool {
-        matches!(self.steps.first(), Some(GeneratedStep::Direct(_)))
-    }
-
-    /// The root fold step, when the entry starts with one.
-    pub fn root_fold_step(&self) -> Option<&GeneratedFoldStep> {
-        self.steps.first().and_then(GeneratedStep::fold_step)
-    }
-
-    /// The terminal direct step, when the entry ends with one.
-    pub fn terminal_direct(&self) -> Option<&GeneratedDirectStep> {
-        match self.steps.last() {
-            Some(GeneratedStep::Direct(step)) => Some(step),
-            _ => None,
-        }
-    }
-
-    /// The brute-forced fold step that carries the root commit layout: the
-    /// root fold step for fold-root entries, or the root-direct commit for
-    /// root-direct entries. `None` for an uncommittable root-direct entry.
-    pub fn root_commit_step(&self) -> Option<&GeneratedFoldStep> {
-        match self.steps.first() {
-            Some(GeneratedStep::Fold(step)) => Some(step),
-            Some(GeneratedStep::FoldWithSetupMetadata(step)) => Some(&step.fold),
-            Some(GeneratedStep::Direct(direct)) => direct.commit.as_ref(),
-            None => None,
-        }
-    }
-
     /// Validate the structural invariants the runtime relies on: the entry
-    /// is non-empty, ends in a `Direct`, and has no non-terminal `Direct`.
+    /// begins with at least two folds, ends in a `Direct`, and has no
+    /// non-terminal `Direct`.
     ///
     /// # Errors
     ///
@@ -905,15 +845,22 @@ fn validate_generated_steps(steps: &[GeneratedStep]) -> Result<(), AkitaError> {
             "generated schedule table entry must contain at least one step".to_string(),
         ));
     }
+    let num_folds = steps.iter().filter_map(GeneratedStep::fold_step).count();
+    if steps.first().and_then(GeneratedStep::fold_step).is_none() || num_folds < 2 {
+        return Err(AkitaError::UnsupportedSchedule(
+            "generated schedule must begin with a root fold and contain at least two folds"
+                .to_string(),
+        ));
+    }
     let last = steps.len() - 1;
     for (idx, step) in steps.iter().enumerate() {
-        if matches!(step, GeneratedStep::Direct(_)) && idx != last {
+        if matches!(step, GeneratedStep::Direct) && idx != last {
             return Err(AkitaError::InvalidSetup(
                 "generated direct step must be terminal".to_string(),
             ));
         }
     }
-    if !matches!(steps[last], GeneratedStep::Direct(_)) {
+    if !matches!(steps[last], GeneratedStep::Direct) {
         return Err(AkitaError::InvalidSetup(
             "generated schedule must end in a terminal direct step".to_string(),
         ));

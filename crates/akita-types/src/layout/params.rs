@@ -61,18 +61,13 @@ fn empty_ajtai_key(role: crate::sis::SisMatrixRole) -> AjtaiKeyParams {
 ///
 /// At a terminal fold the cleartext witness is absorbed into the transcript
 /// and shipped on the wire, so the verifier evaluates the final witness
-/// directly. Keeping the D-block in the relation would be vestigial; this enum
-/// lets the prover, verifier, and planner agree to drop it.
+/// directly and the relation retains neither commitment block.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RelationMatrixRowLayout {
     /// Full layout including the D-block (`v = D * e_hat` rows). Used at every
     /// intermediate fold level and at the root when stage-1 runs.
     WithDBlock,
-    /// Cleartext-witness layout: omit the D-block from the M-matrix. Used at
-    /// a root-terminal fold where the external public statement remains the
-    /// outer commitment `u`, so the B block is still load-bearing.
-    WithoutDBlock,
-    /// Suffix-terminal `t`-state layout: omit both public commitment blocks.
+    /// Terminal `t`-state layout: omit both public commitment blocks.
     /// The physical rows are exactly `consistency | A`; canonical terminal
     /// `t` bytes replace `u` as the transcript-bound public state.
     WithoutCommitmentBlocks,
@@ -900,8 +895,7 @@ impl LevelParams {
     pub fn n_d_active_for(&self, layout: RelationMatrixRowLayout) -> usize {
         match layout {
             RelationMatrixRowLayout::WithDBlock => self.d_key.row_len(),
-            RelationMatrixRowLayout::WithoutDBlock
-            | RelationMatrixRowLayout::WithoutCommitmentBlocks => 0,
+            RelationMatrixRowLayout::WithoutCommitmentBlocks => 0,
         }
     }
 

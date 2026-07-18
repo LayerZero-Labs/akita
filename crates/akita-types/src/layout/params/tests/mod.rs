@@ -181,11 +181,6 @@ fn relation_matrix_row_count_values() {
         1 + 3 + 4 * 4 + 2
     );
     assert_eq!(
-        lp.relation_matrix_row_count_for(2, RelationMatrixRowLayout::WithoutDBlock)
-            .unwrap(),
-        1 + 4 * 2 + 2
-    );
-    assert_eq!(
         lp.relation_matrix_row_count_for(2, RelationMatrixRowLayout::WithoutCommitmentBlocks,)
             .unwrap(),
         1 + lp.a_key.row_len()
@@ -202,27 +197,24 @@ fn canonical_row_offsets_match_open_coded_layout() {
     let n_d = lp.d_key.row_len();
 
     for nc in [1usize, 2, 4] {
-        for layout in [
-            RelationMatrixRowLayout::WithDBlock,
-            RelationMatrixRowLayout::WithoutDBlock,
-        ] {
-            let n_d_active = match layout {
-                RelationMatrixRowLayout::WithDBlock => n_d,
-                RelationMatrixRowLayout::WithoutDBlock => 0,
-                RelationMatrixRowLayout::WithoutCommitmentBlocks => 0,
-            };
-            let a_start = 1;
-            let b_start = a_start + n_a;
-            let d_start = b_start + n_b * nc;
+        let layout = RelationMatrixRowLayout::WithDBlock;
+        let n_d_active = n_d;
+        let a_start = 1;
+        let b_start = a_start + n_a;
+        let d_start = b_start + n_b * nc;
 
-            assert_eq!(lp.a_start(), a_start);
-            assert_eq!(lp.b_start().unwrap(), b_start);
-            assert_eq!(lp.d_start(nc).unwrap(), d_start);
-            assert_eq!(
-                lp.relation_matrix_row_count_for(nc, layout).unwrap(),
-                d_start + n_d_active
-            );
-        }
+        assert_eq!(lp.a_start(), a_start);
+        assert_eq!(lp.b_start().unwrap(), b_start);
+        assert_eq!(lp.d_start(nc).unwrap(), d_start);
+        assert_eq!(
+            lp.relation_matrix_row_count_for(nc, layout).unwrap(),
+            d_start + n_d_active
+        );
+        assert_eq!(
+            lp.relation_matrix_row_count_for(nc, RelationMatrixRowLayout::WithoutCommitmentBlocks,)
+                .unwrap(),
+            1 + n_a,
+        );
     }
 }
 

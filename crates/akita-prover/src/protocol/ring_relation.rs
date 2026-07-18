@@ -379,8 +379,7 @@ where
             )?;
             Ok(v)
         }
-        RelationMatrixRowLayout::WithoutDBlock
-        | RelationMatrixRowLayout::WithoutCommitmentBlocks => Ok(Vec::new()),
+        RelationMatrixRowLayout::WithoutCommitmentBlocks => Ok(Vec::new()),
     }
 }
 

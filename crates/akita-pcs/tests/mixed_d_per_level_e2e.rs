@@ -26,9 +26,8 @@ use akita_prover::{ComputeBackendSetup, CpuBackend};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_transcript::AkitaTranscript;
 use akita_types::{
-    validate_schedule_ring_dims, AkitaBatchedProof, AkitaBatchedRootProof, AkitaLevelProof,
-    CleartextWitnessProof, NextWitnessBinding, OpeningClaimsLayout, RingVec, Schedule,
-    SetupContributionMode, Step,
+    validate_schedule_ring_dims, AkitaBatchedProof, CleartextWitnessProof, NextWitnessBinding,
+    OpeningClaimsLayout, RingVec, Schedule, SetupContributionMode, Step,
 };
 use common::*;
 use mixed_d_per_level_fixture::mixed_d_per_level_schedule;
@@ -320,12 +319,8 @@ fn mixed_d_per_level_prove_verify_replay_and_malformed_rejections() {
 
         // The proof must exercise the folded recursive path across both ring
         // dimensions: root fold + 3 recursive steps.
-        assert!(
-            matches!(fixture.proof.root, AkitaBatchedRootProof::Fold(_)),
-            "mixed-D fixture must exercise the folded recursive prove path"
-        );
         assert_eq!(
-            fixture.proof.steps.len() + 1,
+            fixture.proof.num_fold_levels(),
             mixed_schedule().num_fold_levels(),
             "proof must carry one step per scheduled fold level"
         );
@@ -395,10 +390,7 @@ fn mixed_d_per_level_prove_verify_replay_and_malformed_rejections() {
         // ring dimension footprint.
         {
             let mut proof = fixture.proof.clone();
-            let AkitaBatchedRootProof::Fold(root) = &mut proof.root else {
-                panic!("fixture root must be a fold proof");
-            };
-            let stage2 = &mut root.stage2;
+            let stage2 = &mut proof.root.stage2;
             let NextWitnessBinding::OuterCommitment(next_w_commitment) =
                 &mut stage2.next_witness_binding
             else {
@@ -413,16 +405,10 @@ fn mixed_d_per_level_prove_verify_replay_and_malformed_rejections() {
         // Recursive fold commitment length at every intermediate suffix
         // level: a commitment sized at the OTHER level's dim must be
         // rejected (this is the mixed-D-specific length confusion).
-        for (idx, step) in fixture.proof.steps.iter().enumerate() {
+        for (idx, _) in fixture.proof.recursive_folds.iter().enumerate() {
             let level = idx + 1;
-            if !matches!(step, AkitaLevelProof::Intermediate { .. }) {
-                continue;
-            }
             let mut proof = fixture.proof.clone();
-            let AkitaLevelProof::Intermediate { stage2, .. } = &mut proof.steps[idx] else {
-                unreachable!();
-            };
-            let inner = stage2;
+            let inner = &mut proof.recursive_folds[idx].stage2;
             let NextWitnessBinding::OuterCommitment(next_w_commitment) =
                 &mut inner.next_witness_binding
             else {
@@ -448,9 +434,7 @@ fn mixed_d_per_level_prove_verify_replay_and_malformed_rejections() {
         // Fold `v` vector length (D · ŵ at the level's own dim).
         {
             let mut proof = fixture.proof.clone();
-            let AkitaLevelProof::Intermediate { v, .. } = &mut proof.steps[0] else {
-                panic!("first recursive step must be intermediate");
-            };
+            let v = &mut proof.recursive_folds[0].v;
             let len = v.coeffs().len();
             truncate_ring_vec(v, len / 2);
             verify_mixed(&fixture, &proof, &fixture.commitment)
@@ -461,12 +445,7 @@ fn mixed_d_per_level_prove_verify_replay_and_malformed_rejections() {
         // from the cleartext terminal witness (which lives at D = 64 here).
         {
             let mut proof = fixture.proof.clone();
-            let terminal = proof
-                .steps
-                .last_mut()
-                .and_then(AkitaLevelProof::as_terminal_mut)
-                .expect("fixture must end in a terminal step");
-            let witness = terminal.final_witness_mut();
+            let witness = proof.terminal.final_witness_mut();
             match witness {
                 CleartextWitnessProof::SegmentTyped(segment) => {
                     segment.z_payloads[0].pop();
@@ -483,12 +462,7 @@ fn mixed_d_per_level_prove_verify_replay_and_malformed_rejections() {
         // Terminal witness digit-field (e_fields) length.
         {
             let mut proof = fixture.proof.clone();
-            let terminal = proof
-                .steps
-                .last_mut()
-                .and_then(AkitaLevelProof::as_terminal_mut)
-                .expect("fixture must end in a terminal step");
-            let witness = terminal.final_witness_mut();
+            let witness = proof.terminal.final_witness_mut();
             if let CleartextWitnessProof::SegmentTyped(segment) = witness {
                 let len = segment.e_fields.coeffs().len();
                 truncate_ring_vec(&mut segment.e_fields, len.saturating_sub(1));
@@ -501,12 +475,7 @@ fn mixed_d_per_level_prove_verify_replay_and_malformed_rejections() {
         // linked to the response by the direct A relation.
         {
             let mut proof = fixture.proof.clone();
-            let terminal = proof
-                .steps
-                .last_mut()
-                .and_then(AkitaLevelProof::as_terminal_mut)
-                .expect("fixture must end in a terminal step");
-            let witness = terminal.final_witness_mut();
+            let witness = proof.terminal.final_witness_mut();
             if let CleartextWitnessProof::SegmentTyped(segment) = witness {
                 let mut coeffs = segment.t_fields.coeffs().to_vec();
                 coeffs[0] += F::one();

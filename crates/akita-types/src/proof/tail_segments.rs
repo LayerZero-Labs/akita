@@ -564,10 +564,7 @@ pub fn terminal_golomb_grind_tail_t_vectors(
     relation_matrix_row_layout: RelationMatrixRowLayout,
     witness_shape: Option<&CleartextWitnessShape>,
 ) -> Result<Option<usize>, AkitaError> {
-    if !matches!(
-        relation_matrix_row_layout,
-        RelationMatrixRowLayout::WithoutDBlock | RelationMatrixRowLayout::WithoutCommitmentBlocks
-    ) {
+    if relation_matrix_row_layout != RelationMatrixRowLayout::WithoutCommitmentBlocks {
         return Ok(None);
     }
     let Some(shape) = witness_shape else {

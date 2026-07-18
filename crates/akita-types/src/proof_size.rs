@@ -70,20 +70,19 @@ pub fn level_proof_bytes(
     next_lp: Option<&LevelParams>,
     next_w_len: usize,
     layout: RelationMatrixRowLayout,
-    next_witness_binding: crate::NextWitnessBindingPolicy,
+    next_witness_binding: Option<crate::NextWitnessBindingPolicy>,
 ) -> usize {
     let base_elem_bytes = field_bytes(base_field_bits);
     let challenge_elem_bytes = field_bytes(challenge_field_bits);
     match layout {
-        RelationMatrixRowLayout::WithoutDBlock
-        | RelationMatrixRowLayout::WithoutCommitmentBlocks => FOLD_GRIND_NONCE_BYTES,
+        RelationMatrixRowLayout::WithoutCommitmentBlocks => FOLD_GRIND_NONCE_BYTES,
         RelationMatrixRowLayout::WithDBlock => {
             let rounds = sumcheck_rounds(lp.ring_dimension, next_w_len);
             let sumcheck = sumcheck_bytes(rounds, 3, challenge_elem_bytes);
             let v_bytes =
                 proof_ring_vec_bytes(lp.d_key.row_len(), lp.ring_dimension, base_elem_bytes);
             let next_commit_bytes = match next_witness_binding {
-                crate::NextWitnessBindingPolicy::OuterCommitment => {
+                Some(crate::NextWitnessBindingPolicy::OuterCommitment) => {
                     let next_lp = next_lp.expect(
                         "outer-commitment level_proof_bytes requires next_lp; caller must pass Some",
                     );
@@ -93,10 +92,8 @@ pub fn level_proof_bytes(
                         base_elem_bytes,
                     )
                 }
-                crate::NextWitnessBindingPolicy::TerminalInnerState => 0,
-                crate::NextWitnessBindingPolicy::TerminalCleartextWitness => {
-                    panic!("intermediate level cannot bind a terminal cleartext witness")
-                }
+                Some(crate::NextWitnessBindingPolicy::TerminalInnerState) => 0,
+                None => panic!("intermediate level requires an outgoing witness binding"),
             };
             let next_eval_bytes = challenge_elem_bytes;
             let b = 1usize << lp.log_basis;
@@ -166,9 +163,9 @@ mod tests {
     use crate::proof::{segment_typed_witness_shape_from_groups, SegmentTypedWitness};
     use crate::tail_golomb_rice_z_params;
     use crate::{
-        direct_witness_bytes, AkitaLevelProof, AkitaStage1Proof, AkitaStage1StageProof,
-        AkitaStage2Proof, CleartextWitnessProof, CleartextWitnessShape, RingVec,
-        SetupSumcheckProof, SisModulusProfileId, TerminalLevelProof, SETUP_SUMCHECK_DEGREE,
+        direct_witness_bytes, AkitaStage1Proof, AkitaStage1StageProof, AkitaStage2Proof,
+        CleartextWitnessProof, CleartextWitnessShape, FoldLevelProof, RingVec, SetupSumcheckProof,
+        SisModulusProfileId, TerminalLevelProof, SETUP_SUMCHECK_DEGREE,
     };
 
     type F = Prime128OffsetA7F7;
@@ -292,7 +289,7 @@ mod tests {
         let rounds = sumcheck_rounds(lp.ring_dimension, next_w_len);
         let b = 1usize << lp.log_basis;
 
-        let proof = AkitaLevelProof::Intermediate {
+        let proof = FoldLevelProof {
             extension_opening_reduction: None,
             v: RingVec::from_coeffs(vec![F::zero(); current_coeffs]),
             fold_grind_nonce: 0,
@@ -308,11 +305,6 @@ mod tests {
                     }
                     crate::NextWitnessBindingPolicy::TerminalInnerState => {
                         crate::NextWitnessBinding::TerminalInnerState
-                    }
-                    crate::NextWitnessBindingPolicy::TerminalCleartextWitness => {
-                        return Err(AkitaError::InvalidSetup(
-                            "intermediate proof cannot bind a terminal cleartext witness".into(),
-                        ));
                     }
                 },
                 next_w_eval: F::zero(),
@@ -359,7 +351,7 @@ mod tests {
                     Some(&next_lp),
                     next_w_len,
                     RelationMatrixRowLayout::WithDBlock,
-                    crate::NextWitnessBindingPolicy::OuterCommitment,
+                    Some(crate::NextWitnessBindingPolicy::OuterCommitment),
                 ),
                 exact_level_proof_bytes::<F>(
                     &lp,
@@ -407,7 +399,7 @@ mod tests {
             Some(&next_lp),
             next_w_len,
             RelationMatrixRowLayout::WithDBlock,
-            crate::NextWitnessBindingPolicy::OuterCommitment,
+            Some(crate::NextWitnessBindingPolicy::OuterCommitment),
         );
         let terminal_inner = level_proof_bytes(
             128,
@@ -416,7 +408,7 @@ mod tests {
             None,
             next_w_len,
             RelationMatrixRowLayout::WithDBlock,
-            crate::NextWitnessBindingPolicy::TerminalInnerState,
+            Some(crate::NextWitnessBindingPolicy::TerminalInnerState),
         );
         let expected_outer_commitment =
             proof_ring_vec_bytes(next_lp.b_key.row_len(), D, field_bytes(128));
@@ -520,7 +512,7 @@ mod tests {
                     Some(&next_lp),
                     next_w_len,
                     RelationMatrixRowLayout::WithDBlock,
-                    crate::NextWitnessBindingPolicy::OuterCommitment,
+                    Some(crate::NextWitnessBindingPolicy::OuterCommitment),
                 ),
                 direct_bytes,
                 "direct planner bytes must exclude the stage-3 payload at log_basis={log_basis}"
@@ -571,8 +563,8 @@ mod tests {
                     &lp,
                     None,
                     next_w_len,
-                    RelationMatrixRowLayout::WithoutDBlock,
-                    crate::NextWitnessBindingPolicy::TerminalCleartextWitness,
+                    RelationMatrixRowLayout::WithoutCommitmentBlocks,
+                    None,
                 ),
                 serialized_without_witness,
                 "planned terminal-level bytes should match the serialized terminal body \

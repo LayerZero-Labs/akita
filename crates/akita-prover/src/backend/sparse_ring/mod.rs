@@ -416,9 +416,7 @@ where
     /// Materialize the dense field-evaluation table directly from the flat
     /// coefficient positions.
     ///
-    /// This is the D-free field-materialization shared by the tensor helpers
-    /// and the [`DirectRootWitnessSource`] impl (which wraps it in a
-    /// [`akita_types::CleartextWitnessProof::FieldElements`] payload).
+    /// This is the D-free field materialization used by the tensor helpers.
     ///
     /// # Errors
     ///

@@ -3,10 +3,9 @@ use super::*;
 use crate::backend::RootTensorProjectionPoly;
 use crate::compute::{
     BatchDecomposeFoldOutcome, CommitInnerPlan, CpuBackend, DecomposeFoldBatchPlan,
-    DecomposeFoldPlan, DirectRootWitnessSource, OpeningBatchKernel, OpeningFoldKernel,
-    OpeningFoldOutput, OpeningFoldPlan, RootCommitKernel, RootCommitSource, RootOpeningSource,
-    RootPolyMeta, RootPolyShape, RootTensorSource, TensorPackedWitness,
-    TensorProjectionBatchKernel, TensorProjectionKernel,
+    DecomposeFoldPlan, OpeningBatchKernel, OpeningFoldKernel, OpeningFoldOutput, OpeningFoldPlan,
+    RootCommitKernel, RootCommitSource, RootOpeningSource, RootPolyMeta, RootPolyShape,
+    RootTensorSource, TensorPackedWitness, TensorProjectionBatchKernel, TensorProjectionKernel,
 };
 use akita_field::MulBaseUnreduced;
 
@@ -132,18 +131,6 @@ where
 
     fn tensor_batch<'a>(polys: &'a [&'a Self]) -> Result<Self::TensorBatchView<'a>, AkitaError> {
         Ok(OneHotBatchView { polys })
-    }
-}
-
-impl<F, const D: usize, I> DirectRootWitnessSource<F, D> for OneHotPoly<F, I>
-where
-    F: FieldCore,
-    I: OneHotIndex,
-{
-    fn direct_root_witness(&self) -> Result<CleartextWitnessProof<F>, AkitaError> {
-        Ok(CleartextWitnessProof::FieldElements(RingVec::from_coeffs(
-            self.direct_field_evals()?,
-        )))
     }
 }
 

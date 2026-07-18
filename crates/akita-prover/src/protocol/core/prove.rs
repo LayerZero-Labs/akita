@@ -2,72 +2,29 @@ use super::*;
 use crate::api::commitment::validate_onehot_chunk_size_for_params;
 use crate::backend::RecursiveFoldSource;
 use crate::compute::{
-    CommitmentComputeBackend, ComputeBackendSetup, DigitRowsComputeBackend,
-    DirectRootWitnessSource, LevelProveStacks, ProveStackFor, RootPolyMeta,
-    RuntimeOpeningProveBackendFor, RuntimeRingSwitchProveBackend, RuntimeRootProvePoly,
-    RuntimeTensorBackendFor, SuffixOpeningProveBackend, SuffixTensorProveBackend,
+    CommitmentComputeBackend, ComputeBackendSetup, DigitRowsComputeBackend, LevelProveStacks,
+    ProveStackFor, RootPolyMeta, RuntimeOpeningProveBackendFor, RuntimeRingSwitchProveBackend,
+    RuntimeRootProvePoly, RuntimeTensorBackendFor, SuffixOpeningProveBackend,
+    SuffixTensorProveBackend,
 };
 use crate::RootTensorProjectionPoly;
 use akita_config::{effective_batched_schedule, ensure_schedule_fits_setup, CommitmentConfig};
 use akita_field::unreduced::ReduceTo;
 use akita_field::{AdditiveGroup, CanonicalField};
 use akita_types::{
-    dispatch_for_field, schedule_terminal_direct_witness_shape, should_reject_multi_group_root,
-    validate_schedule_ring_dims,
+    dispatch_for_field, should_reject_multi_group_root, validate_schedule_ring_dims,
 };
-
-/// Build a root-direct batched proof from flattened polynomial references and
-/// their commitment-group hints.
-///
-/// `ring_d` is the schedule-derived root commit ring dimension; the direct
-/// witness materialization is the one typed operation and dispatches on it.
-///
-/// # Errors
-///
-/// Returns an error if any polynomial cannot produce a direct root witness.
-pub fn prove_root_direct<F, E, P>(
-    polys: &[&P],
-    hints: &[AkitaCommitmentHint<F>],
-    ring_d: usize,
-) -> Result<AkitaBatchedProof<F, E>, AkitaError>
-where
-    F: FieldCore + CanonicalField,
-    E: ExtField<F>,
-    P: DirectRootWitnessSource<F, 32>
-        + DirectRootWitnessSource<F, 64>
-        + DirectRootWitnessSource<F, 128>
-        + DirectRootWitnessSource<F, 256>,
-{
-    let witnesses = dispatch_for_field!(
-        ProtocolDispatchSlot::Role(RingRole::Inner),
-        F,
-        ring_d,
-        |D| {
-            polys
-                .iter()
-                .map(|poly| DirectRootWitnessSource::<F, D>::direct_root_witness(*poly))
-                .collect::<Result<Vec<_>, _>>()
-        }
-    )?;
-    let _ = hints;
-    Ok(AkitaBatchedProof {
-        root: AkitaBatchedRootProof::new_zero_fold(witnesses),
-        steps: Vec::new(),
-    })
-}
 
 /// Drive batched proving end-to-end under config `Cfg`.
 ///
 /// This owns the full top-level prover work: validate/flatten public prover
-/// claims, select the schedule from `Cfg`, apply the root-direct shortcut when
-/// the selected schedule says no fold is needed, bind the transcript instance
-/// descriptor, and either emit a root-direct proof or run the folded-root
-/// prover.
+/// claims, select the folded schedule from `Cfg`, bind the transcript instance
+/// descriptor, and run the folded prover.
 ///
 /// # Errors
 ///
-/// Returns an error if claim preparation, schedule selection, root-direct
-/// witness construction, transcript binding, or folded-root proving fails.
+/// Returns an error if claim preparation, schedule selection, transcript
+/// binding, or folded proving fails.
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub fn batched_prove<'a, Cfg, T, P, C, O, TS, R>(
     expanded: &Arc<AkitaExpandedSetup<Cfg::Field>>,
@@ -147,17 +104,12 @@ where
     validate_schedule_ring_dims(&schedule, expanded.seed())?;
     ensure_schedule_fits_setup::<Cfg>(expanded.as_ref(), &schedule, &opening_batch)?;
     schedule.validate_structure()?;
-    let root_commit_params = match schedule.steps.first() {
-        Some(Step::Fold(root)) => &root.params,
-        Some(Step::Direct(root)) => root.params.as_ref().ok_or_else(|| {
-            AkitaError::InvalidSetup("root-direct schedule missing commit params".to_string())
-        })?,
-        None => {
-            return Err(AkitaError::InvalidSetup(
-                "root schedule is empty".to_string(),
-            ));
-        }
+    let Some(Step::Fold(root_step)) = schedule.steps.first() else {
+        return Err(AkitaError::InvalidSetup(
+            "folded schedule is missing its root fold".to_string(),
+        ));
     };
+    let root_commit_params = &root_step.params;
     validate_onehot_chunk_size_for_params::<Cfg::Field, &P>(&flat_polys, root_commit_params)?;
 
     // The transcript instance descriptor binds the setup-wide root ring
@@ -182,20 +134,6 @@ where
         }
     )?;
 
-    if schedule_is_root_direct(&schedule) {
-        let commitment_hints = claims.hints().to_vec();
-        return prove_root_direct::<Cfg::Field, Cfg::ExtField, P>(
-            &flat_polys,
-            &commitment_hints,
-            root_commit_params.role_dims.d_a(),
-        );
-    }
-
-    if schedule_root_fold_step(&schedule).is_none() {
-        return Err(AkitaError::InvalidSetup(
-            "root schedule does not start with a fold".to_string(),
-        ));
-    }
     prove::<Cfg, T, P, C, O, TS, R>(
         expanded,
         prefix_slots,
@@ -325,38 +263,6 @@ where
     let root_packed_w_len = root_current_w_len(&root_scheduled.params);
     root_scheduled.validate_current_w_len(root_packed_w_len)?;
 
-    if root_scheduled.is_terminal {
-        // Root is itself the terminal fold: no recursive suffix.
-        let terminal_shape = schedule_terminal_direct_witness_shape(schedule)?;
-        let terminal = prove_terminal_root_fold_with_params::<
-            Cfg,
-            Cfg::Field,
-            Cfg::ExtField,
-            T,
-            P,
-            C,
-            O,
-            TS,
-            R,
-        >(
-            expanded,
-            stacks,
-            transcript,
-            claims,
-            &root_scheduled,
-            terminal_shape,
-            basis,
-            setup_contribution_mode,
-        )?;
-        return Ok((
-            AkitaBatchedProof {
-                root: AkitaBatchedRootProof::new_terminal(terminal),
-                steps: Vec::new(),
-            },
-            1,
-        ));
-    }
-
     let root = prove_root::<Cfg::Field, Cfg::ExtField, T, P, C, O, TS, R, Cfg>(
         expanded,
         prefix_slots,
@@ -369,7 +275,7 @@ where
     )
     .map_err(|err| AkitaError::InvalidInput(format!("root prove failed: {err:?}")))?;
     let next_state = root.next_state;
-    let root = AkitaBatchedRootProof::new(root.level_proof);
+    let root = root.level_proof;
 
     let suffix = crate::prove_suffix::<Cfg, T, C, O, TS, R>(
         expanded,
@@ -384,7 +290,8 @@ where
     Ok((
         AkitaBatchedProof {
             root,
-            steps: suffix.steps,
+            recursive_folds: suffix.recursive_folds,
+            terminal: suffix.terminal,
         },
         suffix.num_levels,
     ))

@@ -32,7 +32,7 @@ fn prepare_accepts_exact_non_pow2_fold_count() {
     lp.cached_num_digits_block_claims = 2;
     lp.cached_num_digits_fold_value = 2;
     let opening_batch = OpeningClaimsLayout::new(0, 2).expect("opening batch");
-    let relation_matrix_row_layout = RelationMatrixRowLayout::WithoutDBlock;
+    let relation_matrix_row_layout = RelationMatrixRowLayout::WithDBlock;
     let rows = lp
         .relation_matrix_row_count_for(opening_batch.num_groups(), relation_matrix_row_layout)
         .unwrap();

@@ -13,7 +13,7 @@ use akita_types::sis::{
 use akita_types::{
     AjtaiKeyParams, AkitaScheduleInputs, AkitaScheduleLookupKey, DecompositionParams, LevelParams,
     OpeningClaimsLayout, PolynomialGroupLayout, PrecommittedGroupParams, Schedule,
-    SetupMatrixEnvelope, SisModulusProfileId, Step,
+    SetupMatrixEnvelope, SisModulusProfileId,
 };
 use std::marker::PhantomData;
 
@@ -123,7 +123,7 @@ pub(crate) fn conservative_commit_params<Cfg: CommitmentConfig>(
     key: &PolynomialGroupLayout,
 ) -> Result<LevelParams, AkitaError> {
     let schedule = conservative_commit_schedule::<Cfg>(key)?;
-    Ok(root_commit_params(&schedule, "conservative commit schedule")?.clone())
+    Ok(schedule.root_fold()?.params.clone())
 }
 
 pub(crate) fn conservative_commit_schedule<Cfg: CommitmentConfig>(
@@ -146,7 +146,7 @@ pub(crate) fn conservative_commit_schedule<Cfg: CommitmentConfig>(
         Cfg::ring_challenge_config,
         Cfg::fold_challenge_shape_at_level,
     )?;
-    let params = root_commit_params_mut(&mut schedule, "conservative commit schedule")?;
+    let params = &mut schedule.root_fold_mut()?.params;
     widen_conservative_commit_params::<Cfg>(params, policy.sis_security_policy)?;
     Ok(schedule)
 }
@@ -201,30 +201,4 @@ fn widen_conservative_commit_params<Cfg: CommitmentConfig>(
         Cfg::D,
     )?;
     Ok(())
-}
-
-fn root_commit_params<'a>(
-    schedule: &'a Schedule,
-    context: &str,
-) -> Result<&'a LevelParams, AkitaError> {
-    match schedule.steps.first() {
-        Some(Step::Fold(root_step)) => Ok(&root_step.params),
-        Some(Step::Direct(direct)) => direct.params.as_ref().ok_or_else(|| {
-            AkitaError::InvalidSetup(format!("root-direct {context} is missing commit params"))
-        }),
-        None => Err(AkitaError::InvalidSetup(format!("{context} has no steps"))),
-    }
-}
-
-fn root_commit_params_mut<'a>(
-    schedule: &'a mut Schedule,
-    context: &str,
-) -> Result<&'a mut LevelParams, AkitaError> {
-    match schedule.steps.first_mut() {
-        Some(Step::Fold(root_step)) => Ok(&mut root_step.params),
-        Some(Step::Direct(direct)) => direct.params.as_mut().ok_or_else(|| {
-            AkitaError::InvalidSetup(format!("root-direct {context} is missing commit params"))
-        }),
-        None => Err(AkitaError::InvalidSetup(format!("{context} has no steps"))),
-    }
 }

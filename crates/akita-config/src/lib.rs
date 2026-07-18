@@ -18,7 +18,7 @@ use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
 use akita_types::PolynomialGroupLayout;
 use akita_types::{
     AkitaScheduleInputs, AkitaScheduleLookupKey, ChunkedWitnessCfg, DecompositionParams,
-    LevelParams, OpeningClaimsLayout, Schedule, SetupMatrixEnvelope, SisModulusProfileId, Step,
+    LevelParams, OpeningClaimsLayout, Schedule, SetupMatrixEnvelope, SisModulusProfileId,
 };
 
 /// Define a multi-chunk companion preset that delegates every layout-affecting
@@ -354,11 +354,6 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
         )
     }
 
-    /// Root commit layout read from a multi-group runtime schedule.
-    fn multi_group_root_commit_params(schedule: &Schedule) -> Result<LevelParams, AkitaError> {
-        akita_types::multi_group_root_commit_params(schedule)
-    }
-
     /// Schedule consumed by the prove/verify root path.
     ///
     /// # Errors
@@ -368,8 +363,7 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     fn get_params_for_prove(layout: &OpeningClaimsLayout) -> Result<Schedule, AkitaError>;
 
     /// Root commit layout the `batched_prove` flow uses for `layout`,
-    /// read off the runtime schedule's first step (the root Fold params or
-    /// the root-direct's commit slot). Same layout per-point commits use,
+    /// read off the runtime schedule's root fold. Same layout per-point commits use,
     /// so they stay compatible with the batched prove root.
     ///
     /// Reading the schedule's first step (rather than re-resolving the compact
@@ -379,23 +373,12 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     ///
     /// # Errors
     ///
-    /// Propagates [`Self::get_params_for_prove`]; errors if the root-direct
-    /// schedule lacks a commit (the uncommittable edge case).
+    /// Propagates [`Self::get_params_for_prove`] and rejects malformed schedules.
     fn get_params_for_batched_commitment(
         layout: &OpeningClaimsLayout,
     ) -> Result<LevelParams, AkitaError> {
         let schedule = Self::get_params_for_prove(layout)?;
-        match schedule.steps.first() {
-            Some(Step::Fold(root_step)) => Ok(root_step.params.clone()),
-            Some(Step::Direct(direct)) => direct.params.clone().ok_or_else(|| {
-                AkitaError::InvalidSetup(
-                    "root-direct schedule is missing commit params".to_string(),
-                )
-            }),
-            None => Err(AkitaError::InvalidSetup(
-                "schedule has no steps".to_string(),
-            )),
-        }
+        Ok(schedule.root_fold()?.params.clone())
     }
 }
 
@@ -596,7 +579,7 @@ mod fp128_policy_tests {
     }
 
     /// Spot-check keys aligned with `specs/sis-euclidean-estimator.md` plus table max.
-    const CI_SIS_WIDTH_NUM_VARS: &[usize] = &[8, 16, 28, 30, 44, 50];
+    const CI_SIS_WIDTH_NUM_VARS: &[usize] = &[13, 16, 28, 30, 44, 50];
 
     #[test]
     fn current_d64_full_schedule_stays_within_audited_sis_widths() {
@@ -615,14 +598,14 @@ mod fp128_policy_tests {
     #[test]
     #[ignore = "full nv sweep is slow; run manually before SIS table or schedule changes"]
     fn current_d64_full_schedule_stays_within_audited_sis_widths_full_range() {
-        let num_vars: Vec<usize> = (8..=50).collect();
+        let num_vars: Vec<usize> = (13..=50).collect();
         assert_cfg_schedule_stays_within_audited_sis_widths::<fp128::D64Full>(&num_vars);
     }
 
     #[test]
     #[ignore = "full nv sweep is slow; run manually before SIS table or schedule changes"]
     fn current_d64_onehot_schedule_stays_within_audited_sis_widths_full_range() {
-        let num_vars: Vec<usize> = (8..=50).collect();
+        let num_vars: Vec<usize> = (12..=50).collect();
         assert_cfg_schedule_stays_within_audited_sis_widths::<fp128::D64OneHot>(&num_vars);
     }
 
@@ -630,7 +613,7 @@ mod fp128_policy_tests {
     fn small_field_sis_pricing_includes_psi_norm_bound() {
         use super::proof_optimized::{fp128, fp32};
 
-        type SmallCfg = fp32::D64Full;
+        type SmallCfg = fp32::D128OneHot;
         assert_eq!(
             <fp128::D64Full as CommitmentConfig>::ring_subfield_embedding_norm_bound(),
             1
@@ -640,17 +623,10 @@ mod fp128_policy_tests {
             2
         );
 
-        let opening_batch = OpeningClaimsLayout::new(20, 1).expect("singleton opening batch");
+        let opening_batch = OpeningClaimsLayout::new(28, 1).expect("singleton opening batch");
         let schedule =
             SmallCfg::get_params_for_prove(&opening_batch).expect("small-field schedule");
-        let root_params = match schedule.steps.first() {
-            Some(akita_types::Step::Fold(root)) => &root.params,
-            Some(akita_types::Step::Direct(root)) => root
-                .params
-                .as_ref()
-                .expect("root-direct schedule should carry commitment params"),
-            None => panic!("small-field schedule should not be empty"),
-        };
+        let root_params = &schedule.root_fold().expect("small-field root fold").params;
         assert!(
             root_params.a_key.coeff_linf_bound() >= root_params.b_key.coeff_linf_bound() * 2,
             "A-role L-infinity bound should include the psi norm bound"
@@ -697,9 +673,9 @@ mod conservative_precommit_tests {
     fn conservative_precommit_params_freeze_standalone_metadata() {
         let precommitted = conservative_commitment::conservative_precommitted_group_params::<
             fp128::D64OneHot,
-        >(PolynomialGroupLayout::new(2, 1))
+        >(PolynomialGroupLayout::new(16, 1))
         .expect("precommitted group params");
-        assert_eq!(precommitted.group, PolynomialGroupLayout::new(2, 1));
+        assert_eq!(precommitted.group, PolynomialGroupLayout::new(16, 1));
         assert_ne!(precommitted.log_basis, 0);
         assert_ne!(precommitted.n_a, 0);
         assert_ne!(precommitted.conservative_n_b, 0);

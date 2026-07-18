@@ -32,27 +32,11 @@ pub struct GeneratedFoldStepWithSetupMetadata {
     pub setup_contribution_mode: akita_types::SetupContributionMode,
 }
 
-/// Terminal direct-send step in a generated schedule.
-///
-/// `commit` is `Some` only for a **root-direct** entry (a schedule whose
-/// single step is this `Direct`): it carries the brute-forced root commit
-/// layout — the same 7-field shape as a fold step — so the runtime can
-/// expand it into the committed `LevelParams` via
-/// [`GeneratedFoldStep::expand_to_level_params`] without re-running the
-/// offline SIS derivation.
-///
-/// Terminal-direct steps that follow one or more folds ship the cleartext
-/// witness without committing, so they carry `commit: None`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct GeneratedDirectStep {
-    pub commit: Option<GeneratedFoldStep>,
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GeneratedStep {
     Fold(GeneratedFoldStep),
     FoldWithSetupMetadata(GeneratedFoldStepWithSetupMetadata),
-    Direct(GeneratedDirectStep),
+    Direct,
 }
 
 impl GeneratedStep {
@@ -60,7 +44,7 @@ impl GeneratedStep {
         match self {
             Self::Fold(step) => Some(step),
             Self::FoldWithSetupMetadata(step) => Some(&step.fold),
-            Self::Direct(_) => None,
+            Self::Direct => None,
         }
     }
 
@@ -68,7 +52,7 @@ impl GeneratedStep {
         match self {
             Self::Fold(step) => Some(step),
             Self::FoldWithSetupMetadata(step) => Some(&mut step.fold),
-            Self::Direct(_) => None,
+            Self::Direct => None,
         }
     }
 }

@@ -12,11 +12,10 @@ use akita_field::parallel::*;
 use akita_field::unreduced::{HasWide, ReduceTo};
 use akita_field::{AkitaError, CanonicalField, FieldCore, FromPrimitiveInt, RandomSampling};
 use akita_types::{
-    dispatch_for_field, root_tensor_projection_enabled, schedule_root_fold_step,
-    validate_role_dims, validate_role_dims_for_field, AkitaCommitmentHint, AkitaExpandedSetup,
-    AkitaScheduleLookupKey, Commitment, DigitBlocks, FpExtEncoding, LevelParams,
-    OpeningClaimsLayout, PolynomialGroupLayout, PrecommittedGroupParams,
-    MULTI_GROUP_ROOT_DENSE_UNSUPPORTED,
+    dispatch_for_field, root_tensor_projection_enabled, validate_role_dims,
+    validate_role_dims_for_field, AkitaCommitmentHint, AkitaExpandedSetup, AkitaScheduleLookupKey,
+    Commitment, DigitBlocks, FpExtEncoding, LevelParams, OpeningClaimsLayout,
+    PolynomialGroupLayout, PrecommittedGroupParams, MULTI_GROUP_ROOT_DENSE_UNSUPPORTED,
 };
 
 /// Commitment output plus prover-side hint for one committed polynomial bundle.
@@ -163,19 +162,12 @@ where
             params.b_key.col_len()
         )));
     }
-    // TODO: re-enable this D-side nonzero check (or scope it to non-root-direct
-    // schedules) once root-direct commit params no longer carry a
-    // zero-width D-key placeholder. Root-direct schedules don't run
-    // the relation fold (which is what consumes D), so the planner
-    // deliberately emits `d_key.col_len = 0`. This check should
-    // eventually be gated on schedule shape (root-direct vs. fold-root)
-    // rather than disabled outright.
-    // if params.d_key.col_len() == 0 {
-    //     return Err(AkitaError::InvalidSetup(format!(
-    //         "commit params require nonzero D width, got D={}",
-    //         params.d_key.col_len()
-    //     )));
-    // }
+    if params.d_key.col_len() == 0 {
+        return Err(AkitaError::InvalidSetup(format!(
+            "commit params require nonzero D width, got D={}",
+            params.d_key.col_len()
+        )));
+    }
     let setup_len = setup
         .shared_matrix
         .total_ring_elements_at_dyn(params.ring_dimension)?;
@@ -502,9 +494,7 @@ where
         return Ok(None);
     }
     let schedule = Cfg::get_params_for_prove(opening_batch)?;
-    let Some(root_fold) = schedule_root_fold_step(&schedule) else {
-        return Ok(None);
-    };
+    let root_fold = schedule.root_fold()?;
     let ring_d = root_fold.params.role_dims().d_a();
     Ok(root_tensor_projection_enabled::<Cfg::Field, Cfg::ExtField>(
         ring_d,
@@ -525,7 +515,8 @@ where
         return Ok(false);
     }
     let schedule = Cfg::runtime_schedule(AkitaScheduleLookupKey::single(*key))?;
-    Ok(schedule_root_fold_step(&schedule).is_some())
+    schedule.root_fold()?;
+    Ok(true)
 }
 
 /// Commit a group of polynomials under config `Cfg`.
@@ -758,7 +749,8 @@ where
         return Ok(false);
     }
     let schedule = Cfg::runtime_schedule(key.clone())?;
-    Ok(schedule_root_fold_step(&schedule).is_some())
+    schedule.root_fold()?;
+    Ok(true)
 }
 
 /// Commit the final polynomial bundle for a multi-group root commitment.
@@ -792,7 +784,7 @@ where
     let schedule = Cfg::runtime_schedule(schedule_key.clone())?;
     let opening_layout = schedule_key.opening_layout()?;
     ensure_schedule_fits_setup::<Cfg>(expanded, &schedule, &opening_layout)?;
-    let params = Cfg::multi_group_root_commit_params(&schedule)?;
+    let params = schedule.root_fold()?.params.clone();
     validate_batched_onehot_chunk_size_for_params::<Cfg::Field, P>(polys, &params)?;
     validate_commit_level_params::<Cfg::Field>(&params, expanded)?;
     if should_transform_final_group_commitment::<Cfg>(&schedule_key, params.role_dims().d_a())? {

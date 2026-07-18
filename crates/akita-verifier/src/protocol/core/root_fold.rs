@@ -1,8 +1,7 @@
 use super::*;
 use akita_types::{dispatch_for_field, Commitment, RingView};
 
-/// Verify the folded-root proof payload for either an intermediate root or the
-/// 1-fold terminal root.
+/// Verify the folded root proof payload.
 ///
 /// This replays the canonical root transcript layout: batch-shape header,
 /// commitments, padded opening points, per-claim field openings, row
@@ -16,15 +15,14 @@ use akita_types::{dispatch_for_field, Commitment, RingView};
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
 pub(super) fn verify_root<F, E, T>(
-    proof: &AkitaBatchedRootProof<F, E>,
+    proof: &FoldLevelProof<F, E>,
     setup: &AkitaVerifierSetup<F>,
     transcript: &mut T,
     claims: &OpeningClaims<'_, E, &Commitment<F>>,
     basis: BasisMode,
     root_lp: &LevelParams,
     _setup_contribution_mode: SetupContributionMode,
-    next_fold_level_params: Option<&LevelParams>,
-    terminal_final_w_len: usize,
+    next_fold_level_params: &LevelParams,
     next_t_state: Option<&[u8]>,
 ) -> Result<FoldVerifyOutput<E>, AkitaError>
 where
@@ -37,17 +35,14 @@ where
         + MulBaseUnreduced<F>,
     T: Transcript<F>,
 {
-    let relation_matrix_row_layout = proof
-        .fold_relation_matrix_row_layout()
-        .ok_or(AkitaError::InvalidProof)?;
-    let extension_opening_reduction = proof.fold_extension_opening_reduction();
-    let next_fold_level_params = match proof {
-        AkitaBatchedRootProof::Fold(_) => next_fold_level_params.ok_or(AkitaError::InvalidProof)?,
-        AkitaBatchedRootProof::Terminal(_) => root_lp,
-        AkitaBatchedRootProof::ZeroFold { .. } => return Err(AkitaError::InvalidProof),
-    };
-    let stage3_sumcheck_proof =
-        proof.fold_stage3_sumcheck_proof(root_lp.setup_contribution_mode)?;
+    let relation_matrix_row_layout = RelationMatrixRowLayout::WithDBlock;
+    let extension_opening_reduction = proof.extension_opening_reduction();
+    let stage3_sumcheck_proof = proof
+        .stage3_for_mode(
+            root_lp.setup_contribution_mode,
+            Some(next_fold_level_params),
+        )?
+        .map(|(proof, _)| proof);
     let openings = claims.flat_evaluations();
     let opening_batch = claims.layout().map_err(|_| AkitaError::InvalidProof)?;
     let shared_opening_point = claims.point();
@@ -94,7 +89,6 @@ where
             next_fold_level_params,
             basis,
             root_lp,
-            terminal_final_w_len,
             next_t_state,
         );
     }
@@ -116,7 +110,6 @@ where
         next_fold_level_params,
         basis,
         root_lp,
-        terminal_final_w_len,
         next_t_state,
     )
 }
@@ -127,7 +120,7 @@ where
 /// [`verify_fold`] and [`verify_fold_eor`].
 #[allow(clippy::too_many_arguments)]
 fn verify_root_inner<F, E, T>(
-    proof: &AkitaBatchedRootProof<F, E>,
+    proof: &FoldLevelProof<F, E>,
     setup: &AkitaVerifierSetup<F>,
     transcript: &mut T,
     commitment: &RingVec<F>,
@@ -140,7 +133,6 @@ fn verify_root_inner<F, E, T>(
     next_fold_level_params: &LevelParams,
     basis: BasisMode,
     root_lp: &LevelParams,
-    terminal_final_w_len: usize,
     next_t_state: Option<&[u8]>,
 ) -> Result<FoldVerifyOutput<E>, AkitaError>
 where
@@ -155,11 +147,7 @@ where
 {
     let role_dims = root_lp.role_dims();
     let d_a = role_dims.d_a();
-    let v_storage = match proof {
-        AkitaBatchedRootProof::Fold(fold) => fold.v.clone(),
-        AkitaBatchedRootProof::Terminal(_) => RingVec::from_coeffs(Vec::new()),
-        AkitaBatchedRootProof::ZeroFold { .. } => return Err(AkitaError::InvalidProof),
-    };
+    let v_storage = proof.v.clone();
 
     if extension_opening_reduction.is_none() {
         let prepared_point =
@@ -231,44 +219,24 @@ where
         })
         .transpose()?;
 
-    let w_len = match proof {
-        AkitaBatchedRootProof::Terminal(_) => terminal_final_w_len,
-        AkitaBatchedRootProof::Fold(_) => {
-            // Chunked levels commit a wider (replicated-ẑ) next witness; size it
-            // with the per-level chunk count (`num_chunks = 1` is unchanged).
-            akita_types::intermediate_w_ring_element_count_for_chunks(
-                F::modulus_bits(),
-                root_lp,
-                opening_batch.num_total_polynomials(),
-                root_lp.witness_chunk.num_chunks,
-            )?
-            .checked_mul(d_a)
-            .ok_or_else(|| AkitaError::InvalidSetup("next witness length overflow".to_string()))?
-        }
-        AkitaBatchedRootProof::ZeroFold { .. } => return Err(AkitaError::InvalidProof),
-    };
-    let terminal_replay = match proof {
-        AkitaBatchedRootProof::Terminal(terminal) => Some(prepare_terminal_witness_replay::<F, T>(
-            transcript,
-            terminal.final_witness(),
-            w_len,
-        )?),
-        AkitaBatchedRootProof::Fold(_) => None,
-        AkitaBatchedRootProof::ZeroFold { .. } => return Err(AkitaError::InvalidProof),
-    };
-
-    let stage1_proof = proof.fold_stage1()?;
-    let next_w_commitment = proof.fold_next_w_commitment()?;
-    let stage2 = proof.fold_stage2()?;
-    let fold_grind_nonce = proof.fold_grind_nonce()?;
+    // Chunked levels commit a wider (replicated-ẑ) next witness; size it
+    // with the per-level chunk count (`num_chunks = 1` is unchanged).
+    let w_len = akita_types::intermediate_w_ring_element_count_for_chunks(
+        F::modulus_bits(),
+        root_lp,
+        opening_batch.num_total_polynomials(),
+        root_lp.witness_chunk.num_chunks,
+    )?
+    .checked_mul(d_a)
+    .ok_or_else(|| AkitaError::InvalidSetup("next witness length overflow".to_string()))?;
+    let stage1_proof = Some(&proof.stage1);
+    let next_w_commitment = proof.next_w_commitment();
+    let stage2 = Some(&proof.stage2);
+    let fold_grind_nonce = proof.fold_grind_nonce;
     // Scalar root: the sole commitment's rows are the whole M-row commitment
     // block.
     let commitment_rows = RingVec::from_coeffs(commitment.coeffs().to_vec());
-    let next_witness_ring_dim = if matches!(proof, AkitaBatchedRootProof::Fold(_)) {
-        next_fold_level_params.role_dims().d_a()
-    } else {
-        d_a
-    };
+    let next_witness_ring_dim = next_fold_level_params.role_dims().d_a();
     if !w_len.is_multiple_of(next_witness_ring_dim) {
         return Err(AkitaError::InvalidProof);
     }
@@ -285,17 +253,13 @@ where
         w_len,
         stage1: stage1_proof,
         stage2,
-        final_witness: proof
-            .as_terminal_root()
-            .map(|terminal| terminal.final_witness()),
+        final_witness: None,
         next_w_commitment,
         next_t_state,
-        next_ring_dim: matches!(proof, AkitaBatchedRootProof::Fold(_))
-            .then_some(next_fold_level_params.role_dims().d_b()),
-        next_witness_ring_dim: matches!(proof, AkitaBatchedRootProof::Fold(_))
-            .then_some(next_witness_ring_dim),
+        next_ring_dim: Some(next_fold_level_params.role_dims().d_b()),
+        next_witness_ring_dim: Some(next_witness_ring_dim),
         next_opening_source_len: w_len / next_witness_ring_dim,
-        terminal_replay,
+        terminal_replay: None,
         stage3: stage3_sumcheck_proof.map(|proof| (proof, next_fold_level_params)),
         trace_prepared_points: Some(vec![prepared_point.clone()]),
         trace_block_opening: Some(trace_block_opening),
@@ -326,7 +290,7 @@ where
 /// errors.
 #[allow(clippy::too_many_arguments)]
 fn verify_multi_group_root_inner<F, E, T>(
-    proof: &AkitaBatchedRootProof<F, E>,
+    proof: &FoldLevelProof<F, E>,
     setup: &AkitaVerifierSetup<F>,
     transcript: &mut T,
     claims: &OpeningClaims<'_, E, &Commitment<F>>,
@@ -338,7 +302,6 @@ fn verify_multi_group_root_inner<F, E, T>(
     next_fold_level_params: &LevelParams,
     basis: BasisMode,
     root_lp: &LevelParams,
-    _terminal_final_w_len: usize,
     next_t_state: Option<&[u8]>,
 ) -> Result<FoldVerifyOutput<E>, AkitaError>
 where
@@ -356,9 +319,7 @@ where
     if extension_opening_reduction.is_some() {
         return Err(AkitaError::InvalidProof);
     }
-    let relation_matrix_row_layout = proof
-        .fold_relation_matrix_row_layout()
-        .ok_or(AkitaError::InvalidProof)?;
+    let relation_matrix_row_layout = RelationMatrixRowLayout::WithDBlock;
     let role_dims = root_lp.role_dims();
     let d_a = role_dims.d_a();
     let alpha_bits = d_a.trailing_zeros() as usize;
@@ -419,24 +380,12 @@ where
     }
     let commitment_rows = RingVec::from_coeffs(commitment_coeffs);
 
-    let w_len = match proof {
-        AkitaBatchedRootProof::Fold(_) => {
-            root_lp.next_w_len::<F>(opening_batch, relation_matrix_row_layout)?
-        }
-        AkitaBatchedRootProof::Terminal(_) | AkitaBatchedRootProof::ZeroFold { .. } => {
-            return Err(AkitaError::InvalidProof)
-        }
-    };
-
-    let stage1_proof = proof.fold_stage1()?;
-    let next_w_commitment = proof.fold_next_w_commitment()?;
-    let stage2 = proof.fold_stage2()?;
-    let fold_grind_nonce = proof.fold_grind_nonce()?;
-    let v_storage = match proof {
-        AkitaBatchedRootProof::Fold(fold) => fold.v.clone(),
-        AkitaBatchedRootProof::Terminal(_) => RingVec::from_coeffs(Vec::new()),
-        AkitaBatchedRootProof::ZeroFold { .. } => return Err(AkitaError::InvalidProof),
-    };
+    let w_len = root_lp.next_w_len::<F>(opening_batch, relation_matrix_row_layout)?;
+    let stage1_proof = Some(&proof.stage1);
+    let next_w_commitment = proof.next_w_commitment();
+    let stage2 = Some(&proof.stage2);
+    let fold_grind_nonce = proof.fold_grind_nonce;
+    let v_storage = proof.v.clone();
     // Routes `verify_fold` to the multi-group-root trace path; inert for the dense
     // trace-weight table that multi-group roots evaluate.
     let trace_block_opening = root_trace_block_opening::<E>(

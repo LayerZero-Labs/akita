@@ -15,11 +15,6 @@ fn multi_group_m_row_count_matches_canonical_layout() {
         1 + n_a_final + n_b_final + n_a_pre + n_b_pre + n_d
     );
     assert_eq!(
-        lp.relation_matrix_row_count_for(2, RelationMatrixRowLayout::WithoutDBlock)
-            .unwrap(),
-        1 + n_a_final + n_b_final + n_a_pre + n_b_pre
-    );
-    assert_eq!(
         lp.relation_matrix_row_count_for(2, RelationMatrixRowLayout::WithoutCommitmentBlocks,)
             .unwrap(),
         1 + n_a_final + n_a_pre

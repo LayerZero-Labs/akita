@@ -24,7 +24,7 @@ use akita_types::{
     schedule_terminal_direct_witness_shape, AkitaBatchedProof, AkitaCommitmentHint, BasisMode,
     CleartextWitnessProof, CleartextWitnessShape, Commitment, FpExtEncoding, LevelParams,
     OpeningClaims, OpeningClaimsLayout, PointVariableSelection, PolynomialGroupClaims,
-    PolynomialGroupLayout, PrecommittedGroupParams, Schedule, SetupContributionMode, Step,
+    PolynomialGroupLayout, PrecommittedGroupParams, Schedule, SetupContributionMode,
 };
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
@@ -483,15 +483,6 @@ fn run_prove<
         "profile extension field"
     );
     eprintln!("[{label}] ext_field: ext_degree={}", Cfg::EXT_DEGREE);
-    if proof.is_root_direct() && Cfg::EXT_DEGREE > 1 {
-        tracing::warn!(
-            label,
-            "extension opening used root-direct fallback; folded planner byte estimates do not apply"
-        );
-        eprintln!(
-            "[{label}] extension opening fallback: root-direct proof for this unsupported shape; folded planner byte estimates do not apply"
-        );
-    }
     if let Some(plan) = plan {
         report_proof_size_against_planner(
             label,
@@ -919,30 +910,13 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
         "profile extension field"
     );
     eprintln!("[{label}] ext_field: ext_degree={}", Cfg::EXT_DEGREE);
-    if proof.is_root_direct() && Cfg::EXT_DEGREE > 1 {
-        tracing::warn!(
-            label,
-            "extension opening used root-direct fallback; folded planner byte estimates do not apply"
-        );
-        eprintln!(
-            "[{label}] extension opening fallback: root-direct proof for this unsupported shape; folded planner byte estimates do not apply"
-        );
-    }
-    if let Some(Step::Fold(root_step)) = schedule.steps.first() {
-        tracing::info!(
-            label,
-            root_bytes = root_step.level_bytes,
-            observed_total_bytes = proof.size(),
-            "batched planner root-fold summary"
-        );
-    } else if let Some(Step::Direct(root_direct)) = schedule.steps.first() {
-        tracing::info!(
-            label,
-            root_bytes = root_direct.direct_bytes,
-            observed_total_bytes = proof.size(),
-            "batched planner direct-root estimate"
-        );
-    }
+    let root_step = schedule.root_fold().expect("profile schedule root fold");
+    tracing::info!(
+        label,
+        root_bytes = root_step.level_bytes,
+        observed_total_bytes = proof.size(),
+        "batched planner root-fold summary"
+    );
 
     let t_verifier_setup = Instant::now();
     let verifier_setup = pools.in_verify(|| {
@@ -1092,8 +1066,11 @@ pub(crate) fn run_recursive_multi_group_onehot<FF, const D: usize, Cfg>(
         };
         let schedule = ProofCfg::<Cfg>::runtime_schedule(multi_group_key)
             .expect("multi-group runtime schedule");
-        let main_params = akita_types::multi_group_root_commit_params(&schedule)
-            .expect("multi-group root params");
+        let main_params = schedule
+            .root_fold()
+            .expect("multi-group root fold")
+            .params
+            .clone();
         let final_polys = (0..final_num_polys)
             .map(|poly_idx| {
                 make_profile_onehot_poly::<FF, D>(

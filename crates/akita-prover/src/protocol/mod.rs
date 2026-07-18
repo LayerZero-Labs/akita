@@ -11,8 +11,7 @@ pub mod sumcheck;
 
 pub use akita_types::RingRelationInstance;
 pub use core::{
-    batched_prove, prove, prove_root, prove_root_direct, prove_suffix,
-    prove_terminal_root_fold_with_params, ProveLevelOutput, RecursiveSuffixOutcome,
+    batched_prove, prove, prove_root, prove_suffix, ProveLevelOutput, RecursiveSuffixOutcome,
     SuffixProverState,
 };
 pub use fold_grind::ProverTranscriptGrind;

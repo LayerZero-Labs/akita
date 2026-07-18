@@ -111,7 +111,7 @@ where
     <TS as ComputeBackendSetup<Cfg::Field>>::PreparedSetup: 'stack,
     <R as ComputeBackendSetup<Cfg::Field>>::PreparedSetup: 'stack,
 {
-    let planned_num_levels = schedule_num_fold_levels(schedule);
+    let planned_num_levels = schedule.num_fold_levels();
     if planned_num_levels < 2 {
         return Err(AkitaError::InvalidSetup(
             "prove_suffix expects a non-empty recursive suffix".to_string(),
@@ -197,11 +197,9 @@ where
     };
     let terminal = terminal_result;
 
-    let mut steps = intermediate_levels;
-    steps.push(AkitaLevelProof::Terminal(terminal));
-
     Ok(RecursiveSuffixOutcome {
-        steps,
+        recursive_folds: intermediate_levels,
+        terminal,
         num_levels: planned_num_levels,
     })
 }

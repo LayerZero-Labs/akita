@@ -23,7 +23,7 @@ fn sample_descriptor() -> AkitaInstanceDescriptor {
     let opening_batch = OpeningClaimsLayout::new(5, 3).expect("valid opening batch");
     let schedule = Schedule {
         steps: vec![
-            Step::Fold(FoldStep {
+            Step::fold(FoldStep {
                 params: sample_level_params(),
                 current_w_len: 256,
                 next_w_len: 256,
@@ -33,7 +33,6 @@ fn sample_descriptor() -> AkitaInstanceDescriptor {
                 current_w_len: 256,
                 witness_shape: CleartextWitnessShape::FieldElements(64),
                 direct_bytes: 32,
-                params: None,
             }),
         ],
         total_bytes: 155,
@@ -98,9 +97,9 @@ fn fold_linf_descriptor_canonical_digest_pinned() {
         (
             229,
             [
-                0xca, 0xc7, 0x43, 0xed, 0xca, 0x65, 0x90, 0x5d, 0xe9, 0xe2, 0xc7, 0xec, 0x64, 0x66,
-                0x9a, 0x97, 0xc5, 0xb3, 0xed, 0x6a, 0xf4, 0xf9, 0x95, 0x64, 0x8d, 0xfc, 0x19, 0xe3,
-                0xfb, 0xf5, 0xa2, 0x5b,
+                0xbf, 0x20, 0xb0, 0x10, 0xf2, 0x7a, 0x62, 0xc5, 0x7c, 0x9a, 0x8b, 0x2b, 0x42, 0x4e,
+                0x5b, 0x5a, 0x49, 0x63, 0x09, 0xb2, 0x44, 0x2d, 0xfb, 0xac, 0xd7, 0xdc, 0x74, 0xce,
+                0xaa, 0xb1, 0x41, 0x98,
             ]
         ),
         "update pinned digest when descriptor setup-section bindings change"
@@ -156,7 +155,7 @@ fn effective_schedule_digest_binds_tail_bound_with_grind_policy() {
     );
 
     let schedule_certified = Schedule {
-        steps: vec![Step::Fold(FoldStep {
+        steps: vec![Step::fold(FoldStep {
             params: certified,
             current_w_len: 256,
             next_w_len: 256,
@@ -165,7 +164,7 @@ fn effective_schedule_digest_binds_tail_bound_with_grind_policy() {
         total_bytes: 123,
     };
     let schedule_worst_case = Schedule {
-        steps: vec![Step::Fold(FoldStep {
+        steps: vec![Step::fold(FoldStep {
             params: worst_case_only,
             current_w_len: 256,
             next_w_len: 256,
@@ -188,7 +187,7 @@ fn effective_schedule_digest_binds_shape_aware_challenge_l2_sq_max() {
     assert_ne!(flat.challenge_l2_sq_max(), tensor.challenge_l2_sq_max());
 
     let schedule_flat = Schedule {
-        steps: vec![Step::Fold(FoldStep {
+        steps: vec![Step::fold(FoldStep {
             params: flat,
             current_w_len: 256,
             next_w_len: 256,
@@ -197,7 +196,7 @@ fn effective_schedule_digest_binds_shape_aware_challenge_l2_sq_max() {
         total_bytes: 123,
     };
     let schedule_tensor = Schedule {
-        steps: vec![Step::Fold(FoldStep {
+        steps: vec![Step::fold(FoldStep {
             params: tensor,
             current_w_len: 256,
             next_w_len: 256,
@@ -218,7 +217,7 @@ fn effective_schedule_digest_binds_fold_linf_policy() {
     tensor_params.fold_challenge_shape = TensorChallengeShape::Tensor { fold_low_len: 2 };
 
     let schedule_flat = Schedule {
-        steps: vec![Step::Fold(FoldStep {
+        steps: vec![Step::fold(FoldStep {
             params: sample_level_params(),
             current_w_len: 256,
             next_w_len: 256,
@@ -227,7 +226,7 @@ fn effective_schedule_digest_binds_fold_linf_policy() {
         total_bytes: 123,
     };
     let schedule_tensor = Schedule {
-        steps: vec![Step::Fold(FoldStep {
+        steps: vec![Step::fold(FoldStep {
             params: tensor_params,
             current_w_len: 256,
             next_w_len: 256,
@@ -367,7 +366,6 @@ fn effective_schedule_digest_binds_direct_shape() {
             current_w_len: 8,
             witness_shape: CleartextWitnessShape::FieldElements(8),
             direct_bytes: 8,
-            params: None,
         })],
         total_bytes: 8,
     };
@@ -376,43 +374,8 @@ fn effective_schedule_digest_binds_direct_shape() {
             current_w_len: 8,
             witness_shape: CleartextWitnessShape::FieldElements(9),
             direct_bytes: 9,
-            params: None,
         })],
         total_bytes: 9,
-    };
-
-    assert_ne!(
-        digest_effective_schedule(&schedule_a),
-        digest_effective_schedule(&schedule_b)
-    );
-}
-
-#[test]
-fn effective_schedule_digest_binds_root_direct_commit_params() {
-    // Two root-direct schedules with identical witness shape but
-    // different commit `params` must hash to different preamble bytes.
-    // This is the binding the dropped `SetupSection::level_params_digest`
-    // used to provide; it now lives in the per-proof schedule digest.
-    let mut other_params = sample_level_params();
-    other_params.num_live_blocks += 1;
-
-    let schedule_a = Schedule {
-        steps: vec![Step::Direct(crate::DirectStep {
-            current_w_len: 8,
-            witness_shape: CleartextWitnessShape::FieldElements(8),
-            direct_bytes: 0,
-            params: Some(sample_level_params()),
-        })],
-        total_bytes: 0,
-    };
-    let schedule_b = Schedule {
-        steps: vec![Step::Direct(crate::DirectStep {
-            current_w_len: 8,
-            witness_shape: CleartextWitnessShape::FieldElements(8),
-            direct_bytes: 0,
-            params: Some(other_params),
-        })],
-        total_bytes: 0,
     };
 
     assert_ne!(

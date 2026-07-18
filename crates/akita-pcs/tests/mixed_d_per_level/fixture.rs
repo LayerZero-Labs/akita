@@ -495,11 +495,11 @@ where
                 plan.next_w_len,
                 layout,
                 if plan.is_terminal {
-                    akita_types::NextWitnessBindingPolicy::TerminalCleartextWitness
+                    None
                 } else if suffix_plan[idx + 1].is_terminal {
-                    akita_types::NextWitnessBindingPolicy::TerminalInnerState
+                    Some(akita_types::NextWitnessBindingPolicy::TerminalInnerState)
                 } else {
-                    akita_types::NextWitnessBindingPolicy::OuterCommitment
+                    Some(akita_types::NextWitnessBindingPolicy::OuterCommitment)
                 },
             );
             mixed_folds.push(FoldStep {
@@ -565,21 +565,19 @@ where
                 None,
                 current_w_len,
                 RelationMatrixRowLayout::WithoutCommitmentBlocks,
-                akita_types::NextWitnessBindingPolicy::TerminalCleartextWitness,
+                None,
             );
         }
         DirectStep {
             current_w_len,
             witness_shape,
             direct_bytes,
-            params: None,
         }
     } else {
         DirectStep {
             current_w_len: terminal_current_w_len,
             witness_shape: envelope_terminal.witness_shape.clone(),
             direct_bytes: envelope_terminal.direct_bytes,
-            params: envelope_terminal.params.clone(),
         }
     };
 
@@ -593,7 +591,7 @@ where
         .checked_add(terminal.direct_bytes)
         .ok_or_else(|| AkitaError::InvalidSetup("mixed-D total_bytes overflow".into()))?;
 
-    let mut steps = mixed_folds.into_iter().map(Step::Fold).collect::<Vec<_>>();
+    let mut steps = mixed_folds.into_iter().map(Step::fold).collect::<Vec<_>>();
     steps.push(Step::Direct(terminal));
 
     Ok(Schedule { steps, total_bytes })

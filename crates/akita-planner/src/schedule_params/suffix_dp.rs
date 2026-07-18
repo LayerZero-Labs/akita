@@ -40,8 +40,7 @@ pub(crate) struct DirectSuffix {
 /// step:
 ///
 /// - `best_direct` — best no-outgoing-prefix terminal schedule whose first
-///   step is a `Step::Direct` (parent scores under
-///   `RelationMatrixRowLayout::WithoutDBlock`). Omitted when
+///   step is a `Step::Direct`. Omitted when
 ///   `incoming_setup_prefix` is present, because a direct child means the
 ///   parent did not offload a new setup prefix into that child.
 /// - `best_fold_per_lb` — best `Step::Fold`-first schedule per first-fold
@@ -93,7 +92,6 @@ fn make_terminal_direct_step(
         current_w_len,
         witness_shape,
         direct_bytes,
-        params: None,
     })
 }
 
@@ -351,11 +349,11 @@ pub(crate) fn derive_optimal_suffix_schedule(
                         None,
                         next_witness_len_terminal,
                         RelationMatrixRowLayout::WithoutCommitmentBlocks,
-                        akita_types::NextWitnessBindingPolicy::TerminalCleartextWitness,
+                        None,
                     ) + eor_bytes;
                     let total = level_proof_size + suffix_cost;
                     let steps = vec![
-                        Step::Fold(FoldStep {
+                        Step::fold(FoldStep {
                             params: candidate_params.clone(),
                             current_w_len: current_witness_len,
                             next_w_len: next_witness_len_terminal,
@@ -415,15 +413,15 @@ pub(crate) fn derive_optimal_suffix_schedule(
                 Some(&suffix_fold.first_fold_params),
                 next_witness_len,
                 RelationMatrixRowLayout::WithDBlock,
-                if child_is_terminal {
+                Some(if child_is_terminal {
                     akita_types::NextWitnessBindingPolicy::TerminalInnerState
                 } else {
                     akita_types::NextWitnessBindingPolicy::OuterCommitment
-                },
+                }),
             ) + eor_bytes;
             let total = level_proof_size + suffix_fold.total_bytes;
             let mut steps = Vec::with_capacity(1 + suffix_fold.steps.len());
-            steps.push(Step::Fold(FoldStep {
+            steps.push(Step::fold(FoldStep {
                 params: fold_candidate_params,
                 current_w_len: current_witness_len,
                 next_w_len: next_witness_len,

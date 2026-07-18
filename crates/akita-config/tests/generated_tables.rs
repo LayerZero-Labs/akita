@@ -346,7 +346,6 @@ fn direct_steps_equal(left: &DirectStep, right: &DirectStep) -> bool {
     left.current_w_len == right.current_w_len
         && left.witness_shape == right.witness_shape
         && left.direct_bytes == right.direct_bytes
-        && left.params == right.params
 }
 
 fn steps_equal(left: &Step, right: &Step) -> bool {
@@ -379,60 +378,56 @@ fn worker_count() -> usize {
         .min(4)
 }
 
+fn compare_schedule_results(
+    family: &GeneratedFamily,
+    key: PolynomialGroupLayout,
+    table_backed: Result<Schedule, AkitaError>,
+    regenerated: Result<Schedule, AkitaError>,
+) -> Option<Mismatch> {
+    match (table_backed, regenerated) {
+        (Ok(table_backed), Ok(regenerated)) => {
+            if schedules_equal(&table_backed, &regenerated) {
+                None
+            } else {
+                Some(Mismatch {
+                    family: family.module_name,
+                    key: format!("{key:?}"),
+                    table_backed: render_schedule(&table_backed),
+                    regenerated: render_schedule(&regenerated),
+                })
+            }
+        }
+        (Err(AkitaError::UnsupportedSchedule(_)), Err(AkitaError::UnsupportedSchedule(_))) => None,
+        (table_backed, regenerated) => Some(Mismatch {
+            family: family.module_name,
+            key: format!("{key:?}"),
+            table_backed: table_backed
+                .map(|schedule| render_schedule(&schedule))
+                .unwrap_or_else(|error| format!("error: {error}")),
+            regenerated: regenerated
+                .map(|schedule| render_schedule(&schedule))
+                .unwrap_or_else(|error| format!("error: {error}")),
+        }),
+    }
+}
+
 #[cfg(feature = "all-schedules")]
 fn compare_scalar_key(
     family: &GeneratedFamily,
     catalog: akita_planner::GeneratedScheduleTable,
     key: PolynomialGroupLayout,
 ) -> Option<Mismatch> {
-    let table_backed = table_backed_expanded(family, catalog, key).unwrap_or_else(|e| {
-        panic!(
-            "table-backed schedule failed for family {} key={key:?}: {e}",
-            family.module_name
-        )
-    });
-    let regenerated = (family.regen)(key).unwrap_or_else(|e| {
-        panic!(
-            "DP regen failed for family {} key={key:?}: {e}",
-            family.module_name
-        )
-    });
-
-    if schedules_equal(&table_backed, &regenerated) {
-        return None;
-    }
-    Some(Mismatch {
-        family: family.module_name,
-        key: format!("{key:?}"),
-        table_backed: render_schedule(&table_backed),
-        regenerated: render_schedule(&regenerated),
-    })
+    compare_schedule_results(
+        family,
+        key,
+        table_backed_expanded(family, catalog, key),
+        (family.regen)(key),
+    )
 }
 
 #[cfg(not(feature = "all-schedules"))]
 fn compare_scalar_key(family: &GeneratedFamily, key: PolynomialGroupLayout) -> Option<Mismatch> {
-    let table_backed = (family.table_backed)(key).unwrap_or_else(|e| {
-        panic!(
-            "table-backed schedule failed for family {} key={key:?}: {e}",
-            family.module_name
-        )
-    });
-    let regenerated = (family.regen)(key).unwrap_or_else(|e| {
-        panic!(
-            "DP regen failed for family {} key={key:?}: {e}",
-            family.module_name
-        )
-    });
-
-    if schedules_equal(&table_backed, &regenerated) {
-        return None;
-    }
-    Some(Mismatch {
-        family: family.module_name,
-        key: format!("{key:?}"),
-        table_backed: render_schedule(&table_backed),
-        regenerated: render_schedule(&regenerated),
-    })
+    compare_schedule_results(family, key, (family.table_backed)(key), (family.regen)(key))
 }
 
 #[cfg(feature = "all-schedules")]

@@ -28,8 +28,6 @@ pub enum NextWitnessBindingPolicy {
     /// Bind canonical inner-state `t` bytes for the following suffix-terminal
     /// fold. No outer `u` is present on this edge.
     TerminalInnerState,
-    /// The current fold itself terminates by revealing its cleartext witness.
-    TerminalCleartextWitness,
 }
 
 /// Schedule facts for one fold level.
@@ -50,23 +48,20 @@ pub struct ExecutionSchedule {
     /// Whether this fold hands off to the terminal direct witness.
     pub is_terminal: bool,
     /// Transcript/wire policy for the witness state leaving this fold.
-    pub next_witness_binding: NextWitnessBindingPolicy,
+    pub next_witness_binding: Option<NextWitnessBindingPolicy>,
 }
 
 impl ExecutionSchedule {
     /// Canonical physical relation-row layout for this fold.
     ///
-    /// A root-terminal fold must still open the external public `u`, so it
-    /// keeps B and drops only D. A recursive suffix terminal receives public
-    /// `t` from its predecessor and therefore has exactly `consistency | A`.
+    /// A terminal fold receives public `t` from its predecessor and therefore
+    /// has exactly `consistency | A`.
     #[must_use]
     pub fn relation_matrix_row_layout(&self) -> crate::RelationMatrixRowLayout {
-        if !self.is_terminal {
-            crate::RelationMatrixRowLayout::WithDBlock
-        } else if self.level == 0 {
-            crate::RelationMatrixRowLayout::WithoutDBlock
-        } else {
+        if self.is_terminal {
             crate::RelationMatrixRowLayout::WithoutCommitmentBlocks
+        } else {
+            crate::RelationMatrixRowLayout::WithDBlock
         }
     }
 
@@ -506,37 +501,16 @@ pub struct DirectStep {
     pub witness_shape: CleartextWitnessShape,
     /// Direct witness bytes.
     pub direct_bytes: usize,
-    /// Root commit layout for root-direct schedules (schedule starts
-    /// with this `Direct`, `witness_shape = FieldElements`).
-    ///
-    /// `Some(_)` is the root commit layout — the verifier replays
-    /// commitments against it and the transcript binds it through the
-    /// per-proof effective-schedule digest (`PlanSection`). `None` is the
-    /// *uncommittable* edge: a table-recorded large-`num_vars` entry
-    /// whose singleton root layout exceeds the audited SIS floor. The
-    /// schedule is intentionally usable for proof-size exploration and
-    /// DP planning, but `get_params_for_batched_commitment` rejects it
-    /// loudly and `setup_level_params_from_runtime_schedule` returns
-    /// an empty list. Don't commit through such a schedule.
-    ///
-    /// Terminal-direct steps (`witness_shape = SegmentTyped`, schedule
-    /// is `[Fold, …, Fold, Direct]`) ship the cleartext witness without
-    /// committing — the verifier absorbs the bytes into the transcript
-    /// and re-evaluates the witness directly. They always carry
-    /// `params = None`. The active `log_basis` lives on
-    /// [`Self::witness_shape`]; `scheduled_next_level_params`
-    /// synthesizes a [`LevelParams::log_basis_stub`] from it so the
-    /// prover's terminal-fold path still receives a `LevelParams`-shaped
-    /// successor (only `log_basis` is consulted there).
-    pub params: Option<LevelParams>,
 }
 
 impl DirectStep {
     /// Active terminal log-basis for segment-typed direct witnesses.
-    pub fn log_basis(&self, field_bits: u32) -> u32 {
+    pub fn log_basis(&self) -> Result<u32, AkitaError> {
         match &self.witness_shape {
-            CleartextWitnessShape::FieldElements(_) => field_bits,
-            CleartextWitnessShape::SegmentTyped(shape) => shape.layout.log_basis,
+            CleartextWitnessShape::SegmentTyped(shape) => Ok(shape.layout.log_basis),
+            CleartextWitnessShape::FieldElements(_) => Err(AkitaError::InvalidSetup(
+                "terminal direct witness must use the segment-typed encoding".to_string(),
+            )),
         }
     }
 }
@@ -545,9 +519,18 @@ impl DirectStep {
 #[derive(Clone, Debug)]
 pub enum Step {
     /// Fold through one recursive level.
-    Fold(FoldStep),
+    Fold(Box<FoldStep>),
     /// Send the terminal witness directly.
     Direct(DirectStep),
+}
+
+impl Step {
+    /// Construct a fold step while keeping its boxed storage private to the
+    /// schedule representation.
+    #[must_use]
+    pub fn fold(step: FoldStep) -> Self {
+        Self::Fold(Box::new(step))
+    }
 }
 
 /// Complete schedule with step-by-step parameters.
@@ -563,7 +546,7 @@ impl Schedule {
     /// Iterate over the fold steps in execution order.
     pub fn fold_steps(&self) -> impl Iterator<Item = &FoldStep> + '_ {
         self.steps.iter().filter_map(|step| match step {
-            Step::Fold(fold) => Some(fold),
+            Step::Fold(fold) => Some(fold.as_ref()),
             Step::Direct(_) => None,
         })
     }
@@ -571,6 +554,26 @@ impl Schedule {
     /// Number of fold levels before the terminal direct step.
     pub fn num_fold_levels(&self) -> usize {
         self.fold_steps().count()
+    }
+
+    /// Return the root fold carried by every supported schedule.
+    pub fn root_fold(&self) -> Result<&FoldStep, AkitaError> {
+        match self.steps.first() {
+            Some(Step::Fold(step)) => Ok(step.as_ref()),
+            Some(Step::Direct(_)) | None => Err(AkitaError::UnsupportedSchedule(
+                "schedule must begin with a root fold".to_string(),
+            )),
+        }
+    }
+
+    /// Mutably borrow the root fold carried by every supported schedule.
+    pub fn root_fold_mut(&mut self) -> Result<&mut FoldStep, AkitaError> {
+        match self.steps.first_mut() {
+            Some(Step::Fold(step)) => Ok(step.as_mut()),
+            Some(Step::Direct(_)) | None => Err(AkitaError::UnsupportedSchedule(
+                "schedule must begin with a root fold".to_string(),
+            )),
+        }
     }
 
     /// Validate protocol-level schedule topology before any witness is interpreted.
@@ -582,6 +585,11 @@ impl Schedule {
         if self.steps.is_empty() {
             return Err(AkitaError::InvalidSetup(
                 "schedule must contain at least one step".to_string(),
+            ));
+        }
+        if !matches!(self.steps.first(), Some(Step::Fold(_))) || self.num_fold_levels() < 2 {
+            return Err(AkitaError::InvalidSetup(
+                "schedule must start with a fold and contain at least two fold levels".to_string(),
             ));
         }
 
@@ -692,47 +700,16 @@ impl Schedule {
                         ));
                     }
 
-                    if index == 0 {
-                        let CleartextWitnessShape::FieldElements(witness_len) =
-                            &direct.witness_shape
-                        else {
-                            return Err(AkitaError::InvalidSetup(
-                                "root direct step requires a field-element witness".to_string(),
-                            ));
-                        };
-                        if *witness_len != direct.current_w_len {
-                            return Err(AkitaError::InvalidSetup(
-                                "root direct witness shape does not match current witness length"
-                                    .to_string(),
-                            ));
-                        }
-                        if direct
-                            .params
-                            .as_ref()
-                            .is_some_and(LevelParams::has_precommitted_groups)
-                        {
-                            return Err(AkitaError::InvalidSetup(
-                                "root direct step must be scalar".to_string(),
-                            ));
-                        }
-                    } else {
-                        let CleartextWitnessShape::SegmentTyped(shape) = &direct.witness_shape
-                        else {
-                            return Err(AkitaError::InvalidSetup(
-                                "terminal direct step requires a segment-typed witness".to_string(),
-                            ));
-                        };
-                        if shape.layout.logical_num_elems != direct.current_w_len {
-                            return Err(AkitaError::InvalidSetup(
-                                "terminal direct witness shape does not match current witness length"
-                                    .to_string(),
-                            ));
-                        }
-                        if direct.params.is_some() {
-                            return Err(AkitaError::InvalidSetup(
-                                "terminal direct step must not carry commitment params".to_string(),
-                            ));
-                        }
+                    let CleartextWitnessShape::SegmentTyped(shape) = &direct.witness_shape else {
+                        return Err(AkitaError::InvalidSetup(
+                            "terminal direct step requires a segment-typed witness".to_string(),
+                        ));
+                    };
+                    if shape.layout.logical_num_elems != direct.current_w_len {
+                        return Err(AkitaError::InvalidSetup(
+                            "terminal direct witness shape does not match current witness length"
+                                .to_string(),
+                        ));
                     }
                 }
             }
@@ -754,11 +731,11 @@ impl Schedule {
         };
         let is_terminal = matches!(self.steps.get(level + 1), Some(Step::Direct(_)));
         let next_witness_binding = if is_terminal {
-            NextWitnessBindingPolicy::TerminalCleartextWitness
+            None
         } else if matches!(self.steps.get(level + 2), Some(Step::Direct(_))) {
-            NextWitnessBindingPolicy::TerminalInnerState
+            Some(NextWitnessBindingPolicy::TerminalInnerState)
         } else {
-            NextWitnessBindingPolicy::OuterCommitment
+            Some(NextWitnessBindingPolicy::OuterCommitment)
         };
         let next_level_params = scheduled_next_level_params(self, level + 1)?;
         Ok(ExecutionSchedule {
@@ -801,18 +778,6 @@ impl Schedule {
                     push_usize(bytes, direct.current_w_len);
                     append_direct_witness_shape_descriptor_bytes(bytes, &direct.witness_shape);
                     push_usize(bytes, direct.direct_bytes);
-                    // Root-direct commit layout (`Some` for committable root
-                    // entries, `None` for terminal-direct handoffs). Binding it
-                    // here is what lets the transcript drop the redundant
-                    // setup-level `level_params_digest`: the per-proof schedule
-                    // digest now pins the root-direct commit params directly.
-                    match &direct.params {
-                        Some(params) => {
-                            bytes.push(1);
-                            params.append_descriptor_bytes(bytes);
-                        }
-                        None => bytes.push(0),
-                    }
                 }
             }
         }
@@ -842,80 +807,6 @@ pub fn root_current_w_len(lp: &LevelParams) -> usize {
         .checked_mul(lp.num_positions_per_block)
         .and_then(|len| len.checked_mul(lp.ring_dimension))
         .unwrap_or(0)
-}
-
-/// Build the root-direct schedule for roots that do not admit a fold step.
-///
-/// `current_w_len` is the flattened witness length in field elements for a
-/// single scalar group (`2^num_vars`). `commit_params` carries the root commit
-/// layout that `Cfg::get_params_for_batched_commitment` returns for this
-/// schedule shape and must itself be scalar.
-///
-/// # Errors
-///
-/// Returns an error if `current_w_len` is zero or `commit_params` carries
-/// precommitted groups.
-pub fn root_direct_schedule(
-    current_w_len: usize,
-    commit_params: LevelParams,
-) -> Result<Schedule, AkitaError> {
-    if current_w_len == 0 {
-        return Err(AkitaError::InvalidSetup(
-            "root-direct witness length is zero".to_string(),
-        ));
-    }
-    if commit_params.has_precommitted_groups() {
-        return Err(AkitaError::InvalidSetup(
-            "root direct step must be scalar".to_string(),
-        ));
-    }
-    Ok(Schedule {
-        steps: vec![Step::Direct(DirectStep {
-            current_w_len,
-            witness_shape: CleartextWitnessShape::FieldElements(current_w_len),
-            direct_bytes: 0,
-            // Root-direct: stores the root commit layout.
-            params: Some(commit_params),
-        })],
-        total_bytes: 0,
-    })
-}
-
-/// Return the number of fold levels in a runtime schedule.
-pub fn schedule_num_fold_levels(schedule: &Schedule) -> usize {
-    schedule
-        .steps
-        .iter()
-        .filter(|step| matches!(step, Step::Fold(_)))
-        .count()
-}
-
-/// Return whether a runtime schedule uses the root-direct fast path.
-pub fn schedule_is_root_direct(schedule: &Schedule) -> bool {
-    matches!(schedule.steps.first(), Some(Step::Direct(_)))
-}
-
-/// Return the root fold step when a runtime schedule starts with one.
-pub fn schedule_root_fold_step(schedule: &Schedule) -> Option<&FoldStep> {
-    match schedule.steps.first() {
-        Some(Step::Fold(step)) => Some(step),
-        Some(Step::Direct(_)) | None => None,
-    }
-}
-
-/// Root commit layout read from the first step of a multi-group runtime schedule.
-pub fn multi_group_root_commit_params(schedule: &Schedule) -> Result<LevelParams, AkitaError> {
-    match schedule.steps.first() {
-        Some(Step::Fold(root_step)) => Ok(root_step.params.clone()),
-        Some(Step::Direct(direct)) => direct.params.clone().ok_or_else(|| {
-            AkitaError::InvalidSetup(
-                "multi-group root-direct schedule is missing commit params".to_string(),
-            )
-        }),
-        None => Err(AkitaError::InvalidSetup(
-            "multi-group schedule has no steps".to_string(),
-        )),
-    }
 }
 
 /// Return the terminal direct witness shape from a runtime schedule.
@@ -951,8 +842,7 @@ pub fn schedule_terminal_direct_witness_shape(
 /// # Errors
 ///
 /// Returns an error when `step_index` is outside the schedule or when a
-/// recursive schedule transitions into a `Direct(FieldElements)` (only
-/// the *first* step of a root-direct schedule may carry that shape).
+/// recursive schedule transitions into a `Direct(FieldElements)`.
 pub fn scheduled_next_level_params(
     schedule: &Schedule,
     step_index: usize,

@@ -814,7 +814,7 @@ fn dense_z_eq_slice_uses_relative_high_carry() {
         .collect::<Vec<_>>();
     let fold_gadget = gadget_row_scalars::<F>(depth_fold, 4);
     let inputs = test_inputs(
-        RelationMatrixRowLayout::WithoutDBlock,
+        RelationMatrixRowLayout::WithoutCommitmentBlocks,
         1,
         0,
         0,
@@ -864,7 +864,7 @@ fn setup_a_z_weights_do_not_include_commit_gadget() {
     let fold_gadget = gadget_row_scalars::<F>(depth_fold, log_basis);
     let commit_gadget = gadget_row_scalars::<F>(depth_commit, log_basis);
     let inputs = test_inputs(
-        RelationMatrixRowLayout::WithoutDBlock,
+        RelationMatrixRowLayout::WithoutCommitmentBlocks,
         1,
         0,
         0,

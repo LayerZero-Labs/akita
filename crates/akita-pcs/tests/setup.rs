@@ -44,15 +44,15 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 /// Number of variables for the polynomial we actually commit/prove/verify.
 ///
 /// This is chosen to ensure these tests exercise a folded schedule (not the
-/// root-direct fast path) while keeping CI runtime reasonable.
+/// small supported folded path) while keeping CI runtime reasonable.
 const POLY_NV: usize = 16;
 /// How many polynomials we actually commit in the "same size" tests.
 const USE_BATCH: usize = 1;
 
 fn assert_folded_proof(label: &str, proof: &AkitaBatchedProof<F, F>) {
     assert!(
-        !proof.is_root_direct(),
-        "{label} should exercise a folded proof path, not the root-direct fast path"
+        proof.num_fold_levels() >= 2,
+        "{label} should exercise a folded proof path"
     );
 }
 
@@ -254,20 +254,11 @@ where
     .expect("verify");
 
     assert!(
-        matches!(proof.root, akita_types::AkitaBatchedRootProof::Fold(_))
-            && matches!(
-                proof.steps.as_slice(),
-                [akita_types::AkitaLevelProof::Terminal(_)]
-            ),
-        "fixture must use exactly two folds: root then terminal"
+        proof.recursive_folds.is_empty(),
+        "fixture must use exactly two folds"
     );
     let mut tampered = proof.clone();
-    let witness = tampered
-        .steps
-        .last_mut()
-        .and_then(akita_types::AkitaLevelProof::as_terminal_mut)
-        .expect("two-fold fixture must end in a terminal step")
-        .final_witness_mut();
+    let witness = tampered.terminal.final_witness_mut();
     let akita_types::CleartextWitnessProof::SegmentTyped(segment) = witness else {
         panic!("terminal fixture must use a segment-typed witness");
     };
@@ -286,12 +277,10 @@ where
     .expect_err("tampering predecessor-bound terminal t must be rejected");
 
     let mut wrong_binding = proof.clone();
-    let akita_types::AkitaBatchedRootProof::Fold(root) = &mut wrong_binding.root else {
-        unreachable!()
-    };
-    root.stage2.next_witness_binding = akita_types::NextWitnessBinding::OuterCommitment(
-        akita_types::RingVec::from_coeffs(Vec::new()),
-    );
+    wrong_binding.root.stage2.next_witness_binding =
+        akita_types::NextWitnessBinding::OuterCommitment(akita_types::RingVec::from_coeffs(
+            Vec::new(),
+        ));
     let mut verifier_transcript = AkitaTranscript::<F>::new(b"setup-tests/onehot");
     AkitaCommitmentScheme::<Cfg>::batched_verify(
         &wrong_binding,

@@ -13,7 +13,6 @@ use crate::RootTensorProjectionPoly;
 use akita_field::unreduced::{HasWide, ReduceTo};
 use akita_field::RandomSampling;
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt};
-use akita_types::CleartextWitnessProof;
 
 /// D-free shape metadata every root polynomial exposes.
 ///
@@ -144,40 +143,6 @@ where
 
     /// Borrow a same-point batch tensor view over several polynomials.
     fn tensor_batch<'a>(polys: &'a [&'a Self]) -> Result<Self::TensorBatchView<'a>, AkitaError>;
-}
-
-/// Capability: materialize a direct root witness for zero-fold openings, and
-/// the dense field-element evaluation table derived from it.
-///
-/// This is an explicit opt-in, not a hidden default on every root polynomial:
-/// only proving paths that may select a root-direct schedule (or the
-/// extension-opening reduction's dense-term fallback) require it. Both are
-/// prove-only capabilities, so bundling them does not widen the commit-path
-/// capability bound.
-pub trait DirectRootWitnessSource<F, const D: usize>: RootPolyShape<F, D>
-where
-    F: FieldCore,
-{
-    /// Materialize a direct root witness payload.
-    fn direct_root_witness(&self) -> Result<CleartextWitnessProof<F>, AkitaError>;
-
-    /// Dense field-element evaluation table for this polynomial.
-    ///
-    /// Defaults to the field-element payload of [`Self::direct_root_witness`].
-    /// Representations whose direct witness is unavailable, or whose evaluations
-    /// have a cheaper derivation, override this.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the representation cannot materialize its dense
-    /// evaluation table.
-    fn base_evals(&self) -> Result<Vec<F>, AkitaError> {
-        let witness = self.direct_root_witness()?;
-        let field_elems = witness.as_field_elements().ok_or_else(|| {
-            AkitaError::InvalidInput("base evals require field-element witness payload".to_string())
-        })?;
-        Ok(field_elems.coeffs().to_vec())
-    }
 }
 
 /// One opening-point polynomial bundle passed to commit entry points.
@@ -521,7 +486,7 @@ where
 ///
 /// Algorithms live on [`OpeningFoldKernel`] / [`TensorProjectionKernel`], not here.
 pub trait RootProvePoly<F, const D: usize>:
-    RootOpeningSource<F, D> + RootTensorSource<F, D> + DirectRootWitnessSource<F, D>
+    RootOpeningSource<F, D> + RootTensorSource<F, D>
 where
     F: FieldCore,
 {
@@ -530,7 +495,7 @@ where
 impl<F, const D: usize, P> RootProvePoly<F, D> for P
 where
     F: FieldCore,
-    P: RootOpeningSource<F, D> + RootTensorSource<F, D> + DirectRootWitnessSource<F, D>,
+    P: RootOpeningSource<F, D> + RootTensorSource<F, D>,
 {
 }
 

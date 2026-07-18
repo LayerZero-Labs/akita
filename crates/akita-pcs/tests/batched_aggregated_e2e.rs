@@ -103,7 +103,7 @@ mod non_zk_aggregated_cases {
             .expect("batched prove");
             if expect_folded {
                 assert!(
-                    !proof.is_root_direct(),
+                    proof.num_fold_levels() >= 2,
                     "aggregated onehot nv={nv} batch={batch_size} should exercise folded proof path"
                 );
             }
@@ -195,7 +195,7 @@ mod non_zk_aggregated_cases {
             .expect("batched prove");
             if expect_folded {
                 assert!(
-                    !proof.is_root_direct(),
+                    proof.num_fold_levels() >= 2,
                     "aggregated dense nv={nv} batch={batch_size} should exercise folded proof path"
                 );
             }
@@ -315,7 +315,7 @@ fn aggregated_mixed_dense_and_onehot_under_dense_cfg() {
         )
         .expect("mixed batched prove");
         assert!(
-            !proof.is_root_direct(),
+            proof.num_fold_levels() >= 2,
             "aggregated mixed dense/onehot should exercise folded proof path"
         );
 

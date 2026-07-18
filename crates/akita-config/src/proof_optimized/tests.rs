@@ -39,7 +39,7 @@ fn setup_level_params_from_schedule_excludes_terminal_direct() {
 
     let schedule = Schedule {
         steps: vec![
-            Step::Fold(FoldStep {
+            Step::fold(FoldStep {
                 params: fold_lp.clone(),
                 current_w_len: 1 << 8,
                 next_w_len: 1 << 4,
@@ -49,7 +49,6 @@ fn setup_level_params_from_schedule_excludes_terminal_direct() {
                 current_w_len: 1 << 4,
                 witness_shape: CleartextWitnessShape::FieldElements(16),
                 direct_bytes: 0,
-                params: None,
             }),
         ],
         total_bytes: 0,
@@ -59,103 +58,7 @@ fn setup_level_params_from_schedule_excludes_terminal_direct() {
     assert_eq!(
         setup_levels,
         vec![fold_lp],
-        "terminal Direct.params is None and must not feed setup_levels; see DirectStep::params"
-    );
-}
-
-#[test]
-fn uncommittable_root_direct_schedule_yields_empty_setup_levels_and_loud_get_params_error() {
-    // Documents the deliberate asymmetry between
-    // `setup_level_params_from_schedule` (silently skips
-    // root-direct schedules with `params: None`) and
-    // `Cfg::get_params_for_batched_commitment` (rejects the same
-    // schedule with a documented `InvalidSetup` message). The
-    // contract is described on `DirectStep::params` and the
-    // materializer comment that branches on it; this test locks
-    // it in so neither side drifts.
-    use akita_types::{CleartextWitnessShape, DirectStep, Schedule, Step};
-
-    let uncommittable = Schedule {
-        steps: vec![Step::Direct(DirectStep {
-            current_w_len: 1 << 10,
-            witness_shape: CleartextWitnessShape::FieldElements(1 << 10),
-            direct_bytes: 0,
-            params: None,
-        })],
-        total_bytes: 0,
-    };
-
-    let bound = setup_level_params_from_schedule(&uncommittable);
-    assert!(
-        bound.is_empty(),
-        "uncommittable root-direct schedule must produce no setup levels; \
-         see DirectStep::params"
-    );
-
-    // `get_params_for_batched_commitment` reads the root commit off the
-    // runtime schedule's first step: a root-direct `params: None` is the
-    // uncommittable edge and must be rejected loudly (rather than silently
-    // dropped, as the setup-levels reader above does). Drive the real trait
-    // method through a config whose `runtime_schedule` yields exactly this
-    // uncommittable schedule, and assert the documented `InvalidSetup`.
-    #[derive(Clone)]
-    struct UncommittableRootDirectCfg;
-    impl CommitmentConfig for UncommittableRootDirectCfg {
-        type Field = akita_field::Fp32<251>;
-        type ExtField = akita_field::Fp32<251>;
-        const D: usize = 8;
-        fn decomposition() -> akita_types::DecompositionParams {
-            akita_types::DecompositionParams {
-                log_basis: 3,
-                log_commit_bound: 8,
-                log_open_bound: Some(8),
-            }
-        }
-        fn ring_challenge_config(
-            _d: usize,
-        ) -> Result<akita_challenges::SparseChallengeConfig, AkitaError> {
-            Ok(akita_challenges::SparseChallengeConfig::pm1_only(1))
-        }
-        fn sis_modulus_profile() -> akita_types::SisModulusProfileId {
-            akita_types::SisModulusProfileId::Q32Offset99
-        }
-        fn max_setup_matrix_size(
-            _max_num_vars: usize,
-            _max_num_batched_polys: usize,
-        ) -> Result<SetupMatrixEnvelope, AkitaError> {
-            Ok(SetupMatrixEnvelope { max_setup_len: 1 })
-        }
-        fn basis_range() -> (u32, u32) {
-            (3, 3)
-        }
-        // Inject the uncommittable root-direct schedule so the default
-        // `get_params_for_batched_commitment` hits its rejection branch.
-        fn runtime_schedule(_key: AkitaScheduleLookupKey) -> Result<Schedule, AkitaError> {
-            Ok(Schedule {
-                steps: vec![Step::Direct(DirectStep {
-                    current_w_len: 1 << 10,
-                    witness_shape: CleartextWitnessShape::FieldElements(1 << 10),
-                    direct_bytes: 0,
-                    params: None,
-                })],
-                total_bytes: 0,
-            })
-        }
-
-        fn get_params_for_prove(layout: &OpeningClaimsLayout) -> Result<Schedule, AkitaError> {
-            Self::runtime_schedule(
-                crate::proof_optimized::proof_optimized_schedule_key::<Self>(layout)?,
-            )
-        }
-    }
-
-    let opening_batch = OpeningClaimsLayout::new(10, 1).expect("singleton opening batch");
-    let err = UncommittableRootDirectCfg::get_params_for_batched_commitment(&opening_batch)
-        .expect_err("uncommittable root-direct must reject get_params_for_batched_commitment");
-    assert!(
-        err.to_string()
-            .contains("root-direct schedule is missing commit params"),
-        "unexpected error: {err}"
+        "terminal direct steps must not feed setup levels"
     );
 }
 
@@ -206,7 +109,6 @@ fn setup_matrix_envelope_does_not_add_conservative_layout() {
                     current_w_len: 1 << 8,
                     witness_shape: CleartextWitnessShape::FieldElements(1 << 8),
                     direct_bytes: 0,
-                    params: None,
                 })],
                 total_bytes: 0,
             })
@@ -227,75 +129,11 @@ fn setup_matrix_envelope_does_not_add_conservative_layout() {
 }
 
 #[test]
-fn fallback_root_direct_schedule_binds_real_opening_batch_commit_params() {
-    // Locks in the fix for the descriptor-binding bug at
-    // `akita_prover::protocol::core` and
-    // `akita_verifier::protocol::core`: when the planner-selected
-    // folded root cannot handle the opening shape, both sides build
-    // a fallback root-direct schedule. That schedule's `params` are
-    // hashed into the per-proof effective-schedule digest
-    // (`PlanSection::from_schedule` -> `digest_effective_schedule`),
-    // while the root-direct verification closure recomputes commitments
-    // using `Cfg::get_params_for_batched_commitment(real_opening_batch)`. If
-    // the fallback used a synthetic `same_point(num_vars, 1)`
-    // singleton opening batch (the pre-fix behavior), the descriptor
-    // would bind singleton-sized params while verification ran
-    // against batched ones.
-    use akita_types::{digest_effective_schedule, root_direct_schedule};
-    type Cfg = fp128::D128Full;
-    let real_opening_batch =
-        OpeningClaimsLayout::new(30, 4).expect("batched same-point opening batch");
-    let real_params =
-        Cfg::get_params_for_batched_commitment(&real_opening_batch).expect("batched commit params");
-    let singleton_opening_batch = OpeningClaimsLayout::new(30, 1).expect("singleton opening batch");
-    let singleton_params = Cfg::get_params_for_batched_commitment(&singleton_opening_batch)
-        .expect("singleton commit params");
-
-    // Sanity: a non-singleton opening batch should resolve to a
-    // different commit layout, otherwise the regression couldn't
-    // manifest with this fixture.
-    assert_ne!(
-        real_params, singleton_params,
-        "test fixture: pick an opening batch where batched and singleton params differ"
-    );
-
-    let real_schedule = root_direct_schedule(
-        real_opening_batch
-            .root_direct_witness_len()
-            .expect("witness len"),
-        real_params.clone(),
-    )
-    .expect("fallback root-direct schedule");
-    let bound_levels = setup_level_params_from_schedule(&real_schedule);
-    assert_eq!(
-        bound_levels,
-        vec![real_params],
-        "fallback schedule must carry the real opening-batch params the verifier recomputes"
-    );
-
-    // The descriptor binds those params through the schedule digest: a
-    // singleton-params fallback at the same `num_vars` must produce a
-    // different preamble than the real batched-params fallback.
-    let singleton_schedule = root_direct_schedule(
-        real_opening_batch
-            .root_direct_witness_len()
-            .expect("witness len"),
-        singleton_params,
-    )
-    .expect("singleton fallback root-direct schedule");
-    assert_ne!(
-        digest_effective_schedule(&real_schedule),
-        digest_effective_schedule(&singleton_schedule),
-        "schedule digest must distinguish batched vs singleton root-direct commit params"
-    );
-}
-
-#[test]
 fn multi_group_multi_chunk_schedule_resolves_at_effective_schedule_boundary() {
     type Cfg = fp128::D64OneHotMultiChunkW2R2;
     let opening_batch = OpeningClaimsLayout::from_groups(vec![
-        PolynomialGroupLayout::new(8, 1),
         PolynomialGroupLayout::new(16, 1),
+        PolynomialGroupLayout::new(32, 1),
     ])
     .expect("multi-group opening batch");
     let point = vec![fp128::Field::zero(); opening_batch.max_num_vars()];
@@ -428,9 +266,11 @@ fn setup_matrix_envelope_covers_batched_runtime_root_widths() {
     type Cfg = fp128::D128Full;
     let opening_batch = OpeningClaimsLayout::new(30, 4).expect("batched same-point opening_batch");
     let schedule = Cfg::get_params_for_prove(&opening_batch).expect("runtime schedule");
-    let root_params = root_commit_params_from_schedule(&schedule)
-        .unwrap()
-        .expect("batched root schedule should carry commit params");
+    let root_params = schedule
+        .root_fold()
+        .expect("batched root schedule should carry a root fold")
+        .params
+        .clone();
     let required = expected_runtime_root_setup_len(&root_params, &opening_batch);
 
     let runtime_envelope = setup_matrix_envelope_for_shape::<Cfg>(&opening_batch)
@@ -441,33 +281,6 @@ fn setup_matrix_envelope_covers_batched_runtime_root_widths() {
     let setup_envelope = proof_optimized_max_setup_matrix_size::<Cfg>(30, 4)
         .expect("setup envelope should cover generated batched root widths");
     assert!(setup_envelope.max_setup_len >= required);
-}
-
-#[test]
-fn setup_matrix_envelope_covers_single_point_batch_root_widths() {
-    use akita_types::root_direct_schedule;
-
-    type Cfg = fp128::D128Full;
-    let opening_batch = OpeningClaimsLayout::new(30, 4).expect("supported batched opening_batch");
-    let root_params = Cfg::get_params_for_batched_commitment(&opening_batch)
-        .expect("supported batched commit params");
-    let schedule = root_direct_schedule(
-        opening_batch
-            .root_direct_witness_len()
-            .expect("witness len"),
-        root_params.clone(),
-    )
-    .expect("synthetic direct schedule");
-    let required = expected_runtime_root_setup_len(&root_params, &opening_batch);
-
-    let mut max_setup_len = 1;
-    super::accumulate_root_matrix_envelope_for_opening_batch(
-        &schedule,
-        &opening_batch,
-        &mut max_setup_len,
-    )
-    .expect("synthetic direct schedule envelope");
-    assert!(max_setup_len >= required);
 }
 
 #[test]
@@ -497,15 +310,15 @@ fn proof_optimized_setup_includes_arbitrary_precommit_group_sizes() {
     type Cfg = fp128::D64OneHot;
 
     let layout = OpeningClaimsLayout::from_root_groups(
-        &[PolynomialGroupLayout::new(10, 1)],
-        PolynomialGroupLayout::new(20, 1),
+        &[PolynomialGroupLayout::new(16, 1)],
+        PolynomialGroupLayout::new(32, 1),
     )
     .expect("max precommitted group layout");
     let runtime = setup_matrix_envelope_for_shape::<Cfg>(&layout)
         .expect("runtime setup envelope")
         .expect("max precommitted group should be schedulable");
     let setup_envelope =
-        super::proof_optimized_max_setup_matrix_size::<Cfg>(20, 1).expect("setup envelope");
+        super::proof_optimized_max_setup_matrix_size::<Cfg>(32, 1).expect("setup envelope");
 
     assert!(
         setup_envelope.max_setup_len >= runtime.max_setup_len,
@@ -518,15 +331,17 @@ fn grouped_root_runtime_setup_uses_per_group_roles_and_summed_d_width() {
     type Cfg = fp128::D64OneHot;
 
     let layout = OpeningClaimsLayout::from_root_groups(
-        &[PolynomialGroupLayout::new(10, 1)],
-        PolynomialGroupLayout::new(24, 1),
+        &[PolynomialGroupLayout::new(16, 1)],
+        PolynomialGroupLayout::new(32, 1),
     )
     .expect("grouped root layout");
     let key = super::proof_optimized_schedule_key::<Cfg>(&layout).expect("grouped root key");
     let schedule = Cfg::runtime_schedule(key).expect("grouped root schedule");
-    let root_params = root_commit_params_from_schedule(&schedule)
-        .expect("root params lookup")
-        .expect("grouped root should carry params");
+    let root_params = schedule
+        .root_fold()
+        .expect("grouped root should carry a root fold")
+        .params
+        .clone();
 
     let expected = expected_runtime_root_setup_len(&root_params, &layout);
     let actual = super::root_runtime_matrix_len_for_opening_batch(&root_params, &layout)
@@ -590,7 +405,6 @@ fn recursive_setup_envelope_counts_setup_prefix_d_segment() {
             current_w_len: shape.layout.logical_num_elems,
             witness_shape,
             direct_bytes: 0,
-            params: None,
         }
     }
 
@@ -638,19 +452,19 @@ fn recursive_setup_envelope_counts_setup_prefix_d_segment() {
         let terminal_current_w_len = 64;
         Schedule {
             steps: vec![
-                Step::Fold(FoldStep {
+                Step::fold(FoldStep {
                     params: root,
                     current_w_len: 256,
                     next_w_len: 128,
                     level_bytes: 0,
                 }),
-                Step::Fold(FoldStep {
+                Step::fold(FoldStep {
                     params: successor,
                     current_w_len: 128,
                     next_w_len: terminal_current_w_len,
                     level_bytes: 0,
                 }),
-                Step::Fold(FoldStep {
+                Step::fold(FoldStep {
                     params: terminal_params,
                     current_w_len: terminal_current_w_len,
                     next_w_len: direct.current_w_len,

@@ -7,11 +7,9 @@
 
 use super::poly::DensePoly;
 use crate::compute::{
-    DirectRootWitnessSource, RootCommitSource, RootOpeningSource, RootPolyMeta, RootPolyShape,
-    RootTensorSource,
+    RootCommitSource, RootOpeningSource, RootPolyMeta, RootPolyShape, RootTensorSource,
 };
 use akita_field::{AkitaError, FieldCore};
-use akita_types::{CleartextWitnessProof, RingVec};
 
 /// Borrowed single-polynomial view over dense ring storage at dimension `D`.
 ///
@@ -120,17 +118,5 @@ where
             poly.ring_coeffs::<D>()?;
         }
         Ok(DenseBatchView { polys })
-    }
-}
-
-impl<F, const D: usize> DirectRootWitnessSource<F, D> for DensePoly<F>
-where
-    F: FieldCore,
-{
-    fn direct_root_witness(&self) -> Result<CleartextWitnessProof<F>, AkitaError> {
-        let live_len = self.live_coeff_len()?;
-        Ok(CleartextWitnessProof::FieldElements(RingVec::from_coeffs(
-            self.field_coeffs()[..live_len].to_vec(),
-        )))
     }
 }

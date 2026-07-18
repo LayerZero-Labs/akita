@@ -106,8 +106,7 @@ where
             RelationMatrixRowLayout::WithDBlock => (0..num_sc_vars)
                 .map(|_| sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_TAU0))
                 .collect(),
-            RelationMatrixRowLayout::WithoutDBlock
-            | RelationMatrixRowLayout::WithoutCommitmentBlocks => Vec::new(),
+            RelationMatrixRowLayout::WithoutCommitmentBlocks => Vec::new(),
         };
         let tau1: Vec<E> = (0..num_i)
             .map(|_| sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_TAU1))

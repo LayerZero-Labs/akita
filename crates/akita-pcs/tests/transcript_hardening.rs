@@ -11,8 +11,7 @@ use akita_transcript::{
     ext_limb_label, labels, AkitaTranscript, LoggingTranscript, Transcript, TranscriptEvent,
 };
 use akita_types::{
-    AkitaBatchedProof, AkitaBatchedProofShape, AkitaBatchedRootProof, AkitaLevelProof,
-    CleartextWitnessProof, CleartextWitnessShape,
+    AkitaBatchedProof, AkitaBatchedProofShape, CleartextWitnessProof, CleartextWitnessShape,
 };
 use common::*;
 
@@ -80,9 +79,8 @@ fn event_stream_equality_small() {
         )
         .expect("prove");
         assert!(
-            matches!(proof.root, AkitaBatchedRootProof::Fold(_))
-                && matches!(proof.steps.as_slice(), [AkitaLevelProof::Terminal(_)]),
-            "transcript fixture must use exactly two folds"
+            proof.recursive_folds.is_empty(),
+            "fixture must use exactly two folds"
         );
 
         let mut verifier_transcript =
@@ -215,18 +213,7 @@ fn terminal_event_order_rejects_malformed_windows() {
 }
 
 fn final_witness_mut(proof: &mut AkitaBatchedProof<F, F>) -> &mut CleartextWitnessProof<F> {
-    match &mut proof.root {
-        AkitaBatchedRootProof::Terminal(terminal) => terminal.final_witness_mut(),
-        AkitaBatchedRootProof::Fold(_) => proof
-            .steps
-            .last_mut()
-            .and_then(AkitaLevelProof::as_terminal_mut)
-            .expect("fold-rooted proof must end in a terminal step")
-            .final_witness_mut(),
-        AkitaBatchedRootProof::ZeroFold { .. } => {
-            panic!("terminal tamper test requires a folded terminal proof")
-        }
-    }
+    proof.terminal.final_witness_mut()
 }
 
 #[derive(Clone, Copy)]
@@ -344,21 +331,7 @@ fn terminal_final_witness_tamper_rejects() {
 fn terminal_shape_final_witness_mut(
     shape: &mut AkitaBatchedProofShape,
 ) -> &mut CleartextWitnessShape {
-    match shape {
-        AkitaBatchedProofShape::Terminal(terminal) => &mut terminal.final_witness,
-        AkitaBatchedProofShape::Fold { step_shapes, .. } => step_shapes
-            .last_mut()
-            .and_then(|step| match step {
-                akita_types::AkitaProofStepShape::Intermediate(_) => None,
-                akita_types::AkitaProofStepShape::Terminal(terminal) => {
-                    Some(&mut terminal.final_witness)
-                }
-            })
-            .expect("fold-rooted proof must end in a terminal shape"),
-        AkitaBatchedProofShape::ZeroFold { .. } => {
-            panic!("terminal shape test requires a folded terminal proof")
-        }
-    }
+    &mut shape.terminal.final_witness
 }
 
 #[test]

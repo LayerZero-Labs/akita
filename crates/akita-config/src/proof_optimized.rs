@@ -228,15 +228,13 @@ fn setup_matrix_envelope_for_schedule(
 
 /// Extract setup-level params from a `Schedule`.
 ///
-/// Uncommittable root-direct entries carry no setup params and are skipped
-/// here; `Cfg::get_params_for_batched_commitment` rejects them loudly.
 pub fn setup_level_params_from_schedule(schedule: &Schedule) -> Vec<LevelParams> {
     schedule
         .steps
         .iter()
         .filter_map(|step| match step {
             akita_types::Step::Fold(fold_step) => Some(fold_step.params.clone()),
-            akita_types::Step::Direct(direct) => direct.params.clone(),
+            akita_types::Step::Direct(_) => None,
         })
         .collect()
 }
@@ -268,17 +266,16 @@ where
         )?;
     }
 
-    if let Some(root_params) = root_commit_params_from_schedule(schedule)? {
-        let required_setup_len = root_runtime_matrix_len_for_opening_batch(&root_params, layout)?;
-        let available_setup_len = setup
-            .shared_matrix
-            .total_ring_elements_at_dyn(root_params.ring_dimension)?;
-        ensure_required_setup_len(
-            required_setup_len,
-            available_setup_len,
-            root_params.ring_dimension,
-        )?;
-    }
+    let root_params = &schedule.root_fold()?.params;
+    let required_setup_len = root_runtime_matrix_len_for_opening_batch(root_params, layout)?;
+    let available_setup_len = setup
+        .shared_matrix
+        .total_ring_elements_at_dyn(root_params.ring_dimension)?;
+    ensure_required_setup_len(
+        required_setup_len,
+        available_setup_len,
+        root_params.ring_dimension,
+    )?;
     Ok(())
 }
 
@@ -294,20 +291,6 @@ fn ensure_required_setup_len(
         "schedule requires {required_setup_len} setup ring elements at D={ring_dimension}, but \
          setup provides {available_setup_len}"
     )))
-}
-
-#[cfg(test)]
-fn accumulate_root_matrix_envelope_for_opening_batch(
-    schedule: &Schedule,
-    layout: &OpeningClaimsLayout,
-    max_setup_len: &mut usize,
-) -> Result<(), AkitaError> {
-    let Some(root_params) = root_commit_params_from_schedule(schedule)? else {
-        return Ok(());
-    };
-    let root_len = root_runtime_matrix_len_for_opening_batch(&root_params, layout)?;
-    *max_setup_len = (*max_setup_len).max(root_len);
-    Ok(())
 }
 
 fn root_runtime_matrix_len_for_opening_batch(
@@ -386,18 +369,6 @@ fn root_setup_len(
         .checked_mul(d_width)
         .ok_or_else(|| AkitaError::InvalidSetup("root D setup envelope overflow".to_string()))?;
     Ok(d_len.max(max_a_len).max(max_b_len))
-}
-
-fn root_commit_params_from_schedule(
-    schedule: &Schedule,
-) -> Result<Option<LevelParams>, AkitaError> {
-    match schedule.steps.first() {
-        Some(akita_types::Step::Fold(root_step)) => Ok(Some(root_step.params.clone())),
-        Some(akita_types::Step::Direct(direct)) => Ok(direct.params.clone()),
-        None => Err(AkitaError::InvalidSetup(
-            "schedule has no steps".to_string(),
-        )),
-    }
 }
 
 // ---------------------------------------------------------------------------

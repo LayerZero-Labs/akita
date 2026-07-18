@@ -52,7 +52,7 @@ fn test_seed(gen_ring_dim: usize) -> AkitaSetupSeed {
 fn ring_dim_plan_rejects_fold_dim_above_gen_ring_dim() {
     let schedule = Schedule {
         steps: vec![
-            Step::Fold({
+            Step::fold({
                 let mut step = FoldStep {
                     params: LevelParams::log_basis_stub(3),
                     current_w_len: 256,
@@ -69,7 +69,6 @@ fn ring_dim_plan_rejects_fold_dim_above_gen_ring_dim() {
                 current_w_len: 64,
                 witness_shape: CleartextWitnessShape::FieldElements(64),
                 direct_bytes: 0,
-                params: None,
             }),
         ],
         total_bytes: 0,

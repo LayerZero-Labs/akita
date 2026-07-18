@@ -97,8 +97,7 @@ pub fn resolve_group_batch_schedule(
 
 fn unsupported_grouped_table_hit_error(err: &AkitaError) -> bool {
     let msg = err.to_string();
-    msg.contains("root direct step must be scalar")
-        || msg.contains("grouped terminal fold must be followed by another fold")
+    msg.contains("grouped terminal fold must be followed by another fold")
         || msg.contains("terminal fold must be scalar")
 }
 
@@ -146,8 +145,7 @@ mod tests {
     use crate::find_group_batch_schedule;
     use crate::find_schedule;
     use crate::generated::{
-        validate_generated_schedule_entry, GeneratedDirectStep, GeneratedFoldStep,
-        GeneratedScheduleTable, GeneratedStep,
+        validate_generated_schedule_entry, GeneratedFoldStep, GeneratedScheduleTable, GeneratedStep,
     };
     use akita_types::{
         AkitaScheduleLookupKey, ChunkedWitnessCfg, DecompositionParams, LevelParams,
@@ -161,14 +159,14 @@ mod tests {
             decomposition: DecompositionParams {
                 log_basis: 3,
                 log_commit_bound: 1,
-                log_open_bound: Some(8),
+                log_open_bound: Some(128),
             },
             sis_modulus_profile: SisModulusProfileId::Q128OffsetA7F7,
             sis_security_policy: DEFAULT_SIS_SECURITY_POLICY,
             sis_table_digest: SisTableDigest::CURRENT,
             ring_subfield_norm_bound: 1,
-            claim_ext_degree: 4,
-            chal_ext_degree: 4,
+            claim_ext_degree: 1,
+            chal_ext_degree: 1,
             basis_range: (3, 4),
             onehot_chunk_size: 1,
             witness_chunk: ChunkedWitnessCfg::default(),
@@ -210,9 +208,7 @@ mod tests {
             .iter()
             .map(|step| match step {
                 Step::Fold(fold) => GeneratedStep::Fold(generated_fold_step(&fold.params)),
-                Step::Direct(direct) => GeneratedStep::Direct(GeneratedDirectStep {
-                    commit: direct.params.as_ref().map(generated_fold_step),
-                }),
+                Step::Direct(_) => GeneratedStep::Direct,
             })
             .collect()
     }
@@ -242,15 +238,10 @@ mod tests {
                     mutate(&mut fold.fold);
                     return;
                 }
-                GeneratedStep::Direct(direct) => {
-                    if let Some(commit) = direct.commit.as_mut() {
-                        mutate(commit);
-                        return;
-                    }
-                }
+                GeneratedStep::Direct => {}
             }
         }
-        panic!("schedule should contain a fold or root-direct commit");
+        panic!("schedule should contain a fold");
     }
 
     #[test]
@@ -295,10 +286,16 @@ mod tests {
         let base = flat_policy();
         let mut explicit_default = flat_policy();
         explicit_default.witness_chunk = ChunkedWitnessCfg::default();
-        let a = find_single_schedule(key, &base).expect("a");
-        let b = find_single_schedule(key, &explicit_default).expect("b");
-        assert_eq!(a.total_bytes, b.total_bytes);
-        assert_eq!(a.steps.len(), b.steps.len());
+        let a = find_single_schedule(key, &base);
+        let b = find_single_schedule(key, &explicit_default);
+        match (a, b) {
+            (Ok(a), Ok(b)) => {
+                assert_eq!(a.total_bytes, b.total_bytes);
+                assert_eq!(a.steps.len(), b.steps.len());
+            }
+            (Err(AkitaError::UnsupportedSchedule(_)), Err(AkitaError::UnsupportedSchedule(_))) => {}
+            (a, b) => panic!("default chunk policy diverged: implicit={a:?}, explicit={b:?}"),
+        }
     }
 
     #[test]
@@ -346,19 +343,25 @@ mod tests {
         let policy = flat_policy();
 
         let via_multi_group =
-            resolve_group_batch_schedule(&key, &policy, ring_challenge_config, fold_shape, None)
-                .expect("single-group resolve should delegate to scalar path");
+            resolve_group_batch_schedule(&key, &policy, ring_challenge_config, fold_shape, None);
         let via_scalar = resolve_schedule(
             final_group,
             &policy,
             ring_challenge_config,
             fold_shape,
             None,
-        )
-        .expect("scalar resolve");
+        );
 
-        assert_eq!(via_multi_group.total_bytes, via_scalar.total_bytes);
-        assert_eq!(via_multi_group.steps.len(), via_scalar.steps.len());
+        match (via_multi_group, via_scalar) {
+            (Ok(via_multi_group), Ok(via_scalar)) => {
+                assert_eq!(via_multi_group.total_bytes, via_scalar.total_bytes);
+                assert_eq!(via_multi_group.steps.len(), via_scalar.steps.len());
+            }
+            (Err(AkitaError::UnsupportedSchedule(_)), Err(AkitaError::UnsupportedSchedule(_))) => {}
+            (via_multi_group, via_scalar) => panic!(
+                "single-group resolve diverged: grouped={via_multi_group:?}, scalar={via_scalar:?}"
+            ),
+        }
     }
 
     #[test]
@@ -540,7 +543,7 @@ mod tests {
     }
 
     fn multi_group_sample_key() -> AkitaScheduleLookupKey {
-        let pre_key = PolynomialGroupLayout::new(10, 1);
+        let pre_key = PolynomialGroupLayout::new(16, 1);
         let policy = flat_policy();
         let pre = PrecommittedGroupParams::from_params(
             pre_key,
@@ -549,13 +552,13 @@ mod tests {
                 .steps
                 .first()
                 .and_then(|step| match step {
-                    Step::Direct(direct) => direct.params.as_ref(),
+                    Step::Direct(_) => None,
                     Step::Fold(fold) => Some(&fold.params),
                 })
                 .expect("commit params"),
         );
         AkitaScheduleLookupKey {
-            final_group: PolynomialGroupLayout::new(20, 2),
+            final_group: PolynomialGroupLayout::new(32, 2),
             precommitteds: vec![pre],
         }
     }
@@ -591,7 +594,7 @@ mod tests {
     }
 
     #[test]
-    fn resolve_group_batch_schedule_falls_back_on_stale_grouped_terminal_table_hit() {
+    fn resolve_group_batch_schedule_rejects_stale_one_fold_table_hit() {
         let key = multi_group_sample_key();
         let mut policy = flat_policy();
         policy.decomposition.log_open_bound = Some(128);
@@ -608,10 +611,7 @@ mod tests {
             .expect("multi-group root fold");
         let entry = generated_group_entry_from_steps(
             &key,
-            vec![
-                GeneratedStep::Fold(root),
-                GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
-            ],
+            vec![GeneratedStep::Fold(root), GeneratedStep::Direct],
         );
         let entries: &'static [GeneratedScheduleTableEntry] =
             Box::leak(vec![entry].into_boxed_slice());
@@ -620,16 +620,15 @@ mod tests {
                 .expect("identity");
         let table = GeneratedScheduleTable { entries, identity };
 
-        let resolved = resolve_group_batch_schedule(
+        let error = resolve_group_batch_schedule(
             &key,
             &policy,
             ring_challenge_config,
             fold_shape,
             Some(table),
         )
-        .expect("stale grouped-terminal table hit should fall back to DP");
+        .expect_err("stale one-fold table hit must be rejected");
 
-        assert_eq!(resolved.total_bytes, regenerated.total_bytes);
-        assert_eq!(resolved.steps.len(), regenerated.steps.len());
+        assert!(matches!(error, AkitaError::UnsupportedSchedule(_)));
     }
 }

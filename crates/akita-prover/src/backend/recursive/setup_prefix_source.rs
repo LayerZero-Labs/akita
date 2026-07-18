@@ -6,9 +6,7 @@ use akita_algebra::CyclotomicRing;
 use akita_field::{
     AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, MulBaseUnreduced,
 };
-use akita_types::{
-    AkitaExpandedSetup, CleartextWitnessProof, FpExtEncoding, RingVec, SetupPrefixSlot,
-};
+use akita_types::{AkitaExpandedSetup, FpExtEncoding, SetupPrefixSlot};
 
 use crate::backend::poly_helpers::{
     balanced_ring_decompose_fold_partitioned, build_decompose_fold_witness, DecomposeParams,
@@ -16,9 +14,9 @@ use crate::backend::poly_helpers::{
 use crate::backend::{RecursiveWitnessFlat, SuffixWitnessBatchView, SuffixWitnessView};
 use crate::compute::{
     BatchDecomposeFoldOutcome, CpuBackend, DecomposeFoldBatchPlan, DecomposeFoldPlan,
-    DirectRootWitnessSource, OpeningBatchKernel, OpeningFoldKernel, OpeningFoldOutput,
-    OpeningFoldPlan, RootOpeningSource, RootPolyMeta, RootPolyShape, RootTensorSource,
-    TensorPackedWitness, TensorProjectionBatchKernel, TensorProjectionKernel,
+    OpeningBatchKernel, OpeningFoldKernel, OpeningFoldOutput, OpeningFoldPlan, RootOpeningSource,
+    RootPolyMeta, RootPolyShape, RootTensorSource, TensorPackedWitness,
+    TensorProjectionBatchKernel, TensorProjectionKernel,
 };
 use crate::protocol::extension_opening_reduction::SparseExtensionOpeningWitness;
 use crate::RootTensorProjectionPoly;
@@ -138,21 +136,6 @@ impl<F: FieldCore, const D: usize> RootTensorSource<F, D> for RecursiveFoldSourc
 
     fn tensor_batch<'v>(polys: &'v [&'v Self]) -> Result<Self::TensorBatchView<'v>, AkitaError> {
         Ok(RecursiveFoldBatchView { polys })
-    }
-}
-
-impl<F: FieldCore + CanonicalField, const D: usize> DirectRootWitnessSource<F, D>
-    for RecursiveFoldSource<F>
-{
-    fn direct_root_witness(&self) -> Result<CleartextWitnessProof<F>, AkitaError> {
-        match self {
-            Self::SetupPrefix { expanded, slot } => Ok(CleartextWitnessProof::FieldElements(
-                RingVec::from_coeffs(setup_prefix_field_evals(expanded.as_ref(), slot.as_ref())?),
-            )),
-            Self::Witness(witness) => {
-                DirectRootWitnessSource::<F, D>::direct_root_witness(witness.as_ref())
-            }
-        }
     }
 }
 

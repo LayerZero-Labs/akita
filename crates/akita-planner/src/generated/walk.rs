@@ -12,8 +12,8 @@ use akita_field::{AkitaError, Prime128OffsetA7F7};
 use akita_types::{
     direct_witness_bytes, extension_opening_reduction_level_bytes, level_proof_bytes,
     segment_typed_witness_shape_from_groups, AkitaScheduleInputs, AkitaScheduleLookupKey,
-    CleartextWitnessShape, DirectStep, FoldStep, LevelParams, PolynomialGroupLayout,
-    PrecommittedLevelParams, RelationMatrixRowLayout, Schedule, SetupContributionMode, Step,
+    DirectStep, FoldStep, LevelParams, PolynomialGroupLayout, PrecommittedLevelParams,
+    RelationMatrixRowLayout, Schedule, SetupContributionMode, Step,
 };
 
 use crate::generated::{
@@ -114,7 +114,7 @@ fn walk_scalar_generated_schedule_entry(
                         "generated schedule ended with a fold step at level {fold_level}"
                     ))
                 })?;
-                let is_terminal = matches!(next, GeneratedStep::Direct(_));
+                let is_terminal = matches!(next, GeneratedStep::Direct);
                 let num_claims = if fold_level == 0 {
                     key.num_polynomials()
                 } else {
@@ -156,15 +156,7 @@ fn walk_scalar_generated_schedule_entry(
                     )?;
                     let len = shape.logical_num_elems();
                     terminal_witness_field_len = Some(len);
-                    (
-                        len,
-                        None,
-                        if fold_level == 0 {
-                            RelationMatrixRowLayout::WithoutDBlock
-                        } else {
-                            RelationMatrixRowLayout::WithoutCommitmentBlocks
-                        },
-                    )
+                    (len, None, RelationMatrixRowLayout::WithoutCommitmentBlocks)
                 } else {
                     let len = planned_next_witness_len(
                         field_bits,
@@ -199,11 +191,11 @@ fn walk_scalar_generated_schedule_entry(
                     next_w_len,
                     layout,
                     if is_terminal {
-                        akita_types::NextWitnessBindingPolicy::TerminalCleartextWitness
-                    } else if matches!(entry.steps.get(idx + 2), Some(GeneratedStep::Direct(_))) {
-                        akita_types::NextWitnessBindingPolicy::TerminalInnerState
+                        None
+                    } else if matches!(entry.steps.get(idx + 2), Some(GeneratedStep::Direct)) {
+                        Some(akita_types::NextWitnessBindingPolicy::TerminalInnerState)
                     } else {
-                        akita_types::NextWitnessBindingPolicy::OuterCommitment
+                        Some(akita_types::NextWitnessBindingPolicy::OuterCommitment)
                     },
                 )
                 .checked_add(extension_opening_reduction_level_bytes(
@@ -220,7 +212,7 @@ fn walk_scalar_generated_schedule_entry(
                     AkitaError::InvalidSetup("generated proof byte total overflow".to_string())
                 })?;
 
-                steps.push(Step::Fold(FoldStep {
+                steps.push(Step::fold(FoldStep {
                     params: lp.clone(),
                     current_w_len,
                     next_w_len,
@@ -230,80 +222,38 @@ fn walk_scalar_generated_schedule_entry(
                 fold_level += 1;
                 current_w_len = next_w_len;
             }
-            GeneratedStep::Direct(direct) => {
-                let (witness_shape, direct_current_w_len, params) = if fold_level == 0 {
-                    let params = direct
-                        .commit
-                        .as_ref()
-                        .map(|commit| {
-                            validate_block_geometry(commit, key, policy, 0, expected_root_w_len)?;
-                            validate_log_basis(commit.log_basis, policy)?;
-                            let fold_shape = fold_challenge_shape_at_level(AkitaScheduleInputs {
-                                num_vars: key.num_vars(),
-                                level: 0,
-                                current_w_len: expected_root_w_len,
-                            });
-                            let lp = commit.expand_to_root_direct_commit_params(
-                                policy,
-                                ring_challenge_config,
-                                expected_root_w_len,
-                                fold_shape,
-                                key.num_polynomials(),
-                            )?;
-                            validate_expanded_level_params(
-                                &lp,
-                                commit,
-                                policy,
-                                0,
-                                key.num_polynomials(),
-                            )
-                        })
-                        .transpose()?;
-                    (
-                        CleartextWitnessShape::FieldElements(expected_root_w_len),
-                        expected_root_w_len,
-                        params,
+            GeneratedStep::Direct => {
+                let direct_current_w_len = terminal_witness_field_len.ok_or_else(|| {
+                    AkitaError::InvalidSetup(
+                        "terminal direct step missing predecessor fold".to_string(),
                     )
+                })?;
+                let terminal_lp = last_fold_lp.as_ref().ok_or_else(|| {
+                    AkitaError::InvalidSetup(
+                        "terminal direct step missing predecessor fold params".to_string(),
+                    )
+                })?;
+                let num_polynomials = if fold_level == 1 {
+                    key.num_polynomials()
                 } else {
-                    let len = terminal_witness_field_len.ok_or_else(|| {
-                        AkitaError::InvalidSetup(
-                            "terminal direct step missing precomputed witness length".to_string(),
-                        )
-                    })?;
-                    let terminal_lp = last_fold_lp.as_ref().ok_or_else(|| {
-                        AkitaError::InvalidSetup(
-                            "terminal direct step missing predecessor fold params".to_string(),
-                        )
-                    })?;
-                    let num_polynomials = if fold_level == 1 {
-                        key.num_polynomials()
-                    } else {
-                        1
-                    };
-                    // The terminal-direct (cleartext) witness is single-chunk by
-                    // construction: the prover emits the global folded response
-                    // and one shared `r̂` tail (`num_segments = 1`). Chunking the
-                    // cleartext tail is unsupported, so the last fold level must be
-                    // single-chunk; reject loudly here instead of letting the
-                    // prover hit a cryptic layout mismatch at prove time.
-                    if terminal_lp.witness_chunk.num_chunks > 1 {
-                        return Err(AkitaError::InvalidSetup(
-                            "terminal-direct witness does not support a multi-chunk last fold level"
-                                .to_string(),
-                        ));
-                    }
-                    let witness_shape = segment_typed_witness_shape_from_groups(
-                        terminal_lp,
-                        field_bits,
-                        [(
-                            terminal_lp as &dyn akita_types::LevelParamsLike,
-                            num_polynomials,
-                            num_polynomials,
-                            1,
-                        )],
-                    )?;
-                    (witness_shape, len, None)
+                    1
                 };
+                if terminal_lp.witness_chunk.num_chunks > 1 {
+                    return Err(AkitaError::InvalidSetup(
+                        "terminal-direct witness does not support a multi-chunk last fold level"
+                            .to_string(),
+                    ));
+                }
+                let witness_shape = segment_typed_witness_shape_from_groups(
+                    terminal_lp,
+                    field_bits,
+                    [(
+                        terminal_lp as &dyn akita_types::LevelParamsLike,
+                        num_polynomials,
+                        num_polynomials,
+                        1,
+                    )],
+                )?;
                 if direct_current_w_len == 0 {
                     return Err(AkitaError::InvalidSetup(
                         "generated direct step has zero witness length".to_string(),
@@ -317,7 +267,6 @@ fn walk_scalar_generated_schedule_entry(
                     current_w_len: direct_current_w_len,
                     witness_shape,
                     direct_bytes,
-                    params,
                 }));
             }
         }
@@ -382,7 +331,7 @@ fn walk_multi_group_generated_schedule_entry(
                         "generated multi-group schedule ended with a fold step at level {fold_level}"
                     ))
                 })?;
-                let is_terminal = matches!(next, GeneratedStep::Direct(_));
+                let is_terminal = matches!(next, GeneratedStep::Direct);
                 let inputs = AkitaScheduleInputs {
                     num_vars: key.final_group.num_vars(),
                     level: fold_level,
@@ -433,15 +382,7 @@ fn walk_multi_group_generated_schedule_entry(
                     )?;
                     let len = shape.logical_num_elems();
                     terminal_witness_field_len = Some(len);
-                    (
-                        len,
-                        None,
-                        if fold_level == 0 {
-                            RelationMatrixRowLayout::WithoutDBlock
-                        } else {
-                            RelationMatrixRowLayout::WithoutCommitmentBlocks
-                        },
-                    )
+                    (len, None, RelationMatrixRowLayout::WithoutCommitmentBlocks)
                 } else {
                     let len = if fold_level == 0 {
                         let opening_batch = key.opening_layout()?;
@@ -484,11 +425,11 @@ fn walk_multi_group_generated_schedule_entry(
                     next_w_len,
                     layout,
                     if is_terminal {
-                        akita_types::NextWitnessBindingPolicy::TerminalCleartextWitness
-                    } else if matches!(entry.steps.get(idx + 2), Some(GeneratedStep::Direct(_))) {
-                        akita_types::NextWitnessBindingPolicy::TerminalInnerState
+                        None
+                    } else if matches!(entry.steps.get(idx + 2), Some(GeneratedStep::Direct)) {
+                        Some(akita_types::NextWitnessBindingPolicy::TerminalInnerState)
                     } else {
-                        akita_types::NextWitnessBindingPolicy::OuterCommitment
+                        Some(akita_types::NextWitnessBindingPolicy::OuterCommitment)
                     },
                 )
                 .checked_add(extension_opening_reduction_level_bytes(
@@ -509,7 +450,7 @@ fn walk_multi_group_generated_schedule_entry(
                     )
                 })?;
                 last_fold_lp = Some(lp.clone());
-                steps.push(Step::Fold(FoldStep {
+                steps.push(Step::fold(FoldStep {
                     params: lp,
                     current_w_len,
                     next_w_len,
@@ -518,57 +459,22 @@ fn walk_multi_group_generated_schedule_entry(
                 fold_level += 1;
                 current_w_len = next_w_len;
             }
-            GeneratedStep::Direct(direct) => {
-                let (witness_shape, direct_current_w_len, params) = if fold_level == 0 {
-                    let direct_current_w_len = key.opening_layout()?.root_direct_witness_len()?;
-                    let fold_shape = fold_challenge_shape_at_level(AkitaScheduleInputs {
-                        num_vars: key.final_group.num_vars(),
-                        level: 0,
-                        current_w_len: direct_current_w_len,
-                    });
-                    let params = match direct.commit {
-                        Some(commit) => {
-                            let (precommitted_groups, precommitted_d_width) =
-                                multi_group_root_precommitted_groups(
-                                    key,
-                                    policy,
-                                    ring_challenge_config,
-                                )?;
-                            validate_expanded_precommitted_groups(key, &precommitted_groups)?;
-                            Some(commit.expand_to_multi_group_root_level_params(
-                                policy,
-                                ring_challenge_config,
-                                fold_shape,
-                                key.final_group.num_polynomials(),
-                                precommitted_groups,
-                                precommitted_d_width,
-                            )?)
-                        }
-                        None => None,
-                    };
-                    (
-                        CleartextWitnessShape::FieldElements(direct_current_w_len),
-                        direct_current_w_len,
-                        params,
+            GeneratedStep::Direct => {
+                let direct_current_w_len = terminal_witness_field_len.ok_or_else(|| {
+                    AkitaError::InvalidSetup(
+                        "terminal direct step missing predecessor fold".to_string(),
                     )
-                } else {
-                    let len = terminal_witness_field_len.ok_or_else(|| {
-                        AkitaError::InvalidSetup(
-                            "terminal direct step missing precomputed witness length".to_string(),
-                        )
-                    })?;
-                    let terminal_lp = last_fold_lp.as_ref().ok_or_else(|| {
-                        AkitaError::InvalidSetup(
-                            "terminal direct step missing predecessor fold params".to_string(),
-                        )
-                    })?;
-                    let witness_shape = segment_typed_witness_shape_from_groups(
-                        terminal_lp,
-                        field_bits,
-                        [(terminal_lp as &dyn akita_types::LevelParamsLike, 1, 1, 1)],
-                    )?;
-                    (witness_shape, len, None)
-                };
+                })?;
+                let terminal_lp = last_fold_lp.as_ref().ok_or_else(|| {
+                    AkitaError::InvalidSetup(
+                        "terminal direct step missing predecessor fold params".to_string(),
+                    )
+                })?;
+                let witness_shape = segment_typed_witness_shape_from_groups(
+                    terminal_lp,
+                    field_bits,
+                    [(terminal_lp as &dyn akita_types::LevelParamsLike, 1, 1, 1)],
+                )?;
                 if direct_current_w_len == 0 {
                     return Err(AkitaError::InvalidSetup(
                         "generated multi-group direct step has zero witness length".to_string(),
@@ -584,7 +490,6 @@ fn walk_multi_group_generated_schedule_entry(
                     current_w_len: direct_current_w_len,
                     witness_shape,
                     direct_bytes,
-                    params,
                 }));
             }
         }
@@ -686,7 +591,7 @@ fn expand_fold_step(
             fold_shape,
             num_claims,
         ),
-        GeneratedStep::Direct(_) => Err(AkitaError::InvalidSetup(
+        GeneratedStep::Direct => Err(AkitaError::InvalidSetup(
             "generated expected a fold step".to_string(),
         )),
     }
@@ -718,7 +623,7 @@ fn expand_multi_group_root_fold_step(
             precommitted_groups,
             precommitted_d_width,
         ),
-        GeneratedStep::Direct(_) => Err(AkitaError::InvalidSetup(
+        GeneratedStep::Direct => Err(AkitaError::InvalidSetup(
             "generated expected a fold step".to_string(),
         )),
     }
@@ -780,9 +685,9 @@ fn validate_block_geometry(
                 )
             })?;
     if fold_level == 0 {
-        // A small root-direct polynomial may occupy only a prefix of its first
-        // ring. Count that padded ring as live source storage; recursive
-        // witnesses remain exactly ring-aligned below.
+        // A small root polynomial may occupy only a prefix of its first ring.
+        // Count that padded ring as live source storage; recursive witnesses
+        // remain exactly ring-aligned below.
         let num_live_ring_elements_per_claim = current_w_len.div_ceil(policy.ring_dimension);
         let derived_num_live_blocks =
             num_live_ring_elements_per_claim.div_ceil(num_positions_per_block);

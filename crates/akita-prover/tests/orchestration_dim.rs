@@ -48,12 +48,11 @@ fn batched_schedule_selection_matches_config_preset() {
 fn ring_dim_plan_rejects_level_dim_larger_than_gen_ring_dim() {
     let schedule = Schedule {
         steps: vec![
-            Step::Fold(make_fold_step(128)),
+            Step::fold(make_fold_step(128)),
             Step::Direct(DirectStep {
                 current_w_len: 64,
                 witness_shape: CleartextWitnessShape::FieldElements(64),
                 direct_bytes: 0,
-                params: None,
             }),
         ],
         total_bytes: 0,

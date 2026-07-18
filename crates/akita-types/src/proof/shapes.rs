@@ -93,7 +93,7 @@ pub enum NextWitnessBindingShape {
     TerminalInnerState,
 }
 
-/// Shape descriptor for deserializing a [`AkitaLevelProof`] without headers.
+/// Shape descriptor for deserializing a [`FoldLevelProof`] without headers.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LevelProofShape {
     /// Shape of the optional extension-opening reduction payload.
@@ -113,34 +113,13 @@ pub struct LevelProofShape {
 /// Shape descriptor for deserializing an [`AkitaBatchedProof`] without
 /// headers.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum AkitaBatchedProofShape {
-    /// Standard fold-rooted batched proof with a recursive suffix. The
-    /// recursive suffix is a (possibly empty) sequence of
-    /// [`AkitaProofStepShape::Intermediate`] step shapes followed by exactly
-    /// one [`AkitaProofStepShape::Terminal`].
-    Fold {
-        /// Root-level shape (same field layout as a regular level).
-        root_shape: LevelProofShape,
-        /// Recursive proof step shapes following the batched root level.
-        step_shapes: Vec<AkitaProofStepShape>,
-    },
-    /// Terminal-rooted batched proof (1-fold case): the root is itself the
-    /// terminal fold level and no steps follow.
-    Terminal(TerminalLevelProofShape),
-    /// Zero-fold batched proof: one cleartext witness per claim.
-    ZeroFold {
-        /// Per-claim cleartext witness shapes.
-        witness_shapes: Vec<CleartextWitnessShape>,
-    },
-}
-
-/// Shape descriptor for deserializing a proof step without headers.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum AkitaProofStepShape {
-    /// Shape of an intermediate fold level.
-    Intermediate(LevelProofShape),
-    /// Shape of the terminal fold level.
-    Terminal(TerminalLevelProofShape),
+pub struct AkitaBatchedProofShape {
+    /// Root fold shape.
+    pub root: LevelProofShape,
+    /// Non-terminal recursive fold shapes in execution order.
+    pub recursive_folds: Vec<LevelProofShape>,
+    /// Required terminal fold shape.
+    pub terminal: TerminalLevelProofShape,
 }
 
 pub(super) fn sumcheck_shape<F: FieldCore>(sc: &SumcheckProof<F>) -> SumcheckProofShape {
@@ -584,97 +563,12 @@ impl AkitaDeserialize for TerminalLevelProofShape {
     }
 }
 
-impl Valid for AkitaProofStepShape {
-    fn check(&self) -> Result<(), SerializationError> {
-        match self {
-            Self::Intermediate(level) => level.check()?,
-            Self::Terminal(terminal) => terminal.check()?,
-        }
-        Ok(())
-    }
-}
-
-impl AkitaSerialize for AkitaProofStepShape {
-    fn serialize_with_mode<W: Write>(
-        &self,
-        mut writer: W,
-        compress: Compress,
-    ) -> Result<(), SerializationError> {
-        match self {
-            Self::Intermediate(level) => {
-                0u8.serialize_with_mode(&mut writer, compress)?;
-                level.serialize_with_mode(&mut writer, compress)?;
-            }
-            Self::Terminal(terminal) => {
-                1u8.serialize_with_mode(&mut writer, compress)?;
-                terminal.serialize_with_mode(&mut writer, compress)?;
-            }
-        }
-        Ok(())
-    }
-
-    fn serialized_size(&self, compress: Compress) -> usize {
-        1 + match self {
-            Self::Intermediate(level) => level.serialized_size(compress),
-            Self::Terminal(terminal) => terminal.serialized_size(compress),
-        }
-    }
-}
-
-impl AkitaDeserialize for AkitaProofStepShape {
-    type Context = ();
-    fn deserialize_with_mode<R: Read>(
-        mut reader: R,
-        compress: Compress,
-        validate: Validate,
-        _ctx: &(),
-    ) -> Result<Self, SerializationError> {
-        let tag = u8::deserialize_with_mode(&mut reader, compress, validate, &())?;
-        let out = match tag {
-            0 => Self::Intermediate(LevelProofShape::deserialize_with_mode(
-                &mut reader,
-                compress,
-                validate,
-                &(),
-            )?),
-            1 => Self::Terminal(TerminalLevelProofShape::deserialize_with_mode(
-                &mut reader,
-                compress,
-                validate,
-                &(),
-            )?),
-            other => {
-                return Err(SerializationError::InvalidData(format!(
-                    "unknown AkitaProofStepShape tag {other}"
-                )))
-            }
-        };
-        if matches!(validate, Validate::Yes) {
-            out.check()?;
-        }
-        Ok(out)
-    }
-}
-
 impl Valid for AkitaBatchedProofShape {
     fn check(&self) -> Result<(), SerializationError> {
-        match self {
-            Self::Fold {
-                root_shape,
-                step_shapes,
-            } => {
-                root_shape.check()?;
-                checked_shape_sequence_len(step_shapes.len())?;
-                step_shapes.check()?;
-            }
-            Self::Terminal(terminal) => {
-                terminal.check()?;
-            }
-            Self::ZeroFold { witness_shapes } => {
-                checked_shape_sequence_len(witness_shapes.len())?;
-                witness_shapes.check()?;
-            }
-        }
+        self.root.check()?;
+        checked_shape_sequence_len(self.recursive_folds.len())?;
+        self.recursive_folds.check()?;
+        self.terminal.check()?;
         Ok(())
     }
 }
@@ -685,36 +579,17 @@ impl AkitaSerialize for AkitaBatchedProofShape {
         mut writer: W,
         compress: Compress,
     ) -> Result<(), SerializationError> {
-        match self {
-            Self::Fold {
-                root_shape,
-                step_shapes,
-            } => {
-                0u8.serialize_with_mode(&mut writer, compress)?;
-                root_shape.serialize_with_mode(&mut writer, compress)?;
-                step_shapes.serialize_with_mode(&mut writer, compress)?;
-            }
-            Self::Terminal(terminal_shape) => {
-                1u8.serialize_with_mode(&mut writer, compress)?;
-                terminal_shape.serialize_with_mode(&mut writer, compress)?;
-            }
-            Self::ZeroFold { witness_shapes } => {
-                2u8.serialize_with_mode(&mut writer, compress)?;
-                witness_shapes.serialize_with_mode(&mut writer, compress)?;
-            }
-        }
+        self.root.serialize_with_mode(&mut writer, compress)?;
+        self.recursive_folds
+            .serialize_with_mode(&mut writer, compress)?;
+        self.terminal.serialize_with_mode(&mut writer, compress)?;
         Ok(())
     }
 
     fn serialized_size(&self, compress: Compress) -> usize {
-        1 + match self {
-            Self::Fold {
-                root_shape,
-                step_shapes,
-            } => root_shape.serialized_size(compress) + step_shapes.serialized_size(compress),
-            Self::Terminal(terminal_shape) => terminal_shape.serialized_size(compress),
-            Self::ZeroFold { witness_shapes } => witness_shapes.serialized_size(compress),
-        }
+        self.root.serialized_size(compress)
+            + self.recursive_folds.serialized_size(compress)
+            + self.terminal.serialized_size(compress)
     }
 }
 
@@ -726,45 +601,19 @@ impl AkitaDeserialize for AkitaBatchedProofShape {
         validate: Validate,
         _ctx: &(),
     ) -> Result<Self, SerializationError> {
-        let tag = u8::deserialize_with_mode(&mut reader, compress, validate, &())?;
-        match tag {
-            0 => {
-                let root_shape =
-                    LevelProofShape::deserialize_with_mode(&mut reader, compress, validate, &())?;
-                let step_shapes = deserialize_shape_vec(&mut reader, compress, validate)?;
-                let out = Self::Fold {
-                    root_shape,
-                    step_shapes,
-                };
-                if matches!(validate, Validate::Yes) {
-                    out.check()?;
-                }
-                Ok(out)
-            }
-            1 => {
-                let terminal_shape = TerminalLevelProofShape::deserialize_with_mode(
-                    &mut reader,
-                    compress,
-                    validate,
-                    &(),
-                )?;
-                let out = Self::Terminal(terminal_shape);
-                if matches!(validate, Validate::Yes) {
-                    out.check()?;
-                }
-                Ok(out)
-            }
-            2 => {
-                let witness_shapes = deserialize_shape_vec(&mut reader, compress, validate)?;
-                let out = Self::ZeroFold { witness_shapes };
-                if matches!(validate, Validate::Yes) {
-                    out.check()?;
-                }
-                Ok(out)
-            }
-            other => Err(SerializationError::InvalidData(format!(
-                "unknown AkitaBatchedProofShape tag {other}"
-            ))),
+        let out = Self {
+            root: LevelProofShape::deserialize_with_mode(&mut reader, compress, validate, &())?,
+            recursive_folds: deserialize_shape_vec(&mut reader, compress, validate)?,
+            terminal: TerminalLevelProofShape::deserialize_with_mode(
+                &mut reader,
+                compress,
+                validate,
+                &(),
+            )?,
+        };
+        if matches!(validate, Validate::Yes) {
+            out.check()?;
         }
+        Ok(out)
     }
 }

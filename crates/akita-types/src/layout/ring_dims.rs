@@ -5,7 +5,7 @@
 //! lives on [`super::LevelParams`].
 
 use crate::proof::AkitaSetupSeed;
-use crate::schedule::{schedule_num_fold_levels, Schedule, Step};
+use crate::schedule::{Schedule, Step};
 use akita_field::AkitaError;
 
 /// Upper bound on fold levels accepted by [`validate_schedule_ring_dims`].
@@ -123,7 +123,7 @@ pub fn validate_schedule_ring_dims(
             "gen_ring_dim must be non-zero".to_string(),
         ));
     }
-    let num_folds = schedule_num_fold_levels(schedule);
+    let num_folds = schedule.num_fold_levels();
     if num_folds > MAX_FOLD_LEVELS {
         return Err(AkitaError::InvalidSetup(format!(
             "schedule has {num_folds} fold levels, max supported is {MAX_FOLD_LEVELS}"
@@ -305,13 +305,12 @@ mod tests {
             current_w_len: 0,
             witness_shape: CleartextWitnessShape::FieldElements(0),
             direct_bytes: 0,
-            params: None,
         }
     }
 
     fn uniform_schedule(ring_dimension: usize, num_levels: usize) -> Schedule {
         let mut steps: Vec<Step> = (0..num_levels)
-            .map(|_| Step::Fold(make_fold_step(ring_dimension, 4, 8)))
+            .map(|_| Step::fold(make_fold_step(ring_dimension, 4, 8)))
             .collect();
         steps.push(Step::Direct(make_direct_step()));
         Schedule {
@@ -323,7 +322,7 @@ mod tests {
     fn mixed_d_schedule(dims: &[(usize, usize, usize)]) -> Schedule {
         let mut steps: Vec<Step> = dims
             .iter()
-            .map(|&(d, nb, bl)| Step::Fold(make_fold_step(d, nb, bl)))
+            .map(|&(d, nb, bl)| Step::fold(make_fold_step(d, nb, bl)))
             .collect();
         steps.push(Step::Direct(make_direct_step()));
         Schedule {
@@ -431,7 +430,7 @@ mod tests {
     fn rejects_witness_length_not_divisible_by_d_a() {
         let sched = Schedule {
             steps: vec![
-                Step::Fold(fold_step_with_witness_lens(64, 65, 64)),
+                Step::fold(fold_step_with_witness_lens(64, 65, 64)),
                 Step::Direct(make_direct_step()),
             ],
             total_bytes: 0,
@@ -444,8 +443,8 @@ mod tests {
     fn rejects_next_witness_length_not_divisible_by_next_d_a() {
         let sched = Schedule {
             steps: vec![
-                Step::Fold(fold_step_with_witness_lens(64, 64, 65)),
-                Step::Fold(make_fold_step(64, 4, 8)),
+                Step::fold(fold_step_with_witness_lens(64, 64, 65)),
+                Step::fold(make_fold_step(64, 4, 8)),
                 Step::Direct(make_direct_step()),
             ],
             total_bytes: 0,
@@ -457,7 +456,7 @@ mod tests {
     #[test]
     fn rejects_too_many_fold_levels() {
         let steps: Vec<Step> = (0..MAX_FOLD_LEVELS + 1)
-            .map(|_| Step::Fold(make_fold_step(64, 4, 8)))
+            .map(|_| Step::fold(make_fold_step(64, 4, 8)))
             .chain([Step::Direct(make_direct_step())])
             .collect();
         let sched = Schedule {
@@ -477,7 +476,7 @@ mod tests {
             opening: 64,
         };
         let sched = Schedule {
-            steps: vec![Step::Fold(step), Step::Direct(make_direct_step())],
+            steps: vec![Step::fold(step), Step::Direct(make_direct_step())],
             total_bytes: 0,
         };
         let err = validate_schedule_ring_dims(&sched, &seed(256)).expect_err("B-key still 64");
@@ -529,7 +528,7 @@ mod tests {
         params.stamp_role_dims_from_keys();
         let sched = Schedule {
             steps: vec![
-                Step::Fold(FoldStep {
+                Step::fold(FoldStep {
                     params,
                     current_w_len: 256,
                     next_w_len: 128,
@@ -594,7 +593,7 @@ mod tests {
         params.stamp_role_dims_from_keys();
         let sched = Schedule {
             steps: vec![
-                Step::Fold(FoldStep {
+                Step::fold(FoldStep {
                     params,
                     current_w_len: 128,
                     next_w_len: 64,
@@ -623,7 +622,7 @@ mod tests {
             opening: 32,
         };
         let sched = Schedule {
-            steps: vec![Step::Fold(step), Step::Direct(make_direct_step())],
+            steps: vec![Step::fold(step), Step::Direct(make_direct_step())],
             total_bytes: 0,
         };
         let err = validate_schedule_ring_dims(&sched, &seed(256)).expect_err("d_a=32");
@@ -635,7 +634,7 @@ mod tests {
         let mut step = make_fold_step(64, 4, 8);
         step.params.ring_dimension = 128;
         let sched = Schedule {
-            steps: vec![Step::Fold(step), Step::Direct(make_direct_step())],
+            steps: vec![Step::fold(step), Step::Direct(make_direct_step())],
             total_bytes: 0,
         };
         let err = validate_schedule_ring_dims(&sched, &seed(256)).expect_err("ring_dim != d_a");

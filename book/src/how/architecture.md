@@ -97,7 +97,7 @@ Mixed-dimension execution is exercised end-to-end by
 | `PlannerPolicy` | `Cfg`-free projection of a preset for `akita_planner::find_group_batch_schedule`; derive via `akita_config::policy_of::<Cfg>()` |
 | `DensePoly`, `OneHotPoly`, `AkitaPolyOps` | Polynomial backends consumed by the scheme |
 | `WitnessLayout`, `WitnessUnitLayout` | Canonical digit-innermost group-and-chunk ranges ([opening layout](./proving/opening-points-layout.md)) |
-| `AkitaBatchedProof`, `AkitaLevelProof`, `AkitaProofStep` | Serialized proof structure (singleton openings are the 1×1 batched case) |
+| `AkitaBatchedProof`, `FoldLevelProof`, `TerminalLevelProof` | Structural serialized proof: root fold, recursive folds, and one terminal witness (singleton openings are the 1×1 batched case) |
 | `OpeningClaims` / `OpeningClaimsLayout` | Public single-point opening claims and layout-only batch geometry for prove/verify, setup, and schedule lookup ([`specs/shared-opening-claims-api.md`](../../../specs/shared-opening-claims-api.md)) |
 | `AkitaTranscript`, `Transcript` | Spongefish-backed Fiat-Shamir layer |
 | `AkitaInstanceDescriptor` | Canonical transcript preamble binding algebra, setup, plan, and call shape |

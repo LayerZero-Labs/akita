@@ -82,14 +82,13 @@ fn make_direct_step() -> DirectStep {
         current_w_len: 0,
         witness_shape: CleartextWitnessShape::FieldElements(0),
         direct_bytes: 0,
-        params: None,
     }
 }
 
 fn mixed_d_schedule(dims: &[(usize, usize, usize)]) -> Schedule {
     let mut steps: Vec<Step> = dims
         .iter()
-        .map(|&(d, nb, bl)| Step::Fold(make_fold_step(d, nb, bl)))
+        .map(|&(d, nb, bl)| Step::fold(make_fold_step(d, nb, bl)))
         .collect();
     steps.push(Step::Direct(make_direct_step()));
     Schedule {
@@ -248,7 +247,7 @@ fn ring_dim_plan_accepts_nested_opening_d32() {
         SparseChallengeConfig::production_for_ring_dim(step.params.d_a()).expect("d_a ladder");
     step.current_w_len = 128;
     let sched = Schedule {
-        steps: vec![Step::Fold(step), Step::Direct(make_direct_step())],
+        steps: vec![Step::fold(step), Step::Direct(make_direct_step())],
         total_bytes: 0,
     };
     validate_schedule_ring_dims(&sched, &test_seed(128)).expect("128|64|32");

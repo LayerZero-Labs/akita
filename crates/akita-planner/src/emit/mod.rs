@@ -18,9 +18,8 @@ use akita_types::{
 
 use crate::catalog_identity::expected_catalog_identity;
 use crate::generated::{
-    GeneratedDirectStep, GeneratedFoldStep, GeneratedFoldStepWithSetupMetadata,
-    GeneratedScheduleCatalogIdentity, GeneratedScheduleTableEntry, GeneratedSetupPrefixGroup,
-    GeneratedStep,
+    GeneratedFoldStep, GeneratedFoldStepWithSetupMetadata, GeneratedScheduleCatalogIdentity,
+    GeneratedScheduleTableEntry, GeneratedSetupPrefixGroup, GeneratedStep,
 };
 use crate::PlannerPolicy;
 
@@ -107,9 +106,7 @@ fn schedule_to_generated_steps(
                     GeneratedStep::Fold(fold_step)
                 }
             }
-            Step::Direct(direct) => GeneratedStep::Direct(GeneratedDirectStep {
-                commit: direct.params.as_ref().map(fold_step_from_params),
-            }),
+            Step::Direct(_) => GeneratedStep::Direct,
         })
         .collect()
 }
@@ -205,14 +202,8 @@ fn emit_fold_step(p: &LevelParams, include_setup_prefix_group: bool) -> String {
     )
 }
 
-fn emit_direct(direct: &DirectStep) -> String {
-    match &direct.params {
-        Some(commit) => format!(
-            "        GeneratedStep::Direct(GeneratedDirectStep {{ commit: Some({}) }}),",
-            emit_compact_fold_struct(commit)
-        ),
-        None => "        GeneratedStep::Direct(GeneratedDirectStep { commit: None }),".to_string(),
-    }
+fn emit_direct(_: &DirectStep) -> String {
+    "        GeneratedStep::Direct,".to_string()
 }
 
 fn emit_schedule_entry(
@@ -358,14 +349,25 @@ fn materialized_entries(
 ) -> Result<Vec<(AkitaScheduleLookupKey, Schedule)>, String> {
     let mut entries = Vec::new();
     for key in &spec.keys {
-        let schedule =
-            (spec.regen)(*key).map_err(|e| format!("{}: regen {key:?}: {e}", spec.module_name))?;
-        entries.push((AkitaScheduleLookupKey::single(*key), schedule));
+        match (spec.regen)(*key) {
+            Ok(schedule) => entries.push((AkitaScheduleLookupKey::single(*key), schedule)),
+            Err(akita_field::AkitaError::UnsupportedSchedule(_)) => {}
+            Err(error) => {
+                return Err(format!("{}: regen {key:?}: {error}", spec.module_name));
+            }
+        }
     }
     for key in &spec.group_batch_keys {
-        let schedule = (spec.regen_group_batch)(key.clone())
-            .map_err(|e| format!("{}: regen multi-group {key:?}: {e}", spec.module_name))?;
-        entries.push((key.clone(), schedule));
+        match (spec.regen_group_batch)(key.clone()) {
+            Ok(schedule) => entries.push((key.clone(), schedule)),
+            Err(akita_field::AkitaError::UnsupportedSchedule(_)) => {}
+            Err(error) => {
+                return Err(format!(
+                    "{}: regen multi-group {key:?}: {error}",
+                    spec.module_name
+                ));
+            }
+        }
     }
     entries
         .sort_by(|(left, _), (right, _)| crate::generated::runtime_schedule_key_cmp(left, right));
@@ -397,7 +399,7 @@ pub fn emit_family_module(spec: &EmitSpec) -> Result<String, String> {
     if uses_fold_with_setup {
         writeln!(
             out,
-            "use super::{{\n    ChunkedWitnessCfg, DecompositionParams, GeneratedDirectStep, GeneratedFoldStep, \
+            "use super::{{\n    ChunkedWitnessCfg, DecompositionParams, GeneratedFoldStep, \
              GeneratedFoldStepWithSetupMetadata, GeneratedScheduleCatalogIdentity, \
              GeneratedScheduleTableEntry, GeneratedSetupPrefixGroup, GeneratedStep, \
              PolynomialGroupLayout, PrecommittedGroupParams, SetupContributionMode, \
@@ -407,7 +409,7 @@ pub fn emit_family_module(spec: &EmitSpec) -> Result<String, String> {
     } else {
         writeln!(
             out,
-            "use super::{{\n    ChunkedWitnessCfg, DecompositionParams, GeneratedDirectStep, GeneratedFoldStep, \
+            "use super::{{\n    ChunkedWitnessCfg, DecompositionParams, GeneratedFoldStep, \
              GeneratedScheduleCatalogIdentity, GeneratedScheduleTableEntry, GeneratedStep, \
              PolynomialGroupLayout, PrecommittedGroupParams, SisModulusProfileId, \
              SisSecurityPolicyId, SisTableDigest, TensorChallengeShape,\n}};"

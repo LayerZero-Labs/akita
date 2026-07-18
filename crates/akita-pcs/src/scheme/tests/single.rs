@@ -114,10 +114,7 @@ fn verify_rejects_wrong_opening() {
 fn verify_rejects_malformed_v_dimension_without_panicking() {
     let (verifier_setup, commitment, mut proof, opening_point, opening, _layout) =
         make_verify_fixture(16);
-    let root_fold = proof
-        .root
-        .as_fold_mut()
-        .expect("expected a fold-rooted batched proof");
+    let root_fold = &mut proof.root;
     let mut coeffs = root_fold.v.coeffs().to_vec();
     let _ = coeffs.pop().expect("expected non-empty v");
     root_fold.v = RingVec::from_coeffs(coeffs);
@@ -176,18 +173,15 @@ fn folded_payload_commitments_and_digits_stay_base_field() {
     fn assert_base_direct_witness(_: &akita_types::CleartextWitnessProof<F>) {}
 
     let (_, _, proof, _, _, _) = make_verify_fixture(16);
-    let root = proof
-        .root
-        .as_fold()
-        .expect("fixture should use folded root proof");
+    let root = &proof.root;
     assert_base_flat_ring_vec(&root.v);
     if let Some(commitment) = root.stage2.next_witness_binding.outer_commitment() {
         assert_base_flat_ring_vec(commitment);
     }
 
-    for level in proof.fold_levels() {
-        assert_base_flat_ring_vec(level.v());
-        if let Some(commitment) = level.next_w_commitment() {
+    for level in proof.nonterminal_folds() {
+        assert_base_flat_ring_vec(&level.v);
+        if let Some(commitment) = level.stage2.next_witness_binding.outer_commitment() {
             assert_base_flat_ring_vec(commitment);
         }
     }
@@ -198,18 +192,8 @@ fn folded_payload_commitments_and_digits_stay_base_field() {
 fn folded_root_rejects_unchecked_extension_opening_reduction_payload() {
     let (verifier_setup, commitment, mut proof, opening_point, opening, _) =
         make_verify_fixture(16);
-    let dummy_sumcheck = proof
-        .root
-        .as_fold()
-        .expect("fixture should use folded root proof")
-        .stage2
-        .sumcheck_proof
-        .clone();
-    proof
-        .root
-        .as_fold_mut()
-        .expect("fixture should use folded root proof")
-        .extension_opening_reduction = Some(ExtensionOpeningReductionProof {
+    let dummy_sumcheck = proof.root.stage2.sumcheck_proof.clone();
+    proof.root.extension_opening_reduction = Some(ExtensionOpeningReductionProof {
         partials: vec![F::zero()],
         sumcheck: dummy_sumcheck,
     });
@@ -286,70 +270,4 @@ fn monomial_basis_prove_verify_round_trip() {
         result.is_ok(),
         "monomial-basis proof should verify: {result:?}"
     );
-}
-
-#[test]
-fn tiny_d64_root_direct_helpers_accept_valid_proof() {
-    type DirectCfg = fp128::D64Full;
-    type DirectF = fp128::Field;
-    const DIRECT_D: usize = DirectCfg::D;
-    type DirectScheme = AkitaCommitmentScheme<DirectCfg>;
-
-    let num_vars = 4usize;
-    let evals: Vec<DirectF> = (0..(1usize << num_vars))
-        .map(|i| DirectF::from_u64((i + 1) as u64))
-        .collect();
-    let poly = DensePoly::<DirectF>::from_field_evals(num_vars, DIRECT_D, &evals).unwrap();
-    let opening_point = vec![DirectF::zero(); num_vars];
-    let opening = evals[0];
-
-    let setup = DirectScheme::setup_prover(num_vars, 1).unwrap();
-    let prepared = CpuBackend.prepare_setup(&setup).unwrap();
-    let stack =
-        akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
-            .expect("stack");
-    let verifier_setup = DirectScheme::setup_verifier(&setup).expect("verifier setup");
-    let (commitment, hint) =
-        DirectScheme::commit::<_, _>(&setup, std::slice::from_ref(&poly), &stack).unwrap();
-
-    let poly_refs: [&DensePoly<DirectF>; 1] = [&poly];
-    let commitments = [commitment];
-    let openings = [opening];
-
-    let mut prover_transcript = AkitaTranscript::<DirectF>::new(b"test/tiny-direct");
-    let proof = DirectScheme::batched_prove::<_, _, _>(
-        &setup,
-        prover_claims(&opening_point[..], &poly_refs[..], &commitments[0], hint),
-        &stack,
-        &mut prover_transcript,
-        BasisMode::Lagrange,
-        akita_types::SetupContributionMode::Direct,
-    )
-    .unwrap();
-
-    assert!(proof.is_root_direct());
-    assert_eq!(proof.num_fold_levels(), 0);
-    let witnesses = proof
-        .root
-        .as_zero_fold()
-        .expect("root-direct batched proof expected");
-    assert_eq!(witnesses.len(), 1);
-    assert!(cleartext_witness_opening_matches::<DirectF, DirectF>(
-        &witnesses[0],
-        &opening_point,
-        &opening,
-        BasisMode::Lagrange,
-    )
-    .unwrap());
-
-    let mut verifier_transcript = AkitaTranscript::<DirectF>::new(b"test/tiny-direct");
-    DirectScheme::batched_verify(
-        &proof,
-        &verifier_setup,
-        &mut verifier_transcript,
-        verifier_claims(&opening_point[..], &openings[..], &commitments[0]),
-        BasisMode::Lagrange,
-        akita_types::SetupContributionMode::Direct,
-    )
-    .unwrap();
 }

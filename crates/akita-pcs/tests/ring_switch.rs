@@ -272,7 +272,7 @@ mod tests {
         type F = fp128::Field;
         type Cfg = fp128::D128Full;
         const D: usize = Cfg::D;
-        const NV: usize = 12;
+        const NV: usize = 16;
 
         let opening_batch =
             akita_types::OpeningClaimsLayout::new(NV, 1).expect("singleton opening batch");
@@ -428,7 +428,7 @@ mod tests {
         type F = fp128::Field;
         type Cfg = fp128::D128Full;
         const D: usize = Cfg::D;
-        const NV: usize = 12;
+        const NV: usize = 16;
 
         let opening_batch =
             akita_types::OpeningClaimsLayout::new(NV, 1).expect("singleton opening batch");
@@ -583,7 +583,7 @@ mod tests {
         type F = fp128::Field;
         type Cfg = fp128::D128Full;
         const D: usize = Cfg::D;
-        const NV: usize = 12;
+        const NV: usize = 16;
 
         let opening_batch =
             akita_types::OpeningClaimsLayout::new(NV, 1).expect("singleton opening batch");
@@ -785,7 +785,7 @@ mod tests {
         type F = fp128::Field;
         type Cfg = fp128::D128Full;
         const D: usize = Cfg::D;
-        const NV: usize = 12;
+        const NV: usize = 16;
 
         let opening_batch =
             akita_types::OpeningClaimsLayout::new(NV, 1).expect("singleton opening batch");
@@ -1135,7 +1135,7 @@ mod tests {
         type F = fp128::Field;
         type Cfg = fp128::D128Full;
         const D: usize = Cfg::D;
-        const NV: usize = 12;
+        const NV: usize = 16;
 
         let level_params = Cfg::get_params_for_batched_commitment(
             &akita_types::OpeningClaimsLayout::new(NV, 1).expect("singleton opening batch"),
@@ -1212,7 +1212,7 @@ mod tests {
                 level_params.clone(),
                 &mut transcript,
                 RingVec::from_single(&CyclotomicRing::<F, D>::one()),
-                RelationMatrixRowLayout::WithoutDBlock,
+                RelationMatrixRowLayout::WithoutCommitmentBlocks,
                 None,
             )
             .expect("ring relation");
