@@ -200,7 +200,7 @@ impl<F: FieldCore, I: OneHotIndex> OneHotPoly<F, I> {
         }
         let built = {
             let _span =
-                tracing::debug_span!("OneHotPoly::build_blocks", ring_d, num_positions_per_block)
+                tracing::info_span!("onehot_block_cache_build", ring_d, num_positions_per_block)
                     .entered();
             self.build_blocks_inner(ring_d, num_positions_per_block, ring_elems_at_d)?
         };
