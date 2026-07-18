@@ -100,7 +100,7 @@ fn suffix_commitment_rows<F: FieldCore>(
         return Err(AkitaError::InvalidProof);
     }
 
-    let commitment_ring_dim = lp.role_dims().d_a();
+    let commitment_ring_dim = lp.role_dims().d_b();
     let mut group_order = (0..opening_batch.num_groups())
         .map(|group_index| {
             let range = lp.commitment_row_range(

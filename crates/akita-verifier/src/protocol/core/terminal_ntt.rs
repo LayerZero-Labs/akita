@@ -10,24 +10,18 @@ use akita_types::{max_safe_crt_accumulation_width, AkitaVerifierSetup, VerifierN
 const MAX_I8_LOG_BASIS: u32 = 6;
 const CENTERED_LUT_MAX_ABS: u64 = (1 << 16) - 1;
 
-fn prepared_prefix<F, const D: usize>(
-    setup: &AkitaVerifierSetup<F>,
-    num_ring_elements: usize,
-) -> Result<std::sync::Arc<akita_types::VerifierNttSlotAny>, AkitaError>
-where
-    F: FieldCore + CanonicalField,
-{
-    setup.prepared_verifier_ntt_prefix::<D>(num_ring_elements)
-}
-
-fn checked_rows<T>(flat: &[T], num_rows: usize, num_cols: usize) -> Result<Vec<&[T]>, AkitaError> {
+fn checked_matrix_prefix<T>(
+    flat: &[T],
+    num_rows: usize,
+    num_cols: usize,
+) -> Result<&[T], AkitaError> {
     let required = num_rows
         .checked_mul(num_cols)
         .ok_or(AkitaError::InvalidProof)?;
     let prefix = flat.get(..required).ok_or_else(|| {
         AkitaError::InvalidSetup("prepared verifier matrix prefix is undersized".into())
     })?;
-    Ok(prefix.chunks_exact(num_cols).collect())
+    Ok(prefix)
 }
 
 fn safe_chunk_width<F, W, const K: usize, const D: usize>(
@@ -73,7 +67,7 @@ where
     if num_rows == 0 || num_cols == 0 {
         return Ok(vec![CyclotomicRing::zero(); num_rows]);
     }
-    let rows = checked_rows(flat, num_rows, num_cols)?;
+    let matrix = checked_matrix_prefix(flat, num_rows, num_cols)?;
     let rhs_bound = (1u64 << (log_basis - 1)).max(1);
     let chunk_width = safe_chunk_width::<F, W, K, D>(params, num_cols, rhs_bound)
         .ok_or_else(|| AkitaError::InvalidSetup("CRT profile cannot fit one i8 product".into()))?;
@@ -88,7 +82,7 @@ where
                 continue;
             }
             let transformed = CyclotomicCrtNtt::from_i8_with_lut(digit, params, &lut);
-            for ((accumulator, row), _) in accumulators.iter_mut().zip(&rows).zip(0..num_rows) {
+            for (accumulator, row) in accumulators.iter_mut().zip(matrix.chunks_exact(num_cols)) {
                 accumulator.add_assign_pointwise_mul_with_params(
                     &row[column],
                     &transformed,
@@ -109,8 +103,9 @@ fn centered_i32<F, W, const K: usize, const D: usize>(
     num_cols: usize,
     rhs: &[[i32; D]],
     rhs_abs_bound: u64,
+    chunk_width: usize,
     params: &CrtNttParamSet<W, K, D>,
-) -> Result<Option<Vec<CyclotomicRing<F, D>>>, AkitaError>
+) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>
 where
     F: FieldCore + CanonicalField,
     W: PrimeWidth,
@@ -118,13 +113,10 @@ where
     if rhs.len() != num_cols {
         return Err(AkitaError::InvalidProof);
     }
-    let Some(chunk_width) = safe_chunk_width::<F, W, K, D>(params, num_cols, rhs_abs_bound) else {
-        return Ok(None);
-    };
     if num_rows == 0 || num_cols == 0 {
-        return Ok(Some(vec![CyclotomicRing::zero(); num_rows]));
+        return Ok(vec![CyclotomicRing::zero(); num_rows]);
     }
-    let rows = checked_rows(flat, num_rows, num_cols)?;
+    let matrix = checked_matrix_prefix(flat, num_rows, num_cols)?;
     let lut = (rhs_abs_bound <= CENTERED_LUT_MAX_ABS)
         .then(|| CenteredMontLut::new(params, rhs_abs_bound as i32));
     let mut out = vec![CyclotomicRing::<F, D>::zero(); num_rows];
@@ -141,7 +133,7 @@ where
             } else {
                 CyclotomicCrtNtt::from_centered_i32_with_params(value, params)
             };
-            for (accumulator, row) in accumulators.iter_mut().zip(&rows) {
+            for (accumulator, row) in accumulators.iter_mut().zip(matrix.chunks_exact(num_cols)) {
                 accumulator.add_assign_pointwise_mul_with_params(
                     &row[column],
                     &transformed,
@@ -153,7 +145,7 @@ where
             *dst += accumulator.to_ring_with_params(params);
         }
     }
-    Ok(Some(out))
+    Ok(out)
 }
 
 fn balanced_i64_planes<const D: usize>(rhs: &[[i64; D]]) -> Vec<Vec<[i8; D]>> {
@@ -181,6 +173,36 @@ fn balanced_i64_planes<const D: usize>(rhs: &[[i64; D]]) -> Vec<Vec<[i8; D]>> {
     planes
 }
 
+fn balanced_i64_plane_count<const D: usize>(rhs: &[[i64; D]]) -> usize {
+    rhs.iter()
+        .flatten()
+        .map(|&value| {
+            let mut remaining = i128::from(value);
+            let mut planes = 0;
+            while remaining != 0 {
+                let residue = remaining & 63;
+                let balanced = if residue >= 32 { residue - 64 } else { residue };
+                remaining = (remaining - balanced) >> 6;
+                planes += 1;
+            }
+            planes
+        })
+        .max()
+        .unwrap_or(0)
+}
+
+fn try_centered_i32<const D: usize>(rhs: &[[i64; D]]) -> Option<Vec<[i32; D]>> {
+    let mut centered = Vec::with_capacity(rhs.len());
+    for ring in rhs {
+        let mut converted = [0i32; D];
+        for (dst, &source) in converted.iter_mut().zip(ring) {
+            *dst = i32::try_from(source).ok()?;
+        }
+        centered.push(converted);
+    }
+    Some(centered)
+}
+
 fn accumulate_centered_i64<F, W, const K: usize, const D: usize>(
     flat: &[CyclotomicCrtNtt<W, K, D>],
     num_rows: usize,
@@ -204,19 +226,8 @@ where
     if actual_bound == 0 {
         return Ok(vec![CyclotomicRing::zero(); num_rows]);
     }
-    let centered = rhs
-        .iter()
-        .map(|ring| {
-            ring.iter()
-                .copied()
-                .map(i32::try_from)
-                .collect::<Result<Vec<_>, _>>()
-                .ok()
-                .and_then(|values| values.try_into().ok())
-        })
-        .collect::<Option<Vec<[i32; D]>>>();
     let centered_safe = safe_chunk_width::<F, W, K, D>(params, num_cols, actual_bound);
-    let planes = balanced_i64_planes(rhs);
+    let balanced_planes = balanced_i64_plane_count(rhs);
     let centered_chunks = centered_safe.map_or(usize::MAX, |width| num_cols.div_ceil(width));
     tracing::debug!(
         target: "akita_verifier::terminal_ntt",
@@ -226,24 +237,26 @@ where
         rhs_abs_bound = actual_bound,
         centered_safe_width = centered_safe.unwrap_or(0),
         centered_chunks,
-        balanced_planes = planes.len(),
+        balanced_planes,
         "selected exact terminal A matrix-product strategy"
     );
-    if centered_chunks <= planes.len().max(1) {
-        if let Some(centered) = centered {
-            if let Some(result) = centered_i32::<F, W, K, D>(
-                flat,
-                num_rows,
-                num_cols,
-                &centered,
-                actual_bound,
-                params,
-            )? {
-                return Ok(result);
+    if centered_chunks <= balanced_planes.max(1) {
+        if let Some(chunk_width) = centered_safe {
+            if let Some(centered) = try_centered_i32(rhs) {
+                return centered_i32::<F, W, K, D>(
+                    flat,
+                    num_rows,
+                    num_cols,
+                    &centered,
+                    actual_bound,
+                    chunk_width,
+                    params,
+                );
             }
         }
     }
 
+    let planes = balanced_i64_planes(rhs);
     let mut out = vec![CyclotomicRing::<F, D>::zero(); num_rows];
     let mut scale = F::one();
     let radix = F::from_i64(64);
@@ -276,7 +289,7 @@ where
             "verifier B cache prefix is undersized".into(),
         ));
     }
-    let slot = prepared_prefix::<F, D>(setup, prepared_prefix_len)?;
+    let slot = setup.prepared_verifier_ntt_prefix::<D>(prepared_prefix_len)?;
     match slot.as_d::<D>()? {
         VerifierNttSlot::Q32 { neg, params } => {
             accumulate_i8(neg, num_rows, digits.len(), digits, log_basis, params)
@@ -308,7 +321,7 @@ where
             "verifier A cache prefix is undersized".into(),
         ));
     }
-    let slot = prepared_prefix::<F, D>(setup, prepared_prefix_len)?;
+    let slot = setup.prepared_verifier_ntt_prefix::<D>(prepared_prefix_len)?;
     match slot.as_d::<D>()? {
         VerifierNttSlot::Q32 { neg, params } => {
             accumulate_centered_i64(neg, num_rows, rhs.len(), rhs, params)

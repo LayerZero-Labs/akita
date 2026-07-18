@@ -162,7 +162,6 @@ fn walk_scalar_generated_schedule_entry(
                         field_bits,
                         &lp,
                         num_polynomials,
-                        RelationMatrixRowLayout::WithDBlock,
                         lp.witness_chunk.num_chunks,
                     )?;
                     if next.fold_step().is_none() {
@@ -429,13 +428,7 @@ fn walk_multi_group_generated_schedule_entry(
                             RelationMatrixRowLayout::WithDBlock,
                         )?
                     } else {
-                        planned_next_witness_len(
-                            field_bits,
-                            &lp,
-                            1,
-                            RelationMatrixRowLayout::WithDBlock,
-                            lp.witness_chunk.num_chunks,
-                        )?
+                        planned_next_witness_len(field_bits, &lp, 1, lp.witness_chunk.num_chunks)?
                     };
                     if next.fold_step().is_none() {
                         return Err(AkitaError::InvalidSetup(

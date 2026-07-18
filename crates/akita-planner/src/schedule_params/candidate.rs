@@ -218,7 +218,6 @@ pub(crate) fn planned_next_witness_len(
     field_bits: u32,
     params: &LevelParams,
     final_num_polys: usize,
-    layout: RelationMatrixRowLayout,
     num_chunks: usize,
 ) -> Result<usize, AkitaError> {
     if !params.precommitted_groups.is_empty() {
@@ -231,12 +230,11 @@ pub(crate) fn planned_next_witness_len(
             field_bits,
             params,
             final_num_polys,
-            layout,
             num_chunks,
         );
     }
 
-    w_ring_element_count_for_chunks(field_bits, params, final_num_polys, layout, num_chunks)?
+    intermediate_w_ring_element_count_for_chunks(field_bits, params, final_num_polys, num_chunks)?
         .checked_mul(params.ring_dimension)
         .ok_or_else(|| AkitaError::InvalidSetup("next witness length overflow".into()))
 }
@@ -245,7 +243,6 @@ fn grouped_setup_prefix_next_witness_len(
     field_bits: u32,
     params: &LevelParams,
     final_num_polys: usize,
-    layout: RelationMatrixRowLayout,
     num_chunks: usize,
 ) -> Result<usize, AkitaError> {
     let mut total = grouped_segment_rings(
@@ -274,8 +271,10 @@ fn grouped_setup_prefix_next_witness_len(
             .ok_or_else(|| AkitaError::InvalidSetup("grouped witness overflow".to_string()))?;
     }
 
-    let r_rows =
-        params.relation_matrix_row_count_for(params.precommitted_group_count() + 1, layout)?;
+    let r_rows = params.relation_matrix_row_count_for(
+        params.precommitted_group_count() + 1,
+        RelationMatrixRowLayout::WithDBlock,
+    )?;
     let r_count = r_rows
         .checked_mul(akita_types::sis::compute_num_digits_full_field(
             field_bits,
@@ -557,7 +556,6 @@ pub(crate) fn derive_candidate_level_params(
             policy.decomposition.field_bits(),
             &candidate_params,
             1,
-            RelationMatrixRowLayout::WithDBlock,
             num_chunks,
         )?;
         let terminal_shape = segment_typed_witness_shape_from_groups(
@@ -1004,9 +1002,8 @@ mod tests {
     #[test]
     fn planned_next_witness_len_rejects_multi_group_root_level_params() {
         let grouped = grouped_level_params();
-        let err =
-            planned_next_witness_len(128, &grouped, 1, RelationMatrixRowLayout::WithDBlock, 1)
-                .expect_err("multi-group root suffix sizing must use next_w_len");
+        let err = planned_next_witness_len(128, &grouped, 1, 1)
+            .expect_err("multi-group root suffix sizing must use next_w_len");
         assert!(matches!(err, AkitaError::InvalidSetup(_)));
     }
 

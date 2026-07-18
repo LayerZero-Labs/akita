@@ -40,15 +40,28 @@ pub(super) fn decompose_rows_i8<F, const D: usize>(
     rows: &[CyclotomicRing<F, D>],
     num_digits: usize,
     log_basis: u32,
-) -> Vec<[i8; D]>
+) -> Result<Vec<[i8; D]>, AkitaError>
 where
     F: FieldCore + CanonicalField,
 {
-    let mut out = vec![[0i8; D]; rows.len() * num_digits];
+    if !(1..=6).contains(&log_basis)
+        || num_digits
+            .checked_mul(log_basis as usize)
+            .is_none_or(|bits| bits > 128 + log_basis as usize)
+    {
+        return Err(AkitaError::InvalidSetup(
+            "i8 decomposition parameters exceed the supported width".to_string(),
+        ));
+    }
+    let output_len = rows
+        .len()
+        .checked_mul(num_digits)
+        .ok_or_else(|| AkitaError::InvalidSetup("i8 decomposition length overflow".into()))?;
+    let mut out = vec![[0i8; D]; output_len];
     for (dst_chunk, row) in out.chunks_mut(num_digits).zip(rows.iter()) {
         row.balanced_decompose_pow2_i8_into(dst_chunk, log_basis);
     }
-    out
+    Ok(out)
 }
 
 #[cfg(test)]
@@ -78,5 +91,13 @@ mod tests {
                 CyclotomicRing::from_coefficients([F::from_i64(-3), F::from_i64(1)]),
             ]
         );
+    }
+
+    #[test]
+    fn decomposition_rejects_parameters_that_would_panic() {
+        let row = [CyclotomicRing::<F, 2>::one()];
+        assert!(decompose_rows_i8(&row, 1, 0).is_err());
+        assert!(decompose_rows_i8(&row, 1, 7).is_err());
+        assert!(decompose_rows_i8(&row, 66, 2).is_err());
     }
 }

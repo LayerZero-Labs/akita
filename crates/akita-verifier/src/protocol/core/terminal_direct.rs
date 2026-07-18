@@ -368,7 +368,7 @@ where
                 // `D_A` in `check_b_rows` multiplied every inner dispatch arm by
                 // every outer arm and forced optimized test binaries to compile
                 // a large cross-product of identical NTT kernels.
-                let t_digits = decompose_rows_i8(&t, params.num_digits_open(), params.log_basis());
+                let t_digits = decompose_rows_i8(&t, params.num_digits_open(), params.log_basis())?;
                 let t_digits_flat = t_digits.as_flattened();
 
                 dispatch_for_field!(

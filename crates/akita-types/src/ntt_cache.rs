@@ -257,22 +257,6 @@ pub enum VerifierNttSlot<const D: usize> {
 }
 
 impl<const D: usize> VerifierNttSlot<D> {
-    /// Number of prepared matrix rings.
-    #[must_use]
-    pub fn len(&self) -> usize {
-        match self {
-            Self::Q32 { neg, .. } => neg.len(),
-            Self::Q64 { neg, .. } => neg.len(),
-            Self::Q128 { neg, .. } => neg.len(),
-        }
-    }
-
-    /// Whether the prepared prefix is empty.
-    #[must_use]
-    pub fn is_empty(&self) -> bool {
-        self.len() == 0
-    }
-
     /// In-memory byte footprint of the negacyclic entries.
     #[must_use]
     pub fn cache_bytes(&self) -> usize {
@@ -453,17 +437,6 @@ impl VerifierNttCache {
         });
         slots.insert(key, Arc::clone(&built));
         Ok(built)
-    }
-
-    /// Total prepared verifier cache bytes.
-    pub(crate) fn cache_bytes(&self) -> Result<usize, AkitaError> {
-        Ok(self
-            .slots
-            .lock()
-            .map_err(|_| AkitaError::InvalidSetup("verifier NTT cache lock poisoned".into()))?
-            .values()
-            .map(|slot| slot.cache_bytes())
-            .sum())
     }
 }
 

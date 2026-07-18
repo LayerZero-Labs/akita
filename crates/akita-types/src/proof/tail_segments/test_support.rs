@@ -53,7 +53,7 @@ pub(crate) fn encode_z_segment_from_centered<const D: usize>(
         ));
     }
     let values = centered_rows_to_i64(centered);
-    encode_z_segment_from_centered_flat(&values, rice_low_bits, zigzag_w_z)
+    golomb_rice_encode_vec(&values, rice_low_bits, zigzag_w_z)
 }
 
 #[cfg(test)]

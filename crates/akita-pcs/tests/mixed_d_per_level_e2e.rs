@@ -455,9 +455,7 @@ fn mixed_d_per_level_prove_verify_replay_and_malformed_rejections() {
                 .last_mut()
                 .and_then(AkitaLevelProof::as_terminal_mut)
                 .expect("fixture must end in a terminal step");
-            let witness = terminal
-                .final_witness_mut()
-                .expect("terminal step must carry final witness");
+            let witness = terminal.final_witness_mut();
             match witness {
                 CleartextWitnessProof::SegmentTyped(segment) => {
                     segment.z_payloads[0].pop();
@@ -479,9 +477,7 @@ fn mixed_d_per_level_prove_verify_replay_and_malformed_rejections() {
                 .last_mut()
                 .and_then(AkitaLevelProof::as_terminal_mut)
                 .expect("fixture must end in a terminal step");
-            let witness = terminal
-                .final_witness_mut()
-                .expect("terminal step must carry final witness");
+            let witness = terminal.final_witness_mut();
             if let CleartextWitnessProof::SegmentTyped(segment) = witness {
                 let len = segment.e_fields.coeffs().len();
                 truncate_ring_vec(&mut segment.e_fields, len.saturating_sub(1));
@@ -498,9 +494,7 @@ fn mixed_d_per_level_prove_verify_replay_and_malformed_rejections() {
                 .last_mut()
                 .and_then(AkitaLevelProof::as_terminal_mut)
                 .expect("fixture must end in a terminal step");
-            let witness = terminal
-                .final_witness_mut()
-                .expect("terminal step must carry final witness");
+            let witness = terminal.final_witness_mut();
             if let CleartextWitnessProof::SegmentTyped(segment) = witness {
                 let mut coeffs = segment.t_fields.coeffs().to_vec();
                 coeffs[0] += F::one();

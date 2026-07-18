@@ -369,8 +369,8 @@ fn terminal_witness_mut<FField: FieldCore, E: FieldCore>(
             .steps
             .last_mut()
             .and_then(akita_types::AkitaLevelProof::as_terminal_mut)
-            .and_then(akita_types::AkitaLevelProof::final_witness_mut)
-            .expect("fold-rooted proof must end in a terminal step"),
+            .expect("fold-rooted proof must end in a terminal step")
+            .final_witness_mut(),
         akita_types::AkitaBatchedRootProof::ZeroFold { .. } => {
             panic!("terminal tamper test requires a folded terminal proof")
         }

@@ -91,10 +91,10 @@ pub use stage1::{
     stage1_tree_stage_shapes, validate_stage1_tree_basis,
 };
 pub use tail_segments::{
-    build_segment_typed_witness, build_segment_typed_witness_from_groups,
-    decode_terminal_z_golomb_payload, decode_terminal_z_golomb_payload_with_cap,
-    e_folded_segment_bytes, emit_witness_e_planes, emit_witness_r_planes, emit_witness_t_planes,
-    emit_witness_z_planes, segment_typed_witness_upper_bound_bytes, segment_typed_z_payload_bytes,
+    build_segment_typed_witness_from_groups, decode_terminal_z_golomb_payload,
+    decode_terminal_z_golomb_payload_with_cap, e_folded_segment_bytes, emit_witness_e_planes,
+    emit_witness_r_planes, emit_witness_t_planes, emit_witness_z_planes,
+    segment_typed_witness_upper_bound_bytes, segment_typed_z_payload_bytes,
     tail_golomb_rice_z_params, tail_segment_layout_from_groups,
     tail_segment_multiplicities_from_layout, tail_segment_multiplicities_from_layout_for_params,
     terminal_golomb_grind_tail_t_vectors, validate_segment_typed_z_payload,

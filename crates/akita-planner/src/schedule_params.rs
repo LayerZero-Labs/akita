@@ -17,13 +17,13 @@ use akita_types::sis::{
     FoldWitnessLinfCapConfig, FoldWitnessNorms, SisTableKey,
 };
 use akita_types::{
-    direct_witness_bytes, extension_opening_reduction_level_bytes, level_proof_bytes,
-    padded_setup_prefix_len, segment_typed_witness_shape_from_groups,
-    w_ring_element_count_for_chunks, AkitaScheduleInputs, ChunkedWitnessCfg, CleartextWitnessShape,
-    CommitmentRingDims, DecompositionParams, DirectStep, FoldStep, LevelParams, LevelParamsLike,
-    OpeningClaimsLayout, PolynomialGroupLayout, PrecommittedGroupParams, PrecommittedLevelParams,
-    RelationMatrixRowLayout, Schedule, SetupContributionMode, Step, WitnessLayout,
-    SETUP_OFFLOAD_D_SETUP,
+    direct_witness_bytes, extension_opening_reduction_level_bytes,
+    intermediate_w_ring_element_count_for_chunks, level_proof_bytes, padded_setup_prefix_len,
+    segment_typed_witness_shape_from_groups, AkitaScheduleInputs, ChunkedWitnessCfg,
+    CleartextWitnessShape, CommitmentRingDims, DecompositionParams, DirectStep, FoldStep,
+    LevelParams, LevelParamsLike, OpeningClaimsLayout, PolynomialGroupLayout,
+    PrecommittedGroupParams, PrecommittedLevelParams, RelationMatrixRowLayout, Schedule,
+    SetupContributionMode, Step, WitnessLayout, SETUP_OFFLOAD_D_SETUP,
 };
 
 use crate::PlannerPolicy;
@@ -278,19 +278,14 @@ fn find_schedule_inner(
                 continue;
             };
 
-            let next_withness_len_impl = |layout| -> Result<usize, AkitaError> {
-                let rings = w_ring_element_count_for_chunks(
-                    field_bits,
-                    &candidate_params,
-                    key.num_polynomials(),
-                    layout,
-                    root_num_chunks,
-                )?;
-                rings.checked_mul(policy.ring_dimension).ok_or_else(|| {
-                    AkitaError::InvalidSetup("root next witness length overflow".into())
-                })
-            };
-            let next_w_len = next_withness_len_impl(RelationMatrixRowLayout::WithDBlock)?;
+            let next_w_len = intermediate_w_ring_element_count_for_chunks(
+                field_bits,
+                &candidate_params,
+                key.num_polynomials(),
+                root_num_chunks,
+            )?
+            .checked_mul(policy.ring_dimension)
+            .ok_or_else(|| AkitaError::InvalidSetup("root next witness length overflow".into()))?;
             let terminal_shape = segment_typed_witness_shape_from_groups(
                 &candidate_params,
                 field_bits,

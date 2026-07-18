@@ -15,10 +15,10 @@ use akita_types::sis::{
     rounded_up_role_a_inf_norm, SisMatrixRole, SisTableDigest, SisTableKey,
 };
 use akita_types::{
-    direct_witness_bytes, level_proof_bytes, segment_typed_witness_shape_from_groups,
-    w_ring_element_count_with_counts_for_layout_bits, AjtaiKeyParams, AkitaScheduleInputs,
+    direct_witness_bytes, intermediate_w_ring_element_count_with_counts_bits, level_proof_bytes,
+    segment_typed_witness_shape_from_groups, AjtaiKeyParams, AkitaScheduleInputs,
     AkitaScheduleLookupKey, CommitmentRingDims, DecompositionParams, DirectStep, FoldStep,
-    LevelParams, PolynomialGroupLayout, RelationMatrixRowLayout, Schedule, Step,
+    LevelParams, LevelParamsLike, PolynomialGroupLayout, RelationMatrixRowLayout, Schedule, Step,
 };
 struct MixedSuffixFoldPlan {
     params: LevelParams,
@@ -452,17 +452,20 @@ where
                 )?
             };
             let is_terminal_fold = level + 1 == num_fold_levels;
-            let layout = if is_terminal_fold {
-                RelationMatrixRowLayout::WithoutDBlock
+            let next_w_len = if is_terminal_fold {
+                segment_typed_witness_shape_from_groups(
+                    &params,
+                    field_bits,
+                    [(&params as &dyn LevelParamsLike, 1, 1, 1)],
+                )?
+                .logical_num_elems()
             } else {
-                RelationMatrixRowLayout::WithDBlock
+                intermediate_w_ring_element_count_with_counts_bits(field_bits, &params, 1, 1)?
+                    .checked_mul(params.ring_dimension)
+                    .ok_or_else(|| {
+                        AkitaError::InvalidSetup("mixed-D witness length overflow".into())
+                    })?
             };
-            let ring = w_ring_element_count_with_counts_for_layout_bits(
-                field_bits, &params, 1, 1, layout,
-            )?;
-            let next_w_len = ring.checked_mul(params.ring_dimension).ok_or_else(|| {
-                AkitaError::InvalidSetup("mixed-D witness length overflow".into())
-            })?;
             suffix_plan.push(MixedSuffixFoldPlan {
                 params,
                 current_w_len: w_len,

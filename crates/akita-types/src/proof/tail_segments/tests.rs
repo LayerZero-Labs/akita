@@ -201,5 +201,52 @@ fn decode_terminal_z_rejects_trailing_zero_byte_padding() {
     assert!(decode_terminal_z_golomb_payload(&payload, 3, &lp, 1, None).is_err());
 }
 
+#[test]
+fn terminal_layout_validation_rejects_overflow_without_panicking() {
+    let layout = TailSegmentLayout {
+        ring_dimension: 64,
+        log_basis: 6,
+        groups: vec![
+            TailSegmentGroupLayout {
+                z_coords: 1,
+                e_field_elems: usize::MAX,
+                t_field_elems: 1,
+                z_payload_bytes: 1,
+            },
+            TailSegmentGroupLayout {
+                z_coords: 1,
+                e_field_elems: 1,
+                t_field_elems: usize::MAX,
+                z_payload_bytes: usize::MAX,
+            },
+        ],
+        logical_num_elems: 1,
+    };
+    let result = std::panic::catch_unwind(|| layout.check());
+    assert!(result.is_ok(), "malformed proof shape must not panic");
+    assert!(result.unwrap().is_err());
+}
+
+#[test]
+fn terminal_layout_decode_rejects_oversized_group_count_before_allocation() {
+    use akita_serialization::{AkitaDeserialize, AkitaSerialize, Compress, Validate};
+
+    let mut bytes = Vec::new();
+    64usize
+        .serialize_with_mode(&mut bytes, Compress::No)
+        .unwrap();
+    6u32.serialize_with_mode(&mut bytes, Compress::No).unwrap();
+    (super::super::MAX_PROOF_SHAPE_SEQUENCE_LEN as u64 + 1)
+        .serialize_with_mode(&mut bytes, Compress::No)
+        .unwrap();
+    let err =
+        TailSegmentLayout::deserialize_with_mode(&bytes[..], Compress::No, Validate::Yes, &())
+            .expect_err("oversized terminal group vector must be rejected");
+    assert!(matches!(
+        err,
+        SerializationError::LengthLimitExceeded { .. }
+    ));
+}
+
 #[path = "test_support.rs"]
 mod test_support;

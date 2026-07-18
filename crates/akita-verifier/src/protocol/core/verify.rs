@@ -211,13 +211,14 @@ where
         } else {
             &[]
         };
-        let block_digits = decompose_rows_i8(block, params.num_digits_commit(), params.log_basis());
+        let block_digits =
+            decompose_rows_i8(block, params.num_digits_commit(), params.log_basis())?;
         let t_rows = mat_vec_mul_i8::<F, D>(&a_rows, &block_digits)?;
         out.extend(decompose_rows_i8(
             &t_rows,
             params.num_digits_open(),
             params.log_basis(),
-        ));
+        )?);
     }
 
     Ok(out)

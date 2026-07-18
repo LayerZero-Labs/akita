@@ -6,8 +6,8 @@ use akita_types::{
     layout::proof_size::field_bytes,
     schedule_terminal_direct_witness_shape, tail_segment_multiplicities_from_layout,
     z_fold_decoded_from_segment, z_fold_encoding_stats_from_segment, AkitaBatchedProof,
-    AkitaBatchedRootProof, AkitaLevelProof, CleartextWitnessProof, CleartextWitnessShape,
-    LevelParams, Schedule, SetupSumcheckProof, Step, TerminalLevelProof, ZFoldEncodingStats,
+    AkitaBatchedRootProof, AkitaLevelProof, CleartextWitnessShape, LevelParams, Schedule,
+    SetupSumcheckProof, Step, TerminalLevelProof, ZFoldEncodingStats,
 };
 
 const TAIL_Z_LENGTH_PREFIX_BYTES: usize = 8;
@@ -537,67 +537,21 @@ where
     total
 }
 
-trait TerminalProofView<FF: FieldCore, E: FieldCore>: AkitaSerialize {
-    fn extension_opening_reduction(
-        &self,
-    ) -> Option<&akita_types::ExtensionOpeningReductionProof<E>>;
-    fn final_witness(&self) -> &CleartextWitnessProof<FF>;
-    fn fold_grind_nonce_value(&self) -> u32;
-}
-
-impl<FF: FieldCore + CanonicalField + AkitaSerialize, E: FieldCore + AkitaSerialize>
-    TerminalProofView<FF, E> for TerminalLevelProof<FF, E>
-{
-    fn extension_opening_reduction(
-        &self,
-    ) -> Option<&akita_types::ExtensionOpeningReductionProof<E>> {
-        self.extension_opening_reduction.as_ref()
-    }
-
-    fn final_witness(&self) -> &CleartextWitnessProof<FF> {
-        self.final_witness()
-    }
-
-    fn fold_grind_nonce_value(&self) -> u32 {
-        self.fold_grind_nonce
-    }
-}
-
-impl<FF: FieldCore + CanonicalField + AkitaSerialize, E: FieldCore + AkitaSerialize>
-    TerminalProofView<FF, E> for AkitaLevelProof<FF, E>
-{
-    fn extension_opening_reduction(
-        &self,
-    ) -> Option<&akita_types::ExtensionOpeningReductionProof<E>> {
-        self.extension_opening_reduction()
-    }
-
-    fn final_witness(&self) -> &CleartextWitnessProof<FF> {
-        self.final_witness()
-            .expect("terminal Akita level proof must carry final witness")
-    }
-
-    fn fold_grind_nonce_value(&self) -> u32 {
-        self.fold_grind_nonce()
-    }
-}
-
-fn print_terminal_level_breakdown<FF, E, P, const D: usize>(
+fn print_terminal_level_breakdown<FF, E, const D: usize>(
     label: &str,
     level_idx: usize,
-    level: &P,
+    level: &TerminalLevelProof<FF, E>,
     root_variant: &'static str,
 ) -> usize
 where
     FF: FieldCore + CanonicalField + AkitaSerialize,
     E: FieldCore + AkitaSerialize,
-    P: TerminalProofView<FF, E>,
 {
     let (extension_opening_partials_size, extension_opening_sumcheck_size) =
-        extension_opening_reduction_sizes(level.extension_opening_reduction());
+        extension_opening_reduction_sizes(level.extension_opening_reduction.as_ref());
     let final_witness_size = level.final_witness().serialized_size(Compress::No);
     let fold_grind_nonce_size = fold_grind_nonce_wire_bytes();
-    let grind_nonce = level.fold_grind_nonce_value();
+    let grind_nonce = level.fold_grind_nonce;
     let full = level.serialized_size(Compress::No);
     // `total_bytes` excludes `final_witness` to mirror the planner's
     // `terminal_level_proof_bytes`. `final_witness` is reported separately as
@@ -655,7 +609,7 @@ where
     E: FieldCore + AkitaSerialize,
 {
     if let Some(terminal) = root.as_terminal_root() {
-        return print_terminal_level_breakdown::<FF, E, _, D>(label, 0, terminal, "terminal");
+        return print_terminal_level_breakdown::<FF, E, D>(label, 0, terminal, "terminal");
     }
     let Some(fold) = root.as_fold() else {
         let total = root.serialized_size(Compress::No);
@@ -823,8 +777,8 @@ pub(crate) fn print_batched_proof_summary<FF, E, const D: usize>(
             AkitaLevelProof::Intermediate { .. } => {
                 print_akita_level_breakdown::<FF, E, D>(label, level_idx, step);
             }
-            AkitaLevelProof::Terminal(_) => {
-                print_terminal_level_breakdown::<FF, E, _, D>(label, level_idx, step, "fold");
+            AkitaLevelProof::Terminal(terminal) => {
+                print_terminal_level_breakdown::<FF, E, D>(label, level_idx, terminal, "fold");
             }
         }
     }

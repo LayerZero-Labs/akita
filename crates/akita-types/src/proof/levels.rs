@@ -184,20 +184,6 @@ impl<F: FieldCore, E: FieldCore> AkitaLevelProof<F, E> {
         }
     }
 
-    /// Construct a terminal level proof.
-    #[allow(clippy::too_many_arguments)]
-    pub fn new_terminal_with_extension_opening_reduction(
-        extension_opening_reduction: Option<ExtensionOpeningReductionProof<E>>,
-        final_witness: CleartextWitnessProof<F>,
-        fold_grind_nonce: u32,
-    ) -> Self {
-        Self::Terminal(TerminalLevelProof {
-            extension_opening_reduction,
-            fold_grind_nonce,
-            final_witness,
-        })
-    }
-
     /// Accepted fold grind nonce (`0` under deterministic policy).
     pub fn fold_grind_nonce(&self) -> u32 {
         match self {
@@ -419,19 +405,19 @@ impl<F: FieldCore, E: FieldCore> AkitaLevelProof<F, E> {
         }
     }
 
-    /// Borrow this proof if it is a terminal recursive level.
-    pub fn as_terminal(&self) -> Option<&Self> {
+    /// Borrow the typed terminal payload, if present.
+    pub fn as_terminal(&self) -> Option<&TerminalLevelProof<F, E>> {
         match self {
             Self::Intermediate { .. } => None,
-            Self::Terminal(_) => Some(self),
+            Self::Terminal(terminal) => Some(terminal),
         }
     }
 
-    /// Mutably borrow this proof if it is a terminal recursive level.
-    pub fn as_terminal_mut(&mut self) -> Option<&mut Self> {
+    /// Mutably borrow the typed terminal payload, if present.
+    pub fn as_terminal_mut(&mut self) -> Option<&mut TerminalLevelProof<F, E>> {
         match self {
             Self::Intermediate { .. } => None,
-            Self::Terminal(_) => Some(self),
+            Self::Terminal(terminal) => Some(terminal),
         }
     }
 
@@ -455,14 +441,6 @@ impl<F: FieldCore, E: FieldCore> AkitaLevelProof<F, E> {
             stage2,
             stage3_sumcheck_proof.as_ref(),
         )
-    }
-
-    /// Derive the [`TerminalLevelProofShape`] for a terminal level proof.
-    pub fn terminal_shape(&self) -> TerminalLevelProofShape {
-        let Self::Terminal(terminal) = self else {
-            panic!("terminal_shape() called on intermediate level proof");
-        };
-        terminal.shape()
     }
 
     /// Derive the shape for this recursive level proof.
@@ -852,10 +830,12 @@ impl<F: FieldCore, E: FieldCore> AkitaBatchedProof<F, E> {
             AkitaBatchedRootProof::Fold(_) => self
                 .steps
                 .last()
-                .and_then(AkitaLevelProof::as_terminal)
+                .and_then(|step| match step {
+                    AkitaLevelProof::Terminal(terminal) => Some(terminal),
+                    AkitaLevelProof::Intermediate { .. } => None,
+                })
                 .expect("fold-rooted Akita proof must terminate with a terminal step")
-                .final_witness()
-                .expect("terminal Akita level proof must carry final witness"),
+                .final_witness(),
             AkitaBatchedRootProof::ZeroFold { .. } => {
                 panic!("final_witness() called on a zero-fold batched proof")
             }

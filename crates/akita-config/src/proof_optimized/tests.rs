@@ -791,11 +791,10 @@ fn assert_plan_matches_runtime_w_sizes_for_key<Cfg: CommitmentConfig>(key: Polyn
             } else {
                 (1, 1)
             };
-            akita_types::w_ring_element_count_with_counts_for_layout::<Cfg::Field>(
+            akita_types::intermediate_w_ring_element_count_with_counts::<Cfg::Field>(
                 &fold.params,
                 num_polynomials,
                 num_public_rows,
-                akita_types::RelationMatrixRowLayout::WithDBlock,
             )
             .expect("valid planned witness")
                 * fold.params.ring_dimension
@@ -1255,14 +1254,14 @@ fn tensor_onehot_preset_keeps_d64_onehot_chunk_size() {
 }
 
 #[test]
-fn verifier_ntt_capacity_scan_rejects_hostile_metadata_before_planning() {
+fn setup_capacity_scan_rejects_hostile_metadata_before_planning() {
     let vars_err =
-        verifier_ntt_cache_keys_for_capacity::<fp128::D64OneHot>(usize::BITS as usize, 1)
+        proof_optimized_max_setup_matrix_size::<fp128::D64OneHot>(usize::BITS as usize, 1)
             .expect_err("unrepresentable polynomial variable count must fail closed");
     assert!(matches!(vars_err, AkitaError::InvalidSetup(_)));
 
     let oversized_batch = MAX_VERIFIER_SETUP_SCHEDULE_SCANS / 32 + 1;
-    let work_err = verifier_ntt_cache_keys_for_capacity::<fp128::D64OneHot>(32, oversized_batch)
+    let work_err = proof_optimized_max_setup_matrix_size::<fp128::D64OneHot>(32, oversized_batch)
         .expect_err("oversized setup schedule scan must fail closed");
     assert!(matches!(work_err, AkitaError::InvalidSetup(_)));
 }

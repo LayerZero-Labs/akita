@@ -10,7 +10,7 @@ pub enum CleartextWitnessProof<F: FieldCore> {
     /// Raw field elements, for direct witnesses that are not naturally digit
     /// bounded.
     FieldElements(RingVec<F>),
-    /// Segment-typed terminal witness (`e`/`t`/`r` raw field, `z` Golomb-Rice).
+    /// Segment-typed terminal witness (`e`/`t` raw field, `z` Golomb-Rice).
     SegmentTyped(SegmentTypedWitness<F>),
 }
 

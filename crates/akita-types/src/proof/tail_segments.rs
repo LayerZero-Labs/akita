@@ -7,6 +7,7 @@ use akita_serialization::{
     AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
 };
 
+use super::{checked_shape_len, checked_shape_sequence_len, reserve_shape_len};
 use crate::descriptor_bytes::{push_u32, push_usize};
 use crate::golomb_rice::{
     analyze_z_fold_golomb_encoding, golomb_rice_decode_vec, golomb_rice_encode_vec,
@@ -90,22 +91,30 @@ impl TailSegmentLayout {
 
     #[must_use]
     pub fn z_coords(&self) -> usize {
-        self.groups.iter().map(|group| group.z_coords).sum()
+        self.groups
+            .iter()
+            .fold(0usize, |total, group| total.saturating_add(group.z_coords))
     }
 
     #[must_use]
     pub fn e_field_elems(&self) -> usize {
-        self.groups.iter().map(|group| group.e_field_elems).sum()
+        self.groups.iter().fold(0usize, |total, group| {
+            total.saturating_add(group.e_field_elems)
+        })
     }
 
     #[must_use]
     pub fn t_field_elems(&self) -> usize {
-        self.groups.iter().map(|group| group.t_field_elems).sum()
+        self.groups.iter().fold(0usize, |total, group| {
+            total.saturating_add(group.t_field_elems)
+        })
     }
 
     #[must_use]
     pub fn z_payload_bytes(&self) -> usize {
-        self.groups.iter().map(|group| group.z_payload_bytes).sum()
+        self.groups.iter().fold(0usize, |total, group| {
+            total.saturating_add(group.z_payload_bytes)
+        })
     }
 
     #[must_use]
@@ -139,13 +148,41 @@ impl Valid for TailSegmentLayout {
                 "tail segment layout has no groups".to_string(),
             ));
         }
+        checked_shape_sequence_len(self.groups.len())?;
+        checked_shape_len(self.logical_num_elems)?;
+        let mut z_coords = 0usize;
+        let mut e_field_elems = 0usize;
+        let mut t_field_elems = 0usize;
+        let mut z_payload_bytes = 0usize;
         for group in &self.groups {
             if group.z_coords == 0 {
                 return Err(SerializationError::InvalidData(
                     "tail segment group has zero z_coords".to_string(),
                 ));
             }
+            z_coords = z_coords.checked_add(group.z_coords).ok_or_else(|| {
+                SerializationError::InvalidData("tail z coordinate count overflow".to_string())
+            })?;
+            e_field_elems = e_field_elems
+                .checked_add(group.e_field_elems)
+                .ok_or_else(|| {
+                    SerializationError::InvalidData("tail e field count overflow".to_string())
+                })?;
+            t_field_elems = t_field_elems
+                .checked_add(group.t_field_elems)
+                .ok_or_else(|| {
+                    SerializationError::InvalidData("tail t field count overflow".to_string())
+                })?;
+            z_payload_bytes = z_payload_bytes
+                .checked_add(group.z_payload_bytes)
+                .ok_or_else(|| {
+                    SerializationError::InvalidData("tail z payload budget overflow".to_string())
+                })?;
         }
+        checked_shape_len(z_coords)?;
+        checked_shape_len(e_field_elems)?;
+        checked_shape_len(t_field_elems)?;
+        checked_shape_len(z_payload_bytes)?;
         Ok(())
     }
 }
@@ -227,12 +264,24 @@ impl AkitaDeserialize for TailSegmentLayout {
     ) -> Result<Self, SerializationError> {
         let ring_dimension = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
         let log_basis = u32::deserialize_with_mode(&mut reader, compress, validate, &())?;
-        let groups = Vec::<TailSegmentGroupLayout>::deserialize_with_mode(
-            &mut reader,
-            compress,
-            validate,
-            &(),
-        )?;
+        let encoded_group_len = u64::deserialize_with_mode(&mut reader, compress, validate, &())?;
+        let group_len = usize::try_from(encoded_group_len).map_err(|_| {
+            SerializationError::LengthLimitExceeded {
+                len: encoded_group_len,
+                max: super::MAX_PROOF_SHAPE_SEQUENCE_LEN,
+            }
+        })?;
+        checked_shape_sequence_len(group_len)?;
+        let mut groups = Vec::new();
+        reserve_shape_len(&mut groups, group_len)?;
+        for _ in 0..group_len {
+            groups.push(TailSegmentGroupLayout::deserialize_with_mode(
+                &mut reader,
+                compress,
+                validate,
+                &(),
+            )?);
+        }
         let logical_num_elems = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
         let out = Self {
             ring_dimension,
@@ -348,7 +397,9 @@ impl<F: FieldCore + CanonicalField + AkitaSerialize> AkitaSerialize for SegmentT
             })
             .sum::<usize>();
         z_bytes.saturating_add(
-            (self.layout.e_field_elems() + self.layout.t_field_elems())
+            self.layout
+                .e_field_elems()
+                .saturating_add(self.layout.t_field_elems())
                 .saturating_mul(field_bytes(F::modulus_bits())),
         )
     }
@@ -834,49 +885,6 @@ pub fn segment_typed_witness_upper_bound_bytes(
         .saturating_add(8usize.saturating_mul(layout.groups.len()))
 }
 
-/// Build Golomb-Rice `z` payload from a flat centered coefficient stream.
-fn encode_z_segment_from_centered_flat(
-    centered_flat: &[i64],
-    rice_low_bits: u32,
-    zigzag_w_z: u32,
-) -> Result<Vec<u8>, AkitaError> {
-    golomb_rice_encode_vec(centered_flat, rice_low_bits, zigzag_w_z)
-}
-
-/// Construct a segment-typed terminal witness from ring-switch outputs.
-///
-/// # Errors
-///
-/// Returns an error when layout counts do not match the supplied witness parts.
-#[allow(clippy::too_many_arguments)]
-pub fn build_segment_typed_witness<F>(
-    ring_d: usize,
-    e_folded: &RingVec<F>,
-    recomposed_inner_rows: &[RingVec<F>],
-    z_folded_centered_flat: &[i32],
-    lp: &LevelParams,
-    num_w_vectors: usize,
-    num_t_vectors: usize,
-    num_z_segments: usize,
-) -> Result<SegmentTypedWitness<F>, AkitaError>
-where
-    F: FieldCore + CanonicalField + HalvingField + AkitaSerialize,
-{
-    build_segment_typed_witness_from_groups(
-        ring_d,
-        &[SegmentTypedWitnessGroupParts {
-            params: lp,
-            num_w_vectors,
-            num_t_vectors,
-            num_z_segments,
-            e_folded,
-            recomposed_inner_rows,
-            z_folded_centered_flat,
-        }],
-        lp,
-    )
-}
-
 pub fn build_segment_typed_witness_from_groups<F>(
     ring_d: usize,
     groups: &[SegmentTypedWitnessGroupParts<'_, F>],
@@ -934,8 +942,7 @@ where
             ));
         }
         let (rice_low_bits, zigzag_w_z) = tail_golomb_rice_z_params_from_cap(cap)?;
-        let z_payload =
-            encode_z_segment_from_centered_flat(&z_centered_i64, rice_low_bits, zigzag_w_z)?;
+        let z_payload = golomb_rice_encode_vec(&z_centered_i64, rice_low_bits, zigzag_w_z)?;
         let group_layout = layout
             .groups
             .get(group_index)

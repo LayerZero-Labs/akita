@@ -8,8 +8,8 @@ use crate::matrix_envelope::accumulate_matrix_envelope_for_level;
 use akita_field::AkitaError;
 use akita_field::{Ext2, FpExt4, Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59};
 use akita_types::{
-    AkitaExpandedSetup, AkitaScheduleLookupKey, LevelParams, LevelParamsLike, NttCacheKey,
-    OpeningClaimsLayout, PolynomialGroupLayout, Schedule, SetupMatrixEnvelope, Step,
+    AkitaExpandedSetup, AkitaScheduleLookupKey, LevelParams, OpeningClaimsLayout,
+    PolynomialGroupLayout, Schedule, SetupMatrixEnvelope,
 };
 use std::any::TypeId;
 use std::collections::HashMap;
@@ -79,14 +79,8 @@ pub(crate) fn proof_optimized_schedule_key<Cfg: CommitmentConfig>(
 ///
 /// Planned role footprints are not monotone across shapes, so scan all
 /// supported sub-shapes and keep the largest packed setup length.
-#[derive(Clone)]
-struct SetupCapacityRequirements {
-    matrix: SetupMatrixEnvelope,
-    verifier_ntt_keys: Vec<NttCacheKey>,
-}
-
 type SetupMatrixEnvelopeCache =
-    LazyLock<Mutex<HashMap<(TypeId, usize, usize), SetupCapacityRequirements>>>;
+    LazyLock<Mutex<HashMap<(TypeId, usize, usize), SetupMatrixEnvelope>>>;
 
 static SETUP_MATRIX_ENVELOPE_CACHE: SetupMatrixEnvelopeCache =
     LazyLock::new(|| Mutex::new(HashMap::new()));
@@ -95,16 +89,6 @@ pub(crate) fn proof_optimized_max_setup_matrix_size<Cfg: CommitmentConfig>(
     max_num_vars: usize,
     max_num_batched_polys: usize,
 ) -> Result<SetupMatrixEnvelope, AkitaError> {
-    Ok(
-        proof_optimized_setup_capacity_requirements::<Cfg>(max_num_vars, max_num_batched_polys)?
-            .matrix,
-    )
-}
-
-fn proof_optimized_setup_capacity_requirements<Cfg: CommitmentConfig>(
-    max_num_vars: usize,
-    max_num_batched_polys: usize,
-) -> Result<SetupCapacityRequirements, AkitaError> {
     validate_setup_capacity_scan(max_num_vars, max_num_batched_polys)?;
     let cache_key = (TypeId::of::<Cfg>(), max_num_vars, max_num_batched_polys);
     if let Some(cached) = SETUP_MATRIX_ENVELOPE_CACHE
@@ -116,33 +100,29 @@ fn proof_optimized_setup_capacity_requirements<Cfg: CommitmentConfig>(
         return Ok(cached);
     }
 
-    let requirements = proof_optimized_setup_capacity_requirements_uncached::<Cfg>(
-        max_num_vars,
-        max_num_batched_polys,
-    )?;
+    let envelope =
+        proof_optimized_max_setup_matrix_size_uncached::<Cfg>(max_num_vars, max_num_batched_polys)?;
 
     SETUP_MATRIX_ENVELOPE_CACHE
         .lock()
         .map_err(|_| AkitaError::InvalidSetup("setup capacity cache lock poisoned".into()))?
-        .insert(cache_key, requirements.clone());
+        .insert(cache_key, envelope);
 
-    Ok(requirements)
+    Ok(envelope)
 }
 
-fn proof_optimized_setup_capacity_requirements_uncached<Cfg: CommitmentConfig>(
+fn proof_optimized_max_setup_matrix_size_uncached<Cfg: CommitmentConfig>(
     max_num_vars: usize,
     max_num_batched_polys: usize,
-) -> Result<SetupCapacityRequirements, AkitaError> {
+) -> Result<SetupMatrixEnvelope, AkitaError> {
     let layouts = setup_envelope_scan_layouts::<Cfg>(max_num_vars, max_num_batched_polys)?;
     let mut saw_supported_shape = false;
     let mut envelope = SetupMatrixEnvelope { max_setup_len: 1 };
-    let mut max_prefix_by_ring_d = HashMap::new();
     for layout in &layouts {
         let Ok(schedule) = Cfg::get_params_for_prove(layout) else {
             continue;
         };
         let entry_envelope = setup_matrix_envelope_for_schedule(&schedule)?;
-        accumulate_terminal_verifier_ntt_keys(&schedule, &mut max_prefix_by_ring_d)?;
         saw_supported_shape = true;
         envelope.max_setup_len = envelope.max_setup_len.max(entry_envelope.max_setup_len);
     }
@@ -157,7 +137,6 @@ fn proof_optimized_setup_capacity_requirements_uncached<Cfg: CommitmentConfig>(
     )? {
         let schedule = Cfg::runtime_schedule(key)?;
         let entry_envelope = setup_matrix_envelope_for_schedule(&schedule)?;
-        accumulate_terminal_verifier_ntt_keys(&schedule, &mut max_prefix_by_ring_d)?;
         saw_supported_shape = true;
         envelope.max_setup_len = envelope.max_setup_len.max(entry_envelope.max_setup_len);
     }
@@ -168,18 +147,7 @@ fn proof_optimized_setup_capacity_requirements_uncached<Cfg: CommitmentConfig>(
         )));
     }
 
-    let mut verifier_ntt_keys: Vec<_> = max_prefix_by_ring_d
-        .into_iter()
-        .map(|(ring_d, num_ring_elements)| NttCacheKey {
-            ring_d,
-            num_ring_elements,
-        })
-        .collect();
-    verifier_ntt_keys.sort_unstable_by_key(|key| key.ring_d);
-    Ok(SetupCapacityRequirements {
-        matrix: envelope,
-        verifier_ntt_keys,
-    })
+    Ok(envelope)
 }
 
 fn validate_setup_capacity_scan(
@@ -225,61 +193,6 @@ fn setup_envelope_scan_layouts<Cfg: CommitmentConfig>(
     }
 
     Ok(layouts)
-}
-
-fn accumulate_terminal_verifier_ntt_keys(
-    schedule: &Schedule,
-    max_prefix_by_ring_d: &mut HashMap<usize, usize>,
-) -> Result<(), AkitaError> {
-    schedule.validate_structure()?;
-    let Some(terminal) = schedule.steps.iter().rev().find_map(|step| match step {
-        Step::Fold(fold) => Some(&fold.params),
-        Step::Direct(_) => None,
-    }) else {
-        return Ok(());
-    };
-    let role_dims = terminal.role_dims();
-    let mut accumulate = |params: &dyn LevelParamsLike| -> Result<(), AkitaError> {
-        let a_len = params
-            .a_rows_len()
-            .checked_mul(params.a_col_len())
-            .ok_or_else(|| {
-                AkitaError::InvalidSetup("terminal A cache footprint overflow".into())
-            })?;
-        let b_len = params
-            .b_rows_len()
-            .checked_mul(params.b_col_len())
-            .ok_or_else(|| {
-                AkitaError::InvalidSetup("terminal B cache footprint overflow".into())
-            })?;
-        for (ring_d, len) in [(role_dims.d_a(), a_len), (role_dims.d_b(), b_len)] {
-            max_prefix_by_ring_d
-                .entry(ring_d)
-                .and_modify(|current| *current = (*current).max(len))
-                .or_insert(len);
-        }
-        Ok(())
-    };
-    accumulate(terminal)?;
-    for group in terminal.precommitted_group_iter() {
-        accumulate(group)?;
-    }
-    Ok(())
-}
-
-/// Exact negacyclic matrix prefixes needed by every terminal fold admitted by a setup.
-///
-/// The capacity scan mirrors setup-matrix sizing, but retains only the largest
-/// terminal A/B prefix per ring dimension rather than transforming the full
-/// shared setup envelope.
-pub fn verifier_ntt_cache_keys_for_capacity<Cfg: CommitmentConfig>(
-    max_num_vars: usize,
-    max_num_batched_polys: usize,
-) -> Result<Vec<NttCacheKey>, AkitaError> {
-    Ok(
-        proof_optimized_setup_capacity_requirements::<Cfg>(max_num_vars, max_num_batched_polys)?
-            .verifier_ntt_keys,
-    )
 }
 
 #[cfg(test)]

@@ -87,7 +87,7 @@ pub use proof::{
 };
 pub use proof::{
     active_setup_field_len, append_batched_commitments_to_transcript,
-    append_claim_values_to_transcript, assemble_relation_rhs, build_segment_typed_witness,
+    append_claim_values_to_transcript, assemble_relation_rhs,
     build_segment_typed_witness_from_groups, compute_relation_matrix_col_evals,
     compute_relation_weight_evals, decode_terminal_z_golomb_payload,
     decode_terminal_z_golomb_payload_with_cap, derive_public_matrix_flat, e_folded_segment_bytes,
@@ -127,13 +127,14 @@ pub use proof::{
 };
 pub use proof_size::{level_proof_bytes, FOLD_GRIND_NONCE_BYTES};
 pub use schedule::{
-    detect_field_modulus, multi_group_root_commit_params, r_decomp_levels, root_current_w_len,
-    root_direct_schedule, schedule_is_root_direct, schedule_num_fold_levels,
-    schedule_root_fold_step, schedule_terminal_direct_witness_shape, scheduled_next_level_params,
-    w_ring_element_count_for_chunks, w_ring_element_count_with_counts_for_layout,
-    w_ring_element_count_with_counts_for_layout_bits, AkitaScheduleInputs, AkitaScheduleLookupKey,
-    DirectStep, ExecutionSchedule, FoldStep, PrecommittedGroupParams, Schedule,
-    ScheduleKeyPrecommitSource, Step,
+    detect_field_modulus, intermediate_w_ring_element_count_for_chunks,
+    intermediate_w_ring_element_count_with_counts,
+    intermediate_w_ring_element_count_with_counts_bits, multi_group_root_commit_params,
+    r_decomp_levels, root_current_w_len, root_direct_schedule, schedule_is_root_direct,
+    schedule_num_fold_levels, schedule_root_fold_step, schedule_terminal_direct_witness_shape,
+    scheduled_next_level_params, AkitaScheduleInputs, AkitaScheduleLookupKey, DirectStep,
+    ExecutionSchedule, FoldStep, PrecommittedGroupParams, Schedule, ScheduleKeyPrecommitSource,
+    Step,
 };
 pub use setup_contribution::{
     ensure_setup_envelope, shared_setup_fold_gadget, SetupContributionGroupInputs,

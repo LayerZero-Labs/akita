@@ -118,11 +118,10 @@ fn expected_same_point_batched_shape(
             .expect("scheduled recursive fold current witness length");
         let level_params = scheduled.params;
         let next_level_params = scheduled.next_params;
-        let next_w_len = akita_types::w_ring_element_count_with_counts_for_layout::<OneHotF>(
+        let next_w_len = akita_types::intermediate_w_ring_element_count_with_counts::<OneHotF>(
             &level_params,
             1,
             1,
-            RelationMatrixRowLayout::WithDBlock,
         )
         .unwrap()
             * level_params.ring_dimension;

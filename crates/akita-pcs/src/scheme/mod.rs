@@ -85,22 +85,6 @@ where
         setup.verifier_setup()
     }
 
-    /// Optionally materialize every capacity-admitted verifier cache prefix.
-    ///
-    /// Verification prepares only the exact prefixes it uses on demand, so
-    /// callers should use this only when they explicitly want setup time to
-    /// absorb the full-capacity preprocessing cost.
-    pub fn preprocess_verifier_setup(
-        setup: &AkitaVerifierSetup<Cfg::Field>,
-    ) -> Result<(), AkitaError> {
-        let seed = setup.expanded.seed();
-        let keys = akita_config::verifier_ntt_cache_keys_for_capacity::<Cfg>(
-            seed.max_num_vars,
-            seed.max_num_batched_polys,
-        )?;
-        setup.prepare_verifier_ntt_prefixes(&keys)
-    }
-
     /// Validate the field tower against the config schedule policy ring dimension.
     fn validate_cfg_ring_policy() -> Result<usize, AkitaError> {
         let ring_d = akita_config::policy_of::<Cfg>().ring_dimension;

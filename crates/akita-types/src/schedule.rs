@@ -320,38 +320,34 @@ pub fn detect_field_modulus<F: CanonicalField>() -> u128 {
     crate::dispatch::field_modulus::<F>()
 }
 
-/// Total ring elements in a recursive witness polynomial for an explicit
-/// relation-matrix row layout. The terminal layout drops the D-block from the M-matrix,
-/// which shrinks the per-row `r` quotients by `n_d * r_decomp_levels` ring
-/// elements relative to the intermediate layout.
-pub fn w_ring_element_count_with_counts_for_layout<F: CanonicalField>(
+/// Total ring elements in an intermediate recursive witness polynomial.
+/// Terminal witnesses are quotient-free and must be sized from their
+/// [`crate::CleartextWitnessShape`] instead.
+pub fn intermediate_w_ring_element_count_with_counts<F: CanonicalField>(
     lp: &LevelParams,
     num_polynomials: usize,
     num_z_segments: usize,
-    layout: crate::layout::RelationMatrixRowLayout,
 ) -> Result<usize, AkitaError> {
     let modulus = detect_field_modulus::<F>();
     let field_bits = 128 - (modulus.saturating_sub(1)).leading_zeros();
-    w_ring_element_count_with_counts_for_layout_bits(
+    intermediate_w_ring_element_count_with_counts_bits(
         field_bits,
         lp,
         num_polynomials,
         num_z_segments,
-        layout,
     )
 }
 
-/// Non-generic variant of [`w_ring_element_count_with_counts_for_layout`] for
+/// Non-generic variant of [`intermediate_w_ring_element_count_with_counts`] for
 /// callers that already know the effective field bit width. The planner
 /// search uses this to keep its API free of a base-field type parameter.
-pub fn w_ring_element_count_with_counts_for_layout_bits(
+pub fn intermediate_w_ring_element_count_with_counts_bits(
     field_bits: u32,
     lp: &LevelParams,
     num_polynomials: usize,
     num_z_segments: usize,
-    layout: crate::layout::RelationMatrixRowLayout,
 ) -> Result<usize, AkitaError> {
-    lp.require_scalar_level("w_ring_element_count_with_counts_for_layout_bits")?;
+    lp.require_scalar_level("intermediate_w_ring_element_count_with_counts_bits")?;
     let e_hat_count = num_polynomials
         .checked_mul(lp.num_live_blocks)
         .and_then(|n| n.checked_mul(lp.num_digits_open))
@@ -366,7 +362,8 @@ pub fn w_ring_element_count_with_counts_for_layout_bits(
         .checked_mul(lp.inner_width())
         .and_then(|n| n.checked_mul(num_digits_fold))
         .ok_or_else(|| AkitaError::InvalidSetup("witness Z width overflow".to_string()))?;
-    let r_rows = lp.relation_matrix_row_count_for(1, layout)?;
+    let r_rows =
+        lp.relation_matrix_row_count_for(1, crate::layout::RelationMatrixRowLayout::WithDBlock)?;
     let r_count = r_rows
         .checked_mul(crate::sis::compute_num_digits_full_field(
             field_bits,
@@ -384,7 +381,7 @@ pub fn w_ring_element_count_with_counts_for_layout_bits(
 /// Witness ring-element count for a chunked (multi-chunk) or single-chunk layout.
 ///
 /// `num_chunks == 1` delegates to
-/// [`w_ring_element_count_with_counts_for_layout_bits`] with `num_public_rows = 1`,
+/// [`intermediate_w_ring_element_count_with_counts_bits`] with `num_public_rows = 1`,
 /// so it is byte-identical to the historical single-chunk pricing.
 ///
 /// `num_chunks > 1` prices the multi-chunk witness layout used by the distributed
@@ -406,46 +403,40 @@ pub fn w_ring_element_count_with_counts_for_layout_bits(
 /// Returns [`AkitaError::InvalidSetup`] when `num_chunks == 0`, `num_chunks > 1`
 /// is not a power of two, there are fewer live blocks than chunks, or
 /// any width product overflows. Never panics — verifier-reachable through the runtime DP fallback.
-pub fn w_ring_element_count_for_chunks(
+pub fn intermediate_w_ring_element_count_for_chunks(
     field_bits: u32,
     lp: &LevelParams,
     num_polynomials: usize,
-    layout: crate::layout::RelationMatrixRowLayout,
     num_chunks: usize,
 ) -> Result<usize, AkitaError> {
     if num_chunks == 0 {
         return Err(AkitaError::InvalidSetup(
-            "w_ring_element_count_for_chunks: num_chunks must be >= 1".to_string(),
+            "intermediate_w_ring_element_count_for_chunks: num_chunks must be >= 1".to_string(),
         ));
     }
     if num_chunks == 1 {
-        return w_ring_element_count_with_counts_for_layout_bits(
+        return intermediate_w_ring_element_count_with_counts_bits(
             field_bits,
             lp,
             num_polynomials,
             1,
-            layout,
         );
     }
     if !num_chunks.is_power_of_two() {
         return Err(AkitaError::InvalidSetup(
-            "w_ring_element_count_for_chunks: num_chunks must be a power of two".to_string(),
+            "intermediate_w_ring_element_count_for_chunks: num_chunks must be a power of two"
+                .to_string(),
         ));
     }
     if lp.num_live_blocks < num_chunks {
         return Err(AkitaError::InvalidSetup(format!(
-            "w_ring_element_count_for_chunks: num_live_blocks={} smaller than num_chunks={num_chunks}",
+            "intermediate_w_ring_element_count_for_chunks: num_live_blocks={} smaller than num_chunks={num_chunks}",
             lp.num_live_blocks
         )));
     }
     let overflow = || AkitaError::InvalidSetup("chunked witness width overflow".to_string());
-    let single = w_ring_element_count_with_counts_for_layout_bits(
-        field_bits,
-        lp,
-        num_polynomials,
-        1,
-        layout,
-    )?;
+    let single =
+        intermediate_w_ring_element_count_with_counts_bits(field_bits, lp, num_polynomials, 1)?;
     let num_digits_fold = lp.num_digits_fold(num_polynomials, field_bits)?;
     let z_chunk = lp
         .inner_width()

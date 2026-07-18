@@ -1120,7 +1120,10 @@ mod tests {
 
     #[test]
     fn terminal_build_stops_before_quotient_and_recursive_witness() {
-        use akita_types::{build_segment_typed_witness, ring_opening_point_from_field, BasisMode};
+        use akita_types::{
+            build_segment_typed_witness_from_groups, ring_opening_point_from_field, BasisMode,
+            SegmentTypedWitnessGroupParts,
+        };
 
         type F = fp128::Field;
         type Cfg = fp128::D128Full;
@@ -1215,15 +1218,18 @@ mod tests {
         };
         artifacts.ensure_ring_dim::<D>().expect("ring dim");
         let group = artifacts.groups.first().expect("single terminal group");
-        let segment = build_segment_typed_witness::<F>(
+        let segment = build_segment_typed_witness_from_groups::<F>(
             artifacts.ring_dim(),
-            &group.e_folded,
-            &group.recomposed_inner_rows,
-            group.z_folded_centered_flat(),
+            &[SegmentTypedWitnessGroupParts {
+                params: &level_params,
+                num_w_vectors: 1,
+                num_t_vectors: 1,
+                num_z_segments: 1,
+                e_folded: &group.e_folded,
+                recomposed_inner_rows: &group.recomposed_inner_rows,
+                z_folded_centered_flat: group.z_folded_centered_flat(),
+            }],
             &level_params,
-            1,
-            1,
-            1,
         )
         .expect("segment witness");
         assert_eq!(segment.layout.ring_dimension, D);

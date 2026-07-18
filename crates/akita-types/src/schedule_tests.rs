@@ -37,31 +37,25 @@ fn chunked_witness_count_matches_chunk_layout_arithmetic() {
     let field_bits = 128u32;
     let num_poly = 3usize;
 
-    for layout in [
-        RelationMatrixRowLayout::WithDBlock,
-        RelationMatrixRowLayout::WithoutDBlock,
-    ] {
-        let single =
-            w_ring_element_count_with_counts_for_layout_bits(field_bits, &lp, num_poly, 1, layout)
-                .unwrap();
-        // num_chunks = 1 must be byte-identical to the single-chunk delegate.
-        assert_eq!(
-            w_ring_element_count_for_chunks(field_bits, &lp, num_poly, layout, 1).unwrap(),
-            single
-        );
+    let single =
+        intermediate_w_ring_element_count_with_counts_bits(field_bits, &lp, num_poly, 1).unwrap();
+    // num_chunks = 1 must be byte-identical to the single-chunk delegate.
+    assert_eq!(
+        intermediate_w_ring_element_count_for_chunks(field_bits, &lp, num_poly, 1).unwrap(),
+        single
+    );
 
-        let z_pre = lp.inner_width() * lp.num_digits_fold(num_poly, field_bits).unwrap();
-        for num_chunks in [2usize, 4, 8] {
-            let chunked =
-                w_ring_element_count_for_chunks(field_bits, &lp, num_poly, layout, num_chunks)
-                    .unwrap();
-            // ê/t̂ totals are unchanged (partitioned), and the shared r-tail is
-            // a single summed quotient that keeps the single-machine row count
-            // (num_commitments = 1). So the ONLY growth is the replicated ẑ:
-            // (num_chunks - 1) full-width copies.
-            assert_eq!(chunked, single + (num_chunks - 1) * z_pre);
-            assert!(chunked > single, "chunked layout must grow vs single chunk");
-        }
+    let z_pre = lp.inner_width() * lp.num_digits_fold(num_poly, field_bits).unwrap();
+    for num_chunks in [2usize, 4, 8] {
+        let chunked =
+            intermediate_w_ring_element_count_for_chunks(field_bits, &lp, num_poly, num_chunks)
+                .unwrap();
+        // ê/t̂ totals are unchanged (partitioned), and the shared r-tail is
+        // a single summed quotient that keeps the single-machine row count
+        // (num_commitments = 1). So the ONLY growth is the replicated ẑ:
+        // (num_chunks - 1) full-width copies.
+        assert_eq!(chunked, single + (num_chunks - 1) * z_pre);
+        assert!(chunked > single, "chunked layout must grow vs single chunk");
     }
 }
 
@@ -83,17 +77,17 @@ fn chunked_witness_count_rejects_invalid_chunk_counts() {
     .unwrap();
     // Non-power-of-two chunk count.
     assert!(matches!(
-        w_ring_element_count_for_chunks(128, &lp, 1, RelationMatrixRowLayout::WithDBlock, 6),
+        intermediate_w_ring_element_count_for_chunks(128, &lp, 1, 6),
         Err(AkitaError::InvalidSetup(_))
     ));
     // num_chunks does not divide num_live_blocks (8 % 16 != 0).
     assert!(matches!(
-        w_ring_element_count_for_chunks(128, &lp, 1, RelationMatrixRowLayout::WithDBlock, 16),
+        intermediate_w_ring_element_count_for_chunks(128, &lp, 1, 16),
         Err(AkitaError::InvalidSetup(_))
     ));
     // Zero chunks.
     assert!(matches!(
-        w_ring_element_count_for_chunks(128, &lp, 1, RelationMatrixRowLayout::WithDBlock, 0),
+        intermediate_w_ring_element_count_for_chunks(128, &lp, 1, 0),
         Err(AkitaError::InvalidSetup(_))
     ));
 }

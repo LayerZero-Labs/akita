@@ -232,11 +232,10 @@ where
         AkitaBatchedRootProof::Fold(_) => {
             // Chunked levels commit a wider (replicated-ẑ) next witness; size it
             // with the per-level chunk count (`num_chunks = 1` is unchanged).
-            akita_types::w_ring_element_count_for_chunks(
+            akita_types::intermediate_w_ring_element_count_for_chunks(
                 F::modulus_bits(),
                 root_lp,
                 opening_batch.num_total_polynomials(),
-                akita_types::RelationMatrixRowLayout::WithDBlock,
                 root_lp.witness_chunk.num_chunks,
             )?
             .checked_mul(d_a)
