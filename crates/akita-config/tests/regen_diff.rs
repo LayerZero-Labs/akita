@@ -20,7 +20,7 @@
 use std::collections::BTreeMap;
 
 use akita_config::generated_families::{family_keys, ALL_GENERATED_FAMILIES};
-use akita_types::{Schedule, Step};
+use akita_types::Schedule;
 
 #[derive(Default, Clone, Copy)]
 struct FamilyTotals {
@@ -55,18 +55,11 @@ impl ChangedKey {
 }
 
 fn step_count(s: &Schedule) -> usize {
-    s.steps.len()
+    s.folds.len() + 1
 }
 
 fn log_basis_set(s: &Schedule) -> Vec<u32> {
-    let mut v: Vec<u32> = s
-        .steps
-        .iter()
-        .filter_map(|step| match step {
-            Step::Fold(f) => Some(f.params.log_basis),
-            Step::Direct(_) => None,
-        })
-        .collect();
+    let mut v: Vec<u32> = s.folds.iter().map(|fold| fold.params.log_basis).collect();
     v.sort_unstable();
     v.dedup();
     v

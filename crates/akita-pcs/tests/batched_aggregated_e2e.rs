@@ -128,7 +128,6 @@ mod non_zk_aggregated_cases {
                 &mut verifier_transcript,
                 verify_input(&pt[..], opening_groups[0], &commitments[0]),
                 BasisMode::Lagrange,
-                akita_types::SetupContributionMode::Direct,
             );
             assert!(
                 result.is_ok(),
@@ -220,7 +219,6 @@ mod non_zk_aggregated_cases {
                 &mut verifier_transcript,
                 verify_input(&pt[..], opening_groups[0], &commitments[0]),
                 BasisMode::Lagrange,
-                akita_types::SetupContributionMode::Direct,
             );
             assert!(
                 result.is_ok(),
@@ -339,7 +337,6 @@ fn aggregated_mixed_dense_and_onehot_under_dense_cfg() {
             &mut verifier_transcript,
             verify_input(&pt[..], opening_groups[0], &commitments[0]),
             BasisMode::Lagrange,
-            akita_types::SetupContributionMode::Direct,
         );
         assert!(
             result.is_ok(),

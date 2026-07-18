@@ -13,8 +13,11 @@ At a high level:
 
 1. **Bind the instance** and absorb the opening batch shape into the transcript.
 2. **Resolve the schedule** the prover used (`CommitmentConfig::runtime_schedule`), validating `num_vars` against setup capacity before any DP fallback.
-3. **For each level**, replay sumcheck stages, opening checks, and fold or direct paths as dictated by `LevelParams` (see `protocol/levels/`, `levels/root_fold.rs`, `levels/suffix.rs`, `src/stages/`).
-4. **Evaluate the relation matrix** `M` at the derived point ([Matrix evaluation](./verifying/matrix_evaluation.md)).
+3. **Replay the structural folds** in `protocol/core`: the root fold followed by
+   every recursive fold, using the schedule-selected `LevelParams`.
+4. **Check the terminal witness directly** against its predecessor-bound `t`
+   state. The terminal relation is `consistency | A`; it has no outer `u`, B
+   block, D block, or quotient sumcheck.
 
 The verifier never constructs prover-only polynomial backends or setup expansion
 kernels.

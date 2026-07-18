@@ -188,8 +188,9 @@ Implemented now:
   resolves the runtime schedule, reads its multi-group root commit params through
   `Cfg::multi_group_root_commit_params`,
   and emits the final commitment plus hint.
-- `batched_prove` / `batched_verify` support `G > 1` folded multi-group-root one-hot
-  openings when `SetupContributionMode::Direct`, the opening field has extension
+- `batched_prove` supports `G > 1` folded multi-group-root one-hot openings when
+  proving selects `SetupContributionMode::Direct`; `batched_verify` derives
+  setup-contribution behavior from the schedule. The opening field has extension
   degree one, and the root can hand off to a singleton recursive suffix. The
   multi-group root carries per-group `z_hat`, `e_hat`, and `t_hat` sections followed
   by one shared quotient tail.
@@ -721,7 +722,6 @@ fn batched_verify<T: Transcript<F>>(
     transcript: &mut T,
     claims: OpeningClaims<'_, Self::ExtField, &Self::Commitment>,
     basis: BasisMode,
-    setup_contribution_mode: SetupContributionMode,
 ) -> Result<(), AkitaError>;
 
 fn batched_prove<'a, T, P, B>(

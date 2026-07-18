@@ -330,9 +330,9 @@ pub(crate) fn build_verifier_ntt_slot_for_key<F: FieldCore + CanonicalField>(
     expanded: &AkitaExpandedSetup<F>,
     key: NttCacheKey,
 ) -> Result<PreparedNttSlotAny, AkitaError> {
-    // Terminal A/B roles use the union represented by the outer-role table.
-    // The broader NTT table also contains setup-envelope-only dimensions and
-    // made every verifier instantiation compile kernels it can never call.
+    // The verifier cache key already selects one active ring dimension. Use
+    // the outer-role dispatch table as the type-erased dimension registry;
+    // this does not imply a terminal B role (terminals use A only).
     crate::dispatch_for_field!(
         ProtocolDispatchSlot::Role(RingRole::Outer),
         F,

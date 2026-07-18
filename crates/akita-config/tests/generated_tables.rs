@@ -24,7 +24,7 @@
 //! expanded [`LevelParams`] (SIS buckets + derived matrix widths,
 //! which the compact 7-tuple drops), step kinds / witness shapes, and total
 //! proof bytes. This is strictly stronger than diffing the compact
-//! `GeneratedStep` tuples: it catches any drift where the table-hit
+//! generated fold tuples: it catches any drift where the table-hit
 //! expansion would carry a different `a_key.coeff_linf_bound()` (or width, or
 //! rank) than the DP used, not just a different stored tuple.
 //!
@@ -39,9 +39,7 @@ use akita_config::proof_optimized::{fp128, fp32, fp64};
 use akita_config::tensor_verifier;
 use akita_config::CommitmentConfig;
 use akita_field::AkitaError;
-use akita_types::{
-    AkitaScheduleLookupKey, DirectStep, FoldStep, PolynomialGroupLayout, Schedule, Step,
-};
+use akita_types::{AkitaScheduleLookupKey, DirectStep, FoldStep, PolynomialGroupLayout, Schedule};
 
 #[cfg(feature = "all-schedules")]
 use akita_config::policy_of;
@@ -330,8 +328,8 @@ impl Mismatch {
 /// witness shapes).
 fn render_schedule(schedule: &Schedule) -> String {
     format!(
-        "total_bytes={} steps={:?}",
-        schedule.total_bytes, schedule.steps
+        "total_bytes={} folds={:?} terminal={:?}",
+        schedule.total_bytes, schedule.folds, schedule.terminal
     )
 }
 
@@ -348,27 +346,19 @@ fn direct_steps_equal(left: &DirectStep, right: &DirectStep) -> bool {
         && left.direct_bytes == right.direct_bytes
 }
 
-fn steps_equal(left: &Step, right: &Step) -> bool {
-    match (left, right) {
-        (Step::Fold(left), Step::Fold(right)) => fold_steps_equal(left, right),
-        (Step::Direct(left), Step::Direct(right)) => direct_steps_equal(left, right),
-        _ => false,
-    }
-}
-
 fn schedules_equal(left: &Schedule, right: &Schedule) -> bool {
     if left.total_bytes != right.total_bytes {
         return false;
     }
-    if left.steps.len() != right.steps.len() {
+    if left.folds.len() != right.folds.len() {
         return false;
     }
-    for (l, r) in left.steps.iter().zip(right.steps.iter()) {
-        if !steps_equal(l, r) {
+    for (l, r) in left.folds.iter().zip(right.folds.iter()) {
+        if !fold_steps_equal(l, r) {
             return false;
         }
     }
-    true
+    direct_steps_equal(&left.terminal, &right.terminal)
 }
 
 fn worker_count() -> usize {

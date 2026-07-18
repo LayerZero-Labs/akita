@@ -11,7 +11,7 @@ use akita_planner::{find_group_batch_schedule, PlannerPolicy};
 use akita_types::sis::{
     min_secure_rank, rounded_up_collision_inf_norm, SisMatrixRole, SisTableDigest, SisTableKey,
 };
-use akita_types::{AkitaScheduleLookupKey, LevelParams, PolynomialGroupLayout, Step};
+use akita_types::{AkitaScheduleLookupKey, LevelParams, PolynomialGroupLayout};
 
 type Cfg = fp128::D64OneHot;
 
@@ -26,12 +26,11 @@ struct LayoutSummary {
 }
 
 fn root_params(schedule: &akita_types::Schedule) -> Result<&LevelParams, AkitaError> {
-    match schedule.steps.first() {
-        Some(Step::Fold(fold)) => Ok(&fold.params),
-        Some(Step::Direct(_)) | None => Err(AkitaError::InvalidSetup(
-            "schedule is missing its root fold".to_string(),
-        )),
-    }
+    schedule
+        .folds
+        .first()
+        .map(|fold| &fold.params)
+        .ok_or_else(|| AkitaError::InvalidSetup("schedule is missing its root fold".to_string()))
 }
 
 fn layout_summary(

@@ -13,7 +13,7 @@ use akita_types::{
     padded_setup_prefix_len, shared_d_digit_log_basis, AkitaScheduleInputs, AkitaScheduleLookupKey,
     CommitmentRingDims, DecompositionParams, FoldStep, LevelParams, OpeningClaimsLayout,
     PolynomialGroupLayout, PrecommittedGroupParams, PrecommittedLevelParams,
-    RelationMatrixRowLayout, Schedule, SetupContributionMode, Step, WitnessLayout,
+    RelationMatrixRowLayout, Schedule, SetupContributionMode, WitnessLayout,
     SETUP_OFFLOAD_MIN_PREFIX_FIELD_LEN,
 };
 
@@ -414,7 +414,7 @@ pub fn find_group_batch_schedule(
     let fold_shape_at_level = &fold_challenge_shape_at_level;
     let field_bits = policy.decomposition.field_bits();
     let challenge_field_bits = field_bits * policy.chal_ext_degree as u32;
-    let mut best: Option<(usize, Vec<Step>)> = None;
+    let mut best: Option<(usize, Vec<FoldStep>, akita_types::DirectStep)> = None;
 
     let root_current_w_len = 1usize
         .checked_shl(key.final_group.num_vars() as u32)
@@ -541,7 +541,7 @@ pub fn find_group_batch_schedule(
             };
 
             for suffix_fold in child_suffix_no_prefix.best_fold_per_lb.values() {
-                let child_is_terminal = matches!(suffix_fold.steps.get(1), Some(Step::Direct(_)));
+                let child_is_terminal = suffix_fold.folds.len() == 1;
                 let (fold_mode, suffix_fold) = if child_is_terminal {
                     (SetupContributionMode::Direct, suffix_fold.clone())
                 } else if recursion_threshold_met {
@@ -563,7 +563,7 @@ pub fn find_group_batch_schedule(
                     else {
                         continue;
                     };
-                    if matches!(prefixed_suffix_fold.steps.get(1), Some(Step::Direct(_))) {
+                    if prefixed_suffix_fold.folds.len() == 1 {
                         continue;
                     }
                     (
@@ -588,29 +588,33 @@ pub fn find_group_batch_schedule(
                 let total = root_proof_size + suffix_fold.total_bytes;
                 if best
                     .as_ref()
-                    .is_none_or(|(best_total, _)| total < *best_total)
+                    .is_none_or(|(best_total, _, _)| total < *best_total)
                 {
-                    let mut steps = Vec::with_capacity(1 + suffix_fold.steps.len());
-                    steps.push(Step::fold(FoldStep {
+                    let mut folds = Vec::with_capacity(1 + suffix_fold.folds.len());
+                    folds.push(FoldStep {
                         params: fold_candidate_params,
                         current_w_len: root_current_w_len,
                         next_w_len,
                         level_bytes: root_proof_size,
-                    }));
-                    steps.extend(suffix_fold.steps.iter().cloned());
-                    best = Some((total, steps));
+                    });
+                    folds.extend(suffix_fold.folds.iter().cloned());
+                    best = Some((total, folds, suffix_fold.terminal.clone()));
                 }
             }
         }
     }
 
-    let Some((total_bytes, steps)) = best else {
+    let Some((total_bytes, folds, terminal)) = best else {
         return Err(AkitaError::UnsupportedSchedule(format!(
             "no multi-group schedule with at least two folds for num_vars={}",
             key.final_group.num_vars()
         )));
     };
-    Ok(Schedule { steps, total_bytes })
+    Ok(Schedule {
+        folds,
+        terminal,
+        total_bytes,
+    })
 }
 
 #[cfg(test)]
@@ -677,10 +681,12 @@ mod tests {
         precommitted_policy.recursive_setup_planning = false;
         let schedule = find_schedule(key, &precommitted_policy, ring_challenge_config, fold_shape)
             .expect("schedule");
-        let params = match schedule.steps.first().expect("schedule step") {
-            Step::Fold(fold) => fold.params.clone(),
-            Step::Direct(_) => panic!("precommit schedule must start with a fold"),
-        };
+        let params = schedule
+            .folds
+            .first()
+            .expect("schedule root fold")
+            .params
+            .clone();
         PrecommittedGroupParams::from_params(key, &params)
     }
 
@@ -709,9 +715,7 @@ mod tests {
         let opening_batch = key.opening_layout().expect("opening layout");
         let schedule = find_group_batch_schedule(&key, &policy, ring_challenge_config, fold_shape)
             .expect("multi-group schedule");
-        let Step::Fold(root) = schedule.steps.first().expect("multi-group root step") else {
-            panic!("expected multi-group root fold");
-        };
+        let root = schedule.folds.first().expect("multi-group root fold");
 
         let runtime_next_w_len = root
             .params
@@ -765,7 +769,7 @@ mod tests {
         match (via_multi_group, via_scalar) {
             (Ok(via_multi_group), Ok(via_scalar)) => {
                 assert_eq!(via_multi_group.total_bytes, via_scalar.total_bytes);
-                assert_eq!(via_multi_group.steps.len(), via_scalar.steps.len());
+                assert_eq!(via_multi_group.folds.len(), via_scalar.folds.len());
             }
             (Err(AkitaError::UnsupportedSchedule(_)), Err(AkitaError::UnsupportedSchedule(_))) => {}
             (via_multi_group, via_scalar) => panic!(
@@ -843,9 +847,7 @@ mod tests {
 
         let schedule = find_group_batch_schedule(&key, &policy, ring_challenge_config, fold_shape)
             .expect("multi-group schedule");
-        let Step::Fold(root) = schedule.steps.first().expect("multi-group root step") else {
-            panic!("expected multi-group root fold");
-        };
+        let root = schedule.folds.first().expect("multi-group root fold");
 
         assert_eq!(root.params.log_basis, 4);
     }
@@ -880,9 +882,7 @@ mod tests {
         let schedule =
             find_group_batch_schedule(&key, &root_policy, ring_challenge_config, fold_shape)
                 .expect("mixed-basis D128 root schedule");
-        let Step::Fold(root) = schedule.steps.first().expect("mixed-basis root step") else {
-            panic!("expected mixed-basis root fold");
-        };
+        let root = schedule.folds.first().expect("mixed-basis root fold");
 
         assert_eq!(root.params.log_basis, 2);
         assert_eq!(root.params.shared_d_digit_log_basis(), 3);
@@ -910,9 +910,7 @@ mod tests {
 
         let schedule = find_group_batch_schedule(&key, &policy, ring_challenge_config, fold_shape)
             .expect("multi-group schedule");
-        let Step::Fold(root) = schedule.steps.first().expect("multi-group root step") else {
-            panic!("expected multi-group root fold");
-        };
+        let root = schedule.folds.first().expect("multi-group root fold");
 
         assert_eq!(root.current_w_len, 1usize << key.final_group.num_vars());
         assert_eq!(
@@ -936,14 +934,7 @@ mod tests {
 
         let schedule = find_group_batch_schedule(&key, &policy, ring_challenge_config, fold_shape)
             .expect("recursive multi-group schedule");
-        let folds = schedule
-            .steps
-            .iter()
-            .filter_map(|step| match step {
-                Step::Fold(fold) => Some(fold),
-                Step::Direct(_) => None,
-            })
-            .collect::<Vec<_>>();
+        let folds = &schedule.folds;
 
         assert!(folds.len() >= 2, "test key must plan a fold-again edge");
         assert_eq!(
@@ -1080,14 +1071,7 @@ mod tests {
 
         let schedule = find_group_batch_schedule(&key, &policy, ring_challenge_config, fold_shape)
             .expect("schedule with terminal child");
-        let folds = schedule
-            .steps
-            .iter()
-            .filter_map(|step| match step {
-                Step::Fold(fold) => Some(fold),
-                Step::Direct(_) => None,
-            })
-            .collect::<Vec<_>>();
+        let folds = &schedule.folds;
         if folds.len() == 1 {
             assert_eq!(
                 folds[0].params.setup_contribution_mode,
@@ -1101,16 +1085,13 @@ mod tests {
             SetupContributionMode::Direct
         );
         assert!(!terminal_fold.params.has_precommitted_groups());
-        let predecessor = folds[folds.len() - 2];
-        if matches!(schedule.steps.get(folds.len()), Some(Step::Direct(_))) {
-            // The fold immediately before Direct must remain Direct-mode when
-            // its child is the terminal fold.
-            if folds.len() == 2 {
-                assert_eq!(
-                    predecessor.params.setup_contribution_mode,
-                    SetupContributionMode::Direct
-                );
-            }
+        let predecessor = &folds[folds.len() - 2];
+        // The fold immediately before the terminal fold must remain Direct-mode.
+        if folds.len() == 2 {
+            assert_eq!(
+                predecessor.params.setup_contribution_mode,
+                SetupContributionMode::Direct
+            );
         }
     }
 
@@ -1132,20 +1113,14 @@ mod tests {
 
         let schedule = find_group_batch_schedule(&key, &policy, ring_challenge_config, fold_shape)
             .expect("recursive multi-group schedule");
-        for (index, step) in schedule.steps.iter().enumerate() {
-            let Step::Fold(fold) = step else {
-                continue;
-            };
+        for (index, fold) in schedule.folds.iter().enumerate() {
             if fold.params.setup_contribution_mode != SetupContributionMode::Recursive {
                 continue;
             }
-            let Step::Fold(successor) = schedule
-                .steps
+            let successor = schedule
+                .folds
                 .get(index + 1)
-                .expect("recursive fold must have a successor")
-            else {
-                panic!("recursive fold successor must be another fold");
-            };
+                .expect("recursive fold must have a successor");
             assert!(successor.params.setup_prefix.is_some());
             assert!(successor.params.precommitted_groups.is_empty());
             assert_eq!(successor.params.precommitted_group_count(), 1);

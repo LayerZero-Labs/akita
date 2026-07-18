@@ -164,7 +164,6 @@ where
         &mut verifier_transcript,
         verify_input(&pt[..], opening_groups[0], &commitments[0]),
         BasisMode::Lagrange,
-        akita_types::SetupContributionMode::Direct,
     )
     .expect("verify");
 }
@@ -249,7 +248,6 @@ where
         &mut verifier_transcript,
         verify_input(&pt[..], opening_groups[0], &commitments[0]),
         BasisMode::Lagrange,
-        akita_types::SetupContributionMode::Direct,
     )
     .expect("verify");
 
@@ -259,12 +257,9 @@ where
     );
     let mut tampered = proof.clone();
     let witness = tampered.terminal.final_witness_mut();
-    let akita_types::CleartextWitnessProof::SegmentTyped(segment) = witness else {
-        panic!("terminal fixture must use a segment-typed witness");
-    };
-    let mut t_coeffs = segment.t_fields.coeffs().to_vec();
+    let mut t_coeffs = witness.t_fields.coeffs().to_vec();
     t_coeffs[0] += F::one();
-    segment.t_fields = akita_types::RingVec::from_coeffs(t_coeffs);
+    witness.t_fields = akita_types::RingVec::from_coeffs(t_coeffs);
     let mut verifier_transcript = AkitaTranscript::<F>::new(b"setup-tests/onehot");
     AkitaCommitmentScheme::<Cfg>::batched_verify(
         &tampered,
@@ -272,7 +267,6 @@ where
         &mut verifier_transcript,
         verify_input(&pt[..], opening_groups[0], &commitments[0]),
         BasisMode::Lagrange,
-        akita_types::SetupContributionMode::Direct,
     )
     .expect_err("tampering predecessor-bound terminal t must be rejected");
 
@@ -288,7 +282,6 @@ where
         &mut verifier_transcript,
         verify_input(&pt[..], opening_groups[0], &commitments[0]),
         BasisMode::Lagrange,
-        akita_types::SetupContributionMode::Direct,
     )
     .expect_err("schedule/proof binding mismatch must reject without panic");
 }
@@ -367,7 +360,6 @@ fn run_dense_batched_e2e<Cfg, const D: usize>(
         &mut verifier_transcript,
         verify_input(&pt[..], opening_groups[0], &commitments[0]),
         BasisMode::Lagrange,
-        akita_types::SetupContributionMode::Direct,
     )
     .expect("batched verify");
 }
@@ -461,7 +453,6 @@ fn run_onehot_batched_e2e<Cfg, const D: usize>(
         &mut verifier_transcript,
         verify_input(&pt[..], opening_groups[0], &commitments[0]),
         BasisMode::Lagrange,
-        akita_types::SetupContributionMode::Direct,
     )
     .expect("batched onehot verify");
 }

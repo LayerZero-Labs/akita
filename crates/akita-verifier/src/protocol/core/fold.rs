@@ -234,22 +234,7 @@ pub(in crate::protocol::core) struct PreparedFoldReplay<'a, F: FieldCore, E: Fie
     /// Per-group ring multiplier points in `OpeningClaims` order.
     pub(in crate::protocol::core) group_ring_multiplier_points: Vec<RingMultiplierOpeningPoint<F>>,
     pub(in crate::protocol::core) w_len: usize,
-    pub(in crate::protocol::core) stage1: Option<&'a AkitaStage1Proof<E>>,
-    pub(in crate::protocol::core) stage2: Option<&'a AkitaStage2Proof<F, E>>,
-    pub(in crate::protocol::core) final_witness: Option<&'a CleartextWitnessProof<F>>,
-    pub(in crate::protocol::core) next_w_commitment: Option<&'a RingVec<F>>,
-    /// Canonical terminal `t` bytes for an intermediate edge that elides `u`.
-    pub(in crate::protocol::core) next_t_state: Option<&'a [u8]>,
-    /// Schedule ring dimension of the next fold level. `Some` for
-    /// intermediate levels (the dimension `next_w_commitment` is shaped at,
-    /// which may differ from the current level's `D` in mixed-D schedules);
-    /// `None` for terminal levels.
-    pub(in crate::protocol::core) next_ring_dim: Option<usize>,
-    /// A-role dimension used to lay out the next logical witness opening.
-    pub(in crate::protocol::core) next_witness_ring_dim: Option<usize>,
-    pub(in crate::protocol::core) next_opening_source_len: usize,
-    pub(in crate::protocol::core) terminal_replay: Option<TerminalWitnessTranscriptParts>,
-    pub(in crate::protocol::core) stage3: Option<(&'a SetupSumcheckProof<E>, &'a LevelParams)>,
+    pub(in crate::protocol::core) payload: PreparedFoldPayload<'a, F, E>,
     /// Per-group prepared opening points in `OpeningClaims` order (one element
     /// for scalar/suffix folds). Reused for the fused trace term.
     pub(in crate::protocol::core) trace_prepared_points: Option<Vec<PreparedOpeningPoint<F, E>>>,
@@ -260,6 +245,30 @@ pub(in crate::protocol::core) struct PreparedFoldReplay<'a, F: FieldCore, E: Fie
     pub(in crate::protocol::core) trace_basis: BasisMode,
 }
 
+#[derive(Clone, Copy)]
+pub(in crate::protocol::core) enum PreparedNextWitness<'a, F: FieldCore> {
+    Commitment {
+        commitment: &'a RingVec<F>,
+        ring_dim: usize,
+    },
+    TerminalT(&'a [u8]),
+}
+
+pub(in crate::protocol::core) enum PreparedFoldPayload<'a, F: FieldCore, E: FieldCore> {
+    Terminal {
+        final_witness: &'a CleartextWitnessProof<F>,
+        transcript: TerminalWitnessTranscriptParts,
+    },
+    Recursive {
+        stage1: &'a AkitaStage1Proof<E>,
+        stage2: &'a AkitaStage2Proof<F, E>,
+        next_witness: PreparedNextWitness<'a, F>,
+        next_witness_ring_dim: usize,
+        next_opening_source_len: usize,
+        stage3: Option<(&'a SetupSumcheckProof<E>, &'a LevelParams)>,
+    },
+}
+
 struct Stage1Replay<E: FieldCore> {
     batching_coeff: E,
     s_claim: E,
@@ -267,7 +276,7 @@ struct Stage1Replay<E: FieldCore> {
 }
 
 fn verify_stage1<F, E, T>(
-    proof: Option<&AkitaStage1Proof<E>>,
+    proof: &AkitaStage1Proof<E>,
     rs: &RingSwitchVerifyOutput<E>,
     transcript: &mut T,
 ) -> Result<Stage1Replay<E>, AkitaError>
@@ -280,7 +289,6 @@ where
         .col_bits
         .checked_add(rs.ring_bits)
         .ok_or_else(|| AkitaError::InvalidSetup("stage-1 variable count overflow".to_string()))?;
-    let proof = proof.ok_or(AkitaError::InvalidProof)?;
     if rs.tau0.len() != num_rounds {
         return Err(AkitaError::InvalidSize {
             expected: num_rounds,
@@ -783,68 +791,88 @@ where
         role_dims,
     )?;
     relation_instance.check_v_shape_for_level(prepared.lp)?;
-    if let Some(final_witness) = prepared.final_witness {
-        let _terminal_span = tracing::info_span!(
-            "verify_terminal_direct_fold",
-            d_a = role_dims.d_a(),
-            d_b = role_dims.d_b(),
-            groups = num_groups
-        )
-        .entered();
-        let replay = prepared
-            .terminal_replay
-            .as_ref()
-            .ok_or(AkitaError::InvalidProof)?;
-        if LevelParams::has_commitment_block(prepared.relation_matrix_row_layout) {
-            let response = replay.outer_committed_response();
-            transcript.absorb_and_record_bytes(ABSORB_TERMINAL_W_REMAINDER, &response);
-        } else {
-            transcript.absorb_and_record_bytes(ABSORB_TERMINAL_W_REMAINDER, &replay.response);
-        }
-        super::terminal_direct::verify_terminal_ring_relations(
-            setup,
-            &relation_instance,
-            prepared.lp,
-            commitment_rows,
-            final_witness,
-        )?;
-        super::terminal_direct::verify_terminal_trace(
-            &relation_instance,
-            prepared.lp,
-            final_witness,
-            prepared
-                .trace_prepared_points
-                .as_deref()
-                .ok_or(AkitaError::InvalidProof)?,
-            &prepared.row_coefficients,
-            prepared.trace_claim_scales.as_deref(),
-            prepared.trace_eval_scale,
-            prepared.trace_eval_target,
-        )?;
-        return Ok((Vec::new(), None));
-    }
+    let (stage1, stage2, next_witness, next_witness_ring_dim, next_opening_source_len, stage3) =
+        match prepared.payload {
+            PreparedFoldPayload::Terminal {
+                final_witness,
+                transcript: terminal_replay,
+            } => {
+                let _terminal_span = tracing::info_span!(
+                    "verify_terminal_direct_fold",
+                    d_a = role_dims.d_a(),
+                    d_b = role_dims.d_b(),
+                    groups = num_groups
+                )
+                .entered();
+                if prepared.relation_matrix_row_layout
+                    != RelationMatrixRowLayout::WithoutCommitmentBlocks
+                {
+                    return Err(AkitaError::InvalidProof);
+                }
+                transcript.absorb_and_record_bytes(
+                    ABSORB_TERMINAL_W_REMAINDER,
+                    &terminal_replay.response,
+                );
+                super::terminal_direct::verify_terminal_ring_relations(
+                    setup,
+                    &relation_instance,
+                    prepared.lp,
+                    final_witness,
+                )?;
+                super::terminal_direct::verify_terminal_trace(
+                    &relation_instance,
+                    prepared.lp,
+                    final_witness,
+                    prepared
+                        .trace_prepared_points
+                        .as_deref()
+                        .ok_or(AkitaError::InvalidProof)?,
+                    &prepared.row_coefficients,
+                    prepared.trace_claim_scales.as_deref(),
+                    prepared.trace_eval_scale,
+                    prepared.trace_eval_target,
+                )?;
+                return Ok((Vec::new(), None));
+            }
+            PreparedFoldPayload::Recursive {
+                stage1,
+                stage2,
+                next_witness,
+                next_witness_ring_dim,
+                next_opening_source_len,
+                stage3,
+            } => (
+                stage1,
+                stage2,
+                next_witness,
+                next_witness_ring_dim,
+                next_opening_source_len,
+                stage3,
+            ),
+        };
     let ring_switch_replay = RingSwitchReplay {
         setup: &setup.expanded,
         relation: &relation_instance,
         row_coefficients: &prepared.row_coefficients,
         lp: prepared.lp,
-        opening_source_len: prepared.next_opening_source_len,
-        opening_ring_dim: prepared.next_witness_ring_dim.unwrap_or(role_dims.d_a()),
+        opening_source_len: next_opening_source_len,
+        opening_ring_dim: next_witness_ring_dim,
     };
     let d_a = role_dims.d_a();
-    match (prepared.next_w_commitment, prepared.next_t_state) {
-        (Some(next_w_commitment), None) => {
-            let next_ring_dim = prepared.next_ring_dim.ok_or(AkitaError::InvalidProof)?;
-            if next_ring_dim == 0 || !next_w_commitment.can_decode_vec(next_ring_dim) {
+    match next_witness {
+        PreparedNextWitness::Commitment {
+            commitment,
+            ring_dim,
+        } => {
+            if ring_dim == 0 || !commitment.can_decode_vec(ring_dim) {
                 return Err(AkitaError::InvalidProof);
             }
-            transcript
-                .absorb_and_record_serde(ABSORB_NEXT_LEVEL_WITNESS_BINDING, next_w_commitment);
+            transcript.absorb_and_record_serde(ABSORB_NEXT_LEVEL_WITNESS_BINDING, commitment);
         }
-        (None, Some(t_state)) if !t_state.is_empty() => {
+        PreparedNextWitness::TerminalT(t_state) if !t_state.is_empty() => {
             transcript.absorb_and_record_bytes(ABSORB_NEXT_LEVEL_WITNESS_BINDING, t_state);
         }
-        _ => return Err(AkitaError::InvalidProof),
+        PreparedNextWitness::TerminalT(_) => return Err(AkitaError::InvalidProof),
     }
     let rs = dispatch_for_field!(ProtocolDispatchSlot::Role(RingRole::Inner), F, d_a, |D| {
         ring_switch_verifier::<F, E, T, D>(
@@ -862,7 +890,7 @@ where
         relation_instance.v(),
         commitment_rows,
     )?;
-    let stage1_replay = verify_stage1::<F, E, T>(prepared.stage1, &rs, transcript)?;
+    let stage1_replay = verify_stage1::<F, E, T>(stage1, &rs, transcript)?;
     // EvaluationTrace is the last padded relation row: weight openings by
     // `eq(tau1, EvaluationTrace_row_index)`.
     let opening_batch = relation_instance.opening_batch();
@@ -979,27 +1007,24 @@ where
             opening_batch: relation_instance.opening_batch().clone(),
         })
     };
-    let setup_claim = prepared.stage3.as_ref().map(|(proof, _)| proof.claim);
+    let setup_claim = stage3.as_ref().map(|(proof, _)| proof.claim);
     let sumcheck_challenges = verify_stage2::<F, E, T>(
         transcript,
         setup,
         &relation_instance,
-        prepared.stage2.ok_or(AkitaError::InvalidProof)?,
+        stage2,
         prepared.w_len,
         stage1_replay,
         &rs,
         relation_claim,
         prepared.lp,
         setup_claim,
-        prepared.next_opening_source_len,
-        prepared.next_witness_ring_dim.unwrap_or(role_dims.d_a()),
+        next_opening_source_len,
+        next_witness_ring_dim,
         trace_wire,
     )?;
-    let stage2_next_w_eval = if prepared.stage3.is_some() {
-        prepared
-            .stage2
-            .ok_or(AkitaError::InvalidProof)?
-            .next_w_eval()
+    let stage2_next_w_eval = if stage3.is_some() {
+        stage2.next_w_eval()
     } else {
         E::zero()
     };
@@ -1009,7 +1034,7 @@ where
         &rs,
         &sumcheck_challenges,
         stage2_next_w_eval,
-        prepared.stage3,
+        stage3,
     )?;
     Ok(stage3_output.unwrap_or((sumcheck_challenges, None)))
 }

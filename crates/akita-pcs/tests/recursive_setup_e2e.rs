@@ -19,7 +19,7 @@ use akita_transcript::AkitaTranscript;
 use akita_types::{
     AkitaBatchedProof, AkitaScheduleLookupKey, BasisMode, OpeningClaims, OpeningClaimsLayout,
     PointVariableSelection, PolynomialGroupClaims, PolynomialGroupLayout, PrecommittedGroupParams,
-    Schedule, SetupContributionMode, Step,
+    Schedule, SetupContributionMode,
 };
 use common::*;
 
@@ -37,19 +37,17 @@ type RecursiveOneHotScheme = AkitaCommitmentScheme<RecursiveOneHotCfg>;
 type ConservativeOneHotScheme = AkitaCommitmentScheme<ConservativeOneHotCfg>;
 
 fn multi_group_root_params(schedule: &Schedule) -> &LevelParams {
-    match schedule.steps.first().expect("generated profile root step") {
-        Step::Direct(_) => panic!("multi-group schedule must start with a fold"),
-        Step::Fold(fold) => &fold.params,
-    }
+    &schedule
+        .root_fold()
+        .expect("generated profile root fold")
+        .params
 }
 
 fn schedule_uses_setup_prefix(schedule: &Schedule) -> bool {
-    schedule.steps.iter().any(|step| {
-        matches!(
-            step,
-            Step::Fold(fold) if fold.params.setup_prefix.is_some()
-        )
-    })
+    schedule
+        .folds
+        .iter()
+        .any(|fold| fold.params.setup_prefix.is_some())
 }
 
 fn proof_has_recursive_setup_sumcheck(proof: &AkitaBatchedProof<F, F>) -> bool {
@@ -249,7 +247,6 @@ fn generated_recursive_onehot_profile_proves_with_setup_offload() {
             &mut verifier_transcript,
             verify_claims,
             BasisMode::Lagrange,
-            SetupContributionMode::Recursive,
         )
         .expect("generated-profile recursive verify");
     });

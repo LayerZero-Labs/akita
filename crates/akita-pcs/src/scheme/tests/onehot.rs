@@ -43,10 +43,10 @@ fn conservative_config_commit_returns_frozen_layout() {
 }
 
 fn multi_group_root_params(schedule: &akita_types::Schedule) -> &LevelParams {
-    match schedule.steps.first().expect("multi-group schedule step") {
-        Step::Direct(_) => panic!("multi-group schedule must start with a fold"),
-        Step::Fold(fold) => &fold.params,
-    }
+    &schedule
+        .root_fold()
+        .expect("multi-group schedule root fold")
+        .params
 }
 
 fn with_conservative_commit_stack<R>(
@@ -365,13 +365,9 @@ fn multi_group_root_round_trip_onehot<TestCfg>(
         TestCfg::runtime_schedule(multi_group_key).expect("multi-group runtime schedule");
     let main_params = multi_group_root_params(&multi_group_schedule);
     if TestCfg::chunked_witness_cfg().uses_multi_chunk() {
-        let Step::Fold(root) = multi_group_schedule
-            .steps
-            .first()
-            .expect("chunked multi-group root step")
-        else {
-            panic!("chunked multi-group regression must force a fold");
-        };
+        let root = multi_group_schedule
+            .root_fold()
+            .expect("chunked multi-group root step");
         assert!(root.params.has_precommitted_groups());
         assert_eq!(
             root.params.witness_chunk,
@@ -522,7 +518,6 @@ fn multi_group_root_round_trip_onehot<TestCfg>(
         &mut verifier_transcript,
         verify_claims,
         BasisMode::Lagrange,
-        setup_contribution_mode,
     )
     .expect("multi-group verify");
 }
@@ -676,7 +671,6 @@ fn multi_group_root_folded_two_group_onehot_round_trips() {
         &mut verifier_transcript,
         verify_claims(),
         BasisMode::Lagrange,
-        akita_types::SetupContributionMode::Direct,
     )
     .expect("multi-group verify");
 
@@ -707,7 +701,6 @@ fn multi_group_root_folded_two_group_onehot_round_trips() {
             &mut swapped_transcript,
             swapped_claims,
             BasisMode::Lagrange,
-            akita_types::SetupContributionMode::Direct,
         )
         .is_err(),
         "swapped group commitments must reject"
@@ -740,7 +733,6 @@ fn multi_group_root_folded_two_group_onehot_round_trips() {
             &mut tampered_transcript,
             tampered_claims,
             BasisMode::Lagrange,
-            akita_types::SetupContributionMode::Direct,
         )
         .is_err(),
         "tampered group opening must reject"
@@ -885,7 +877,6 @@ fn multi_group_root_folded_three_group_onehot_round_trips() {
         &mut verifier_transcript,
         verify_claims,
         BasisMode::Lagrange,
-        akita_types::SetupContributionMode::Direct,
     )
     .expect("multi-group verify");
 }
@@ -987,7 +978,6 @@ fn batched_onehot_roundtrip_matches_public_shape_context() {
         &mut verifier_transcript,
         verifier_claims(&point[..], &openings[..], &commitments[0]),
         BasisMode::Lagrange,
-        akita_types::SetupContributionMode::Direct,
     )
     .expect("batched onehot verify");
 }

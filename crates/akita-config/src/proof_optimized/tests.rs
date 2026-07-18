@@ -29,28 +29,32 @@ fn setup_level_params_from_schedule_excludes_terminal_direct() {
     // must not contribute to the FS-bound `setup_levels`. Only
     // the preceding Fold steps (which do commit) appear.
     use akita_challenges::SparseChallengeConfig;
-    use akita_types::{
-        CleartextWitnessShape, DirectStep, FoldStep, Schedule, SisModulusProfileId, Step,
-    };
+    use akita_types::{DirectStep, FoldStep, LevelParamsLike, Schedule, SisModulusProfileId};
 
     let sparse = SparseChallengeConfig::pm1_only(1);
     let fold_lp =
-        LevelParams::params_only(SisModulusProfileId::Q128OffsetA7F7, 64, 3, 1, 1, 1, sparse);
+        LevelParams::params_only(SisModulusProfileId::Q128OffsetA7F7, 64, 3, 1, 1, 1, sparse)
+            .with_decomp(1, 4, 1, 1)
+            .expect("laid-out fold params");
+    let witness_shape = akita_types::segment_typed_witness_shape_from_groups(
+        &fold_lp,
+        128,
+        [(&fold_lp as &dyn LevelParamsLike, 1, 1, 1)],
+    )
+    .expect("terminal witness shape");
 
     let schedule = Schedule {
-        steps: vec![
-            Step::fold(FoldStep {
-                params: fold_lp.clone(),
-                current_w_len: 1 << 8,
-                next_w_len: 1 << 4,
-                level_bytes: 0,
-            }),
-            Step::Direct(DirectStep {
-                current_w_len: 1 << 4,
-                witness_shape: CleartextWitnessShape::FieldElements(16),
-                direct_bytes: 0,
-            }),
-        ],
+        folds: vec![FoldStep {
+            params: fold_lp.clone(),
+            current_w_len: 1 << 8,
+            next_w_len: 1 << 4,
+            level_bytes: 0,
+        }],
+        terminal: DirectStep {
+            current_w_len: 1 << 4,
+            witness_shape,
+            direct_bytes: 0,
+        },
         total_bytes: 0,
     };
 
@@ -60,72 +64,6 @@ fn setup_level_params_from_schedule_excludes_terminal_direct() {
         vec![fold_lp],
         "terminal direct steps must not feed setup levels"
     );
-}
-
-#[test]
-fn setup_matrix_envelope_does_not_add_conservative_layout() {
-    use akita_types::{CleartextWitnessShape, DecompositionParams, DirectStep, Schedule, Step};
-
-    #[derive(Clone)]
-    struct GroupLayoutRejectCfg;
-
-    impl CommitmentConfig for GroupLayoutRejectCfg {
-        type Field = akita_field::Fp32<251>;
-        type ExtField = akita_field::Fp32<251>;
-        const D: usize = 8;
-
-        fn decomposition() -> DecompositionParams {
-            DecompositionParams {
-                log_basis: 3,
-                log_commit_bound: 1,
-                log_open_bound: Some(8),
-            }
-        }
-
-        fn ring_challenge_config(
-            _d: usize,
-        ) -> Result<akita_challenges::SparseChallengeConfig, AkitaError> {
-            Ok(akita_challenges::SparseChallengeConfig::pm1_only(1))
-        }
-
-        fn sis_modulus_profile() -> akita_types::SisModulusProfileId {
-            akita_types::SisModulusProfileId::Q32Offset99
-        }
-
-        fn max_setup_matrix_size(
-            _max_num_vars: usize,
-            _max_num_batched_polys: usize,
-        ) -> Result<SetupMatrixEnvelope, AkitaError> {
-            Ok(SetupMatrixEnvelope { max_setup_len: 1 })
-        }
-
-        fn basis_range() -> (u32, u32) {
-            (3, 3)
-        }
-
-        fn runtime_schedule(_key: AkitaScheduleLookupKey) -> Result<Schedule, AkitaError> {
-            Ok(Schedule {
-                steps: vec![Step::Direct(DirectStep {
-                    current_w_len: 1 << 8,
-                    witness_shape: CleartextWitnessShape::FieldElements(1 << 8),
-                    direct_bytes: 0,
-                })],
-                total_bytes: 0,
-            })
-        }
-
-        fn get_params_for_prove(layout: &OpeningClaimsLayout) -> Result<Schedule, AkitaError> {
-            Self::runtime_schedule(
-                crate::proof_optimized::proof_optimized_schedule_key::<Self>(layout)?,
-            )
-        }
-    }
-
-    let opening_batch = OpeningClaimsLayout::new(8, 1).expect("singleton opening batch");
-    let envelope = setup_matrix_envelope_for_shape::<GroupLayoutRejectCfg>(&opening_batch)
-        .expect("runtime setup envelope should use runtime schedule only")
-        .expect("runtime schedule is supported");
-    assert_eq!(envelope.max_setup_len, 1);
 }
 
 #[test]
@@ -372,8 +310,8 @@ fn recursive_setup_envelope_counts_setup_prefix_d_segment() {
     use akita_types::{
         padded_setup_prefix_len, segment_typed_witness_shape_from_groups,
         setup_prefix_precommitted_params, setup_prefix_slot_id, AjtaiKeyParams,
-        CleartextWitnessShape, DecompositionParams, DirectStep, FoldStep, LevelParamsLike,
-        SetupContributionMode, Step, SETUP_OFFLOAD_D_SETUP,
+        DecompositionParams, DirectStep, FoldStep, LevelParamsLike, SetupContributionMode,
+        SETUP_OFFLOAD_D_SETUP,
     };
 
     fn scalar_level_params() -> LevelParams {
@@ -398,11 +336,8 @@ fn recursive_setup_envelope_counts_setup_prefix_d_segment() {
             [(params as &dyn LevelParamsLike, 1, 1, 1)],
         )
         .expect("segment-typed witness shape");
-        let CleartextWitnessShape::SegmentTyped(shape) = &witness_shape else {
-            panic!("expected segment-typed witness");
-        };
         DirectStep {
-            current_w_len: shape.layout.logical_num_elems,
+            current_w_len: witness_shape.layout.logical_num_elems,
             witness_shape,
             direct_bytes: 0,
         }
@@ -451,27 +386,27 @@ fn recursive_setup_envelope_counts_setup_prefix_d_segment() {
         let direct = terminal_direct_step(&terminal_params);
         let terminal_current_w_len = 64;
         Schedule {
-            steps: vec![
-                Step::fold(FoldStep {
+            folds: vec![
+                FoldStep {
                     params: root,
                     current_w_len: 256,
                     next_w_len: 128,
                     level_bytes: 0,
-                }),
-                Step::fold(FoldStep {
+                },
+                FoldStep {
                     params: successor,
                     current_w_len: 128,
                     next_w_len: terminal_current_w_len,
                     level_bytes: 0,
-                }),
-                Step::fold(FoldStep {
+                },
+                FoldStep {
                     params: terminal_params,
                     current_w_len: terminal_current_w_len,
                     next_w_len: direct.current_w_len,
                     level_bytes: 0,
-                }),
-                Step::Direct(direct),
+                },
             ],
+            terminal: direct,
             total_bytes: 0,
         }
     }
@@ -594,9 +529,7 @@ fn assert_plan_matches_runtime_w_sizes_for_key<Cfg: CommitmentConfig>(key: Polyn
         let runtime_next_w_len = if is_terminal_fold {
             // Terminal W is quotient-free. Its canonical shape is the Direct
             // successor materialized by the planner, not an M-matrix row count.
-            akita_types::schedule_terminal_direct_witness_shape(&schedule)
-                .expect("fold schedule must end in a direct witness")
-                .logical_num_elems()
+            schedule.terminal.witness_shape.logical_num_elems()
         } else {
             // Root-level batched witnesses fan out over the key's polynomial
             // count; recursive levels collapse back to singleton-by-construction.
@@ -881,12 +814,7 @@ fn batched_onehot_4x30_plan_keeps_terminal_witness_bounded() {
         "4x30 onehot schedule should keep a recursive suffix after the root fold"
     );
 
-    let akita_types::CleartextWitnessShape::SegmentTyped(ref shape) =
-        *akita_types::schedule_terminal_direct_witness_shape(&schedule)
-            .expect("4x30 onehot schedule should end in a direct step")
-    else {
-        panic!("4x30 onehot schedule should end in segment-typed witness");
-    };
+    let shape = &schedule.terminal.witness_shape;
     // Bound reflects the committed-fold A-role SIS pricing: honest pricing
     // lifts the per-level rank, widening the terminal witness, but the
     // byte-aware schedule still keeps folding rather than dumping a huge

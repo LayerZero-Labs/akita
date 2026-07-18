@@ -17,8 +17,8 @@ use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::AkitaError;
 
 use crate::generated::{
-    GeneratedFoldStep, GeneratedFoldStepWithSetupMetadata, GeneratedScheduleTableEntry,
-    GeneratedSetupPrefixGroup, GeneratedStep,
+    GeneratedFold, GeneratedFoldStep, GeneratedFoldStepWithSetupMetadata,
+    GeneratedScheduleTableEntry, GeneratedSetupPrefixGroup,
 };
 use crate::schedule_params::optimize_fold_challenge_shape;
 use crate::PlannerPolicy;
@@ -323,8 +323,8 @@ impl GeneratedFoldStep {
                 "witness length is not divisible by the ring dimension".to_string(),
             ));
         }
-        // Root-direct inputs may be shorter than one ring and are zero-padded
-        // inside that ring. Recursive witnesses are ring-aligned by contract.
+        // Root inputs may be shorter than one ring and are zero-padded inside
+        // that ring. Recursive witnesses are ring-aligned by contract.
         let num_live_ring_elements_per_claim = if is_root {
             current_w_len.div_ceil(ring_d)
         } else {
@@ -821,48 +821,23 @@ impl GeneratedFoldStepWithSetupMetadata {
 impl GeneratedScheduleTableEntry {
     /// Number of fold levels before the terminal direct step.
     pub fn num_fold_levels(&self) -> usize {
-        self.steps
-            .iter()
-            .filter_map(GeneratedStep::fold_step)
-            .count()
+        self.folds.len()
     }
 
-    /// Validate the structural invariants the runtime relies on: the entry
-    /// begins with at least two folds, ends in a `Direct`, and has no
-    /// non-terminal `Direct`.
+    /// Validate the structural invariants the runtime relies on.
     ///
     /// # Errors
     ///
     /// Returns an error when any invariant is violated.
     pub fn validate(&self) -> Result<(), AkitaError> {
-        validate_generated_steps(self.steps)
+        validate_generated_folds(self.folds)
     }
 }
 
-fn validate_generated_steps(steps: &[GeneratedStep]) -> Result<(), AkitaError> {
-    if steps.is_empty() {
-        return Err(AkitaError::InvalidSetup(
-            "generated schedule table entry must contain at least one step".to_string(),
-        ));
-    }
-    let num_folds = steps.iter().filter_map(GeneratedStep::fold_step).count();
-    if steps.first().and_then(GeneratedStep::fold_step).is_none() || num_folds < 2 {
+fn validate_generated_folds(folds: &[GeneratedFold]) -> Result<(), AkitaError> {
+    if folds.len() < 2 {
         return Err(AkitaError::UnsupportedSchedule(
-            "generated schedule must begin with a root fold and contain at least two folds"
-                .to_string(),
-        ));
-    }
-    let last = steps.len() - 1;
-    for (idx, step) in steps.iter().enumerate() {
-        if matches!(step, GeneratedStep::Direct) && idx != last {
-            return Err(AkitaError::InvalidSetup(
-                "generated direct step must be terminal".to_string(),
-            ));
-        }
-    }
-    if !matches!(steps[last], GeneratedStep::Direct) {
-        return Err(AkitaError::InvalidSetup(
-            "generated schedule must end in a terminal direct step".to_string(),
+            "generated schedule must contain at least two folds".to_string(),
         ));
     }
     Ok(())

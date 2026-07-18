@@ -1,8 +1,9 @@
 # Recursion and proof shape
 
-Akita uses the same digit-innermost source and witness geometry at every level.
-A nonterminal fold emits one recursive witness commitment. A direct fold emits
-no successor setup claim, and the terminal fold is scalar and direct.
+Akita uses the same digit-innermost source and witness geometry at every fold.
+An intermediate fold emits one recursive witness commitment. The final fold
+instead hands its predecessor-bound inner `t` state to a scalar terminal
+checker, which consumes the cleartext witness without another commitment.
 
 ## Intermediate vs terminal levels
 
@@ -14,8 +15,10 @@ transpose through a column-major intermediate.
 
 A grouped root fold is nonterminal. Its successor contains exactly one witness
 group and one setup-prefix group. Setup-prefix materialization consumes the same
-canonical ranges as witness emission. At a terminal step, the single group is
+canonical ranges as witness emission. At the terminal, the single group is
 consumed through the scalar direct path, including a scalar `F = 1` handoff.
+Its physical relation is `consistency | A`: the terminal has no outer `u`, B
+block, or D block.
 
 The transcript binds the schedule and exact group geometry before challenges
 that depend on them. Changing a terminal or recursive handoff is therefore a

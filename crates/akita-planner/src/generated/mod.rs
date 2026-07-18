@@ -33,26 +33,23 @@ pub struct GeneratedFoldStepWithSetupMetadata {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum GeneratedStep {
+pub enum GeneratedFold {
     Fold(GeneratedFoldStep),
     FoldWithSetupMetadata(GeneratedFoldStepWithSetupMetadata),
-    Direct,
 }
 
-impl GeneratedStep {
-    pub fn fold_step(&self) -> Option<&GeneratedFoldStep> {
+impl GeneratedFold {
+    pub fn fold_step(&self) -> &GeneratedFoldStep {
         match self {
-            Self::Fold(step) => Some(step),
-            Self::FoldWithSetupMetadata(step) => Some(&step.fold),
-            Self::Direct => None,
+            Self::Fold(step) => step,
+            Self::FoldWithSetupMetadata(step) => &step.fold,
         }
     }
 
-    pub fn fold_step_mut(&mut self) -> Option<&mut GeneratedFoldStep> {
+    pub fn fold_step_mut(&mut self) -> &mut GeneratedFoldStep {
         match self {
-            Self::Fold(step) => Some(step),
-            Self::FoldWithSetupMetadata(step) => Some(&mut step.fold),
-            Self::Direct => None,
+            Self::Fold(step) => step,
+            Self::FoldWithSetupMetadata(step) => &mut step.fold,
         }
     }
 }
@@ -61,7 +58,7 @@ impl GeneratedStep {
 pub struct GeneratedScheduleTableEntry {
     pub final_group: akita_types::PolynomialGroupLayout,
     pub precommitteds: &'static [akita_types::PrecommittedGroupParams],
-    pub steps: &'static [GeneratedStep],
+    pub folds: &'static [GeneratedFold],
 }
 
 impl GeneratedScheduleTableEntry {

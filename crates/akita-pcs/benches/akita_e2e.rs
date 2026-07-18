@@ -193,7 +193,6 @@ fn bench_dense_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField 
                     &mut transcript,
                     black_box(verifier_claims(&pt[..], &openings[..], &commitments[0])),
                     BasisMode::Lagrange,
-                    mode,
                 )
                 .unwrap();
             })
@@ -225,7 +224,6 @@ fn bench_dense_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField 
                     &mut vt_tr,
                     verifier_claims(&pt[..], &openings[..], &cms[0]),
                     BasisMode::Lagrange,
-                    mode,
                 )
                 .unwrap();
                 black_box(())
@@ -350,7 +348,6 @@ fn bench_onehot_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField
                     &mut transcript,
                     black_box(verifier_claims(&pt[..], &openings[..], &commitments[0])),
                     BasisMode::Lagrange,
-                    mode,
                 )
                 .unwrap();
             })
@@ -382,7 +379,6 @@ fn bench_onehot_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField
                     &mut vt_tr,
                     verifier_claims(&pt[..], &openings[..], &cms[0]),
                     BasisMode::Lagrange,
-                    mode,
                 )
                 .unwrap();
                 black_box(())

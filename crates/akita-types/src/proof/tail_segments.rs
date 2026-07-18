@@ -346,10 +346,7 @@ impl AkitaDeserialize for SegmentTypedWitnessShape {
 
 impl<F: FieldCore + Valid> Valid for SegmentTypedWitness<F> {
     fn check(&self) -> Result<(), SerializationError> {
-        SegmentTypedWitnessShape {
-            layout: self.layout.clone(),
-        }
-        .check()?;
+        self.layout.check()?;
         if self.z_payloads.len() != self.layout.groups.len() {
             return Err(SerializationError::InvalidData(
                 "z payload group count mismatch".to_string(),
@@ -373,6 +370,34 @@ impl<F: FieldCore + Valid> Valid for SegmentTypedWitness<F> {
             ));
         }
         Ok(())
+    }
+}
+
+impl<F: FieldCore> SegmentTypedWitness<F> {
+    /// Shape descriptor for this terminal witness.
+    pub fn shape(&self) -> SegmentTypedWitnessShape {
+        SegmentTypedWitnessShape {
+            layout: self.layout.clone(),
+        }
+    }
+
+    /// Number of logical field elements carried by this witness.
+    pub fn num_elems(&self) -> usize {
+        self.layout.logical_num_elems
+    }
+}
+
+impl SegmentTypedWitnessShape {
+    /// Number of logical field elements represented by this shape.
+    #[must_use]
+    pub fn logical_num_elems(&self) -> usize {
+        self.layout.logical_num_elems
+    }
+
+    /// Whether a realized terminal layout fits this scheduled upper bound.
+    #[must_use]
+    pub fn admits_realized(&self, realized: &Self) -> bool {
+        self.layout.admits_realized(&realized.layout)
     }
 }
 
@@ -480,15 +505,15 @@ impl<F: FieldCore + CanonicalField + AkitaSerialize> SegmentTypedWitness<F> {
         Ok(())
     }
 
-    /// Split wire bytes into pre-challenge `e`/`t` state and the post-challenge
-    /// `z` response.
+    /// Materialize pre-challenge `e` bytes and the post-challenge `z` response.
+    /// Terminal `t` is bound once by the predecessor and is intentionally not
+    /// serialized again here.
     pub fn terminal_transcript_parts(&self) -> Result<TerminalWitnessTranscriptParts, AkitaError> {
         let e_folded = raw_field_segment_bytes(&self.e_fields)?;
         if e_folded.is_empty() {
             return Err(AkitaError::InvalidProof);
         }
-        let t_state = raw_field_segment_bytes(&self.t_fields)?;
-        if t_state.is_empty() {
+        if self.t_fields.coeffs().is_empty() {
             return Err(AkitaError::InvalidProof);
         }
         let mut response = Vec::new();
@@ -498,11 +523,7 @@ impl<F: FieldCore + CanonicalField + AkitaSerialize> SegmentTypedWitness<F> {
         if response.is_empty() {
             return Err(AkitaError::InvalidProof);
         }
-        Ok(TerminalWitnessTranscriptParts {
-            e_folded,
-            t_state,
-            response,
-        })
+        Ok(TerminalWitnessTranscriptParts { e_folded, response })
     }
 }
 
@@ -553,8 +574,7 @@ where
 
 /// `num_t_vectors` for terminal fold grind when Golomb encodability must match witness build.
 ///
-/// Returns `None` for non-terminal layouts, non-segment-typed tails, or callers without a
-/// scheduled shape (ZK packed-digit tails, unit tests).
+/// Returns `None` for non-terminal layouts or callers without a scheduled shape.
 ///
 /// # Errors
 ///
@@ -570,10 +590,7 @@ pub fn terminal_golomb_grind_tail_t_vectors(
     let Some(shape) = witness_shape else {
         return Ok(None);
     };
-    let CleartextWitnessShape::SegmentTyped(scheduled) = shape else {
-        return Ok(None);
-    };
-    let (_, num_t_vectors, _) = tail_segment_multiplicities_from_layout(lp, &scheduled.layout, 0)?;
+    let (_, num_t_vectors, _) = tail_segment_multiplicities_from_layout(lp, &shape.layout, 0)?;
     Ok(Some(num_t_vectors))
 }
 

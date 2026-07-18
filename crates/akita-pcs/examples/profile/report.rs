@@ -4,10 +4,9 @@ use akita_serialization::{AkitaSerialize, Compress};
 use akita_types::{
     golomb_rice::{golomb_rice_low_bits_sweep_payload_bytes, rice_low_bits_for_cap},
     layout::proof_size::field_bytes,
-    schedule_terminal_direct_witness_shape, tail_segment_multiplicities_from_layout,
-    z_fold_decoded_from_segment, z_fold_encoding_stats_from_segment, AkitaBatchedProof,
-    CleartextWitnessShape, FoldLevelProof, LevelParams, Schedule, SetupSumcheckProof, Step,
-    TerminalLevelProof, ZFoldEncodingStats,
+    tail_segment_multiplicities_from_layout, z_fold_decoded_from_segment,
+    z_fold_encoding_stats_from_segment, AkitaBatchedProof, FoldLevelProof, LevelParams, Schedule,
+    SetupSumcheckProof, TerminalLevelProof, ZFoldEncodingStats,
 };
 
 const TAIL_Z_LENGTH_PREFIX_BYTES: usize = 8;
@@ -31,7 +30,8 @@ pub(crate) fn emit_proof_tail_report<FF, E>(
     let tail_bytes = final_w.serialized_size(Compress::No);
     let num_elems = final_w.num_elems();
 
-    if let Some(segment) = final_w.as_segment_typed() {
+    {
+        let segment = final_w;
         let field_sz = field_bytes(FF::modulus_bits());
         let ring_dim = segment.layout.ring_dimension;
         let z_golomb_bytes = segment.z_payloads.iter().map(Vec::len).sum::<usize>();
@@ -44,15 +44,7 @@ pub(crate) fn emit_proof_tail_report<FF, E>(
         let t_ring_elems = t_field_elems / ring_dim.max(1);
         let e_bytes = e_field_elems.saturating_mul(field_sz);
         let t_bytes = t_field_elems.saturating_mul(field_sz);
-        let z_budget_bytes = schedule_terminal_direct_witness_shape(schedule)
-            .ok()
-            .and_then(|shape| match shape {
-                CleartextWitnessShape::SegmentTyped(scheduled) => {
-                    Some(scheduled.layout.z_payload_bytes())
-                }
-                _ => None,
-            })
-            .unwrap_or(0);
+        let z_budget_bytes = schedule.terminal.witness_shape.layout.z_payload_bytes();
         let z_slack_bytes = z_budget_bytes.saturating_sub(z_golomb_bytes);
         let z_stats = segment_typed_z_fold_stats(segment, schedule, field_bits).ok();
         let z_witness_linf_cap = z_stats.as_ref().map(|s| s.witness_linf_cap).unwrap_or(0);
@@ -152,21 +144,7 @@ pub(crate) fn emit_proof_tail_report<FF, E>(
         if std::env::var("AKITA_Z_GOLOMB_SWEEP").ok().as_deref() == Some("1") {
             emit_z_golomb_k_sweep(label, segment, schedule, field_bits, z_golomb_bytes);
         }
-        return;
     }
-
-    tracing::info!(
-        label,
-        tail_bytes,
-        final_w_num_elems = num_elems,
-        final_w_encoding = "field_elements",
-        final_w_policy = "unexpected_field_elements",
-        "proof tail summary"
-    );
-    eprintln!(
-        "[{label}]   final_w: encoding=field_elements (unexpected terminal witness), \
-         total={tail_bytes} bytes, field_elems={num_elems}",
-    );
 }
 
 fn segment_typed_z_fold_stats<FF: FieldCore>(
@@ -306,11 +284,7 @@ pub(crate) fn emit_runtime_schedule_summary(
     root_num_claims: usize,
     field_bits: u32,
 ) {
-    let levels = schedule
-        .steps
-        .iter()
-        .filter(|step| matches!(step, Step::Fold(_)))
-        .count();
+    let levels = schedule.num_fold_levels();
     tracing::info!(
         label,
         levels,
@@ -318,15 +292,7 @@ pub(crate) fn emit_runtime_schedule_summary(
         "runtime schedule"
     );
 
-    for (level_idx, level) in schedule
-        .steps
-        .iter()
-        .filter_map(|step| match step {
-            Step::Fold(level) => Some(level),
-            Step::Direct(_) => None,
-        })
-        .enumerate()
-    {
+    for (level_idx, level) in schedule.folds.iter().enumerate() {
         let lp = &level.params;
         let role_dims = lp.role_dims();
         let num_claims = if level_idx == 0 { root_num_claims } else { 1 };
@@ -358,16 +324,12 @@ pub(crate) fn emit_runtime_schedule_summary(
         );
     }
 
-    if let Some(Step::Direct(terminal)) = schedule.steps.last() {
-        tracing::info!(
-            label,
-            final_w_len = terminal.current_w_len,
-            final_log_basis = terminal
-                .log_basis()
-                .expect("validated terminal witness shape"),
-            "planned terminal state"
-        );
-    }
+    tracing::info!(
+        label,
+        final_w_len = schedule.terminal.current_w_len,
+        final_log_basis = schedule.terminal.log_basis(),
+        "planned terminal state"
+    );
 }
 
 fn ring_elem_count(coeff_len: usize, d: usize) -> usize {

@@ -139,7 +139,6 @@ fn heterogeneous_delegating_clusters_batched_prove_and_verify() {
         )
         .expect("valid verifier claims"),
         BasisMode::Lagrange,
-        akita_types::SetupContributionMode::Direct,
     )
     .expect("heterogeneous batched verify");
 }

@@ -25,18 +25,11 @@ pub fn packed_digits_bytes(num_elems: usize, bits_per_elem: u32) -> usize {
 
 /// Serialized byte size for a terminal direct witness shape.
 pub fn direct_witness_bytes(field_bits: u32, shape: &CleartextWitnessShape) -> usize {
-    match shape {
-        CleartextWitnessShape::FieldElements(num_coeffs) => {
-            num_coeffs.saturating_mul(field_bytes(field_bits))
-        }
-        CleartextWitnessShape::SegmentTyped(segment_shape) => {
-            crate::proof::segment_typed_witness_upper_bound_bytes(
-                field_bits,
-                &segment_shape.layout,
-                segment_shape.layout.z_payload_bytes(),
-            )
-        }
-    }
+    crate::proof::segment_typed_witness_upper_bound_bytes(
+        field_bits,
+        &shape.layout,
+        shape.layout.z_payload_bytes(),
+    )
 }
 
 fn compressed_unipoly_bytes(degree: usize, elem_bytes: usize) -> usize {

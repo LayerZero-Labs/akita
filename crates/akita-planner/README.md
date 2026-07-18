@@ -10,9 +10,9 @@ The planner can also generate and cache schedule values when a preset wants a sh
 
 ## What The Planner Optimizes
 
-Akita proofs can either ship a witness directly or recursively fold the witness through one or more levels before the terminal direct-send step. The planner chooses the cheapest sequence of those steps.
+Akita proofs recursively fold the witness through at least two levels before the terminal direct-send step. The planner chooses the cheapest supported folded sequence.
 
-The output is an `akita_types::Schedule`: either a root-direct `Step::Direct`, or one or more `Step::Fold` entries followed by a terminal `Step::Direct`, plus the total modeled byte count.
+The output is an `akita_types::Schedule`: an ordered `folds` vector, one explicit `terminal` handoff, and the total modeled byte count.
 
 ## Inputs And Outputs
 
@@ -89,7 +89,7 @@ At the root, the planner iterates over the configured `log_basis` range and over
 
 Batching is folded directly into the root B and D widths. A batched root does not first plan a singleton layout and scale it later; the matrix widths are sized for the actual `num_polynomials` count.
 
-The planner also considers the root-direct case, where the schedule ships the original witness directly. That gives the DP a baseline: folding is selected only if the fold proof plus its suffix is smaller than direct shipping.
+The planner fails with `UnsupportedSchedule` when no candidate contains at least two folds. Degenerate inputs are rejected instead of producing a separate proof topology.
 
 ## Recursive Suffix Search
 
@@ -99,17 +99,20 @@ Instead, for each recursive `log_basis`, `derive_candidate_level_params` scans t
 
 After that candidate is chosen, the suffix DP still performs the important global comparison:
 
-- Terminate now and ship the current packed-digit witness with `Step::Direct`.
+- Terminate after this fold and ship the segment-typed cleartext witness.
 - Fold once more and pay the current level proof bytes plus the best suffix below it.
 
-The memoized suffix state is `(level, current_witness_len, current_witness_len_terminal, current_log_basis)`. Two witness lengths are tracked because an ordinary recursive fold uses the full `WithDBlock` witness, while the terminal direct witness has no D/quotient tail. A root terminal retains its external-commitment B rows (`WithoutDBlock`); a suffix terminal receives transcript-bound inner `t` from its predecessor and has no commitment block (`WithoutCommitmentBlocks`).
+The memoized suffix state is `(level, current_witness_len, current_witness_len_terminal, current_log_basis)`. Two witness lengths are tracked because an ordinary recursive fold uses the full `WithDBlock` witness, while the terminal direct witness has no D/quotient tail. The terminal receives transcript-bound inner `t` from its predecessor and has no commitment block (`WithoutCommitmentBlocks`).
 
 The same topology selects the outgoing binding of the preceding intermediate
 fold. Ordinary recursive edges ship outer `u`; the final edge into a suffix
 terminal binds inner `t` and contributes no duplicate `u` bytes. This is a
 schedule property, not a proof-derived layout guess.
 
-The search is capped by `MAX_RECURSION_DEPTH`. Beyond that cap, the suffix returns the direct-send branch only. In the supported parameter ranges, schedules do not need deeper recursion, and the cap keeps verifier-reachable fallback work bounded.
+The search is capped by `MAX_RECURSION_DEPTH`. Beyond that cap, the suffix may
+terminate only if doing so still produces the required root-plus-suffix folded
+topology. In the supported parameter ranges, schedules do not need deeper
+recursion, and the cap keeps verifier-reachable fallback work bounded.
 
 ## Proof-Size Accounting
 

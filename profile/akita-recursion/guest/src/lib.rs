@@ -94,7 +94,7 @@ fn akita_verify(input: &[u8]) -> u32 {
     let openings = [decoded.opening];
 
     // We call `batched_verify` directly (rather than the public
-    // `AkitaCommitmentScheme::<D, Cfg>::batched_verify` wrapper) to skip
+    // `AkitaCommitmentScheme::<Cfg>::batched_verify` wrapper) to skip
     // its `Instant::now()` + final `tracing::info!` wall-clock log. The
     // Jolt RISC-V runtime panics on `std::time::Instant::now()` (no
     // `clock_gettime` support), so the scheme entry point would abort
@@ -108,7 +108,6 @@ fn akita_verify(input: &[u8]) -> u32 {
         &mut transcript,
         decoded.verifier_opening_batch(&openings),
         BasisMode::Lagrange,
-        decoded.setup_contribution_mode,
     );
     end_cycle_tracking("akita_verify");
 

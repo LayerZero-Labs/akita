@@ -39,19 +39,6 @@ pub fn shared_d_digit_log_basis(
         .fold(main_log_basis, u32::max)
 }
 
-fn empty_ajtai_key(role: crate::sis::SisMatrixRole) -> AjtaiKeyParams {
-    AjtaiKeyParams::new_unchecked(
-        crate::sis::DEFAULT_SIS_SECURITY_POLICY,
-        crate::sis::SisTableDigest::CURRENT,
-        crate::sis::SisModulusProfileId::Q128OffsetA7F7,
-        role,
-        0,
-        0,
-        0,
-        0,
-    )
-}
-
 /// Per-level M-matrix row layout selector.
 ///
 /// At an intermediate fold the prover ships a fresh commitment for the next
@@ -185,48 +172,6 @@ impl LevelParams {
             outer: self.b_key.sis_table_key().ring_dimension as usize,
             opening: self.d_key.sis_table_key().ring_dimension as usize,
         };
-    }
-
-    /// Synthetic `LevelParams` carrying only a terminal-direct's `log_basis`.
-    ///
-    /// `scheduled_next_level_params` returns this stub when the next step
-    /// is a terminal `Direct(SegmentTyped)`: that step does not commit
-    /// anything, so it has no Ajtai keys, no block geometry, and no
-    /// digit depths. The only field consumers downstream actually read is
-    /// `log_basis` (used by `prove_suffix` as
-    /// `final_log_basis` for the terminal fold's witness packing); every
-    /// other field is left at the zero/empty defaults to make accidental
-    /// use surface as obviously-degenerate output. Do not feed this stub
-    /// into commitment, audit, or descriptor-binding code paths.
-    pub fn log_basis_stub(log_basis: u32) -> Self {
-        Self {
-            ring_dimension: 0,
-            log_basis,
-            a_key: empty_ajtai_key(crate::sis::SisMatrixRole::A),
-            b_key: empty_ajtai_key(crate::sis::SisMatrixRole::B),
-            d_key: empty_ajtai_key(crate::sis::SisMatrixRole::D),
-            num_live_ring_elements_per_claim: 0,
-            num_positions_per_block: 0,
-            num_live_blocks: 0,
-            fold_challenge_config: SparseChallengeConfig {
-                count_pm1: 0,
-                count_pm2: 0,
-            },
-            fold_challenge_shape: TensorChallengeShape::Flat,
-            num_digits_commit: 0,
-            num_digits_open: 0,
-            onehot_chunk_size: 0,
-            fold_linf_cap_config: FoldWitnessLinfCapConfig::worst_case_beta_only(),
-            num_digits_fold_one: 1,
-            field_bits_hint: 0,
-            cached_num_digits_block_claims: 0,
-            cached_num_digits_fold_value: 1,
-            witness_chunk: crate::witness::ChunkedWitnessCfg::default_non_chunked(),
-            precommitted_groups: Vec::new(),
-            setup_prefix: None,
-            role_dims: CommitmentRingDims::uniform(0),
-            setup_contribution_mode: SetupContributionMode::Direct,
-        }
     }
 
     /// Build a params-only `LevelParams` with zeroed layout fields.

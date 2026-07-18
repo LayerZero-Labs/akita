@@ -7,7 +7,7 @@
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_config::{policy_of, CommitmentConfig};
 use akita_field::AkitaError;
-use akita_planner::generated::{table_entry, GeneratedFoldStep, GeneratedStep};
+use akita_planner::generated::{table_entry, GeneratedFoldStep};
 use akita_planner::PlannerPolicy;
 use akita_types::sis::{
     decomposed_s_block_ring_count, decomposed_t_ring_count, decomposed_w_ring_count,
@@ -18,7 +18,7 @@ use akita_types::{
     direct_witness_bytes, intermediate_w_ring_element_count_with_counts_bits, level_proof_bytes,
     segment_typed_witness_shape_from_groups, AjtaiKeyParams, AkitaScheduleInputs,
     AkitaScheduleLookupKey, CommitmentRingDims, DecompositionParams, DirectStep, FoldStep,
-    LevelParams, LevelParamsLike, PolynomialGroupLayout, RelationMatrixRowLayout, Schedule, Step,
+    LevelParams, LevelParamsLike, PolynomialGroupLayout, RelationMatrixRowLayout, Schedule,
 };
 struct MixedSuffixFoldPlan {
     params: LevelParams,
@@ -41,19 +41,16 @@ fn generated_fold_step<Cfg: CommitmentConfig>(
     let entry = table_entry(catalog, &table_key).ok_or_else(|| {
         AkitaError::InvalidSetup(format!("missing generated schedule for {key:?}"))
     })?;
-    let mut fold_idx = 0usize;
-    for step in entry.steps {
-        if let GeneratedStep::Fold(fold) = step {
-            if fold_idx == level {
-                return Ok(*fold);
-            }
-            fold_idx += 1;
-        }
-    }
-    Err(AkitaError::InvalidSetup(format!(
-        "fold level {level} missing from {} table entry {key:?}",
-        std::any::type_name::<Cfg>()
-    )))
+    entry
+        .folds
+        .get(level)
+        .map(|fold| *fold.fold_step())
+        .ok_or_else(|| {
+            AkitaError::InvalidSetup(format!(
+                "fold level {level} missing from {} table entry {key:?}",
+                std::any::type_name::<Cfg>()
+            ))
+        })
 }
 
 /// Expand a compact generated fold step's witness geometry at a different
@@ -511,14 +508,7 @@ where
         }
     }
 
-    let envelope_terminal = match envelope.steps.last() {
-        Some(Step::Direct(step)) => step,
-        _ => {
-            return Err(AkitaError::InvalidSetup(
-                "envelope schedule must end in a direct witness step".into(),
-            ));
-        }
-    };
+    let envelope_terminal = &envelope.terminal;
     let needs_terminal_override = mixed_folds
         .iter()
         .zip(envelope_folds.iter())
@@ -591,8 +581,9 @@ where
         .checked_add(terminal.direct_bytes)
         .ok_or_else(|| AkitaError::InvalidSetup("mixed-D total_bytes overflow".into()))?;
 
-    let mut steps = mixed_folds.into_iter().map(Step::fold).collect::<Vec<_>>();
-    steps.push(Step::Direct(terminal));
-
-    Ok(Schedule { steps, total_bytes })
+    Ok(Schedule {
+        folds: mixed_folds,
+        terminal,
+        total_bytes,
+    })
 }

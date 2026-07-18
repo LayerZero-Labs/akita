@@ -39,9 +39,10 @@ pub struct ExecutionSchedule {
     pub current_w_len: usize,
     /// Active level parameters for this fold.
     pub params: LevelParams,
-    /// Successor parameters for the next committed level, or a log-basis stub
-    /// for the terminal direct witness.
-    pub next_params: LevelParams,
+    /// Successor parameters when another committed fold follows.
+    pub next_params: Option<LevelParams>,
+    /// Active log basis of the successor fold or terminal witness.
+    pub next_log_basis: u32,
     /// Witness length expected after this fold's ring-switch relation builds
     /// the next `w`.
     pub next_w_len: usize,
@@ -504,40 +505,19 @@ pub struct DirectStep {
 }
 
 impl DirectStep {
-    /// Active terminal log-basis for segment-typed direct witnesses.
-    pub fn log_basis(&self) -> Result<u32, AkitaError> {
-        match &self.witness_shape {
-            CleartextWitnessShape::SegmentTyped(shape) => Ok(shape.layout.log_basis),
-            CleartextWitnessShape::FieldElements(_) => Err(AkitaError::InvalidSetup(
-                "terminal direct witness must use the segment-typed encoding".to_string(),
-            )),
-        }
+    /// Active terminal log-basis.
+    pub fn log_basis(&self) -> u32 {
+        self.witness_shape.layout.log_basis
     }
 }
 
-/// A single step in the schedule.
-#[derive(Clone, Debug)]
-pub enum Step {
-    /// Fold through one recursive level.
-    Fold(Box<FoldStep>),
-    /// Send the terminal witness directly.
-    Direct(DirectStep),
-}
-
-impl Step {
-    /// Construct a fold step while keeping its boxed storage private to the
-    /// schedule representation.
-    #[must_use]
-    pub fn fold(step: FoldStep) -> Self {
-        Self::Fold(Box::new(step))
-    }
-}
-
-/// Complete schedule with step-by-step parameters.
+/// Complete folded-only schedule.
 #[derive(Clone, Debug)]
 pub struct Schedule {
-    /// Ordered proof schedule steps.
-    pub steps: Vec<Step>,
+    /// Ordered recursive fold levels. Supported schedules contain at least two.
+    pub folds: Vec<FoldStep>,
+    /// The unique terminal cleartext handoff.
+    pub terminal: DirectStep,
     /// Exact total proof bytes for the schedule.
     pub total_bytes: usize,
 }
@@ -545,35 +525,26 @@ pub struct Schedule {
 impl Schedule {
     /// Iterate over the fold steps in execution order.
     pub fn fold_steps(&self) -> impl Iterator<Item = &FoldStep> + '_ {
-        self.steps.iter().filter_map(|step| match step {
-            Step::Fold(fold) => Some(fold.as_ref()),
-            Step::Direct(_) => None,
-        })
+        self.folds.iter()
     }
 
     /// Number of fold levels before the terminal direct step.
     pub fn num_fold_levels(&self) -> usize {
-        self.fold_steps().count()
+        self.folds.len()
     }
 
     /// Return the root fold carried by every supported schedule.
     pub fn root_fold(&self) -> Result<&FoldStep, AkitaError> {
-        match self.steps.first() {
-            Some(Step::Fold(step)) => Ok(step.as_ref()),
-            Some(Step::Direct(_)) | None => Err(AkitaError::UnsupportedSchedule(
-                "schedule must begin with a root fold".to_string(),
-            )),
-        }
+        self.folds.first().ok_or_else(|| {
+            AkitaError::UnsupportedSchedule("schedule must begin with a root fold".to_string())
+        })
     }
 
     /// Mutably borrow the root fold carried by every supported schedule.
     pub fn root_fold_mut(&mut self) -> Result<&mut FoldStep, AkitaError> {
-        match self.steps.first_mut() {
-            Some(Step::Fold(step)) => Ok(step.as_mut()),
-            Some(Step::Direct(_)) | None => Err(AkitaError::UnsupportedSchedule(
-                "schedule must begin with a root fold".to_string(),
-            )),
-        }
+        self.folds.first_mut().ok_or_else(|| {
+            AkitaError::UnsupportedSchedule("schedule must begin with a root fold".to_string())
+        })
     }
 
     /// Validate protocol-level schedule topology before any witness is interpreted.
@@ -582,137 +553,103 @@ impl Schedule {
     /// eligibility, setup-slot identity, and proof-object validation remain at
     /// their respective boundaries.
     pub fn validate_structure(&self) -> Result<(), AkitaError> {
-        if self.steps.is_empty() {
+        if self.folds.len() < 2 {
             return Err(AkitaError::InvalidSetup(
-                "schedule must contain at least one step".to_string(),
-            ));
-        }
-        if !matches!(self.steps.first(), Some(Step::Fold(_))) || self.num_fold_levels() < 2 {
-            return Err(AkitaError::InvalidSetup(
-                "schedule must start with a fold and contain at least two fold levels".to_string(),
+                "schedule must contain at least two fold levels".to_string(),
             ));
         }
 
-        let last_index = self.steps.len() - 1;
-        for (index, step) in self.steps.iter().enumerate() {
-            match step {
-                Step::Fold(fold) => {
-                    if fold.current_w_len == 0 || fold.next_w_len == 0 {
-                        return Err(AkitaError::InvalidSetup(
-                            "fold witness lengths must be nonzero".to_string(),
-                        ));
-                    }
+        for (index, fold) in self.folds.iter().enumerate() {
+            if fold.current_w_len == 0 || fold.next_w_len == 0 {
+                return Err(AkitaError::InvalidSetup(
+                    "fold witness lengths must be nonzero".to_string(),
+                ));
+            }
 
-                    let Some(successor) = self.steps.get(index + 1) else {
-                        return Err(AkitaError::InvalidSetup(
-                            "schedule must end with a direct step".to_string(),
-                        ));
-                    };
-                    let successor_w_len = match successor {
-                        Step::Fold(next_fold) => next_fold.current_w_len,
-                        Step::Direct(direct) => direct.current_w_len,
-                    };
-                    if fold.next_w_len != successor_w_len {
-                        return Err(AkitaError::InvalidSetup(format!(
-                            "schedule witness length mismatch between steps {index} and {}",
-                            index + 1
-                        )));
-                    }
-                    if fold.params.has_precommitted_groups() && !matches!(successor, Step::Fold(_))
-                    {
-                        return Err(AkitaError::InvalidSetup(
-                            "grouped fold must be followed by another fold".to_string(),
-                        ));
-                    }
+            let successor_fold = self.folds.get(index + 1);
+            let successor_w_len =
+                successor_fold.map_or(self.terminal.current_w_len, |next| next.current_w_len);
+            if fold.next_w_len != successor_w_len {
+                return Err(AkitaError::InvalidSetup(format!(
+                    "schedule witness length mismatch between steps {index} and {}",
+                    index + 1
+                )));
+            }
+            if fold.params.has_precommitted_groups() && successor_fold.is_none() {
+                return Err(AkitaError::InvalidSetup(
+                    "grouped fold must be followed by another fold".to_string(),
+                ));
+            }
 
-                    if index == 0 && fold.params.setup_prefix.is_some() {
-                        return Err(AkitaError::InvalidSetup(
-                            "root fold must not carry an incoming setup prefix".to_string(),
-                        ));
-                    }
+            if index == 0 && fold.params.setup_prefix.is_some() {
+                return Err(AkitaError::InvalidSetup(
+                    "root fold must not carry an incoming setup prefix".to_string(),
+                ));
+            }
 
-                    let successor_is_direct = matches!(successor, Step::Direct(_));
-                    if successor_is_direct {
-                        if fold.params.setup_contribution_mode != SetupContributionMode::Direct {
+            let successor_is_direct = successor_fold.is_none();
+            if successor_is_direct {
+                if fold.params.setup_contribution_mode != SetupContributionMode::Direct {
+                    return Err(AkitaError::InvalidSetup(
+                        "terminal fold must use direct setup contribution".to_string(),
+                    ));
+                }
+                if fold.params.has_precommitted_groups() {
+                    return Err(AkitaError::InvalidSetup(
+                        "terminal fold must be scalar".to_string(),
+                    ));
+                }
+            }
+
+            if let Some(successor_fold) = successor_fold {
+                let successor_carries_setup_prefix_only =
+                    successor_fold.params.setup_prefix.is_some()
+                        && successor_fold.params.precommitted_groups.is_empty()
+                        && successor_fold.params.precommitted_group_count() == 1;
+
+                match fold.params.setup_contribution_mode {
+                    SetupContributionMode::Recursive => {
+                        if successor_fold.params.setup_prefix.is_none() {
                             return Err(AkitaError::InvalidSetup(
-                                "terminal fold must use direct setup contribution".to_string(),
+                                "recursive fold successor must carry a setup prefix".to_string(),
                             ));
                         }
-                        if fold.params.has_precommitted_groups() {
-                            return Err(AkitaError::InvalidSetup(
-                                "terminal fold must be scalar".to_string(),
-                            ));
-                        }
-                    }
-
-                    if let Step::Fold(successor_fold) = successor {
-                        let successor_carries_setup_prefix_only =
-                            successor_fold.params.setup_prefix.is_some()
-                                && successor_fold.params.precommitted_groups.is_empty()
-                                && successor_fold.params.precommitted_group_count() == 1;
-
-                        match fold.params.setup_contribution_mode {
-                            SetupContributionMode::Recursive => {
-                                if successor_fold.params.setup_prefix.is_none() {
-                                    return Err(AkitaError::InvalidSetup(
-                                        "recursive fold successor must carry a setup prefix"
-                                            .to_string(),
-                                    ));
-                                }
-                                if !successor_fold.params.precommitted_groups.is_empty()
-                                    || successor_fold.params.precommitted_group_count() != 1
-                                {
-                                    return Err(AkitaError::InvalidSetup(
-                                        "recursive fold successor must carry only the setup prefix group"
-                                            .to_string(),
-                                    ));
-                                }
-                            }
-                            SetupContributionMode::Direct => {
-                                if successor_fold.params.setup_prefix.is_some() {
-                                    return Err(AkitaError::InvalidSetup(
-                                        "direct fold must not forward a setup prefix".to_string(),
-                                    ));
-                                }
-                            }
-                        }
-
-                        if successor_carries_setup_prefix_only
-                            && fold.params.setup_contribution_mode
-                                != SetupContributionMode::Recursive
+                        if !successor_fold.params.precommitted_groups.is_empty()
+                            || successor_fold.params.precommitted_group_count() != 1
                         {
                             return Err(AkitaError::InvalidSetup(
-                                "setup-prefix successor requires a recursive predecessor"
+                                "recursive fold successor must carry only the setup prefix group"
                                     .to_string(),
                             ));
                         }
                     }
+                    SetupContributionMode::Direct => {
+                        if successor_fold.params.setup_prefix.is_some() {
+                            return Err(AkitaError::InvalidSetup(
+                                "direct fold must not forward a setup prefix".to_string(),
+                            ));
+                        }
+                    }
                 }
-                Step::Direct(direct) => {
-                    if index != last_index {
-                        return Err(AkitaError::InvalidSetup(
-                            "direct step must be the final schedule step".to_string(),
-                        ));
-                    }
-                    if direct.current_w_len == 0 {
-                        return Err(AkitaError::InvalidSetup(
-                            "direct witness length must be nonzero".to_string(),
-                        ));
-                    }
 
-                    let CleartextWitnessShape::SegmentTyped(shape) = &direct.witness_shape else {
-                        return Err(AkitaError::InvalidSetup(
-                            "terminal direct step requires a segment-typed witness".to_string(),
-                        ));
-                    };
-                    if shape.layout.logical_num_elems != direct.current_w_len {
-                        return Err(AkitaError::InvalidSetup(
-                            "terminal direct witness shape does not match current witness length"
-                                .to_string(),
-                        ));
-                    }
+                if successor_carries_setup_prefix_only
+                    && fold.params.setup_contribution_mode != SetupContributionMode::Recursive
+                {
+                    return Err(AkitaError::InvalidSetup(
+                        "setup-prefix successor requires a recursive predecessor".to_string(),
+                    ));
                 }
             }
+        }
+        if self.terminal.current_w_len == 0 {
+            return Err(AkitaError::InvalidSetup(
+                "direct witness length must be nonzero".to_string(),
+            ));
+        }
+        if self.terminal.witness_shape.layout.logical_num_elems != self.terminal.current_w_len {
+            return Err(AkitaError::InvalidSetup(
+                "terminal direct witness shape does not match current witness length".to_string(),
+            ));
         }
         Ok(())
     }
@@ -724,38 +661,40 @@ impl Schedule {
     /// Returns an error if `level` is not a fold step or if the scheduled
     /// successor step cannot provide next-level params.
     pub fn get_execution_schedule(&self, level: usize) -> Result<ExecutionSchedule, AkitaError> {
-        let Some(Step::Fold(step)) = self.steps.get(level) else {
+        let Some(step) = self.folds.get(level) else {
             return Err(AkitaError::InvalidSetup(format!(
                 "schedule is missing fold step at level {level}"
             )));
         };
-        let is_terminal = matches!(self.steps.get(level + 1), Some(Step::Direct(_)));
+        let is_terminal = level + 1 == self.folds.len();
         let next_witness_binding = if is_terminal {
             None
-        } else if matches!(self.steps.get(level + 2), Some(Step::Direct(_))) {
+        } else if level + 2 == self.folds.len() {
             Some(NextWitnessBindingPolicy::TerminalInnerState)
         } else {
             Some(NextWitnessBindingPolicy::OuterCommitment)
         };
-        let next_level_params = scheduled_next_level_params(self, level + 1)?;
+        let next_params = self.folds.get(level + 1).map(|fold| fold.params.clone());
+        let next_log_basis = next_params
+            .as_ref()
+            .map_or_else(|| self.terminal.log_basis(), |params| params.log_basis);
         Ok(ExecutionSchedule {
             level,
             current_w_len: step.current_w_len,
             params: step.params.clone(),
-            next_params: next_level_params,
+            next_params,
+            next_log_basis,
             next_w_len: step.next_w_len,
             is_terminal,
             next_witness_binding,
         })
     }
 
-    /// Witness length (field elements) entering the first step, or `None`
-    /// when the schedule has no steps.
+    /// Witness length (field elements) entering the root fold.
+    ///
+    /// Returns `None` only for an unvalidated, unsupported empty schedule.
     pub fn initial_w_len(&self) -> Option<usize> {
-        self.steps.first().map(|step| match step {
-            Step::Fold(fold) => fold.current_w_len,
-            Step::Direct(direct) => direct.current_w_len,
-        })
+        self.folds.first().map(|fold| fold.current_w_len)
     }
 
     /// Append the descriptor digest encoding for this effective schedule.
@@ -763,41 +702,17 @@ impl Schedule {
     /// Kept next to [`Schedule`] so protocol-affecting step field changes are
     /// reviewed with their Fiat-Shamir binding.
     pub(crate) fn append_descriptor_bytes(&self, bytes: &mut Vec<u8>) {
-        push_usize(bytes, self.steps.len());
-        for step in &self.steps {
-            match step {
-                Step::Fold(fold) => {
-                    bytes.push(0);
-                    fold.params.append_descriptor_bytes(bytes);
-                    push_usize(bytes, fold.current_w_len);
-                    push_usize(bytes, fold.next_w_len);
-                    push_usize(bytes, fold.level_bytes);
-                }
-                Step::Direct(direct) => {
-                    bytes.push(1);
-                    push_usize(bytes, direct.current_w_len);
-                    append_direct_witness_shape_descriptor_bytes(bytes, &direct.witness_shape);
-                    push_usize(bytes, direct.direct_bytes);
-                }
-            }
+        push_usize(bytes, self.folds.len());
+        for fold in &self.folds {
+            fold.params.append_descriptor_bytes(bytes);
+            push_usize(bytes, fold.current_w_len);
+            push_usize(bytes, fold.next_w_len);
+            push_usize(bytes, fold.level_bytes);
         }
+        push_usize(bytes, self.terminal.current_w_len);
+        self.terminal.witness_shape.append_descriptor_bytes(bytes);
+        push_usize(bytes, self.terminal.direct_bytes);
         push_usize(bytes, self.total_bytes);
-    }
-}
-
-fn append_direct_witness_shape_descriptor_bytes(
-    bytes: &mut Vec<u8>,
-    shape: &CleartextWitnessShape,
-) {
-    match shape {
-        CleartextWitnessShape::FieldElements(coeff_len) => {
-            bytes.push(1);
-            push_usize(bytes, *coeff_len);
-        }
-        CleartextWitnessShape::SegmentTyped(shape) => {
-            bytes.push(2);
-            shape.append_descriptor_bytes(bytes);
-        }
     }
 }
 
@@ -807,60 +722,6 @@ pub fn root_current_w_len(lp: &LevelParams) -> usize {
         .checked_mul(lp.num_positions_per_block)
         .and_then(|len| len.checked_mul(lp.ring_dimension))
         .unwrap_or(0)
-}
-
-/// Return the terminal direct witness shape from a runtime schedule.
-///
-/// # Errors
-///
-/// Returns an error if the schedule does not end in a direct witness handoff.
-pub fn schedule_terminal_direct_witness_shape(
-    schedule: &Schedule,
-) -> Result<&CleartextWitnessShape, AkitaError> {
-    match schedule.steps.last() {
-        Some(Step::Direct(step)) => Ok(&step.witness_shape),
-        Some(Step::Fold(_)) => Err(AkitaError::InvalidSetup(
-            "schedule must end in a terminal direct witness step".to_string(),
-        )),
-        None => Err(AkitaError::InvalidSetup(
-            "schedule is missing terminal direct witness step".to_string(),
-        )),
-    }
-}
-
-/// Resolve one scheduled level's active Akita params.
-///
-/// `Fold` steps return the baked-in `params` set by the planner DP and
-/// table materializer. A terminal `Direct(SegmentTyped)` step has no
-/// commitment of its own (the cleartext witness is absorbed into the
-/// transcript directly), so it ships no `LevelParams`; this function
-/// instead returns a [`LevelParams::log_basis_stub`] carrying only the
-/// active `log_basis` read off `witness_shape`. The only caller that
-/// actually consumes a field of the terminal-Direct successor is the
-/// prover's terminal-fold path, which reads `log_basis`.
-///
-/// # Errors
-///
-/// Returns an error when `step_index` is outside the schedule or when a
-/// recursive schedule transitions into a `Direct(FieldElements)`.
-pub fn scheduled_next_level_params(
-    schedule: &Schedule,
-    step_index: usize,
-) -> Result<LevelParams, AkitaError> {
-    match schedule.steps.get(step_index) {
-        Some(Step::Fold(step)) => Ok(step.params.clone()),
-        Some(Step::Direct(step)) => match &step.witness_shape {
-            CleartextWitnessShape::SegmentTyped(shape) => {
-                Ok(LevelParams::log_basis_stub(shape.layout.log_basis))
-            }
-            CleartextWitnessShape::FieldElements(_) => Err(AkitaError::InvalidSetup(
-                "recursive schedule cannot transition into a field-element direct step".to_string(),
-            )),
-        },
-        None => Err(AkitaError::InvalidSetup(
-            "schedule is missing successor step".to_string(),
-        )),
-    }
 }
 
 #[cfg(test)]

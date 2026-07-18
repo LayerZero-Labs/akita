@@ -1,6 +1,7 @@
 use super::*;
 use crate::{
-    CleartextWitnessShape, FoldStep, LevelParams, OpeningClaimsLayout, PolynomialGroupLayout, Step,
+    CleartextWitnessShape, DirectStep, FoldStep, LevelParams, OpeningClaimsLayout,
+    PolynomialGroupLayout, TailSegmentGroupLayout, TailSegmentLayout,
 };
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::{Prime32Offset99, Prime64Offset59};
@@ -19,22 +20,36 @@ fn sample_level_params() -> LevelParams {
     .expect("sample level params")
 }
 
+fn sample_direct_step(logical_num_elems: usize) -> DirectStep {
+    DirectStep {
+        current_w_len: logical_num_elems,
+        witness_shape: CleartextWitnessShape {
+            layout: TailSegmentLayout {
+                ring_dimension: 64,
+                log_basis: 3,
+                groups: vec![TailSegmentGroupLayout {
+                    z_coords: 1,
+                    e_field_elems: logical_num_elems,
+                    t_field_elems: 0,
+                    z_payload_bytes: 1,
+                }],
+                logical_num_elems,
+            },
+        },
+        direct_bytes: logical_num_elems,
+    }
+}
+
 fn sample_descriptor() -> AkitaInstanceDescriptor {
     let opening_batch = OpeningClaimsLayout::new(5, 3).expect("valid opening batch");
     let schedule = Schedule {
-        steps: vec![
-            Step::fold(FoldStep {
-                params: sample_level_params(),
-                current_w_len: 256,
-                next_w_len: 256,
-                level_bytes: 123,
-            }),
-            Step::Direct(crate::DirectStep {
-                current_w_len: 256,
-                witness_shape: CleartextWitnessShape::FieldElements(64),
-                direct_bytes: 32,
-            }),
-        ],
+        folds: vec![FoldStep {
+            params: sample_level_params(),
+            current_w_len: 256,
+            next_w_len: 256,
+            level_bytes: 123,
+        }],
+        terminal: sample_direct_step(256),
         total_bytes: 155,
     };
 
@@ -97,9 +112,9 @@ fn fold_linf_descriptor_canonical_digest_pinned() {
         (
             229,
             [
-                0xbf, 0x20, 0xb0, 0x10, 0xf2, 0x7a, 0x62, 0xc5, 0x7c, 0x9a, 0x8b, 0x2b, 0x42, 0x4e,
-                0x5b, 0x5a, 0x49, 0x63, 0x09, 0xb2, 0x44, 0x2d, 0xfb, 0xac, 0xd7, 0xdc, 0x74, 0xce,
-                0xaa, 0xb1, 0x41, 0x98,
+                0xe8, 0x1a, 0x74, 0x57, 0x32, 0xb5, 0x9c, 0x77, 0xb8, 0x63, 0x0b, 0xde, 0x3e, 0xac,
+                0xc0, 0x77, 0xb8, 0x3d, 0x12, 0xa2, 0x51, 0x4c, 0x7c, 0x70, 0x27, 0x79, 0x3e, 0xe0,
+                0x1e, 0x88, 0xab, 0x21,
             ]
         ),
         "update pinned digest when descriptor setup-section bindings change"
@@ -155,21 +170,23 @@ fn effective_schedule_digest_binds_tail_bound_with_grind_policy() {
     );
 
     let schedule_certified = Schedule {
-        steps: vec![Step::fold(FoldStep {
+        folds: vec![FoldStep {
             params: certified,
             current_w_len: 256,
             next_w_len: 256,
             level_bytes: 123,
-        })],
+        }],
+        terminal: sample_direct_step(256),
         total_bytes: 123,
     };
     let schedule_worst_case = Schedule {
-        steps: vec![Step::fold(FoldStep {
+        folds: vec![FoldStep {
             params: worst_case_only,
             current_w_len: 256,
             next_w_len: 256,
             level_bytes: 123,
-        })],
+        }],
+        terminal: sample_direct_step(256),
         total_bytes: 123,
     };
 
@@ -187,21 +204,23 @@ fn effective_schedule_digest_binds_shape_aware_challenge_l2_sq_max() {
     assert_ne!(flat.challenge_l2_sq_max(), tensor.challenge_l2_sq_max());
 
     let schedule_flat = Schedule {
-        steps: vec![Step::fold(FoldStep {
+        folds: vec![FoldStep {
             params: flat,
             current_w_len: 256,
             next_w_len: 256,
             level_bytes: 123,
-        })],
+        }],
+        terminal: sample_direct_step(256),
         total_bytes: 123,
     };
     let schedule_tensor = Schedule {
-        steps: vec![Step::fold(FoldStep {
+        folds: vec![FoldStep {
             params: tensor,
             current_w_len: 256,
             next_w_len: 256,
             level_bytes: 123,
-        })],
+        }],
+        terminal: sample_direct_step(256),
         total_bytes: 123,
     };
 
@@ -217,21 +236,23 @@ fn effective_schedule_digest_binds_fold_linf_policy() {
     tensor_params.fold_challenge_shape = TensorChallengeShape::Tensor { fold_low_len: 2 };
 
     let schedule_flat = Schedule {
-        steps: vec![Step::fold(FoldStep {
+        folds: vec![FoldStep {
             params: sample_level_params(),
             current_w_len: 256,
             next_w_len: 256,
             level_bytes: 123,
-        })],
+        }],
+        terminal: sample_direct_step(256),
         total_bytes: 123,
     };
     let schedule_tensor = Schedule {
-        steps: vec![Step::fold(FoldStep {
+        folds: vec![FoldStep {
             params: tensor_params,
             current_w_len: 256,
             next_w_len: 256,
             level_bytes: 123,
-        })],
+        }],
+        terminal: sample_direct_step(256),
         total_bytes: 123,
     };
 
@@ -362,19 +383,13 @@ fn setup_seed_digest_matches_setup_section() {
 #[test]
 fn effective_schedule_digest_binds_direct_shape() {
     let schedule_a = Schedule {
-        steps: vec![Step::Direct(crate::DirectStep {
-            current_w_len: 8,
-            witness_shape: CleartextWitnessShape::FieldElements(8),
-            direct_bytes: 8,
-        })],
+        folds: Vec::new(),
+        terminal: sample_direct_step(8),
         total_bytes: 8,
     };
     let schedule_b = Schedule {
-        steps: vec![Step::Direct(crate::DirectStep {
-            current_w_len: 8,
-            witness_shape: CleartextWitnessShape::FieldElements(9),
-            direct_bytes: 9,
-        })],
+        folds: Vec::new(),
+        terminal: sample_direct_step(9),
         total_bytes: 9,
     };
 

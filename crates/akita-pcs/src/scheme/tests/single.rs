@@ -47,7 +47,6 @@ fn verify_passes_for_consistent_opening() {
         &mut verifier_transcript,
         verifier_claims(&opening_point[..], &openings[..], &commitments[0]),
         BasisMode::Lagrange,
-        akita_types::SetupContributionMode::Direct,
     );
 
     assert!(result.is_ok());
@@ -101,7 +100,6 @@ fn verify_rejects_wrong_opening() {
         &mut verifier_transcript,
         verifier_claims(&opening_point[..], &wrong_openings[..], &commitments[0]),
         BasisMode::Lagrange,
-        akita_types::SetupContributionMode::Direct,
     );
 
     assert!(
@@ -130,7 +128,6 @@ fn verify_rejects_malformed_v_dimension_without_panicking() {
             &mut verifier_transcript,
             verifier_claims(&opening_point[..], &openings[..], &commitments[0]),
             BasisMode::Lagrange,
-            akita_types::SetupContributionMode::Direct,
         )
     }));
 
@@ -162,7 +159,6 @@ fn fp128_degree_one_batched_proof_roundtrip_is_stable() {
         &mut verifier_transcript,
         verifier_claims(&opening_point[..], &openings[..], &commitments[0]),
         BasisMode::Lagrange,
-        akita_types::SetupContributionMode::Direct,
     )
     .expect("degree-one roundtrip proof should verify");
 }
@@ -170,7 +166,7 @@ fn fp128_degree_one_batched_proof_roundtrip_is_stable() {
 #[test]
 fn folded_payload_commitments_and_digits_stay_base_field() {
     fn assert_base_flat_ring_vec(_: &RingVec<F>) {}
-    fn assert_base_direct_witness(_: &akita_types::CleartextWitnessProof<F>) {}
+    fn assert_base_direct_witness(_: &akita_types::SegmentTypedWitness<F>) {}
 
     let (_, _, proof, _, _, _) = make_verify_fixture(16);
     let root = &proof.root;
@@ -207,7 +203,6 @@ fn folded_root_rejects_unchecked_extension_opening_reduction_payload() {
         &mut verifier_transcript,
         verifier_claims(&opening_point[..], &openings[..], &commitments[0]),
         BasisMode::Lagrange,
-        akita_types::SetupContributionMode::Direct,
     )
     .unwrap_err();
     assert!(matches!(err, AkitaError::InvalidProof));
@@ -263,7 +258,6 @@ fn monomial_basis_prove_verify_round_trip() {
         &mut verifier_transcript,
         verifier_claims(&opening_point[..], &openings[..], &commitments[0]),
         BasisMode::Monomial,
-        akita_types::SetupContributionMode::Direct,
     );
 
     assert!(

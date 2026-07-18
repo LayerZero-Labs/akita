@@ -112,7 +112,7 @@ fn direct_terminal_builder_constructs_z_e_t_segments() {
 fn terminal_golomb_grind_covers_terminal_layout() {
     let lp = test_lp();
     let layout = scalar_group_layout(&lp, 1, 1, 1, F::modulus_bits()).unwrap();
-    let shape = CleartextWitnessShape::SegmentTyped(SegmentTypedWitnessShape { layout });
+    let shape = SegmentTypedWitnessShape { layout };
 
     let terminal = terminal_golomb_grind_tail_t_vectors(
         &lp,
@@ -221,10 +221,6 @@ fn terminal_transcript_parts_separate_t_state_from_z_response() {
 
     let parts = witness.terminal_transcript_parts().unwrap();
     assert_eq!(parts.response, z);
-    assert_eq!(parts.t_state, raw_field_segment_bytes(&t_fields).unwrap());
-    let mut legacy = parts.response.clone();
-    legacy.extend_from_slice(&parts.t_state);
-    assert_eq!(parts.outer_committed_response(), legacy);
 }
 
 #[test]

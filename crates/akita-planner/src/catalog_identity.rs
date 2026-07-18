@@ -14,8 +14,8 @@ use akita_field::AkitaError;
 use akita_types::{AkitaScheduleInputs, PolynomialGroupLayout, PrecommittedGroupParams};
 
 use crate::generated::{
-    generated_schedule_key_cmp, GeneratedScheduleCatalogIdentity, GeneratedScheduleTable,
-    GeneratedScheduleTableEntry, GeneratedStep,
+    generated_schedule_key_cmp, GeneratedFold, GeneratedScheduleCatalogIdentity,
+    GeneratedScheduleTable, GeneratedScheduleTableEntry,
 };
 use crate::PlannerPolicy;
 
@@ -393,18 +393,17 @@ fn root_fold_shape_for_entries(
 fn collect_ring_dimensions(entries: &[GeneratedScheduleTableEntry]) -> Vec<usize> {
     let mut dims = Vec::new();
     for entry in entries {
-        collect_step_ring_dimensions(entry.steps, &mut dims);
+        collect_fold_ring_dimensions(entry.folds, &mut dims);
     }
     dims.sort_unstable();
     dims
 }
 
-fn collect_step_ring_dimensions(steps: &[GeneratedStep], dims: &mut Vec<usize>) {
-    for step in steps {
-        match step {
-            GeneratedStep::Fold(f) => push_unique(dims, f.ring_d as usize),
-            GeneratedStep::FoldWithSetupMetadata(f) => push_unique(dims, f.fold.ring_d as usize),
-            GeneratedStep::Direct => {}
+fn collect_fold_ring_dimensions(folds: &[GeneratedFold], dims: &mut Vec<usize>) {
+    for fold in folds {
+        match fold {
+            GeneratedFold::Fold(f) => push_unique(dims, f.ring_d as usize),
+            GeneratedFold::FoldWithSetupMetadata(f) => push_unique(dims, f.fold.ring_d as usize),
         }
     }
 }
@@ -557,7 +556,7 @@ mod tests {
         GeneratedScheduleTableEntry {
             final_group: PolynomialGroupLayout::new(16, 1),
             precommitteds: &[],
-            steps: &[],
+            folds: &[],
         }
     }
 
@@ -579,7 +578,7 @@ mod tests {
         GeneratedScheduleTableEntry {
             final_group: PolynomialGroupLayout::new(16, 1),
             precommitteds: &PRECOMMITTED,
-            steps: &[],
+            folds: &[],
         }
     }
 

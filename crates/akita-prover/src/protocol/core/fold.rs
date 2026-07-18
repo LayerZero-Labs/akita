@@ -45,8 +45,7 @@ pub(in crate::protocol::core) struct PreparedFold<F: FieldCore, E: FieldCore> {
     pub(in crate::protocol::core) trace_claim_scales: Option<Vec<E>>,
     pub(in crate::protocol::core) trace_scale: E,
     pub(in crate::protocol::core) row_coefficients: Option<Vec<E>>,
-    /// Canonical suffix-terminal `t` state already bound by the predecessor.
-    /// Root-terminal folds keep this absent and retain their public B rows.
+    /// Canonical terminal `t` state already bound by the predecessor.
     pub(in crate::protocol::core) terminal_t_state: Option<RingVec<F>>,
     /// Per-block terminal `t` rows retained by the predecessor's inner commit.
     pub(in crate::protocol::core) terminal_recomposed_inner_rows: Option<Vec<RingVec<F>>>,
@@ -590,7 +589,10 @@ where
             terminal_artifacts,
             terminal_direct_witness_shape,
             prepared_fold.instance.opening_batch(),
-            prepared_fold.terminal_t_state.as_ref(),
+            prepared_fold
+                .terminal_t_state
+                .as_ref()
+                .ok_or(AkitaError::InvalidProof)?,
         )
         .map_err(|err| {
             AkitaError::InvalidInput(format!("terminal witness binding failed: {err:?}"))
@@ -605,10 +607,13 @@ where
     let RingSwitchBuildOutput::Intermediate(logical_w) = build_output else {
         return Err(AkitaError::InvalidProof);
     };
+    let next_params = scheduled.next_params.as_ref().ok_or_else(|| {
+        AkitaError::InvalidSetup("non-terminal fold is missing successor params".into())
+    })?;
     scheduled.validate_next_w_len(logical_w.len())?;
     let _span = tracing::info_span!("commit_w_level", level).entered();
     let next_commitment = crate::commit_w::<Cfg, C>(
-        &scheduled.next_params,
+        next_params,
         expanded,
         stack.commit(),
         &logical_w,
@@ -627,7 +632,7 @@ where
         }
     }
     let relation_matrix_row_layout = RelationMatrixRowLayout::WithDBlock;
-    let next_opening_ring_dim = scheduled.next_params.d_a();
+    let next_opening_ring_dim = next_params.d_a();
     if !logical_w.len().is_multiple_of(next_opening_ring_dim) {
         return Err(AkitaError::InvalidProof);
     }
@@ -792,7 +797,7 @@ where
         expanded.as_ref(),
         prefix_slots,
         lp,
-        &scheduled.next_params,
+        next_params,
         &prepared_fold.instance,
         &tau1,
         alpha,
@@ -864,7 +869,7 @@ where
             logical_w,
             binding: next_binding,
             hint: committed_hint,
-            log_basis: scheduled.next_params.log_basis,
+            log_basis: next_params.log_basis,
             sumcheck_challenges: next_opening_point,
             opening: next_opening,
             setup_prefix_opening,
@@ -879,23 +884,15 @@ pub(in crate::protocol::core) fn bind_terminal_witness<F, T>(
     artifacts: RingSwitchTerminalArtifacts<F>,
     terminal_direct_witness_shape: Option<&CleartextWitnessShape>,
     opening_batch: &OpeningClaimsLayout,
-    bound_t_state: Option<&RingVec<F>>,
+    bound_t_state: &RingVec<F>,
 ) -> Result<CleartextWitnessProof<F>, AkitaError>
 where
     F: FieldCore + CanonicalField + HalvingField + AkitaSerialize,
     T: Transcript<F>,
 {
-    let CleartextWitnessShape::SegmentTyped(scheduled_shape) = terminal_direct_witness_shape
-        .ok_or_else(|| {
-            AkitaError::InvalidSetup(
-                "terminal fold missing scheduled segment-typed witness shape".to_string(),
-            )
-        })?
-    else {
-        return Err(AkitaError::InvalidSetup(
-            "terminal fold expected segment-typed witness shape".to_string(),
-        ));
-    };
+    let scheduled_shape = terminal_direct_witness_shape.ok_or_else(|| {
+        AkitaError::InvalidSetup("terminal fold missing scheduled witness shape".to_string())
+    })?;
     let group_parts = artifacts
         .groups
         .iter()
@@ -928,16 +925,11 @@ where
         ));
     }
     let parts = segment.terminal_transcript_parts()?;
-    let response = if let Some(bound_t_state) = bound_t_state {
-        if segment.t_fields.coeffs() != bound_t_state.coeffs() {
-            return Err(AkitaError::InvalidProof);
-        }
-        parts.response
-    } else {
-        parts.outer_committed_response()
-    };
-    transcript.absorb_and_record_bytes(ABSORB_TERMINAL_W_REMAINDER, &response);
-    Ok(CleartextWitnessProof::SegmentTyped(segment))
+    if segment.t_fields.coeffs() != bound_t_state.coeffs() {
+        return Err(AkitaError::InvalidProof);
+    }
+    transcript.absorb_and_record_bytes(ABSORB_TERMINAL_W_REMAINDER, &parts.response);
+    Ok(segment)
 }
 
 #[allow(clippy::too_many_arguments)]

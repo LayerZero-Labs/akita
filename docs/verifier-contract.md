@@ -15,6 +15,12 @@ Any malformed verifier-facing proof, setup, schedule, public claim, opening poin
 
 The verifier must validate `key.num_vars` against setup capacity before invoking the DP so a malformed proof cannot blow up the search's bounded state space.
 
+The accepted proof topology is structural: a root fold, at least one suffix
+fold, and one terminal cleartext witness. The verifier rejects empty/one-fold
+schedules and proof-shape mismatches before transcript replay. Every terminal
+uses predecessor-bound inner `t` and the `consistency | A` relation; there is no
+root-terminal fallback, final outer `u`, or terminal B/D block to validate.
+
 ## Rules
 
 1. Do not add verifier-reachable `panic!`, `assert!`, `assert_eq!`, `expect`, `unwrap`, `unreachable!`, unchecked indexing/slicing, overflow-prone shape arithmetic, or unbounded allocation unless an earlier verifier boundary has clearly validated the invariant.

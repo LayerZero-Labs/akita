@@ -100,7 +100,6 @@ fn run_single_onehot(nv: usize) {
             &mut verifier_transcript,
             verify_input(&pt[..], opening_groups[0], &commitments[0]),
             BasisMode::Lagrange,
-            akita_types::SetupContributionMode::Direct,
         );
         assert!(
             result.is_ok(),
@@ -186,7 +185,6 @@ fn run_single_dense(nv: usize) {
             &mut verifier_transcript,
             verify_input(&pt[..], opening_groups[0], &commitments[0]),
             BasisMode::Lagrange,
-            akita_types::SetupContributionMode::Direct,
         );
         assert!(
             result.is_ok(),
@@ -325,7 +323,6 @@ fn run_single_onehot_oversized_setup(setup_nv: usize, poly_nv: usize) {
             &mut verifier_transcript,
             verify_input(&pt[..], opening_groups[0], &commitments[0]),
             BasisMode::Lagrange,
-            akita_types::SetupContributionMode::Direct,
         );
         assert!(
             result.is_ok(),

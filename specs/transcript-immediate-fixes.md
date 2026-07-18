@@ -206,8 +206,8 @@ guest should call the shared timer-free config adapter exposed from
    shared config helpers;
 3. bind the canonical descriptor bytes before any proof absorb or challenge
    squeeze; and
-4. run the same field-role and root-direct commitment checks as the normal
-   verifier path.
+4. run the same field-role, folded-root commitment, and terminal predecessor-`t`
+   checks as the normal verifier path.
 
 The guest must not use `AkitaTranscript::new` for verifier replay. That helper
 constructs a prover-side placeholder transcript for lower-level tests and may

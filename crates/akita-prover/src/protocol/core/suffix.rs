@@ -8,7 +8,6 @@ use crate::compute::{
 use crate::RootTensorProjectionPoly;
 use akita_field::unreduced::ReduceTo;
 use akita_field::AdditiveGroup;
-use akita_types::schedule_terminal_direct_witness_shape;
 use akita_types::terminal_golomb_grind_tail_t_vectors;
 use std::sync::Arc;
 
@@ -50,9 +49,8 @@ impl<F: FieldCore, E: FieldCore> SuffixProverState<F, E> {
 ///
 /// # Errors
 ///
-/// Returns an error if level proving fails, or an invalid-setup error when the
-/// schedule's recursive suffix is empty (root-terminal proofs do not run this
-/// helper).
+/// Returns an error if level proving fails or the required recursive suffix is
+/// absent.
 #[allow(clippy::too_many_arguments)]
 pub fn prove_suffix<'stack, Cfg, T, C, O, TS, R>(
     expanded: &Arc<AkitaExpandedSetup<Cfg::Field>>,
@@ -121,7 +119,7 @@ where
     let mut current_state = starting_state;
     let mut level = 1usize;
 
-    let terminal_direct_witness_shape = schedule_terminal_direct_witness_shape(schedule)?;
+    let terminal_direct_witness_shape = &schedule.terminal.witness_shape;
     let terminal_tail_t_vectors = {
         let terminal_level = planned_num_levels - 1;
         let terminal_scheduled = schedule.get_execution_schedule(terminal_level)?;
@@ -145,7 +143,6 @@ where
         };
         let prepared_fold = {
             let stack = stacks.prove_stack_at_level(level);
-            stack.ensure_fold_level_role_ntt(expanded.as_ref(), role_dims)?;
             prepare_suffix::<Cfg::Field, Cfg::ExtField, T, C, O, TS, R>(
                 stack,
                 expanded,

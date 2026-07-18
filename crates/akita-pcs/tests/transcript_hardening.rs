@@ -11,7 +11,8 @@ use akita_transcript::{
     ext_limb_label, labels, AkitaTranscript, LoggingTranscript, Transcript, TranscriptEvent,
 };
 use akita_types::{
-    AkitaBatchedProof, AkitaBatchedProofShape, CleartextWitnessProof, CleartextWitnessShape,
+    AkitaBatchedProof, AkitaBatchedProofShape, NextWitnessBinding, RingVec, SegmentTypedWitness,
+    SegmentTypedWitnessShape,
 };
 use common::*;
 
@@ -93,7 +94,6 @@ fn event_stream_equality_small() {
             &mut verifier_transcript,
             verify_input(&point, &openings, &commitments[0]),
             BasisMode::Lagrange,
-            akita_types::SetupContributionMode::Direct,
         )
         .expect("verify");
 
@@ -212,49 +212,66 @@ fn terminal_event_order_rejects_malformed_windows() {
     }
 }
 
-fn final_witness_mut(proof: &mut AkitaBatchedProof<F, F>) -> &mut CleartextWitnessProof<F> {
+fn final_witness_mut(proof: &mut AkitaBatchedProof<F, F>) -> &mut SegmentTypedWitness<F> {
     proof.terminal.final_witness_mut()
 }
 
 #[derive(Clone, Copy)]
-enum TerminalTamper {
+enum ProofTamper {
     EHatDigit,
     RemainderDigit,
     WitnessLen,
     PackedPayload,
+    ExtraZPayload,
+    OversizedRootV,
+    WrongOutgoingBinding,
 }
 
-impl TerminalTamper {
-    fn apply(self, witness: &mut CleartextWitnessProof<F>) {
-        match witness {
-            CleartextWitnessProof::SegmentTyped(segment) => match self {
-                Self::EHatDigit => {
-                    let mut coeffs = segment.e_fields.coeffs().to_vec();
-                    let first = coeffs
-                        .first_mut()
-                        .expect("segment-typed terminal must carry e field coeffs");
-                    *first += F::one();
-                    segment.e_fields = akita_types::RingVec::from_coeffs(coeffs);
-                }
-                Self::RemainderDigit => {
-                    segment.z_payloads[0][0] ^= 1;
-                }
-                Self::WitnessLen => {
-                    segment.layout.logical_num_elems =
-                        segment.layout.logical_num_elems.saturating_sub(1);
-                }
-                Self::PackedPayload => {
-                    segment.z_payloads[0].pop();
-                }
-            },
-            CleartextWitnessProof::FieldElements(_) => {
-                panic!("terminal tamper test does not cover field-element witnesses");
+impl ProofTamper {
+    fn apply(self, proof: &mut AkitaBatchedProof<F, F>) {
+        match self {
+            Self::EHatDigit => {
+                let witness = final_witness_mut(proof);
+                let mut coeffs = witness.e_fields.coeffs().to_vec();
+                let first = coeffs
+                    .first_mut()
+                    .expect("segment-typed terminal must carry e field coeffs");
+                *first += F::one();
+                witness.e_fields = RingVec::from_coeffs(coeffs);
+            }
+            Self::RemainderDigit => final_witness_mut(proof).z_payloads[0][0] ^= 1,
+            Self::WitnessLen => {
+                let witness = final_witness_mut(proof);
+                witness.layout.logical_num_elems =
+                    witness.layout.logical_num_elems.saturating_sub(1);
+            }
+            Self::PackedPayload => {
+                final_witness_mut(proof).z_payloads[0].pop();
+            }
+            Self::ExtraZPayload => final_witness_mut(proof).z_payloads.push(vec![0]),
+            Self::OversizedRootV => {
+                let mut coeffs = proof.root.v.coeffs().to_vec();
+                coeffs.push(F::zero());
+                proof.root.v = RingVec::from_coeffs(coeffs);
+            }
+            Self::WrongOutgoingBinding => {
+                proof.root.stage2.next_witness_binding =
+                    match &proof.root.stage2.next_witness_binding {
+                        NextWitnessBinding::OuterCommitment(_) => {
+                            NextWitnessBinding::TerminalInnerState
+                        }
+                        NextWitnessBinding::TerminalInnerState => {
+                            NextWitnessBinding::OuterCommitment(RingVec::from_coeffs(vec![
+                                F::zero(),
+                            ]))
+                        }
+                    };
             }
         }
     }
 }
 
-fn assert_terminal_tamper_rejected_at_num_vars(num_vars: usize, tamper: TerminalTamper) {
+fn assert_proof_tamper_rejected_at_num_vars(num_vars: usize, tamper: ProofTamper) {
     init_rayon_pool();
     run_on_large_stack(move || {
         let layout = OneHotCfg::get_params_for_batched_commitment(
@@ -297,7 +314,7 @@ fn assert_terminal_tamper_rejected_at_num_vars(num_vars: usize, tamper: Terminal
             akita_types::SetupContributionMode::Direct,
         )
         .expect("prove");
-        tamper.apply(final_witness_mut(&mut proof));
+        tamper.apply(&mut proof);
 
         let mut verifier_transcript = AkitaTranscript::<F>::new(b"hardening/terminal-tamper");
         Scheme::batched_verify(
@@ -306,31 +323,33 @@ fn assert_terminal_tamper_rejected_at_num_vars(num_vars: usize, tamper: Terminal
             &mut verifier_transcript,
             verify_input(&point, &openings, &commitments[0]),
             BasisMode::Lagrange,
-            akita_types::SetupContributionMode::Direct,
         )
         .expect_err("tampered terminal proof must reject");
     });
 }
 
-fn assert_terminal_tamper_rejected(tamper: TerminalTamper) {
-    assert_terminal_tamper_rejected_at_num_vars(TRANSCRIPT_HARDENING_NUM_VARS, tamper);
+fn assert_proof_tamper_rejected(tamper: ProofTamper) {
+    assert_proof_tamper_rejected_at_num_vars(TRANSCRIPT_HARDENING_NUM_VARS, tamper);
 }
 
 #[test]
-fn terminal_final_witness_tamper_rejects() {
+fn malformed_proof_carriers_reject_before_replay() {
     for tamper in [
-        TerminalTamper::EHatDigit,
-        TerminalTamper::RemainderDigit,
-        TerminalTamper::WitnessLen,
-        TerminalTamper::PackedPayload,
+        ProofTamper::EHatDigit,
+        ProofTamper::RemainderDigit,
+        ProofTamper::WitnessLen,
+        ProofTamper::PackedPayload,
+        ProofTamper::ExtraZPayload,
+        ProofTamper::OversizedRootV,
+        ProofTamper::WrongOutgoingBinding,
     ] {
-        assert_terminal_tamper_rejected(tamper);
+        assert_proof_tamper_rejected(tamper);
     }
 }
 
 fn terminal_shape_final_witness_mut(
     shape: &mut AkitaBatchedProofShape,
-) -> &mut CleartextWitnessShape {
+) -> &mut SegmentTypedWitnessShape {
     &mut shape.terminal.final_witness
 }
 
@@ -374,11 +393,7 @@ fn terminal_direct_witness_shape_mismatch_rejects_deserialization() {
             .serialize_compressed(&mut bytes)
             .expect("serialize proof");
         let mut bad_shape = proof.shape();
-        let CleartextWitnessShape::SegmentTyped(shape) =
-            terminal_shape_final_witness_mut(&mut bad_shape)
-        else {
-            panic!("terminal witness should be segment-typed");
-        };
+        let shape = terminal_shape_final_witness_mut(&mut bad_shape);
         // Segment-typed tails admit exact `z` payloads up to the scheduled
         // upper bound; a *tighter* budget than the encoded payload must reject.
         shape.layout.groups[0].z_payload_bytes = 0;

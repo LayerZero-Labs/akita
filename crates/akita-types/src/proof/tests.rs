@@ -9,11 +9,43 @@ use rand::SeedableRng;
 
 type F = Prime128Offset275;
 
+fn test_terminal_witness(coeffs: Vec<F>) -> CleartextWitnessProof<F> {
+    let layout = TailSegmentLayout {
+        ring_dimension: 64,
+        log_basis: 3,
+        groups: vec![TailSegmentGroupLayout {
+            z_coords: 1,
+            e_field_elems: coeffs.len(),
+            t_field_elems: 0,
+            z_payload_bytes: 1,
+        }],
+        logical_num_elems: coeffs.len(),
+    };
+    CleartextWitnessProof {
+        layout,
+        z_payloads: vec![Vec::new()],
+        e_fields: RingVec::from_coeffs(coeffs),
+        t_fields: RingVec::from_coeffs(Vec::new()),
+    }
+}
+
 #[test]
 fn direct_witness_shape_rejects_oversized_allocations() {
-    let err = CleartextWitnessShape::FieldElements(DEFAULT_MAX_SEQUENCE_LEN + 1)
-        .check()
-        .unwrap_err();
+    let err = CleartextWitnessShape {
+        layout: TailSegmentLayout {
+            ring_dimension: 64,
+            log_basis: 3,
+            groups: vec![TailSegmentGroupLayout {
+                z_coords: 1,
+                e_field_elems: DEFAULT_MAX_SEQUENCE_LEN + 1,
+                t_field_elems: 0,
+                z_payload_bytes: 1,
+            }],
+            logical_num_elems: DEFAULT_MAX_SEQUENCE_LEN + 1,
+        },
+    }
+    .check()
+    .unwrap_err();
     assert!(matches!(
         err,
         SerializationError::LengthLimitExceeded { .. }
@@ -220,12 +252,7 @@ fn terminal_inner_state_omits_outer_commitment_from_tag_free_proof_wire() {
 
 #[test]
 fn terminal_level_proof_serde_round_trip() {
-    let final_witness = CleartextWitnessProof::FieldElements(RingVec::from_coeffs(vec![
-        F::one(),
-        -F::one(),
-        F::zero(),
-        F::from_u64(2),
-    ]));
+    let final_witness = test_terminal_witness(vec![F::one(), -F::one(), F::zero(), F::from_u64(2)]);
 
     let without_reduction =
         TerminalLevelProof::new_with_extension_opening_reduction(None, final_witness.clone(), 7);
@@ -271,8 +298,7 @@ fn terminal_level_proof_serde_round_trip() {
 
 #[test]
 fn direct_terminal_relation_proof_serde_round_trip() {
-    let final_witness =
-        CleartextWitnessProof::FieldElements(RingVec::from_coeffs(vec![F::one(), -F::one()]));
+    let final_witness = test_terminal_witness(vec![F::one(), -F::one()]);
     let proof = TerminalLevelProof {
         extension_opening_reduction: None,
         fold_grind_nonce: 3,

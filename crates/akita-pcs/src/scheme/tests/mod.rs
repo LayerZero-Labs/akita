@@ -9,13 +9,12 @@ use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_transcript::AkitaTranscript;
 use akita_types::stage1_tree_stage_shapes;
 use akita_types::ExtensionOpeningReductionProof;
+use akita_types::LevelParams;
 use akita_types::RelationMatrixRowLayout;
-use akita_types::Step;
 use akita_types::{
     lagrange_weights, monomial_weights, reduce_inner_opening_to_ring_element,
     ring_opening_point_from_field,
 };
-use akita_types::{scheduled_next_level_params, LevelParams};
 use akita_types::{
     AkitaBatchedProofShape, LevelProofShape, NextWitnessBindingPolicy, NextWitnessBindingShape,
     RingVec, TerminalLevelProofShape,
@@ -46,6 +45,7 @@ type ConservativeOneHotScheme = AkitaCommitmentScheme<ConservativeOneHotCfg>;
 const MIN_W_LEN_FOR_FOLDING: usize = 4096;
 
 mod batched;
+mod fp32_ext4;
 mod layout;
 mod onehot;
 mod single;
@@ -74,9 +74,7 @@ fn expected_same_point_batched_shape(
         akita_types::OpeningClaimsLayout::new(max_num_vars, num_claims).expect("opening_batch");
     let schedule =
         OneHotCfg::get_params_for_prove(&opening_batch).expect("batched root runtime plan");
-    let Some(Step::Fold(root_step)) = schedule.steps.first() else {
-        panic!("batched schedule should start with a fold");
-    };
+    let root_step = schedule.root_fold().expect("batched root fold");
     let num_fold_levels = schedule.num_fold_levels();
     let root_rounds = batched_shape_rounds(root_step.params.ring_dimension, root_step.next_w_len);
 
@@ -85,7 +83,7 @@ fn expected_same_point_batched_shape(
         "folded-only schedules have a root and terminal fold"
     );
 
-    let next_level_params = scheduled_next_level_params(&schedule, 1).unwrap();
+    let next_level_params = &schedule.folds[1].params;
     let root_scheduled = schedule.get_execution_schedule(0).unwrap();
     let root_shape = LevelProofShape {
         extension_opening_reduction: None,
@@ -139,6 +137,9 @@ fn expected_same_point_batched_shape(
             stage3_sumcheck: None,
             next_witness_binding: match scheduled.next_witness_binding {
                 Some(NextWitnessBindingPolicy::OuterCommitment) => {
+                    let next_level_params = next_level_params
+                        .as_ref()
+                        .expect("outer commitment requires successor fold params");
                     NextWitnessBindingShape::OuterCommitment {
                         coeffs: next_level_params.b_key.row_len()
                             * next_level_params.ring_dimension,
@@ -156,9 +157,8 @@ fn expected_same_point_batched_shape(
         current_level += 1;
     }
 
-    // Terminal fold step (always present in the multi-fold case): its params
-    // live at `schedule.steps[current_level]` (still a `Step::Fold`); the
-    // immediately following Direct step encodes the terminal witness shape.
+    // Terminal fold step (always present in the multi-fold case); the
+    // structural terminal field encodes its witness shape.
     let terminal_scheduled = schedule
         .get_execution_schedule(current_level)
         .expect("scheduled terminal fold");
@@ -167,9 +167,7 @@ fn expected_same_point_batched_shape(
         .expect("scheduled terminal fold current witness length");
     let terminal = TerminalLevelProofShape {
         extension_opening_reduction: None,
-        final_witness: akita_types::schedule_terminal_direct_witness_shape(&schedule)
-            .expect("terminal direct witness shape")
-            .clone(),
+        final_witness: schedule.terminal.witness_shape.clone(),
     };
 
     AkitaBatchedProofShape {

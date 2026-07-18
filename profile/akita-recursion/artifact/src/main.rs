@@ -219,7 +219,6 @@ fn verify_with_setup_mode(
         transcript,
         claims,
         BasisMode::Lagrange,
-        setup_contribution_mode,
     )
     .map_err(|err| format!("{setup_contribution_mode:?}-mode verifier rejected proof: {err}"))
 }

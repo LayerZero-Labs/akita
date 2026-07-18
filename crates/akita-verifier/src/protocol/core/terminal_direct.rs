@@ -1,6 +1,5 @@
 //! Deterministic terminal checks over the revealed segment-typed witness.
 
-use super::direct_ring_arithmetic::decompose_rows_i8;
 use akita_algebra::CyclotomicRing;
 use akita_challenges::{Challenges, SparseChallenge};
 use akita_field::{
@@ -9,7 +8,8 @@ use akita_field::{
 use akita_types::{
     decode_terminal_z_golomb_payload_with_cap, dispatch_for_field,
     recover_ring_subfield_inner_product, AkitaVerifierSetup, CleartextWitnessProof, FpExtEncoding,
-    LevelParams, LevelParamsLike, PreparedOpeningPoint, RingRelationInstance, RingVec,
+    LevelParams, LevelParamsLike, PreparedOpeningPoint, RelationMatrixRowLayout,
+    RingRelationInstance,
 };
 
 fn sparse_challenge_ring<F, const D: usize>(
@@ -139,61 +139,26 @@ where
     Ok(())
 }
 
-#[tracing::instrument(skip_all, name = "terminal_direct_b_rows")]
-fn check_b_rows<F, const D_B: usize>(
-    setup: &AkitaVerifierSetup<F>,
-    t_digits_flat: &[i8],
-    expected: &[CyclotomicRing<F, D_B>],
-    params: &dyn LevelParamsLike,
-    prepared_prefix_len: usize,
-) -> Result<(), AkitaError>
-where
-    F: FieldCore + CanonicalField,
-{
-    if !t_digits_flat.len().is_multiple_of(D_B) {
-        return Err(AkitaError::InvalidProof);
-    }
-    let (outer_digits, remainder) = t_digits_flat.as_chunks::<D_B>();
-    if !remainder.is_empty() || outer_digits.len() != params.b_col_len() {
-        return Err(AkitaError::InvalidProof);
-    }
-    let actual = super::terminal_ntt::digit_rows(
-        setup,
-        params.b_rows_len(),
-        outer_digits,
-        params.log_basis(),
-        prepared_prefix_len,
-    )?;
-    (actual.as_slice() == expected)
-        .then_some(())
-        .ok_or(AkitaError::InvalidProof)
-}
-
-/// Check reduced consistency, A, and B rows for a quotient-free terminal witness.
+/// Check reduced consistency and A rows for a quotient-free terminal witness.
 #[tracing::instrument(skip_all, name = "terminal_direct_ring_relations")]
 pub(super) fn verify_terminal_ring_relations<F>(
     setup: &AkitaVerifierSetup<F>,
     relation: &RingRelationInstance<F>,
     lp: &LevelParams,
-    commitment_rows: &RingVec<F>,
     final_witness: &CleartextWitnessProof<F>,
 ) -> Result<(), AkitaError>
 where
     F: FieldCore + CanonicalField + FromPrimitiveInt + HalvingField,
 {
-    let witness = final_witness
-        .as_segment_typed()
-        .ok_or(AkitaError::InvalidProof)?;
-    let row_layout = relation.relation_matrix_row_layout();
-    let has_commitment_block = LevelParams::has_commitment_block(row_layout);
-    if witness.layout.ring_dimension != relation.role_dims().d_a()
+    let witness = final_witness;
+    if relation.relation_matrix_row_layout() != RelationMatrixRowLayout::WithoutCommitmentBlocks
+        || witness.layout.ring_dimension != relation.role_dims().d_a()
         || witness.layout.groups.len() != relation.opening_batch().num_groups()
     {
         return Err(AkitaError::InvalidProof);
     }
     let order = relation.opening_batch().root_group_order()?;
     let mut max_a_prefix_len = 0usize;
-    let mut max_b_prefix_len = 0usize;
     for &group_index in &order {
         let params = lp.group_params(relation.opening_batch(), group_index)?;
         max_a_prefix_len = max_a_prefix_len.max(
@@ -202,25 +167,9 @@ where
                 .checked_mul(params.a_col_len())
                 .ok_or(AkitaError::InvalidProof)?,
         );
-        if has_commitment_block {
-            max_b_prefix_len = max_b_prefix_len.max(
-                params
-                    .b_rows_len()
-                    .checked_mul(params.b_col_len())
-                    .ok_or(AkitaError::InvalidProof)?,
-            );
-        }
     }
-    let (prepared_a_prefix_len, prepared_b_prefix_len) =
-        if relation.role_dims().d_a() == relation.role_dims().d_b() {
-            let shared = max_a_prefix_len.max(max_b_prefix_len);
-            (shared, shared)
-        } else {
-            (max_a_prefix_len, max_b_prefix_len)
-        };
     let mut e_offset = 0usize;
     let mut t_offset = 0usize;
-    let mut commitment_offset = 0usize;
     dispatch_for_field!(
         akita_types::ProtocolDispatchSlot::Role(akita_types::RingRole::Inner),
         F,
@@ -239,18 +188,12 @@ where
                     .opening_batch()
                     .group_layout(group_index)?
                     .num_polynomials();
-                let a_range = lp.a_row_range(relation.opening_batch(), group_index, row_layout)?;
-                let b_range =
-                    lp.commitment_row_range(relation.opening_batch(), group_index, row_layout)?;
-                if a_range.len() != params.a_rows_len()
-                    || b_range.len()
-                        != if has_commitment_block {
-                            params.b_rows_len()
-                        } else {
-                            0
-                        }
-                    || b_range.start != a_range.end
-                {
+                let a_range = lp.a_row_range(
+                    relation.opening_batch(),
+                    group_index,
+                    RelationMatrixRowLayout::WithoutCommitmentBlocks,
+                )?;
+                if a_range.len() != params.a_rows_len() {
                     return Err(AkitaError::InvalidSetup(
                         "terminal direct row ranges do not match group matrix heights".to_string(),
                     ));
@@ -363,47 +306,8 @@ where
                     z_centered,
                     &challenges,
                     params,
-                    prepared_a_prefix_len,
+                    max_a_prefix_len,
                 )?;
-                if has_commitment_block {
-                    // Erase the inner ring degree before outer-role dispatch. Keeping
-                    // `D_A` in `check_b_rows` multiplied every inner dispatch arm by
-                    // every outer arm and forced optimized test binaries to compile
-                    // a large cross-product of identical NTT kernels.
-                    let t_digits =
-                        decompose_rows_i8(&t, params.num_digits_open(), params.log_basis())?;
-                    let t_digits_flat = t_digits.as_flattened();
-
-                    dispatch_for_field!(
-                        akita_types::ProtocolDispatchSlot::Role(akita_types::RingRole::Outer),
-                        F,
-                        relation.role_dims().d_b(),
-                        |D_B| {
-                            let commitment_coeffs = b_range
-                                .len()
-                                .checked_mul(D_B)
-                                .ok_or(AkitaError::InvalidProof)?;
-                            let end = commitment_offset
-                                .checked_add(commitment_coeffs)
-                                .ok_or(AkitaError::InvalidProof)?;
-                            let expected = decode_rings::<F, D_B>(
-                                commitment_rows
-                                    .coeffs()
-                                    .get(commitment_offset..end)
-                                    .ok_or(AkitaError::InvalidProof)?,
-                            )?;
-                            check_b_rows::<F, D_B>(
-                                setup,
-                                t_digits_flat,
-                                &expected,
-                                params,
-                                prepared_b_prefix_len,
-                            )?;
-                            commitment_offset = end;
-                            Ok::<(), AkitaError>(())
-                        }
-                    )?;
-                }
                 e_offset = e_end;
                 t_offset = t_end;
             }
@@ -413,10 +317,7 @@ where
             Ok::<(), AkitaError>(())
         }
     )?;
-    if e_offset != witness.e_fields.coeff_len()
-        || t_offset != witness.t_fields.coeff_len()
-        || commitment_offset != commitment_rows.coeff_len()
-    {
+    if e_offset != witness.e_fields.coeff_len() || t_offset != witness.t_fields.coeff_len() {
         return Err(AkitaError::InvalidProof);
     }
     Ok(())
@@ -439,9 +340,7 @@ where
     F: FieldCore + CanonicalField + FromPrimitiveInt,
     E: ExtField<F> + FpExtEncoding<F>,
 {
-    let witness = final_witness
-        .as_segment_typed()
-        .ok_or(AkitaError::InvalidProof)?;
+    let witness = final_witness;
     if prepared_points.len() != relation.opening_batch().num_groups()
         || row_coefficients.len() != relation.opening_batch().num_total_polynomials()
         || claim_scales.is_some_and(|scales| scales.len() != row_coefficients.len())
@@ -528,13 +427,33 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use akita_field::{Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59};
+    use std::sync::Arc;
+
+    use akita_challenges::SparseChallengeConfig;
+    use akita_field::Prime128OffsetA7F7;
+    use akita_types::{
+        build_segment_typed_witness_from_groups, AkitaExpandedSetup, AkitaSetupSeed,
+        CommitmentRingDims, FlatMatrix, OpeningClaimsLayout, PolynomialGroupLayout,
+        PrecommittedGroupParams, PrecommittedLevelParams, RingMultiplierOpeningPoint,
+        RingOpeningPoint, RingVec, SegmentTypedWitnessGroupParts, SetupPrefixVerifierRegistry,
+        SisModulusProfileId,
+    };
+
+    type F = Prime128OffsetA7F7;
 
     #[derive(Clone, Copy)]
     enum TerminalRowRole {
         Consistency,
         A,
-        B,
+    }
+
+    #[derive(Clone, Copy)]
+    struct TerminalGroupFixture<const D: usize> {
+        challenge: CyclotomicRing<F, D>,
+        e: CyclotomicRing<F, D>,
+        t: CyclotomicRing<F, D>,
+        z: CyclotomicRing<F, D>,
+        z_centered: [i32; D],
     }
 
     fn cyclic_product<F: FieldCore, const D: usize>(
@@ -550,75 +469,60 @@ mod tests {
         CyclotomicRing::from_coefficients(coefficients)
     }
 
-    fn deterministic_ring<F, const D: usize>(seed: i64) -> CyclotomicRing<F, D>
-    where
-        F: FieldCore + FromPrimitiveInt,
-    {
-        CyclotomicRing::from_coefficients(std::array::from_fn(|index| {
-            let signed = ((index * 17 + seed.unsigned_abs() as usize * 11) % 19) as i64 - 9;
-            F::from_i64(if seed.is_negative() { -signed } else { signed })
+    fn monomial<const D: usize>(index: usize, coefficient: i64) -> CyclotomicRing<F, D> {
+        CyclotomicRing::from_coefficients(std::array::from_fn(|slot| {
+            if slot == index {
+                F::from_i64(coefficient)
+            } else {
+                F::zero()
+            }
         }))
     }
 
-    fn row_images<F, const D: usize>(
+    fn group_fixture<const D: usize>(challenge_sign: i8, scale: i32) -> TerminalGroupFixture<D> {
+        let challenge = monomial::<D>(1, i64::from(challenge_sign));
+        let e = monomial::<D>(D - 1, i64::from(scale));
+        let t = e;
+        let z_constant = -i32::from(challenge_sign) * scale;
+        let z_centered = std::array::from_fn(|index| if index == 0 { z_constant } else { 0 });
+        let z = monomial::<D>(0, i64::from(z_constant));
+        TerminalGroupFixture {
+            challenge,
+            e,
+            t,
+            z,
+            z_centered,
+        }
+    }
+
+    fn row_images<const D: usize>(
         role: TerminalRowRole,
+        groups: &[TerminalGroupFixture<D>],
     ) -> (
         CyclotomicRing<F, D>,
         CyclotomicRing<F, D>,
         CyclotomicRing<F, D>,
         CyclotomicRing<F, D>,
-    )
-    where
-        F: FieldCore + FromPrimitiveInt,
-    {
-        let role_seed = match role {
-            TerminalRowRole::Consistency => 1,
-            TerminalRowRole::A => 7,
-            TerminalRowRole::B => 13,
-        };
-        let terms = [
+    ) {
+        groups.iter().fold(
             (
-                deterministic_ring::<F, D>(role_seed),
-                deterministic_ring::<F, D>(role_seed + 2),
+                CyclotomicRing::zero(),
+                CyclotomicRing::zero(),
+                CyclotomicRing::zero(),
+                CyclotomicRing::zero(),
             ),
-            (
-                deterministic_ring::<F, D>(-(role_seed + 4)),
-                deterministic_ring::<F, D>(role_seed + 6),
-            ),
-            (
-                deterministic_ring::<F, D>(role_seed + 8),
-                deterministic_ring::<F, D>(-(role_seed + 10)),
-            ),
-        ];
-        let (mut actual_cyclic, mut actual_reduced) = terms.iter().fold(
-            (CyclotomicRing::zero(), CyclotomicRing::zero()),
-            |(cyclic, reduced), (lhs, rhs)| {
-                (cyclic + cyclic_product(lhs, rhs), reduced + (*lhs * *rhs))
+            |(actual_cyclic, actual_reduced, expected_cyclic, expected_reduced), group| {
+                let (actual_lhs, expected_lhs) = match role {
+                    TerminalRowRole::Consistency => (group.e, group.z),
+                    TerminalRowRole::A => (group.t, group.z),
+                };
+                (
+                    actual_cyclic + cyclic_product(&group.challenge, &actual_lhs),
+                    actual_reduced + group.challenge * actual_lhs,
+                    expected_cyclic + cyclic_product(&CyclotomicRing::one(), &expected_lhs),
+                    expected_reduced + expected_lhs,
+                )
             },
-        );
-
-        // Force a non-zero quotient: X^(D-1) * X reduces to -1 in
-        // F[X]/(X^D+1), but to +1 in the cyclic convolution ring used by the
-        // legacy quotient construction.
-        let mut high = [F::zero(); D];
-        high[D - 1] = F::one();
-        let mut x = [F::zero(); D];
-        x[1] = F::one();
-        let high = CyclotomicRing::from_coefficients(high);
-        let x = CyclotomicRing::from_coefficients(x);
-        actual_cyclic += cyclic_product(&high, &x);
-        actual_reduced += high * x;
-
-        // A plain-ring RHS is also a valid product by one, and has no wrap.
-        // This makes the accepting case exercise a non-trivial legacy
-        // quotient instead of cancelling two identical quotient values.
-        let expected_reduced = actual_reduced;
-        let expected_cyclic = cyclic_product(&expected_reduced, &CyclotomicRing::one());
-        (
-            actual_cyclic,
-            actual_reduced,
-            expected_cyclic,
-            expected_reduced,
         )
     }
 
@@ -641,12 +545,12 @@ mod tests {
         actual_cyclic - expected_cyclic - quotient_delta - quotient_delta
     }
 
-    fn assert_direct_matches_legacy<F, const D: usize>(role: TerminalRowRole)
-    where
-        F: FieldCore + FromPrimitiveInt + HalvingField,
-    {
+    fn assert_direct_matches_legacy<const D: usize>(
+        role: TerminalRowRole,
+        groups: &[TerminalGroupFixture<D>],
+    ) {
         let (actual_cyclic, actual_reduced, expected_cyclic, expected_reduced) =
-            row_images::<F, D>(role);
+            row_images::<D>(role, groups);
 
         let direct_valid = actual_reduced - expected_reduced;
         let legacy_valid = legacy_residual(
@@ -673,44 +577,169 @@ mod tests {
         assert_ne!(direct_tampered, CyclotomicRing::zero());
     }
 
-    macro_rules! assert_roles {
-        ($field:ty, inner: [$($inner:literal),+], outer: [$($outer:literal),+]) => {{
-            $(
-                assert_direct_matches_legacy::<$field, $inner>(TerminalRowRole::Consistency);
-                assert_direct_matches_legacy::<$field, $inner>(TerminalRowRole::A);
-            )+
-            $(
-                assert_direct_matches_legacy::<$field, $outer>(TerminalRowRole::B);
-            )+
-        }};
+    fn sparse_challenges(sign: i8) -> Challenges {
+        Challenges::from_sparse(
+            vec![SparseChallenge {
+                positions: vec![1],
+                coeffs: vec![sign],
+            }],
+            1,
+            1,
+        )
+        .expect("one-claim challenge fixture")
+    }
+
+    fn grouped_terminal_fixture<const D: usize>() -> (
+        AkitaVerifierSetup<F>,
+        RingRelationInstance<F>,
+        LevelParams,
+        CleartextWitnessProof<F>,
+        [TerminalGroupFixture<D>; 2],
+    ) {
+        let dims = CommitmentRingDims {
+            inner: D,
+            outer: 32,
+            opening: 16,
+        };
+        let base_params = LevelParams::params_only(
+            SisModulusProfileId::Q128OffsetA7F7,
+            D,
+            1,
+            1,
+            1,
+            1,
+            SparseChallengeConfig::production_for_ring_dim(D)
+                .expect("supported A-role challenge dimension"),
+        )
+        .with_decomp(1, 1, 1, 1)
+        .expect("terminal fixture layout")
+        .with_role_dims(dims)
+        .expect("nested role dimensions");
+        let precommitted_layout = PolynomialGroupLayout::new(0, 1);
+        let precommitted = PrecommittedLevelParams {
+            layout: PrecommittedGroupParams::from_params(precommitted_layout, &base_params),
+            a_key: base_params.a_key.clone(),
+            b_key: base_params.b_key.clone(),
+            num_digits_commit: base_params.num_digits_commit,
+            num_digits_open: base_params.num_digits_open,
+            num_digits_fold_one: base_params.num_digits_fold_one,
+        };
+        let mut params = base_params;
+        params.precommitted_groups.push(precommitted);
+        let opening_batch = OpeningClaimsLayout::from_root_groups(
+            &[precommitted_layout],
+            PolynomialGroupLayout::new(0, 1),
+        )
+        .expect("two-group opening layout");
+
+        // Original group order is precommitted then final. Terminal witness
+        // order is deliberately final then precommitted.
+        let groups = [group_fixture::<D>(1, 1), group_fixture::<D>(-1, 2)];
+        let final_e = RingVec::from_ring_elems(&[groups[1].e]);
+        let final_t = [RingVec::from_ring_elems(&[groups[1].t])];
+        let precommitted_e = RingVec::from_ring_elems(&[groups[0].e]);
+        let precommitted_t = [RingVec::from_ring_elems(&[groups[0].t])];
+        let witness = build_segment_typed_witness_from_groups(
+            D,
+            &[
+                SegmentTypedWitnessGroupParts {
+                    params: &params,
+                    num_w_vectors: 1,
+                    num_t_vectors: 1,
+                    num_z_segments: 1,
+                    e_folded: &final_e,
+                    recomposed_inner_rows: &final_t,
+                    z_folded_centered_flat: &groups[1].z_centered,
+                },
+                SegmentTypedWitnessGroupParts {
+                    params: &params.precommitted_groups[0],
+                    num_w_vectors: 1,
+                    num_t_vectors: 1,
+                    num_z_segments: 1,
+                    e_folded: &precommitted_e,
+                    recomposed_inner_rows: &precommitted_t,
+                    z_folded_centered_flat: &groups[0].z_centered,
+                },
+            ],
+            &params,
+        )
+        .expect("production terminal witness fixture");
+
+        let one = CyclotomicRing::<F, D>::one();
+        let setup = AkitaVerifierSetup::from_parts(
+            Arc::new(
+                AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
+                    AkitaSetupSeed {
+                        max_num_vars: 1,
+                        max_num_batched_polys: 2,
+                        gen_ring_dim: D,
+                        max_setup_len: 1,
+                        public_matrix_seed: [7; 32],
+                    },
+                    FlatMatrix::from_ring_slice(&[one]),
+                ),
+            ),
+            SetupPrefixVerifierRegistry::new(),
+        );
+        let opening_point = RingOpeningPoint {
+            position_weights: vec![F::one()],
+            live_block_weights: vec![F::one()],
+        };
+        let multiplier = RingMultiplierOpeningPoint::from_ring(vec![one], vec![one]);
+        let relation = RingRelationInstance::new(
+            RelationMatrixRowLayout::WithoutCommitmentBlocks,
+            vec![sparse_challenges(1), sparse_challenges(-1)],
+            vec![opening_point.clone(), opening_point],
+            vec![multiplier.clone(), multiplier],
+            opening_batch,
+            vec![F::one(); 2],
+            RingVec::from_ring_elems(&[one; 2]),
+            RingVec::from_ring_elems::<D>(&[CyclotomicRing::zero()]),
+            RingVec::from_coeffs(Vec::new()),
+            dims,
+        )
+        .expect("terminal relation fixture");
+
+        (setup, relation, params, witness, groups)
+    }
+
+    fn assert_production_matches_legacy<const D: usize>() {
+        let (setup, relation, params, witness, groups) = grouped_terminal_fixture::<D>();
+
+        verify_terminal_ring_relations(&setup, &relation, &params, &witness)
+            .expect("valid grouped terminal witness");
+        // `akita-prover::protocol::ring_relation::relation_quotient::
+        // compute_multi_group_relation_quotient` is crate-private, so importing
+        // it here would require a test-only cross-crate wrapper. Instead, apply
+        // its exact cyclic quotient equation to the same ring operands consumed
+        // by the production direct checker above.
+        assert_direct_matches_legacy::<D>(TerminalRowRole::Consistency, &groups);
+        for group in &groups {
+            assert_direct_matches_legacy::<D>(TerminalRowRole::A, std::slice::from_ref(group));
+        }
+
+        let mut swapped = witness.clone();
+        swapped.z_payloads.swap(0, 1);
+        let e_len = swapped.layout.groups[0].e_field_elems;
+        let mut e = swapped.e_fields.coeffs().to_vec();
+        e.rotate_left(e_len);
+        swapped.e_fields = RingVec::from_coeffs(e);
+        let t_len = swapped.layout.groups[0].t_field_elems;
+        let mut t = swapped.t_fields.coeffs().to_vec();
+        t.rotate_left(t_len);
+        swapped.t_fields = RingVec::from_coeffs(t);
+        assert!(verify_terminal_ring_relations(&setup, &relation, &params, &swapped).is_err());
+
+        let mut tampered_t = witness;
+        let mut t = tampered_t.t_fields.coeffs().to_vec();
+        t[D / 2] += F::one();
+        tampered_t.t_fields = RingVec::from_coeffs(t);
+        assert!(verify_terminal_ring_relations(&setup, &relation, &params, &tampered_t).is_err());
     }
 
     #[test]
-    fn terminal_direct_rows_match_legacy_quotients_for_every_role_dimension() {
-        assert_roles!(
-            Prime128OffsetA7F7,
-            inner: [64, 128],
-            outer: [16, 32, 64, 128, 256]
-        );
-        assert_roles!(
-            Prime64Offset59,
-            inner: [64, 128, 256],
-            outer: [32, 64, 128, 256]
-        );
-        assert_roles!(
-            Prime32Offset99,
-            inner: [64, 128, 256],
-            outer: [64, 128, 256]
-        );
-    }
-
-    #[test]
-    fn terminal_direct_rows_match_legacy_quotients_for_unequal_role_extrema() {
-        assert_direct_matches_legacy::<Prime128OffsetA7F7, 128>(TerminalRowRole::A);
-        assert_direct_matches_legacy::<Prime128OffsetA7F7, 16>(TerminalRowRole::B);
-        assert_direct_matches_legacy::<Prime64Offset59, 256>(TerminalRowRole::A);
-        assert_direct_matches_legacy::<Prime64Offset59, 32>(TerminalRowRole::B);
-        assert_direct_matches_legacy::<Prime32Offset99, 256>(TerminalRowRole::A);
-        assert_direct_matches_legacy::<Prime32Offset99, 64>(TerminalRowRole::B);
+    fn production_terminal_checker_matches_legacy_grouped_quotient_semantics() {
+        assert_production_matches_legacy::<64>();
+        assert_production_matches_legacy::<128>();
     }
 }

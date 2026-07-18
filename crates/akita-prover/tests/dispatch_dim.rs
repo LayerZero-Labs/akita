@@ -20,7 +20,8 @@ use akita_config::CommitmentConfig;
 use akita_field::AkitaError;
 use akita_types::{
     validate_schedule_ring_dims, AkitaScheduleLookupKey, AkitaSetupSeed, CleartextWitnessShape,
-    DirectStep, FoldStep, LevelParams, Schedule, SisModulusProfileId, Step,
+    DirectStep, FoldStep, LevelParams, Schedule, SisModulusProfileId, TailSegmentGroupLayout,
+    TailSegmentLayout,
 };
 
 // ---------------------------------------------------------------------------
@@ -80,27 +81,36 @@ fn make_fold_step(
 fn make_direct_step() -> DirectStep {
     DirectStep {
         current_w_len: 0,
-        witness_shape: CleartextWitnessShape::FieldElements(0),
+        witness_shape: CleartextWitnessShape {
+            layout: TailSegmentLayout {
+                ring_dimension: 64,
+                log_basis: 3,
+                groups: vec![TailSegmentGroupLayout {
+                    z_coords: 1,
+                    e_field_elems: 0,
+                    t_field_elems: 0,
+                    z_payload_bytes: 1,
+                }],
+                logical_num_elems: 0,
+            },
+        },
         direct_bytes: 0,
     }
 }
 
 fn mixed_d_schedule(dims: &[(usize, usize, usize)]) -> Schedule {
-    let mut steps: Vec<Step> = dims
-        .iter()
-        .map(|&(d, nb, bl)| Step::fold(make_fold_step(d, nb, bl)))
-        .collect();
-    steps.push(Step::Direct(make_direct_step()));
     Schedule {
-        steps,
+        folds: dims
+            .iter()
+            .map(|&(d, nb, bl)| make_fold_step(d, nb, bl))
+            .collect(),
+        terminal: make_direct_step(),
         total_bytes: 0,
     }
 }
 
 fn assert_fold_level_geometry(sched: &Schedule, level: usize, ring_dimension: usize) {
-    let Step::Fold(step) = &sched.steps[level] else {
-        panic!("level {level} is not a fold step");
-    };
+    let step = &sched.folds[level];
     let lp = &step.params;
     assert_eq!(lp.d_a(), ring_dimension, "level {level} d_a");
     assert_eq!(
@@ -186,9 +196,7 @@ fn ring_dim_plan_accepts_mixed_d_schedule_all_divide_gen_ring_dim() {
         (256, 4, 1024),
     ];
     for (level, (d, nr, ff)) in expected.into_iter().enumerate() {
-        let Step::Fold(step) = &sched.steps[level] else {
-            panic!("level {level} is not a fold step");
-        };
+        let step = &sched.folds[level];
         let lp = &step.params;
         assert_eq!(lp.d_a(), d, "level {level} d_a");
         assert_eq!(
@@ -247,13 +255,12 @@ fn ring_dim_plan_accepts_nested_opening_d32() {
         SparseChallengeConfig::production_for_ring_dim(step.params.d_a()).expect("d_a ladder");
     step.current_w_len = 128;
     let sched = Schedule {
-        steps: vec![Step::fold(step), Step::Direct(make_direct_step())],
+        folds: vec![step],
+        terminal: make_direct_step(),
         total_bytes: 0,
     };
     validate_schedule_ring_dims(&sched, &test_seed(128)).expect("128|64|32");
-    let Step::Fold(step) = &sched.steps[0] else {
-        panic!("expected fold");
-    };
+    let step = &sched.folds[0];
     let dims = step.params.role_dims;
     assert_eq!(dims.d_a(), 128);
     assert_eq!(dims.d_b(), 64);

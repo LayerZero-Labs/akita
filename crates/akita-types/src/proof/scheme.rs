@@ -1,6 +1,6 @@
 //! Shared commitment-scheme API contracts.
 
-use crate::{BasisMode, OpeningClaims, SetupContributionMode};
+use crate::{BasisMode, OpeningClaims};
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
 use akita_transcript::Transcript;
 use std::borrow::Cow;
@@ -41,14 +41,12 @@ where
     /// # Errors
     ///
     /// Returns an error when verification fails.
-    #[allow(clippy::too_many_arguments)]
     fn batched_verify<T: Transcript<F>>(
         proof: &Self::BatchedProof,
         setup: &Self::VerifierSetup,
         transcript: &mut T,
         claims: OpeningClaims<'_, Self::ExtField, &Self::Commitment>,
         basis: BasisMode,
-        setup_contribution_mode: SetupContributionMode,
     ) -> Result<(), AkitaError>;
 
     /// Protocol identifier.

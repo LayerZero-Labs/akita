@@ -323,19 +323,15 @@ impl<F: FieldCore, E: FieldCore> FoldLevelProof<F, E> {
 /// Terminal fold-level proof.
 ///
 /// Ships `final_witness` in cleartext. Its raw `e` segment is bound before the
-/// terminal sparse challenge. At a suffix terminal, the predecessor has
-/// already bound the canonical `t` segment as its outgoing state and only the
-/// `z` response is absorbed afterward. At a root terminal, the external `u`
-/// remains public and B-checked, so the post-challenge response remains
-/// `z || t`.
+/// terminal sparse challenge. The predecessor has already bound the canonical
+/// `t` segment as its outgoing state, so only the `z` response is absorbed
+/// afterward.
 ///
 /// Drops the redundant proof components at the terminal: `stage1`
 /// (segment-typed tail encodes digit range), the stage-2 outgoing binding
 /// (replaced by `final_witness`), and `next_w_eval` (verifier computes
-/// directly from `final_witness`). All terminal schedules drop the D-row block,
-/// so `v` is not serialized. The schedule—not this proof variant—decides
-/// whether root-terminal B rows remain or suffix-terminal commitment rows are
-/// absent.
+/// directly from `final_witness`). All terminal schedules drop commitment and
+/// D-row blocks, so neither an outer `u` nor `v` is serialized.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TerminalLevelProof<F: FieldCore, E: FieldCore> {
     /// Optional extension-opening reduction payload.

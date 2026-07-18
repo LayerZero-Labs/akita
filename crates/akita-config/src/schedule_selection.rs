@@ -70,7 +70,7 @@ mod tests {
     use akita_field::{ExtField, Fp32, FpExt4};
     use akita_types::{
         AkitaScheduleLookupKey, CleartextWitnessShape, DirectStep, FoldStep, LevelParams,
-        PolynomialGroupLayout, SetupMatrixEnvelope, SisModulusProfileId, Step,
+        LevelParamsLike, PolynomialGroupLayout, SetupMatrixEnvelope, SisModulusProfileId,
     };
 
     type Base = Fp32<251>;
@@ -89,6 +89,14 @@ mod tests {
             1,
             GroupedExtensionCfg::ring_challenge_config(GroupedExtensionCfg::D)?,
         ))
+    }
+
+    fn terminal_shape(params: &LevelParams) -> Result<CleartextWitnessShape, AkitaError> {
+        akita_types::segment_typed_witness_shape_from_groups(
+            params,
+            32,
+            [(params as &dyn LevelParamsLike, 1, 1, 1)],
+        )
     }
 
     impl CommitmentConfig for GroupedExtensionCfg {
@@ -126,20 +134,20 @@ mod tests {
 
         fn runtime_schedule(_key: AkitaScheduleLookupKey) -> Result<Schedule, AkitaError> {
             let params = multi_group_extension_params()?;
+            let witness_shape = terminal_shape(&params)?;
+            let terminal_w_len = witness_shape.logical_num_elems();
             Ok(Schedule {
-                steps: vec![
-                    Step::fold(FoldStep {
-                        params,
-                        current_w_len: 1 << 8,
-                        next_w_len: 1 << 5,
-                        level_bytes: 0,
-                    }),
-                    Step::Direct(DirectStep {
-                        current_w_len: 1 << 5,
-                        witness_shape: CleartextWitnessShape::FieldElements(1 << 5),
-                        direct_bytes: 0,
-                    }),
-                ],
+                folds: vec![FoldStep {
+                    params,
+                    current_w_len: 1 << 8,
+                    next_w_len: terminal_w_len,
+                    level_bytes: 0,
+                }],
+                terminal: DirectStep {
+                    current_w_len: terminal_w_len,
+                    witness_shape,
+                    direct_bytes: 0,
+                },
                 total_bytes: 0,
             })
         }
@@ -217,12 +225,15 @@ mod tests {
         }
 
         fn runtime_schedule(_key: AkitaScheduleLookupKey) -> Result<Schedule, AkitaError> {
+            let params = multi_group_extension_params()?;
+            let witness_shape = terminal_shape(&params)?;
             Ok(Schedule {
-                steps: vec![Step::Direct(DirectStep {
-                    current_w_len: 1 << 4,
-                    witness_shape: CleartextWitnessShape::FieldElements(1 << 4),
+                folds: vec![],
+                terminal: DirectStep {
+                    current_w_len: witness_shape.logical_num_elems(),
+                    witness_shape,
                     direct_bytes: 0,
-                })],
+                },
                 total_bytes: 0,
             })
         }

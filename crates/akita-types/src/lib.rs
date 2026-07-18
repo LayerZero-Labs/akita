@@ -130,9 +130,8 @@ pub use schedule::{
     detect_field_modulus, intermediate_w_ring_element_count_for_chunks,
     intermediate_w_ring_element_count_with_counts,
     intermediate_w_ring_element_count_with_counts_bits, r_decomp_levels, root_current_w_len,
-    schedule_terminal_direct_witness_shape, scheduled_next_level_params, AkitaScheduleInputs,
-    AkitaScheduleLookupKey, DirectStep, ExecutionSchedule, FoldStep, NextWitnessBindingPolicy,
-    PrecommittedGroupParams, Schedule, ScheduleKeyPrecommitSource, Step,
+    AkitaScheduleInputs, AkitaScheduleLookupKey, DirectStep, ExecutionSchedule, FoldStep,
+    NextWitnessBindingPolicy, PrecommittedGroupParams, Schedule, ScheduleKeyPrecommitSource,
 };
 pub use setup_contribution::{
     ensure_setup_envelope, shared_setup_fold_gadget, SetupContributionGroupInputs,

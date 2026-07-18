@@ -13,17 +13,19 @@
 
 ## Summary
 
-The Akita proof tail (the terminal recursive fold and the terminal-root 1-fold case) is the only place a folded witness is sent in cleartext rather than as a commitment.
-The canonical transparent witness is now `SegmentTyped(z, e, t)`: Golomb-Rice
+The Akita proof tail is the only place a folded witness is sent in cleartext
+rather than as a commitment. Every supported schedule contains a root fold and
+at least one suffix fold before this terminal; zero-fold and root-terminal
+proof families are unsupported. The canonical transparent witness is the sole
+segment-typed `(z, e, t)` representation: Golomb-Rice
 bytes for the norm-bounded `z` response and raw canonical field bytes for
 `e_folded` and `t`. Terminal quotient `r`, terminal stage 2, and the old uniform
 `PackedDigits` representation are absent.
 
 Historically, #190 replaced one `PackedDigits` blob containing `z`, opening
 digits, inner-commitment digits, and quotient digits with typed segments while
-the elision work remained deferred. The zero-fold fast path still uses
-`CleartextWitnessProof::FieldElements` (raw polynomial coefficients), not the
-terminal segment layout; see Non-Goals.
+the elision work remained deferred. The folded-only cutover subsequently
+removed the raw-field zero-fold representation entirely.
 That historical encoding paid the worst-case width on every coordinate even
 though `z` is norm-bounded while `e_folded`, `t`, and the former quotient `r`
 are full-entropy field data.
@@ -32,11 +34,10 @@ This spec defines a comprehensive tail wire encoding built on one principle: **e
 It composes four levers, three of which are commitment/quotient *elision* (do not send objects whose information the verifier can reconstruct or check directly) and one of which is *entropy coding* (send norm-bounded witness segments at their true entropy, not at a worst-case fixed width).
 The verifier reconstructs every elided or de-decomposed quantity deterministically, so soundness is unchanged and the wire shrinks to the realized information content.
 
-**Current scope.** The transparent cutover now includes segment typing,
-Golomb-Rice `z`, terminal `r`/stage-2 elision, and the suffix-terminal
-`t`-state handoff. Ordinary recursive edges still ship outer `u`. A root
-terminal also retains the external public `u` and its B check; only the final
-recursive edge into a suffix terminal elides `u`. Historical #190/#209 staging
+**Current scope.** The transparent cutover includes segment typing, Golomb-Rice
+`z`, terminal `r`/stage-2 elision, and the predecessor-bound terminal `t`
+handoff. Ordinary recursive edges still ship outer `u`; the final edge always
+binds inner `t` and the terminal has no B block. Historical #190/#209 staging
 and remaining Jolt measurement notes are recorded in Execution.
 
 ## Intent
@@ -53,29 +54,31 @@ The feature introduces or modifies:
 - A **segment-typed tail witness** representation replacing the historical single-width `PackedDigits` blob: Golomb-Rice for `z` only and raw canonical field coefficients for `e`/`t`. Boundaries derive from the schedule/shape (headerless wire). Wire `rice_low_bits` is never on the wire; both sides derive it from the fold `‖z‖_inf` cap (`min(β_inf, t*)` or `β_inf` alone) for `z` only.
 - A **canonical, total Golomb-Rice codec** (`akita-types`, verifier-reachable, no-panic) with zigzag sign mapping and standard unary+remainder Rice encoding only. Decode rejects unary runs longer than [`golomb_rice_max_quotient_for_cap`](crates/akita-types/src/golomb_rice.rs). **#190 applies it to `z` only.**
 - A per-level **fold `‖z‖_inf` cap accessor** via [`LevelParams::fold_witness_linf_cap_for_claims`](crates/akita-types/src/layout/params.rs) and the deterministic cap→wire low-bits rules in [`tail_golomb_rice_low_bits`](crates/akita-types/src/tail_golomb_rice_low_bits.rs) for the folded-response `z` segment.
-- **Terminal `t`-state cutover**: the penultimate fold stops sending outer
-  `u = B * decompose(t)` and binds inner `t = A * w_terminal` as the suffix
-  terminal's public state. Root terminals retain external `u` and B.
+- **Terminal `t`-state cutover**: the predecessor fold stops sending outer
+  `u = B * decompose(t)` and binds inner `t = A * w_terminal` as the
+  terminal's public state.
 - **`r`-elision and terminal-stage-2 elision** via the
   [terminal direct ring relations cutover](terminal-direct-ring-relations-cutover.md).
 - **Descriptor binding** through the canonical schedule/instance descriptor:
-  topology fixes whether an edge carries outer `u`, terminal inner `t`, or a
-  terminal cleartext witness.
+  structural `folds + terminal` topology fixes ordinary outer-`u` edges and
+  the final inner-`t` handoff.
 
 ### Invariants
 
-1. **Lossless and soundness-preserving.** Entropy-coded segments decode bit-exactly; auxiliary `v`/`r` are replaced by direct checks; and suffix outer `u` is replaced by transcript-bound inner `t` plus its A check. Root external `u` is not elided. The digit/norm bounds the extractor relies on are unchanged.
+1. **Lossless and soundness-preserving.** Entropy-coded segments decode bit-exactly; auxiliary `v`/`r` are replaced by direct checks; and the final outer `u` is replaced by transcript-bound inner `t` plus its A check. The digit/norm bounds the extractor relies on are unchanged.
 2. **Canonical encoding.** Each integer vector has exactly one valid byte encoding under a fixed `(model, rice_low_bits)`; a non-canonical or malformed encoding is rejected with `AkitaError`/`SerializationError`, never decoded ambiguously. Protected by: a canonicality unit test (encode-decode-encode fixpoint) and a malformed-bytes rejection test.
 3. **Total, bounded, no-panic decode.** The Golomb-Rice decoder terminates on every byte string, rejects unary quotients above the cap-derived maximum, allocates only the schedule-declared element count, rejects non-minimal trailing byte padding, and never panics, unwraps, or indexes unchecked. Protected by: a fuzz/edge unit test over random byte strings and the verifier no-panic audit.
 4. **Public models, zero side info.** Segment boundaries and Golomb wire low bits for `z` (`cap`, `wire_rice_low_bits`) are derivable by the verifier from `LevelParams` + transcript before decode; `e`/`t` carry no separate model tag. Protected by: a prover/verifier cap/wire low-bits agreement test for `z` and a `LoggingTranscript` event-stream equality test.
-5. **Suffix-terminal `t`-state preserves weak binding.** The last recursive transition changes the suffix terminal input state from outer `u = B * decompose(t)` to inner `t = A * w_terminal`. Soundness does **not** come from deleting B while keeping `u`; it comes from binding `t` before dependent challenges and checking that the clear witness maps to that exact `t` under A. A root terminal is different: its external `u` remains in the statement and its B rows remain mandatory.
-6. **Descriptor binding distinguishes topology.** The instance descriptor binds the complete schedule. The `Fold/Fold/Direct` topology deterministically selects a terminal-inner handoff, while `Fold/Direct` selects a root terminal with external `u`/B. A proof-body binding variant inconsistent with that schedule rejects.
+5. **Terminal `t`-state preserves weak binding.** The last recursive transition changes the terminal input state from outer `u = B * decompose(t)` to inner `t = A * w_terminal`. Soundness does **not** come from deleting B while keeping `u`; it comes from binding `t` before dependent challenges and checking that the clear witness maps to that exact `t` under A.
+6. **Descriptor binding fixes topology.** The instance descriptor binds the complete structural schedule. Every accepted schedule has at least two folds, and its final edge selects the terminal-inner handoff. A proof-body binding variant inconsistent with that schedule rejects.
 7. **Transparent-only.** Entropy coding applies only to the transparent tail. Historical `feature = "zk"` / `PackedDigits` notes refer to the removed pre-zk-strip implementation.
 
 ### Non-Goals
 
 - **No general intermediate-level change.** Non-terminal recursive folds still commit their next witness with the usual outer `u` commitment. The only exception is the **last recursive transition into the transparent terminal**, whose next-state payload is `t` instead of `u`.
-- **No zero-fold tail encoding.** Zero-fold / root-direct schedules keep `CleartextWitnessProof::FieldElements`; they do not use the `z`/`e`/`t` segment layout.
+- **No degenerate proof fallback.** Inputs that cannot support at least two
+  shrinking folds return `UnsupportedSchedule`; they do not select another
+  witness representation.
 - **No tiered multipoint tail.** Tiered commitment layouts require `num_points == 1` today; multipoint tiered terminal encoding is out of scope until that restriction is lifted.
 - **No ZK tail encoding.** Masked/blinded witnesses are near-uniform and do not compress; a ZK direct/entropy tail needs a separate masked-relation design (same boundary PR #141 draws).
 - **No change to the norm bound or the decomposition basis.** This spec changes how the realized witness is *encoded*, not the bound `K`/`t*` the verifier enforces (PR #174) nor the SIS rank pricing.
@@ -94,7 +97,7 @@ Encoding slice (#190):
 - [x] `fold_witness_linf_cap_for_claims` and the deterministic cap→low-bits rules (`cap_rice_low_bits`, `wire_rice_low_bits`) return integers pinned against reference calculations; prover and verifier derive the same wire low bits for `z`.
 - [x] The transparent terminal `final_witness` serializes as segment-typed
   payloads (`z` length-prefixed Golomb bytes, then raw `e`/`t` fields);
-  `CleartextWitnessShape::admits_realized` accepts exact `z` payloads up to the
+  `SegmentTypedWitnessShape::admits_realized` accepts exact `z` payloads up to the
   schedule upper bound.
 - [x] Non-zk shipped schedule tables regenerated under segment-typed terminal sizing; `generated_schedule_tables_match_find_schedule` passes for affected families.
 - [x] Net `z` entropy win on cited `onehot_fp128_d64` cells (Golomb at `wire_rice_low_bits(cap)` beats legacy `PackedDigits`); profile emits structured tail breakdown (`proof tail summary`, Golomb vs packed `z` stats).
@@ -102,8 +105,7 @@ Encoding slice (#190):
 Current umbrella items:
 
 - [x] No terminal `r` or terminal stage-2 sumcheck. The final recursive
-  transition sends no parent `u`; its suffix-terminal relation has no B block.
-  Root-terminal B remains intentionally present.
+  transition sends no parent `u`; the terminal relation has no B block.
 - [x] Prover and verifier bind the same canonical terminal `t`, and direct A
   rows check the revealed witness against it. Existing tamper suites cover
   `z`, `e`, and `t`; exact two-fold coverage remains a recommended hardening
@@ -119,7 +121,7 @@ Must keep passing: all `akita-types` proof/shape/serialization tests, the termin
 New tests:
 
 - `akita-types`: Golomb-Rice round-trip, canonicality (minimal byte length), malformed/unary-above-cap edge cases, no-panic over random bytes; cap/wire low-bits reference pins; segment layout decode boundaries; `TerminalLevelProofShape` round-trips the segment-typed tail and rejects cross-policy shapes.
-- `akita-prover`/`akita-verifier`: prover/verifier cap/wire low-bits agreement; suffix-terminal `t`-state row check (send `t`, check revealed witness maps to `t`, no B block); root-terminal external `u`/B check; verifier no-panic on malformed tail bytes.
+- `akita-prover`/`akita-verifier`: prover/verifier cap/wire low-bits agreement; terminal `t`-state row check (send `t`, check revealed witness maps to `t`, no B block); verifier no-panic on malformed tail bytes.
 - e2e: tamper tests for `z`, `e`, `t`, segment shape, and `y_rings`; descriptor cross-policy reject; ZK rejection; post-decode norm-bound violation reject.
 - `LoggingTranscript`: event-stream equality across the new tail schedule.
 
@@ -132,8 +134,8 @@ Expected direction: smaller proofs, no material prover slowdown, bounded verifie
 Per-lever, at the affected tail modes (verified by `AKITA_MODE=onehot_fp128_d64 AKITA_NUM_VARS=32 cargo run --release --example profile` and the planner `exact_proof_bytes`):
 
 - **r-drop + terminal stage-2 drop**: implemented for transparent terminals.
-- **u-drop (suffix-terminal `t`-state)**: implemented on the final recursive
-  edge; root-terminal external `u` remains. The removed payload is one
+- **u-drop (terminal `t`-state)**: implemented on the final recursive edge.
+  The removed payload is one
   `n_b`-ring-element outgoing commitment on affected schedules.
 - **z entropy coding** *(landed in #190; cap-aligned on fold-linf #189; wire tightened in #209)*: `z` coordinate cost drops from fixed `depth_fold * log_basis` bits/coord (packed digits) to `rice_low_bits + O(1)` bits/coord on wire at `wire_rice_low_bits(cap) = cap_rice_low_bits(cap) - 2` (~10 bits/coord on fp128 D64 vs 15 packed when `cap = β_inf`). Realized random witnesses average ~9.7–10 bits/coord. Planner budgets use `cap_rice_low_bits(cap) + 2` bits/coord ([`TAIL_Z_PLANNER_CAP_LOW_BITS_PLUS_TWO`]). Both wire and planner reference the same fold `‖z‖_inf` cap as `num_digits_fold` and grind acceptance, not the level variance envelope `isqrt_ceil(β_inf² · T_level · ρ²)` (which would imply `cap_rice_low_bits ≈ 22`).
 - **`e`/`t` as `RawField`**: wire carries full ring/base-field coefficients
@@ -151,8 +153,7 @@ The unifying classification: every tail wire object is in exactly one bucket, an
 | object | nature | correct encoding | lever |
 |---|---|---|---|
 | `v = D * e_hat` | auxiliary D image | do not send; reveal `e` at the tail | D-drop (done, PR #88) |
-| suffix-terminal input | final recursive witness state | bind inner `t = A * w_terminal`; do not send outer `u` | terminal `t`-state |
-| root-terminal input | external public commitment `u` | retain `u` and B-check revealed `t` | root statement |
+| terminal input | final recursive witness state | bind inner `t = A * w_terminal`; do not send outer `u` | terminal `t`-state |
 | `z` (folded response) | norm-bounded per coefficient (`cap`) | Golomb-Rice keyed by `wire_rice_low_bits(cap)` | this spec (S4) |
 | `e` (`e_folded`, partial evaluation) | full ring element per block (not sparse) | raw field coefficients (`RawField`) | **#190** |
 | `t` (inner commitment image) | full field entropy | raw field coefficients (`RawField`) | **#190** |
@@ -160,25 +161,30 @@ The unifying classification: every tail wire object is in exactly one bucket, an
 
 Affected surfaces:
 
-- `akita-types`: the codec, the segment-typed `CleartextWitnessProof` variant and its shape, `direct_witness_bytes` / `proof_size.rs` tail accounting, the `cap`/low-bits accessors on `LevelParams` (via `fold_witness_linf_cap_for_claims` and `tail_golomb_rice_low_bits`), and the descriptor policy fields.
+- `akita-types`: the codec, the `SegmentTypedWitness` representation and its shape, `direct_witness_bytes` / `proof_size.rs` tail accounting, the `cap`/low-bits accessors on `LevelParams` (via `fold_witness_linf_cap_for_claims` and `tail_golomb_rice_low_bits`), and the descriptor policy fields.
 - `akita-prover`: emit the tail as typed segments (Golomb `z` on centered
   fold-response integers; `RawField` for `e_folded`/`t`), send terminal `t` as
   the next-state payload at the last recursive transition, and skip parent `u`.
 - `akita-verifier`: decode typed segments (no-panic), expand `z` to digit planes and decompose `e`/`t` field segments to digit planes for row checks, verify terminal A rows against transcript-bound state.
 - `akita-planner`/`akita-config`: codec-aware tail byte accounting, regenerate shipped tables under the new tail policy, bind the policy in the descriptor.
 
-The transparent tail routes through `CleartextWitnessProof::SegmentTyped`.
-References below to a retained ZK `PackedDigits` arm are historical.
+The transparent tail always uses `SegmentTypedWitness`. References below to a
+retained ZK `PackedDigits` arm are historical.
 
-### Suffix-terminal `t`-state / u-elision
+### Terminal `t`-state / u-elision
 
-The current relation row layout is `consistency | A(n_a) | B(n_b) | D(n_d)` (`crates/akita-types/src/layout/params.rs`). Public openings bind through the fused trace term in stage-2 sumcheck, not through M public rows. Tiered commitment (`B_inner`, second-tier `F`) was removed in PR #257.
-Every terminal sets `n_d_active = 0` by revealing `e_folded` in cleartext: the D-role commitment `v = D * e_hat` and its rows are gone (`specs/terminal-fold-cutover.md`). Root terminals use `WithoutDBlock`; suffix terminals use `WithoutCommitmentBlocks`.
+Intermediate relations use `consistency | A(n_a) | B(n_b) | D(n_d)`
+(`crates/akita-types/src/layout/params.rs`). Public openings bind through the
+fused trace term in stage-2 sumcheck, not through M public rows. Every terminal
+reveals `e_folded` in cleartext, so the D-role commitment `v = D * e_hat` and
+its rows are gone. Because the terminal state is predecessor-bound `t`, the B
+block is gone as well. The sole terminal layout is
+`WithoutCommitmentBlocks = consistency | A`.
 
 The correct S2 cutover is **not** "delete B rows while keeping `u` as the terminal statement."
 That would be unsound: if the verifier still accepted a public commitment `u` but no longer checked `B * t_hat = u`, the terminal proof would no longer depend on `u`.
 
-Instead, the last recursive transition changes the suffix terminal input state
+Instead, the last recursive transition changes the terminal input state
 and binds the terminal inner image
 
 ```text
@@ -192,24 +198,21 @@ It does **not** send the outer image
 u = B * decompose(t).
 ```
 
-The suffix-terminal direct relation then has no commitment/B block.
+The terminal direct relation then has no commitment/B block.
 Its A block is no longer a zero-RHS quotient row whose `t` contribution lives only inside the witness MLE; it is a direct check that the revealed terminal witness maps to the public `t` state.
 Equivalently, the verifier computes the same folded A-row value from the revealed witness and checks equality to the transcript-bound `t` rows in `F[X]/(X^D+1)`.
 
 Soundness sketch.
-The suffix-terminal state is `t`, not `u`.
+The terminal state is `t`, not `u`.
 The prover must bind the canonical bytes of `t` before any terminal challenge depending on the terminal state is squeezed.
 The terminal verifier decodes the clear witness, checks the public norm/digit bounds, recomputes the A-image of that witness under the terminal fold challenges, and rejects unless it equals the bound `t`.
 Thus an accepting proof gives an explicit short preimage of the public `t` under `A`; by the same Module-SIS weak-binding argument already used for the A-role, two different accepting terminal witnesses for the same `t` extract a short kernel vector of `A`.
-No suffix-terminal B binding is required because `u` is no longer part of that
-statement. A one-fold root terminal still accepts the user's external `u`, so
-it retains `consistency | A | B` and absorbs `z || t` after the sparse
-challenge; this is not an elision case.
+No terminal B binding is required because `u` is no longer part of that
+statement. A terminal without a predecessor is not an accepted proof topology.
 
 This is why the cutover is sound: it replaces the statement `u = B * decompose(A * w_terminal)` with the statement `t = A * w_terminal` at the transparent tail, where `w_terminal` is revealed and range-checked.
-It is implemented as the distinct `WithoutCommitmentBlocks` row layout rather
-than as a local omission from `WithoutDBlock`. The execution schedule is the
-single source of truth for choosing these layouts.
+It is implemented as the sole `WithoutCommitmentBlocks` terminal row layout.
+The execution schedule is the single source of truth for selecting it.
 
 ### The segment-typed tail encoder
 
@@ -245,12 +248,14 @@ legacy `t_hat`, `û_concat`, or `r_hat` planes.
 Segments appear in wire order `z ‖ e ‖ t`. Terminal quotient rows and their digit planes do not exist.
 Multipoint layouts scale `z_coords` with `num_z_segments`.
 
-This mirrors the existing headerless, shape-driven decode (the shape supplies counts and the `z` payload upper bound). `CleartextWitnessShape::SegmentTyped` and `CleartextWitnessProof::SegmentTyped` ship in #190.
+This mirrors the existing headerless, shape-driven decode (the shape supplies
+counts and the `z` payload upper bound). `SegmentTypedWitnessShape` and
+`SegmentTypedWitness` descend from the typed representation shipped in #190.
 
 The verifier decodes `z` via Golomb–Rice into centered ring elements and
 decodes `e`/`t` as raw field coefficients. It always checks consistency and A
-directly. It decomposes `t` for B only at a root terminal; a suffix terminal has
-no B block. The wire never carries `e_hat` digit planes for `e`; it carries
+directly. The terminal has no B block. The wire never carries `e_hat` digit
+planes for `e`; it carries
 `e_folded` field elements.
 
 ### Golomb-Rice for the Gaussian z segment
@@ -282,7 +287,7 @@ Tail encoding uses three layers:
 | Layer | Source | Carries |
 |-------|--------|---------|
 | **Policy** | `AkitaInstanceDescriptor` schedule and level descriptors | codec/cap rules, terminal topology, row and witness parameters |
-| **Layout** | `CleartextWitnessShape` / `TerminalLevelProofShape` (S3) | per-segment element counts (and byte length once entropy-coded) |
+| **Layout** | `SegmentTypedWitnessShape` / `TerminalLevelProofShape` (S3) | per-segment element counts (and byte length once entropy-coded) |
 | **Derived** | both sides at runtime | `cap`, `wire_rice_low_bits`, segment order (`z ‖ e ‖ t`), decode bounds and outgoing binding |
 
 The tail-encoding policy is bound in the canonical instance descriptor:
@@ -291,8 +296,8 @@ The tail-encoding policy is bound in the canonical instance descriptor:
 - the cap→wire low-bits rule identity for the `z` segment only,
 - per-segment model assignment: Golomb-Rice for `z`, raw canonical fields for
   `e`/`t`;
-- the complete `Fold`/`Direct` schedule, from which root-terminal external
-  `u`/B versus suffix-terminal inner `t` is derived.
+- the complete structural `folds + terminal` schedule, whose final edge binds
+  terminal inner `t` and carries no `u`/B state.
 
 The proof shape carries segment **counts** (and, for variable-length entropy segments, the realized payload byte length). Model tags and wire low bits are **not** duplicated on the shape; the verifier checks `shape.counts == derive_counts(policy, level_params, incidence)` before decode.
 Prover, verifier, schedule digest, and descriptor must agree; any disagreement rejects before hot arithmetic.
@@ -302,8 +307,8 @@ Transcript binding (S3 acceptance): absorb **canonical encoded segment bytes** i
 
 `direct_witness_bytes` (`crates/akita-types/src/layout/proof_size.rs:32-41`) gains a segment-typed arm: runtime sizing sums exact encoded segment sizes; **planner** sizing uses a conservative upper bound on entropy segments (`~num_coords * (cap_rice_low_bits + 2)` bits for Gaussian `z` under [`TAIL_Z_PLANNER_CAP_LOW_BITS_PLUS_TWO`]), consistent with the repo's `actual <= planned + ACCEPTED_PLANNER_PROOF_SIZE_OVERCOUNT_BYTES` profile gate.
 `level_proof_bytes` drops `next_commit_bytes` for the last recursive transition.
-The terminal direct witness already owns the sole raw `t` payload. Both
-terminal layouts drop `v`/stage 1; only the suffix layout also drops B.
+The terminal direct witness owns the sole raw `t` payload. Its only layout
+drops `v`/stage 1 and B.
 Shipped schedule tables are regenerated under the new tail policy in S5; the drift guard `generated_schedule_tables_match_find_schedule` must pass after regen.
 
 ### Alternatives Considered
@@ -343,8 +348,8 @@ part of the canonical transparent protocol rather than deferred alternatives.
 
 Remaining audit/measurement items:
 
-- Exact two-fold and root-terminal tamper tests should continue pinning the
-  intentional split: suffix `t`/A without B, root `u`/A/B.
+- Exact two-fold tamper tests should continue pinning predecessor `t`/A binding
+  without a terminal B block.
 - S3/S4 (landed in #190) must keep prover packing, verifier transcript slicing, and verifier row decoding byte-for-byte aligned across segment boundaries; `segment_typed_expand_matches_logical_w` guards this.
 - S5 descriptor binding (wire low-bits rule id + δ in [`FoldLinfProtocolBinding`](../../crates/akita-types/src/instance_descriptor/fold_linf_binding.rs); `AKITA_INSTANCE_DESCRIPTOR_VERSION = 2`) and Jolt cycle measurement remain partially open.
 
@@ -354,9 +359,9 @@ Remaining audit/measurement items:
 - PR #174 / `specs/fold-linf-rejection.md` (closed spec PR; implementation #189): the `t*` threshold and fold `‖z‖_inf` cap; Golomb `z` sizing uses the same cap as `num_digits_fold`, not the level variance envelope.
 - `specs/terminal-fold-cutover.md` (PR #88): the D-role drop whose transcript-binding discipline the terminal `t`-state cutover reuses.
 - `specs/weak-binding-norm-fix.md`: the weak-binding object the tail extraction recovers.
-- `crates/akita-types/src/proof/direct_witness.rs` (`CleartextWitnessProof`),
+- `crates/akita-types/src/proof/direct_witness.rs` (`SegmentTypedWitness`),
   `crates/akita-types/src/proof/tail_segments.rs` (segment layout and transcript
   slicing), and `crates/akita-types/src/proof/levels.rs` (`TerminalLevelProof`).
 - `crates/akita-types/src/proof_size.rs:72-106` and `crates/akita-types/src/layout/proof_size.rs` (proof-byte and witness accounting).
-- `crates/akita-prover/src/protocol/ring_relation/relation_quotient.rs` (intermediate A/B/D row roles), `crates/akita-prover/src/protocol/ring_switch/commit.rs` (ordinary outer `u` versus suffix-terminal inner `t`).
+- `crates/akita-prover/src/protocol/ring_relation/relation_quotient.rs` (intermediate A/B/D row roles), `crates/akita-prover/src/protocol/ring_switch/commit.rs` (ordinary outer `u` versus terminal inner `t`).
 - Profile: `AKITA_MODE=onehot_fp128_d64 AKITA_NUM_VARS=32 cargo run --release --example profile`.

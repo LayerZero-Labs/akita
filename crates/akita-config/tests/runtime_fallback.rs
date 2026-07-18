@@ -31,9 +31,21 @@ fn assert_schedule_eq(label: &str, lhs: &akita_types::Schedule, rhs: &akita_type
         "{label}: total_bytes diverge"
     );
     assert_eq!(
-        format!("{:?}", lhs.steps),
-        format!("{:?}", rhs.steps),
-        "{label}: step sequences diverge"
+        format!("{:?}", lhs.folds),
+        format!("{:?}", rhs.folds),
+        "{label}: fold sequences diverge"
+    );
+    assert_eq!(
+        lhs.terminal.current_w_len, rhs.terminal.current_w_len,
+        "{label}: terminal witness lengths diverge"
+    );
+    assert_eq!(
+        lhs.terminal.witness_shape, rhs.terminal.witness_shape,
+        "{label}: terminal witness shapes diverge"
+    );
+    assert_eq!(
+        lhs.terminal.direct_bytes, rhs.terminal.direct_bytes,
+        "{label}: terminal byte counts diverge"
     );
 }
 

@@ -91,7 +91,6 @@ fn batched_verify_accepts_consistent_openings_and_rejects_bad_inputs() {
         &mut verifier_transcript,
         verifier_claims(&opening_point[..], &openings[..], &commitments[0]),
         BasisMode::Lagrange,
-        akita_types::SetupContributionMode::Direct,
     )
     .expect("batched verify should accept consistent openings");
 
@@ -104,7 +103,6 @@ fn batched_verify_accepts_consistent_openings_and_rejects_bad_inputs() {
         &mut verifier_transcript,
         verifier_claims(&opening_point[..], &wrong_openings[..], &commitments[0]),
         BasisMode::Lagrange,
-        akita_types::SetupContributionMode::Direct,
     );
     assert!(matches!(
         wrong_opening_result,
@@ -128,7 +126,6 @@ fn batched_verify_accepts_consistent_openings_and_rejects_bad_inputs() {
         &mut verifier_transcript,
         verifier_claims(&opening_point[..], &oversized_openings[..], &commitments[0]),
         BasisMode::Lagrange,
-        akita_types::SetupContributionMode::Direct,
     );
 
     assert!(matches!(oversized_result, Err(AkitaError::InvalidProof)));

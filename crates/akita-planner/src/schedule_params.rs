@@ -21,7 +21,7 @@ use akita_types::{
     AkitaScheduleInputs, CleartextWitnessShape, CommitmentRingDims, DecompositionParams, FoldStep,
     LevelParams, LevelParamsLike, OpeningClaimsLayout, PolynomialGroupLayout,
     PrecommittedGroupParams, PrecommittedLevelParams, RelationMatrixRowLayout, Schedule,
-    SetupContributionMode, Step, WitnessLayout, SETUP_OFFLOAD_D_SETUP,
+    SetupContributionMode, WitnessLayout, SETUP_OFFLOAD_D_SETUP,
 };
 
 use crate::PlannerPolicy;
@@ -208,7 +208,7 @@ fn find_schedule_inner(
 
     let field_bits = policy.decomposition.field_bits();
 
-    let mut best: Option<(usize, Vec<Step>)> = None;
+    let mut best: Option<(usize, Vec<FoldStep>, akita_types::DirectStep)> = None;
     let fold_challenge_shape = fold_shape(AkitaScheduleInputs {
         num_vars: key.num_vars(),
         level: 0,
@@ -316,12 +316,11 @@ fn find_schedule_inner(
 
             // A supported root must recurse into at least one suffix fold.
             for suffix_fold in suffix.best_fold_per_lb.values() {
-                let next_witness_binding =
-                    if matches!(suffix_fold.steps.get(1), Some(Step::Direct(_))) {
-                        akita_types::NextWitnessBindingPolicy::TerminalInnerState
-                    } else {
-                        akita_types::NextWitnessBindingPolicy::OuterCommitment
-                    };
+                let next_witness_binding = if suffix_fold.folds.len() == 1 {
+                    akita_types::NextWitnessBindingPolicy::TerminalInnerState
+                } else {
+                    akita_types::NextWitnessBindingPolicy::OuterCommitment
+                };
                 let root_proof_size = level_proof_bytes(
                     field_bits,
                     field_bits * policy.chal_ext_degree as u32,
@@ -334,30 +333,34 @@ fn find_schedule_inner(
                 let total = root_proof_size + suffix_fold.total_bytes;
                 if best
                     .as_ref()
-                    .is_none_or(|(best_cost, _)| total < *best_cost)
+                    .is_none_or(|(best_cost, _, _)| total < *best_cost)
                 {
-                    let mut steps = Vec::with_capacity(1 + suffix_fold.steps.len());
-                    steps.push(Step::fold(FoldStep {
+                    let mut folds = Vec::with_capacity(1 + suffix_fold.folds.len());
+                    folds.push(FoldStep {
                         params: candidate_params.clone(),
                         current_w_len: witness_len,
                         next_w_len,
                         level_bytes: root_proof_size,
-                    }));
-                    steps.extend(suffix_fold.steps.iter().cloned());
-                    best = Some((total, steps));
+                    });
+                    folds.extend(suffix_fold.folds.iter().cloned());
+                    best = Some((total, folds, suffix_fold.terminal.clone()));
                 }
             }
         }
     }
 
-    let Some((total_bytes, steps)) = best else {
+    let Some((total_bytes, folds, terminal)) = best else {
         return Err(AkitaError::UnsupportedSchedule(format!(
             "no schedule with at least two folds for num_vars={}, num_polynomials={}",
             key.num_vars(),
             key.num_polynomials()
         )));
     };
-    Ok(Schedule { steps, total_bytes })
+    Ok(Schedule {
+        folds,
+        terminal,
+        total_bytes,
+    })
 }
 
 #[cfg(test)]

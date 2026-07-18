@@ -145,12 +145,12 @@ mod tests {
     use crate::find_group_batch_schedule;
     use crate::find_schedule;
     use crate::generated::{
-        validate_generated_schedule_entry, GeneratedFoldStep, GeneratedScheduleTable, GeneratedStep,
+        validate_generated_schedule_entry, GeneratedFold, GeneratedFoldStep, GeneratedScheduleTable,
     };
     use akita_types::{
         AkitaScheduleLookupKey, ChunkedWitnessCfg, DecompositionParams, LevelParams,
         MultiChunkProfileId, PolynomialGroupLayout, PrecommittedGroupParams, SisModulusProfileId,
-        SisTableDigest, Step, DEFAULT_SIS_SECURITY_POLICY,
+        SisTableDigest, DEFAULT_SIS_SECURITY_POLICY,
     };
 
     fn flat_policy() -> PlannerPolicy {
@@ -202,46 +202,31 @@ mod tests {
         }
     }
 
-    fn generated_steps_from_schedule(schedule: &Schedule) -> Vec<GeneratedStep> {
+    fn generated_folds_from_schedule(schedule: &Schedule) -> Vec<GeneratedFold> {
         schedule
-            .steps
+            .folds
             .iter()
-            .map(|step| match step {
-                Step::Fold(fold) => GeneratedStep::Fold(generated_fold_step(&fold.params)),
-                Step::Direct(_) => GeneratedStep::Direct,
-            })
+            .map(|fold| GeneratedFold::Fold(generated_fold_step(&fold.params)))
             .collect()
     }
 
-    fn generated_entry_from_steps(
+    fn generated_entry_from_folds(
         key: PolynomialGroupLayout,
-        steps: Vec<GeneratedStep>,
+        folds: Vec<GeneratedFold>,
     ) -> GeneratedScheduleTableEntry {
         GeneratedScheduleTableEntry {
             final_group: key,
             precommitteds: &[],
-            steps: Box::leak(steps.into_boxed_slice()),
+            folds: Box::leak(folds.into_boxed_slice()),
         }
     }
 
     fn mutate_first_generated_fold_step(
-        steps: &mut [GeneratedStep],
+        folds: &mut [GeneratedFold],
         mutate: impl FnOnce(&mut GeneratedFoldStep),
     ) {
-        for step in steps.iter_mut() {
-            match step {
-                GeneratedStep::Fold(fold) => {
-                    mutate(fold);
-                    return;
-                }
-                GeneratedStep::FoldWithSetupMetadata(fold) => {
-                    mutate(&mut fold.fold);
-                    return;
-                }
-                GeneratedStep::Direct => {}
-            }
-        }
-        panic!("schedule should contain a fold");
+        let fold = folds.first_mut().expect("schedule should contain a fold");
+        mutate(fold.fold_step_mut());
     }
 
     #[test]
@@ -266,15 +251,7 @@ mod tests {
         };
         let key = PolynomialGroupLayout::new(30, 1);
         let schedule = find_single_schedule(key, &policy).expect("schedule");
-        let last_fold = schedule
-            .steps
-            .iter()
-            .rev()
-            .find_map(|step| match step {
-                Step::Fold(fold) => Some(fold),
-                _ => None,
-            })
-            .expect("fold-then-direct schedule");
+        let last_fold = schedule.folds.last().expect("fold-then-direct schedule");
         assert_eq!(last_fold.params.witness_chunk.num_chunks, 1);
     }
 
@@ -291,7 +268,7 @@ mod tests {
         match (a, b) {
             (Ok(a), Ok(b)) => {
                 assert_eq!(a.total_bytes, b.total_bytes);
-                assert_eq!(a.steps.len(), b.steps.len());
+                assert_eq!(a.folds.len(), b.folds.len());
             }
             (Err(AkitaError::UnsupportedSchedule(_)), Err(AkitaError::UnsupportedSchedule(_))) => {}
             (a, b) => panic!("default chunk policy diverged: implicit={a:?}, explicit={b:?}"),
@@ -307,15 +284,7 @@ mod tests {
             policy.witness_chunk = profile.cfg();
             let schedule = find_single_schedule(key, &policy)
                 .unwrap_or_else(|err| panic!("profile {profile:?} must plan at nv=30: {err:?}"));
-            let last_fold = schedule
-                .steps
-                .iter()
-                .rev()
-                .find_map(|step| match step {
-                    Step::Fold(fold) => Some(fold),
-                    _ => None,
-                })
-                .expect("fold-then-direct schedule");
+            let last_fold = schedule.folds.last().expect("fold-then-direct schedule");
             assert_eq!(
                 last_fold.params.witness_chunk.num_chunks, 1,
                 "profile {profile:?} must end with a single-chunk terminal fold"
@@ -355,7 +324,7 @@ mod tests {
         match (via_multi_group, via_scalar) {
             (Ok(via_multi_group), Ok(via_scalar)) => {
                 assert_eq!(via_multi_group.total_bytes, via_scalar.total_bytes);
-                assert_eq!(via_multi_group.steps.len(), via_scalar.steps.len());
+                assert_eq!(via_multi_group.folds.len(), via_scalar.folds.len());
             }
             (Err(AkitaError::UnsupportedSchedule(_)), Err(AkitaError::UnsupportedSchedule(_))) => {}
             (via_multi_group, via_scalar) => panic!(
@@ -380,7 +349,7 @@ mod tests {
         let key = PolynomialGroupLayout::new(30, 1);
         let policy = flat_policy();
         let schedule = find_single_schedule(key, &policy).expect("find schedule");
-        let entry = generated_entry_from_steps(key, generated_steps_from_schedule(&schedule));
+        let entry = generated_entry_from_folds(key, generated_folds_from_schedule(&schedule));
 
         validate_generated_schedule_entry(
             &entry,
@@ -397,9 +366,9 @@ mod tests {
         let key = PolynomialGroupLayout::new(30, 1);
         let policy = flat_policy();
         let schedule = find_single_schedule(key, &policy).expect("find schedule");
-        let mut steps = generated_steps_from_schedule(&schedule);
-        mutate_first_generated_fold_step(&mut steps, |fold| fold.n_b += 1);
-        let entry = generated_entry_from_steps(key, steps);
+        let mut folds = generated_folds_from_schedule(&schedule);
+        mutate_first_generated_fold_step(&mut folds, |fold| fold.n_b += 1);
+        let entry = generated_entry_from_folds(key, folds);
 
         let err = validate_generated_schedule_entry(
             &entry,
@@ -421,9 +390,9 @@ mod tests {
         let key = PolynomialGroupLayout::new(30, 1);
         let policy = flat_policy();
         let schedule = find_single_schedule(key, &policy).expect("find schedule");
-        let mut steps = generated_steps_from_schedule(&schedule);
-        mutate_first_generated_fold_step(&mut steps, |fold| fold.num_live_blocks -= 1);
-        let entry = generated_entry_from_steps(key, steps);
+        let mut folds = generated_folds_from_schedule(&schedule);
+        mutate_first_generated_fold_step(&mut folds, |fold| fold.num_live_blocks -= 1);
+        let entry = generated_entry_from_folds(key, folds);
 
         let err = validate_generated_schedule_entry(
             &entry,
@@ -445,9 +414,9 @@ mod tests {
         let key = PolynomialGroupLayout::new(30, 1);
         let policy = flat_policy();
         let schedule = find_single_schedule(key, &policy).expect("find schedule");
-        let mut steps = generated_steps_from_schedule(&schedule);
-        mutate_first_generated_fold_step(&mut steps, |fold| fold.n_a += 1);
-        let entry = generated_entry_from_steps(key, steps);
+        let mut folds = generated_folds_from_schedule(&schedule);
+        mutate_first_generated_fold_step(&mut folds, |fold| fold.n_a += 1);
+        let entry = generated_entry_from_folds(key, folds);
 
         let err = validate_generated_schedule_entry(
             &entry,
@@ -469,12 +438,12 @@ mod tests {
         let key = PolynomialGroupLayout::new(30, 1);
         let policy = flat_policy();
         let schedule = find_single_schedule(key, &policy).expect("find schedule");
-        let mut steps = generated_steps_from_schedule(&schedule);
-        mutate_first_generated_fold_step(&mut steps, |fold| {
+        let mut folds = generated_folds_from_schedule(&schedule);
+        mutate_first_generated_fold_step(&mut folds, |fold| {
             assert!(fold.n_a > 1, "test needs n_a > 1 to understate rank");
             fold.n_a -= 1;
         });
-        let entry = generated_entry_from_steps(key, steps);
+        let entry = generated_entry_from_folds(key, folds);
 
         let err = validate_generated_schedule_entry(
             &entry,
@@ -496,9 +465,9 @@ mod tests {
         let key = PolynomialGroupLayout::new(30, 1);
         let policy = flat_policy();
         let schedule = find_single_schedule(key, &policy).expect("find schedule");
-        let mut steps = generated_steps_from_schedule(&schedule);
-        mutate_first_generated_fold_step(&mut steps, |fold| fold.n_d += 1);
-        let entry = generated_entry_from_steps(key, steps);
+        let mut folds = generated_folds_from_schedule(&schedule);
+        mutate_first_generated_fold_step(&mut folds, |fold| fold.n_d += 1);
+        let entry = generated_entry_from_folds(key, folds);
         let entries: &'static [GeneratedScheduleTableEntry] =
             Box::leak(vec![entry].into_boxed_slice());
         let identity =
@@ -520,7 +489,7 @@ mod tests {
         let key = PolynomialGroupLayout::new(30, 1);
         let policy = flat_policy();
         let schedule = find_single_schedule(key, &policy).expect("find schedule");
-        let entry = generated_entry_from_steps(key, generated_steps_from_schedule(&schedule));
+        let entry = generated_entry_from_folds(key, generated_folds_from_schedule(&schedule));
 
         let validated = estimate_proof_bytes(
             &entry,
@@ -549,12 +518,9 @@ mod tests {
             pre_key,
             find_single_schedule(pre_key, &policy)
                 .expect("precommit schedule")
-                .steps
+                .folds
                 .first()
-                .and_then(|step| match step {
-                    Step::Direct(_) => None,
-                    Step::Fold(fold) => Some(&fold.params),
-                })
+                .map(|fold| &fold.params)
                 .expect("commit params"),
         );
         AkitaScheduleLookupKey {
@@ -563,14 +529,14 @@ mod tests {
         }
     }
 
-    fn generated_group_entry_from_steps(
+    fn generated_group_entry_from_folds(
         key: &AkitaScheduleLookupKey,
-        steps: Vec<GeneratedStep>,
+        folds: Vec<GeneratedFold>,
     ) -> GeneratedScheduleTableEntry {
         GeneratedScheduleTableEntry {
             final_group: key.final_group,
             precommitteds: Box::leak(key.precommitteds.clone().into_boxed_slice()),
-            steps: Box::leak(steps.into_boxed_slice()),
+            folds: Box::leak(folds.into_boxed_slice()),
         }
     }
 
@@ -581,7 +547,7 @@ mod tests {
         let schedule = find_group_batch_schedule(&key, &policy, ring_challenge_config, fold_shape)
             .expect("multi-group schedule");
         let entry =
-            generated_group_entry_from_steps(&key, generated_steps_from_schedule(&schedule));
+            generated_group_entry_from_folds(&key, generated_folds_from_schedule(&schedule));
 
         validate_generated_schedule_entry(
             &entry,
@@ -602,17 +568,11 @@ mod tests {
             find_group_batch_schedule(&key, &policy, ring_challenge_config, fold_shape)
                 .expect("multi-group schedule");
         let root = regenerated
-            .steps
+            .folds
             .first()
-            .and_then(|step| match step {
-                Step::Fold(fold) => Some(generated_fold_step(&fold.params)),
-                Step::Direct(_) => None,
-            })
+            .map(|fold| generated_fold_step(&fold.params))
             .expect("multi-group root fold");
-        let entry = generated_group_entry_from_steps(
-            &key,
-            vec![GeneratedStep::Fold(root), GeneratedStep::Direct],
-        );
+        let entry = generated_group_entry_from_folds(&key, vec![GeneratedFold::Fold(root)]);
         let entries: &'static [GeneratedScheduleTableEntry] =
             Box::leak(vec![entry].into_boxed_slice());
         let identity =

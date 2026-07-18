@@ -4,7 +4,6 @@
 //! in `verify`, `root_fold`, and `suffix`. Schedule/config dispatch stays with
 //! the scheme crate until the verifier-facing config boundary is extracted.
 
-mod direct_ring_arithmetic;
 mod extension_opening_reduction;
 mod verify;
 use crate::protocol::ring_switch::{
@@ -34,15 +33,14 @@ use akita_types::{
     proof::relation::evaluation_trace_row_weight, raw_field_segment_bytes,
     relation_claim_from_layout_extension, relation_rhs_layout_for, reorder_stage1_coords,
     ring_subfield_packed_extension_opening_point, root_trace_block_opening,
-    sample_public_row_coefficients, scheduled_next_level_params,
-    tensor_equality_factor_eval_at_point, trace_public_weights_recursive,
-    trace_public_weights_root_terms, trace_terms_recursive, trace_weight_layout_from_segment,
-    AkitaStage1Proof, AkitaStage2Proof, AkitaVerifierSetup, BasisMode, CleartextWitnessProof,
-    ExecutionSchedule, ExtensionOpeningReductionProof, FoldLevelProof, FoldLinfProtocolBinding,
-    FpExtEncoding, LevelParams, OpeningClaims, OpeningClaimsLayout, PointVariableSelection,
-    PolynomialGroupClaims, PreparedOpeningPoint, RelationMatrixRowLayout,
-    RingMultiplierOpeningPoint, RingOpeningPoint, RingRelationInstance, RingVec, Schedule,
-    SetupContributionMode, SetupSumcheckProof, TerminalLevelProof, TerminalWitnessTranscriptParts,
+    sample_public_row_coefficients, tensor_equality_factor_eval_at_point,
+    trace_public_weights_recursive, trace_public_weights_root_terms, trace_terms_recursive,
+    trace_weight_layout_from_segment, AkitaStage1Proof, AkitaStage2Proof, AkitaVerifierSetup,
+    BasisMode, CleartextWitnessProof, ExecutionSchedule, ExtensionOpeningReductionProof,
+    FoldLevelProof, FoldLinfProtocolBinding, FpExtEncoding, LevelParams, OpeningClaims,
+    OpeningClaimsLayout, PointVariableSelection, PolynomialGroupClaims, PreparedOpeningPoint,
+    RelationMatrixRowLayout, RingMultiplierOpeningPoint, RingOpeningPoint, RingRelationInstance,
+    RingVec, Schedule, SetupSumcheckProof, TerminalLevelProof, TerminalWitnessTranscriptParts,
     TraceClaim,
 };
 use akita_types::{
@@ -63,7 +61,8 @@ pub(in crate::protocol::core) type SetupPrefixOpening<E> = (Vec<E>, E);
 pub(in crate::protocol::core) type FoldVerifyOutput<E> = (Vec<E>, Option<SetupPrefixOpening<E>>);
 
 pub(in crate::protocol::core) use fold::{
-    verify_fold, verify_fold_eor, FoldEorReplay, PreparedFoldReplay,
+    verify_fold, verify_fold_eor, FoldEorReplay, PreparedFoldPayload, PreparedFoldReplay,
+    PreparedNextWitness,
 };
 
 fn prepare_terminal_witness_replay<F, T>(

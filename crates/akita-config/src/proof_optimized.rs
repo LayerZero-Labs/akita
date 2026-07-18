@@ -230,12 +230,9 @@ fn setup_matrix_envelope_for_schedule(
 ///
 pub fn setup_level_params_from_schedule(schedule: &Schedule) -> Vec<LevelParams> {
     schedule
-        .steps
+        .folds
         .iter()
-        .filter_map(|step| match step {
-            akita_types::Step::Fold(fold_step) => Some(fold_step.params.clone()),
-            akita_types::Step::Direct(_) => None,
-        })
+        .map(|fold| fold.params.clone())
         .collect()
 }
 

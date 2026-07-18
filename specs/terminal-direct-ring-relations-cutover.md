@@ -11,11 +11,13 @@
 Every supported proof schedule has exactly this topology:
 
 ```text
-root Fold | one or more suffix Folds | terminal Direct
+root Fold | one or more suffix Folds | terminal cleartext witness
 ```
 
-The terminal `Direct` step is a data-free planner marker plus the public
-segment-typed witness shape and byte budget. It has no commitment parameters.
+Runtime schedules encode this topology structurally as `folds` plus one
+`terminal` witness shape and byte budget. Compact generated catalogs contain
+only folds; expansion derives the terminal from the final fold. The terminal
+has no commitment parameters and is not a step variant or generated marker.
 Inputs for which the planner cannot produce at least two shrinking folds return
 `AkitaError::UnsupportedSchedule`; the prover emits no proof.
 
@@ -103,7 +105,7 @@ must reject any schedule/proof disagreement before replay.
 ## Single sources of truth
 
 - `Schedule::validate_structure` owns runtime topology validation.
-- `GeneratedScheduleTableEntry::validate` owns compact-table topology.
+- generated-entry validation owns the compact fold-catalog topology.
 - `Schedule::{root_fold, root_fold_mut, num_fold_levels}` owns root/fold access.
 - `ExecutionSchedule::relation_matrix_row_layout` selects the terminal layout.
 - `LevelParams` row-offset helpers own physical relation ranges.

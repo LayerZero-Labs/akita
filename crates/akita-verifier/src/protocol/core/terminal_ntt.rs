@@ -270,39 +270,6 @@ where
     Ok(out)
 }
 
-/// Compute a prepared negacyclic matrix product with balanced i8 digit rings.
-pub(super) fn digit_rows<F, const D: usize>(
-    setup: &AkitaVerifierSetup<F>,
-    num_rows: usize,
-    digits: &[[i8; D]],
-    log_basis: u32,
-    prepared_prefix_len: usize,
-) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>
-where
-    F: FieldCore + CanonicalField,
-{
-    let required = num_rows
-        .checked_mul(digits.len())
-        .ok_or(AkitaError::InvalidProof)?;
-    if prepared_prefix_len < required {
-        return Err(AkitaError::InvalidSetup(
-            "verifier B cache prefix is undersized".into(),
-        ));
-    }
-    let slot = setup.prepared_verifier_ntt_prefix::<D>(prepared_prefix_len)?;
-    match slot.as_d::<D>()? {
-        PreparedNttSlot::Q32 { neg, params, .. } => {
-            accumulate_i8(neg, num_rows, digits.len(), digits, log_basis, params)
-        }
-        PreparedNttSlot::Q64 { neg, params, .. } => {
-            accumulate_i8(neg, num_rows, digits.len(), digits, log_basis, params)
-        }
-        PreparedNttSlot::Q128 { neg, params, .. } => {
-            accumulate_i8(neg, num_rows, digits.len(), digits, log_basis, params)
-        }
-    }
-}
-
 /// Compute a prepared negacyclic matrix product with arbitrary centered i64 rings.
 pub(super) fn centered_rows<F, const D: usize>(
     setup: &AkitaVerifierSetup<F>,

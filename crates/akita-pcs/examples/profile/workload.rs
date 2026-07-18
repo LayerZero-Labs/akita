@@ -21,8 +21,7 @@ use akita_serialization::{AkitaSerialize, Valid};
 use akita_transcript::AkitaTranscript;
 use akita_types::{
     lagrange_weights, reduce_inner_opening_to_ring_element, ring_opening_point_from_field,
-    schedule_terminal_direct_witness_shape, AkitaBatchedProof, AkitaCommitmentHint, BasisMode,
-    CleartextWitnessProof, CleartextWitnessShape, Commitment, FpExtEncoding, LevelParams,
+    AkitaBatchedProof, AkitaCommitmentHint, BasisMode, Commitment, FpExtEncoding, LevelParams,
     OpeningClaims, OpeningClaimsLayout, PointVariableSelection, PolynomialGroupClaims,
     PolynomialGroupLayout, PrecommittedGroupParams, Schedule, SetupContributionMode,
 };
@@ -156,19 +155,19 @@ where
     FF: FieldCore,
     E: FieldCore,
 {
-    let Ok(scheduled_shape) = schedule_terminal_direct_witness_shape(schedule) else {
-        return 0;
-    };
-    let CleartextWitnessShape::SegmentTyped(scheduled) = scheduled_shape else {
-        return 0;
-    };
-    let CleartextWitnessProof::SegmentTyped(witness) = proof.final_witness() else {
-        return 0;
-    };
-    scheduled
+    schedule
+        .terminal
+        .witness_shape
         .layout
         .z_payload_bytes()
-        .saturating_sub(witness.z_payloads.iter().map(Vec::len).sum::<usize>())
+        .saturating_sub(
+            proof
+                .final_witness()
+                .z_payloads
+                .iter()
+                .map(Vec::len)
+                .sum::<usize>(),
+        )
 }
 
 /// Check the runtime proof size against a planner estimate, tolerating the
@@ -438,7 +437,8 @@ fn run_prove<
         + FrobeniusExtField<FF>
         + HasUnreducedOps
         + HasOptimizedFold
-        + AkitaSerialize,
+        + AkitaSerialize
+        + Valid,
     CpuBackend: RuntimeRootCommitBackend<FF, P, Cfg::ExtField>
         + RecursiveProveBackend<FF, P, Cfg::ExtField>,
 {
@@ -537,7 +537,6 @@ fn run_prove<
             &mut verifier_transcript,
             verifier_claims(pt, &openings[..], &commitments[0]),
             BasisMode::Lagrange,
-            setup_contribution_mode,
         ) {
             Ok(()) => {}
             Err(e) => {
@@ -572,7 +571,8 @@ pub(crate) fn run_dense_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF
         + FpExtEncoding<FF>
         + HasUnreducedOps
         + HasOptimizedFold
-        + AkitaSerialize,
+        + AkitaSerialize
+        + Valid,
 {
     let mut rng = StdRng::seed_from_u64(0xbeef_cafe);
     let original_pt = random_claim_point::<FF, Cfg::ExtField>(nv, &mut rng);
@@ -668,7 +668,8 @@ pub(crate) fn run_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
         + FpExtEncoding<FF>
         + HasUnreducedOps
         + HasOptimizedFold
-        + AkitaSerialize,
+        + AkitaSerialize
+        + Valid,
 {
     let mut rng = StdRng::seed_from_u64(0xbeef_cafe);
     let total_field = (layout.num_live_blocks * layout.num_positions_per_block)
@@ -761,7 +762,8 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
         + FpExtEncoding<FF>
         + HasUnreducedOps
         + HasOptimizedFold
-        + AkitaSerialize,
+        + AkitaSerialize
+        + Valid,
 {
     let polys: Vec<OneHotPoly<FF, u8>> = (0..num_polys)
         .map(|poly_idx| {
@@ -936,7 +938,6 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
             &mut verifier_transcript,
             verifier_claims(&pt[..], &openings[..], &commitments[0]),
             BasisMode::Lagrange,
-            setup_contribution_mode,
         ) {
             Ok(()) => {}
             Err(e) => {
@@ -972,7 +973,8 @@ pub(crate) fn run_recursive_multi_group_onehot<FF, const D: usize, Cfg>(
         + FpExtEncoding<FF>
         + HasUnreducedOps
         + HasOptimizedFold
-        + AkitaSerialize,
+        + AkitaSerialize
+        + Valid,
 {
     type ProofCfg<C> = RecursiveCommitmentConfig<C>;
 
@@ -1231,7 +1233,6 @@ pub(crate) fn run_recursive_multi_group_onehot<FF, const D: usize, Cfg>(
             &mut verifier_transcript,
             OpeningClaims::from_groups(point, verifier_groups).expect("verifier claims"),
             BasisMode::Lagrange,
-            setup_contribution_mode,
         ) {
             Ok(()) => {}
             Err(e) => {

@@ -76,7 +76,6 @@ fn prove_tail_bound_with_grind_onehot_fixture(num_vars: usize, seed: u64) -> Tai
         &mut verifier_transcript,
         verify_input(&point, &[opening], &commitment),
         BasisMode::Lagrange,
-        akita_types::SetupContributionMode::Direct,
     )
     .expect("verify");
 
@@ -125,7 +124,6 @@ fn fold_grind_nonce_wire_roundtrip_and_oversized_nonce_rejected() {
             &mut verifier_transcript,
             verify_input(&fixture.point, &[fixture.opening], &fixture.commitment),
             BasisMode::Lagrange,
-            akita_types::SetupContributionMode::Direct,
         )
         .expect("deserialized proof must verify");
 
@@ -139,7 +137,6 @@ fn fold_grind_nonce_wire_roundtrip_and_oversized_nonce_rejected() {
             &mut verifier_transcript,
             verify_input(&fixture.point, &[fixture.opening], &fixture.commitment),
             BasisMode::Lagrange,
-            akita_types::SetupContributionMode::Direct,
         )
         .expect_err("oversized grind nonce must be rejected");
         assert!(matches!(err, AkitaError::InvalidProof));
@@ -165,7 +162,6 @@ fn fold_recursive_handle_tamper_rejected() {
             &mut verifier_transcript,
             verify_input(&fixture.point, &[fixture.opening], &fixture.commitment),
             BasisMode::Lagrange,
-            akita_types::SetupContributionMode::Direct,
         );
         assert_invalid_proof("tampered recursive fold handle", result);
     });
@@ -230,7 +226,6 @@ fn logging_transcript_event_stream_equality_tail_bound_with_grind() {
             &mut verifier_transcript,
             verify_input(&point, &[opening], &commitment),
             BasisMode::Lagrange,
-            akita_types::SetupContributionMode::Direct,
         )
         .expect("verify");
 

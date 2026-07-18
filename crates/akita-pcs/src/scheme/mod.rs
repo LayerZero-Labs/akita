@@ -270,17 +270,9 @@ where
         transcript: &mut T,
         claims: OpeningClaims<'_, Cfg::ExtField, &Commitment<Cfg::Field>>,
         basis: BasisMode,
-        setup_contribution_mode: SetupContributionMode,
     ) -> Result<(), AkitaError> {
         Self::validate_verifier_policy_ring_dim(setup)?;
-        batched_verify_inner::<Cfg, T>(
-            proof,
-            setup,
-            transcript,
-            claims,
-            basis,
-            setup_contribution_mode,
-        )
+        batched_verify_inner::<Cfg, T>(proof, setup, transcript, claims, basis)
     }
 
     /// Protocol identifier.
@@ -296,7 +288,6 @@ fn batched_verify_inner<Cfg, T>(
     transcript: &mut T,
     claims: OpeningClaims<'_, Cfg::ExtField, &Commitment<Cfg::Field>>,
     basis: BasisMode,
-    setup_contribution_mode: SetupContributionMode,
 ) -> Result<(), AkitaError>
 where
     Cfg: CommitmentConfig,
@@ -310,21 +301,14 @@ where
         + Valid
         + AkitaSerialize,
     Cfg::ExtField: FpExtEncoding<Cfg::Field>,
-    Cfg::ExtField: FrobeniusExtField<Cfg::Field> + FromPrimitiveInt + AkitaSerialize,
+    Cfg::ExtField: FrobeniusExtField<Cfg::Field> + FromPrimitiveInt + AkitaSerialize + Valid,
     T: Transcript<Cfg::Field>,
 {
     let t_verify_akita = Instant::now();
-    akita_verifier::batched_verify::<Cfg, T>(
-        proof,
-        setup,
-        transcript,
-        claims,
-        basis,
-        setup_contribution_mode,
-    )?;
+    akita_verifier::batched_verify::<Cfg, T>(proof, setup, transcript, claims, basis)?;
 
     tracing::info!(
-        levels = proof.num_fold_levels() + 1,
+        levels = proof.num_fold_levels(),
         elapsed_s = t_verify_akita.elapsed().as_secs_f64(),
         "akita batched verify complete"
     );

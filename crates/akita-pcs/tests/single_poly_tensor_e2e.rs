@@ -81,7 +81,6 @@ fn run_single_onehot_tensor(nv: usize) {
             &mut verifier_transcript,
             verify_input(&pt[..], opening_groups[0], &commitments[0]),
             BasisMode::Lagrange,
-            akita_types::SetupContributionMode::Direct,
         );
         assert!(
             result.is_ok(),
@@ -156,7 +155,6 @@ fn run_single_dense_tensor(nv: usize) {
             &mut verifier_transcript,
             verify_input(&pt[..], opening_groups[0], &commitments[0]),
             BasisMode::Lagrange,
-            akita_types::SetupContributionMode::Direct,
         );
         assert!(
             result.is_ok(),

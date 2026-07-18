@@ -181,10 +181,7 @@ mod tests {
             [(lp as &dyn crate::LevelParamsLike, num_claims, num_claims, 1)],
         )
         .expect("segment-typed witness shape");
-        let CleartextWitnessShape::SegmentTyped(ref segment_shape) = shape else {
-            panic!("expected segment-typed witness shape");
-        };
-        let layout = segment_shape.layout.clone();
+        let layout = shape.layout.clone();
         let group = layout.groups[0];
         let (rice_low_bits, zigzag_w) =
             tail_golomb_rice_z_params(lp, num_claims).expect("golomb z params");
@@ -197,7 +194,7 @@ mod tests {
             e_fields: RingVec::from_coeffs(vec![F::zero(); group.e_field_elems]),
             t_fields: RingVec::from_coeffs(vec![F::zero(); group.t_field_elems]),
         };
-        (CleartextWitnessProof::SegmentTyped(witness), shape)
+        (witness, shape)
     }
 
     fn dummy_sumcheck<F: FieldCore>(rounds: usize, degree: usize) -> SumcheckProof<F> {

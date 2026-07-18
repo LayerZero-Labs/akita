@@ -68,7 +68,8 @@ fn run_dense_mode_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
         + FpExtEncoding<FF>
         + HasUnreducedOps
         + HasOptimizedFold
-        + AkitaSerialize,
+        + AkitaSerialize
+        + Valid,
 {
     // The dense profile opens one polynomial at one point, so the schedule key
     // is the singleton root the prover actually resolves via
@@ -104,7 +105,8 @@ fn run_onehot_mode_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
         + FpExtEncoding<FF>
         + HasUnreducedOps
         + HasOptimizedFold
-        + AkitaSerialize,
+        + AkitaSerialize
+        + Valid,
 {
     tracing::info!("{}", title);
     if num_polys == 1 {

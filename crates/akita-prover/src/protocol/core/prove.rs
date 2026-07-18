@@ -104,11 +104,7 @@ where
     validate_schedule_ring_dims(&schedule, expanded.seed())?;
     ensure_schedule_fits_setup::<Cfg>(expanded.as_ref(), &schedule, &opening_batch)?;
     schedule.validate_structure()?;
-    let Some(Step::Fold(root_step)) = schedule.steps.first() else {
-        return Err(AkitaError::InvalidSetup(
-            "folded schedule is missing its root fold".to_string(),
-        ));
-    };
+    let root_step = schedule.root_fold()?;
     let root_commit_params = &root_step.params;
     validate_onehot_chunk_size_for_params::<Cfg::Field, &P>(&flat_polys, root_commit_params)?;
 
@@ -226,10 +222,14 @@ where
     // Role dims were validated against the setup seed at batched_prove entry;
     // NTT pre-warm reads the same schedule-owned dims per level.
     for level in 0..schedule.num_fold_levels() {
-        let role_dims = schedule.get_execution_schedule(level)?.params.role_dims();
-        stacks
-            .prove_stack_at_level(level)
-            .ensure_fold_level_role_ntt(expanded.as_ref(), role_dims)?;
+        let scheduled = schedule.get_execution_schedule(level)?;
+        let role_dims = scheduled.params.role_dims();
+        let stack = stacks.prove_stack_at_level(level);
+        if scheduled.is_terminal {
+            stack.ensure_fold_level_envelope_ntt(expanded.as_ref(), role_dims.d_a())?;
+        } else {
+            stack.ensure_fold_level_role_ntt(expanded.as_ref(), role_dims)?;
+        }
     }
 
     let root_scheduled = schedule.get_execution_schedule(0)?;

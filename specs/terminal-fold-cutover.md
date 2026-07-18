@@ -7,6 +7,15 @@
 | Status      | implemented                    |
 | PR          | #88                            |
 
+> **Historical topology note.** This spec records the PR #88 D-block cutover.
+> The current folded-only protocol is defined by
+> [`terminal-direct-ring-relations-cutover.md`](terminal-direct-ring-relations-cutover.md):
+> every terminal has a predecessor-bound `t`, the terminal relation is
+> `consistency | A`, and root-direct/root-terminal proof families no longer
+> exist. References below to root terminals, `WithoutDBlock`, packed digits, or
+> the former proof enums describe the historical implementation reviewed by
+> this spec, not current behavior.
+
 ## Summary
 
 The recursive-fold terminal level previously committed to the next-level

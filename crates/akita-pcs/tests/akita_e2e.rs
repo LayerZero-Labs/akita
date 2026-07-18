@@ -17,10 +17,8 @@ use akita_prover::OneHotPoly;
 use akita_prover::ProverOpeningData;
 use akita_serialization::{AkitaDeserialize, AkitaSerialize, Compress, Valid};
 use akita_transcript::AkitaTranscript;
+use akita_types::Schedule;
 use akita_types::{lagrange_weights, FpExtEncoding, LevelParams};
-use akita_types::{
-    schedule_terminal_direct_witness_shape, CleartextWitnessProof, CleartextWitnessShape, Schedule,
-};
 use akita_types::{
     AkitaBatchedProof, AkitaCommitmentHint, AkitaVerifierSetup, BasisMode, Commitment,
     OpeningClaims, PointVariableSelection, PolynomialGroupClaims,
@@ -58,22 +56,12 @@ where
     FF: FieldCore + CanonicalField + AkitaSerialize,
     E: FieldCore + AkitaSerialize,
 {
-    let Ok(scheduled_shape) = schedule_terminal_direct_witness_shape(schedule) else {
-        return schedule.total_bytes;
-    };
-    let CleartextWitnessShape::SegmentTyped(_) = scheduled_shape else {
-        return schedule.total_bytes;
-    };
-    let CleartextWitnessProof::SegmentTyped(_) = proof.final_witness() else {
-        return schedule.total_bytes;
-    };
-
-    let scheduled_terminal_bytes = match schedule.steps.as_slice() {
-        [.., akita_types::Step::Fold(terminal), akita_types::Step::Direct(direct)] => {
-            terminal.level_bytes + direct.direct_bytes
-        }
-        _ => return schedule.total_bytes,
-    };
+    let scheduled_terminal_bytes = schedule
+        .folds
+        .last()
+        .map(|terminal| terminal.level_bytes)
+        .unwrap_or(0)
+        .saturating_add(schedule.terminal.direct_bytes);
     let realized_terminal_bytes = proof.terminal.serialized_size(Compress::No);
     schedule
         .total_bytes
@@ -186,10 +174,7 @@ type DenseFixture<FField, E, const D: usize> = (
 
 /// Active log-basis of a runtime schedule's terminal direct step.
 fn schedule_terminal_log_basis(schedule: &akita_types::Schedule) -> u32 {
-    match schedule.steps.last() {
-        Some(akita_types::Step::Direct(direct)) => direct.log_basis().expect("terminal log basis"),
-        _ => panic!("schedule must end in a terminal direct step"),
-    }
+    schedule.terminal.log_basis()
 }
 
 /// Count the total number of fold levels (including the batched root and the
@@ -325,19 +310,14 @@ fn bump_flat_ring_vec<FField: FieldCore>(flat: &mut akita_types::RingVec<FField>
 }
 
 fn mutate_terminal_e_hat_digit<FField: FieldCore>(
-    witness: &mut akita_types::CleartextWitnessProof<FField>,
+    witness: &mut akita_types::SegmentTypedWitness<FField>,
 ) {
-    match witness {
-        akita_types::CleartextWitnessProof::SegmentTyped(segment) => {
-            bump_flat_ring_vec(&mut segment.e_fields);
-        }
-        _ => panic!("trace tamper fixture expects segment-typed terminal witness"),
-    }
+    bump_flat_ring_vec(&mut witness.e_fields);
 }
 
 fn terminal_witness_mut<FField: FieldCore, E: FieldCore>(
     proof: &mut AkitaBatchedProof<FField, E>,
-) -> &mut akita_types::CleartextWitnessProof<FField> {
+) -> &mut akita_types::SegmentTypedWitness<FField> {
     proof.terminal.final_witness_mut()
 }
 
@@ -371,11 +351,9 @@ fn chunked_multi_chunk_prove_verify() {
         ))
         .expect("multi-chunk schedule");
         let chunked_levels = plan
-            .steps
+            .folds
             .iter()
-            .filter(|s| {
-                matches!(s, akita_types::Step::Fold(f) if f.params.witness_chunk.num_chunks > 1)
-            })
+            .filter(|fold| fold.params.witness_chunk.num_chunks > 1)
             .count();
         assert!(
             chunked_levels >= 1,
@@ -443,7 +421,6 @@ fn chunked_multi_chunk_prove_verify() {
             &mut verifier_transcript,
             verify_input(&pt[..], &openings[..], &commitment),
             BasisMode::Lagrange,
-            akita_types::SetupContributionMode::Direct,
         );
         assert!(
             verify_result.is_ok(),
@@ -542,7 +519,6 @@ fn full_d64_prove_verify() {
             &mut verifier_transcript,
             verify_input(&pt[..], opening_groups[0], &commitments[0]),
             BasisMode::Lagrange,
-            akita_types::SetupContributionMode::Direct,
         );
         let verify_time = verify_start.elapsed();
 
@@ -585,7 +561,6 @@ fn full_d64_snap_regen_prove_verify_nv24() {
             &mut verifier_transcript,
             verify_input(&opening_point[..], &openings[..], &commitments[0]),
             BasisMode::Lagrange,
-            akita_types::SetupContributionMode::Direct,
         );
         assert!(
             result.is_ok(),
@@ -617,7 +592,6 @@ fn trace_internalization_rejects_tampered_root_fold_handle() {
             &mut verifier_transcript,
             verify_input(&opening_point[..], &openings[..], &commitments[0]),
             BasisMode::Lagrange,
-            akita_types::SetupContributionMode::Direct,
         );
         assert_invalid_proof("tampered root fold handle", result);
     });
@@ -699,7 +673,6 @@ fn trace_internalization_rejects_tampered_recursive_fold_handle() {
             &mut verifier_transcript,
             verify_input(&point[..], &openings[..], &commitments[0]),
             BasisMode::Lagrange,
-            akita_types::SetupContributionMode::Direct,
         );
         assert_invalid_proof("tampered recursive fold handle", result);
     });
@@ -727,7 +700,6 @@ fn trace_internalization_rejects_tampered_terminal_e_hat_digit() {
             &mut verifier_transcript,
             verify_input(&opening_point[..], &openings[..], &commitments[0]),
             BasisMode::Lagrange,
-            akita_types::SetupContributionMode::Direct,
         );
         assert_invalid_proof("tampered terminal e_hat digit", result);
     });
@@ -791,12 +763,7 @@ fn full_d64_adaptive_mixed_basis_roundtrip_and_serialization() {
         assert_eq!(batched_total_fold_levels(&proof), plan.num_fold_levels());
 
         assert_eq!(
-            proof
-                .final_witness()
-                .as_segment_typed()
-                .expect("terminal witness should be segment-typed")
-                .layout
-                .log_basis,
+            proof.final_witness().layout.log_basis,
             schedule_terminal_log_basis(&plan)
         );
 
@@ -821,7 +788,6 @@ fn full_d64_adaptive_mixed_basis_roundtrip_and_serialization() {
             &mut verifier_transcript,
             verify_input(&opening_point[..], opening_groups[0], &commitments[0]),
             BasisMode::Lagrange,
-            akita_types::SetupContributionMode::Direct,
         );
         assert!(
             result.is_ok(),
@@ -928,12 +894,7 @@ fn adaptive_onehot_direct_tail_uses_terminal_schedule_basis() {
                  realized variable-length terminal z payload is substituted",
         );
         assert_eq!(
-            decoded
-                .final_witness()
-                .as_segment_typed()
-                .expect("terminal witness should be segment-typed")
-                .layout
-                .log_basis,
+            decoded.final_witness().layout.log_basis,
             schedule_terminal_log_basis(&plan)
         );
 
@@ -944,7 +905,6 @@ fn adaptive_onehot_direct_tail_uses_terminal_schedule_basis() {
             &mut verifier_transcript,
             verify_input(&pt[..], opening_groups[0], &commitments[0]),
             BasisMode::Lagrange,
-            akita_types::SetupContributionMode::Direct,
         );
         assert!(
             result.is_ok(),
@@ -1053,10 +1013,7 @@ fn batched_onehot_same_point_round_trip() {
         let mut cursor = std::io::Cursor::new(serialized);
         let decoded = AkitaBatchedProof::<F, F>::deserialize_compressed(&mut cursor, &proof_shape)
             .expect("deserialize batched onehot proof");
-        let terminal = decoded
-            .final_witness()
-            .as_segment_typed()
-            .expect("recursive proof must terminate in a segment-typed witness");
+        let terminal = decoded.final_witness();
         assert_eq!(
             terminal.layout.groups.len(),
             1,
@@ -1074,7 +1031,6 @@ fn batched_onehot_same_point_round_trip() {
             &mut verifier_transcript,
             verify_input(&pt[..], opening_groups[0], &commitments[0]),
             BasisMode::Lagrange,
-            akita_types::SetupContributionMode::Direct,
         );
         assert!(
             result.is_ok(),
@@ -1092,7 +1048,6 @@ fn batched_onehot_same_point_round_trip() {
             &mut truncated_transcript,
             verify_input(&pt[..], opening_groups[0], &commitments[0]),
             BasisMode::Lagrange,
-            akita_types::SetupContributionMode::Direct,
         );
         assert!(
             truncated_result.is_err(),
@@ -1182,7 +1137,6 @@ fn batched_onehot_same_point_rejects_tampered_root_stage1_s_claim() {
             &mut verifier_transcript,
             verify_input(&pt[..], opening_groups[0], &commitments[0]),
             BasisMode::Lagrange,
-            akita_types::SetupContributionMode::Direct,
         );
         assert!(
             result.is_err(),

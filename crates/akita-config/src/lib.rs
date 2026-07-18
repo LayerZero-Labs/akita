@@ -13,6 +13,7 @@ use akita_field::{
     AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, MulBaseUnreduced,
 };
 use akita_planner::PlannerPolicy;
+use akita_serialization::Valid;
 use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
 #[cfg(test)]
 use akita_types::PolynomialGroupLayout;
@@ -164,7 +165,7 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     type Field: CanonicalField + FieldCore;
 
     /// Field used by public openings and all proof scalars.
-    type ExtField: ExtField<Self::Field> + MulBaseUnreduced<Self::Field>;
+    type ExtField: ExtField<Self::Field> + MulBaseUnreduced<Self::Field> + Valid;
 
     /// Extension degree `K = [ExtField : Field]`.
     ///

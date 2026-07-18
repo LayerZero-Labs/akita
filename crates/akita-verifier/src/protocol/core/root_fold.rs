@@ -21,7 +21,6 @@ pub(super) fn verify_root<F, E, T>(
     claims: &OpeningClaims<'_, E, &Commitment<F>>,
     basis: BasisMode,
     root_lp: &LevelParams,
-    _setup_contribution_mode: SetupContributionMode,
     next_fold_level_params: &LevelParams,
     next_t_state: Option<&[u8]>,
 ) -> Result<FoldVerifyOutput<E>, AkitaError>
@@ -43,6 +42,14 @@ where
             Some(next_fold_level_params),
         )?
         .map(|(proof, _)| proof);
+    let next_witness = match (proof.next_w_commitment(), next_t_state) {
+        (Some(commitment), None) => PreparedNextWitness::Commitment {
+            commitment,
+            ring_dim: next_fold_level_params.role_dims().d_b(),
+        },
+        (None, Some(t_state)) if !t_state.is_empty() => PreparedNextWitness::TerminalT(t_state),
+        _ => return Err(AkitaError::InvalidProof),
+    };
     let openings = claims.flat_evaluations();
     let opening_batch = claims.layout().map_err(|_| AkitaError::InvalidProof)?;
     let shared_opening_point = claims.point();
@@ -89,7 +96,7 @@ where
             next_fold_level_params,
             basis,
             root_lp,
-            next_t_state,
+            next_witness,
         );
     }
     let commitment = claims
@@ -110,7 +117,7 @@ where
         next_fold_level_params,
         basis,
         root_lp,
-        next_t_state,
+        next_witness,
     )
 }
 
@@ -133,7 +140,7 @@ fn verify_root_inner<F, E, T>(
     next_fold_level_params: &LevelParams,
     basis: BasisMode,
     root_lp: &LevelParams,
-    next_t_state: Option<&[u8]>,
+    next_witness: PreparedNextWitness<'_, F>,
 ) -> Result<FoldVerifyOutput<E>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling + HalvingField,
@@ -229,9 +236,6 @@ where
     )?
     .checked_mul(d_a)
     .ok_or_else(|| AkitaError::InvalidSetup("next witness length overflow".to_string()))?;
-    let stage1_proof = Some(&proof.stage1);
-    let next_w_commitment = proof.next_w_commitment();
-    let stage2 = Some(&proof.stage2);
     let fold_grind_nonce = proof.fold_grind_nonce;
     // Scalar root: the sole commitment's rows are the whole M-row commitment
     // block.
@@ -251,16 +255,14 @@ where
         group_ring_opening_points: vec![prepared_point.ring_opening_point.clone()],
         group_ring_multiplier_points: vec![prepared_point.ring_multiplier_point.clone()],
         w_len,
-        stage1: stage1_proof,
-        stage2,
-        final_witness: None,
-        next_w_commitment,
-        next_t_state,
-        next_ring_dim: Some(next_fold_level_params.role_dims().d_b()),
-        next_witness_ring_dim: Some(next_witness_ring_dim),
-        next_opening_source_len: w_len / next_witness_ring_dim,
-        terminal_replay: None,
-        stage3: stage3_sumcheck_proof.map(|proof| (proof, next_fold_level_params)),
+        payload: PreparedFoldPayload::Recursive {
+            stage1: &proof.stage1,
+            stage2: &proof.stage2,
+            next_witness,
+            next_witness_ring_dim,
+            next_opening_source_len: w_len / next_witness_ring_dim,
+            stage3: stage3_sumcheck_proof.map(|proof| (proof, next_fold_level_params)),
+        },
         trace_prepared_points: Some(vec![prepared_point.clone()]),
         trace_block_opening: Some(trace_block_opening),
         trace_eval_target,
@@ -302,7 +304,7 @@ fn verify_multi_group_root_inner<F, E, T>(
     next_fold_level_params: &LevelParams,
     basis: BasisMode,
     root_lp: &LevelParams,
-    next_t_state: Option<&[u8]>,
+    next_witness: PreparedNextWitness<'_, F>,
 ) -> Result<FoldVerifyOutput<E>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling + HalvingField,
@@ -381,9 +383,6 @@ where
     let commitment_rows = RingVec::from_coeffs(commitment_coeffs);
 
     let w_len = root_lp.next_w_len::<F>(opening_batch, relation_matrix_row_layout)?;
-    let stage1_proof = Some(&proof.stage1);
-    let next_w_commitment = proof.next_w_commitment();
-    let stage2 = Some(&proof.stage2);
     let fold_grind_nonce = proof.fold_grind_nonce;
     let v_storage = proof.v.clone();
     // Routes `verify_fold` to the multi-group-root trace path; inert for the dense
@@ -419,16 +418,14 @@ where
         group_ring_opening_points,
         group_ring_multiplier_points,
         w_len,
-        stage1: stage1_proof,
-        stage2,
-        final_witness: None,
-        next_w_commitment,
-        next_t_state,
-        next_ring_dim: Some(next_fold_level_params.role_dims().d_b()),
-        next_witness_ring_dim: Some(next_fold_level_params.role_dims().d_a()),
-        next_opening_source_len: w_len / next_witness_ring_dim,
-        terminal_replay: None,
-        stage3: stage3_sumcheck_proof.map(|proof| (proof, next_fold_level_params)),
+        payload: PreparedFoldPayload::Recursive {
+            stage1: &proof.stage1,
+            stage2: &proof.stage2,
+            next_witness,
+            next_witness_ring_dim,
+            next_opening_source_len: w_len / next_witness_ring_dim,
+            stage3: stage3_sumcheck_proof.map(|proof| (proof, next_fold_level_params)),
+        },
         trace_prepared_points: Some(prepared_points),
         trace_block_opening: Some(trace_block_opening),
         trace_eval_target,
