@@ -156,7 +156,7 @@ where
     let d_a = role_dims.d_a();
     let v_storage = proof.v.clone();
 
-    if extension_opening_reduction.is_none() {
+    let prepared_without_eor = if extension_opening_reduction.is_none() {
         let prepared_point =
             dispatch_for_field!(ProtocolDispatchSlot::Role(RingRole::Inner), F, d_a, |D| {
                 prepare_opening_point::<F, E, D>(
@@ -170,7 +170,10 @@ where
         for pt in &prepared_point.padded_point {
             append_ext_field::<F, E, T>(transcript, ABSORB_EVALUATION_CLAIMS, pt);
         }
-    }
+        Some(prepared_point)
+    } else {
+        None
+    };
     append_claim_values_to_transcript::<F, E, T>(openings, transcript);
     let row_coefficients = sample_public_row_coefficients::<F, E, T>(opening_batch, transcript)?;
     let root_eor = verify_fold_eor::<F, E, T>(
@@ -187,7 +190,11 @@ where
     let reduction_check = root_eor.reduction_challenges;
     let prepared_points = root_eor.prepared_points;
     let eor_trace_final = root_eor.final_relation;
-    let prepared_point = prepared_points.first().ok_or(AkitaError::InvalidProof)?;
+    let prepared_point = if let Some(prepared) = prepared_without_eor.as_ref() {
+        prepared
+    } else {
+        prepared_points.first().ok_or(AkitaError::InvalidProof)?
+    };
     if extension_opening_reduction.is_some() {
         for pt in &prepared_point.padded_point {
             append_ext_field::<F, E, T>(transcript, ABSORB_EVALUATION_CLAIMS, pt);

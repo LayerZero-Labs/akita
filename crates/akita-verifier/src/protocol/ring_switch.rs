@@ -953,12 +953,20 @@ impl<E: FieldCore> RelationMatrixEvaluator<E> {
         };
 
         let r_contribution = {
+            let _span = tracing::info_span!("relation_r_contribution").entered();
             let r_gadget =
                 gadget_row_scalars::<F>(r_decomp_levels::<F>(self.log_basis), self.log_basis);
             let alpha_pow_d = *alpha_pows_d.get(d_d - 1).ok_or(AkitaError::InvalidProof)?;
             let denom = alpha_pow_d * alpha + E::one();
             let offset_r = context.witness_layout.r_offset();
-            compute_r_contribution(self, x_challenges, offset_r, denom, &r_gadget)?
+            compute_r_contribution(
+                self,
+                x_challenges,
+                setup_plan.as_ref().map(SetupContributionPlan::eq_window),
+                offset_r,
+                denom,
+                &r_gadget,
+            )?
         };
 
         Ok(e_structured_contribution

@@ -3,6 +3,7 @@ use crate::{
     LevelParams, LevelParamsLike, OpeningClaimsLayout, RelationMatrixRowLayout,
     SetupProjectionGeometry, WitnessLayout,
 };
+use akita_algebra::offset_eq::OffsetEqWindow;
 use akita_field::{AkitaError, FieldCore};
 use std::{ops::Range, sync::Arc};
 
@@ -304,15 +305,22 @@ impl SetupContributionGroupInputs {
     }
 }
 
-pub struct SetupContributionPlan<E> {
+pub struct SetupContributionPlan<E: FieldCore> {
     pub(crate) groups: Vec<SetupContributionGroupPlan<E>>,
     pub(crate) d_rows: usize,
     pub(crate) d_physical_cols: usize,
     pub(crate) d_weights: Arc<[E]>,
     pub(crate) projection_geometry: SetupProjectionGeometry,
+    pub(crate) eq_window: OffsetEqWindow<E>,
 }
 
 impl<E: FieldCore> SetupContributionPlan<E> {
+    /// Equality window shared by every direct contribution over this opening point.
+    #[must_use]
+    pub fn eq_window(&self) -> &OffsetEqWindow<E> {
+        &self.eq_window
+    }
+
     /// Prepared D/B/A column equality slices for the group at `index` in plan
     /// (witness relation) order.
     ///

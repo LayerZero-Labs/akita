@@ -199,13 +199,7 @@ where
         )?;
         vec![prepared]
     } else {
-        vec![prepare_opening_point::<F, E, D>(
-            challenge_point,
-            basis,
-            num_positions_per_block,
-            num_live_blocks,
-            alpha_bits,
-        )?]
+        Vec::new()
     };
     Ok(FoldEorReplay {
         prepared_points,
@@ -730,76 +724,86 @@ where
         terminal = matches!(&prepared.payload, PreparedFoldPayload::Terminal { .. })
     )
     .entered();
-    dispatch_for_field!(
-        ProtocolDispatchSlot::Role(RingRole::Outer),
-        F,
-        role_dims.d_b(),
-        |D| commitment_rows.as_ring_slice::<D>().map(|_| ())
-    )?;
-    prepared
-        .lp
-        .fold_witness_grind_batch_contract(
-            &opening_shape,
-            FoldLinfProtocolBinding::CURRENT.max_grind_attempts,
-        )?
-        .validate_nonce(prepared.fold_grind_nonce)?;
-    if !prepared.v.coeffs().is_empty() {
-        dispatch_for_field!(
-            ProtocolDispatchSlot::Role(RingRole::Opening),
-            F,
-            role_dims.d_d(),
-            |D| prepared.v.as_ring_slice::<D>().map(|_| ())
-        )?;
-    }
-    if prepared.group_ring_opening_points.len() != num_groups
-        || prepared.group_ring_multiplier_points.len() != num_groups
     {
-        return Err(AkitaError::InvalidProof);
-    }
-    let group_challenges = derive_multi_group_stage1_challenges::<F, T>(
-        transcript,
-        prepared.v.coeffs(),
-        role_dims.d_d(),
-        role_dims.d_a(),
-        &opening_shape,
-        prepared.lp,
-        prepared.relation_matrix_row_layout,
-        prepared.fold_grind_nonce,
-    )?;
-    let (gamma, row_coefficient_rings) = dispatch_for_field!(
-        ProtocolDispatchSlot::Role(RingRole::Inner),
-        F,
-        role_dims.d_a(),
-        |D| {
-            RingRelationInstance::<F>::gamma_and_row_rings_from_coefficients::<D, E>(
-                &prepared.row_coefficients,
-            )
+        let _span = tracing::info_span!("fold_validate_inputs").entered();
+        dispatch_for_field!(
+            ProtocolDispatchSlot::Role(RingRole::Outer),
+            F,
+            role_dims.d_b(),
+            |D| commitment_rows.as_ring_slice::<D>().map(|_| ())
+        )?;
+        prepared
+            .lp
+            .fold_witness_grind_batch_contract(
+                &opening_shape,
+                FoldLinfProtocolBinding::CURRENT.max_grind_attempts,
+            )?
+            .validate_nonce(prepared.fold_grind_nonce)?;
+        if !prepared.v.coeffs().is_empty() {
+            dispatch_for_field!(
+                ProtocolDispatchSlot::Role(RingRole::Opening),
+                F,
+                role_dims.d_d(),
+                |D| prepared.v.as_ring_slice::<D>().map(|_| ())
+            )?;
         }
-    )?;
-    let relation_rhs_layout = relation_rhs_layout_for(
-        prepared.lp,
-        &opening_shape,
-        prepared.relation_matrix_row_layout,
-    )?;
-    let relation_rhs = assemble_relation_rhs::<F>(
-        role_dims,
-        &relation_rhs_layout,
-        &prepared.v,
-        commitment_rows,
-    )?;
-    let relation_instance = RingRelationInstance::new(
-        prepared.relation_matrix_row_layout,
-        group_challenges,
-        prepared.group_ring_opening_points,
-        prepared.group_ring_multiplier_points,
-        opening_shape.clone(),
-        gamma,
-        row_coefficient_rings,
-        relation_rhs,
-        prepared.v,
-        role_dims,
-    )?;
-    relation_instance.check_v_shape_for_level(prepared.lp)?;
+        if prepared.group_ring_opening_points.len() != num_groups
+            || prepared.group_ring_multiplier_points.len() != num_groups
+        {
+            return Err(AkitaError::InvalidProof);
+        }
+    }
+    let group_challenges = {
+        let _span = tracing::info_span!("fold_derive_stage1_challenges").entered();
+        derive_multi_group_stage1_challenges::<F, T>(
+            transcript,
+            prepared.v.coeffs(),
+            role_dims.d_d(),
+            role_dims.d_a(),
+            &opening_shape,
+            prepared.lp,
+            prepared.relation_matrix_row_layout,
+            prepared.fold_grind_nonce,
+        )?
+    };
+    let (relation_rhs_layout, relation_instance) = {
+        let _span = tracing::info_span!("fold_prepare_relation").entered();
+        let (gamma, row_coefficient_rings) = dispatch_for_field!(
+            ProtocolDispatchSlot::Role(RingRole::Inner),
+            F,
+            role_dims.d_a(),
+            |D| {
+                RingRelationInstance::<F>::gamma_and_row_rings_from_coefficients::<D, E>(
+                    &prepared.row_coefficients,
+                )
+            }
+        )?;
+        let relation_rhs_layout = relation_rhs_layout_for(
+            prepared.lp,
+            &opening_shape,
+            prepared.relation_matrix_row_layout,
+        )?;
+        let relation_rhs = assemble_relation_rhs::<F>(
+            role_dims,
+            &relation_rhs_layout,
+            &prepared.v,
+            commitment_rows,
+        )?;
+        let relation_instance = RingRelationInstance::new(
+            prepared.relation_matrix_row_layout,
+            group_challenges,
+            prepared.group_ring_opening_points,
+            prepared.group_ring_multiplier_points,
+            opening_shape.clone(),
+            gamma,
+            row_coefficient_rings,
+            relation_rhs,
+            prepared.v,
+            role_dims,
+        )?;
+        relation_instance.check_v_shape_for_level(prepared.lp)?;
+        (relation_rhs_layout, relation_instance)
+    };
     let (stage1, stage2, next_witness, next_witness_ring_dim, next_opening_source_len, stage3) =
         match prepared.payload {
             PreparedFoldPayload::Terminal {
@@ -871,20 +875,23 @@ where
         opening_ring_dim: next_witness_ring_dim,
     };
     let d_a = role_dims.d_a();
-    match next_witness {
-        PreparedNextWitness::Commitment {
-            commitment,
-            ring_dim,
-        } => {
-            if ring_dim == 0 || !commitment.can_decode_vec(ring_dim) {
-                return Err(AkitaError::InvalidProof);
+    {
+        let _span = tracing::info_span!("fold_bind_next_witness").entered();
+        match next_witness {
+            PreparedNextWitness::Commitment {
+                commitment,
+                ring_dim,
+            } => {
+                if ring_dim == 0 || !commitment.can_decode_vec(ring_dim) {
+                    return Err(AkitaError::InvalidProof);
+                }
+                transcript.absorb_and_record_serde(ABSORB_NEXT_LEVEL_WITNESS_BINDING, commitment);
             }
-            transcript.absorb_and_record_serde(ABSORB_NEXT_LEVEL_WITNESS_BINDING, commitment);
+            PreparedNextWitness::TerminalT(t_state) if !t_state.is_empty() => {
+                transcript.absorb_and_record_bytes(ABSORB_NEXT_LEVEL_WITNESS_BINDING, t_state);
+            }
+            PreparedNextWitness::TerminalT(_) => return Err(AkitaError::InvalidProof),
         }
-        PreparedNextWitness::TerminalT(t_state) if !t_state.is_empty() => {
-            transcript.absorb_and_record_bytes(ABSORB_NEXT_LEVEL_WITNESS_BINDING, t_state);
-        }
-        PreparedNextWitness::TerminalT(_) => return Err(AkitaError::InvalidProof),
     }
     let rs = dispatch_for_field!(ProtocolDispatchSlot::Role(RingRole::Inner), F, d_a, |D| {
         ring_switch_verifier::<F, E, T, D>(

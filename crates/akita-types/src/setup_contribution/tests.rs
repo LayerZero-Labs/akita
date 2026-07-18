@@ -262,6 +262,7 @@ fn finalize_test_plan(
             .collect::<Vec<_>>()
             .into(),
         projection_geometry,
+        eq_window: akita_algebra::offset_eq::OffsetEqWindow::new(&[]).unwrap(),
     };
     for group in &mut plan.groups {
         group

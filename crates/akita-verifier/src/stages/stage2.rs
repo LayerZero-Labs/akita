@@ -112,15 +112,19 @@ where
         };
 
         let (y_challenges, x_challenges) = challenges.split_at(self.ring_bits);
-        let relation_weight = self.relation_matrix_evaluator.eval_flat_at_point::<F, D>(
-            challenges,
-            self.setup,
-            self.relation_instance,
-            self.alpha,
-            self.setup_claim,
-        )?;
+        let relation_weight = {
+            let _span = tracing::info_span!("stage2_relation_weight").entered();
+            self.relation_matrix_evaluator.eval_flat_at_point::<F, D>(
+                challenges,
+                self.setup,
+                self.relation_instance,
+                self.alpha,
+                self.setup_claim,
+            )?
+        };
         let relation_oracle = w_eval * relation_weight;
         let trace_oracle = if let Some(trace) = &self.trace {
+            let _span = tracing::info_span!("stage2_trace_oracle").entered();
             // Scalar/recursive folds use one layout; multi-group roots use one
             // closed-form batch per group because their e-hat segments have
             // different geometry.
@@ -160,8 +164,11 @@ where
         if self.batching_coeff.is_zero() {
             return Ok(relation_oracle + trace_oracle);
         }
-        let eq_val = EqPolynomial::mle(&self.stage1_point, challenges)?;
-        let virtual_oracle = eq_val * w_eval * (w_eval + E::one());
+        let virtual_oracle = {
+            let _span = tracing::info_span!("stage2_virtual_oracle").entered();
+            let eq_val = EqPolynomial::mle(&self.stage1_point, challenges)?;
+            eq_val * w_eval * (w_eval + E::one())
+        };
         Ok(self.batching_coeff * virtual_oracle + relation_oracle + trace_oracle)
     }
 }

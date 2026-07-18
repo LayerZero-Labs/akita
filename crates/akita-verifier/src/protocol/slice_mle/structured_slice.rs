@@ -9,6 +9,7 @@ use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
 pub(crate) fn compute_r_contribution<F, E>(
     prepared: &RelationMatrixEvaluator<E>,
     full_vec_randomness: &[E],
+    prepared_eq_window: Option<&OffsetEqWindow<E>>,
     offset_r: usize,
     denom: E,
     r_gadget: &[F],
@@ -28,7 +29,13 @@ where
     }
     // Share a bounded low equality table across every canonical r address
     // instead of recomputing a full-width equality product per (row, level).
-    let eq_window = OffsetEqWindow::new(full_vec_randomness)?;
+    let eq_window_storage;
+    let eq_window = if let Some(window) = prepared_eq_window {
+        window
+    } else {
+        eq_window_storage = OffsetEqWindow::new(full_vec_randomness)?;
+        &eq_window_storage
+    };
     let mut contribution = E::zero();
     for row_idx in 0..rows {
         let row_weight = prepared
