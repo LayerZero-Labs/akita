@@ -514,6 +514,51 @@ fn proof_optimized_setup_includes_arbitrary_precommit_group_sizes() {
 }
 
 #[test]
+fn setup_envelope_dominates_bounded_precommit_shape_grid() {
+    type Cfg = fp128::D64OneHot;
+
+    const MIN_NUM_VARS: usize = 10;
+    const MAX_NUM_VARS: usize = 20;
+    let setup_envelope = super::proof_optimized_max_setup_matrix_size::<Cfg>(MAX_NUM_VARS, 1)
+        .expect("bounded setup envelope");
+    let mut schedulable_shapes = 0usize;
+
+    for main_num_vars in MIN_NUM_VARS..=MAX_NUM_VARS {
+        let main_group = PolynomialGroupLayout::new(main_num_vars, 1);
+        for first_num_vars in MIN_NUM_VARS..=MAX_NUM_VARS {
+            for second_num_vars in 0..=MAX_NUM_VARS {
+                if second_num_vars != 0 && second_num_vars < MIN_NUM_VARS {
+                    continue;
+                }
+                let mut precommitted = vec![PolynomialGroupLayout::new(first_num_vars, 1)];
+                if second_num_vars != 0 {
+                    precommitted.push(PolynomialGroupLayout::new(second_num_vars, 1));
+                }
+                let layout = OpeningClaimsLayout::from_root_groups(&precommitted, main_group)
+                    .expect("bounded precommit layout");
+                let Some(required) = setup_matrix_envelope_for_shape::<Cfg>(&layout)
+                    .expect("bounded precommit shape must either schedule or be infeasible")
+                else {
+                    continue;
+                };
+                schedulable_shapes += 1;
+                assert!(
+                    setup_envelope.max_setup_len >= required.max_setup_len,
+                    "setup envelope {} does not cover requirement {} for main_num_vars={main_num_vars}, precommitted={precommitted:?}",
+                    setup_envelope.max_setup_len,
+                    required.max_setup_len,
+                );
+            }
+        }
+    }
+
+    assert!(
+        schedulable_shapes > 0,
+        "bounded shape grid must exercise at least one schedulable precommit layout"
+    );
+}
+
+#[test]
 fn grouped_root_runtime_setup_uses_per_group_roles_and_summed_d_width() {
     type Cfg = fp128::D64OneHot;
 
