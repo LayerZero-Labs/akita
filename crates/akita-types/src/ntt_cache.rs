@@ -316,12 +316,20 @@ pub(crate) fn build_verifier_ntt_slot_for_key<F: FieldCore + CanonicalField>(
     expanded: &AkitaExpandedSetup<F>,
     key: NttCacheKey,
 ) -> Result<VerifierNttSlotAny, AkitaError> {
-    crate::dispatch_for_field!(ProtocolDispatchSlot::Ntt, F, key.ring_d, |D| {
-        let matrix = expanded
-            .shared_matrix()
-            .ring_view::<D>(1, key.num_ring_elements)?;
-        Ok(build_verifier_ntt_slot(matrix)?.into())
-    })
+    // Terminal A/B roles use the union represented by the outer-role table.
+    // The broader NTT table also contains setup-envelope-only dimensions and
+    // made every verifier instantiation compile kernels it can never call.
+    crate::dispatch_for_field!(
+        ProtocolDispatchSlot::Role(RingRole::Outer),
+        F,
+        key.ring_d,
+        |D| {
+            let matrix = expanded
+                .shared_matrix()
+                .ring_view::<D>(1, key.num_ring_elements)?;
+            Ok(build_verifier_ntt_slot(matrix)?.into())
+        }
+    )
 }
 
 macro_rules! define_verifier_ntt_slot_any {
@@ -408,7 +416,7 @@ impl core::fmt::Debug for VerifierNttCache {
 }
 
 impl VerifierNttCache {
-    /// Build and atomically install a setup-preprocessed entry when needed.
+    /// Build and atomically install an entry when needed.
     pub(crate) fn prepare(
         &self,
         key: NttCacheKey,
@@ -447,26 +455,6 @@ impl VerifierNttCache {
         Ok(built)
     }
 
-    /// Return the smallest prepared entry covering `key` without doing work.
-    pub(crate) fn get(&self, key: NttCacheKey) -> Result<Arc<VerifierNttSlotAny>, AkitaError> {
-        self.slots
-            .lock()
-            .map_err(|_| AkitaError::InvalidSetup("verifier NTT cache lock poisoned".into()))?
-            .iter()
-            .filter(|(candidate, _)| {
-                candidate.ring_d == key.ring_d
-                    && candidate.num_ring_elements >= key.num_ring_elements
-            })
-            .min_by_key(|(candidate, _)| candidate.num_ring_elements)
-            .map(|(_, slot)| Arc::clone(slot))
-            .ok_or_else(|| {
-                AkitaError::InvalidSetup(format!(
-                    "verifier setup was not preprocessed for D={} matrix prefix {}",
-                    key.ring_d, key.num_ring_elements
-                ))
-            })
-    }
-
     /// Total prepared verifier cache bytes.
     pub(crate) fn cache_bytes(&self) -> Result<usize, AkitaError> {
         Ok(self
@@ -483,19 +471,6 @@ impl VerifierNttCache {
 mod tests {
     use super::*;
     use akita_field::Prime128Offset275;
-
-    #[test]
-    fn verifier_cache_lookup_fails_closed_without_preprocessing() {
-        let cache = VerifierNttCache::default();
-        let err = cache
-            .get(NttCacheKey {
-                ring_d: 64,
-                num_ring_elements: 1,
-            })
-            .expect_err("verification must not populate an empty cache");
-        assert!(matches!(err, AkitaError::InvalidSetup(_)));
-        assert_eq!(cache.cache_bytes().expect("cache bytes"), 0);
-    }
 
     #[test]
     fn q128_d64_centered_z_capacity_matches_profile_tail() {

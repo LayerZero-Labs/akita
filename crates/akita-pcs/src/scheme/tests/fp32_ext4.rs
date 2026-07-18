@@ -275,13 +275,6 @@ impl CommitmentConfig for Fp32RingSubfieldRootFoldCfg {
             &Self::root_lp(),
             opening_batch.num_total_polynomials(),
         )?;
-        let w_ring = akita_types::w_ring_element_count_with_counts_for_layout::<Self::Field>(
-            &lp,
-            opening_batch.num_total_polynomials(),
-            1,
-            akita_types::RelationMatrixRowLayout::WithoutDBlock,
-        )?;
-        let next_w_len = w_ring * Self::D;
         let witness_shape = akita_types::segment_typed_witness_shape_from_groups(
             &lp,
             Self::Field::modulus_bits(),
@@ -292,6 +285,7 @@ impl CommitmentConfig for Fp32RingSubfieldRootFoldCfg {
                 1,
             )],
         )?;
+        let next_w_len = witness_shape.logical_num_elems();
         let direct_bytes =
             akita_types::direct_witness_bytes(Self::Field::modulus_bits(), &witness_shape);
         Ok(akita_types::Schedule {
@@ -368,18 +362,8 @@ impl CommitmentConfig for Fp32RingSubfieldOuterFallbackCfg {
             &Self::root_lp(),
             opening_batch.num_total_polynomials(),
         )?;
-        // Single-fold schedule: the root IS the terminal fold, so its
-        // shipped `w` is built under RelationMatrixRowLayout::WithoutDBlock (no D-block in
-        // the per-row `r` quotients). The schedule's `next_w_len` and the
-        // following Direct step's witness shape must match that reduced
-        // length.
-        let w_ring = akita_types::w_ring_element_count_with_counts_for_layout::<Self::Field>(
-            &lp,
-            opening_batch.num_total_polynomials(),
-            1,
-            akita_types::RelationMatrixRowLayout::WithoutDBlock,
-        )?;
-        let next_w_len = w_ring * Self::D;
+        // Single-fold schedule: the root IS the terminal fold, so its direct
+        // witness length comes from the quotient-free segment shape itself.
         let witness_shape = akita_types::segment_typed_witness_shape_from_groups(
             &lp,
             Self::Field::modulus_bits(),
@@ -390,6 +374,7 @@ impl CommitmentConfig for Fp32RingSubfieldOuterFallbackCfg {
                 1,
             )],
         )?;
+        let next_w_len = witness_shape.logical_num_elems();
         let direct_bytes =
             akita_types::direct_witness_bytes(Self::Field::modulus_bits(), &witness_shape);
         Ok(akita_types::Schedule {

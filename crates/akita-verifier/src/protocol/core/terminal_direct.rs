@@ -141,9 +141,9 @@ where
 }
 
 #[tracing::instrument(skip_all, name = "terminal_direct_b_rows")]
-fn check_b_rows<F, const D_A: usize, const D_B: usize>(
+fn check_b_rows<F, const D_B: usize>(
     setup: &AkitaVerifierSetup<F>,
-    t: &[CyclotomicRing<F, D_A>],
+    t_digits_flat: &[i8],
     expected: &[CyclotomicRing<F, D_B>],
     params: &dyn LevelParamsLike,
     prepared_prefix_len: usize,
@@ -151,12 +151,10 @@ fn check_b_rows<F, const D_A: usize, const D_B: usize>(
 where
     F: FieldCore + CanonicalField,
 {
-    let t_digits = decompose_rows_i8(t, params.num_digits_open(), params.log_basis());
-    let flat = t_digits.as_flattened();
-    if !flat.len().is_multiple_of(D_B) {
+    if !t_digits_flat.len().is_multiple_of(D_B) {
         return Err(AkitaError::InvalidProof);
     }
-    let (outer_digits, remainder) = flat.as_chunks::<D_B>();
+    let (outer_digits, remainder) = t_digits_flat.as_chunks::<D_B>();
     if !remainder.is_empty() || outer_digits.len() != params.b_col_len() {
         return Err(AkitaError::InvalidProof);
     }
@@ -366,6 +364,12 @@ where
                     params,
                     prepared_a_prefix_len,
                 )?;
+                // Erase the inner ring degree before outer-role dispatch. Keeping
+                // `D_A` in `check_b_rows` multiplied every inner dispatch arm by
+                // every outer arm and forced optimized test binaries to compile
+                // a large cross-product of identical NTT kernels.
+                let t_digits = decompose_rows_i8(&t, params.num_digits_open(), params.log_basis());
+                let t_digits_flat = t_digits.as_flattened();
 
                 dispatch_for_field!(
                     akita_types::ProtocolDispatchSlot::Role(akita_types::RingRole::Outer),
@@ -385,9 +389,9 @@ where
                                 .get(commitment_offset..end)
                                 .ok_or(AkitaError::InvalidProof)?,
                         )?;
-                        check_b_rows::<F, D_A, D_B>(
+                        check_b_rows::<F, D_B>(
                             setup,
-                            &t,
+                            t_digits_flat,
                             &expected,
                             params,
                             prepared_b_prefix_len,

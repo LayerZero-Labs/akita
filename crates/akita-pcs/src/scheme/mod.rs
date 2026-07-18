@@ -74,23 +74,22 @@ where
         })
     }
 
-    /// Derive and preprocess verifier setup from prover setup.
+    /// Derive verifier setup from prover setup.
     ///
     /// # Errors
     ///
-    /// Returns [`AkitaError::InvalidSetup`] when setup conversion, capacity
-    /// planning, or verifier cache preprocessing fails.
+    /// Returns [`AkitaError::InvalidSetup`] when setup conversion fails.
     pub fn setup_verifier(
         setup: &AkitaProverSetup<Cfg::Field>,
     ) -> Result<AkitaVerifierSetup<Cfg::Field>, AkitaError> {
-        let verifier_setup = setup.verifier_setup()?;
-        Self::preprocess_verifier_setup(&verifier_setup)?;
-        Ok(verifier_setup)
+        setup.verifier_setup()
     }
 
-    /// Materialize verifier-only derived caches once, before proof verification.
+    /// Optionally materialize every capacity-admitted verifier cache prefix.
     ///
-    /// Call this after deserializing an [`AkitaVerifierSetup`].
+    /// Verification prepares only the exact prefixes it uses on demand, so
+    /// callers should use this only when they explicitly want setup time to
+    /// absorb the full-capacity preprocessing cost.
     pub fn preprocess_verifier_setup(
         setup: &AkitaVerifierSetup<Cfg::Field>,
     ) -> Result<(), AkitaError> {
