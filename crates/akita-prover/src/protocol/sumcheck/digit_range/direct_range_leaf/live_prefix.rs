@@ -23,8 +23,8 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> DirectRangeLeafState<E> 
         let live_pairs = next_live_x_cols.div_ceil(2);
         let block_size = num_first.min(live_pairs);
 
-        let range_pc = &self.range_precomp;
-        let full_num_coeffs_q = range_pc.degree_q + 1;
+        let polynomial_precomputation = &self.polynomial_precomputation;
+        let full_num_coeffs_q = polynomial_precomputation.degree_q + 1;
         let num_coeffs_q = full_num_coeffs_q;
         let mut out = vec![E::zero(); y_len * next_live_x_cols];
 
@@ -39,7 +39,6 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> DirectRangeLeafState<E> 
                 let mut outer_accum = vec![E::ProductAccum::zero(); num_coeffs_q];
                 let mut batch_out = [[E::zero(); MAX_AFFINE_COEFFS]; 4];
                 let mut entry_buf = [E::zero(); MAX_AFFINE_COEFFS];
-                let mut s_pows_buf = [E::zero(); MAX_AFFINE_COEFFS];
 
                 let mut blk = 0usize;
                 while blk < live_pairs {
@@ -55,21 +54,21 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> DirectRangeLeafState<E> 
                         for (slot, pair_x) in (pair_base..pair_base + 4).enumerate() {
                             let left_next = 2 * pair_x;
                             let left_old = 4 * pair_x;
-                            let s0 = fold_full_prefix_pair(row, left_old, r);
-                            row_out[left_next] = s0;
-                            let s1 = if left_next + 1 < next_live_x_cols {
-                                let s1 = fold_full_prefix_pair(row, left_old + 2, r);
-                                row_out[left_next + 1] = s1;
-                                s1
+                            let left_range_image = fold_full_prefix_pair(row, left_old, r);
+                            row_out[left_next] = left_range_image;
+                            let right_range_image = if left_next + 1 < next_live_x_cols {
+                                let right_range_image = fold_full_prefix_pair(row, left_old + 2, r);
+                                row_out[left_next + 1] = right_range_image;
+                                right_range_image
                             } else {
                                 E::zero()
                             };
-                            pairs[slot] = (s0, s1);
+                            pairs[slot] = (left_range_image, right_range_image);
                         }
 
-                        compute_entry_coeffs_from_s_x4(
+                        compute_entry_coefficients_x4(
                             &mut batch_out,
-                            range_pc,
+                            polynomial_precomputation,
                             [pairs[0].0, pairs[1].0, pairs[2].0, pairs[3].0],
                             [
                                 pairs[0].1 - pairs[0].0,
@@ -94,21 +93,20 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> DirectRangeLeafState<E> 
                     for pair_x in blk + full_chunks * 4..blk_end {
                         let left_next = 2 * pair_x;
                         let left_old = 4 * pair_x;
-                        let s_0 = fold_full_prefix_pair(row, left_old, r);
-                        row_out[left_next] = s_0;
-                        let s_1 = if left_next + 1 < next_live_x_cols {
-                            let s_1 = fold_full_prefix_pair(row, left_old + 2, r);
-                            row_out[left_next + 1] = s_1;
-                            s_1
+                        let left_range_image = fold_full_prefix_pair(row, left_old, r);
+                        row_out[left_next] = left_range_image;
+                        let right_range_image = if left_next + 1 < next_live_x_cols {
+                            let right_range_image = fold_full_prefix_pair(row, left_old + 2, r);
+                            row_out[left_next + 1] = right_range_image;
+                            right_range_image
                         } else {
                             E::zero()
                         };
-                        compute_entry_coeffs_from_s(
+                        compute_entry_coefficients(
                             &mut entry_buf,
-                            &mut s_pows_buf,
-                            range_pc,
-                            s_0,
-                            s_1 - s_0,
+                            polynomial_precomputation,
+                            left_range_image,
+                            right_range_image - left_range_image,
                         );
                         let j_low = (j_base + pair_x) & (num_first - 1);
                         let e_in = e_first[j_low];
@@ -151,7 +149,6 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> DirectRangeLeafState<E> 
                 let j_base = y * next_current_x_half;
                 let mut batch_out = [[E::zero(); MAX_AFFINE_COEFFS]; 4];
                 let mut entry_buf = [E::zero(); MAX_AFFINE_COEFFS];
-                let mut s_pows_buf = [E::zero(); MAX_AFFINE_COEFFS];
 
                 let mut blk = 0usize;
                 while blk < live_pairs {
@@ -167,21 +164,21 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> DirectRangeLeafState<E> 
                         for (slot, pair_x) in (pair_base..pair_base + 4).enumerate() {
                             let left_next = 2 * pair_x;
                             let left_old = 4 * pair_x;
-                            let s0 = fold_full_prefix_pair(row, left_old, r);
-                            row_out[left_next] = s0;
-                            let s1 = if left_next + 1 < next_live_x_cols {
-                                let s1 = fold_full_prefix_pair(row, left_old + 2, r);
-                                row_out[left_next + 1] = s1;
-                                s1
+                            let left_range_image = fold_full_prefix_pair(row, left_old, r);
+                            row_out[left_next] = left_range_image;
+                            let right_range_image = if left_next + 1 < next_live_x_cols {
+                                let right_range_image = fold_full_prefix_pair(row, left_old + 2, r);
+                                row_out[left_next + 1] = right_range_image;
+                                right_range_image
                             } else {
                                 E::zero()
                             };
-                            pairs[slot] = (s0, s1);
+                            pairs[slot] = (left_range_image, right_range_image);
                         }
 
-                        compute_entry_coeffs_from_s_x4(
+                        compute_entry_coefficients_x4(
                             &mut batch_out,
-                            range_pc,
+                            polynomial_precomputation,
                             [pairs[0].0, pairs[1].0, pairs[2].0, pairs[3].0],
                             [
                                 pairs[0].1 - pairs[0].0,
@@ -206,21 +203,20 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> DirectRangeLeafState<E> 
                     for pair_x in blk + full_chunks * 4..blk_end {
                         let left_next = 2 * pair_x;
                         let left_old = 4 * pair_x;
-                        let s_0 = fold_full_prefix_pair(row, left_old, r);
-                        row_out[left_next] = s_0;
-                        let s_1 = if left_next + 1 < next_live_x_cols {
-                            let s_1 = fold_full_prefix_pair(row, left_old + 2, r);
-                            row_out[left_next + 1] = s_1;
-                            s_1
+                        let left_range_image = fold_full_prefix_pair(row, left_old, r);
+                        row_out[left_next] = left_range_image;
+                        let right_range_image = if left_next + 1 < next_live_x_cols {
+                            let right_range_image = fold_full_prefix_pair(row, left_old + 2, r);
+                            row_out[left_next + 1] = right_range_image;
+                            right_range_image
                         } else {
                             E::zero()
                         };
-                        compute_entry_coeffs_from_s(
+                        compute_entry_coefficients(
                             &mut entry_buf,
-                            &mut s_pows_buf,
-                            range_pc,
-                            s_0,
-                            s_1 - s_0,
+                            polynomial_precomputation,
+                            left_range_image,
+                            right_range_image - left_range_image,
                         );
                         let j_low = (j_base + pair_x) & (num_first - 1);
                         let e_in = e_first[j_low];
@@ -272,10 +268,10 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> DirectRangeLeafState<E> 
         let live_pairs = self.live_x_cols.div_ceil(2);
         let block_size = num_first.min(live_pairs);
 
-        let rp = &self.range_precomp;
-        let full_num_coeffs_q = rp.degree_q + 1;
+        let polynomial_precomputation = &self.polynomial_precomputation;
+        let full_num_coeffs_q = polynomial_precomputation.degree_q + 1;
         let num_coeffs_q = full_num_coeffs_q;
-        let q_coeffs = if rp.compact_coeffs_lut(0, 0).is_some() {
+        let q_coeffs = if polynomial_precomputation.compact_coeffs_lut(0, 0).is_some() {
             cfg_fold_reduce!(
                 0..(1usize << (self.num_vars - self.col_bits)),
                 || vec![E::ProductAccum::zero(); num_coeffs_q],
@@ -295,14 +291,17 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> DirectRangeLeafState<E> 
                             let j_low = (j_base + pair_x) & (num_first - 1);
                             let e_in = e_first[j_low];
                             let left = 2 * pair_x;
-                            let s0_i = row[left].range_image_value();
-                            let s1_i = if left + 1 < self.live_x_cols {
+                            let left_range_image_integer = row[left].range_image_value();
+                            let right_range_image_integer = if left + 1 < self.live_x_cols {
                                 row[left + 1].range_image_value()
                             } else {
                                 0
                             };
-                            let coeffs = rp
-                                .compact_coeffs_lut(s0_i, s1_i)
+                            let coeffs = polynomial_precomputation
+                                .compact_coeffs_lut(
+                                    left_range_image_integer,
+                                    right_range_image_integer,
+                                )
                                 .expect("missing compact coefficient LUT");
                             accumulate_compact_coeffs(
                                 &mut inner_pos[..num_coeffs_q],
@@ -332,7 +331,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> DirectRangeLeafState<E> 
             .into_iter()
             .map(E::reduce_product_accum)
             .collect()
-        } else if rp.field_coeffs_lut(0, 0).is_some() {
+        } else if polynomial_precomputation.field_coeffs_lut(0, 0).is_some() {
             cfg_fold_reduce!(
                 0..(1usize << (self.num_vars - self.col_bits)),
                 || vec![E::ProductAccum::zero(); num_coeffs_q],
@@ -351,14 +350,17 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> DirectRangeLeafState<E> 
                             let j_low = (j_base + pair_x) & (num_first - 1);
                             let e_in = e_first[j_low];
                             let left = 2 * pair_x;
-                            let s0_i = row[left].range_image_value();
-                            let s1_i = if left + 1 < self.live_x_cols {
+                            let left_range_image_integer = row[left].range_image_value();
+                            let right_range_image_integer = if left + 1 < self.live_x_cols {
                                 row[left + 1].range_image_value()
                             } else {
                                 0
                             };
-                            let coeffs = rp
-                                .field_coeffs_lut(s0_i, s1_i)
+                            let coeffs = polynomial_precomputation
+                                .field_coeffs_lut(
+                                    left_range_image_integer,
+                                    right_range_image_integer,
+                                )
                                 .expect("missing field coefficient LUT");
                             accumulate_dense_entry_coeffs(
                                 &mut inner_accum[..num_coeffs_q],
@@ -395,7 +397,6 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> DirectRangeLeafState<E> 
                     let row = &compact_range_image[row_start..row_start + self.live_x_cols];
                     let j_base = y * current_x_half;
                     let mut entry_buf = [E::zero(); MAX_AFFINE_COEFFS];
-                    let mut s_pows_buf = [E::zero(); MAX_AFFINE_COEFFS];
 
                     let mut blk = 0usize;
                     while blk < live_pairs {
@@ -407,18 +408,19 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> DirectRangeLeafState<E> 
                             let j_low = (j_base + pair_x) & (num_first - 1);
                             let e_in = e_first[j_low];
                             let left = 2 * pair_x;
-                            let s0_i = row[left].range_image_value();
-                            let s1_i = if left + 1 < self.live_x_cols {
+                            let left_range_image_integer = row[left].range_image_value();
+                            let right_range_image_integer = if left + 1 < self.live_x_cols {
                                 row[left + 1].range_image_value()
                             } else {
                                 0
                             };
-                            compute_entry_coeffs_from_s(
+                            compute_entry_coefficients(
                                 &mut entry_buf,
-                                &mut s_pows_buf,
-                                rp,
-                                E::from_i64(i64::from(s0_i)),
-                                E::from_i64(i64::from(s1_i - s0_i)),
+                                polynomial_precomputation,
+                                E::from_i64(i64::from(left_range_image_integer)),
+                                E::from_i64(i64::from(
+                                    right_range_image_integer - left_range_image_integer,
+                                )),
                             );
                             accumulate_dense_entry_coeffs(
                                 &mut inner_accum[..num_coeffs_q],
@@ -462,8 +464,8 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> DirectRangeLeafState<E> 
         let live_pairs = self.live_x_cols.div_ceil(2);
         let block_size = num_first.min(live_pairs);
 
-        let range_pc = &self.range_precomp;
-        let full_num_coeffs_q = range_pc.degree_q + 1;
+        let polynomial_precomputation = &self.polynomial_precomputation;
+        let full_num_coeffs_q = polynomial_precomputation.degree_q + 1;
         let num_coeffs_q = full_num_coeffs_q;
         let q_coeffs = cfg_fold_reduce!(
             0..y_len,
@@ -475,7 +477,6 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> DirectRangeLeafState<E> 
                 let j_base = y * current_x_half;
                 let mut batch_out = [[E::zero(); MAX_AFFINE_COEFFS]; 4];
                 let mut entry_buf = [E::zero(); MAX_AFFINE_COEFFS];
-                let mut s_pows_buf = [E::zero(); MAX_AFFINE_COEFFS];
 
                 let mut blk = 0usize;
                 while blk < live_pairs {
@@ -490,18 +491,18 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> DirectRangeLeafState<E> 
                         let mut pairs = [(E::zero(), E::zero()); 4];
                         for (slot, pair_x) in (pair_base..pair_base + 4).enumerate() {
                             let left = 2 * pair_x;
-                            let s_0 = row[left];
-                            let s_1 = if left + 1 < self.live_x_cols {
+                            let left_range_image = row[left];
+                            let right_range_image = if left + 1 < self.live_x_cols {
                                 row[left + 1]
                             } else {
                                 E::zero()
                             };
-                            pairs[slot] = (s_0, s_1);
+                            pairs[slot] = (left_range_image, right_range_image);
                         }
 
-                        compute_entry_coeffs_from_s_x4(
+                        compute_entry_coefficients_x4(
                             &mut batch_out,
-                            range_pc,
+                            polynomial_precomputation,
                             [pairs[0].0, pairs[1].0, pairs[2].0, pairs[3].0],
                             [
                                 pairs[0].1 - pairs[0].0,
@@ -525,18 +526,17 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> DirectRangeLeafState<E> 
 
                     for pair_x in blk + full_chunks * 4..blk_end {
                         let left = 2 * pair_x;
-                        let s_0 = row[left];
-                        let s_1 = if left + 1 < self.live_x_cols {
+                        let left_range_image = row[left];
+                        let right_range_image = if left + 1 < self.live_x_cols {
                             row[left + 1]
                         } else {
                             E::zero()
                         };
-                        compute_entry_coeffs_from_s(
+                        compute_entry_coefficients(
                             &mut entry_buf,
-                            &mut s_pows_buf,
-                            range_pc,
-                            s_0,
-                            s_1 - s_0,
+                            polynomial_precomputation,
+                            left_range_image,
+                            right_range_image - left_range_image,
                         );
                         let j_low = (j_base + pair_x) & (num_first - 1);
                         let e_in = e_first[j_low];
@@ -590,12 +590,12 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> DirectRangeLeafState<E> 
                 let row = &compact_range_image[row_start..row_start + live_x_cols];
                 for (pair_x, dst) in row_out.iter_mut().enumerate() {
                     let left = 2 * pair_x;
-                    let s_1 = if left + 1 < live_x_cols {
+                    let right_range_image = if left + 1 < live_x_cols {
                         row[left + 1].range_image_value()
                     } else {
                         0
                     };
-                    *dst = fold_lut.fold(row[left].range_image_value(), s_1);
+                    *dst = fold_lut.fold(row[left].range_image_value(), right_range_image);
                 }
             });
 
@@ -605,12 +605,12 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> DirectRangeLeafState<E> 
             let row = &compact_range_image[row_start..row_start + live_x_cols];
             for (pair_x, dst) in row_out.iter_mut().enumerate() {
                 let left = 2 * pair_x;
-                let s_1 = if left + 1 < live_x_cols {
+                let right_range_image = if left + 1 < live_x_cols {
                     row[left + 1].range_image_value()
                 } else {
                     0
                 };
-                *dst = fold_lut.fold(row[left].range_image_value(), s_1);
+                *dst = fold_lut.fold(row[left].range_image_value(), right_range_image);
             }
         }
 
@@ -635,13 +635,13 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> DirectRangeLeafState<E> 
                 let row = &range_image[row_start..row_start + live_x_cols];
                 for (pair_x, dst) in row_out.iter_mut().enumerate() {
                     let left = 2 * pair_x;
-                    let s_0 = row[left];
-                    let s_1 = if left + 1 < live_x_cols {
+                    let left_range_image = row[left];
+                    let right_range_image = if left + 1 < live_x_cols {
                         row[left + 1]
                     } else {
                         E::zero()
                     };
-                    *dst = s_0 + r * (s_1 - s_0);
+                    *dst = left_range_image + r * (right_range_image - left_range_image);
                 }
             });
 
@@ -651,13 +651,13 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> DirectRangeLeafState<E> 
             let row = &range_image[row_start..row_start + live_x_cols];
             for (pair_x, dst) in row_out.iter_mut().enumerate() {
                 let left = 2 * pair_x;
-                let s_0 = row[left];
-                let s_1 = if left + 1 < live_x_cols {
+                let left_range_image = row[left];
+                let right_range_image = if left + 1 < live_x_cols {
                     row[left + 1]
                 } else {
                     E::zero()
                 };
-                *dst = s_0 + r * (s_1 - s_0);
+                *dst = left_range_image + r * (right_range_image - left_range_image);
             }
         }
 

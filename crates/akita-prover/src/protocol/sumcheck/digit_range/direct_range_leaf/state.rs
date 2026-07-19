@@ -70,7 +70,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> DirectRangeLeafState<E> 
             range_image: RangeImageState::Compact,
             digit_witness,
             split_eq: GruenSplitEq::new(tau0)?,
-            range_precomp: RangeAffineFromSPrecomp::new(b),
+            polynomial_precomputation: RangePolynomialPrecomputation::new(b),
             live_x_cols,
             col_bits,
             num_vars,
@@ -78,9 +78,6 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> DirectRangeLeafState<E> 
             prefix_tau: can_use_stage1_two_round_prefix(ring_bits, b).then(|| tau0.to_vec()),
             two_round_prefix: None,
             cached_round_poly: None,
-            prefix_time_total: 0.0,
-            dense_time_total: 0.0,
-            fold_time_total: 0.0,
             rounds_completed: 0,
         })
     }
@@ -157,8 +154,8 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> DirectRangeLeafState<E> 
 
     #[inline]
     pub(super) fn build_range_image_fold_lut(b: usize, r: E) -> CompactPairFoldLut<E> {
-        let valid_s = Self::valid_range_image_values(b);
-        CompactPairFoldLut::from_allowed_values(&valid_s, r)
+        let valid_range_images = Self::valid_range_image_values(b);
+        CompactPairFoldLut::from_allowed_values(&valid_range_images, r)
     }
 
     pub(super) fn ensure_two_round_prefix(&mut self) -> &mut Stage1TwoRoundPrefix<E> {
