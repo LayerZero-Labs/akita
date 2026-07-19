@@ -1,12 +1,11 @@
-use super::compact_digit_source::{CompactDigitSource, RangeImageClass};
-use super::exact_prefix::{ExactPrefixTable, SplitEqualitySuffixMass};
-use super::range_class_tables::OrderedRangePairCoefficients;
-use super::round_accumulation::accumulate_precomputed_round;
-use super::round_accumulation::{add_scaled_round_coefficients, split_equality_weight};
+use super::compact_digit_source::CompactDigitSource;
+use super::exact_prefix::ExactPrefixTable;
+use super::range_class_tables::{FoldedRangeImagePairTable, OrderedRangePairCoefficients};
+use super::round_accumulation::accumulate_equality_weighted_round;
 use super::{compose_small_poly_with_affine, MAX_TREE_STAGE_Q_DEGREE};
 use akita_algebra::split_eq::GruenSplitEq;
 use akita_field::parallel::*;
-use akita_field::unreduced::HasOptimizedFold;
+use akita_field::unreduced::{HasOptimizedFold, HasUnreducedOps};
 use akita_field::{AkitaError, FieldCore, FromPrimitiveInt};
 use akita_sumcheck::{EqFactoredSumcheckInstanceProver, EqFactoredUniPoly};
 
@@ -18,7 +17,7 @@ enum RangeImageValues<E: FieldCore> {
     Folded(ExactPrefixTable<E>),
 }
 
-fn accumulate_round<E: FieldCore>(
+fn accumulate_round<E: FieldCore + HasUnreducedOps>(
     first: &[E],
     second: &[E],
     explicit_pair_count: usize,
@@ -26,34 +25,18 @@ fn accumulate_round<E: FieldCore>(
     pair_at: impl Fn(usize) -> (E, E) + Sync,
     polynomial_coefficients: &[E],
 ) -> [E; MAX_TREE_STAGE_Q_DEGREE + 1] {
-    let mut coefficients = cfg_fold_reduce!(
-        0..explicit_pair_count,
-        || [E::zero(); MAX_TREE_STAGE_Q_DEGREE + 1],
-        |mut sum, pair_index| {
-            let (left, right) = pair_at(pair_index);
-            let pair_coefficients =
-                compose_small_poly_with_affine(polynomial_coefficients, left, right - left);
-            add_scaled_round_coefficients(
-                &mut sum,
-                &pair_coefficients,
-                split_equality_weight(first, second, pair_index),
-            );
-            sum
-        },
-        |mut left, right| {
-            for (left, right) in left.iter_mut().zip(right.iter()) {
-                *left += *right;
-            }
-            left
-        }
-    );
     let default_coefficients =
         compose_small_poly_with_affine(polynomial_coefficients, default, E::zero());
-    let suffix_weight = SplitEqualitySuffixMass::new(first, second)
-        .and_then(|suffix| suffix.weight_from(explicit_pair_count))
-        .expect("split equality and exact prefix were validated at construction");
-    add_scaled_round_coefficients(&mut coefficients, &default_coefficients, suffix_weight);
-    coefficients
+    accumulate_equality_weighted_round(
+        first,
+        second,
+        explicit_pair_count,
+        |pair_index| {
+            let (left, right) = pair_at(pair_index);
+            compose_small_poly_with_affine(polynomial_coefficients, left, right - left)
+        },
+        default_coefficients,
+    )
 }
 
 /// Final equality-factored quartic over the virtual range-image table.
@@ -112,8 +95,8 @@ impl<E: FieldCore + FromPrimitiveInt> StreamingRangeLeaf<E> {
     }
 }
 
-impl<E: FieldCore + FromPrimitiveInt + HasOptimizedFold> EqFactoredSumcheckInstanceProver<E>
-    for StreamingRangeLeaf<E>
+impl<E: FieldCore + FromPrimitiveInt + HasOptimizedFold + HasUnreducedOps>
+    EqFactoredSumcheckInstanceProver<E> for StreamingRangeLeaf<E>
 {
     fn num_rounds(&self) -> usize {
         self.num_rounds
@@ -145,18 +128,15 @@ impl<E: FieldCore + FromPrimitiveInt + HasOptimizedFold> EqFactoredSumcheckInsta
                     kernel_strategy = "ordered-pair-coefficients",
                 )
                 .entered();
-                accumulate_precomputed_round(
+                accumulate_equality_weighted_round(
                     first,
                     second,
-                    source.live_len().div_ceil(2),
+                    source.pair_count(),
                     |pair_index| {
-                        pair_coefficients.coefficients(
-                            source.class_or_padding(2 * pair_index),
-                            source.class_or_padding(2 * pair_index + 1),
-                        )
+                        pair_coefficients
+                            .coefficients_by_pair_index(source.ordered_pair_index(pair_index))
                     },
-                    pair_coefficients
-                        .coefficients(RangeImageClass::PADDING, RangeImageClass::PADDING),
+                    pair_coefficients.coefficients_by_pair_index(0),
                 )
             }
             RangeImageValues::Folded(table) => {
@@ -195,18 +175,28 @@ impl<E: FieldCore + FromPrimitiveInt + HasOptimizedFold> EqFactoredSumcheckInsta
                     explicit_rows = source.live_len(),
                 )
                 .entered();
-                let explicit = cfg_into_iter!(0..source.live_len().div_ceil(2))
+                let folded_pairs = {
+                    let _span = tracing::info_span!(
+                        "digit_range_build_folded_pair_table",
+                        round = self.rounds_completed,
+                        class_count = source.class_count(),
+                        lane_count = 1,
+                    )
+                    .entered();
+                    FoldedRangeImagePairTable::new(source.class_count(), challenge)
+                };
+                let explicit = cfg_into_iter!(0..source.pair_count())
                     .map(|pair_index| {
-                        let left = source.class_or_padding(2 * pair_index).range_image::<E>();
-                        let right = source
-                            .class_or_padding(2 * pair_index + 1)
-                            .range_image::<E>();
-                        left + challenge * (right - left)
+                        folded_pairs.value_by_pair_index(source.ordered_pair_index(pair_index))
                     })
                     .collect();
                 Some(
-                    ExactPrefixTable::new(source.domain_len() / 2, explicit, E::zero())
-                        .expect("compact source and Boolean domain were validated"),
+                    ExactPrefixTable::new(
+                        source.domain_len() / 2,
+                        explicit,
+                        folded_pairs.value_by_pair_index(0),
+                    )
+                    .expect("compact source and Boolean domain were validated"),
                 )
             }
             RangeImageValues::Folded(_) => None,
@@ -221,8 +211,9 @@ impl<E: FieldCore + FromPrimitiveInt + HasOptimizedFold> EqFactoredSumcheckInsta
                 domain_len = table.domain_len(),
             )
             .entered();
+            let fold_context = E::precompute_fold(challenge);
             table
-                .fold_in_place(|left, right| left + challenge * (right - left))
+                .fold_in_place(|left, right| E::fold_one(&fold_context, left, right))
                 .expect("validated exact-prefix range-image state can fold");
         }
         self.rounds_completed += 1;

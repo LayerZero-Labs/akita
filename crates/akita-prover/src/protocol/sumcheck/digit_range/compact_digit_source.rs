@@ -40,6 +40,7 @@ impl RangeImageClass {
 #[derive(Clone)]
 pub(super) struct CompactDigitSource {
     digits: Arc<[i8]>,
+    ordered_range_class_pairs: Arc<[u16]>,
     domain: FlatBooleanDomain,
     class_count: usize,
 }
@@ -56,10 +57,30 @@ impl CompactDigitSource {
                 actual: digits.len(),
             });
         }
+        let class_count = basis / 2;
+        let ordered_range_class_pairs = if basis > 8 {
+            digits
+                .chunks(2)
+                .map(|pair| {
+                    let left = RangeImageClass::from_balanced_digit(pair[0], class_count).index();
+                    let right = pair
+                        .get(1)
+                        .copied()
+                        .map(|digit| RangeImageClass::from_balanced_digit(digit, class_count))
+                        .unwrap_or(RangeImageClass::PADDING)
+                        .index();
+                    u16::try_from(left * class_count + right)
+                        .expect("supported ordered range-class pair fits u16")
+                })
+                .collect::<Arc<[u16]>>()
+        } else {
+            Arc::from([])
+        };
         Ok(Self {
             digits,
+            ordered_range_class_pairs,
             domain,
-            class_count: basis / 2,
+            class_count,
         })
     }
 
@@ -79,13 +100,13 @@ impl CompactDigitSource {
         self.class_count
     }
 
+    pub(super) fn pair_count(&self) -> usize {
+        self.ordered_range_class_pairs.len()
+    }
+
     #[inline(always)]
-    pub(super) fn class_or_padding(&self, index: usize) -> RangeImageClass {
-        self.digits
-            .get(index)
-            .copied()
-            .map(|digit| RangeImageClass::from_balanced_digit(digit, self.class_count))
-            .unwrap_or(RangeImageClass::PADDING)
+    pub(super) fn ordered_pair_index(&self, pair_index: usize) -> usize {
+        usize::from(self.ordered_range_class_pairs[pair_index])
     }
 }
 
@@ -106,5 +127,15 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn compact_ordered_pairs_include_odd_prefix_padding() {
+        let digits = Arc::<[i8]>::from([0, -2, 3]);
+        let source =
+            CompactDigitSource::new(digits, FlatBooleanDomain::new(3, 2).unwrap(), 16).unwrap();
+        assert_eq!(source.pair_count(), 2);
+        assert_eq!(source.ordered_pair_index(0), 1);
+        assert_eq!(source.ordered_pair_index(1), 3 * source.class_count());
     }
 }

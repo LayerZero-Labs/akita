@@ -82,24 +82,44 @@ where
 
 fn compose_small_poly_with_affine<E: FieldCore>(coeffs: &[E], offset: E, slope: E) -> [E; 5] {
     debug_assert!(coeffs.len() <= MAX_TREE_STAGE_Q_DEGREE + 1);
-
-    let mut out = [E::zero(); MAX_TREE_STAGE_Q_DEGREE + 1];
-    let mut power = [E::zero(); MAX_TREE_STAGE_Q_DEGREE + 1];
-    power[0] = E::one();
-
-    for (idx, &coeff) in coeffs.iter().enumerate() {
-        if idx > 0 {
-            for k in (0..idx).rev() {
-                power[k + 1] += power[k] * slope;
-                power[k] *= offset;
-            }
+    let [constant, linear, quadratic, cubic, quartic] = match coeffs {
+        [] => return [E::zero(); 5],
+        [c0] => return [*c0, E::zero(), E::zero(), E::zero(), E::zero()],
+        [c0, c1] => {
+            return [
+                *c0 + *c1 * offset,
+                *c1 * slope,
+                E::zero(),
+                E::zero(),
+                E::zero(),
+            ]
         }
-        for k in 0..=idx {
-            out[k] += coeff * power[k];
-        }
-    }
+        [c0, c1, c2] => [*c0, *c1, *c2, E::zero(), E::zero()],
+        [c0, c1, c2, c3] => [*c0, *c1, *c2, *c3, E::zero()],
+        [c0, c1, c2, c3, c4] => [*c0, *c1, *c2, *c3, *c4],
+        _ => unreachable!("range polynomial degree is at most four"),
+    };
 
-    out
+    let two_quadratic = quadratic + quadratic;
+    let three_cubic = cubic + cubic + cubic;
+    let four_quartic = (quartic + quartic) + (quartic + quartic);
+    let six_quartic = four_quartic + quartic + quartic;
+
+    let value =
+        constant + offset * (linear + offset * (quadratic + offset * (cubic + offset * quartic)));
+    let first_derivative =
+        linear + offset * (two_quadratic + offset * (three_cubic + offset * four_quartic));
+    let second_divided_derivative = quadratic + offset * (three_cubic + offset * six_quartic);
+    let third_divided_derivative = cubic + offset * four_quartic;
+    let slope_squared = slope * slope;
+
+    [
+        value,
+        slope * first_derivative,
+        slope_squared * second_divided_derivative,
+        slope_squared * slope * third_divided_derivative,
+        slope_squared * slope_squared * quartic,
+    ]
 }
 
 /// Stage-1 range-check prover, including the root/leaf tree choreography.

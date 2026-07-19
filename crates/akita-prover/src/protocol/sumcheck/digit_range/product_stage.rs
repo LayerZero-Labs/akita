@@ -1,15 +1,13 @@
-use super::compact_digit_source::{CompactDigitSource, RangeImageClass};
-use super::exact_prefix::{ExactPrefixTable, SplitEqualitySuffixMass};
+use super::compact_digit_source::CompactDigitSource;
+use super::exact_prefix::ExactPrefixTable;
 use super::range_class_tables::{
-    product_coefficients, OrderedProductPairCoefficients, ProductNodeTable,
+    product_coefficients, FoldedProductPairTable, OrderedProductPairCoefficients, ProductNodeTable,
 };
-use super::round_accumulation::{
-    accumulate_precomputed_round, add_scaled_round_coefficients, split_equality_weight,
-};
+use super::round_accumulation::accumulate_equality_weighted_round;
 use super::MAX_TREE_STAGE_Q_DEGREE;
 use akita_algebra::split_eq::GruenSplitEq;
 use akita_field::parallel::*;
-use akita_field::unreduced::HasOptimizedFold;
+use akita_field::unreduced::{HasOptimizedFold, HasUnreducedOps};
 use akita_field::{AkitaError, FieldCore, FromPrimitiveInt};
 use akita_sumcheck::{EqFactoredSumcheckInstanceProver, EqFactoredUniPoly};
 use akita_types::DigitRangePlan;
@@ -23,7 +21,7 @@ enum ProductValues<E: FieldCore, const LANES: usize> {
     Folded(ExactPrefixTable<[E; LANES]>),
 }
 
-fn accumulate_round<E: FieldCore, const LANES: usize>(
+fn accumulate_round<E: FieldCore + HasUnreducedOps, const LANES: usize>(
     first: &[E],
     second: &[E],
     explicit_pair_count: usize,
@@ -32,32 +30,17 @@ fn accumulate_round<E: FieldCore, const LANES: usize>(
     arity: usize,
     parent_weights: &[E],
 ) -> [E; MAX_TREE_STAGE_Q_DEGREE + 1] {
-    let mut coefficients = cfg_fold_reduce!(
-        0..explicit_pair_count,
-        || [E::zero(); MAX_TREE_STAGE_Q_DEGREE + 1],
-        |mut sum, pair_index| {
-            let (left, right) = pair_at(pair_index);
-            let pair_coefficients = product_coefficients(left, right, arity, parent_weights);
-            add_scaled_round_coefficients(
-                &mut sum,
-                &pair_coefficients,
-                split_equality_weight(first, second, pair_index),
-            );
-            sum
-        },
-        |mut left, right| {
-            for (left, right) in left.iter_mut().zip(right.iter()) {
-                *left += *right;
-            }
-            left
-        }
-    );
     let padding_coefficients = product_coefficients(padding, padding, arity, parent_weights);
-    let suffix_weight = SplitEqualitySuffixMass::new(first, second)
-        .and_then(|suffix| suffix.weight_from(explicit_pair_count))
-        .expect("split equality and exact prefix were validated at construction");
-    add_scaled_round_coefficients(&mut coefficients, &padding_coefficients, suffix_weight);
-    coefficients
+    accumulate_equality_weighted_round(
+        first,
+        second,
+        explicit_pair_count,
+        |pair_index| {
+            let (left, right) = pair_at(pair_index);
+            product_coefficients(left, right, arity, parent_weights)
+        },
+        padding_coefficients,
+    )
 }
 
 /// One eq-factored product substage over compact classes followed by folded field lanes.
@@ -142,7 +125,7 @@ impl<E: FieldCore + FromPrimitiveInt, const LANES: usize> StreamingProductStage<
     }
 }
 
-impl<E: FieldCore + FromPrimitiveInt + HasOptimizedFold, const LANES: usize>
+impl<E: FieldCore + FromPrimitiveInt + HasOptimizedFold + HasUnreducedOps, const LANES: usize>
     EqFactoredSumcheckInstanceProver<E> for StreamingProductStage<E, LANES>
 {
     fn num_rounds(&self) -> usize {
@@ -176,18 +159,15 @@ impl<E: FieldCore + FromPrimitiveInt + HasOptimizedFold, const LANES: usize>
                     kernel_strategy = "ordered-pair-coefficients",
                 )
                 .entered();
-                accumulate_precomputed_round(
+                accumulate_equality_weighted_round(
                     first,
                     second,
-                    source.live_len().div_ceil(2),
+                    source.pair_count(),
                     |pair_index| {
-                        pair_coefficients.coefficients(
-                            source.class_or_padding(2 * pair_index),
-                            source.class_or_padding(2 * pair_index + 1),
-                        )
+                        pair_coefficients
+                            .coefficients_by_pair_index(source.ordered_pair_index(pair_index))
                     },
-                    pair_coefficients
-                        .coefficients(RangeImageClass::PADDING, RangeImageClass::PADDING),
+                    pair_coefficients.coefficients_by_pair_index(0),
                 )
             }
             ProductValues::Folded(table) => {
@@ -228,18 +208,28 @@ impl<E: FieldCore + FromPrimitiveInt + HasOptimizedFold, const LANES: usize>
                     lane_count = LANES,
                 )
                 .entered();
-                let explicit = cfg_into_iter!(0..source.live_len().div_ceil(2))
+                let folded_pairs = {
+                    let _span = tracing::info_span!(
+                        "digit_range_build_folded_pair_table",
+                        round = self.rounds_completed,
+                        class_count = source.class_count(),
+                        lane_count = LANES,
+                    )
+                    .entered();
+                    FoldedProductPairTable::new(nodes, source.class_count(), challenge)
+                };
+                let explicit = cfg_into_iter!(0..source.pair_count())
                     .map(|pair_index| {
-                        let left = nodes.row(source.class_or_padding(2 * pair_index));
-                        let right = nodes.row(source.class_or_padding(2 * pair_index + 1));
-                        std::array::from_fn(|lane| {
-                            left[lane] + challenge * (right[lane] - left[lane])
-                        })
+                        folded_pairs.row_by_pair_index(source.ordered_pair_index(pair_index))
                     })
                     .collect();
                 Some(
-                    ExactPrefixTable::new(source.domain_len() / 2, explicit, nodes.padding_row())
-                        .expect("compact source and Boolean domain were validated"),
+                    ExactPrefixTable::new(
+                        source.domain_len() / 2,
+                        explicit,
+                        folded_pairs.row_by_pair_index(0),
+                    )
+                    .expect("compact source and Boolean domain were validated"),
                 )
             }
             ProductValues::Folded(_) => None,
@@ -255,9 +245,10 @@ impl<E: FieldCore + FromPrimitiveInt + HasOptimizedFold, const LANES: usize>
                 lane_count = LANES,
             )
             .entered();
+            let fold_context = E::precompute_fold(challenge);
             table
                 .fold_in_place(|left, right| {
-                    std::array::from_fn(|lane| left[lane] + challenge * (right[lane] - left[lane]))
+                    std::array::from_fn(|lane| E::fold_one(&fold_context, left[lane], right[lane]))
                 })
                 .expect("validated exact-prefix product state can fold");
         }
