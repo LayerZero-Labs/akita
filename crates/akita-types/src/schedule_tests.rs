@@ -4,8 +4,8 @@ use crate::proof::{segment_typed_witness_shape_from_groups, SegmentTypedWitness}
 use crate::tail_golomb_rice_z_params;
 use crate::{
     direct_witness_bytes, extension_opening_reduction_proof_bytes, level_proof_bytes,
-    stage1_tree_stage_shapes, sumcheck_rounds, AkitaStage1Proof, AkitaStage1StageProof,
-    AkitaStage2Proof, CleartextWitnessProof, ExtensionOpeningReductionProof, FoldLevelProof,
+    sumcheck_rounds, AkitaStage1Proof, AkitaStage1StageProof, AkitaStage2Proof,
+    CleartextWitnessProof, DigitRangePlan, ExtensionOpeningReductionProof, FoldLevelProof,
     NextWitnessBinding, RelationMatrixRowLayout, RingVec, SisModulusProfileId, TerminalLevelProof,
     EXTENSION_OPENING_REDUCTION_DEGREE,
 };
@@ -146,7 +146,9 @@ fn dummy_eq_factored_sumcheck<F: FieldCore>(
 
 fn dummy_stage1_proof<F: FieldCore>(rounds: usize, b: usize) -> AkitaStage1Proof<F> {
     AkitaStage1Proof {
-        stages: stage1_tree_stage_shapes(rounds, b)
+        stages: DigitRangePlan::new(b)
+            .expect("test range basis")
+            .stage_shapes(rounds)
             .into_iter()
             .map(|shape| AkitaStage1StageProof {
                 sumcheck_proof: dummy_eq_factored_sumcheck(rounds, shape.sumcheck_proof.1),

@@ -1,19 +1,20 @@
 //! Stage-1 range-check tree prover for the Akita PCS.
 //!
 //! For `b <= 8`, stage 1 is still a single eq-factored sumcheck over
-//! `Q(S(z))`, where `S(z) = w(z)(w(z)+1)` and `Q` is the full range polynomial.
+//! `Q(range_image(z))`, where `range_image(z) = w(z)(w(z)+1)` and `Q` is the
+//! full range polynomial.
 //! For larger supported bases, stage 1 is written as a short root-to-leaf tree:
 //!
 //! - a root stage proves the product of `2` or `4` quartic leaf factors,
 //! - the prover sends those child-node claims at the sampled root point,
 //! - a leaf stage proves a random linear combination of the quartic factors
-//!   directly from `S`.
+//!   directly from `range_image`.
 //!
 //! This matches the proof-size study's current tree cutover for `log_basis <= 6`
 //! without widening the recursive witness encoding beyond the existing runtime
 //! bound.
 
-use super::akita_stage1 as single_stage_backend;
+pub(crate) mod direct_range_leaf;
 use akita_algebra::split_eq::GruenSplitEq;
 use akita_field::parallel::*;
 use akita_field::unreduced::{HasOptimizedFold, HasUnreducedOps};
@@ -24,22 +25,21 @@ use akita_sumcheck::{fold_evals_in_place, EqFactoredSumcheckInstanceProver, EqFa
 use akita_transcript::labels;
 use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
 use akita_types::{
-    combine_polys, eval_poly, linear_combination, stage1_interstage_batch_weights,
-    stage1_leaf_coeffs, stage1_tree_product_stage_arities, validate_stage1_tree_basis,
-    AkitaStage1Proof, AkitaStage1StageProof,
+    AkitaStage1Proof, AkitaStage1StageProof, DigitRangeEqualityPoint, DigitRangePlan,
+    FlatBooleanDomain,
 };
 
 type Stage1ProveOutput<E> = (AkitaStage1Proof<E>, Vec<E>);
 
-fn compact_s_from_w(w: i8) -> i64 {
+fn range_image_from_digit(w: i8) -> i64 {
     let w = i64::from(w);
     w * (w + 1)
 }
 
 const MAX_TREE_STAGE_Q_DEGREE: usize = 4;
 
-fn padded_s_table<E: FieldCore + FromPrimitiveInt>(
-    w_evals_compact: &[i8],
+fn padded_range_image_table<E: FieldCore + FromPrimitiveInt>(
+    digit_witness: &[i8],
     live_x_cols: usize,
     col_bits: usize,
     ring_bits: usize,
@@ -57,10 +57,10 @@ fn padded_s_table<E: FieldCore + FromPrimitiveInt>(
     let expected = live_x_cols
         .checked_mul(y_len)
         .ok_or_else(|| AkitaError::InvalidInput("stage-1 witness size overflow".to_string()))?;
-    if w_evals_compact.len() != expected {
+    if digit_witness.len() != expected {
         return Err(AkitaError::InvalidSize {
             expected,
-            actual: w_evals_compact.len(),
+            actual: digit_witness.len(),
         });
     }
 
@@ -71,7 +71,7 @@ fn padded_s_table<E: FieldCore + FromPrimitiveInt>(
     for x in 0..live_x_cols {
         let src_start = x * y_len;
         for y in 0..y_len {
-            out[x * y_len + y] = E::from_i64(compact_s_from_w(w_evals_compact[src_start + y]));
+            out[x * y_len + y] = E::from_i64(range_image_from_digit(digit_witness[src_start + y]));
         }
     }
     Ok(out)
@@ -99,13 +99,17 @@ fn compose_small_poly_with_affine<E: FieldCore>(coeffs: &[E], offset: E, slope: 
     out
 }
 
-fn build_leaf_tables<E: FieldCore>(leaf_coeffs: &[Vec<E>], s_table: &[E]) -> Vec<Vec<E>> {
+fn build_leaf_tables<E: FieldCore>(
+    plan: DigitRangePlan,
+    leaf_coeffs: &[Vec<E>],
+    range_image: &[E],
+) -> Vec<Vec<E>> {
     cfg_iter!(leaf_coeffs)
         .map(|coeffs| {
-            s_table
+            range_image
                 .iter()
                 .copied()
-                .map(|s| eval_poly(coeffs, s))
+                .map(|range_image_eval| plan.evaluate_leaf_polynomial(coeffs, range_image_eval))
                 .collect()
         })
         .collect()
@@ -171,7 +175,7 @@ fn build_product_stage_layers<E: FieldCore>(
     bottom_up_layers
 }
 
-struct ProductStageProver<E: FieldCore> {
+struct ProductStageState<E: FieldCore> {
     child_tables_by_parent: Vec<Vec<Vec<E>>>,
     batch_weights: Vec<E>,
     split_eq: GruenSplitEq<E>,
@@ -179,7 +183,7 @@ struct ProductStageProver<E: FieldCore> {
     num_rounds: usize,
 }
 
-impl<E: FieldCore> ProductStageProver<E> {
+impl<E: FieldCore> ProductStageState<E> {
     fn new(
         child_tables_by_parent: Vec<Vec<Vec<E>>>,
         batch_weights: Vec<E>,
@@ -214,9 +218,7 @@ impl<E: FieldCore> ProductStageProver<E> {
     }
 }
 
-impl<E: FieldCore + HasOptimizedFold> EqFactoredSumcheckInstanceProver<E>
-    for ProductStageProver<E>
-{
+impl<E: FieldCore + HasOptimizedFold> EqFactoredSumcheckInstanceProver<E> for ProductStageState<E> {
     fn num_rounds(&self) -> usize {
         self.num_rounds
     }
@@ -302,23 +304,23 @@ impl<E: FieldCore + HasOptimizedFold> EqFactoredSumcheckInstanceProver<E>
     }
 }
 
-struct PolynomialStageProver<E: FieldCore> {
-    s_table: Vec<E>,
+struct PolynomialLeafState<E: FieldCore> {
+    range_image: Vec<E>,
     split_eq: GruenSplitEq<E>,
     input_claim: E,
     poly_coeffs: Vec<E>,
     num_rounds: usize,
 }
 
-impl<E: FieldCore> PolynomialStageProver<E> {
+impl<E: FieldCore> PolynomialLeafState<E> {
     fn new(
-        s_table: Vec<E>,
+        range_image: Vec<E>,
         tau: &[E],
         input_claim: E,
         poly_coeffs: Vec<E>,
     ) -> Result<Self, AkitaError> {
         Ok(Self {
-            s_table,
+            range_image,
             split_eq: GruenSplitEq::new(tau)?,
             input_claim,
             poly_coeffs,
@@ -326,14 +328,14 @@ impl<E: FieldCore> PolynomialStageProver<E> {
         })
     }
 
-    fn final_s_claim(&self) -> E {
-        debug_assert_eq!(self.s_table.len(), 1);
-        self.s_table[0]
+    fn final_range_image_eval(&self) -> E {
+        debug_assert_eq!(self.range_image.len(), 1);
+        self.range_image[0]
     }
 }
 
 impl<E: FieldCore + HasOptimizedFold> EqFactoredSumcheckInstanceProver<E>
-    for PolynomialStageProver<E>
+    for PolynomialLeafState<E>
 {
     fn num_rounds(&self) -> usize {
         self.num_rounds
@@ -358,7 +360,7 @@ impl<E: FieldCore + HasOptimizedFold> EqFactoredSumcheckInstanceProver<E>
         let degree = self.degree_bound();
         let expected_pairs = num_first * e_second.len();
         debug_assert_eq!(
-            self.s_table.len(),
+            self.range_image.len(),
             expected_pairs * 2,
             "polynomial stage table length should match split-eq shape",
         );
@@ -374,8 +376,8 @@ impl<E: FieldCore + HasOptimizedFold> EqFactoredSumcheckInstanceProver<E>
                     let j = base + j_low;
                     let coeffs = compose_small_poly_with_affine(
                         &self.poly_coeffs,
-                        self.s_table[2 * j],
-                        self.s_table[2 * j + 1] - self.s_table[2 * j],
+                        self.range_image[2 * j],
+                        self.range_image[2 * j + 1] - self.range_image[2 * j],
                     );
                     for k in 0..=degree {
                         inner[k] += e_in * coeffs[k];
@@ -399,118 +401,72 @@ impl<E: FieldCore + HasOptimizedFold> EqFactoredSumcheckInstanceProver<E>
 
     fn ingest_challenge(&mut self, _round: usize, r_round: E) {
         self.split_eq.bind(r_round);
-        fold_evals_in_place(&mut self.s_table, r_round);
+        fold_evals_in_place(&mut self.range_image, r_round);
     }
 }
 
 /// Backend-specific Stage 1 witness representation.
-enum Stage1Witness<E: FieldCore> {
+enum DigitRangeState<E: FieldCore> {
     Compact(std::sync::Arc<[i8]>),
-    PaddedS {
-        s_table: Vec<E>,
-        w: std::sync::Arc<[i8]>,
-    },
+    PaddedRangeImage(Vec<E>),
 }
 
 /// Stage-1 range-check prover, including the root/leaf tree choreography.
-pub struct AkitaStage1Prover<E: FieldCore> {
-    witness: Stage1Witness<E>,
-    tau0: Vec<E>,
-    b: usize,
-    live_x_cols: usize,
-    col_bits: usize,
-    ring_bits: usize,
+pub struct DigitRangeProver<E: FieldCore> {
+    witness: DigitRangeState<E>,
+    equality_point: Vec<E>,
+    plan: DigitRangePlan,
+    live_block_count: usize,
+    high_variable_count: usize,
+    low_variable_count: usize,
 }
 
-impl<E: FieldCore + FromPrimitiveInt> AkitaStage1Prover<E> {
-    /// Build the stage-1 prover from the compact witness table.
+impl<E: FieldCore + FromPrimitiveInt> DigitRangeProver<E> {
+    /// Build the prover from the shared compact digit witness and checked layout.
     ///
     /// # Errors
     ///
-    /// Returns [`AkitaError::InvalidSize`] if the compact witness rows do not
-    /// match `live_x_cols * 2^ring_bits`.
+    /// Returns an error if the witness length, domain, or equality point are
+    /// inconsistent.
     pub fn new(
-        w_evals_compact: &[i8],
-        tau0: &[E],
-        b: usize,
-        live_x_cols: usize,
-        col_bits: usize,
-        ring_bits: usize,
+        digit_witness: std::sync::Arc<[i8]>,
+        plan: DigitRangePlan,
+        domain: FlatBooleanDomain,
+        equality_point: DigitRangeEqualityPoint<E>,
     ) -> Result<Self, AkitaError> {
-        Self::new_owned(
-            std::sync::Arc::from(w_evals_compact),
-            tau0,
-            b,
-            live_x_cols,
-            col_bits,
-            ring_bits,
-        )
-    }
-
-    pub(crate) fn new_owned(
-        w_evals_compact: std::sync::Arc<[i8]>,
-        tau0: &[E],
-        b: usize,
-        live_x_cols: usize,
-        col_bits: usize,
-        ring_bits: usize,
-    ) -> Result<Self, AkitaError> {
-        validate_stage1_tree_basis(b)?;
-        let num_vars = col_bits.checked_add(ring_bits).ok_or_else(|| {
-            AkitaError::InvalidInput("stage-1 challenge width overflow".to_string())
-        })?;
-        if tau0.len() != num_vars {
+        equality_point.validate_domain(domain)?;
+        if digit_witness.len() != domain.live_len() {
             return Err(AkitaError::InvalidSize {
-                expected: num_vars,
-                actual: tau0.len(),
+                expected: domain.live_len(),
+                actual: digit_witness.len(),
             });
         }
-        let col_bits_u32 = u32::try_from(col_bits)
-            .map_err(|_| AkitaError::InvalidInput("stage-1 column width overflow".to_string()))?;
-        let x_len = 1usize
-            .checked_shl(col_bits_u32)
-            .ok_or_else(|| AkitaError::InvalidInput("stage-1 column width overflow".to_string()))?;
-        if live_x_cols == 0 || live_x_cols > x_len {
-            return Err(AkitaError::InvalidSize {
-                expected: x_len,
-                actual: live_x_cols,
-            });
-        }
-        let ring_bits_u32 = u32::try_from(ring_bits)
-            .map_err(|_| AkitaError::InvalidInput("stage-1 ring width overflow".to_string()))?;
-        let y_len = 1usize
-            .checked_shl(ring_bits_u32)
-            .ok_or_else(|| AkitaError::InvalidInput("stage-1 ring width overflow".to_string()))?;
-        let expected = live_x_cols
-            .checked_mul(y_len)
-            .ok_or_else(|| AkitaError::InvalidInput("stage-1 witness size overflow".to_string()))?;
-        if w_evals_compact.len() != expected {
-            return Err(AkitaError::InvalidSize {
-                expected,
-                actual: w_evals_compact.len(),
-            });
-        }
+        let low_variable_count = equality_point.low_variable_count();
+        let high_variable_count = domain.num_vars() - low_variable_count;
+        let live_block_count = domain.live_block_count(low_variable_count)?;
+        let coordinates = equality_point.into_coordinates();
         Ok(Self {
-            witness: if b <= 8 {
-                Stage1Witness::Compact(w_evals_compact)
+            witness: if plan.basis() <= 8 {
+                DigitRangeState::Compact(digit_witness)
             } else {
-                let s_table = padded_s_table(&w_evals_compact, live_x_cols, col_bits, ring_bits)?;
-                Stage1Witness::PaddedS {
-                    s_table,
-                    w: w_evals_compact,
-                }
+                DigitRangeState::PaddedRangeImage(padded_range_image_table(
+                    &digit_witness,
+                    live_block_count,
+                    high_variable_count,
+                    low_variable_count,
+                )?)
             },
-            tau0: tau0.to_vec(),
-            b,
-            live_x_cols,
-            col_bits,
-            ring_bits,
+            equality_point: coordinates,
+            plan,
+            live_block_count,
+            high_variable_count,
+            low_variable_count,
         })
     }
 }
 
 impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + HasOptimizedFold + AkitaSerialize>
-    AkitaStage1Prover<E>
+    DigitRangeProver<E>
 {
     /// Produce the full stage-1 tree proof and return the final `stage1_point`.
     ///
@@ -519,19 +475,6 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + HasOptimizedFold + Akit
     /// Propagates any transcript or sumcheck failure from the internal root
     /// and leaf-stage proofs.
     pub fn prove<F, T>(self, transcript: &mut T) -> Result<Stage1ProveOutput<E>, AkitaError>
-    where
-        F: FieldCore + CanonicalField,
-        E: ExtField<F>,
-        T: Transcript<F>,
-    {
-        self.prove_recover_w::<F, T>(transcript)
-            .map(|(output, _)| output)
-    }
-
-    pub(crate) fn prove_recover_w<F, T>(
-        self,
-        transcript: &mut T,
-    ) -> Result<(Stage1ProveOutput<E>, std::sync::Arc<[i8]>), AkitaError>
     where
         F: FieldCore + CanonicalField,
         E: ExtField<F>,
@@ -553,57 +496,51 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + HasOptimizedFold + Akit
         }
         let Self {
             witness,
-            tau0,
-            b,
-            live_x_cols,
-            col_bits,
-            ring_bits,
+            equality_point,
+            plan,
+            live_block_count,
+            high_variable_count,
+            low_variable_count,
         } = self;
-        validate_stage1_tree_basis(b)?;
-        let retained_w;
-        let s_table = match witness {
-            Stage1Witness::Compact(w_evals_compact) => {
-                let mut leaf_stage = single_stage_backend::AkitaStage1Prover::new_owned(
-                    w_evals_compact,
-                    &tau0,
-                    b,
-                    live_x_cols,
-                    col_bits,
-                    ring_bits,
+        let range_image = match witness {
+            DigitRangeState::Compact(digit_witness) => {
+                let mut leaf_stage = direct_range_leaf::DirectRangeLeafState::new_owned(
+                    digit_witness,
+                    &equality_point,
+                    plan.basis(),
+                    live_block_count,
+                    high_variable_count,
+                    low_variable_count,
                 )?;
                 let (sumcheck, stage1_point, _final_claim) = leaf_stage
                     .prove::<F, T, _>(transcript, |tr| {
                         sample_ext_challenge::<F, E, T>(tr, labels::CHALLENGE_SUMCHECK_ROUND)
                     })?;
-                let true_s_claim = leaf_stage.final_s_claim();
-                let w_evals_compact = leaf_stage.take_w_evals_compact();
+                let range_image_eval = leaf_stage.final_range_image_eval();
                 let proof = AkitaStage1Proof {
                     stages: vec![AkitaStage1StageProof {
                         sumcheck_proof: sumcheck,
                         child_claims: Vec::new(),
                     }],
-                    s_claim: true_s_claim,
+                    s_claim: range_image_eval,
                 };
-                return Ok(((proof, stage1_point), w_evals_compact));
+                return Ok((proof, stage1_point));
             }
-            Stage1Witness::PaddedS { s_table, w } => {
-                retained_w = w;
-                s_table
-            }
+            DigitRangeState::PaddedRangeImage(range_image) => range_image,
         };
 
-        let leaf_coeffs = stage1_leaf_coeffs::<E>(b);
+        let leaf_coeffs = plan.leaf_coeffs::<E>();
         let product_layers = build_product_stage_layers(
-            build_leaf_tables(&leaf_coeffs, &s_table),
-            &stage1_tree_product_stage_arities(b),
+            build_leaf_tables(plan, &leaf_coeffs, &range_image),
+            plan.product_stage_arities(),
         );
         let mut stage_proofs = Vec::with_capacity(product_layers.len() + 1);
-        let mut current_tau = tau0;
+        let mut current_tau = equality_point;
         let mut current_claim = E::zero();
         let mut current_weights = vec![E::one()];
 
         for layer in product_layers {
-            let mut product_stage = ProductStageProver::new(
+            let mut product_stage = ProductStageState::new(
                 layer.child_tables_by_parent,
                 current_weights,
                 &current_tau,
@@ -625,14 +562,18 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + HasOptimizedFold + Akit
                 transcript,
                 labels::CHALLENGE_SUMCHECK_INTERSTAGE_BATCH,
             );
-            current_weights = stage1_interstage_batch_weights(gamma, child_claims.len());
-            current_claim = linear_combination(&current_weights, &child_claims);
+            current_weights = plan.interstage_batch_weights(gamma, child_claims.len());
+            current_claim = plan.batch_claims(&current_weights, &child_claims);
             current_tau = next_tau;
         }
 
-        let batched_leaf_coeffs = combine_polys(&current_weights, &leaf_coeffs);
-        let mut leaf_stage =
-            PolynomialStageProver::new(s_table, &current_tau, current_claim, batched_leaf_coeffs)?;
+        let batched_leaf_coeffs = plan.batch_leaf_polynomials(&current_weights, &leaf_coeffs);
+        let mut leaf_stage = PolynomialLeafState::new(
+            range_image,
+            &current_tau,
+            current_claim,
+            batched_leaf_coeffs,
+        )?;
         let (leaf_sumcheck, stage1_point, _leaf_final_claim) = leaf_stage
             .prove::<F, T, _>(transcript, |tr| {
                 sample_ext_challenge::<F, E, T>(tr, labels::CHALLENGE_SUMCHECK_ROUND)
@@ -642,55 +583,11 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + HasOptimizedFold + Akit
             child_claims: Vec::new(),
         });
 
-        let true_s_claim = leaf_stage.final_s_claim();
+        let range_image_eval = leaf_stage.final_range_image_eval();
         let proof = AkitaStage1Proof {
             stages: stage_proofs,
-            s_claim: true_s_claim,
+            s_claim: range_image_eval,
         };
-        Ok(((proof, stage1_point), retained_w))
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use akita_types::stage1_tree_stage_shapes;
-
-    #[test]
-    fn stage1_tree_shapes_match_generic_quartic_chain() {
-        assert_eq!(
-            stage1_tree_stage_shapes(7, 4)
-                .into_iter()
-                .map(|shape| (shape.sumcheck_proof.1, shape.child_claims))
-                .collect::<Vec<_>>(),
-            vec![(2, 0)]
-        );
-        assert_eq!(
-            stage1_tree_stage_shapes(7, 8)
-                .into_iter()
-                .map(|shape| (shape.sumcheck_proof.1, shape.child_claims))
-                .collect::<Vec<_>>(),
-            vec![(4, 0)]
-        );
-        assert_eq!(
-            stage1_tree_stage_shapes(7, 16)
-                .into_iter()
-                .map(|shape| (shape.sumcheck_proof.1, shape.child_claims))
-                .collect::<Vec<_>>(),
-            vec![(2, 2), (4, 0)]
-        );
-        assert_eq!(
-            stage1_tree_stage_shapes(7, 32)
-                .into_iter()
-                .map(|shape| (shape.sumcheck_proof.1, shape.child_claims))
-                .collect::<Vec<_>>(),
-            vec![(4, 4), (4, 0)]
-        );
-        assert_eq!(
-            stage1_tree_stage_shapes(7, 64)
-                .into_iter()
-                .map(|shape| (shape.sumcheck_proof.1, shape.child_claims))
-                .collect::<Vec<_>>(),
-            vec![(2, 2), (4, 8), (4, 0)]
-        );
+        Ok((proof, stage1_point))
     }
 }

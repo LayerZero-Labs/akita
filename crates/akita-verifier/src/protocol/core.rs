@@ -31,7 +31,7 @@ use akita_types::{
     build_trace_claim_root, build_trace_table_scaled, dispatch_for_field,
     ensure_trace_stage2_supported, prepare_opening_point,
     proof::relation::evaluation_trace_row_weight, raw_field_segment_bytes,
-    relation_claim_from_layout_extension, relation_rhs_layout_for, reorder_stage1_coords,
+    relation_claim_from_layout_extension, relation_rhs_layout_for,
     ring_subfield_packed_extension_opening_point, root_trace_block_opening,
     sample_public_row_coefficients, tensor_equality_factor_eval_at_point,
     trace_public_weights_recursive, trace_public_weights_root_terms, trace_terms_recursive,

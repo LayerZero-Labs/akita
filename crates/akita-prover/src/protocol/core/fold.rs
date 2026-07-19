@@ -4,16 +4,17 @@ use crate::compute::{
     ProverComputeStack, RootOpeningSource, RootPolyMeta, RuntimeOpeningProveBackendFor,
     RuntimeRingSwitchProveBackend, RuntimeRootProvePoly, RuntimeTensorBackendFor,
 };
+use crate::protocol::sumcheck::DigitRangeProver;
 use crate::RootTensorProjectionPoly;
 use akita_field::unreduced::ReduceTo;
 use akita_field::AdditiveGroup;
 
 use crate::protocol::ring_switch::RingSwitchTerminalArtifacts;
-use akita_types::build_segment_typed_witness_from_groups;
-use akita_types::dispatch_for_field;
-use akita_types::CleartextWitnessShape;
-use akita_types::OpeningClaimsLayout;
-use akita_types::SegmentTypedWitnessGroupParts;
+use akita_types::{
+    build_segment_typed_witness_from_groups, dispatch_for_field, CleartextWitnessShape,
+    DigitRangeEqualityPoint, DigitRangePlan, FlatBooleanDomain, OpeningClaimsLayout,
+    SegmentTypedWitnessGroupParts,
+};
 
 fn trace_layout_for_instance<F: FieldCore + CanonicalField>(
     lp: &LevelParams,
@@ -942,18 +943,23 @@ where
     T: Transcript<F>,
 {
     let _sumcheck_span = tracing::info_span!("stage1_sumcheck").entered();
-    let tau0_reordered = reorder_stage1_coords(&rs.tau0, rs.col_bits, rs.ring_bits);
-    let stage1_prover = AkitaStage1Prover::new_owned(
-        std::mem::take(&mut rs.w_evals_compact),
-        &tau0_reordered,
-        rs.b,
-        rs.live_x_cols,
+    let num_vars = rs
+        .col_bits
+        .checked_add(rs.ring_bits)
+        .ok_or_else(|| AkitaError::InvalidInput("digit-range domain width overflow".to_string()))?;
+    let domain = FlatBooleanDomain::new(rs.w_evals_compact.len(), num_vars)?;
+    let equality_point = DigitRangeEqualityPoint::from_column_then_ring_challenges(
+        &rs.tau0,
         rs.col_bits,
         rs.ring_bits,
     )?;
-    let ((stage1_proof, stage1_point), w_evals_compact) =
-        stage1_prover.prove_recover_w::<F, T>(transcript)?;
-    rs.w_evals_compact = w_evals_compact;
+    let stage1_prover = DigitRangeProver::new(
+        std::sync::Arc::clone(&rs.w_evals_compact),
+        DigitRangePlan::new(rs.b)?,
+        domain,
+        equality_point,
+    )?;
+    let (stage1_proof, stage1_point) = stage1_prover.prove::<F, T>(transcript)?;
     let s_claim = stage1_proof.s_claim;
     Ok((stage1_proof, stage1_point, s_claim))
 }

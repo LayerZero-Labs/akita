@@ -80,12 +80,6 @@ pub use ntt_cache::{
     PreparedNttDomains, PreparedNttSlot, PreparedNttSlotAny, ProtocolCrtNttParams,
 };
 pub use proof::{
-    absorb_interstage_claims, combine_polys, eval_poly, linear_combination,
-    range_check_eval_from_s, reorder_stage1_coords, stage1_interstage_batch_weights,
-    stage1_leaf_coeffs, stage1_stage_count, stage1_tree_product_stage_arities,
-    stage1_tree_stage_shapes, validate_stage1_tree_basis,
-};
-pub use proof::{
     active_setup_field_len, append_batched_commitments_to_transcript,
     append_claim_values_to_transcript, assemble_relation_rhs,
     build_segment_typed_witness_from_groups, compute_relation_matrix_col_evals,
@@ -125,6 +119,7 @@ pub use proof::{
     MULTI_GROUP_ROOT_DENSE_UNSUPPORTED, SETUP_OFFLOAD_D_SETUP, SETUP_OFFLOAD_MIN_PREFIX_FIELD_LEN,
     SETUP_SUMCHECK_DEGREE,
 };
+pub use proof::{DigitRangeEqualityPoint, DigitRangePlan, FlatBooleanDomain};
 pub use proof_size::{level_proof_bytes, FOLD_GRIND_NONCE_BYTES};
 pub use schedule::{
     detect_field_modulus, intermediate_w_ring_element_count_for_chunks,

@@ -1,8 +1,8 @@
 use super::*;
 
-impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage1Prover<E> {
+impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> DirectRangeLeafState<E> {
     #[inline]
-    pub(super) fn direct_fold_s_quad_to_round2(
+    pub(super) fn direct_fold_range_image_quad_to_round2(
         s00: i16,
         s10: i16,
         s01: i16,
@@ -20,29 +20,29 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage1Prover<E> {
     }
 
     #[inline(always)]
-    pub(super) fn stage1_b4_quad_lookup_index_from_row<S: CompactSValue>(
-        row: &[S],
+    pub(super) fn stage1_b4_quad_lookup_index_from_row<V: CompactRangeImageValue>(
+        row: &[V],
         base: usize,
     ) -> usize {
         let d0 = row
             .get(base)
             .copied()
-            .map(|value| stage1_b4_s_digit_from_m_compact_s(value.compact_s()))
+            .map(|value| stage1_b4_digit_from_compact_range_image(value.range_image_value()))
             .unwrap_or(0);
         let d1 = row
             .get(base + 1)
             .copied()
-            .map(|value| stage1_b4_s_digit_from_m_compact_s(value.compact_s()))
+            .map(|value| stage1_b4_digit_from_compact_range_image(value.range_image_value()))
             .unwrap_or(0);
         let d2 = row
             .get(base + 2)
             .copied()
-            .map(|value| stage1_b4_s_digit_from_m_compact_s(value.compact_s()))
+            .map(|value| stage1_b4_digit_from_compact_range_image(value.range_image_value()))
             .unwrap_or(0);
         let d3 = row
             .get(base + 3)
             .copied()
-            .map(|value| stage1_b4_s_digit_from_m_compact_s(value.compact_s()))
+            .map(|value| stage1_b4_digit_from_compact_range_image(value.range_image_value()))
             .unwrap_or(0);
         d0 | (d1 << 1) | (d2 << 2) | (d3 << 3)
     }
@@ -55,7 +55,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage1Prover<E> {
                 let d1 = (idx >> 1) & 0b1;
                 let d2 = (idx >> 2) & 0b1;
                 let d3 = (idx >> 3) & 0b1;
-                Self::direct_fold_s_quad_to_round2(
+                Self::direct_fold_range_image_quad_to_round2(
                     S_VALUES[d0],
                     S_VALUES[d1],
                     S_VALUES[d2],
@@ -68,29 +68,29 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage1Prover<E> {
     }
 
     #[inline(always)]
-    pub(super) fn stage1_b8_quad_lookup_index_from_row<S: CompactSValue>(
-        row: &[S],
+    pub(super) fn stage1_b8_quad_lookup_index_from_row<V: CompactRangeImageValue>(
+        row: &[V],
         base: usize,
     ) -> usize {
         let d0 = row
             .get(base)
             .copied()
-            .map(|value| stage1_b8_s_digit_from_m_compact_s(value.compact_s()))
+            .map(|value| stage1_b8_digit_from_compact_range_image(value.range_image_value()))
             .unwrap_or(0);
         let d1 = row
             .get(base + 1)
             .copied()
-            .map(|value| stage1_b8_s_digit_from_m_compact_s(value.compact_s()))
+            .map(|value| stage1_b8_digit_from_compact_range_image(value.range_image_value()))
             .unwrap_or(0);
         let d2 = row
             .get(base + 2)
             .copied()
-            .map(|value| stage1_b8_s_digit_from_m_compact_s(value.compact_s()))
+            .map(|value| stage1_b8_digit_from_compact_range_image(value.range_image_value()))
             .unwrap_or(0);
         let d3 = row
             .get(base + 3)
             .copied()
-            .map(|value| stage1_b8_s_digit_from_m_compact_s(value.compact_s()))
+            .map(|value| stage1_b8_digit_from_compact_range_image(value.range_image_value()))
             .unwrap_or(0);
         d0 | (d1 << 2) | (d2 << 4) | (d3 << 6)
     }
@@ -103,7 +103,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage1Prover<E> {
                 let d1 = (idx >> 2) & 0b11;
                 let d2 = (idx >> 4) & 0b11;
                 let d3 = (idx >> 6) & 0b11;
-                Self::direct_fold_s_quad_to_round2(
+                Self::direct_fold_range_image_quad_to_round2(
                     S_VALUES[d0],
                     S_VALUES[d1],
                     S_VALUES[d2],
@@ -115,9 +115,12 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage1Prover<E> {
             .collect()
     }
 
-    #[tracing::instrument(skip_all, name = "AkitaStage1Prover::fold_s_compact_to_round2")]
-    pub(super) fn fold_s_compact_to_round2<S: CompactSValue>(
-        s_compact: &[S],
+    #[tracing::instrument(
+        skip_all,
+        name = "DirectRangeLeafState::fold_compact_range_image_to_round2"
+    )]
+    pub(super) fn fold_compact_range_image_to_round2<V: CompactRangeImageValue>(
+        compact_range_image: &[V],
         live_x_cols: usize,
         y_len: usize,
         r0: E,
@@ -127,14 +130,14 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage1Prover<E> {
         let next_y_len = y_len / 4;
         let mut out = vec![E::zero(); live_x_cols * next_y_len];
         for (x, col_out) in out.chunks_mut(next_y_len).enumerate() {
-            let col = &s_compact[x * y_len..(x + 1) * y_len];
+            let col = &compact_range_image[x * y_len..(x + 1) * y_len];
             for (quad_y, dst) in col_out.iter_mut().enumerate() {
                 let base = 4 * quad_y;
-                *dst = Self::direct_fold_s_quad_to_round2(
-                    col[base].compact_s(),
-                    col[base + 1].compact_s(),
-                    col[base + 2].compact_s(),
-                    col[base + 3].compact_s(),
+                *dst = Self::direct_fold_range_image_quad_to_round2(
+                    col[base].range_image_value(),
+                    col[base + 1].range_image_value(),
+                    col[base + 2].range_image_value(),
+                    col[base + 3].range_image_value(),
                     r0,
                     r1,
                 );
@@ -145,17 +148,17 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage1Prover<E> {
 
     #[tracing::instrument(
         skip_all,
-        name = "AkitaStage1Prover::fuse_compact_to_round2_and_compute_round"
+        name = "DirectRangeLeafState::fuse_compact_to_round2_and_compute_round"
     )]
-    pub(super) fn fuse_compact_to_round2_and_compute_round<S: CompactSValue>(
+    pub(super) fn fuse_compact_to_round2_and_compute_round<V: CompactRangeImageValue>(
         &self,
-        s_compact: &[S],
+        compact_range_image: &[V],
         r0: E,
         r1: E,
     ) -> (Vec<E>, EqFactoredUniPoly<E>) {
         debug_assert!(self.ring_bits() > 2);
         let live_x_cols = self.live_x_cols;
-        let y_len = s_compact.len() / live_x_cols;
+        let y_len = compact_range_image.len() / live_x_cols;
         debug_assert_eq!(y_len % 4, 0);
         let next_y_len = y_len / 4;
         let live_pairs = next_y_len / 2;
@@ -179,7 +182,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage1Prover<E> {
             .par_chunks_mut(next_y_len)
             .enumerate()
             .map(|(x, col_out)| {
-                let col = &s_compact[x * y_len..(x + 1) * y_len];
+                let col = &compact_range_image[x * y_len..(x + 1) * y_len];
                 let j_base = x * current_y_half;
                 let mut outer_accum = vec![E::ProductAccum::zero(); num_coeffs_q];
                 let mut entry_buf = [E::zero(); MAX_AFFINE_COEFFS];
@@ -246,7 +249,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage1Prover<E> {
         let q_coeffs = {
             let mut outer = vec![E::ProductAccum::zero(); num_coeffs_q];
             for (x, col_out) in out.chunks_mut(next_y_len).enumerate() {
-                let col = &s_compact[x * y_len..(x + 1) * y_len];
+                let col = &compact_range_image[x * y_len..(x + 1) * y_len];
                 let j_base = x * current_y_half;
                 let mut entry_buf = [E::zero(); MAX_AFFINE_COEFFS];
                 let mut s_pows_buf = [E::zero(); MAX_AFFINE_COEFFS];
