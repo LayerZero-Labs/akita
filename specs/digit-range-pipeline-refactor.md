@@ -2653,6 +2653,113 @@ lands #309, the ring-switch producer supplies that same concrete value from
 `log_basis_open`, so no compatibility wrapper or F1 API change is permitted. Record the
 literal B0 and F1 head SHAs in this ledger before implementation review begins.
 
+#### Versioned oracle epochs
+
+The byte and transcript fixtures are versioned protocol epochs, not immutable constants
+for all future Akita revisions. A change that claims to preserve the declared epoch must
+match its fixtures exactly. Conversely, a PR that intentionally changes the protocol must
+update the affected fixtures in the same atomic change, record the old and new epoch base
+SHAs, enumerate the expected proof-byte, transcript-event, challenge, claim, and point
+deltas, and establish the replacement epoch for subsequent wire-preserving work. A
+compute-only refactor must never regenerate an oracle merely to make its tests pass.
+
+F1 declares the literal #311 head
+`bc959ef34572aee143ba0114094b0b4212b4e111` as its oracle epoch. Later stack entries use
+the latest deliberately established epoch rather than assuming that the F1 fixtures are
+permanent. This gives protocol-changing PRs authority to evolve the fixtures while keeping
+the negative-diff contract precise for every wire-preserving tranche.
+
+#### F1 evidence ledger
+
+The architecture cutover snapshot is
+`83a2b98f725e2dbb5000806fd5adb6f1d6c2fd47`; its literal implementation base and oracle
+epoch is the #311 SHA above. Record the eventual ready-for-review F1 head in the stack
+ledger once the bounded F1 slices are complete. Do not rewrite B0 to a merge-base or an
+approximate `main` revision.
+
+`crates/akita-pcs/tests/stage1_f1_oracle.rs` is the executable F1/#311 epoch. It was
+captured by compiling and running the old `AkitaStage1Prover` in a detached worktree at
+the literal B0, then checked against the cut-over `DigitRangeProver`. Its payload encoder
+uses the canonical Stage 1 wire order: each eq-factored sumcheck, then its child claims,
+then the legacy `s_claim` wire field. Its transcript encoder records the complete ordered
+`LoggingTranscript` event stream. The test additionally replays the proof through
+`AkitaStage1Verifier`, requires the verifier and prover event streams to be identical,
+and compares the final point and range-image evaluation.
+
+Run the epoch check with:
+
+```text
+cargo test -p akita-pcs --test stage1_f1_oracle --features logging-transcript
+```
+
+The captured cells are intentionally small deterministic witnesses; the performance
+matrix below owns representative scale. Digests are field-challenge digests under the
+test-only `akita/digit-range-f1-oracle-digest` domain.
+
+| Basis | Stage 1 bytes | Events | Proof digest | Event digest | Output-point digest | Range-image evaluation |
+|---:|---:|---:|---|---|---|---|
+| 4 | 144 | 9 | `c61248b8bf8c61deea2524d26db69185` | `5ddaed9b348525b4f9d2ef345f672ffb` | `e783caec7cbe466efe4f1c34c184cd00` | `a3597f88c2a199b05fe5c285c9366d15` |
+| 8 | 272 | 9 | `5da8770dddfb285c8208fd9aae0b4f6b` | `50334f5bdbb07670569bc029f37ef121` | `7b8ff2e661c4f5704694ff7a07c16f7d` | `0092bf8c55d7731e323a60f3f9b603c7` |
+| 16 | 432 | 21 | `cace743ea85f297bc72a1f796a6d9f8c` | `3220b489f953f08382a3eb9805176043` | `98834bf262f55f45cb47b9da459ba46d` | `119a3282dc19d6bd68b08929aa82b8f4` |
+| 32 | 592 | 23 | `ea696003d2f1dedad5b27b813b9d9322` | `30c6da082fa039f7c642be9a09efe4fc` | `0cb5f64dbe2e9bf5260ac5811c36476f` | `7335696cb66eb923716ac7c085344918` |
+| 64 | 816 | 39 | `26d7092d9f07de2be3da47e10cbc232b` | `14621564d2b7e9863e29c6e5b9cf2c04` | `1e8623c7cac587fd9b45c1fe86dc4dd8` | `b62ebc70f19c7bcd71fa9c466d5c86b9` |
+
+The proof and event digests transitively cover every round polynomial, challenge,
+substage child claim, and transcript label/order. A failing digest must first be
+classified as either an unintended regression or an intentional protocol change. Only
+the latter may establish a new epoch under the lifecycle above.
+
+The checked-in Criterion matrix uses bases 4/8/16/32/64, `N = 2^18`, full and
+three-quarter live prefixes, uniform/zero-heavy/alternating-endpoint digits, and both
+prover and verifier measurements. It uses sample size 20 and constructs witnesses,
+plans, domains, points, and reference proofs outside timed closures. Run serial and
+parallel results as separate named baselines; do not average them together. The capture
+machine for the initial F1 evidence is:
+
+| Property | Value |
+|---|---|
+| OS/ISA | Darwin 25.5.0, `aarch64-apple-darwin` |
+| CPU | Apple M4, 10 physical / 10 logical cores |
+| Memory | 25,769,803,776 bytes |
+| Rust | `rustc 1.95.0 (59807616e 2026-04-14)` |
+| LLVM | 22.1.2 |
+
+Use Criterion saved baselines against the literal B0 and candidate, with identical
+features and environment. Persist the exact command line and raw Criterion estimates in
+the PR evidence; the default parallel capture command is:
+
+```text
+cargo bench -p akita-pcs --bench digit_range --features parallel -- --save-baseline <epoch>
+```
+
+The current eager high-basis owner count is exact from the retained vectors, with `N`
+the padded Boolean-domain length: LB4 owns `N` range-image elements plus `2N` leaf-table
+elements (`3N`); LB5 owns `N + 4N` (`5N`); LB6 owns `N + 8N + 2N` (`11N`). The LB6
+`2N` term is the intermediate product-node table retained concurrently with all eight
+leaf child tables. C3 replaces these formula counts with measured peak counters and must
+explain any allocator-capacity or scratch-space delta instead of silently changing the
+model.
+
+Production phase attribution uses one span per owner, with no parallel `Instant` timing
+state: `digit_range_prove`, `digit_range_materialize_range_image`,
+`digit_range_direct_leaf`, `digit_range_materialize_leaf_tables`,
+`digit_range_build_product_layers`, `digit_range_product_stage` (including index and
+arity), `digit_range_polynomial_leaf`, `digit_range_direct_leaf_round` (including round
+and representation phase), and `digit_range_direct_leaf_fold`. These names are the
+single profiling vocabulary for the retained F1 implementation; do not add wrappers that
+measure the same owner again.
+
+For code ownership and deletion accounting, use
+`git diff --numstat B0...HEAD` and `git diff --name-status B0...HEAD`, classify every path
+against the positive change-surface table, and count moved code at its final owner rather
+than claiming deletion from a rename. For max RSS, run each benchmark cell in a fresh
+process and record Darwin `/usr/bin/time -l` maximum resident set size in bytes (or a
+documented normalized `getrusage(RUSAGE_SELF).ru_maxrss` equivalent). Allocation counts
+use one benchmark-only single-threaded counting allocator; never enable it in the
+parallel timing run. Text size uses one documented release `digit_range` benchmark
+artifact and the toolchain's `llvm-size`; record the exact artifact path and features so
+several hash-suffixed binaries cannot be accidentally aggregated.
+
 Recommended final PR title:
 
 ```text
@@ -2673,7 +2780,7 @@ path outside this manifest requires a hub amendment explaining the invariant it 
 | Canonical prover | new `crates/akita-prover/src/protocol/sumcheck/digit_range/`, `protocol/sumcheck/mod.rs`, the public export in `crates/akita-prover/src/lib.rs`, Stage-1-owned pieces of `two_round_prefix/{common,stage1}.rs`, the Stage-1 import seam in `protocol/core.rs`, and the Stage-1 boundary in `protocol/core/fold.rs` | One production `DigitRangeProver` owns construction, transcript choreography, claims, folding, and all LB2-LB6 dispatch |
 | Removed prover surface | `protocol/sumcheck/akita_stage1_tree.rs` and `protocol/sumcheck/akita_stage1/` | Migrate invariant-bearing code into `digit_range/`, then delete both old prover owners and every pass-through export |
 | Verifier parity | `crates/akita-verifier/src/stages/stage1.rs` and only the Stage-1 replay region of `crates/akita-verifier/src/protocol/core/fold.rs` | Consume `DigitRangePlan`/checked points, preserve equations and transcript order, and reject malformed shapes without panic |
-| Differential tests and test-only oracles | `crates/akita-pcs/tests/stage1_roundtrip.rs`, narrowly scoped transcript-hardening tests, `digit_range/` unit tests, Stage-1-owned imports/assertions in existing `akita_stage2/tests.rs` and `two_round_prefix/tests.rs`, and test/bench-only dense range or relation helpers | Exhaust plans and malformed inputs; compare proof bytes, events, challenges, claims, points, and round polynomials against the pre-F1 oracle |
+| Differential tests and test-only oracles | `crates/akita-pcs/tests/stage1_roundtrip.rs`, `crates/akita-pcs/tests/stage1_f1_oracle.rs`, narrowly scoped transcript-hardening tests, `digit_range/` unit tests, Stage-1-owned imports/assertions in existing `akita_stage2/tests.rs` and `two_round_prefix/tests.rs`, and test/bench-only dense range or relation helpers | Exhaust plans and malformed inputs; compare proof bytes, events, challenges, claims, points, and round polynomials against the declared F1/#311 oracle epoch |
 
 The new module should be organized by invariant-bearing state, not by basis or old
 backend. Acceptable internal seams are plan validation, active representation state,
@@ -2867,7 +2974,9 @@ legacy single `log_basis`; I5/#309 must land first.
 **Must record:**
 
 - current proof bytes and logging-transcript events;
-- post-#311 terminal proof bytes/events as an immutable negative-diff oracle;
+- post-#311 terminal proof bytes/events as the F1 oracle epoch: fixed for descendants
+  claiming wire preservation, and atomically replaced—with old/new SHAs and intended
+  deltas recorded—by an authorized protocol-changing PR;
 - current round polynomial, challenge, fold state, child claim, final point, and legacy
   range-image claim;
 - complete actual/formula byte counts for direct, legacy recursive, target separate, and

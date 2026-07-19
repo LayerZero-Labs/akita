@@ -5,8 +5,20 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> DirectRangeLeafState<E> 
         let use_two_round_prefix = self.using_two_round_prefix();
         let use_prefix_x_round = !use_two_round_prefix && self.use_prefix_x_round();
         let use_sparse_x_y_round = !use_two_round_prefix && self.use_sparse_x_y_round();
-        let t_round = Instant::now();
         let rounds_completed = self.rounds_completed;
+        let phase = if use_two_round_prefix || use_prefix_x_round {
+            "live-prefix"
+        } else if use_sparse_x_y_round {
+            "sparse-low-variables"
+        } else {
+            "dense"
+        };
+        let _span = tracing::info_span!(
+            "digit_range_direct_leaf_round",
+            round = rounds_completed,
+            phase
+        )
+        .entered();
         let poly = if use_two_round_prefix {
             let prefix = self.ensure_two_round_prefix();
             if rounds_completed == 0 {
@@ -28,10 +40,10 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> DirectRangeLeafState<E> 
                     } else if use_sparse_x_y_round {
                         self.compute_round_compact_sparse_x_y(compact_range_image)
                     } else {
-                        compute_norm_round_eq_poly_from_compact_range_image(
+                        compute_range_round_polynomial_from_compact_image(
                             &self.split_eq,
                             compact_range_image,
-                            &self.range_precomp,
+                            &self.polynomial_precomputation,
                         )
                     }
                 }
@@ -41,21 +53,15 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> DirectRangeLeafState<E> 
                     } else if use_sparse_x_y_round {
                         self.compute_round_full_sparse_x_y(range_image)
                     } else {
-                        compute_norm_round_eq_poly_from_s(
+                        compute_range_round_polynomial_from_range_image(
                             &self.split_eq,
-                            &self.range_precomp,
+                            &self.polynomial_precomputation,
                             |j| (range_image[2 * j], range_image[2 * j + 1]),
                         )
                     }
                 }
             }
         };
-
-        if use_two_round_prefix || use_prefix_x_round {
-            self.prefix_time_total += t_round.elapsed().as_secs_f64();
-        } else {
-            self.dense_time_total += t_round.elapsed().as_secs_f64();
-        }
 
         poly
     }
@@ -107,8 +113,11 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + HasOptimizedFold>
     }
 
     fn ingest_challenge(&mut self, _round: usize, r: E) {
-        let t_fold = Instant::now();
-        let _span = tracing::info_span!("DirectRangeLeafState::fold_round").entered();
+        let _span = tracing::info_span!(
+            "digit_range_direct_leaf_fold",
+            round = self.rounds_completed
+        )
+        .entered();
         if self.using_two_round_prefix() {
             let rounds_completed = self.rounds_completed;
             self.split_eq.bind(r);
@@ -164,8 +173,6 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + HasOptimizedFold>
             } else {
                 self.cached_round_poly = None;
             }
-            drop(_span);
-            self.fold_time_total += t_fold.elapsed().as_secs_f64();
             return;
         }
 
@@ -248,18 +255,6 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + HasOptimizedFold>
         } else {
             self.cached_round_poly = None;
         }
-        drop(_span);
-        self.fold_time_total += t_fold.elapsed().as_secs_f64();
-    }
-
-    fn finalize(&mut self) {
-        tracing::debug!(
-            rounds = self.num_vars,
-            prefix_s = self.prefix_time_total,
-            dense_s = self.dense_time_total,
-            fold_range_image = self.fold_time_total,
-            "stage1 sumcheck rounds complete"
-        );
     }
 }
 

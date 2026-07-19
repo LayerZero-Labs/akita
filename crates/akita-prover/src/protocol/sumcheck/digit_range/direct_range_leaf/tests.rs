@@ -110,10 +110,10 @@ fn stage1_round0_matches_dense_reference() {
         .unwrap();
         let stage1_poly = prover.compute_round_eq_factored(0);
         let compact_range_image = build_compact_range_image(&w_compact);
-        let reference = compute_norm_round_eq_poly_from_compact_range_image(
+        let reference = compute_range_round_polynomial_from_compact_image(
             &prover.split_eq,
             &compact_range_image,
-            &prover.range_precomp,
+            &prover.polynomial_precomputation,
         );
 
         assert_eq!(stage1_poly, reference, "stage1 round0 mismatch for b={b}");
@@ -123,25 +123,25 @@ fn stage1_round0_matches_dense_reference() {
 #[test]
 fn stage1_compact_coeff_lut_reaches_b16() {
     for b in [4usize, 8, 16] {
-        let precomp = RangeAffineFromSPrecomp::<F>::new(b);
+        let precomp = RangePolynomialPrecomputation::<F>::new(b);
         assert!(
             precomp.compact_coeffs_lut(0, 0).is_some(),
             "expected compact coefficient LUT for b={b}"
         );
     }
 
-    let precomp = RangeAffineFromSPrecomp::<F>::new(32);
+    let precomp = RangePolynomialPrecomputation::<F>::new(32);
     assert!(precomp.compact_coeffs_lut(0, 0).is_none());
 }
 
 #[test]
 fn stage1_field_coeff_lut_reaches_b32() {
     for b in [4usize, 8, 16] {
-        let precomp = RangeAffineFromSPrecomp::<F>::new(b);
+        let precomp = RangePolynomialPrecomputation::<F>::new(b);
         assert!(precomp.field_coeffs_lut(0, 0).is_none());
     }
 
-    let precomp = RangeAffineFromSPrecomp::<F>::new(32);
+    let precomp = RangePolynomialPrecomputation::<F>::new(32);
     assert!(
         precomp.field_coeffs_lut(0, 0).is_some(),
         "expected field coefficient LUT for b=32"
