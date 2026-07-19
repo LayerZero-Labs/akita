@@ -4,11 +4,17 @@
 |-------------|--------------------------------|
 | Author(s)   | Quang Dao (spec) → hand-off for implementation |
 | Created     | 2026-06-02                     |
-| Status      | ready for implementation       |
+| Status      | ready for implementation (EOR only; Stage 1/2 blocked) |
 | Pilot       | extension-opening reduction (EOR), then stage1 / stage2 |
-| Related     | [`specs/eor-streamed-prover.md`](eor-streamed-prover.md), PR [#142](https://github.com/LayerZero-Labs/akita/pull/142) (`specs/cross-repo-field-microbench.md`) |
+| Related     | [`eor-streamed-prover.md`](eor-streamed-prover.md), [`digit-range-pipeline-refactor.md`](digit-range-pipeline-refactor.md), PR [#142](https://github.com/LayerZero-Labs/akita/pull/142) (`specs/cross-repo-field-microbench.md`) |
 
 ## Summary
+
+> **Coordination gate.** EOR packing may proceed. Stage 1/Stage 2 packing is blocked until
+> Packets 1-12 and the scalar gates in
+> [`digit-range-pipeline-refactor.md`](digit-range-pipeline-refactor.md) pass. Packing must
+> target the resulting flat, address-major scalar buffers and may not preserve or extend
+> the current x/y/prefix/tree architecture.
 
 Akita's sum-check and extension-opening-reduction (EOR) prover hot loops run on
 **scalar extension-field arithmetic** today: `Vec<E>` with `E = RingSubfieldFp4<Fp32>`,
