@@ -1370,14 +1370,30 @@ candidate:
    quadratics; the final range leaf uses the closed-form degree-four affine composition.
    Keep the generic recurrence only as a test oracle, never in the production hot loop.
 
-Do not add a nominal fused fold-next-scan that allocates a replacement field table,
-stores a second round polynomial owner, or introduces unsafe overlapping in-place writes.
-The current in-place fold is a much smaller phase than later-round polynomial arithmetic,
-and the direct fixed-degree formulas address the dominant cost without those ownership
-regressions. Reopen fusion only with an allocation-free design and complete-substage
-evidence. These arithmetic and lifecycle changes stay inside the canonical product stage;
-they do not create wrapper APIs, duplicate state owners, persistent runtime selectors, or
-basis-named modules.
+Do not add a fused fold-next-scan. A follow-up experiment tested the strongest plausible
+form for the current layout on LB5/LB6: allocate the required `N/4` output only once with
+uninitialized slots, materialize each post-`r_1` row pair, write those two rows, and compute
+the next product polynomial from the still-register-resident values. The candidate retained
+the selected equality-block decomposition, `DELAYED_PRODUCT_SUM_IS_EXACT` arithmetic
+branch, implicit-suffix mass, parallel block boundaries, and transcript bytes; only the
+next polynomial was cached for the following sum-check call. Thus the experiment did not
+replace the saved read with a padding-prefill pass or forgo an existing accumulator
+optimization.
+
+The faithful candidate did not win. On fresh one-thread complete-prover measurements,
+LB5 full/uniform moved from 22.546 ms to 22.821 ms (+1.22%) and LB6 full/uniform from
+40.333 ms to 40.946 ms (+1.52%). A six-thread paired pass was statistically tied
+(LB5 +1.27%, LB6 -1.91%); eight-thread runs were noisier and produced no repeatable
+candidate win. The likely explanation is that the separately materialized quarter-state
+is still cache-hot: its immediate sequential next-round scan is cheap, while interleaving
+compact-index gathers, row stores, fixed-degree arithmetic, and equality accumulation
+slightly worsens the loop. The production diff therefore retains separate materialization
+and next-round computation and does not add cached-round state, an unsafe initialization
+boundary, or a second accumulator implementation. Reconsider this fusion only after a
+material layout or working-set change makes the quarter-state scan demonstrably
+memory-bound. These arithmetic and lifecycle changes stay inside the canonical product
+stage; they do not create wrapper APIs, duplicate state owners, persistent runtime
+selectors, or basis-named modules.
 
 ### Fixed-lane kernel, not basis-specific module families
 
