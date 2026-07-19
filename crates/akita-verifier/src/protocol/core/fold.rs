@@ -1,7 +1,10 @@
 //! Shared per-fold verifier replay (EOR, stage-1/2/3, ring switch).
 
 use super::*;
-use akita_types::{build_multi_group_root_stage2_trace_table, dispatch_for_field};
+use akita_types::{
+    build_multi_group_root_stage2_trace_table, dispatch_for_field, DigitRangeEqualityPoint,
+    DigitRangePlan,
+};
 
 pub(in crate::protocol::core) struct FoldEorReplay<F: FieldCore, E: FieldCore> {
     pub(in crate::protocol::core) prepared_points: Vec<PreparedOpeningPoint<F, E>>,
@@ -289,8 +292,13 @@ where
             actual: rs.tau0.len(),
         });
     }
-    let tau0_reordered = reorder_stage1_coords(&rs.tau0, rs.col_bits, rs.ring_bits);
-    let stage1_verifier = AkitaStage1Verifier::new(tau0_reordered, rs.b);
+    let equality_point = DigitRangeEqualityPoint::from_column_then_ring_challenges(
+        &rs.tau0,
+        rs.col_bits,
+        rs.ring_bits,
+    )?;
+    let plan = DigitRangePlan::new(rs.b)?;
+    let stage1_verifier = AkitaStage1Verifier::new(equality_point, plan);
     let stage1_point = {
         let _sumcheck_span = tracing::info_span!("stage1_sumcheck").entered();
         stage1_verifier.verify::<F, T>(proof, transcript)?

@@ -46,7 +46,7 @@ pub use compute::{
     RECURSIVE_SUFFIX_RING_DIMENSIONS,
 };
 pub use protocol::fold_grind::ProverTranscriptGrind;
-pub use protocol::sumcheck::{AkitaStage1Prover, AkitaStage2Prover};
+pub use protocol::sumcheck::{AkitaStage2Prover, DigitRangeProver};
 pub use protocol::{
     batched_prove, commit_w, prove, prove_root, prove_suffix, ProveLevelOutput,
     RecursiveSuffixOutcome, RingSwitchOutput, SuffixProverState,

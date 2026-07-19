@@ -2,7 +2,7 @@ use akita_field::unreduced::HasUnreducedOps;
 use akita_field::{FieldCore, FromPrimitiveInt};
 use akita_sumcheck::{EqFactoredUniPoly, UniPoly};
 #[cfg(test)]
-use akita_types::range_check_eval_from_s;
+use akita_types::DigitRangePlan;
 
 #[cfg(test)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -517,7 +517,7 @@ pub(crate) fn accum_pointwise_signed<E: FieldCore + HasUnreducedOps, const N: us
 }
 
 #[inline(always)]
-pub(crate) fn stage1_b4_s_digit_from_m_compact_s(s: i16) -> usize {
+pub(crate) fn stage1_b4_digit_from_compact_range_image(s: i16) -> usize {
     match s {
         0 => 0,
         2 => 1,
@@ -526,7 +526,7 @@ pub(crate) fn stage1_b4_s_digit_from_m_compact_s(s: i16) -> usize {
 }
 
 #[inline(always)]
-pub(crate) fn stage1_b8_s_digit_from_m_compact_s(s: i16) -> usize {
+pub(crate) fn stage1_b8_digit_from_compact_range_image(s: i16) -> usize {
     match s {
         0 => 0,
         2 => 1,
@@ -647,7 +647,9 @@ pub(crate) fn stage1_local_norm_eval<E: FieldCore + FromPrimitiveInt>(
     b: usize,
 ) -> E {
     let s_eval = bilinear_eval_on_prefix_points(s_quad, x, y);
-    range_check_eval_from_s(s_eval, b)
+    DigitRangePlan::new(b)
+        .expect("supported test basis")
+        .evaluate_range_polynomial(s_eval)
 }
 
 /// Evaluate the raw stage-1 full-domain polynomial on
@@ -675,9 +677,9 @@ pub(crate) fn stage1_local_norm_raw_eval<E: FieldCore + FromPrimitiveInt>(
     };
 
     match (x, y) {
-        (PrefixPoint::Finite(x), PrefixPoint::Finite(y)) => {
-            range_check_eval_from_s(bilinear_eval(s_quad, x, y), b)
-        }
+        (PrefixPoint::Finite(x), PrefixPoint::Finite(y)) => DigitRangePlan::new(b)
+            .expect("supported test basis")
+            .evaluate_range_polynomial(bilinear_eval(s_quad, x, y)),
         (PrefixPoint::Infinity, PrefixPoint::Finite(y)) => pow(bx + y * dxy),
         (PrefixPoint::Finite(x), PrefixPoint::Infinity) => pow(cy + x * dxy),
         (PrefixPoint::Infinity, PrefixPoint::Infinity) => pow(dxy),

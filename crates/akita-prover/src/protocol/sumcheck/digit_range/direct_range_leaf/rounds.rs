@@ -1,6 +1,6 @@
 use super::*;
 
-impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage1Prover<E> {
+impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> DirectRangeLeafState<E> {
     pub(super) fn compute_current_round_eq_poly_from_state(&mut self) -> EqFactoredUniPoly<E> {
         let use_two_round_prefix = self.using_two_round_prefix();
         let use_prefix_x_round = !use_two_round_prefix && self.use_prefix_x_round();
@@ -20,31 +20,31 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage1Prover<E> {
         } else if self.split_eq.current_scalar().is_zero() {
             EqFactoredUniPoly::from_q_coeffs(vec![E::zero()])
         } else {
-            match &self.s_table {
-                STable::Compact => {
-                    let s_compact = &self.w_evals_compact;
+            match &self.range_image {
+                RangeImageState::Compact => {
+                    let compact_range_image = &self.digit_witness;
                     if use_prefix_x_round {
-                        self.compute_round_compact_prefix_x(s_compact)
+                        self.compute_round_compact_prefix_x(compact_range_image)
                     } else if use_sparse_x_y_round {
-                        self.compute_round_compact_sparse_x_y(s_compact)
+                        self.compute_round_compact_sparse_x_y(compact_range_image)
                     } else {
-                        compute_norm_round_eq_poly_from_s_compact(
+                        compute_norm_round_eq_poly_from_compact_range_image(
                             &self.split_eq,
-                            s_compact,
+                            compact_range_image,
                             &self.range_precomp,
                         )
                     }
                 }
-                STable::Full(s_full) => {
+                RangeImageState::Full(range_image) => {
                     if use_prefix_x_round {
-                        self.compute_round_full_prefix_x(s_full)
+                        self.compute_round_full_prefix_x(range_image)
                     } else if use_sparse_x_y_round {
-                        self.compute_round_full_sparse_x_y(s_full)
+                        self.compute_round_full_sparse_x_y(range_image)
                     } else {
                         compute_norm_round_eq_poly_from_s(
                             &self.split_eq,
                             &self.range_precomp,
-                            |j| (s_full[2 * j], s_full[2 * j + 1]),
+                            |j| (range_image[2 * j], range_image[2 * j + 1]),
                         )
                     }
                 }
@@ -60,16 +60,19 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage1Prover<E> {
         poly
     }
 
-    #[tracing::instrument(skip_all, name = "AkitaStage1Prover::fold_s_compact_to_full")]
-    pub(super) fn fold_s_compact_to_full<S: CompactSValue>(
-        s_compact: &[S],
+    #[tracing::instrument(
+        skip_all,
+        name = "DirectRangeLeafState::fold_compact_range_image_to_full"
+    )]
+    pub(super) fn fold_compact_range_image_to_full<V: CompactRangeImageValue>(
+        compact_range_image: &[V],
         fold_lut: &CompactPairFoldLut<E>,
     ) -> Vec<E> {
-        cfg_into_iter!(0..s_compact.len() / 2)
+        cfg_into_iter!(0..compact_range_image.len() / 2)
             .map(|j| {
                 fold_lut.fold(
-                    s_compact[2 * j].compact_s(),
-                    s_compact[2 * j + 1].compact_s(),
+                    compact_range_image[2 * j].range_image_value(),
+                    compact_range_image[2 * j + 1].range_image_value(),
                 )
             })
             .collect()
@@ -77,7 +80,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage1Prover<E> {
 }
 
 impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + HasOptimizedFold>
-    EqFactoredSumcheckInstanceProver<E> for AkitaStage1Prover<E>
+    EqFactoredSumcheckInstanceProver<E> for DirectRangeLeafState<E>
 {
     fn num_rounds(&self) -> usize {
         self.num_vars
@@ -105,7 +108,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + HasOptimizedFold>
 
     fn ingest_challenge(&mut self, _round: usize, r: E) {
         let t_fold = Instant::now();
-        let _span = tracing::info_span!("AkitaStage1Prover::fold_round").entered();
+        let _span = tracing::info_span!("DirectRangeLeafState::fold_round").entered();
         if self.using_two_round_prefix() {
             let rounds_completed = self.rounds_completed;
             self.split_eq.bind(r);
@@ -118,31 +121,39 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + HasOptimizedFold>
                         .first_challenge
                         .expect("round 1 ingest requires the round 0 challenge")
                 };
-                let y_len = match &self.s_table {
-                    STable::Compact => self.w_evals_compact.len() / self.live_x_cols,
-                    STable::Full(_) => panic!("two-round prefix expected compact table"),
+                let y_len = match &self.range_image {
+                    RangeImageState::Compact => self.digit_witness.len() / self.live_x_cols,
+                    RangeImageState::Full(_) => panic!("two-round prefix expected compact table"),
                 };
-                self.s_table = match std::mem::replace(&mut self.s_table, STable::Full(Vec::new()))
-                {
-                    STable::Compact => {
-                        let s_compact = &self.w_evals_compact;
+                self.range_image = match std::mem::replace(
+                    &mut self.range_image,
+                    RangeImageState::Full(Vec::new()),
+                ) {
+                    RangeImageState::Compact => {
+                        let compact_range_image = &self.digit_witness;
                         if self.ring_bits() > 2 {
-                            let (s_full, round_poly) =
-                                self.fuse_compact_to_round2_and_compute_round(s_compact, r0, r);
+                            let (range_image, round_poly) = self
+                                .fuse_compact_to_round2_and_compute_round(
+                                    compact_range_image,
+                                    r0,
+                                    r,
+                                );
                             self.cached_round_poly = Some(round_poly);
-                            STable::Full(s_full)
+                            RangeImageState::Full(range_image)
                         } else {
-                            let s_full = Self::fold_s_compact_to_round2(
-                                s_compact,
+                            let range_image = Self::fold_compact_range_image_to_round2(
+                                compact_range_image,
                                 self.live_x_cols,
                                 y_len,
                                 r0,
                                 r,
                             );
-                            STable::Full(s_full)
+                            RangeImageState::Full(range_image)
                         }
                     }
-                    STable::Full(_) => unreachable!("two-round prefix should hold compact table"),
+                    RangeImageState::Full(_) => {
+                        unreachable!("two-round prefix should hold compact table")
+                    }
                 };
             }
             self.rounds_completed += 1;
@@ -165,52 +176,66 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + HasOptimizedFold>
             use_prefix_x_round && self.next_use_prefix_x_round_after_current();
         let fuse_next_sparse_x_y =
             use_sparse_x_y_round && self.next_use_sparse_x_y_round_after_current();
-        let y_len = match &self.s_table {
-            STable::Compact => self.w_evals_compact.len() / self.live_x_cols,
-            STable::Full(s_full) => s_full.len() / self.live_x_cols,
+        let y_len = match &self.range_image {
+            RangeImageState::Compact => self.digit_witness.len() / self.live_x_cols,
+            RangeImageState::Full(range_image) => range_image.len() / self.live_x_cols,
         };
 
-        self.s_table = match std::mem::replace(&mut self.s_table, STable::Full(Vec::new())) {
-            STable::Compact => {
-                let s_compact = &self.w_evals_compact;
-                let fold_lut = Self::build_compact_s_fold_lut(self.b, r);
-                let s_full = if use_prefix_x_round {
-                    Self::fold_s_compact_prefix_x(s_compact, self.live_x_cols, y_len, &fold_lut)
-                } else {
-                    Self::fold_s_compact_to_full(s_compact, &fold_lut)
-                };
-                STable::Full(s_full)
-            }
-            STable::Full(s_full) => {
-                if use_prefix_x_round {
-                    if fuse_next_full_prefix_x {
-                        let (next_s_full, round_poly) =
-                            self.fuse_full_prefix_x_and_compute_round(&s_full, r);
-                        self.cached_round_poly = Some(round_poly);
-                        STable::Full(next_s_full)
+        self.range_image =
+            match std::mem::replace(&mut self.range_image, RangeImageState::Full(Vec::new())) {
+                RangeImageState::Compact => {
+                    let compact_range_image = &self.digit_witness;
+                    let fold_lut = Self::build_range_image_fold_lut(self.b, r);
+                    let range_image = if use_prefix_x_round {
+                        Self::fold_compact_range_image_prefix_x(
+                            compact_range_image,
+                            self.live_x_cols,
+                            y_len,
+                            &fold_lut,
+                        )
                     } else {
-                        let next_s_full =
-                            Self::fold_s_full_prefix_x(&s_full, self.live_x_cols, y_len, r);
-                        STable::Full(next_s_full)
-                    }
-                } else if use_sparse_x_y_round {
-                    if fuse_next_sparse_x_y {
-                        let (next_s_full, round_poly) =
-                            self.fuse_full_sparse_x_y_and_compute_round(&s_full, r);
-                        self.cached_round_poly = Some(round_poly);
-                        STable::Full(next_s_full)
-                    } else {
-                        let next_s_full =
-                            Self::fold_s_full_sparse_x_y(&s_full, self.live_x_cols, y_len, r);
-                        STable::Full(next_s_full)
-                    }
-                } else {
-                    let mut s_full = s_full;
-                    fold_evals_in_place(&mut s_full, r);
-                    STable::Full(s_full)
+                        Self::fold_compact_range_image_to_full(compact_range_image, &fold_lut)
+                    };
+                    RangeImageState::Full(range_image)
                 }
-            }
-        };
+                RangeImageState::Full(range_image) => {
+                    if use_prefix_x_round {
+                        if fuse_next_full_prefix_x {
+                            let (next_range_image, round_poly) =
+                                self.fuse_full_prefix_x_and_compute_round(&range_image, r);
+                            self.cached_round_poly = Some(round_poly);
+                            RangeImageState::Full(next_range_image)
+                        } else {
+                            let next_range_image = Self::fold_range_image_prefix_x(
+                                &range_image,
+                                self.live_x_cols,
+                                y_len,
+                                r,
+                            );
+                            RangeImageState::Full(next_range_image)
+                        }
+                    } else if use_sparse_x_y_round {
+                        if fuse_next_sparse_x_y {
+                            let (next_range_image, round_poly) =
+                                self.fuse_full_sparse_x_y_and_compute_round(&range_image, r);
+                            self.cached_round_poly = Some(round_poly);
+                            RangeImageState::Full(next_range_image)
+                        } else {
+                            let next_range_image = Self::fold_range_image_sparse_x_y(
+                                &range_image,
+                                self.live_x_cols,
+                                y_len,
+                                r,
+                            );
+                            RangeImageState::Full(next_range_image)
+                        }
+                    } else {
+                        let mut range_image = range_image;
+                        fold_evals_in_place(&mut range_image, r);
+                        RangeImageState::Full(range_image)
+                    }
+                }
+            };
 
         if self.in_x_phase() {
             self.live_x_cols = self.live_x_cols.div_ceil(2);
@@ -232,7 +257,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + HasOptimizedFold>
             rounds = self.num_vars,
             prefix_s = self.prefix_time_total,
             dense_s = self.dense_time_total,
-            fold_s = self.fold_time_total,
+            fold_range_image = self.fold_time_total,
             "stage1 sumcheck rounds complete"
         );
     }
@@ -259,7 +284,7 @@ pub(crate) fn pad_compact_witness(
 pub(crate) fn advance_stage1_claim<
     F: FieldCore + FromPrimitiveInt + akita_field::CanonicalField + HasUnreducedOps + HasOptimizedFold,
 >(
-    prover: &AkitaStage1Prover<F>,
+    prover: &DirectRangeLeafState<F>,
     scaled_claim: F,
     claim_scale: F,
     poly: &EqFactoredUniPoly<F>,
