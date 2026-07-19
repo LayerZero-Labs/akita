@@ -2,6 +2,7 @@ use super::compact_digit_source::CompactDigitSource;
 use super::exact_prefix::ExactPrefixTable;
 use super::range_class_tables::{
     product_coefficients, FoldedProductPairTable, OrderedProductPairCoefficients, ProductNodeTable,
+    SecondRoundProductQuartetCoefficients,
 };
 use super::round_accumulation::accumulate_equality_weighted_round;
 use super::MAX_TREE_STAGE_Q_DEGREE;
@@ -17,6 +18,11 @@ enum ProductValues<E: FieldCore, const LANES: usize> {
         source: CompactDigitSource,
         nodes: ProductNodeTable<E, LANES>,
         pair_coefficients: OrderedProductPairCoefficients<E>,
+    },
+    DeferredSecondRound {
+        source: CompactDigitSource,
+        folded_pairs: FoldedProductPairTable<E, LANES>,
+        coefficients: [E; MAX_TREE_STAGE_Q_DEGREE + 1],
     },
     Folded(ExactPrefixTable<[E; LANES]>),
 }
@@ -43,7 +49,7 @@ fn accumulate_round<E: FieldCore + HasUnreducedOps, const LANES: usize>(
     )
 }
 
-/// One eq-factored product substage over compact classes followed by folded field lanes.
+/// One eq-factored product substage that keeps compact classes through its first two rounds.
 pub(super) struct StreamingProductStage<E: FieldCore, const LANES: usize> {
     values: ProductValues<E, LANES>,
     parent_weights: Vec<E>,
@@ -170,6 +176,15 @@ impl<E: FieldCore + FromPrimitiveInt + HasOptimizedFold + HasUnreducedOps, const
                     pair_coefficients.coefficients_by_pair_index(0),
                 )
             }
+            ProductValues::DeferredSecondRound { coefficients, .. } => {
+                let _span = tracing::info_span!(
+                    "digit_range_initial_round",
+                    round = self.rounds_completed,
+                    kernel_strategy = "cached-second-round",
+                )
+                .entered();
+                *coefficients
+            }
             ProductValues::Folded(table) => {
                 let _span = tracing::info_span!(
                     "digit_range_later_round",
@@ -199,6 +214,125 @@ impl<E: FieldCore + FromPrimitiveInt + HasOptimizedFold + HasUnreducedOps, const
 
     fn ingest_challenge(&mut self, _round: usize, challenge: E) {
         self.split_eq.bind(challenge);
+        if self.rounds_completed == 0 && self.num_rounds >= 2 {
+            let deferred = match &self.values {
+                ProductValues::Compact { source, nodes, .. } => {
+                    let _span = tracing::info_span!(
+                        "digit_range_prepare_deferred_second_round",
+                        explicit_rows = source.live_len(),
+                        lane_count = LANES,
+                        kernel_strategy = if source.class_count() == 8 {
+                            "quartet-coefficient-table"
+                        } else {
+                            "factorized-pair-rescan"
+                        },
+                    )
+                    .entered();
+                    let folded_pairs =
+                        FoldedProductPairTable::new(nodes, source.class_count(), challenge);
+                    let (first, second) = self.split_eq.remaining_eq_tables();
+                    let coefficients = if source.class_count() == 8 {
+                        let _span = tracing::info_span!(
+                            "digit_range_build_second_round_quartet_table",
+                            class_count = source.class_count(),
+                            lane_count = LANES,
+                        )
+                        .entered();
+                        let ordered_pair_count = source.class_count() * source.class_count();
+                        let quartets = SecondRoundProductQuartetCoefficients::new(
+                            &folded_pairs,
+                            ordered_pair_count,
+                            self.arity,
+                            &self.parent_weights,
+                        );
+                        accumulate_equality_weighted_round(
+                            first,
+                            second,
+                            source.quartet_count(),
+                            |quartet_index| {
+                                let (left_pair, right_pair) =
+                                    source.ordered_pair_indices_for_quartet(quartet_index);
+                                quartets.coefficients_by_pair_indices(left_pair, right_pair)
+                            },
+                            quartets.coefficients_by_pair_indices(0, 0),
+                        )
+                    } else {
+                        accumulate_round(
+                            first,
+                            second,
+                            source.quartet_count(),
+                            folded_pairs.row_by_pair_index(0),
+                            |quartet_index| {
+                                let (left_pair, right_pair) =
+                                    source.ordered_pair_indices_for_quartet(quartet_index);
+                                (
+                                    folded_pairs.row_by_pair_index(left_pair),
+                                    folded_pairs.row_by_pair_index(right_pair),
+                                )
+                            },
+                            self.arity,
+                            &self.parent_weights,
+                        )
+                    };
+                    Some(ProductValues::DeferredSecondRound {
+                        source: source.clone(),
+                        folded_pairs,
+                        coefficients,
+                    })
+                }
+                ProductValues::DeferredSecondRound { .. } | ProductValues::Folded(_) => None,
+            };
+            if let Some(deferred) = deferred {
+                self.values = deferred;
+                self.rounds_completed += 1;
+                return;
+            }
+        }
+
+        if self.rounds_completed == 1 {
+            let folded_after_two_rounds = match &self.values {
+                ProductValues::DeferredSecondRound {
+                    source,
+                    folded_pairs,
+                    ..
+                } => {
+                    let _span = tracing::info_span!(
+                        "digit_range_materialize_after_two_rounds",
+                        explicit_rows = source.live_len(),
+                        lane_count = LANES,
+                        kernel_strategy = "factorized-pair-rescan",
+                    )
+                    .entered();
+                    let fold_context = E::precompute_fold(challenge);
+                    let explicit = cfg_into_iter!(0..source.quartet_count())
+                        .map(|quartet_index| {
+                            let (left_pair, right_pair) =
+                                source.ordered_pair_indices_for_quartet(quartet_index);
+                            let left = folded_pairs.row_by_pair_index(left_pair);
+                            let right = folded_pairs.row_by_pair_index(right_pair);
+                            std::array::from_fn(|lane| {
+                                E::fold_one(&fold_context, left[lane], right[lane])
+                            })
+                        })
+                        .collect();
+                    let padding_pair = folded_pairs.row_by_pair_index(0);
+                    let padding = std::array::from_fn(|lane| {
+                        E::fold_one(&fold_context, padding_pair[lane], padding_pair[lane])
+                    });
+                    Some(
+                        ExactPrefixTable::new(source.domain_len() / 4, explicit, padding)
+                            .expect("compact source and Boolean domain were validated"),
+                    )
+                }
+                ProductValues::Compact { .. } | ProductValues::Folded(_) => None,
+            };
+            if let Some(table) = folded_after_two_rounds {
+                self.values = ProductValues::Folded(table);
+                self.rounds_completed += 1;
+                return;
+            }
+        }
+
         let folded_from_compact = match &self.values {
             ProductValues::Compact { source, nodes, .. } => {
                 let _span = tracing::info_span!(
@@ -232,7 +366,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasOptimizedFold + HasUnreducedOps, const
                     .expect("compact source and Boolean domain were validated"),
                 )
             }
-            ProductValues::Folded(_) => None,
+            ProductValues::DeferredSecondRound { .. } | ProductValues::Folded(_) => None,
         };
         if let Some(table) = folded_from_compact {
             self.values = ProductValues::Folded(table);
