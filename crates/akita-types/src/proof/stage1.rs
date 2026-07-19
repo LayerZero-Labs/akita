@@ -434,8 +434,20 @@ mod tests {
     }
 
     #[test]
-    fn flat_domain_and_equality_point_check_width_and_alignment() {
+    fn flat_domain_checks_count_width_and_alignment() {
         let domain = FlatBooleanDomain::new(24, 5).expect("live prefix");
+        assert_eq!(domain.live_len(), 24);
+        assert_eq!(domain.num_vars(), 5);
+        assert_eq!(domain.domain_len(), 32);
+        assert_eq!(domain.live_block_count(2).unwrap(), 6);
+        assert!(domain.live_block_count(4).is_err());
+        assert!(FlatBooleanDomain::new(0, 5).is_err());
+        assert!(FlatBooleanDomain::new(33, 5).is_err());
+        assert!(FlatBooleanDomain::new(1, usize::MAX).is_err());
+    }
+
+    #[test]
+    fn equality_point_owns_every_column_then_ring_permutation() {
         let transcript_point = [
             F::from_u64(1),
             F::from_u64(2),
@@ -443,27 +455,34 @@ mod tests {
             F::from_u64(4),
             F::from_u64(5),
         ];
-        let point =
-            DigitRangeEqualityPoint::from_column_then_ring_challenges(&transcript_point, 3, 2)
-                .expect("checked point");
-        assert_eq!(
-            point.coordinates(),
-            &[
-                transcript_point[3],
-                transcript_point[4],
-                transcript_point[0],
-                transcript_point[1],
-                transcript_point[2]
-            ]
-        );
-        point.validate_domain(domain).expect("matching domain");
-        assert_eq!(domain.live_block_count(2).unwrap(), 6);
-        assert!(domain.live_block_count(4).is_err());
+        let domain = FlatBooleanDomain::new(24, transcript_point.len()).unwrap();
+        for column_variable_count in 0..=transcript_point.len() {
+            let ring_variable_count = transcript_point.len() - column_variable_count;
+            let point = DigitRangeEqualityPoint::from_column_then_ring_challenges(
+                &transcript_point,
+                column_variable_count,
+                ring_variable_count,
+            )
+            .expect("checked point");
+            let expected = transcript_point[column_variable_count..]
+                .iter()
+                .chain(&transcript_point[..column_variable_count])
+                .copied()
+                .collect::<Vec<_>>();
+            assert_eq!(point.coordinates(), expected);
+            assert_eq!(point.low_variable_count(), ring_variable_count);
+            point.validate_domain(domain).expect("matching domain");
+        }
+
         assert!(DigitRangeEqualityPoint::from_column_then_ring_challenges(
             &transcript_point[..4],
             3,
             2,
         )
         .is_err());
+        let short_point =
+            DigitRangeEqualityPoint::from_column_then_ring_challenges(&transcript_point[..4], 2, 2)
+                .unwrap();
+        assert!(short_point.validate_domain(domain).is_err());
     }
 }

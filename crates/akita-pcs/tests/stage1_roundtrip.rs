@@ -68,37 +68,90 @@ fn assert_stage1_roundtrip(
     }
 }
 
-#[test]
-fn stage1_verifier_rejects_malformed_plan_shapes_without_panicking() {
-    let basis = 16;
-    let transcript_point = vec![
-        F::from_u64(3),
-        F::from_u64(5),
-        F::from_u64(7),
-        F::from_u64(9),
-    ];
-    let (proof, _, equality_point) = prove_stage1_case(basis, 6, transcript_point);
-    let plan = DigitRangePlan::new(basis).unwrap();
-
-    let mut missing_child = proof.clone();
-    missing_child.stages[0].child_claims.pop();
-    let verifier = AkitaStage1Verifier::new(equality_point.clone(), plan);
-    let mut transcript = AkitaTranscript::<F>::new(labels::DOMAIN_AKITA_PROTOCOL);
-    assert!(verifier.verify(&missing_child, &mut transcript).is_err());
-
-    let mut wrong_degree = proof.clone();
-    wrong_degree.stages[0].sumcheck_proof.round_polys[0]
-        .coeffs_except_linear_term
-        .pop();
-    let verifier = AkitaStage1Verifier::new(equality_point.clone(), plan);
-    let mut transcript = AkitaTranscript::<F>::new(labels::DOMAIN_AKITA_PROTOCOL);
-    assert!(verifier.verify(&wrong_degree, &mut transcript).is_err());
-
-    let mut extra_stage = proof;
-    extra_stage.stages.push(extra_stage.stages[0].clone());
+fn assert_stage1_rejected(
+    proof: &AkitaStage1Proof<F>,
+    equality_point: DigitRangeEqualityPoint<F>,
+    plan: DigitRangePlan,
+) {
     let verifier = AkitaStage1Verifier::new(equality_point, plan);
     let mut transcript = AkitaTranscript::<F>::new(labels::DOMAIN_AKITA_PROTOCOL);
-    assert!(verifier.verify(&extra_stage, &mut transcript).is_err());
+    assert!(verifier.verify(proof, &mut transcript).is_err());
+}
+
+#[test]
+fn stage1_verifier_rejects_every_malformed_plan_shape_without_panicking() {
+    for basis in [4, 8, 16, 32, 64] {
+        let transcript_point = vec![
+            F::from_u64(3),
+            F::from_u64(5),
+            F::from_u64(7),
+            F::from_u64(9),
+        ];
+        let (proof, _, equality_point) = prove_stage1_case(basis, 6, transcript_point);
+        let plan = DigitRangePlan::new(basis).unwrap();
+
+        let mut missing_stage = proof.clone();
+        missing_stage.stages.pop();
+        assert_stage1_rejected(&missing_stage, equality_point.clone(), plan);
+
+        let mut extra_stage = proof.clone();
+        extra_stage.stages.push(extra_stage.stages[0].clone());
+        assert_stage1_rejected(&extra_stage, equality_point.clone(), plan);
+
+        for stage_index in 0..proof.stages.len() {
+            let mut missing_round = proof.clone();
+            missing_round.stages[stage_index]
+                .sumcheck_proof
+                .round_polys
+                .pop();
+            assert_stage1_rejected(&missing_round, equality_point.clone(), plan);
+
+            let mut extra_round = proof.clone();
+            let extra = extra_round.stages[stage_index].sumcheck_proof.round_polys[0].clone();
+            extra_round.stages[stage_index]
+                .sumcheck_proof
+                .round_polys
+                .push(extra);
+            assert_stage1_rejected(&extra_round, equality_point.clone(), plan);
+
+            let mut degree_too_low = proof.clone();
+            degree_too_low.stages[stage_index]
+                .sumcheck_proof
+                .round_polys[0]
+                .coeffs_except_linear_term
+                .pop();
+            assert_stage1_rejected(&degree_too_low, equality_point.clone(), plan);
+
+            let mut degree_too_high = proof.clone();
+            degree_too_high.stages[stage_index]
+                .sumcheck_proof
+                .round_polys[0]
+                .coeffs_except_linear_term
+                .push(F::from_u64(0));
+            assert_stage1_rejected(&degree_too_high, equality_point.clone(), plan);
+
+            let mut wrong_child_count = proof.clone();
+            if wrong_child_count.stages[stage_index]
+                .child_claims
+                .is_empty()
+            {
+                wrong_child_count.stages[stage_index]
+                    .child_claims
+                    .push(F::from_u64(0));
+            } else {
+                wrong_child_count.stages[stage_index].child_claims.pop();
+            }
+            assert_stage1_rejected(&wrong_child_count, equality_point.clone(), plan);
+        }
+
+        let short_point = DigitRangeEqualityPoint::from_column_then_ring_challenges(
+            equality_point.coordinates().get(..3).unwrap(),
+            2,
+            1,
+        )
+        .unwrap();
+        assert_stage1_rejected(&proof, short_point, plan);
+    }
 }
 
 #[test]
