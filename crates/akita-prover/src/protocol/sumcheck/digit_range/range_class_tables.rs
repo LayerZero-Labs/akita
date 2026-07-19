@@ -1,5 +1,5 @@
 use super::compact_digit_source::RangeImageClass;
-use super::MAX_TREE_STAGE_Q_DEGREE;
+use super::{compose_small_poly_with_affine, MAX_TREE_STAGE_Q_DEGREE};
 use akita_field::{AkitaError, FieldCore, FromPrimitiveInt};
 use akita_types::DigitRangePlan;
 
@@ -97,13 +97,11 @@ pub(super) fn product_coefficients<E: FieldCore, const LANES: usize>(
     batched
 }
 
-#[cfg(test)]
 pub(super) struct OrderedProductPairCoefficients<E: FieldCore> {
     class_count: usize,
     rows: Vec<[E; MAX_TREE_STAGE_Q_DEGREE + 1]>,
 }
 
-#[cfg(test)]
 impl<E: FieldCore + FromPrimitiveInt> OrderedProductPairCoefficients<E> {
     pub(super) fn new<const LANES: usize>(
         nodes: &ProductNodeTable<E, LANES>,
@@ -114,11 +112,11 @@ impl<E: FieldCore + FromPrimitiveInt> OrderedProductPairCoefficients<E> {
         let rows = (0..class_count * class_count)
             .map(|pair_index| {
                 let left_class = RangeImageClass::from_balanced_digit(
-                    i8::try_from(pair_index / class_count).unwrap(),
+                    i8::try_from(pair_index / class_count).expect("supported range class fits i8"),
                     class_count,
                 );
                 let right_class = RangeImageClass::from_balanced_digit(
-                    i8::try_from(pair_index % class_count).unwrap(),
+                    i8::try_from(pair_index % class_count).expect("supported range class fits i8"),
                     class_count,
                 );
                 product_coefficients(
@@ -132,6 +130,42 @@ impl<E: FieldCore + FromPrimitiveInt> OrderedProductPairCoefficients<E> {
         Self { class_count, rows }
     }
 
+    pub(super) fn coefficients(
+        &self,
+        left: RangeImageClass,
+        right: RangeImageClass,
+    ) -> [E; MAX_TREE_STAGE_Q_DEGREE + 1] {
+        self.rows[left.index() * self.class_count + right.index()]
+    }
+}
+
+/// Complete round-zero polynomial coefficients indexed by two range-image classes.
+pub(super) struct OrderedRangePairCoefficients<E: FieldCore> {
+    class_count: usize,
+    rows: Vec<[E; MAX_TREE_STAGE_Q_DEGREE + 1]>,
+}
+
+impl<E: FieldCore + FromPrimitiveInt> OrderedRangePairCoefficients<E> {
+    pub(super) fn new(class_count: usize, polynomial_coefficients: &[E]) -> Self {
+        let rows = (0..class_count * class_count)
+            .map(|pair_index| {
+                let left = RangeImageClass::from_balanced_digit(
+                    i8::try_from(pair_index / class_count).expect("supported range class fits i8"),
+                    class_count,
+                )
+                .range_image::<E>();
+                let right = RangeImageClass::from_balanced_digit(
+                    i8::try_from(pair_index % class_count).expect("supported range class fits i8"),
+                    class_count,
+                )
+                .range_image::<E>();
+                compose_small_poly_with_affine(polynomial_coefficients, left, right - left)
+            })
+            .collect();
+        Self { class_count, rows }
+    }
+
+    #[inline(always)]
     pub(super) fn coefficients(
         &self,
         left: RangeImageClass,
@@ -196,6 +230,40 @@ mod tests {
                     4 => check_lanes!(4),
                     8 => check_lanes!(8),
                     lanes => panic!("unexpected test lane count {lanes}"),
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn ordered_range_pairs_match_direct_affine_composition() {
+        for basis in [16, 32, 64] {
+            let plan = DigitRangePlan::new(basis).unwrap();
+            let coefficients = plan.batch_leaf_polynomials(
+                &plan.interstage_batch_weights(F::from_u64(7), plan.leaf_factor_count()),
+                &plan.leaf_coeffs::<F>(),
+            );
+            let pairs = OrderedRangePairCoefficients::new(basis / 2, &coefficients);
+            for left_index in 0..basis / 2 {
+                for right_index in 0..basis / 2 {
+                    let left = RangeImageClass::from_balanced_digit(
+                        i8::try_from(left_index).unwrap(),
+                        basis / 2,
+                    );
+                    let right = RangeImageClass::from_balanced_digit(
+                        i8::try_from(right_index).unwrap(),
+                        basis / 2,
+                    );
+                    let left_value = left.range_image::<F>();
+                    let right_value = right.range_image::<F>();
+                    assert_eq!(
+                        pairs.coefficients(left, right),
+                        compose_small_poly_with_affine(
+                            &coefficients,
+                            left_value,
+                            right_value - left_value,
+                        )
+                    );
                 }
             }
         }

@@ -1,7 +1,11 @@
-use super::compact_digit_source::CompactDigitSource;
+use super::compact_digit_source::{CompactDigitSource, RangeImageClass};
 use super::exact_prefix::{ExactPrefixTable, SplitEqualitySuffixMass};
-use super::range_class_tables::{product_coefficients, ProductNodeTable};
-use super::round_accumulation::{add_scaled_round_coefficients, split_equality_weight};
+use super::range_class_tables::{
+    product_coefficients, OrderedProductPairCoefficients, ProductNodeTable,
+};
+use super::round_accumulation::{
+    accumulate_precomputed_round, add_scaled_round_coefficients, split_equality_weight,
+};
 use super::MAX_TREE_STAGE_Q_DEGREE;
 use akita_algebra::split_eq::GruenSplitEq;
 use akita_field::parallel::*;
@@ -14,6 +18,7 @@ enum ProductValues<E: FieldCore, const LANES: usize> {
     Compact {
         source: CompactDigitSource,
         nodes: ProductNodeTable<E, LANES>,
+        pair_coefficients: OrderedProductPairCoefficients<E>,
     },
     Folded(ExactPrefixTable<[E; LANES]>),
 }
@@ -100,8 +105,23 @@ impl<E: FieldCore + FromPrimitiveInt, const LANES: usize> StreamingProductStage<
             .entered();
             ProductNodeTable::new(plan, leaf_polynomials, stage_index)?
         };
+        let pair_coefficients = {
+            let _span = tracing::info_span!(
+                "digit_range_build_pair_coefficients",
+                stage_index,
+                arity,
+                lane_count = LANES,
+                class_count = plan.basis() / 2,
+            )
+            .entered();
+            OrderedProductPairCoefficients::new(&nodes, plan.basis() / 2, arity, &parent_weights)
+        };
         Ok(Self {
-            values: ProductValues::Compact { source, nodes },
+            values: ProductValues::Compact {
+                source,
+                nodes,
+                pair_coefficients,
+            },
             parent_weights,
             split_eq: GruenSplitEq::new(equality_point)?,
             input_claim,
@@ -144,27 +164,30 @@ impl<E: FieldCore + FromPrimitiveInt + HasOptimizedFold, const LANES: usize>
     fn compute_round_eq_factored(&mut self, _round: usize) -> EqFactoredUniPoly<E> {
         let (first, second) = self.split_eq.remaining_eq_tables();
         let coefficients = match &self.values {
-            ProductValues::Compact { source, nodes } => {
+            ProductValues::Compact {
+                source,
+                pair_coefficients,
+                ..
+            } => {
                 let _span = tracing::info_span!(
                     "digit_range_initial_round",
                     round = self.rounds_completed,
                     explicit_rows = source.live_len(),
-                    kernel_strategy = "node-evaluation",
+                    kernel_strategy = "ordered-pair-coefficients",
                 )
                 .entered();
-                accumulate_round(
+                accumulate_precomputed_round(
                     first,
                     second,
                     source.live_len().div_ceil(2),
-                    nodes.padding_row(),
                     |pair_index| {
-                        (
-                            nodes.row(source.class_or_padding(2 * pair_index)),
-                            nodes.row(source.class_or_padding(2 * pair_index + 1)),
+                        pair_coefficients.coefficients(
+                            source.class_or_padding(2 * pair_index),
+                            source.class_or_padding(2 * pair_index + 1),
                         )
                     },
-                    self.arity,
-                    &self.parent_weights,
+                    pair_coefficients
+                        .coefficients(RangeImageClass::PADDING, RangeImageClass::PADDING),
                 )
             }
             ProductValues::Folded(table) => {
@@ -197,7 +220,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasOptimizedFold, const LANES: usize>
     fn ingest_challenge(&mut self, _round: usize, challenge: E) {
         self.split_eq.bind(challenge);
         let folded_from_compact = match &self.values {
-            ProductValues::Compact { source, nodes } => {
+            ProductValues::Compact { source, nodes, .. } => {
                 let _span = tracing::info_span!(
                     "digit_range_materialize_folded_lanes",
                     round = self.rounds_completed,

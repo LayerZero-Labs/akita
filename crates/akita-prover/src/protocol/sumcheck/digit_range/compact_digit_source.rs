@@ -75,6 +75,10 @@ impl CompactDigitSource {
         self.domain.domain_len()
     }
 
+    pub(super) fn class_count(&self) -> usize {
+        self.class_count
+    }
+
     #[inline(always)]
     pub(super) fn class_or_padding(&self, index: usize) -> RangeImageClass {
         self.digits
