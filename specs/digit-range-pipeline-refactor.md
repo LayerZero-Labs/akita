@@ -4,7 +4,7 @@
 |---|---|
 | Author(s) | Quang Dao (direction); Codex planning synthesis |
 | Created | 2026-07-18 |
-| Revised | 2026-07-19; concurrent Opus/Fable review reconciled; per-level setup prefixes, verifier-time selection objective, staged 7a/7b cutover, gated `Batched`, envelope-level `setup_contribution_eval`, shared-emitter ownership, and current #311 stack recorded |
+| Revised | 2026-07-19; concurrent Opus/Fable review reconciled; per-level setup prefixes, verifier-time selection objective, staged 7a/7b cutover, gated `Batched`, envelope-level `setup_contribution_eval`, shared-emitter ownership, current #311 stack, and bounded additive/cutover PR delivery model recorded |
 | Status | implementation-ready after #309 integration; planning branch stacked on #311 |
 | Planning branch | `quang/plan-digit-range-pipeline` |
 | Stack base | PR #311 at `49353bf829e3f7b56059e513ae9053b72897cf2f` |
@@ -159,8 +159,9 @@ deletions, packet order, test oracles, and quantitative stop gates.
 | Planner/serialization | proof-size accounting, planner integration, setup eligibility | 1-2, 7, 9 |
 | Upstream digit pipeline | `Upstream prover digit production` | 10 |
 
-No owner may begin a later production packet while an earlier packet's exit gate is open.
-Test-only prototypes may run ahead only where the packet text explicitly allows them.
+Owners may investigate later packets in test/bench branches, but a production PR may not
+merge across an open predecessor gate. The central stack ledger below, not branch age or
+implementation convenience, determines merge order.
 
 ## Non-negotiable outcomes
 
@@ -773,6 +774,11 @@ pub enum RecursiveClaimReductionPlan {
     Batched(SetupWitnessBatchGeometry),
 }
 ```
+
+This is the final form only if E8 is admitted. Through C7, the recursive topology owns
+`SeparateReductionShape` directly and there is no one-variant
+`RecursiveClaimReductionPlan`; E8 introduces the enum only when `Batched` becomes a real
+second production shape.
 
 The descriptor authenticates this choice before proof messages. Headerless serialization
 uses the authenticated shape and carries no enum tag. Prover, verifier, level/root proof
@@ -1865,6 +1871,12 @@ pub struct FoldLevelProof<F: FieldCore, E: FieldCore> {
 ```
 
 The sketches name ownership; use the repository's actual generic and container types.
+They show the final target after optional ledger PR E8. Packet 7b stores
+`SetupContributionProof` and `RangeImageConsistencyProof` directly in the recursive
+variant; it must not add a one-variant `RecursiveClaimReductionProof`, an empty `Batched`
+placeholder, or a forwarding accessor. E8 introduces the two-variant enum and
+`BatchedSetupAndRangeImageProof` only if the batched gate passes, while preserving the
+existing direct and separate encodings.
 `setup_contribution_eval` closes Stage 1 and is absorbed before any Stage 2 challenge, so
 it lives exactly once in the `RecursiveSetupOffload` envelope — matching the wire's
 common prefix below — rather than duplicated across the two reduction variants.
@@ -2399,10 +2411,10 @@ First mixed-role release policy:
   emits a diagnostic. A prover/verifier given either scheduled recursive variant with
   a missing or mismatched slot returns `InvalidSetup`; it never dynamically downgrades the
   mode or changes proof shape.
-- `RecursiveClaimReductionPlan::Separate` additionally requires a next-level opening route
-  for two independent points. `RecursiveClaimReductionPlan::Batched` requires validated
-  lift/suffix geometry. Both require the complete setup and witness opening route promised
-  by the level envelope.
+- C7's direct `SeparateReductionShape` additionally requires a next-level opening route
+  for two independent points. If E8 lands, `RecursiveClaimReductionPlan::Batched`
+  requires validated lift/suffix geometry. Both require the complete setup and witness
+  opening route promised by the level envelope.
 - A `128/64/32` recursive setup path requires a separately generated, committed, and
   audited D32 setup-prefix slot. Parameterize the APIs now, but do not pretend the D64
   artifact serves D32.
@@ -2532,11 +2544,111 @@ prepare_opening_digits
 These are phases, not forwarding wrappers. If a proposed type does not eliminate a clone,
 centralize validation, or establish an invariant, do not add it.
 
+## Delivery model: central hub, bounded PRs, and atomic cutovers
+
+This document is the central implementation hub. It owns the target architecture, packet
+contracts, dependency order, PR ledger, benchmark gates, and accepted deviations. A child
+PR may refine implementation detail, but it must update the affected ledger row and this
+document in the same diff when it changes a dependency, invariant, cutover boundary, or
+performance gate. Do not create a second branch-local design spec.
+
+The work must not live as one long-running mega-PR. Deliver it as short tranches. Each
+tranche has zero or more additive/behavior-preserving foundation PRs followed by exactly
+one atomic production cutover PR. Merge a completed tranche before opening the next
+production tranche; rebase the next branch on the new `main` instead of carrying the full
+historical stack indefinitely. Investigations and benchmarks may run in parallel, but
+their production branches do not merge out of ledger order.
+
+### What “additive” permits
+
+An additive foundation PR may merge independently only when every added artifact is
+already useful and exercised without creating a second protocol implementation:
+
+- test-only dense oracles, differential fixtures, and fixed benchmark scenarios;
+- checked plan/domain types that immediately replace duplicated validation or sizing
+  authority while preserving current proof bytes and transcript events;
+- arithmetic, pair-scan, fold, and provider primitives called directly by the current
+  production path with byte-identical behavior;
+- private candidate kernels confined to `#[cfg(test)]` or benches until a winner is
+  selected.
+
+“Additive” does **not** permit an unused production prover/verifier, a feature-flagged
+second engine, ignored proof fields, a dormant schedule variant, a compatibility decoder,
+or an adapter whose only job is to keep old and new APIs alive together. If a foundation
+cannot stand on its own under those rules, keep it as a stacked draft and merge it only
+back-to-back with its cutover.
+
+### Atomic cutover rule
+
+The closing PR of each tranche must, in one diff:
+
+1. select the new canonical entry point from every affected production caller;
+2. update the prover, verifier, authenticated plan, proof shape, sizing, serialization,
+   transcript, schedules, and generated artifacts that the feature actually changes;
+3. delete the replaced implementation, names, wrappers, decoders, and runtime selector;
+4. prove old/new parity or the declared protocol delta against the tranche baseline; and
+5. update this ledger with the final PR, head, measurements, and any approved deviation.
+
+No follow-up “cleanup PR” may be required to make a cutover single-source-of-truth. Later
+optimization PRs may improve the new canonical implementation, but they may not finish a
+deletion owed by the cutover that activated it.
+
+### Planned PR stack
+
+Branch names are recommended names, not API. `Base` is the required semantic predecessor;
+once a tranche merges, descendants rebase onto the resulting `main`. Every implementation
+PR fills its `PR / status` and evidence cells before it becomes ready for review.
+
+| ID | Recommended branch | Base | Packets | Kind | Bounded responsibility | PR / status |
+|---|---|---|---:|---|---|---|
+| H | `quang/plan-digit-range-pipeline` | #311 | hub | specification | This architecture, stack ledger, gates, and cross-PR diff ownership | current planning PR |
+| B0 | existing prerequisite branches | H, then `main` | 0 | prerequisite cutover | Land #311; rebase/land #309; reconcile #310/#308 as required; ratify exact implementation base | planned |
+| A1 | `quang/digit-range-01-baselines` | B0 | 1 | additive | Stable bench, tracing, allocation counters, dense range/relation oracles, proof-byte and transcript baselines | planned |
+| A2 | `quang/digit-range-02-range-plans` | A1 | 2 | additive / behavior-preserving | Canonical checked range plans and points replace duplicate shape/validation authority; current wire only | planned |
+| C2 | `quang/digit-range-03-range-architecture` | A2 | 3 | atomic internal cutover | Make one `DigitRangeProver` own all current range choreography and delete duplicate prover/module facades | planned |
+| C3 | `quang/digit-range-04-streaming-cutover` | C2 | 4 | atomic compute cutover | Make the generic streaming prover canonical for LB2-LB6 and delete eager forest/padded-table production paths | planned |
+| O4a | `quang/digit-range-05-lb4-kernel` | C3 | 5 | bounded optimization | Select and install the LB4 winner; delete candidates and knobs | planned |
+| O4b | `quang/digit-range-06-lb5-kernel` | O4a | 5 | bounded optimization | Select and install the LB5 winner; delete candidates and knobs | planned |
+| O4c | `quang/digit-range-07-lb6-kernel` | O4b | 5 | bounded optimization | Select and install the LB6 winner; delete candidates and knobs | planned |
+| C5 | `quang/digit-range-08-flat-relations` | O4c | 6 | atomic compute/API cutover | Move current direct relation/setup evaluation to the flat semantic providers; delete public x/y and sentinel paths with unchanged wire | planned |
+| C6 | `quang/digit-range-09-direct-fold-check` | C5 | 7a | atomic direct cutover | Install the semantic direct fold-check container, keep direct bytes unchanged, unschedule recursive offload, and delete legacy recursive Stage 2/3 | planned |
+| C7 | `quang/digit-range-10-recursive-two-stage` | C6 and #310 integration | 7b | atomic protocol cutover | Add the fused recursive Stage 1 leaf and `Separate` Stage 2 reduction across proof/prover/verifier/wire/sizing/schedules | planned |
+| E8 | `quang/digit-range-11-batched-reduction` | C7 | optional target | atomic capability cutover | Add and emit `Batched` across plan/proof/prover/verifier/wire/sizing only if complete-size and differential gates beat `Separate`; otherwise add no production shape | planned / optional |
+| M9 | `quang/digit-range-12-mixed-dimensions` | C7 or E8 | 8 | atomic compute/capability cutover | Extend canonical providers to mixed role dimensions under the fixed two-stage proof language and remove the mixed-plus-setup rejection | planned |
+| M10 | `quang/digit-range-13-mixed-planner` | M9 | 9 | capability enablement | Price and schedule eligible mixed/offloaded candidates; regenerate only approved rows | planned |
+| O11 | `quang/digit-range-14-prover-cleanup` | M10 | 10 | bounded optimization | Destination-oriented digit emission, nonce/fold workspace reuse, and invariant-bearing constructor split | planned |
+| O12 | `quang/digit-range-15-verifier-kernels` | O11 | 11 | bounded optimization | Port only measured structured verifier kernels onto the canonical providers | planned |
+| D13 | `quang/digit-range-16-docs-packing-handoff` | O12 | 12 | closure | Final audit, book/spec/profile synchronization, scalar packing handoff; no deferred cutover deletion | planned |
+
+O4a/O4b/O4c are written linearly to minimize hot-file conflicts, but their candidate
+experiments may run as sibling branches from C3. Only the measured winner for each basis
+is rebased into the listed production order. E8 is optional: if `Batched` does not beat
+`Separate`, record the stop result in this hub and skip directly to M9.
+
+### Per-PR review and merge protocol
+
+Every PR in the stack must state:
+
+- its ledger ID, exact base SHA, head SHA, and immediate predecessor PR;
+- the cumulative tranche baseline used for correctness and performance comparison;
+- the one production authority it adds, replaces, or optimizes;
+- whether proof bytes/transcript are identical or intentionally cut over;
+- deleted symbols and the `rg`/guardrail evidence that no second path remains;
+- tests, benchmark cells, allocation results, and unresolved gates;
+- the next ledger ID, without claiming that later work is already implemented.
+
+Review the immediate `base...head` diff for boundedness and the tranche-base cumulative
+diff for architectural coherence. Merge foundation PRs only when independently valid;
+then merge the cutover promptly after its gates pass. If another Akita PR changes a base,
+provider, schedule, or proof shape, update this hub first, rebase the earliest affected
+unmerged PR, and rebuild all descendants. Never merge around the conflict with a wrapper.
+
 ## Execution map and risk register
 
-The merge order is linear even where investigations may run in parallel. Before Packet 7,
-each arrow means the previous packet's deletions, byte-identity gates, and benchmark
-report are complete. Packet 7 is the one intentional wire cutover:
+The packet order is linear even where investigations may run in parallel. The PR ledger
+above is the delivery authority; the packet graph below is the technical dependency map.
+Before each cutover, its foundation packet's deletions, byte-identity gates, and benchmark
+report must be complete. Packet 7 is deliberately split into two bounded cutovers:
 
 ```text
 0 #311 terminal baseline + #309 semantic bases
@@ -2546,7 +2658,8 @@ report are complete. Packet 7 is the one intentional wire cutover:
   -> 4 streaming high-basis reference
   -> 5 measured per-basis winners
   -> 6 flat relation-provider cleanup under the current wire
-  -> 7 atomic two-stage protocol cutover
+  -> 7a direct semantic cutover and recursive capability removal
+  -> 7b atomic recursive two-stage protocol cutover
   -> 8 mixed common-base relation and setup providers
   -> 9 mixed-candidate planner rollout and cost model
   -> 10 upstream digit-emission cleanup
@@ -2564,7 +2677,7 @@ target or carrying dual protocol shapes across packet boundaries.
 | Derived-table padding mistaken for zero | Valid proofs drift because omitted Stage 1 suffixes have nonzero leaf/product values | Differentially test every round against the dense oracle; require per-lane defaults and exact split-equality suffix mass before deleting it |
 | Delayed-reduction overflow | Release-only proof corruption | Establish an accumulator-specific term bound and chunk reduction rule; reject a specialization whose bound cannot be proved |
 | A pre-cutover cleanup changes the wire | Existing schedules drift before the versioned migration | Compare proof bytes, logging-transcript events, round messages, challenges, claims, and final points after every Packet 2-6 semantic move |
-| Two-stage cutover is only partial | Prover, verifier, sizing, or transcript still interprets numeric Stage 3 fields | Land proof types, schedule plan, prover, verifier, serializer, transcript labels, sizing, and deletion atomically in Packet 7 |
+| Two-stage cutover is only partial | Prover, verifier, sizing, or transcript still interprets numeric Stage 3 fields | Packet 7a deletes the legacy recursive protocol while unscheduling the capability; Packet 7b adds the complete new recursive proof, plan, prover, verifier, serializer, transcript, sizing, and schedules atomically |
 | Mixed-role point slicing is wrong | Direct and recursively proved full setup contributions disagree | Use typed points; test dense/factorized provider equality and direct/recursive full-scalar equality for every supported tuple |
 | Generic abstraction hides algebra | Degree or batching coefficients are applied twice or omitted | No semantic engine traits or expression graph; Stage 1 and Stage 2 equations remain in their owning modules and are reviewed independently |
 | Microbenchmark win regresses the prover | LUT construction, cache misses, allocations, or parallel overhead erase a hot-loop gain | Gate on whole-substage and whole-prover ratios as well as the kernel; delete the losing path and its knob |
@@ -2582,11 +2695,13 @@ The only deliberately unresolved items are benchmark experiments, not architectu
 
 ## Implementation packets
 
-Each packet is a review boundary. A temporary oracle may exist under tests while its
-replacement is differentially validated; it must be deleted from production before the
-packet merges. Packets 0-6 are homogeneous transcript/wire preserving. Packet 7 is the
-single authenticated protocol cutover specified in this document. Packets 8-12 must be
-byte-identical to the new protocol for a fixed `FoldCheckPlan`.
+Packets are technical acceptance scopes; the central ledger above maps them to bounded
+PRs and is normative for delivery. A temporary oracle may exist under tests while its
+replacement is differentially validated; it must not become a second production path.
+Packets 0-6 are homogeneous transcript/wire preserving. Packet 7a is a byte-identical
+direct cutover with recursive offloading deliberately unscheduled; Packet 7b is the
+authenticated recursive protocol cutover. Packets 8-12 must be byte-identical to the new
+protocol for a fixed `FoldCheckPlan`.
 
 ### Packet 0: establish the #311 + #309 implementation base
 
@@ -2799,73 +2914,92 @@ byte-identical; dense providers match current round polynomials at every round; 
 constructors contain no raw x/y geometry; qualifying homogeneous production provider
 state remains at most `N/g`; uniform performance is at most 1.02x baseline.
 
-### Packet 7: atomic direct/offloaded protocol cutover
+### Packet 7: bounded direct and recursive protocol cutovers
 
-**Goal:** install the clean two-stage protocol in one indivisible review/merge unit.
+**Goal:** install the clean two-stage protocol through two independently atomic PRs,
+without maintaining old and new recursive engines together.
 
-The review boundary is one unit, but the merge may be staged as 7a/7b to bound blast
-radius: 7a lands the complete new types, composers, serializer, verifier, and planner
-schema with regenerated schedules emitting only `DirectSetup`, and deletes the legacy
-Stage 2/Stage 3 recursive path in the same merge; 7b regenerates recursive-offload
-schedules and proves the recursive gates against the Packet 1 legacy baseline. Between 7a
-and 7b recursive offloading is temporarily unscheduled — an accepted capability gap, not
-a dual architecture. Schedule gating is not a dormant engine: the recursive composers are
-production code selected by the authenticated descriptor, and no legacy path survives 7a.
+Packet 7a is the direct semantic cutover. It lands the direct `FoldCheckPlan`, direct proof
+container/composer, serializer, verifier, sizing, and schedules with byte-identical
+`DirectSetup` behavior. In the same PR it disables recursive-offload schedules and deletes
+the legacy recursive Stage 2/Stage 3 path. Recursive joint-leaf and claim-reduction code
+may still exist in tests/benches, but not as an unused production engine. The temporary
+capability gap is explicit and reviewable: after 7a, every non-terminal production level
+is direct and every production proof has one canonical interpretation.
 
-Within the recursive reduction shapes, `Separate` is the mandatory cutover scope. The
-wire schema, descriptors, and validation for `Batched` land with the cutover so no second
-wire migration is ever needed, but the planner emits `Batched` only after it passes its
-own complete-size and differential gates; until then every scheduled recursive level uses
-`Separate`.
+Packet 7b is the recursive protocol cutover. It extends the authenticated plan and proof
+shape with `RecursiveSetupOffload` and lands the joint Stage 1 leaf, Stage 2 reduction,
+prover, verifier, serializer, sizing, setup-route validation, planner selection, and
+regenerated recursive schedules in the same PR. There is no legacy recursive decoder or
+fallback to revive. #310's distributed recursive schedules must already be integrated or
+7b cannot claim distributed coverage.
 
-**Actions:**
+`Separate` is the complete Packet 7b scope. `Batched` does not land dormant in 7b: optional
+ledger PR E8 adds its plan variant, proof shape, prover, verifier, sizing, validation, and
+schedule emission atomically only after it beats `Separate` on complete-size and
+differential gates. Existing direct and separate encodings remain unchanged because the
+authenticated schedule selects a headerless shape; E8 is a new schedule capability, not
+a compatibility migration. If the gate fails, no production `Batched` variant or code is
+added.
 
-- add `FoldCheckPlan` and authenticate topology, domains, role dimensions, coordinate/lift
-  convention, recursive reduction shape, and exact setup slot before proof messages;
+**7a actions:**
+
+- add the direct-only `FoldCheckPlan` and direct semantic proof container;
+- migrate `next_witness_binding` into the common non-terminal envelope, preserving both
+  #311 variants and exact bytes;
+- route direct prover, verifier, serializer, deserializer, proof sizing, and schedules to
+  the new direct authority;
+- remove recursive-offload schedule rows and reject recursive plans at validation;
+- delete the legacy recursive Stage 2/Stage 3 prover, verifier, proof fields, accessors,
+  sizing branches, and decoders;
+- preserve #311 terminal proof shape, transcript, direct checks, and bytes exactly.
+
+**7b actions:**
+
+- extend 7a's `FoldCheckPlan` and authenticate topology, domains, role dimensions,
+  coordinate/lift convention, and exact setup slot before proof messages;
 - retain direct setup's range-only Stage 1 and standard degree-3 Stage 2
   relation/range-image composer, now over the canonical flat providers;
 - add the recursive standard joint final leaf with degrees 3/5, two independent folded
   lanes, signed-digit loads outside `RangeImageClass`, and the standard-leaf suffix rule;
 - implement consuming `DeferredRangeRelationCheck` and close it with the full setup
   contribution before any Stage 2 challenge;
-- implement `RangeImageConsistencyProof` and `SetupContributionProof`; land the standard
-  degree-3 batched proof, including unequal-domain lift/scaling, as schema plus validated
-  implementation, with planner emission gated behind its own complete-size and
-  differential evidence per the staging rule above;
-- implement `RecursiveClaimReductionPlan::{Separate,Batched}` and validate opening-route
-  eligibility before transcript mutation;
-- replace proof types, root/level envelopes, shape descriptors, proof-size formulas,
-  serializer/deserializer, transcript labels/version, prover, verifier, and schedules
-  together;
-- update the planner schema/emitter with `FoldCheckTopology` and
-  `RecursiveClaimReductionPlan`, implement the complete-size selector and route/slot
-  eligibility needed by current homogeneous candidates, and regenerate every affected
-  homogeneous schedule artifact in this same packet;
+- implement `RangeImageConsistencyProof` and `SetupContributionProof`, stored directly in
+  the recursive proof; validate opening-route eligibility before transcript mutation;
+- extend proof types, shape descriptors, proof-size formulas, serializer/deserializer,
+  transcript labels/version, prover, verifier, and schedules together without changing
+  7a direct bytes;
+- update the planner schema/emitter with `FoldCheckTopology`, with `Separate` as the only
+  recursive reduction and no one-variant reduction enum; implement the complete-size
+  selector and route/slot eligibility needed by current homogeneous candidates, and
+  regenerate every affected homogeneous schedule artifact in this same packet;
 - when #310 is present, update its one canonical distributed-setup-offload e2e fixture and
   schedule assertions from numeric Stage 3 to semantic recursive Stage 2; do not add a
   parallel digit-range-specific copy of that fixture;
-- move #311's `next_witness_binding` to the common non-terminal envelope and preserve both
-  its outer-commitment payload and zero-byte terminal-inner-state case; use
+- preserve 7a's common `next_witness_binding` envelope and both #311 payload cases; use
   `scaled_fold_witness` outside math;
 - leave #311 `TerminalLevelProof`, direct terminal ring/trace checks, transcript order, and
   wire bytes unchanged; assert that `FoldCheckPlan` rejects terminal construction;
-- delete `AkitaStage3Prover`, `SetupSumcheckProof`, `stage3_sumcheck_proof`,
-  `BatchedStage3Geometry`, numeric-stage modules/fields/accessors, panicking cross-variant
-  accessors, and all legacy decoders/wrappers;
+- assert that 7a already deleted `AkitaStage3Prover`, `SetupSumcheckProof`,
+  `stage3_sumcheck_proof`, `BatchedStage3Geometry`, numeric-stage
+  modules/fields/accessors, panicking cross-variant accessors, and legacy decoders/wrappers;
 - enforce every degree and received count from `FoldCheckPlan` before allocation.
 
-The cutover is accepted only if actual serialization matches all formulas, non-terminal
-direct proof size is unchanged, #311 terminal bytes/events are unchanged, and every
-scheduled recursive-offload target is no larger than its legacy counterpart in complete
-bytes with measured verifier time improved.
+The 7b cutover is accepted only if actual serialization matches all direct/separate
+formulas, non-terminal direct proof size is unchanged, #311 terminal bytes/events are
+unchanged, and every scheduled recursive-offload target is no larger than its legacy
+counterpart in complete bytes with measured verifier time improved.
 Compare complete old `Stage1+Stage2+Stage3` with complete new `Stage1+Stage2` for the same
 non-terminal fold; round-only arithmetic is insufficient.
 
-**Exit:** no production `stage3` identifier or legacy proof reader remains; direct proving
-time, witness scan count, allocation count, and bytes do not regress beyond the cutover
-gate; recursive proof bytes do not increase and recursive verifier time decreases against
-the legacy recursive baseline; prover/verifier logging transcripts match
-the new semantic oracle exactly.
+**7a exit:** direct proof bytes/events are unchanged, recursive schedules are absent, no
+production `stage3` identifier or legacy recursive proof reader remains, and no dormant
+recursive production composer is present.
+
+**7b exit:** direct proving time, witness scan count, allocation count, and bytes do not
+regress beyond the cutover gate; recursive proof bytes do not increase and recursive
+verifier time decreases against the legacy recursive baseline; prover/verifier logging
+transcripts match the new semantic oracle exactly.
 
 ### Packet 8: generalize common-base relation and setup providers to mixed dimensions
 
@@ -2945,6 +3079,10 @@ baseline with a material win on targeted structured cases.
 ### Packet 12: docs and downstream packing handoff
 
 **Goal:** make code, book, active specs, and profiles agree.
+
+Packet 12 is a closure audit, not a place to finish old-code deletion. If a superseded
+production path from C3, C5, C6, or C7 still exists, reopen that cutover gate instead of
+deferring the cleanup here.
 
 Update at least:
 
@@ -3113,7 +3251,12 @@ distributions, and both thread modes declared above. The LB6 primary target is f
   from baseline; allocation count and total allocated bytes do not grow in any primary
   LB4/LB5/LB6 cell.
 
-### Atomic protocol-cutover gate (Packet 7)
+### Atomic protocol-cutover gates (Packets 7a and 7b)
+
+Packet 7a must first prove direct byte/transcript identity, preserve #311 terminal
+behavior, remove every legacy recursive Stage 2/3 production path, and emit no recursive
+schedule. Packet 7b then applies all recursive requirements below against Packet 1's
+legacy recursive baseline; it may not rely on a compatibility decoder or fallback path.
 
 All of the following are hard requirements:
 
@@ -3126,7 +3269,8 @@ All of the following are hard requirements:
   only with the verifier-time improvement below;
 - each scheduled recursive target's measured verifier time improves on its legacy
   recursive baseline;
-- formula sizes equal actual serialization for direct, separate, and batched shapes;
+- in 7b, formula sizes equal actual serialization for direct and separate shapes; E8 must
+  add the same gate for batched before that shape exists in production;
 - direct complete fold-check prove time is at most `1.02x` its Packet 6 baseline in every
   primary cell, with identical signed-witness scan/fold count and no allocation growth;
 - recursive complete fold-check prove time is at most `1.02x` baseline in every primary
@@ -3159,14 +3303,15 @@ line-count script:
   most 10% under the documented `llvm-size`/symbol method;
 - any specialization that fails its basis gate is removed, not left dormant.
 
-At the end of Packet 7, measured with Packet 1's combined Stage 2/Stage 3 ownership closure
+At the end of Packet 7b, measured with Packet 1's combined Stage 2/Stage 3 ownership closure
 (including moved provider/pair-scan code and stage-owned prefix functions):
 
 - non-test relation/range-image/setup-reduction production code falls by at least 30% and
   at least 900 lines relative to the old Stage 2 plus Stage 3 closure;
 - `x_prefix`, `y_prefix`, `sparse_y`, and the old dual-geometry dispatch modules are gone;
 - public final-leaf-composer/reduction constructors do not exceed the two scheduled
-  topologies and two recursive reduction shapes;
+  topologies and one recursive reduction shape; E8 may raise the latter to two only when
+  its batched gate passes;
 - moving code to a generic/provider module does not remove it from the measured ownership
   closure;
 - allocation count and total allocated bytes do not grow on any direct uniform primary
