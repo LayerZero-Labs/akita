@@ -211,14 +211,20 @@ class ProfileBenchReportTests(unittest.TestCase):
         self.assertNotIn("r_pos", report)
 
     def test_proof_breakdown_marks_absent_components(self) -> None:
-        from scripts.profile_bench_report import extract_summary, render_proof_levels
+        from scripts.profile_bench_report import (
+            extract_summary,
+            proof_level_component_bytes,
+            render_proof_levels,
+        )
 
         log = (
-            'INFO proof fold level label=onehot_fp128_d64 level=0 d=64 total_bytes=4 '
+            'INFO proof fold level label=onehot_fp128_d64 level=0 d=64 total_bytes=20 '
             'fold_grind_nonce_bytes=4 grind_nonce=3 grind_attempts=4 '
+            'stage1_range_image_evaluation_bytes=16 '
             'root_variant=terminal\n'
         )
         levels = extract_summary(log, "onehot_fp128_d64", 24, 1)["proof_levels"]
+        self.assertEqual(proof_level_component_bytes(levels[0]), 20)
 
         output = io.StringIO()
         with contextlib.redirect_stdout(output):
@@ -226,6 +232,7 @@ class ProfileBenchReportTests(unittest.TestCase):
         report = output.getvalue()
 
         self.assertIn("Fold-level bytes", report)
+        self.assertIn("Range-image evaluation", report)
         self.assertIn("—", report)
         self.assertIn("+0.00% vs main", report)
         self.assertIn("final witness", report)
@@ -318,7 +325,7 @@ class ProfileBenchReportTests(unittest.TestCase):
             "v_bytes": 0,
             "stage1_sumcheck_bytes": 0,
             "stage1_interstage_claims_bytes": 0,
-            "stage1_s_claim_bytes": 0,
+            "stage1_range_image_evaluation_bytes": 0,
             "stage2_sumcheck_bytes": 0,
             "stage3_sumcheck_bytes": 0,
             "next_w_commitment_bytes": 0,
