@@ -20,7 +20,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> LowBasisRangeCheckProver
         )
         .entered();
         let poly = if use_two_round_prefix {
-            let prefix = self.ensure_two_round_prefix();
+            let prefix = self.ensure_initial_round_prefix();
             if rounds_completed == 0 {
                 prefix.skip_state.reconstruct_round0_eq_poly()
             } else {
@@ -123,10 +123,10 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + HasOptimizedFold>
             let rounds_completed = self.rounds_completed;
             self.split_eq.bind(r);
             if rounds_completed == 0 {
-                self.ensure_two_round_prefix().first_challenge = Some(r);
+                self.ensure_initial_round_prefix().first_challenge = Some(r);
             } else {
                 let r0 = {
-                    let prefix = self.ensure_two_round_prefix();
+                    let prefix = self.ensure_initial_round_prefix();
                     prefix
                         .first_challenge
                         .expect("round 1 ingest requires the round 0 challenge")
@@ -139,41 +139,109 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + HasOptimizedFold>
                         panic!("two-round prefix expected compact table")
                     }
                 };
-                self.range_image = match std::mem::replace(
-                    &mut self.range_image,
-                    LowBasisRangeImageStorage::Materialized(Vec::new()),
-                ) {
-                    LowBasisRangeImageStorage::Compact(compact_range_image) => {
-                        if self.ring_bits() > 2 {
-                            let (range_image, round_poly) = self
-                                .fuse_compact_to_round2_and_compute_round(
+                if self.defers_binary_range_image_through_third_round() {
+                    self.ensure_initial_round_prefix().second_challenge = Some(r);
+                    let round_poly = match &self.range_image {
+                        LowBasisRangeImageStorage::Compact(compact_range_image) => self
+                            .compute_binary_range_image_third_round_from_compact_octets(
+                                compact_range_image,
+                                r0,
+                                r,
+                            ),
+                        LowBasisRangeImageStorage::Materialized(_) => {
+                            unreachable!(
+                                "three-round binary range-image deferral requires compact storage"
+                            )
+                        }
+                    };
+                    self.cached_round_poly = Some(round_poly);
+                } else {
+                    self.range_image = match std::mem::replace(
+                        &mut self.range_image,
+                        LowBasisRangeImageStorage::Materialized(Vec::new()),
+                    ) {
+                        LowBasisRangeImageStorage::Compact(compact_range_image) => {
+                            if self.ring_bits() > 2 {
+                                let (range_image, round_poly) = self
+                                    .fuse_compact_to_round2_and_compute_round(
+                                        &compact_range_image,
+                                        r0,
+                                        r,
+                                    );
+                                self.cached_round_poly = Some(round_poly);
+                                LowBasisRangeImageStorage::Materialized(range_image)
+                            } else {
+                                let range_image = Self::fold_compact_range_image_to_round2(
                                     &compact_range_image,
+                                    self.live_x_cols,
+                                    y_len,
                                     r0,
                                     r,
                                 );
-                            self.cached_round_poly = Some(round_poly);
-                            LowBasisRangeImageStorage::Materialized(range_image)
-                        } else {
-                            let range_image = Self::fold_compact_range_image_to_round2(
-                                &compact_range_image,
-                                self.live_x_cols,
-                                y_len,
-                                r0,
-                                r,
-                            );
-                            LowBasisRangeImageStorage::Materialized(range_image)
+                                LowBasisRangeImageStorage::Materialized(range_image)
+                            }
                         }
-                    }
-                    LowBasisRangeImageStorage::Materialized(_) => {
-                        unreachable!("two-round prefix should hold compact table")
-                    }
-                };
+                        LowBasisRangeImageStorage::Materialized(_) => {
+                            unreachable!("two-round prefix should hold compact table")
+                        }
+                    };
+                }
             }
             self.rounds_completed += 1;
             if self.rounds_completed < self.num_vars {
                 if self.cached_round_poly.is_none() {
                     self.cached_round_poly = Some(self.compute_current_round_eq_poly_from_state());
                 }
+            } else {
+                self.cached_round_poly = None;
+            }
+            return;
+        }
+
+        if self.awaiting_binary_range_image_third_challenge() {
+            let (r0, r1) = {
+                let prefix = self.ensure_initial_round_prefix();
+                (
+                    prefix
+                        .first_challenge
+                        .expect("binary range-image transition requires the first challenge"),
+                    prefix
+                        .second_challenge
+                        .expect("binary range-image transition requires the second challenge"),
+                )
+            };
+            self.split_eq.bind(r);
+            let y_len = match &self.range_image {
+                LowBasisRangeImageStorage::Compact(digit_witness) => {
+                    digit_witness.len() / self.live_x_cols
+                }
+                LowBasisRangeImageStorage::Materialized(_) => {
+                    unreachable!(
+                        "three-round binary range-image transition requires compact storage"
+                    )
+                }
+            };
+            self.range_image = match std::mem::replace(
+                &mut self.range_image,
+                LowBasisRangeImageStorage::Materialized(Vec::new()),
+            ) {
+                LowBasisRangeImageStorage::Compact(compact_range_image) => {
+                    LowBasisRangeImageStorage::Materialized(
+                        Self::materialize_binary_range_image_after_third_round(
+                            &compact_range_image,
+                            self.live_x_cols,
+                            y_len,
+                            r0,
+                            r1,
+                            r,
+                        ),
+                    )
+                }
+                LowBasisRangeImageStorage::Materialized(_) => unreachable!(),
+            };
+            self.rounds_completed += 1;
+            if self.rounds_completed < self.num_vars {
+                self.cached_round_poly = Some(self.compute_current_round_eq_poly_from_state());
             } else {
                 self.cached_round_poly = None;
             }

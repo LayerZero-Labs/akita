@@ -59,7 +59,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> LowBasisRangeCheckProver
             num_vars,
             basis,
             prefix_tau: can_use_stage1_two_round_prefix(ring_bits, basis).then(|| tau0.to_vec()),
-            two_round_prefix: None,
+            initial_round_prefix: None,
             cached_round_poly: None,
             rounds_completed: 0,
         })
@@ -132,6 +132,18 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> LowBasisRangeCheckProver
     }
 
     #[inline]
+    pub(super) fn defers_binary_range_image_through_third_round(&self) -> bool {
+        self.basis == 4 && self.ring_bits() >= 3 && self.can_use_two_round_prefix()
+    }
+
+    #[inline]
+    pub(super) fn awaiting_binary_range_image_third_challenge(&self) -> bool {
+        self.rounds_completed == 2
+            && self.defers_binary_range_image_through_third_round()
+            && matches!(self.range_image, LowBasisRangeImageStorage::Compact(_))
+    }
+
+    #[inline]
     pub(super) fn valid_range_image_values(basis: usize) -> Vec<i16> {
         let half = (basis / 2) as i16;
         (0..half).map(|k| k * (k + 1)).collect()
@@ -143,8 +155,8 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> LowBasisRangeCheckProver
         CompactPairFoldLut::from_allowed_values(&valid_range_images, r)
     }
 
-    pub(super) fn ensure_two_round_prefix(&mut self) -> &mut DirectRangeTwoRoundPrefix<E> {
-        if self.two_round_prefix.is_none() {
+    pub(super) fn ensure_initial_round_prefix(&mut self) -> &mut DirectRangePrefixState<E> {
+        if self.initial_round_prefix.is_none() {
             let tau0 = self
                 .prefix_tau
                 .clone()
@@ -167,12 +179,13 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> LowBasisRangeCheckProver
             .expect("two-round prefix should be available");
             let skip_state = Stage1BivariateSkipState::new(&proof, &tau0, self.basis)
                 .expect("valid bivariate-skip state");
-            self.two_round_prefix = Some(DirectRangeTwoRoundPrefix {
+            self.initial_round_prefix = Some(DirectRangePrefixState {
                 skip_state,
                 first_challenge: None,
+                second_challenge: None,
             });
         }
-        self.two_round_prefix
+        self.initial_round_prefix
             .as_mut()
             .expect("two-round prefix should be initialized")
     }
