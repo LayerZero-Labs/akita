@@ -79,6 +79,40 @@ fn assert_stage1_rejected(
 }
 
 #[test]
+fn streaming_high_basis_handles_odd_live_prefix_without_materializing_padding() {
+    let point = vec![
+        F::from_u64(3),
+        F::from_u64(5),
+        F::from_u64(7),
+        F::from_u64(9),
+    ];
+    for basis in [16, 32, 64] {
+        let witness = sample_stage1_witness(basis, 5, 0);
+        let equality_point =
+            DigitRangeEqualityPoint::from_column_then_ring_challenges(&point, 4, 0).unwrap();
+        let domain = FlatBooleanDomain::new(witness.len(), 4).unwrap();
+        let plan = DigitRangePlan::new(basis).unwrap();
+        let prover = DigitRangeProver::new(
+            std::sync::Arc::from(witness),
+            plan,
+            domain,
+            equality_point.clone(),
+        )
+        .unwrap();
+        let mut prover_transcript = AkitaTranscript::<F>::new(labels::DOMAIN_AKITA_PROTOCOL);
+        let (proof, expected_point) = prover.prove(&mut prover_transcript).unwrap();
+
+        let verifier = AkitaStage1Verifier::new(equality_point, plan);
+        let mut verifier_transcript = AkitaTranscript::<F>::new(labels::DOMAIN_AKITA_PROTOCOL);
+        assert_eq!(
+            verifier.verify(&proof, &mut verifier_transcript).unwrap(),
+            expected_point,
+            "basis {basis}"
+        );
+    }
+}
+
+#[test]
 fn stage1_verifier_rejects_every_malformed_plan_shape_without_panicking() {
     for basis in [4, 8, 16, 32, 64] {
         let transcript_point = vec![
