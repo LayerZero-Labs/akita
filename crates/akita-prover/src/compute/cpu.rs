@@ -20,8 +20,8 @@ use akita_algebra::CyclotomicRing;
 use akita_field::unreduced::{HasWide, ReduceTo};
 use akita_field::{AdditiveGroup, AkitaError, CanonicalField, FieldCore, HalvingField};
 use akita_types::{
-    build_prepared_ntt_slot, dispatch_for_field, AkitaExpandedSetup, NttCacheKey,
-    PreparedNttDomains, PreparedNttSlot, PreparedNttSlotAny,
+    build_negacyclic_and_cyclic_ntt_slot, dispatch_for_field, AkitaExpandedSetup, NttCacheKey,
+    PreparedNttSlot, PreparedNttSlotAny,
 };
 use std::array::from_fn;
 use std::collections::{HashMap, HashSet};
@@ -138,7 +138,7 @@ fn build_ntt_slot_for_key<F: FieldCore + CanonicalField>(
         let view = expanded
             .shared_matrix()
             .ring_view::<RING_D>(1, key.num_ring_elements)?;
-        let slot = build_prepared_ntt_slot(view, PreparedNttDomains::NegacyclicAndCyclic)?;
+        let slot = build_negacyclic_and_cyclic_ntt_slot(view)?;
         let any: PreparedNttSlotAny = slot.into();
         Ok(any)
     })

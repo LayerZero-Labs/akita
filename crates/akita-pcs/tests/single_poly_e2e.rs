@@ -330,8 +330,8 @@ fn run_single_onehot_oversized_setup(setup_nv: usize, poly_nv: usize) {
 }
 
 #[test]
-fn single_onehot_oversized_setup_15_10() {
-    run_single_onehot_oversized_setup(15, 10);
+fn single_onehot_oversized_setup_15_12() {
+    run_single_onehot_oversized_setup(15, 12);
 }
 
 #[test]

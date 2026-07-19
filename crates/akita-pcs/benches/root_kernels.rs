@@ -9,7 +9,7 @@ use akita_prover::kernels::linear::{
     mat_vec_mul_ntt_i8_dense_single_row,
 };
 use akita_prover::DensePoly;
-use akita_types::{build_prepared_ntt_slot, PreparedNttDomains};
+use akita_types::build_negacyclic_and_cyclic_ntt_slot;
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
@@ -48,13 +48,12 @@ fn bench_dense_root_matvec_full_nv25_d32(c: &mut Criterion) {
         .shared_matrix
         .total_ring_elements_at::<D>()
         .unwrap();
-    let ntt_shared = build_prepared_ntt_slot(
+    let ntt_shared = build_negacyclic_and_cyclic_ntt_slot(
         setup
             .expanded
             .shared_matrix
             .ring_view::<D>(1, total)
             .unwrap(),
-        PreparedNttDomains::NegacyclicAndCyclic,
     )
     .unwrap();
     let rings = poly.ring_coeffs::<D>().expect("dense ring view");

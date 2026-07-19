@@ -238,15 +238,6 @@ pub fn max_safe_crt_accumulation_width<
     Some(low)
 }
 
-/// Transform domains materialized in a prepared NTT slot.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum PreparedNttDomains {
-    /// Materialize only the negacyclic representation used by commitments.
-    NegacyclicOnly,
-    /// Materialize both negacyclic and cyclic representations used by the prover.
-    NegacyclicAndCyclic,
-}
-
 /// Prepared matrix transforms shared by prover and verifier caches.
 ///
 /// Verifier slots leave `cyc` absent; prover slots materialize it for quotient
@@ -292,30 +283,22 @@ impl<const D: usize> PreparedNttSlot<D> {
     }
 }
 
-/// Prepare exactly the supplied coefficient-matrix view in the requested NTT domains.
-#[tracing::instrument(skip_all, name = "build_prepared_ntt_slot", fields(ring_d = D, rings = mat.as_slice().len()))]
-pub fn build_prepared_ntt_slot<F: FieldCore + CanonicalField, const D: usize>(
+/// Prepare exactly the supplied coefficient-matrix view in negacyclic NTT form.
+#[tracing::instrument(skip_all, name = "build_negacyclic_ntt_slot", fields(ring_d = D, rings = mat.as_slice().len()))]
+pub fn build_negacyclic_ntt_slot<F: FieldCore + CanonicalField, const D: usize>(
     mat: RingMatrixView<'_, F, D>,
-    domains: PreparedNttDomains,
 ) -> Result<PreparedNttSlot<D>, AkitaError> {
     macro_rules! convert {
         ($params:expr, $variant:ident) => {{
             let params = $params;
-            let (neg, cyc) = match domains {
-                PreparedNttDomains::NegacyclicOnly => {
-                    let neg = cfg_iter!(mat.as_slice())
-                        .map(|ring| CyclotomicCrtNtt::from_ring_with_params(ring, &params))
-                        .collect();
-                    (neg, None)
-                }
-                PreparedNttDomains::NegacyclicAndCyclic => {
-                    let (neg, cyc) = cfg_iter!(mat.as_slice())
-                        .map(|ring| CyclotomicCrtNtt::from_ring_pair_with_params(ring, &params))
-                        .unzip();
-                    (neg, Some(cyc))
-                }
-            };
-            PreparedNttSlot::$variant { neg, cyc, params }
+            let neg = cfg_iter!(mat.as_slice())
+                .map(|ring| CyclotomicCrtNtt::from_ring_with_params(ring, &params))
+                .collect();
+            PreparedNttSlot::$variant {
+                neg,
+                cyc: None,
+                params,
+            }
         }};
     }
     Ok(match select_crt_ntt_params::<F, D>()? {
@@ -323,6 +306,68 @@ pub fn build_prepared_ntt_slot<F: FieldCore + CanonicalField, const D: usize>(
         ProtocolCrtNttParams::Q64(params) => convert!(params, Q64),
         ProtocolCrtNttParams::Q128(params) => convert!(params, Q128),
     })
+}
+
+/// Prepare exactly the supplied coefficient-matrix view in both NTT domains.
+#[tracing::instrument(skip_all, name = "build_negacyclic_and_cyclic_ntt_slot", fields(ring_d = D, rings = mat.as_slice().len()))]
+pub fn build_negacyclic_and_cyclic_ntt_slot<F: FieldCore + CanonicalField, const D: usize>(
+    mat: RingMatrixView<'_, F, D>,
+) -> Result<PreparedNttSlot<D>, AkitaError> {
+    let params = select_crt_ntt_params::<F, D>()?;
+    Ok(build_negacyclic_and_cyclic_ntt_slot_from_params(
+        mat, params,
+    ))
+}
+
+fn convert_flat_pair<F, W, const K: usize, const D: usize>(
+    mat: RingMatrixView<'_, F, D>,
+    params: &CrtNttParamSet<W, K, D>,
+) -> (
+    Vec<CyclotomicCrtNtt<W, K, D>>,
+    Vec<CyclotomicCrtNtt<W, K, D>>,
+)
+where
+    F: FieldCore + CanonicalField,
+    W: akita_algebra::PrimeWidth,
+{
+    cfg_iter!(mat.as_slice())
+        .map(|ring| CyclotomicCrtNtt::from_ring_pair_with_params(ring, params))
+        .unzip()
+}
+
+fn build_negacyclic_and_cyclic_ntt_slot_from_params<
+    F: FieldCore + CanonicalField,
+    const D: usize,
+>(
+    mat: RingMatrixView<'_, F, D>,
+    params: ProtocolCrtNttParams<D>,
+) -> PreparedNttSlot<D> {
+    match params {
+        ProtocolCrtNttParams::Q32(params) => {
+            let (neg, cyc) = convert_flat_pair(mat, &params);
+            PreparedNttSlot::Q32 {
+                neg,
+                cyc: Some(cyc),
+                params,
+            }
+        }
+        ProtocolCrtNttParams::Q64(params) => {
+            let (neg, cyc) = convert_flat_pair(mat, &params);
+            PreparedNttSlot::Q64 {
+                neg,
+                cyc: Some(cyc),
+                params,
+            }
+        }
+        ProtocolCrtNttParams::Q128(params) => {
+            let (neg, cyc) = convert_flat_pair(mat, &params);
+            PreparedNttSlot::Q128 {
+                neg,
+                cyc: Some(cyc),
+                params,
+            }
+        }
+    }
 }
 
 /// Build a type-erased exact verifier prefix for a runtime NTT cache key.
@@ -341,7 +386,7 @@ pub(crate) fn build_verifier_ntt_slot_for_key<F: FieldCore + CanonicalField>(
             let matrix = expanded
                 .shared_matrix()
                 .ring_view::<D>(1, key.num_ring_elements)?;
-            let slot = build_prepared_ntt_slot(matrix, PreparedNttDomains::NegacyclicOnly)?;
+            let slot = build_negacyclic_ntt_slot(matrix)?;
             let any: PreparedNttSlotAny = slot.into();
             Ok(any)
         }
@@ -480,19 +525,21 @@ mod tests {
         Prime32Offset99, Prime64Offset59,
     };
 
-    fn sample_slot<F: FieldCore + CanonicalField, const D: usize>(
-        domains: PreparedNttDomains,
-    ) -> PreparedNttSlot<D> {
+    fn sample_negacyclic_slot<F: FieldCore + CanonicalField, const D: usize>() -> PreparedNttSlot<D>
+    {
         let ring = akita_algebra::CyclotomicRing::<F, D>::zero();
         let flat = crate::FlatMatrix::from_ring_slice(&[ring]);
-        build_prepared_ntt_slot(flat.ring_view::<D>(1, 1).expect("view"), domains)
+        build_negacyclic_ntt_slot(flat.ring_view::<D>(1, 1).expect("view"))
             .expect("prepared NTT slot")
     }
 
     #[test]
     fn prepared_slot_materializes_only_requested_domains() {
-        let neg_only = sample_slot::<Prime32Offset99, 64>(PreparedNttDomains::NegacyclicOnly);
-        let both = sample_slot::<Prime32Offset99, 64>(PreparedNttDomains::NegacyclicAndCyclic);
+        let neg_only = sample_negacyclic_slot::<Prime32Offset99, 64>();
+        let ring = akita_algebra::CyclotomicRing::<Prime32Offset99, 64>::zero();
+        let flat = crate::FlatMatrix::from_ring_slice(&[ring]);
+        let both = build_negacyclic_and_cyclic_ntt_slot(flat.ring_view::<64>(1, 1).expect("view"))
+            .expect("prepared NTT slot");
         let PreparedNttSlot::Q32 {
             cyc: neg_only_cyc, ..
         } = neg_only
@@ -508,8 +555,7 @@ mod tests {
 
     #[test]
     fn prepared_slot_any_rejects_ring_degree_mismatch() {
-        let any: PreparedNttSlotAny =
-            sample_slot::<Prime32Offset99, 64>(PreparedNttDomains::NegacyclicOnly).into();
+        let any: PreparedNttSlotAny = sample_negacyclic_slot::<Prime32Offset99, 64>().into();
         assert_eq!(any.ring_d(), 64);
         assert!(matches!(any.as_d::<32>(), Err(AkitaError::InvalidSetup(_))));
     }
@@ -517,14 +563,14 @@ mod tests {
     #[test]
     fn prepared_slot_any_maps_every_supported_ring_degree() {
         let slots: [PreparedNttSlotAny; 8] = [
-            sample_slot::<Prime128OffsetA7F7, 16>(PreparedNttDomains::NegacyclicOnly).into(),
-            sample_slot::<Prime64Offset59, 32>(PreparedNttDomains::NegacyclicOnly).into(),
-            sample_slot::<Prime32Offset99, 64>(PreparedNttDomains::NegacyclicOnly).into(),
-            sample_slot::<Prime32Offset99, 128>(PreparedNttDomains::NegacyclicOnly).into(),
-            sample_slot::<Prime32Offset99, 256>(PreparedNttDomains::NegacyclicOnly).into(),
-            sample_slot::<Prime32Offset99, 512>(PreparedNttDomains::NegacyclicOnly).into(),
-            sample_slot::<Prime64Offset59, 1024>(PreparedNttDomains::NegacyclicOnly).into(),
-            sample_slot::<Prime32Offset99, 2048>(PreparedNttDomains::NegacyclicOnly).into(),
+            sample_negacyclic_slot::<Prime128OffsetA7F7, 16>().into(),
+            sample_negacyclic_slot::<Prime64Offset59, 32>().into(),
+            sample_negacyclic_slot::<Prime32Offset99, 64>().into(),
+            sample_negacyclic_slot::<Prime32Offset99, 128>().into(),
+            sample_negacyclic_slot::<Prime32Offset99, 256>().into(),
+            sample_negacyclic_slot::<Prime32Offset99, 512>().into(),
+            sample_negacyclic_slot::<Prime64Offset59, 1024>().into(),
+            sample_negacyclic_slot::<Prime32Offset99, 2048>().into(),
         ];
         for (slot, expected) in slots.iter().zip([16, 32, 64, 128, 256, 512, 1024, 2048]) {
             assert_eq!(slot.ring_d(), expected);

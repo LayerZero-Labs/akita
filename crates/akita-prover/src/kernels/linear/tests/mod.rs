@@ -16,7 +16,8 @@ use akita_algebra::{CrtNttParamSet, CyclotomicCrtNtt, CyclotomicRing};
 use akita_field::{CanonicalField, FieldCore, Fp64, Prime128Offset275, Prime64Offset59};
 use akita_types::layout::FlatMatrix;
 use akita_types::{
-    build_prepared_ntt_slot, select_crt_ntt_params, PreparedNttDomains, ProtocolCrtNttParams,
+    build_negacyclic_and_cyclic_ntt_slot, build_negacyclic_ntt_slot, select_crt_ntt_params,
+    ProtocolCrtNttParams,
 };
 
 fn centered_i32_ring<F: akita_field::CanonicalField, const D: usize>(
