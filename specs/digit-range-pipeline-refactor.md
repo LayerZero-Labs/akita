@@ -58,7 +58,7 @@ or transcript dependencies are the same.
 |---|---|---|
 | `DigitRangePlan` | supported basis, roots, product topology, range-layer shape, transcript child order | relation placement, hot tables, or witness storage |
 | `WitnessDomain` | one checked flat Boolean address space, live prefix, bind order, transcript-point mapping | an x/y split or role-specific relation algebra |
-| `ValidatedDigitSource` | checked compact digits and `RangeImageClass` access | protocol topology |
+| `CompactDigitSource` | the shared compact digit slice and infallible `RangeImageClass` access under the ring-switch producer invariant | protocol topology or a second balanced-digit validation scan |
 | `range_image(digit)` | the exact map `digit * (digit + 1)` used to pair balanced roots | a table called merely `S`, "square", or "norm" |
 | `ExactPrefixTable<[E; LANES]>` | the current derived lane records plus one default record | several tree levels or a `LaneTable` wrapper |
 | `scan_adjacent_pairs` / reduction functions | checked adjacent-pair traversal and serial/parallel reduction mechanics | a range, relation, setup, or reduction equation, or a `PairScan` facade type |
@@ -424,7 +424,7 @@ resolutions are final for this handoff:
 | One generic eq-factored "composed-witness" engine for Stage 1, the product tree, and Stage 2 | Correctly notices extensive duplicated pair iteration, reduction, and folding | Share only direct `scan_adjacent_pairs`, exact-prefix, accumulator, fold, and parallel-reduction functions. Current Stage 1 product layers are eq-factored while current Stage 2 is standard; the target adds a standard joint Stage 1 leaf and either eq-factored or standard Stage 2 reduction. Their equations, degree accounting, drivers, and transcript choreography remain explicit. |
 | `RoundWitnessSource::Value` plus `fold(&mut self, r)` | Tries to hide compact-versus-field state from callers | A Rust associated type cannot change from compact `i16` to field `E` after a challenge. Do not add an enum branch to every corner to rescue the abstraction. Stage-owned, statically typed compact and field phases call the same mechanical scan functions. |
 | `is_zero_pair` and implicit-zero suffix skipping | Essential for avoiding padded witness scans | Sound for the digit witness and every linear relation term that contains it, but not for derived range tables. Most quartic leaves and randomized product batches have nonzero values at padded `range_image = 0`. Use `ExactPrefixTable` with a per-lane default and add the exact omitted `GruenSplitEq` suffix mass. |
-| Build compact per-class leaf tuples | Uses the small `RangeImageClass` alphabet and removes repeated Horner evaluation | Adopt as the source of fixed-lane tables, but do not describe the current tree as `b/2` quartic leaf tables: it has `b/8` quartic leaves. Materialize only the current 2/4/8-lane substage state, never the full forest. |
+| Build compact per-class leaf tuples | Uses the small `RangeImageClass` alphabet and removes repeated Horner evaluation | Adopt node-by-class rows as the source of post-challenge fixed-lane state. For round zero, implement and measure every admissible node-evaluation and ordered class-pair-coefficient candidate for each LB4/LB5/LB6 substage, including construction and cache effects; retain exactly the fastest complete-substage path and delete every loser before cutover. Do not describe the current tree as `b/2` quartic leaf tables: it has `b/8` quartic leaves. Materialize only the current 2/4/8-lane substage state, never the full forest. |
 | Extend two-round prefix tables to LB4/LB5/LB6 | Correctly identifies first-round compactness as an optimization lever | Make the one-round streaming kernel the baseline. Four-class key spaces grow from 4,096 at LB4 to 65,536 at LB5 and 1,048,576 at LB6 before field-coefficient payloads. Benchmark a bounded LB4 table; for LB5/LB6 permit only an on-the-fly experiment after the baseline wins. |
 | Model mixed dimensions as ragged `WitnessDomain` axes and choose common-prefix versus segment-concatenated binding later | Removes hard-coded x/y names and recognizes the common low dimension | Do not leave the protocol domain unresolved. Bind the existing flat physical address LSB-first. Compile role-local row-family algebra into a semantic flat `RelationWeight`; use `g = min(d_a,d_b,d_d)` only to factor that polynomial internally as `A_g(y) M(x)` plus checked fringes. |
 | Select a per-segment alpha vector in the relation prover | Recognizes that one global `alpha_evals_y` is invalid for mixed role dimensions | A per-pair segment branch is not the semantic contract and does not solve folding or verifier evaluation. Define row-family events at native dimensions, then give dense and common-base providers the same flat-polynomial semantics in the final Stage 1 subproof. |
@@ -918,29 +918,34 @@ every short live length, odd/even boundaries, random nonzero defaults, and every
 
 ### Canonical compact source
 
-The prover keeps the original `Arc<[i8]>` for the complete Stage 1/Stage 2 lifetime. Before
-any Stage 1 transcript mutation, construct a `ValidatedDigitSource`. Its constructor scans
-the immutable live prefix once and returns `AkitaError` for an out-of-range digit. All
-subsequent class access is infallible under that invariant. At the Stage 1 boundary:
+The prover keeps the original `Arc<[i8]>` for the complete Stage 1/Stage 2 lifetime. The
+ring-switch decomposition is the authority for the balanced-digit invariant: it emits
+`i8` digits in `[-b/2, b/2)`. Stage 1 is honest-prover internal code, not a verifier input
+boundary, so it must not rescan the witness merely to validate that semantic invariant a
+second time. `CompactDigitSource` checks only layout/length ownership already required at
+the Stage 1 boundary and documents the producer precondition. Its hot class accessor is
+infallible, with a debug assertion rather than a `Result` branch per load.
 
-1. Validate every live digit against the plan's balanced interval.
-2. Convert it to a `RangeImageClass` byte using `k = w` for nonnegative `w`
-   and `k = -w - 1` otherwise.
-3. Treat every wire-padding address as class zero without storing it.
-4. Build at most one compact `RangeImageClass` buffer if repeated class conversion is measured to
-   dominate; fuse its construction with validation. Otherwise compute the class while
-   scanning the already-validated original digits. Retain the faster measured choice, not
-   both.
+Performance validation is mandatory; duplicate semantic digit validation is not. Every
+representation/kernel choice below is provisional until the complete-phase CI benchmarks
+and coarse-grained trace attribution agree on the winner.
 
-Do not allocate a field-valued paired-digit-product table. Do not consume and return the `Arc` through a
-`prove_recover_w` ownership dance. The range prover borrows or cheaply clones the shared
-`Arc`. Direct Stage 1 outputs its range proof and `range_image_eval`. Recursive-offload
-Stage 1 outputs `DigitRangeRelationProof`, one `RangeRelationPoint`,
-`range_image_eval`, and `digit_witness_eval`.
+At each address, derive `RangeImageClass` using `k = w` for nonnegative `w` and
+`k = -w - 1` otherwise. Treat every wire-padding address as class zero without storing
+it. Implement and measure both direct class conversion from the original `i8` slice and
+one compact preconverted class buffer. If the buffer wins the complete prover for a
+specific basis, build it in the existing source/setup pass; otherwise retain direct
+conversion. Exactly one production representation remains for each statically dispatched
+basis path, with no runtime knob or duplicate owner.
 
-### Tiny node-by-class tables
+Do not consume and return the `Arc` through a `prove_recover_w` ownership dance. The range
+prover borrows or cheaply clones the shared `Arc`. Direct Stage 1 outputs its range proof
+and `range_image_eval`. Recursive-offload Stage 1 outputs `DigitRangeRelationProof`, one
+`RangeRelationPoint`, `range_image_eval`, and `digit_witness_eval`.
 
-For each substage, derive small field-valued tables from the plan:
+### Per-class nodes and ordered class-pair coefficients
+
+For each substage, derive a small field-valued node table from the plan:
 
 ```text
 node_value[class][lane]
@@ -951,22 +956,68 @@ class count is 32 and the largest product-stage lane count is 8. A class-indexed
 produce only range-derived values: `digit` and `-digit-1` share one `RangeImageClass` but
 have different signed witness values. The recursive joint leaf therefore gets
 `range_image` from the class table and loads the signed `digit_witness` lane directly from
-`ValidatedDigitSource`.
+`CompactDigitSource`.
 
 Build only the current substage's table. The table's default lane record is the same
 `node_value[0]`, because padding means `digit_witness = 0`, hence
-`RangeImageClass = 0`. Interstage batching
-weights are sampled before constructing the next substage's local round tables, so combine
-parent/leaf coefficients once rather than carrying a dynamic weight multiply in the inner
-loop.
+`RangeImageClass = 0`. This node-by-class representation is also the canonical source for
+materializing post-challenge field lanes.
+
+Round zero has two mandatory candidate families:
+
+1. **Node evaluation:** load the two node rows and construct the affine child-product
+   coefficients inside the address scan.
+2. **Ordered class-pair coefficients:** after the active interstage weights are known,
+   build
+
+   ```text
+   round0_coefficients[left_class][right_class][coefficient]
+   ```
+
+   with the parent weights already combined, so the address scan performs only class
+   indexing and equality-weighted coefficient accumulation.
+
+Both candidates use the same node rows, exact-prefix semantics, round equations, and
+post-challenge materialization; they are kernel alternatives, not protocol or state
+owners. Implement every admissible candidate in test/benchmark scope for every
+LB4/LB5/LB6 substage, measure complete construction plus scan plus materialization under
+the primary serial and parallel cells, retain exactly the fastest production candidate
+for that substage, and delete the losers and selection knobs before cutover. A result for
+one basis or one substage does not authorize the same choice for another.
+
+For fp128, the ordered-pair payloads are small enough to be serious candidates rather
+than speculative giant tables:
+
+| Substage | Ordered pairs | Round coefficients | Approximate payload |
+|---|---:|---:|---:|
+| LB4 two-lane root | `8^2` | 3 | 3 KiB |
+| LB5 four-lane root | `16^2` | 5 | 20 KiB |
+| LB6 two-lane root | `32^2` | 3 | 48 KiB |
+| LB6 eight-lane second product | `32^2` | 5 | 80 KiB |
+| LB6 batched quartic leaf | `32^2` | 5 | 80 KiB |
+
+Record extension-field payloads in field elements as well as bytes; do not assume a
+16-byte element outside fp128. Interstage weights are sampled before constructing the
+next substage's candidate table, so combine them once in the ordered-pair coefficients
+rather than multiplying dynamically in the hot scan.
+
+The compact digits themselves never become a full field table. Before the first
+challenge, a digit is an `i8`, its class needs at most five bits, and its range image is at
+most `31 * 32 = 992` for LB6. Post-challenge lanes must be field elements because
+`left + r * (right - left)` is arbitrary in the challenge field. Integer lookup candidates
+are basis-specific experiments only: quartic endpoints reach about 40 bits at LB6, an
+LB6 four-leaf node reaches roughly 158 bits, and round coefficients exceed 300 bits.
+Never force the generic path through `u64`/`u128` or an unproved multi-limb accumulator.
 
 ### First implementation: one-round streaming
 
 Every high-basis product substage follows this lifecycle:
 
-1. **Round 0 compact scan.** Iterate logical adjacent address pairs. Load two classes,
-   using class zero at the boundary/padded endpoint. Look up all immediate child lane
-   values and accumulate exactly the current eq-factored round polynomial.
+1. **Round 0 compact scan.** Iterate logical adjacent address pairs and load two classes,
+   using class zero at the boundary/padded endpoint. The statically selected per-substage
+   winner either loads the two node rows and constructs their affine product coefficients,
+   or loads the already-batched ordered class-pair coefficients. Accumulate exactly the
+   same current eq-factored round polynomial.
 2. **Tail accounting.** Add fully implicit pair contributions with
    `SplitEqSuffixMass`; do not scan or allocate the padded suffix.
 3. **Challenge 0.** After the transcript supplies `r_0`, rescan the compact class pairs
@@ -983,6 +1034,54 @@ Every high-basis product substage follows this lifecycle:
    next substage.
 7. **Next substage.** Rescan the original compact classes at its new equality point. Never
    retain the previous tree layer as a shortcut.
+
+### Tracing and performance attribution contract
+
+Production tracing is mandatory and is the primary tool for attributing whole-prover
+performance to the range pipeline. Instrument phase owners and round boundaries, never
+the address, pair, lane, coefficient, lookup, or Rayon-item hot loops. A representative
+Perfetto trace must remain navigable at the `2^22` manual-profile domain instead of
+emitting millions of events.
+
+The streaming cutover replaces the eager implementation's profiling vocabulary with one
+canonical span tree:
+
+```text
+digit_range_prove
+  digit_range_prepare_compact_source
+  digit_range_product_substage {stage_index, arity, lane_count}
+    digit_range_build_node_table
+    digit_range_build_pair_coefficients       # only for the candidate/selected path
+    digit_range_initial_round
+    digit_range_materialize_folded_lanes
+    digit_range_later_round {round}
+    digit_range_fold_lanes {round}
+  digit_range_polynomial_leaf
+    digit_range_build_pair_coefficients       # only for the candidate/selected path
+    digit_range_initial_round
+    digit_range_materialize_range_image
+    digit_range_later_round {round}
+    digit_range_fold_range_image {round}
+```
+
+Each substage span records basis, explicit live length, padded domain length, selected
+kernel strategy, serial/parallel mode, and current explicit-row count where applicable.
+Counters for allocated field elements, implicit suffix addresses, compact bytes scanned,
+and materialized rows are emitted once at the owning phase boundary, not updated through
+per-pair tracing calls. The same span names own Criterion phase attribution and Perfetto
+inspection; do not add timing wrappers or aliases around them.
+
+For every node-evaluation versus ordered-pair candidate decision, capture both:
+
+- Criterion/CI evidence for complete table construction, round-zero scan,
+  materialization, complete substage, and whole prover; and
+- a representative Perfetto trace showing construction cost, parallel occupancy,
+  cache-sensitive phase duration, fold tail, and absence of accidental extra scans.
+
+Tracing selects where time is spent and catches serialization/parallelism pathologies;
+the ratified benchmark confidence interval decides the winner. Instrumentation overhead
+must be measured once with tracing enabled/disabled on a representative cell, and traces
+from a build that materially changes the winner ordering are invalid for selection.
 
 Packets 4-5 land the range-only leaf behind its byte-identical oracle. Packet 7 retains it
 for direct setup and adds the recursive-offload **range-and-relation leaf composer**
@@ -1132,7 +1231,8 @@ build's lack of overflow.
 
 - Eight `RangeImageClass` rows.
 - Root product: two child lanes, degree 2.
-- First correct version: field-valued class-pair table.
+- Implement both node-evaluation and ordered class-pair coefficient round-zero kernels;
+  select the complete-substage winner rather than assuming the small pair table wins.
 - After parity, benchmark the precisely bounded narrow-coefficient/unreduced table.
 - Benchmark two-round deferral because the 4,096-key space is plausible.
 - Keep the existing two-stage proof topology. A direct degree-8 proof is a separate
@@ -1143,8 +1243,9 @@ build's lack of overflow.
 
 - Sixteen `RangeImageClass` rows.
 - Root product: four child lanes, degree 4.
-- Use a field pair table or direct fixed-lane evaluation, whichever wins the complete
-  substage benchmark including table construction.
+- Implement both field-valued node evaluation and ordered class-pair coefficients. The
+  production winner is the fastest complete substage including construction, scan,
+  materialization, cache effects, and whole-prover impact; delete the loser.
 - Do not use the technically-fitting but fragile signed-`i128` coefficient path.
 - Do not retain a two-round four-class LUT.
 
@@ -1155,8 +1256,10 @@ build's lack of overflow.
 - Second product substage: eight leaf lanes grouped into two weighted arity-4 parents.
 - Build challenge-dependent combined round data only after the interstage weights exist.
 - Final leaf substage: one field-valued batched quartic over `range_image`.
-- Benchmark class-pair field tables against direct field evaluation; include construction
-  and cache misses, not just lookup throughput.
+- Implement and compare node evaluation against ordered class-pair field coefficients
+  separately for the root, second product, and final leaf. Include construction, cache
+  behavior, materialization, full-substage time, and whole-prover time; retain one winner
+  per substage and delete every losing kernel.
 - Reject all fixed-width integer parent arithmetic and all full two-round LUTs.
 
 #### LB2/LB3 regression path
@@ -1247,8 +1350,8 @@ must look like:
 ```text
 crates/akita-prover/src/protocol/sumcheck/digit_range/
   mod.rs                  orchestration and product-to-leaf choreography
-  validated_digits.rs     checked compact digit and RangeImageClass access
-  tables.rs               plan-derived per-class fixed-lane data
+  compact_digit_source.rs shared compact digits and infallible RangeImageClass access
+  range_class_tables.rs   plan-derived node rows and selected ordered-pair coefficients
   product_stage.rs        one fixed-lane product-stage implementation
   range_leaf.rs           direct equality-factored range-only leaf composer
   relation_leaf.rs        recursive standard range-image-and-relation composer
@@ -3054,8 +3157,10 @@ legacy single `log_basis`; I5/#309 must land first.
 - `crates/akita-pcs/benches/digit_range.rs`, its private
   `benches/digit_range/measurement.rs` measurement-mechanics submodule, and the Cargo
   bench entry;
-- prover tracing spans/counters for Stage 1 setup, compact scan, materialization, product
-  substages, leaf substage, fold, and finalization;
+- prover tracing spans/counters for Stage 1 setup, compact-source preparation, node/pair
+  table construction, initial round, materialization, each product substage, leaf
+  substage, later-round scan, fold, and finalization. Spans surround owners and round
+  boundaries only; hot address/pair/lane/coefficient/Rayon-item loops emit no events;
 - test-only dense fully padded range-tree oracle;
 - test-only dense flat relation-weight materializer and evaluator;
 - allocation and peak-field-element counters owned by the range stage.
@@ -3163,12 +3268,23 @@ identical; LB2/LB3/LB4/LB5/LB6 each stay within 3% before the high-basis optimiz
 
 **Actions:**
 
-- add checked `RangeImageClass` access;
-- add field-valued node-by-class lookup construction;
+- add `CompactDigitSource` with infallible `RangeImageClass` access under the existing
+  ring-switch balanced-digit producer invariant; do not add a second semantic validation
+  scan in Stage 1;
+- add field-valued node-by-class lookup construction as the canonical source for
+  post-challenge lanes;
+- implement every admissible field-valued node-evaluation and ordered class-pair
+  coefficient candidate for the LB4 root, LB5 root, and each LB6 root/second-product/leaf
+  substage in test/benchmark scope;
+- measure complete construction, round-zero scan, materialization, substage, and
+  whole-prover cost in serial and parallel modes; retain exactly one static production
+  winner per substage and delete losing candidates and selectors before cutover;
 - implement round-0 compact pair scan;
 - implement `ExactPrefixTable` with per-lane nonzero defaults;
 - implement actual split-equality suffix mass;
 - materialize address-major lane state at `N/2`;
+- add the canonical coarse-grained tracing span tree and Perfetto profile capture described
+  above, with no hot-loop instrumentation;
 - free every substage before rescanning compact classes for the next one;
 - implement the final quartic-from-range-image leaf stage;
 - differentially compare every round/fold/claim against the padded oracle;
@@ -3176,23 +3292,29 @@ identical; LB2/LB3/LB4/LB5/LB6 each stay within 3% before the high-basis optimiz
   layers, and nested table production code.
 
 **Exit:** proof and transcript bytes are identical; table peaks meet LB4 `N`, LB5 `2N`,
-and LB6 `4N`, plus separately reported fixed state; the unspecialized reference path is no
-slower than 1.02x on each Packet-1 primary basis cell using the ratified ratio rule. If it
-cannot meet that gate, Packets 4 and 5 become one atomic, non-mergeable packet; do not
-merge a slow reference path while waiting for specialization. Final improvement gates
-remain owned by Packet 5.
+and LB6 `4N`, plus separately reported node/pair/split-eq fixed state; the selected static
+kernel for every substage has complete-phase benchmark and Perfetto evidence against all
+admissible B/C candidates, and no losing implementation or runtime selector remains. The
+selected streaming path is no slower than 1.02x on each Packet-1 primary basis cell using
+the ratified ratio rule. If it cannot meet that gate, Packets 4 and 5 become one atomic,
+non-mergeable packet; do not merge a slow reference path while waiting for further
+specialization. Final improvement gates remain owned by Packet 5.
 
 ### Packet 5: measured LB4/LB5/LB6 specialization
 
 **Goal:** retain only per-basis optimizations that improve the complete prover.
 
-Implement and gate in order:
+Packet 4 has already selected and cut over one field-valued node/pair strategy per
+substage. Implement and gate further specializations in order:
 
-1. LB4 two-lane field pair table versus direct evaluation.
-2. LB4 bounded narrow/unreduced table experiment.
-3. LB4 two-round defer experiment.
-4. LB5 four-lane field table versus direct evaluation.
-5. LB6 two-lane root, eight-lane second product, and quartic leaf table/direct choices.
+1. LB4 bounded narrow/unreduced table experiment against its selected field strategy.
+2. LB4 two-round defer experiment.
+3. LB5 bounded integer/deferred-reduction experiments only where an exact accumulator
+   proof exists; otherwise retain its selected field strategy.
+4. LB6 cache/layout and bounded-reduction experiments separately for the two-lane root,
+   eight-lane second product, and quartic leaf; do not reintroduce deleted B/C losers.
+5. Reconfirm every retained per-substage winner in the complete prover and delete all
+   benchmark-only candidates before the Packet-5 cutover.
 6. Fused fold-next-scan where it improves the whole substage.
 
 Every experiment includes construction time, allocations, cache behavior, serial and
@@ -3446,6 +3568,7 @@ ratified measurement method stays stable; moving the bench invalidates the recor
 baseline commands. Report these phases separately:
 
 - plan and lookup-table setup;
+- node-row construction and ordered class-pair coefficient construction separately;
 - compact class conversion/source scan;
 - initial compact round;
 - every product substage;
@@ -3473,6 +3596,8 @@ Measure:
 
 - median, confidence interval, and ns/live digit;
 - per-substage wall time;
+- candidate strategy, selected strategy, node-table elements/bytes, and ordered-pair-table
+  elements/bytes for every LB4/LB5/LB6 substage;
 - peak range-owned field elements and bytes;
 - total allocated bytes and allocation count;
 - compact-to-field conversion count;
@@ -3480,6 +3605,12 @@ Measure:
 - standalone process max RSS;
 - verifier time;
 - proof bytes and `LoggingTranscript` event count.
+
+Store one representative Perfetto trace for each selected LB4/LB5/LB6 substage strategy
+in both serial and production-parallel modes, plus traces for any losing candidate whose
+aggregate timing is close enough to require attribution. Trace comparison uses the
+canonical span tree above and confirms table construction, compact rescans,
+materialization, fold tails, and worker occupancy without per-item events.
 
 Use a fixed toolchain, machine, ISA, thread count, and thermal/background policy. Use at
 least 20-30 Criterion samples for primary microbenchmarks and store raw artifacts/allocation
