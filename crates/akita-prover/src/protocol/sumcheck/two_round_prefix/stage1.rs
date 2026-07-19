@@ -233,15 +233,10 @@ pub(crate) fn build_stage1_bivariate_skip_proof_from_compact_range_image<
                 .collect()
         }
         8 => {
-            let (pos, neg) = cfg_fold_reduce!(
+            let class_weights = cfg_fold_reduce!(
                 0..live_x_cols,
-                || {
-                    (
-                        [E::MulU64Accum::zero(); STAGE1_PREFIX_EVAL_COUNT],
-                        [E::MulU64Accum::zero(); STAGE1_PREFIX_EVAL_COUNT],
-                    )
-                },
-                |(mut pos, mut neg), x_col| {
+                || [E::zero(); 256],
+                |mut histogram, x_col| {
                     let col = &s_compact[x_col * y_len..(x_col + 1) * y_len];
                     let eq_x_weight = eq_x[x_col];
                     for (y_quad, &eq_y_weight) in eq_y_suffix.iter().take(y_quads).enumerate() {
@@ -259,25 +254,30 @@ pub(crate) fn build_stage1_bivariate_skip_proof_from_compact_range_image<
                             ),
                         ]);
                         let weight = eq_x_weight * eq_y_weight;
-                        accum_lookup_vector_signed(
-                            &mut pos,
-                            &mut neg,
-                            weight,
-                            &STAGE1_B8_PREFIX_LOOKUP_TABLE[lookup_idx],
-                        );
+                        histogram[lookup_idx] += weight;
                     }
-                    (pos, neg)
+                    histogram
                 },
-                |(mut pos_a, mut neg_a), (pos_b, neg_b)| {
-                    for (dst, src) in pos_a.iter_mut().zip(pos_b.iter()) {
-                        *dst += *src;
+                |mut left, right| {
+                    for (dst, src) in left.iter_mut().zip(right) {
+                        *dst += src;
                     }
-                    for (dst, src) in neg_a.iter_mut().zip(neg_b.iter()) {
-                        *dst += *src;
-                    }
-                    (pos_a, neg_a)
+                    left
                 }
             );
+
+            let mut pos = [E::MulU64Accum::zero(); STAGE1_PREFIX_EVAL_COUNT];
+            let mut neg = [E::MulU64Accum::zero(); STAGE1_PREFIX_EVAL_COUNT];
+            for (lookup_idx, class_weight) in class_weights.into_iter().enumerate() {
+                if !class_weight.is_zero() {
+                    accum_lookup_vector_signed(
+                        &mut pos,
+                        &mut neg,
+                        class_weight,
+                        &STAGE1_B8_PREFIX_LOOKUP_TABLE[lookup_idx],
+                    );
+                }
+            }
             (0..STAGE1_PREFIX_EVAL_COUNT)
                 .map(|idx| reduce_signed_accum::<E>(pos[idx], neg[idx]))
                 .collect()
