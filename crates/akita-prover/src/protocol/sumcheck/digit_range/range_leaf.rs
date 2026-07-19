@@ -1,6 +1,8 @@
 use super::compact_digit_source::CompactDigitSource;
 use super::exact_prefix::ExactPrefixTable;
-use super::range_class_tables::{FoldedRangeImagePairTable, OrderedRangePairCoefficients};
+use super::range_class_tables::{
+    FoldedRangeImagePairTable, OrderedRangePairCoefficients, SecondRoundRangeQuartetCoefficients,
+};
 use super::round_accumulation::accumulate_equality_weighted_round;
 use super::{compose_small_poly_with_affine, MAX_TREE_STAGE_Q_DEGREE};
 use akita_algebra::split_eq::GruenSplitEq;
@@ -13,6 +15,11 @@ enum RangeImageValues<E: FieldCore> {
     Compact {
         source: CompactDigitSource,
         pair_coefficients: OrderedRangePairCoefficients<E>,
+    },
+    DeferredSecondRound {
+        source: CompactDigitSource,
+        folded_pairs: FoldedRangeImagePairTable<E>,
+        coefficients: [E; MAX_TREE_STAGE_Q_DEGREE + 1],
     },
     Folded(ExactPrefixTable<E>),
 }
@@ -139,6 +146,15 @@ impl<E: FieldCore + FromPrimitiveInt + HasOptimizedFold + HasUnreducedOps>
                     pair_coefficients.coefficients_by_pair_index(0),
                 )
             }
+            RangeImageValues::DeferredSecondRound { coefficients, .. } => {
+                let _span = tracing::info_span!(
+                    "digit_range_initial_round",
+                    round = self.rounds_completed,
+                    kernel_strategy = "cached-second-round",
+                )
+                .entered();
+                *coefficients
+            }
             RangeImageValues::Folded(table) => {
                 let _span = tracing::info_span!(
                     "digit_range_later_round",
@@ -167,6 +183,99 @@ impl<E: FieldCore + FromPrimitiveInt + HasOptimizedFold + HasUnreducedOps>
 
     fn ingest_challenge(&mut self, _round: usize, challenge: E) {
         self.split_eq.bind(challenge);
+        if self.rounds_completed == 0 && self.num_rounds >= 2 {
+            let deferred = match &self.range_image {
+                RangeImageValues::Compact { source, .. } if source.class_count() == 8 => {
+                    let _span = tracing::info_span!(
+                        "digit_range_prepare_deferred_second_round",
+                        explicit_rows = source.live_len(),
+                        lane_count = 1,
+                        kernel_strategy = "quartet-coefficient-table",
+                    )
+                    .entered();
+                    let folded_pairs =
+                        FoldedRangeImagePairTable::new(source.class_count(), challenge);
+                    let (first, second) = self.split_eq.remaining_eq_tables();
+                    let _span = tracing::info_span!(
+                        "digit_range_build_second_round_quartet_table",
+                        class_count = source.class_count(),
+                        lane_count = 1,
+                    )
+                    .entered();
+                    let ordered_pair_count = source.class_count() * source.class_count();
+                    let quartets = SecondRoundRangeQuartetCoefficients::new(
+                        &folded_pairs,
+                        ordered_pair_count,
+                        &self.polynomial_coefficients,
+                    );
+                    let coefficients = accumulate_equality_weighted_round(
+                        first,
+                        second,
+                        source.quartet_count(),
+                        |quartet_index| {
+                            let (left_pair, right_pair) =
+                                source.ordered_pair_indices_for_quartet(quartet_index);
+                            quartets.coefficients_by_pair_indices(left_pair, right_pair)
+                        },
+                        quartets.coefficients_by_pair_indices(0, 0),
+                    );
+                    Some(RangeImageValues::DeferredSecondRound {
+                        source: source.clone(),
+                        folded_pairs,
+                        coefficients,
+                    })
+                }
+                RangeImageValues::Compact { .. }
+                | RangeImageValues::DeferredSecondRound { .. }
+                | RangeImageValues::Folded(_) => None,
+            };
+            if let Some(deferred) = deferred {
+                self.range_image = deferred;
+                self.rounds_completed += 1;
+                return;
+            }
+        }
+
+        if self.rounds_completed == 1 {
+            let folded_after_two_rounds = match &self.range_image {
+                RangeImageValues::DeferredSecondRound {
+                    source,
+                    folded_pairs,
+                    ..
+                } => {
+                    let _span = tracing::info_span!(
+                        "digit_range_materialize_after_two_rounds",
+                        explicit_rows = source.live_len(),
+                        lane_count = 1,
+                        kernel_strategy = "factorized-pair-rescan",
+                    )
+                    .entered();
+                    let fold_context = E::precompute_fold(challenge);
+                    let explicit = cfg_into_iter!(0..source.quartet_count())
+                        .map(|quartet_index| {
+                            let (left_pair, right_pair) =
+                                source.ordered_pair_indices_for_quartet(quartet_index);
+                            let left = folded_pairs.value_by_pair_index(left_pair);
+                            let right = folded_pairs.value_by_pair_index(right_pair);
+                            E::fold_one(&fold_context, left, right)
+                        })
+                        .collect();
+                    let padding_pair = folded_pairs.value_by_pair_index(0);
+                    let padding = E::fold_one(&fold_context, padding_pair, padding_pair);
+                    Some(
+                        ExactPrefixTable::new(source.domain_len() / 4, explicit, padding)
+                            .expect("compact source and Boolean domain were validated"),
+                    )
+                }
+                RangeImageValues::Compact { .. } | RangeImageValues::Folded(_) => None,
+            };
+            if let Some(table) = folded_after_two_rounds {
+                self.range_image = RangeImageValues::Folded(table);
+                self.rounds_completed += 1;
+                return;
+            }
+        }
+
         let folded_from_compact = match &self.range_image {
             RangeImageValues::Compact { source, .. } => {
                 let _span = tracing::info_span!(
@@ -199,7 +308,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasOptimizedFold + HasUnreducedOps>
                     .expect("compact source and Boolean domain were validated"),
                 )
             }
-            RangeImageValues::Folded(_) => None,
+            RangeImageValues::DeferredSecondRound { .. } | RangeImageValues::Folded(_) => None,
         };
         if let Some(table) = folded_from_compact {
             self.range_image = RangeImageValues::Folded(table);
