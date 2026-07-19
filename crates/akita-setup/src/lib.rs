@@ -459,7 +459,7 @@ mod tests {
 
     #[test]
     fn expanded_setup_roundtrips_and_derives_same_verifier() {
-        let prover_setup = new_prover_setup::<TestF, Cfg>(10, 3).unwrap();
+        let prover_setup = new_prover_setup::<TestF, Cfg>(13, 3).unwrap();
         let verifier_setup = prover_setup.verifier_setup().unwrap();
 
         let mut bytes = Vec::new();
@@ -522,7 +522,7 @@ mod tests {
         #[test]
         fn save_and_load_roundtrips() {
             with_test_cache_dir("roundtrip", || {
-                const MAX_VARS: usize = 12;
+                const MAX_VARS: usize = 13;
 
                 cleanup_setup_file_shape(MAX_VARS, 1);
 
