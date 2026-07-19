@@ -68,6 +68,144 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> LowBasisRangeCheckProver
     }
 
     #[inline(always)]
+    pub(super) fn stage1_b4_octet_lookup_index_from_row<V: CompactRangeImageValue>(
+        row: &[V],
+        base: usize,
+    ) -> usize {
+        debug_assert!(base + 8 <= row.len());
+        let mut table_index = 0usize;
+        for offset in 0..8 {
+            table_index |=
+                stage1_b4_digit_from_compact_range_image(row[base + offset].range_image_value())
+                    << offset;
+        }
+        table_index
+    }
+
+    /// Build `Q(left + X(right-left))` for every binary range-image octet.
+    ///
+    /// After the first two challenges, an octet has two folded endpoints for
+    /// round three. Each original range-image entry is either zero or two, so
+    /// the complete challenge-dependent table has only `2^8` rows and three
+    /// coefficients per row.
+    fn build_binary_range_image_third_round_coefficient_table(r0: E, r1: E) -> [[E; 3]; 256] {
+        let folded_quads = Self::build_round2_range_image_lookup_b4(r0, r1);
+        std::array::from_fn(|octet_index| {
+            let left = folded_quads[octet_index & 0x0f];
+            let delta = folded_quads[octet_index >> 4] - left;
+            [
+                left * (left - E::from_u64(2)),
+                E::from_u64(2) * delta * (left - E::one()),
+                delta * delta,
+            ]
+        })
+    }
+
+    #[tracing::instrument(
+        skip_all,
+        name = "LowBasisRangeCheckProver::compute_binary_range_image_third_round_from_compact_octets"
+    )]
+    pub(super) fn compute_binary_range_image_third_round_from_compact_octets<
+        V: CompactRangeImageValue,
+    >(
+        &self,
+        compact_range_image: &[V],
+        r0: E,
+        r1: E,
+    ) -> EqFactoredUniPoly<E> {
+        debug_assert!(self.defers_binary_range_image_through_third_round());
+        debug_assert_eq!(self.rounds_completed, 1);
+        let y_len = compact_range_image.len() / self.live_x_cols;
+        let octets_per_column = y_len / 8;
+        let coefficient_table =
+            Self::build_binary_range_image_third_round_coefficient_table(r0, r1);
+        let (e_first, e_second) = self.split_eq.remaining_eq_tables();
+        let num_first = e_first.len();
+
+        let accumulated = cfg_fold_reduce!(
+            0..e_second.len(),
+            || [E::ProductAccum::zero(); 3],
+            |mut outer_accum, j_high| {
+                let mut inner_accum = [E::ProductAccum::zero(); 3];
+                let base_j = j_high * num_first;
+                for (j_low, &inner_equality_weight) in e_first.iter().enumerate() {
+                    let pair_index = base_j + j_low;
+                    let x = pair_index / octets_per_column;
+                    if x >= self.live_x_cols {
+                        continue;
+                    }
+                    let octet = pair_index % octets_per_column;
+                    let row = &compact_range_image[x * y_len..(x + 1) * y_len];
+                    let table_index = Self::stage1_b4_octet_lookup_index_from_row(row, 8 * octet);
+                    for (accumulator, &coefficient) in inner_accum
+                        .iter_mut()
+                        .zip(coefficient_table[table_index].iter())
+                    {
+                        *accumulator += inner_equality_weight.mul_to_product_accum(coefficient);
+                    }
+                }
+                let outer_equality_weight = e_second[j_high];
+                for (accumulator, inner) in outer_accum.iter_mut().zip(inner_accum) {
+                    *accumulator +=
+                        outer_equality_weight.mul_to_product_accum(E::reduce_product_accum(inner));
+                }
+                outer_accum
+            },
+            |mut left, right| {
+                for (left_coefficient, right_coefficient) in left.iter_mut().zip(right) {
+                    *left_coefficient += right_coefficient;
+                }
+                left
+            }
+        );
+
+        EqFactoredUniPoly::from_q_coeffs(
+            accumulated
+                .into_iter()
+                .map(E::reduce_product_accum)
+                .collect(),
+        )
+    }
+
+    /// Fold every binary range-image octet through all three initial challenges.
+    fn build_binary_range_image_octet_fold_table(r0: E, r1: E, r2: E) -> [E; 256] {
+        let folded_quads = Self::build_round2_range_image_lookup_b4(r0, r1);
+        std::array::from_fn(|octet_index| {
+            let left = folded_quads[octet_index & 0x0f];
+            let right = folded_quads[octet_index >> 4];
+            left + r2 * (right - left)
+        })
+    }
+
+    #[tracing::instrument(
+        skip_all,
+        name = "LowBasisRangeCheckProver::materialize_binary_range_image_after_third_round"
+    )]
+    pub(super) fn materialize_binary_range_image_after_third_round<V: CompactRangeImageValue>(
+        compact_range_image: &[V],
+        live_x_cols: usize,
+        y_len: usize,
+        r0: E,
+        r1: E,
+        r2: E,
+    ) -> Vec<E> {
+        debug_assert_eq!(y_len % 8, 0);
+        let next_y_len = y_len / 8;
+        let fold_table = Self::build_binary_range_image_octet_fold_table(r0, r1, r2);
+        let mut output = vec![E::zero(); live_x_cols * next_y_len];
+        cfg_chunks_mut!(output, next_y_len)
+            .enumerate()
+            .for_each(|(x, column_output)| {
+                let row = &compact_range_image[x * y_len..(x + 1) * y_len];
+                for (octet, value) in column_output.iter_mut().enumerate() {
+                    let table_index = Self::stage1_b4_octet_lookup_index_from_row(row, 8 * octet);
+                    *value = fold_table[table_index];
+                }
+            });
+        output
+    }
+
+    #[inline(always)]
     pub(super) fn stage1_b8_quad_lookup_index_from_row<V: CompactRangeImageValue>(
         row: &[V],
         base: usize,

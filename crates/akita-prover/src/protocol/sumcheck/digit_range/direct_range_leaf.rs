@@ -554,9 +554,10 @@ fn build_compact_range_image(digit_witness: &[i8]) -> Vec<i16> {
         .collect()
 }
 
-struct DirectRangeTwoRoundPrefix<E: FieldCore> {
+struct DirectRangePrefixState<E: FieldCore> {
     skip_state: Stage1BivariateSkipState<E>,
     first_challenge: Option<E>,
+    second_challenge: Option<E>,
 }
 
 /// Direct leaf state over `range_image(x) = w(x)(w(x)+1)`.
@@ -569,16 +570,16 @@ pub(crate) struct LowBasisRangeCheckProver<E: FieldCore> {
     num_vars: usize,
     basis: usize,
     prefix_tau: Option<Vec<E>>,
-    two_round_prefix: Option<DirectRangeTwoRoundPrefix<E>>,
+    initial_round_prefix: Option<DirectRangePrefixState<E>>,
     cached_round_poly: Option<EqFactoredUniPoly<E>>,
     rounds_completed: usize,
 }
 
+mod initial_round_deferral;
 mod live_prefix;
 mod rounds;
 mod sparse_low_variables;
 mod state;
-mod two_round_prefix;
 
 #[cfg(test)]
 mod tests;
