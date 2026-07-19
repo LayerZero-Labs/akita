@@ -5,8 +5,8 @@
 | Author(s) | Quang Dao (direction); Codex planning synthesis |
 | Created | 2026-07-18 |
 | Revised | 2026-07-19; concurrent Opus/Fable review reconciled; per-level setup prefixes, verifier-time selection objective, staged 7a/7b cutover, gated `Batched`, envelope-level `setup_contribution_eval`, shared-emitter ownership, current #311 stack, and bounded additive/cutover PR delivery model recorded |
-| Status | implementation-ready after #309 integration; planning branch stacked on #311 |
-| Planning branch | `quang/plan-digit-range-pipeline` |
+| Status | first PR contract locked; implementation blocked only on the #311 + #309 base integration |
+| First PR branch | `quang/plan-digit-range-pipeline` |
 | Stack base | PR #311 at `bc959ef34572aee143ba0114094b0b4212b4e111` |
 | Historical audit base | `main` at `f5c180a49a83f5ce3e8b683a34208166ffed2f66` |
 | Related | [`digit-innermost-layout.md`](digit-innermost-layout.md), [`runtime-ring-cutover.md`](runtime-ring-cutover.md), [`transcript-hardening.md`](transcript-hardening.md), [`packed-sumcheck.md`](packed-sumcheck.md), [`akita-sumcheck-unification.md`](akita-sumcheck-unification.md) |
@@ -312,8 +312,10 @@ relation sumcheck, Stage 2, or Stage 3. Therefore this handoff neither introduce
 `TerminalRelationProof` nor claims a terminal degree-3-to-degree-2 saving. Its proof-size
 comparison covers non-terminal folds only.
 
-The planning branch is stacked directly on the audited #311 head so its only branch-local
-change is this documentation series. Implementation follows this fixed integration policy:
+The F1 branch is currently a documentation scaffold stacked directly on the audited #311
+head. It must not merge in that state: after B0 integrates #309, bring B0 into this same
+published branch, retarget the PR, and implement the locked F1 surface below. The fixed
+integration policy is:
 
 1. Keep #311 as the hard base. Its audited head is `bc959ef3`; if it advances, repeat the
    direct-page, changed-file, and terminal-contract audit before rebasing this specification.
@@ -2601,29 +2603,151 @@ PR fills its `PR / status` and evidence cells before it becomes ready for review
 
 | ID | Recommended branch | Base | Packets | Kind | Bounded responsibility | PR / status |
 |---|---|---|---:|---|---|---|
-| H | `quang/plan-digit-range-pipeline` | #311 | hub | specification | This architecture, stack ledger, gates, and cross-PR diff ownership | current planning PR |
-| B0 | existing prerequisite branches | H, then `main` | 0 | prerequisite cutover | Land #311; rebase/land #309; reconcile #310/#308 as required; ratify exact implementation base | planned |
-| A1 | `quang/digit-range-01-baselines` | B0 | 1 | additive | Stable bench, tracing, allocation counters, dense range/relation oracles, proof-byte and transcript baselines | planned |
-| A2 | `quang/digit-range-02-range-plans` | A1 | 2 | additive / behavior-preserving | Canonical checked range plans and points replace duplicate shape/validation authority; current wire only | planned |
-| C2 | `quang/digit-range-03-range-architecture` | A2 | 3 | atomic internal cutover | Make one `DigitRangeProver` own all current range choreography and delete duplicate prover/module facades | planned |
-| C3 | `quang/digit-range-04-streaming-cutover` | C2 | 4 | atomic compute cutover | Make the generic streaming prover canonical for LB2-LB6 and delete eager forest/padded-table production paths | planned |
-| O4a | `quang/digit-range-05-lb4-kernel` | C3 | 5 | bounded optimization | Select and install the LB4 winner; delete candidates and knobs | planned |
-| O4b | `quang/digit-range-06-lb5-kernel` | O4a | 5 | bounded optimization | Select and install the LB5 winner; delete candidates and knobs | planned |
-| O4c | `quang/digit-range-07-lb6-kernel` | O4b | 5 | bounded optimization | Select and install the LB6 winner; delete candidates and knobs | planned |
-| C5 | `quang/digit-range-08-flat-relations` | O4c | 6 | atomic compute/API cutover | Move current direct relation/setup evaluation to the flat semantic providers; delete public x/y and sentinel paths with unchanged wire | planned |
-| C6 | `quang/digit-range-09-direct-fold-check` | C5 | 7a | atomic direct cutover | Install the semantic direct fold-check container, keep direct bytes unchanged, unschedule recursive offload, and delete legacy recursive Stage 2/3 | planned |
-| C7 | `quang/digit-range-10-recursive-two-stage` | C6 and #310 integration | 7b | atomic protocol cutover | Add the fused recursive Stage 1 leaf and `Separate` Stage 2 reduction across proof/prover/verifier/wire/sizing/schedules | planned |
-| E8 | `quang/digit-range-11-batched-reduction` | C7 | optional target | atomic capability cutover | Add and emit `Batched` across plan/proof/prover/verifier/wire/sizing only if complete-size and differential gates beat `Separate`; otherwise add no production shape | planned / optional |
-| M9 | `quang/digit-range-12-mixed-dimensions` | C7 or E8 | 8 | atomic compute/capability cutover | Extend canonical providers to mixed role dimensions under the fixed two-stage proof language and remove the mixed-plus-setup rejection | planned |
-| M10 | `quang/digit-range-13-mixed-planner` | M9 | 9 | capability enablement | Price and schedule eligible mixed/offloaded candidates; regenerate only approved rows | planned |
-| O11 | `quang/digit-range-14-prover-cleanup` | M10 | 10 | bounded optimization | Destination-oriented digit emission, nonce/fold workspace reuse, and invariant-bearing constructor split | planned |
-| O12 | `quang/digit-range-15-verifier-kernels` | O11 | 11 | bounded optimization | Port only measured structured verifier kernels onto the canonical providers | planned |
-| D13 | `quang/digit-range-16-docs-packing-handoff` | O12 | 12 | closure | Final audit, book/spec/profile synchronization, scalar packing handoff; no deferred cutover deletion | planned |
+| B0 | existing prerequisite branches | #311, then `main` | 0 | prerequisite cutover | Land #311; rebase/land #309; reconcile #310/#308 as required; ratify exact implementation base | planned |
+| F1 | `quang/plan-digit-range-pipeline` | B0 | hub, 1-3 | additive foundation + atomic internal cutover | Land this hub, baselines/oracles, canonical range plan/domain, and the single `DigitRangeProver` cutover as one coherent first PR | **locked; code waits for B0** |
+| C3 | `quang/digit-range-02-streaming-cutover` | F1 | 4 | atomic compute cutover | Make the generic streaming prover canonical for LB2-LB6 and delete eager forest/padded-table production paths | planned |
+| O4a | `quang/digit-range-03-lb4-kernel` | C3 | 5 | bounded optimization | Select and install the LB4 winner; delete candidates and knobs | planned |
+| O4b | `quang/digit-range-04-lb5-kernel` | O4a | 5 | bounded optimization | Select and install the LB5 winner; delete candidates and knobs | planned |
+| O4c | `quang/digit-range-05-lb6-kernel` | O4b | 5 | bounded optimization | Select and install the LB6 winner; delete candidates and knobs | planned |
+| C5 | `quang/digit-range-06-flat-relations` | O4c | 6 | atomic compute/API cutover | Move current direct relation/setup evaluation to the flat semantic providers; delete public x/y and sentinel paths with unchanged wire | planned |
+| C6 | `quang/digit-range-07-direct-fold-check` | C5 | 7a | atomic direct cutover | Install the semantic direct fold-check container, keep direct bytes unchanged, unschedule recursive offload, and delete legacy recursive Stage 2/3 | planned |
+| C7 | `quang/digit-range-08-recursive-two-stage` | C6 and #310 integration | 7b | atomic protocol cutover | Add the fused recursive Stage 1 leaf and `Separate` Stage 2 reduction across proof/prover/verifier/wire/sizing/schedules | planned |
+| E8 | `quang/digit-range-09-batched-reduction` | C7 | optional target | atomic capability cutover | Add and emit `Batched` across plan/proof/prover/verifier/wire/sizing only if complete-size and differential gates beat `Separate`; otherwise add no production shape | planned / optional |
+| M9 | `quang/digit-range-10-mixed-dimensions` | C7 or E8 | 8 | atomic compute/capability cutover | Extend canonical providers to mixed role dimensions under the fixed two-stage proof language and remove the mixed-plus-setup rejection | planned |
+| M10 | `quang/digit-range-11-mixed-planner` | M9 | 9 | capability enablement | Price and schedule eligible mixed/offloaded candidates; regenerate only approved rows | planned |
+| O11 | `quang/digit-range-12-prover-cleanup` | M10 | 10 | bounded optimization | Destination-oriented digit emission, nonce/fold workspace reuse, and invariant-bearing constructor split | planned |
+| O12 | `quang/digit-range-13-verifier-kernels` | O11 | 11 | bounded optimization | Port only measured structured verifier kernels onto the canonical providers | planned |
+| D13 | `quang/digit-range-14-docs-packing-handoff` | O12 | 12 | closure | Final audit, book/spec/profile synchronization, scalar packing handoff; no deferred cutover deletion | planned |
 
 O4a/O4b/O4c are written linearly to minimize hot-file conflicts, but their candidate
 experiments may run as sibling branches from C3. Only the measured winner for each basis
 is rebased into the listed production order. E8 is optional: if `Batched` does not beat
 `Separate`, record the stop result in this hub and skip directly to M9.
+
+### F1: locked first PR contract
+
+This is a settled delivery decision. The current planning PR becomes the first
+implementation PR; do not merge it as a documentation-only waypoint. Its coherent claim
+is:
+
+> establish the canonical range architecture, prove that it preserves the current
+> protocol, and cut every Stage 1 caller over to one production `DigitRangeProver`.
+
+F1 combines the hub with Packets 1-3 because the pieces are mutually justifying: the
+baseline/oracles make the refactor reviewable, `DigitRangePlan` removes duplicate shape
+authority, and the architecture cutover ensures the new plan is exercised rather than
+dormant. Splitting before the F1 cutover would either merge unused substrate or leave the
+repository with two prover owners.
+
+#### Base and branch rule
+
+F1 may not add Rust implementation commits on the current #311-only base. B0 must first
+produce an exact post-#311, post-#309 base SHA with semantic `log_basis_inner`,
+`log_basis_outer`, and `log_basis_open`; F1 consumes `log_basis_open` explicitly as its
+certified range basis. Once B0 exists, update the already-published
+`quang/plan-digit-range-pipeline` branch onto that base without a generic force-push
+(prefer an ordinary merge for published history unless an exact force-with-lease rewrite
+is separately authorized), change the LayerZero PR base selector to B0, and record the
+literal base SHA in this ledger before implementation review begins.
+
+Recommended final PR title:
+
+```text
+refactor(prover): establish one digit-range architecture
+```
+
+#### Exact positive change surface
+
+The final `git diff B0...F1` may touch only the following ownership regions. A necessary
+path outside this manifest requires a hub amendment explaining the invariant it owns;
+“the compiler needed it” is not sufficient.
+
+| Surface | Allowed paths | Required final responsibility |
+|---|---|---|
+| Central hub and lifecycle | `specs/digit-range-pipeline-refactor.md`, `specs/akita-sumcheck-unification.md`, `specs/packed-sumcheck.md` | Keep this stack authoritative; record F1 base/head, benchmark method, status, and any deviation |
+| Benchmark and counters | `crates/akita-pcs/Cargo.toml`, new `crates/akita-pcs/benches/digit_range.rs`, narrowly scoped Stage 1 tracing/counter sites | Pin LB2-LB6, live-prefix, digit-distribution, serial/parallel, allocation, and whole-Stage-1 baselines without changing production decisions |
+| Range shape/domain authority | `crates/akita-types/src/proof/stage1.rs`, Stage-1-only exports in `crates/akita-types/src/proof/mod.rs` and `crates/akita-types/src/lib.rs`, and the Stage-1 regions of `proof/{levels,shapes,wire}.rs` and `proof_size.rs` | One checked `DigitRangePlan` and one checked Stage-1 view of `WitnessDomain`; prover, verifier, shape validation, and sizing consume them directly |
+| Canonical prover | new `crates/akita-prover/src/protocol/sumcheck/digit_range/`, `protocol/sumcheck/mod.rs`, Stage-1-owned pieces of `two_round_prefix/{common,stage1}.rs`, and the Stage-1 boundary in `protocol/core/fold.rs` | One production `DigitRangeProver` owns construction, transcript choreography, claims, folding, and all LB2-LB6 dispatch |
+| Removed prover surface | `protocol/sumcheck/akita_stage1_tree.rs` and `protocol/sumcheck/akita_stage1/` | Migrate invariant-bearing code into `digit_range/`, then delete both old prover owners and every pass-through export |
+| Verifier parity | `crates/akita-verifier/src/stages/stage1.rs` and only the Stage-1 replay region of `crates/akita-verifier/src/protocol/core/fold.rs` | Consume `DigitRangePlan`/checked points, preserve equations and transcript order, and reject malformed shapes without panic |
+| Differential tests and test-only oracles | `crates/akita-pcs/tests/stage1_roundtrip.rs`, narrowly scoped transcript-hardening tests, `digit_range/` unit tests, and test/bench-only dense range or relation helpers | Exhaust plans and malformed inputs; compare proof bytes, events, challenges, claims, points, and round polynomials against the pre-F1 oracle |
+
+The new module should be organized by invariant-bearing state, not by basis or old
+backend. Acceptable internal seams are plan validation, active representation state,
+round production/folding, prefix optimization, and tests. Do not create `lb2.rs`,
+`lb4.rs`, `compact_backend.rs`, `tree_backend.rs`, an `Engine` trait, or a facade that
+forwards to the two old provers.
+
+F1 may temporarily retain both **active representations** required by the current
+protocol — compact digits for LB2/LB3 and padded range-image state for LB4/LB5/LB6 — but
+they must be private states inside one prover and must not own separate plan, transcript,
+proof-shape, or round-loop implementations. Both are exercised production states, not a
+dormant alternate engine. C3 owns replacing the padded high-basis state with streaming;
+F1 must neither optimize nor generalize it.
+
+Within the new Stage 1 code, production identifiers use `digit_witness`, `range_image`,
+and `range_image_eval`; do not introduce a new `S`-named table, claim, or helper. The
+legacy `AkitaStage1Proof` type and any field name whose mechanical rename would pull
+Stage 2/wire migration into this PR remain unchanged until their scheduled semantic
+cutover. Do not add a compatibility alias for either vocabulary.
+
+#### Mandatory deletion and single-owner gate
+
+F1 is not ready until all of the following are true:
+
+- exactly one non-test `struct DigitRangeProver` owns Stage 1 range proving;
+- no non-test `struct AkitaStage1Prover` remains;
+- `pub mod akita_stage1`, `pub mod akita_stage1_tree`, and their re-exports are gone;
+- `prove_recover_w`, `take_w_evals_compact`, and the
+  `mem::take -> prove -> restore` witness handoff are gone; the existing `Arc<[i8]>` is
+  shared directly;
+- range topology, arity, degree, child count/order, and round count are derived only from
+  `DigitRangePlan` in prover, verifier, sizing, and shape validation;
+- the old free topology helpers are private implementation details or deleted; no
+  `_for_level`, forwarding constructor, compatibility reader, or runtime engine flag is
+  added;
+- every retained source file over the repository line limit is split only at an
+  invariant-bearing boundary and passes the repository line guardrail without a blanket
+  exception.
+
+#### Explicitly forbidden in F1
+
+F1 must not change:
+
+- any serialized byte, proof field order/count, transcript label/order, challenge, claim,
+  or final point for a fixed input and transcript seed;
+- the high-basis padded-table/forest algorithm beyond moving and descriptively naming its
+  private state; C3 owns the streaming replacement and its memory/speed claims;
+- Stage 2 relation algebra, Stage 3 setup offload, relation placement, setup contribution,
+  `FoldCheckPlan`, or recursive proof topology;
+- public x/y geometry, mixed-role dimensions, setup slots, planner selection, generated
+  schedules, commitment compression, terminal proof/checking, digit emission, fold grind,
+  or verifier performance kernels;
+- `two_round_prefix/stage2.rs` or production Stage 2/Stage 3 modules, except that test-only
+  baseline code may observe their outputs without changing their behavior.
+
+#### F1 ready-to-merge gate
+
+Against the literal B0 SHA, F1 must demonstrate:
+
+- byte-for-byte proof and logging-transcript identity for LB2-LB6 across direct and
+  currently scheduled recursive non-terminal levels;
+- identical Stage 1 round messages, challenges, interstage claims, final point, and legacy
+  range-image claim;
+- exhaustive `DigitRangePlan` shape tests and verifier rejection of malformed LB, count,
+  degree, point width/order, and child shape without panic;
+- each fixed Stage 1 benchmark cell within the ratified parity interval, no allocation or
+  peak-memory increase, and no end-to-end primary workload above `1.02x`;
+- a complete `B0...F1` ownership diff showing only the manifest above and an `rg` deletion
+  report for the forbidden old owners/wrappers;
+- the current repository-wide preflight, all three feature-matrix Clippy commands, focused
+  `akita-types`/`akita-prover`/`akita-verifier` Stage 1 tests,
+  `akita-pcs --test stage1_roundtrip`, transcript-hardening coverage, and the CI-profile
+  nextest suite, each polled to a real exit code.
+
+If preserving the old high-basis implementation inside one owner cannot meet parity or
+requires a wrapper around either legacy prover, F1 stops. Do not pull C3 streaming work
+backward merely to make the first PR pass.
 
 ### Per-PR review and merge protocol
 
@@ -2721,7 +2845,7 @@ protocol for a fixed `FoldCheckPlan`.
 **Stop:** do not implement this plan against a legacy single `log_basis` or pre-#311
 terminal protocol and then perform another broad rename/cutover.
 
-### Packet 1: baselines, spans, and dense oracles
+### Packet 1: baselines, spans, and dense oracles (F1 foundation)
 
 **Goal:** make every later optimization measurable and differentially checkable.
 
@@ -2773,7 +2897,7 @@ Benchmark setup and witness generation stay outside timed closures.
 measurement methods are reproducible, numeric targets are ratified, and the old
 implementation is captured as a test oracle. No protocol behavior changes.
 
-### Packet 2: canonical range plans and checked points (wire-preserving)
+### Packet 2: canonical range plans and checked points (F1 foundation, wire-preserving)
 
 **Goal:** one range-topology/domain authority with byte-identical behavior.
 
@@ -2811,7 +2935,7 @@ terminal replay.
 **Exit:** every supported plan shape is exhaustively asserted; malformed basis/shape/point
 returns errors; cleanup benchmark is within 3% and memory does not increase.
 
-### Packet 3: one range-product architecture and module cleanup
+### Packet 3: one range-product architecture and module cleanup (F1 atomic cutover)
 
 **Goal:** move compact LB2/LB3 mechanics and tree choreography into one `digit_range`
 module before changing high-basis storage.
@@ -3485,22 +3609,21 @@ The implementation must explicitly reject:
 
 ## Validation commands
 
-Every implementation packet runs focused crate tests plus the proportional workspace
-suite. Before the complete series merges, run and poll each command to a real exit code:
-
-```bash
-cargo fmt -q
-cargo clippy --all --message-format=short -q -- -D warnings
-cargo test
-rtk cargo nextest run --profile ci --no-default-features --features parallel,disk-persistence
-./scripts/check-doc-guardrails.sh
-```
+`AGENTS.md` is the single authority for the current repository-wide preflight, feature
+matrix, and CI-fidelity selectors; do not preserve a stale duplicate command list here.
+Every implementation PR runs that current preflight plus focused tests and benchmarks for
+its ownership surface, and polls every live command to a real exit code. F1's additional
+focused requirements are fixed in its ready-to-merge gate above. Before the complete
+series merges, run the current CI-profile nextest suite and every path-specific workflow
+triggered by the cumulative diff.
 
 Follow the repository dependency-cache policy before the first `lake`/Lean command if a
 future cross-repository validation adds one; no Lean validation is currently required.
 
-For this planning-only branch, only Markdown changes are expected, so
-`git diff --check` and `./scripts/check-doc-guardrails.sh` are the required local checks.
+Until B0 exists, F1 remains a Markdown-only scaffold, so `git diff --check` and
+`./scripts/check-doc-guardrails.sh` are sufficient for hub revisions. Once its first Rust
+implementation commit lands, the full F1 gate applies; the prior documentation-only
+validation is not evidence for the implementation head.
 
 ## Definition of done
 
