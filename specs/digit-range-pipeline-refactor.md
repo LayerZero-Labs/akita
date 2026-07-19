@@ -7,7 +7,7 @@
 | Revised | 2026-07-19; concurrent Opus/Fable review reconciled; per-level setup prefixes, verifier-time selection objective, staged 7a/7b cutover, gated `Batched`, envelope-level `setup_contribution_eval`, shared-emitter ownership, current #311 stack, and bounded additive/cutover PR delivery model recorded |
 | Status | implementation-ready after #309 integration; planning branch stacked on #311 |
 | Planning branch | `quang/plan-digit-range-pipeline` |
-| Stack base | PR #311 at `49353bf829e3f7b56059e513ae9053b72897cf2f` |
+| Stack base | PR #311 at `bc959ef34572aee143ba0114094b0b4212b4e111` |
 | Historical audit base | `main` at `f5c180a49a83f5ce3e8b683a34208166ffed2f66` |
 | Related | [`digit-innermost-layout.md`](digit-innermost-layout.md), [`runtime-ring-cutover.md`](runtime-ring-cutover.md), [`transcript-hardening.md`](transcript-hardening.md), [`packed-sumcheck.md`](packed-sumcheck.md), [`akita-sumcheck-unification.md`](akita-sumcheck-unification.md) |
 
@@ -282,7 +282,7 @@ not expand this project's scope.
 ### Open-PR audit and branch coordination
 
 This audit was refreshed on 2026-07-19 from public pull refs and each direct PR page; the
-conflict analysis below uses current #311 head `49353bf8`. The
+conflict analysis below uses current #311 head `bc959ef3`. The
 open set was #277, #282, #295, #307, #308, #309, #310, and #311. Pull refs alone are not
 state evidence; the direct pages reported #277/#282/#295/#307 as draft and
 #308/#309/#310/#311 as open.
@@ -315,7 +315,7 @@ comparison covers non-terminal folds only.
 The planning branch is stacked directly on the audited #311 head so its only branch-local
 change is this documentation series. Implementation follows this fixed integration policy:
 
-1. Keep #311 as the hard base. Its audited head is `49353bf8`; if it advances, repeat the
+1. Keep #311 as the hard base. Its audited head is `bc959ef3`; if it advances, repeat the
    direct-page, changed-file, and terminal-contract audit before rebasing this specification.
 2. Rebase and land #309 on that main. Its audited head is `d4100f3f` and introduces
    semantic `log_basis_inner`, `log_basis_outer`, and `log_basis_open`. Resolve #309's
