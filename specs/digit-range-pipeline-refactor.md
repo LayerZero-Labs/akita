@@ -5,7 +5,7 @@
 | Author(s) | Quang Dao (direction); Codex planning synthesis |
 | Created | 2026-07-18 |
 | Revised | 2026-07-19; concurrent Opus/Fable review reconciled; per-level setup prefixes, verifier-time selection objective, staged 7a/7b cutover, gated `Batched`, envelope-level `setup_contribution_eval`, shared-emitter ownership, current #311 stack, and bounded additive/cutover PR delivery model recorded |
-| Status | first PR contract locked; implementation blocked only on the #311 + #309 base integration |
+| Status | F1 implementation may proceed on #311; #309 is deferred to the pre-C5 semantic-basis integration gate |
 | First PR branch | `quang/plan-digit-range-pipeline` |
 | Stack base | PR #311 at `bc959ef34572aee143ba0114094b0b4212b4e111` |
 | Historical audit base | `main` at `f5c180a49a83f5ce3e8b683a34208166ffed2f66` |
@@ -250,8 +250,8 @@ performance gates, stop and report the evidence instead of retaining a second pa
 
 When sources disagree, use this order:
 
-1. The implementation base defined below, including the landed #311 terminal contract and
-   the landed semantic-basis contract from #309.
+1. The active tranche base defined below: #311 for F1 through O4c, then #309's
+   semantic-basis contract from I5 onward.
 2. This handoff for the target implementation and packet order.
 3. The Akita paper as mathematical context.
 4. Every other unmerged branch as prior art only.
@@ -290,7 +290,7 @@ state evidence; the direct pages reported #277/#282/#295/#307 as draft and
 | PR | Relevant change | Overlap decision |
 |---|---|---|
 | [#311](https://github.com/LayerZero-Labs/akita/pull/311) | Quotient-free direct terminal relations; removes terminal Stage 1, relation sumcheck, outgoing binding, and numeric terminal stage structure | **Hard prerequisite.** Build on it. `FoldCheckPlan` governs non-terminal `FoldLevelProof` only. Do not touch its direct terminal checker, terminal transcript, or `TerminalLevelProof` payload. |
-| [#309](https://github.com/LayerZero-Labs/akita/pull/309) | Splits `log_basis`/digit depths into semantic inner, outer, and opening roles | **Hard prerequisite.** The range proof consumes the certified `log_basis_open`; it does not recreate a largest-basis rule. Rebase #309 after #311, because the reviewed heads have 41 textual conflict paths, mostly schedule regeneration and shared level plumbing. |
+| [#309](https://github.com/LayerZero-Labs/akita/pull/309) | Splits `log_basis`/digit depths into semantic inner, outer, and opening roles | **Deferred prerequisite for C5, not F1.** F1-C3/O4 consume the already-computed checked range basis and never read `LevelParams`; after #309 the same boundary is sourced from `log_basis_open`. Integrate #309 before flat relation/setup providers need all three role bases. Its reviewed head has 41 conflict paths with #311, mostly schedule regeneration and shared level plumbing, so importing it into F1 would destroy the first PR's bounded diff without changing Stage 1 semantics. |
 | [#310](https://github.com/LayerZero-Labs/akita/pull/310) | Distributed multi-chunk recursive setup-offloading schedules and e2e coverage | Land or rebase before Packet 7's distributed rollout. The reviewed heads have only one textual conflict with #311 and one with #309. Preserve its schedules and convert its Stage-3 assertions to semantic Stage-2 claim reduction; do not clone its e2e fixture. |
 | [#308](https://github.com/LayerZero-Labs/akita/pull/308) | Planner-backed K16 preset | No algorithmic overlap. Let it land before schedule regeneration; never hand-copy or overwrite its preset rows. |
 | [#307](https://github.com/LayerZero-Labs/akita/pull/307) | Shared Jolt field implementation | Broad mechanical overlap but little protocol overlap. New kernels use only repository field/sumcheck traits and add no field implementation. If it lands first, rebaseline before Packet 1; otherwise its branch rebases over this work. |
@@ -301,10 +301,10 @@ state evidence; the direct pages reported #277/#282/#295/#307 as draft and
 `git merge-tree --write-tree` on the audited heads found 41 conflict records between
 #311/#309, one between #311/#310, one between #309/#310, 75 between #311/#295, and 70
 between #311/#307. Those counts measure textual integration pressure, not semantic scope:
-#295 and #307 are broad draft cutovers, while #309 directly changes the basis vocabulary
-this range plan must consume. This is why #311 then rebased #309 is the hard base, #310 is
-a narrow capability integration, and #295/#307 are boundary constraints rather than code
-to import here.
+#295 and #307 are broad draft cutovers, while #309 changes the basis vocabulary that the
+later relation/setup work must consume. This is why #311 alone is F1's hard base, #309 is
+the explicit I5 gate before C5, #310 is a narrow capability integration, and #295/#307 are
+boundary constraints rather than code to import here.
 
 The key interaction is #311. It makes this project smaller: the terminal fold already
 reveals a segment-typed witness and performs direct ring/trace checks, with no range proof,
@@ -312,20 +312,18 @@ relation sumcheck, Stage 2, or Stage 3. Therefore this handoff neither introduce
 `TerminalRelationProof` nor claims a terminal degree-3-to-degree-2 saving. Its proof-size
 comparison covers non-terminal folds only.
 
-The F1 branch is currently a documentation scaffold stacked directly on the audited #311
-head. It must not merge in that state: after B0 integrates #309, bring B0 into this same
-published branch, retarget the PR, and implement the locked F1 surface below. The fixed
-integration policy is:
+The F1 branch is stacked directly on the audited #311 head and may implement the locked
+surface below without #309. The fixed integration policy is:
 
 1. Keep #311 as the hard base. Its audited head is `bc959ef3`; if it advances, repeat the
    direct-page, changed-file, and terminal-contract audit before rebasing this specification.
-2. Rebase and land #309 on that main. Its audited head is `d4100f3f` and introduces
-   semantic `log_basis_inner`, `log_basis_outer`, and `log_basis_open`. Resolve #309's
-   obsolete terminal assumptions in favor of #311; do not restore a terminal sumcheck.
-3. Start the implementation branch from the resulting main. Resolve the basis call sites
-   before touching the range prover. Stage 1 receives an explicit
-   `certified_range_log_basis = log_basis_open`; `DigitRangePlan` must not read a legacy
-   global `LevelParams.log_basis` itself.
+2. F1 through O4c accept the checked range basis already carried by the ring-switch
+   output. `DigitRangePlan` must not read `LevelParams`, so #309 later changes only the
+   upstream source of that value from the uniform basis to `log_basis_open`.
+3. Before C5, rebase and land #309 at audited head `d4100f3f` (or its refreshed head),
+   resolving terminal conflicts in favor of #311 and recording the resulting I5 base.
+   From C5 onward, relation/setup code consumes semantic `log_basis_inner`,
+   `log_basis_outer`, and `log_basis_open` directly; do not restore a largest-basis rule.
 4. Prefer landing/rebasing #310 and the small #308 preset before Packet 7 schedule
    regeneration. If #310 is still pending, core Packets 0-6 may proceed, but Packet 7 may
    not claim distributed recursive coverage or add a duplicate fixture.
@@ -505,9 +503,10 @@ label string is not a security boundary.
 
 The line counts and call paths in this section describe planning base `f5c180a4` so the
 spaghetti/deletion baseline remains reproducible. They are not the implementation base.
-Before Packet 1, refresh the inventory after #311 and #309 land, remove every terminal
-path already deleted by #311 from this project's ownership closure, and ratify new
-post-prerequisite line counts without weakening the percentage/absolute deletion gates.
+Before Packet 1, refresh the inventory on #311, remove every terminal path already deleted
+by #311 from this project's ownership closure, and ratify new F1 line counts without
+weakening the percentage/absolute deletion gates. Refresh the relation/setup inventory
+again at I5 after #309 lands.
 
 ### End-to-end call path
 
@@ -706,7 +705,7 @@ Add a field-independent, validated plan under `akita-types`, with an API equival
 
 ```rust
 pub struct DigitRangePlan {
-    certified_range_log_basis: u8,
+    log_basis: u8,
     stages: FixedRangeStages,
 }
 
@@ -722,6 +721,11 @@ pub enum DigitRangeStage {
     },
 }
 ```
+
+F1 constructs this plan from the checked concrete basis already carried by the
+ring-switch output (`b in {4,8,16,32,64}`) and derives `log_basis`; it does not accept or
+inspect `LevelParams`. I5/#309 changes the producer of that concrete basis to
+`log_basis_open` without changing the `DigitRangePlan` API.
 
 The exact storage type may use arrays plus counts rather than a new small-vector
 dependency. `basis()` and `half_basis()` are checked derived accessors; do not store
@@ -2603,13 +2607,14 @@ PR fills its `PR / status` and evidence cells before it becomes ready for review
 
 | ID | Recommended branch | Base | Packets | Kind | Bounded responsibility | PR / status |
 |---|---|---|---:|---|---|---|
-| B0 | existing prerequisite branches | #311, then `main` | 0 | prerequisite cutover | Land #311; rebase/land #309; reconcile #310/#308 as required; ratify exact implementation base | planned |
-| F1 | `quang/plan-digit-range-pipeline` | B0 | hub, 1-3 | additive foundation + atomic internal cutover | Land this hub, baselines/oracles, canonical range plan/domain, and the single `DigitRangeProver` cutover as one coherent first PR | **locked; code waits for B0** |
+| B0 | #311 | `main` | 0a | prerequisite cutover | Land/use #311 and ratify its terminal contract as F1's exact base | current audited head `bc959ef3` |
+| F1 | `quang/plan-digit-range-pipeline` | B0 | hub, 1-3 | additive foundation + atomic internal cutover | Land this hub, baselines/oracles, canonical range plan/domain, and the single `DigitRangeProver` cutover as one coherent first PR | **implementation active** |
 | C3 | `quang/digit-range-02-streaming-cutover` | F1 | 4 | atomic compute cutover | Make the generic streaming prover canonical for LB2-LB6 and delete eager forest/padded-table production paths | planned |
 | O4a | `quang/digit-range-03-lb4-kernel` | C3 | 5 | bounded optimization | Select and install the LB4 winner; delete candidates and knobs | planned |
 | O4b | `quang/digit-range-04-lb5-kernel` | O4a | 5 | bounded optimization | Select and install the LB5 winner; delete candidates and knobs | planned |
 | O4c | `quang/digit-range-05-lb6-kernel` | O4b | 5 | bounded optimization | Select and install the LB6 winner; delete candidates and knobs | planned |
-| C5 | `quang/digit-range-06-flat-relations` | O4c | 6 | atomic compute/API cutover | Move current direct relation/setup evaluation to the flat semantic providers; delete public x/y and sentinel paths with unchanged wire | planned |
+| I5 | refreshed #309 integration branch | O4c + #309 | 0b | prerequisite integration | Rebase/land #309 over the current stack, resolve #311 terminal conflicts, and ratify the three semantic bases before relation/setup work | planned before C5 |
+| C5 | `quang/digit-range-06-flat-relations` | I5 | 6 | atomic compute/API cutover | Move current direct relation/setup evaluation to the flat semantic providers; delete public x/y and sentinel paths with unchanged wire | planned |
 | C6 | `quang/digit-range-07-direct-fold-check` | C5 | 7a | atomic direct cutover | Install the semantic direct fold-check container, keep direct bytes unchanged, unschedule recursive offload, and delete legacy recursive Stage 2/3 | planned |
 | C7 | `quang/digit-range-08-recursive-two-stage` | C6 and #310 integration | 7b | atomic protocol cutover | Add the fused recursive Stage 1 leaf and `Separate` Stage 2 reduction across proof/prover/verifier/wire/sizing/schedules | planned |
 | E8 | `quang/digit-range-09-batched-reduction` | C7 | optional target | atomic capability cutover | Add and emit `Batched` across plan/proof/prover/verifier/wire/sizing only if complete-size and differential gates beat `Separate`; otherwise add no production shape | planned / optional |
@@ -2641,14 +2646,12 @@ repository with two prover owners.
 
 #### Base and branch rule
 
-F1 may not add Rust implementation commits on the current #311-only base. B0 must first
-produce an exact post-#311, post-#309 base SHA with semantic `log_basis_inner`,
-`log_basis_outer`, and `log_basis_open`; F1 consumes `log_basis_open` explicitly as its
-certified range basis. Once B0 exists, update the already-published
-`quang/plan-digit-range-pipeline` branch onto that base without a generic force-push
-(prefer an ordinary merge for published history unless an exact force-with-lease rewrite
-is separately authorized), change the LayerZero PR base selector to B0, and record the
-literal base SHA in this ledger before implementation review begins.
+F1's exact base is the current #311 head recorded as B0. It consumes the checked concrete
+range basis already carried by `RingSwitchOutput` and passes it directly to
+`DigitRangePlan`; neither the plan nor the Stage 1 prover reads `LevelParams`. When I5
+lands #309, the ring-switch producer supplies that same concrete value from
+`log_basis_open`, so no compatibility wrapper or F1 API change is permitted. Record the
+literal B0 and F1 head SHAs in this ledger before implementation review begins.
 
 Recommended final PR title:
 
@@ -2775,12 +2778,13 @@ Before each cutover, its foundation packet's deletions, byte-identity gates, and
 report must be complete. Packet 7 is deliberately split into two bounded cutovers:
 
 ```text
-0 #311 terminal baseline + #309 semantic bases
+0a #311 terminal baseline (F1 base)
   -> 1 baselines and oracles
   -> 2 canonical range plans and checked points (wire-preserving)
   -> 3 one range-product architecture
   -> 4 streaming high-basis reference
   -> 5 measured per-basis winners
+  -> 0b integrate #309 semantic inner/outer/open bases
   -> 6 flat relation-provider cleanup under the current wire
   -> 7a direct semantic cutover and recursive capability removal
   -> 7b atomic recursive two-stage protocol cutover
@@ -2827,23 +2831,25 @@ direct cutover with recursive offloading deliberately unscheduled; Packet 7b is 
 authenticated recursive protocol cutover. Packets 8-12 must be byte-identical to the new
 protocol for a fixed `FoldCheckPlan`.
 
-### Packet 0: establish the #311 + #309 implementation base
+### Packet 0a/0b: establish tranche-specific external bases
 
 **Goal:** make the implementation base unambiguous.
 
 **Actions:**
 
-- start from the audited #311 head (the planning branch is already stacked on it) and
-  record the exact post-cutover terminal proof/transcript oracle;
-- rebase and land the current `origin/refactor/multi-group-digit-decompose` series on that
-  main, resolving every terminal conflict in favor of #311's no-sumcheck contract;
-- confirm `log_basis_open` dominates inner/outer bases under schedule validation;
-- make the range handoff pass `certified_range_log_basis` explicitly;
-- regenerate schedule artifacts as required by that branch;
-- rebase the implementation worktree from the resulting main.
+- 0a: start F1 from the audited #311 head and record the exact post-cutover terminal
+  proof/transcript oracle;
+- 0a: pass the checked concrete range basis from `RingSwitchOutput` into
+  `DigitRangePlan`, with no `LevelParams` dependency;
+- 0b, after O4c and before C5: rebase and land the current
+  `origin/refactor/multi-group-digit-decompose` series, resolving every terminal conflict
+  in favor of #311's no-sumcheck contract;
+- 0b: confirm `log_basis_open` dominates inner/outer bases, confirm the ring-switch range
+  basis is sourced from `log_basis_open`, regenerate schedule artifacts, and ratify the
+  exact I5 base.
 
-**Stop:** do not implement this plan against a legacy single `log_basis` or pre-#311
-terminal protocol and then perform another broad rename/cutover.
+**Stop:** do not implement F1 before #311. Do not begin C5 relation/setup work against a
+legacy single `log_basis`; I5/#309 must land first.
 
 ### Packet 1: baselines, spans, and dense oracles (F1 foundation)
 
@@ -3620,10 +3626,10 @@ triggered by the cumulative diff.
 Follow the repository dependency-cache policy before the first `lake`/Lean command if a
 future cross-repository validation adds one; no Lean validation is currently required.
 
-Until B0 exists, F1 remains a Markdown-only scaffold, so `git diff --check` and
-`./scripts/check-doc-guardrails.sh` are sufficient for hub revisions. Once its first Rust
-implementation commit lands, the full F1 gate applies; the prior documentation-only
-validation is not evidence for the implementation head.
+For a Markdown-only F1 head, `git diff --check` and
+`./scripts/check-doc-guardrails.sh` are sufficient. Once its first Rust implementation
+commit lands, the full F1 gate applies; the prior documentation-only validation is not
+evidence for the implementation head.
 
 ## Definition of done
 
