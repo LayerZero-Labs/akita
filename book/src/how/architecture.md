@@ -42,7 +42,7 @@ Key structural facts:
 2. **Setup.** `akita-setup` expands the config-backed setup (Ajtai matrices, stride envelopes). Setup capacity must cover the requested `num_vars`.
 3. **Commit.** `commit` / `batched_commit` (in `akita-prover`, orchestrated by `akita-pcs`) produce commitments over root polynomials at the opening layout implied by the schedule.
 4. **Prove.** `batched_prove` walks the folded-only schedule level by level: sumcheck stages, extension-opening reduction, recursive suffix work, and the final direct terminal handoff.
-5. **Verify.** `batched_verify` re-derives the schedule, replays each level's sumcheck and opening checks, and evaluates the relation matrix at the derived point. Prover and verifier share `bind_transcript_instance_descriptor` so Fiat-Shamir challenges match.
+5. **Verify.** `batched_verify` re-derives the schedule, replays nonterminal sumchecks and relation-matrix evaluations, then closes the terminal with direct consistency/A and weighted trace checks. Prover and verifier share `bind_transcript_instance_descriptor` so Fiat-Shamir challenges match.
 
 Entry points: `crates/akita-pcs/src/scheme/mod.rs`, `crates/akita-prover/src/protocol/core/prove.rs`, `crates/akita-verifier/src/protocol/core/verify.rs`.
 
@@ -93,9 +93,8 @@ Mixed-dimension execution is exercised end-to-end by
 | `CommitmentRingDims`, `validate_schedule_ring_dims` | Per-role ring dimensions and schedule validation |
 | `CommitmentConfig` | Single user-facing trait for every per-config policy hook (algebra, exact SIS profile, decomposition, layout, schedule, transcript bind, prove/commitment params). Verifier-reachable hooks return `Result<_, AkitaError>` |
 | `LevelParams` | Per-level recursion layout and config (fold shape, ring/ext degrees, decomposition depth, `role_dims`) |
-| `PlanPolicy` | Value-typed inputs to `akita_types::schedule_plan_from_table` |
 | `PlannerPolicy` | `Cfg`-free projection of a preset for `akita_planner::find_group_batch_schedule`; derive via `akita_config::policy_of::<Cfg>()` |
-| `DensePoly`, `OneHotPoly`, `AkitaPolyOps` | Polynomial backends consumed by the scheme |
+| `DensePoly`, `OneHotPoly`, `Root*Source`, compute-backend traits | Polynomial sources and operation capabilities consumed by the scheme |
 | `WitnessLayout`, `WitnessUnitLayout` | Canonical digit-innermost group-and-chunk ranges ([opening layout](./proving/opening-points-layout.md)) |
 | `AkitaBatchedProof`, `FoldLevelProof`, `TerminalLevelProof` | Structural serialized proof: root fold, recursive folds, and one terminal witness (singleton openings are the 1×1 batched case) |
 | `OpeningClaims` / `OpeningClaimsLayout` | Public single-point opening claims and layout-only batch geometry for prove/verify, setup, and schedule lookup ([`specs/shared-opening-claims-api.md`](../../../specs/shared-opening-claims-api.md)) |

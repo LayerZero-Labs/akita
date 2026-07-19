@@ -246,7 +246,6 @@ where
         &stack,
         &mut prover_transcript,
         BasisMode::Lagrange,
-        akita_types::SetupContributionMode::Direct,
     )
     .unwrap();
 
@@ -399,7 +398,6 @@ fn chunked_multi_chunk_prove_verify() {
             &stack,
             &mut prover_transcript,
             BasisMode::Lagrange,
-            akita_types::SetupContributionMode::Direct,
         )
         .unwrap();
 
@@ -493,7 +491,6 @@ fn full_d64_prove_verify() {
             &stack,
             &mut prover_transcript,
             BasisMode::Lagrange,
-            akita_types::SetupContributionMode::Direct,
         )
         .unwrap();
         let prove_time = prove_start.elapsed();
@@ -654,7 +651,6 @@ fn trace_internalization_rejects_tampered_recursive_fold_handle() {
             &stack,
             &mut prover_transcript,
             BasisMode::Lagrange,
-            akita_types::SetupContributionMode::Direct,
         )
         .unwrap();
 
@@ -723,7 +719,7 @@ fn small_field_d64_dense_degenerate_roots_fail_fast() {
 }
 
 #[test]
-fn full_d64_tiny_roots_are_rejected_before_setup() {
+fn full_d64_tiny_roots_and_setup_capacities_are_rejected() {
     init_rayon_pool();
     let _guard = E2E_TEST_LOCK.lock().unwrap();
     run_on_large_stack(|| {
@@ -737,10 +733,12 @@ fn full_d64_tiny_roots_are_rejected_before_setup() {
             err,
             akita_field::AkitaError::UnsupportedSchedule(_)
         ));
-        assert!(matches!(
-            AkitaCommitmentScheme::<Cfg>::setup_prover(nv, 1),
-            Err(akita_field::AkitaError::UnsupportedSchedule(_))
-        ));
+        let setup_err = AkitaCommitmentScheme::<Cfg>::setup_prover(nv, 1)
+            .expect_err("tiny capacity must not produce a prover setup");
+        assert!(
+            matches!(setup_err, akita_field::AkitaError::InvalidSetup(_)),
+            "setup capacity rejection should use the setup boundary: {setup_err:?}"
+        );
     });
 }
 
@@ -859,7 +857,6 @@ fn adaptive_onehot_direct_tail_uses_terminal_schedule_basis() {
             &stack,
             &mut prover_transcript,
             BasisMode::Lagrange,
-            akita_types::SetupContributionMode::Direct,
         )
         .unwrap();
 
@@ -1001,7 +998,6 @@ fn batched_onehot_same_point_round_trip() {
             &stack,
             &mut prover_transcript,
             BasisMode::Lagrange,
-            akita_types::SetupContributionMode::Direct,
         )
         .unwrap();
 
@@ -1121,7 +1117,6 @@ fn batched_onehot_same_point_rejects_tampered_root_stage1_s_claim() {
             &stack,
             &mut prover_transcript,
             BasisMode::Lagrange,
-            akita_types::SetupContributionMode::Direct,
         )
         .unwrap();
 

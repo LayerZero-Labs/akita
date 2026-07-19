@@ -75,7 +75,6 @@ fn batched_verify_accepts_consistent_openings_and_rejects_bad_inputs() {
         &stack,
         &mut prover_transcript,
         BasisMode::Lagrange,
-        akita_types::SetupContributionMode::Direct,
     )
     .unwrap();
 

@@ -62,9 +62,8 @@ fn should_stop_batched_folding(w_len: usize, prev_w_len: usize) -> bool {
     w_len <= MIN_W_LEN_FOR_FOLDING || w_len >= prev_w_len
 }
 
-/// Terminal stage-2 sumcheck round degrees can depend on Fiat-Shamir challenges
-/// (e.g. structurally zero leading cubic on the first round). Copy them from
-/// the proved shape so deserialization uses the on-wire widths.
+/// Derive the structural proof shape from the schedule. The terminal carries
+/// only optional EOR, its grind nonce, and the clear segment-typed witness.
 fn expected_same_point_batched_shape(
     max_num_vars: usize,
     num_claims: usize,
@@ -267,7 +266,6 @@ fn make_verify_fixture(num_vars: usize) -> VerifyFixture {
         &stack,
         &mut prover_transcript,
         BasisMode::Lagrange,
-        akita_types::SetupContributionMode::Direct,
     )
     .unwrap();
 

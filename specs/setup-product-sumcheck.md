@@ -7,6 +7,13 @@
 | Status      | proposed                       |
 | PR          |                                |
 
+> **Harness supersession (PR #311).** Setup-contribution mode is now owned by
+> the config-selected schedule, not a caller argument. The singleton Jolt
+> artifact necessarily selects the direct scalar schedule, so its former
+> `--setup-mode recursive` flag and blob mode byte were misleading and are
+> removed. Exercise recursive stage 3 with the config-typed multi-group profile
+> and `recursive_setup_e2e` tests described below.
+
 ## Summary
 
 In `SetupContributionMode::Direct`, each fold level's verifier proves the setup
@@ -45,10 +52,8 @@ Key abstractions and surfaces:
   `stages/` alongside stage1/stage2.
 - `akita-types::SETUP_SUMCHECK_DEGREE` — the relocated degree constant
   (formerly `FACTORED_PRODUCT_SUMCHECK_DEGREE`).
-- `profile/akita-recursion` artifact/host/guest gain a `--setup-mode
-  <direct|recursive>` CLI input (default `direct`); the chosen mode is recorded
-  in the verifier-input blob so host preflight and guest replay verify under the
-  same mode without a separate flag.
+- the config-typed recursive multi-group profile exercises stage 3; the
+  singleton `profile/akita-recursion` artifact remains direct-only.
 
 ### Invariants
 
@@ -141,11 +146,8 @@ is realized only once the carried setup-prefix opening replaces the matrix scan
 (future work, STACK.md slice 04). Verify with:
 
 ```bash
-cd profile/akita-recursion
-cargo build --release
-AKITA_NUM_VARS=32 AKITA_RECURSION_BLOB=target/blob.bin \
-  ./target/release/akita-recursion-artifact --setup-mode recursive
-./target/release/akita-recursion-host --input target/blob.bin
+AKITA_MODE=onehot_fp128_d64_recursive AKITA_SETUP_MODE=recursive \
+  cargo run --release -p akita-pcs --example profile
 ```
 
 ## Design
@@ -170,9 +172,9 @@ AKITA_NUM_VARS=32 AKITA_RECURSION_BLOB=target/blob.bin \
   (`SetupContributionPlan::evaluate_setup_index_weight_mle`).
 - **Types** (`akita-types`): `SETUP_SUMCHECK_DEGREE` and the
   `SetupContributionMode` enum.
-- **Recursion harness** (`profile/akita-recursion`): the `--setup-mode` CLI flag
-  on the artifact, a `setup_contribution_mode` byte in the `AkitaJoltInputs`
-  blob, and host/guest reading that byte so both replay under the proof's mode.
+- **Recursion harness:** the singleton Jolt artifact is direct-only. Recursive
+  setup contribution is exercised by the multi-group profile instantiated as
+  `RecursiveCommitmentConfig<Cfg>` and by `recursive_setup_e2e`.
 
 ### Alternatives Considered
 
@@ -189,8 +191,8 @@ AKITA_NUM_VARS=32 AKITA_RECURSION_BLOB=target/blob.bin \
 - This spec.
 - `crates/akita-pcs/examples/profile` with `AKITA_SETUP_MODE=recursive` (runnable
   harness for recursive vs direct setup-contribution).
-- `profile/akita-recursion/README.md` already documents the harness flow; the new
-  `--setup-mode` flag is self-describing via `--help`.
+- `profile/akita-recursion/README.md` documents the direct singleton Jolt flow;
+  the Akita profile example documents the recursive multi-group run.
 
 ## References
 

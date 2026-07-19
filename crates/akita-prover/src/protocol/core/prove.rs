@@ -40,7 +40,6 @@ pub fn batched_prove<'a, Cfg, T, P, C, O, TS, R>(
     claims: ProverOpeningData<'a, Cfg::ExtField, P, Cfg::Field>,
     transcript: &mut T,
     basis: BasisMode,
-    setup_contribution_mode: SetupContributionMode,
 ) -> Result<AkitaBatchedProof<Cfg::Field, Cfg::ExtField>, AkitaError>
 where
     Cfg: CommitmentConfig,
@@ -138,7 +137,6 @@ where
         claims,
         &schedule,
         basis,
-        setup_contribution_mode,
     )
     .map(|(proof, _total_levels)| proof)
 }
@@ -172,7 +170,6 @@ pub fn prove<'a, Cfg, T, P, C, O, TS, R>(
     claims: ProverOpeningData<'a, Cfg::ExtField, P, Cfg::Field>,
     schedule: &Schedule,
     basis: BasisMode,
-    setup_contribution_mode: SetupContributionMode,
 ) -> Result<(AkitaBatchedProof<Cfg::Field, Cfg::ExtField>, usize), AkitaError>
 where
     Cfg: CommitmentConfig,
@@ -271,7 +268,6 @@ where
         claims,
         &root_scheduled,
         basis,
-        setup_contribution_mode,
     )
     .map_err(|err| AkitaError::InvalidInput(format!("root prove failed: {err:?}")))?;
     let next_state = root.next_state;
@@ -284,7 +280,6 @@ where
         transcript,
         next_state,
         schedule,
-        setup_contribution_mode,
     )
     .map_err(|err| AkitaError::InvalidInput(format!("suffix prove failed: {err:?}")))?;
     Ok((

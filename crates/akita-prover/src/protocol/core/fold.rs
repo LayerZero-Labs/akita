@@ -536,7 +536,6 @@ pub(in crate::protocol::core) fn prove_fold<'stack, F, E, T, C, O, TS, R, Cfg>(
     level: usize,
     scheduled: &ExecutionSchedule,
     prepared_fold: PreparedFold<F, E>,
-    _setup_contribution_mode: SetupContributionMode,
     is_terminal_fold: bool,
     terminal_direct_witness_shape: Option<&CleartextWitnessShape>,
 ) -> Result<FoldProveOutput<F, E>, AkitaError>

@@ -506,8 +506,8 @@ impl<F: FieldCore + CanonicalField + AkitaSerialize> SegmentTypedWitness<F> {
     }
 
     /// Materialize pre-challenge `e` bytes and the post-challenge `z` response.
-    /// Terminal `t` is bound once by the predecessor and is intentionally not
-    /// serialized again here.
+    /// This helper omits `t`: the predecessor binds it as outgoing state and
+    /// terminal current-state replay owns its second transcript binding.
     pub fn terminal_transcript_parts(&self) -> Result<TerminalWitnessTranscriptParts, AkitaError> {
         let e_folded = raw_field_segment_bytes(&self.e_fields)?;
         if e_folded.is_empty() {

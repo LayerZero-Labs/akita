@@ -1,6 +1,13 @@
 # Spec: Commitment Compression Cutover
 
-Status: draft planning spec.
+Status: proposed.
+
+The commitment-compression work remains proposed; the terminal-`t` slice was
+implemented independently by PR #311. Descriptions below of `Step::Direct`,
+`Schedule::level_schedule`, and `WithoutDBlock` are the pre-#311 baseline.
+Current schedules are structural `folds + terminal`, runtime execution uses
+`Schedule::get_execution_schedule`, and the terminal layout is
+`WithoutCommitmentBlocks`.
 
 This spec maps the PR stack for removing the current tiered-commitment
 implementation and replacing it with commitment compression.
@@ -295,12 +302,12 @@ cutover. The locked target names are:
 
 ```rust
 enum RelationMatrixRowLayout {
-    WithCommitmentBlocks,
+    WithDBlock,
     WithoutCommitmentBlocks,
 }
 ```
 
-`WithCommitmentBlocks` means both B and D rows are present. It is the recursive
+`WithDBlock` means both B and D rows are present. It is the recursive
 fold layout. `WithoutCommitmentBlocks` means both B and D rows are absent. It is
 the terminal layout after PR3.
 
@@ -638,9 +645,9 @@ trace term in stage-2 sumcheck, not through `M` rows) and renames the witness
 public block in `M`. Public openings bind via the fused trace term in stage-2
 sumcheck ([`specs/y-ring-trace-internalization.md`](y-ring-trace-internalization.md)).
 
-**Terminal fold (`RelationMatrixRowLayout::WithoutDBlock`):** `consistency | A | B` (the
-trailing `D` block is dropped). This aligns with PR3's direction of shrinking
-terminal rows toward `consistency | A`.
+**Historical terminal fold (`RelationMatrixRowLayout::WithoutDBlock`):**
+`consistency | A | B` dropped only D. PR #311 replaced it with
+`WithoutCommitmentBlocks = consistency | A`.
 
 **Descriptor version:** do not bump `AKITA_INSTANCE_DESCRIPTOR_VERSION`; row
 order is an implicit protocol convention, not a per-instance descriptor field.
@@ -824,6 +831,8 @@ Acceptance tests:
 
 ### PR3: Terminal `t` cutover, no final `u`
 
+Implemented by PR #311.
+
 Purpose: finish the tail reduction by deleting the final recursive `u` and
 shrinking the terminal relation rows accordingly.
 
@@ -832,9 +841,8 @@ Expected implementation surface:
 - M-row layout:
   - replace `RelationMatrixRowLayout::WithoutDBlock` with
     `RelationMatrixRowLayout::WithoutCommitmentBlocks`;
-  - replace `RelationMatrixRowLayout::WithDBlock` with
-    `RelationMatrixRowLayout::WithCommitmentBlocks`;
-  - `WithCommitmentBlocks` means `consistency | A | B | D`;
+  - retain `RelationMatrixRowLayout::WithDBlock` for intermediate folds;
+  - `WithDBlock` means `consistency | A | B | D`;
   - `WithoutCommitmentBlocks` means `consistency | A`;
   - update `n_d_active_for`, `b_start`, `d_start`, `a_start`, and
     `relation_matrix_row_count_for` so the terminal layout is:
@@ -853,8 +861,8 @@ Expected implementation surface:
 - Prover:
   - penultimate fold no longer computes/absorbs/sends next-witness `u`;
   - terminal witness assembly exposes `t` in the terminal segment;
-  - ring-switch finalize paths use `RelationMatrixRowLayout::WithoutCommitmentBlocks` for
-    terminal quotient rows.
+  - the terminal path exits before `ring_switch_finalize` and never
+    materializes quotient rows.
 - Verifier:
   - penultimate replay does not expect `next_w_commitment`;
   - terminal verifier checks revealed witness maps to the terminal `t` state;
@@ -862,7 +870,7 @@ Expected implementation surface:
     cleanly.
 - Proof-size accounting:
   - remove raw final `u` bytes from penultimate fold pricing;
-  - shrink terminal `r` tail by removing B rows;
+  - remove the terminal `r` tail entirely;
   - update profile output labels so the win is attributable to terminal-tail
     cutover, not compression.
 - Tests/benches/docs:

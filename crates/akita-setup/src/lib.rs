@@ -481,13 +481,11 @@ mod tests {
 
     #[test]
     fn setup_accepts_field_coupled_presets() {
-        // D128Full has no schedule table at all, so setup-matrix sizing
-        // falls through to the planner DP via the default `runtime_schedule`
-        // fallback. D64Full has a singleton table but the
-        // (max_num_vars=12, polys=1, points=1) iteration is a table hit.
-        new_prover_setup::<fp128::Field, fp128::D128Full>(12, 1)
+        // Both folded-only catalogs begin at nv=13, the first singleton shape
+        // with the required root and suffix folds.
+        new_prover_setup::<fp128::Field, fp128::D128Full>(13, 1)
             .expect("default fp128 D=128 preset should accept the fp128 field");
-        new_prover_setup::<fp128::Field, fp128::D64Full>(12, 1)
+        new_prover_setup::<fp128::Field, fp128::D64Full>(13, 1)
             .expect("small-D fp128 preset should accept the default field");
     }
 

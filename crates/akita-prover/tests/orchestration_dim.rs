@@ -46,7 +46,7 @@ fn make_fold_step(ring_dimension: usize) -> FoldStep {
 #[test]
 fn batched_schedule_selection_matches_config_preset() {
     type Cfg = fp64::D64Full;
-    let nv = 10usize;
+    let nv = 14usize;
     let schedule = real_schedule::<Cfg>(nv);
     let opening_batch = OpeningClaimsLayout::new(nv, 1).expect("opening batch");
     let point = vec![<Cfg as CommitmentConfig>::ExtField::zero(); nv];
@@ -93,7 +93,7 @@ fn validate_role_dispatch_rejects_stack_d_mismatch() {
 #[test]
 fn ring_dim_plan_accepts_uniform_d64_preset() {
     type Cfg = fp64::D64Full;
-    let schedule = real_schedule::<Cfg>(10);
+    let schedule = real_schedule::<Cfg>(14);
     validate_schedule_ring_dims(&schedule, &ring_plan_test_seed(Cfg::D))
         .expect("uniform preset envelope");
 }
@@ -101,7 +101,7 @@ fn ring_dim_plan_accepts_uniform_d64_preset() {
 #[test]
 fn ring_dim_plan_accepts_fp128_d64_preset() {
     type Cfg = fp128::D64Full;
-    let schedule = real_schedule::<Cfg>(12);
+    let schedule = real_schedule::<Cfg>(13);
     validate_schedule_ring_dims(&schedule, &ring_plan_test_seed(Cfg::D))
         .expect("fp128 uniform preset envelope");
 }

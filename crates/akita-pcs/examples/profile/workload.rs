@@ -210,9 +210,8 @@ fn assert_runtime_matches_planned_proof_size(
     }
 }
 
-/// Setup-contribution mode for the profile run, selected by `AKITA_SETUP_MODE`
-/// (`direct` default, `recursive` to exercise the stage-3 setup-product
-/// sumcheck). Unknown values warn and fall back to direct.
+/// Required setup-contribution mode for the config-typed recursive multi-group
+/// profile. Scalar profiles are direct by construction.
 fn profile_setup_contribution_mode() -> SetupContributionMode {
     match std::env::var("AKITA_SETUP_MODE").ok().as_deref() {
         Some("recursive") => SetupContributionMode::Recursive,
@@ -445,7 +444,7 @@ fn run_prove<
     let pools = ProfileThreadPools::get();
     let poly_refs: [&P; 1] = [poly];
     let openings = [opening];
-    let setup_contribution_mode = profile_setup_contribution_mode();
+    let setup_contribution_mode = SetupContributionMode::Direct;
     tracing::info!(
         label,
         ?setup_contribution_mode,
@@ -468,7 +467,6 @@ fn run_prove<
             stack,
             &mut prover_transcript,
             BasisMode::Lagrange,
-            setup_contribution_mode,
         )
         .unwrap();
         report_timing(label, "prove", t0.elapsed().as_secs_f64());
@@ -601,18 +599,9 @@ pub(crate) fn run_dense_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF
             dense_lagrange_opening_from_evals::<FF, Cfg::ExtField>(&evals, &original_pt)
         };
     let t0 = Instant::now();
-    let setup = match profile_setup_contribution_mode() {
-        SetupContributionMode::Direct => {
-            AkitaCommitmentScheme::<Cfg>::setup_prover(RootPolyShape::<FF, D>::num_vars(&poly), 1)
-        }
-        SetupContributionMode::Recursive => {
-            AkitaCommitmentScheme::<RecursiveCommitmentConfig<Cfg>>::setup_prover(
-                RootPolyShape::<FF, D>::num_vars(&poly),
-                1,
-            )
-        }
-    }
-    .unwrap();
+    let setup =
+        AkitaCommitmentScheme::<Cfg>::setup_prover(RootPolyShape::<FF, D>::num_vars(&poly), 1)
+            .unwrap();
     let setup_expand_secs = t0.elapsed().as_secs_f64();
     let t_prepare = Instant::now();
     let prepared = CpuBackend.prepare_setup(&setup).unwrap();
@@ -699,13 +688,7 @@ pub(crate) fn run_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
         onehot_lagrange_opening::<FF, Cfg::ExtField, u8>(&onehot_poly, &pt)
     };
     let t0 = Instant::now();
-    let setup = match profile_setup_contribution_mode() {
-        SetupContributionMode::Direct => AkitaCommitmentScheme::<Cfg>::setup_prover(nv, 1),
-        SetupContributionMode::Recursive => {
-            AkitaCommitmentScheme::<RecursiveCommitmentConfig<Cfg>>::setup_prover(nv, 1)
-        }
-    }
-    .unwrap();
+    let setup = AkitaCommitmentScheme::<Cfg>::setup_prover(nv, 1).unwrap();
     let setup_expand_secs = t0.elapsed().as_secs_f64();
     let t_prepare = Instant::now();
     let prepared = CpuBackend.prepare_setup(&setup).unwrap();
@@ -794,18 +777,10 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
     let poly_refs: Vec<&OneHotPoly<FF, u8>> = polys.iter().collect();
 
     let pools = ProfileThreadPools::get();
-    let setup_contribution_mode = profile_setup_contribution_mode();
+    let setup_contribution_mode = SetupContributionMode::Direct;
     let (commitments, proof, setup) = {
         let t0 = Instant::now();
-        let setup = match setup_contribution_mode {
-            SetupContributionMode::Direct => {
-                AkitaCommitmentScheme::<Cfg>::setup_prover(nv, num_polys)
-            }
-            SetupContributionMode::Recursive => {
-                AkitaCommitmentScheme::<RecursiveCommitmentConfig<Cfg>>::setup_prover(nv, num_polys)
-            }
-        }
-        .unwrap();
+        let setup = AkitaCommitmentScheme::<Cfg>::setup_prover(nv, num_polys).unwrap();
         let setup_expand_secs = t0.elapsed().as_secs_f64();
         let t_prepare = Instant::now();
         let prepared = CpuBackend.prepare_setup(&setup).unwrap();
@@ -858,7 +833,6 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
             &stack,
             &mut prover_transcript,
             BasisMode::Lagrange,
-            setup_contribution_mode,
         )
         .unwrap();
         report_timing(label, "prove", t0.elapsed().as_secs_f64());
@@ -1149,7 +1123,6 @@ pub(crate) fn run_recursive_multi_group_onehot<FF, const D: usize, Cfg>(
             &stack,
             &mut prover_transcript,
             BasisMode::Lagrange,
-            setup_contribution_mode,
         )
         .expect("multi-group prove");
         report_timing(label, "prove", t_prove.elapsed().as_secs_f64());

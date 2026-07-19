@@ -78,7 +78,6 @@ fn run_single_onehot(nv: usize) {
             &stack,
             &mut prover_transcript,
             BasisMode::Lagrange,
-            akita_types::SetupContributionMode::Direct,
         )
         .expect("prove");
 
@@ -163,7 +162,6 @@ fn run_single_dense(nv: usize) {
             &stack,
             &mut prover_transcript,
             BasisMode::Lagrange,
-            akita_types::SetupContributionMode::Direct,
         )
         .expect("prove");
 
@@ -300,7 +298,6 @@ fn run_single_onehot_oversized_setup(setup_nv: usize, poly_nv: usize) {
             &stack,
             &mut prover_transcript,
             BasisMode::Lagrange,
-            akita_types::SetupContributionMode::Direct,
         )
         .expect("prove with oversized setup");
 

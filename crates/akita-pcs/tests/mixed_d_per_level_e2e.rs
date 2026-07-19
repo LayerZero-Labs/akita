@@ -27,7 +27,7 @@ use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_transcript::AkitaTranscript;
 use akita_types::{
     validate_schedule_ring_dims, AkitaBatchedProof, NextWitnessBinding, OpeningClaimsLayout,
-    RingVec, Schedule, SetupContributionMode,
+    RingVec, Schedule,
 };
 use common::*;
 use mixed_d_per_level_fixture::mixed_d_per_level_schedule;
@@ -217,7 +217,6 @@ fn prove_mixed_fixture() -> MixedDFixture {
         &stack,
         &mut prover_transcript,
         BasisMode::Lagrange,
-        SetupContributionMode::Direct,
     )
     .expect("mixed-D prove");
 
@@ -499,7 +498,6 @@ fn mixed_d_malformed_hint_digit_length_rejected() {
             &stack,
             &mut prover_transcript,
             BasisMode::Lagrange,
-            SetupContributionMode::Direct,
         )
         .expect_err("prove must reject a hint with a missing digit stream");
 
@@ -515,7 +513,6 @@ fn mixed_d_malformed_hint_digit_length_rejected() {
             &stack,
             &mut prover_transcript,
             BasisMode::Lagrange,
-            SetupContributionMode::Direct,
         )
         .expect_err("prove must reject a hint digit stream sized at the wrong level's dim");
     });
@@ -558,7 +555,6 @@ fn mixed_d_schedule_with_non_dividing_level_dim_is_rejected() {
             &stack,
             &mut prover_transcript,
             BasisMode::Lagrange,
-            SetupContributionMode::Direct,
         )
         .expect_err("prove must reject a level dim that does not divide gen_ring_dim");
 

@@ -323,9 +323,9 @@ impl<F: FieldCore, E: FieldCore> FoldLevelProof<F, E> {
 /// Terminal fold-level proof.
 ///
 /// Ships `final_witness` in cleartext. Its raw `e` segment is bound before the
-/// terminal sparse challenge. The predecessor has already bound the canonical
-/// `t` segment as its outgoing state, so only the `z` response is absorbed
-/// afterward.
+/// terminal sparse challenge. The predecessor first binds canonical `t` as its
+/// outgoing state; terminal replay rebinds the same `t` as current state before
+/// absorbing `e`, sampling challenges, and absorbing the `z` response.
 ///
 /// Drops the redundant proof components at the terminal: `stage1`
 /// (segment-typed tail encodes digit range), the stage-2 outgoing binding

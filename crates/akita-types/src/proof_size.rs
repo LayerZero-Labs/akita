@@ -1,7 +1,7 @@
 //! Header-stripped proof-byte formula for one fold level, shared by the
 //! offline planner DP, the schedule selector, and profiling tooling.
 //!
-//! This is the single source of truth for per-level proof-byte accounting:
+//! This is the single source of truth for direct-mode per-level proof-byte accounting:
 //! [`level_proof_bytes`] scores one fold level. It is not on the
 //! prover/verifier replay path. The compact-entry walker that sums a whole
 //! proof (`schedule_from_entry`) lives in `akita-planner`, next to the

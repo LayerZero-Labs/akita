@@ -27,5 +27,5 @@ This part covers, in reading order:
 ## Sources to fold in
 
 - Council architecture report (numbered end-to-end flow, dispatch table).
-- `crates/akita-prover/src/protocol/flow/`, `crates/akita-verifier/src/protocol/batched.rs`.
+- `crates/akita-prover/src/protocol/core/`, `crates/akita-verifier/src/protocol/core/`.
 - Paper §3 `sec:akita-recap` (the protocol, end to end).

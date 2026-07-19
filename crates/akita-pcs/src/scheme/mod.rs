@@ -19,7 +19,7 @@ use akita_types::{
     dispatch_for_field, validate_ring_subfield_role, BasisMode, Commitment, FpExtEncoding,
     PolynomialGroupLayout,
 };
-use akita_types::{AkitaBatchedProof, AkitaCommitmentHint, SetupContributionMode};
+use akita_types::{AkitaBatchedProof, AkitaCommitmentHint};
 use akita_types::{AkitaVerifierSetup, OpeningClaims};
 use std::marker::PhantomData;
 use std::time::Instant;
@@ -225,7 +225,6 @@ where
         >,
         transcript: &mut T,
         basis: BasisMode,
-        setup_contribution_mode: SetupContributionMode,
     ) -> Result<AkitaBatchedProof<Cfg::Field, Cfg::ExtField>, AkitaError>
     where
         T: Transcript<Cfg::Field> + ProverTranscriptGrind<Cfg::Field>,
@@ -246,7 +245,6 @@ where
             claims,
             transcript,
             basis,
-            setup_contribution_mode,
         )?;
 
         tracing::info!(

@@ -144,7 +144,6 @@ pub fn prove_root<'stack, F, E, T, P, C, O, TS, R, Cfg>(
     claims: ProverOpeningData<'_, E, P, F>,
     scheduled: &ExecutionSchedule,
     basis: BasisMode,
-    setup_contribution_mode: SetupContributionMode,
 ) -> Result<ProveLevelOutput<F, E>, AkitaError>
 where
     F: FieldCore
@@ -217,7 +216,6 @@ where
         0,
         scheduled,
         prepared_fold,
-        setup_contribution_mode,
         false,
         None,
     )

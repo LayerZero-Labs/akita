@@ -289,26 +289,16 @@ fn commit_group_returns_frozen_conservative_layout() {
 /// `K_g`. Precommitted groups are committed under the conservative config; the
 /// final group is committed with `commit_final_group`; the multi-group root folds
 /// into a singleton recursive suffix.
-fn multi_group_root_round_trip_onehot<TestCfg>(
-    pre_sizes: &[usize],
-    final_size: usize,
-    setup_contribution_mode: akita_types::SetupContributionMode,
-) where
+fn multi_group_root_round_trip_onehot<TestCfg, ProtocolCfg>(pre_sizes: &[usize], final_size: usize)
+where
     TestCfg: CommitmentConfig<Field = OneHotF, ExtField = OneHotF>,
+    ProtocolCfg: CommitmentConfig<Field = OneHotF, ExtField = OneHotF>,
 {
     const PRE_NV: usize = 16;
     const FINAL_NV: usize = PRE_NV * 2;
     let total: usize = pre_sizes.iter().sum::<usize>() + final_size;
 
-    let setup = match setup_contribution_mode {
-        akita_types::SetupContributionMode::Direct => AkitaCommitmentScheme::<
-            ConservativeCommitmentConfig<TestCfg>,
-        >::setup_prover(FINAL_NV, total),
-        akita_types::SetupContributionMode::Recursive => crate::AkitaCommitmentScheme::<
-            akita_config::RecursiveCommitmentConfig<ConservativeCommitmentConfig<TestCfg>>,
-        >::setup_prover(FINAL_NV, total),
-    }
-    .expect("setup");
+    let setup = AkitaCommitmentScheme::<ProtocolCfg>::setup_prover(FINAL_NV, total).expect("setup");
     let prepared = CpuBackend.prepare_setup(&setup).expect("prepared setup");
     let stack =
         akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
@@ -362,7 +352,7 @@ fn multi_group_root_round_trip_onehot<TestCfg>(
         .opening_layout()
         .expect("multi-group opening layout");
     let multi_group_schedule =
-        TestCfg::runtime_schedule(multi_group_key).expect("multi-group runtime schedule");
+        ProtocolCfg::runtime_schedule(multi_group_key).expect("multi-group runtime schedule");
     let main_params = multi_group_root_params(&multi_group_schedule);
     if TestCfg::chunked_witness_cfg().uses_multi_chunk() {
         let root = multi_group_schedule
@@ -399,7 +389,7 @@ fn multi_group_root_round_trip_onehot<TestCfg>(
             debug_make_onehot_poly(main_params, 0x0bee_fcaf_f100_0000 + poly_idx as u64)
         })
         .collect();
-    let (final_commitment, final_hint) = AkitaCommitmentScheme::<TestCfg>::commit_final_group(
+    let (final_commitment, final_hint) = AkitaCommitmentScheme::<ProtocolCfg>::commit_final_group(
         &setup,
         &final_polys,
         &stack,
@@ -465,16 +455,29 @@ fn multi_group_root_round_trip_onehot<TestCfg>(
     .expect("multi-group prover data");
 
     let mut prover_transcript = AkitaTranscript::<OneHotF>::new(b"test/multi-group-unequal");
-    let proof = AkitaCommitmentScheme::<TestCfg>::batched_prove(
+    let proof = AkitaCommitmentScheme::<ProtocolCfg>::batched_prove(
         &setup,
         prover_claims,
         &stack,
         &mut prover_transcript,
         BasisMode::Lagrange,
-        setup_contribution_mode,
     )
     .expect("multi-group prove");
     assert!(proof.num_fold_levels() >= 2);
+    let planned_stage3 = multi_group_schedule
+        .fold_steps()
+        .filter(|fold| {
+            fold.params.setup_contribution_mode == akita_types::SetupContributionMode::Recursive
+        })
+        .count();
+    let proved_stage3 = proof
+        .nonterminal_folds()
+        .filter(|fold| fold.stage3_sumcheck_proof().is_some())
+        .count();
+    assert_eq!(
+        proved_stage3, planned_stage3,
+        "proof stage-3 payloads must follow the config-selected schedule"
+    );
 
     let shape = proof.shape();
     let mut bytes = Vec::new();
@@ -489,7 +492,7 @@ fn multi_group_root_round_trip_onehot<TestCfg>(
     assert_eq!(decoded, proof);
 
     let verifier_setup =
-        AkitaCommitmentScheme::<TestCfg>::setup_verifier(&setup).expect("verifier setup");
+        AkitaCommitmentScheme::<ProtocolCfg>::setup_verifier(&setup).expect("verifier setup");
     let mut verifier_groups = Vec::new();
     for (group_idx, openings) in pre_openings.iter().enumerate() {
         verifier_groups.push(
@@ -512,7 +515,7 @@ fn multi_group_root_round_trip_onehot<TestCfg>(
     let verify_claims = OpeningClaims::from_groups(point.clone(), verifier_groups)
         .expect("multi-group verifier claims");
     let mut verifier_transcript = AkitaTranscript::<OneHotF>::new(b"test/multi-group-unequal");
-    AkitaCommitmentScheme::<TestCfg>::batched_verify(
+    AkitaCommitmentScheme::<ProtocolCfg>::batched_verify(
         &decoded,
         &verifier_setup,
         &mut verifier_transcript,
@@ -524,38 +527,28 @@ fn multi_group_root_round_trip_onehot<TestCfg>(
 
 #[test]
 fn multi_group_root_folded_unequal_one_three_round_trips() {
-    multi_group_root_round_trip_onehot::<OneHotCfg>(
-        &[1],
-        3,
-        akita_types::SetupContributionMode::Direct,
-    );
+    multi_group_root_round_trip_onehot::<OneHotCfg, OneHotCfg>(&[1], 3);
 }
 
 #[test]
 fn multi_group_root_folded_unequal_two_one_round_trips() {
-    multi_group_root_round_trip_onehot::<OneHotCfg>(
-        &[1, 1],
-        1,
-        akita_types::SetupContributionMode::Direct,
-    );
+    multi_group_root_round_trip_onehot::<OneHotCfg, OneHotCfg>(&[1, 1], 1);
 }
 
 #[test]
 fn multi_group_root_folded_recursive_setup_round_trips() {
-    multi_group_root_round_trip_onehot::<OneHotCfg>(
-        &[1],
-        3,
-        akita_types::SetupContributionMode::Recursive,
-    );
+    multi_group_root_round_trip_onehot::<
+        OneHotCfg,
+        akita_config::RecursiveCommitmentConfig<OneHotCfg>,
+    >(&[1], 3);
 }
 
 #[test]
 fn multi_group_multi_chunk_fold_round_trips() {
-    multi_group_root_round_trip_onehot::<fp128::D64OneHotMultiChunkW2R2>(
-        &[1],
-        3,
-        akita_types::SetupContributionMode::Direct,
-    );
+    multi_group_root_round_trip_onehot::<
+        fp128::D64OneHotMultiChunkW2R2,
+        fp128::D64OneHotMultiChunkW2R2,
+    >(&[1], 3);
 }
 
 #[test]
@@ -626,7 +619,6 @@ fn multi_group_root_folded_two_group_onehot_round_trips() {
         &stack,
         &mut prover_transcript,
         BasisMode::Lagrange,
-        akita_types::SetupContributionMode::Direct,
     )
     .expect("multi-group prove");
     assert!(proof.num_fold_levels() >= 2);
@@ -828,7 +820,6 @@ fn multi_group_root_folded_three_group_onehot_round_trips() {
         &stack,
         &mut prover_transcript,
         BasisMode::Lagrange,
-        akita_types::SetupContributionMode::Direct,
     )
     .expect("multi-group prove");
     assert!(proof.num_fold_levels() >= 2);
@@ -931,7 +922,6 @@ fn batched_onehot_roundtrip_matches_public_shape_context() {
         &stack,
         &mut prover_transcript,
         BasisMode::Lagrange,
-        akita_types::SetupContributionMode::Direct,
     )
     .expect("batched onehot prove");
 

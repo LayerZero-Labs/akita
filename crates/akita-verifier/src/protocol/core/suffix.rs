@@ -157,7 +157,7 @@ enum FoldReplayKind<'a, F: FieldCore, E: FieldCore> {
 /// Prepare one suffix fold level for relation verification.
 ///
 /// Terminal levels absorb the cleartext final witness instead of a
-/// next-witness commitment and run stage-2 in relation-only mode.
+/// next-witness commitment and run direct consistency/A and trace checks.
 ///
 /// # Errors
 ///

@@ -9,7 +9,7 @@ use akita_prover::{ComputeBackendSetup, CpuBackend, DensePoly, OneHotPoly, Prove
 use akita_transcript::AkitaTranscript;
 use akita_types::{
     AkitaCommitmentHint, BasisMode, Commitment, OpeningClaims, PointVariableSelection,
-    PolynomialGroupClaims, SetupContributionMode,
+    PolynomialGroupClaims,
 };
 use criterion::measurement::WallTime;
 use criterion::{black_box, criterion_group, BatchSize, BenchmarkGroup, Criterion};
@@ -85,16 +85,8 @@ fn configure_group(group: &mut BenchmarkGroup<'_, WallTime>, nv: usize) {
 }
 
 /// Setup-contribution modes benchmarked per phase. Direct scans the expanded
-/// setup matrix inline; Recursive delegates each non-terminal fold to the
-/// stage-3 setup-product sumcheck. Benching both keeps `prove/{mode}`,
-/// `verify/{mode}`, and `e2e/{mode}` regressions independently visible.
-fn setup_contribution_modes() -> [(SetupContributionMode, &'static str); 2] {
-    [
-        (SetupContributionMode::Direct, "direct"),
-        (SetupContributionMode::Recursive, "recursive"),
-    ]
-}
-
+/// These scalar benches instantiate direct-schedule configs. Recursive stage-3
+/// setup contribution is benchmarked by the config-typed multi-group profile.
 fn bench_dense_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField = F>>(
     c: &mut Criterion,
     label: &str,
@@ -146,7 +138,7 @@ fn bench_dense_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField 
     let verifier_setup =
         AkitaCommitmentScheme::<Cfg>::setup_verifier(&setup).expect("verifier setup");
 
-    for (mode, mode_label) in setup_contribution_modes() {
+    for mode_label in ["direct"] {
         group.bench_function(format!("prove/{mode_label}"), |b| {
             b.iter_batched(
                 || vec![hint.clone()],
@@ -164,7 +156,6 @@ fn bench_dense_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField 
                             &stack,
                             &mut transcript,
                             BasisMode::Lagrange,
-                            mode,
                         )
                         .unwrap(),
                     )
@@ -180,7 +171,6 @@ fn bench_dense_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField 
             &stack,
             &mut prover_transcript,
             BasisMode::Lagrange,
-            mode,
         )
         .unwrap();
 
@@ -214,7 +204,6 @@ fn bench_dense_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField 
                     &stack,
                     &mut pt_tr,
                     BasisMode::Lagrange,
-                    mode,
                 )
                 .unwrap();
                 let mut vt_tr = AkitaTranscript::<F>::new(b"bench");
@@ -301,7 +290,7 @@ fn bench_onehot_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField
     let verifier_setup =
         AkitaCommitmentScheme::<Cfg>::setup_verifier(&setup).expect("verifier setup");
 
-    for (mode, mode_label) in setup_contribution_modes() {
+    for mode_label in ["direct"] {
         group.bench_function(format!("prove/{mode_label}"), |b| {
             b.iter_batched(
                 || vec![hint.clone()],
@@ -319,7 +308,6 @@ fn bench_onehot_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField
                             &stack,
                             &mut transcript,
                             BasisMode::Lagrange,
-                            mode,
                         )
                         .unwrap(),
                     )
@@ -335,7 +323,6 @@ fn bench_onehot_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField
             &stack,
             &mut prover_transcript,
             BasisMode::Lagrange,
-            mode,
         )
         .unwrap();
 
@@ -369,7 +356,6 @@ fn bench_onehot_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField
                     &stack,
                     &mut pt_tr,
                     BasisMode::Lagrange,
-                    mode,
                 )
                 .unwrap();
                 let mut vt_tr = AkitaTranscript::<F>::new(b"bench");

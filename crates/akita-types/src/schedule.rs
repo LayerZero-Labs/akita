@@ -518,7 +518,10 @@ pub struct Schedule {
     pub folds: Vec<FoldStep>,
     /// The unique terminal cleartext handoff.
     pub terminal: DirectStep,
-    /// Exact total proof bytes for the schedule.
+    /// Planned direct-mode proof-byte upper bound for the schedule.
+    ///
+    /// Golomb-coded terminal `z` is sized conservatively. Recursive stage-3
+    /// setup-product payloads are reported separately and are not included.
     pub total_bytes: usize,
 }
 

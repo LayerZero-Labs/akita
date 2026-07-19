@@ -5,7 +5,7 @@
 | --------- | ---------------------------------- |
 | Author(s) |                                    |
 | Created   | 2026-06-17                         |
-| Status    | implemented; layout portions superseded by digit-innermost geometry |
+| Status    | implemented                        |
 | PR        |                                    |
 | Book      | configuration chapter              |
 
@@ -17,6 +17,15 @@
 > formulas are superseded by [`digit-innermost-layout.md`](digit-innermost-layout.md).
 > Multi-group and multi-chunk witnesses now use the canonical product
 > `WitnessLayout`, with one shared quotient tail.
+
+> **Topology/API supersession (PR #311).** The implementation is folded-only:
+> `Schedule` is structural `folds + terminal`, every supported proof has at
+> least two folds, and unsupported keys return `UnsupportedSchedule`. Later
+> historical passages mentioning `Step::Direct`, root-direct fallbacks,
+> `multi_group_root_commit_params`, or caller-selected prove modes describe the
+> pre-#311 implementation. Current root parameters come from
+> `schedule.root_fold()?.params`, and proving derives setup-contribution mode
+> from the schedule selected by its config.
 
 Akita currently supports batching several polynomials inside one commitment
 object. This spec defines the first production model for batching several
@@ -154,8 +163,8 @@ singleton proof path.
 ## Current State
 
 The codebase has implemented the multi-group scheduler, conservative precommit,
-`commit_final_group`, and **root-direct multi-group opening proofs** for
-one-hot polynomials under `SetupContributionMode::Direct`.
+`commit_final_group`, and folded-root multi-group opening proofs for one-hot
+polynomials.
 
 Implemented now:
 
@@ -169,8 +178,9 @@ Implemented now:
   `AkitaScheduleLookupKey::single(final_group)` and delegates to the scalar
   scheduler. A multi-group key goes through generated group-batch lookup first, then
   DP fallback.
-- `find_group_batch_schedule` builds multi-group root-direct or folded-root
-  schedules for one-hot, non-tiered configs. The multi-group root `LevelParams` holds
+- `find_group_batch_schedule` builds folded-root schedules for one-hot,
+  non-tiered configs. Unsupported keys return `UnsupportedSchedule`. The
+  multi-group root `LevelParams` holds
   the final group in the normal root fields and all precommitted groups in
   `precommitted_groups`.
 - Multi-group root planning sizes the shared `D` key over one `w_hat_g` segment per
@@ -185,17 +195,17 @@ Implemented now:
   `CommitmentProver` / PCS scheme surface. It validates the final group,
   reconstructs precommitted `PrecommittedGroupParams` values from
   `PolynomialGroupLayout`s under `ConservativeCommitmentConfig<Cfg>`,
-  resolves the runtime schedule, reads its multi-group root commit params through
-  `Cfg::multi_group_root_commit_params`,
+  resolves the runtime schedule, reads its root commit params from
+  `schedule.root_fold()?.params`,
   and emits the final commitment plus hint.
-- `batched_prove` supports `G > 1` folded multi-group-root one-hot openings when
-  proving selects `SetupContributionMode::Direct`; `batched_verify` derives
-  setup-contribution behavior from the schedule. The opening field has extension
+- `batched_prove` supports `G > 1` folded multi-group-root one-hot openings;
+  proving and verification derive setup-contribution behavior from the schedule.
+  The opening field has extension
   degree one, and the root can hand off to a singleton recursive suffix. The
   multi-group root carries per-group `z_hat`, `e_hat`, and `t_hat` sections followed
   by one shared quotient tail.
-- `akita_config::effective_batched_schedule` still root-directs unsupported
-  multi-group folded-root shapes, including multi-group extension-field openings.
+- `akita_config::effective_batched_schedule` rejects unsupported multi-group
+  folded-root shapes, including unsupported extension-field openings.
 - The multi-group root relation quotient, verifier ring-switch replay, setup
   contribution, relation-matrix column table, and multi-group stage-2 trace table are
   implemented for the supported folded root shape.
@@ -204,14 +214,12 @@ Implemented now:
 
 Still future / guarded:
 
-- Multi-chunk / distributed multi-group witnesses. Today, multi-chunk witness layout
-  combined with precommitted groups is rejected; the distributed design should
-  decide whether all groups must share the same chunk count.
-- Dense polynomial multi-group roots, recursive setup contribution, and tiered
-  multi-group commitments remain guarded.
-- Folded multi-group roots over extension-field openings remain guarded by a
-  root-direct fallback until the multi-group trace and output contribution support
-  them.
+- Distributed multi-group execution beyond the shipped multi-chunk layouts.
+- Dense polynomial multi-group roots and tiered multi-group commitments remain
+  guarded. Recursive setup contribution is config-typed and covered end to end.
+- Folded multi-group roots over extension-field openings remain guarded until
+  the multi-group trace and output contribution support them; there is no
+  root-direct fallback.
 - Immediately terminal multi-group root folds and EOR-bearing multi-group roots remain
   guarded.
 - There is no separate descriptor `CommitSection`, and the design should not add
@@ -590,26 +598,22 @@ commit_final_group(new_group, precommitted_layouts)
   from its `PolynomialGroupLayout` under `ConservativeCommitmentConfig<Cfg>`;
 - builds the full `AkitaScheduleLookupKey`;
 - resolves the multi-group final-root commit params through
-  `Cfg::multi_group_root_commit_params`;
+  `schedule.root_fold()?.params`;
 - commits the last group with the final multi-group plan and returns only the final
   commitment plus hint.
 
 ## Config Surface
 
-`CommitmentConfig` now has a unified multi-group/scalar schedule entry point plus a
-root-params accessor for final multi-group commitments:
+`CommitmentConfig` has one unified multi-group/scalar schedule entry point:
 
 ```rust
 fn runtime_schedule(key: AkitaScheduleLookupKey) -> Result<Schedule, AkitaError>;
-
-fn multi_group_root_commit_params(schedule: &Schedule) -> Result<LevelParams, AkitaError>;
 ```
 
 `runtime_schedule` delegates scalar keys to `resolve_schedule` and multi-group keys
 to `resolve_group_batch_schedule`; both paths validate catalog identity on table
-hits and fall back to DP on misses. `multi_group_root_commit_params` reads the
-main/final group's root commit params from the first schedule step (`Fold.params`
-or root-direct `Direct.params`).
+hits and fall back to DP on misses. The main/final group's root commit params
+come directly from `schedule.root_fold()?.params`.
 
 Standalone conservative precommit scheduling is not a public trait hook. It is
 implemented by `ConservativeCommitmentConfig<Cfg>`, which overrides
@@ -691,7 +695,7 @@ precommitted group. The final-group path then:
 - reconstructs precommitted layouts by resolving each key under
   `ConservativeCommitmentConfig<Cfg>::get_params_for_batched_commitment`;
 - builds an `AkitaScheduleLookupKey` from those layouts and the final group key;
-- resolves multi-group params through `Cfg::multi_group_root_commit_params`;
+- resolves multi-group params through `schedule.root_fold()?.params`;
 - validates setup footprint and one-hot chunk size for the final group;
 - applies tensor root projection when the multi-group final schedule starts with a
   fold and the field tower supports root tensor projection;
@@ -730,7 +734,6 @@ fn batched_prove<'a, T, P, B>(
     stacks: &'a impl LevelProveStacks<'a, F, D, Commit = B, Opening = B, Tensor = B, RingSwitch = B>,
     transcript: &mut T,
     basis: BasisMode,
-    setup_contribution_mode: SetupContributionMode,
 ) -> Result<Self::BatchedProof, AkitaError>;
 ```
 
@@ -740,10 +743,9 @@ wrap one group entry.
 ## Root Witness Layout
 
 The current implementation has scheduler-side multi-group witness sizing, not
-yet a serialized/prover-side `MultiGroupRootWitnessLayout` object. A
-multi-group schedule can be root-direct (`Step::Direct` with `params:
-Some(multi_group_root_params)`) or fold-rooted (`Step::Fold` followed by a
-singleton recursive suffix).
+yet a serialized/prover-side `MultiGroupRootWitnessLayout` object. A supported
+multi-group schedule is fold-rooted and followed by a singleton recursive
+suffix. Root-direct schedules were removed by PR #311.
 
 For each group, the planner prices:
 
@@ -763,13 +765,6 @@ sum_g (e_hat_g + t_hat_g + z_hat_g)
 
 `multi_group_root_next_w_len` returns this count multiplied by `ring_dimension`,
 matching the schedule's field-element witness lengths.
-
-For a multi-group root-direct schedule, the direct witness length is the sum of raw
-group witness lengths:
-
-```text
-sum_g K_g * 2^{num_vars_g}
-```
 
 The implemented D width uses one `w_hat_g` segment per group:
 
@@ -1323,9 +1318,8 @@ kernels land if B-row time is a bottleneck.
 - Current prove/verify accept one-hot `G > 1` with recursive setup contribution when the
   folded multi-group root can hand off to a singleton recursive suffix.
 - Current prove/verify reject tiered `G > 1` with `AkitaError::InvalidSetup`.
-- Current prove/verify reject `G > 1` combined with `witness_chunk.num_chunks > 1`
-  through the canonical multi-group multi-chunk error.
-- Implemented: root-direct two-group one-hot same-point round trip.
+- Current prove/verify accept the shipped multi-group multi-chunk layout.
+- Removed by PR #311: root-direct two-group round trips.
 - Implemented: folded non-tiered two-group one-hot same-point round trip.
 - Implemented: folded non-tiered unequal group sizes, for example `[1, 3]`.
 - Implemented: suffix remains singleton after a multi-group root.

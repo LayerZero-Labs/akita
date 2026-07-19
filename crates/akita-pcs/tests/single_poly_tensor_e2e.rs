@@ -68,7 +68,6 @@ fn run_single_onehot_tensor(nv: usize) {
             &stack,
             &mut prover_transcript,
             BasisMode::Lagrange,
-            akita_types::SetupContributionMode::Direct,
         )
         .expect("prove");
 
@@ -142,7 +141,6 @@ fn run_single_dense_tensor(nv: usize) {
             &stack,
             &mut prover_transcript,
             BasisMode::Lagrange,
-            akita_types::SetupContributionMode::Direct,
         )
         .expect("prove");
 

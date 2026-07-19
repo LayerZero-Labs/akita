@@ -32,10 +32,11 @@ impl<E: FieldCore> SetupContributionGroupPlan<E> {
             ));
         }
 
-        let segment_slice = self.segments.as_ref();
-        let terms = cfg_iter!(segment_slice)
-            .map(|segment| {
-                dispatch_segment_roles!(segment, Ok(E::zero()), |HAS_D, HAS_B, HAS_A| {
+        cfg_try_fold_reduce!(
+            self.segments.as_ref(),
+            E::zero,
+            |acc, segment| {
+                dispatch_segment_roles!(segment, Ok(acc), |HAS_D, HAS_B, HAS_A| {
                     base_ring_segment_inner_sum_typed::<F, E, BASE_D, HAS_D, HAS_B, HAS_A>(
                         segment.lo..segment.hi,
                         setup_flat,
@@ -48,9 +49,10 @@ impl<E: FieldCore> SetupContributionGroupPlan<E> {
                         b_projection,
                         a_projection,
                     )
+                    .map(|term| acc + term)
                 })
-            })
-            .collect::<Result<Vec<_>, AkitaError>>()?;
-        Ok(terms.into_iter().fold(E::zero(), |acc, term| acc + term))
+            },
+            |lhs, rhs| Ok(lhs + rhs)
+        )
     }
 }

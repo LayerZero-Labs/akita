@@ -65,7 +65,6 @@ fn prove_tail_bound_with_grind_onehot_fixture(num_vars: usize, seed: u64) -> Tai
         &stack,
         &mut prover_transcript,
         BasisMode::Lagrange,
-        akita_types::SetupContributionMode::Direct,
     )
     .expect("prove");
 
@@ -212,7 +211,6 @@ fn logging_transcript_event_stream_equality_tail_bound_with_grind() {
             &stack,
             &mut prover_transcript,
             BasisMode::Lagrange,
-            akita_types::SetupContributionMode::Direct,
         )
         .expect("prove");
 

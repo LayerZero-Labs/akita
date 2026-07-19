@@ -8,8 +8,9 @@
 |-------------|-----------------------------------------------------------|
 | Author(s)   | Quang Dao                                                 |
 | Created     | 2026-06-13                                                |
-| Status      | implemented for the transparent tail; historical #190 staging retained below |
-| PR          | #190 (spec + encoding implementation, targets `main`; spec-only #187 superseded) |
+| Status      | implemented                                               |
+| PR          | #190, #209, #311                                          |
+| Book-chapter | how/recursion.md                                         |
 
 ## Summary
 
@@ -52,11 +53,11 @@ handoff into the terminal, replace outer `u` with canonical inner `t`.
 The feature introduces or modifies:
 
 - A **segment-typed tail witness** representation replacing the historical single-width `PackedDigits` blob: Golomb-Rice for `z` only and raw canonical field coefficients for `e`/`t`. Boundaries derive from the schedule/shape (headerless wire). Wire `rice_low_bits` is never on the wire; both sides derive it from the fold `‖z‖_inf` cap (`min(β_inf, t*)` or `β_inf` alone) for `z` only.
-- A **canonical, total Golomb-Rice codec** (`akita-types`, verifier-reachable, no-panic) with zigzag sign mapping and standard unary+remainder Rice encoding only. Decode rejects unary runs longer than [`golomb_rice_max_quotient_for_cap`](crates/akita-types/src/golomb_rice.rs). **#190 applies it to `z` only.**
-- A per-level **fold `‖z‖_inf` cap accessor** via [`LevelParams::fold_witness_linf_cap_for_claims`](crates/akita-types/src/layout/params.rs) and the deterministic cap→wire low-bits rules in [`tail_golomb_rice_low_bits`](crates/akita-types/src/tail_golomb_rice_low_bits.rs) for the folded-response `z` segment.
+- A **canonical, total Golomb-Rice codec** (`akita-types`, verifier-reachable, no-panic) with zigzag sign mapping and standard unary+remainder Rice encoding only. Decode rejects unary runs longer than [`golomb_rice_max_quotient_for_cap`](../crates/akita-types/src/golomb_rice.rs). **#190 applies it to `z` only.**
+- A per-level **fold `‖z‖_inf` cap accessor** via [`LevelParams::fold_witness_linf_cap_for_claims`](../crates/akita-types/src/layout/params.rs) and the deterministic cap→wire low-bits rules in [`tail_golomb_rice_low_bits`](../crates/akita-types/src/tail_golomb_rice_low_bits.rs) for the folded-response `z` segment.
 - **Terminal `t`-state cutover**: the predecessor fold stops sending outer
-  `u = B * decompose(t)` and binds inner `t = A * w_terminal` as the
-  terminal's public state.
+  `u = B * decompose(t)` and binds canonical inner `t` rings as the terminal's
+  public state; the terminal later checks their challenge-folded A relation.
 - **`r`-elision and terminal-stage-2 elision** via the
   [terminal direct ring relations cutover](terminal-direct-ring-relations-cutover.md).
 - **Descriptor binding** through the canonical schedule/instance descriptor:
@@ -69,7 +70,7 @@ The feature introduces or modifies:
 2. **Canonical encoding.** Each integer vector has exactly one valid byte encoding under a fixed `(model, rice_low_bits)`; a non-canonical or malformed encoding is rejected with `AkitaError`/`SerializationError`, never decoded ambiguously. Protected by: a canonicality unit test (encode-decode-encode fixpoint) and a malformed-bytes rejection test.
 3. **Total, bounded, no-panic decode.** The Golomb-Rice decoder terminates on every byte string, rejects unary quotients above the cap-derived maximum, allocates only the schedule-declared element count, rejects non-minimal trailing byte padding, and never panics, unwraps, or indexes unchecked. Protected by: a fuzz/edge unit test over random byte strings and the verifier no-panic audit.
 4. **Public models, zero side info.** Segment boundaries and Golomb wire low bits for `z` (`cap`, `wire_rice_low_bits`) are derivable by the verifier from `LevelParams` + transcript before decode; `e`/`t` carry no separate model tag. Protected by: a prover/verifier cap/wire low-bits agreement test for `z` and a `LoggingTranscript` event-stream equality test.
-5. **Terminal `t`-state preserves weak binding.** The last recursive transition changes the terminal input state from outer `u = B * decompose(t)` to inner `t = A * w_terminal`. Soundness does **not** come from deleting B while keeping `u`; it comes from binding `t` before dependent challenges and checking that the clear witness maps to that exact `t` under A.
+5. **Terminal `t`-state preserves weak binding.** The last recursive transition changes the terminal input state from outer `u = B * decompose(t)` to canonical inner `t`. Soundness does **not** come from deleting B while keeping `u`; it comes from binding `t` before dependent challenges and checking `A_g z_g = Σ_i c_{g,i} t_{g,i}` together with the global consistency and opening-trace equations.
 6. **Descriptor binding fixes topology.** The instance descriptor binds the complete structural schedule. Every accepted schedule has at least two folds, and its final edge selects the terminal-inner handoff. A proof-body binding variant inconsistent with that schedule rejects.
 7. **Transparent-only.** Entropy coding applies only to the transparent tail. Historical `feature = "zk"` / `PackedDigits` notes refer to the removed pre-zk-strip implementation.
 
@@ -184,11 +185,11 @@ block is gone as well. The sole terminal layout is
 The correct S2 cutover is **not** "delete B rows while keeping `u` as the terminal statement."
 That would be unsound: if the verifier still accepted a public commitment `u` but no longer checked `B * t_hat = u`, the terminal proof would no longer depend on `u`.
 
-Instead, the last recursive transition changes the terminal input state
-and binds the terminal inner image
+Instead, the last recursive transition changes the terminal input state and
+binds the terminal inner rings
 
 ```text
-t = A * w_terminal
+t_{g,i}
 ```
 
 as raw ring elements, in the transcript slot where the next-state payload is bound.
@@ -198,19 +199,30 @@ It does **not** send the outer image
 u = B * decompose(t).
 ```
 
-The terminal direct relation then has no commitment/B block.
-Its A block is no longer a zero-RHS quotient row whose `t` contribution lives only inside the witness MLE; it is a direct check that the revealed terminal witness maps to the public `t` state.
-Equivalently, the verifier computes the same folded A-row value from the revealed witness and checks equality to the transcript-bound `t` rows in `F[X]/(X^D+1)`.
+The terminal direct relation then has no commitment/B block. Its A block is no
+longer a zero-RHS quotient row whose `t` contribution lives only inside the
+witness MLE. After sampling the fold coefficients, the verifier checks
+
+```text
+A_g z_g = Σ_i c_{g,i} t_{g,i}
+Σ_g,i c_{g,i} e_{g,i} = Σ_g multiplier_g · G · z_g
+weighted_opening_eval(e, row_coefficients, EOR_scales) = trace_eval_target.
+```
 
 Soundness sketch.
 The terminal state is `t`, not `u`.
 The prover must bind the canonical bytes of `t` before any terminal challenge depending on the terminal state is squeezed.
-The terminal verifier decodes the clear witness, checks the public norm/digit bounds, recomputes the A-image of that witness under the terminal fold challenges, and rejects unless it equals the bound `t`.
-Thus an accepting proof gives an explicit short preimage of the public `t` under `A`; by the same Module-SIS weak-binding argument already used for the A-role, two different accepting terminal witnesses for the same `t` extract a short kernel vector of `A`.
+The terminal verifier decodes the clear witness, checks the public norm/digit
+bounds, and enforces the three equations above. Thus an accepting proof gives
+the challenge-folded short A preimage tied to the predecessor-bound `t`, while
+the consistency and trace equations tie that response to the folded evaluation
+and public opening.
 No terminal B binding is required because `u` is no longer part of that
 statement. A terminal without a predecessor is not an accepted proof topology.
 
-This is why the cutover is sound: it replaces the statement `u = B * decompose(A * w_terminal)` with the statement `t = A * w_terminal` at the transparent tail, where `w_terminal` is revealed and range-checked.
+This is why the cutover is sound: it replaces the outer-`u` statement with the
+challenge-folded A/consistency/trace statement above at the transparent tail,
+where `z`, `e`, and `t` are revealed and `z` is range-checked.
 It is implemented as the sole `WithoutCommitmentBlocks` terminal row layout.
 The execution schedule is the single source of truth for selecting it.
 
@@ -270,7 +282,7 @@ cap_rice_low_bits = rice_low_bits_for_cap(cap)                   (= max(0, floor
 wire_rice_low_bits = cap_rice_low_bits - WIRE_RICE_LOW_BITS_DELTA  (= cap low bits - 2 today)
 ```
 
-`cap` is the same bound already used by [`fold_witness_digit_plan`](crates/akita-types/src/sis/norm_bound.rs) and grind acceptance. It is **not** the level variance envelope `isqrt_ceil(β_inf² · T_level · ρ²)` from PR #174's `t*` analysis: that quantity aggregates coordinates and is far too loose for per-coordinate Golomb-Rice parameterization (it would imply `cap_rice_low_bits ≈ 22` on fp128 D64 where `cap_rice_low_bits = 12` suffices).
+`cap` is the same bound already used by [`fold_witness_digit_plan`](../crates/akita-types/src/sis/norm_bound.rs) and grind acceptance. It is **not** the level variance envelope `isqrt_ceil(β_inf² · T_level · ρ²)` from PR #174's `t*` analysis: that quantity aggregates coordinates and is far too loose for per-coordinate Golomb-Rice parameterization (it would imply `cap_rice_low_bits ≈ 22` on fp128 D64 where `cap_rice_low_bits = 12` suffices).
 
 `rice_low_bits_for_cap` is the cap-derived Rice low-bit width covering every admitted `z` coefficient magnitude at the planner reference. `wire_rice_low_bits` is what prover and verifier use on the wire (#209). The codec is canonical because standard Rice is bijective for a fixed `rice_low_bits` on `[-cap, cap]`, and wire payloads must use the minimal byte length (partial-byte zero padding only). Decode and grind use the cap-derived maximum quotient; no alternate wire shape exists.
 
@@ -351,11 +363,11 @@ Remaining audit/measurement items:
 - Exact two-fold tamper tests should continue pinning predecessor `t`/A binding
   without a terminal B block.
 - S3/S4 (landed in #190) must keep prover packing, verifier transcript slicing, and verifier row decoding byte-for-byte aligned across segment boundaries; `segment_typed_expand_matches_logical_w` guards this.
-- S5 descriptor binding (wire low-bits rule id + δ in [`FoldLinfProtocolBinding`](../../crates/akita-types/src/instance_descriptor/fold_linf_binding.rs); `AKITA_INSTANCE_DESCRIPTOR_VERSION = 2`) and Jolt cycle measurement remain partially open.
+- S5 descriptor binding (wire low-bits rule id + δ in [`FoldLinfProtocolBinding`](../crates/akita-types/src/instance_descriptor/fold_linf_binding.rs); `AKITA_INSTANCE_DESCRIPTOR_VERSION = 2`) is implemented; only Jolt cycle measurement remains open.
 
 ## References
 
-- PR #141 branch `specs/terminal-direct-ring-relation.md`: terminal r-drop and direct ring relations; S1 dependency.
+- PR #311 / [`terminal-direct-ring-relations-cutover.md`](terminal-direct-ring-relations-cutover.md): terminal r-drop and direct ring relations.
 - PR #174 / `specs/fold-linf-rejection.md` (closed spec PR; implementation #189): the `t*` threshold and fold `‖z‖_inf` cap; Golomb `z` sizing uses the same cap as `num_digits_fold`, not the level variance envelope.
 - `specs/terminal-fold-cutover.md` (PR #88): the D-role drop whose transcript-binding discipline the terminal `t`-state cutover reuses.
 - `specs/weak-binding-norm-fix.md`: the weak-binding object the tail extraction recovers.

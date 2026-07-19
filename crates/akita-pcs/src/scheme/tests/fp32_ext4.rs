@@ -81,7 +81,6 @@ fn fp32_ext4_folded_eor_batched_roundtrip_and_rejections() {
         &stack,
         &mut prover_transcript,
         BasisMode::Lagrange,
-        akita_types::SetupContributionMode::Direct,
     )
     .expect("fp32 extension proof");
     assert!(

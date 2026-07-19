@@ -76,7 +76,6 @@ fn event_stream_equality_small() {
             &stack,
             &mut prover_transcript,
             BasisMode::Lagrange,
-            akita_types::SetupContributionMode::Direct,
         )
         .expect("prove");
         assert!(
@@ -311,7 +310,6 @@ fn assert_proof_tamper_rejected_at_num_vars(num_vars: usize, tamper: ProofTamper
             &stack,
             &mut prover_transcript,
             BasisMode::Lagrange,
-            akita_types::SetupContributionMode::Direct,
         )
         .expect("prove");
         tamper.apply(&mut proof);
@@ -384,7 +382,6 @@ fn terminal_direct_witness_shape_mismatch_rejects_deserialization() {
             &stack,
             &mut prover_transcript,
             BasisMode::Lagrange,
-            akita_types::SetupContributionMode::Direct,
         )
         .expect("prove");
 

@@ -98,7 +98,6 @@ mod non_zk_aggregated_cases {
                 &stack,
                 &mut prover_transcript,
                 BasisMode::Lagrange,
-                akita_types::SetupContributionMode::Direct,
             )
             .expect("batched prove");
             if expect_folded {
@@ -189,7 +188,6 @@ mod non_zk_aggregated_cases {
                 &stack,
                 &mut prover_transcript,
                 BasisMode::Lagrange,
-                akita_types::SetupContributionMode::Direct,
             )
             .expect("batched prove");
             if expect_folded {
@@ -309,7 +307,6 @@ fn aggregated_mixed_dense_and_onehot_under_dense_cfg() {
             &stack,
             &mut prover_transcript,
             BasisMode::Lagrange,
-            akita_types::SetupContributionMode::Direct,
         )
         .expect("mixed batched prove");
         assert!(

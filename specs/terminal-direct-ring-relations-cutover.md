@@ -2,8 +2,12 @@
 
 | Field | Value |
 | --- | --- |
+| Author(s) | Quang Dao |
+| Created | 2026-07-19 |
 | Branch | `quang/terminal-direct-ring-relations` |
 | Status | implemented |
+| PR | #311 |
+| Book-chapter | how/recursion.md |
 | Compatibility | hard protocol and wire cutover |
 
 ## Contract
@@ -62,12 +66,22 @@ next-witness-binding transcript label before sampling dependent challenges.
 The terminal rebinds the same bytes as its current public state.
 
 After extension-opening reduction, when present, the terminal verifier checks
-the revealed segment-typed witness directly in `F[X] / (X^D + 1)`:
+the revealed segment-typed witness directly in `F[X] / (X^D + 1)`. For group
+`g`, response ring `z_g`, terminal-state rings `t_{g,i}`, and sampled fold
+coefficients `c_{g,i}`, it checks:
 
 ```text
-A * w_terminal == t_terminal
-witness_trace_eval == trace_eval_target
+A_g * z_g == sum_i(c_{g,i} * t_{g,i})
+sum_g sum_i(c_{g,i} * e_{g,i})
+    == sum_g(multiplier_g * G * z_g)
+weighted_opening_eval(e_terminal, row_coefficients, EOR_scales)
+    == trace_eval_target
 ```
+
+The EOR scale is one when no extension-opening reduction is required and is
+the final EOR relation scale otherwise. Thus the A check binds each group to
+the predecessor state, the consistency check links the challenge-folded `e`
+and `z`, and the trace check links `e` to the public opening claim.
 
 The only terminal relation layout is
 `RelationMatrixRowLayout::WithoutCommitmentBlocks`, whose physical rows are:
@@ -76,10 +90,11 @@ The only terminal relation layout is
 consistency | A
 ```
 
-The removed `WithoutDBlock = consistency | A | B` layout was meaningful only
-for a root terminal whose external `u` had no predecessor. Since that topology
-is unsupported, retaining the layout would create an uninhabited security
-state and duplicate row logic.
+The former `WithoutDBlock = consistency | A | B` layout retained B because the
+terminal accepted outer `u = B * decompose(t)` as public state. The folded-only
+topology guarantees a predecessor, and the final recursive edge now binds
+canonical inner `t` directly. Consequently the terminal has no outer `u`, and
+its B rows disappear together with root-direct/root-terminal proof modes.
 
 Extension-opening reduction remains independent. Revealing terminal `z`, `e`,
 and `t` does not reveal the pre-reduction polynomial table, so its partials and
@@ -92,10 +107,11 @@ The terminal sequence is fixed:
 ```text
 predecessor absorbs canonical terminal t as its outgoing binding
 terminal absorbs the same t as current state
+terminal replays extension-opening reduction, when required
 terminal absorbs e
 terminal samples the sparse challenge and fold challenges
 terminal absorbs z
-terminal performs the reduced A relation and trace checks
+terminal performs direct consistency/A and weighted trace checks
 ```
 
 The instance descriptor binds the complete folded topology, every expanded

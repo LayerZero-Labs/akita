@@ -19,7 +19,7 @@ use akita_transcript::AkitaTranscript;
 use akita_types::{
     AkitaBatchedProof, AkitaScheduleLookupKey, BasisMode, OpeningClaims, OpeningClaimsLayout,
     PointVariableSelection, PolynomialGroupClaims, PolynomialGroupLayout, PrecommittedGroupParams,
-    Schedule, SetupContributionMode,
+    Schedule,
 };
 use common::*;
 
@@ -199,7 +199,6 @@ fn generated_recursive_onehot_profile_proves_with_setup_offload() {
             &stack,
             &mut prover_transcript,
             BasisMode::Lagrange,
-            SetupContributionMode::Recursive,
         )
         .expect("generated-profile recursive proof");
         assert!(

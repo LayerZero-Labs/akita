@@ -106,9 +106,9 @@ impl<F: FieldCore> AkitaProverSetup<F> {
 
     /// Derive a verifier setup from this prover setup.
     ///
-    /// This copies protocol-independent setup state only. Before verification,
-    /// run the config-aware verifier preprocessing exposed by `akita-pcs` so
-    /// terminal matrix prefixes are materialized for the setup capacity.
+    /// This copies protocol-independent setup state. Verifier setup initializes
+    /// a non-serialized lazy terminal NTT-prefix cache; direct terminal checks
+    /// prepare exact or covering prefixes on demand.
     ///
     /// # Errors
     ///

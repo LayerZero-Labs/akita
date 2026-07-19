@@ -152,7 +152,6 @@ where
         &stack,
         &mut prover_transcript,
         BasisMode::Lagrange,
-        akita_types::SetupContributionMode::Direct,
     )
     .expect("prove");
     assert_folded_proof("single dense setup-capacity round trip", &proof);
@@ -236,7 +235,6 @@ where
         &stack,
         &mut prover_transcript,
         BasisMode::Lagrange,
-        akita_types::SetupContributionMode::Direct,
     )
     .expect("prove");
     assert_folded_proof("single onehot setup-capacity round trip", &proof);
@@ -348,7 +346,6 @@ fn run_dense_batched_e2e<Cfg, const D: usize>(
         &stack,
         &mut prover_transcript,
         BasisMode::Lagrange,
-        akita_types::SetupContributionMode::Direct,
     )
     .expect("batched prove");
     assert_folded_proof("batched dense setup-capacity round trip", &proof);
@@ -441,7 +438,6 @@ fn run_onehot_batched_e2e<Cfg, const D: usize>(
         &stack,
         &mut prover_transcript,
         BasisMode::Lagrange,
-        akita_types::SetupContributionMode::Direct,
     )
     .expect("batched onehot prove");
     assert_folded_proof("batched onehot setup-capacity round trip", &proof);

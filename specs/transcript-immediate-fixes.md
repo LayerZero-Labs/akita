@@ -4,8 +4,17 @@
 |-------------|-----------------------------------------|
 | Author(s)   | Quang Dao                               |
 | Created     | 2026-05-24                              |
-| Status      | proposed                                |
-| PR          | PR 1 of the transcript-grinding split   |
+| Status      | superseded                              |
+| PR          | superseded in part by #311              |
+
+> **Historical terminal-path note.** The setup-identity and recursion-boundary
+> material remains applicable. The terminal transcript path and its acceptance
+> criteria below describe the quotient-backed protocol predating PR #311. The
+> folded-only terminal now binds predecessor `t`, replays optional EOR, absorbs
+> raw `e`, samples only sparse/fold challenges, absorbs `z`, and performs direct
+> consistency/A and trace checks. It has no terminal ring-switch `alpha`,
+> `tau1`, quotient, or stage-2 sumcheck. See
+> [`terminal-direct-ring-relations-cutover.md`](terminal-direct-ring-relations-cutover.md).
 
 ## Summary
 

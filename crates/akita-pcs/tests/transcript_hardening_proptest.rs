@@ -58,7 +58,6 @@ fn logged_dense_round_trip(num_vars: usize, shape_index: usize, basis_mode: Basi
         &stack,
         &mut prover_transcript,
         basis_mode,
-        akita_types::SetupContributionMode::Direct,
     )
     .expect("prove");
 

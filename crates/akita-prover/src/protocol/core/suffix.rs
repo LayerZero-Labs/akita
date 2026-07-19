@@ -66,7 +66,6 @@ pub fn prove_suffix<'stack, Cfg, T, C, O, TS, R>(
     transcript: &mut T,
     starting_state: SuffixProverState<Cfg::Field, Cfg::ExtField>,
     schedule: &Schedule,
-    setup_contribution_mode: SetupContributionMode,
 ) -> Result<RecursiveSuffixOutcome<Cfg::Field, Cfg::ExtField>, AkitaError>
 where
     Cfg: CommitmentConfig,
@@ -169,7 +168,6 @@ where
             level,
             &scheduled,
             prepared_fold,
-            setup_contribution_mode,
             is_terminal_level,
             if is_terminal_level {
                 Some(terminal_direct_witness_shape)

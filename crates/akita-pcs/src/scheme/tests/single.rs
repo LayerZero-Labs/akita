@@ -36,7 +36,6 @@ fn verify_passes_for_consistent_opening() {
         &stack,
         &mut prover_transcript,
         BasisMode::Lagrange,
-        akita_types::SetupContributionMode::Direct,
     )
     .unwrap();
 
@@ -87,7 +86,6 @@ fn verify_rejects_wrong_opening() {
         &stack,
         &mut prover_transcript,
         BasisMode::Lagrange,
-        akita_types::SetupContributionMode::Direct,
     )
     .unwrap();
 
@@ -247,7 +245,6 @@ fn monomial_basis_prove_verify_round_trip() {
         &stack,
         &mut prover_transcript,
         BasisMode::Monomial,
-        akita_types::SetupContributionMode::Direct,
     )
     .unwrap();
 
