@@ -104,9 +104,26 @@ impl CompactDigitSource {
         self.ordered_range_class_pairs.len()
     }
 
+    pub(super) fn quartet_count(&self) -> usize {
+        self.pair_count().div_ceil(2)
+    }
+
     #[inline(always)]
     pub(super) fn ordered_pair_index(&self, pair_index: usize) -> usize {
         usize::from(self.ordered_range_class_pairs[pair_index])
+    }
+
+    #[inline(always)]
+    pub(super) fn ordered_pair_indices_for_quartet(&self, quartet_index: usize) -> (usize, usize) {
+        let first_pair_index = 2 * quartet_index;
+        let first = usize::from(self.ordered_range_class_pairs[first_pair_index]);
+        let second = self
+            .ordered_range_class_pairs
+            .get(first_pair_index + 1)
+            .copied()
+            .map(usize::from)
+            .unwrap_or(0);
+        (first, second)
     }
 }
 
