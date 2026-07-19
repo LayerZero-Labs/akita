@@ -124,7 +124,7 @@ Both converge on the same five moves; copy them.
 | EOR sparse accumulate / factor query | `sparse.rs:322-346` (`accumulate_entries_with_factor_using`), `:749-783` (`factor_pair`) | scalar over support + scalar `ProductAccum` dot |
 | EOR partials | `akita-types/src/extension_opening_reduction.rs:260-279` (`tensor_column_partials_split_fold`) | scalar base×ext via `SplitEqEvals` |
 | eq table | `akita-algebra/src/eq_poly.rs:232-252` (`SplitEqEvals`), `EqPolynomial::evals` | scalar `Vec<E>` |
-| stage1 round + fold | `akita_stage1/mod.rs:392-448`, `round_flow.rs:200-201` | scalar |
+| digit-range round + fold | `digit_range/direct_range_leaf/`, `digit_range/class_indexed_product.rs`, `digit_range/class_indexed_range_leaf.rs` | basis-specialized compact and class-indexed kernels |
 | stage2 round + fold | `akita_stage2/dense_terms.rs:189-216`, `round_flow.rs:234` | scalar |
 | generic fold | `akita-algebra/src/poly.rs:225-228` (`fold_evals_in_place`) | scalar `E::fold_one` |
 | driver (unchanged) | `drivers/standard.rs:112-148` | trait-driven; packing lives in the instance |

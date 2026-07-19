@@ -1,6 +1,6 @@
 use super::*;
 use akita_field::Prime128Offset275;
-use akita_sumcheck::multilinear_eval;
+use akita_sumcheck::{advance_eq_factored_claim, multilinear_eval};
 use akita_types::DigitRangeEqualityPoint;
 
 type F = Prime128Offset275;
@@ -22,12 +22,36 @@ fn ordered_equality_point(
 #[test]
 fn stage1_new_rejects_malformed_shapes_without_panicking() {
     let tau = vec![F::zero(); usize::BITS as usize];
-    assert!(DirectRangeLeafState::<F>::new(&[], &tau, 4, 1, 0, usize::BITS as usize).is_err());
+    assert!(LowBasisRangeCheckProver::<F>::new(
+        std::sync::Arc::from([]),
+        &tau,
+        DigitRangePlan::new(4).unwrap(),
+        1,
+        0,
+        usize::BITS as usize
+    )
+    .is_err());
 
     let tau = vec![F::zero(); usize::BITS as usize + 1];
-    assert!(DirectRangeLeafState::<F>::new(&[], &tau, 4, 3, 2, usize::BITS as usize - 1).is_err());
+    assert!(LowBasisRangeCheckProver::<F>::new(
+        std::sync::Arc::from([]),
+        &tau,
+        DigitRangePlan::new(4).unwrap(),
+        3,
+        2,
+        usize::BITS as usize - 1
+    )
+    .is_err());
 
-    assert!(DirectRangeLeafState::<F>::new(&[], &[], 1, 1, 0, 0).is_err());
+    assert!(LowBasisRangeCheckProver::<F>::new(
+        std::sync::Arc::from([]),
+        &[],
+        DigitRangePlan::new(16).unwrap(),
+        1,
+        0,
+        0
+    )
+    .is_err());
 }
 
 fn fold_compact_range_image_prefix_x_reference(
@@ -67,21 +91,29 @@ fn fold_compact_range_image_to_full_reference(compact_range_image: &[i16], r: F)
 
 #[test]
 fn stage1_compact_fold_lookup_matches_direct_formula() {
-    let b = 8usize;
+    let basis = 8usize;
     let r = F::from_u64(41);
 
-    let s_prefix = vec![2, 6, 12, 2, 6, 12, 2, 6, 12, 2];
-    let fold_lut = DirectRangeLeafState::<F>::build_range_image_fold_lut(b, r);
+    let range_image_prefix = vec![2, 6, 12, 2, 6, 12, 2, 6, 12, 2];
+    let fold_lut = LowBasisRangeCheckProver::<F>::build_range_image_fold_lut(basis, r);
     assert_eq!(
-        DirectRangeLeafState::<F>::fold_compact_range_image_prefix_x(&s_prefix, 5, 2, &fold_lut),
-        fold_compact_range_image_prefix_x_reference(&s_prefix, 5, 2, r)
+        LowBasisRangeCheckProver::<F>::fold_compact_range_image_prefix_x(
+            &range_image_prefix,
+            5,
+            2,
+            &fold_lut
+        ),
+        fold_compact_range_image_prefix_x_reference(&range_image_prefix, 5, 2, r)
     );
 
-    let s_dense = vec![2, 6, 12, 2, 6, 12];
-    let dense_lut = DirectRangeLeafState::<F>::build_range_image_fold_lut(b, r);
+    let dense_range_image = vec![2, 6, 12, 2, 6, 12];
+    let dense_lut = LowBasisRangeCheckProver::<F>::build_range_image_fold_lut(basis, r);
     assert_eq!(
-        DirectRangeLeafState::<F>::fold_compact_range_image_to_full(&s_dense, &dense_lut),
-        fold_compact_range_image_to_full_reference(&s_dense, r)
+        LowBasisRangeCheckProver::<F>::fold_compact_range_image_to_full(
+            &dense_range_image,
+            &dense_lut
+        ),
+        fold_compact_range_image_to_full_reference(&dense_range_image, r)
     );
 }
 
@@ -95,82 +127,65 @@ fn stage1_round0_matches_dense_reference() {
         .collect();
     let tau0 = ordered_equality_point(&tau0, col_bits, ring_bits);
 
-    for b in [4usize, 8, 16, 32] {
-        let half = (b / 2) as i8;
-        let w_compact: Vec<i8> = (0..n).map(|i| ((i * 5 + 3) % b) as i8 - half).collect();
+    for basis in [4usize, 8] {
+        let half = (basis / 2) as i8;
+        let compact_digit_witness: Vec<i8> =
+            (0..n).map(|i| ((i * 5 + 3) % basis) as i8 - half).collect();
 
-        let mut prover = DirectRangeLeafState::new(
-            &w_compact,
+        let mut prover = LowBasisRangeCheckProver::new(
+            std::sync::Arc::from(compact_digit_witness.as_slice()),
             &tau0,
-            b,
+            DigitRangePlan::new(basis).unwrap(),
             1usize << col_bits,
             col_bits,
             ring_bits,
         )
         .unwrap();
         let stage1_poly = prover.compute_round_eq_factored(0);
-        let compact_range_image = build_compact_range_image(&w_compact);
+        let compact_range_image = build_compact_range_image(&compact_digit_witness);
         let reference = compute_range_round_polynomial_from_compact_image(
             &prover.split_eq,
             &compact_range_image,
             &prover.polynomial_precomputation,
         );
 
-        assert_eq!(stage1_poly, reference, "stage1 round0 mismatch for b={b}");
-    }
-}
-
-#[test]
-fn stage1_compact_coeff_lut_reaches_b16() {
-    for b in [4usize, 8, 16] {
-        let precomp = RangePolynomialPrecomputation::<F>::new(b);
-        assert!(
-            precomp.compact_coeffs_lut(0, 0).is_some(),
-            "expected compact coefficient LUT for b={b}"
+        assert_eq!(
+            stage1_poly, reference,
+            "stage1 round0 mismatch for basis={basis}"
         );
     }
-
-    let precomp = RangePolynomialPrecomputation::<F>::new(32);
-    assert!(precomp.compact_coeffs_lut(0, 0).is_none());
-}
-
-#[test]
-fn stage1_field_coeff_lut_reaches_b32() {
-    for b in [4usize, 8, 16] {
-        let precomp = RangePolynomialPrecomputation::<F>::new(b);
-        assert!(precomp.field_coeffs_lut(0, 0).is_none());
-    }
-
-    let precomp = RangePolynomialPrecomputation::<F>::new(32);
-    assert!(
-        precomp.field_coeffs_lut(0, 0).is_some(),
-        "expected field coefficient LUT for b=32"
-    );
 }
 
 #[test]
 fn stage1_prefix_aware_rounds_match_explicit_zero_padding() {
     let ring_bits = 2usize;
-    for b in [4usize, 8, 16, 32] {
-        let half = (b / 2) as i8;
+    for basis in [4usize, 8] {
+        let half = (basis / 2) as i8;
         for live_x_cols in [5usize, 6usize] {
             let col_bits = live_x_cols.next_power_of_two().trailing_zeros() as usize;
             let y_len = 1usize << ring_bits;
-            let w_prefix: Vec<i8> = (0..(live_x_cols * y_len))
-                .map(|i| ((i * 7 + 5) % b) as i8 - half)
+            let digit_witness_prefix: Vec<i8> = (0..(live_x_cols * y_len))
+                .map(|i| ((i * 7 + 5) % basis) as i8 - half)
                 .collect();
-            let w_padded = pad_compact_witness(&w_prefix, live_x_cols, col_bits, ring_bits);
+            let padded_digit_witness =
+                pad_compact_witness(&digit_witness_prefix, live_x_cols, col_bits, ring_bits);
             let tau0: Vec<F> = (0..(col_bits + ring_bits))
                 .map(|i| F::from_u64((i as u64) + 19))
                 .collect();
             let tau0 = ordered_equality_point(&tau0, col_bits, ring_bits);
-            let mut prefix_prover =
-                DirectRangeLeafState::new(&w_prefix, &tau0, b, live_x_cols, col_bits, ring_bits)
-                    .unwrap();
-            let mut padded_prover = DirectRangeLeafState::new(
-                &w_padded,
+            let mut prefix_prover = LowBasisRangeCheckProver::new(
+                std::sync::Arc::from(digit_witness_prefix.as_slice()),
                 &tau0,
-                b,
+                DigitRangePlan::new(basis).unwrap(),
+                live_x_cols,
+                col_bits,
+                ring_bits,
+            )
+            .unwrap();
+            let mut padded_prover = LowBasisRangeCheckProver::new(
+                std::sync::Arc::from(padded_digit_witness.as_slice()),
+                &tau0,
+                DigitRangePlan::new(basis).unwrap(),
                 1usize << col_bits,
                 col_bits,
                 ring_bits,
@@ -187,22 +202,28 @@ fn stage1_prefix_aware_rounds_match_explicit_zero_padding() {
                 let padded_poly = padded_prover.compute_round_eq_factored(round);
                 assert_eq!(
                     prefix_poly, padded_poly,
-                    "round {round} polynomial mismatch live_x_cols={live_x_cols} b={b}"
+                    "round {round} polynomial mismatch live_x_cols={live_x_cols} basis={basis}"
                 );
 
                 let challenge = F::from_u64((round as u64) + 29);
                 challenges.push(challenge);
-                (prefix_claim, prefix_scale) = advance_stage1_claim(
-                    &prefix_prover,
+                let (prefix_linear_at_zero, prefix_linear_at_one) =
+                    prefix_prover.current_linear_factor_evals();
+                (prefix_claim, prefix_scale) = advance_eq_factored_claim(
                     prefix_claim,
                     prefix_scale,
+                    prefix_linear_at_zero,
+                    prefix_linear_at_one,
                     &prefix_poly,
                     challenge,
                 );
-                (padded_claim, padded_scale) = advance_stage1_claim(
-                    &padded_prover,
+                let (padded_linear_at_zero, padded_linear_at_one) =
+                    padded_prover.current_linear_factor_evals();
+                (padded_claim, padded_scale) = advance_eq_factored_claim(
                     padded_claim,
                     padded_scale,
+                    padded_linear_at_zero,
+                    padded_linear_at_one,
                     &padded_poly,
                     challenge,
                 );
@@ -216,14 +237,14 @@ fn stage1_prefix_aware_rounds_match_explicit_zero_padding() {
             );
             assert_eq!(prefix_claim, padded_claim);
             assert_eq!(prefix_scale, padded_scale);
-            let s_padded: Vec<F> = build_compact_range_image(&w_padded)
+            let padded_range_image: Vec<F> = build_compact_range_image(&padded_digit_witness)
                 .into_iter()
                 .map(|s| F::from_i64(i64::from(s)))
                 .collect();
             assert_eq!(
                 prefix_prover.final_range_image_eval(),
-                multilinear_eval(&s_padded, &challenges).unwrap(),
-                "final s-claim mismatch live_x_cols={live_x_cols} b={b}"
+                multilinear_eval(&padded_range_image, &challenges).unwrap(),
+                "final s-claim mismatch live_x_cols={live_x_cols} basis={basis}"
             );
         }
     }
@@ -235,38 +256,61 @@ fn stage1_fused_round2_transition_matches_two_pass_reference() {
     let ring_bits = 2usize;
     let live_x_cols = 6usize;
     let y_len = 1usize << ring_bits;
-    for b in [4usize, 8] {
-        let half = (b / 2) as i8;
-        let w_prefix: Vec<i8> = (0..(live_x_cols * y_len))
-            .map(|i| ((i * 9 + 5) % b) as i8 - half)
+    for basis in [4usize, 8] {
+        let half = (basis / 2) as i8;
+        let digit_witness_prefix: Vec<i8> = (0..(live_x_cols * y_len))
+            .map(|i| ((i * 9 + 5) % basis) as i8 - half)
             .collect();
-        let compact_range_image = build_compact_range_image(&w_prefix);
+        let compact_range_image = build_compact_range_image(&digit_witness_prefix);
         let tau0: Vec<F> = (0..(col_bits + ring_bits))
             .map(|i| F::from_u64((i as u64) + 53))
             .collect();
         let tau0 = ordered_equality_point(&tau0, col_bits, ring_bits);
 
-        let mut prover =
-            DirectRangeLeafState::new(&w_prefix, &tau0, b, live_x_cols, col_bits, ring_bits)
-                .unwrap();
+        let mut prover = LowBasisRangeCheckProver::new(
+            std::sync::Arc::from(digit_witness_prefix.as_slice()),
+            &tau0,
+            DigitRangePlan::new(basis).unwrap(),
+            live_x_cols,
+            col_bits,
+            ring_bits,
+        )
+        .unwrap();
         let round0 = prover.compute_round_eq_factored(0);
         let r0 = F::from_u64(61);
-        let (claim1, scale1) = advance_stage1_claim(&prover, F::zero(), F::one(), &round0, r0);
+        let (linear_at_zero, linear_at_one) = prover.current_linear_factor_evals();
+        let (claim1, scale1) = advance_eq_factored_claim(
+            F::zero(),
+            F::one(),
+            linear_at_zero,
+            linear_at_one,
+            &round0,
+            r0,
+        );
         prover.ingest_challenge(0, r0);
         let round1 = prover.compute_round_eq_factored(1);
         let r1 = F::from_u64(67);
-        let (_claim2, _scale2) = advance_stage1_claim(&prover, claim1, scale1, &round1, r1);
+        let (linear_at_zero, linear_at_one) = prover.current_linear_factor_evals();
+        let (_claim2, _scale2) =
+            advance_eq_factored_claim(claim1, scale1, linear_at_zero, linear_at_one, &round1, r1);
 
-        let expected_range_image = DirectRangeLeafState::<F>::fold_compact_range_image_to_round2(
-            &compact_range_image,
+        let expected_range_image =
+            LowBasisRangeCheckProver::<F>::fold_compact_range_image_to_round2(
+                &compact_range_image,
+                live_x_cols,
+                y_len,
+                r0,
+                r1,
+            );
+        let mut expected = LowBasisRangeCheckProver::new(
+            std::sync::Arc::from(digit_witness_prefix.as_slice()),
+            &tau0,
+            DigitRangePlan::new(basis).unwrap(),
             live_x_cols,
-            y_len,
-            r0,
-            r1,
-        );
-        let mut expected =
-            DirectRangeLeafState::new(&w_prefix, &tau0, b, live_x_cols, col_bits, ring_bits)
-                .unwrap();
+            col_bits,
+            ring_bits,
+        )
+        .unwrap();
         expected.split_eq.bind(r0);
         expected.split_eq.bind(r1);
         expected.rounds_completed = 2;
@@ -275,8 +319,10 @@ fn stage1_fused_round2_transition_matches_two_pass_reference() {
         prover.ingest_challenge(1, r1);
 
         match &prover.range_image {
-            RangeImageState::Full(range_image) => assert_eq!(range_image, &expected_range_image),
-            RangeImageState::Compact => {
+            LowBasisRangeImageStorage::Materialized(range_image) => {
+                assert_eq!(range_image, &expected_range_image)
+            }
+            LowBasisRangeImageStorage::Compact(_) => {
                 panic!("expected fused stage1 transition to materialize full table")
             }
         }
@@ -290,36 +336,60 @@ fn stage1_later_full_prefix_fusion_matches_two_pass_reference() {
     let ring_bits = 2usize;
     let live_x_cols = 12usize;
     let y_len = 1usize << ring_bits;
-    for b in [4usize, 8] {
-        let half = (b / 2) as i8;
-        let w_prefix: Vec<i8> = (0..(live_x_cols * y_len))
-            .map(|i| ((i * 5 + 11) % b) as i8 - half)
+    for basis in [4usize, 8] {
+        let half = (basis / 2) as i8;
+        let digit_witness_prefix: Vec<i8> = (0..(live_x_cols * y_len))
+            .map(|i| ((i * 5 + 11) % basis) as i8 - half)
             .collect();
         let tau0: Vec<F> = (0..(col_bits + ring_bits))
             .map(|i| F::from_u64((i as u64) + 101))
             .collect();
         let tau0 = ordered_equality_point(&tau0, col_bits, ring_bits);
 
-        let mut prover =
-            DirectRangeLeafState::new(&w_prefix, &tau0, b, live_x_cols, col_bits, ring_bits)
-                .unwrap();
+        let mut prover = LowBasisRangeCheckProver::new(
+            std::sync::Arc::from(digit_witness_prefix.as_slice()),
+            &tau0,
+            DigitRangePlan::new(basis).unwrap(),
+            live_x_cols,
+            col_bits,
+            ring_bits,
+        )
+        .unwrap();
         let round0 = prover.compute_round_eq_factored(0);
         let r0 = F::from_u64(107);
-        let (claim1, scale1) = advance_stage1_claim(&prover, F::zero(), F::one(), &round0, r0);
+        let (linear_at_zero, linear_at_one) = prover.current_linear_factor_evals();
+        let (claim1, scale1) = advance_eq_factored_claim(
+            F::zero(),
+            F::one(),
+            linear_at_zero,
+            linear_at_one,
+            &round0,
+            r0,
+        );
         prover.ingest_challenge(0, r0);
 
         let round1 = prover.compute_round_eq_factored(1);
         let r1 = F::from_u64(109);
-        let (claim2, scale2) = advance_stage1_claim(&prover, claim1, scale1, &round1, r1);
+        let (linear_at_zero, linear_at_one) = prover.current_linear_factor_evals();
+        let (claim2, scale2) =
+            advance_eq_factored_claim(claim1, scale1, linear_at_zero, linear_at_one, &round1, r1);
         prover.ingest_challenge(1, r1);
 
         let round2 = prover.compute_round_eq_factored(2);
         let r2 = F::from_u64(113);
-        let (claim3, _scale3) = advance_stage1_claim(&prover, claim2, scale2, &round2, r2);
+        let (linear_at_zero, linear_at_one) = prover.current_linear_factor_evals();
+        let (claim3, _scale3) =
+            advance_eq_factored_claim(claim2, scale2, linear_at_zero, linear_at_one, &round2, r2);
 
-        let mut expected =
-            DirectRangeLeafState::new(&w_prefix, &tau0, b, live_x_cols, col_bits, ring_bits)
-                .unwrap();
+        let mut expected = LowBasisRangeCheckProver::new(
+            std::sync::Arc::from(digit_witness_prefix.as_slice()),
+            &tau0,
+            DigitRangePlan::new(basis).unwrap(),
+            live_x_cols,
+            col_bits,
+            ring_bits,
+        )
+        .unwrap();
         let expected_round0 = expected.compute_round_eq_factored(0);
         assert_eq!(expected_round0, round0);
         expected.ingest_challenge(0, r0);
@@ -330,11 +400,13 @@ fn stage1_later_full_prefix_fusion_matches_two_pass_reference() {
         assert_eq!(expected_round2, round2);
 
         let current_range_image = match &expected.range_image {
-            RangeImageState::Full(range_image) => range_image.clone(),
-            RangeImageState::Compact => panic!("expected later prefix state to be full"),
+            LowBasisRangeImageStorage::Materialized(range_image) => range_image.clone(),
+            LowBasisRangeImageStorage::Compact(_) => {
+                panic!("expected later prefix state to be full")
+            }
         };
         let current_y_len = current_range_image.len() / expected.live_x_cols;
-        let expected_next_range_image = DirectRangeLeafState::<F>::fold_range_image_prefix_x(
+        let expected_next_range_image = LowBasisRangeCheckProver::<F>::fold_range_image_prefix_x(
             &current_range_image,
             expected.live_x_cols,
             current_y_len,
@@ -349,10 +421,12 @@ fn stage1_later_full_prefix_fusion_matches_two_pass_reference() {
         prover.ingest_challenge(2, r2);
 
         match &prover.range_image {
-            RangeImageState::Full(range_image) => {
+            LowBasisRangeImageStorage::Materialized(range_image) => {
                 assert_eq!(range_image, &expected_next_range_image)
             }
-            RangeImageState::Compact => panic!("expected fused later prefix stage to stay full"),
+            LowBasisRangeImageStorage::Compact(_) => {
+                panic!("expected fused later prefix stage to stay full")
+            }
         }
         assert_eq!(prover.cached_round_poly.as_ref(), Some(&expected_round3));
     }
@@ -364,36 +438,60 @@ fn stage1_sparse_x_y_fusion_matches_two_pass_reference() {
     let ring_bits = 4usize;
     let live_x_cols = 6usize;
     let y_len = 1usize << ring_bits;
-    for b in [4usize, 8] {
-        let half = (b / 2) as i8;
-        let w_prefix: Vec<i8> = (0..(live_x_cols * y_len))
-            .map(|i| ((i * 7 + 9) % b) as i8 - half)
+    for basis in [4usize, 8] {
+        let half = (basis / 2) as i8;
+        let digit_witness_prefix: Vec<i8> = (0..(live_x_cols * y_len))
+            .map(|i| ((i * 7 + 9) % basis) as i8 - half)
             .collect();
         let tau0: Vec<F> = (0..(col_bits + ring_bits))
             .map(|i| F::from_u64((i as u64) + 131))
             .collect();
         let tau0 = ordered_equality_point(&tau0, col_bits, ring_bits);
 
-        let mut prover =
-            DirectRangeLeafState::new(&w_prefix, &tau0, b, live_x_cols, col_bits, ring_bits)
-                .unwrap();
+        let mut prover = LowBasisRangeCheckProver::new(
+            std::sync::Arc::from(digit_witness_prefix.as_slice()),
+            &tau0,
+            DigitRangePlan::new(basis).unwrap(),
+            live_x_cols,
+            col_bits,
+            ring_bits,
+        )
+        .unwrap();
         let round0 = prover.compute_round_eq_factored(0);
         let r0 = F::from_u64(137);
-        let (claim1, scale1) = advance_stage1_claim(&prover, F::zero(), F::one(), &round0, r0);
+        let (linear_at_zero, linear_at_one) = prover.current_linear_factor_evals();
+        let (claim1, scale1) = advance_eq_factored_claim(
+            F::zero(),
+            F::one(),
+            linear_at_zero,
+            linear_at_one,
+            &round0,
+            r0,
+        );
         prover.ingest_challenge(0, r0);
 
         let round1 = prover.compute_round_eq_factored(1);
         let r1 = F::from_u64(139);
-        let (claim2, scale2) = advance_stage1_claim(&prover, claim1, scale1, &round1, r1);
+        let (linear_at_zero, linear_at_one) = prover.current_linear_factor_evals();
+        let (claim2, scale2) =
+            advance_eq_factored_claim(claim1, scale1, linear_at_zero, linear_at_one, &round1, r1);
         prover.ingest_challenge(1, r1);
 
         let round2 = prover.compute_round_eq_factored(2);
         let r2 = F::from_u64(149);
-        let (_claim3, _scale3) = advance_stage1_claim(&prover, claim2, scale2, &round2, r2);
+        let (linear_at_zero, linear_at_one) = prover.current_linear_factor_evals();
+        let (_claim3, _scale3) =
+            advance_eq_factored_claim(claim2, scale2, linear_at_zero, linear_at_one, &round2, r2);
 
-        let mut expected =
-            DirectRangeLeafState::new(&w_prefix, &tau0, b, live_x_cols, col_bits, ring_bits)
-                .unwrap();
+        let mut expected = LowBasisRangeCheckProver::new(
+            std::sync::Arc::from(digit_witness_prefix.as_slice()),
+            &tau0,
+            DigitRangePlan::new(basis).unwrap(),
+            live_x_cols,
+            col_bits,
+            ring_bits,
+        )
+        .unwrap();
         let expected_round0 = expected.compute_round_eq_factored(0);
         assert_eq!(expected_round0, round0);
         expected.ingest_challenge(0, r0);
@@ -404,11 +502,11 @@ fn stage1_sparse_x_y_fusion_matches_two_pass_reference() {
         assert_eq!(expected_round2, round2);
 
         let current_range_image = match &expected.range_image {
-            RangeImageState::Full(range_image) => range_image.clone(),
-            RangeImageState::Compact => panic!("expected sparse-x/y state to be full"),
+            LowBasisRangeImageStorage::Materialized(range_image) => range_image.clone(),
+            LowBasisRangeImageStorage::Compact(_) => panic!("expected sparse-x/y state to be full"),
         };
         let current_y_len = current_range_image.len() / expected.live_x_cols;
-        let expected_next_range_image = DirectRangeLeafState::<F>::fold_range_image_sparse_x_y(
+        let expected_next_range_image = LowBasisRangeCheckProver::<F>::fold_range_image_sparse_x_y(
             &current_range_image,
             expected.live_x_cols,
             current_y_len,
@@ -421,10 +519,12 @@ fn stage1_sparse_x_y_fusion_matches_two_pass_reference() {
         prover.ingest_challenge(2, r2);
 
         match &prover.range_image {
-            RangeImageState::Full(range_image) => {
+            LowBasisRangeImageStorage::Materialized(range_image) => {
                 assert_eq!(range_image, &expected_next_range_image)
             }
-            RangeImageState::Compact => panic!("expected sparse-x/y fusion to stay full"),
+            LowBasisRangeImageStorage::Compact(_) => {
+                panic!("expected sparse-x/y fusion to stay full")
+            }
         }
         assert_eq!(prover.cached_round_poly.as_ref(), Some(&expected_round3));
     }

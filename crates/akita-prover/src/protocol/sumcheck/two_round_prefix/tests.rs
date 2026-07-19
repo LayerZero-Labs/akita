@@ -1,8 +1,7 @@
 use super::common::*;
 use super::stage1::*;
 use super::stage2::*;
-use crate::protocol::sumcheck::digit_range::direct_range_leaf::advance_stage1_claim;
-use crate::protocol::sumcheck::digit_range::direct_range_leaf::DirectRangeLeafState;
+use crate::protocol::sumcheck::digit_range::direct_range_leaf::LowBasisRangeCheckProver;
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_field::{FieldCore, Prime128Offset275};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
@@ -859,14 +858,28 @@ fn stage1_bivariate_skip_proof_reconstructs_first_two_rounds() {
     let skip_state = Stage1BivariateSkipState::new(&proof, &tau0, b)
         .expect("stage1 bivariate-skip state should build");
 
-    let mut prover =
-        DirectRangeLeafState::<F>::new(&w_compact, &tau0, b, live_x_cols, col_bits, ring_bits)
-            .unwrap();
+    let mut prover = LowBasisRangeCheckProver::<F>::new(
+        std::sync::Arc::from(w_compact.as_slice()),
+        &tau0,
+        akita_types::DigitRangePlan::new(b).unwrap(),
+        live_x_cols,
+        col_bits,
+        ring_bits,
+    )
+    .unwrap();
     let round0 = prover.compute_round_eq_factored(0);
     assert_eq!(skip_state.reconstruct_round0_eq_poly(), round0);
 
     let r0 = F::from_u64(9);
-    let _ = advance_stage1_claim(&prover, F::zero(), F::one(), &round0, r0);
+    let (linear_at_zero, linear_at_one) = prover.current_linear_factor_evals();
+    let _ = akita_sumcheck::advance_eq_factored_claim(
+        F::zero(),
+        F::one(),
+        linear_at_zero,
+        linear_at_one,
+        &round0,
+        r0,
+    );
     prover.ingest_challenge(0, r0);
 
     let round1 = prover.compute_round_eq_factored(1);

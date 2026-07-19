@@ -11,14 +11,14 @@ use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitive
 use akita_serialization::AkitaSerialize;
 use akita_sumcheck::{EqFactoredSumcheckInstanceVerifier, EqFactoredSumcheckInstanceVerifierExt};
 use akita_transcript::labels::{self, ABSORB_PROVER_V};
-use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
+use akita_transcript::{sample_ext_challenge, Transcript};
 use akita_types::proof::append_flat_coefficients;
 use akita_types::{
-    AkitaStage1Proof, DigitRangeEqualityPoint, DigitRangePlan, LevelParams, OpeningClaimsLayout,
-    RelationMatrixRowLayout,
+    append_digit_range_child_claims, AkitaStage1Proof, DigitRangeEqualityPoint, DigitRangePlan,
+    LevelParams, OpeningClaimsLayout, RelationMatrixRowLayout,
 };
 
-type Stage1VerifyOutput<E> = Vec<E>;
+type DigitRangeVerifyOutput<E> = Vec<E>;
 
 /// Absorb the prover's `v` rows once, then sample one [`Challenges`] set per
 /// commitment group in `OpeningClaims` order.
@@ -77,19 +77,19 @@ where
     Ok(group_challenges)
 }
 
-struct ProductStageVerifier<E: FieldCore> {
-    tau: Vec<E>,
+struct ProductSubcheckVerifier<'a, E: FieldCore> {
+    equality_point: Vec<E>,
     input_claim: E,
-    child_claims: Vec<E>,
+    child_claims: &'a [E],
     batch_weights: Vec<E>,
     arity: usize,
 }
 
-impl<E: FieldCore> EqFactoredSumcheckInstanceVerifier<E> for ProductStageVerifier<E> {
+impl<E: FieldCore> EqFactoredSumcheckInstanceVerifier<E> for ProductSubcheckVerifier<'_, E> {
     type RoundState = GruenSplitEq<E>;
 
     fn num_rounds(&self) -> usize {
-        self.tau.len()
+        self.equality_point.len()
     }
 
     fn degree_bound(&self) -> usize {
@@ -101,7 +101,7 @@ impl<E: FieldCore> EqFactoredSumcheckInstanceVerifier<E> for ProductStageVerifie
     }
 
     fn start_round_state(&self) -> Result<Self::RoundState, AkitaError> {
-        GruenSplitEq::new(&self.tau)
+        GruenSplitEq::new(&self.equality_point)
     }
 
     fn expected_output_claim(
@@ -124,19 +124,19 @@ impl<E: FieldCore> EqFactoredSumcheckInstanceVerifier<E> for ProductStageVerifie
     }
 }
 
-struct PolynomialStageVerifier<E: FieldCore> {
+struct RangePolynomialLeafVerifier<E: FieldCore> {
     plan: DigitRangePlan,
-    tau: Vec<E>,
+    equality_point: Vec<E>,
     input_claim: E,
     poly_coeffs: Vec<E>,
-    s_claim: E,
+    range_image_evaluation: E,
 }
 
-impl<E: FieldCore> EqFactoredSumcheckInstanceVerifier<E> for PolynomialStageVerifier<E> {
+impl<E: FieldCore> EqFactoredSumcheckInstanceVerifier<E> for RangePolynomialLeafVerifier<E> {
     type RoundState = GruenSplitEq<E>;
 
     fn num_rounds(&self) -> usize {
-        self.tau.len()
+        self.equality_point.len()
     }
 
     fn degree_bound(&self) -> usize {
@@ -148,7 +148,7 @@ impl<E: FieldCore> EqFactoredSumcheckInstanceVerifier<E> for PolynomialStageVeri
     }
 
     fn start_round_state(&self) -> Result<Self::RoundState, AkitaError> {
-        GruenSplitEq::new(&self.tau)
+        GruenSplitEq::new(&self.equality_point)
     }
 
     fn expected_output_claim(
@@ -159,7 +159,7 @@ impl<E: FieldCore> EqFactoredSumcheckInstanceVerifier<E> for PolynomialStageVeri
         Ok(round_state.current_scalar()
             * self
                 .plan
-                .evaluate_leaf_polynomial(&self.poly_coeffs, self.s_claim))
+                .evaluate_leaf_polynomial(&self.poly_coeffs, self.range_image_evaluation))
     }
 }
 
@@ -190,7 +190,7 @@ impl<E: FieldCore + FromPrimitiveInt + AkitaSerialize> AkitaStage1Verifier<E> {
         &self,
         proof: &AkitaStage1Proof<E>,
         transcript: &mut T,
-    ) -> Result<Stage1VerifyOutput<E>, AkitaError>
+    ) -> Result<DigitRangeVerifyOutput<E>, AkitaError>
     where
         F: FieldCore + CanonicalField,
         E: ExtField<F>,
@@ -204,7 +204,7 @@ impl<E: FieldCore + FromPrimitiveInt + AkitaSerialize> AkitaStage1Verifier<E> {
         let Some((leaf_stage_proof, product_stage_proofs)) = proof.stages.split_last() else {
             return Err(AkitaError::InvalidProof);
         };
-        let mut current_tau = self.equality_point.coordinates().to_vec();
+        let mut current_equality_point = self.equality_point.coordinates().to_vec();
         let mut current_claim = E::zero();
         let mut current_weights = vec![E::one()];
 
@@ -212,26 +212,20 @@ impl<E: FieldCore + FromPrimitiveInt + AkitaSerialize> AkitaStage1Verifier<E> {
             .iter()
             .zip(product_stage_proofs.iter())
         {
-            let product_verifier = ProductStageVerifier {
-                tau: current_tau,
+            let product_verifier = ProductSubcheckVerifier {
+                equality_point: current_equality_point,
                 input_claim: current_claim,
-                child_claims: stage_proof.child_claims.clone(),
+                child_claims: &stage_proof.child_claims,
                 batch_weights: current_weights,
                 arity,
             };
-            current_tau = product_verifier.verify::<F, T, _>(
+            current_equality_point = product_verifier.verify::<F, T, _>(
                 &stage_proof.sumcheck_proof,
                 transcript,
                 |tr| sample_ext_challenge::<F, E, T>(tr, labels::CHALLENGE_SUMCHECK_ROUND),
             )?;
 
-            for claim in &stage_proof.child_claims {
-                append_ext_field::<F, E, T>(
-                    transcript,
-                    labels::ABSORB_SUMCHECK_INTERSTAGE_CLAIM,
-                    claim,
-                );
-            }
+            append_digit_range_child_claims::<F, E, T>(&stage_proof.child_claims, transcript);
             let gamma = sample_ext_challenge::<F, E, T>(
                 transcript,
                 labels::CHALLENGE_SUMCHECK_INTERSTAGE_BATCH,
@@ -241,18 +235,18 @@ impl<E: FieldCore + FromPrimitiveInt + AkitaSerialize> AkitaStage1Verifier<E> {
                 .interstage_batch_weights(gamma, stage_proof.child_claims.len());
             current_claim = self
                 .plan
-                .batch_claims(&current_weights, &stage_proof.child_claims);
+                .batch_claims(&current_weights, &stage_proof.child_claims)?;
         }
 
         let batched_leaf_coeffs = self
             .plan
-            .batch_leaf_polynomials(&current_weights, &leaf_coeffs);
-        let leaf_verifier = PolynomialStageVerifier {
+            .batch_leaf_polynomials(&current_weights, &leaf_coeffs)?;
+        let leaf_verifier = RangePolynomialLeafVerifier {
             plan: self.plan,
-            tau: current_tau,
+            equality_point: current_equality_point,
             input_claim: current_claim,
             poly_coeffs: batched_leaf_coeffs,
-            s_claim: proof.s_claim,
+            range_image_evaluation: proof.range_image_evaluation,
         };
         leaf_verifier.verify::<F, T, _>(&leaf_stage_proof.sumcheck_proof, transcript, |tr| {
             sample_ext_challenge::<F, E, T>(tr, labels::CHALLENGE_SUMCHECK_ROUND)

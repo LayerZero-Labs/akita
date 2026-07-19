@@ -240,7 +240,7 @@ mod tests {
                     child_claims: vec![F::zero(); shape.child_claims],
                 })
                 .collect(),
-            s_claim: F::zero(),
+            range_image_evaluation: F::zero(),
         }
     }
 

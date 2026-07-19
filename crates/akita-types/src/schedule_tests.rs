@@ -5,8 +5,8 @@ use crate::{
     extension_opening_reduction_proof_bytes, level_proof_bytes, segment_typed_witness_bytes,
     sumcheck_rounds, AkitaStage1Proof, AkitaStage1StageProof, AkitaStage2Proof, DigitRangePlan,
     ExtensionOpeningReductionProof, FoldLevelProof, NextWitnessBinding, RelationMatrixRowLayout,
-    RingVec, SegmentTypedWitness, SegmentTypedWitnessShape, SisModulusProfileId, TerminalLevelProof,
-    EXTENSION_OPENING_REDUCTION_DEGREE,
+    RingVec, SegmentTypedWitness, SegmentTypedWitnessShape, SisModulusProfileId,
+    TerminalLevelProof, EXTENSION_OPENING_REDUCTION_DEGREE,
 };
 use akita_algebra::CyclotomicRing;
 use akita_challenges::SparseChallengeConfig;
@@ -154,7 +154,7 @@ fn dummy_stage1_proof<F: FieldCore>(rounds: usize, b: usize) -> AkitaStage1Proof
                 child_claims: vec![F::zero(); shape.child_claims],
             })
             .collect(),
-        s_claim: F::zero(),
+        range_image_evaluation: F::zero(),
     }
 }
 

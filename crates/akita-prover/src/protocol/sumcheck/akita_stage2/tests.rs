@@ -84,7 +84,7 @@ fn new_stage2_test_prover(
     relation_matrix_col_evals: Vec<F>,
     params: Stage2Params<'_>,
 ) -> AkitaStage2Prover<F> {
-    let s_claim = s_claim_from_m_compact_rows(&w_compact, &params);
+    let range_image_evaluation = s_claim_from_m_compact_rows(&w_compact, &params);
     let relation_claim = relation_claim_from_m_compact_rows(
         &w_compact,
         &alpha_evals_y,
@@ -95,7 +95,7 @@ fn new_stage2_test_prover(
         batching_coeff,
         w_compact,
         params.stage1_point,
-        s_claim,
+        range_image_evaluation,
         params.b,
         alpha_evals_y,
         relation_matrix_col_evals,
@@ -117,7 +117,7 @@ pub(super) fn new_stage2_test_prover_with_trace(
     trace_compact: Vec<F>,
     params: Stage2Params<'_>,
 ) -> AkitaStage2Prover<F> {
-    let s_claim = s_claim_from_m_compact_rows(&w_compact, &params);
+    let range_image_evaluation = s_claim_from_m_compact_rows(&w_compact, &params);
     let relation_claim = relation_claim_from_m_compact_rows(
         &w_compact,
         &alpha_evals_y,
@@ -129,7 +129,7 @@ pub(super) fn new_stage2_test_prover_with_trace(
         batching_coeff,
         w_compact,
         params.stage1_point,
-        s_claim,
+        range_image_evaluation,
         params.b,
         alpha_evals_y,
         relation_matrix_col_evals,
@@ -152,7 +152,7 @@ pub(super) fn new_stage2_test_prover_with_trace_table(
     trace_claim_table: &[F],
     params: Stage2Params<'_>,
 ) -> AkitaStage2Prover<F> {
-    let s_claim = s_claim_from_m_compact_rows(&w_compact, &params);
+    let range_image_evaluation = s_claim_from_m_compact_rows(&w_compact, &params);
     let relation_claim = relation_claim_from_m_compact_rows(
         &w_compact,
         &alpha_evals_y,
@@ -165,7 +165,7 @@ pub(super) fn new_stage2_test_prover_with_trace_table(
         batching_coeff,
         w_compact,
         params.stage1_point,
-        s_claim,
+        range_image_evaluation,
         params.b,
         alpha_evals_y,
         relation_matrix_col_evals,

@@ -394,7 +394,7 @@ impl<E: FieldCore> Stage2BivariateSkipState<E> {
     pub(crate) fn new(
         proof: &Stage2BivariateSkipProof<E>,
         stage1_point: &[E],
-        s_claim: E,
+        range_image_evaluation: E,
         relation_claim: E,
         batching_coeff: E,
     ) -> Option<Self> {
@@ -406,7 +406,7 @@ impl<E: FieldCore> Stage2BivariateSkipState<E> {
         let norm_full_grid = recover_stage2_grid_from_corner_claim(
             &proof.norm,
             stage2_norm_corner_weights_from_taus(tau0, tau1),
-            s_claim,
+            range_image_evaluation,
         )?;
         let relation_full_grid =
             recover_stage2_relation_grid_from_claim(&proof.relation, relation_claim);

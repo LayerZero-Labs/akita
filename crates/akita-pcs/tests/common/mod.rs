@@ -18,7 +18,9 @@ pub(super) use rand::rngs::StdRng;
 pub(super) use rand::{Rng, SeedableRng};
 use std::sync::Once;
 
-use akita_transcript::{labels, AkitaTranscript, Transcript, TranscriptEvent};
+#[cfg(feature = "logging-transcript")]
+use akita_transcript::TranscriptEvent;
+use akita_transcript::{labels, AkitaTranscript, Transcript};
 
 pub(super) type F = fp128::Field;
 pub(super) const STACK_SIZE: usize = 256 * 1024 * 1024;
@@ -65,6 +67,7 @@ pub(super) fn run_on_large_stack(f: impl FnOnce() + Send + 'static) {
 }
 
 /// Canonical byte encoding of an ordered logging-transcript event stream.
+#[cfg(feature = "logging-transcript")]
 pub(super) fn serialize_transcript_events(events: &[TranscriptEvent]) -> Vec<u8> {
     let mut bytes = Vec::new();
     for event in events {
@@ -128,7 +131,7 @@ where
         }
     }
     proof
-        .s_claim
+        .range_image_evaluation
         .serialize_with_mode(&mut bytes, Compress::Yes)
         .expect("serialize Stage 1 range-image claim");
     bytes

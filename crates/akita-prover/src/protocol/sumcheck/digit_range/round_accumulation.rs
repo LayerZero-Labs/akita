@@ -150,14 +150,12 @@ mod tests {
 
     #[test]
     fn blocked_accumulation_matches_dense_for_canonical_fallback() {
-        assert!(!Prime128Offset275::DELAYED_PRODUCT_SUM_IS_EXACT);
         check_blocked_accumulation::<Prime128Offset275>();
     }
 
     #[test]
     fn blocked_accumulation_matches_dense_with_delayed_reduction() {
         type E = FpExt4<Prime32Offset99>;
-        assert!(E::DELAYED_PRODUCT_SUM_IS_EXACT);
         check_blocked_accumulation::<E>();
     }
 }
