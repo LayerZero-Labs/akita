@@ -7,7 +7,7 @@ use akita_prover::{ComputeBackendSetup, CpuBackend};
 use akita_prover::{DensePoly, OneHotPoly, ProverOpeningData};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_transcript::AkitaTranscript;
-use akita_types::stage1_tree_stage_shapes;
+use akita_types::DigitRangePlan;
 use akita_types::ExtensionOpeningReductionProof;
 use akita_types::LevelParams;
 use akita_types::RelationMatrixRowLayout;
@@ -87,10 +87,9 @@ fn expected_same_point_batched_shape(
     let root_shape = LevelProofShape {
         extension_opening_reduction: None,
         v_coeffs: root_step.params.d_key.row_len() * root_step.params.ring_dimension,
-        stage1_stages: stage1_tree_stage_shapes(
-            root_rounds,
-            1usize << root_step.params.log_basis_open,
-        ),
+        stage1_stages: DigitRangePlan::new(1usize << root_step.params.log_basis_open)
+            .expect("scheduled root range basis")
+            .stage_shapes(root_rounds),
         stage2_sumcheck_proof: vec![3; root_rounds],
         stage3_sumcheck: None,
         next_witness_binding: match root_scheduled.next_witness_binding {
@@ -134,7 +133,9 @@ fn expected_same_point_batched_shape(
         recursive_folds.push(LevelProofShape {
             extension_opening_reduction: None,
             v_coeffs: level_params.d_key.row_len() * level_params.ring_dimension,
-            stage1_stages: stage1_tree_stage_shapes(rounds, 1usize << level_params.log_basis_open),
+            stage1_stages: DigitRangePlan::new(1usize << level_params.log_basis_open)
+                .expect("scheduled range basis")
+                .stage_shapes(rounds),
             stage2_sumcheck_proof: vec![3; rounds],
             stage3_sumcheck: None,
             next_witness_binding: match scheduled.next_witness_binding {

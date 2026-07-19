@@ -12,12 +12,10 @@ use akita_serialization::AkitaSerialize;
 use akita_sumcheck::{EqFactoredSumcheckInstanceVerifier, EqFactoredSumcheckInstanceVerifierExt};
 use akita_transcript::labels::{self, ABSORB_PROVER_V};
 use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
-use akita_types::eval_poly;
 use akita_types::proof::append_flat_coefficients;
 use akita_types::{
-    combine_polys, linear_combination, stage1_interstage_batch_weights, stage1_leaf_coeffs,
-    stage1_stage_count, stage1_tree_product_stage_arities, validate_stage1_tree_basis,
-    AkitaStage1Proof, LevelParams, OpeningClaimsLayout, RelationMatrixRowLayout,
+    AkitaStage1Proof, DigitRangeEqualityPoint, DigitRangePlan, LevelParams, OpeningClaimsLayout,
+    RelationMatrixRowLayout,
 };
 
 type Stage1VerifyOutput<E> = Vec<E>;
@@ -127,6 +125,7 @@ impl<E: FieldCore> EqFactoredSumcheckInstanceVerifier<E> for ProductStageVerifie
 }
 
 struct PolynomialStageVerifier<E: FieldCore> {
+    plan: DigitRangePlan,
     tau: Vec<E>,
     input_claim: E,
     poly_coeffs: Vec<E>,
@@ -157,20 +156,26 @@ impl<E: FieldCore> EqFactoredSumcheckInstanceVerifier<E> for PolynomialStageVeri
         round_state: &Self::RoundState,
         _challenges: &[E],
     ) -> Result<E, AkitaError> {
-        Ok(round_state.current_scalar() * eval_poly(&self.poly_coeffs, self.s_claim))
+        Ok(round_state.current_scalar()
+            * self
+                .plan
+                .evaluate_leaf_polynomial(&self.poly_coeffs, self.s_claim))
     }
 }
 
 /// Stage-1 range-check verifier, including the root/leaf tree choreography.
 pub struct AkitaStage1Verifier<E: FieldCore> {
-    tau0: Vec<E>,
-    b: usize,
+    equality_point: DigitRangeEqualityPoint<E>,
+    plan: DigitRangePlan,
 }
 
 impl<E: FieldCore> AkitaStage1Verifier<E> {
-    /// Construct the stage-1 verifier from `tau0` and `b`.
-    pub fn new(tau0: Vec<E>, b: usize) -> Self {
-        Self { tau0, b }
+    /// Construct the stage-1 verifier from a checked range topology.
+    pub fn new(equality_point: DigitRangeEqualityPoint<E>, plan: DigitRangePlan) -> Self {
+        Self {
+            equality_point,
+            plan,
+        }
     }
 }
 
@@ -191,29 +196,15 @@ impl<E: FieldCore + FromPrimitiveInt + AkitaSerialize> AkitaStage1Verifier<E> {
         E: ExtField<F>,
         T: Transcript<F>,
     {
-        validate_stage1_tree_basis(self.b)?;
-        let expected_stage_count = stage1_stage_count(self.b);
-        if proof.stages.len() != expected_stage_count {
-            return Err(AkitaError::InvalidSize {
-                expected: expected_stage_count,
-                actual: proof.stages.len(),
-            });
-        }
+        self.plan
+            .validate_proof_shape(proof, self.equality_point.coordinates().len())?;
 
-        let leaf_coeffs = stage1_leaf_coeffs::<E>(self.b);
-        let product_stage_arities = if leaf_coeffs.len() == 1 {
-            Vec::new()
-        } else {
-            stage1_tree_product_stage_arities(self.b)
-        };
+        let leaf_coeffs = self.plan.leaf_coeffs::<E>();
+        let product_stage_arities = self.plan.product_stage_arities();
         let Some((leaf_stage_proof, product_stage_proofs)) = proof.stages.split_last() else {
             return Err(AkitaError::InvalidProof);
         };
-        if !leaf_stage_proof.child_claims.is_empty() {
-            return Err(AkitaError::InvalidProof);
-        }
-
-        let mut current_tau = self.tau0.clone();
+        let mut current_tau = self.equality_point.coordinates().to_vec();
         let mut current_claim = E::zero();
         let mut current_weights = vec![E::one()];
 
@@ -221,14 +212,6 @@ impl<E: FieldCore + FromPrimitiveInt + AkitaSerialize> AkitaStage1Verifier<E> {
             .iter()
             .zip(product_stage_proofs.iter())
         {
-            let expected_child_claims = current_weights.len() * arity;
-            if stage_proof.child_claims.len() != expected_child_claims {
-                return Err(AkitaError::InvalidSize {
-                    expected: expected_child_claims,
-                    actual: stage_proof.child_claims.len(),
-                });
-            }
-
             let product_verifier = ProductStageVerifier {
                 tau: current_tau,
                 input_claim: current_claim,
@@ -253,13 +236,19 @@ impl<E: FieldCore + FromPrimitiveInt + AkitaSerialize> AkitaStage1Verifier<E> {
                 transcript,
                 labels::CHALLENGE_SUMCHECK_INTERSTAGE_BATCH,
             );
-            current_weights =
-                stage1_interstage_batch_weights(gamma, stage_proof.child_claims.len());
-            current_claim = linear_combination(&current_weights, &stage_proof.child_claims);
+            current_weights = self
+                .plan
+                .interstage_batch_weights(gamma, stage_proof.child_claims.len());
+            current_claim = self
+                .plan
+                .batch_claims(&current_weights, &stage_proof.child_claims);
         }
 
-        let batched_leaf_coeffs = combine_polys(&current_weights, &leaf_coeffs);
+        let batched_leaf_coeffs = self
+            .plan
+            .batch_leaf_polynomials(&current_weights, &leaf_coeffs);
         let leaf_verifier = PolynomialStageVerifier {
+            plan: self.plan,
             tau: current_tau,
             input_claim: current_claim,
             poly_coeffs: batched_leaf_coeffs,

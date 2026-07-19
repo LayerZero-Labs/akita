@@ -1,20 +1,23 @@
 use super::*;
 
-impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage1Prover<E> {
+impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> DirectRangeLeafState<E> {
     #[inline]
     pub(super) fn use_sparse_x_y_round(&self) -> bool {
         !self.in_x_phase() && self.live_x_cols < (1usize << self.col_bits)
     }
 
-    #[tracing::instrument(skip_all, name = "AkitaStage1Prover::compute_round_compact_sparse_x_y")]
-    pub(super) fn compute_round_compact_sparse_x_y<S: CompactSValue>(
+    #[tracing::instrument(
+        skip_all,
+        name = "DirectRangeLeafState::compute_round_compact_sparse_x_y"
+    )]
+    pub(super) fn compute_round_compact_sparse_x_y<V: CompactRangeImageValue>(
         &self,
-        s_compact: &[S],
+        compact_range_image: &[V],
     ) -> EqFactoredUniPoly<E> {
         debug_assert!(self.use_sparse_x_y_round());
-        let y_len = s_compact.len() / self.live_x_cols;
+        let y_len = compact_range_image.len() / self.live_x_cols;
         let y_pairs = y_len / 2;
-        compute_norm_round_eq_poly_from_s_compact_with_pairs(
+        compute_norm_round_eq_poly_from_compact_range_image_with_pairs(
             &self.split_eq,
             &self.range_precomp,
             |j| {
@@ -24,15 +27,18 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage1Prover<E> {
                 }
                 let y_pair = j % y_pairs;
                 let top = x * y_len + 2 * y_pair;
-                (s_compact[top].compact_s(), s_compact[top + 1].compact_s())
+                (
+                    compact_range_image[top].range_image_value(),
+                    compact_range_image[top + 1].range_image_value(),
+                )
             },
         )
     }
 
-    #[tracing::instrument(skip_all, name = "AkitaStage1Prover::compute_round_full_sparse_x_y")]
-    pub(super) fn compute_round_full_sparse_x_y(&self, s_full: &[E]) -> EqFactoredUniPoly<E> {
+    #[tracing::instrument(skip_all, name = "DirectRangeLeafState::compute_round_full_sparse_x_y")]
+    pub(super) fn compute_round_full_sparse_x_y(&self, range_image: &[E]) -> EqFactoredUniPoly<E> {
         debug_assert!(self.use_sparse_x_y_round());
-        let y_len = s_full.len() / self.live_x_cols;
+        let y_len = range_image.len() / self.live_x_cols;
         let y_pairs = y_len / 2;
         compute_norm_round_eq_poly_from_s(&self.split_eq, &self.range_precomp, |j| {
             let x = j / y_pairs;
@@ -41,23 +47,23 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage1Prover<E> {
             }
             let y_pair = j % y_pairs;
             let top = x * y_len + 2 * y_pair;
-            (s_full[top], s_full[top + 1])
+            (range_image[top], range_image[top + 1])
         })
     }
 
     #[tracing::instrument(
         skip_all,
-        name = "AkitaStage1Prover::fuse_full_sparse_x_y_and_compute_round"
+        name = "DirectRangeLeafState::fuse_full_sparse_x_y_and_compute_round"
     )]
     pub(super) fn fuse_full_sparse_x_y_and_compute_round(
         &self,
-        s_full: &[E],
+        range_image: &[E],
         r: E,
     ) -> (Vec<E>, EqFactoredUniPoly<E>) {
         debug_assert!(self.use_sparse_x_y_round());
         debug_assert!(self.next_use_sparse_x_y_round_after_current());
         let live_x_cols = self.live_x_cols;
-        let y_len = s_full.len() / live_x_cols;
+        let y_len = range_image.len() / live_x_cols;
         debug_assert_eq!(y_len % 4, 0);
         let next_y_len = y_len / 2;
         let live_pairs = next_y_len / 2;
@@ -77,7 +83,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage1Prover<E> {
             .enumerate()
             .map(|(x, col_out)| {
                 debug_assert!(full_num_coeffs_q <= MAX_AFFINE_COEFFS);
-                let col = &s_full[x * y_len..(x + 1) * y_len];
+                let col = &range_image[x * y_len..(x + 1) * y_len];
                 let j_base = x * current_y_half;
                 let mut outer_accum = vec![E::ProductAccum::zero(); num_coeffs_q];
                 let mut batch_out = [[E::zero(); MAX_AFFINE_COEFFS]; 4];
@@ -180,7 +186,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage1Prover<E> {
             let mut outer = vec![E::ProductAccum::zero(); num_coeffs_q];
             for (x, col_out) in out.chunks_mut(next_y_len).enumerate() {
                 debug_assert!(full_num_coeffs_q <= MAX_AFFINE_COEFFS);
-                let col = &s_full[x * y_len..(x + 1) * y_len];
+                let col = &range_image[x * y_len..(x + 1) * y_len];
                 let j_base = x * current_y_half;
                 let mut batch_out = [[E::zero(); MAX_AFFINE_COEFFS]; 4];
                 let mut entry_buf = [E::zero(); MAX_AFFINE_COEFFS];
@@ -272,9 +278,9 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage1Prover<E> {
         (out, poly)
     }
 
-    #[tracing::instrument(skip_all, name = "AkitaStage1Prover::fold_s_full_sparse_x_y")]
-    pub(super) fn fold_s_full_sparse_x_y(
-        s_full: &[E],
+    #[tracing::instrument(skip_all, name = "DirectRangeLeafState::fold_range_image_sparse_x_y")]
+    pub(super) fn fold_range_image_sparse_x_y(
+        range_image: &[E],
         live_x_cols: usize,
         y_len: usize,
         r: E,
@@ -287,7 +293,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage1Prover<E> {
         out.par_chunks_mut(next_y_len)
             .enumerate()
             .for_each(|(x, col_out)| {
-                let col = &s_full[x * y_len..(x + 1) * y_len];
+                let col = &range_image[x * y_len..(x + 1) * y_len];
                 for (pair_y, dst) in col_out.iter_mut().enumerate() {
                     let top = 2 * pair_y;
                     let s_0 = col[top];
@@ -298,7 +304,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage1Prover<E> {
 
         #[cfg(not(feature = "parallel"))]
         for (x, col_out) in out.chunks_mut(next_y_len).enumerate() {
-            let col = &s_full[x * y_len..(x + 1) * y_len];
+            let col = &range_image[x * y_len..(x + 1) * y_len];
             for (pair_y, dst) in col_out.iter_mut().enumerate() {
                 let top = 2 * pair_y;
                 let s_0 = col[top];

@@ -1,10 +1,10 @@
 use super::*;
 
-impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage1Prover<E> {
+impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> DirectRangeLeafState<E> {
     /// Build the stage-1 prover from the compact witness table.
-    #[tracing::instrument(skip_all, name = "AkitaStage1Prover::new")]
-    pub fn new(
-        w_evals_compact: &[i8],
+    #[cfg(test)]
+    pub(crate) fn new(
+        digit_witness: &[i8],
         tau0: &[E],
         b: usize,
         live_x_cols: usize,
@@ -12,7 +12,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage1Prover<E> {
         ring_bits: usize,
     ) -> Result<Self, AkitaError> {
         Self::new_owned(
-            std::sync::Arc::from(w_evals_compact),
+            std::sync::Arc::from(digit_witness),
             tau0,
             b,
             live_x_cols,
@@ -22,7 +22,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage1Prover<E> {
     }
 
     pub(crate) fn new_owned(
-        w_evals_compact: std::sync::Arc<[i8]>,
+        digit_witness: std::sync::Arc<[i8]>,
         tau0: &[E],
         b: usize,
         live_x_cols: usize,
@@ -54,10 +54,10 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage1Prover<E> {
         let expected = live_x_cols
             .checked_mul(y_len)
             .ok_or_else(|| AkitaError::InvalidInput("stage-1 witness size overflow".to_string()))?;
-        if w_evals_compact.len() != expected {
+        if digit_witness.len() != expected {
             return Err(AkitaError::InvalidSize {
                 expected,
-                actual: w_evals_compact.len(),
+                actual: digit_witness.len(),
             });
         }
         if tau0.len() != num_vars {
@@ -67,8 +67,8 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage1Prover<E> {
             });
         }
         Ok(Self {
-            s_table: STable::Compact,
-            w_evals_compact,
+            range_image: RangeImageState::Compact,
+            digit_witness,
             split_eq: GruenSplitEq::new(tau0)?,
             range_precomp: RangeAffineFromSPrecomp::new(b),
             live_x_cols,
@@ -85,23 +85,19 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage1Prover<E> {
         })
     }
 
-    pub(crate) fn take_w_evals_compact(&mut self) -> std::sync::Arc<[i8]> {
-        std::mem::take(&mut self.w_evals_compact)
-    }
-
-    /// Return the fully folded virtual-polynomial claim `S(stage1_point)`.
+    /// Return `range_image(stage1_point)` after the final fold.
     ///
     /// # Panics
     ///
     /// Panics if called before the virtual table has been fully folded to a
     /// single field element.
-    pub fn final_s_claim(&self) -> E {
-        match &self.s_table {
-            STable::Full(s_full) => {
-                assert_eq!(s_full.len(), 1, "s_table not fully folded");
-                s_full[0]
+    pub(crate) fn final_range_image_eval(&self) -> E {
+        match &self.range_image {
+            RangeImageState::Full(range_image) => {
+                assert_eq!(range_image.len(), 1, "range_image not fully folded");
+                range_image[0]
             }
-            STable::Compact => panic!("s_table remained compact after final fold"),
+            RangeImageState::Compact => panic!("range_image remained compact after final fold"),
         }
     }
 
@@ -154,14 +150,14 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage1Prover<E> {
     }
 
     #[inline]
-    pub(super) fn compact_s_values(b: usize) -> Vec<i16> {
+    pub(super) fn valid_range_image_values(b: usize) -> Vec<i16> {
         let half = (b / 2) as i16;
         (0..half).map(|k| k * (k + 1)).collect()
     }
 
     #[inline]
-    pub(super) fn build_compact_s_fold_lut(b: usize, r: E) -> CompactPairFoldLut<E> {
-        let valid_s = Self::compact_s_values(b);
+    pub(super) fn build_range_image_fold_lut(b: usize, r: E) -> CompactPairFoldLut<E> {
+        let valid_s = Self::valid_range_image_values(b);
         CompactPairFoldLut::from_allowed_values(&valid_s, r)
     }
 
@@ -172,12 +168,14 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage1Prover<E> {
                 .clone()
                 .expect("two-round prefix requested without cached tau");
             let ring_bits = self.num_vars - self.col_bits;
-            let s_compact = match &self.s_table {
-                STable::Compact => self.w_evals_compact.as_ref(),
-                STable::Full(_) => panic!("two-round prefix can only build from compact table"),
+            let compact_range_image = match &self.range_image {
+                RangeImageState::Compact => self.digit_witness.as_ref(),
+                RangeImageState::Full(_) => {
+                    panic!("two-round prefix can only build from compact table")
+                }
             };
-            let proof = build_stage1_bivariate_skip_proof_from_s_compact(
-                s_compact,
+            let proof = build_stage1_bivariate_skip_proof_from_compact_range_image(
+                compact_range_image,
                 &tau0,
                 self.b,
                 self.live_x_cols,

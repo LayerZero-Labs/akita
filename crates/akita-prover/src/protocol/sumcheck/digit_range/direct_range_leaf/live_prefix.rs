@@ -1,13 +1,13 @@
 use super::*;
 
-impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage1Prover<E> {
+impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> DirectRangeLeafState<E> {
     #[tracing::instrument(
         skip_all,
-        name = "AkitaStage1Prover::fuse_full_prefix_x_and_compute_round"
+        name = "DirectRangeLeafState::fuse_full_prefix_x_and_compute_round"
     )]
     pub(super) fn fuse_full_prefix_x_and_compute_round(
         &self,
-        s_full: &[E],
+        range_image: &[E],
         r: E,
     ) -> (Vec<E>, EqFactoredUniPoly<E>) {
         debug_assert!(self.next_use_prefix_x_round_after_current());
@@ -15,7 +15,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage1Prover<E> {
 
         let old_live_x_cols = self.live_x_cols;
         let next_live_x_cols = old_live_x_cols.div_ceil(2);
-        let y_len = s_full.len() / old_live_x_cols;
+        let y_len = range_image.len() / old_live_x_cols;
         let (e_first, e_second) = self.split_eq.remaining_eq_tables();
         let num_first = e_first.len();
         let first_bits = num_first.trailing_zeros();
@@ -34,7 +34,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage1Prover<E> {
             .enumerate()
             .map(|(y, row_out)| {
                 debug_assert!(full_num_coeffs_q <= MAX_AFFINE_COEFFS);
-                let row = &s_full[y * old_live_x_cols..(y + 1) * old_live_x_cols];
+                let row = &range_image[y * old_live_x_cols..(y + 1) * old_live_x_cols];
                 let j_base = y * next_current_x_half;
                 let mut outer_accum = vec![E::ProductAccum::zero(); num_coeffs_q];
                 let mut batch_out = [[E::zero(); MAX_AFFINE_COEFFS]; 4];
@@ -147,7 +147,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage1Prover<E> {
             let mut outer_accum = vec![E::ProductAccum::zero(); num_coeffs_q];
             for (y, row_out) in out.chunks_mut(next_live_x_cols).enumerate() {
                 debug_assert!(full_num_coeffs_q <= MAX_AFFINE_COEFFS);
-                let row = &s_full[y * old_live_x_cols..(y + 1) * old_live_x_cols];
+                let row = &range_image[y * old_live_x_cols..(y + 1) * old_live_x_cols];
                 let j_base = y * next_current_x_half;
                 let mut batch_out = [[E::zero(); MAX_AFFINE_COEFFS]; 4];
                 let mut entry_buf = [E::zero(); MAX_AFFINE_COEFFS];
@@ -251,14 +251,17 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage1Prover<E> {
     }
 
     #[inline]
-    #[tracing::instrument(skip_all, name = "AkitaStage1Prover::compute_round_compact_prefix_x")]
-    pub(super) fn compute_round_compact_prefix_x<S: CompactSValue>(
+    #[tracing::instrument(
+        skip_all,
+        name = "DirectRangeLeafState::compute_round_compact_prefix_x"
+    )]
+    pub(super) fn compute_round_compact_prefix_x<V: CompactRangeImageValue>(
         &self,
-        s_compact: &[S],
+        compact_range_image: &[V],
     ) -> EqFactoredUniPoly<E> {
         debug_assert!(self.rounds_completed < self.col_bits);
         debug_assert_eq!(
-            s_compact.len(),
+            compact_range_image.len(),
             self.live_x_cols * (1usize << (self.num_vars - self.col_bits))
         );
 
@@ -278,7 +281,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage1Prover<E> {
                 || vec![E::ProductAccum::zero(); num_coeffs_q],
                 |mut outer_accum, y| {
                     let row_start = y * self.live_x_cols;
-                    let row = &s_compact[row_start..row_start + self.live_x_cols];
+                    let row = &compact_range_image[row_start..row_start + self.live_x_cols];
                     let j_base = y * current_x_half;
 
                     let mut blk = 0usize;
@@ -292,9 +295,9 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage1Prover<E> {
                             let j_low = (j_base + pair_x) & (num_first - 1);
                             let e_in = e_first[j_low];
                             let left = 2 * pair_x;
-                            let s0_i = row[left].compact_s();
+                            let s0_i = row[left].range_image_value();
                             let s1_i = if left + 1 < self.live_x_cols {
-                                row[left + 1].compact_s()
+                                row[left + 1].range_image_value()
                             } else {
                                 0
                             };
@@ -335,7 +338,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage1Prover<E> {
                 || vec![E::ProductAccum::zero(); num_coeffs_q],
                 |mut outer_accum, y| {
                     let row_start = y * self.live_x_cols;
-                    let row = &s_compact[row_start..row_start + self.live_x_cols];
+                    let row = &compact_range_image[row_start..row_start + self.live_x_cols];
                     let j_base = y * current_x_half;
 
                     let mut blk = 0usize;
@@ -348,9 +351,9 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage1Prover<E> {
                             let j_low = (j_base + pair_x) & (num_first - 1);
                             let e_in = e_first[j_low];
                             let left = 2 * pair_x;
-                            let s0_i = row[left].compact_s();
+                            let s0_i = row[left].range_image_value();
                             let s1_i = if left + 1 < self.live_x_cols {
-                                row[left + 1].compact_s()
+                                row[left + 1].range_image_value()
                             } else {
                                 0
                             };
@@ -389,7 +392,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage1Prover<E> {
                 || vec![E::ProductAccum::zero(); num_coeffs_q],
                 |mut outer_accum, y| {
                     let row_start = y * self.live_x_cols;
-                    let row = &s_compact[row_start..row_start + self.live_x_cols];
+                    let row = &compact_range_image[row_start..row_start + self.live_x_cols];
                     let j_base = y * current_x_half;
                     let mut entry_buf = [E::zero(); MAX_AFFINE_COEFFS];
                     let mut s_pows_buf = [E::zero(); MAX_AFFINE_COEFFS];
@@ -404,9 +407,9 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage1Prover<E> {
                             let j_low = (j_base + pair_x) & (num_first - 1);
                             let e_in = e_first[j_low];
                             let left = 2 * pair_x;
-                            let s0_i = row[left].compact_s();
+                            let s0_i = row[left].range_image_value();
                             let s1_i = if left + 1 < self.live_x_cols {
-                                row[left + 1].compact_s()
+                                row[left + 1].range_image_value()
                             } else {
                                 0
                             };
@@ -448,10 +451,10 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage1Prover<E> {
         EqFactoredUniPoly::from_q_coeffs(q_coeffs)
     }
 
-    #[tracing::instrument(skip_all, name = "AkitaStage1Prover::compute_round_full_prefix_x")]
-    pub(super) fn compute_round_full_prefix_x(&self, s_full: &[E]) -> EqFactoredUniPoly<E> {
+    #[tracing::instrument(skip_all, name = "DirectRangeLeafState::compute_round_full_prefix_x")]
+    pub(super) fn compute_round_full_prefix_x(&self, range_image: &[E]) -> EqFactoredUniPoly<E> {
         debug_assert!(self.rounds_completed < self.col_bits);
-        let y_len = s_full.len() / self.live_x_cols;
+        let y_len = range_image.len() / self.live_x_cols;
         let (e_first, e_second) = self.split_eq.remaining_eq_tables();
         let num_first = e_first.len();
         let first_bits = num_first.trailing_zeros();
@@ -468,7 +471,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage1Prover<E> {
             |mut outer_accum, y| {
                 debug_assert!(full_num_coeffs_q <= MAX_AFFINE_COEFFS);
                 let row_start = y * self.live_x_cols;
-                let row = &s_full[row_start..row_start + self.live_x_cols];
+                let row = &range_image[row_start..row_start + self.live_x_cols];
                 let j_base = y * current_x_half;
                 let mut batch_out = [[E::zero(); MAX_AFFINE_COEFFS]; 4];
                 let mut entry_buf = [E::zero(); MAX_AFFINE_COEFFS];
@@ -566,9 +569,12 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage1Prover<E> {
         EqFactoredUniPoly::from_q_coeffs(q_coeffs)
     }
 
-    #[tracing::instrument(skip_all, name = "AkitaStage1Prover::fold_s_compact_prefix_x")]
-    pub(super) fn fold_s_compact_prefix_x<S: CompactSValue>(
-        s_compact: &[S],
+    #[tracing::instrument(
+        skip_all,
+        name = "DirectRangeLeafState::fold_compact_range_image_prefix_x"
+    )]
+    pub(super) fn fold_compact_range_image_prefix_x<V: CompactRangeImageValue>(
+        compact_range_image: &[V],
         live_x_cols: usize,
         y_len: usize,
         fold_lut: &CompactPairFoldLut<E>,
@@ -581,39 +587,39 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage1Prover<E> {
             .enumerate()
             .for_each(|(y, row_out)| {
                 let row_start = y * live_x_cols;
-                let row = &s_compact[row_start..row_start + live_x_cols];
+                let row = &compact_range_image[row_start..row_start + live_x_cols];
                 for (pair_x, dst) in row_out.iter_mut().enumerate() {
                     let left = 2 * pair_x;
                     let s_1 = if left + 1 < live_x_cols {
-                        row[left + 1].compact_s()
+                        row[left + 1].range_image_value()
                     } else {
                         0
                     };
-                    *dst = fold_lut.fold(row[left].compact_s(), s_1);
+                    *dst = fold_lut.fold(row[left].range_image_value(), s_1);
                 }
             });
 
         #[cfg(not(feature = "parallel"))]
         for (y, row_out) in out.chunks_mut(next_live_x_cols).enumerate() {
             let row_start = y * live_x_cols;
-            let row = &s_compact[row_start..row_start + live_x_cols];
+            let row = &compact_range_image[row_start..row_start + live_x_cols];
             for (pair_x, dst) in row_out.iter_mut().enumerate() {
                 let left = 2 * pair_x;
                 let s_1 = if left + 1 < live_x_cols {
-                    row[left + 1].compact_s()
+                    row[left + 1].range_image_value()
                 } else {
                     0
                 };
-                *dst = fold_lut.fold(row[left].compact_s(), s_1);
+                *dst = fold_lut.fold(row[left].range_image_value(), s_1);
             }
         }
 
         out
     }
 
-    #[tracing::instrument(skip_all, name = "AkitaStage1Prover::fold_s_full_prefix_x")]
-    pub(super) fn fold_s_full_prefix_x(
-        s_full: &[E],
+    #[tracing::instrument(skip_all, name = "DirectRangeLeafState::fold_range_image_prefix_x")]
+    pub(super) fn fold_range_image_prefix_x(
+        range_image: &[E],
         live_x_cols: usize,
         y_len: usize,
         r: E,
@@ -626,7 +632,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage1Prover<E> {
             .enumerate()
             .for_each(|(y, row_out)| {
                 let row_start = y * live_x_cols;
-                let row = &s_full[row_start..row_start + live_x_cols];
+                let row = &range_image[row_start..row_start + live_x_cols];
                 for (pair_x, dst) in row_out.iter_mut().enumerate() {
                     let left = 2 * pair_x;
                     let s_0 = row[left];
@@ -642,7 +648,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage1Prover<E> {
         #[cfg(not(feature = "parallel"))]
         for (y, row_out) in out.chunks_mut(next_live_x_cols).enumerate() {
             let row_start = y * live_x_cols;
-            let row = &s_full[row_start..row_start + live_x_cols];
+            let row = &range_image[row_start..row_start + live_x_cols];
             for (pair_x, dst) in row_out.iter_mut().enumerate() {
                 let left = 2 * pair_x;
                 let s_0 = row[left];

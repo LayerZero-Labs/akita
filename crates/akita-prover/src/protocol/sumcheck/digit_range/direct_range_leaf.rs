@@ -2,15 +2,16 @@
 //!
 //! The committed witness is a Boolean table
 //! `w : {0,1}^{col_bits} x {0,1}^{ring_bits} -> {-half, ..., half-1}` with
-//! `half = b/2`. Define the virtual table `S(z) = w(z) * (w(z) + 1)`. For an
-//! honest witness every entry of `w` is a valid digit, so `S(z)` lies in the
+//! `half = b/2`. Define the virtual table
+//! `range_image(z) = w(z) * (w(z) + 1)`. For an honest witness every entry of
+//! `w` is a valid digit, so `range_image(z)` lies in the
 //! set `{k(k+1) : k = 0, ..., half-1}`. The range-check polynomial
 //!
 //! `Q(s) = prod_{k=0}^{half-1} (s - k(k+1))`
 //!
 //! has degree `b/2` and vanishes on exactly that set. The sumcheck proves
 //!
-//! `0 = sum_z eq(tau0, z) * Q(S(z))`,
+//! `0 = sum_z eq(tau0, z) * Q(range_image(z))`,
 //!
 //! where the input claim is `0` (an honest prover makes every summand vanish).
 //! Stage 1 uses the generic eq-factored sumcheck path: each round writes the
@@ -20,10 +21,11 @@
 //! degree-`b/2 + 1` product polynomial. After all rounds, at `stage1_point`, the
 //! verifier checks
 //!
-//! `eq(tau0, stage1_point) * Q(s_claim)`
+//! `eq(tau0, stage1_point) * Q(range_image_eval)`
 //!
-//! where `s_claim = S(stage1_point) = w(stage1_point) * (w(stage1_point) + 1)` is the
-//! carried virtual claim passed into stage 2.
+//! where `range_image_eval = range_image(stage1_point)` is the carried virtual
+//! claim passed into stage 2. The wire field retains its legacy `s_claim` name
+//! until the scheduled wire-vocabulary cutover.
 //!
 //! ## `b = 8` specialization
 //!
@@ -33,10 +35,10 @@
 //!
 //! degree 4, so round polynomials have degree 5.
 
-use super::fold_full_prefix_pair;
-use super::two_round_prefix::{
-    build_stage1_bivariate_skip_proof_from_s_compact, can_use_stage1_two_round_prefix,
-    stage1_b4_s_digit_from_m_compact_s, stage1_b8_s_digit_from_m_compact_s,
+use super::super::fold_full_prefix_pair;
+use super::super::two_round_prefix::{
+    build_stage1_bivariate_skip_proof_from_compact_range_image, can_use_stage1_two_round_prefix,
+    stage1_b4_digit_from_compact_range_image, stage1_b8_digit_from_compact_range_image,
     Stage1BivariateSkipState,
 };
 use akita_algebra::split_eq::GruenSplitEq;
@@ -463,7 +465,7 @@ fn compute_norm_round_eq_poly_from_s<E: FieldCore + FromPrimitiveInt + HasUnredu
     EqFactoredUniPoly::from_q_coeffs(q_coeffs)
 }
 
-fn compute_norm_round_eq_poly_from_s_compact_with_pairs<
+fn compute_norm_round_eq_poly_from_compact_range_image_with_pairs<
     E: FieldCore + FromPrimitiveInt + HasUnreducedOps,
 >(
     split_eq: &GruenSplitEq<E>,
@@ -592,47 +594,47 @@ fn compute_norm_round_eq_poly_from_s_compact_with_pairs<
     EqFactoredUniPoly::from_q_coeffs(q_coeffs)
 }
 
-fn compute_norm_round_eq_poly_from_s_compact<
+fn compute_norm_round_eq_poly_from_compact_range_image<
     E: FieldCore + FromPrimitiveInt + HasUnreducedOps,
-    S: CompactSValue,
+    V: CompactRangeImageValue,
 >(
     split_eq: &GruenSplitEq<E>,
-    s_compact: &[S],
+    compact_range_image: &[V],
     range_precomp: &RangeAffineFromSPrecomp<E>,
 ) -> EqFactoredUniPoly<E> {
-    compute_norm_round_eq_poly_from_s_compact_with_pairs(split_eq, range_precomp, |j| {
+    compute_norm_round_eq_poly_from_compact_range_image_with_pairs(split_eq, range_precomp, |j| {
         (
-            s_compact[2 * j].compact_s(),
-            s_compact[2 * j + 1].compact_s(),
+            compact_range_image[2 * j].range_image_value(),
+            compact_range_image[2 * j + 1].range_image_value(),
         )
     })
 }
 
-enum STable<E: FieldCore> {
+enum RangeImageState<E: FieldCore> {
     Compact,
     Full(Vec<E>),
 }
 
-pub(crate) trait CompactSValue: Copy + Send + Sync {
-    fn compact_s(self) -> i16;
+pub(crate) trait CompactRangeImageValue: Copy + Send + Sync {
+    fn range_image_value(self) -> i16;
 }
 
-impl CompactSValue for i16 {
+impl CompactRangeImageValue for i16 {
     #[inline(always)]
-    fn compact_s(self) -> i16 {
+    fn range_image_value(self) -> i16 {
         self
     }
 }
 
-impl CompactSValue for i8 {
+impl CompactRangeImageValue for i8 {
     #[inline(always)]
-    fn compact_s(self) -> i16 {
-        compact_s_from_w(self)
+    fn range_image_value(self) -> i16 {
+        range_image_from_digit(self)
     }
 }
 
 #[inline]
-fn compact_s_from_w(w: i8) -> i16 {
+fn range_image_from_digit(w: i8) -> i16 {
     let w = i32::from(w);
     let s = w * (w + 1);
     debug_assert!(s >= 0);
@@ -640,11 +642,11 @@ fn compact_s_from_w(w: i8) -> i16 {
 }
 
 #[cfg(test)]
-fn build_compact_s_table(w_evals_compact: &[i8]) -> Vec<i16> {
-    w_evals_compact
+fn build_compact_range_image(digit_witness: &[i8]) -> Vec<i16> {
+    digit_witness
         .iter()
         .copied()
-        .map(compact_s_from_w)
+        .map(range_image_from_digit)
         .collect()
 }
 
@@ -653,10 +655,10 @@ struct Stage1TwoRoundPrefix<E: FieldCore> {
     first_challenge: Option<E>,
 }
 
-/// Stage-1 norm sumcheck prover over the virtual table `S(x) = w(x)(w(x)+1)`.
-pub struct AkitaStage1Prover<E: FieldCore> {
-    s_table: STable<E>,
-    w_evals_compact: std::sync::Arc<[i8]>,
+/// Direct leaf state over `range_image(x) = w(x)(w(x)+1)`.
+pub(crate) struct DirectRangeLeafState<E: FieldCore> {
+    range_image: RangeImageState<E>,
+    digit_witness: std::sync::Arc<[i8]>,
     split_eq: GruenSplitEq<E>,
     range_precomp: RangeAffineFromSPrecomp<E>,
     live_x_cols: usize,
@@ -672,14 +674,14 @@ pub struct AkitaStage1Prover<E: FieldCore> {
     rounds_completed: usize,
 }
 
-mod lifecycle;
-mod round2_prefix;
-mod round_flow;
-mod sparse_y;
-mod x_prefix;
+mod live_prefix;
+mod rounds;
+mod sparse_low_variables;
+mod state;
+mod two_round_prefix;
 
 #[cfg(test)]
 mod tests;
 
 #[cfg(test)]
-pub(crate) use round_flow::{advance_stage1_claim, pad_compact_witness};
+pub(crate) use rounds::{advance_stage1_claim, pad_compact_witness};

@@ -1,9 +1,9 @@
 #![allow(missing_docs)]
 
 use akita_field::Prime128Offset275;
-use akita_prover::AkitaStage1Prover;
+use akita_prover::DigitRangeProver;
 use akita_transcript::{labels, AkitaTranscript};
-use akita_types::reorder_stage1_coords;
+use akita_types::{AkitaStage1Proof, DigitRangeEqualityPoint, DigitRangePlan, FlatBooleanDomain};
 use akita_verifier::AkitaStage1Verifier;
 
 type F = Prime128Offset275;
@@ -20,25 +20,42 @@ fn sample_stage1_witness(b: usize, live_x_cols: usize, ring_bits: usize) -> Vec<
         .collect()
 }
 
+fn prove_stage1_case(
+    b: usize,
+    live_x_cols: usize,
+    tau0: Vec<F>,
+) -> (AkitaStage1Proof<F>, Vec<F>, DigitRangeEqualityPoint<F>) {
+    let col_bits = 3;
+    let ring_bits = 1;
+    let witness = sample_stage1_witness(b, live_x_cols, ring_bits);
+    let equality_point =
+        DigitRangeEqualityPoint::from_column_then_ring_challenges(&tau0, col_bits, ring_bits)
+            .unwrap();
+    let domain = FlatBooleanDomain::new(witness.len(), col_bits + ring_bits).unwrap();
+
+    let prover = DigitRangeProver::new(
+        std::sync::Arc::from(witness),
+        DigitRangePlan::new(b).unwrap(),
+        domain,
+        equality_point.clone(),
+    )
+    .expect("stage1 prover should build");
+    let mut prover_transcript = AkitaTranscript::<F>::new(labels::DOMAIN_AKITA_PROTOCOL);
+    let (proof, stage1_point) = prover
+        .prove(&mut prover_transcript)
+        .expect("stage1 proof should succeed");
+    (proof, stage1_point, equality_point)
+}
+
 fn assert_stage1_roundtrip(
     b: usize,
     live_x_cols: usize,
     tau0: Vec<F>,
     expected_child_claim_counts: &[usize],
 ) {
-    let col_bits = 3;
-    let ring_bits = 1;
-    let witness = sample_stage1_witness(b, live_x_cols, ring_bits);
-    let tau0 = reorder_stage1_coords(&tau0, col_bits, ring_bits);
+    let (proof, stage1_point, equality_point) = prove_stage1_case(b, live_x_cols, tau0);
 
-    let prover = AkitaStage1Prover::new(&witness, &tau0, b, live_x_cols, col_bits, ring_bits)
-        .expect("stage1 prover should build");
-    let mut prover_transcript = AkitaTranscript::<F>::new(labels::DOMAIN_AKITA_PROTOCOL);
-    let (proof, stage1_point) = prover
-        .prove(&mut prover_transcript)
-        .expect("stage1 proof should succeed");
-
-    let verifier = AkitaStage1Verifier::new(tau0, b);
+    let verifier = AkitaStage1Verifier::new(equality_point, DigitRangePlan::new(b).unwrap());
     let mut verifier_transcript = AkitaTranscript::<F>::new(labels::DOMAIN_AKITA_PROTOCOL);
     let verified_point = verifier
         .verify(&proof, &mut verifier_transcript)
@@ -49,6 +66,39 @@ fn assert_stage1_roundtrip(
     for (stage, &expected_child_claims) in proof.stages.iter().zip(expected_child_claim_counts) {
         assert_eq!(stage.child_claims.len(), expected_child_claims);
     }
+}
+
+#[test]
+fn stage1_verifier_rejects_malformed_plan_shapes_without_panicking() {
+    let basis = 16;
+    let transcript_point = vec![
+        F::from_u64(3),
+        F::from_u64(5),
+        F::from_u64(7),
+        F::from_u64(9),
+    ];
+    let (proof, _, equality_point) = prove_stage1_case(basis, 6, transcript_point);
+    let plan = DigitRangePlan::new(basis).unwrap();
+
+    let mut missing_child = proof.clone();
+    missing_child.stages[0].child_claims.pop();
+    let verifier = AkitaStage1Verifier::new(equality_point.clone(), plan);
+    let mut transcript = AkitaTranscript::<F>::new(labels::DOMAIN_AKITA_PROTOCOL);
+    assert!(verifier.verify(&missing_child, &mut transcript).is_err());
+
+    let mut wrong_degree = proof.clone();
+    wrong_degree.stages[0].sumcheck_proof.round_polys[0]
+        .coeffs_except_linear_term
+        .pop();
+    let verifier = AkitaStage1Verifier::new(equality_point.clone(), plan);
+    let mut transcript = AkitaTranscript::<F>::new(labels::DOMAIN_AKITA_PROTOCOL);
+    assert!(verifier.verify(&wrong_degree, &mut transcript).is_err());
+
+    let mut extra_stage = proof;
+    extra_stage.stages.push(extra_stage.stages[0].clone());
+    let verifier = AkitaStage1Verifier::new(equality_point, plan);
+    let mut transcript = AkitaTranscript::<F>::new(labels::DOMAIN_AKITA_PROTOCOL);
+    assert!(verifier.verify(&extra_stage, &mut transcript).is_err());
 }
 
 #[test]
