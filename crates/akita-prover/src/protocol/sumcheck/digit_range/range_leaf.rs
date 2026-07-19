@@ -1,5 +1,7 @@
-use super::compact_digit_source::CompactDigitSource;
+use super::compact_digit_source::{CompactDigitSource, RangeImageClass};
 use super::exact_prefix::{ExactPrefixTable, SplitEqualitySuffixMass};
+use super::range_class_tables::OrderedRangePairCoefficients;
+use super::round_accumulation::accumulate_precomputed_round;
 use super::round_accumulation::{add_scaled_round_coefficients, split_equality_weight};
 use super::{compose_small_poly_with_affine, MAX_TREE_STAGE_Q_DEGREE};
 use akita_algebra::split_eq::GruenSplitEq;
@@ -9,7 +11,10 @@ use akita_field::{AkitaError, FieldCore, FromPrimitiveInt};
 use akita_sumcheck::{EqFactoredSumcheckInstanceProver, EqFactoredUniPoly};
 
 enum RangeImageValues<E: FieldCore> {
-    Compact(CompactDigitSource),
+    Compact {
+        source: CompactDigitSource,
+        pair_coefficients: OrderedRangePairCoefficients<E>,
+    },
     Folded(ExactPrefixTable<E>),
 }
 
@@ -61,7 +66,7 @@ pub(super) struct StreamingRangeLeaf<E: FieldCore> {
     rounds_completed: usize,
 }
 
-impl<E: FieldCore> StreamingRangeLeaf<E> {
+impl<E: FieldCore + FromPrimitiveInt> StreamingRangeLeaf<E> {
     pub(super) fn new(
         source: CompactDigitSource,
         equality_point: &[E],
@@ -74,8 +79,21 @@ impl<E: FieldCore> StreamingRangeLeaf<E> {
                 actual: polynomial_coefficients.len(),
             });
         }
+        let pair_coefficients = {
+            let _span = tracing::info_span!(
+                "digit_range_build_pair_coefficients",
+                arity = polynomial_coefficients.len().saturating_sub(1),
+                lane_count = 1,
+                class_count = source.class_count(),
+            )
+            .entered();
+            OrderedRangePairCoefficients::new(source.class_count(), &polynomial_coefficients)
+        };
         Ok(Self {
-            range_image: RangeImageValues::Compact(source),
+            range_image: RangeImageValues::Compact {
+                source,
+                pair_coefficients,
+            },
             split_eq: GruenSplitEq::new(equality_point)?,
             input_claim,
             polynomial_coefficients,
@@ -116,28 +134,29 @@ impl<E: FieldCore + FromPrimitiveInt + HasOptimizedFold> EqFactoredSumcheckInsta
     fn compute_round_eq_factored(&mut self, _round: usize) -> EqFactoredUniPoly<E> {
         let (first, second) = self.split_eq.remaining_eq_tables();
         let coefficients = match &self.range_image {
-            RangeImageValues::Compact(source) => {
+            RangeImageValues::Compact {
+                source,
+                pair_coefficients,
+            } => {
                 let _span = tracing::info_span!(
                     "digit_range_initial_round",
                     round = self.rounds_completed,
                     explicit_rows = source.live_len(),
-                    kernel_strategy = "node-evaluation",
+                    kernel_strategy = "ordered-pair-coefficients",
                 )
                 .entered();
-                accumulate_round(
+                accumulate_precomputed_round(
                     first,
                     second,
                     source.live_len().div_ceil(2),
-                    E::zero(),
                     |pair_index| {
-                        (
-                            source.class_or_padding(2 * pair_index).range_image::<E>(),
-                            source
-                                .class_or_padding(2 * pair_index + 1)
-                                .range_image::<E>(),
+                        pair_coefficients.coefficients(
+                            source.class_or_padding(2 * pair_index),
+                            source.class_or_padding(2 * pair_index + 1),
                         )
                     },
-                    &self.polynomial_coefficients,
+                    pair_coefficients
+                        .coefficients(RangeImageClass::PADDING, RangeImageClass::PADDING),
                 )
             }
             RangeImageValues::Folded(table) => {
@@ -169,7 +188,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasOptimizedFold> EqFactoredSumcheckInsta
     fn ingest_challenge(&mut self, _round: usize, challenge: E) {
         self.split_eq.bind(challenge);
         let folded_from_compact = match &self.range_image {
-            RangeImageValues::Compact(source) => {
+            RangeImageValues::Compact { source, .. } => {
                 let _span = tracing::info_span!(
                     "digit_range_materialize_range_image",
                     round = self.rounds_completed,
