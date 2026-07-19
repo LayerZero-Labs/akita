@@ -10,11 +10,14 @@
 
 use akita_field::{CanonicalBytes, Prime128Offset275};
 use akita_prover::DigitRangeProver;
-use akita_serialization::{AkitaSerialize, Compress};
-use akita_transcript::{labels, AkitaTranscript, LoggingTranscript, Transcript, TranscriptEvent};
-use akita_types::{AkitaStage1Proof, DigitRangeEqualityPoint, DigitRangePlan, FlatBooleanDomain};
+use akita_transcript::{labels, AkitaTranscript, LoggingTranscript};
+use akita_types::{DigitRangeEqualityPoint, DigitRangePlan, FlatBooleanDomain};
 use akita_verifier::AkitaStage1Verifier;
 use std::sync::Arc;
+
+mod common;
+
+use common::{f1_oracle_digest, serialize_stage1_payload, serialize_transcript_events};
 
 type F = Prime128Offset275;
 
@@ -84,82 +87,6 @@ fn digit_witness(basis: usize, live_block_count: usize, low_variable_count: usiz
         .into()
 }
 
-fn serialize_stage1(proof: &AkitaStage1Proof<F>) -> Vec<u8> {
-    let mut bytes = Vec::new();
-    for stage in &proof.stages {
-        stage
-            .sumcheck_proof
-            .serialize_with_mode(&mut bytes, Compress::Yes)
-            .expect("serialize sumcheck");
-        for claim in &stage.child_claims {
-            claim
-                .serialize_with_mode(&mut bytes, Compress::Yes)
-                .expect("serialize child claim");
-        }
-    }
-    proof
-        .s_claim
-        .serialize_with_mode(&mut bytes, Compress::Yes)
-        .expect("serialize range-image claim");
-    bytes
-}
-
-fn serialize_events(events: &[TranscriptEvent]) -> Vec<u8> {
-    let mut bytes = Vec::new();
-    for event in events {
-        match event {
-            TranscriptEvent::Preamble {
-                bytes_digest,
-                bytes_len,
-            } => {
-                bytes.push(0);
-                bytes.extend_from_slice(bytes_digest);
-                bytes.extend_from_slice(&u64::try_from(*bytes_len).unwrap().to_le_bytes());
-            }
-            TranscriptEvent::Absorb {
-                label,
-                bytes_digest,
-                bytes_len,
-            } => {
-                bytes.push(1);
-                bytes.extend_from_slice(&u64::try_from(label.len()).unwrap().to_le_bytes());
-                bytes.extend_from_slice(label);
-                bytes.extend_from_slice(bytes_digest);
-                bytes.extend_from_slice(&u64::try_from(*bytes_len).unwrap().to_le_bytes());
-            }
-            TranscriptEvent::Squeeze { label, len } => {
-                bytes.push(2);
-                bytes.extend_from_slice(&u64::try_from(label.len()).unwrap().to_le_bytes());
-                bytes.extend_from_slice(label);
-                bytes.extend_from_slice(&u64::try_from(*len).unwrap().to_le_bytes());
-            }
-            TranscriptEvent::Wire {
-                label,
-                bytes_digest,
-                bytes_len,
-            } => {
-                bytes.push(3);
-                bytes.extend_from_slice(&u64::try_from(label.len()).unwrap().to_le_bytes());
-                bytes.extend_from_slice(label);
-                bytes.extend_from_slice(bytes_digest);
-                bytes.extend_from_slice(&u64::try_from(*bytes_len).unwrap().to_le_bytes());
-            }
-        }
-    }
-    bytes
-}
-
-fn oracle_digest(payload: &[u8]) -> String {
-    let mut transcript = AkitaTranscript::<F>::new(b"akita/digit-range-f1-oracle-digest");
-    transcript.append_bytes(labels::ABSORB_PROVER_V, payload);
-    transcript
-        .challenge_scalar(labels::CHALLENGE_SUMCHECK_BATCH)
-        .to_bytes_le_vec()
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect()
-}
-
 fn field_vector_bytes(values: &[F]) -> Vec<u8> {
     values
         .iter()
@@ -209,8 +136,8 @@ fn stage1_matches_f1_pr311_oracle_epoch() {
         let mut transcript =
             LoggingTranscript::wrap(AkitaTranscript::<F>::new(labels::DOMAIN_AKITA_PROTOCOL));
         let (proof, output_point) = prover.prove(&mut transcript).expect("oracle proof");
-        let proof_bytes = serialize_stage1(&proof);
-        let event_bytes = serialize_events(transcript.events());
+        let proof_bytes = serialize_stage1_payload(&proof);
+        let event_bytes = serialize_transcript_events(transcript.events());
         let verifier = AkitaStage1Verifier::new(
             equality_point,
             DigitRangePlan::new(expected.basis).expect("oracle basis"),
@@ -234,19 +161,19 @@ fn stage1_matches_f1_pr311_oracle_epoch() {
             expected.basis
         );
         assert_eq!(
-            oracle_digest(&proof_bytes),
+            f1_oracle_digest::<F>(&proof_bytes),
             expected.proof_digest,
             "proof bytes changed for basis {}",
             expected.basis
         );
         assert_eq!(
-            oracle_digest(&event_bytes),
+            f1_oracle_digest::<F>(&event_bytes),
             expected.event_digest,
             "transcript events changed for basis {}",
             expected.basis
         );
         assert_eq!(
-            oracle_digest(&field_vector_bytes(&output_point)),
+            f1_oracle_digest::<F>(&field_vector_bytes(&output_point)),
             expected.output_point_digest,
             "output point changed for basis {}",
             expected.basis
