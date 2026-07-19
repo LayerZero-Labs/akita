@@ -94,11 +94,11 @@ fn logged_dense_round_trip(num_vars: usize, shape_index: usize, basis_mode: Basi
 fn seed_corpus_covers_nv_basis_and_batch_shapes() {
     run_on_large_stack(|| {
         for (num_vars, shape_index, basis_mode, seed) in [
-            (8, 0, BasisMode::Lagrange, 0x1001),
-            (10, 1, BasisMode::Lagrange, 0x1002),
+            (15, 0, BasisMode::Lagrange, 0x1001),
+            (15, 1, BasisMode::Lagrange, 0x1002),
             (20, 0, BasisMode::Lagrange, 0x1003),
-            (10, 2, BasisMode::Lagrange, 0x1004),
-            (10, 3, BasisMode::Monomial, 0x1005),
+            (15, 2, BasisMode::Lagrange, 0x1004),
+            (15, 3, BasisMode::Monomial, 0x1005),
         ] {
             logged_dense_round_trip(num_vars, shape_index, basis_mode, seed);
         }
@@ -110,6 +110,6 @@ proptest! {
 
     #[test]
     fn event_stream_equality_fuzzes_batch_shapes(shape_index in 0usize..4, seed in any::<u64>()) {
-        run_on_large_stack(move || logged_dense_round_trip(10, shape_index, BasisMode::Lagrange, seed));
+        run_on_large_stack(move || logged_dense_round_trip(15, shape_index, BasisMode::Lagrange, seed));
     }
 }

@@ -10,8 +10,8 @@
 //!
 //! Variable counts:
 //!
-//! - one-hot: 10, 15, 20
-//! - dense: 10, 15, 18
+//! - one-hot: 12, 15, 20
+//! - dense: 13, 15, 18
 
 #![allow(missing_docs)]
 
@@ -197,8 +197,8 @@ fn run_single_dense(nv: usize) {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn single_onehot_nv10() {
-    run_single_onehot(10);
+fn single_onehot_nv12() {
+    run_single_onehot(12);
 }
 
 #[test]
@@ -221,8 +221,8 @@ fn single_onehot_nv20() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn single_dense_nv10() {
-    run_single_dense(10);
+fn single_dense_nv13() {
+    run_single_dense(13);
 }
 
 #[test]

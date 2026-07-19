@@ -3,3 +3,10 @@ dir = "target/nextest"
 
 [profile.ci.junit]
 path = "junit.xml"
+
+# These production-sized grouped fixtures use Rayon internally and otherwise
+# contend with every other test in the shard, inflating both their own timing
+# and unrelated protocol E2Es. Reserve the full nextest pool while they run.
+[[profile.ci.overrides]]
+filter = 'test(multi_group_root_folded_group_binding_round_trips) | test(multi_group_multi_chunk_fold_round_trips)'
+threads-required = "num-test-threads"

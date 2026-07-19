@@ -244,10 +244,10 @@ mod non_zk_aggregated_cases {
         };
     }
 
-    aggregated_onehot_case!(aggregated_onehot_nv10_batch1, 10, 1, false);
+    aggregated_onehot_case!(aggregated_onehot_nv12_batch1, 12, 1, true);
     aggregated_onehot_case!(aggregated_onehot_nv20_batch7, 20, 7, true);
 
-    aggregated_dense_case!(aggregated_dense_nv10_batch1, 10, 1, false);
+    aggregated_dense_case!(aggregated_dense_nv13_batch1, 13, 1, true);
     aggregated_dense_case!(aggregated_dense_nv17_batch5, 17, 5, true);
 }
 
