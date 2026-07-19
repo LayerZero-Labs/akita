@@ -9,6 +9,7 @@
 
 use crate::layout::{field_bytes, proof_ring_vec_bytes, sumcheck_rounds};
 use crate::{stage1_tree_stage_shapes, LevelParams, RelationMatrixRowLayout};
+use akita_field::AkitaError;
 
 /// Fixed wire size of `fold_grind_nonce` on every fold level proof.
 pub const FOLD_GRIND_NONCE_BYTES: usize = 4;
@@ -57,12 +58,10 @@ fn stage1_proof_bytes(rounds: usize, b: usize, elem_bytes: usize) -> usize {
 /// (it sizes the next-level witness commitment shipped on the wire). It is
 /// unused for a terminal-inner binding and on terminal layouts.
 ///
-/// # Panics
+/// # Errors
 ///
-/// Panics if an outer-commitment binding has no `next_lp`, or if an
-/// intermediate layout is paired with a terminal-cleartext binding. This
-/// helper is offline (planner / selector / profiling) and is not on the
-/// verifier path, so the no-panic boundary does not apply.
+/// Returns an error if an outer-commitment binding has no `next_lp`, or if an
+/// intermediate layout has no outgoing witness binding.
 pub fn level_proof_bytes(
     base_field_bits: u32,
     challenge_field_bits: u32,
@@ -71,11 +70,11 @@ pub fn level_proof_bytes(
     next_w_len: usize,
     layout: RelationMatrixRowLayout,
     next_witness_binding: Option<crate::NextWitnessBindingPolicy>,
-) -> usize {
+) -> Result<usize, AkitaError> {
     let base_elem_bytes = field_bytes(base_field_bits);
     let challenge_elem_bytes = field_bytes(challenge_field_bits);
     match layout {
-        RelationMatrixRowLayout::WithoutCommitmentBlocks => FOLD_GRIND_NONCE_BYTES,
+        RelationMatrixRowLayout::WithoutCommitmentBlocks => Ok(FOLD_GRIND_NONCE_BYTES),
         RelationMatrixRowLayout::WithDBlock => {
             let rounds = sumcheck_rounds(lp.ring_dimension, next_w_len);
             let sumcheck = sumcheck_bytes(rounds, 3, challenge_elem_bytes);
@@ -83,9 +82,11 @@ pub fn level_proof_bytes(
                 proof_ring_vec_bytes(lp.d_key.row_len(), lp.ring_dimension, base_elem_bytes);
             let next_commit_bytes = match next_witness_binding {
                 Some(crate::NextWitnessBindingPolicy::OuterCommitment) => {
-                    let next_lp = next_lp.expect(
-                        "outer-commitment level_proof_bytes requires next_lp; caller must pass Some",
-                    );
+                    let next_lp = next_lp.ok_or_else(|| {
+                        AkitaError::InvalidSetup(
+                            "outer-commitment level proof is missing successor params".to_string(),
+                        )
+                    })?;
                     proof_ring_vec_bytes(
                         next_lp.b_key.row_len(),
                         next_lp.ring_dimension,
@@ -93,17 +94,21 @@ pub fn level_proof_bytes(
                     )
                 }
                 Some(crate::NextWitnessBindingPolicy::TerminalInnerState) => 0,
-                None => panic!("intermediate level requires an outgoing witness binding"),
+                None => {
+                    return Err(AkitaError::InvalidSetup(
+                        "intermediate level is missing an outgoing witness binding".to_string(),
+                    ))
+                }
             };
             let next_eval_bytes = challenge_elem_bytes;
             let b = 1usize << lp.log_basis;
             let stage1_bytes = stage1_proof_bytes(rounds, b, challenge_elem_bytes);
-            v_bytes
+            Ok(v_bytes
                 + FOLD_GRIND_NONCE_BYTES
                 + stage1_bytes
                 + sumcheck
                 + next_commit_bytes
-                + next_eval_bytes
+                + next_eval_bytes)
         }
     }
 }
@@ -160,11 +165,10 @@ mod tests {
     use akita_sumcheck::{CompressedUniPoly, EqFactoredSumcheckProof, SumcheckProof};
 
     use crate::golomb_rice::golomb_rice_encode_vec;
-    use crate::proof::{segment_typed_witness_shape_from_groups, SegmentTypedWitness};
     use crate::tail_golomb_rice_z_params;
     use crate::{
-        direct_witness_bytes, AkitaStage1Proof, AkitaStage1StageProof, AkitaStage2Proof,
-        CleartextWitnessProof, CleartextWitnessShape, FoldLevelProof, RingVec, SetupSumcheckProof,
+        segment_typed_witness_bytes, AkitaStage1Proof, AkitaStage1StageProof, AkitaStage2Proof,
+        FoldLevelProof, RingVec, SegmentTypedWitness, SegmentTypedWitnessShape, SetupSumcheckProof,
         SisModulusProfileId, TerminalLevelProof, SETUP_SUMCHECK_DEGREE,
     };
 
@@ -173,9 +177,9 @@ mod tests {
     fn segment_typed_final_witness(
         lp: &LevelParams,
         num_claims: usize,
-    ) -> (CleartextWitnessProof<F>, CleartextWitnessShape) {
+    ) -> (SegmentTypedWitness<F>, SegmentTypedWitnessShape) {
         let field_bits = F::modulus_bits();
-        let shape = segment_typed_witness_shape_from_groups(
+        let shape = SegmentTypedWitnessShape::from_groups(
             lp,
             field_bits,
             [(lp as &dyn crate::LevelParamsLike, num_claims, num_claims, 1)],
@@ -349,7 +353,8 @@ mod tests {
                     next_w_len,
                     RelationMatrixRowLayout::WithDBlock,
                     Some(crate::NextWitnessBindingPolicy::OuterCommitment),
-                ),
+                )
+                .unwrap(),
                 exact_level_proof_bytes::<F>(
                     &lp,
                     &next_lp,
@@ -397,7 +402,8 @@ mod tests {
             next_w_len,
             RelationMatrixRowLayout::WithDBlock,
             Some(crate::NextWitnessBindingPolicy::OuterCommitment),
-        );
+        )
+        .unwrap();
         let terminal_inner = level_proof_bytes(
             128,
             128,
@@ -406,7 +412,8 @@ mod tests {
             next_w_len,
             RelationMatrixRowLayout::WithDBlock,
             Some(crate::NextWitnessBindingPolicy::TerminalInnerState),
-        );
+        )
+        .unwrap();
         let expected_outer_commitment =
             proof_ring_vec_bytes(next_lp.b_key.row_len(), D, field_bytes(128));
         assert_eq!(outer - terminal_inner, expected_outer_commitment);
@@ -421,6 +428,47 @@ mod tests {
             )
             .unwrap()
         );
+    }
+
+    #[test]
+    fn level_proof_bytes_rejects_incomplete_intermediate_schedule() {
+        const D: usize = 64;
+        let lp = LevelParams::params_only(
+            SisModulusProfileId::Q128OffsetA7F7,
+            D,
+            4,
+            2,
+            2,
+            2,
+            SparseChallengeConfig::pm1_only(3),
+        )
+        .with_decomp(1, 1, 1, 1)
+        .unwrap();
+
+        let missing_successor = level_proof_bytes(
+            128,
+            128,
+            &lp,
+            None,
+            D * 8,
+            RelationMatrixRowLayout::WithDBlock,
+            Some(crate::NextWitnessBindingPolicy::OuterCommitment),
+        );
+        assert!(matches!(
+            missing_successor,
+            Err(AkitaError::InvalidSetup(_))
+        ));
+
+        let missing_binding = level_proof_bytes(
+            128,
+            128,
+            &lp,
+            None,
+            D * 8,
+            RelationMatrixRowLayout::WithDBlock,
+            None,
+        );
+        assert!(matches!(missing_binding, Err(AkitaError::InvalidSetup(_))));
     }
 
     #[test]
@@ -484,7 +532,7 @@ mod tests {
             .with_decomp(1, 1, 1, 1)
             .unwrap();
 
-            let direct_bytes = exact_level_proof_bytes::<F>(
+            let terminal_bytes = exact_level_proof_bytes::<F>(
                 &lp,
                 &next_lp,
                 next_w_len,
@@ -510,12 +558,13 @@ mod tests {
                     next_w_len,
                     RelationMatrixRowLayout::WithDBlock,
                     Some(crate::NextWitnessBindingPolicy::OuterCommitment),
-                ),
-                direct_bytes,
+                )
+                .unwrap(),
+                terminal_bytes,
                 "direct planner bytes must exclude the stage-3 payload at log_basis={log_basis}"
             );
             assert_eq!(
-                recursive_bytes - direct_bytes,
+                recursive_bytes - terminal_bytes,
                 stage3_setup_product_bytes(128, D, setup_ring_len, next_w_len),
                 "stage-3 payload must be additive over the direct level bytes at log_basis={log_basis}"
             );
@@ -562,13 +611,14 @@ mod tests {
                     next_w_len,
                     RelationMatrixRowLayout::WithoutCommitmentBlocks,
                     None,
-                ),
+                )
+                .unwrap(),
                 serialized_without_witness,
                 "planned terminal-level bytes should match the serialized terminal body \
                  (less final_witness) at log_basis={log_basis}"
             );
 
-            let scheduled_bytes = direct_witness_bytes(128, &witness_shape);
+            let scheduled_bytes = segment_typed_witness_bytes(128, &witness_shape);
             assert!(
                 scheduled_bytes >= final_witness_bytes_runtime,
                 "scheduled direct witness budget must cover serialized segment-typed witness \

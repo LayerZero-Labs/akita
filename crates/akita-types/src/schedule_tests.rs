@@ -1,13 +1,12 @@
 use super::*;
 use crate::golomb_rice::golomb_rice_encode_vec;
-use crate::proof::{segment_typed_witness_shape_from_groups, SegmentTypedWitness};
 use crate::tail_golomb_rice_z_params;
 use crate::{
-    direct_witness_bytes, extension_opening_reduction_proof_bytes, level_proof_bytes,
+    extension_opening_reduction_proof_bytes, level_proof_bytes, segment_typed_witness_bytes,
     stage1_tree_stage_shapes, sumcheck_rounds, AkitaStage1Proof, AkitaStage1StageProof,
-    AkitaStage2Proof, CleartextWitnessProof, ExtensionOpeningReductionProof, FoldLevelProof,
-    NextWitnessBinding, RelationMatrixRowLayout, RingVec, SisModulusProfileId, TerminalLevelProof,
-    EXTENSION_OPENING_REDUCTION_DEGREE,
+    AkitaStage2Proof, ExtensionOpeningReductionProof, FoldLevelProof, NextWitnessBinding,
+    RelationMatrixRowLayout, RingVec, SegmentTypedWitness, SegmentTypedWitnessShape,
+    SisModulusProfileId, TerminalLevelProof, EXTENSION_OPENING_REDUCTION_DEGREE,
 };
 use akita_algebra::CyclotomicRing;
 use akita_challenges::SparseChallengeConfig;
@@ -95,9 +94,9 @@ fn chunked_witness_count_rejects_invalid_chunk_counts() {
 fn segment_typed_final_witness(
     lp: &LevelParams,
     num_claims: usize,
-) -> (CleartextWitnessProof<F>, CleartextWitnessShape) {
+) -> (SegmentTypedWitness<F>, SegmentTypedWitnessShape) {
     let field_bits = F::modulus_bits();
-    let shape = segment_typed_witness_shape_from_groups(
+    let shape = SegmentTypedWitnessShape::from_groups(
         lp,
         field_bits,
         [(lp as &dyn crate::LevelParamsLike, num_claims, num_claims, 1)],
@@ -229,7 +228,8 @@ fn planned_level_bytes_match_two_stage_payload_at_all_bases() {
                     next_w_len,
                     RelationMatrixRowLayout::WithDBlock,
                     Some(crate::NextWitnessBindingPolicy::OuterCommitment),
-                ),
+                )
+                .unwrap(),
                 exact_level_proof_bytes::<F>(&lp, &next_lp, next_w_len).unwrap(),
                 "planned level bytes should match the serialized two-stage body at log_basis={log_basis}"
             );
@@ -265,7 +265,7 @@ fn planned_terminal_level_bytes_match_terminal_payload_at_all_bases() {
         );
 
         // The planner accounts for the final witness separately
-        // (`direct_witness_bytes` on the terminal direct step). Subtract
+        // (`segment_typed_witness_bytes` on the terminal plan). Subtract
         // it from the serialized terminal level to compare against
         // `terminal_level_proof_bytes`.
         let serialized_without_witness =
@@ -280,13 +280,14 @@ fn planned_terminal_level_bytes_match_terminal_payload_at_all_bases() {
                 next_w_len,
                 RelationMatrixRowLayout::WithoutCommitmentBlocks,
                 None,
-            ),
+            )
+            .unwrap(),
             serialized_without_witness,
             "planned terminal-level bytes should match the serialized terminal body \
                  (less final_witness) at log_basis={log_basis}"
         );
 
-        let scheduled_bytes = direct_witness_bytes(128, &witness_shape);
+        let scheduled_bytes = segment_typed_witness_bytes(128, &witness_shape);
         assert!(
             scheduled_bytes >= final_witness_bytes_runtime,
             "scheduled direct witness budget must cover serialized segment-typed witness \
@@ -329,13 +330,14 @@ fn planned_batched_root_bytes_match_two_stage_payload_at_all_bases() {
             next_lp.b_key.row_len()
         ])
         .into_compact();
-        let level_proof = FoldLevelProof::new_two_stage_many_with_extension_opening_reduction::<D>(
-            None,
+        let level_proof = FoldLevelProof::new::<D>(
             vec![CyclotomicRing::<F, D>::zero(); lp.d_key.row_len()],
             dummy_stage1_proof(rounds, b),
-            dummy_sumcheck(rounds, 3),
-            next_commitment,
-            F::zero(),
+            AkitaStage2Proof {
+                sumcheck_proof: dummy_sumcheck(rounds, 3),
+                next_witness_binding: NextWitnessBinding::OuterCommitment(next_commitment),
+                next_w_eval: F::zero(),
+            },
         );
         assert_eq!(
                 level_proof_bytes(
@@ -346,7 +348,8 @@ fn planned_batched_root_bytes_match_two_stage_payload_at_all_bases() {
                     next_w_len,
                     RelationMatrixRowLayout::WithDBlock,
                     Some(crate::NextWitnessBindingPolicy::OuterCommitment),
-                ),
+                )
+                .unwrap(),
                 level_proof.serialized_size(Compress::No),
                 "planned batched root bytes should match the serialized two-stage body at log_basis={log_basis}"
             );

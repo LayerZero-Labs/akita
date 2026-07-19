@@ -29,14 +29,16 @@ fn setup_level_params_from_schedule_excludes_terminal_direct() {
     // must not contribute to the FS-bound `setup_levels`. Only
     // the preceding Fold steps (which do commit) appear.
     use akita_challenges::SparseChallengeConfig;
-    use akita_types::{DirectStep, FoldStep, LevelParamsLike, Schedule, SisModulusProfileId};
+    use akita_types::{
+        FoldStep, LevelParamsLike, Schedule, SisModulusProfileId, TerminalWitnessPlan,
+    };
 
     let sparse = SparseChallengeConfig::pm1_only(1);
     let fold_lp =
         LevelParams::params_only(SisModulusProfileId::Q128OffsetA7F7, 64, 3, 1, 1, 1, sparse)
             .with_decomp(1, 4, 1, 1)
             .expect("laid-out fold params");
-    let witness_shape = akita_types::segment_typed_witness_shape_from_groups(
+    let witness_shape = akita_types::SegmentTypedWitnessShape::from_groups(
         &fold_lp,
         128,
         [(&fold_lp as &dyn LevelParamsLike, 1, 1, 1)],
@@ -50,10 +52,10 @@ fn setup_level_params_from_schedule_excludes_terminal_direct() {
             next_w_len: 1 << 4,
             level_bytes: 0,
         }],
-        terminal: DirectStep {
+        terminal: TerminalWitnessPlan {
             current_w_len: 1 << 4,
             witness_shape,
-            direct_bytes: 0,
+            terminal_bytes: 0,
         },
         total_bytes: 0,
     };
@@ -308,10 +310,9 @@ fn grouped_root_runtime_setup_uses_per_group_roles_and_summed_d_width() {
 #[test]
 fn recursive_setup_envelope_counts_setup_prefix_d_segment() {
     use akita_types::{
-        padded_setup_prefix_len, segment_typed_witness_shape_from_groups,
-        setup_prefix_precommitted_params, setup_prefix_slot_id, AjtaiKeyParams,
-        DecompositionParams, DirectStep, FoldStep, LevelParamsLike, SetupContributionMode,
-        SETUP_OFFLOAD_D_SETUP,
+        padded_setup_prefix_len, setup_prefix_precommitted_params, setup_prefix_slot_id,
+        AjtaiKeyParams, DecompositionParams, FoldStep, LevelParamsLike, SegmentTypedWitnessShape,
+        SetupContributionMode, TerminalWitnessPlan, SETUP_OFFLOAD_D_SETUP,
     };
 
     fn scalar_level_params() -> LevelParams {
@@ -329,17 +330,17 @@ fn recursive_setup_envelope_counts_setup_prefix_d_segment() {
         .expect("scalar params")
     }
 
-    fn terminal_direct_step(params: &LevelParams) -> DirectStep {
-        let witness_shape = segment_typed_witness_shape_from_groups(
+    fn terminal_direct_step(params: &LevelParams) -> TerminalWitnessPlan {
+        let witness_shape = SegmentTypedWitnessShape::from_groups(
             params,
             128,
             [(params as &dyn LevelParamsLike, 1, 1, 1)],
         )
         .expect("segment-typed witness shape");
-        DirectStep {
+        TerminalWitnessPlan {
             current_w_len: witness_shape.layout.logical_num_elems,
             witness_shape,
-            direct_bytes: 0,
+            terminal_bytes: 0,
         }
     }
 
@@ -1006,4 +1007,8 @@ fn setup_capacity_scan_rejects_hostile_metadata_before_planning() {
     let work_err = proof_optimized_max_setup_matrix_size::<fp128::D64OneHot>(32, oversized_batch)
         .expect_err("oversized setup schedule scan must fail closed");
     assert!(matches!(work_err, AkitaError::InvalidSetup(_)));
+
+    let grouped_work_err = proof_optimized_max_setup_matrix_size::<fp128::D64OneHot>(32, 512)
+        .expect_err("grouped layouts must count toward the setup scan bound");
+    assert!(matches!(grouped_work_err, AkitaError::InvalidSetup(_)));
 }

@@ -246,9 +246,9 @@ pub fn validate_role_dims(dims: CommitmentRingDims) -> Result<(), AkitaError> {
 mod tests {
     use super::*;
     use crate::layout::LevelParams;
-    use crate::schedule::{DirectStep, FoldStep, Schedule};
+    use crate::schedule::{FoldStep, Schedule, TerminalWitnessPlan};
     use crate::sis::SisModulusProfileId;
-    use crate::CleartextWitnessShape;
+    use crate::SegmentTypedWitnessShape;
     use akita_challenges::SparseChallengeConfig;
     use akita_field::AkitaError;
 
@@ -300,10 +300,10 @@ mod tests {
         }
     }
 
-    fn make_direct_step() -> DirectStep {
-        DirectStep {
+    fn make_direct_step() -> TerminalWitnessPlan {
+        TerminalWitnessPlan {
             current_w_len: 0,
-            witness_shape: CleartextWitnessShape {
+            witness_shape: SegmentTypedWitnessShape {
                 layout: crate::TailSegmentLayout {
                     ring_dimension: 64,
                     log_basis: 3,
@@ -316,7 +316,7 @@ mod tests {
                     logical_num_elems: 0,
                 },
             },
-            direct_bytes: 0,
+            terminal_bytes: 0,
         }
     }
 

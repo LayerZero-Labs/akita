@@ -250,7 +250,7 @@ pub(in crate::protocol::core) enum PreparedNextWitness<'a, F: FieldCore> {
 
 pub(in crate::protocol::core) enum PreparedFoldPayload<'a, F: FieldCore, E: FieldCore> {
     Terminal {
-        final_witness: &'a CleartextWitnessProof<F>,
+        final_witness: &'a SegmentTypedWitness<F>,
         transcript: TerminalWitnessTranscriptParts,
     },
     Recursive {

@@ -477,6 +477,14 @@ impl core::fmt::Debug for VerifierNttCache {
 }
 
 impl VerifierNttCache {
+    pub(crate) fn cache_bytes(&self) -> Result<usize, AkitaError> {
+        let slots = self
+            .slots
+            .lock()
+            .map_err(|_| AkitaError::InvalidSetup("verifier NTT cache lock poisoned".into()))?;
+        Ok(slots.values().map(|slot| slot.cache_bytes()).sum())
+    }
+
     /// Build and atomically install an entry when needed.
     pub(crate) fn prepare(
         &self,

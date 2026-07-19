@@ -5,7 +5,8 @@ use akita_field::{AkitaError, CanonicalField};
 use crate::sis::compute_num_digits_full_field;
 use crate::PolynomialGroupLayout;
 use crate::{
-    CleartextWitnessShape, LevelParams, RelationMatrixRowLayout, EXTENSION_OPENING_REDUCTION_DEGREE,
+    LevelParams, RelationMatrixRowLayout, SegmentTypedWitnessShape,
+    EXTENSION_OPENING_REDUCTION_DEGREE,
 };
 
 /// Field element size in bytes for a field with `field_bits` bits.
@@ -24,7 +25,7 @@ pub fn packed_digits_bytes(num_elems: usize, bits_per_elem: u32) -> usize {
 }
 
 /// Serialized byte size for a terminal direct witness shape.
-pub fn direct_witness_bytes(field_bits: u32, shape: &CleartextWitnessShape) -> usize {
+pub fn segment_typed_witness_bytes(field_bits: u32, shape: &SegmentTypedWitnessShape) -> usize {
     crate::proof::segment_typed_witness_upper_bound_bytes(
         field_bits,
         &shape.layout,

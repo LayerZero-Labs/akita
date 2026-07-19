@@ -2,7 +2,7 @@
 
 use crate::config::SetupContributionMode;
 use crate::descriptor_bytes::{push_u32, push_usize};
-use crate::{CleartextWitnessShape, LevelParams, OpeningClaimsLayout, PolynomialGroupLayout};
+use crate::{LevelParams, OpeningClaimsLayout, PolynomialGroupLayout, SegmentTypedWitnessShape};
 use akita_field::{AkitaError, CanonicalField};
 
 /// Public inputs that deterministically select one level's active Akita params.
@@ -352,7 +352,7 @@ pub fn detect_field_modulus<F: CanonicalField>() -> u128 {
 
 /// Total ring elements in an intermediate recursive witness polynomial.
 /// Terminal witnesses are quotient-free and must be sized from their
-/// [`crate::CleartextWitnessShape`] instead.
+/// [`crate::SegmentTypedWitnessShape`] instead.
 pub fn intermediate_w_ring_element_count_with_counts<F: CanonicalField>(
     lp: &LevelParams,
     num_polynomials: usize,
@@ -495,16 +495,16 @@ pub struct FoldStep {
 
 /// Terminal direct-send step.
 #[derive(Clone, Debug)]
-pub struct DirectStep {
+pub struct TerminalWitnessPlan {
     /// Witness length entering the direct step.
     pub current_w_len: usize,
     /// Serialized terminal witness payload shape.
-    pub witness_shape: CleartextWitnessShape,
+    pub witness_shape: SegmentTypedWitnessShape,
     /// Direct witness bytes.
-    pub direct_bytes: usize,
+    pub terminal_bytes: usize,
 }
 
-impl DirectStep {
+impl TerminalWitnessPlan {
     /// Active terminal log-basis.
     pub fn log_basis(&self) -> u32 {
         self.witness_shape.layout.log_basis
@@ -517,7 +517,7 @@ pub struct Schedule {
     /// Ordered recursive fold levels. Supported schedules contain at least two.
     pub folds: Vec<FoldStep>,
     /// The unique terminal cleartext handoff.
-    pub terminal: DirectStep,
+    pub terminal: TerminalWitnessPlan,
     /// Planned direct-mode proof-byte upper bound for the schedule.
     ///
     /// Golomb-coded terminal `z` is sized conservatively. Recursive stage-3
@@ -714,7 +714,7 @@ impl Schedule {
         }
         push_usize(bytes, self.terminal.current_w_len);
         self.terminal.witness_shape.append_descriptor_bytes(bytes);
-        push_usize(bytes, self.terminal.direct_bytes);
+        push_usize(bytes, self.terminal.terminal_bytes);
         push_usize(bytes, self.total_bytes);
     }
 }

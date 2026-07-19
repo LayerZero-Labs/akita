@@ -9,7 +9,7 @@ use rand::SeedableRng;
 
 type F = Prime128Offset275;
 
-fn test_terminal_witness(coeffs: Vec<F>) -> CleartextWitnessProof<F> {
+fn test_terminal_witness(coeffs: Vec<F>) -> SegmentTypedWitness<F> {
     let layout = TailSegmentLayout {
         ring_dimension: 64,
         log_basis: 3,
@@ -21,7 +21,7 @@ fn test_terminal_witness(coeffs: Vec<F>) -> CleartextWitnessProof<F> {
         }],
         logical_num_elems: coeffs.len(),
     };
-    CleartextWitnessProof {
+    SegmentTypedWitness {
         layout,
         z_payloads: vec![Vec::new()],
         e_fields: RingVec::from_coeffs(coeffs),
@@ -31,7 +31,7 @@ fn test_terminal_witness(coeffs: Vec<F>) -> CleartextWitnessProof<F> {
 
 #[test]
 fn direct_witness_shape_rejects_oversized_allocations() {
-    let err = CleartextWitnessShape {
+    let err = SegmentTypedWitnessShape {
         layout: TailSegmentLayout {
             ring_dimension: 64,
             log_basis: 3,
@@ -179,16 +179,22 @@ fn extension_opening_reduction_none_is_zero_proof_wire_bytes() {
     assert!(decoded.extension_opening_reduction().is_none());
     assert_eq!(decoded, without_reduction);
 
-    let with_reduction = FoldLevelProof::new_two_stage_many_with_extension_opening_reduction::<D>(
-        Some(tiny_reduction()),
-        vec![CyclotomicRing::<F, D>::zero()],
-        tiny_stage1(),
-        SumcheckProof {
-            round_polys: Vec::new(),
+    let with_reduction = FoldLevelProof {
+        extension_opening_reduction: Some(tiny_reduction()),
+        v: RingVec::from_ring_elems(&[CyclotomicRing::<F, D>::zero()]).into_compact(),
+        fold_grind_nonce: 0,
+        stage1: tiny_stage1(),
+        stage2: AkitaStage2Proof {
+            sumcheck_proof: SumcheckProof {
+                round_polys: Vec::new(),
+            },
+            next_witness_binding: NextWitnessBinding::OuterCommitment(
+                RingVec::from_ring_elems(&[CyclotomicRing::<F, D>::zero()]).into_compact(),
+            ),
+            next_w_eval: F::zero(),
         },
-        RingVec::from_ring_elems(&[CyclotomicRing::<F, D>::zero()]).into_compact(),
-        F::zero(),
-    );
+        stage3_sumcheck_proof: None,
+    };
     let reduction_bytes = extension_opening_reduction_serialized_size(
         with_reduction.extension_opening_reduction(),
         Compress::No,

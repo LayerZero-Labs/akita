@@ -89,7 +89,7 @@ pub(crate) fn proof_optimized_max_setup_matrix_size<Cfg: CommitmentConfig>(
     max_num_vars: usize,
     max_num_batched_polys: usize,
 ) -> Result<SetupMatrixEnvelope, AkitaError> {
-    validate_setup_capacity_scan(max_num_vars, max_num_batched_polys)?;
+    validate_setup_capacity_metadata(max_num_vars, max_num_batched_polys)?;
     let cache_key = (TypeId::of::<Cfg>(), max_num_vars, max_num_batched_polys);
     if let Some(cached) = SETUP_MATRIX_ENVELOPE_CACHE
         .lock()
@@ -150,7 +150,7 @@ fn proof_optimized_max_setup_matrix_size_uncached<Cfg: CommitmentConfig>(
     Ok(envelope)
 }
 
-fn validate_setup_capacity_scan(
+fn validate_setup_capacity_metadata(
     max_num_vars: usize,
     max_num_batched_polys: usize,
 ) -> Result<(), AkitaError> {
@@ -159,10 +159,7 @@ fn validate_setup_capacity_scan(
             "max_num_batched_polys must be at least 1".to_string(),
         ));
     }
-    let scan_count = max_num_vars
-        .checked_mul(max_num_batched_polys)
-        .ok_or_else(|| AkitaError::InvalidSetup("verifier setup capacity overflow".into()))?;
-    if max_num_vars >= usize::BITS as usize || scan_count > MAX_VERIFIER_SETUP_SCHEDULE_SCANS {
+    if max_num_vars >= usize::BITS as usize {
         return Err(AkitaError::InvalidSetup(format!(
             "verifier setup capacity ({max_num_vars} vars, {max_num_batched_polys} polynomials) \
              exceeds preprocessing limits"
@@ -177,17 +174,41 @@ fn setup_envelope_scan_layouts<Cfg: CommitmentConfig>(
 ) -> Result<Vec<OpeningClaimsLayout>, AkitaError> {
     let mut layouts = Vec::new();
     let supports_multi_group_root = Cfg::decomposition().log_commit_bound == 1;
+    let precommitted_group = PolynomialGroupLayout::new(max_num_vars, 1);
+    let precommitted_groups = [precommitted_group;
+        crate::generated_families::DEFAULT_GROUP_BATCH_MAX_PRECOMMITTED_GROUPS];
+
+    let mut push_layout = |layout| {
+        if layouts.len() >= MAX_VERIFIER_SETUP_SCHEDULE_SCANS {
+            return Err(AkitaError::InvalidSetup(format!(
+                "verifier setup capacity ({max_num_vars} vars, {max_num_batched_polys} polynomials) \
+                 exceeds preprocessing limits"
+            )));
+        }
+        layouts.push(layout);
+        Ok(())
+    };
 
     for main_num_vars in 1..=max_num_vars {
         for main_num_polys in 1..=max_num_batched_polys {
             let main_group = PolynomialGroupLayout::new(main_num_vars, main_num_polys);
-            layouts.push(OpeningClaimsLayout::from_root_groups(&[], main_group)?);
+            push_layout(OpeningClaimsLayout::from_root_groups(&[], main_group)?)?;
             if supports_multi_group_root {
-                let precommitted = PolynomialGroupLayout::new(max_num_vars, 1);
-                layouts.push(OpeningClaimsLayout::from_root_groups(
-                    &[precommitted, precommitted],
-                    main_group,
-                )?);
+                for num_precommitted in
+                    1..=crate::generated_families::DEFAULT_GROUP_BATCH_MAX_PRECOMMITTED_GROUPS
+                {
+                    let Some(total_polynomials) = main_num_polys.checked_add(num_precommitted)
+                    else {
+                        continue;
+                    };
+                    if total_polynomials > max_num_batched_polys {
+                        continue;
+                    }
+                    push_layout(OpeningClaimsLayout::from_root_groups(
+                        &precommitted_groups[..num_precommitted],
+                        main_group,
+                    )?)?;
+                }
             }
         }
     }

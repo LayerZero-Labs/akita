@@ -36,11 +36,11 @@ use akita_types::{
     sample_public_row_coefficients, tensor_equality_factor_eval_at_point,
     trace_public_weights_recursive, trace_public_weights_root_terms, trace_terms_recursive,
     trace_weight_layout_from_segment, AkitaStage1Proof, AkitaStage2Proof, AkitaVerifierSetup,
-    BasisMode, CleartextWitnessProof, ExecutionSchedule, ExtensionOpeningReductionProof,
-    FoldLevelProof, FoldLinfProtocolBinding, FpExtEncoding, LevelParams, OpeningClaims,
-    OpeningClaimsLayout, PointVariableSelection, PolynomialGroupClaims, PreparedOpeningPoint,
-    RelationMatrixRowLayout, RingMultiplierOpeningPoint, RingOpeningPoint, RingRelationInstance,
-    RingVec, Schedule, SetupSumcheckProof, TerminalLevelProof, TerminalWitnessTranscriptParts,
+    BasisMode, ExecutionSchedule, ExtensionOpeningReductionProof, FoldLevelProof,
+    FoldLinfProtocolBinding, FpExtEncoding, LevelParams, OpeningClaims, OpeningClaimsLayout,
+    PointVariableSelection, PolynomialGroupClaims, PreparedOpeningPoint, RelationMatrixRowLayout,
+    RingMultiplierOpeningPoint, RingOpeningPoint, RingRelationInstance, RingVec, Schedule,
+    SegmentTypedWitness, SetupSumcheckProof, TerminalLevelProof, TerminalWitnessTranscriptParts,
     TraceClaim,
 };
 use akita_types::{
@@ -67,7 +67,7 @@ pub(in crate::protocol::core) use fold::{
 
 fn prepare_terminal_witness_replay<F, T>(
     transcript: &mut T,
-    final_witness: &CleartextWitnessProof<F>,
+    final_witness: &SegmentTypedWitness<F>,
     final_w_len: usize,
 ) -> Result<TerminalWitnessTranscriptParts, AkitaError>
 where

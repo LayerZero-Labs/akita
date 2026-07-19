@@ -829,7 +829,10 @@ impl<E: FieldCore> RelationMatrixEvaluator<E> {
         {
             let _span = tracing::info_span!("structured_chunks").entered();
             // Bounded equality window for the serial Z fallback (tensor mode).
-            let x_eq_window = OffsetEqWindow::new(x_challenges)?;
+            let x_eq_window = setup_plan
+                .is_none()
+                .then(|| OffsetEqWindow::new(x_challenges))
+                .transpose()?;
             for (group_index, group) in self.groups.iter().enumerate() {
                 let units = self.group_units(context, group)?;
                 validate_log_basis(group.log_basis)?;
@@ -924,6 +927,8 @@ impl<E: FieldCore> RelationMatrixEvaluator<E> {
                                             context.opening_source_len,
                                             z_index,
                                         )?;
+                                    let x_eq_window =
+                                        x_eq_window.as_ref().ok_or(AkitaError::InvalidProof)?;
                                     z_weight -=
                                         x_eq_window.eval(z_opening_index) * E::lift_base(fold);
                                 }

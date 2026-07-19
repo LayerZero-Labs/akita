@@ -19,9 +19,9 @@ use akita_config::proof_optimized::{fp128, fp64};
 use akita_config::CommitmentConfig;
 use akita_field::AkitaError;
 use akita_types::{
-    validate_schedule_ring_dims, AkitaScheduleLookupKey, AkitaSetupSeed, CleartextWitnessShape,
-    DirectStep, FoldStep, LevelParams, Schedule, SisModulusProfileId, TailSegmentGroupLayout,
-    TailSegmentLayout,
+    validate_schedule_ring_dims, AkitaScheduleLookupKey, AkitaSetupSeed, FoldStep, LevelParams,
+    Schedule, SegmentTypedWitnessShape, SisModulusProfileId, TailSegmentGroupLayout,
+    TailSegmentLayout, TerminalWitnessPlan,
 };
 
 // ---------------------------------------------------------------------------
@@ -78,10 +78,10 @@ fn make_fold_step(
     }
 }
 
-fn make_direct_step() -> DirectStep {
-    DirectStep {
+fn make_direct_step() -> TerminalWitnessPlan {
+    TerminalWitnessPlan {
         current_w_len: 0,
-        witness_shape: CleartextWitnessShape {
+        witness_shape: SegmentTypedWitnessShape {
             layout: TailSegmentLayout {
                 ring_dimension: 64,
                 log_basis: 3,
@@ -94,7 +94,7 @@ fn make_direct_step() -> DirectStep {
                 logical_num_elems: 0,
             },
         },
-        direct_bytes: 0,
+        terminal_bytes: 0,
     }
 }
 

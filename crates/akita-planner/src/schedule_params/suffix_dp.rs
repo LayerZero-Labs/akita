@@ -2,10 +2,10 @@ use std::collections::{BTreeMap, HashMap};
 
 use akita_field::AkitaError;
 use akita_types::{
-    active_setup_field_len, direct_witness_bytes, extension_opening_reduction_level_bytes,
-    level_proof_bytes, padded_setup_prefix_len, segment_typed_witness_shape_from_groups,
-    DirectStep, FoldStep, LevelParams, OpeningClaimsLayout, PolynomialGroupLayout,
-    RelationMatrixRowLayout, SetupContributionMode, SETUP_OFFLOAD_MIN_PREFIX_FIELD_LEN,
+    active_setup_field_len, extension_opening_reduction_level_bytes, level_proof_bytes,
+    padded_setup_prefix_len, segment_typed_witness_bytes, FoldStep, LevelParams,
+    OpeningClaimsLayout, PolynomialGroupLayout, RelationMatrixRowLayout, SegmentTypedWitnessShape,
+    SetupContributionMode, TerminalWitnessPlan, SETUP_OFFLOAD_MIN_PREFIX_FIELD_LEN,
 };
 
 use crate::PlannerPolicy;
@@ -25,11 +25,11 @@ pub(crate) struct FoldSuffix {
     pub(crate) total_bytes: usize,
     pub(crate) first_fold_params: LevelParams,
     pub(crate) folds: Vec<FoldStep>,
-    pub(crate) terminal: DirectStep,
+    pub(crate) terminal: TerminalWitnessPlan,
 }
 
 /// Best direct suffix at one DP state: witness length only. The terminal
-/// `DirectStep` is materialized at stitch time from the predecessor fold's
+/// `TerminalWitnessPlan` is materialized at stitch time from the predecessor fold's
 /// committed `LevelParams`.
 #[derive(Clone, Copy)]
 pub(crate) struct DirectSuffix {
@@ -64,7 +64,7 @@ fn make_terminal_direct_step(
     field_bits: u32,
     num_polynomials: usize,
     opening_layout: Option<&OpeningClaimsLayout>,
-) -> Result<DirectStep, AkitaError> {
+) -> Result<TerminalWitnessPlan, AkitaError> {
     // The terminal-direct (cleartext) witness is single-chunk by construction:
     // the prover emits the global folded response and one shared `r̂` tail, so
     // chunking the cleartext tail is unsupported. The last fold level must be
@@ -77,7 +77,7 @@ fn make_terminal_direct_step(
     }
     let witness_shape = match opening_layout {
         Some(layout) => terminal_witness_shape_for_opening_layout(terminal_lp, field_bits, layout)?,
-        None => segment_typed_witness_shape_from_groups(
+        None => SegmentTypedWitnessShape::from_groups(
             terminal_lp,
             field_bits,
             [(
@@ -88,11 +88,11 @@ fn make_terminal_direct_step(
             )],
         )?,
     };
-    let direct_bytes = direct_witness_bytes(field_bits, &witness_shape);
-    Ok(DirectStep {
+    let terminal_bytes = segment_typed_witness_bytes(field_bits, &witness_shape);
+    Ok(TerminalWitnessPlan {
         current_w_len,
         witness_shape,
-        direct_bytes,
+        terminal_bytes,
     })
 }
 
@@ -106,11 +106,11 @@ pub(super) fn try_terminal_direct_suffix_cost(
     key: PolynomialGroupLayout,
     terminal_fold_level: usize,
     opening_layout: Option<&OpeningClaimsLayout>,
-) -> Result<Option<(DirectStep, usize)>, AkitaError> {
+) -> Result<Option<(TerminalWitnessPlan, usize)>, AkitaError> {
     if terminal_lp.witness_chunk.num_chunks > 1 {
         return Ok(None);
     }
-    let (direct, direct_bytes) = terminal_direct_suffix_cost(
+    let (direct, terminal_bytes) = terminal_direct_suffix_cost(
         current_w_len,
         terminal_lp,
         field_bits,
@@ -118,7 +118,7 @@ pub(super) fn try_terminal_direct_suffix_cost(
         terminal_fold_level,
         opening_layout,
     )?;
-    Ok(Some((direct, direct_bytes)))
+    Ok(Some((direct, terminal_bytes)))
 }
 
 pub(crate) fn terminal_direct_suffix_cost(
@@ -128,7 +128,7 @@ pub(crate) fn terminal_direct_suffix_cost(
     key: PolynomialGroupLayout,
     terminal_fold_level: usize,
     opening_layout: Option<&OpeningClaimsLayout>,
-) -> Result<(DirectStep, usize), AkitaError> {
+) -> Result<(TerminalWitnessPlan, usize), AkitaError> {
     // Scalar same-point root fold: polynomial count at the root, 1 recursively.
     let num_polynomials = if terminal_fold_level == 0 {
         key.num_polynomials()
@@ -142,8 +142,8 @@ pub(crate) fn terminal_direct_suffix_cost(
         num_polynomials,
         opening_layout,
     )?;
-    let direct_bytes = direct.direct_bytes;
-    Ok((direct, direct_bytes))
+    let terminal_bytes = direct.terminal_bytes;
+    Ok((direct, terminal_bytes))
 }
 
 pub(crate) type ScheduleMemo = HashMap<(usize, usize, usize, u32, usize), SuffixResult>;
@@ -298,12 +298,12 @@ pub(crate) fn derive_optimal_suffix_schedule(
             continue;
         };
 
-        let mut best_for_this_lb: Option<(usize, Vec<FoldStep>, DirectStep)> = None;
+        let mut best_for_this_lb: Option<(usize, Vec<FoldStep>, TerminalWitnessPlan)> = None;
         let try_update =
             |total: usize,
              folds: Vec<FoldStep>,
-             terminal: DirectStep,
-             slot: &mut Option<(usize, Vec<FoldStep>, DirectStep)>| {
+             terminal: TerminalWitnessPlan,
+             slot: &mut Option<(usize, Vec<FoldStep>, TerminalWitnessPlan)>| {
                 if slot.as_ref().map(|(c, _, _)| total < *c).unwrap_or(true) {
                     *slot = Some((total, folds, terminal));
                 }
@@ -355,7 +355,7 @@ pub(crate) fn derive_optimal_suffix_schedule(
                         next_witness_len_terminal,
                         RelationMatrixRowLayout::WithoutCommitmentBlocks,
                         None,
-                    ) + eor_bytes;
+                    )? + eor_bytes;
                     let total = level_proof_size + suffix_cost;
                     let folds = vec![FoldStep {
                         params: candidate_params.clone(),
@@ -420,7 +420,7 @@ pub(crate) fn derive_optimal_suffix_schedule(
                 } else {
                     akita_types::NextWitnessBindingPolicy::OuterCommitment
                 }),
-            ) + eor_bytes;
+            )? + eor_bytes;
             let total = level_proof_size + suffix_fold.total_bytes;
             let mut folds = Vec::with_capacity(1 + suffix_fold.folds.len());
             folds.push(FoldStep {

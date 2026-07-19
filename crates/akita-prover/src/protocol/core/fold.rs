@@ -11,9 +11,9 @@ use akita_field::AdditiveGroup;
 use crate::protocol::ring_switch::RingSwitchTerminalArtifacts;
 use akita_types::build_segment_typed_witness_from_groups;
 use akita_types::dispatch_for_field;
-use akita_types::CleartextWitnessShape;
 use akita_types::OpeningClaimsLayout;
 use akita_types::SegmentTypedWitnessGroupParts;
+use akita_types::SegmentTypedWitnessShape;
 
 fn trace_layout_for_instance<F: FieldCore + CanonicalField>(
     lp: &LevelParams,
@@ -537,7 +537,7 @@ pub(in crate::protocol::core) fn prove_fold<'stack, F, E, T, C, O, TS, R, Cfg>(
     scheduled: &ExecutionSchedule,
     prepared_fold: PreparedFold<F, E>,
     is_terminal_fold: bool,
-    terminal_direct_witness_shape: Option<&CleartextWitnessShape>,
+    terminal_direct_witness_shape: Option<&SegmentTypedWitnessShape>,
 ) -> Result<FoldProveOutput<F, E>, AkitaError>
 where
     F: FieldCore
@@ -881,10 +881,10 @@ pub(in crate::protocol::core) fn bind_terminal_witness<F, T>(
     transcript: &mut T,
     lp: &LevelParams,
     artifacts: RingSwitchTerminalArtifacts<F>,
-    terminal_direct_witness_shape: Option<&CleartextWitnessShape>,
+    terminal_direct_witness_shape: Option<&SegmentTypedWitnessShape>,
     opening_batch: &OpeningClaimsLayout,
     bound_t_state: &RingVec<F>,
-) -> Result<CleartextWitnessProof<F>, AkitaError>
+) -> Result<SegmentTypedWitness<F>, AkitaError>
 where
     F: FieldCore + CanonicalField + HalvingField + AkitaSerialize,
     T: Transcript<F>,

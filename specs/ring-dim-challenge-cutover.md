@@ -54,7 +54,7 @@ derives fold-challenge seeds.
 Runtime `match` on ring degree is cheap. The real cost is **how many const-D
 monomorphizations** each call site pays for at compile time.
 
-Today one macro (`dispatch_ring_dim_result!`) served every role with the same
+Before the cutover one macro served every role with the same
 four arms `{32, 64, 128, 256}`. Role × field-tier dispatch removes unused arms.
 
 ### Design: two axes for fold / ring-switch dispatch

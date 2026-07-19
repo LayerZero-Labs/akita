@@ -27,16 +27,17 @@ fn scalar_group_layout(
     num_z_segments: usize,
     field_bits: u32,
 ) -> Result<TailSegmentLayout, AkitaError> {
-    tail_segment_layout_from_groups(
+    SegmentTypedWitnessShape::from_groups(
         lp,
+        field_bits,
         [(
             lp as &dyn LevelParamsLike,
             num_w_vectors,
             num_t_vectors,
             num_z_segments,
         )],
-        field_bits,
     )
+    .map(|shape| shape.layout)
 }
 
 #[test]
@@ -66,12 +67,13 @@ fn segment_typed_z_budget_uses_golomb_rate_not_packed_digit_width() {
 fn direct_terminal_layout_contains_only_z_e_t_planes() {
     let lp = test_lp();
     let field_bits = F::modulus_bits();
-    let layout = tail_segment_layout_from_groups(
+    let layout = SegmentTypedWitnessShape::from_groups(
         &lp,
-        [(&lp as &dyn LevelParamsLike, 1usize, 1usize, 1usize)],
         field_bits,
+        [(&lp as &dyn LevelParamsLike, 1usize, 1usize, 1usize)],
     )
-    .expect("direct terminal layout");
+    .expect("direct terminal layout")
+    .layout;
     assert_eq!(layout.groups.len(), 1);
     assert_eq!(layout.logical_num_elems % lp.ring_dimension, 0);
 }
@@ -80,12 +82,13 @@ fn direct_terminal_layout_contains_only_z_e_t_planes() {
 fn direct_terminal_builder_constructs_z_e_t_segments() {
     let lp = test_lp();
     let field_bits = F::modulus_bits();
-    let layout = tail_segment_layout_from_groups(
+    let layout = SegmentTypedWitnessShape::from_groups(
         &lp,
-        [(&lp as &dyn LevelParamsLike, 1usize, 1usize, 1usize)],
         field_bits,
+        [(&lp as &dyn LevelParamsLike, 1usize, 1usize, 1usize)],
     )
-    .expect("direct terminal layout");
+    .expect("direct terminal layout")
+    .layout;
     let group_layout = layout.groups[0];
     let e_folded = RingVec::from_coeffs(vec![F::zero(); group_layout.e_field_elems]);
     let recomposed_inner_rows = vec![RingVec::from_coeffs(vec![

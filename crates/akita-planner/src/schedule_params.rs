@@ -17,11 +17,11 @@ use akita_types::sis::{
 };
 use akita_types::{
     extension_opening_reduction_level_bytes, intermediate_w_ring_element_count_for_chunks,
-    level_proof_bytes, padded_setup_prefix_len, segment_typed_witness_shape_from_groups,
-    AkitaScheduleInputs, CleartextWitnessShape, CommitmentRingDims, DecompositionParams, FoldStep,
-    LevelParams, LevelParamsLike, OpeningClaimsLayout, PolynomialGroupLayout,
-    PrecommittedGroupParams, PrecommittedLevelParams, RelationMatrixRowLayout, Schedule,
-    SetupContributionMode, WitnessLayout, SETUP_OFFLOAD_D_SETUP,
+    level_proof_bytes, padded_setup_prefix_len, AkitaScheduleInputs, CommitmentRingDims,
+    DecompositionParams, FoldStep, LevelParams, LevelParamsLike, OpeningClaimsLayout,
+    PolynomialGroupLayout, PrecommittedGroupParams, PrecommittedLevelParams,
+    RelationMatrixRowLayout, Schedule, SegmentTypedWitnessShape, SetupContributionMode,
+    WitnessLayout, SETUP_OFFLOAD_D_SETUP,
 };
 
 use crate::PlannerPolicy;
@@ -208,7 +208,7 @@ fn find_schedule_inner(
 
     let field_bits = policy.decomposition.field_bits();
 
-    let mut best: Option<(usize, Vec<FoldStep>, akita_types::DirectStep)> = None;
+    let mut best: Option<(usize, Vec<FoldStep>, akita_types::TerminalWitnessPlan)> = None;
     let fold_challenge_shape = fold_shape(AkitaScheduleInputs {
         num_vars: key.num_vars(),
         level: 0,
@@ -263,7 +263,7 @@ fn find_schedule_inner(
             )?
             .checked_mul(policy.ring_dimension)
             .ok_or_else(|| AkitaError::InvalidSetup("root next witness length overflow".into()))?;
-            let terminal_shape = segment_typed_witness_shape_from_groups(
+            let terminal_shape = SegmentTypedWitnessShape::from_groups(
                 &candidate_params,
                 field_bits,
                 [(
@@ -329,7 +329,7 @@ fn find_schedule_inner(
                     next_w_len,
                     RelationMatrixRowLayout::WithDBlock,
                     Some(next_witness_binding),
-                ) + eor_bytes;
+                )? + eor_bytes;
                 let total = root_proof_size + suffix_fold.total_bytes;
                 if best
                     .as_ref()

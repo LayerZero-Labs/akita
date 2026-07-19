@@ -39,7 +39,9 @@ use akita_config::proof_optimized::{fp128, fp32, fp64};
 use akita_config::tensor_verifier;
 use akita_config::CommitmentConfig;
 use akita_field::AkitaError;
-use akita_types::{AkitaScheduleLookupKey, DirectStep, FoldStep, PolynomialGroupLayout, Schedule};
+use akita_types::{
+    AkitaScheduleLookupKey, FoldStep, PolynomialGroupLayout, Schedule, TerminalWitnessPlan,
+};
 
 #[cfg(feature = "all-schedules")]
 use akita_config::policy_of;
@@ -340,10 +342,10 @@ fn fold_steps_equal(left: &FoldStep, right: &FoldStep) -> bool {
         && left.params == right.params
 }
 
-fn direct_steps_equal(left: &DirectStep, right: &DirectStep) -> bool {
+fn direct_steps_equal(left: &TerminalWitnessPlan, right: &TerminalWitnessPlan) -> bool {
     left.current_w_len == right.current_w_len
         && left.witness_shape == right.witness_shape
-        && left.direct_bytes == right.direct_bytes
+        && left.terminal_bytes == right.terminal_bytes
 }
 
 fn schedules_equal(left: &Schedule, right: &Schedule) -> bool {

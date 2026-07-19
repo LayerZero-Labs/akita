@@ -61,7 +61,7 @@ where
         .last()
         .map(|terminal| terminal.level_bytes)
         .unwrap_or(0)
-        .saturating_add(schedule.terminal.direct_bytes);
+        .saturating_add(schedule.terminal.terminal_bytes);
     let realized_terminal_bytes = proof.terminal.serialized_size(Compress::No);
     schedule
         .total_bytes

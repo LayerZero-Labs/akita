@@ -150,7 +150,7 @@ enum FoldReplayKind<'a, F: FieldCore, E: FieldCore> {
         stage3: Option<(&'a SetupSumcheckProof<E>, &'a LevelParams)>,
     },
     Terminal {
-        final_witness: &'a CleartextWitnessProof<F>,
+        final_witness: &'a SegmentTypedWitness<F>,
     },
 }
 

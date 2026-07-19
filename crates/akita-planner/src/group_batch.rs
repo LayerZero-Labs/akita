@@ -414,7 +414,7 @@ pub fn find_group_batch_schedule(
     let fold_shape_at_level = &fold_challenge_shape_at_level;
     let field_bits = policy.decomposition.field_bits();
     let challenge_field_bits = field_bits * policy.chal_ext_degree as u32;
-    let mut best: Option<(usize, Vec<FoldStep>, akita_types::DirectStep)> = None;
+    let mut best: Option<(usize, Vec<FoldStep>, akita_types::TerminalWitnessPlan)> = None;
 
     let root_current_w_len = 1usize
         .checked_shl(key.final_group.num_vars() as u32)
@@ -584,7 +584,7 @@ pub fn find_group_batch_schedule(
                     next_w_len,
                     RelationMatrixRowLayout::WithDBlock,
                     Some(akita_types::NextWitnessBindingPolicy::OuterCommitment),
-                ) + eor_bytes;
+                )? + eor_bytes;
                 let total = root_proof_size + suffix_fold.total_bytes;
                 if best
                     .as_ref()

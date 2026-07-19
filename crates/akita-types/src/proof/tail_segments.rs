@@ -17,7 +17,6 @@ use crate::golomb_rice::{
 };
 use crate::instance_descriptor::FoldLinfProtocolBinding;
 use crate::layout::field_bytes;
-use crate::proof::CleartextWitnessShape;
 use crate::proof::{RingVec, TerminalWitnessTranscriptParts};
 use crate::tail_golomb_rice_low_bits::{cap_rice_low_bits, wire_rice_low_bits_from_rule};
 use crate::{
@@ -582,7 +581,7 @@ where
 pub fn terminal_golomb_grind_tail_t_vectors(
     lp: &LevelParams,
     relation_matrix_row_layout: RelationMatrixRowLayout,
-    witness_shape: Option<&CleartextWitnessShape>,
+    witness_shape: Option<&SegmentTypedWitnessShape>,
 ) -> Result<Option<usize>, AkitaError> {
     if relation_matrix_row_layout != RelationMatrixRowLayout::WithoutCommitmentBlocks {
         return Ok(None);
@@ -724,89 +723,113 @@ pub fn z_fold_encoding_stats_from_segment<F: FieldCore>(
     )
 }
 
-pub fn tail_segment_layout_from_groups<'a>(
-    lp: &LevelParams,
-    groups: impl IntoIterator<Item = (&'a dyn LevelParamsLike, usize, usize, usize)>,
-    field_bits: u32,
-) -> Result<TailSegmentLayout, AkitaError> {
-    let d = lp.ring_dimension;
-    if d == 0 {
-        return Err(AkitaError::InvalidSetup(
-            "tail segment layout has zero ring dimension".to_string(),
-        ));
-    }
-    let groups = groups.into_iter().collect::<Vec<_>>();
-    if groups.is_empty() {
-        return Err(AkitaError::InvalidSetup(
-            "tail segment layout requires at least one group".to_string(),
-        ));
-    }
-    let mut group_layouts = Vec::with_capacity(groups.len());
-    let mut total_plane_rings = 0usize;
-    for (params, num_w_vectors, num_t_vectors, num_z_segments) in groups {
-        let depth_open = params.num_digits_open();
-        let depth_commit = params.num_digits_commit();
-        let depth_fold = lp.num_digits_fold_for_params(params, num_t_vectors, field_bits)?;
-        if depth_open == 0 || depth_commit == 0 || depth_fold == 0 {
+impl SegmentTypedWitnessShape {
+    /// Derive the checked terminal witness shape for the scheduled groups.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AkitaError::InvalidSetup`] when dimensions are empty or any
+    /// derived segment size overflows.
+    pub fn from_groups<'a>(
+        lp: &LevelParams,
+        field_bits: u32,
+        groups: impl IntoIterator<Item = (&'a dyn LevelParamsLike, usize, usize, usize)>,
+    ) -> Result<Self, AkitaError> {
+        let d = lp.ring_dimension;
+        if d == 0 {
             return Err(AkitaError::InvalidSetup(
-                "tail segment layout has zero digit depth".to_string(),
+                "tail segment layout has zero ring dimension".to_string(),
             ));
         }
-        let total_w_blocks = params
-            .num_live_blocks()
-            .checked_mul(num_w_vectors)
-            .ok_or_else(|| AkitaError::InvalidSetup("tail e block count overflow".to_string()))?;
-        let total_t_blocks = params
-            .num_live_blocks()
-            .checked_mul(num_t_vectors)
-            .ok_or_else(|| AkitaError::InvalidSetup("tail t block count overflow".to_string()))?;
-        let e_field_elems = total_w_blocks
+        let groups = groups.into_iter().collect::<Vec<_>>();
+        if groups.is_empty() {
+            return Err(AkitaError::InvalidSetup(
+                "tail segment layout requires at least one group".to_string(),
+            ));
+        }
+        let mut group_layouts = Vec::with_capacity(groups.len());
+        let mut total_plane_rings = 0usize;
+        for (params, num_w_vectors, num_t_vectors, num_z_segments) in groups {
+            let depth_open = params.num_digits_open();
+            let depth_commit = params.num_digits_commit();
+            let depth_fold = lp.num_digits_fold_for_params(params, num_t_vectors, field_bits)?;
+            if depth_open == 0 || depth_commit == 0 || depth_fold == 0 {
+                return Err(AkitaError::InvalidSetup(
+                    "tail segment layout has zero digit depth".to_string(),
+                ));
+            }
+            let total_w_blocks = params
+                .num_live_blocks()
+                .checked_mul(num_w_vectors)
+                .ok_or_else(|| {
+                    AkitaError::InvalidSetup("tail e block count overflow".to_string())
+                })?;
+            let total_t_blocks = params
+                .num_live_blocks()
+                .checked_mul(num_t_vectors)
+                .ok_or_else(|| {
+                    AkitaError::InvalidSetup("tail t block count overflow".to_string())
+                })?;
+            let e_field_elems = total_w_blocks.checked_mul(d).ok_or_else(|| {
+                AkitaError::InvalidSetup("tail e field count overflow".to_string())
+            })?;
+            let t_field_elems = total_t_blocks
+                .checked_mul(params.a_rows_len())
+                .and_then(|n| n.checked_mul(d))
+                .ok_or_else(|| {
+                    AkitaError::InvalidSetup("tail t field count overflow".to_string())
+                })?;
+            let z_coords = num_z_segments
+                .checked_mul(params.num_positions_per_block())
+                .and_then(|n| n.checked_mul(depth_commit))
+                .and_then(|n| n.checked_mul(d))
+                .ok_or_else(|| {
+                    AkitaError::InvalidSetup("tail z coord count overflow".to_string())
+                })?;
+            let z_plane_rings = num_z_segments
+                .checked_mul(params.num_positions_per_block())
+                .and_then(|n| n.checked_mul(depth_commit))
+                .and_then(|n| n.checked_mul(depth_fold))
+                .ok_or_else(|| {
+                    AkitaError::InvalidSetup("tail z plane count overflow".to_string())
+                })?;
+            let e_plane_rings = total_w_blocks.checked_mul(depth_open).ok_or_else(|| {
+                AkitaError::InvalidSetup("tail e plane count overflow".to_string())
+            })?;
+            let t_plane_rings = total_t_blocks
+                .checked_mul(params.a_rows_len())
+                .and_then(|n| n.checked_mul(depth_open))
+                .ok_or_else(|| {
+                    AkitaError::InvalidSetup("tail t plane count overflow".to_string())
+                })?;
+            let z_cap = lp.fold_witness_linf_cap_for_params(params, num_t_vectors, field_bits)?;
+            let z_payload_bytes = z_payload_budget_from_cap(z_coords, z_cap);
+            group_layouts.push(TailSegmentGroupLayout {
+                z_coords,
+                e_field_elems,
+                t_field_elems,
+                z_payload_bytes,
+            });
+            total_plane_rings = total_plane_rings
+                .checked_add(z_plane_rings)
+                .and_then(|n| n.checked_add(e_plane_rings))
+                .and_then(|n| n.checked_add(t_plane_rings))
+                .ok_or_else(|| {
+                    AkitaError::InvalidSetup("tail logical plane overflow".to_string())
+                })?;
+        }
+        let logical_num_elems = total_plane_rings
             .checked_mul(d)
-            .ok_or_else(|| AkitaError::InvalidSetup("tail e field count overflow".to_string()))?;
-        let t_field_elems = total_t_blocks
-            .checked_mul(params.a_rows_len())
-            .and_then(|n| n.checked_mul(d))
-            .ok_or_else(|| AkitaError::InvalidSetup("tail t field count overflow".to_string()))?;
-        let z_coords = num_z_segments
-            .checked_mul(params.num_positions_per_block())
-            .and_then(|n| n.checked_mul(depth_commit))
-            .and_then(|n| n.checked_mul(d))
-            .ok_or_else(|| AkitaError::InvalidSetup("tail z coord count overflow".to_string()))?;
-        let z_plane_rings = num_z_segments
-            .checked_mul(params.num_positions_per_block())
-            .and_then(|n| n.checked_mul(depth_commit))
-            .and_then(|n| n.checked_mul(depth_fold))
-            .ok_or_else(|| AkitaError::InvalidSetup("tail z plane count overflow".to_string()))?;
-        let e_plane_rings = total_w_blocks
-            .checked_mul(depth_open)
-            .ok_or_else(|| AkitaError::InvalidSetup("tail e plane count overflow".to_string()))?;
-        let t_plane_rings = total_t_blocks
-            .checked_mul(params.a_rows_len())
-            .and_then(|n| n.checked_mul(depth_open))
-            .ok_or_else(|| AkitaError::InvalidSetup("tail t plane count overflow".to_string()))?;
-        let z_cap = lp.fold_witness_linf_cap_for_params(params, num_t_vectors, field_bits)?;
-        let z_payload_bytes = z_payload_budget_from_cap(z_coords, z_cap);
-        group_layouts.push(TailSegmentGroupLayout {
-            z_coords,
-            e_field_elems,
-            t_field_elems,
-            z_payload_bytes,
-        });
-        total_plane_rings = total_plane_rings
-            .checked_add(z_plane_rings)
-            .and_then(|n| n.checked_add(e_plane_rings))
-            .and_then(|n| n.checked_add(t_plane_rings))
-            .ok_or_else(|| AkitaError::InvalidSetup("tail logical plane overflow".to_string()))?;
+            .ok_or_else(|| AkitaError::InvalidSetup("tail logical elem overflow".to_string()))?;
+        Ok(Self {
+            layout: TailSegmentLayout {
+                ring_dimension: d,
+                log_basis: lp.log_basis,
+                groups: group_layouts,
+                logical_num_elems,
+            },
+        })
     }
-    let logical_num_elems = total_plane_rings
-        .checked_mul(d)
-        .ok_or_else(|| AkitaError::InvalidSetup("tail logical elem overflow".to_string()))?;
-    Ok(TailSegmentLayout {
-        ring_dimension: d,
-        log_basis: lp.log_basis,
-        groups: group_layouts,
-        logical_num_elems,
-    })
 }
 
 /// Recover tail multiplicities from a committed [`TailSegmentLayout`].
@@ -925,7 +948,7 @@ where
         })
         .collect::<Vec<_>>();
     let field_bits = F::modulus_bits();
-    let layout = tail_segment_layout_from_groups(lp, group_shapes, field_bits)?;
+    let layout = SegmentTypedWitnessShape::from_groups(lp, field_bits, group_shapes)?.layout;
     let mut z_payloads = Vec::with_capacity(groups.len());
     let mut e_coeffs = Vec::new();
     let mut t_coeffs = Vec::new();

@@ -153,55 +153,6 @@ impl<F: FieldCore, E: FieldCore> FoldLevelProof<F, E> {
         }
     }
 
-    /// Construct a level proof for the two-stage norm-check.
-    #[allow(clippy::too_many_arguments)]
-    pub fn new_two_stage<const D: usize>(
-        v: Vec<CyclotomicRing<F, D>>,
-        stage1: AkitaStage1Proof<E>,
-        stage2_sumcheck_proof: SumcheckProof<E>,
-        next_w_commitment: RingVec<F>,
-        next_w_eval: E,
-    ) -> Self {
-        Self::new::<D>(
-            v,
-            stage1,
-            AkitaStage2Proof {
-                sumcheck_proof: stage2_sumcheck_proof,
-                next_witness_binding: NextWitnessBinding::OuterCommitment(
-                    next_w_commitment.into_compact(),
-                ),
-                next_w_eval,
-            },
-        )
-    }
-
-    /// Construct a level proof for a multi-row public opening relation with
-    /// extension-opening reduction payloads already produced.
-    #[allow(clippy::too_many_arguments)]
-    pub fn new_two_stage_many_with_extension_opening_reduction<const D: usize>(
-        extension_opening_reduction: Option<ExtensionOpeningReductionProof<E>>,
-        v: Vec<CyclotomicRing<F, D>>,
-        stage1: AkitaStage1Proof<E>,
-        stage2_sumcheck_proof: SumcheckProof<E>,
-        next_w_commitment: RingVec<F>,
-        next_w_eval: E,
-    ) -> Self {
-        Self {
-            extension_opening_reduction,
-            v: RingVec::from_ring_elems(&v).into_compact(),
-            fold_grind_nonce: 0,
-            stage1,
-            stage2: AkitaStage2Proof {
-                sumcheck_proof: stage2_sumcheck_proof,
-                next_witness_binding: NextWitnessBinding::OuterCommitment(
-                    next_w_commitment.into_compact(),
-                ),
-                next_w_eval,
-            },
-            stage3_sumcheck_proof: None,
-        }
-    }
-
     /// Accepted fold grind nonce (`0` under deterministic policy).
     pub fn fold_grind_nonce(&self) -> u32 {
         self.fold_grind_nonce
@@ -217,16 +168,6 @@ impl<F: FieldCore, E: FieldCore> FoldLevelProof<F, E> {
         &self.v
     }
 
-    /// Reconstruct typed `v` as a vector.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`AkitaError::InvalidProof`] when the intermediate `v` buffer
-    /// cannot be decoded under `D`.
-    pub fn v_as_ring_slice<const D: usize>(&self) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError> {
-        self.v.try_to_vec::<D>()
-    }
-
     /// Mutably borrow the `v` payload.
     pub fn v_mut(&mut self) -> &mut RingVec<F> {
         &mut self.v
@@ -235,11 +176,6 @@ impl<F: FieldCore, E: FieldCore> FoldLevelProof<F, E> {
     /// Borrow the stage-1 payload.
     pub fn stage1(&self) -> &AkitaStage1Proof<E> {
         &self.stage1
-    }
-
-    /// Borrow the intermediate stage-1 payload, if present.
-    pub fn stage1_proof(&self) -> Option<&AkitaStage1Proof<E>> {
-        Some(&self.stage1)
     }
 
     /// Mutably borrow the stage-1 payload.
@@ -339,7 +275,7 @@ pub struct TerminalLevelProof<F: FieldCore, E: FieldCore> {
     /// Accepted Fiat-Shamir grind nonce for fold-l∞ rejection (0 under deterministic policy).
     pub fold_grind_nonce: u32,
     /// Quotient-free terminal witness checked directly by the verifier.
-    pub final_witness: CleartextWitnessProof<F>,
+    pub final_witness: SegmentTypedWitness<F>,
 }
 
 impl<F: FieldCore, E: FieldCore> TerminalLevelProof<F, E> {
@@ -349,7 +285,7 @@ impl<F: FieldCore, E: FieldCore> TerminalLevelProof<F, E> {
     /// not use extension-opening reduction.
     pub fn new_with_extension_opening_reduction(
         extension_opening_reduction: Option<ExtensionOpeningReductionProof<E>>,
-        final_witness: CleartextWitnessProof<F>,
+        final_witness: SegmentTypedWitness<F>,
         fold_grind_nonce: u32,
     ) -> Self {
         Self {
@@ -360,12 +296,12 @@ impl<F: FieldCore, E: FieldCore> TerminalLevelProof<F, E> {
     }
 
     /// Borrow the terminal cleartext witness.
-    pub fn final_witness(&self) -> &CleartextWitnessProof<F> {
+    pub fn final_witness(&self) -> &SegmentTypedWitness<F> {
         &self.final_witness
     }
 
     /// Mutably borrow the terminal cleartext witness.
-    pub fn final_witness_mut(&mut self) -> &mut CleartextWitnessProof<F> {
+    pub fn final_witness_mut(&mut self) -> &mut SegmentTypedWitness<F> {
         &mut self.final_witness
     }
 
@@ -394,7 +330,7 @@ pub struct AkitaBatchedProof<F: FieldCore, E: FieldCore> {
 
 impl<F: FieldCore, E: FieldCore> AkitaBatchedProof<F, E> {
     /// Access the terminal cleartext witness.
-    pub fn final_witness(&self) -> &CleartextWitnessProof<F> {
+    pub fn final_witness(&self) -> &SegmentTypedWitness<F> {
         self.terminal.final_witness()
     }
 

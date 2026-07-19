@@ -502,7 +502,7 @@ where
 /// Root polynomial usable at every runtime-supported ring dimension.
 ///
 /// D-free orchestration bounds on this; operation adapters select a concrete
-/// dimension with `dispatch_ring_dim_result!` and use the per-D capability
+/// dimension with `dispatch_for_field!` and use the per-D capability
 /// inside the arm. Blanket-implemented: the D-free storage types
 /// (`DensePoly<F>`, `OneHotPoly<F, I>`, `SparseRingPoly<F>`,
 /// `RootTensorProjectionPoly<F>`, `RecursiveWitnessFlat`) satisfy it through

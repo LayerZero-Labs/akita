@@ -254,6 +254,11 @@ pub(crate) fn report_setup_sizes(
     );
 }
 
+pub(crate) fn report_verifier_ntt_cache_size(label: &str, verifier_ntt_cache_bytes: usize) {
+    tracing::info!(label, verifier_ntt_cache_bytes, "verifier NTT cache size");
+    eprintln!("[{label}] verifier NTT cache: ntt_cache={verifier_ntt_cache_bytes} bytes");
+}
+
 pub(crate) fn report_crt_profile(label: &str, profile: PreparedCrtNttProfile) {
     tracing::info!(
         label,

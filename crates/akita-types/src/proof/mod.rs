@@ -19,7 +19,6 @@ pub mod stage1;
 pub mod terminal_witness;
 
 mod containers;
-mod direct_witness;
 mod hints;
 mod levels;
 mod shapes;
@@ -44,9 +43,6 @@ pub use commitment::{
 };
 pub use containers::{
     append_flat_coefficients, DigitBlockIter, DigitBlocks, FlatCoeffSerializer, RingVec, RingView,
-};
-pub use direct_witness::{
-    segment_typed_witness_shape_from_groups, CleartextWitnessProof, CleartextWitnessShape,
 };
 pub use hints::AkitaCommitmentHint;
 pub use levels::{
@@ -95,12 +91,11 @@ pub use tail_segments::{
     decode_terminal_z_golomb_payload_with_cap, emit_witness_e_planes, emit_witness_r_planes,
     emit_witness_t_planes, emit_witness_z_planes, raw_field_segment_bytes,
     segment_typed_witness_upper_bound_bytes, segment_typed_z_payload_bytes,
-    tail_golomb_rice_z_params, tail_segment_layout_from_groups,
-    tail_segment_multiplicities_from_layout, tail_segment_multiplicities_from_layout_for_params,
-    terminal_golomb_grind_tail_t_vectors, validate_segment_typed_z_payload,
-    z_fold_decoded_from_segment, z_fold_encoding_stats_from_segment, SegmentTypedWitness,
-    SegmentTypedWitnessGroupParts, SegmentTypedWitnessShape, TailSegmentGroupLayout,
-    TailSegmentLayout,
+    tail_golomb_rice_z_params, tail_segment_multiplicities_from_layout,
+    tail_segment_multiplicities_from_layout_for_params, terminal_golomb_grind_tail_t_vectors,
+    validate_segment_typed_z_payload, z_fold_decoded_from_segment,
+    z_fold_encoding_stats_from_segment, SegmentTypedWitness, SegmentTypedWitnessGroupParts,
+    SegmentTypedWitnessShape, TailSegmentGroupLayout, TailSegmentLayout,
 };
 pub use terminal_witness::TerminalWitnessTranscriptParts;
 

@@ -20,6 +20,7 @@
 
 use akita_config::proof_optimized::fp128;
 use akita_config::CommitmentConfig;
+use akita_field::AkitaError;
 use akita_recursion_glue::AkitaJoltInputs;
 use akita_transcript::AkitaTranscript;
 use akita_types::BasisMode;
@@ -30,6 +31,13 @@ use jolt::{end_cycle_tracking, start_cycle_tracking};
 type F = fp128::Field;
 const D: usize = 64;
 type Cfg = fp128::D64OneHot;
+
+fn verification_status(result: Result<(), AkitaError>) -> u32 {
+    match result {
+        Ok(()) => 0,
+        Err(_) => 2,
+    }
+}
 
 const _: () = {
     // Hard-fail at compile time if the guest monomorphization drifts away from
@@ -111,8 +119,15 @@ fn akita_verify(input: &[u8]) -> u32 {
     );
     end_cycle_tracking("akita_verify");
 
-    match result {
-        Ok(()) => 0,
-        Err(err) => panic!("recursive verifier rejected proof: {err:?}"),
+    verification_status(result)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn verifier_rejection_returns_documented_status() {
+        assert_eq!(verification_status(Err(AkitaError::InvalidProof)), 2);
     }
 }

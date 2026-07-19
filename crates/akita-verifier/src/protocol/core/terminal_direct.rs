@@ -8,8 +8,8 @@ use akita_field::{
 };
 use akita_types::{
     decode_terminal_z_golomb_payload_with_cap, dispatch_for_field,
-    recover_ring_subfield_inner_product, AkitaVerifierSetup, CleartextWitnessProof, FpExtEncoding,
-    LevelParams, PreparedOpeningPoint, RelationMatrixRowLayout, RingRelationInstance,
+    recover_ring_subfield_inner_product, AkitaVerifierSetup, FpExtEncoding, LevelParams,
+    PreparedOpeningPoint, RelationMatrixRowLayout, RingRelationInstance, SegmentTypedWitness,
 };
 
 fn sparse_challenge_ring<F, const D: usize>(
@@ -139,7 +139,7 @@ pub(super) fn verify_terminal_ring_relations<F>(
     setup: &AkitaVerifierSetup<F>,
     relation: &RingRelationInstance<F>,
     lp: &LevelParams,
-    final_witness: &CleartextWitnessProof<F>,
+    final_witness: &SegmentTypedWitness<F>,
 ) -> Result<(), AkitaError>
 where
     F: FieldCore + CanonicalField + FromPrimitiveInt + HalvingField,
@@ -372,7 +372,7 @@ where
 pub(super) fn verify_terminal_trace<F, E>(
     relation: &RingRelationInstance<F>,
     lp: &LevelParams,
-    final_witness: &CleartextWitnessProof<F>,
+    final_witness: &SegmentTypedWitness<F>,
     prepared_points: &[PreparedOpeningPoint<F, E>],
     row_coefficients: &[E],
     claim_scales: Option<&[E]>,
@@ -636,7 +636,7 @@ mod tests {
         AkitaVerifierSetup<F>,
         RingRelationInstance<F>,
         LevelParams,
-        CleartextWitnessProof<F>,
+        SegmentTypedWitness<F>,
         [TerminalGroupFixture<D>; 2],
     ) {
         let dims = CommitmentRingDims {

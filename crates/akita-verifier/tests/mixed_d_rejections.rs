@@ -7,8 +7,9 @@ use akita_field::AkitaError;
 use akita_field::Prime128OffsetA7F7 as F;
 use akita_types::{
     validate_role_dims, validate_role_dispatch, validate_schedule_ring_dims, AkitaSetupSeed,
-    CleartextWitnessShape, CommitmentRingDims, DirectStep, FoldStep, LevelParams, RingRole,
-    RingView, Schedule, SisModulusProfileId, TailSegmentGroupLayout, TailSegmentLayout,
+    CommitmentRingDims, FoldStep, LevelParams, RingRole, RingView, Schedule,
+    SegmentTypedWitnessShape, SisModulusProfileId, TailSegmentGroupLayout, TailSegmentLayout,
+    TerminalWitnessPlan,
 };
 
 const NUM_VARS: usize = 16;
@@ -72,9 +73,9 @@ fn ring_dim_plan_rejects_fold_dim_above_gen_ring_dim() {
             next_w_len: 128,
             level_bytes: 0,
         }],
-        terminal: DirectStep {
+        terminal: TerminalWitnessPlan {
             current_w_len: 64,
-            witness_shape: CleartextWitnessShape {
+            witness_shape: SegmentTypedWitnessShape {
                 layout: TailSegmentLayout {
                     ring_dimension: 64,
                     log_basis: 3,
@@ -87,7 +88,7 @@ fn ring_dim_plan_rejects_fold_dim_above_gen_ring_dim() {
                     logical_num_elems: 64,
                 },
             },
-            direct_bytes: 0,
+            terminal_bytes: 0,
         },
         total_bytes: 0,
     };

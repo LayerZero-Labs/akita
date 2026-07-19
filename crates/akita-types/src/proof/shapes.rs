@@ -78,7 +78,7 @@ pub struct TerminalLevelProofShape {
     /// Shape of the optional extension-opening reduction payload.
     pub extension_opening_reduction: Option<ExtensionOpeningReductionShape>,
     /// Shape of the terminal cleartext witness.
-    pub final_witness: CleartextWitnessShape,
+    pub final_witness: SegmentTypedWitnessShape,
 }
 
 /// Shape-selected outgoing witness binding for an intermediate fold.
@@ -473,7 +473,7 @@ impl AkitaDeserialize for TerminalLevelProofShape {
             None
         };
         let final_witness =
-            CleartextWitnessShape::deserialize_with_mode(&mut reader, compress, validate, &())?;
+            SegmentTypedWitnessShape::deserialize_with_mode(&mut reader, compress, validate, &())?;
         let out = Self {
             extension_opening_reduction,
             final_witness,

@@ -704,6 +704,8 @@ def extract_summary(
             summary["setup_ring_elements"] = int(kvs["setup_ring_elements"])
             summary["setup_vector_bytes"] = int(kvs["setup_vector_bytes"])
             summary["setup_ntt_cache_bytes"] = int(kvs["setup_ntt_cache_bytes"])
+        elif " INFO verifier NTT cache size" in line and kvs.get("label") == mode:
+            summary["verifier_ntt_cache_bytes"] = int(kvs["verifier_ntt_cache_bytes"])
         elif "CRT NTT profile" in line and kvs.get("label") == mode:
             summary["crt_profile"] = kvs["crt_profile"]
             summary["crt_num_primes"] = int(kvs["crt_num_primes"])
@@ -1001,6 +1003,7 @@ SUMMARY_CSV_COLUMNS = (
     "setup_ring_elements",
     "setup_vector_bytes",
     "setup_ntt_cache_bytes",
+    "verifier_ntt_cache_bytes",
     "crt_profile",
     "crt_num_primes",
     "crt_prime_modulus_bits",
@@ -1429,6 +1432,7 @@ REPORT_METRICS = [
     Metric("setup_ring_elements", "Setup ring elements", "ring elements", fmt_count),
     Metric("setup_vector_bytes", "Setup vector", "MiB", fmt_mib_from_bytes),
     Metric("setup_ntt_cache_bytes", "Prepared NTT cache", "MiB", fmt_mib_from_bytes),
+    Metric("verifier_ntt_cache_bytes", "Verifier NTT cache", "MiB", fmt_mib_from_bytes),
     Metric("proof_size_bytes", "Proof size", "bytes", fmt_bytes),
     Metric("akita_fold_bytes", "Recursive fold payload", "bytes", fmt_bytes),
     Metric("tail_bytes", "Final-witness tail", "bytes", fmt_bytes),
@@ -1607,6 +1611,7 @@ def render_matrix_summary(
         "Setup and preparation",
         "Setup vector size",
         "Prepared NTT cache size",
+        "Verifier NTT cache size",
         "Commit",
         "Prove",
         "Verify",
@@ -1637,6 +1642,14 @@ def render_matrix_summary(
                 current,
                 baseline,
                 "setup_ntt_cache_bytes",
+                fmt_mib_from_bytes,
+                " MiB",
+                main_baseline is not None,
+            ),
+            optional_value_with_main_delta(
+                current,
+                baseline,
+                "verifier_ntt_cache_bytes",
                 fmt_mib_from_bytes,
                 " MiB",
                 main_baseline is not None,

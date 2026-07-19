@@ -2,6 +2,7 @@ use crate::parallel::ProfileThreadPools;
 use crate::report::{
     emit_proof_tail_report, emit_runtime_schedule_summary, observed_stage3_setup_product_bytes,
     print_batched_proof_summary, report_crt_profile, report_setup_sizes, report_timing,
+    report_verifier_ntt_cache_size,
 };
 use akita_config::{CommitmentConfig, ConservativeCommitmentConfig, RecursiveCommitmentConfig};
 use akita_field::unreduced::{HasOptimizedFold, HasUnreducedOps, HasWide, ReduceTo};
@@ -546,6 +547,12 @@ fn run_prove<
         }
     });
     report_timing(label, "verify OK", t0.elapsed().as_secs_f64());
+    report_verifier_ntt_cache_size(
+        label,
+        verifier_setup
+            .verifier_ntt_cache_bytes()
+            .expect("verifier NTT cache metrics"),
+    );
 }
 
 pub(crate) fn run_dense_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
@@ -923,6 +930,12 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
         }
     });
     report_timing(label, "verify OK", t0.elapsed().as_secs_f64());
+    report_verifier_ntt_cache_size(
+        label,
+        verifier_setup
+            .verifier_ntt_cache_bytes()
+            .expect("verifier NTT cache metrics"),
+    );
 }
 
 pub(crate) fn run_recursive_multi_group_onehot<FF, const D: usize, Cfg>(
@@ -1217,4 +1230,10 @@ pub(crate) fn run_recursive_multi_group_onehot<FF, const D: usize, Cfg>(
         }
     });
     report_timing(label, "verify OK", t_verify.elapsed().as_secs_f64());
+    report_verifier_ntt_cache_size(
+        label,
+        verifier_setup
+            .verifier_ntt_cache_bytes()
+            .expect("verifier NTT cache metrics"),
+    );
 }

@@ -69,8 +69,8 @@ mod tests {
     use akita_challenges::SparseChallengeConfig;
     use akita_field::{ExtField, Fp32, FpExt4};
     use akita_types::{
-        AkitaScheduleLookupKey, CleartextWitnessShape, DirectStep, FoldStep, LevelParams,
-        LevelParamsLike, PolynomialGroupLayout, SetupMatrixEnvelope, SisModulusProfileId,
+        AkitaScheduleLookupKey, FoldStep, LevelParams, LevelParamsLike, PolynomialGroupLayout,
+        SegmentTypedWitnessShape, SetupMatrixEnvelope, SisModulusProfileId, TerminalWitnessPlan,
     };
 
     type Base = Fp32<251>;
@@ -91,8 +91,8 @@ mod tests {
         ))
     }
 
-    fn terminal_shape(params: &LevelParams) -> Result<CleartextWitnessShape, AkitaError> {
-        akita_types::segment_typed_witness_shape_from_groups(
+    fn terminal_shape(params: &LevelParams) -> Result<SegmentTypedWitnessShape, AkitaError> {
+        akita_types::SegmentTypedWitnessShape::from_groups(
             params,
             32,
             [(params as &dyn LevelParamsLike, 1, 1, 1)],
@@ -143,10 +143,10 @@ mod tests {
                     next_w_len: terminal_w_len,
                     level_bytes: 0,
                 }],
-                terminal: DirectStep {
+                terminal: TerminalWitnessPlan {
                     current_w_len: terminal_w_len,
                     witness_shape,
-                    direct_bytes: 0,
+                    terminal_bytes: 0,
                 },
                 total_bytes: 0,
             })
@@ -229,10 +229,10 @@ mod tests {
             let witness_shape = terminal_shape(&params)?;
             Ok(Schedule {
                 folds: vec![],
-                terminal: DirectStep {
+                terminal: TerminalWitnessPlan {
                     current_w_len: witness_shape.logical_num_elems(),
                     witness_shape,
-                    direct_bytes: 0,
+                    terminal_bytes: 0,
                 },
                 total_bytes: 0,
             })

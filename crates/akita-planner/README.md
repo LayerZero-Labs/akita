@@ -119,7 +119,7 @@ recursion, and the cap keeps verifier-reachable fallback work bounded.
 The planner uses the same byte formulas that runtime schedule expansion uses:
 
 - `level_proof_bytes` for a fold level.
-- `direct_witness_bytes` for a direct-send step.
+- `segment_typed_witness_bytes` for the terminal witness.
 - `extension_opening_reduction_proof_bytes` for extension-field opening reductions.
 - `w_ring_element_count_with_counts_for_layout_bits` to compute witness sizes
   under the schedule-selected row layout.
@@ -128,7 +128,7 @@ The planner uses the same byte formulas that runtime schedule expansion uses:
 ordinary recursive edges and zero outgoing-commitment bytes for the
 `TerminalInnerState` handoff. Terminal proof bodies contain only the grind
 nonce plus any extension-opening reduction; their clear witness is priced by
-`direct_witness_bytes`.
+`segment_typed_witness_bytes`.
 
 This keeps generated-table expansion and DP fallback aligned. A table hit and a table miss are two ways to produce the same runtime `Schedule` shape.
 

@@ -10,10 +10,10 @@
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::{AkitaError, Prime128OffsetA7F7};
 use akita_types::{
-    direct_witness_bytes, extension_opening_reduction_level_bytes, level_proof_bytes,
-    segment_typed_witness_shape_from_groups, AkitaScheduleInputs, AkitaScheduleLookupKey,
-    DirectStep, FoldStep, LevelParams, PolynomialGroupLayout, PrecommittedLevelParams,
-    RelationMatrixRowLayout, Schedule, SetupContributionMode,
+    extension_opening_reduction_level_bytes, level_proof_bytes, segment_typed_witness_bytes,
+    AkitaScheduleInputs, AkitaScheduleLookupKey, FoldStep, LevelParams, PolynomialGroupLayout,
+    PrecommittedLevelParams, RelationMatrixRowLayout, Schedule, SegmentTypedWitnessShape,
+    SetupContributionMode, TerminalWitnessPlan,
 };
 
 use crate::generated::{
@@ -56,8 +56,7 @@ pub(crate) fn walk_generated_schedule_entry(
         PolynomialGroupLayout::new(key.final_group.num_vars(), key.num_polynomials()?);
     let mut folds = Vec::with_capacity(entry.folds.len());
     let mut current_w_len = expected_root_w_len;
-    let mut terminal_witness_field_len = None;
-    let mut last_fold_lp = None;
+    let mut terminal_witness_shape = None;
     let mut total_bytes = 0usize;
 
     for (fold_level, fold) in entry.folds.iter().enumerate() {
@@ -137,13 +136,18 @@ pub(crate) fn walk_generated_schedule_entry(
             next_lp.witness_chunk = policy.witness_chunk_for_level(fold_level + 1);
             (len, Some(next_lp), RelationMatrixRowLayout::WithDBlock)
         } else {
-            let shape = segment_typed_witness_shape_from_groups(
+            if lp.witness_chunk.num_chunks > 1 {
+                return Err(AkitaError::InvalidSetup(
+                    "terminal witness does not support a multi-chunk last fold level".to_string(),
+                ));
+            }
+            let shape = SegmentTypedWitnessShape::from_groups(
                 &lp,
                 field_bits,
                 [(&lp as &dyn akita_types::LevelParamsLike, 1, 1, 1)],
             )?;
             let len = shape.logical_num_elems();
-            terminal_witness_field_len = Some(len);
+            terminal_witness_shape = Some(shape);
             (len, None, RelationMatrixRowLayout::WithoutCommitmentBlocks)
         };
 
@@ -161,7 +165,7 @@ pub(crate) fn walk_generated_schedule_entry(
             } else {
                 Some(akita_types::NextWitnessBindingPolicy::OuterCommitment)
             },
-        )
+        )?
         .checked_add(extension_opening_reduction_level_bytes(
             challenge_field_bits,
             policy.claim_ext_degree,
@@ -175,7 +179,6 @@ pub(crate) fn walk_generated_schedule_entry(
         total_bytes = total_bytes.checked_add(level_bytes).ok_or_else(|| {
             AkitaError::InvalidSetup("generated proof byte total overflow".to_string())
         })?;
-        last_fold_lp = Some(lp.clone());
         folds.push(FoldStep {
             params: lp,
             current_w_len,
@@ -185,29 +188,16 @@ pub(crate) fn walk_generated_schedule_entry(
         current_w_len = next_w_len;
     }
 
-    let direct_current_w_len = terminal_witness_field_len.ok_or_else(|| {
-        AkitaError::InvalidSetup("terminal direct step missing predecessor fold".to_string())
+    let witness_shape = terminal_witness_shape.ok_or_else(|| {
+        AkitaError::InvalidSetup("terminal witness missing predecessor fold".to_string())
     })?;
-    let terminal_lp = last_fold_lp.as_ref().ok_or_else(|| {
-        AkitaError::InvalidSetup("terminal direct step missing predecessor fold params".to_string())
-    })?;
-    if terminal_lp.witness_chunk.num_chunks > 1 {
+    if current_w_len == 0 {
         return Err(AkitaError::InvalidSetup(
-            "terminal-direct witness does not support a multi-chunk last fold level".to_string(),
+            "generated terminal witness has zero length".to_string(),
         ));
     }
-    let witness_shape = segment_typed_witness_shape_from_groups(
-        terminal_lp,
-        field_bits,
-        [(terminal_lp as &dyn akita_types::LevelParamsLike, 1, 1, 1)],
-    )?;
-    if direct_current_w_len == 0 {
-        return Err(AkitaError::InvalidSetup(
-            "generated direct step has zero witness length".to_string(),
-        ));
-    }
-    let direct_bytes = direct_witness_bytes(field_bits, &witness_shape);
-    total_bytes = total_bytes.checked_add(direct_bytes).ok_or_else(|| {
+    let terminal_bytes = segment_typed_witness_bytes(field_bits, &witness_shape);
+    total_bytes = total_bytes.checked_add(terminal_bytes).ok_or_else(|| {
         AkitaError::InvalidSetup("generated proof byte total overflow".to_string())
     })?;
     if total_bytes == 0 {
@@ -217,10 +207,10 @@ pub(crate) fn walk_generated_schedule_entry(
     }
     let schedule = Schedule {
         folds,
-        terminal: DirectStep {
-            current_w_len: direct_current_w_len,
+        terminal: TerminalWitnessPlan {
+            current_w_len,
             witness_shape,
-            direct_bytes,
+            terminal_bytes,
         },
         total_bytes,
     };

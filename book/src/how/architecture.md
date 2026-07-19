@@ -69,7 +69,7 @@ Every function on the prove/verify path has one of two roles:
 
 The bridge is the *operation adapter*: a D-free function that extracts the
 ring dimension of the specific data one operation touches and enters the
-kernel through `akita_types::dispatch_ring_dim_result!` exactly once,
+kernel through `akita_types::dispatch_for_field!` exactly once,
 returning D-free storage. Dispatch is per operation — never per level or per
 proof — so that per-role ring dimensions inside one fold (`d_a`/`d_b`/`d_d`,
 see `specs/mixed-row-ring-dimensions.md`) reduce to feeding different

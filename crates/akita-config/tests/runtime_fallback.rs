@@ -44,7 +44,7 @@ fn assert_schedule_eq(label: &str, lhs: &akita_types::Schedule, rhs: &akita_type
         "{label}: terminal witness shapes diverge"
     );
     assert_eq!(
-        lhs.terminal.direct_bytes, rhs.terminal.direct_bytes,
+        lhs.terminal.terminal_bytes, rhs.terminal.terminal_bytes,
         "{label}: terminal byte counts diverge"
     );
 }

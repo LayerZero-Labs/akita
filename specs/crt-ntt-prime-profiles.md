@@ -228,7 +228,7 @@ larger ring degree.
     the same `512 | (p - 1)`; the reused i32 primes already satisfy the stronger
     `2048 | (p - 1)`.
     `D = 512` and `D = 1024` are removed from `SUPPORTED_RING_DIMS`, the
-    `dispatch_ring_dim` / `dispatch_ring_dim_result` arms, the fp16/fp32
+    `dispatch_for_field!` arms, the fp16/fp32
     `D512Full` / `D512OneHot` public config presets, and the generated
     family/table lists; no production path may instantiate them.
     The `D512*` config preset names are removed rather than left as dead public
@@ -378,7 +378,7 @@ Criteria sections above, with #134 providing the chunking implementation.
       There is no `D`-keyed width fallback (no "16-bit field with `D > 64` uses
       Q64").
 - [ ] `D = 512` / `D = 1024` are removed from `SUPPORTED_RING_DIMS`, the
-      `dispatch_ring_dim` / `dispatch_ring_dim_result` macro arms, the fp16/fp32
+      `dispatch_for_field!` macro arms, the fp16/fp32
       `D512Full` / `D512OneHot` public config presets, `generated_families`, and
       any generated table/drift-guard list, with `cargo test -q` and the drift
       guard green.

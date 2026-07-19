@@ -118,6 +118,15 @@ impl<F: FieldCore> AkitaVerifierSetup<F> {
             verifier_ntt: Arc::new(crate::ntt_cache::VerifierNttCache::default()),
         }
     }
+
+    /// In-memory byte footprint of verifier NTT prefixes materialized so far.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the cache lock was poisoned.
+    pub fn verifier_ntt_cache_bytes(&self) -> Result<usize, AkitaError> {
+        self.verifier_ntt.cache_bytes()
+    }
 }
 
 impl<F: FieldCore + CanonicalField> AkitaVerifierSetup<F> {

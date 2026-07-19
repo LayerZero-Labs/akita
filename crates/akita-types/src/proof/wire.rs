@@ -355,7 +355,7 @@ impl<
                 validate,
                 ctx.extension_opening_reduction.as_ref(),
             )?;
-        let final_witness = CleartextWitnessProof::deserialize_with_mode(
+        let final_witness = SegmentTypedWitness::deserialize_with_mode(
             &mut reader,
             compress,
             validate,
