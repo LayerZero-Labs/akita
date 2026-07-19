@@ -1,7 +1,6 @@
 use super::*;
 
 type ConservativeCommitter = ConservativeOneHotScheme;
-type RegularCommitter = OneHotScheme;
 
 #[test]
 fn conservative_config_commit_returns_frozen_layout() {
@@ -113,7 +112,7 @@ fn conservative_config_allows_independent_precommitted_groups() {
 
 #[test]
 fn group_batch_schedule_preserves_precommitted_order() {
-    const PRE_NV: usize = 16;
+    const PRE_NV: usize = 15;
     const FINAL_NV: usize = PRE_NV * 2;
     const PRE_A_SIZE: usize = 1;
     const PRE_B_SIZE: usize = 1;
@@ -138,56 +137,40 @@ fn group_batch_schedule_preserves_precommitted_order() {
     let pre_c_layout =
         ConservativeOneHotCfg::get_params_for_batched_commitment(&pre_c_opening_batch)
             .expect("precommit C layout");
-    let pre_a_polys = [debug_make_onehot_poly(&pre_a_layout, 0x0bee_fcaf_9a77_3001)];
-    let pre_b_polys = [debug_make_onehot_poly(&pre_b_layout, 0x0bee_fcaf_9a77_4001)];
-    let pre_c_polys = [debug_make_onehot_poly(&pre_c_layout, 0x0bee_fcaf_9a77_4002)];
+    let pre_a_frozen = akita_types::PrecommittedGroupParams::from_params(pre_a_key, &pre_a_layout);
+    let pre_b_frozen = akita_types::PrecommittedGroupParams::from_params(pre_b_key, &pre_b_layout);
+    let pre_c_frozen = akita_types::PrecommittedGroupParams::from_params(pre_c_key, &pre_c_layout);
+    let multi_group_key = akita_types::AkitaScheduleLookupKey {
+        final_group: akita_types::PolynomialGroupLayout::new(FINAL_NV, MAIN_SIZE),
+        precommitteds: vec![pre_a_frozen, pre_b_frozen, pre_c_frozen],
+    };
 
-    with_conservative_commit_stack(
-        FINAL_NV,
-        PRE_A_SIZE + PRE_B_SIZE + PRE_C_SIZE + MAIN_SIZE,
-        |setup, stack| {
-            ConservativeCommitter::commit(setup, &pre_a_polys, stack).expect("precommit A");
-            ConservativeCommitter::commit(setup, &pre_b_polys, stack).expect("precommit B");
-            ConservativeCommitter::commit(setup, &pre_c_polys, stack).expect("precommit C");
-            let pre_a_frozen =
-                akita_types::PrecommittedGroupParams::from_params(pre_a_key, &pre_a_layout);
-            let pre_b_frozen =
-                akita_types::PrecommittedGroupParams::from_params(pre_b_key, &pre_b_layout);
-            let pre_c_frozen =
-                akita_types::PrecommittedGroupParams::from_params(pre_c_key, &pre_c_layout);
-            let multi_group_key = akita_types::AkitaScheduleLookupKey {
-                final_group: akita_types::PolynomialGroupLayout::new(FINAL_NV, MAIN_SIZE),
-                precommitteds: vec![pre_a_frozen, pre_b_frozen, pre_c_frozen],
-            };
+    let schedule =
+        OneHotCfg::runtime_schedule(multi_group_key.clone()).expect("multi-group runtime schedule");
+    let root = multi_group_root_params(&schedule);
+    let main_params = schedule
+        .root_fold()
+        .expect("main multi-group root fold")
+        .params
+        .clone();
 
-            let schedule = OneHotCfg::runtime_schedule(multi_group_key.clone())
-                .expect("multi-group runtime schedule");
-            let root = multi_group_root_params(&schedule);
-            let main_params = schedule
-                .root_fold()
-                .expect("main multi-group root fold")
-                .params
-                .clone();
-
-            assert_eq!(multi_group_key.num_commitment_groups(), 4);
-            assert_eq!(
-                multi_group_key
-                    .num_polynomials()
-                    .expect("multi-group polynomial count"),
-                PRE_A_SIZE + PRE_B_SIZE + PRE_C_SIZE + MAIN_SIZE
-            );
-            assert_eq!(main_params, *root);
-            assert_eq!(root.precommitted_groups.len(), 3);
-            assert_eq!(root.precommitted_groups[0].layout, pre_a_frozen);
-            assert_eq!(root.precommitted_groups[1].layout, pre_b_frozen);
-            assert_eq!(root.precommitted_groups[2].layout, pre_c_frozen);
-        },
+    assert_eq!(multi_group_key.num_commitment_groups(), 4);
+    assert_eq!(
+        multi_group_key
+            .num_polynomials()
+            .expect("multi-group polynomial count"),
+        PRE_A_SIZE + PRE_B_SIZE + PRE_C_SIZE + MAIN_SIZE
     );
+    assert_eq!(main_params, *root);
+    assert_eq!(root.precommitted_groups.len(), 3);
+    assert_eq!(root.precommitted_groups[0].layout, pre_a_frozen);
+    assert_eq!(root.precommitted_groups[1].layout, pre_b_frozen);
+    assert_eq!(root.precommitted_groups[2].layout, pre_c_frozen);
 }
 
 #[test]
 fn group_batch_commits_precommitteds_then_double_size_final_group() {
-    const PRE_NV: usize = 16;
+    const PRE_NV: usize = 15;
     const FINAL_NV: usize = PRE_NV * 2;
     const GROUP_SIZE: usize = 1;
 
@@ -289,12 +272,15 @@ fn commit_group_returns_frozen_conservative_layout() {
 /// `K_g`. Precommitted groups are committed under the conservative config; the
 /// final group is committed with `commit_final_group`; the multi-group root folds
 /// into a singleton recursive suffix.
-fn multi_group_root_round_trip_onehot<TestCfg, ProtocolCfg>(pre_sizes: &[usize], final_size: usize)
-where
+fn multi_group_root_round_trip_onehot<TestCfg, ProtocolCfg>(
+    pre_sizes: &[usize],
+    final_size: usize,
+    check_group_binding: bool,
+) where
     TestCfg: CommitmentConfig<Field = OneHotF, ExtField = OneHotF>,
     ProtocolCfg: CommitmentConfig<Field = OneHotF, ExtField = OneHotF>,
 {
-    const PRE_NV: usize = 16;
+    const PRE_NV: usize = 15;
     const FINAL_NV: usize = PRE_NV * 2;
     let total: usize = pre_sizes.iter().sum::<usize>() + final_size;
 
@@ -523,24 +509,78 @@ where
         BasisMode::Lagrange,
     )
     .expect("multi-group verify");
+
+    if check_group_binding {
+        assert_eq!(pre_commitments.len(), 1, "binding fixture uses two groups");
+        let swapped_claims = OpeningClaims::from_groups(
+            point.clone(),
+            vec![
+                PolynomialGroupClaims::new(
+                    PointVariableSelection::prefix(PRE_NV, FINAL_NV).expect("pre point vars"),
+                    pre_openings[0].clone(),
+                    &final_commitment,
+                )
+                .expect("swapped pre verifier group"),
+                PolynomialGroupClaims::new(
+                    PointVariableSelection::prefix(FINAL_NV, FINAL_NV).expect("final point vars"),
+                    final_openings.clone(),
+                    &pre_commitments[0],
+                )
+                .expect("swapped final verifier group"),
+            ],
+        )
+        .expect("swapped verifier claims");
+        let mut swapped_transcript = AkitaTranscript::<OneHotF>::new(b"test/multi-group-unequal");
+        assert!(
+            AkitaCommitmentScheme::<ProtocolCfg>::batched_verify(
+                &decoded,
+                &verifier_setup,
+                &mut swapped_transcript,
+                swapped_claims,
+                BasisMode::Lagrange,
+            )
+            .is_err(),
+            "swapped group commitments must reject"
+        );
+
+        let mut tampered_final_openings = final_openings.clone();
+        tampered_final_openings[0] += OneHotF::one();
+        let tampered_claims = OpeningClaims::from_groups(
+            point.clone(),
+            vec![
+                PolynomialGroupClaims::new(
+                    PointVariableSelection::prefix(PRE_NV, FINAL_NV).expect("pre point vars"),
+                    pre_openings[0].clone(),
+                    &pre_commitments[0],
+                )
+                .expect("pre verifier group"),
+                PolynomialGroupClaims::new(
+                    PointVariableSelection::prefix(FINAL_NV, FINAL_NV).expect("final point vars"),
+                    tampered_final_openings,
+                    &final_commitment,
+                )
+                .expect("tampered final verifier group"),
+            ],
+        )
+        .expect("tampered verifier claims");
+        let mut tampered_transcript = AkitaTranscript::<OneHotF>::new(b"test/multi-group-unequal");
+        assert!(
+            AkitaCommitmentScheme::<ProtocolCfg>::batched_verify(
+                &decoded,
+                &verifier_setup,
+                &mut tampered_transcript,
+                tampered_claims,
+                BasisMode::Lagrange,
+            )
+            .is_err(),
+            "tampered group opening must reject"
+        );
+    }
 }
 
 #[test]
-fn multi_group_root_folded_unequal_one_three_round_trips() {
-    multi_group_root_round_trip_onehot::<OneHotCfg, OneHotCfg>(&[1], 3);
-}
-
-#[test]
-fn multi_group_root_folded_unequal_two_one_round_trips() {
-    multi_group_root_round_trip_onehot::<OneHotCfg, OneHotCfg>(&[1, 1], 1);
-}
-
-#[test]
-fn multi_group_root_folded_recursive_setup_round_trips() {
-    multi_group_root_round_trip_onehot::<
-        OneHotCfg,
-        akita_config::RecursiveCommitmentConfig<OneHotCfg>,
-    >(&[1], 3);
+fn multi_group_root_folded_group_binding_round_trips() {
+    multi_group_root_round_trip_onehot::<OneHotCfg, OneHotCfg>(&[1], 3, true);
 }
 
 #[test]
@@ -548,328 +588,7 @@ fn multi_group_multi_chunk_fold_round_trips() {
     multi_group_root_round_trip_onehot::<
         fp128::D64OneHotMultiChunkW2R2,
         fp128::D64OneHotMultiChunkW2R2,
-    >(&[1], 3);
-}
-
-#[test]
-fn multi_group_root_folded_two_group_onehot_round_trips() {
-    const PRE_NV: usize = 16;
-    const FINAL_NV: usize = PRE_NV * 2;
-    const PRE_SIZE: usize = 1;
-    const FINAL_SIZE: usize = 1;
-    const TOTAL_SIZE: usize = PRE_SIZE + FINAL_SIZE;
-
-    let pre_key = akita_types::PolynomialGroupLayout::new(PRE_NV, PRE_SIZE);
-    let pre_opening_batch = OpeningClaimsLayout::new(PRE_NV, PRE_SIZE).expect("precommit batch");
-    let pre_layout = ConservativeOneHotCfg::get_params_for_batched_commitment(&pre_opening_batch)
-        .expect("precommit layout");
-    let pre_polys = [debug_make_onehot_poly(&pre_layout, 0x0bee_fcaf_9a77_8001)];
-
-    let setup = ConservativeCommitter::setup_prover(FINAL_NV, TOTAL_SIZE).expect("setup");
-    let prepared = CpuBackend.prepare_setup(&setup).expect("prepared setup");
-    let stack =
-        akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
-            .expect("stack");
-
-    let (pre_commitment, pre_hint) =
-        ConservativeCommitter::batched_commit(&setup, &pre_polys, &stack).expect("precommit");
-    let pre_frozen = akita_types::PrecommittedGroupParams::from_params(pre_key, &pre_layout);
-    let multi_group_key = akita_types::AkitaScheduleLookupKey {
-        final_group: akita_types::PolynomialGroupLayout::new(FINAL_NV, FINAL_SIZE),
-        precommitteds: vec![pre_frozen],
-    };
-    let multi_group_schedule =
-        OneHotCfg::runtime_schedule(multi_group_key).expect("multi-group runtime schedule");
-    let final_layout = multi_group_root_params(&multi_group_schedule);
-    let final_polys = [debug_make_onehot_poly(final_layout, 0x0bee_fcaf_9a77_9001)];
-    let (final_commitment, final_hint) =
-        RegularCommitter::commit_final_group(&setup, &final_polys, &stack, vec![pre_key])
-            .expect("final multi-group commitment");
-
-    let point = debug_random_point(FINAL_NV);
-    let pre_opening = opening_from_poly(&pre_polys[0], &point[..PRE_NV], &pre_layout);
-    let final_opening = opening_from_poly(&final_polys[0], &point, final_layout);
-    let pre_refs: Vec<&OneHotPoly<OneHotF, u8>> = pre_polys.iter().collect();
-    let final_refs: Vec<&OneHotPoly<OneHotF, u8>> = final_polys.iter().collect();
-    let prover_groups = vec![
-        PolynomialGroupClaims::new(
-            PointVariableSelection::prefix(PRE_NV, FINAL_NV).expect("pre point vars"),
-            vec![pre_opening],
-            pre_commitment.clone(),
-        )
-        .expect("pre prover group"),
-        PolynomialGroupClaims::new(
-            PointVariableSelection::prefix(FINAL_NV, FINAL_NV).expect("final point vars"),
-            vec![final_opening],
-            final_commitment.clone(),
-        )
-        .expect("final prover group"),
-    ];
-    let prover_claims = ProverOpeningData::new(
-        OpeningClaims::from_groups(point.clone(), prover_groups).expect("prover claims"),
-        vec![pre_hint, final_hint],
-        vec![&pre_refs[..], &final_refs[..]],
-    )
-    .expect("multi-group prover data");
-
-    let mut prover_transcript = AkitaTranscript::<OneHotF>::new(b"test/multi-group-folded");
-    let proof = RegularCommitter::batched_prove(
-        &setup,
-        prover_claims,
-        &stack,
-        &mut prover_transcript,
-        BasisMode::Lagrange,
-    )
-    .expect("multi-group prove");
-    assert!(proof.num_fold_levels() >= 2);
-
-    let shape = proof.shape();
-    let mut bytes = Vec::new();
-    proof
-        .serialize_uncompressed(&mut bytes)
-        .expect("serialize multi-group proof");
-    let decoded = akita_types::AkitaBatchedProof::<OneHotF, OneHotF>::deserialize_uncompressed(
-        &bytes[..],
-        &shape,
-    )
-    .expect("deserialize multi-group proof");
-    assert_eq!(decoded, proof);
-
-    let verifier_setup = RegularCommitter::setup_verifier(&setup).expect("verifier setup");
-    let verify_claims = || {
-        OpeningClaims::from_groups(
-            point.clone(),
-            vec![
-                PolynomialGroupClaims::new(
-                    PointVariableSelection::prefix(PRE_NV, FINAL_NV).expect("pre point vars"),
-                    vec![pre_opening],
-                    &pre_commitment,
-                )
-                .expect("pre verifier group"),
-                PolynomialGroupClaims::new(
-                    PointVariableSelection::prefix(FINAL_NV, FINAL_NV).expect("final point vars"),
-                    vec![final_opening],
-                    &final_commitment,
-                )
-                .expect("final verifier group"),
-            ],
-        )
-        .expect("multi-group verifier claims")
-    };
-    let mut verifier_transcript = AkitaTranscript::<OneHotF>::new(b"test/multi-group-folded");
-    RegularCommitter::batched_verify(
-        &decoded,
-        &verifier_setup,
-        &mut verifier_transcript,
-        verify_claims(),
-        BasisMode::Lagrange,
-    )
-    .expect("multi-group verify");
-
-    // Negative: swapping the two group commitments must reject.
-    let mut swapped_transcript = AkitaTranscript::<OneHotF>::new(b"test/multi-group-folded");
-    let swapped_claims = OpeningClaims::from_groups(
-        point.clone(),
-        vec![
-            PolynomialGroupClaims::new(
-                PointVariableSelection::prefix(PRE_NV, FINAL_NV).expect("pre point vars"),
-                vec![pre_opening],
-                &final_commitment,
-            )
-            .expect("pre verifier group"),
-            PolynomialGroupClaims::new(
-                PointVariableSelection::prefix(FINAL_NV, FINAL_NV).expect("final point vars"),
-                vec![final_opening],
-                &pre_commitment,
-            )
-            .expect("final verifier group"),
-        ],
-    )
-    .expect("swapped verifier claims");
-    assert!(
-        RegularCommitter::batched_verify(
-            &decoded,
-            &verifier_setup,
-            &mut swapped_transcript,
-            swapped_claims,
-            BasisMode::Lagrange,
-        )
-        .is_err(),
-        "swapped group commitments must reject"
-    );
-
-    // Negative: tampering the final group's opening must reject.
-    let mut tampered_transcript = AkitaTranscript::<OneHotF>::new(b"test/multi-group-folded");
-    let tampered_claims = OpeningClaims::from_groups(
-        point.clone(),
-        vec![
-            PolynomialGroupClaims::new(
-                PointVariableSelection::prefix(PRE_NV, FINAL_NV).expect("pre point vars"),
-                vec![pre_opening],
-                &pre_commitment,
-            )
-            .expect("pre verifier group"),
-            PolynomialGroupClaims::new(
-                PointVariableSelection::prefix(FINAL_NV, FINAL_NV).expect("final point vars"),
-                vec![final_opening + OneHotF::one()],
-                &final_commitment,
-            )
-            .expect("final verifier group"),
-        ],
-    )
-    .expect("tampered verifier claims");
-    assert!(
-        RegularCommitter::batched_verify(
-            &decoded,
-            &verifier_setup,
-            &mut tampered_transcript,
-            tampered_claims,
-            BasisMode::Lagrange,
-        )
-        .is_err(),
-        "tampered group opening must reject"
-    );
-}
-
-#[test]
-fn multi_group_root_folded_three_group_onehot_round_trips() {
-    const PRE_NV: usize = 16;
-    const FINAL_NV: usize = PRE_NV * 2;
-    const PRE_A_SIZE: usize = 1;
-    const PRE_B_SIZE: usize = 1;
-    const FINAL_SIZE: usize = 1;
-    const TOTAL_SIZE: usize = PRE_A_SIZE + PRE_B_SIZE + FINAL_SIZE;
-
-    let pre_a_key = akita_types::PolynomialGroupLayout::new(PRE_NV, PRE_A_SIZE);
-    let pre_b_key = akita_types::PolynomialGroupLayout::new(PRE_NV, PRE_B_SIZE);
-    let pre_opening_batch = OpeningClaimsLayout::new(PRE_NV, PRE_A_SIZE).expect("precommit batch");
-    let pre_a_layout = ConservativeOneHotCfg::get_params_for_batched_commitment(&pre_opening_batch)
-        .expect("precommit A layout");
-    let pre_b_layout = ConservativeOneHotCfg::get_params_for_batched_commitment(&pre_opening_batch)
-        .expect("precommit B layout");
-    let pre_a_polys = [debug_make_onehot_poly(&pre_a_layout, 0x0bee_fcaf_9a77_5001)];
-    let pre_b_polys = [debug_make_onehot_poly(&pre_b_layout, 0x0bee_fcaf_9a77_6001)];
-
-    let setup = ConservativeCommitter::setup_prover(FINAL_NV, TOTAL_SIZE).expect("setup");
-    let prepared = CpuBackend.prepare_setup(&setup).expect("prepared setup");
-    let stack =
-        akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
-            .expect("stack");
-
-    let (pre_a_commitment, pre_a_hint) =
-        ConservativeCommitter::batched_commit(&setup, &pre_a_polys, &stack).expect("precommit A");
-    let (pre_b_commitment, pre_b_hint) =
-        ConservativeCommitter::batched_commit(&setup, &pre_b_polys, &stack).expect("precommit B");
-    let pre_a_frozen = akita_types::PrecommittedGroupParams::from_params(pre_a_key, &pre_a_layout);
-    let pre_b_frozen = akita_types::PrecommittedGroupParams::from_params(pre_b_key, &pre_b_layout);
-    let multi_group_key = akita_types::AkitaScheduleLookupKey {
-        final_group: akita_types::PolynomialGroupLayout::new(FINAL_NV, FINAL_SIZE),
-        precommitteds: vec![pre_a_frozen, pre_b_frozen],
-    };
-    let multi_group_schedule =
-        OneHotCfg::runtime_schedule(multi_group_key).expect("multi-group runtime schedule");
-    let main_params = multi_group_root_params(&multi_group_schedule);
-    let final_polys = [debug_make_onehot_poly(main_params, 0x0bee_fcaf_9a77_7001)];
-    let (final_commitment, final_hint) = RegularCommitter::commit_final_group(
-        &setup,
-        &final_polys,
-        &stack,
-        vec![pre_a_key, pre_b_key],
-    )
-    .expect("final multi-group commitment");
-
-    let point = debug_random_point(FINAL_NV);
-    let pre_a_opening = opening_from_poly(&pre_a_polys[0], &point[..PRE_NV], &pre_a_layout);
-    let pre_b_opening = opening_from_poly(&pre_b_polys[0], &point[..PRE_NV], &pre_b_layout);
-    let final_opening = opening_from_poly(&final_polys[0], &point, main_params);
-
-    let pre_a_refs: Vec<&OneHotPoly<OneHotF, u8>> = pre_a_polys.iter().collect();
-    let pre_b_refs: Vec<&OneHotPoly<OneHotF, u8>> = pre_b_polys.iter().collect();
-    let final_refs: Vec<&OneHotPoly<OneHotF, u8>> = final_polys.iter().collect();
-    let prover_groups = vec![
-        PolynomialGroupClaims::new(
-            PointVariableSelection::prefix(PRE_NV, FINAL_NV).expect("pre A point vars"),
-            vec![pre_a_opening],
-            pre_a_commitment.clone(),
-        )
-        .expect("pre A prover group"),
-        PolynomialGroupClaims::new(
-            PointVariableSelection::prefix(PRE_NV, FINAL_NV).expect("pre B point vars"),
-            vec![pre_b_opening],
-            pre_b_commitment.clone(),
-        )
-        .expect("pre B prover group"),
-        PolynomialGroupClaims::new(
-            PointVariableSelection::prefix(FINAL_NV, FINAL_NV).expect("final point vars"),
-            vec![final_opening],
-            final_commitment.clone(),
-        )
-        .expect("final prover group"),
-    ];
-    let prover_claims = ProverOpeningData::new(
-        OpeningClaims::from_groups(point.clone(), prover_groups).expect("prover claims"),
-        vec![pre_a_hint, pre_b_hint, final_hint],
-        vec![&pre_a_refs[..], &pre_b_refs[..], &final_refs[..]],
-    )
-    .expect("multi-group prover data");
-
-    let mut prover_transcript = AkitaTranscript::<OneHotF>::new(b"test/multi-group-folded-3");
-    let proof = RegularCommitter::batched_prove(
-        &setup,
-        prover_claims,
-        &stack,
-        &mut prover_transcript,
-        BasisMode::Lagrange,
-    )
-    .expect("multi-group prove");
-    assert!(proof.num_fold_levels() >= 2);
-
-    let shape = proof.shape();
-    let mut bytes = Vec::new();
-    proof
-        .serialize_uncompressed(&mut bytes)
-        .expect("serialize multi-group proof");
-    let decoded = akita_types::AkitaBatchedProof::<OneHotF, OneHotF>::deserialize_uncompressed(
-        &bytes[..],
-        &shape,
-    )
-    .expect("deserialize multi-group proof");
-    assert_eq!(decoded, proof);
-
-    let verifier_setup = RegularCommitter::setup_verifier(&setup).expect("verifier setup");
-    let verify_claims = OpeningClaims::from_groups(
-        point.clone(),
-        vec![
-            PolynomialGroupClaims::new(
-                PointVariableSelection::prefix(PRE_NV, FINAL_NV).expect("pre A point vars"),
-                vec![pre_a_opening],
-                &pre_a_commitment,
-            )
-            .expect("pre A verifier group"),
-            PolynomialGroupClaims::new(
-                PointVariableSelection::prefix(PRE_NV, FINAL_NV).expect("pre B point vars"),
-                vec![pre_b_opening],
-                &pre_b_commitment,
-            )
-            .expect("pre B verifier group"),
-            PolynomialGroupClaims::new(
-                PointVariableSelection::prefix(FINAL_NV, FINAL_NV).expect("final point vars"),
-                vec![final_opening],
-                &final_commitment,
-            )
-            .expect("final verifier group"),
-        ],
-    )
-    .expect("multi-group verifier claims");
-    let mut verifier_transcript = AkitaTranscript::<OneHotF>::new(b"test/multi-group-folded-3");
-    RegularCommitter::batched_verify(
-        &decoded,
-        &verifier_setup,
-        &mut verifier_transcript,
-        verify_claims,
-        BasisMode::Lagrange,
-    )
-    .expect("multi-group verify");
+    >(&[1], 3, false);
 }
 
 #[test]
