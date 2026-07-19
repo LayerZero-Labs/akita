@@ -126,10 +126,11 @@ evidence:
    arithmetic. Streaming node evaluation inside the address scan lost decisively and is
    deleted; node-by-class rows remain only as the canonical source for constructing pair
    coefficients and post-challenge lanes. Do not create one module per basis.
-4. Two-round deferral is a measured specialization candidate, not a second engine. Try a
-   bounded full bivariate table only for LB4 and a factorized challenge-staged compact
-   rescan for LB5/LB6, beginning with LB6's eight-lane product stage. No full LB5/LB6
-   bivariate LUT survives.
+4. Two-round deferral is a measured specialization inside the canonical engine. LB4 uses
+   a bounded challenge-dependent quartet-coefficient table for its product and scalar
+   leaf. LB5/LB6 use factorized compact rescans only for multi-lane product substages and
+   retain the one-round scalar leaf. No full bivariate table, LB5/LB6 four-class LUT,
+   runtime selector, or duplicate engine survives.
    The production tree remains the checked arity-2/arity-4 topology; binary-only variants
    add substages and child claims without reducing round coefficients.
 5. Exact-prefix skipping for derived Stage 1 tables always carries their nonzero default
@@ -432,7 +433,7 @@ resolutions are final for this handoff:
 | `RoundWitnessSource::Value` plus `fold(&mut self, r)` | Tries to hide compact-versus-field state from callers | A Rust associated type cannot change from compact `i16` to field `E` after a challenge. Do not add an enum branch to every corner to rescue the abstraction. Stage-owned, statically typed compact and field phases call the same mechanical scan functions. |
 | `is_zero_pair` and implicit-zero suffix skipping | Essential for avoiding padded witness scans | Sound for the digit witness and every linear relation term that contains it, but not for derived range tables. Most quartic leaves and randomized product batches have nonzero values at padded `range_image = 0`. Use `ExactPrefixTable` with a per-lane default and add the exact omitted `GruenSplitEq` suffix mass. |
 | Build compact per-class leaf tuples | Uses the small `RangeImageClass` alphabet and removes repeated Horner evaluation | Adopt node-by-class rows as the source of post-challenge fixed-lane state and ordered class-pair coefficients as the selected round-zero kernel. The measured streaming node-evaluation loser is deleted. Do not describe the current tree as `b/2` quartic leaf tables: it has `b/8` quartic leaves. Materialize only the current 2/4/8-lane substage state, never the full forest. |
-| Extend two-round prefix tables to LB4/LB5/LB6 | Correctly identifies first-round compactness as an optimization lever | Make the one-round streaming kernel the baseline. Four-class key spaces grow from 4,096 at LB4 to 65,536 at LB5 and 1,048,576 at LB6 before field-coefficient payloads. Benchmark a bounded LB4 table; for LB5/LB6 permit only an on-the-fly experiment after the baseline wins. |
+| Extend two-round prefix tables to LB4/LB5/LB6 | Correctly identifies first-round compactness as an optimization lever | The measured cutover keeps ordinary transcript rounds and specializes the canonical state machine: LB4 uses a 4,096-key challenge-dependent quartet table; LB5/LB6 product substages use factorized folded-pair rescans; their scalar leaves remain one-round. No generic prefix wrapper or full LB5/LB6 four-class table remains. |
 | Model mixed dimensions as ragged `WitnessDomain` axes and choose common-prefix versus segment-concatenated binding later | Removes hard-coded x/y names and recognizes the common low dimension | Do not leave the protocol domain unresolved. Bind the existing flat physical address LSB-first. Compile role-local row-family algebra into a semantic flat `RelationWeight`; use `g = min(d_a,d_b,d_d)` only to factor that polynomial internally as `A_g(y) M(x)` plus checked fringes. |
 | Select a per-segment alpha vector in the relation prover | Recognizes that one global `alpha_evals_y` is invalid for mixed role dimensions | A per-pair segment branch is not the semantic contract and does not solve folding or verifier evaluation. Define row-family events at native dimensions, then give dense and common-base providers the same flat-polynomial semantics in the final Stage 1 subproof. |
 | Reserve `binary_support: Option<RestrictedEqWeights>` in a production composition | Anticipates the paper's later fused negative-binary path | Do not add inactive production state or transcript ambiguity. Reserve only an internal additive-provider seam in Stage 2 range-image consistency reduction. A future restricted term must be the single MLE of the pointwise restricted equality table, not the product of two MLEs. |
@@ -1116,11 +1117,12 @@ and materialized rows are emitted once at the owning phase boundary, not updated
 per-pair tracing calls. The same span names own Criterion phase attribution and Perfetto
 inspection; do not add timing wrappers or aliases around them.
 
-Candidate builds for the later lifecycle experiments add only owning phase spans:
+The selected two-round specialization adds only owning phase spans:
 
 ```text
 digit_range_build_folded_pair_table
-digit_range_deferred_second_round
+digit_range_prepare_deferred_second_round
+digit_range_build_second_round_quartet_table  # LB4 only
 digit_range_materialize_after_two_rounds
 ```
 
@@ -1275,12 +1277,69 @@ A degree-4 bivariate table needs up to 25 field coefficients per key. Therefore:
 - select per substage rather than imposing one basis-wide deferral policy;
 - delete any two-round experiment that fails its complete-substage and end-to-end gates.
 
-The expected opportunity is topology-dependent. LB6's eight-lane second product stage is
-the strongest candidate because deferral eliminates the widest `N/2` field state. The LB5
-root is next. LB4 has only two lanes, so its bounded full table and factorized rescan must
-both beat the already-fast one-round ordered-pair path. The LB6 two-lane root is a smaller
-opportunity, and the final one-lane leaf is least likely to repay extra compact scans. Do
-not infer one substage's result for another.
+The opportunity is topology-dependent. LB6's eight-lane second product stage eliminates
+the widest `N/2` field state, while a one-lane scalar leaf saves too little field traffic
+to repay two factorized compact rescans. Do not infer one substage's result for another.
+
+#### Selected two-round kernels
+
+The measured production policy is fixed by topology; there is no public selector,
+planner-visible mode, or dormant alternate engine:
+
+| Topology | Selected initial-round kernel | State materialized after `r_1` |
+|---|---|---:|
+| LB4 two-lane product root | challenge-dependent 4,096-key quartet-coefficient table | two lanes at `N/4` (`N/2` elements) |
+| LB4 scalar range leaf | challenge-dependent 4,096-key quartet-coefficient table | one lane at `N/4` |
+| LB5 four-lane product root | factorized folded-pair rescan | four lanes at `N/4` (`N` elements) |
+| LB5 scalar range leaf | optimized one-round ordered-pair kernel | one lane at `N/2` |
+| LB6 two-lane product root | factorized folded-pair rescan | two lanes at `N/4` (`N/2` elements) |
+| LB6 eight-lane second product | factorized folded-pair rescan | eight lanes at `N/4` (`2N` elements) |
+| LB6 scalar range leaf | optimized one-round ordered-pair kernel | one lane at `N/2` |
+
+LB4 does not use the proposed full bivariate table. It sends ordinary `q_0`, receives
+`r_0`, builds a challenge-dependent univariate `q_1` coefficient table indexed by the
+two compact ordered-pair IDs in each quartet, and aggregates `q_1` by lookup. This keeps
+the affordable `8^4 = 4,096` key space while avoiding nine bivariate coefficients per
+product key. After `r_1`, it rescans the same compact quartet IDs and materializes the
+`N/4` field state directly. LB5/LB6 reject this `classes^4` table and compute `q_1` from
+two rows of their `classes^2 * lanes` folded-pair table instead.
+
+For LB5/LB6, the scalar range-leaf deferral was measured separately and lost: keep that
+leaf on the optimized one-round path. Removing it from the all-substage candidate improved
+every measured LB5/LB6 cell by approximately 9%--26%. This is why the production decision
+is per topology rather than one boolean per basis.
+
+Selection evidence was collected on 2026-07-19 between optimized one-round head
+`b9e44a5095160889f2156d592511a027589cb2fd` and two-round head `7b94cb8b` on the same
+Apple M4, with feature-pruned parallel fp128 release binaries, `RAYON_NUM_THREADS=8`, 20
+Criterion samples, a one-second warm-up, and five-second target measurement. The matrix
+uses the same `2^18` full/three-quarter live prefixes and uniform, zero-heavy, and
+alternating-endpoint digit distributions as the one-round selection. Point-estimate
+improvements were 4.07%--27.72% for LB4 (12.2% geometric mean), 16.06%--33.96% for LB5
+(the 33.96% cell had a visibly wide baseline interval; about 18% excluding it), and
+13.74%--26.22% for LB6 (19.9% geometric mean). The fixed proof/transcript epoch remained
+byte-identical.
+
+| Basis | Live prefix | Digits | Optimized one-round | Selected two-round | Delta |
+|---:|---|---|---:|---:|---:|
+| 16 | full | uniform | 6.906 ms | 4.991 ms | -27.72% |
+| 16 | full | zero-heavy | 7.094 ms | 6.271 ms | -11.60% |
+| 16 | full | alternating endpoints | 7.075 ms | 6.337 ms | -10.43% |
+| 16 | three-quarters | uniform | 5.779 ms | 5.420 ms | -6.21% |
+| 16 | three-quarters | zero-heavy | 5.990 ms | 5.312 ms | -11.32% |
+| 16 | three-quarters | alternating endpoints | 5.890 ms | 5.650 ms | -4.07% |
+| 32 | full | uniform | 9.657 ms | 8.106 ms | -16.06% |
+| 32 | full | zero-heavy | 9.706 ms | 7.987 ms | -17.71% |
+| 32 | full | alternating endpoints | 9.915 ms | 7.923 ms | -20.08% |
+| 32 | three-quarters | uniform | 7.842 ms | 6.452 ms | -17.73% |
+| 32 | three-quarters | zero-heavy | 9.746 ms | 6.437 ms | -33.96% |
+| 32 | three-quarters | alternating endpoints | 8.073 ms | 6.568 ms | -18.64% |
+| 64 | full | uniform | 20.183 ms | 14.892 ms | -26.22% |
+| 64 | full | zero-heavy | 19.701 ms | 14.880 ms | -24.47% |
+| 64 | full | alternating endpoints | 19.314 ms | 15.304 ms | -20.76% |
+| 64 | three-quarters | uniform | 14.859 ms | 12.258 ms | -17.50% |
+| 64 | three-quarters | zero-heavy | 14.713 ms | 12.692 ms | -13.74% |
+| 64 | three-quarters | alternating endpoints | 15.304 ms | 12.889 ms | -15.78% |
 
 ### Selected composable one-round optimizations
 
@@ -1370,10 +1429,11 @@ build's lack of overflow.
 - Use the selected ordered class-pair coefficient round-zero kernel; do not restore
   streaming node evaluation. Retain the selected compact pair indices, blocked
   accumulation, folded-pair table, and direct quadratic product formula.
-- After parity, benchmark the precisely bounded narrow-coefficient/unreduced table.
-- Benchmark both the bounded full-bivariate and challenge-staged factorized two-round
-  candidates because the 4,096-key space is plausible; retain neither unless it beats the
-  one-round ordered-pair path end to end.
+- Retain the measured two-round 4,096-key challenge-dependent quartet-coefficient table
+  for both the product root and scalar range leaf. Do not add the larger full-bivariate
+  representation or the losing factorized LB4 variant beside it.
+- A later narrow-coefficient/unreduced experiment must beat this selected two-round path,
+  not the superseded one-round baseline, and must replace rather than wrap it.
 - Keep the existing two-stage proof topology. A direct degree-8 proof is a separate
   protocol experiment and may not replace this path without independent proof-byte and
   verifier pricing.
@@ -1386,9 +1446,10 @@ build's lack of overflow.
   streaming node-evaluation loser stays deleted. Retain the selected compact pair indices,
   blocked accumulation, folded-pair table, and direct quartic product formula.
 - Do not use the technically-fitting but fragile signed-`i128` coefficient path.
+- Retain challenge-staged factorized two-round deferral for the four-lane product root.
+- Keep the scalar range leaf on the optimized one-round path; its measured two-round
+  factorized variant is deleted.
 - Do not retain a two-round four-class LUT.
-- Benchmark challenge-staged factorized two-round deferral after the LB6 eight-lane
-  experiment establishes the shared lifecycle.
 
 #### LB6 / basis 64
 
@@ -1401,9 +1462,10 @@ build's lack of overflow.
   do not retain the measured node-evaluation alternative.
 - Retain compact pair indices, blocked accumulation, challenge-dependent folded-pair
   materialization, and direct degree-2/degree-4 formulas for every applicable substage.
-- First benchmark challenge-staged two-round deferral on the eight-lane second product.
-  Evaluate the two-lane root and one-lane leaf separately only after that result; their
-  smaller field-state savings do not inherit the eight-lane decision.
+- Retain challenge-staged factorized two-round deferral on both the two-lane root and the
+  eight-lane second product.
+- Keep the scalar range leaf on the optimized one-round path; its measured two-round
+  factorized variant is deleted rather than hidden behind a substage selector.
 - Reject all fixed-width integer parent arithmetic and all full two-round LUTs.
 
 #### LB2/LB3 regression path
@@ -2858,10 +2920,8 @@ PR fills its `PR / status` and evidence cells before it becomes ready for review
 | F1 | `quang/plan-digit-range-pipeline` | B0 | hub, 1-3 | additive foundation + atomic internal cutover | Land this hub, baselines/oracles, canonical range plan/domain, and the single `DigitRangeProver` cutover as one coherent first PR | **implementation active** |
 | C3 | `quang/digit-range-pair-table-candidate` | F1 | 4 | atomic compute cutover | Make the generic streaming prover canonical for LB2-LB6, select ordered class-pair round-zero coefficients, and delete eager forest/padded-table and streaming node-evaluation production paths | selected baseline head `999678ce` |
 | O4 | `quang/digit-range-ordered-pair-optimized` | C3 | 5 | bounded one-round optimization | Install compact pair indices, split-equality accumulation, contract-gated delayed reduction, folded-pair materialization, optimized folds, and direct fixed-degree arithmetic without two-round deferral | **selected head `b9e44a50`; 18/18 cells won** |
-| O4a | `quang/digit-range-03-lb4-kernel` | O4 | 5 | bounded optimization | Compare LB4 bounded/unreduced and two-round candidates against optimized ordered pairs; install only the complete-prover winner | planned |
-| O4b | `quang/digit-range-04-lb5-kernel` | O4a | 5 | bounded optimization | Compare deferred accumulation, folded-pair materialization, and factorized two-round deferral against ordered pairs; install only the winner | planned |
-| O4c | `quang/digit-range-05-lb6-kernel` | O4b | 5 | bounded optimization | Optimize each LB6 lane topology independently, beginning with folded-pair materialization and two-round deferral for the eight-lane stage | planned |
-| I5 | refreshed #309 integration branch | O4c + #309 | 0b | prerequisite integration | Rebase/land #309 over the current stack, resolve #311 terminal conflicts, and ratify the three semantic bases before relation/setup work | planned before C5 |
+| O5 | `quang/digit-range-two-round-deferral` | O4 | 5 | bounded two-round optimization | Retain the measured LB4 quartet-table product/leaf kernels and LB5/LB6 factorized product kernels; keep high-basis scalar leaves one-round; preserve transcript bytes | **selected head `7b94cb8b`; 18/18 point estimates won** |
+| I5 | refreshed #309 integration branch | O5 + #309 | 0b | prerequisite integration | Rebase/land #309 over the current stack, resolve #311 terminal conflicts, and ratify the three semantic bases before relation/setup work | planned before C5 |
 | C5 | `quang/digit-range-06-flat-relations` | I5 | 6 | atomic compute/API cutover | Move current direct relation/setup evaluation to the flat semantic providers; delete public x/y and sentinel paths with unchanged wire | planned |
 | C6 | `quang/digit-range-07-direct-fold-check` | C5 | 7a | atomic direct cutover | Install the semantic direct fold-check container, keep direct bytes unchanged, unschedule recursive offload, and delete legacy recursive Stage 2/3 | planned |
 | C7 | `quang/digit-range-08-recursive-two-stage` | C6 and #310 integration | 7b | atomic protocol cutover | Add the fused recursive Stage 1 leaf and `Separate` Stage 2 reduction across proof/prover/verifier/wire/sizing/schedules | planned |
@@ -2876,8 +2936,9 @@ The original C3 node-evaluation head `91d05aca` remains measurement history and 
 is deleted. C3's ordered-pair child `999678ce` is the direct benchmark baseline for O4;
 the selected one-round implementation base for later work is O4 head `b9e44a50`.
 
-O4a/O4b/O4c are written linearly to minimize hot-file conflicts, but their candidate
-experiments may run as sibling branches from C3. Only the measured winner for each basis
+O5 deliberately combines the three basis decisions because they share one two-round state
+transition and were selected together against O4. Disposable candidates were measured
+outside the retained diff. Only the measured winner for each topology
 is rebased into the listed production order. E8 is optional: if `Batched` does not beat
 `Separate`, record the stop result in this hub and skip directly to M9.
 
@@ -3457,18 +3518,22 @@ challenge-folded pair materialization, optimized folds, and direct quadratic/qua
 arithmetic. Do not reopen the deleted node-evaluation kernel or retain the unoptimized
 ordered-pair baseline as a second engine.
 
-Gate the remaining specializations in order:
+O5 completes the initial-round specialization gate:
 
-1. Benchmark challenge-staged two-round deferral first on LB6's eight-lane second product,
-   then the LB5 root. Do not build a full four-class LUT for either basis.
-2. Benchmark LB4's bounded full-bivariate table and challenge-staged factorized deferral
-   against the optimized one-round ordered-pair path.
-3. Run LB4's bounded narrow/unreduced coefficient-table experiment and any further LB5
-   bounded experiment only where an exact accumulator proof exists.
-4. Evaluate remaining LB6 cache/layout experiments separately for the two-lane root,
-   eight-lane second product, and quartic leaf; do not infer a result across lane widths.
-5. Reconfirm every retained per-substage winner in the complete prover and delete all
-   benchmark-only candidates before the Packet-5 cutover.
+1. LB4 retains its measured challenge-dependent quartet-coefficient table for the
+   two-lane product and scalar leaf. The full-bivariate and factorized LB4 alternatives
+   are not production paths.
+2. LB5 retains factorized two-round deferral for its four-lane product and the optimized
+   one-round scalar leaf.
+3. LB6 retains factorized two-round deferral for its two-lane and eight-lane products and
+   the optimized one-round scalar leaf.
+4. All candidates preserve the ordinary two-message transcript; the fixed protocol epoch
+   is unchanged.
+5. No benchmark selector, `defer_rounds` option, wrapper, or duplicate state engine lands.
+
+A later LB4 narrow/unreduced experiment or further cache/layout work is a new bounded
+optimization against O5. It must replace the selected owner if it wins and leave no
+parallel implementation if it loses.
 
 Every experiment includes construction time, allocations, cache behavior, serial and
 parallel prove time, verifier time, and e2e effect. Delete the losing implementation; do
