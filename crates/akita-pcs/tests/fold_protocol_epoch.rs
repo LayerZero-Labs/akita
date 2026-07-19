@@ -1,7 +1,7 @@
 #![allow(missing_docs)]
 #![cfg(feature = "logging-transcript")]
 
-//! Complete-fold F1 wire-preservation oracle epoch, captured from the literal #311 head
+//! Complete-fold wire-preservation epoch captured from baseline commit
 //! `bc959ef34572aee143ba0114094b0b4212b4e111`.
 
 mod common;
@@ -15,13 +15,13 @@ use common::*;
 
 type Scheme = AkitaCommitmentScheme<OneHotCfg>;
 
-struct Stage1LevelEpoch {
+struct DigitRangeLevelEpoch {
     basis: usize,
     payload_len: usize,
     payload_digest: &'static str,
 }
 
-struct FoldOracleEpoch {
+struct FoldProtocolEpoch {
     name: &'static str,
     num_vars: usize,
     witness_seed: u64,
@@ -32,59 +32,59 @@ struct FoldOracleEpoch {
     event_digest: &'static str,
     terminal_len: usize,
     terminal_digest: &'static str,
-    stage1_levels: &'static [Stage1LevelEpoch],
+    digit_range_levels: &'static [DigitRangeLevelEpoch],
 }
 
-const PR311_FOLD_ORACLE_EPOCH: &[FoldOracleEpoch] = &[
-    FoldOracleEpoch {
+const FOLD_PROTOCOL_EPOCH: &[FoldProtocolEpoch] = &[
+    FoldProtocolEpoch {
         name: "direct-to-terminal",
         num_vars: 12,
-        witness_seed: 0xf1_311_001,
-        transcript_domain: b"akita/f1/direct-to-terminal",
+        witness_seed: 0xd1_613_001,
+        transcript_domain: b"akita/protocol-epoch/direct-to-terminal",
         proof_len: 57_250,
-        proof_digest: "69a998cf92c7af0479803bd23da368a0",
+        proof_digest: "3a155ec04047e9942f2eb1685e778e50",
         event_count: 164,
-        event_digest: "e7082502c6830cdcb549121978752b9c",
+        event_digest: "57046ae9d1a2a2b0a63e1ecd34bc6dea",
         terminal_len: 54_286,
-        terminal_digest: "2fffaaaefe3aa58f9e5a972bfd29750e",
-        stage1_levels: &[Stage1LevelEpoch {
+        terminal_digest: "5a26d324461406760daa77a6e3009858",
+        digit_range_levels: &[DigitRangeLevelEpoch {
             basis: 8,
             payload_len: 1_104,
-            payload_digest: "7e868b3d1026fc2ef97f68fa7782bd6a",
+            payload_digest: "b7886ed83f5fb59999120c97cc9cd7db",
         }],
     },
-    FoldOracleEpoch {
+    FoldProtocolEpoch {
         name: "recursive-nonterminal",
         num_vars: 20,
-        witness_seed: 0xf1_311_002,
-        transcript_domain: b"akita/f1/recursive-nonterminal",
-        proof_len: 74_246,
-        proof_digest: "1ad8feff3b79b8a8cbe5fb2ea458e6f8",
+        witness_seed: 0xd1_613_002,
+        transcript_domain: b"akita/protocol-epoch/recursive-nonterminal",
+        proof_len: 74_231,
+        proof_digest: "7caa4641e201f1be5a6437f5fa3e7535",
         event_count: 677,
-        event_digest: "f6ce402e34096ea9751b09637bcb5835",
-        terminal_len: 57_722,
-        terminal_digest: "8b2dced0ca215f7588e7c88261a3b76f",
-        stage1_levels: &[
-            Stage1LevelEpoch {
+        event_digest: "6fa3d54d166f79a4c4fe7054c5d4ed84",
+        terminal_len: 57_707,
+        terminal_digest: "dd68f68783534944dad6c7a213866d45",
+        digit_range_levels: &[
+            DigitRangeLevelEpoch {
                 basis: 64,
                 payload_len: 3_056,
-                payload_digest: "41c4852f6f4405c48578ed00b7c71745",
+                payload_digest: "5995ceb94140360728b8f7c494d22199",
             },
-            Stage1LevelEpoch {
+            DigitRangeLevelEpoch {
                 basis: 64,
                 payload_len: 2_896,
-                payload_digest: "99cde8d12d9d716a761430e90b2c73cb",
+                payload_digest: "0802c2c4dfa4b51a5208dc136b768a54",
             },
-            Stage1LevelEpoch {
+            DigitRangeLevelEpoch {
                 basis: 64,
                 payload_len: 2_896,
-                payload_digest: "999fa85658303c9243b8b0a12e4297bd",
+                payload_digest: "98996e2c69f54673049516b58df8f384",
             },
         ],
     },
 ];
 
-fn assert_fold_epoch(expected: &FoldOracleEpoch) {
+fn assert_fold_protocol_epoch(expected: &FoldProtocolEpoch) {
     let layout = OneHotCfg::get_params_for_batched_commitment(
         &akita_types::OpeningClaimsLayout::new(expected.num_vars, 1)
             .expect("singleton opening batch"),
@@ -141,20 +141,20 @@ fn assert_fold_epoch(expected: &FoldOracleEpoch) {
     .expect("generated schedule");
     assert_eq!(
         schedule.folds.len(),
-        expected.stage1_levels.len() + 1,
+        expected.digit_range_levels.len() + 1,
         "{} schedule must end in exactly one terminal fold",
         expected.name
     );
     assert_eq!(
         proof.nonterminal_folds().count(),
-        expected.stage1_levels.len(),
+        expected.digit_range_levels.len(),
         "{} non-terminal level count",
         expected.name
     );
     for ((level, scheduled), level_expected) in proof
         .nonterminal_folds()
         .zip(schedule.folds.iter())
-        .zip(expected.stage1_levels)
+        .zip(expected.digit_range_levels)
     {
         let bytes = serialize_stage1_payload(level.stage1());
         assert_eq!(
@@ -170,7 +170,7 @@ fn assert_fold_epoch(expected: &FoldOracleEpoch) {
             expected.name
         );
         assert_eq!(
-            f1_oracle_digest::<F>(&bytes),
+            protocol_epoch_digest::<F>(&bytes),
             level_expected.payload_digest,
             "{} Stage 1 payload changed",
             expected.name
@@ -195,7 +195,7 @@ fn assert_fold_epoch(expected: &FoldOracleEpoch) {
         expected.name
     );
     assert_eq!(
-        f1_oracle_digest::<F>(&proof_bytes),
+        protocol_epoch_digest::<F>(&proof_bytes),
         expected.proof_digest,
         "{} complete proof changed",
         expected.name
@@ -207,7 +207,7 @@ fn assert_fold_epoch(expected: &FoldOracleEpoch) {
         expected.name
     );
     assert_eq!(
-        f1_oracle_digest::<F>(&event_bytes),
+        protocol_epoch_digest::<F>(&event_bytes),
         expected.event_digest,
         "{} transcript events changed",
         expected.name
@@ -219,7 +219,7 @@ fn assert_fold_epoch(expected: &FoldOracleEpoch) {
         expected.name
     );
     assert_eq!(
-        f1_oracle_digest::<F>(&terminal_bytes),
+        protocol_epoch_digest::<F>(&terminal_bytes),
         expected.terminal_digest,
         "{} terminal payload changed",
         expected.name
@@ -227,11 +227,11 @@ fn assert_fold_epoch(expected: &FoldOracleEpoch) {
 }
 
 #[test]
-fn folds_match_direct_terminal_and_recursive_nonterminal_f1_epochs() {
+fn folds_match_direct_terminal_and_recursive_nonterminal_protocol_epoch() {
     init_rayon_pool();
     run_on_large_stack(|| {
-        for expected in PR311_FOLD_ORACLE_EPOCH {
-            assert_fold_epoch(expected);
+        for expected in FOLD_PROTOCOL_EPOCH {
+            assert_fold_protocol_epoch(expected);
         }
     });
 }

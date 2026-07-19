@@ -134,12 +134,12 @@ where
     bytes
 }
 
-/// Stable digest used by the versioned F1/#311 oracle epoch.
-pub(super) fn f1_oracle_digest<FF>(payload: &[u8]) -> String
+/// Stable digest used by versioned protocol epochs.
+pub(super) fn protocol_epoch_digest<FF>(payload: &[u8]) -> String
 where
     FF: FieldCore + CanonicalField + CanonicalBytes + TranscriptChallenge + 'static,
 {
-    let mut transcript = AkitaTranscript::<FF>::new(b"akita/digit-range-f1-oracle-digest");
+    let mut transcript = AkitaTranscript::<FF>::new(b"akita/protocol-epoch/digest");
     transcript.append_bytes(labels::ABSORB_PROVER_V, payload);
     transcript
         .challenge_scalar(labels::CHALLENGE_SUMCHECK_BATCH)
