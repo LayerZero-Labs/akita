@@ -408,7 +408,6 @@ fn compute_range_round_polynomial_from_range_image<
 ) -> EqFactoredUniPoly<E> {
     let (e_first, e_second) = split_eq.remaining_eq_tables();
     let num_first = e_first.len();
-    let polynomial_precomputation = polynomial_precomputation;
     let full_num_coeffs_q = polynomial_precomputation.degree_q + 1;
     let num_coeffs_q = full_num_coeffs_q;
 
@@ -500,7 +499,6 @@ fn compute_range_round_polynomial_from_compact_image_pairs<
     let (e_first, e_second) = split_eq.remaining_eq_tables();
     let num_first = e_first.len();
 
-    let polynomial_precomputation = polynomial_precomputation;
     let full_num_coeffs_q = polynomial_precomputation.degree_q + 1;
     let num_coeffs_q = full_num_coeffs_q;
 
