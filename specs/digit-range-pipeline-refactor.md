@@ -2704,6 +2704,27 @@ test-only `akita/digit-range-f1-oracle-digest` domain.
 | 32 | 592 | 23 | `ea696003d2f1dedad5b27b813b9d9322` | `30c6da082fa039f7c642be9a09efe4fc` | `0cb5f64dbe2e9bf5260ac5811c36476f` | `7335696cb66eb923716ac7c085344918` |
 | 64 | 816 | 39 | `26d7092d9f07de2be3da47e10cbc232b` | `14621564d2b7e9863e29c6e5b9cf2c04` | `1e8623c7cac587fd9b45c1fe86dc4dd8` | `b62ebc70f19c7bcd71fa9c466d5c86b9` |
 
+`crates/akita-pcs/tests/fold_f1_oracle.rs` extends that exhaustive leaf-level epoch
+through the currently generated fold schedules. A capture form of the same fixture and
+canonical encoders was compiled and run at literal B0 before its outputs became
+expectations. It serializes the complete proof,
+the #311 terminal payload, every non-terminal Stage 1 payload in level order, and the
+complete public logging-event stream; verifier replay must reproduce the prover events.
+The direct fixture is a root followed immediately by the terminal, while the recursive
+fixture contains the root plus two recursive non-terminal folds.
+
+| Schedule fixture | Non-terminal range bases | Complete proof bytes / digest | Public events / digest | Terminal bytes / digest |
+|---|---|---|---|---|
+| direct-to-terminal, nv12 | `8` | 57,250 / `69a998cf92c7af0479803bd23da368a0` | 164 / `e7082502c6830cdcb549121978752b9c` | 54,286 / `2fffaaaefe3aa58f9e5a972bfd29750e` |
+| recursive-nonterminal, nv20 | `64, 64, 64` | 74,246 / `1ad8feff3b79b8a8cbe5fb2ea458e6f8` | 677 / `f6ce402e34096ea9751b09637bcb5835` | 57,722 / `8b2dced0ca215f7588e7c88261a3b76f` |
+
+The per-level Stage 1 payload digests are checked separately inside the fixture, so a
+terminal or surrounding fold change cannot mask a range-proof delta. Together,
+`stage1_f1_oracle` covers every supported LB2-LB6 topology and `fold_f1_oracle` covers the
+two currently scheduled non-terminal execution shapes. Both use the one test-only event
+encoder and field-parameterized epoch digest in `tests/common/mod.rs`; there is no second
+oracle digest implementation.
+
 The proof and event digests transitively cover every round polynomial, challenge,
 substage child claim, and transcript label/order. A failing digest must first be
 classified as either an unintended regression or an intentional protocol change. Only
@@ -2717,8 +2738,8 @@ evidence state rather than creating a second acceptance policy.
 |---|---|---|
 | Canonical plan/domain/point and one `DigitRangeProver` cutover | complete | architecture snapshot above; mandatory deletion scan still belongs to final diff audit |
 | Standalone LB2-LB6 proof, transcript, challenge, claim, and point identity | complete | checked-in `stage1_f1_oracle` epoch and digest table above |
-| Post-#311 terminal proof/transcript epoch | pending | capture the unchanged terminal payload and ordered logging events at literal B0 and require F1 identity; F1 must not edit terminal production code |
-| Direct and recursive scheduled non-terminal fold identity | pending | capture B0 and F1 level-indexed Stage 1 payload/event evidence from the currently generated schedules |
+| Post-#311 terminal proof/transcript epoch | complete | literal-B0 complete-fold fixtures and terminal payload digests above; F1 does not edit terminal production code |
+| Direct and recursive scheduled non-terminal fold identity | complete | level-indexed Stage 1 payloads, complete proof bytes, and prover/verifier public event identity in `fold_f1_oracle` |
 | Exhaustive plan and malformed-shape behavior | complete | all supported topologies; unsupported basis; domain count/width/alignment; every column/ring point permutation; wrong point width; and per-basis missing/extra stage, round, degree coefficient, and child claim tests. Point order is unrepresentable after construction because `DigitRangeEqualityPoint` fields are private and its sole constructor performs the protocol permutation. |
 | Allocation and allocator-observed peak parity | complete for the fixed uniform primary cells | literal B0/F1 table below; remaining distributions are benchmark cells, not additional allocation baselines unless review requests them |
 | Criterion timing parity | pending | paired serial and parallel B0/F1 intervals for the fixed matrix, including verifier attribution |
@@ -2844,7 +2865,7 @@ path outside this manifest requires a hub amendment explaining the invariant it 
 | Canonical prover | new `crates/akita-prover/src/protocol/sumcheck/digit_range/`, `protocol/sumcheck/mod.rs`, the public export in `crates/akita-prover/src/lib.rs`, Stage-1-owned pieces of `two_round_prefix/{common,stage1}.rs`, the Stage-1 import seam in `protocol/core.rs`, and the Stage-1 boundary in `protocol/core/fold.rs` | One production `DigitRangeProver` owns construction, transcript choreography, claims, folding, and all LB2-LB6 dispatch |
 | Removed prover surface | `protocol/sumcheck/akita_stage1_tree.rs` and `protocol/sumcheck/akita_stage1/` | Migrate invariant-bearing code into `digit_range/`, then delete both old prover owners and every pass-through export |
 | Verifier parity | `crates/akita-verifier/src/stages/stage1.rs` and only the Stage-1 replay region of `crates/akita-verifier/src/protocol/core/fold.rs` | Consume `DigitRangePlan`/checked points, preserve equations and transcript order, and reject malformed shapes without panic |
-| Differential tests and test-only oracles | `crates/akita-pcs/tests/stage1_roundtrip.rs`, `crates/akita-pcs/tests/stage1_f1_oracle.rs`, narrowly scoped transcript-hardening tests, `digit_range/` unit tests, Stage-1-owned imports/assertions in existing `akita_stage2/tests.rs` and `two_round_prefix/tests.rs`, and test/bench-only dense range or relation helpers | Exhaust plans and malformed inputs; compare proof bytes, events, challenges, claims, points, and round polynomials against the declared F1/#311 oracle epoch |
+| Differential tests and test-only oracles | `crates/akita-pcs/tests/stage1_roundtrip.rs`, `crates/akita-pcs/tests/{stage1_f1_oracle,fold_f1_oracle}.rs`, the shared test-only epoch encoding primitives in `crates/akita-pcs/tests/common/mod.rs`, narrowly scoped transcript-hardening tests, `digit_range/` unit tests, Stage-1-owned imports/assertions in existing `akita_stage2/tests.rs` and `two_round_prefix/tests.rs`, and test/bench-only dense range or relation helpers | Exhaust plans and malformed inputs; compare proof bytes, events, challenges, claims, points, and round polynomials against the declared F1/#311 oracle epoch. Keep one field-parameterized digest and one event encoder rather than duplicating oracle mechanics. |
 
 The new module should be organized by invariant-bearing state, not by basis or old
 backend. Acceptable internal seams are plan validation, active representation state,
