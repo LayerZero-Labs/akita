@@ -54,7 +54,7 @@ PROOF_LEVEL_BYTE_FIELDS = (
     "v_bytes",
     "stage1_sumcheck_bytes",
     "stage1_interstage_claims_bytes",
-    "stage1_s_claim_bytes",
+    "stage1_range_image_evaluation_bytes",
     "stage2_sumcheck_bytes",
     "stage3_sumcheck_bytes",
     "next_w_commitment_bytes",
@@ -1837,7 +1837,7 @@ def render_proof_levels(
     print(
         "| Fold level | Proof step | Fold-level bytes | Extension-opening partials | "
         "Extension-opening sumcheck | Grinding nonce | Opening commitment (`v`) | "
-        "Stage 1 sumcheck | Stage 1 transition claims | Folded-witness claim (`s`) | "
+        "Stage 1 sumcheck | Stage 1 transition claims | Range-image evaluation | "
         "Stage 2 sumcheck | Stage 3 sumcheck | Next-witness commitment | "
         "Next-witness evaluation |"
     )
@@ -1862,7 +1862,7 @@ def render_proof_levels(
             f"{proof_component_value(level, baseline, 'v_bytes')} | "
             f"{proof_component_value(level, baseline, 'stage1_sumcheck_bytes')} | "
             f"{proof_component_value(level, baseline, 'stage1_interstage_claims_bytes')} | "
-            f"{proof_component_value(level, baseline, 'stage1_s_claim_bytes')} | "
+            f"{proof_component_value(level, baseline, 'stage1_range_image_evaluation_bytes')} | "
             f"{proof_component_value(level, baseline, 'stage2_sumcheck_bytes')} | "
             f"{proof_component_value(level, baseline, 'stage3_sumcheck_bytes')} | "
             f"{proof_component_value(level, baseline, 'next_w_commitment_bytes')} | "
