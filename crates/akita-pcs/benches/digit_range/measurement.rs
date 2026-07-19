@@ -1,6 +1,9 @@
-use super::*;
+use super::cases::{BenchmarkCase, BenchmarkField as F, DigitDistribution};
+use akita_transcript::{labels, AkitaTranscript};
+use akita_verifier::AkitaStage1Verifier;
+use criterion::black_box;
 use std::alloc::{GlobalAlloc, Layout, System};
-use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Instant;
 
 struct CountingAllocator;
@@ -8,8 +11,6 @@ struct CountingAllocator;
 static MEASURE_ALLOCATIONS: AtomicBool = AtomicBool::new(false);
 static ALLOCATION_COUNT: AtomicU64 = AtomicU64::new(0);
 static ALLOCATED_BYTES: AtomicU64 = AtomicU64::new(0);
-static LIVE_BYTES: AtomicUsize = AtomicUsize::new(0);
-static PEAK_LIVE_BYTES: AtomicUsize = AtomicUsize::new(0);
 
 #[global_allocator]
 static GLOBAL_ALLOCATOR: CountingAllocator = CountingAllocator;
@@ -34,9 +35,6 @@ unsafe impl GlobalAlloc for CountingAllocator {
     }
 
     unsafe fn dealloc(&self, pointer: *mut u8, layout: Layout) {
-        if MEASURE_ALLOCATIONS.load(Ordering::Relaxed) {
-            record_deallocation(layout.size());
-        }
         // SAFETY: `pointer` and `layout` are the pair supplied to this allocator by the caller.
         unsafe { System.dealloc(pointer, layout) };
     }
@@ -47,8 +45,6 @@ unsafe impl GlobalAlloc for CountingAllocator {
         if !new_pointer.is_null() && MEASURE_ALLOCATIONS.load(Ordering::Relaxed) {
             ALLOCATION_COUNT.fetch_add(1, Ordering::Relaxed);
             ALLOCATED_BYTES.fetch_add(new_size as u64, Ordering::Relaxed);
-            record_deallocation(layout.size());
-            record_live_allocation(new_size);
         }
         new_pointer
     }
@@ -57,32 +53,17 @@ unsafe impl GlobalAlloc for CountingAllocator {
 fn record_allocation(bytes: usize) {
     ALLOCATION_COUNT.fetch_add(1, Ordering::Relaxed);
     ALLOCATED_BYTES.fetch_add(bytes as u64, Ordering::Relaxed);
-    record_live_allocation(bytes);
-}
-
-fn record_live_allocation(bytes: usize) {
-    let live_bytes = LIVE_BYTES.fetch_add(bytes, Ordering::Relaxed) + bytes;
-    PEAK_LIVE_BYTES.fetch_max(live_bytes, Ordering::Relaxed);
-}
-
-fn record_deallocation(bytes: usize) {
-    let _ = LIVE_BYTES.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |live_bytes| {
-        Some(live_bytes.saturating_sub(bytes))
-    });
 }
 
 #[derive(Clone, Copy)]
 struct AllocationMetrics {
     allocation_count: u64,
     allocated_bytes: u64,
-    peak_measured_live_bytes: usize,
 }
 
 fn start_allocation_measurement() {
     ALLOCATION_COUNT.store(0, Ordering::Relaxed);
     ALLOCATED_BYTES.store(0, Ordering::Relaxed);
-    LIVE_BYTES.store(0, Ordering::Relaxed);
-    PEAK_LIVE_BYTES.store(0, Ordering::Relaxed);
     MEASURE_ALLOCATIONS.store(true, Ordering::Relaxed);
 }
 
@@ -91,7 +72,6 @@ fn finish_allocation_measurement() -> AllocationMetrics {
     AllocationMetrics {
         allocation_count: ALLOCATION_COUNT.load(Ordering::Relaxed),
         allocated_bytes: ALLOCATED_BYTES.load(Ordering::Relaxed),
-        peak_measured_live_bytes: PEAK_LIVE_BYTES.load(Ordering::Relaxed),
     }
 }
 
@@ -256,16 +236,13 @@ fn run(case: MeasurementCase) {
         }
     };
 
+    println!("case,live_elements,elapsed_ns,allocation_count,allocated_bytes");
     println!(
-        "case,live_elements,elapsed_ns,allocation_count,allocated_bytes,peak_measured_live_bytes"
-    );
-    println!(
-        "{},{},{elapsed_ns},{},{},{}",
+        "{},{},{elapsed_ns},{},{}",
         case.name(),
         benchmark_case.domain.live_len(),
         metrics.allocation_count,
         metrics.allocated_bytes,
-        metrics.peak_measured_live_bytes,
     );
 }
 

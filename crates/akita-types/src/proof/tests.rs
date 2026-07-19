@@ -126,7 +126,7 @@ fn level_shape_deserialization_rejects_vector_length_before_allocation() {
 fn tiny_stage1() -> AkitaStage1Proof<F> {
     AkitaStage1Proof {
         stages: Vec::new(),
-        s_claim: F::zero(),
+        range_image_evaluation: F::zero(),
     }
 }
 

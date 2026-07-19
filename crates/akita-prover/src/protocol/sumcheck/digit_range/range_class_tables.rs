@@ -7,6 +7,7 @@ use akita_types::DigitRangePlan;
 /// Plan-derived child-node values for every range-image class.
 pub(super) struct ProductNodeTable<E: FieldCore, const LANES: usize> {
     rows: Vec<[E; LANES]>,
+    class_count: usize,
 }
 
 impl<E: FieldCore + FromPrimitiveInt, const LANES: usize> ProductNodeTable<E, LANES> {
@@ -15,32 +16,24 @@ impl<E: FieldCore + FromPrimitiveInt, const LANES: usize> ProductNodeTable<E, LA
         leaf_polynomials: &[Vec<E>],
         stage_index: usize,
     ) -> Result<Self, AkitaError> {
-        let arity = plan
-            .product_stage_arities()
-            .get(stage_index)
-            .copied()
+        let expected_lanes = plan
+            .product_stage_lane_count(stage_index)
             .ok_or(AkitaError::InvalidProof)?;
-        let parent_count = plan.product_stage_arities()[..stage_index]
-            .iter()
-            .copied()
-            .product::<usize>();
-        let expected_lanes = parent_count.checked_mul(arity).ok_or_else(|| {
-            AkitaError::InvalidInput("range-product lane count overflow".to_string())
-        })?;
         if LANES != expected_lanes {
             return Err(AkitaError::InvalidSize {
                 expected: expected_lanes,
                 actual: LANES,
             });
         }
-        if !leaf_polynomials.len().is_multiple_of(LANES) {
+        if leaf_polynomials.len() != plan.leaf_factor_count() {
             return Err(AkitaError::InvalidSize {
-                expected: LANES,
+                expected: plan.leaf_factor_count(),
                 actual: leaf_polynomials.len(),
             });
         }
         let leaves_per_lane = leaf_polynomials.len() / LANES;
-        let rows = (0..plan.basis() / 2)
+        let class_count = plan.basis() / 2;
+        let rows = (0..class_count)
             .map(|class_index| {
                 let class = RangeImageClass::from_balanced_digit(
                     i8::try_from(class_index).expect("supported range class fits i8"),
@@ -57,7 +50,7 @@ impl<E: FieldCore + FromPrimitiveInt, const LANES: usize> ProductNodeTable<E, LA
                 })
             })
             .collect();
-        Ok(Self { rows })
+        Ok(Self { rows, class_count })
     }
 
     #[inline(always)]
@@ -69,6 +62,7 @@ impl<E: FieldCore + FromPrimitiveInt, const LANES: usize> ProductNodeTable<E, LA
 /// Child-node rows folded at the first challenge, indexed by an ordered class pair.
 pub(super) struct FoldedProductPairTable<E: FieldCore, const LANES: usize> {
     rows: Vec<[E; LANES]>,
+    ordered_pair_count: usize,
 }
 
 /// Round-one product coefficients indexed by two first-challenge-folded class pairs.
@@ -80,10 +74,10 @@ pub(super) struct SecondRoundProductQuartetCoefficients<E: FieldCore> {
 impl<E: FieldCore + FromPrimitiveInt + HasOptimizedFold> SecondRoundProductQuartetCoefficients<E> {
     pub(super) fn new<const LANES: usize>(
         folded_pairs: &FoldedProductPairTable<E, LANES>,
-        ordered_pair_count: usize,
         arity: usize,
         parent_weights: &[E],
     ) -> Self {
+        let ordered_pair_count = folded_pairs.ordered_pair_count;
         let rows = (0..ordered_pair_count * ordered_pair_count)
             .map(|quartet_index| {
                 product_coefficients(
@@ -113,11 +107,8 @@ impl<E: FieldCore + FromPrimitiveInt + HasOptimizedFold> SecondRoundProductQuart
 impl<E: FieldCore + FromPrimitiveInt + HasOptimizedFold, const LANES: usize>
     FoldedProductPairTable<E, LANES>
 {
-    pub(super) fn new(
-        nodes: &ProductNodeTable<E, LANES>,
-        class_count: usize,
-        challenge: E,
-    ) -> Self {
+    pub(super) fn new(nodes: &ProductNodeTable<E, LANES>, challenge: E) -> Self {
+        let class_count = nodes.class_count;
         let fold_context = E::precompute_fold(challenge);
         let rows = (0..class_count * class_count)
             .map(|pair_index| {
@@ -126,7 +117,10 @@ impl<E: FieldCore + FromPrimitiveInt + HasOptimizedFold, const LANES: usize>
                 std::array::from_fn(|lane| E::fold_one(&fold_context, left[lane], right[lane]))
             })
             .collect();
-        Self { rows }
+        Self {
+            rows,
+            ordered_pair_count: class_count * class_count,
+        }
     }
 
     #[inline(always)]
@@ -138,6 +132,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasOptimizedFold, const LANES: usize>
 /// Range-image values folded at the first challenge, indexed by an ordered class pair.
 pub(super) struct FoldedRangeImagePairTable<E: FieldCore> {
     values: Vec<E>,
+    ordered_pair_count: usize,
 }
 
 /// Round-one range-polynomial coefficients indexed by two folded class pairs.
@@ -149,9 +144,9 @@ pub(super) struct SecondRoundRangeQuartetCoefficients<E: FieldCore> {
 impl<E: FieldCore + FromPrimitiveInt + HasOptimizedFold> SecondRoundRangeQuartetCoefficients<E> {
     pub(super) fn new(
         folded_pairs: &FoldedRangeImagePairTable<E>,
-        ordered_pair_count: usize,
         polynomial_coefficients: &[E],
     ) -> Self {
+        let ordered_pair_count = folded_pairs.ordered_pair_count;
         let rows = (0..ordered_pair_count * ordered_pair_count)
             .map(|quartet_index| {
                 let left = folded_pairs.value_by_pair_index(quartet_index / ordered_pair_count);
@@ -185,7 +180,10 @@ impl<E: FieldCore + FromPrimitiveInt + HasOptimizedFold> FoldedRangeImagePairTab
                 E::fold_one(&fold_context, left, right)
             })
             .collect();
-        Self { values }
+        Self {
+            values,
+            ordered_pair_count: class_count * class_count,
+        }
     }
 
     #[inline(always)]
@@ -412,8 +410,7 @@ mod tests {
                         .unwrap();
                         let pairs =
                             OrderedProductPairCoefficients::new(&nodes, basis / 2, arity, &weights);
-                        let folded_pairs =
-                            FoldedProductPairTable::new(&nodes, basis / 2, challenge);
+                        let folded_pairs = FoldedProductPairTable::new(&nodes, challenge);
                         for left_index in 0..basis / 2 {
                             for right_index in 0..basis / 2 {
                                 let left = RangeImageClass::from_balanced_digit(
@@ -464,10 +461,12 @@ mod tests {
         let fold_context = F::precompute_fold(challenge);
         for basis in [16, 32, 64] {
             let plan = DigitRangePlan::new(basis).unwrap();
-            let coefficients = plan.batch_leaf_polynomials(
-                &plan.interstage_batch_weights(F::from_u64(7), plan.leaf_factor_count()),
-                &plan.leaf_coeffs::<F>(),
-            );
+            let coefficients = plan
+                .batch_leaf_polynomials(
+                    &plan.interstage_batch_weights(F::from_u64(7), plan.leaf_factor_count()),
+                    &plan.leaf_coeffs::<F>(),
+                )
+                .unwrap();
             let pairs = OrderedRangePairCoefficients::new(basis / 2, &coefficients);
             let folded_pairs = FoldedRangeImagePairTable::<F>::new(basis / 2, challenge);
             for left_index in 0..basis / 2 {
@@ -509,24 +508,19 @@ mod tests {
         let leaf_polynomials = plan.leaf_coeffs::<F>();
         let parent_weights = vec![F::one()];
         let nodes = ProductNodeTable::<F, 2>::new(plan, &leaf_polynomials, 0).unwrap();
-        let folded_products = FoldedProductPairTable::new(&nodes, class_count, challenge);
-        let product_quartets = SecondRoundProductQuartetCoefficients::new(
-            &folded_products,
-            ordered_pair_count,
-            2,
-            &parent_weights,
-        );
+        let folded_products = FoldedProductPairTable::new(&nodes, challenge);
+        let product_quartets =
+            SecondRoundProductQuartetCoefficients::new(&folded_products, 2, &parent_weights);
 
-        let range_coefficients = plan.batch_leaf_polynomials(
-            &plan.interstage_batch_weights(F::from_u64(7), plan.leaf_factor_count()),
-            &leaf_polynomials,
-        );
+        let range_coefficients = plan
+            .batch_leaf_polynomials(
+                &plan.interstage_batch_weights(F::from_u64(7), plan.leaf_factor_count()),
+                &leaf_polynomials,
+            )
+            .unwrap();
         let folded_ranges = FoldedRangeImagePairTable::<F>::new(class_count, challenge);
-        let range_quartets = SecondRoundRangeQuartetCoefficients::new(
-            &folded_ranges,
-            ordered_pair_count,
-            &range_coefficients,
-        );
+        let range_quartets =
+            SecondRoundRangeQuartetCoefficients::new(&folded_ranges, &range_coefficients);
 
         for left_pair in 0..ordered_pair_count {
             for right_pair in 0..ordered_pair_count {

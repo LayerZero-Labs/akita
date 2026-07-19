@@ -1,37 +1,21 @@
 use super::*;
 
-impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> DirectRangeLeafState<E> {
-    /// Build the stage-1 prover from the compact witness table.
-    #[cfg(test)]
+impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> LowBasisRangeCheckProver<E> {
+    /// Build the low-basis prover from the compact witness table.
     pub(crate) fn new(
-        digit_witness: &[i8],
-        tau0: &[E],
-        b: usize,
-        live_x_cols: usize,
-        col_bits: usize,
-        ring_bits: usize,
-    ) -> Result<Self, AkitaError> {
-        Self::new_owned(
-            std::sync::Arc::from(digit_witness),
-            tau0,
-            b,
-            live_x_cols,
-            col_bits,
-            ring_bits,
-        )
-    }
-
-    pub(crate) fn new_owned(
         digit_witness: std::sync::Arc<[i8]>,
         tau0: &[E],
-        b: usize,
+        plan: DigitRangePlan,
         live_x_cols: usize,
         col_bits: usize,
         ring_bits: usize,
     ) -> Result<Self, AkitaError> {
-        if b < 2 {
-            return Err(AkitaError::InvalidInput("b must be at least 2".to_string()));
+        if !plan.product_stage_arities().is_empty() {
+            return Err(AkitaError::InvalidInput(
+                "direct range prover requires basis 4 or 8".to_string(),
+            ));
         }
+        let basis = plan.basis();
         let num_vars = col_bits.checked_add(ring_bits).ok_or_else(|| {
             AkitaError::InvalidInput("stage-1 challenge width overflow".to_string())
         })?;
@@ -67,15 +51,14 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> DirectRangeLeafState<E> 
             });
         }
         Ok(Self {
-            range_image: RangeImageState::Compact,
-            digit_witness,
+            range_image: LowBasisRangeImageStorage::Compact(digit_witness),
             split_eq: GruenSplitEq::new(tau0)?,
-            polynomial_precomputation: RangePolynomialPrecomputation::new(b),
+            polynomial_precomputation: RangePolynomialPrecomputation::new(basis),
             live_x_cols,
             col_bits,
             num_vars,
-            b,
-            prefix_tau: can_use_stage1_two_round_prefix(ring_bits, b).then(|| tau0.to_vec()),
+            basis,
+            prefix_tau: can_use_stage1_two_round_prefix(ring_bits, basis).then(|| tau0.to_vec()),
             two_round_prefix: None,
             cached_round_poly: None,
             rounds_completed: 0,
@@ -90,11 +73,13 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> DirectRangeLeafState<E> 
     /// single field element.
     pub(crate) fn final_range_image_eval(&self) -> E {
         match &self.range_image {
-            RangeImageState::Full(range_image) => {
+            LowBasisRangeImageStorage::Materialized(range_image) => {
                 assert_eq!(range_image.len(), 1, "range_image not fully folded");
                 range_image[0]
             }
-            RangeImageState::Compact => panic!("range_image remained compact after final fold"),
+            LowBasisRangeImageStorage::Compact(_) => {
+                panic!("range_image remained compact after final fold")
+            }
         }
     }
 
@@ -147,18 +132,18 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> DirectRangeLeafState<E> 
     }
 
     #[inline]
-    pub(super) fn valid_range_image_values(b: usize) -> Vec<i16> {
-        let half = (b / 2) as i16;
+    pub(super) fn valid_range_image_values(basis: usize) -> Vec<i16> {
+        let half = (basis / 2) as i16;
         (0..half).map(|k| k * (k + 1)).collect()
     }
 
     #[inline]
-    pub(super) fn build_range_image_fold_lut(b: usize, r: E) -> CompactPairFoldLut<E> {
-        let valid_range_images = Self::valid_range_image_values(b);
+    pub(super) fn build_range_image_fold_lut(basis: usize, r: E) -> CompactPairFoldLut<E> {
+        let valid_range_images = Self::valid_range_image_values(basis);
         CompactPairFoldLut::from_allowed_values(&valid_range_images, r)
     }
 
-    pub(super) fn ensure_two_round_prefix(&mut self) -> &mut Stage1TwoRoundPrefix<E> {
+    pub(super) fn ensure_two_round_prefix(&mut self) -> &mut DirectRangeTwoRoundPrefix<E> {
         if self.two_round_prefix.is_none() {
             let tau0 = self
                 .prefix_tau
@@ -166,23 +151,23 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> DirectRangeLeafState<E> 
                 .expect("two-round prefix requested without cached tau");
             let ring_bits = self.num_vars - self.col_bits;
             let compact_range_image = match &self.range_image {
-                RangeImageState::Compact => self.digit_witness.as_ref(),
-                RangeImageState::Full(_) => {
+                LowBasisRangeImageStorage::Compact(digit_witness) => digit_witness.as_ref(),
+                LowBasisRangeImageStorage::Materialized(_) => {
                     panic!("two-round prefix can only build from compact table")
                 }
             };
             let proof = build_stage1_bivariate_skip_proof_from_compact_range_image(
                 compact_range_image,
                 &tau0,
-                self.b,
+                self.basis,
                 self.live_x_cols,
                 self.col_bits,
                 ring_bits,
             )
             .expect("two-round prefix should be available");
-            let skip_state = Stage1BivariateSkipState::new(&proof, &tau0, self.b)
+            let skip_state = Stage1BivariateSkipState::new(&proof, &tau0, self.basis)
                 .expect("valid bivariate-skip state");
-            self.two_round_prefix = Some(Stage1TwoRoundPrefix {
+            self.two_round_prefix = Some(DirectRangeTwoRoundPrefix {
                 skip_state,
                 first_challenge: None,
             });

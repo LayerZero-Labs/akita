@@ -1,54 +1,60 @@
+//! Class-indexed range-polynomial leaf prover.
+
+use super::class_indexed_state::ClassIndexedTableState;
 use super::compact_digit_source::CompactDigitSource;
 use super::exact_prefix::ExactPrefixTable;
 use super::range_class_tables::{
     FoldedRangeImagePairTable, OrderedRangePairCoefficients, SecondRoundRangeQuartetCoefficients,
 };
 use super::round_accumulation::accumulate_equality_weighted_round;
-use super::{compose_small_poly_with_affine, MAX_TREE_STAGE_Q_DEGREE};
+use super::{
+    compose_small_poly_with_affine, MAX_QUARTET_TABLE_CLASS_COUNT, MAX_TREE_STAGE_Q_DEGREE,
+};
 use akita_algebra::split_eq::GruenSplitEq;
 use akita_field::parallel::*;
 use akita_field::unreduced::{HasOptimizedFold, HasUnreducedOps};
 use akita_field::{AkitaError, FieldCore, FromPrimitiveInt};
 use akita_sumcheck::{EqFactoredSumcheckInstanceProver, EqFactoredUniPoly};
 
-enum RangeImageValues<E: FieldCore> {
-    Compact {
-        source: CompactDigitSource,
-        pair_coefficients: OrderedRangePairCoefficients<E>,
-    },
-    DeferredSecondRound {
-        source: CompactDigitSource,
-        folded_pairs: FoldedRangeImagePairTable<E>,
-        coefficients: [E; MAX_TREE_STAGE_Q_DEGREE + 1],
-    },
-    Folded(ExactPrefixTable<E>),
+struct CompactRangeLeafState<E: FieldCore> {
+    source: CompactDigitSource,
+    pair_coefficients: OrderedRangePairCoefficients<E>,
 }
 
+struct FirstChallengeFoldedRangeLeafState<E: FieldCore> {
+    source: CompactDigitSource,
+    folded_pairs: FoldedRangeImagePairTable<E>,
+    cached_second_round_coefficients: [E; MAX_TREE_STAGE_Q_DEGREE + 1],
+}
+
+type RangeImageTableState<E> =
+    ClassIndexedTableState<CompactRangeLeafState<E>, FirstChallengeFoldedRangeLeafState<E>, E>;
+
 fn accumulate_round<E: FieldCore + HasUnreducedOps>(
-    first: &[E],
-    second: &[E],
+    equality_prefix_weights: &[E],
+    equality_suffix_weights: &[E],
     explicit_pair_count: usize,
-    default: E,
+    padding_range_image: E,
     pair_at: impl Fn(usize) -> (E, E) + Sync,
     polynomial_coefficients: &[E],
 ) -> [E; MAX_TREE_STAGE_Q_DEGREE + 1] {
-    let default_coefficients =
-        compose_small_poly_with_affine(polynomial_coefficients, default, E::zero());
+    let padding_coefficients =
+        compose_small_poly_with_affine(polynomial_coefficients, padding_range_image, E::zero());
     accumulate_equality_weighted_round(
-        first,
-        second,
+        equality_prefix_weights,
+        equality_suffix_weights,
         explicit_pair_count,
         |pair_index| {
             let (left, right) = pair_at(pair_index);
             compose_small_poly_with_affine(polynomial_coefficients, left, right - left)
         },
-        default_coefficients,
+        padding_coefficients,
     )
 }
 
 /// Final equality-factored quartic over the virtual range-image table.
-pub(super) struct StreamingRangeLeaf<E: FieldCore> {
-    range_image: RangeImageValues<E>,
+pub(super) struct ClassIndexedRangeLeafProver<E: FieldCore> {
+    range_image: RangeImageTableState<E>,
     split_eq: GruenSplitEq<E>,
     input_claim: E,
     polynomial_coefficients: Vec<E>,
@@ -56,7 +62,7 @@ pub(super) struct StreamingRangeLeaf<E: FieldCore> {
     rounds_completed: usize,
 }
 
-impl<E: FieldCore + FromPrimitiveInt> StreamingRangeLeaf<E> {
+impl<E: FieldCore + FromPrimitiveInt> ClassIndexedRangeLeafProver<E> {
     pub(super) fn new(
         source: CompactDigitSource,
         equality_point: &[E],
@@ -80,10 +86,10 @@ impl<E: FieldCore + FromPrimitiveInt> StreamingRangeLeaf<E> {
             OrderedRangePairCoefficients::new(source.class_count(), &polynomial_coefficients)
         };
         Ok(Self {
-            range_image: RangeImageValues::Compact {
+            range_image: RangeImageTableState::Compact(CompactRangeLeafState {
                 source,
                 pair_coefficients,
-            },
+            }),
             split_eq: GruenSplitEq::new(equality_point)?,
             input_claim,
             polynomial_coefficients,
@@ -93,17 +99,14 @@ impl<E: FieldCore + FromPrimitiveInt> StreamingRangeLeaf<E> {
     }
 
     pub(super) fn final_range_image_eval(&self) -> E {
-        let RangeImageValues::Folded(table) = &self.range_image else {
-            panic!("range-image leaf remained compact after its final round")
-        };
-        table
+        self.range_image
             .final_value()
             .expect("range-image leaf was not fully folded")
     }
 }
 
 impl<E: FieldCore + FromPrimitiveInt + HasOptimizedFold + HasUnreducedOps>
-    EqFactoredSumcheckInstanceProver<E> for StreamingRangeLeaf<E>
+    EqFactoredSumcheckInstanceProver<E> for ClassIndexedRangeLeafProver<E>
 {
     fn num_rounds(&self) -> usize {
         self.num_rounds
@@ -121,23 +124,26 @@ impl<E: FieldCore + FromPrimitiveInt + HasOptimizedFold + HasUnreducedOps>
         self.split_eq.linear_factor_evals()
     }
 
-    fn compute_round_eq_factored(&mut self, _round: usize) -> EqFactoredUniPoly<E> {
-        let (first, second) = self.split_eq.remaining_eq_tables();
+    fn compute_round_eq_factored(&mut self, round: usize) -> EqFactoredUniPoly<E> {
+        debug_assert_eq!(round, self.rounds_completed);
+        let (equality_prefix_weights, equality_suffix_weights) =
+            self.split_eq.remaining_eq_tables();
         let coefficients = match &self.range_image {
-            RangeImageValues::Compact {
+            RangeImageTableState::Compact(CompactRangeLeafState {
                 source,
                 pair_coefficients,
-            } => {
+            }) => {
                 let _span = tracing::info_span!(
-                    "digit_range_initial_round",
+                    "digit_range_leaf_initial_round",
                     round = self.rounds_completed,
-                    explicit_rows = source.live_len(),
+                    live_digits = source.live_len(),
+                    explicit_pairs = source.pair_count(),
                     kernel_strategy = "ordered-pair-coefficients",
                 )
                 .entered();
                 accumulate_equality_weighted_round(
-                    first,
-                    second,
+                    equality_prefix_weights,
+                    equality_suffix_weights,
                     source.pair_count(),
                     |pair_index| {
                         pair_coefficients
@@ -146,26 +152,29 @@ impl<E: FieldCore + FromPrimitiveInt + HasOptimizedFold + HasUnreducedOps>
                     pair_coefficients.coefficients_by_pair_index(0),
                 )
             }
-            RangeImageValues::DeferredSecondRound { coefficients, .. } => {
+            RangeImageTableState::FirstChallengeFolded(FirstChallengeFoldedRangeLeafState {
+                cached_second_round_coefficients,
+                ..
+            }) => {
                 let _span = tracing::info_span!(
-                    "digit_range_initial_round",
+                    "digit_range_leaf_initial_round",
                     round = self.rounds_completed,
                     kernel_strategy = "cached-second-round",
                 )
                 .entered();
-                *coefficients
+                *cached_second_round_coefficients
             }
-            RangeImageValues::Folded(table) => {
+            RangeImageTableState::Materialized(table) => {
                 let _span = tracing::info_span!(
-                    "digit_range_later_round",
+                    "digit_range_leaf_materialized_round",
                     round = self.rounds_completed,
-                    explicit_rows = table.explicit_len(),
+                    materialized_rows = table.explicit_len(),
                     domain_len = table.domain_len(),
                 )
                 .entered();
                 accumulate_round(
-                    first,
-                    second,
+                    equality_prefix_weights,
+                    equality_suffix_weights,
                     table.explicit_len().div_ceil(2),
                     table.default_value(),
                     |pair_index| {
@@ -181,36 +190,38 @@ impl<E: FieldCore + FromPrimitiveInt + HasOptimizedFold + HasUnreducedOps>
         EqFactoredUniPoly::from_q_coeffs(coefficients[..=self.degree_bound()].to_vec())
     }
 
-    fn ingest_challenge(&mut self, _round: usize, challenge: E) {
+    fn ingest_challenge(&mut self, round: usize, challenge: E) {
+        debug_assert_eq!(round, self.rounds_completed);
         self.split_eq.bind(challenge);
         if self.rounds_completed == 0 && self.num_rounds >= 2 {
             let deferred = match &self.range_image {
-                RangeImageValues::Compact { source, .. } if source.class_count() == 8 => {
+                RangeImageTableState::Compact(CompactRangeLeafState { source, .. })
+                    if source.class_count() == MAX_QUARTET_TABLE_CLASS_COUNT =>
+                {
                     let _span = tracing::info_span!(
                         "digit_range_prepare_deferred_second_round",
-                        explicit_rows = source.live_len(),
+                        live_digits = source.live_len(),
                         lane_count = 1,
                         kernel_strategy = "quartet-coefficient-table",
                     )
                     .entered();
                     let folded_pairs =
                         FoldedRangeImagePairTable::new(source.class_count(), challenge);
-                    let (first, second) = self.split_eq.remaining_eq_tables();
+                    let (equality_prefix_weights, equality_suffix_weights) =
+                        self.split_eq.remaining_eq_tables();
                     let _span = tracing::info_span!(
                         "digit_range_build_second_round_quartet_table",
                         class_count = source.class_count(),
                         lane_count = 1,
                     )
                     .entered();
-                    let ordered_pair_count = source.class_count() * source.class_count();
                     let quartets = SecondRoundRangeQuartetCoefficients::new(
                         &folded_pairs,
-                        ordered_pair_count,
                         &self.polynomial_coefficients,
                     );
                     let coefficients = accumulate_equality_weighted_round(
-                        first,
-                        second,
+                        equality_prefix_weights,
+                        equality_suffix_weights,
                         source.quartet_count(),
                         |quartet_index| {
                             let (left_pair, right_pair) =
@@ -219,15 +230,17 @@ impl<E: FieldCore + FromPrimitiveInt + HasOptimizedFold + HasUnreducedOps>
                         },
                         quartets.coefficients_by_pair_indices(0, 0),
                     );
-                    Some(RangeImageValues::DeferredSecondRound {
-                        source: source.clone(),
-                        folded_pairs,
-                        coefficients,
-                    })
+                    Some(RangeImageTableState::FirstChallengeFolded(
+                        FirstChallengeFoldedRangeLeafState {
+                            source: source.clone(),
+                            folded_pairs,
+                            cached_second_round_coefficients: coefficients,
+                        },
+                    ))
                 }
-                RangeImageValues::Compact { .. }
-                | RangeImageValues::DeferredSecondRound { .. }
-                | RangeImageValues::Folded(_) => None,
+                RangeImageTableState::Compact(_)
+                | RangeImageTableState::FirstChallengeFolded(_)
+                | RangeImageTableState::Materialized(_) => None,
             };
             if let Some(deferred) = deferred {
                 self.range_image = deferred;
@@ -238,14 +251,17 @@ impl<E: FieldCore + FromPrimitiveInt + HasOptimizedFold + HasUnreducedOps>
 
         if self.rounds_completed == 1 {
             let folded_after_two_rounds = match &self.range_image {
-                RangeImageValues::DeferredSecondRound {
-                    source,
-                    folded_pairs,
-                    ..
-                } => {
+                RangeImageTableState::FirstChallengeFolded(
+                    FirstChallengeFoldedRangeLeafState {
+                        source,
+                        folded_pairs,
+                        ..
+                    },
+                ) => {
                     let _span = tracing::info_span!(
                         "digit_range_materialize_after_two_rounds",
-                        explicit_rows = source.live_len(),
+                        live_digits = source.live_len(),
+                        explicit_quartets = source.quartet_count(),
                         lane_count = 1,
                         kernel_strategy = "factorized-pair-rescan",
                     )
@@ -267,21 +283,22 @@ impl<E: FieldCore + FromPrimitiveInt + HasOptimizedFold + HasUnreducedOps>
                             .expect("compact source and Boolean domain were validated"),
                     )
                 }
-                RangeImageValues::Compact { .. } | RangeImageValues::Folded(_) => None,
+                RangeImageTableState::Compact(_) | RangeImageTableState::Materialized(_) => None,
             };
             if let Some(table) = folded_after_two_rounds {
-                self.range_image = RangeImageValues::Folded(table);
+                self.range_image = RangeImageTableState::Materialized(table);
                 self.rounds_completed += 1;
                 return;
             }
         }
 
         let folded_from_compact = match &self.range_image {
-            RangeImageValues::Compact { source, .. } => {
+            RangeImageTableState::Compact(CompactRangeLeafState { source, .. }) => {
                 let _span = tracing::info_span!(
                     "digit_range_materialize_range_image",
                     round = self.rounds_completed,
-                    explicit_rows = source.live_len(),
+                    live_digits = source.live_len(),
+                    explicit_pairs = source.pair_count(),
                 )
                 .entered();
                 let folded_pairs = {
@@ -308,15 +325,16 @@ impl<E: FieldCore + FromPrimitiveInt + HasOptimizedFold + HasUnreducedOps>
                     .expect("compact source and Boolean domain were validated"),
                 )
             }
-            RangeImageValues::DeferredSecondRound { .. } | RangeImageValues::Folded(_) => None,
+            RangeImageTableState::FirstChallengeFolded(_)
+            | RangeImageTableState::Materialized(_) => None,
         };
         if let Some(table) = folded_from_compact {
-            self.range_image = RangeImageValues::Folded(table);
-        } else if let RangeImageValues::Folded(table) = &mut self.range_image {
+            self.range_image = RangeImageTableState::Materialized(table);
+        } else if let RangeImageTableState::Materialized(table) = &mut self.range_image {
             let _span = tracing::info_span!(
                 "digit_range_fold_range_image",
                 round = self.rounds_completed,
-                explicit_rows = table.explicit_len(),
+                materialized_rows = table.explicit_len(),
                 domain_len = table.domain_len(),
             )
             .entered();

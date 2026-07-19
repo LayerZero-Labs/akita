@@ -1,5 +1,5 @@
 use akita_field::{AkitaError, FieldCore, FromPrimitiveInt};
-use akita_types::FlatBooleanDomain;
+use akita_types::{DigitRangePlan, FlatBooleanDomain};
 use std::sync::Arc;
 
 /// Collision class of one balanced digit under `digit * (digit + 1)`.
@@ -49,7 +49,7 @@ impl CompactDigitSource {
     pub(super) fn new(
         digits: Arc<[i8]>,
         domain: FlatBooleanDomain,
-        basis: usize,
+        plan: DigitRangePlan,
     ) -> Result<Self, AkitaError> {
         if digits.len() != domain.live_len() {
             return Err(AkitaError::InvalidSize {
@@ -57,8 +57,8 @@ impl CompactDigitSource {
                 actual: digits.len(),
             });
         }
-        let class_count = basis / 2;
-        let ordered_range_class_pairs = if basis > 8 {
+        let class_count = plan.basis() / 2;
+        let ordered_range_class_pairs = if !plan.product_stage_arities().is_empty() {
             digits
                 .chunks(2)
                 .map(|pair| {
@@ -149,8 +149,12 @@ mod tests {
     #[test]
     fn compact_ordered_pairs_include_odd_prefix_padding() {
         let digits = Arc::<[i8]>::from([0, -2, 3]);
-        let source =
-            CompactDigitSource::new(digits, FlatBooleanDomain::new(3, 2).unwrap(), 16).unwrap();
+        let source = CompactDigitSource::new(
+            digits,
+            FlatBooleanDomain::new(3, 2).unwrap(),
+            DigitRangePlan::new(16).unwrap(),
+        )
+        .unwrap();
         assert_eq!(source.pair_count(), 2);
         assert_eq!(source.ordered_pair_index(0), 1);
         assert_eq!(source.ordered_pair_index(1), 3 * source.class_count());

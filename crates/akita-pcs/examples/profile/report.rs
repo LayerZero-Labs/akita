@@ -424,7 +424,8 @@ where
         .flat_map(|stage| stage.child_claims.iter())
         .map(|claim| claim.serialized_size(Compress::No))
         .sum::<usize>();
-    let stage1_s_claim_size = stage1.s_claim.serialized_size(Compress::No);
+    let stage1_range_image_evaluation_size =
+        stage1.range_image_evaluation.serialized_size(Compress::No);
     let stage2_sumcheck_size = stage2_intermediate
         .sumcheck_proof
         .serialized_size(Compress::No);
@@ -452,7 +453,7 @@ where
         grind_nonce,
         stage1_sumcheck_bytes = stage1_sumcheck_size,
         stage1_interstage_claims_bytes = stage1_interstage_claims_size,
-        stage1_s_claim_bytes = stage1_s_claim_size,
+        stage1_range_image_evaluation_bytes = stage1_range_image_evaluation_size,
         stage2_sumcheck_bytes = stage2_sumcheck_size,
         stage3_sumcheck_bytes = stage3_sumcheck_size,
         next_w_commitment_bytes = next_w_commitment_size,
@@ -464,7 +465,9 @@ where
     eprintln!("[{label}]     fold_grind_nonce={fold_grind_nonce_size} bytes");
     eprintln!("[{label}]     stage1_sumcheck={stage1_sumcheck_size} bytes");
     eprintln!("[{label}]     stage1_interstage_claims={stage1_interstage_claims_size} bytes");
-    eprintln!("[{label}]     stage1_s_claim={stage1_s_claim_size} bytes");
+    eprintln!(
+        "[{label}]     stage1_range_image_evaluation={stage1_range_image_evaluation_size} bytes"
+    );
     eprintln!("[{label}]     stage2_sumcheck={stage2_sumcheck_size} bytes");
     eprintln!("[{label}]     stage3_sumcheck={stage3_sumcheck_size} bytes");
     eprintln!(
@@ -480,7 +483,7 @@ where
             + fold_grind_nonce_size
             + stage1_sumcheck_size
             + stage1_interstage_claims_size
-            + stage1_s_claim_size
+            + stage1_range_image_evaluation_size
             + stage2_sumcheck_size
             + stage3_sumcheck_size
             + next_w_commitment_size

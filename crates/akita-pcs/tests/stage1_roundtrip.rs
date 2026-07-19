@@ -1,7 +1,13 @@
 #![allow(missing_docs)]
 
-use akita_field::Prime128Offset275;
+use akita_field::unreduced::{HasOptimizedFold, HasUnreducedOps};
+use akita_field::{
+    CanonicalBytes, CanonicalField, Ext2, ExtField, FieldCore, FpExt4, FromPrimitiveInt,
+    Prime128Offset275, Prime32Offset99, Prime64Offset59, TranscriptChallenge,
+};
 use akita_prover::DigitRangeProver;
+use akita_serialization::AkitaSerialize;
+use akita_sumcheck::multilinear_eval;
 use akita_transcript::{labels, AkitaTranscript};
 use akita_types::{AkitaStage1Proof, DigitRangeEqualityPoint, DigitRangePlan, FlatBooleanDomain};
 use akita_verifier::AkitaStage1Verifier;
@@ -109,6 +115,111 @@ fn streaming_high_basis_handles_odd_live_prefix_without_materializing_padding() 
             expected_point,
             "basis {basis}"
         );
+    }
+}
+
+fn assert_high_basis_extension_roundtrips<Base, E>()
+where
+    Base: FieldCore + CanonicalField + CanonicalBytes + TranscriptChallenge,
+    E: FieldCore
+        + ExtField<Base>
+        + FromPrimitiveInt
+        + HasOptimizedFold
+        + HasUnreducedOps
+        + AkitaSerialize,
+{
+    let raw_challenges = [3, 5, 7, 9].map(E::from_u64);
+    for basis in [16, 32, 64] {
+        let half = i8::try_from(basis / 2).unwrap();
+        let witness = (0..5)
+            .map(|index| i8::try_from(index % basis).unwrap() - half)
+            .collect::<Vec<_>>();
+        let equality_point = DigitRangeEqualityPoint::from_column_then_ring_challenges(
+            &raw_challenges,
+            raw_challenges.len(),
+            0,
+        )
+        .unwrap();
+        let domain = FlatBooleanDomain::new(witness.len(), raw_challenges.len()).unwrap();
+        let plan = DigitRangePlan::new(basis).unwrap();
+        let prover = DigitRangeProver::new(
+            std::sync::Arc::from(witness),
+            plan,
+            domain,
+            equality_point.clone(),
+        )
+        .unwrap();
+        let mut prover_transcript = AkitaTranscript::<Base>::new(labels::DOMAIN_AKITA_PROTOCOL);
+        let (proof, expected_point) = prover.prove(&mut prover_transcript).unwrap();
+
+        let verifier = AkitaStage1Verifier::new(equality_point, plan);
+        let mut verifier_transcript = AkitaTranscript::<Base>::new(labels::DOMAIN_AKITA_PROTOCOL);
+        assert_eq!(
+            verifier.verify(&proof, &mut verifier_transcript).unwrap(),
+            expected_point,
+            "basis {basis}"
+        );
+    }
+}
+
+#[test]
+fn high_basis_roundtrip_covers_delayed_fp32_extension_accumulation() {
+    assert_high_basis_extension_roundtrips::<Prime32Offset99, FpExt4<Prime32Offset99>>();
+}
+
+#[test]
+fn high_basis_roundtrip_covers_fp64_extension_accumulation() {
+    assert_high_basis_extension_roundtrips::<Prime64Offset59, Ext2<Prime64Offset59>>();
+}
+
+#[test]
+fn high_basis_final_range_image_matches_dense_padding_oracle_at_every_prefix() {
+    let raw_challenges = [F::from_u64(3), F::from_u64(5), F::from_u64(7)];
+    for basis in [16, 32, 64] {
+        let half = i8::try_from(basis / 2).unwrap();
+        for live_len in 1..=8 {
+            let witness = (0..live_len)
+                .map(|index| i8::try_from((index * 5 + 3) % basis).unwrap() - half)
+                .collect::<Vec<_>>();
+            let equality_point = DigitRangeEqualityPoint::from_column_then_ring_challenges(
+                &raw_challenges,
+                raw_challenges.len(),
+                0,
+            )
+            .unwrap();
+            let domain = FlatBooleanDomain::new(live_len, raw_challenges.len()).unwrap();
+            let plan = DigitRangePlan::new(basis).unwrap();
+            let prover = DigitRangeProver::new(
+                std::sync::Arc::from(witness.as_slice()),
+                plan,
+                domain,
+                equality_point.clone(),
+            )
+            .unwrap();
+            let mut prover_transcript = AkitaTranscript::<F>::new(labels::DOMAIN_AKITA_PROTOCOL);
+            let (proof, stage1_point) = prover.prove(&mut prover_transcript).unwrap();
+
+            let verifier = AkitaStage1Verifier::new(equality_point, plan);
+            let mut verifier_transcript = AkitaTranscript::<F>::new(labels::DOMAIN_AKITA_PROTOCOL);
+            assert_eq!(
+                verifier.verify(&proof, &mut verifier_transcript).unwrap(),
+                stage1_point
+            );
+
+            let mut dense_range_image = witness
+                .iter()
+                .map(|&digit| {
+                    let digit = i64::from(digit);
+                    F::from_i64(digit * (digit + 1))
+                })
+                .collect::<Vec<_>>();
+            dense_range_image.resize(8, F::zero());
+            assert_eq!(
+                proof.range_image_evaluation,
+                multilinear_eval(&dense_range_image, &stage1_point).unwrap(),
+                "basis={basis}, live_len={live_len}"
+            );
+        }
     }
 }
 

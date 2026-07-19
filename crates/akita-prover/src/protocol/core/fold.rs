@@ -663,8 +663,12 @@ where
         prepared_fold.instance.v(),
         &prepared_fold.commitment,
     )?;
-    let (stage1_proof, stage1_point, s_claim) = prove_stage1::<F, E, T>(transcript, &mut rs)?;
-    transcript.append_serde(ABSORB_SUMCHECK_S_CLAIM, &stage1_proof.s_claim);
+    let (stage1_proof, stage1_point, range_image_evaluation) =
+        prove_stage1::<F, E, T>(transcript, &mut rs)?;
+    transcript.append_serde(
+        ABSORB_RANGE_IMAGE_EVALUATION,
+        &stage1_proof.range_image_evaluation,
+    );
     let stage1_proof = Some(stage1_proof);
     let batching_coeff: E = sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_SUMCHECK_BATCH);
     // EvaluationTrace is the last padded relation row: weight openings by
@@ -779,7 +783,7 @@ where
         batching_coeff,
         rs,
         &stage1_point,
-        s_claim,
+        range_image_evaluation,
         relation_claim,
         trace_compact,
         trace_opening_claim,
@@ -948,6 +952,13 @@ where
         .checked_add(rs.ring_bits)
         .ok_or_else(|| AkitaError::InvalidInput("digit-range domain width overflow".to_string()))?;
     let domain = FlatBooleanDomain::new(rs.w_evals_compact.len(), num_vars)?;
+    let derived_live_x_cols = domain.live_block_count(rs.ring_bits)?;
+    if derived_live_x_cols != rs.live_x_cols {
+        return Err(AkitaError::InvalidSize {
+            expected: derived_live_x_cols,
+            actual: rs.live_x_cols,
+        });
+    }
     let equality_point = DigitRangeEqualityPoint::from_column_then_ring_challenges(
         &rs.tau0,
         rs.col_bits,
@@ -960,8 +971,8 @@ where
         equality_point,
     )?;
     let (stage1_proof, stage1_point) = stage1_prover.prove::<F, T>(transcript)?;
-    let s_claim = stage1_proof.s_claim;
-    Ok((stage1_proof, stage1_point, s_claim))
+    let range_image_evaluation = stage1_proof.range_image_evaluation;
+    Ok((stage1_proof, stage1_point, range_image_evaluation))
 }
 
 fn remap_trace_table<E: FieldCore>(
@@ -1021,7 +1032,7 @@ fn prove_stage2<F, E, T>(
     batching_coeff: E,
     rs: RingSwitchOutput<E>,
     stage1_point: &[E],
-    s_claim: E,
+    range_image_evaluation: E,
     relation_claim: E,
     trace_compact: Option<TraceTable<E>>,
     trace_opening_claim: E,
@@ -1041,7 +1052,7 @@ where
         batching_coeff,
         rs.w_evals_compact,
         stage1_point,
-        s_claim,
+        range_image_evaluation,
         rs.b,
         alpha_evals_y,
         rs.relation_weight_evals,

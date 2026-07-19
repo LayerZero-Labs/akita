@@ -1,6 +1,6 @@
 use super::*;
 
-impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> DirectRangeLeafState<E> {
+impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> LowBasisRangeCheckProver<E> {
     #[inline]
     pub(super) fn direct_fold_range_image_quad_to_round2(
         range_image_00: i16,
@@ -117,7 +117,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> DirectRangeLeafState<E> 
 
     #[tracing::instrument(
         skip_all,
-        name = "DirectRangeLeafState::fold_compact_range_image_to_round2"
+        name = "LowBasisRangeCheckProver::fold_compact_range_image_to_round2"
     )]
     pub(super) fn fold_compact_range_image_to_round2<V: CompactRangeImageValue>(
         compact_range_image: &[V],
@@ -148,7 +148,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> DirectRangeLeafState<E> 
 
     #[tracing::instrument(
         skip_all,
-        name = "DirectRangeLeafState::fuse_compact_to_round2_and_compute_round"
+        name = "LowBasisRangeCheckProver::fuse_compact_to_round2_and_compute_round"
     )]
     pub(super) fn fuse_compact_to_round2_and_compute_round<V: CompactRangeImageValue>(
         &self,
@@ -167,7 +167,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> DirectRangeLeafState<E> 
         let num_first = e_first.len();
         let first_bits = num_first.trailing_zeros();
         let block_size = num_first.min(live_pairs);
-        let quad_fold_lut = match self.b {
+        let quad_fold_lut = match self.basis {
             4 => Self::build_round2_range_image_lookup_b4(r0, r1),
             _ => Self::build_round2_range_image_lookup_b8(r0, r1),
         };
@@ -177,127 +177,83 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> DirectRangeLeafState<E> 
         let num_coeffs_q = full_num_coeffs_q;
         let mut out = vec![E::zero(); live_x_cols * next_y_len];
 
-        #[cfg(feature = "parallel")]
-        let q_coeffs = out
-            .par_chunks_mut(next_y_len)
-            .enumerate()
-            .map(|(x, col_out)| {
-                let col = &compact_range_image[x * y_len..(x + 1) * y_len];
-                let j_base = x * current_y_half;
-                let mut outer_accum = vec![E::ProductAccum::zero(); num_coeffs_q];
-                let mut entry_buf = [E::zero(); MAX_AFFINE_COEFFS];
+        let process_column = |(x, col_out): (usize, &mut [E])| {
+            let col = &compact_range_image[x * y_len..(x + 1) * y_len];
+            let j_base = x * current_y_half;
+            let mut outer_accum = vec![E::ProductAccum::zero(); num_coeffs_q];
+            let mut entry_buf = [E::zero(); MAX_DIRECT_RANGE_COEFFICIENTS];
 
-                let mut blk = 0usize;
-                while blk < live_pairs {
-                    let blk_end = (blk + block_size).min(live_pairs);
-                    let j_high = (j_base + blk) >> first_bits;
-                    let mut inner_accum = [E::ProductAccum::zero(); MAX_AFFINE_COEFFS];
+            let mut block_start = 0usize;
+            while block_start < live_pairs {
+                let block_end = (block_start + block_size).min(live_pairs);
+                let outer_equality_index = (j_base + block_start) >> first_bits;
+                let mut inner_accum = [E::ProductAccum::zero(); MAX_DIRECT_RANGE_COEFFICIENTS];
 
-                    for pair_y in blk..blk_end {
-                        let j_low = (j_base + pair_y) & (num_first - 1);
-                        let e_in = e_first[j_low];
-                        let top_y = 2 * pair_y;
-                        let top_base = 8 * pair_y;
-                        let left_range_image = quad_fold_lut[match self.b {
-                            4 => Self::stage1_b4_quad_lookup_index_from_row(col, top_base),
-                            _ => Self::stage1_b8_quad_lookup_index_from_row(col, top_base),
-                        }];
-                        let right_range_image = quad_fold_lut[match self.b {
-                            4 => Self::stage1_b4_quad_lookup_index_from_row(col, top_base + 4),
-                            _ => Self::stage1_b8_quad_lookup_index_from_row(col, top_base + 4),
-                        }];
-                        col_out[top_y] = left_range_image;
-                        col_out[top_y + 1] = right_range_image;
-                        compute_entry_coefficients(
-                            &mut entry_buf,
-                            polynomial_precomputation,
-                            left_range_image,
-                            right_range_image - left_range_image,
-                        );
-                        accumulate_dense_entry_coeffs(
-                            &mut inner_accum[..num_coeffs_q],
-                            &entry_buf[..full_num_coeffs_q],
-                            e_in,
-                        );
-                    }
-
-                    let e_out = e_second[j_high];
-                    for k in 0..num_coeffs_q {
-                        let inner_reduced = E::reduce_product_accum(inner_accum[k]);
-                        outer_accum[k] += e_out.mul_to_product_accum(inner_reduced);
-                    }
-                    blk = blk_end;
+                for pair_y in block_start..block_end {
+                    let inner_equality_index = (j_base + pair_y) & (num_first - 1);
+                    let inner_equality_weight = e_first[inner_equality_index];
+                    let output_offset = 2 * pair_y;
+                    let input_offset = 8 * pair_y;
+                    let left_range_image = quad_fold_lut[match self.basis {
+                        4 => Self::stage1_b4_quad_lookup_index_from_row(col, input_offset),
+                        _ => Self::stage1_b8_quad_lookup_index_from_row(col, input_offset),
+                    }];
+                    let right_range_image = quad_fold_lut[match self.basis {
+                        4 => Self::stage1_b4_quad_lookup_index_from_row(col, input_offset + 4),
+                        _ => Self::stage1_b8_quad_lookup_index_from_row(col, input_offset + 4),
+                    }];
+                    col_out[output_offset] = left_range_image;
+                    col_out[output_offset + 1] = right_range_image;
+                    compute_entry_coefficients(
+                        &mut entry_buf,
+                        polynomial_precomputation,
+                        left_range_image,
+                        right_range_image - left_range_image,
+                    );
+                    accumulate_dense_entry_coeffs(
+                        &mut inner_accum[..num_coeffs_q],
+                        &entry_buf[..full_num_coeffs_q],
+                        inner_equality_weight,
+                    );
                 }
-                outer_accum
-            })
+
+                let outer_equality_weight = e_second[outer_equality_index];
+                for coefficient_index in 0..num_coeffs_q {
+                    let inner_reduced = E::reduce_product_accum(inner_accum[coefficient_index]);
+                    outer_accum[coefficient_index] +=
+                        outer_equality_weight.mul_to_product_accum(inner_reduced);
+                }
+                block_start = block_end;
+            }
+            outer_accum
+        };
+        let merge_accumulators = |mut left: Vec<E::ProductAccum>, right: Vec<E::ProductAccum>| {
+            for (left_coefficient, right_coefficient) in left.iter_mut().zip(right) {
+                *left_coefficient += right_coefficient;
+            }
+            left
+        };
+
+        #[cfg(feature = "parallel")]
+        let accumulated = cfg_chunks_mut!(out, next_y_len)
+            .enumerate()
+            .map(process_column)
             .reduce(
                 || vec![E::ProductAccum::zero(); num_coeffs_q],
-                |mut a, b| {
-                    for (ai, bi) in a.iter_mut().zip(b.iter()) {
-                        *ai += *bi;
-                    }
-                    a
-                },
-            )
+                merge_accumulators,
+            );
+        #[cfg(not(feature = "parallel"))]
+        let accumulated = cfg_chunks_mut!(out, next_y_len)
+            .enumerate()
+            .map(process_column)
+            .fold(
+                vec![E::ProductAccum::zero(); num_coeffs_q],
+                merge_accumulators,
+            );
+        let q_coeffs = accumulated
             .into_iter()
             .map(E::reduce_product_accum)
-            .collect::<Vec<_>>();
-
-        #[cfg(not(feature = "parallel"))]
-        let q_coeffs = {
-            let mut outer = vec![E::ProductAccum::zero(); num_coeffs_q];
-            for (x, col_out) in out.chunks_mut(next_y_len).enumerate() {
-                let col = &compact_range_image[x * y_len..(x + 1) * y_len];
-                let j_base = x * current_y_half;
-                let mut entry_buf = [E::zero(); MAX_AFFINE_COEFFS];
-
-                let mut blk = 0usize;
-                while blk < live_pairs {
-                    let blk_end = (blk + block_size).min(live_pairs);
-                    let j_high = (j_base + blk) >> first_bits;
-                    let mut inner_accum = [E::ProductAccum::zero(); MAX_AFFINE_COEFFS];
-
-                    for pair_y in blk..blk_end {
-                        let j_low = (j_base + pair_y) & (num_first - 1);
-                        let e_in = e_first[j_low];
-                        let top_y = 2 * pair_y;
-                        let top_base = 8 * pair_y;
-                        let left_range_image = quad_fold_lut[match self.b {
-                            4 => Self::stage1_b4_quad_lookup_index_from_row(col, top_base),
-                            _ => Self::stage1_b8_quad_lookup_index_from_row(col, top_base),
-                        }];
-                        let right_range_image = quad_fold_lut[match self.b {
-                            4 => Self::stage1_b4_quad_lookup_index_from_row(col, top_base + 4),
-                            _ => Self::stage1_b8_quad_lookup_index_from_row(col, top_base + 4),
-                        }];
-                        col_out[top_y] = left_range_image;
-                        col_out[top_y + 1] = right_range_image;
-                        compute_entry_coefficients(
-                            &mut entry_buf,
-                            polynomial_precomputation,
-                            left_range_image,
-                            right_range_image - left_range_image,
-                        );
-                        accumulate_dense_entry_coeffs(
-                            &mut inner_accum[..num_coeffs_q],
-                            &entry_buf[..full_num_coeffs_q],
-                            e_in,
-                        );
-                    }
-
-                    let e_out = e_second[j_high];
-                    for k in 0..num_coeffs_q {
-                        let inner_reduced = E::reduce_product_accum(inner_accum[k]);
-                        outer[k] += e_out.mul_to_product_accum(inner_reduced);
-                    }
-                    blk = blk_end;
-                }
-            }
-            outer
-                .into_iter()
-                .map(E::reduce_product_accum)
-                .collect::<Vec<_>>()
-        };
+            .collect();
 
         let poly = EqFactoredUniPoly::from_q_coeffs(q_coeffs);
         (out, poly)

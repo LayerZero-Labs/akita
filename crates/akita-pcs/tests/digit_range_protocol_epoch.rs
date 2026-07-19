@@ -179,7 +179,7 @@ fn digit_range_proof_matches_protocol_epoch() {
             expected.basis
         );
         assert_eq!(
-            canonical_hex(&proof.s_claim),
+            canonical_hex(&proof.range_image_evaluation),
             expected.range_image_eval,
             "range-image evaluation changed for basis {}",
             expected.basis

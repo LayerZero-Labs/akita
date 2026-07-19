@@ -119,7 +119,9 @@ pub use proof::{
     MULTI_GROUP_ROOT_DENSE_UNSUPPORTED, SETUP_OFFLOAD_D_SETUP, SETUP_OFFLOAD_MIN_PREFIX_FIELD_LEN,
     SETUP_SUMCHECK_DEGREE,
 };
-pub use proof::{DigitRangeEqualityPoint, DigitRangePlan, FlatBooleanDomain};
+pub use proof::{
+    append_digit_range_child_claims, DigitRangeEqualityPoint, DigitRangePlan, FlatBooleanDomain,
+};
 pub use proof_size::{level_proof_bytes, FOLD_GRIND_NONCE_BYTES};
 pub use schedule::{
     detect_field_modulus, intermediate_w_ring_element_count_for_chunks,

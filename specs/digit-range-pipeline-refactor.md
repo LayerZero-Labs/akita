@@ -4,10 +4,10 @@
 |---|---|
 | Author(s) | Quang Dao (direction); Codex planning synthesis |
 | Created | 2026-07-18 |
-| Revised | 2026-07-19; concurrent Opus/Fable review reconciled; per-level setup prefixes, verifier-time selection objective, staged 7a/7b cutover, gated `Batched`, envelope-level `setup_contribution_eval`, shared-emitter ownership, current #311 stack, and bounded additive/cutover PR delivery model recorded |
-| Status | F1 implementation may proceed on #311; #309 is deferred to the pre-C5 semantic-basis integration gate |
+| Revised | 2026-07-20; PR #312 implementation, selected ordered-pair/two-round kernels, rejected post-round-one fusion, and strict merge-readiness cleanup recorded |
+| Status | F1/C3/O4/O5 implementation and cleanup are in PR #312; later mixed-dimension and stage-placement cuts remain additive stack entries |
 | First PR branch | `quang/plan-digit-range-pipeline` |
-| Stack base | PR #311 at `bc959ef34572aee143ba0114094b0b4212b4e111` |
+| Stack base | PR #311 branch `quang/terminal-direct-ring-relations`; implementation merge base `bc959ef34572aee143ba0114094b0b4212b4e111` |
 | Historical audit base | `main` at `f5c180a49a83f5ce3e8b683a34208166ffed2f66` |
 | Related | [`digit-innermost-layout.md`](digit-innermost-layout.md), [`runtime-ring-cutover.md`](runtime-ring-cutover.md), [`transcript-hardening.md`](transcript-hardening.md), [`packed-sumcheck.md`](packed-sumcheck.md), [`akita-sumcheck-unification.md`](akita-sumcheck-unification.md) |
 
@@ -1574,8 +1574,11 @@ crates/akita-prover/src/protocol/sumcheck/digit_range/
   mod.rs                  orchestration and product-to-leaf choreography
   compact_digit_source.rs shared compact digits and infallible RangeImageClass access
   range_class_tables.rs   plan-derived node rows and selected ordered-pair coefficients
-  product_stage.rs        one fixed-lane product-stage implementation
-  range_leaf.rs           direct equality-factored range-only leaf composer
+  class_indexed_state.rs  lifecycle shared by class-indexed product and leaf substages
+  class_indexed_product.rs one fixed-lane product-subcheck implementation
+  class_indexed_range_leaf.rs equality-factored range-polynomial leaf implementation
+  direct_range_leaf.rs    low-basis range-only prover and coefficient precomputation
+  direct_range_leaf/      low-basis live-prefix, sparse-low-variable, and round kernels
   relation_leaf.rs        recursive standard range-image-and-relation composer
   initial_rounds.rs       optional measured round batching
   tests.rs
@@ -3011,7 +3014,8 @@ protocol epoch inherited by F1 from #311. It was
 captured by compiling and running the old `AkitaStage1Prover` in a detached worktree at
 the literal B0, then checked against the cut-over `DigitRangeProver`. Its payload encoder
 uses the canonical Stage 1 wire order: each eq-factored sumcheck, then its child claims,
-then the legacy `s_claim` wire field. Its transcript encoder records the complete ordered
+then `range_image_evaluation`. This Rust vocabulary rename is wire-neutral: positional
+serialization and the transcript label bytes are unchanged. Its transcript encoder records the complete ordered
 `LoggingTranscript` event stream. The test additionally replays the proof through
 `AkitaStage1Verifier`, requires the verifier and prover event streams to be identical,
 and compares the final point and range-image evaluation.
@@ -3072,7 +3076,7 @@ evidence state rather than creating a second acceptance policy.
 | Post-#311 terminal proof/transcript epoch | complete | literal-B0 complete-fold fixtures and terminal payload digests above; F1 does not edit terminal production code |
 | Direct and recursive scheduled non-terminal fold identity | complete | level-indexed Stage 1 payloads, complete proof bytes, and prover/verifier public event identity in `fold_protocol_epoch` |
 | Exhaustive plan and malformed-shape behavior | complete | all supported topologies; unsupported basis; domain count/width/alignment; every column/ring point permutation; wrong point width; and per-basis missing/extra stage, round, degree coefficient, and child claim tests. Point order is unrepresentable after construction because `DigitRangeEqualityPoint` fields are private and its sole constructor performs the protocol permutation. |
-| Allocation and allocator-observed peak parity | complete for the fixed uniform primary cells | literal B0/F1 table below; remaining distributions are benchmark cells, not additional allocation baselines unless review requests them |
+| Allocation count/byte parity | complete for the fixed uniform primary cells | literal B0/F1 table below; remaining distributions are benchmark cells, not additional allocation baselines unless review requests them |
 | Criterion timing parity | pending | paired serial and parallel B0/F1 intervals for the fixed matrix, including verifier attribution |
 | Stage 2/relation baseline coverage | pending | add the Packet-1 Stage 2 cells and separately report relation construction without changing Stage 2 production code |
 | Exact proof-size and soundness evidence | pending review | reconcile complete actual/formula bytes for direct, legacy recursive, target separate, and target batched shapes—including unequal native rounds—with the proof-size and degree ledgers; finish the claimed-polynomial/challenge/extraction review before Packet 7 |
@@ -3108,22 +3112,22 @@ the PR evidence; the default parallel capture command is:
 cargo bench -p akita-pcs --bench digit_range --features parallel -- --save-baseline <epoch>
 ```
 
-The same binary owns allocation measurement; there is no copied scenario list or second
-prover entry point. Build and run it without default features so the global counting
-allocator observes exactly one thread:
+The allocation target reuses the same `cases.rs` scenario source and prover entry point,
+but is a separate binary so its global counting allocator cannot perturb Criterion timing.
+Build and run it without default features so the allocator observes exactly one thread:
 
 ```text
-cargo bench -p akita-pcs --bench digit_range --no-default-features -- \
+cargo bench -p akita-pcs --bench digit_range_allocations --no-default-features -- \
   --measure-case prove-total/b64/full/uniform
 ```
 
 The case grammar is
 `<construct|prove|prove-total|verify>/b<4|8|16|32|64>/<full|three-quarters>/<uniform|zero-heavy|alternating-endpoints>`.
 The CSV `elapsed_ns` value is a one-shot diagnostic, not timing-gate evidence; Criterion's
-20-sample intervals own timing decisions. `allocated_bytes` counts successful allocations
-and reallocations, and `peak_measured_live_bytes` counts allocations whose lifetime
-begins inside the selected interval. Therefore only `prove-total` is the canonical
-whole-stage peak: phase-only runs may free buffers allocated before their counter reset.
+20-sample intervals own timing decisions. `allocation_count` and `allocated_bytes` count
+successful allocations and reallocations begun inside the selected interval. The harness
+does not report a synthetic peak-live value because allocator callbacks cannot reliably
+attribute deallocations of pre-existing allocations to the measured phase.
 
 The following serial release measurements compare the literal B0 production
 `new_owned` path with F1 on the same prebuilt `Arc<[i8]>`, point, `N = 2^18`, and uniform
@@ -3133,18 +3137,19 @@ three-quarter high-basis cells have identical allocation results because the ret
 algorithm still pads them to the same Boolean domain; removing that behavior belongs to
 C3.
 
-| Basis / live prefix | B0 allocations | F1 allocations | B0 allocated bytes | F1 allocated bytes | B0 peak measured bytes | F1 peak measured bytes |
-|---|---:|---:|---:|---:|---:|---:|
-| 4 / full | 171 | 170 | 1,149,107 | 1,148,819 | 1,070,027 | 1,069,739 |
-| 8 / full | 215 | 214 | 1,161,629 | 1,161,341 | 1,075,573 | 1,075,285 |
-| 16 / full or three-quarters | 323 | 319 | 12,646,816 | 12,646,384 | 12,609,728 | 12,609,440 |
-| 32 / full or three-quarters | 361 | 355 | 21,039,360 | 21,038,800 | 20,998,688 | 20,998,400 |
-| 64 / full or three-quarters | 552 | 542 | 46,237,568 | 46,236,744 | 46,165,096 | 46,164,808 |
+| Basis / live prefix | B0 allocations | F1 allocations | B0 allocated bytes | F1 allocated bytes |
+|---|---:|---:|---:|---:|
+| 4 / full | 171 | 170 | 1,149,107 | 1,148,819 |
+| 8 / full | 215 | 214 | 1,161,629 | 1,161,341 |
+| 16 / full or three-quarters | 323 | 319 | 12,646,816 | 12,646,384 |
+| 32 / full or three-quarters | 361 | 355 | 21,039,360 | 21,038,800 |
+| 64 / full or three-quarters | 552 | 542 | 46,237,568 | 46,236,744 |
 
-Thus F1 does not increase allocation count, allocated bytes, or allocator-observed peak
-in any captured basis; it removes one to ten allocations depending on the topology. This
-is the F1 parity result, not a C3 memory claim: the dominant `3N/5N/11N` eager state is
-still present.
+Thus F1 does not increase allocation count or allocated bytes in any captured basis; it
+removes one to ten allocations depending on the topology. No allocator-derived peak is
+claimed: callback accounting cannot reliably attribute deallocations of objects created
+outside the measured interval. Fresh-process maximum RSS and explicit live-table formulas
+remain the peak-memory evidence.
 
 The current eager high-basis owner count is exact from the retained vectors, with `N`
 the padded Boolean-domain length: LB4 owns `N` range-image elements plus `2N` leaf-table
@@ -3155,24 +3160,28 @@ explain any allocator-capacity or scratch-space delta instead of silently changi
 model.
 
 Production phase attribution uses one span per owner, with no parallel `Instant` timing
-state: `digit_range_prove`, `digit_range_materialize_range_image`,
-`digit_range_direct_leaf`, `digit_range_materialize_leaf_tables`,
-`digit_range_build_product_layers`, `digit_range_product_stage` (including index and
-arity), `digit_range_polynomial_leaf`, `digit_range_direct_leaf_round` (including round
-and representation phase), and `digit_range_direct_leaf_fold`. These names are the
-single profiling vocabulary for the retained F1 implementation; do not add wrappers that
-measure the same owner again.
+state. The orchestration spans are `digit_range_prepare_compact_source`,
+`digit_range_prove`, `digit_range_direct_leaf`, `digit_range_product_substage` (including
+stage index and arity), and `digit_range_polynomial_leaf`. Class-indexed kernels use
+`digit_range_build_node_table`, `digit_range_build_pair_coefficients`,
+`digit_range_product_initial_round`, `digit_range_product_materialized_round`,
+`digit_range_leaf_initial_round`, `digit_range_leaf_materialized_round`, the narrowly
+scoped deferred-second-round/materialization spans, and the final lane/range-image fold
+spans. Low-basis kernels use `digit_range_direct_leaf_round` (round and phase) and
+`digit_range_direct_leaf_fold`. These names are the single profiling vocabulary; do not
+instrument hot address, pair, lane, coefficient, or Rayon-item loops, and do not add
+wrappers that measure the same owner again.
 
 For code ownership and deletion accounting, use
 `git diff --numstat B0...HEAD` and `git diff --name-status B0...HEAD`, classify every path
 against the positive change-surface table, and count moved code at its final owner rather
 than claiming deletion from a rename. For max RSS, run each benchmark cell in a fresh
-process. First use `cargo bench -p akita-pcs --bench digit_range --no-default-features
+process. First use `cargo bench -p akita-pcs --bench digit_range_allocations --no-default-features
 --no-run` and copy the exact executable path Cargo prints; then run `/usr/bin/time -l
 <exact-executable> --measure-case <case>` and record `maximum resident set size` in bytes.
 Do not compare RSS from different crates or binaries. Never enable the counting allocator
-mode in the parallel timing run. Text size uses that same exact release `digit_range`
-artifact and the toolchain's `llvm-size` (or the recorded Xcode `size` equivalent when
+binary in the parallel Criterion timing run. Text size uses the uninstrumented release
+`digit_range` artifact and the toolchain's `llvm-size` (or the recorded Xcode `size` equivalent when
 `llvm-tools` is absent); record the exact artifact path and features so several
 hash-suffixed binaries cannot be accidentally aggregated.
 
@@ -3191,7 +3200,7 @@ path outside this manifest requires a hub amendment explaining the invariant it 
 | Surface | Allowed paths | Required final responsibility |
 |---|---|---|
 | Central hub and lifecycle | `specs/digit-range-pipeline-refactor.md`, `specs/akita-sumcheck-unification.md`, `specs/packed-sumcheck.md` | Keep this stack authoritative; record F1 base/head, benchmark method, status, and any deviation |
-| Benchmark and counters | `crates/akita-pcs/Cargo.toml`, new `crates/akita-pcs/benches/digit_range.rs` and its private invariant-bearing `benches/digit_range/measurement.rs` allocation/RSS submodule, narrowly scoped Stage 1 tracing/counter sites | Pin LB2-LB6, live-prefix, digit-distribution, serial/parallel, allocation, and whole-Stage-1 baselines without changing production decisions; the submodule owns measurement mechanics and reuses the parent scenario definitions rather than copying them |
+| Benchmark and counters | `crates/akita-pcs/Cargo.toml`, `benches/digit_range.rs`, `benches/digit_range_allocations.rs`, and shared `benches/digit_range/{cases,measurement}.rs`, plus narrowly scoped Stage 1 tracing sites | Pin LB2-LB6, live-prefix, digit-distribution, serial/parallel, allocation, and whole-Stage-1 baselines without changing production decisions; one shared scenario source feeds an uninstrumented Criterion binary and a separate counting-allocator binary |
 | Range shape/domain authority | `crates/akita-types/src/proof/stage1.rs`, Stage-1-only exports in `crates/akita-types/src/proof/mod.rs` and `crates/akita-types/src/lib.rs`, the Stage-1 regions of `proof/{levels,shapes,wire}.rs` and `proof_size.rs`, and existing Stage-1 shape consumers in `crates/akita-types/src/schedule_tests.rs` and `crates/akita-pcs/src/scheme/tests/mod.rs` | One checked `DigitRangePlan` and one checked Stage-1 view of `WitnessDomain`; prover, verifier, shape validation, sizing, and their existing assertions consume them directly. These two test paths are named explicitly because deleting the old free topology helpers necessarily cuts their existing assertions over to the plan; they gain no production responsibility. |
 | Canonical prover | new `crates/akita-prover/src/protocol/sumcheck/digit_range/`, `protocol/sumcheck/mod.rs`, the public export in `crates/akita-prover/src/lib.rs`, Stage-1-owned pieces of `two_round_prefix/{common,stage1}.rs`, the Stage-1 import seam in `protocol/core.rs`, and the Stage-1 boundary in `protocol/core/fold.rs` | One production `DigitRangeProver` owns construction, transcript choreography, claims, folding, and all LB2-LB6 dispatch |
 | Removed prover surface | `protocol/sumcheck/akita_stage1_tree.rs` and `protocol/sumcheck/akita_stage1/` | Migrate invariant-bearing code into `digit_range/`, then delete both old prover owners and every pass-through export |
@@ -3212,10 +3221,9 @@ dormant alternate engine. C3 owns replacing the padded high-basis state with str
 F1 must neither optimize nor generalize it.
 
 Within the new Stage 1 code, production identifiers use `digit_witness`, `range_image`,
-and `range_image_eval`; do not introduce a new `S`-named table, claim, or helper. The
-legacy `AkitaStage1Proof` type and any field name whose mechanical rename would pull
-Stage 2/wire migration into this PR remain unchanged until their scheduled semantic
-cutover. Do not add a compatibility alias for either vocabulary.
+and `range_image_evaluation`; do not introduce a new `S`-named table, claim, or helper.
+`AkitaStage1Proof::range_image_evaluation` is the sole Rust field name. The positional
+wire encoding and transcript label bytes remain unchanged, and no compatibility alias exists.
 
 #### Mandatory deletion and single-owner gate
 

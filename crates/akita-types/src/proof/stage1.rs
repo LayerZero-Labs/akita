@@ -1,9 +1,20 @@
 //! Shared stage-1 tree shape and polynomial helpers.
 
 use crate::{AkitaStage1Proof, AkitaStage1StageShape};
-use akita_field::{AkitaError, FieldCore, FromPrimitiveInt};
+use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt};
+use akita_transcript::{append_ext_field, labels, Transcript};
 
-const MAX_PRODUCT_STAGES: usize = 2;
+/// Absorb digit-range product child claims in their canonical transcript order.
+pub fn append_digit_range_child_claims<F, E, T>(claims: &[E], transcript: &mut T)
+where
+    F: FieldCore + CanonicalField,
+    E: ExtField<F>,
+    T: Transcript<F>,
+{
+    for claim in claims {
+        append_ext_field::<F, E, T>(transcript, labels::ABSORB_SUMCHECK_INTERSTAGE_CLAIM, claim);
+    }
+}
 
 /// Checked flat Boolean domain for the compact digit witness.
 ///
@@ -167,10 +178,6 @@ impl<E: FieldCore> DigitRangeEqualityPoint<E> {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct DigitRangePlan {
     log_basis: u8,
-    product_stage_arities: [usize; MAX_PRODUCT_STAGES],
-    product_stage_count: u8,
-    leaf_factor_count: usize,
-    leaf_degree: usize,
 }
 
 impl DigitRangePlan {
@@ -180,25 +187,13 @@ impl DigitRangePlan {
     ///
     /// Returns an error unless `basis` is one of `4, 8, 16, 32, 64`.
     pub fn new(basis: usize) -> Result<Self, AkitaError> {
-        let (product_stage_arities, product_stage_count, leaf_factor_count, leaf_degree) =
-            match basis {
-                4 => ([0, 0], 0, 1, 2),
-                8 => ([0, 0], 0, 1, 4),
-                16 => ([2, 0], 1, 2, 4),
-                32 => ([4, 0], 1, 4, 4),
-                64 => ([2, 4], 2, 8, 4),
-                _ => {
-                    return Err(AkitaError::InvalidInput(format!(
-                        "digit range basis must be one of 4, 8, 16, 32, 64; got {basis}"
-                    )))
-                }
-            };
+        if !matches!(basis, 4 | 8 | 16 | 32 | 64) {
+            return Err(AkitaError::InvalidInput(format!(
+                "digit range basis must be one of 4, 8, 16, 32, 64; got {basis}"
+            )));
+        }
         Ok(Self {
             log_basis: basis.trailing_zeros() as u8,
-            product_stage_arities,
-            product_stage_count,
-            leaf_factor_count,
-            leaf_degree,
         })
     }
 
@@ -217,43 +212,66 @@ impl DigitRangePlan {
     /// Product-stage arities in transcript order, before the leaf stage.
     #[must_use]
     pub fn product_stage_arities(&self) -> &[usize] {
-        &self.product_stage_arities[..usize::from(self.product_stage_count)]
+        match self.log_basis {
+            2 | 3 => &[],
+            4 => &[2],
+            5 => &[4],
+            6 => &[2, 4],
+            _ => unreachable!("DigitRangePlan construction validates log basis"),
+        }
+    }
+
+    /// Number of child lanes emitted by one product substage.
+    #[must_use]
+    pub fn product_stage_lane_count(self, stage_index: usize) -> Option<usize> {
+        let arity = *self.product_stage_arities().get(stage_index)?;
+        let parent_count = self.product_stage_arities()[..stage_index]
+            .iter()
+            .copied()
+            .product::<usize>();
+        parent_count.checked_mul(arity)
     }
 
     /// Number of quartic (or smaller for basis four) leaf factors.
     #[must_use]
     pub fn leaf_factor_count(self) -> usize {
-        self.leaf_factor_count
+        match self.log_basis {
+            2 | 3 => 1,
+            4 => 2,
+            5 => 4,
+            6 => 8,
+            _ => unreachable!("DigitRangePlan construction validates log basis"),
+        }
     }
 
     /// Degree of the final range leaf.
     #[must_use]
     pub fn leaf_degree(self) -> usize {
-        self.leaf_degree
+        if self.log_basis == 2 {
+            2
+        } else {
+            4
+        }
     }
 
     /// Number of range subproofs in transcript order.
     #[must_use]
     pub fn stage_count(self) -> usize {
-        usize::from(self.product_stage_count) + 1
+        self.product_stage_arities().len() + 1
     }
 
     /// Wire shape of one range subproof in transcript order.
     #[must_use]
     pub fn stage_shape(self, rounds: usize, stage_index: usize) -> Option<AkitaStage1StageShape> {
-        if stage_index < usize::from(self.product_stage_count) {
-            let mut parent_count = 1usize;
-            for &arity in &self.product_stage_arities[..stage_index] {
-                parent_count *= arity;
-            }
-            let arity = self.product_stage_arities[stage_index];
+        if stage_index < self.product_stage_arities().len() {
+            let arity = self.product_stage_arities()[stage_index];
             return Some(AkitaStage1StageShape {
                 sumcheck_proof: (rounds, arity),
-                child_claims: parent_count * arity,
+                child_claims: self.product_stage_lane_count(stage_index)?,
             });
         }
-        (stage_index == usize::from(self.product_stage_count)).then_some(AkitaStage1StageShape {
-            sumcheck_proof: (rounds, self.leaf_degree),
+        (stage_index == self.product_stage_arities().len()).then_some(AkitaStage1StageShape {
+            sumcheck_proof: (rounds, self.leaf_degree()),
             child_claims: 0,
         })
     }
@@ -349,12 +367,17 @@ impl DigitRangePlan {
     }
 
     /// Batch child claims using the current interstage weights.
-    pub fn batch_claims<E: FieldCore>(self, weights: &[E], claims: &[E]) -> E {
-        debug_assert_eq!(weights.len(), claims.len());
-        weights
+    pub fn batch_claims<E: FieldCore>(self, weights: &[E], claims: &[E]) -> Result<E, AkitaError> {
+        if weights.len() != claims.len() {
+            return Err(AkitaError::InvalidSize {
+                expected: weights.len(),
+                actual: claims.len(),
+            });
+        }
+        Ok(weights
             .iter()
             .zip(claims.iter())
-            .fold(E::zero(), |acc, (&weight, &claim)| acc + weight * claim)
+            .fold(E::zero(), |acc, (&weight, &claim)| acc + weight * claim))
     }
 
     /// Batch leaf-polynomial coefficient vectors using interstage weights.
@@ -362,8 +385,13 @@ impl DigitRangePlan {
         self,
         weights: &[E],
         leaf_polynomials: &[Vec<E>],
-    ) -> Vec<E> {
-        debug_assert_eq!(weights.len(), leaf_polynomials.len());
+    ) -> Result<Vec<E>, AkitaError> {
+        if weights.len() != leaf_polynomials.len() {
+            return Err(AkitaError::InvalidSize {
+                expected: weights.len(),
+                actual: leaf_polynomials.len(),
+            });
+        }
         let max_len = leaf_polynomials.iter().map(Vec::len).max().unwrap_or(0);
         let mut batched = vec![E::zero(); max_len];
         for (weight, polynomial) in weights.iter().zip(leaf_polynomials.iter()) {
@@ -371,7 +399,7 @@ impl DigitRangePlan {
                 *coefficient += *weight * term;
             }
         }
-        batched
+        Ok(batched)
     }
 }
 
@@ -431,6 +459,16 @@ mod tests {
         for basis in [0, 1, 2, 3, 5, 6, 7, 9, 15, 63, 65, 128] {
             assert!(DigitRangePlan::new(basis).is_err(), "basis {basis}");
         }
+    }
+
+    #[test]
+    fn digit_range_batching_rejects_mismatched_lengths() {
+        let plan = DigitRangePlan::new(16).unwrap();
+        let weights = [F::one(), F::from_u64(2)];
+        assert!(plan.batch_claims(&weights, &[F::one()]).is_err());
+        assert!(plan
+            .batch_leaf_polynomials(&weights, &[vec![F::one()]])
+            .is_err());
     }
 
     #[test]

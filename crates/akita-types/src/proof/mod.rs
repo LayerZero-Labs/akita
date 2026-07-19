@@ -80,7 +80,9 @@ pub use shapes::{
     NextWitnessBindingShape, SetupProductSumcheckShape, TerminalLevelProofShape,
     SETUP_SUMCHECK_DEGREE,
 };
-pub use stage1::{DigitRangeEqualityPoint, DigitRangePlan, FlatBooleanDomain};
+pub use stage1::{
+    append_digit_range_child_claims, DigitRangeEqualityPoint, DigitRangePlan, FlatBooleanDomain,
+};
 pub use tail_segments::{
     build_segment_typed_witness_from_groups, decode_terminal_z_golomb_payload,
     decode_terminal_z_golomb_payload_with_cap, emit_witness_e_planes, emit_witness_r_planes,

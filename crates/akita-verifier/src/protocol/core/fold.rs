@@ -268,7 +268,7 @@ pub(in crate::protocol::core) enum PreparedFoldPayload<'a, F: FieldCore, E: Fiel
 
 struct Stage1Replay<E: FieldCore> {
     batching_coeff: E,
-    s_claim: E,
+    range_image_evaluation: E,
     stage1_point: Vec<E>,
 }
 
@@ -303,11 +303,11 @@ where
         let _sumcheck_span = tracing::info_span!("stage1_sumcheck").entered();
         stage1_verifier.verify::<F, T>(proof, transcript)?
     };
-    transcript.append_serde(ABSORB_SUMCHECK_S_CLAIM, &proof.s_claim);
+    transcript.append_serde(ABSORB_RANGE_IMAGE_EVALUATION, &proof.range_image_evaluation);
     let batching_coeff: E = sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_SUMCHECK_BATCH);
     Ok(Stage1Replay {
         batching_coeff,
-        s_claim: proof.s_claim,
+        range_image_evaluation: proof.range_image_evaluation,
         stage1_point,
     })
 }
@@ -625,7 +625,7 @@ where
 {
     let stage2_verifier = AkitaStage2Verifier::new(
         stage1.batching_coeff,
-        stage1.s_claim,
+        stage1.range_image_evaluation,
         witness_eval,
         stage1.stage1_point,
         &rs.relation_matrix_evaluator,

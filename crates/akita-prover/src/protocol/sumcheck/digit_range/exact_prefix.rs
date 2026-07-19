@@ -59,6 +59,7 @@ impl<T: Copy> ExactPrefixTable<T> {
             let right = self.value_or_default(2 * pair_index + 1);
             self.explicit[pair_index] = fold_pair(left, right);
         }
+        self.default = fold_pair(self.default, self.default);
         self.explicit.truncate(next_explicit_len);
         self.domain_len /= 2;
         Ok(())
