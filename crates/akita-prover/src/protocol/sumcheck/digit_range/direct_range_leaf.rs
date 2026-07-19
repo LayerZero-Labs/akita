@@ -72,9 +72,7 @@ fn polynomial_coefficients_from_integer_roots(roots: &[i128]) -> Vec<i128> {
 }
 
 #[derive(Clone)]
-struct RangePolynomialPrecomputation<E: FieldCore> {
-    dense_coeffs: Vec<E>,
-    dense_row_offsets: Vec<usize>,
+struct RangePolynomialPrecomputation {
     degree_q: usize,
     compact_coeff_lut: Vec<CompactCoeffEntry>,
     /// Maps a raw range-image integer (offset by `minimum_range_image`) to a compact index into the
@@ -84,7 +82,7 @@ struct RangePolynomialPrecomputation<E: FieldCore> {
     minimum_range_image: i16,
 }
 
-impl<E: FieldCore + FromPrimitiveInt> RangePolynomialPrecomputation<E> {
+impl RangePolynomialPrecomputation {
     fn new(basis: usize) -> Self {
         assert!(
             matches!(basis, 4 | 8),
@@ -114,8 +112,6 @@ impl<E: FieldCore + FromPrimitiveInt> RangePolynomialPrecomputation<E> {
             }
         }
         dense_row_offsets.push(dense_int.len());
-        let dense_coeffs = dense_int.iter().copied().map(E::from_i128).collect();
-
         let minimum_range_image = 0i16;
         let maximum_range_image_i128 = half * (half - 1);
         assert!(
@@ -173,8 +169,6 @@ impl<E: FieldCore + FromPrimitiveInt> RangePolynomialPrecomputation<E> {
         }
 
         Self {
-            dense_coeffs,
-            dense_row_offsets,
             degree_q,
             compact_coeff_lut,
             range_image_to_index,
@@ -184,7 +178,7 @@ impl<E: FieldCore + FromPrimitiveInt> RangePolynomialPrecomputation<E> {
     }
 }
 
-impl<E: FieldCore> RangePolynomialPrecomputation<E> {
+impl RangePolynomialPrecomputation {
     #[inline]
     fn compact_index(&self, range_image_integer: i16) -> usize {
         let raw = (range_image_integer - self.minimum_range_image) as usize;
@@ -200,11 +194,6 @@ impl<E: FieldCore> RangePolynomialPrecomputation<E> {
 
     fn num_rows(&self) -> usize {
         self.degree_q + 1
-    }
-
-    #[inline]
-    fn dense_row(&self, i: usize) -> &[E] {
-        &self.dense_coeffs[self.dense_row_offsets[i]..self.dense_row_offsets[i + 1]]
     }
 
     #[inline]
@@ -288,65 +277,61 @@ fn accumulate_dense_entry_coeffs<E: FieldCore + HasUnreducedOps>(
 }
 
 #[inline]
-fn compute_entry_coefficients<E: FieldCore + HasUnreducedOps>(
+fn compute_entry_coefficients<E: FieldCore + FromPrimitiveInt + HasUnreducedOps>(
     out: &mut [E],
-    precomp: &RangePolynomialPrecomputation<E>,
+    precomp: &RangePolynomialPrecomputation,
     left_range_image: E,
     range_image_delta: E,
 ) {
     let num_rows = precomp.num_rows();
     debug_assert!(out.len() >= num_rows);
 
-    let mut a_pow = E::one();
-    for (i, out_i) in out.iter_mut().enumerate().take(num_rows) {
-        let mut h_i = E::zero();
-        for &coeff in precomp.dense_row(i).iter().rev() {
-            h_i = h_i * left_range_image + coeff;
+    match precomp.degree_q {
+        2 => {
+            let twice_left = left_range_image + left_range_image;
+            out[0] = left_range_image * (left_range_image - E::from_u64(2));
+            out[1] = range_image_delta * (twice_left - E::from_u64(2));
+            out[2] = range_image_delta * range_image_delta;
         }
-        *out_i = a_pow * h_i;
-        a_pow *= range_image_delta;
+        4 => {
+            let twice_left = left_range_image + left_range_image;
+            let four_times_left = twice_left + twice_left;
+            let eight_times_left = four_times_left + four_times_left;
+            let sixteen_times_left = eight_times_left + eight_times_left;
+            let left_squared = left_range_image * left_range_image;
+            let first_quadratic = left_squared - twice_left;
+            let second_quadratic =
+                left_squared - (sixteen_times_left + twice_left) + E::from_u64(72);
+            let delta_squared = range_image_delta * range_image_delta;
+            let first_linear = range_image_delta * (twice_left - E::from_u64(2));
+            let second_linear = range_image_delta * (twice_left - E::from_u64(18));
+
+            out[0] = first_quadratic * second_quadratic;
+            out[1] = first_quadratic * second_linear + first_linear * second_quadratic;
+            out[2] = first_quadratic * delta_squared
+                + first_linear * second_linear
+                + delta_squared * second_quadratic;
+            out[3] = delta_squared * (first_linear + second_linear);
+            out[4] = delta_squared * delta_squared;
+        }
+        _ => unreachable!("direct range leaf only supports quadratic and quartic checks"),
     }
 }
 
 #[inline]
-fn compute_entry_coefficients_x4<E: FieldCore + HasUnreducedOps>(
+fn compute_entry_coefficients_x4<E: FieldCore + FromPrimitiveInt + HasUnreducedOps>(
     out: &mut [[E; MAX_DIRECT_RANGE_COEFFICIENTS]; 4],
-    precomp: &RangePolynomialPrecomputation<E>,
+    precomp: &RangePolynomialPrecomputation,
     left_range_image: [E; 4],
     range_image_delta: [E; 4],
 ) {
-    let num_rows = precomp.num_rows();
-
-    let mut ap = [E::one(); 4];
-    let [out0, out1, out2, out3] = out.each_mut();
-    for (i, (((out0_i, out1_i), out2_i), out3_i)) in out0
-        .iter_mut()
-        .zip(out1.iter_mut())
-        .zip(out2.iter_mut())
-        .zip(out3.iter_mut())
-        .take(num_rows)
-        .enumerate()
-    {
-        let mut h0 = E::zero();
-        let mut h1 = E::zero();
-        let mut h2 = E::zero();
-        let mut h3 = E::zero();
-        for &coeff in precomp.dense_row(i).iter().rev() {
-            h0 = h0 * left_range_image[0] + coeff;
-            h1 = h1 * left_range_image[1] + coeff;
-            h2 = h2 * left_range_image[2] + coeff;
-            h3 = h3 * left_range_image[3] + coeff;
-        }
-
-        *out0_i = ap[0] * h0;
-        *out1_i = ap[1] * h1;
-        *out2_i = ap[2] * h2;
-        *out3_i = ap[3] * h3;
-
-        ap[0] *= range_image_delta[0];
-        ap[1] *= range_image_delta[1];
-        ap[2] *= range_image_delta[2];
-        ap[3] *= range_image_delta[3];
+    for lane in 0..4 {
+        compute_entry_coefficients(
+            &mut out[lane],
+            precomp,
+            left_range_image[lane],
+            range_image_delta[lane],
+        );
     }
 }
 
@@ -354,7 +339,7 @@ fn compute_range_round_polynomial_from_range_image<
     E: FieldCore + FromPrimitiveInt + HasUnreducedOps,
 >(
     split_eq: &GruenSplitEq<E>,
-    polynomial_precomputation: &RangePolynomialPrecomputation<E>,
+    polynomial_precomputation: &RangePolynomialPrecomputation,
     range_image_pair: impl Fn(usize) -> (E, E) + Sync,
 ) -> EqFactoredUniPoly<E> {
     let (e_first, e_second) = split_eq.remaining_eq_tables();
@@ -444,7 +429,7 @@ fn compute_range_round_polynomial_from_compact_image_pairs<
     E: FieldCore + FromPrimitiveInt + HasUnreducedOps,
 >(
     split_eq: &GruenSplitEq<E>,
-    polynomial_precomputation: &RangePolynomialPrecomputation<E>,
+    polynomial_precomputation: &RangePolynomialPrecomputation,
     range_image_pair: impl Fn(usize) -> (i16, i16) + Sync,
 ) -> EqFactoredUniPoly<E> {
     let (e_first, e_second) = split_eq.remaining_eq_tables();
@@ -500,7 +485,7 @@ fn compute_range_round_polynomial_from_compact_image<
 >(
     split_eq: &GruenSplitEq<E>,
     compact_range_image: &[V],
-    polynomial_precomputation: &RangePolynomialPrecomputation<E>,
+    polynomial_precomputation: &RangePolynomialPrecomputation,
 ) -> EqFactoredUniPoly<E> {
     compute_range_round_polynomial_from_compact_image_pairs(
         split_eq,
@@ -564,7 +549,7 @@ struct DirectRangePrefixState<E: FieldCore> {
 pub(crate) struct LowBasisRangeCheckProver<E: FieldCore> {
     range_image: LowBasisRangeImageStorage<E>,
     split_eq: GruenSplitEq<E>,
-    polynomial_precomputation: RangePolynomialPrecomputation<E>,
+    polynomial_precomputation: RangePolynomialPrecomputation,
     live_x_cols: usize,
     col_bits: usize,
     num_vars: usize,
