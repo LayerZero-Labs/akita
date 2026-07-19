@@ -2717,13 +2717,16 @@ evidence state rather than creating a second acceptance policy.
 |---|---|---|
 | Canonical plan/domain/point and one `DigitRangeProver` cutover | complete | architecture snapshot above; mandatory deletion scan still belongs to final diff audit |
 | Standalone LB2-LB6 proof, transcript, challenge, claim, and point identity | complete | checked-in `stage1_f1_oracle` epoch and digest table above |
+| Post-#311 terminal proof/transcript epoch | pending | capture the unchanged terminal payload and ordered logging events at literal B0 and require F1 identity; F1 must not edit terminal production code |
 | Direct and recursive scheduled non-terminal fold identity | pending | capture B0 and F1 level-indexed Stage 1 payload/event evidence from the currently generated schedules |
 | Exhaustive plan and malformed-shape behavior | complete | all supported topologies; unsupported basis; domain count/width/alignment; every column/ring point permutation; wrong point width; and per-basis missing/extra stage, round, degree coefficient, and child claim tests. Point order is unrepresentable after construction because `DigitRangeEqualityPoint` fields are private and its sole constructor performs the protocol permutation. |
 | Allocation and allocator-observed peak parity | complete for the fixed uniform primary cells | literal B0/F1 table below; remaining distributions are benchmark cells, not additional allocation baselines unless review requests them |
 | Criterion timing parity | pending | paired serial and parallel B0/F1 intervals for the fixed matrix, including verifier attribution |
+| Stage 2/relation baseline coverage | pending | add the Packet-1 Stage 2 cells and separately report relation construction without changing Stage 2 production code |
+| Exact proof-size and soundness evidence | pending review | reconcile complete actual/formula bytes for direct, legacy recursive, target separate, and target batched shapes—including unequal native rounds—with the proof-size and degree ledgers; finish the claimed-polynomial/challenge/extraction review before Packet 7 |
 | Fresh-process max RSS and exact-artifact text size | pending | commands and artifact-identity rules below |
 | End-to-end primary workload `<= 1.02x` | pending | paired B0/F1 result under the ratified ratio rule |
-| Positive-surface classification and forbidden-owner deletion report | pending | final `B0...F1` name/numstat classification plus the required `rg` report |
+| Production ownership and positive-surface classification | pending | finalize the Stage 1/Stage 2 file-and-function manifest, classify final `B0...F1` name/numstat output exactly once, and attach the forbidden-owner/wrapper `rg` report |
 | Repository validation | pending final head | preflight, three release Clippy graphs, focused suites, transcript hardening, and CI-profile nextest |
 | Release bookkeeping | pending final head | record F1 head SHA, commit/push, open the PR, and attach local/CI evidence |
 
