@@ -7,7 +7,7 @@
 //! `w` is a valid digit, so `range_image(z)` lies in the
 //! set `{k(k+1) : k = 0, ..., half-1}`. The range-check polynomial
 //!
-//! `Q(s) = prod_{k=0}^{half-1} (s - k(k+1))`
+//! `Q(r) = prod_{k=0}^{half-1} (r - k(k+1))`
 //!
 //! has degree `b/2` and vanishes on exactly that set. The sumcheck proves
 //!
@@ -15,7 +15,7 @@
 //!
 //! where the input claim is `0` (an honest prover makes every summand vanish).
 //! Stage 1 uses the generic eq-factored sumcheck path: each round writes the
-//! full polynomial as `s(X) = l(X) * q(X)`, where `l` is the linear eq factor
+//! full polynomial as `p(X) = l(X) * q(X)`, where `l` is the linear eq factor
 //! for the current round and `q` has degree `b/2`. The proof sends the
 //! headerless `q` message with its linear term omitted, rather than the full
 //! degree-`b/2 + 1` product polynomial. After all rounds, at `stage1_point`, the
@@ -31,7 +31,7 @@
 //!
 //! With `half = 4` the roots are `{0, 2, 6, 12}`, giving
 //!
-//! `Q(s) = s * (s - 2) * (s - 6) * (s - 12)`,
+//! `Q(r) = r * (r - 2) * (r - 6) * (r - 12)`,
 //!
 //! degree 4, so round polynomials have degree 5.
 
@@ -48,7 +48,6 @@ use akita_field::{AkitaError, FieldCore, FromPrimitiveInt, Zero};
 use akita_sumcheck::{
     fold_evals_in_place, CompactPairFoldLut, EqFactoredSumcheckInstanceProver, EqFactoredUniPoly,
 };
-use std::time::Instant;
 
 const MAX_AFFINE_COEFFS: usize = 17;
 const MAX_COMPACT_COEFF_LUT_B: usize = 16;
@@ -60,7 +59,7 @@ struct CompactCoeffEntry {
     is_neg: bool,
 }
 
-fn poly_coeffs_from_roots_int(roots: &[i128]) -> Vec<i128> {
+fn polynomial_coefficients_from_integer_roots(roots: &[i128]) -> Vec<i128> {
     let mut coeffs = vec![1i128];
     for &root in roots {
         let mut next = vec![0i128; coeffs.len() + 1];
@@ -74,29 +73,29 @@ fn poly_coeffs_from_roots_int(roots: &[i128]) -> Vec<i128> {
 }
 
 #[derive(Clone)]
-struct RangeAffineFromSPrecomp<E: FieldCore> {
+struct RangePolynomialPrecomputation<E: FieldCore> {
     dense_coeffs: Vec<E>,
     dense_row_offsets: Vec<usize>,
     degree_q: usize,
-    /// `h_i(s_0)` for each valid `s_0` and coefficient index `i`.
+    /// `h_i(left_range_image)` for each valid `left_range_image` and coefficient index `i`.
     /// Indexed as `compact_idx * num_rows + i`, where `compact_idx` is
-    /// obtained from `s_to_compact`.
-    small_s_lut: Vec<E>,
+    /// obtained from `range_image_to_index`.
+    valid_range_image_lut: Vec<E>,
     compact_coeff_lut: Option<Vec<CompactCoeffEntry>>,
     field_coeff_lut: Option<Vec<E>>,
-    /// Maps raw `s` integer (offset by `min_s`) to a compact index into the
+    /// Maps a raw range-image integer (offset by `minimum_range_image`) to a compact index into the
     /// `b/2`-element valid-value set `{k(k+1) : k = 0..half-1}`.
-    s_to_compact: Vec<u8>,
-    num_valid_s: usize,
-    min_s: i16,
+    range_image_to_index: Vec<u8>,
+    valid_range_image_count: usize,
+    minimum_range_image: i16,
 }
 
-impl<E: FieldCore + FromPrimitiveInt> RangeAffineFromSPrecomp<E> {
+impl<E: FieldCore + FromPrimitiveInt> RangePolynomialPrecomputation<E> {
     fn new(b: usize) -> Self {
         assert!(b >= 2, "b must be at least 2");
         let half = (b / 2) as i128;
         let pair_offsets: Vec<i128> = (0..half).map(|k| k * (k + 1)).collect();
-        let range_coeffs = poly_coeffs_from_roots_int(&pair_offsets);
+        let range_coeffs = polynomial_coefficients_from_integer_roots(&pair_offsets);
         let degree_q = range_coeffs.len() - 1;
         let num_rows = degree_q + 1;
 
@@ -120,43 +119,46 @@ impl<E: FieldCore + FromPrimitiveInt> RangeAffineFromSPrecomp<E> {
         dense_row_offsets.push(dense_int.len());
         let dense_coeffs = dense_int.iter().copied().map(E::from_i128).collect();
 
-        let min_s = 0i16;
-        let max_s_i128 = half * (half - 1);
+        let minimum_range_image = 0i16;
+        let maximum_range_image_i128 = half * (half - 1);
         assert!(
-            max_s_i128 <= i16::MAX as i128,
-            "compact s range exceeds i16 for b={b}"
+            maximum_range_image_i128 <= i16::MAX as i128,
+            "compact range-image values exceed i16 for basis={b}"
         );
-        let max_s = max_s_i128 as i16;
-        let raw_range = (i32::from(max_s) - i32::from(min_s) + 1) as usize;
-        let num_valid_s = half as usize;
+        let maximum_range_image = maximum_range_image_i128 as i16;
+        let raw_range =
+            (i32::from(maximum_range_image) - i32::from(minimum_range_image) + 1) as usize;
+        let valid_range_image_count = half as usize;
 
-        let mut s_to_compact = vec![u8::MAX; raw_range];
-        for (compact_idx, &s_val) in pair_offsets.iter().enumerate() {
-            s_to_compact[(s_val as i16 - min_s) as usize] = compact_idx as u8;
+        let mut range_image_to_index = vec![u8::MAX; raw_range];
+        for (compact_idx, &range_image_value) in pair_offsets.iter().enumerate() {
+            range_image_to_index[(range_image_value as i16 - minimum_range_image) as usize] =
+                compact_idx as u8;
         }
 
-        let mut small_s_lut = vec![E::zero(); num_valid_s * num_rows];
-        let mut small_s_lut_int = vec![0i128; num_valid_s * num_rows];
-        for (compact_idx, &s_val) in pair_offsets.iter().enumerate() {
+        let mut valid_range_image_lut = vec![E::zero(); valid_range_image_count * num_rows];
+        let mut valid_range_image_lut_int = vec![0i128; valid_range_image_count * num_rows];
+        for (compact_idx, &range_image_value) in pair_offsets.iter().enumerate() {
             for i in 0..num_rows {
                 let row = &dense_int[dense_row_offsets[i]..dense_row_offsets[i + 1]];
                 let mut h: i128 = 0;
                 for &c in row.iter().rev() {
-                    h = h * s_val + c;
+                    h = h * range_image_value + c;
                 }
-                small_s_lut_int[compact_idx * num_rows + i] = h;
-                small_s_lut[compact_idx * num_rows + i] = E::from_i128(h);
+                valid_range_image_lut_int[compact_idx * num_rows + i] = h;
+                valid_range_image_lut[compact_idx * num_rows + i] = E::from_i128(h);
             }
         }
 
         let compact_coeff_lut = if b <= MAX_COMPACT_COEFF_LUT_B {
-            let mut lut = Vec::with_capacity(num_valid_s * num_valid_s * num_rows);
-            for (s0_ci, &s0_val) in pair_offsets.iter().enumerate() {
-                let h_base = s0_ci * num_rows;
-                for &s1_val in &pair_offsets {
-                    let delta = s1_val - s0_val;
+            let mut lut =
+                Vec::with_capacity(valid_range_image_count * valid_range_image_count * num_rows);
+            for (left_index, &left_value) in pair_offsets.iter().enumerate() {
+                let h_base = left_index * num_rows;
+                for &right_value in &pair_offsets {
+                    let delta = right_value - left_value;
                     let mut delta_pow = 1i128;
-                    for &h_i in &small_s_lut_int[h_base..h_base + num_rows] {
+                    for &h_i in &valid_range_image_lut_int[h_base..h_base + num_rows] {
                         let coeff = h_i
                             .checked_mul(delta_pow)
                             .expect("compact affine coefficient overflow");
@@ -180,13 +182,14 @@ impl<E: FieldCore + FromPrimitiveInt> RangeAffineFromSPrecomp<E> {
             None
         };
         let field_coeff_lut = if b > MAX_COMPACT_COEFF_LUT_B && b <= MAX_FIELD_COEFF_LUT_B {
-            let mut lut = Vec::with_capacity(num_valid_s * num_valid_s * num_rows);
-            for (s0_ci, &s0_val) in pair_offsets.iter().enumerate() {
-                let h_base = s0_ci * num_rows;
-                for &s1_val in &pair_offsets {
-                    let delta = E::from_i128(s1_val - s0_val);
+            let mut lut =
+                Vec::with_capacity(valid_range_image_count * valid_range_image_count * num_rows);
+            for (left_index, &left_value) in pair_offsets.iter().enumerate() {
+                let h_base = left_index * num_rows;
+                for &right_value in &pair_offsets {
+                    let delta = E::from_i128(right_value - left_value);
                     let mut delta_pow = E::one();
-                    for &h_i in &small_s_lut[h_base..h_base + num_rows] {
+                    for &h_i in &valid_range_image_lut[h_base..h_base + num_rows] {
                         lut.push(h_i * delta_pow);
                         delta_pow *= delta;
                     }
@@ -201,23 +204,27 @@ impl<E: FieldCore + FromPrimitiveInt> RangeAffineFromSPrecomp<E> {
             dense_coeffs,
             dense_row_offsets,
             degree_q,
-            small_s_lut,
+            valid_range_image_lut,
             compact_coeff_lut,
             field_coeff_lut,
-            s_to_compact,
-            num_valid_s,
-            min_s,
+            range_image_to_index,
+            valid_range_image_count,
+            minimum_range_image,
         }
     }
 }
 
-impl<E: FieldCore> RangeAffineFromSPrecomp<E> {
+impl<E: FieldCore> RangePolynomialPrecomputation<E> {
     #[inline]
-    fn compact_index(&self, s_int: i16) -> usize {
-        let raw = (s_int - self.min_s) as usize;
-        debug_assert!(raw < self.s_to_compact.len());
-        let ci = self.s_to_compact[raw];
-        debug_assert_ne!(ci, u8::MAX, "s={s_int} is not a valid w*(w+1) value");
+    fn compact_index(&self, range_image_integer: i16) -> usize {
+        let raw = (range_image_integer - self.minimum_range_image) as usize;
+        debug_assert!(raw < self.range_image_to_index.len());
+        let ci = self.range_image_to_index[raw];
+        debug_assert_ne!(
+            ci,
+            u8::MAX,
+            "range_image={range_image_integer} is not a valid w*(w+1) value"
+        );
         ci as usize
     }
 
@@ -231,30 +238,43 @@ impl<E: FieldCore> RangeAffineFromSPrecomp<E> {
     }
 
     #[inline]
-    fn h_i_lut(&self, s_0_int: i16, i: usize) -> E {
-        let ci = self.compact_index(s_0_int);
-        self.small_s_lut[ci * self.num_rows() + i]
+    fn h_i_lut(&self, left_range_image_integer: i16, i: usize) -> E {
+        let ci = self.compact_index(left_range_image_integer);
+        self.valid_range_image_lut[ci * self.num_rows() + i]
     }
 
     #[inline]
-    fn pair_coeff_lut_start(&self, s_0_int: i16, s_1_int: i16) -> usize {
-        let pair_idx = self.compact_index(s_0_int) * self.num_valid_s + self.compact_index(s_1_int);
+    fn pair_coeff_lut_start(
+        &self,
+        left_range_image_integer: i16,
+        right_range_image_integer: i16,
+    ) -> usize {
+        let pair_idx = self.compact_index(left_range_image_integer) * self.valid_range_image_count
+            + self.compact_index(right_range_image_integer);
         pair_idx * self.num_rows()
     }
 
     #[inline]
-    fn compact_coeffs_lut(&self, s_0_int: i16, s_1_int: i16) -> Option<&[CompactCoeffEntry]> {
+    fn compact_coeffs_lut(
+        &self,
+        left_range_image_integer: i16,
+        right_range_image_integer: i16,
+    ) -> Option<&[CompactCoeffEntry]> {
         let lut = self.compact_coeff_lut.as_ref()?;
         let num_rows = self.num_rows();
-        let start = self.pair_coeff_lut_start(s_0_int, s_1_int);
+        let start = self.pair_coeff_lut_start(left_range_image_integer, right_range_image_integer);
         Some(&lut[start..start + num_rows])
     }
 
     #[inline]
-    fn field_coeffs_lut(&self, s_0_int: i16, s_1_int: i16) -> Option<&[E]> {
+    fn field_coeffs_lut(
+        &self,
+        left_range_image_integer: i16,
+        right_range_image_integer: i16,
+    ) -> Option<&[E]> {
         let lut = self.field_coeff_lut.as_ref()?;
         let num_rows = self.num_rows();
-        let start = self.pair_coeff_lut_start(s_0_int, s_1_int);
+        let start = self.pair_coeff_lut_start(left_range_image_integer, right_range_image_integer);
         Some(&lut[start..start + num_rows])
     }
 }
@@ -317,12 +337,11 @@ fn accumulate_dense_entry_coeffs<E: FieldCore + HasUnreducedOps>(
 }
 
 #[inline]
-fn compute_entry_coeffs_from_s<E: FieldCore + HasUnreducedOps>(
+fn compute_entry_coefficients<E: FieldCore + HasUnreducedOps>(
     out: &mut [E],
-    _s_pows: &mut [E],
-    precomp: &RangeAffineFromSPrecomp<E>,
-    s_0: E,
-    a: E,
+    precomp: &RangePolynomialPrecomputation<E>,
+    left_range_image: E,
+    range_image_delta: E,
 ) {
     let num_rows = precomp.num_rows();
     debug_assert!(out.len() >= num_rows);
@@ -331,19 +350,19 @@ fn compute_entry_coeffs_from_s<E: FieldCore + HasUnreducedOps>(
     for (i, out_i) in out.iter_mut().enumerate().take(num_rows) {
         let mut h_i = E::zero();
         for &coeff in precomp.dense_row(i).iter().rev() {
-            h_i = h_i * s_0 + coeff;
+            h_i = h_i * left_range_image + coeff;
         }
         *out_i = a_pow * h_i;
-        a_pow *= a;
+        a_pow *= range_image_delta;
     }
 }
 
 #[inline]
-fn compute_entry_coeffs_from_s_x4<E: FieldCore + HasUnreducedOps>(
+fn compute_entry_coefficients_x4<E: FieldCore + HasUnreducedOps>(
     out: &mut [[E; MAX_AFFINE_COEFFS]; 4],
-    precomp: &RangeAffineFromSPrecomp<E>,
-    s_0: [E; 4],
-    a: [E; 4],
+    precomp: &RangePolynomialPrecomputation<E>,
+    left_range_image: [E; 4],
+    range_image_delta: [E; 4],
 ) {
     let num_rows = precomp.num_rows();
 
@@ -362,10 +381,10 @@ fn compute_entry_coeffs_from_s_x4<E: FieldCore + HasUnreducedOps>(
         let mut h2 = E::zero();
         let mut h3 = E::zero();
         for &coeff in precomp.dense_row(i).iter().rev() {
-            h0 = h0 * s_0[0] + coeff;
-            h1 = h1 * s_0[1] + coeff;
-            h2 = h2 * s_0[2] + coeff;
-            h3 = h3 * s_0[3] + coeff;
+            h0 = h0 * left_range_image[0] + coeff;
+            h1 = h1 * left_range_image[1] + coeff;
+            h2 = h2 * left_range_image[2] + coeff;
+            h3 = h3 * left_range_image[3] + coeff;
         }
 
         *out0_i = ap[0] * h0;
@@ -373,22 +392,24 @@ fn compute_entry_coeffs_from_s_x4<E: FieldCore + HasUnreducedOps>(
         *out2_i = ap[2] * h2;
         *out3_i = ap[3] * h3;
 
-        ap[0] *= a[0];
-        ap[1] *= a[1];
-        ap[2] *= a[2];
-        ap[3] *= a[3];
+        ap[0] *= range_image_delta[0];
+        ap[1] *= range_image_delta[1];
+        ap[2] *= range_image_delta[2];
+        ap[3] *= range_image_delta[3];
     }
 }
 
-fn compute_norm_round_eq_poly_from_s<E: FieldCore + FromPrimitiveInt + HasUnreducedOps>(
+fn compute_range_round_polynomial_from_range_image<
+    E: FieldCore + FromPrimitiveInt + HasUnreducedOps,
+>(
     split_eq: &GruenSplitEq<E>,
-    range_precomp: &RangeAffineFromSPrecomp<E>,
-    s_pair: impl Fn(usize) -> (E, E) + Sync,
+    polynomial_precomputation: &RangePolynomialPrecomputation<E>,
+    range_image_pair: impl Fn(usize) -> (E, E) + Sync,
 ) -> EqFactoredUniPoly<E> {
     let (e_first, e_second) = split_eq.remaining_eq_tables();
     let num_first = e_first.len();
-    let rp = range_precomp;
-    let full_num_coeffs_q = rp.degree_q + 1;
+    let polynomial_precomputation = polynomial_precomputation;
+    let full_num_coeffs_q = polynomial_precomputation.degree_q + 1;
     let num_coeffs_q = full_num_coeffs_q;
 
     let q_coeffs = cfg_fold_reduce!(
@@ -404,14 +425,14 @@ fn compute_norm_round_eq_poly_from_s<E: FieldCore + FromPrimitiveInt + HasUnredu
             for chunk in 0..full_chunks {
                 let jl = chunk * 4;
                 let pairs = [
-                    s_pair(base_j + jl),
-                    s_pair(base_j + jl + 1),
-                    s_pair(base_j + jl + 2),
-                    s_pair(base_j + jl + 3),
+                    range_image_pair(base_j + jl),
+                    range_image_pair(base_j + jl + 1),
+                    range_image_pair(base_j + jl + 2),
+                    range_image_pair(base_j + jl + 3),
                 ];
-                compute_entry_coeffs_from_s_x4(
+                compute_entry_coefficients_x4(
                     &mut batch_out,
-                    rp,
+                    polynomial_precomputation,
                     [pairs[0].0, pairs[1].0, pairs[2].0, pairs[3].0],
                     [
                         pairs[0].1 - pairs[0].0,
@@ -431,11 +452,15 @@ fn compute_norm_round_eq_poly_from_s<E: FieldCore + FromPrimitiveInt + HasUnredu
             }
 
             let mut entry_buf = [E::zero(); MAX_AFFINE_COEFFS];
-            let mut s_pows_buf = [E::zero(); MAX_AFFINE_COEFFS];
             for (tail_idx, &e_in) in e_first[full_chunks * 4..].iter().enumerate() {
                 let j = base_j + full_chunks * 4 + tail_idx;
-                let (s_0, s_1) = s_pair(j);
-                compute_entry_coeffs_from_s(&mut entry_buf, &mut s_pows_buf, rp, s_0, s_1 - s_0);
+                let (left_range_image, right_range_image) = range_image_pair(j);
+                compute_entry_coefficients(
+                    &mut entry_buf,
+                    polynomial_precomputation,
+                    left_range_image,
+                    right_range_image - left_range_image,
+                );
                 accumulate_dense_entry_coeffs(
                     &mut inner_accum[..num_coeffs_q],
                     &entry_buf[..full_num_coeffs_q],
@@ -465,21 +490,21 @@ fn compute_norm_round_eq_poly_from_s<E: FieldCore + FromPrimitiveInt + HasUnredu
     EqFactoredUniPoly::from_q_coeffs(q_coeffs)
 }
 
-fn compute_norm_round_eq_poly_from_compact_range_image_with_pairs<
+fn compute_range_round_polynomial_from_compact_image_pairs<
     E: FieldCore + FromPrimitiveInt + HasUnreducedOps,
 >(
     split_eq: &GruenSplitEq<E>,
-    range_precomp: &RangeAffineFromSPrecomp<E>,
-    s_pair: impl Fn(usize) -> (i16, i16) + Sync,
+    polynomial_precomputation: &RangePolynomialPrecomputation<E>,
+    range_image_pair: impl Fn(usize) -> (i16, i16) + Sync,
 ) -> EqFactoredUniPoly<E> {
     let (e_first, e_second) = split_eq.remaining_eq_tables();
     let num_first = e_first.len();
 
-    let rp = range_precomp;
-    let full_num_coeffs_q = rp.degree_q + 1;
+    let polynomial_precomputation = polynomial_precomputation;
+    let full_num_coeffs_q = polynomial_precomputation.degree_q + 1;
     let num_coeffs_q = full_num_coeffs_q;
 
-    let q_coeffs = if rp.compact_coeffs_lut(0, 0).is_some() {
+    let q_coeffs = if polynomial_precomputation.compact_coeffs_lut(0, 0).is_some() {
         cfg_fold_reduce!(
             0..e_second.len(),
             || vec![E::ProductAccum::zero(); num_coeffs_q],
@@ -489,9 +514,9 @@ fn compute_norm_round_eq_poly_from_compact_range_image_with_pairs<
                 let mut inner_neg = [E::MulU64Accum::zero(); MAX_AFFINE_COEFFS];
                 for (j_low, &e_in) in e_first.iter().enumerate() {
                     let j = j_high * num_first + j_low;
-                    let (s_0_int, s_1_int) = s_pair(j);
-                    let coeffs = rp
-                        .compact_coeffs_lut(s_0_int, s_1_int)
+                    let (left_range_image_integer, right_range_image_integer) = range_image_pair(j);
+                    let coeffs = polynomial_precomputation
+                        .compact_coeffs_lut(left_range_image_integer, right_range_image_integer)
                         .expect("missing compact coefficient LUT");
                     accumulate_compact_coeffs(
                         &mut inner_pos[..num_coeffs_q],
@@ -517,7 +542,7 @@ fn compute_norm_round_eq_poly_from_compact_range_image_with_pairs<
         .into_iter()
         .map(E::reduce_product_accum)
         .collect::<Vec<_>>()
-    } else if rp.field_coeffs_lut(0, 0).is_some() {
+    } else if polynomial_precomputation.field_coeffs_lut(0, 0).is_some() {
         cfg_fold_reduce!(
             0..e_second.len(),
             || vec![E::ProductAccum::zero(); num_coeffs_q],
@@ -526,9 +551,9 @@ fn compute_norm_round_eq_poly_from_compact_range_image_with_pairs<
                 let mut inner_accum = [E::ProductAccum::zero(); MAX_AFFINE_COEFFS];
                 for (j_low, &e_in) in e_first.iter().enumerate() {
                     let j = j_high * num_first + j_low;
-                    let (s_0_int, s_1_int) = s_pair(j);
-                    let coeffs = rp
-                        .field_coeffs_lut(s_0_int, s_1_int)
+                    let (left_range_image_integer, right_range_image_integer) = range_image_pair(j);
+                    let coeffs = polynomial_precomputation
+                        .field_coeffs_lut(left_range_image_integer, right_range_image_integer)
                         .expect("missing field coefficient LUT");
                     accumulate_dense_entry_coeffs(&mut inner_accum[..num_coeffs_q], coeffs, e_in);
                 }
@@ -558,17 +583,19 @@ fn compute_norm_round_eq_poly_from_compact_range_image_with_pairs<
                 let mut inner_accum = [E::ProductAccum::zero(); MAX_AFFINE_COEFFS];
                 for (j_low, &e_in) in e_first.iter().enumerate() {
                     let j = j_high * num_first + j_low;
-                    let (s_0_int, s_1_int) = s_pair(j);
-                    let s_1 = E::from_i64(i64::from(s_1_int));
-                    let a = s_1 - E::from_i64(i64::from(s_0_int));
-                    let mut a_pow = E::one();
+                    let (left_range_image_integer, right_range_image_integer) = range_image_pair(j);
+                    let right_range_image = E::from_i64(i64::from(right_range_image_integer));
+                    let range_image_delta =
+                        right_range_image - E::from_i64(i64::from(left_range_image_integer));
+                    let mut delta_power = E::one();
                     for (coeff_idx, coeff_accum) in
                         inner_accum.iter_mut().take(full_num_coeffs_q).enumerate()
                     {
-                        let h_i_s0 = rp.h_i_lut(s_0_int, coeff_idx);
-                        let val = a_pow * h_i_s0;
-                        *coeff_accum += e_in.mul_to_product_accum(val);
-                        a_pow *= a;
+                        let translated_coefficient =
+                            polynomial_precomputation.h_i_lut(left_range_image_integer, coeff_idx);
+                        let coefficient = delta_power * translated_coefficient;
+                        *coeff_accum += e_in.mul_to_product_accum(coefficient);
+                        delta_power *= range_image_delta;
                     }
                 }
                 let e_out = e_second[j_high];
@@ -594,20 +621,24 @@ fn compute_norm_round_eq_poly_from_compact_range_image_with_pairs<
     EqFactoredUniPoly::from_q_coeffs(q_coeffs)
 }
 
-fn compute_norm_round_eq_poly_from_compact_range_image<
+fn compute_range_round_polynomial_from_compact_image<
     E: FieldCore + FromPrimitiveInt + HasUnreducedOps,
     V: CompactRangeImageValue,
 >(
     split_eq: &GruenSplitEq<E>,
     compact_range_image: &[V],
-    range_precomp: &RangeAffineFromSPrecomp<E>,
+    polynomial_precomputation: &RangePolynomialPrecomputation<E>,
 ) -> EqFactoredUniPoly<E> {
-    compute_norm_round_eq_poly_from_compact_range_image_with_pairs(split_eq, range_precomp, |j| {
-        (
-            compact_range_image[2 * j].range_image_value(),
-            compact_range_image[2 * j + 1].range_image_value(),
-        )
-    })
+    compute_range_round_polynomial_from_compact_image_pairs(
+        split_eq,
+        polynomial_precomputation,
+        |j| {
+            (
+                compact_range_image[2 * j].range_image_value(),
+                compact_range_image[2 * j + 1].range_image_value(),
+            )
+        },
+    )
 }
 
 enum RangeImageState<E: FieldCore> {
@@ -636,9 +667,9 @@ impl CompactRangeImageValue for i8 {
 #[inline]
 fn range_image_from_digit(w: i8) -> i16 {
     let w = i32::from(w);
-    let s = w * (w + 1);
-    debug_assert!(s >= 0);
-    s as i16
+    let range_image = w * (w + 1);
+    debug_assert!(range_image >= 0);
+    range_image as i16
 }
 
 #[cfg(test)]
@@ -660,7 +691,7 @@ pub(crate) struct DirectRangeLeafState<E: FieldCore> {
     range_image: RangeImageState<E>,
     digit_witness: std::sync::Arc<[i8]>,
     split_eq: GruenSplitEq<E>,
-    range_precomp: RangeAffineFromSPrecomp<E>,
+    polynomial_precomputation: RangePolynomialPrecomputation<E>,
     live_x_cols: usize,
     col_bits: usize,
     num_vars: usize,
@@ -668,9 +699,6 @@ pub(crate) struct DirectRangeLeafState<E: FieldCore> {
     prefix_tau: Option<Vec<E>>,
     two_round_prefix: Option<Stage1TwoRoundPrefix<E>>,
     cached_round_poly: Option<EqFactoredUniPoly<E>>,
-    prefix_time_total: f64,
-    dense_time_total: f64,
-    fold_time_total: f64,
     rounds_completed: usize,
 }
 

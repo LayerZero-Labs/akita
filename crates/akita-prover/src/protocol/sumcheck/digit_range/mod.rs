@@ -445,17 +445,25 @@ impl<E: FieldCore + FromPrimitiveInt> DigitRangeProver<E> {
         let high_variable_count = domain.num_vars() - low_variable_count;
         let live_block_count = domain.live_block_count(low_variable_count)?;
         let coordinates = equality_point.into_coordinates();
+        let witness = if plan.basis() <= 8 {
+            DigitRangeState::Compact(digit_witness)
+        } else {
+            let _span = tracing::info_span!(
+                "digit_range_materialize_range_image",
+                basis = plan.basis(),
+                live_len = domain.live_len(),
+                domain_len = domain.domain_len(),
+            )
+            .entered();
+            DigitRangeState::PaddedRangeImage(padded_range_image_table(
+                &digit_witness,
+                live_block_count,
+                high_variable_count,
+                low_variable_count,
+            )?)
+        };
         Ok(Self {
-            witness: if plan.basis() <= 8 {
-                DigitRangeState::Compact(digit_witness)
-            } else {
-                DigitRangeState::PaddedRangeImage(padded_range_image_table(
-                    &digit_witness,
-                    live_block_count,
-                    high_variable_count,
-                    low_variable_count,
-                )?)
-            },
+            witness,
             equality_point: coordinates,
             plan,
             live_block_count,
@@ -502,8 +510,15 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + HasOptimizedFold + Akit
             high_variable_count,
             low_variable_count,
         } = self;
+        let _prove_span = tracing::info_span!(
+            "digit_range_prove",
+            basis = plan.basis(),
+            rounds = equality_point.len(),
+        )
+        .entered();
         let range_image = match witness {
             DigitRangeState::Compact(digit_witness) => {
+                let _leaf_span = tracing::info_span!("digit_range_direct_leaf").entered();
                 let mut leaf_stage = direct_range_leaf::DirectRangeLeafState::new_owned(
                     digit_witness,
                     &equality_point,
@@ -530,16 +545,32 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + HasOptimizedFold + Akit
         };
 
         let leaf_coeffs = plan.leaf_coeffs::<E>();
-        let product_layers = build_product_stage_layers(
-            build_leaf_tables(plan, &leaf_coeffs, &range_image),
-            plan.product_stage_arities(),
-        );
+        let leaf_tables = {
+            let _span = tracing::info_span!(
+                "digit_range_materialize_leaf_tables",
+                leaf_count = plan.leaf_factor_count(),
+                domain_len = range_image.len(),
+            )
+            .entered();
+            build_leaf_tables(plan, &leaf_coeffs, &range_image)
+        };
+        let product_layers = {
+            let _span = tracing::info_span!("digit_range_build_product_layers").entered();
+            build_product_stage_layers(leaf_tables, plan.product_stage_arities())
+        };
         let mut stage_proofs = Vec::with_capacity(product_layers.len() + 1);
         let mut current_tau = equality_point;
         let mut current_claim = E::zero();
         let mut current_weights = vec![E::one()];
 
-        for layer in product_layers {
+        for (stage_index, (&arity, layer)) in plan
+            .product_stage_arities()
+            .iter()
+            .zip(product_layers)
+            .enumerate()
+        {
+            let _stage_span =
+                tracing::info_span!("digit_range_product_stage", stage_index, arity,).entered();
             let mut product_stage = ProductStageState::new(
                 layer.child_tables_by_parent,
                 current_weights,
@@ -568,6 +599,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + HasOptimizedFold + Akit
         }
 
         let batched_leaf_coeffs = plan.batch_leaf_polynomials(&current_weights, &leaf_coeffs);
+        let _leaf_span = tracing::info_span!("digit_range_polynomial_leaf").entered();
         let mut leaf_stage = PolynomialLeafState::new(
             range_image,
             &current_tau,

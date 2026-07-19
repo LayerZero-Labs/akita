@@ -3,20 +3,20 @@ use super::*;
 impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> DirectRangeLeafState<E> {
     #[inline]
     pub(super) fn direct_fold_range_image_quad_to_round2(
-        s00: i16,
-        s10: i16,
-        s01: i16,
-        s11: i16,
+        range_image_00: i16,
+        range_image_10: i16,
+        range_image_01: i16,
+        range_image_11: i16,
         r0: E,
         r1: E,
     ) -> E {
-        let s00 = E::from_i64(i64::from(s00));
-        let s10 = E::from_i64(i64::from(s10));
-        let s01 = E::from_i64(i64::from(s01));
-        let s11 = E::from_i64(i64::from(s11));
-        let x0 = s00 + r0 * (s10 - s00);
-        let x1 = s01 + r0 * (s11 - s01);
-        x0 + r1 * (x1 - x0)
+        let range_image_00 = E::from_i64(i64::from(range_image_00));
+        let range_image_10 = E::from_i64(i64::from(range_image_10));
+        let range_image_01 = E::from_i64(i64::from(range_image_01));
+        let range_image_11 = E::from_i64(i64::from(range_image_11));
+        let first_fold = range_image_00 + r0 * (range_image_10 - range_image_00);
+        let second_fold = range_image_01 + r0 * (range_image_11 - range_image_01);
+        first_fold + r1 * (second_fold - first_fold)
     }
 
     #[inline(always)]
@@ -47,8 +47,8 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> DirectRangeLeafState<E> 
         d0 | (d1 << 1) | (d2 << 2) | (d3 << 3)
     }
 
-    pub(super) fn build_round2_s_lookup_b4(r0: E, r1: E) -> Vec<E> {
-        const S_VALUES: [i16; 2] = [0, 2];
+    pub(super) fn build_round2_range_image_lookup_b4(r0: E, r1: E) -> Vec<E> {
+        const RANGE_IMAGE_VALUES: [i16; 2] = [0, 2];
         (0..16usize)
             .map(|idx| {
                 let d0 = idx & 0b1;
@@ -56,10 +56,10 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> DirectRangeLeafState<E> 
                 let d2 = (idx >> 2) & 0b1;
                 let d3 = (idx >> 3) & 0b1;
                 Self::direct_fold_range_image_quad_to_round2(
-                    S_VALUES[d0],
-                    S_VALUES[d1],
-                    S_VALUES[d2],
-                    S_VALUES[d3],
+                    RANGE_IMAGE_VALUES[d0],
+                    RANGE_IMAGE_VALUES[d1],
+                    RANGE_IMAGE_VALUES[d2],
+                    RANGE_IMAGE_VALUES[d3],
                     r0,
                     r1,
                 )
@@ -95,8 +95,8 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> DirectRangeLeafState<E> 
         d0 | (d1 << 2) | (d2 << 4) | (d3 << 6)
     }
 
-    pub(super) fn build_round2_s_lookup_b8(r0: E, r1: E) -> Vec<E> {
-        const S_VALUES: [i16; 4] = [0, 2, 6, 12];
+    pub(super) fn build_round2_range_image_lookup_b8(r0: E, r1: E) -> Vec<E> {
+        const RANGE_IMAGE_VALUES: [i16; 4] = [0, 2, 6, 12];
         (0..256usize)
             .map(|idx| {
                 let d0 = idx & 0b11;
@@ -104,10 +104,10 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> DirectRangeLeafState<E> 
                 let d2 = (idx >> 4) & 0b11;
                 let d3 = (idx >> 6) & 0b11;
                 Self::direct_fold_range_image_quad_to_round2(
-                    S_VALUES[d0],
-                    S_VALUES[d1],
-                    S_VALUES[d2],
-                    S_VALUES[d3],
+                    RANGE_IMAGE_VALUES[d0],
+                    RANGE_IMAGE_VALUES[d1],
+                    RANGE_IMAGE_VALUES[d2],
+                    RANGE_IMAGE_VALUES[d3],
                     r0,
                     r1,
                 )
@@ -168,12 +168,12 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> DirectRangeLeafState<E> 
         let first_bits = num_first.trailing_zeros();
         let block_size = num_first.min(live_pairs);
         let quad_fold_lut = match self.b {
-            4 => Self::build_round2_s_lookup_b4(r0, r1),
-            _ => Self::build_round2_s_lookup_b8(r0, r1),
+            4 => Self::build_round2_range_image_lookup_b4(r0, r1),
+            _ => Self::build_round2_range_image_lookup_b8(r0, r1),
         };
 
-        let range_pc = &self.range_precomp;
-        let full_num_coeffs_q = range_pc.degree_q + 1;
+        let polynomial_precomputation = &self.polynomial_precomputation;
+        let full_num_coeffs_q = polynomial_precomputation.degree_q + 1;
         let num_coeffs_q = full_num_coeffs_q;
         let mut out = vec![E::zero(); live_x_cols * next_y_len];
 
@@ -186,7 +186,6 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> DirectRangeLeafState<E> 
                 let j_base = x * current_y_half;
                 let mut outer_accum = vec![E::ProductAccum::zero(); num_coeffs_q];
                 let mut entry_buf = [E::zero(); MAX_AFFINE_COEFFS];
-                let mut s_pows_buf = [E::zero(); MAX_AFFINE_COEFFS];
 
                 let mut blk = 0usize;
                 while blk < live_pairs {
@@ -199,22 +198,21 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> DirectRangeLeafState<E> 
                         let e_in = e_first[j_low];
                         let top_y = 2 * pair_y;
                         let top_base = 8 * pair_y;
-                        let s0 = quad_fold_lut[match self.b {
+                        let left_range_image = quad_fold_lut[match self.b {
                             4 => Self::stage1_b4_quad_lookup_index_from_row(col, top_base),
                             _ => Self::stage1_b8_quad_lookup_index_from_row(col, top_base),
                         }];
-                        let s1 = quad_fold_lut[match self.b {
+                        let right_range_image = quad_fold_lut[match self.b {
                             4 => Self::stage1_b4_quad_lookup_index_from_row(col, top_base + 4),
                             _ => Self::stage1_b8_quad_lookup_index_from_row(col, top_base + 4),
                         }];
-                        col_out[top_y] = s0;
-                        col_out[top_y + 1] = s1;
-                        compute_entry_coeffs_from_s(
+                        col_out[top_y] = left_range_image;
+                        col_out[top_y + 1] = right_range_image;
+                        compute_entry_coefficients(
                             &mut entry_buf,
-                            &mut s_pows_buf,
-                            range_pc,
-                            s0,
-                            s1 - s0,
+                            polynomial_precomputation,
+                            left_range_image,
+                            right_range_image - left_range_image,
                         );
                         accumulate_dense_entry_coeffs(
                             &mut inner_accum[..num_coeffs_q],
@@ -252,7 +250,6 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> DirectRangeLeafState<E> 
                 let col = &compact_range_image[x * y_len..(x + 1) * y_len];
                 let j_base = x * current_y_half;
                 let mut entry_buf = [E::zero(); MAX_AFFINE_COEFFS];
-                let mut s_pows_buf = [E::zero(); MAX_AFFINE_COEFFS];
 
                 let mut blk = 0usize;
                 while blk < live_pairs {
@@ -265,22 +262,21 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> DirectRangeLeafState<E> 
                         let e_in = e_first[j_low];
                         let top_y = 2 * pair_y;
                         let top_base = 8 * pair_y;
-                        let s0 = quad_fold_lut[match self.b {
+                        let left_range_image = quad_fold_lut[match self.b {
                             4 => Self::stage1_b4_quad_lookup_index_from_row(col, top_base),
                             _ => Self::stage1_b8_quad_lookup_index_from_row(col, top_base),
                         }];
-                        let s1 = quad_fold_lut[match self.b {
+                        let right_range_image = quad_fold_lut[match self.b {
                             4 => Self::stage1_b4_quad_lookup_index_from_row(col, top_base + 4),
                             _ => Self::stage1_b8_quad_lookup_index_from_row(col, top_base + 4),
                         }];
-                        col_out[top_y] = s0;
-                        col_out[top_y + 1] = s1;
-                        compute_entry_coeffs_from_s(
+                        col_out[top_y] = left_range_image;
+                        col_out[top_y + 1] = right_range_image;
+                        compute_entry_coefficients(
                             &mut entry_buf,
-                            &mut s_pows_buf,
-                            range_pc,
-                            s0,
-                            s1 - s0,
+                            polynomial_precomputation,
+                            left_range_image,
+                            right_range_image - left_range_image,
                         );
                         accumulate_dense_entry_coeffs(
                             &mut inner_accum[..num_coeffs_q],
