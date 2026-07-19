@@ -1,0 +1,243 @@
+use super::compact_digit_source::CompactDigitSource;
+use super::exact_prefix::{ExactPrefixTable, SplitEqualitySuffixMass};
+use super::range_class_tables::{product_coefficients, ProductNodeTable};
+use super::round_accumulation::{add_scaled_round_coefficients, split_equality_weight};
+use super::MAX_TREE_STAGE_Q_DEGREE;
+use akita_algebra::split_eq::GruenSplitEq;
+use akita_field::parallel::*;
+use akita_field::unreduced::HasOptimizedFold;
+use akita_field::{AkitaError, FieldCore, FromPrimitiveInt};
+use akita_sumcheck::{EqFactoredSumcheckInstanceProver, EqFactoredUniPoly};
+use akita_types::DigitRangePlan;
+
+enum ProductValues<E: FieldCore, const LANES: usize> {
+    Compact {
+        source: CompactDigitSource,
+        nodes: ProductNodeTable<E, LANES>,
+    },
+    Folded(ExactPrefixTable<[E; LANES]>),
+}
+
+fn accumulate_round<E: FieldCore, const LANES: usize>(
+    first: &[E],
+    second: &[E],
+    explicit_pair_count: usize,
+    padding: [E; LANES],
+    pair_at: impl Fn(usize) -> ([E; LANES], [E; LANES]) + Sync,
+    arity: usize,
+    parent_weights: &[E],
+) -> [E; MAX_TREE_STAGE_Q_DEGREE + 1] {
+    let mut coefficients = cfg_fold_reduce!(
+        0..explicit_pair_count,
+        || [E::zero(); MAX_TREE_STAGE_Q_DEGREE + 1],
+        |mut sum, pair_index| {
+            let (left, right) = pair_at(pair_index);
+            let pair_coefficients = product_coefficients(left, right, arity, parent_weights);
+            add_scaled_round_coefficients(
+                &mut sum,
+                &pair_coefficients,
+                split_equality_weight(first, second, pair_index),
+            );
+            sum
+        },
+        |mut left, right| {
+            for (left, right) in left.iter_mut().zip(right.iter()) {
+                *left += *right;
+            }
+            left
+        }
+    );
+    let padding_coefficients = product_coefficients(padding, padding, arity, parent_weights);
+    let suffix_weight = SplitEqualitySuffixMass::new(first, second)
+        .and_then(|suffix| suffix.weight_from(explicit_pair_count))
+        .expect("split equality and exact prefix were validated at construction");
+    add_scaled_round_coefficients(&mut coefficients, &padding_coefficients, suffix_weight);
+    coefficients
+}
+
+/// One eq-factored product substage over compact classes followed by folded field lanes.
+pub(super) struct StreamingProductStage<E: FieldCore, const LANES: usize> {
+    values: ProductValues<E, LANES>,
+    parent_weights: Vec<E>,
+    split_eq: GruenSplitEq<E>,
+    input_claim: E,
+    arity: usize,
+    num_rounds: usize,
+    rounds_completed: usize,
+}
+
+impl<E: FieldCore + FromPrimitiveInt, const LANES: usize> StreamingProductStage<E, LANES> {
+    pub(super) fn new(
+        source: CompactDigitSource,
+        plan: DigitRangePlan,
+        leaf_polynomials: &[Vec<E>],
+        stage_index: usize,
+        parent_weights: Vec<E>,
+        equality_point: &[E],
+        input_claim: E,
+    ) -> Result<Self, AkitaError> {
+        let arity = plan
+            .product_stage_arities()
+            .get(stage_index)
+            .copied()
+            .ok_or(AkitaError::InvalidProof)?;
+        let expected_lanes = arity.checked_mul(parent_weights.len()).ok_or_else(|| {
+            AkitaError::InvalidInput("range-product lane count overflow".to_string())
+        })?;
+        if LANES != expected_lanes {
+            return Err(AkitaError::InvalidSize {
+                expected: expected_lanes,
+                actual: LANES,
+            });
+        }
+        let nodes = {
+            let _span = tracing::info_span!(
+                "digit_range_build_node_table",
+                stage_index,
+                arity,
+                lane_count = LANES,
+            )
+            .entered();
+            ProductNodeTable::new(plan, leaf_polynomials, stage_index)?
+        };
+        Ok(Self {
+            values: ProductValues::Compact { source, nodes },
+            parent_weights,
+            split_eq: GruenSplitEq::new(equality_point)?,
+            input_claim,
+            arity,
+            num_rounds: equality_point.len(),
+            rounds_completed: 0,
+        })
+    }
+
+    pub(super) fn final_child_claims(&self) -> Vec<E> {
+        let ProductValues::Folded(table) = &self.values else {
+            panic!("product stage remained compact after its final round")
+        };
+        table
+            .final_value()
+            .expect("product stage was not fully folded")
+            .to_vec()
+    }
+}
+
+impl<E: FieldCore + FromPrimitiveInt + HasOptimizedFold, const LANES: usize>
+    EqFactoredSumcheckInstanceProver<E> for StreamingProductStage<E, LANES>
+{
+    fn num_rounds(&self) -> usize {
+        self.num_rounds
+    }
+
+    fn degree_bound(&self) -> usize {
+        self.arity
+    }
+
+    fn input_claim(&self) -> E {
+        self.input_claim
+    }
+
+    fn current_linear_factor_evals(&self) -> (E, E) {
+        self.split_eq.linear_factor_evals()
+    }
+
+    fn compute_round_eq_factored(&mut self, _round: usize) -> EqFactoredUniPoly<E> {
+        let (first, second) = self.split_eq.remaining_eq_tables();
+        let coefficients = match &self.values {
+            ProductValues::Compact { source, nodes } => {
+                let _span = tracing::info_span!(
+                    "digit_range_initial_round",
+                    round = self.rounds_completed,
+                    explicit_rows = source.live_len(),
+                    kernel_strategy = "node-evaluation",
+                )
+                .entered();
+                accumulate_round(
+                    first,
+                    second,
+                    source.live_len().div_ceil(2),
+                    nodes.padding_row(),
+                    |pair_index| {
+                        (
+                            nodes.row(source.class_or_padding(2 * pair_index)),
+                            nodes.row(source.class_or_padding(2 * pair_index + 1)),
+                        )
+                    },
+                    self.arity,
+                    &self.parent_weights,
+                )
+            }
+            ProductValues::Folded(table) => {
+                let _span = tracing::info_span!(
+                    "digit_range_later_round",
+                    round = self.rounds_completed,
+                    explicit_rows = table.explicit_len(),
+                    domain_len = table.domain_len(),
+                )
+                .entered();
+                accumulate_round(
+                    first,
+                    second,
+                    table.explicit_len().div_ceil(2),
+                    table.default_value(),
+                    |pair_index| {
+                        (
+                            table.value_or_default(2 * pair_index),
+                            table.value_or_default(2 * pair_index + 1),
+                        )
+                    },
+                    self.arity,
+                    &self.parent_weights,
+                )
+            }
+        };
+        EqFactoredUniPoly::from_q_coeffs(coefficients[..=self.arity].to_vec())
+    }
+
+    fn ingest_challenge(&mut self, _round: usize, challenge: E) {
+        self.split_eq.bind(challenge);
+        let folded_from_compact = match &self.values {
+            ProductValues::Compact { source, nodes } => {
+                let _span = tracing::info_span!(
+                    "digit_range_materialize_folded_lanes",
+                    round = self.rounds_completed,
+                    explicit_rows = source.live_len(),
+                    lane_count = LANES,
+                )
+                .entered();
+                let explicit = cfg_into_iter!(0..source.live_len().div_ceil(2))
+                    .map(|pair_index| {
+                        let left = nodes.row(source.class_or_padding(2 * pair_index));
+                        let right = nodes.row(source.class_or_padding(2 * pair_index + 1));
+                        std::array::from_fn(|lane| {
+                            left[lane] + challenge * (right[lane] - left[lane])
+                        })
+                    })
+                    .collect();
+                Some(
+                    ExactPrefixTable::new(source.domain_len() / 2, explicit, nodes.padding_row())
+                        .expect("compact source and Boolean domain were validated"),
+                )
+            }
+            ProductValues::Folded(_) => None,
+        };
+        if let Some(table) = folded_from_compact {
+            self.values = ProductValues::Folded(table);
+        } else if let ProductValues::Folded(table) = &mut self.values {
+            let _span = tracing::info_span!(
+                "digit_range_fold_lanes",
+                round = self.rounds_completed,
+                explicit_rows = table.explicit_len(),
+                domain_len = table.domain_len(),
+                lane_count = LANES,
+            )
+            .entered();
+            table
+                .fold_in_place(|left, right| {
+                    std::array::from_fn(|lane| left[lane] + challenge * (right[lane] - left[lane]))
+                })
+                .expect("validated exact-prefix product state can fold");
+        }
+        self.rounds_completed += 1;
+    }
+}
