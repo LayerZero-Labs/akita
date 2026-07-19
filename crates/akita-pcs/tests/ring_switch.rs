@@ -960,7 +960,6 @@ mod tests {
             .num_polynomials();
         let num_positions_per_block = group_params.num_positions_per_block();
         let depth_witness = group_params.num_digits_inner();
-        let depth_commit = group_params.num_digits_outer();
         let depth_open = group_params.num_digits_open();
         let depth_fold = level_params
             .num_digits_fold_for_params(
