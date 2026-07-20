@@ -320,8 +320,8 @@ selected production kernel at a given revision.
 - one `DigitRangeProver` and one verifier path;
 - the selected high-basis streaming product kernels;
 - the selected low-basis three-round deferral kernels;
-- proof/transcript epoch tests, malformed-shape tests, benchmarks, allocation measurement,
-  and tracing spans;
+- proof/transcript epoch tests, malformed-shape tests, a durable basis benchmark, and
+  tracing spans;
 - deletion of the eager range forest, padded field-valued range-image table, duplicate
   Stage 1 prover, and layout-named Stage 1 modules.
 
@@ -615,8 +615,11 @@ change cannot conceal a range-proof delta.
 | direct-to-terminal, nv12 | `8` | 57,250 / `3a155ec04047e9942f2eb1685e778e50` | 164 / `57046ae9d1a2a2b0a63e1ecd34bc6dea` | 54,286 / `5a26d324461406760daa77a6e3009858` |
 | recursive-nonterminal, nv20 | `64,64,64` | 74,231 / `7caa4641e201f1be5a6437f5fa3e7535` | 677 / `6fa3d54d166f79a4c4fe7054c5d4ed84` | 57,707 / `dd68f68783534944dad6c7a213866d45` |
 
-The separate serial allocation harness shares scenarios with the timing benchmark but
-keeps its counting allocator out of Criterion. Its captured full-prefix results are:
+During kernel selection, a one-off serial counting-allocator harness compared the
+post-#311 baseline with #312 on the same full-prefix scenarios. That development harness
+is deliberately not retained: ongoing performance coverage belongs to the checked-in
+Criterion basis benchmark, profile CI, and coarse tracing spans. The captured allocation
+results remain useful historical evidence:
 
 | Basis | Baseline allocations | #312 allocations | Baseline bytes | #312 bytes |
 |---:|---:|---:|---:|---:|
@@ -626,11 +629,13 @@ keeps its counting allocator out of Criterion. Its captured full-prefix results 
 | 32 | 361 | 355 | 21,039,360 | 21,038,800 |
 | 64 | 552 | 542 | 46,237,568 | 46,236,744 |
 
-The high-basis three-quarter cells have the same allocation counts as their corresponding
-full padded domains. Allocation callbacks do not report a synthetic peak-live value:
-deallocation of an object created before the measured interval cannot be attributed
-soundly. Peak evidence uses explicit retained-state formulas and fresh-process maximum
-RSS instead.
+The high-basis three-quarter cells had the same allocation counts as their corresponding
+full padded domains. The one-off callbacks did not report a synthetic peak-live value:
+deallocation of an object created before the measured interval could not be attributed
+soundly. Peak evidence instead used explicit retained-state formulas and fresh-process
+maximum RSS. Future allocation investigations should use disposable measurement tooling
+or an established repository-wide profiler rather than adding a second Stage 1 benchmark
+driver.
 
 The canonical Stage 1 tracing vocabulary is:
 
@@ -669,7 +674,7 @@ The full merge-base diff may touch only these responsibilities:
 | `akita-types::proof::stage1` and sizing | canonical range topology, descriptive fields, shape validation, byte accounting |
 | `akita-verifier::stages::stage1` | replay through `DigitRangePlan`, descriptive outputs, malformed-shape rejection |
 | Stage 2 call boundary | mechanical `range_image_evaluation` naming and Stage 1 output adaptation only |
-| PCS tests/benches/profile report | epoch fixtures, differential tests, allocation measurement, basis benchmarks |
+| PCS tests/benches/profile report | epoch fixtures, differential tests, durable basis benchmarks, and report field naming |
 | transcript labels/book/specs | semantic range-image names and documentation |
 
 Not allowed in #312: mixed-dimension provider construction, Stage 2 kernel selection,
