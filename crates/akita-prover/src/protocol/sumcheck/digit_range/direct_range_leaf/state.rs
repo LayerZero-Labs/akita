@@ -132,14 +132,14 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> LowBasisRangeCheckProver
     }
 
     #[inline]
-    pub(super) fn defers_binary_range_image_through_third_round(&self) -> bool {
-        self.basis == 4 && self.ring_bits() >= 3 && self.can_use_two_round_prefix()
+    pub(super) fn defers_compact_range_image_through_third_round(&self) -> bool {
+        matches!(self.basis, 4 | 8) && self.ring_bits() >= 3 && self.can_use_two_round_prefix()
     }
 
     #[inline]
-    pub(super) fn awaiting_binary_range_image_third_challenge(&self) -> bool {
+    pub(super) fn awaiting_compact_range_image_third_challenge(&self) -> bool {
         self.rounds_completed == 2
-            && self.defers_binary_range_image_through_third_round()
+            && self.defers_compact_range_image_through_third_round()
             && matches!(self.range_image, LowBasisRangeImageStorage::Compact(_))
     }
 

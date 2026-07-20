@@ -113,7 +113,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> LowBasisRangeCheckProver
         r0: E,
         r1: E,
     ) -> EqFactoredUniPoly<E> {
-        debug_assert!(self.defers_binary_range_image_through_third_round());
+        debug_assert!(self.defers_compact_range_image_through_third_round());
         debug_assert_eq!(self.rounds_completed, 1);
         let y_len = compact_range_image.len() / self.live_x_cols;
         let octets_per_column = y_len / 8;
@@ -251,6 +251,172 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> LowBasisRangeCheckProver
                 )
             })
             .collect()
+    }
+
+    /// Cache `[Q(a), Q'(a), Q''(a)/2, Q'''(a)/6]` for every folded quad.
+    ///
+    /// Then `Q(a + dX)` needs only the powers of `d` and three coefficient
+    /// multiplications per octet; the leading coefficient of `Q` is one.
+    fn build_quartic_taylor_coefficient_table(folded_quads: &[E]) -> [[E; 4]; 256] {
+        std::array::from_fn(|index| {
+            let left = folded_quads[index];
+            let twice_left = left + left;
+            let four_times_left = twice_left + twice_left;
+            let eight_times_left = four_times_left + four_times_left;
+            let sixteen_times_left = eight_times_left + eight_times_left;
+            let thirty_two_times_left = sixteen_times_left + sixteen_times_left;
+            let sixty_four_times_left = thirty_two_times_left + thirty_two_times_left;
+            let left_squared = left * left;
+            let twice_left_squared = left_squared + left_squared;
+            let four_times_left_squared = twice_left_squared + twice_left_squared;
+            let six_times_left_squared = four_times_left_squared + twice_left_squared;
+            let first_quadratic = left_squared - twice_left;
+            let second_quadratic =
+                left_squared - (sixteen_times_left + twice_left) + E::from_u64(72);
+            let value = first_quadratic * second_quadratic;
+            let first_derivative = first_quadratic * (twice_left - E::from_u64(18))
+                + second_quadratic * (twice_left - E::from_u64(2));
+            let second_derivative_over_two = six_times_left_squared
+                - (sixty_four_times_left - four_times_left)
+                + E::from_u64(108);
+            let third_derivative_over_six = four_times_left - E::from_u64(20);
+            [
+                value,
+                first_derivative,
+                second_derivative_over_two,
+                third_derivative_over_six,
+            ]
+        })
+    }
+
+    #[inline]
+    fn quartic_affine_coefficients_from_octet_class(
+        coefficients: &mut [E; MAX_DIRECT_RANGE_COEFFICIENTS],
+        octet_class: usize,
+        folded_quads: &[E],
+        taylor_coefficients: &[[E; 4]; 256],
+    ) {
+        let left_index = octet_class >> 8;
+        let right_index = octet_class & 0xff;
+        let range_image_delta = folded_quads[right_index] - folded_quads[left_index];
+        let delta_squared = range_image_delta * range_image_delta;
+        let delta_cubed = delta_squared * range_image_delta;
+        let taylor_row = taylor_coefficients[left_index];
+        coefficients[0] = taylor_row[0];
+        coefficients[1] = taylor_row[1] * range_image_delta;
+        coefficients[2] = taylor_row[2] * delta_squared;
+        coefficients[3] = taylor_row[3] * delta_cubed;
+        coefficients[4] = delta_squared * delta_squared;
+    }
+
+    #[tracing::instrument(
+        skip_all,
+        name = "LowBasisRangeCheckProver::compute_quartic_range_image_third_round_from_compact_octets"
+    )]
+    pub(super) fn compute_quartic_range_image_third_round_from_compact_octets<
+        V: CompactRangeImageValue,
+    >(
+        &self,
+        compact_range_image: &[V],
+        r0: E,
+        r1: E,
+    ) -> EqFactoredUniPoly<E> {
+        debug_assert_eq!(self.basis, 8);
+        debug_assert_eq!(self.rounds_completed, 1);
+        let y_len = compact_range_image.len() / self.live_x_cols;
+        let octets_per_column = y_len / 8;
+        let folded_quads = Self::build_round2_range_image_lookup_b8(r0, r1);
+        let taylor_coefficients = Self::build_quartic_taylor_coefficient_table(&folded_quads);
+        let (e_first, e_second) = self.split_eq.remaining_eq_tables();
+        let num_first = e_first.len();
+
+        let octet_class = |pair_index: usize| {
+            let x = pair_index / octets_per_column;
+            if x >= self.live_x_cols {
+                return None;
+            }
+            let octet = pair_index % octets_per_column;
+            let row = &compact_range_image[x * y_len..(x + 1) * y_len];
+            let base = 8 * octet;
+            let left_index = Self::stage1_b8_quad_lookup_index_from_row(row, base);
+            let right_index = Self::stage1_b8_quad_lookup_index_from_row(row, base + 4);
+            Some((left_index << 8) | right_index)
+        };
+        let accumulated = cfg_fold_reduce!(
+            0..e_second.len(),
+            || [E::ProductAccum::zero(); 5],
+            |mut outer_accum, j_high| {
+                let mut inner_accum = [E::ProductAccum::zero(); 5];
+                let mut coefficients = [E::zero(); MAX_DIRECT_RANGE_COEFFICIENTS];
+                let base_j = j_high * num_first;
+                for (j_low, &inner_equality_weight) in e_first.iter().enumerate() {
+                    let Some(class) = octet_class(base_j + j_low) else {
+                        continue;
+                    };
+                    Self::quartic_affine_coefficients_from_octet_class(
+                        &mut coefficients,
+                        class,
+                        &folded_quads,
+                        &taylor_coefficients,
+                    );
+                    accumulate_dense_entry_coeffs(
+                        &mut inner_accum,
+                        &coefficients,
+                        inner_equality_weight,
+                    );
+                }
+                let outer_equality_weight = e_second[j_high];
+                for (accumulator, inner) in outer_accum.iter_mut().zip(inner_accum) {
+                    *accumulator +=
+                        outer_equality_weight.mul_to_product_accum(E::reduce_product_accum(inner));
+                }
+                outer_accum
+            },
+            |mut left, right| {
+                for (left_coefficient, right_coefficient) in left.iter_mut().zip(right) {
+                    *left_coefficient += right_coefficient;
+                }
+                left
+            }
+        );
+
+        EqFactoredUniPoly::from_q_coeffs(
+            accumulated
+                .into_iter()
+                .map(E::reduce_product_accum)
+                .collect(),
+        )
+    }
+
+    #[tracing::instrument(
+        skip_all,
+        name = "LowBasisRangeCheckProver::materialize_quartic_range_image_after_third_round"
+    )]
+    pub(super) fn materialize_quartic_range_image_after_third_round<V: CompactRangeImageValue>(
+        compact_range_image: &[V],
+        live_x_cols: usize,
+        y_len: usize,
+        r0: E,
+        r1: E,
+        r2: E,
+    ) -> Vec<E> {
+        debug_assert_eq!(y_len % 8, 0);
+        let next_y_len = y_len / 8;
+        let folded_quads = Self::build_round2_range_image_lookup_b8(r0, r1);
+        let mut output = vec![E::zero(); live_x_cols * next_y_len];
+        cfg_chunks_mut!(output, next_y_len)
+            .enumerate()
+            .for_each(|(x, column_output)| {
+                let row = &compact_range_image[x * y_len..(x + 1) * y_len];
+                for (octet, value) in column_output.iter_mut().enumerate() {
+                    let base = 8 * octet;
+                    let left = folded_quads[Self::stage1_b8_quad_lookup_index_from_row(row, base)];
+                    let right =
+                        folded_quads[Self::stage1_b8_quad_lookup_index_from_row(row, base + 4)];
+                    *value = left + r2 * (right - left);
+                }
+            });
+        output
     }
 
     #[tracing::instrument(

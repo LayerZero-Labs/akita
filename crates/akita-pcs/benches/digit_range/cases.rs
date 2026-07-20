@@ -13,6 +13,7 @@ pub(crate) enum DigitDistribution {
     Uniform,
     ZeroHeavy,
     AlternatingEndpoints,
+    SeededHighEntropy,
 }
 
 impl DigitDistribution {
@@ -21,6 +22,7 @@ impl DigitDistribution {
             Self::Uniform => "uniform",
             Self::ZeroHeavy => "zero-heavy",
             Self::AlternatingEndpoints => "alternating-endpoints",
+            Self::SeededHighEntropy => "seeded-high-entropy",
         }
     }
 
@@ -43,6 +45,13 @@ impl DigitDistribution {
                         } else {
                             half - 1
                         }
+                    }
+                    Self::SeededHighEntropy => {
+                        let mut mixed = index.wrapping_mul(0x9e37_79b9_7f4a_7c15);
+                        mixed ^= mixed >> 30;
+                        mixed = mixed.wrapping_mul(0xbf58_476d_1ce4_e5b9);
+                        mixed ^= mixed >> 27;
+                        i16::try_from(mixed % basis).expect("basis fits i16") - half
                     }
                 };
                 i8::try_from(digit).expect("supported balanced digit fits i8")
