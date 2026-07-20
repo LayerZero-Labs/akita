@@ -1,4 +1,4 @@
-//! Stage-1 norm sumcheck prover/verifier for the Akita PCS.
+//! Small-basis direct digit-range sum-check prover for the Akita PCS.
 //!
 //! The committed witness is a Boolean table
 //! `w : {0,1}^{col_bits} x {0,1}^{ring_bits} -> {-half, ..., half-1}` with
@@ -23,9 +23,14 @@
 //!
 //! `eq(tau0, stage1_point) * Q(range_image_eval)`
 //!
-//! where `range_image_eval = range_image(stage1_point)` is the carried virtual
-//! claim passed into stage 2. The wire field retains its legacy `range_image_evaluation` name
-//! until the scheduled wire-vocabulary cutover.
+//! where
+//!
+//! `range_image_eval = sum_z eq(stage1_point, z) * range_image(z)`
+//!
+//! is the carried multilinear-table claim passed into Stage 2. It is not generally
+//! `w(stage1_point) * (w(stage1_point) + 1)` away from Boolean points. The wire field
+//! retains its legacy `range_image_evaluation` name until the scheduled wire-vocabulary
+//! cutover.
 //!
 //! ## `basis = 8` specialization
 //!

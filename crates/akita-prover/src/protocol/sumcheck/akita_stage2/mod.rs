@@ -42,10 +42,12 @@
 //!
 //! Stage 1 supplies the carried virtual claim
 //!
-//! `range_image_evaluation = w(stage1_point) * (w(stage1_point) + 1)`
-//! `        = sum_z eq(stage1_point, z) * w(z) * (w(z) + 1)`
+//! `range_image_evaluation`
+//! `  = sum_z eq(stage1_point, z) * [w(z) * (w(z) + 1)]`
 //!
-//! for the same multilinear witness table. With `gamma = batching_coeff`, the
+//! for the multilinear extension of the pointwise Boolean range-image table. Away from
+//! Boolean points this is not generally `w(stage1_point) * (w(stage1_point) + 1)`.
+//! With `gamma = batching_coeff`, the
 //! exact identity established by this sumcheck is
 //!
 //! `gamma * range_image_evaluation + relation_claim + eq(tau1, EvaluationTrace_row_index) * trace_target =`
