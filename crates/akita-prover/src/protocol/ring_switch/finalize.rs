@@ -78,26 +78,43 @@ where
                 actual: semantic_ring_elems,
             });
         }
-        // Uniform ring geometry retains the current separable (x, y) opening domain:
-        // `col_bits` addresses the source columns and `ring_bits` addresses the
-        // inner ring coefficients. This keeps the relation weights as a compact
-        // per-column table `M(x)` from the semantic relation events instead of
-        // the flattened field domain. Non-uniform role dimensions use the
-        // flattened single-domain layout (`ring_bits = 0`).
+        // Bind the low coefficient block shared by every role first, then the
+        // remaining relation lanes. The flat challenge order is unchanged: the
+        // common coefficients are the low Boolean coordinates.
         let x_capacity = akita_types::opening_domain_len(opening_source_len)?;
-        let uniform = dims == akita_types::CommitmentRingDims::uniform(opening_ring_dim);
-        let (live_x_cols, col_bits, ring_bits) = if uniform {
-            (
-                w.len() / opening_ring_dim,
-                x_capacity.trailing_zeros() as usize,
-                opening_ring_dim.trailing_zeros() as usize,
-            )
-        } else {
-            let flat = x_capacity
-                .checked_mul(opening_ring_dim)
-                .ok_or_else(|| AkitaError::InvalidSetup("stage-2 domain overflow".into()))?;
-            (w.len(), flat.trailing_zeros() as usize, 0usize)
-        };
+        let common_coefficient_count = dims.common_stage2_coefficient_count(opening_ring_dim);
+        if common_coefficient_count == 0
+            || !common_coefficient_count.is_power_of_two()
+            || !w.len().is_multiple_of(common_coefficient_count)
+            || !opening_ring_dim.is_multiple_of(common_coefficient_count)
+        {
+            return Err(AkitaError::InvalidSetup(
+                "relation roles do not admit a common Stage-2 coefficient block".into(),
+            ));
+        }
+        if dims != akita_types::CommitmentRingDims::uniform(opening_ring_dim)
+            && lp.setup_contribution_mode == akita_types::SetupContributionMode::Recursive
+        {
+            return Err(AkitaError::InvalidSetup(
+                "mixed ring dimensions require the common-coordinate Stage-3 cutover before recursive setup offload"
+                    .into(),
+            ));
+        }
+        let common_opening_source_len = opening_source_len
+            .checked_mul(opening_ring_dim / common_coefficient_count)
+            .ok_or_else(|| AkitaError::InvalidSetup("common opening domain overflow".into()))?;
+        let lane_capacity = x_capacity
+            .checked_mul(opening_ring_dim / common_coefficient_count)
+            .ok_or_else(|| AkitaError::InvalidSetup("stage-2 lane domain overflow".into()))?;
+        let live_x_cols = w.len() / common_coefficient_count;
+        let col_bits = lane_capacity.trailing_zeros() as usize;
+        let ring_bits = common_coefficient_count.trailing_zeros() as usize;
+        let digit_range_equality_low_variable_count =
+            if dims == akita_types::CommitmentRingDims::uniform(opening_ring_dim) {
+                opening_ring_dim.trailing_zeros() as usize
+            } else {
+                0
+            };
         let num_sc_vars = col_bits + ring_bits;
         let num_i =
             lp.relation_row_index_num_vars_for_layout(relation_matrix_row_layout, opening_batch)?;
@@ -117,7 +134,7 @@ where
             ));
         }
 
-        let compile_relation_weights = || {
+        let prepare_relation_weight_factorization = || {
             let _span = tracing::info_span!("relation_weight_compilation").entered();
             let events = build_relation_weight_events(RelationWeightEventInputs {
                 setup: RelationSetupSource::Matrix(setup),
@@ -130,52 +147,51 @@ where
                 opening_source_len,
                 opening_ring_dim,
             })?;
-            if uniform {
-                events
-                    .factor_common_alpha()
-                    .map(PreparedRelationWeights::CommonAlphaFactorization)
-            } else {
-                events
-                    .materialize_dense()
-                    .map(PreparedRelationWeights::FlattenedCoefficientTable)
-            }
+            events.factor_common_alpha()
         };
 
         #[cfg(feature = "parallel")]
-        let (prepared_relation_weights_result, w_result) =
-            rayon::join(compile_relation_weights, || {
+        let (relation_weight_factorization_result, w_result) =
+            rayon::join(prepare_relation_weight_factorization, || {
                 build_w_evals_compact(
                     w.shared_i8_digits(),
-                    opening_ring_dim,
+                    common_coefficient_count,
                     1,
-                    opening_source_len,
+                    common_opening_source_len,
                 )
             });
         #[cfg(not(feature = "parallel"))]
-        let (prepared_relation_weights_result, w_result) = {
-            let prepared_relation_weights = compile_relation_weights();
+        let (relation_weight_factorization_result, w_result) = {
+            let relation_weight_factorization = prepare_relation_weight_factorization();
             let w_compact = build_w_evals_compact(
                 w.shared_i8_digits(),
-                opening_ring_dim,
+                common_coefficient_count,
                 1,
-                opening_source_len,
+                common_opening_source_len,
             );
-            (prepared_relation_weights, w_compact)
+            (relation_weight_factorization, w_compact)
         };
 
-        let prepared_relation_weights = prepared_relation_weights_result.map_err(|err| {
-            AkitaError::InvalidInput(format!("relation-weight compilation failed: {err:?}"))
-        })?;
-        let (w_evals_compact, _, _) = w_result.map_err(|err| {
+        let relation_weight_factorization =
+            relation_weight_factorization_result.map_err(|err| {
+                AkitaError::InvalidInput(format!("relation-weight compilation failed: {err:?}"))
+            })?;
+        let (w_evals_compact, witness_col_bits, witness_ring_bits) = w_result.map_err(|err| {
             AkitaError::InvalidInput(format!("witness opening materialization failed: {err:?}"))
         })?;
+        if witness_col_bits != col_bits || witness_ring_bits != ring_bits {
+            return Err(AkitaError::InvalidSetup(
+                "prepared witness geometry disagrees with the common relation factorization".into(),
+            ));
+        }
 
         Ok(RingSwitchOutput {
             w_evals_compact,
             live_x_cols,
-            relation_weights: prepared_relation_weights,
+            relation_weight_factorization,
             col_bits,
             ring_bits,
+            digit_range_equality_low_variable_count,
             tau0,
             tau1,
             b: 1usize << lp.log_basis,

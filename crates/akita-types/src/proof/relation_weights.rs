@@ -239,7 +239,9 @@ impl<E: FieldCore> RelationWeightEvents<E> {
                 "relation factorization requires direct setup contributions".into(),
             ));
         }
-        let common_coefficient_count = self.role_dims.common_relation_coefficient_count();
+        let common_coefficient_count = self
+            .role_dims
+            .common_stage2_coefficient_count(self.opening_ring_dim);
         if common_coefficient_count == 0
             || !common_coefficient_count.is_power_of_two()
             || !self

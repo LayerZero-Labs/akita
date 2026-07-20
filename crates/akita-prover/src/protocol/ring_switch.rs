@@ -37,14 +37,6 @@ pub use commit::{commit_w, NextWitnessState, NextWitnessStateOutput};
 pub use evals::build_w_evals_compact;
 pub use finalize::ring_switch_finalize;
 
-/// Relation weights prepared in the representation consumed by Stage 2.
-pub(crate) enum PreparedRelationWeights<E: FieldCore> {
-    /// Exact product of a low common-alpha block and the remaining relation lanes.
-    CommonAlphaFactorization(RelationWeightFactorization<E>),
-    /// Transitional flat table for mixed ring dimensions.
-    FlattenedCoefficientTable(Vec<E>),
-}
-
 /// D-agnostic output of the ring switch protocol, containing everything
 /// needed for sumchecks and level chaining.
 pub struct RingSwitchOutput<E: FieldCore> {
@@ -52,12 +44,14 @@ pub struct RingSwitchOutput<E: FieldCore> {
     pub w_evals_compact: std::sync::Arc<[i8]>,
     /// Exact live x-column count; the remaining Boolean x domain is an implicit zero suffix.
     pub live_x_cols: usize,
-    /// Tau1-weighted relation table in its canonical Stage-2 representation.
-    pub(crate) relation_weights: PreparedRelationWeights<E>,
+    /// Exact common-alpha factorization of the tau1-weighted relation table.
+    pub(crate) relation_weight_factorization: RelationWeightFactorization<E>,
     /// Number of upper variable bits.
     pub col_bits: usize,
     /// Number of lower variable bits.
     pub ring_bits: usize,
+    /// Low-variable count used by the protocol's Stage-1 tau0 equality point.
+    pub digit_range_equality_low_variable_count: usize,
     /// Challenge tau0 for F_0 sumcheck.
     pub tau0: Vec<E>,
     /// Challenge tau1 for F_alpha sumcheck.

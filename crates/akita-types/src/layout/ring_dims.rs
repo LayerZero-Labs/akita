@@ -99,6 +99,18 @@ impl CommitmentRingDims {
         }
     }
 
+    /// Low coefficient block shared by every relation role and the outgoing
+    /// Stage-2 witness geometry.
+    #[must_use]
+    pub const fn common_stage2_coefficient_count(self, opening_ring_dimension: usize) -> usize {
+        let relation_common = self.common_relation_coefficient_count();
+        if relation_common < opening_ring_dimension {
+            relation_common
+        } else {
+            opening_ring_dimension
+        }
+    }
+
     /// The single dimension shared by all roles, or an error once per-role
     /// dimensions diverge.
     pub fn uniform_dim(self) -> Result<usize, AkitaError> {

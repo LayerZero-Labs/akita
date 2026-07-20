@@ -109,7 +109,8 @@ where
         .ok_or(AkitaError::InvalidProof)?;
     let role_dims = evaluator.role_dims;
     let inner_ring_dimension = role_dims.d_a();
-    let common_coefficient_count = role_dims.common_relation_coefficient_count();
+    let common_coefficient_count =
+        role_dims.common_stage2_coefficient_count(context.opening_ring_dim);
     if common_coefficient_count == 0
         || !common_coefficient_count.is_power_of_two()
         || !inner_ring_dimension.is_multiple_of(common_coefficient_count)

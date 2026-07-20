@@ -199,9 +199,8 @@ fn direct_fused_equation_matches_checked_stage2_input_claim() {
     for (live_x_cols, col_bits, ring_bits) in [
         (5usize, 3usize, 2usize),
         (8usize, 3usize, 2usize),
-        // Current mixed-dimension representation flattens the complete live
-        // coefficient prefix and therefore has no separate inner factor.
-        (23usize, 5usize, 0usize),
+        // Partial live relation-lane prefix over a four-coordinate common block.
+        (23usize, 5usize, 2usize),
     ] {
         let y_len = 1usize << ring_bits;
         let x_len = 1usize << col_bits;
@@ -251,6 +250,84 @@ fn direct_fused_equation_matches_checked_stage2_input_claim() {
             batching_coeff * direct.range_image + direct.relation + direct.evaluation_trace
         );
     }
+}
+
+#[test]
+fn common_coordinate_factorization_matches_flattened_rounds() {
+    let common_coefficient_count = 4usize;
+    let live_relation_lanes = 5usize;
+    let common_bits = common_coefficient_count.trailing_zeros() as usize;
+    let lane_bits = live_relation_lanes.next_power_of_two().trailing_zeros() as usize;
+    let num_vars = common_bits + lane_bits;
+    let stage1_point = (0..num_vars)
+        .map(|index| F::from_u64(11 * index as u64 + 7))
+        .collect::<Vec<_>>();
+    let common_alpha_factor = (0..common_coefficient_count)
+        .map(|index| F::from_u64(13 * index as u64 + 17))
+        .collect::<Vec<_>>();
+    let relation_lane_weights = (0..(1usize << lane_bits))
+        .map(|index| F::from_u64(19 * index as u64 + 23))
+        .collect::<Vec<_>>();
+    let dense_relation_weights = relation_lane_weights
+        .iter()
+        .flat_map(|&lane_weight| {
+            common_alpha_factor
+                .iter()
+                .map(move |&alpha| lane_weight * alpha)
+        })
+        .collect::<Vec<_>>();
+    let witness = (0..(live_relation_lanes * common_coefficient_count))
+        .map(|index| ((5 * index + 3) % 8) as i8 - 4)
+        .collect::<Vec<_>>();
+    let evaluation_trace_weights = (0..witness.len())
+        .map(|index| F::from_u64(29 * index as u64 + 31))
+        .collect::<Vec<_>>();
+    let batching_coeff = F::from_u64(37);
+
+    let mut factorized = new_stage2_test_prover_with_trace(
+        batching_coeff,
+        witness.clone(),
+        common_alpha_factor,
+        relation_lane_weights,
+        evaluation_trace_weights.clone(),
+        Stage2Params {
+            stage1_point: &stage1_point,
+            b: 8,
+            live_x_cols: live_relation_lanes,
+            col_bits: lane_bits,
+            ring_bits: common_bits,
+        },
+    );
+    let mut flattened = new_stage2_test_prover_with_trace(
+        batching_coeff,
+        witness,
+        vec![F::one()],
+        dense_relation_weights,
+        evaluation_trace_weights,
+        Stage2Params {
+            stage1_point: &stage1_point,
+            b: 8,
+            live_x_cols: live_relation_lanes * common_coefficient_count,
+            col_bits: num_vars,
+            ring_bits: 0,
+        },
+    );
+
+    assert_eq!(factorized.input_claim(), flattened.input_claim());
+    let mut factorized_claim = factorized.input_claim();
+    let mut flattened_claim = flattened.input_claim();
+    for round in 0..num_vars {
+        let factorized_poly = factorized.compute_round_univariate(round, factorized_claim);
+        let flattened_poly = flattened.compute_round_univariate(round, flattened_claim);
+        assert_eq!(factorized_poly, flattened_poly, "round {round}");
+        let challenge = F::from_u64(41 * round as u64 + 43);
+        factorized_claim = factorized_poly.evaluate(&challenge);
+        flattened_claim = flattened_poly.evaluate(&challenge);
+        factorized.ingest_challenge(round, challenge);
+        flattened.ingest_challenge(round, challenge);
+    }
+    assert_eq!(factorized_claim, flattened_claim);
+    assert_eq!(factorized.final_w_eval(), flattened.final_w_eval());
 }
 
 fn relation_round_reference(

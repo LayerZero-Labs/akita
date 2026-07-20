@@ -228,6 +228,7 @@ mod tests {
             witness_layout,
             &opening_batch,
             level_params.role_dims(),
+            D,
         )
         .expect("relation/range-image plan");
 

@@ -59,7 +59,9 @@ basis.
 
 - One checked `RelationRangeImagePlan` and one `RelationRangeImageProver`.
 - One LSB-first flat Boolean address order for homogeneous and mixed dimensions.
-- Exact common-alpha factorization with `g = min(d_a, d_b, d_d)`.
+- Exact common-alpha factorization with
+  `g = min(d_a, d_b, d_d, d_out)`, where `d_out` is the outgoing opening ring
+  dimension that stores the Stage 2 witness.
 - Alpha/common-coordinate rounds before relation-lane rounds.
 - Mandatory evaluation trace represented by per-claim tensor factors, never a flat table.
 - One fused relation/evaluation-trace/range-image round reducer.
@@ -188,13 +190,20 @@ All rounds bind the raw physical field-coefficient address LSB first. For nested
 dimensions
 
 ```text
-g = min(d_a, d_b, d_d),
+g = min(d_a, d_b, d_d, d_out),
 k = log2(g),
 z = g * lane + coefficient,  0 <= coefficient < g.
 ```
 
 The first `k` challenges are common coefficient coordinates. The rest address physical
 relation lanes and padded witness capacity. x/y is not a public protocol abstraction.
+
+This Stage 2 storage split does not reinterpret the already established Stage 1 tau0
+point. The protocol's digit-range equality point retains its incoming geometry: the
+historical uniform current/outgoing case uses its column-then-ring permutation, while
+mixed-role or cross-level ring transitions retain the historical flat tau0 order. A
+descriptive `digit_range_equality_low_variable_count` records that independent boundary;
+it is not inferred from `k`.
 
 `FlatBooleanDomain` checks the live prefix, padded power-of-two domain, point width, and
 LSB-first interpretation. `WitnessLayout` checks semantic group/chunk units inside that
@@ -495,15 +504,18 @@ mixed dimensions plus a deferred setup claim are rejected explicitly. The later 
 boundary slice must remove that rejection and add direct/deferred parity across mixed
 dimensions, groups, and chunks; it must not reinterpret or pad the old `x/y` split.
 
-The final rule is unchanged by chunks:
+The final rule is unchanged by chunks and includes the outgoing witness geometry:
 
 ```text
-g = min(d_a, d_b, d_d).
+g = min(d_a, d_b, d_d, d_out).
 ```
 
-Role subcolumns map into `g`-sized common lanes inside each unit. Chunking changes which
-unit owns a block, not alpha exponents or source ring-coordinate order. Evaluation-trace
-terms retain their own `D_source` split
+The relation algebra alone admits the larger factor
+`min(d_a, d_b, d_d)`, but Stage 2 uses its intersection with `d_out` so the factorized
+witness state is also aligned to the outgoing opening geometry. Role subcolumns map into
+`g`-sized common lanes inside each unit. Chunking changes which unit owns a block, not
+alpha exponents or source ring-coordinate order. Evaluation-trace terms retain their own
+`D_source` split
 
 ```text
 source_address = D_source * opening_column + ring_coordinate

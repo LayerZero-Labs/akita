@@ -38,6 +38,8 @@ pub(crate) struct RingSwitchVerifyOutput<E: FieldCore> {
     pub col_bits: usize,
     /// Number of lower variable bits.
     pub ring_bits: usize,
+    /// Low-variable count used by the protocol's Stage-1 tau0 equality point.
+    pub digit_range_equality_low_variable_count: usize,
     /// Challenge tau0 for the stage-1 sumcheck.
     pub tau0: Vec<E>,
     /// Challenge tau1 for the stage-2 M-row combination.
@@ -52,6 +54,7 @@ struct RingSwitchVerifyCoreOutput<E: FieldCore> {
     relation_matrix_evaluator: RelationMatrixEvaluator<E>,
     col_bits: usize,
     ring_bits: usize,
+    digit_range_equality_low_variable_count: usize,
     tau0: Option<Vec<E>>,
     tau1: Vec<E>,
     b: usize,
@@ -65,6 +68,7 @@ impl<E: FieldCore> RingSwitchVerifyCoreOutput<E> {
             relation_matrix_evaluator: self.relation_matrix_evaluator,
             col_bits: self.col_bits,
             ring_bits: self.ring_bits,
+            digit_range_equality_low_variable_count: self.digit_range_equality_low_variable_count,
             tau0,
             tau1: self.tau1,
             b: self.b,
@@ -190,9 +194,9 @@ where
     let num_ring_elems = w_len / D;
     let opening_ring_dim = replay.opening_ring_dim;
     let x_capacity = akita_types::opening_domain_len(replay.opening_source_len)?;
-    // Mirror the prover's ring-switch geometry (see `ring_switch_finalize`):
-    // uniform role dimensions expose the separable (x, y) opening domain, while
-    // non-uniform roles fall back to the flattened single domain.
+    // Mirror the prover's ring-switch geometry (see `ring_switch_finalize`).
+    // Keep the PR #312 uniform split; mixed roles bind their shared low
+    // coefficient block before the remaining relation lanes.
     let uniform = relation.role_dims() == CommitmentRingDims::uniform(opening_ring_dim);
     let (col_bits, ring_bits) = if uniform {
         (
@@ -200,10 +204,27 @@ where
             opening_ring_dim.trailing_zeros() as usize,
         )
     } else {
-        let opening_field_len = x_capacity
-            .checked_mul(opening_ring_dim)
+        let common_coefficient_count = relation
+            .role_dims()
+            .common_stage2_coefficient_count(opening_ring_dim);
+        if common_coefficient_count == 0
+            || !common_coefficient_count.is_power_of_two()
+            || !opening_ring_dim.is_multiple_of(common_coefficient_count)
+        {
+            return Err(AkitaError::InvalidProof);
+        }
+        let lane_capacity = x_capacity
+            .checked_mul(opening_ring_dim / common_coefficient_count)
             .ok_or(AkitaError::InvalidProof)?;
-        (opening_field_len.trailing_zeros() as usize, 0usize)
+        (
+            lane_capacity.trailing_zeros() as usize,
+            common_coefficient_count.trailing_zeros() as usize,
+        )
+    };
+    let digit_range_equality_low_variable_count = if uniform {
+        opening_ring_dim.trailing_zeros() as usize
+    } else {
+        0
     };
     let num_sc_vars = col_bits + ring_bits;
     let num_i =
@@ -238,6 +259,7 @@ where
         relation_matrix_evaluator,
         col_bits,
         ring_bits,
+        digit_range_equality_low_variable_count,
         tau0,
         tau1,
         b: 1usize

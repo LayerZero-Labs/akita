@@ -626,6 +626,7 @@ where
         prepared_fold.instance.segment_layout(lp, None)?,
         prepared_fold.instance.opening_batch(),
         prepared_fold.instance.role_dims(),
+        next_opening_ring_dim,
     )?;
 
     let relation_rhs_layout = relation_rhs_layout_for(
@@ -664,7 +665,7 @@ where
         groups = opening_batch.num_groups(),
         chunks = relation_range_image_plan.witness_layout().units().len(),
         source_ring_dimension = ring_d,
-        destination_ring_dimension = next_opening_ring_dim,
+        stage2_common_coefficient_count = 1usize << rs.ring_bits,
     )
     .entered();
     let trace_compact = dispatch_for_field!(
@@ -682,7 +683,7 @@ where
                 claim_coefficients: &prepared_fold.evaluation_trace_claim_coefficients,
                 basis: prepared_fold.evaluation_trace_basis,
             })?
-            .materialize_prover_table::<F>(next_opening_ring_dim, evaluation_trace_weight)
+            .materialize_prover_table::<F>(1usize << rs.ring_bits, evaluation_trace_weight)
         }
     )?;
     drop(trace_preparation_span);
@@ -876,10 +877,15 @@ where
             actual: rs.live_x_cols,
         });
     }
+    let digit_range_equality_col_bits = rs
+        .tau0
+        .len()
+        .checked_sub(rs.digit_range_equality_low_variable_count)
+        .ok_or_else(|| AkitaError::InvalidSetup("digit-range equality width overflow".into()))?;
     let equality_point = DigitRangeEqualityPoint::from_column_then_ring_challenges(
         &rs.tau0,
-        rs.col_bits,
-        rs.ring_bits,
+        digit_range_equality_col_bits,
+        rs.digit_range_equality_low_variable_count,
     )?;
     let stage1_prover = DigitRangeProver::new(
         std::sync::Arc::clone(&rs.w_evals_compact),
@@ -926,36 +932,24 @@ where
             "ring-switch output disagrees with the relation/range-image plan".into(),
         ));
     }
-    let (alpha_evals_y, stage2_relation_weight_table) = match rs.relation_weights {
-        PreparedRelationWeights::CommonAlphaFactorization(factorization) => {
-            let (common_alpha_factor, relation_lane_weights) =
-                factorization.into_common_alpha_factor_and_relation_lane_weights();
-            let expected_factor_len = 1usize << rs.ring_bits;
-            if common_alpha_factor.len() != expected_factor_len {
-                return Err(AkitaError::InvalidSetup(format!(
-                    "common alpha factor has length {}, expected {expected_factor_len}",
-                    common_alpha_factor.len(),
-                )));
-            }
-            (common_alpha_factor, relation_lane_weights)
-        }
-        PreparedRelationWeights::FlattenedCoefficientTable(weights) => {
-            if rs.ring_bits != 0 {
-                return Err(AkitaError::InvalidSetup(
-                    "dense relation weights require a flattened Stage-2 domain".into(),
-                ));
-            }
-            (vec![E::one()], weights)
-        }
-    };
+    let (common_alpha_factor, relation_lane_weights) = rs
+        .relation_weight_factorization
+        .into_common_alpha_factor_and_relation_lane_weights();
+    let expected_factor_len = 1usize << rs.ring_bits;
+    if common_alpha_factor.len() != expected_factor_len {
+        return Err(AkitaError::InvalidSetup(format!(
+            "common alpha factor has length {}, expected {expected_factor_len}",
+            common_alpha_factor.len(),
+        )));
+    }
     let mut stage2_prover = AkitaStage2Prover::new(
         batching_coeff,
         rs.w_evals_compact,
         stage1_point,
         range_image_evaluation,
         plan.digit_range_plan().basis(),
-        alpha_evals_y,
-        stage2_relation_weight_table,
+        common_alpha_factor,
+        relation_lane_weights,
         derived_live_x_cols,
         derived_col_bits,
         rs.ring_bits,

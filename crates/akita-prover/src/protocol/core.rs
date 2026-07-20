@@ -6,7 +6,7 @@ use crate::protocol::extension_opening_reduction::{
 };
 use crate::protocol::ring_switch::{
     ring_switch_build_w, ring_switch_finalize, NextWitnessState, NextWitnessStateOutput,
-    PreparedRelationWeights, RingSwitchBuildOutput, RingSwitchOutput,
+    RingSwitchBuildOutput, RingSwitchOutput,
 };
 use crate::protocol::sumcheck::AkitaStage2Prover;
 use crate::protocol::sumcheck::AkitaStage3Prover;

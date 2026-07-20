@@ -285,10 +285,15 @@ where
             actual: rs.tau0.len(),
         });
     }
+    let digit_range_equality_col_bits = rs
+        .tau0
+        .len()
+        .checked_sub(rs.digit_range_equality_low_variable_count)
+        .ok_or(AkitaError::InvalidProof)?;
     let equality_point = DigitRangeEqualityPoint::from_column_then_ring_challenges(
         &rs.tau0,
-        rs.col_bits,
-        rs.ring_bits,
+        digit_range_equality_col_bits,
+        rs.digit_range_equality_low_variable_count,
     )?;
     let plan = DigitRangePlan::new(rs.b)?;
     let stage1_verifier = AkitaStage1Verifier::new(equality_point, plan);

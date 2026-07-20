@@ -67,6 +67,7 @@ impl RelationRangeImagePlan {
         witness_layout: WitnessLayout,
         opening_batch: &OpeningClaimsLayout,
         role_dims: CommitmentRingDims,
+        opening_ring_dimension: usize,
     ) -> Result<Self, AkitaError> {
         validate_role_dims(role_dims)?;
         opening_batch.check()?;
@@ -84,7 +85,16 @@ impl RelationRangeImagePlan {
             });
         }
 
-        let common_alpha_coefficient_count = role_dims.common_relation_coefficient_count();
+        let common_alpha_coefficient_count =
+            role_dims.common_stage2_coefficient_count(opening_ring_dimension);
+        if common_alpha_coefficient_count == 0
+            || !common_alpha_coefficient_count.is_power_of_two()
+            || !opening_ring_dimension.is_power_of_two()
+        {
+            return Err(AkitaError::InvalidSetup(
+                "relation/range-image common coefficient geometry is malformed".into(),
+            ));
+        }
         if !digit_witness_domain
             .live_len()
             .is_multiple_of(common_alpha_coefficient_count)
@@ -270,6 +280,7 @@ mod tests {
         group_sizes: &[usize],
         chunks_per_group: usize,
         role_dims: CommitmentRingDims,
+        opening_ring_dimension: usize,
         basis: usize,
     ) -> RelationRangeImagePlan {
         let opening_batch = OpeningClaimsLayout::from_groups(
@@ -293,6 +304,7 @@ mod tests {
             witness_layout,
             &opening_batch,
             role_dims,
+            opening_ring_dimension,
         )
         .unwrap()
     }
@@ -310,7 +322,13 @@ mod tests {
                     },
                 ] {
                     for basis in [4, 8, 16, 32, 64] {
-                        let plan = plan_for(group_sizes, chunks_per_group, role_dims, basis);
+                        let plan = plan_for(
+                            group_sizes,
+                            chunks_per_group,
+                            role_dims,
+                            role_dims.d_d(),
+                            basis,
+                        );
                         assert_eq!(plan.digit_range_plan().basis(), basis);
                         assert_eq!(plan.role_dims(), role_dims);
                         assert_eq!(plan.common_alpha_coefficient_count(), role_dims.d_d());
@@ -331,13 +349,23 @@ mod tests {
 
     #[test]
     fn plan_preserves_global_claim_ranges_in_physical_group_order() {
-        let plan = plan_for(&[2, 3], 2, CommitmentRingDims::uniform(64), 8);
+        let plan = plan_for(&[2, 3], 2, CommitmentRingDims::uniform(64), 64, 8);
         assert_eq!(plan.groups()[0].group_index(), 1);
         assert_eq!(plan.groups()[0].claim_range(), 2..5);
         assert_eq!(plan.groups()[0].unit_range(), 0..2);
         assert_eq!(plan.groups()[1].group_index(), 0);
         assert_eq!(plan.groups()[1].claim_range(), 0..2);
         assert_eq!(plan.groups()[1].unit_range(), 2..4);
+    }
+
+    #[test]
+    fn plan_common_block_respects_outgoing_ring_dimension() {
+        let plan = plan_for(&[1], 1, CommitmentRingDims::uniform(128), 64, 8);
+        assert_eq!(plan.common_alpha_coefficient_count(), 64);
+        assert_eq!(
+            plan.relation_lane_count() * plan.common_alpha_coefficient_count(),
+            plan.digit_witness_domain().live_len()
+        );
     }
 
     #[test]
@@ -356,6 +384,7 @@ mod tests {
             witness_layout.clone(),
             &opening_batch,
             CommitmentRingDims::uniform(64),
+            64,
         )
         .is_err());
 
@@ -373,6 +402,7 @@ mod tests {
             malformed,
             &opening_batch,
             CommitmentRingDims::uniform(64),
+            64,
         )
         .is_err());
     }
