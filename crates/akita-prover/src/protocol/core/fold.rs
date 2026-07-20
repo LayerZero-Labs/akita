@@ -23,7 +23,7 @@ pub(in crate::protocol::core) struct PreparedFold<F: FieldCore, E: FieldCore> {
     pub(in crate::protocol::core) extension_opening_reduction:
         Option<ExtensionOpeningReductionProof<E>>,
     pub(in crate::protocol::core) evaluation_trace_claim: E,
-    pub(in crate::protocol::core) evaluation_trace_points: Option<Vec<PreparedOpeningPoint<F, E>>>,
+    pub(in crate::protocol::core) evaluation_trace_points: Vec<PreparedOpeningPoint<F, E>>,
     pub(in crate::protocol::core) evaluation_trace_claim_coefficients: Vec<E>,
     pub(in crate::protocol::core) evaluation_trace_basis: BasisMode,
     pub(in crate::protocol::core) row_coefficients: Option<Vec<E>>,
@@ -443,7 +443,7 @@ where
         witness,
         extension_opening_reduction,
         evaluation_trace_claim: trace_claim.claimed_evaluation,
-        evaluation_trace_points: Some(prepared_points),
+        evaluation_trace_points: prepared_points,
         evaluation_trace_claim_coefficients,
         evaluation_trace_basis: basis,
         row_coefficients,
@@ -657,10 +657,7 @@ where
     let evaluation_trace_weight = evaluation_trace_row_weight(evaluation_trace_row, &rs.tau1)?;
     let trace_opening_claim = evaluation_trace_weight * prepared_fold.evaluation_trace_claim;
     ensure_trace_stage2_supported(E::EXT_DEGREE)?;
-    let evaluation_trace_points = prepared_fold
-        .evaluation_trace_points
-        .as_deref()
-        .ok_or(AkitaError::InvalidProof)?;
+    let evaluation_trace_points = &prepared_fold.evaluation_trace_points;
     let trace_preparation_span = tracing::info_span!(
         "stage2_evaluation_trace_preparation",
         claims = opening_batch.num_total_polynomials(),
@@ -676,7 +673,9 @@ where
         ring_d,
         |D| {
             build_evaluation_trace_weights::<F, E, D>(EvaluationTraceWeightInputs {
-                plan: &relation_range_image_plan,
+                digit_witness_domain: relation_range_image_plan.digit_witness_domain(),
+                witness_layout: relation_range_image_plan.witness_layout(),
+                role_dims: relation_range_image_plan.role_dims(),
                 level_params: lp,
                 opening_batch,
                 prepared_points: evaluation_trace_points,

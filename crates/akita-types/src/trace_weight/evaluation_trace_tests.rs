@@ -5,21 +5,21 @@ use rand::{rngs::StdRng, SeedableRng};
 
 type TestField = Prime128OffsetA7F7;
 
-fn term_for_cross_product(
+fn term_for_cross_product<E: FieldCore + FromPrimitiveInt>(
     basis: BasisMode,
     source_ring_dimension: usize,
     coefficient: u64,
     physical_starts: [usize; 2],
-) -> EvaluationTraceTerm<TestField> {
+) -> EvaluationTraceTerm<E> {
     EvaluationTraceTerm {
-        coefficient: TestField::from_u64(coefficient),
-        block_opening_point: vec![TestField::from_u64(17), TestField::from_u64(19)].into(),
+        coefficient: E::from_u64(coefficient),
+        block_opening_point: vec![E::from_u64(17), E::from_u64(19)].into(),
         basis,
         group_block_count: 3,
         source_ring_dimension,
-        opening_digit_weights: vec![TestField::one(), TestField::from_u64(3)].into(),
+        opening_digit_weights: vec![E::one(), E::from_u64(3)].into(),
         inner_trace: (0..source_ring_dimension)
-            .map(|index| TestField::from_u64(2 * index as u64 + coefficient))
+            .map(|index| E::from_u64(2 * index as u64 + coefficient))
             .collect::<Vec<_>>()
             .into(),
         segments: vec![
@@ -37,7 +37,7 @@ fn term_for_cross_product(
     }
 }
 
-fn materialize_term_oracle(term: &EvaluationTraceTerm<TestField>, table: &mut [TestField]) {
+fn materialize_term_oracle<E: FieldCore>(term: &EvaluationTraceTerm<E>, table: &mut [E]) {
     let block_weights = basis_weights_prefix(
         &term.block_opening_point,
         term.basis,
@@ -53,6 +53,64 @@ fn materialize_term_oracle(term: &EvaluationTraceTerm<TestField>, table: &mut [T
                 table[start + offset] += term.coefficient * block_weights[block] * weight;
             }
         }
+    }
+}
+
+fn extension_term<E: FieldCore + RandomSampling>(
+    rng: &mut StdRng,
+    basis: BasisMode,
+    source_ring_dimension: usize,
+    physical_starts: [usize; 2],
+) -> EvaluationTraceTerm<E> {
+    EvaluationTraceTerm {
+        coefficient: E::random(rng),
+        block_opening_point: (0..2).map(|_| E::random(rng)).collect::<Vec<_>>().into(),
+        basis,
+        group_block_count: 3,
+        source_ring_dimension,
+        opening_digit_weights: (0..2).map(|_| E::random(rng)).collect::<Vec<_>>().into(),
+        inner_trace: (0..source_ring_dimension)
+            .map(|_| E::random(rng))
+            .collect::<Vec<_>>()
+            .into(),
+        segments: vec![
+            EvaluationTraceSegment {
+                physical_coefficient_start: physical_starts[0],
+                global_block_start: 0,
+                block_count: 2,
+            },
+            EvaluationTraceSegment {
+                physical_coefficient_start: physical_starts[1],
+                global_block_start: 2,
+                block_count: 1,
+            },
+        ],
+    }
+}
+
+fn assert_extension_terms_match_flat_oracle<E: FieldCore + RandomSampling>(seed: u64) {
+    const PHYSICAL_FIELD_LEN: usize = 256;
+    const SOURCE_RING_DIMENSION: usize = 8;
+    let mut rng = StdRng::seed_from_u64(seed);
+    for basis in [BasisMode::Lagrange, BasisMode::Monomial] {
+        let terms = vec![
+            extension_term::<E>(&mut rng, basis, SOURCE_RING_DIMENSION, [0, 128]),
+            extension_term::<E>(&mut rng, basis, SOURCE_RING_DIMENSION, [64, 192]),
+        ];
+        let weights = EvaluationTraceWeights {
+            terms: terms.clone(),
+            physical_field_len: PHYSICAL_FIELD_LEN,
+            num_vars: 8,
+        };
+        let mut expected = vec![E::zero(); PHYSICAL_FIELD_LEN];
+        for term in &terms {
+            materialize_term_oracle(term, &mut expected);
+        }
+        let point: Vec<E> = (0..8).map(|_| E::random(&mut rng)).collect();
+        assert_eq!(
+            weights.evaluate_at_point(&point).unwrap(),
+            multilinear_eval(&expected, &point).unwrap()
+        );
     }
 }
 
@@ -102,6 +160,12 @@ fn terms_match_flat_oracle_across_bases_chunks_and_ring_dimensions() {
             }
         }
     }
+}
+
+#[test]
+fn extension_terms_match_flat_oracle() {
+    assert_extension_terms_match_flat_oracle::<Extension2>(0x2002);
+    assert_extension_terms_match_flat_oracle::<Extension4>(0x4004);
 }
 
 type BaseField = Fp32<251>;

@@ -4,12 +4,15 @@ use akita_algebra::CyclotomicRing;
 use akita_field::{CanonicalField, Prime128OffsetA7F7};
 use akita_types::{
     gadget_row_scalars, AjtaiKeyParams, AkitaExpandedSetup, AkitaSetupSeed, CommitmentRingDims,
-    FlatMatrix, LevelParams, OpeningClaimsLayout, RelationMatrixRowLayout,
-    SetupContributionGroupInputs, SisModulusProfileId, WitnessLayout,
+    FlatMatrix, LevelParams, OpeningClaimsLayout, RelationMatrixRowLayout, SisModulusProfileId,
+    WitnessLayout,
 };
 
 use super::evaluate_setup_contribution_direct;
-use crate::protocol::ring_switch::{FlatRelationContext, RelationWeightEvaluator};
+use crate::protocol::ring_switch::{
+    FlatRelationContext, PreparedChallengeEvals, RelationMatrixEvaluator,
+    RelationMatrixGroupEvaluator,
+};
 
 type TestField = Prime128OffsetA7F7;
 const TEST_RING_DIM: usize = 64;
@@ -19,7 +22,7 @@ fn test_scalar(value: u128) -> TestField {
 }
 
 struct SetupContributionFixture {
-    relation_weight_evaluator: RelationWeightEvaluator<TestField>,
+    relation_matrix_evaluator: RelationMatrixEvaluator<TestField>,
     setup: AkitaExpandedSetup<TestField>,
     full_vec_randomness: Vec<TestField>,
     alpha_pows: Vec<TestField>,
@@ -118,6 +121,7 @@ impl SetupContributionFixture {
     fn from_shape(shape: &SetupContributionShape) -> Self {
         let mut shape = shape.clone();
         let num_points = shape.num_polys_per_group.len();
+        let total_blocks = shape.num_live_blocks * shape.num_claims;
         let inner_width = shape.num_positions_per_block * shape.depth_commit;
 
         // Canonical relation-matrix row layout: consistency | A | B | D.
@@ -203,29 +207,41 @@ impl SetupContributionFixture {
             .map(|idx| test_scalar(11 + idx as u128))
             .collect::<Vec<_>>()
             .into();
-        let setup_groups = vec![SetupContributionGroupInputs {
+        let groups = vec![RelationMatrixGroupEvaluator {
+            c_alphas: PreparedChallengeEvals::Flat(
+                (0..total_blocks)
+                    .map(|idx| test_scalar(41 + idx as u128))
+                    .collect(),
+            ),
+            opening_a_evals: (0..shape.num_positions_per_block)
+                .map(|idx| test_scalar(501 + idx as u128))
+                .collect(),
             group_id: 0,
             num_claims: shape.num_claims,
+            num_live_blocks: shape.num_live_blocks,
+            depth_open: shape.depth_open,
+            depth_commit: shape.depth_commit,
             depth_fold: shape.depth_fold,
+            log_basis: shape.log_basis,
+            n_a: shape.n_a,
             a_row_start: 1,
             b_row_start: 1 + shape.n_a,
         }];
         let opening_source_len = layout.total_len();
         let layout = std::sync::Arc::new(layout);
-        let relation_weight_evaluator = RelationWeightEvaluator {
+        let relation_matrix_evaluator = RelationMatrixEvaluator {
             role_dims: CommitmentRingDims::uniform(TEST_RING_DIM),
-            setup_groups,
+            groups,
+            log_basis: shape.log_basis,
             eq_tau1,
-            context: FlatRelationContext {
+            flat_context: Some(FlatRelationContext {
                 level_params: lp,
                 opening_batch,
                 witness_layout: layout,
                 opening_source_len,
-                row_coefficients: vec![TestField::zero(); shape.num_claims],
-                tau1: Vec::new(),
                 relation_matrix_row_layout: shape.relation_matrix_row_layout,
                 opening_ring_dim: TEST_RING_DIM,
-            },
+            }),
         };
 
         let full_vec_randomness: Vec<TestField> = (0..bits)
@@ -236,7 +252,7 @@ impl SetupContributionFixture {
         let fold_gadget = gadget_row_scalars::<TestField>(shape.depth_fold, shape.log_basis);
 
         Self {
-            relation_weight_evaluator,
+            relation_matrix_evaluator,
             setup,
             full_vec_randomness,
             alpha_pows,
@@ -246,7 +262,7 @@ impl SetupContributionFixture {
 
     fn compute_contribution(&self) -> TestField {
         evaluate_setup_contribution_direct::<TestField, TestField, TEST_RING_DIM>(
-            &self.relation_weight_evaluator,
+            &self.relation_matrix_evaluator,
             &self.full_vec_randomness,
             &self.alpha_pows,
             &self.alpha_pows,
@@ -259,7 +275,7 @@ impl SetupContributionFixture {
 
     fn materialized_contribution(&self) -> TestField {
         let plan = self
-            .relation_weight_evaluator
+            .relation_matrix_evaluator
             .setup_contribution_plan::<TestField>(
                 &self.full_vec_randomness,
                 Some(&self.fold_gadget),
@@ -302,7 +318,7 @@ impl SetupContributionFixture {
     /// eq-weighted materialized `setup_index_weight`.
     fn assert_setup_index_weight_mle_matches_materialized(&self) {
         let plan = self
-            .relation_weight_evaluator
+            .relation_matrix_evaluator
             .setup_contribution_plan::<TestField>(
                 &self.full_vec_randomness,
                 Some(&self.fold_gadget),

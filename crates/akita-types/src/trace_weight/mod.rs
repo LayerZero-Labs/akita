@@ -32,7 +32,8 @@ pub use eval::{
 };
 pub use evaluation_trace::{
     build_evaluation_trace_weights, ensure_trace_stage2_supported,
-    scale_evaluation_trace_claim_coefficients, EvaluationTraceSegment, EvaluationTraceTerm,
+    prepare_evaluation_trace_group_parameters, scale_evaluation_trace_claim_coefficients,
+    EvaluationTraceGroupParameters, EvaluationTraceSegment, EvaluationTraceTerm,
     EvaluationTraceWeightInputs, EvaluationTraceWeights,
 };
 #[cfg(test)]

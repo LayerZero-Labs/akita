@@ -229,7 +229,7 @@ pub(in crate::protocol::core) struct PreparedFoldReplay<'a, F: FieldCore, E: Fie
     pub(in crate::protocol::core) payload: PreparedFoldPayload<'a, F, E>,
     /// Per-group prepared opening points in `OpeningClaims` order (one element
     /// for scalar/suffix folds). Reused for the fused trace term.
-    pub(in crate::protocol::core) evaluation_trace_points: Option<Vec<PreparedOpeningPoint<F, E>>>,
+    pub(in crate::protocol::core) evaluation_trace_points: Vec<PreparedOpeningPoint<F, E>>,
     pub(in crate::protocol::core) evaluation_trace_claim: E,
     pub(in crate::protocol::core) evaluation_trace_claim_coefficients: Vec<E>,
     pub(in crate::protocol::core) evaluation_trace_basis: BasisMode,
@@ -309,14 +309,13 @@ where
 fn verify_stage2<F, E, T>(
     transcript: &mut T,
     setup: &AkitaVerifierSetup<F>,
-    relation_instance: &RingRelationInstance<F>,
     stage2: &AkitaStage2Proof<F, E>,
     stage1: Stage1Replay<E>,
     rs: &RingSwitchVerifyOutput<E>,
     relation_claim: E,
     lp: &LevelParams,
     setup_claim: Option<E>,
-    evaluation_trace_weights: EvaluationTraceWeights<E>,
+    evaluation_trace: PreparedEvaluationTrace<E>,
     evaluation_trace_row_weight: E,
     evaluation_trace_opening_claim: E,
 ) -> Result<Vec<E>, AkitaError>
@@ -331,14 +330,13 @@ where
         verify_stage2_kernel::<F, E, T, D>(
             transcript,
             setup,
-            relation_instance,
             stage2,
             stage1,
             rs,
             relation_claim,
             witness_eval,
             setup_claim,
-            evaluation_trace_weights,
+            evaluation_trace,
             evaluation_trace_row_weight,
             evaluation_trace_opening_claim,
         )
@@ -349,14 +347,13 @@ where
 fn verify_stage2_kernel<F, E, T, const D: usize>(
     transcript: &mut T,
     setup: &AkitaVerifierSetup<F>,
-    relation_instance: &RingRelationInstance<F>,
     stage2: &AkitaStage2Proof<F, E>,
     stage1: Stage1Replay<E>,
     rs: &RingSwitchVerifyOutput<E>,
     relation_claim: E,
     witness_eval: E,
     setup_claim: Option<E>,
-    evaluation_trace_weights: EvaluationTraceWeights<E>,
+    evaluation_trace: PreparedEvaluationTrace<E>,
     evaluation_trace_row_weight: E,
     evaluation_trace_opening_claim: E,
 ) -> Result<Vec<E>, AkitaError>
@@ -370,15 +367,14 @@ where
         stage1.range_image_evaluation,
         witness_eval,
         stage1.stage1_point,
-        &rs.relation_weight_evaluator,
+        &rs.relation_matrix_evaluator,
         &setup.expanded,
-        relation_instance,
         rs.alpha,
         setup_claim,
         relation_claim,
         rs.col_bits,
         rs.ring_bits,
-        evaluation_trace_weights,
+        evaluation_trace,
         evaluation_trace_row_weight,
         evaluation_trace_opening_claim,
     )?;
@@ -417,7 +413,7 @@ where
             });
         }
         let setup_coefficient_bits = rs
-            .relation_weight_evaluator
+            .relation_matrix_evaluator
             .role_dims
             .d_a()
             .trailing_zeros() as usize;
@@ -426,7 +422,7 @@ where
             .ok_or(AkitaError::InvalidProof)?;
         let eta = sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_SUMCHECK_BATCH);
         let verifier = SetupSumcheckVerifier::new::<F>(
-            &rs.relation_weight_evaluator,
+            &rs.relation_matrix_evaluator,
             setup_x_challenges,
             &rs.tau1,
             rs.alpha,
@@ -591,10 +587,7 @@ where
                     &relation_instance,
                     prepared.lp,
                     final_witness,
-                    prepared
-                        .evaluation_trace_points
-                        .as_deref()
-                        .ok_or(AkitaError::InvalidProof)?,
+                    &prepared.evaluation_trace_points,
                     &prepared.evaluation_trace_claim_coefficients,
                     prepared.evaluation_trace_claim,
                 )?;
@@ -669,34 +662,27 @@ where
     )?;
     let evaluation_trace_weight = evaluation_trace_row_weight(evaluation_trace_row, &rs.tau1)?;
     ensure_trace_stage2_supported(<E as ExtField<F>>::EXT_DEGREE)?;
-    let trace_witness_layout = relation_instance.segment_layout(prepared.lp, None)?;
     let trace_num_vars = rs
         .col_bits
         .checked_add(rs.ring_bits)
         .ok_or_else(|| AkitaError::InvalidSetup("trace domain width overflow".into()))?;
-    let trace_plan = RelationRangeImagePlan::new(
-        FlatBooleanDomain::new(prepared.w_len, trace_num_vars)?,
-        DigitRangePlan::new(rs.b)?,
-        trace_witness_layout,
-        opening_batch,
-        relation_instance.role_dims(),
-    )?;
-    let evaluation_trace_points = prepared
-        .evaluation_trace_points
-        .as_deref()
-        .ok_or(AkitaError::InvalidProof)?;
+    let trace_domain = FlatBooleanDomain::new(prepared.w_len, trace_num_vars)?;
+    let trace_witness_layout = rs.relation_matrix_evaluator.witness_layout()?;
+    let evaluation_trace_points = &prepared.evaluation_trace_points;
     let trace_preparation_span = tracing::info_span!(
         "stage2_evaluation_trace_preparation",
         claims = opening_batch.num_total_polynomials(),
         groups = opening_batch.num_groups(),
-        chunks = trace_plan.witness_layout().units().len(),
+        chunks = trace_witness_layout.units().len(),
         source_ring_dimension = d_a,
     )
     .entered();
-    let evaluation_trace_weights =
+    let evaluation_trace =
         dispatch_for_field!(ProtocolDispatchSlot::Role(RingRole::Inner), F, d_a, |D| {
-            build_evaluation_trace_weights::<F, E, D>(EvaluationTraceWeightInputs {
-                plan: &trace_plan,
+            prepare_evaluation_trace::<F, E, D>(&EvaluationTraceWeightInputs {
+                digit_witness_domain: trace_domain,
+                witness_layout: trace_witness_layout,
+                role_dims: relation_instance.role_dims(),
                 level_params: prepared.lp,
                 opening_batch,
                 prepared_points: evaluation_trace_points,
@@ -710,14 +696,13 @@ where
     let sumcheck_challenges = verify_stage2::<F, E, T>(
         transcript,
         setup,
-        &relation_instance,
         stage2,
         stage1_replay,
         &rs,
         relation_claim,
         prepared.lp,
         setup_claim,
-        evaluation_trace_weights,
+        evaluation_trace,
         evaluation_trace_weight,
         evaluation_trace_opening_claim,
     )?;

@@ -1,15 +1,14 @@
 //! Verifier for the Akita stage-2 fused sumcheck.
 
-use crate::protocol::ring_switch::RelationWeightEvaluator;
+use crate::protocol::evaluation_trace::PreparedEvaluationTrace;
+use crate::protocol::ring_switch::RelationMatrixEvaluator;
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_field::{
     AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, HalvingField,
     MulBaseUnreduced,
 };
 use akita_sumcheck::SumcheckInstanceVerifier;
-use akita_types::{
-    AkitaExpandedSetup, EvaluationTraceWeights, FpExtEncoding, RingRelationInstance,
-};
+use akita_types::{AkitaExpandedSetup, FpExtEncoding};
 use std::marker::PhantomData;
 
 /// Verifier for the stage-2 fused virtual-claim and relation sumcheck.
@@ -18,15 +17,13 @@ pub(crate) struct AkitaStage2Verifier<'a, F: FieldCore, E: FieldCore, const D: u
     range_image_evaluation: E,
     witness_eval: E,
     stage1_point: Vec<E>,
-    relation_weight_evaluator: &'a RelationWeightEvaluator<E>,
+    relation_matrix_evaluator: &'a RelationMatrixEvaluator<E>,
     setup_claim: Option<E>,
     setup: &'a AkitaExpandedSetup<F>,
-    relation_instance: &'a RingRelationInstance<F>,
     alpha: E,
-    col_bits: usize,
-    ring_bits: usize,
+    num_rounds: usize,
     relation_claim: E,
-    evaluation_trace_weights: EvaluationTraceWeights<E>,
+    evaluation_trace: PreparedEvaluationTrace<E>,
     evaluation_trace_row_weight: E,
     evaluation_trace_opening_claim: E,
     _marker: PhantomData<([F; D], E)>,
@@ -46,15 +43,14 @@ where
         range_image_evaluation: E,
         witness_eval: E,
         stage1_point: Vec<E>,
-        relation_weight_evaluator: &'a RelationWeightEvaluator<E>,
+        relation_matrix_evaluator: &'a RelationMatrixEvaluator<E>,
         setup: &'a AkitaExpandedSetup<F>,
-        relation_instance: &'a RingRelationInstance<F>,
         alpha: E,
         setup_claim: Option<E>,
         relation_claim: E,
         col_bits: usize,
         ring_bits: usize,
-        evaluation_trace_weights: EvaluationTraceWeights<E>,
+        evaluation_trace: PreparedEvaluationTrace<E>,
         evaluation_trace_row_weight: E,
         evaluation_trace_opening_claim: E,
     ) -> Result<Self, AkitaError> {
@@ -72,15 +68,13 @@ where
             range_image_evaluation,
             witness_eval,
             stage1_point,
-            relation_weight_evaluator,
+            relation_matrix_evaluator,
             setup_claim,
             setup,
-            relation_instance,
             alpha,
-            col_bits,
-            ring_bits,
+            num_rounds,
             relation_claim,
-            evaluation_trace_weights,
+            evaluation_trace,
             evaluation_trace_row_weight,
             evaluation_trace_opening_claim,
             _marker: PhantomData,
@@ -94,7 +88,7 @@ where
     E: ExtField<F> + FpExtEncoding<F> + FromPrimitiveInt + MulBaseUnreduced<F>,
 {
     fn num_rounds(&self) -> usize {
-        self.col_bits + self.ring_bits
+        self.num_rounds
     }
 
     fn degree_bound(&self) -> usize {
@@ -116,10 +110,9 @@ where
 
         let relation_weight = {
             let _span = tracing::info_span!("stage2_relation_weight").entered();
-            self.relation_weight_evaluator.eval_flat_at_point::<F, D>(
+            self.relation_matrix_evaluator.eval_flat_at_point::<F, D>(
                 challenges,
                 self.setup,
-                self.relation_instance,
                 self.alpha,
                 self.setup_claim,
             )?
@@ -129,9 +122,7 @@ where
             let _span = tracing::info_span!("stage2_trace_oracle").entered();
             self.evaluation_trace_row_weight
                 * w_eval
-                * self
-                    .evaluation_trace_weights
-                    .evaluate_at_point(challenges)?
+                * self.evaluation_trace.evaluate_at_point(challenges)?
         };
 
         // A zero batching challenge removes the virtual term. Avoid the

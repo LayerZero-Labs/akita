@@ -458,10 +458,8 @@ where
             E::one(),
         ),
     };
-    let trace_claim_coefficients = row_coefficients
-        .iter()
-        .map(|&coefficient| coefficient * claim_reduction_factor)
-        .collect();
+    let trace_claim_coefficients =
+        scale_evaluation_trace_claim_coefficients(&row_coefficients, claim_reduction_factor)?;
 
     let fold_grind_nonce = proof.fold_grind_nonce;
     let (v_storage, payload, next_opening_ring_dim) = match proof.kind {
@@ -532,7 +530,7 @@ where
             .collect(),
         w_len,
         payload,
-        evaluation_trace_points: Some(prepared_points),
+        evaluation_trace_points: prepared_points,
         evaluation_trace_claim: trace_eval_target,
         evaluation_trace_claim_coefficients: trace_claim_coefficients,
         evaluation_trace_basis: current_state.basis,

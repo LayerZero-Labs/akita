@@ -1,7 +1,7 @@
 //! Verifier for the setup-product sumcheck — the verifier counterpart to the
 //! prover-side `AkitaStage3Prover`.
 
-use crate::protocol::ring_switch::RelationWeightEvaluator;
+use crate::protocol::ring_switch::RelationMatrixEvaluator;
 use akita_algebra::eq_poly::{EqPolynomial, SplitEqEvals};
 use akita_algebra::ring::{eval_ring_at_pows_fast, scalar_powers};
 use akita_field::parallel::*;
@@ -42,7 +42,7 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
     /// [`verify_batched_stage3`](Self::verify_batched_stage3).
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new<F>(
-        relation_weight_evaluator: &RelationWeightEvaluator<E>,
+        relation_matrix_evaluator: &RelationMatrixEvaluator<E>,
         x_challenges: &[E],
         tau1: &[E],
         alpha: E,
@@ -51,15 +51,15 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
         F: FieldCore + CanonicalField,
         E: ExtField<F>,
     {
-        let fold_gadget = relation_weight_evaluator.setup_contribution_fold_gadget::<F>()?;
-        let plan = relation_weight_evaluator
+        let fold_gadget = relation_matrix_evaluator.setup_contribution_fold_gadget::<F>()?;
+        let plan = relation_matrix_evaluator
             .setup_contribution_plan::<F>(x_challenges, fold_gadget.as_deref())?;
         let geometry = plan.projection_geometry();
         let alpha_pows = scalar_powers(alpha, geometry.alpha_power_len());
         let setup_index_weight_evaluator = fold_gadget
             .as_deref()
             .map(|fold_gadget| {
-                relation_weight_evaluator.setup_index_weight_evaluator::<F>(
+                relation_matrix_evaluator.setup_index_weight_evaluator::<F>(
                     &plan,
                     tau1,
                     x_challenges,

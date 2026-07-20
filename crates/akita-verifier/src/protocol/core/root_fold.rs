@@ -205,17 +205,18 @@ where
         .as_ref()
         .map(|(final_claim, _)| *final_claim)
         .unwrap_or(ordinary_trace_eval_target);
-    let claim_reduction_factors = eor_trace_final
+    let claim_reduction_factor = eor_trace_final
         .as_ref()
         .map(|(_, factors_by_point)| {
-            let shared_factor = *factors_by_point.first().ok_or(AkitaError::InvalidProof)?;
-            Ok(vec![shared_factor; opening_batch.num_total_polynomials()])
+            factors_by_point
+                .first()
+                .copied()
+                .ok_or(AkitaError::InvalidProof)
         })
-        .transpose()?;
-    let trace_claim_coefficients = scale_evaluation_trace_claim_coefficients(
-        &row_coefficients,
-        claim_reduction_factors.as_deref(),
-    )?;
+        .transpose()?
+        .unwrap_or_else(E::one);
+    let trace_claim_coefficients =
+        scale_evaluation_trace_claim_coefficients(&row_coefficients, claim_reduction_factor)?;
 
     // Chunked levels commit a wider (replicated-ẑ) next witness; size it
     // with the per-level chunk count (`num_chunks = 1` is unchanged).
@@ -254,7 +255,7 @@ where
             next_opening_source_len: w_len / next_witness_ring_dim,
             stage3: stage3_sumcheck_proof.map(|proof| (proof, next_fold_level_params)),
         },
-        evaluation_trace_points: Some(vec![prepared_point.clone()]),
+        evaluation_trace_points: vec![prepared_point.clone()],
         evaluation_trace_claim: trace_eval_target,
         evaluation_trace_claim_coefficients: trace_claim_coefficients,
         evaluation_trace_basis: basis,
@@ -407,7 +408,7 @@ where
             next_opening_source_len: w_len / next_witness_ring_dim,
             stage3: stage3_sumcheck_proof.map(|proof| (proof, next_fold_level_params)),
         },
-        evaluation_trace_points: Some(prepared_points),
+        evaluation_trace_points: prepared_points,
         evaluation_trace_claim: trace_eval_target,
         evaluation_trace_claim_coefficients: trace_claim_coefficients,
         evaluation_trace_basis: basis,

@@ -24,8 +24,17 @@ The sum-check has three semantic terms:
 2. the mandatory evaluation trace that binds opening claims to the committed witness; and
 3. range-image consistency with the independent Stage 1 evaluation.
 
-All three share one transcript lifecycle, one checked witness domain, and one round-result
-reducer. They keep distinct named arithmetic; this is not a generic expression engine.
+The goals and acceptance criteria below describe the final PR head, not every additive
+implementation slice. At the current verifier-correction slice, direct mixed-role
+evaluation has W=1/W=2 differential parity, but genuine mixed-role statement construction
+and end-to-end proving remain part of the prover cutover below. Recursive mixed-role setup
+offload is deliberately rejected until the later Stage 3 boundary change.
+
+All three share one transcript lifecycle and checked protocol geometry. The prover owns
+one round-result reducer and the storage it needs to produce messages. The verifier owns
+separate succinct evaluators built from the same checked parameters; it never consumes a
+prover table, event stream, folded state, or other witness-sized representation. The
+three terms keep distinct named arithmetic; this is not a generic expression engine.
 
 ## Motivation
 
@@ -56,8 +65,12 @@ basis.
 - One fused relation/evaluation-trace/range-image round reducer.
 - Measured one/two/three-round compact strategies for every LB2-LB6 basis.
 - Full multi-group, multi-chunk, and mixed-dimension cross-product support.
-- One semantic relation-event authority and one semantic evaluation-trace authority used
-  by prover preparation, verifier replay, setup attribution, and dense test oracles.
+- One checked common-parameter authority for transcript challenges, layouts, role
+  dimensions, row ranges, group/chunk ownership, opening points, and setup attribution.
+- Separate minimal prover and verifier representations derived from those parameters:
+  prover events/factors for round production, and compact structured verifier evaluators
+  for final-point replay.
+- Preserve or improve PR #312 verifier performance in every primary benchmark cell.
 - Atomic deletion of old x/y, dense, sparse, and forwarding paths.
 - No proof-byte, transcript, degree, challenge, or final-claim change.
 
@@ -76,6 +89,35 @@ basis.
 The later recursive-offload PR gets its own spec when implemented. Its stable seam is
 recorded near the end of this document; this PR does not carry a speculative proof-wire
 plan for it.
+
+## Shared inputs, separate consumers
+
+“Single source of truth” applies to protocol facts, not runtime representations. The
+dependency graph is deliberately
+
+```text
+checked common protocol parameters
+  -> prover-owned compact/foldable state
+
+checked common protocol parameters
+  -> verifier-owned succinct evaluation state
+```
+
+Common parameters include the transcript-derived challenges, `LevelParams`,
+`OpeningClaimsLayout`, `WitnessLayout`, authenticated group/claim order, role dimensions,
+row ranges, gadget bases, opening points, and setup-contribution attribution. Neither side
+recomputes those facts through an alternate layout or sizing formula.
+
+The two sides have different cost models and therefore must not share a representation
+merely to share code. Prover event streams, dense/lane weights, trace materialization, and
+folded factor state may scale with the witness because the prover already touches it.
+Verifier state must remain succinct and retain the established structured contractions.
+Cross-side agreement is enforced through the checked inputs and differential direct-
+equation tests, not by making the verifier replay prover-scale data.
+
+A verifier evaluator is the production implementation, not a “compact fast path” beside
+a generic slow implementation. There is one verifier algorithm per concept, with no
+runtime representation switch or wrapper around a prover consumer.
 
 ## Protocol boundary
 
@@ -128,8 +170,10 @@ Current setup-contribution stage: unchanged proof position and wire
 | pointwise `w(w+1)` table | `range_image` |
 | common `[1, alpha, ..., alpha^(g-1)]` factor | `common_alpha_factor` |
 | high-lane linear-relation factor | `relation_lane_weights` |
-| mandatory opening-trace factors | `EvaluationTraceWeights` |
+| prover opening-trace factors | `EvaluationTraceWeights` |
 | prepared trace contraction/fold state | `EvaluationTraceProverState` |
+| verifier opening-trace claims | `PreparedEvaluationTrace` |
+| verifier relation-matrix state | `RelationMatrixEvaluator` |
 | complete checked direct plan | `RelationRangeImagePlan` |
 | equation-owning prover | `RelationRangeImageProver` |
 | proof object | `RelationRangeImageProof` |
@@ -152,7 +196,7 @@ z = g * lane + coefficient,  0 <= coefficient < g.
 The first `k` challenges are common coefficient coordinates. The rest address physical
 relation lanes and padded witness capacity. x/y is not a public protocol abstraction.
 
-`WitnessDomain` checks the live prefix, padded power-of-two domain, point width, and
+`FlatBooleanDomain` checks the live prefix, padded power-of-two domain, point width, and
 LSB-first interpretation. `WitnessLayout` checks semantic group/chunk units inside that
 prefix. Callers do not pass independent `live_x_cols`, `col_bits`, and `ring_bits` values
 that can disagree with those authorities.
@@ -192,7 +236,7 @@ setup amplitudes, and overlaps are additive contributions to high-lane weights. 
 not break the common low factor. Mixed `128/64/32` therefore uses a common factor of
 length 32, not 128 and not a full-domain table.
 
-One closed semantic emitter produces checked relation events:
+The prover's relation compiler uses one closed emitter of checked relation events:
 
 ```rust
 struct RelationWeightEvent<E> {
@@ -222,10 +266,18 @@ dense and uniform-column consumers keep the current Stage 2 prover behavior whil
 prover is cut over. They consume these events and contain no second relation formula.
 
 The emitter explicitly covers E/D consistency, T/B, every per-chunk Z response, the
-shared quotient-R suffix, setup contributions, and row-family resets. It is the single
-source for production lane compilation, verifier evaluation, setup attribution, and the
-dense oracle. Source events are dropped after coalescing; no provider retains dense and
-factorized copies.
+shared quotient-R suffix, setup contributions, and row-family resets. It is the prover
+authority for lane compilation and dense prover-side differential oracles. Source events
+are dropped after coalescing; no prover provider retains dense and factorized copies.
+
+The verifier does **not** build or consume these events. Its relation evaluator is derived
+directly from the checked common inputs and retains the PR #312 structured algorithm:
+prepared claim/block challenge evaluations; bounded equality windows and affine-interval
+E/T contractions; reuse of setup-plan E/T/Z equality slices; a compact quotient-tail
+contraction; and one coefficient-side alpha evaluation for uniform dimensions. Direct
+setup and deferred setup claims remain explicit mutually exclusive inputs. Refactoring
+may improve ownership, validation, names, and module boundaries, but may not replace
+these contractions with leaf event replay.
 
 ## Binding order and relation arithmetic
 
@@ -289,8 +341,8 @@ evaluation_trace_weight(block,digit,nu)
   = sum_ell column_factor_ell(block,digit) * inner_trace_ell(nu).
 ```
 
-The normalized semantic input is a nonempty `EvaluationTraceWeights` containing one
-`EvaluationTraceTerm` per opening claim. There are no `Field`, `Ring`, `Root`,
+The prover's normalized trace input is a nonempty `EvaluationTraceWeights` containing one
+`EvaluationTraceTerm` per opening claim. There are no prover-side `Field`, `Ring`, `Root`,
 `Recursive`, `Absent`, sparse-table, or dense-table semantic variants.
 
 The landed term representation owns exactly:
@@ -302,14 +354,17 @@ The landed term representation owns exactly:
 - one `EvaluationTraceSegment` per witness chunk, recording the flat physical coefficient
   start, group-global block start, and exact live-block count.
 
-The verifier evaluates these segments directly at the final flat point with the existing
-carry-aware affine-interval equality primitive. The current Stage 2 prover temporarily
-materializes this same semantic term list into its pre-existing foldable `TraceTable`
-storage. Scalar same-dimension claims retain sparse columns; extension or mixed-dimension
-claims write one exact-live flat dense table. This is transitional storage, not a second
-semantic representation: no source/destination remap or alternate trace formula remains in
-production. The table disappears with the fused prover cutover in Step 6. The deleted trace
-implementations are compiled only under `cfg(test)` as differential oracles.
+The verifier receives its own minimal prepared group descriptors from the same checked
+claim coefficients, opening points, group/chunk ownership, basis, and source dimensions.
+Each descriptor retains compact chunk geometry shared by every claim in the group, not
+one copy of the prover physical segments per claim. It contracts the rank-one block,
+digit, and inner-coordinate factors in closed form. It must not scan or materialize the
+prover physical trace segments. The current Stage 2
+prover temporarily materializes `EvaluationTraceWeights` into its pre-existing foldable
+`TraceTable` storage. Scalar same-dimension claims retain sparse columns; extension or
+mixed-dimension claims write one exact-live flat dense table. That table disappears with
+the fused prover cutover in Step 6. Deleted historical trace implementations may remain
+only under `cfg(test)` as differential oracles.
 
 The implementation differential-tests the current coordinate algebra against the direct
 E-linear formula. Where the packing map admits the expected adjoint, each inner vector is
@@ -325,7 +380,7 @@ The complication matrix is:
 | multiple groups | none after flat layout | group-specific rows, gadgets, claim offsets, and exponent resets | one prepared point and claim slice per group | compile authenticated root-group order into runs |
 | multiple chunks | none after flat layout | E/T split by block ownership, Z repeated per chunk, R shared | one physical E segment per claim/unit; global block weights do not reset | retain uneven global block ranges and unit ownership |
 | mixed role dimensions | none | common factor uses global `g`; role subcolumns map into common lanes | each claim retains its own source ring split | remove the existing mixed-D/multichunk guard only after flat-oracle parity |
-| EOR | none | no change | per-claim scale multiplies the same trace term | normalize missing scales to one; never make trace optional |
+| EOR | none | no change | one reduction factor scales the authenticated claim coefficients | normalize a missing reduction factor to one; never make trace optional |
 
 Only the range-image column is genuinely indifferent to these axes. Relation and trace
 arithmetic generalize cleanly once geometry is prepared, but that preparation is a
@@ -415,16 +470,30 @@ The selected side scan is still part of the one round reducer. It is permitted o
 it visits strictly smaller support and wins complete-stage measurement. It never creates
 a second prover or witness table.
 
-The verifier evaluates each segment directly at the flat point with the canonical
-carry-aware offset/interval equality primitive. An arbitrary physical E interval is not
-assumed to be a Boolean subcube. Complexity is proportional to claims and prepared
-segments, not the padded witness domain.
+The verifier uses the prepared claim/group/chunk descriptors to contract block-opening,
+digit, and inner-coordinate factors without visiting the physical segment contents. An
+arbitrary physical E interval is not assumed to be a Boolean subcube, but carry-aware
+equality arithmetic is performed over compact factor boundaries rather than one term per
+physical coefficient. Complexity is succinct in claims, groups, chunks, point width, and
+short gadget/factor dimensions; it is not proportional to the padded or live witness
+domain.
 
 ### Mixed ring dimensions with chunks
 
-The current verifier explicitly rejects multi-chunk layouts when B/D role dimensions
-differ from the A dimension. This PR removes that guard only after the relation emitter,
-trace segments, setup attribution, and verifier evaluator agree with dense flat oracles.
+The previous verifier explicitly rejected multi-chunk layouts when B/D role dimensions
+differed from the A dimension. The direct-setup path removes that guard: the relation
+emitter, trace segments, setup attribution, and verifier evaluator use the same checked
+role/lane mapping and must agree with dense flat oracles across the mixed-dimension/chunk
+cross-product.
+
+Recursive setup offload remains a separate cutover boundary. The current Stage 3 builder
+drops `log2(d_a)` Stage 2 coordinates before constructing the setup product, whereas a
+mixed relation binds only `log2(g)` common alpha coordinates before its remaining role
+lanes. Reusing the uniform split would silently omit the A/B lane coordinates. Until the
+Stage 3 setup boundary is generalized to consume the checked common-coordinate count,
+mixed dimensions plus a deferred setup claim are rejected explicitly. The later setup
+boundary slice must remove that rejection and add direct/deferred parity across mixed
+dimensions, groups, and chunks; it must not reinterpret or pad the old `x/y` split.
 
 The final rule is unchanged by chunks:
 
@@ -576,9 +645,16 @@ sum_claims claim_coefficient
   * inner_trace_evaluation(point).
 ```
 
-It accepts one claim list for root, recursive, multigroup, multichunk, and EOR cases. It
-does not allocate dense tables, remap points, or dispatch by historical representation.
-Typed point views validate common, lane, and per-trace source splits.
+It accepts one minimal prepared claim list for root, recursive, multigroup, multichunk,
+and EOR cases. It does not allocate dense tables, build prover trace terms/segments,
+remap points, or dispatch by historical representation. Typed point views validate
+common, lane, and per-trace source splits.
+
+The relation evaluator is especially performance-sensitive and preserves the compact
+PR #312 implementation strategy. The common uniform case must not enter generic mixed-
+dimension or prover-event code. Mixed dimensions may use a separate succinct evaluator
+when their algebra requires it, but that implementation is still verifier-owned and may
+not make uniform verification pay for generality.
 
 Malformed dimensions, group/chunk layouts, claim offsets, point lengths, degrees, round
 counts, and proof-derived allocations return `AkitaError`. Verifier-reachable code adds no
@@ -605,20 +681,16 @@ stage.
    protocol epochs at the actual integration base.
 2. Make `WitnessDomain`, `WitnessLayout`, global claim order, and range-basis authority the
    checked inputs to one `RelationRangeImagePlan`.
-3. Land the semantic relation emitter and compare compiled lane weights/final evaluation
-   against dense weights for every layout cross-product. **Landed:** the checked event
-   authority, direct/deferred setup split, canonical verifier point evaluator, checked
-   common-alpha compiler, uniform Stage-2 handoff, and mixed-dimension reconstruction tests
-   now share one source. The dense mixed consumer remains only until Step 6 cuts over the
-   fused prover.
-4. Land `EvaluationTraceWeights` and its verifier evaluator; replace root/multigroup/EOR
-   variants and dense/sparse semantic tables in one cutover. **Landed:** prover and verifier
-   build the same per-claim terms from `RelationRangeImagePlan`; fully scaled coefficients
-   are normalized at preparation; chunk segments retain group-global block indices; the
-   verifier evaluates the flat point directly; mixed source/destination dimensions use flat
-   physical addresses with no remap; and all former production trace variants/builders are
-   test-only differential oracles. The existing prover `TraceTable` remains solely as the
-   temporary fold storage consumed by the old Stage 2 state machine until Step 6.
+3. Land the prover semantic relation emitter and compare compiled lane weights against
+   dense weights for every layout cross-product. **Corrective follow-up required:** the
+   landed event compiler remains prover-facing, while the verifier is restored to a
+   separately prepared succinct evaluator derived from the shared checked inputs. The
+   dense mixed prover consumer remains only until Step 6.
+4. Land prover `EvaluationTraceWeights` and consolidate root/multigroup/EOR preparation.
+   **Corrective follow-up required:** fully scaled coefficients and checked geometry remain
+   common, but the verifier receives a minimal closed-form claim evaluator rather than
+   prover segments or materialized trace storage. The existing prover `TraceTable` remains
+   solely as temporary fold storage consumed by the old Stage 2 state machine until Step 6.
 5. Implement and measure structured, opening-only, and contraction-first trace
    preparation.
 6. Cut the prover to one compact-prefix/folded-suffix state machine, initially with the
@@ -644,17 +716,29 @@ sumcheck/relation_range_image/
   tests.rs
 ```
 
-Checked relation events, `EvaluationTraceTerm` geometry, witness/group/chunk address
-helpers, and final point evaluators live in the shared types layer used by prover and
-verifier. The prover module owns storage and round production only.
+Checked common protocol geometry and address helpers live in the shared types layer.
+Prover relation events, trace terms, storage, and round production are prover-facing.
+Verifier relation/trace preparation and final-point evaluators are verifier-owned and
+retain only succinct state. A simple verifier evaluator may be a function rather than a
+state type; no type is introduced solely to mirror prover structure.
+
+For the verifier relation matrix, PR #312 is also the source-level baseline. The uniform
+preparation and evaluation path remains structurally recognizable in the diff: its
+prepared tensor/flat challenge evaluations, equality-window and affine-interval
+contractions, setup-plan reuse, and quotient-tail contraction are preserved rather than
+reimplemented under a new abstraction. Unchanged blocks are restored from the PR #312
+source rather than regenerated as equivalent code. Verifier changes relative to PR #312
+require a specific semantic justification—mixed dimensions, compact trace ownership,
+no-panic hardening, removal of dead state, or a strictly local simplification. Equivalent
+rewrites and naming-only churn are rejected even when their measured runtime is similar.
 
 | Surface | Responsibility |
 |---|---|
-| `akita-types` | checked flat/group/chunk/mixed geometry, semantic events/trace terms, final evaluators |
-| ring-switch finalization | prepare one plan, lane weights, and trace factors |
+| `akita-types` | checked flat/group/chunk/mixed geometry and common protocol parameters |
+| ring-switch finalization | prepare prover lane weights and trace factors from checked inputs |
 | `akita-prover::sumcheck` | one fused prover and selected kernels |
 | current setup contribution | reusable typed geometry only |
-| verifier | canonical factorized relation and trace final checks |
+| verifier | minimal prepared relation and trace state; compact final-point checks |
 | PCS tests/benches/profile | dense cross-product oracles, epochs, kernel selection |
 | book/spec | direct Stage 2 architecture and supported layout matrix |
 
@@ -669,7 +753,7 @@ Round-by-round dense differential tests compare every coefficient after every ch
 - structured trace factors/contractions versus exact flat trace weights;
 - fused compact messages versus direct dense summation;
 - folded state after each challenge;
-- final prover and canonical verifier evaluations; and
+- final prover and compact verifier evaluations against the same direct equation; and
 - current setup contribution versus a direct flat dot product.
 
 The landed evaluation-trace differential matrix crosses Lagrange/monomial bases, multiple
@@ -701,21 +785,23 @@ distributed recursive fixture rather than cloning competing setup/prove helpers.
 
 ## Tracing and performance
 
-Coarse spans cover plan construction, relation compilation, trace factor/contraction
-preparation, compact prefix, witness materialization, folded rounds, and folds. The landed
-trace cutover records one `stage2_evaluation_trace_preparation` span on each side, including
-claim/group/chunk and ring-dimension metadata; verifier final evaluation remains under
-`stage2_trace_oracle`. No span or event enters pair, class, coefficient, lane, claim-segment,
-or Rayon-item loops.
+Coarse spans cover plan construction, prover relation compilation, trace preparation,
+compact prefix, witness materialization, folded rounds, verifier relation constraints,
+verifier setup scan, quotient tail, verifier trace contraction, and folds. Spans record
+claim/group/chunk and ring-dimension metadata. No span or event enters pair, class,
+coefficient, lane, claim-segment, or Rayon-item loops.
 
 Measure feature-pruned profile builds for every basis and layout cell above at one and
 production thread counts. Report relation construction, trace preparation, compact
 prefix, materialization, later rounds/folds, complete Stage 2, complete prover, allocations,
 peak field elements, verifier time, proof bytes, and transcript events.
 
-Kernel winners are selected by complete Stage 2 and end-to-end prover results. CI
-benchmarks catch later regressions. Production carries no measured/unmeasured duplicate,
-ad hoc timer, or strategy knob.
+Kernel winners are selected by complete Stage 2 and end-to-end prover results. PR #312 is
+the verifier performance floor: no primary verifier cell may regress beyond measurement
+noise, and verifier work may not scale with prover relation-event count or physical trace
+support. CI benchmarks enforce the contract but do not replace local feature-pruned
+release/profile comparison before a slice lands. Production carries no
+measured/unmeasured duplicate, ad hoc timer, or strategy knob.
 
 ## Risks and stop conditions
 
@@ -724,13 +810,16 @@ ad hoc timer, or strategy knob.
 | group/chunk layout is recomputed in several crates | `WitnessLayout` is the semantic authority; compiled runs are derived and compared once |
 | block equality resets at a chunk boundary | trace segments retain global block starts and uneven ranges |
 | per-chunk Z or shared R is counted incorrectly | closed relation events distinguish replicated Z units from one R suffix |
-| mixed-D multi-chunk silently uses the old guard/fallback | remove the guard only after every cross-product dense oracle passes |
+| mixed-D multi-chunk silently uses the old guard/fallback | direct setup removes the guard only after dense-oracle parity; recursive setup remains an explicit rejection until Stage 3 binds `log2(g)` rather than `log2(d_a)` coordinates |
 | role-specific decomposition bases imply unsupported range claims | one explicit global range-basis authority is shared with security/sizing |
-| trace is treated as optional | nonterminal plan requires nonempty `EvaluationTraceWeights`; missing EOR scales become ones |
+| trace is treated as optional | a nonterminal prover plan requires nonempty `EvaluationTraceWeights`, while the verifier requires nonempty `PreparedEvaluationTrace`; missing EOR scales become ones |
 | nominal fusion still reads the full witness twice | relation and range share one block reducer; trace side scan must have strictly smaller support and measured benefit |
 | terms choose separate witness deferral depths | one joint per-basis materialization boundary; analytical term shortcuts share it |
 | generic abstraction hides degree/batching factors | three named subtotals and equation-owning prover; no expression engine |
 | microkernel win loses end to end | include construction, allocation, parallelism, and complete stage in selection |
+| “single source” forces prover storage into verifier replay | share checked protocol inputs, then derive separate minimal consumers; PR #312 verifier performance is a blocking floor |
+| a generic fallback is relabeled a verifier fast path | one compact production verifier implementation per concept; no slow prover-event/table path remains reachable for supported verifier shapes |
+| verifier restoration becomes a large equivalent rewrite | preserve PR #312's source structure and require a semantic justification for every changed hot-path region |
 
 ## Future recursive-offload seam
 
@@ -747,8 +836,9 @@ No future proof field, transcript challenge, stage enum, or inactive branch is a
 
 ## Acceptance criteria
 
-- One checked plan, one relation emitter, one evaluation-trace semantic form, one prover,
-  and one verifier evaluator remain.
+- One checked common-parameter authority feeds one prover implementation and one compact
+  verifier implementation; their runtime representations are deliberately separate and
+  minimal for their cost models.
 - Homogeneous direct proof bytes, transcript order, challenges, degree, final point, and
   final evaluation match the incoming epoch.
 - Common alpha coordinates bind first and relation lane state is at most `N/g`.
@@ -761,8 +851,10 @@ No future proof field, transcript challenge, stage enum, or inactive branch is a
 - Evaluation trace is mandatory and exact for scalar/extension, root/recursive,
   multigroup/multichunk, and EOR-scaled claims.
 - Every LB2-LB6 candidate is measured; one complete-stage winner remains per basis.
-- No primary Stage 2/prover/verifier benchmark cell regresses beyond measurement noise;
-  targeted cells show material wins.
+- No primary Stage 2/prover benchmark cell regresses beyond measurement noise; targeted
+  prover cells show material wins. No primary verifier cell regresses beyond measurement
+  noise relative to PR #312, and verifier relation/trace work never scales with prover
+  event count or physical trace-table size.
 - Numeric setup code touched by the PR contains only reusable final geometry.
 - Documentation guardrails and all repository-required format, lint, and test commands
   pass at the final head.

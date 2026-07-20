@@ -178,13 +178,11 @@ where
                 )?;
                 Ok(reduction.final_claim)
             })?;
-    let claim_reduction_factors = reduction
+    let claim_reduction_factor = reduction
         .as_ref()
-        .map(|reduction| vec![reduction.final_factor; opening_batch.num_total_polynomials()]);
-    let claim_coefficients = scale_evaluation_trace_claim_coefficients(
-        &row_coefficients,
-        claim_reduction_factors.as_deref(),
-    )?;
+        .map_or_else(E::one, |reduction| reduction.final_factor);
+    let claim_coefficients =
+        scale_evaluation_trace_claim_coefficients(&row_coefficients, claim_reduction_factor)?;
     Ok((
         PreparedEvaluationTraceClaim {
             claimed_evaluation: trace_eval_target,
