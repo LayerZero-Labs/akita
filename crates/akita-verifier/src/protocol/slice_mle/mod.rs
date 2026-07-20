@@ -12,6 +12,3 @@
 //! the results — each slice is orders of magnitude smaller than `M`.
 
 mod setup_contribution;
-mod structured_slice;
-
-pub(super) use structured_slice::compute_r_contribution;

@@ -1,6 +1,6 @@
 //! Verifier for the Akita stage-2 fused sumcheck.
 
-use crate::protocol::ring_switch::RelationMatrixEvaluator;
+use crate::protocol::ring_switch::RelationWeightEvaluator;
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_field::{
     AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, HalvingField,
@@ -19,7 +19,7 @@ pub(crate) struct AkitaStage2Verifier<'a, F: FieldCore, E: FieldCore, const D: u
     range_image_evaluation: E,
     witness_eval: E,
     stage1_point: Vec<E>,
-    relation_matrix_evaluator: &'a RelationMatrixEvaluator<E>,
+    relation_weight_evaluator: &'a RelationWeightEvaluator<E>,
     setup_claim: Option<E>,
     setup: &'a AkitaExpandedSetup<F>,
     relation_instance: &'a RingRelationInstance<F>,
@@ -45,7 +45,7 @@ where
         range_image_evaluation: E,
         witness_eval: E,
         stage1_point: Vec<E>,
-        relation_matrix_evaluator: &'a RelationMatrixEvaluator<E>,
+        relation_weight_evaluator: &'a RelationWeightEvaluator<E>,
         setup: &'a AkitaExpandedSetup<F>,
         relation_instance: &'a RingRelationInstance<F>,
         alpha: E,
@@ -69,7 +69,7 @@ where
             range_image_evaluation,
             witness_eval,
             stage1_point,
-            relation_matrix_evaluator,
+            relation_weight_evaluator,
             setup_claim,
             setup,
             relation_instance,
@@ -114,7 +114,7 @@ where
         let (y_challenges, x_challenges) = challenges.split_at(self.ring_bits);
         let relation_weight = {
             let _span = tracing::info_span!("stage2_relation_weight").entered();
-            self.relation_matrix_evaluator.eval_flat_at_point::<F, D>(
+            self.relation_weight_evaluator.eval_flat_at_point::<F, D>(
                 challenges,
                 self.setup,
                 self.relation_instance,

@@ -94,8 +94,7 @@ mod tests {
     use akita_prover::backend::DenseView;
     use akita_prover::compute::{OpeningFoldKernel, OpeningFoldPlan, RootOpeningSource};
     use akita_prover::protocol::ring_switch::{
-        build_w_evals_compact, compute_relation_matrix_col_evals, compute_relation_weight_evals,
-        ring_switch_build_w, RingSwitchBuildOutput,
+        build_w_evals_compact, ring_switch_build_w, RingSwitchBuildOutput,
     };
     use akita_prover::{
         ComputeBackendSetup, CpuBackend, DensePoly, ProverOpeningData, RingRelationProver,
@@ -105,16 +104,41 @@ mod tests {
     use akita_types::relation_claim_from_rows;
     use akita_types::witness::ChunkedWitnessCfg;
     use akita_types::{
-        r_decomp_levels, ring_opening_point_from_field, AkitaCommitmentHint, BasisMode, Commitment,
-        OpeningClaims, PointVariableSelection, PolynomialGroupClaims, RelationMatrixRowLayout,
-        RingMultiplierOpeningPoint, RingVec,
+        build_relation_weight_events, r_decomp_levels, ring_opening_point_from_field,
+        AkitaCommitmentHint, AkitaExpandedSetup, BasisMode, Commitment, LevelParams, OpeningClaims,
+        PointVariableSelection, PolynomialGroupClaims, RelationMatrixRowLayout,
+        RelationSetupSource, RelationWeightEventInputs, RelationWeightEvents,
+        RingMultiplierOpeningPoint, RingRelationInstance, RingVec,
     };
-    use akita_verifier::{prepare_relation_matrix_evaluator, RingSwitchReplay};
+    use akita_verifier::{prepare_relation_weight_evaluator, RingSwitchReplay};
     use rand::rngs::StdRng;
     use rand::{Rng, SeedableRng};
     use std::array::from_fn;
 
     use akita_pcs::{FieldCore, FromPrimitiveInt, RandomSampling};
+
+    fn test_relation_weight_events<'a>(
+        setup: &'a AkitaExpandedSetup<fp128::Field>,
+        instance: &'a RingRelationInstance<fp128::Field>,
+        alpha: fp128::Field,
+        level_params: &'a LevelParams,
+        relation_row_point: &'a [fp128::Field],
+        opening_source_len: usize,
+        opening_ring_dim: usize,
+    ) -> RelationWeightEvents<fp128::Field> {
+        build_relation_weight_events(RelationWeightEventInputs {
+            setup: RelationSetupSource::Matrix(setup),
+            instance,
+            alpha,
+            level_params,
+            relation_row_point,
+            claim_coefficients: &[fp128::Field::one()],
+            relation_matrix_row_layout: RelationMatrixRowLayout::WithDBlock,
+            opening_source_len,
+            opening_ring_dim,
+        })
+        .expect("relation weight events")
+    }
 
     fn prover_block_claims<'a, F: FieldCore + Clone, P>(
         point: &'a [F],
@@ -372,7 +396,6 @@ mod tests {
                 .expect("compact witness");
 
         let alpha = F::from_u64(29);
-        let alpha_evals_y = scalar_powers(alpha, D);
         let rows = lp
             .relation_matrix_row_count_for(1, RelationMatrixRowLayout::WithDBlock)
             .expect("valid row count");
@@ -393,19 +416,16 @@ mod tests {
                     }
                 })
                 .collect();
-            let relation_matrix_col_evals = compute_relation_weight_evals::<F, F>(
+            let relation_matrix_col_evals = test_relation_weight_events(
                 &setup.expanded,
                 &instance,
                 alpha,
-                &alpha_evals_y,
-                lp.role_dims(),
                 &lp,
                 &tau1,
-                &[F::one()],
-                RelationMatrixRowLayout::WithDBlock,
                 opening_source_len,
                 D,
             )
+            .materialize_dense()
             .expect("m evals");
             let got = direct_relation_claim(&w_compact, &relation_matrix_col_evals);
             let expected = relation_claim_from_rows::<F, D>(
@@ -521,7 +541,6 @@ mod tests {
                 .expect("compact witness");
 
         let alpha = F::from_u64(17);
-        let alpha_evals_y = scalar_powers(alpha, D);
         let rows = lp
             .relation_matrix_row_count_for(1, RelationMatrixRowLayout::WithDBlock)
             .unwrap();
@@ -542,19 +561,16 @@ mod tests {
                     }
                 })
                 .collect();
-            let relation_matrix_col_evals = compute_relation_weight_evals::<F, F>(
+            let relation_matrix_col_evals = test_relation_weight_events(
                 &setup.expanded,
                 &instance,
                 alpha,
-                &alpha_evals_y,
-                lp.role_dims(),
                 &lp,
                 &tau1,
-                &[F::one()],
-                RelationMatrixRowLayout::WithDBlock,
                 opening_source_len,
                 D,
             )
+            .materialize_dense()
             .expect("m evals");
             let got = direct_relation_claim(&w_compact, &relation_matrix_col_evals);
             let expected = relation_claim_from_rows::<F, D>(
@@ -573,7 +589,7 @@ mod tests {
     }
 
     /// Fix 2 correctness: for uniform ring geometry the compact per-column
-    /// relation `M(x)` produced by `compute_relation_matrix_col_evals` must
+    /// relation `M(x)` produced by the uniform event materializer must
     /// reconstruct the dense flattened relation exactly as
     /// `R(x, y) = M(x) * alpha^y`. Checked at a random alpha (spec test 3) and
     /// at `alpha = 0` (spec test 4), where `alpha^y` collapses to the y=0
@@ -693,34 +709,19 @@ mod tests {
                 .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
                 .collect();
 
-            let flat = compute_relation_weight_evals::<F, F>(
+            let events = test_relation_weight_events(
                 &setup.expanded,
                 &instance,
                 alpha,
-                &alpha_evals_y,
-                lp.role_dims(),
                 &lp,
                 &tau1,
-                &[F::one()],
-                RelationMatrixRowLayout::WithDBlock,
                 opening_source_len,
                 D,
-            )
-            .expect("flattened relation");
-            let col = compute_relation_matrix_col_evals::<F, F>(
-                &setup.expanded,
-                &instance,
-                alpha,
-                &alpha_evals_y,
-                lp.role_dims(),
-                &lp,
-                &tau1,
-                &[F::one()],
-                RelationMatrixRowLayout::WithDBlock,
-                opening_source_len,
-                D,
-            )
-            .expect("column relation");
+            );
+            let flat = events.materialize_dense().expect("flattened relation");
+            let col = events
+                .materialize_uniform_columns()
+                .expect("column relation");
 
             assert_eq!(
                 col.len(),
@@ -779,7 +780,7 @@ mod tests {
     }
 
     #[test]
-    fn relation_matrix_evaluator_matches_materialized() {
+    fn relation_weight_evaluator_matches_materialized() {
         use akita_sumcheck::multilinear_eval;
 
         type F = fp128::Field;
@@ -878,7 +879,6 @@ mod tests {
         .expect("ring-switch witness");
 
         let alpha = F::from_u64(42);
-        let alpha_evals_y = scalar_powers(alpha, D);
         let rows = level_params
             .relation_matrix_row_count_for(1, RelationMatrixRowLayout::WithDBlock)
             .unwrap();
@@ -894,19 +894,16 @@ mod tests {
         let witness_layout = instance.segment_layout(&level_params, None).unwrap();
         let opening_source_len = witness_layout.total_len();
 
-        let relation_weight_evals = compute_relation_weight_evals::<F, F>(
+        let relation_weight_evals = test_relation_weight_events(
             &setup.expanded,
             &instance,
             alpha,
-            &alpha_evals_y,
-            level_params.role_dims(),
             &level_params,
             &tau1,
-            &[F::one()],
-            RelationMatrixRowLayout::WithDBlock,
             opening_source_len,
             D,
         )
+        .materialize_dense()
         .expect("relation weight evals (materialized)");
         let relation_matrix_col_evals: Vec<F> = relation_weight_evals
             .chunks_exact(D)
@@ -929,16 +926,18 @@ mod tests {
             opening_source_len,
             opening_ring_dim: D,
         };
-        let prepared = prepare_relation_matrix_evaluator::<F, F, D>(&replay, alpha, &tau1, None)
-            .expect("prepare_relation_matrix_evaluator");
+        let prepared = prepare_relation_weight_evaluator::<F, F, D>(&replay, &tau1, None)
+            .expect("prepare_relation_weight_evaluator");
 
+        let mut flat_point = vec![F::zero(); D.trailing_zeros() as usize];
+        flat_point.extend_from_slice(&x_challenges);
         let got = prepared
-            .eval_at_point::<F, D>(&x_challenges, &setup.expanded, alpha, None)
-            .expect("eval_at_point");
+            .eval_flat_at_point::<F, D>(&flat_point, &setup.expanded, &instance, alpha, None)
+            .expect("flat relation evaluation");
 
         assert_eq!(
             got, expected,
-            "RelationMatrixEvaluator::eval_at_point must match materialized multilinear_eval"
+            "semantic relation event evaluation must match materialized multilinear_eval"
         );
 
         // ----- Chunked layout ground truth (W ∈ powers of two | num_live_blocks) --
@@ -1080,33 +1079,31 @@ mod tests {
                 opening_source_len: opening_source_len_w,
                 opening_ring_dim: D,
             };
-            let prepared_w =
-                prepare_relation_matrix_evaluator::<F, F, D>(&replay_w, alpha, &tau1, None)
-                    .expect("prepare chunked row eval");
+            let prepared_w = prepare_relation_weight_evaluator::<F, F, D>(&replay_w, &tau1, None)
+                .expect("prepare chunked row eval");
+            let mut flat_point_w = vec![F::zero(); D.trailing_zeros() as usize];
+            flat_point_w.extend_from_slice(&x_challenges_w);
             let got_w = prepared_w
-                .eval_at_point::<F, D>(&x_challenges_w, &setup.expanded, alpha, None)
-                .expect("chunked eval_at_point");
+                .eval_flat_at_point::<F, D>(&flat_point_w, &setup.expanded, &instance, alpha, None)
+                .expect("chunked relation evaluation");
             assert_eq!(
                 got_w, expected_w,
-                "chunked eval_at_point must match materialized chunked row for W={w}"
+                "chunked event evaluation must match materialized chunked row for W={w}"
             );
 
             // Prover-side cross-check: the chunked grouped M evaluator must emit
             // exactly the rearranged column layout, and its multilinear eval must
             // match the verifier's chunked row eval.
-            let prover_chunked_weights = compute_relation_weight_evals::<F, F>(
+            let prover_chunked_weights = test_relation_weight_events(
                 &setup.expanded,
                 &instance,
                 alpha,
-                &alpha_evals_y,
-                lp_w.role_dims(),
                 &lp_w,
                 &tau1,
-                &[F::one()],
-                RelationMatrixRowLayout::WithDBlock,
                 opening_source_len_w,
                 D,
             )
+            .materialize_dense()
             .expect("chunked relation weight evals (prover)");
             let prover_chunked: Vec<F> = prover_chunked_weights
                 .chunks_exact(D)

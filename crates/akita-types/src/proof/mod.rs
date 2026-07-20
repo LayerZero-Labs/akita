@@ -10,8 +10,8 @@
 pub mod batch;
 pub mod commitment;
 pub mod relation;
-pub mod relation_matrix_cols;
 pub mod relation_range_image;
+pub mod relation_weights;
 pub mod ring_relation;
 pub mod scheme;
 pub mod setup;
@@ -57,10 +57,11 @@ pub use relation::{
     relation_claim_from_rows_extension, relation_rhs_coeff_len, relation_rhs_layout_for,
     relation_rhs_row_count, RelationGroupRows, RelationRhsLayout,
 };
-pub use relation_matrix_cols::{
-    compute_relation_matrix_col_evals, compute_relation_weight_evals, eval_relation_weight_at_point,
-};
 pub use relation_range_image::{RelationRangeImageGroupPlan, RelationRangeImagePlan};
+pub use relation_weights::{
+    build_relation_weight_events, RelationSetupSource, RelationWeightContribution,
+    RelationWeightEvent, RelationWeightEventInputs, RelationWeightEvents,
+};
 pub use ring_relation::{
     ring_relation_segment_lengths, RingRelationInstance, RingRelationOpeningCounts,
     RingRelationSegmentLengths,

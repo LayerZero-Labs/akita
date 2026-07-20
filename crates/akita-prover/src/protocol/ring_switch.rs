@@ -8,7 +8,6 @@ use crate::{
     RecursiveWitnessFlat,
 };
 use akita_algebra::ring::cyclotomic::BalancedDecomposePow2I8Params;
-use akita_algebra::ring::scalar_powers;
 use akita_algebra::CyclotomicRing;
 use akita_config::CommitmentConfig;
 use akita_field::{
@@ -19,8 +18,9 @@ use akita_transcript::{sample_ext_challenge, Transcript};
 use akita_types::DigitBlocks;
 use akita_types::RingRelationInstance;
 use akita_types::{
-    r_decomp_levels, AkitaCommitmentHint, AkitaExpandedSetup, FpExtEncoding, LevelParams,
-    RelationMatrixRowLayout, RingVec,
+    build_relation_weight_events, r_decomp_levels, AkitaCommitmentHint, AkitaExpandedSetup,
+    FpExtEncoding, LevelParams, RelationMatrixRowLayout, RelationSetupSource,
+    RelationWeightEventInputs, RingVec,
 };
 
 mod coeffs;
@@ -34,9 +34,7 @@ pub(crate) use coeffs::PreparedRingSwitchGroup;
 pub use coeffs::RingSwitchTerminalArtifacts;
 pub use coeffs::{ring_switch_build_w, RingSwitchBuildOutput};
 pub use commit::{commit_w, NextWitnessState, NextWitnessStateOutput};
-pub use evals::{
-    build_w_evals_compact, compute_relation_matrix_col_evals, compute_relation_weight_evals,
-};
+pub use evals::build_w_evals_compact;
 pub use finalize::ring_switch_finalize;
 
 /// D-agnostic output of the ring switch protocol, containing everything

@@ -8,7 +8,7 @@ mod slice_mle;
 
 pub use core::batched_verify;
 pub use ring_switch::{
-    prepare_relation_matrix_evaluator, RelationMatrixEvaluator, RingSwitchReplay,
+    prepare_relation_weight_evaluator, RelationWeightEvaluator, RingSwitchReplay,
 };
 
 #[inline]

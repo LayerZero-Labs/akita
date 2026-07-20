@@ -628,7 +628,7 @@ where
         stage1.range_image_evaluation,
         witness_eval,
         stage1.stage1_point,
-        &rs.relation_matrix_evaluator,
+        &rs.relation_weight_evaluator,
         &setup.expanded,
         relation_instance,
         rs.alpha,
@@ -673,7 +673,7 @@ where
             });
         }
         let setup_coefficient_bits = rs
-            .relation_matrix_evaluator
+            .relation_weight_evaluator
             .role_dims
             .d_a()
             .trailing_zeros() as usize;
@@ -682,7 +682,7 @@ where
             .ok_or(AkitaError::InvalidProof)?;
         let eta = sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_SUMCHECK_BATCH);
         let verifier = SetupSumcheckVerifier::new::<F>(
-            &rs.relation_matrix_evaluator,
+            &rs.relation_weight_evaluator,
             setup_x_challenges,
             &rs.tau1,
             rs.alpha,

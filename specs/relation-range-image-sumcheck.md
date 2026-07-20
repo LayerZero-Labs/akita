@@ -196,11 +196,10 @@ One closed semantic emitter produces checked relation events:
 
 ```rust
 struct RelationWeightEvent<E> {
-    physical_start: WitnessCoefficientIndex,
-    length: usize,
+    physical_coefficients: Range<usize>,
     alpha_exponent_start: usize,
     scalar: E,
-    exponent_pattern: RelationExponentPattern,
+    contribution: RelationWeightContribution,
 }
 ```
 
@@ -208,6 +207,12 @@ Every production event has `g`-aligned physical and exponent starts and preserve
 low common coordinate. Role-local resets begin new aligned events. Overlaps use `+=`
 exactly once. Unsupported unaligned events return `AkitaError`; there is no production
 fringe or dense fallback. A dense exact-live vector exists only as a differential oracle.
+
+`contribution` distinguishes protocol-constraint arithmetic from setup-matrix arithmetic,
+so direct setup evaluation and a deferred complete setup claim cannot be mixed. All emitted
+exponents are consecutive; an exponent-pattern enum would add no information. The temporary
+dense and uniform-column consumers keep the current Stage 2 prover behavior while the fused
+prover is cut over. They consume these events and contain no second relation formula.
 
 The emitter explicitly covers E/D consistency, T/B, every per-chunk Z response, the
 shared quotient-R suffix, setup contributions, and row-family resets. It is the single
@@ -575,7 +580,9 @@ stage.
 2. Make `WitnessDomain`, `WitnessLayout`, global claim order, and range-basis authority the
    checked inputs to one `RelationRangeImagePlan`.
 3. Land the semantic relation emitter and compare compiled lane weights/final evaluation
-   against dense weights for every layout cross-product.
+   against dense weights for every layout cross-product. **In progress:** the checked event
+   authority, direct/deferred setup split, dense/uniform materializers, and canonical verifier
+   point evaluator are landed; common-alpha lane compilation arrives with the fused prover.
 4. Land `EvaluationTraceWeights` and its verifier evaluator; replace root/multigroup/EOR
    variants and dense/sparse tables in one cutover.
 5. Implement and measure structured, opening-only, and contraction-first trace

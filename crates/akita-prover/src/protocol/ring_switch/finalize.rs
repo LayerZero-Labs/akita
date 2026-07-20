@@ -78,12 +78,12 @@ where
                 actual: semantic_ring_elems,
             });
         }
-        // Uniform ring geometry restores the separable (x, y) opening domain:
+        // Uniform ring geometry retains the current separable (x, y) opening domain:
         // `col_bits` addresses the source columns and `ring_bits` addresses the
         // inner ring coefficients. This keeps the relation weights as a compact
-        // per-column table `M(x)` (see `compute_relation_matrix_col_evals`)
-        // instead of the flattened field domain. Non-uniform role dimensions
-        // fall back to the flattened single-domain layout (`ring_bits = 0`).
+        // per-column table `M(x)` from the semantic relation events instead of
+        // the flattened field domain. Non-uniform role dimensions use the
+        // flattened single-domain layout (`ring_bits = 0`).
         let x_capacity = akita_types::opening_domain_len(opening_source_len)?;
         let uniform = dims == akita_types::CommitmentRingDims::uniform(opening_ring_dim);
         let (live_x_cols, col_bits, ring_bits) = if uniform {
@@ -111,7 +111,6 @@ where
         let tau1: Vec<E> = (0..num_i)
             .map(|_| sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_TAU1))
             .collect();
-        let ring_alpha_evals_y = scalar_powers(alpha, D);
         if gamma.len() != instance.opening_batch().num_total_polynomials() {
             return Err(AkitaError::InvalidInput(
                 "ring-switch gamma length does not match claim count".to_string(),
@@ -119,39 +118,21 @@ where
         }
 
         let build_relation_weights = || {
+            let events = build_relation_weight_events(RelationWeightEventInputs {
+                setup: RelationSetupSource::Matrix(setup),
+                instance,
+                alpha,
+                level_params: lp,
+                relation_row_point: &tau1,
+                claim_coefficients: gamma,
+                relation_matrix_row_layout,
+                opening_source_len,
+                opening_ring_dim,
+            })?;
             if uniform {
-                // Uniform geometry: build the per-column weights `M(x)` directly
-                // (length `1 << col_bits`), dropping the per-coefficient alpha
-                // spread that the flattened builder bakes into the full field
-                // domain. The `alpha(y)` factor is supplied to stage-2 as
-                // `ring_alpha_evals_y`.
-                compute_relation_matrix_col_evals::<F, E>(
-                    setup,
-                    instance,
-                    alpha,
-                    &ring_alpha_evals_y,
-                    dims,
-                    lp,
-                    &tau1,
-                    gamma,
-                    relation_matrix_row_layout,
-                    opening_source_len,
-                    opening_ring_dim,
-                )
+                events.materialize_uniform_columns()
             } else {
-                compute_relation_weight_evals::<F, E>(
-                    setup,
-                    instance,
-                    alpha,
-                    &ring_alpha_evals_y,
-                    dims,
-                    lp,
-                    &tau1,
-                    gamma,
-                    relation_matrix_row_layout,
-                    opening_source_len,
-                    opening_ring_dim,
-                )
+                events.materialize_dense()
             }
         };
 
