@@ -331,16 +331,11 @@ fn stage1_fused_round2_transition_matches_two_pass_reference() {
 }
 
 #[test]
-fn stage1_binary_range_image_third_round_deferral_matches_materialized_reference() {
-    let basis = 4usize;
+fn stage1_low_basis_range_image_third_round_deferral_matches_materialized_reference() {
     let col_bits = 3usize;
     let ring_bits = 4usize;
     let live_x_cols = 6usize;
     let y_len = 1usize << ring_bits;
-    let digit_witness: Vec<i8> = (0..live_x_cols * y_len)
-        .map(|index| ((index * 7 + 3) % basis) as i8 - 2)
-        .collect();
-    let compact_range_image = build_compact_range_image(&digit_witness);
     let tau0 = ordered_equality_point(
         &(0..col_bits + ring_bits)
             .map(|index| F::from_u64(index as u64 + 211))
@@ -348,64 +343,72 @@ fn stage1_binary_range_image_third_round_deferral_matches_materialized_reference
         col_bits,
         ring_bits,
     );
-    let mut deferred = LowBasisRangeCheckProver::new(
-        std::sync::Arc::from(digit_witness.as_slice()),
-        &tau0,
-        DigitRangePlan::new(basis).unwrap(),
-        live_x_cols,
-        col_bits,
-        ring_bits,
-    )
-    .unwrap();
     let r0 = F::from_u64(223);
     let r1 = F::from_u64(227);
     let r2 = F::from_u64(229);
-    deferred.compute_round_eq_factored(0);
-    deferred.ingest_challenge(0, r0);
-    deferred.compute_round_eq_factored(1);
-    deferred.ingest_challenge(1, r1);
+    for basis in [4usize, 8] {
+        let half = (basis / 2) as i8;
+        let digit_witness: Vec<i8> = (0..live_x_cols * y_len)
+            .map(|index| ((index * 7 + 3) % basis) as i8 - half)
+            .collect();
+        let compact_range_image = build_compact_range_image(&digit_witness);
+        let mut deferred = LowBasisRangeCheckProver::new(
+            std::sync::Arc::from(digit_witness.as_slice()),
+            &tau0,
+            DigitRangePlan::new(basis).unwrap(),
+            live_x_cols,
+            col_bits,
+            ring_bits,
+        )
+        .unwrap();
+        deferred.compute_round_eq_factored(0);
+        deferred.ingest_challenge(0, r0);
+        deferred.compute_round_eq_factored(1);
+        deferred.ingest_challenge(1, r1);
 
-    assert!(matches!(
-        deferred.range_image,
-        LowBasisRangeImageStorage::Compact(_)
-    ));
-    let deferred_round2 = deferred.compute_round_eq_factored(2);
+        assert!(matches!(
+            deferred.range_image,
+            LowBasisRangeImageStorage::Compact(_)
+        ));
+        let deferred_round2 = deferred.compute_round_eq_factored(2);
 
-    let round2_range_image = LowBasisRangeCheckProver::<F>::fold_compact_range_image_to_round2(
-        &compact_range_image,
-        live_x_cols,
-        y_len,
-        r0,
-        r1,
-    );
-    let mut reference = LowBasisRangeCheckProver::new(
-        std::sync::Arc::from(digit_witness.as_slice()),
-        &tau0,
-        DigitRangePlan::new(basis).unwrap(),
-        live_x_cols,
-        col_bits,
-        ring_bits,
-    )
-    .unwrap();
-    reference.split_eq.bind(r0);
-    reference.split_eq.bind(r1);
-    reference.rounds_completed = 2;
-    let reference_round2 = reference.compute_round_full_sparse_x_y(&round2_range_image);
-    assert_eq!(deferred_round2, reference_round2);
+        let round2_range_image = LowBasisRangeCheckProver::<F>::fold_compact_range_image_to_round2(
+            &compact_range_image,
+            live_x_cols,
+            y_len,
+            r0,
+            r1,
+        );
+        let mut reference = LowBasisRangeCheckProver::new(
+            std::sync::Arc::from(digit_witness.as_slice()),
+            &tau0,
+            DigitRangePlan::new(basis).unwrap(),
+            live_x_cols,
+            col_bits,
+            ring_bits,
+        )
+        .unwrap();
+        reference.split_eq.bind(r0);
+        reference.split_eq.bind(r1);
+        reference.rounds_completed = 2;
+        let reference_round2 = reference.compute_round_full_sparse_x_y(&round2_range_image);
+        assert_eq!(deferred_round2, reference_round2);
 
-    let expected_round3_range_image = LowBasisRangeCheckProver::<F>::fold_range_image_sparse_x_y(
-        &round2_range_image,
-        live_x_cols,
-        y_len / 4,
-        r2,
-    );
-    deferred.ingest_challenge(2, r2);
-    match &deferred.range_image {
-        LowBasisRangeImageStorage::Materialized(actual) => {
-            assert_eq!(actual, &expected_round3_range_image)
-        }
-        LowBasisRangeImageStorage::Compact(_) => {
-            panic!("binary range image must materialize after round three")
+        let expected_round3_range_image =
+            LowBasisRangeCheckProver::<F>::fold_range_image_sparse_x_y(
+                &round2_range_image,
+                live_x_cols,
+                y_len / 4,
+                r2,
+            );
+        deferred.ingest_challenge(2, r2);
+        match &deferred.range_image {
+            LowBasisRangeImageStorage::Materialized(actual) => {
+                assert_eq!(actual, &expected_round3_range_image)
+            }
+            LowBasisRangeImageStorage::Compact(_) => {
+                panic!("low-basis range image must materialize after round three")
+            }
         }
     }
 }
@@ -582,9 +585,9 @@ fn stage1_sparse_x_y_fusion_matches_two_pass_reference() {
         let expected_round2 = expected.compute_round_eq_factored(2);
         assert_eq!(expected_round2, round2);
 
-        let current_range_image = match (&expected.range_image, basis) {
-            (LowBasisRangeImageStorage::Materialized(range_image), _) => range_image.clone(),
-            (LowBasisRangeImageStorage::Compact(_), 4) => {
+        let current_range_image = match &expected.range_image {
+            LowBasisRangeImageStorage::Materialized(range_image) => range_image.clone(),
+            LowBasisRangeImageStorage::Compact(_) => {
                 LowBasisRangeCheckProver::<F>::fold_compact_range_image_to_round2(
                     &compact_range_image,
                     live_x_cols,
@@ -592,9 +595,6 @@ fn stage1_sparse_x_y_fusion_matches_two_pass_reference() {
                     r0,
                     r1,
                 )
-            }
-            (LowBasisRangeImageStorage::Compact(_), _) => {
-                panic!("only the binary range image should remain compact through round three")
             }
         };
         let current_y_len = current_range_image.len() / expected.live_x_cols;

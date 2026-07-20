@@ -139,18 +139,26 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + HasOptimizedFold>
                         panic!("two-round prefix expected compact table")
                     }
                 };
-                if self.defers_binary_range_image_through_third_round() {
+                if self.defers_compact_range_image_through_third_round() {
                     self.ensure_initial_round_prefix().second_challenge = Some(r);
                     let round_poly = match &self.range_image {
-                        LowBasisRangeImageStorage::Compact(compact_range_image) => self
-                            .compute_binary_range_image_third_round_from_compact_octets(
+                        LowBasisRangeImageStorage::Compact(compact_range_image) => match self.basis
+                        {
+                            4 => self.compute_binary_range_image_third_round_from_compact_octets(
                                 compact_range_image,
                                 r0,
                                 r,
                             ),
+                            8 => self.compute_quartic_range_image_third_round_from_compact_octets(
+                                compact_range_image,
+                                r0,
+                                r,
+                            ),
+                            _ => unreachable!("third-round deferral requires a low basis"),
+                        },
                         LowBasisRangeImageStorage::Materialized(_) => {
                             unreachable!(
-                                "three-round binary range-image deferral requires compact storage"
+                                "three-round compact range-image deferral requires compact storage"
                             )
                         }
                     };
@@ -198,16 +206,16 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + HasOptimizedFold>
             return;
         }
 
-        if self.awaiting_binary_range_image_third_challenge() {
+        if self.awaiting_compact_range_image_third_challenge() {
             let (r0, r1) = {
                 let prefix = self.ensure_initial_round_prefix();
                 (
                     prefix
                         .first_challenge
-                        .expect("binary range-image transition requires the first challenge"),
+                        .expect("compact range-image transition requires the first challenge"),
                     prefix
                         .second_challenge
-                        .expect("binary range-image transition requires the second challenge"),
+                        .expect("compact range-image transition requires the second challenge"),
                 )
             };
             self.split_eq.bind(r);
@@ -217,7 +225,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + HasOptimizedFold>
                 }
                 LowBasisRangeImageStorage::Materialized(_) => {
                     unreachable!(
-                        "three-round binary range-image transition requires compact storage"
+                        "three-round compact range-image transition requires compact storage"
                     )
                 }
             };
@@ -226,8 +234,8 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + HasOptimizedFold>
                 LowBasisRangeImageStorage::Materialized(Vec::new()),
             ) {
                 LowBasisRangeImageStorage::Compact(compact_range_image) => {
-                    LowBasisRangeImageStorage::Materialized(
-                        Self::materialize_binary_range_image_after_third_round(
+                    let range_image = match self.basis {
+                        4 => Self::materialize_binary_range_image_after_third_round(
                             &compact_range_image,
                             self.live_x_cols,
                             y_len,
@@ -235,7 +243,17 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + HasOptimizedFold>
                             r1,
                             r,
                         ),
-                    )
+                        8 => Self::materialize_quartic_range_image_after_third_round(
+                            &compact_range_image,
+                            self.live_x_cols,
+                            y_len,
+                            r0,
+                            r1,
+                            r,
+                        ),
+                        _ => unreachable!("third-round deferral requires a low basis"),
+                    };
+                    LowBasisRangeImageStorage::Materialized(range_image)
                 }
                 LowBasisRangeImageStorage::Materialized(_) => unreachable!(),
             };

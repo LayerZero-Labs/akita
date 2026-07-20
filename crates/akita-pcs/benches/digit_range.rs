@@ -16,6 +16,7 @@ fn bench_digit_range(c: &mut Criterion) {
                 DigitDistribution::Uniform,
                 DigitDistribution::ZeroHeavy,
                 DigitDistribution::AlternatingEndpoints,
+                DigitDistribution::SeededHighEntropy,
             ] {
                 let case = BenchmarkCase::new(basis, live_numerator, distribution);
                 let case_name = format!("b{basis}/{live_name}/{}", distribution.name());
