@@ -84,8 +84,7 @@ impl RelationRangeImagePlan {
             });
         }
 
-        let common_alpha_coefficient_count =
-            role_dims.d_a().min(role_dims.d_b()).min(role_dims.d_d());
+        let common_alpha_coefficient_count = role_dims.common_relation_coefficient_count();
         if !digit_witness_domain
             .live_len()
             .is_multiple_of(common_alpha_coefficient_count)

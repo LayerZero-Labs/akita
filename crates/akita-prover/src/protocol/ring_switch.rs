@@ -20,7 +20,7 @@ use akita_types::RingRelationInstance;
 use akita_types::{
     build_relation_weight_events, r_decomp_levels, AkitaCommitmentHint, AkitaExpandedSetup,
     FpExtEncoding, LevelParams, RelationMatrixRowLayout, RelationSetupSource,
-    RelationWeightEventInputs, RingVec,
+    RelationWeightEventInputs, RelationWeightFactorization, RingVec,
 };
 
 mod coeffs;
@@ -37,6 +37,14 @@ pub use commit::{commit_w, NextWitnessState, NextWitnessStateOutput};
 pub use evals::build_w_evals_compact;
 pub use finalize::ring_switch_finalize;
 
+/// Relation weights prepared in the representation consumed by Stage 2.
+pub(crate) enum PreparedRelationWeights<E: FieldCore> {
+    /// Exact product of a low common-alpha block and the remaining relation lanes.
+    CommonAlphaFactorization(RelationWeightFactorization<E>),
+    /// Transitional flat table for mixed ring dimensions.
+    FlattenedCoefficientTable(Vec<E>),
+}
+
 /// D-agnostic output of the ring switch protocol, containing everything
 /// needed for sumchecks and level chaining.
 pub struct RingSwitchOutput<E: FieldCore> {
@@ -44,8 +52,8 @@ pub struct RingSwitchOutput<E: FieldCore> {
     pub w_evals_compact: std::sync::Arc<[i8]>,
     /// Exact live x-column count; the remaining Boolean x domain is an implicit zero suffix.
     pub live_x_cols: usize,
-    /// Tau1-weighted relation table over the full Boolean coefficient domain.
-    pub relation_weight_evals: Vec<E>,
+    /// Tau1-weighted relation table in its canonical Stage-2 representation.
+    pub(crate) relation_weights: PreparedRelationWeights<E>,
     /// Number of upper variable bits.
     pub col_bits: usize,
     /// Number of lower variable bits.

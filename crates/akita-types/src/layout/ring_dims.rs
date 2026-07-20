@@ -81,6 +81,24 @@ impl CommitmentRingDims {
         self.opening
     }
 
+    /// Coefficient block shared by every relation role.
+    ///
+    /// Valid nested dimensions make this the low alpha factor that can be
+    /// bound before role-specific relation lanes.
+    #[must_use]
+    pub const fn common_relation_coefficient_count(self) -> usize {
+        let inner_outer_min = if self.inner < self.outer {
+            self.inner
+        } else {
+            self.outer
+        };
+        if inner_outer_min < self.opening {
+            inner_outer_min
+        } else {
+            self.opening
+        }
+    }
+
     /// The single dimension shared by all roles, or an error once per-role
     /// dimensions diverge.
     pub fn uniform_dim(self) -> Result<usize, AkitaError> {

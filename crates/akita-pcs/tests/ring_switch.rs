@@ -719,9 +719,12 @@ mod tests {
                 D,
             );
             let flat = events.materialize_dense().expect("flattened relation");
-            let col = events
-                .materialize_uniform_columns()
-                .expect("column relation");
+            let (compiled_alpha_evals_y, col) = events
+                .factor_common_alpha()
+                .expect("factorized relation")
+                .into_common_alpha_factor_and_relation_lane_weights();
+
+            assert_eq!(compiled_alpha_evals_y, alpha_evals_y);
 
             assert_eq!(
                 col.len(),

@@ -203,6 +203,13 @@ struct RelationWeightEvent<E> {
 }
 ```
 
+The canonical compiler returns both factors together as
+`RelationWeightFactorization { common_alpha_factor, relation_lane_weights }`. The
+ring-switch handoff carries that object into Stage 2, which consumes both vectors; it
+does not discard and regenerate the alpha factor from the challenge. Until the atomic
+mixed-dimension prover cutover, only the uniform path consumes this representation and
+the pre-existing mixed path remains a dense transitional fallback.
+
 Every production event has `g`-aligned physical and exponent starts and preserves the
 low common coordinate. Role-local resets begin new aligned events. Overlaps use `+=`
 exactly once. Unsupported unaligned events return `AkitaError`; there is no production
@@ -580,9 +587,11 @@ stage.
 2. Make `WitnessDomain`, `WitnessLayout`, global claim order, and range-basis authority the
    checked inputs to one `RelationRangeImagePlan`.
 3. Land the semantic relation emitter and compare compiled lane weights/final evaluation
-   against dense weights for every layout cross-product. **In progress:** the checked event
-   authority, direct/deferred setup split, dense/uniform materializers, and canonical verifier
-   point evaluator are landed; common-alpha lane compilation arrives with the fused prover.
+   against dense weights for every layout cross-product. **Landed:** the checked event
+   authority, direct/deferred setup split, canonical verifier point evaluator, checked
+   common-alpha compiler, uniform Stage-2 handoff, and mixed-dimension reconstruction tests
+   now share one source. The dense mixed consumer remains only until Step 6 cuts over the
+   fused prover.
 4. Land `EvaluationTraceWeights` and its verifier evaluator; replace root/multigroup/EOR
    variants and dense/sparse tables in one cutover.
 5. Implement and measure structured, opening-only, and contraction-first trace

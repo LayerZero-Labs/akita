@@ -1074,11 +1074,28 @@ where
             "ring-switch output disagrees with the relation/range-image plan".into(),
         ));
     }
-    // `alpha(y)` powers over the inner ring domain. For the flattened fallback
-    // (`ring_bits == 0`) this is `[1]`; for uniform geometry it is
-    // `[1, alpha, ..., alpha^(2^ring_bits - 1)]`, supplying the per-coefficient
-    // spread that the compact per-column relation table `M(x)` omits.
-    let alpha_evals_y = akita_algebra::ring::scalar_powers(rs.alpha, 1usize << rs.ring_bits);
+    let (alpha_evals_y, stage2_relation_weight_table) = match rs.relation_weights {
+        PreparedRelationWeights::CommonAlphaFactorization(factorization) => {
+            let (common_alpha_factor, relation_lane_weights) =
+                factorization.into_common_alpha_factor_and_relation_lane_weights();
+            let expected_factor_len = 1usize << rs.ring_bits;
+            if common_alpha_factor.len() != expected_factor_len {
+                return Err(AkitaError::InvalidSetup(format!(
+                    "common alpha factor has length {}, expected {expected_factor_len}",
+                    common_alpha_factor.len(),
+                )));
+            }
+            (common_alpha_factor, relation_lane_weights)
+        }
+        PreparedRelationWeights::FlattenedCoefficientTable(weights) => {
+            if rs.ring_bits != 0 {
+                return Err(AkitaError::InvalidSetup(
+                    "dense relation weights require a flattened Stage-2 domain".into(),
+                ));
+            }
+            (vec![E::one()], weights)
+        }
+    };
     let mut stage2_prover = AkitaStage2Prover::new(
         batching_coeff,
         rs.w_evals_compact,
@@ -1086,7 +1103,7 @@ where
         range_image_evaluation,
         plan.digit_range_plan().basis(),
         alpha_evals_y,
-        rs.relation_weight_evals,
+        stage2_relation_weight_table,
         derived_live_x_cols,
         derived_col_bits,
         rs.ring_bits,

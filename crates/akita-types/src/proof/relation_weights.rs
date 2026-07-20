@@ -95,6 +95,33 @@ pub struct RelationWeightEvents<E: FieldCore> {
     setup_is_deferred: bool,
 }
 
+/// Exact common-alpha factorization of the padded relation-weight table.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RelationWeightFactorization<E: FieldCore> {
+    common_alpha_factor: Vec<E>,
+    relation_lane_weights: Vec<E>,
+}
+
+impl<E: FieldCore> RelationWeightFactorization<E> {
+    /// Alpha powers on the low coefficient block shared by every role.
+    #[must_use]
+    pub fn common_alpha_factor(&self) -> &[E] {
+        &self.common_alpha_factor
+    }
+
+    /// Relation weights after removing the shared low alpha factor.
+    #[must_use]
+    pub fn relation_lane_weights(&self) -> &[E] {
+        &self.relation_lane_weights
+    }
+
+    /// Consume the factorization without recomputing either component.
+    #[must_use]
+    pub fn into_common_alpha_factor_and_relation_lane_weights(self) -> (Vec<E>, Vec<E>) {
+        (self.common_alpha_factor, self.relation_lane_weights)
+    }
+}
+
 impl<E: FieldCore> RelationWeightEvents<E> {
     fn push(
         &mut self,
@@ -205,32 +232,97 @@ impl<E: FieldCore> RelationWeightEvents<E> {
         Ok(weights)
     }
 
-    /// Materialize one scalar per witness column for uniform ring dimensions.
-    pub fn materialize_uniform_columns(&self) -> Result<Vec<E>, AkitaError> {
-        if self.setup_is_deferred
-            || self.role_dims != CommitmentRingDims::uniform(self.opening_ring_dim)
-        {
+    /// Compile the exact common-alpha factorization shared by all role dimensions.
+    pub fn factor_common_alpha(&self) -> Result<RelationWeightFactorization<E>, AkitaError> {
+        if self.setup_is_deferred {
             return Err(AkitaError::InvalidSetup(
-                "uniform relation columns require direct setup and uniform dimensions".into(),
+                "relation factorization requires direct setup contributions".into(),
             ));
         }
-        let mut weights = vec![E::zero(); crate::opening_domain_len(self.opening_source_len)?];
+        let common_coefficient_count = self.role_dims.common_relation_coefficient_count();
+        if common_coefficient_count == 0
+            || !common_coefficient_count.is_power_of_two()
+            || !self
+                .role_dims
+                .d_a()
+                .is_multiple_of(common_coefficient_count)
+            || !self
+                .role_dims
+                .d_b()
+                .is_multiple_of(common_coefficient_count)
+            || !self
+                .role_dims
+                .d_d()
+                .is_multiple_of(common_coefficient_count)
+            || !self
+                .opening_ring_dim
+                .is_multiple_of(common_coefficient_count)
+        {
+            return Err(AkitaError::InvalidSetup(
+                "relation roles do not admit a common alpha factor".into(),
+            ));
+        }
+        let opening_field_len = crate::opening_domain_len(self.opening_source_len)?
+            .checked_mul(self.opening_ring_dim)
+            .ok_or_else(|| AkitaError::InvalidSetup("relation lane length overflow".into()))?;
+        let lane_count = opening_field_len / common_coefficient_count;
+        let mut relation_lane_weights = vec![E::zero(); lane_count];
         for event in &self.events {
-            if event.alpha_exponent_start != 0
-                || event.physical_coefficients.len() != self.opening_ring_dim
+            if !event
+                .physical_coefficients
+                .start
+                .is_multiple_of(common_coefficient_count)
+                || !event
+                    .physical_coefficients
+                    .len()
+                    .is_multiple_of(common_coefficient_count)
+                || !event
+                    .alpha_exponent_start
+                    .is_multiple_of(common_coefficient_count)
             {
                 return Err(AkitaError::InvalidSetup(
-                    "uniform relation event does not cover one complete column".into(),
+                    "relation event does not preserve the common alpha factor".into(),
                 ));
             }
-            let physical_column = event.physical_coefficients.start / self.opening_ring_dim;
-            let opening_column =
-                crate::checked_opening_source_index(self.opening_source_len, physical_column)?;
-            *weights
-                .get_mut(opening_column)
-                .ok_or(AkitaError::InvalidProof)? += event.scalar;
+            for coefficient_offset in
+                (0..event.physical_coefficients.len()).step_by(common_coefficient_count)
+            {
+                let physical = event.physical_coefficients.start + coefficient_offset;
+                let opening_column = crate::checked_opening_source_index(
+                    self.opening_source_len,
+                    physical / self.opening_ring_dim,
+                )?;
+                let opening_coefficient = opening_column
+                    .checked_mul(self.opening_ring_dim)
+                    .and_then(|base| base.checked_add(physical % self.opening_ring_dim))
+                    .ok_or_else(|| {
+                        AkitaError::InvalidSetup("relation lane address overflow".into())
+                    })?;
+                if !opening_coefficient.is_multiple_of(common_coefficient_count) {
+                    return Err(AkitaError::InvalidSetup(
+                        "opening layout breaks relation lane alignment".into(),
+                    ));
+                }
+                let lane = opening_coefficient / common_coefficient_count;
+                let alpha_exponent = event.alpha_exponent_start + coefficient_offset;
+                let alpha_power = *self
+                    .inner_alpha_powers
+                    .get(alpha_exponent)
+                    .ok_or(AkitaError::InvalidProof)?;
+                *relation_lane_weights
+                    .get_mut(lane)
+                    .ok_or(AkitaError::InvalidProof)? += event.scalar * alpha_power;
+            }
         }
-        Ok(weights)
+        let common_alpha_factor = self
+            .inner_alpha_powers
+            .get(..common_coefficient_count)
+            .ok_or(AkitaError::InvalidProof)?
+            .to_vec();
+        Ok(RelationWeightFactorization {
+            common_alpha_factor,
+            relation_lane_weights,
+        })
     }
 
     /// Evaluate the relation-weight MLE directly at one flat coefficient point.
@@ -765,3 +857,7 @@ where
     }
     Ok(relation_events)
 }
+
+#[cfg(test)]
+#[path = "relation_weights_tests.rs"]
+mod tests;

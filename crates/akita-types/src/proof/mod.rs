@@ -61,6 +61,7 @@ pub use relation_range_image::{RelationRangeImageGroupPlan, RelationRangeImagePl
 pub use relation_weights::{
     build_relation_weight_events, RelationSetupSource, RelationWeightContribution,
     RelationWeightEvent, RelationWeightEventInputs, RelationWeightEvents,
+    RelationWeightFactorization,
 };
 pub use ring_relation::{
     ring_relation_segment_lengths, RingRelationInstance, RingRelationOpeningCounts,

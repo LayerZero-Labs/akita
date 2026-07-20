@@ -117,7 +117,8 @@ where
             ));
         }
 
-        let build_relation_weights = || {
+        let compile_relation_weights = || {
+            let _span = tracing::info_span!("relation_weight_compilation").entered();
             let events = build_relation_weight_events(RelationWeightEventInputs {
                 setup: RelationSetupSource::Matrix(setup),
                 instance,
@@ -130,35 +131,40 @@ where
                 opening_ring_dim,
             })?;
             if uniform {
-                events.materialize_uniform_columns()
+                events
+                    .factor_common_alpha()
+                    .map(PreparedRelationWeights::CommonAlphaFactorization)
             } else {
-                events.materialize_dense()
+                events
+                    .materialize_dense()
+                    .map(PreparedRelationWeights::FlattenedCoefficientTable)
             }
         };
 
         #[cfg(feature = "parallel")]
-        let (relation_weight_evals_result, w_result) = rayon::join(build_relation_weights, || {
-            build_w_evals_compact(
-                w.shared_i8_digits(),
-                opening_ring_dim,
-                1,
-                opening_source_len,
-            )
-        });
+        let (prepared_relation_weights_result, w_result) =
+            rayon::join(compile_relation_weights, || {
+                build_w_evals_compact(
+                    w.shared_i8_digits(),
+                    opening_ring_dim,
+                    1,
+                    opening_source_len,
+                )
+            });
         #[cfg(not(feature = "parallel"))]
-        let (relation_weight_evals_result, w_result) = {
-            let relation_weight_evals = build_relation_weights();
+        let (prepared_relation_weights_result, w_result) = {
+            let prepared_relation_weights = compile_relation_weights();
             let w_compact = build_w_evals_compact(
                 w.shared_i8_digits(),
                 opening_ring_dim,
                 1,
                 opening_source_len,
             );
-            (relation_weight_evals, w_compact)
+            (prepared_relation_weights, w_compact)
         };
 
-        let relation_weight_evals = relation_weight_evals_result.map_err(|err| {
-            AkitaError::InvalidInput(format!("relation-weight materialization failed: {err:?}"))
+        let prepared_relation_weights = prepared_relation_weights_result.map_err(|err| {
+            AkitaError::InvalidInput(format!("relation-weight compilation failed: {err:?}"))
         })?;
         let (w_evals_compact, _, _) = w_result.map_err(|err| {
             AkitaError::InvalidInput(format!("witness opening materialization failed: {err:?}"))
@@ -167,7 +173,7 @@ where
         Ok(RingSwitchOutput {
             w_evals_compact,
             live_x_cols,
-            relation_weight_evals,
+            relation_weights: prepared_relation_weights,
             col_bits,
             ring_bits,
             tau0,
