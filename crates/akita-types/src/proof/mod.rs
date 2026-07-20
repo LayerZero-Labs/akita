@@ -11,6 +11,7 @@ pub mod batch;
 pub mod commitment;
 pub mod relation;
 pub mod relation_matrix_cols;
+pub mod relation_range_image;
 pub mod ring_relation;
 pub mod scheme;
 pub mod setup;
@@ -59,6 +60,7 @@ pub use relation::{
 pub use relation_matrix_cols::{
     compute_relation_matrix_col_evals, compute_relation_weight_evals, eval_relation_weight_at_point,
 };
+pub use relation_range_image::{RelationRangeImageGroupPlan, RelationRangeImagePlan};
 pub use ring_relation::{
     ring_relation_segment_lengths, RingRelationInstance, RingRelationOpeningCounts,
     RingRelationSegmentLengths,

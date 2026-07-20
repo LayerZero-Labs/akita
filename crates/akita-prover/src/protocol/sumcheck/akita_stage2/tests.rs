@@ -2,8 +2,8 @@ mod trace_prefix;
 
 use super::*;
 use crate::protocol::sumcheck::digit_range::direct_range_leaf::pad_compact_witness;
+use akita_algebra::eq_poly::EqPolynomial;
 use akita_field::Prime128Offset275;
-use akita_sumcheck::multilinear_eval;
 use akita_types::{TraceSparseColumn, TraceTable};
 
 type F = Prime128Offset275;
@@ -17,7 +17,30 @@ pub(super) struct Stage2Params<'a> {
     ring_bits: usize,
 }
 
-fn s_claim_from_m_compact_rows(w_compact: &[i8], params: &Stage2Params<'_>) -> F {
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct DirectRelationRangeImageEvaluation {
+    range_image: F,
+    relation: F,
+    evaluation_trace: F,
+    fused_claim: F,
+}
+
+fn direct_relation_range_image_evaluation(
+    batching_coeff: F,
+    w_compact: &[i8],
+    alpha_evals_y: &[F],
+    relation_matrix_col_evals: &[F],
+    evaluation_trace_weights: Option<&[F]>,
+    params: &Stage2Params<'_>,
+) -> DirectRelationRangeImageEvaluation {
+    let x_len = 1usize << params.col_bits;
+    let y_len = 1usize << params.ring_bits;
+    assert_eq!(w_compact.len(), params.live_x_cols * y_len);
+    assert_eq!(alpha_evals_y.len(), y_len);
+    assert_eq!(relation_matrix_col_evals.len(), x_len);
+    if let Some(trace) = evaluation_trace_weights {
+        assert_eq!(trace.len(), w_compact.len());
+    }
     let padded = if params.live_x_cols == (1usize << params.col_bits) {
         w_compact.to_vec()
     } else {
@@ -28,53 +51,30 @@ fn s_claim_from_m_compact_rows(w_compact: &[i8], params: &Stage2Params<'_>) -> F
             params.ring_bits,
         )
     };
-    let s_evals: Vec<F> = padded
-        .iter()
-        .map(|&w| {
-            let w = F::from_i64(w as i64);
-            w * (w + F::one())
-        })
-        .collect();
-    multilinear_eval(&s_evals, params.stage1_point).expect("valid stage-2 witness shape")
-}
+    let equality_weights = EqPolynomial::evals(params.stage1_point).unwrap();
+    assert_eq!(equality_weights.len(), padded.len());
 
-fn relation_claim_from_m_compact_rows(
-    w_compact: &[i8],
-    alpha_evals_y: &[F],
-    relation_matrix_col_evals: &[F],
-    params: &Stage2Params<'_>,
-) -> F {
-    let mut claim = F::zero();
-    let y_len = 1usize << params.ring_bits;
-    for (x, &m_eval_x) in relation_matrix_col_evals
-        .iter()
-        .enumerate()
-        .take(params.live_x_cols)
-    {
-        let column = &w_compact[x * y_len..(x + 1) * y_len];
-        for (y, &alpha) in alpha_evals_y.iter().enumerate() {
-            claim += F::from_i64(column[y] as i64) * alpha * m_eval_x;
+    let mut range_image = F::zero();
+    let mut relation = F::zero();
+    let mut evaluation_trace = F::zero();
+    for (physical_index, &digit) in padded.iter().enumerate() {
+        let digit = F::from_i64(i64::from(digit));
+        range_image += equality_weights[physical_index] * digit * (digit + F::one());
+        let column = physical_index / y_len;
+        let coefficient = physical_index % y_len;
+        relation += digit * alpha_evals_y[coefficient] * relation_matrix_col_evals[column];
+        if column < params.live_x_cols {
+            if let Some(trace) = evaluation_trace_weights {
+                evaluation_trace += digit * trace[physical_index];
+            }
         }
     }
-    claim
-}
-
-fn trace_claim_from_m_compact_rows(
-    w_compact: &[i8],
-    trace_compact: &[F],
-    params: &Stage2Params<'_>,
-) -> F {
-    let mut claim = F::zero();
-    let y_len = 1usize << params.ring_bits;
-    assert_eq!(trace_compact.len(), params.live_x_cols * y_len);
-    for x in 0..params.live_x_cols {
-        let column = &w_compact[x * y_len..(x + 1) * y_len];
-        let trace_column = &trace_compact[x * y_len..(x + 1) * y_len];
-        for (w, trace) in column.iter().zip(trace_column.iter()) {
-            claim += F::from_i64(*w as i64) * *trace;
-        }
+    DirectRelationRangeImageEvaluation {
+        range_image,
+        relation,
+        evaluation_trace,
+        fused_claim: batching_coeff * range_image + relation + evaluation_trace,
     }
-    claim
 }
 
 fn new_stage2_test_prover(
@@ -84,25 +84,26 @@ fn new_stage2_test_prover(
     relation_matrix_col_evals: Vec<F>,
     params: Stage2Params<'_>,
 ) -> AkitaStage2Prover<F> {
-    let range_image_evaluation = s_claim_from_m_compact_rows(&w_compact, &params);
-    let relation_claim = relation_claim_from_m_compact_rows(
+    let direct = direct_relation_range_image_evaluation(
+        batching_coeff,
         &w_compact,
         &alpha_evals_y,
         &relation_matrix_col_evals,
+        None,
         &params,
     );
     AkitaStage2Prover::new(
         batching_coeff,
         w_compact,
         params.stage1_point,
-        range_image_evaluation,
+        direct.range_image,
         params.b,
         alpha_evals_y,
         relation_matrix_col_evals,
         params.live_x_cols,
         params.col_bits,
         params.ring_bits,
-        relation_claim,
+        direct.relation,
         None,
         F::zero(),
     )
@@ -117,28 +118,28 @@ pub(super) fn new_stage2_test_prover_with_trace(
     trace_compact: Vec<F>,
     params: Stage2Params<'_>,
 ) -> AkitaStage2Prover<F> {
-    let range_image_evaluation = s_claim_from_m_compact_rows(&w_compact, &params);
-    let relation_claim = relation_claim_from_m_compact_rows(
+    let direct = direct_relation_range_image_evaluation(
+        batching_coeff,
         &w_compact,
         &alpha_evals_y,
         &relation_matrix_col_evals,
+        Some(&trace_compact),
         &params,
     );
-    let trace_opening_claim = trace_claim_from_m_compact_rows(&w_compact, &trace_compact, &params);
     AkitaStage2Prover::new(
         batching_coeff,
         w_compact,
         params.stage1_point,
-        range_image_evaluation,
+        direct.range_image,
         params.b,
         alpha_evals_y,
         relation_matrix_col_evals,
         params.live_x_cols,
         params.col_bits,
         params.ring_bits,
-        relation_claim,
+        direct.relation,
         Some(TraceTable::ring_dense(trace_compact)),
-        trace_opening_claim,
+        direct.evaluation_trace,
     )
     .unwrap()
 }
@@ -152,29 +153,28 @@ pub(super) fn new_stage2_test_prover_with_trace_table(
     trace_claim_table: &[F],
     params: Stage2Params<'_>,
 ) -> AkitaStage2Prover<F> {
-    let range_image_evaluation = s_claim_from_m_compact_rows(&w_compact, &params);
-    let relation_claim = relation_claim_from_m_compact_rows(
+    let direct = direct_relation_range_image_evaluation(
+        batching_coeff,
         &w_compact,
         &alpha_evals_y,
         &relation_matrix_col_evals,
+        Some(trace_claim_table),
         &params,
     );
-    let trace_opening_claim =
-        trace_claim_from_m_compact_rows(&w_compact, trace_claim_table, &params);
     AkitaStage2Prover::new(
         batching_coeff,
         w_compact,
         params.stage1_point,
-        range_image_evaluation,
+        direct.range_image,
         params.b,
         alpha_evals_y,
         relation_matrix_col_evals,
         params.live_x_cols,
         params.col_bits,
         params.ring_bits,
-        relation_claim,
+        direct.relation,
         Some(trace_table),
-        trace_opening_claim,
+        direct.evaluation_trace,
     )
     .unwrap()
 }
@@ -195,6 +195,65 @@ pub(super) fn pad_trace_compact(
         padded[dst..dst + y_len].copy_from_slice(&trace_compact[src..src + y_len]);
     }
     padded
+}
+
+#[test]
+fn direct_fused_equation_matches_checked_stage2_input_claim() {
+    for (live_x_cols, col_bits, ring_bits) in [
+        (5usize, 3usize, 2usize),
+        (8usize, 3usize, 2usize),
+        // Current mixed-dimension representation flattens the complete live
+        // coefficient prefix and therefore has no separate inner factor.
+        (23usize, 5usize, 0usize),
+    ] {
+        let y_len = 1usize << ring_bits;
+        let x_len = 1usize << col_bits;
+        let digit_witness = (0..live_x_cols * y_len)
+            .map(|index| ((index * 11 + 3) % 8) as i8 - 4)
+            .collect::<Vec<_>>();
+        let stage1_point = (0..col_bits + ring_bits)
+            .map(|index| F::from_u64(index as u64 + 17))
+            .collect::<Vec<_>>();
+        let alpha_evals_y = (0..y_len)
+            .map(|index| F::from_u64(3 * index as u64 + 5))
+            .collect::<Vec<_>>();
+        let relation_matrix_col_evals = (0..x_len)
+            .map(|index| F::from_u64(7 * index as u64 + 11))
+            .collect::<Vec<_>>();
+        let evaluation_trace_weights = (0..digit_witness.len())
+            .map(|index| F::from_u64(13 * index as u64 + 19))
+            .collect::<Vec<_>>();
+        let batching_coeff = F::from_u64(29);
+        let params = Stage2Params {
+            stage1_point: &stage1_point,
+            b: 8,
+            live_x_cols,
+            col_bits,
+            ring_bits,
+        };
+        let direct = direct_relation_range_image_evaluation(
+            batching_coeff,
+            &digit_witness,
+            &alpha_evals_y,
+            &relation_matrix_col_evals,
+            Some(&evaluation_trace_weights),
+            &params,
+        );
+        let prover = new_stage2_test_prover_with_trace(
+            batching_coeff,
+            digit_witness,
+            alpha_evals_y,
+            relation_matrix_col_evals,
+            evaluation_trace_weights,
+            params,
+        );
+
+        assert_eq!(prover.input_claim(), direct.fused_claim);
+        assert_eq!(
+            direct.fused_claim,
+            batching_coeff * direct.range_image + direct.relation + direct.evaluation_trace
+        );
+    }
 }
 
 fn relation_round_reference(

@@ -6,7 +6,7 @@
 | Created | 2026-07-20 |
 | Status | active |
 | Branch | `quang/relation-range-image-rewrite` |
-| Base | PR #312 at `11163598a6a66b5376306fa9b97d64c29515446a` |
+| Base | PR #312 at `8a4ec9b140e23514b8e53e61b885774f8d8397d7` |
 | Integration dependencies | PR #309 at `b0c2d4683539b0c2a465b996f48adfc465a20198`; PR #310 at `4cb4113b02a58889230f3dbaa81deb56895bb4ca` as cross-feature evidence |
 | Related | [`digit-range-pipeline-refactor.md`](digit-range-pipeline-refactor.md), [`digit-innermost-layout.md`](digit-innermost-layout.md), [`runtime-ring-cutover.md`](runtime-ring-cutover.md), [`packed-sumcheck.md`](packed-sumcheck.md) |
 

@@ -12,8 +12,8 @@ use akita_field::AdditiveGroup;
 use crate::protocol::ring_switch::RingSwitchTerminalArtifacts;
 use akita_types::{
     build_segment_typed_witness_from_groups, dispatch_for_field, DigitRangeEqualityPoint,
-    DigitRangePlan, FlatBooleanDomain, OpeningClaimsLayout, SegmentTypedWitnessGroupParts,
-    SegmentTypedWitnessShape,
+    DigitRangePlan, FlatBooleanDomain, OpeningClaimsLayout, RelationRangeImagePlan,
+    SegmentTypedWitnessGroupParts, SegmentTypedWitnessShape,
 };
 
 fn trace_layout_for_instance<F: FieldCore + CanonicalField>(
@@ -650,6 +650,18 @@ where
     )
     .map_err(|err| AkitaError::InvalidInput(format!("ring-switch finalize failed: {err:?}")))?;
 
+    let digit_witness_num_vars = rs
+        .col_bits
+        .checked_add(rs.ring_bits)
+        .ok_or_else(|| AkitaError::InvalidInput("digit witness domain width overflow".into()))?;
+    let relation_range_image_plan = RelationRangeImagePlan::new(
+        FlatBooleanDomain::new(rs.w_evals_compact.len(), digit_witness_num_vars)?,
+        DigitRangePlan::new(rs.b)?,
+        prepared_fold.instance.segment_layout(lp, None)?,
+        prepared_fold.instance.opening_batch(),
+        prepared_fold.instance.role_dims(),
+    )?;
+
     let relation_rhs_layout = relation_rhs_layout_for(
         lp,
         prepared_fold.instance.opening_batch(),
@@ -664,7 +676,7 @@ where
         &prepared_fold.commitment,
     )?;
     let (stage1_proof, stage1_point, range_image_evaluation) =
-        prove_stage1::<F, E, T>(transcript, &mut rs)?;
+        prove_stage1::<F, E, T>(transcript, &mut rs, &relation_range_image_plan)?;
     transcript.append_serde(
         ABSORB_RANGE_IMAGE_EVALUATION,
         &stage1_proof.range_image_evaluation,
@@ -679,7 +691,7 @@ where
     let evaluation_trace_weight = evaluation_trace_row_weight(evaluation_trace_row, &rs.tau1)?;
     let trace_opening_claim = evaluation_trace_weight * prepared_fold.trace_eval_target;
     ensure_trace_stage2_supported(E::EXT_DEGREE)?;
-    let trace_witness_layout = prepared_fold.instance.segment_layout(lp, None)?;
+    let trace_witness_layout = relation_range_image_plan.witness_layout();
     let trace_opening_source_len = trace_witness_layout.total_len();
     let trace_x_cols = akita_types::opening_domain_len(trace_opening_source_len)?;
     let trace_col_bits = trace_x_cols.trailing_zeros() as usize;
@@ -691,7 +703,7 @@ where
                 E,
             >(
                 ring_d,
-                &trace_witness_layout,
+                trace_witness_layout,
                 trace_opening_source_len,
                 lp,
                 prepared_fold.instance.opening_batch(),
@@ -787,6 +799,7 @@ where
         relation_claim,
         trace_compact,
         trace_opening_claim,
+        relation_range_image_plan,
     )
     .map_err(|err| AkitaError::InvalidInput(format!("stage-2 proving failed: {err:?}")))?;
     let w_eval = {
@@ -940,6 +953,7 @@ where
 pub(in crate::protocol::core) fn prove_stage1<F, E, T>(
     transcript: &mut T,
     rs: &mut RingSwitchOutput<E>,
+    plan: &RelationRangeImagePlan,
 ) -> Result<(AkitaStage1Proof<E>, Vec<E>, E), AkitaError>
 where
     F: FieldCore + CanonicalField,
@@ -947,11 +961,12 @@ where
     T: Transcript<F>,
 {
     let _sumcheck_span = tracing::info_span!("stage1_sumcheck").entered();
-    let num_vars = rs
-        .col_bits
-        .checked_add(rs.ring_bits)
-        .ok_or_else(|| AkitaError::InvalidInput("digit-range domain width overflow".to_string()))?;
-    let domain = FlatBooleanDomain::new(rs.w_evals_compact.len(), num_vars)?;
+    let domain = plan.digit_witness_domain();
+    if domain.live_len() != rs.w_evals_compact.len() || plan.digit_range_plan().basis() != rs.b {
+        return Err(AkitaError::InvalidSetup(
+            "ring-switch output disagrees with the relation/range-image plan".into(),
+        ));
+    }
     let derived_live_x_cols = domain.live_block_count(rs.ring_bits)?;
     if derived_live_x_cols != rs.live_x_cols {
         return Err(AkitaError::InvalidSize {
@@ -966,7 +981,7 @@ where
     )?;
     let stage1_prover = DigitRangeProver::new(
         std::sync::Arc::clone(&rs.w_evals_compact),
-        DigitRangePlan::new(rs.b)?,
+        plan.digit_range_plan(),
         domain,
         equality_point,
     )?;
@@ -1036,6 +1051,7 @@ fn prove_stage2<F, E, T>(
     relation_claim: E,
     trace_compact: Option<TraceTable<E>>,
     trace_opening_claim: E,
+    plan: RelationRangeImagePlan,
 ) -> Result<Stage2ProveResult<E>, AkitaError>
 where
     F: FieldCore + CanonicalField,
@@ -1043,6 +1059,21 @@ where
     T: Transcript<F>,
 {
     let _sumcheck_span = tracing::info_span!("stage2_sumcheck").entered();
+    let domain = plan.digit_witness_domain();
+    let derived_live_x_cols = domain.live_block_count(rs.ring_bits)?;
+    let derived_col_bits = domain
+        .num_vars()
+        .checked_sub(rs.ring_bits)
+        .ok_or_else(|| AkitaError::InvalidSetup("stage-2 ring width exceeds domain".into()))?;
+    if domain.live_len() != rs.w_evals_compact.len()
+        || plan.digit_range_plan().basis() != rs.b
+        || derived_live_x_cols != rs.live_x_cols
+        || derived_col_bits != rs.col_bits
+    {
+        return Err(AkitaError::InvalidSetup(
+            "ring-switch output disagrees with the relation/range-image plan".into(),
+        ));
+    }
     // `alpha(y)` powers over the inner ring domain. For the flattened fallback
     // (`ring_bits == 0`) this is `[1]`; for uniform geometry it is
     // `[1, alpha, ..., alpha^(2^ring_bits - 1)]`, supplying the per-coefficient
@@ -1053,11 +1084,11 @@ where
         rs.w_evals_compact,
         stage1_point,
         range_image_evaluation,
-        rs.b,
+        plan.digit_range_plan().basis(),
         alpha_evals_y,
         rs.relation_weight_evals,
-        rs.live_x_cols,
-        rs.col_bits,
+        derived_live_x_cols,
+        derived_col_bits,
         rs.ring_bits,
         relation_claim,
         trace_compact.clone(),
