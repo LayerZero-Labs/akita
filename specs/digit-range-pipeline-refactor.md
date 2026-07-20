@@ -1,4297 +1,1235 @@
-# Digit Range Pipeline Refactor and Mixed-Dimension Sumcheck: Implementation Handoff
+# Digit-range and relation sum-check pipeline
 
 | Field | Value |
 |---|---|
-| Author(s) | Quang Dao (direction); Codex planning synthesis |
+| Author(s) | Quang Dao (protocol and implementation direction); Codex (design synthesis) |
 | Created | 2026-07-18 |
-| Revised | 2026-07-20; PR #312 implementation, selected high- and low-basis deferral kernels, rejected follow-up cache/fusion variants, and strict merge-readiness cleanup recorded |
-| Status | F1/C3/O4/O5 implementation and cleanup are in PR #312; later mixed-dimension and stage-placement cuts remain additive stack entries |
-| First PR branch | `quang/plan-digit-range-pipeline` |
-| Stack base | PR #311 branch `quang/terminal-direct-ring-relations`; implementation merge base `bc959ef34572aee143ba0114094b0b4212b4e111` |
-| Historical audit base | `main` at `f5c180a49a83f5ce3e8b683a34208166ffed2f66` |
-| Related | [`digit-innermost-layout.md`](digit-innermost-layout.md), [`runtime-ring-cutover.md`](runtime-ring-cutover.md), [`transcript-hardening.md`](transcript-hardening.md), [`packed-sumcheck.md`](packed-sumcheck.md), [`akita-sumcheck-unification.md`](akita-sumcheck-unification.md) |
+| Revised | 2026-07-20; scope reduced to a three-PR implementation stack and Stage 2 redesigned around common-dimension alpha-first binding |
+| Status | active |
+| PR | [#312](https://github.com/LayerZero-Labs/akita/pull/312) implements the specification and complete Stage 1 cutover |
+| PR #312 branch | `quang/plan-digit-range-pipeline` |
+| PR #312 base | PR #311, `quang/terminal-direct-ring-relations` at `fad006e2280e880fa16f1cd13b5ea2df599364d0` |
+| PR #312 head at this revision | `f5520cd8ca6fe314b5f14faef4300807e6c43ac8` before the documentation/CI-fix commit |
+| Related | [`digit-innermost-layout.md`](digit-innermost-layout.md), [`runtime-ring-cutover.md`](runtime-ring-cutover.md), [`packed-sumcheck.md`](packed-sumcheck.md), [`akita-sumcheck-unification.md`](akita-sumcheck-unification.md) |
 
-## Read this first
+## Decision summary
 
-Four problems are entangled in the current pipeline:
+This document is the central design record for three PRs. The boundaries are semantic,
+not chronological implementation packets:
 
-| Problem | Current consequence | Target |
+| PR | Delivers | Deliberately does not deliver |
 |---|---|---|
-| Two Stage 1 implementations | LB2/LB3 use compact kernels; LB4/LB5/LB6 fall into an eager field-valued tree | One streaming range-product prover driven by one topology plan |
-| Too many layout-shaped kernels | Dense, sparse-y, x-prefix, y-prefix, round-2, and two-round paths repeat the same pair/fold mechanics | One flat pair-scan and fold toolkit; each semantic subprotocol retains its own equation |
-| Public x/y geometry | Mixed A/B/D dimensions fall into a `ring_bits == 0` sentinel and dense relation weights | One flat LSB-first `WitnessDomain`; role-local dimensions stay inside semantic providers |
-| Offloading adds a third stage | The relation point is fixed too late, so setup certification and witness carrying require a later setup sumcheck | In recursive-offload mode, fuse relation checking into the final Stage 1 range leaf and move setup/range-image reduction to Stage 2 |
+| **#312: digit-range cutover** | This specification; one Stage 1 range prover; streaming range-product storage; selected LB2-LB6 initial-round kernels; descriptive range-image names; proof/transcript parity | Stage 2 rewrite, mixed-dimension relation execution, relation stage movement, setup-offload protocol changes |
+| **Stacked PR: relation/range-image prover** | Reimplement the current fused Stage 2; preserve its proof statement and wire; bind the common alpha coordinates first; retain and extend compact initial-round deferral; support mixed ring dimensions; adapt current setup-contribution code only where mixed dimensions require it | Move the relation to Stage 1, change proof size, remove the setup-contribution stage, or add compressed commitments |
+| **Stacked PR: two-stage offloading cutover** | In recursive setup-offload mode, move the relation into the final Stage 1 range subcheck; move setup contribution and witness/range-image reduction into Stage 2; remove numeric Stage 3; update proof shape, transcript, sizing, planner, prover, and verifier atomically | Change the direct non-offloaded placement; implement compressed commitments or the fused negative-binary range check |
 
-The target has one shared range-product implementation and two schedule-bound final-leaf
-compositions. The split is deliberate: pushing relation work into Stage 1 helps recursive
-offloading, but would make the direct prover fold `digit_witness` twice and add a scalar
-for no proof-size benefit.
+This replaces the previous many-packet plan. There is no longer a separate PR for each
+Stage 1 kernel experiment, provider type, proof container, or cleanup pass. #312 owns the
+entire Stage 1 implementation. The next PR owns the entire behavior-preserving Stage 2
+rewrite and mixed-dimension execution. The final PR owns the protocol-changing offload
+placement.
+
+The discipline remains additive before cutover and atomic at cutover:
+
+- test oracles, benchmarks, and directly used arithmetic primitives may land before a
+  replacement becomes canonical;
+- an unused production prover, compatibility wrapper, runtime feature switch, or second
+  semantic implementation may not land;
+- a cutover PR changes all callers and deletes the superseded implementation in the same
+  diff;
+- an intentional protocol change updates its versioned proof/transcript oracle in the
+  same diff. The existing oracles are not immutable across declared protocol epochs.
+
+## The protocol after the three PRs
+
+Direct setup evaluation retains the prover-efficient placement:
 
 ```text
-FoldCheckTopology::DirectSetup
-  Stage 1: optimized equality-factored range tree, including range-only leaf
-  Stage 2: one standard relation-and-range-image-consistency sumcheck
-           -> next_witness_eval
-
-FoldCheckTopology::RecursiveSetupOffload
-  Stage 1: same optimized range-product prefix
-           + final range leaf and relation in one standard sumcheck
-           -> range_image_eval and digit_witness_eval at one joint point
-  Stage 2: RecursiveClaimReductionPlan
-           Separate    setup contribution proof + range-image consistency proof
-           Batched     one lifted setup-and-range-image proof
-           -> next_witness_eval + setup_prefix_eval
-```
-
-The important abstraction boundary is deliberately narrower than a generic sumcheck
-engine. All range-product layers use the same eq-factored implementation. Direct mode
-uses the range-only leaf composer and one standard Stage 2 relation/consistency proof.
-Recursive offload uses the standard joint leaf and either a separate eq-factored
-consistency proof plus standard setup proof, or one standard batch. They share address
-iteration, exact-prefix access, bounded accumulation, folding, and parallel reduction—not
-a trait that pretends their equations
-or transcript dependencies are the same.
-
-### Names and responsibilities
-
-| Name | Owns | Must not own |
-|---|---|---|
-| `DigitRangePlan` | supported basis, roots, product topology, range-layer shape, transcript child order | relation placement, hot tables, or witness storage |
-| `WitnessDomain` | one checked flat Boolean address space, live prefix, bind order, transcript-point mapping | an x/y split or role-specific relation algebra |
-| `CompactDigitSource` | the shared compact digit slice and infallible `RangeImageClass` access under the ring-switch producer invariant | protocol topology or a second balanced-digit validation scan |
-| `range_image(digit)` | the exact map `digit * (digit + 1)` used to pair balanced roots | a table called merely `S`, "square", or "norm" |
-| `ExactPrefixTable<[E; LANES]>` | the current derived lane records plus one default record | several tree levels or a `LaneTable` wrapper |
-| `scan_adjacent_pairs` / reduction functions | checked adjacent-pair traversal and serial/parallel reduction mechanics | a range, relation, setup, or reduction equation, or a `PairScan` facade type |
-| `RelationWeight` | one semantic flat public polynomial with dense and factorized implementations | witness folding or transcript choreography |
-| `non_setup_relation_weight_eval` | full evaluation of every relation/trace term except the setup contribution | a common-base lane fragment |
-| `setup_contribution_eval` | full flat setup portion at the active relation point | setup weight alone or a high-lane partial |
-| `DirectRelationRangeImagePlan` | direct Stage 2 relation plus range-image consistency equation | recursive setup certification |
-| `RangeRelationLeafPlan` | recursive final-leaf relation-term shape and batching choreography; joint degree is derived from `DigitRangePlan` | duplicate domain/range/degree state or setup certification |
-| `RangeCheckPoint` | direct Stage 1 range-only output point anchoring Stage 2 consistency | recursive relation evaluation |
-| `RangeRelationPoint` | the shared Stage 1 output point for `range_image_eval` and `digit_witness_eval` | a setup-prefix opening point |
-| `SetupCoefficientDomain` | the setup prefix's own flat coefficient address space | witness-domain coordinates |
-| `SetupContributionPlan` | exact setup slot/domain, role mapping, and the canonical full setup-weight polynomial at a relation point | a common-base-only claim |
-| `FoldCheckPlan` | complete direct-versus-offloaded topology, domains, proof shape, and degree schedule | hot tables or runtime heuristics |
-| `RecursiveClaimReductionPlan` | schedule-bound `Separate` or `Batched` offloaded Stage 2 shape | a per-round branch or wire tag |
-| `SetupWitnessBatchGeometry` | projections of the fresh Stage 2 point to setup and witness native domains | the Stage 1 joint point |
-| `DigitRangeRelationProof` | optimized range-product layers plus the final joint leaf | Stage 2 range-image consistency |
-| `RangeImageConsistencyProof` | binds the independent range-image MLE to `digit_witness` and reduces both claims to `next_witness_eval` | setup certification |
-| `SetupContributionProof` | proves the full flat setup contribution against an exact committed setup prefix | a high-lane partial claim |
-
-Use these names in implementation and review. In particular, use `pair_scan/`, not
-`engine/`: the latter suggests a semantic unification this design explicitly rejects.
-
-Mandatory production renames at Packet 7:
-
-| Legacy/vague name | Target name |
-|---|---|
-| `S`, `s_table`, `padded_s`, `s_claim` | `range_image`, `range_image_table`, `range_image_eval` |
-| public/local `W` fields | `digit_witness`; keep `W` only in equations |
-| `next_w_*` | `next_witness_*` |
-| `v` proof field | `scaled_fold_witness`; keep `v` only in equations |
-| `AkitaStage1Proof` | `DigitRangeProof` or `DigitRangeRelationProof`, selected by topology |
-| direct `AkitaStage2Proof` | `DirectRelationRangeImageProof` |
-| `SetupSumcheckProof` / `stage3_sumcheck_proof` | `SetupContributionProof` or `BatchedSetupAndRangeImageProof` inside `RecursiveClaimReductionProof` |
-| `BatchedStage3Geometry` | `SetupWitnessBatchGeometry` |
-| setup claim `C`, `claimed_setup`, high-lane setup claim | full `setup_contribution_eval` |
-| a setup matrix/prefix called `S` | `SetupCoefficient`, `setup_prefix`, `SetupCoefficientDomain` |
-
-Do not land aliases for these names. Serializer field order is migrated atomically from
-the schedule shape; internal code calls the one canonical concept directly.
-
-Several target names are reused, not new: `akita-types` already owns production
-`SetupContributionPlan`, `SetupContributionGroupInputs`, `SetupProjectionGeometry`, and
-`BatchedStage3Geometry`, all consumed by the current Stage 3. This plan redefines their
-ownership rather than introducing them. Packet 7 must record the semantic delta for each
-reused type in the PR — in particular the carried setup claim's change from its current
-meaning to the full flat `setup_contribution_eval` — so a reviewer can diff meanings, not
-just names.
-
-### Settled decisions
-
-These are not implementation choices to reopen without new benchmark or correctness
-evidence:
-
-1. There is one flat physical Boolean address domain for `digit_witness`. Mixed role
-   dimensions do not create ragged witness axes or per-segment bind schedules. The
-   independently committed setup prefix has its own flat `SetupCoefficientDomain`.
-2. The range product tree stays. Recursive offload changes only its final leaf to a
-   standard range-and-relation sumcheck whose first round walks the compact witness once
-   for both terms. Direct setup keeps the optimized equality-factored range-only leaf and
-   current one-pass Stage 2 relation/range-image composition.
-3. The high-basis baseline is one-round streaming from compact classes, with fixed
-   2/4/8-lane kernels selected by table data. Its measured one-round kernel uses compact
-   ordered class-pair indices, precomputed round-zero coefficients, split-equality block
-   accumulation, challenge-folded pair tables, and direct degree-2/degree-4 affine-product
-   arithmetic. Streaming node evaluation inside the address scan lost decisively and is
-   deleted; node-by-class rows remain only as the canonical source for constructing pair
-   coefficients and post-challenge lanes. Do not create one module per basis.
-4. Two-round deferral is a measured specialization inside the canonical engine. LB4 uses
-   a bounded challenge-dependent quartet-coefficient table for its product and scalar
-   leaf. LB5/LB6 use factorized compact rescans only for multi-lane product substages and
-   retain the one-round scalar leaf. No full bivariate table, LB5/LB6 four-class LUT,
-   runtime selector, or duplicate engine survives.
-   The production tree remains the checked arity-2/arity-4 topology; binary-only variants
-   add substages and child claims without reducing round coefficients.
-5. Exact-prefix skipping for derived Stage 1 tables always carries their nonzero default
-   and analytically accounts for the omitted equality-weight suffix.
-6. `g = min(d_a, d_b, d_d)` is an internal factorization of a flat relation polynomial,
-   not proof metadata or a public x/y split.
-7. Stage 2 always binds the virtual range-image table to the digit witness. Direct setup
-   combines that binding with relation checking; recursive offload combines or sequences
-   it with setup certification. There is no Stage 3 in the target protocol.
-8. Every current live digit address receives the common balanced range proof. This series
-   adds no compressed-commitment or negative-binary proof field, coefficient, or transcript
-   slot.
-9. Packets before the two-stage cutover remain byte-identical. Against the mandatory
-   post-#311 baseline, the cutover preserves the non-terminal direct proof shape and
-   atomically changes only recursive-offload proof/transcript shape. The terminal fold is
-   already quotient-free and sumcheck-free under #311 and is outside `FoldCheckPlan`.
-   Every admitted recursive target must be no larger than its legacy proof in complete
-   serialized bytes and must reduce measured verifier work; bytes are a no-regression
-   bound, verifier time is the selection objective (setup offloading exists to remove the
-   verifier's setup scan, not to save bytes). The descriptor
-   selects the shape without a serialized tag or legacy decoder.
-
-The remaining sections are a reference handoff: they define the math, ownership,
-deletions, packet order, test oracles, and quantitative stop gates.
-
-### Reader map
-
-| Implementer | Read first | Owned packets |
-|---|---|---|
-| Range prover / LB4-LB6 kernels | `Stage 1 prover design`, `Exact live prefixes`, performance gates | 3-5, then joint-leaf work in 7 |
-| Protocol/proof types | `Two-stage range, relation, and setup design`, degree ledger, transcript order | 2, 6-7 |
-| Mixed dimensions/setup | `Mixed ring dimensions`, relation finalization/opening geometry | 6, 8-9 |
-| Verifier/security | `Stage 1 verifier design`, transcript order, correctness/security matrix | 1, 7, 11 |
-| Planner/serialization | proof-size accounting, planner integration, setup eligibility | 1-2, 7, 9 |
-| Upstream digit pipeline | `Upstream prover digit production` | 10 |
-
-Owners may investigate later packets in test/bench branches, but a production PR may not
-merge across an open predecessor gate. The central stack ledger below, not branch age or
-implementation convenience, determines merge order.
-
-## Non-negotiable outcomes
-
-Replace the current digit range-check implementation with one compact, flat-addressed,
-streaming prover architecture. The implementation must do all of the following:
-
-1. Make `DigitRangePlan` the sole authority for roots, product topology, child order, and
-   leaf inner degree. Make one composed `FoldCheckPlan` the sole authority for final-leaf
-   composition, complete non-terminal proof shape, prover/verifier choreography, and proof-size
-   calculation.
-2. Delete the split between the compact base-4/base-8 prover and the eager
-   base-16/base-32/base-64 tree prover.
-3. Never materialize a padded field-valued
-   `range_image = digit_witness(digit_witness + 1)` table, all quartic leaves, or all
-   product-tree levels.
-4. Prove one tree substage at a time from the original compact digits, materialize only
-   the current folded child lanes, and drop that state before the next substage.
-5. Optimize log bases 4, 5, and 6 (`b = 16, 32, 64`) with measured fixed-lane kernels,
-   while retaining one readable implementation rather than a module family per basis.
-6. Replace the relation path's public x/y geometry and its `ring_bits == 0` mixed-dimension
-   sentinel with one canonical flat Boolean address domain.
-7. For recursive setup offload, move the complete linear relation, including trace, into
-   the final Stage 1 range subproof. Preserve the product tree before that final subproof;
-   do not replace LB4/LB5/LB6 with the paper's direct high-degree range-image polynomial.
-   Preserve direct setup's one-pass Stage 2 relation/consistency composition.
-8. In recursive-offload mode, replace current Stage 2 with range-image consistency plus
-   the current Stage 3 setup product, either as separate proofs or a checked
-   independent-domain batch selected by `RecursiveClaimReductionPlan`. Delete Stage 3 as
-   a protocol stage and name.
-9. Use the common nested ring dimension only as an internal factorization fast path.
-   It must not become proof metadata or a second protocol domain.
-10. Generalize relation-weight, setup-weight, Stage 1 relation-point, and Stage 2 opening
-    boundaries so mixed role dimensions work in both direct and recursive setup modes.
-    Recursive offload fails
-    closed when its exact committed setup slot or next-level opening route is unavailable.
-11. Make the two-stage cutover improve the recursive-offload verifier without regressing
-    proof bytes. A balanced
-    batched cell is expected to save one extension-field element per common round, but the
-    planner must compare complete legacy, separate-target, and batched-target serialized
-    sizes for unequal domains. Packet 1 derives them and Packet 7 rejects any target that
-    exceeds the matching current recursive shape in complete bytes. Byte parity is
-    admissible — when `lambda >= mu` the `Separate` round count exactly ties the legacy
-    shape, and a tie must not disable offloading — but every admitted target must reduce
-    measured verifier work relative to its legacy recursive baseline.
-12. Delete the old architecture as each replacement lands. No compatibility wrappers,
-    dormant alternate engines, or `_for_level` pass-through helpers may survive.
-
-This is an implementation handoff, not a menu. The packet order, deletion rules, tests,
-and performance gates below are mandatory. If a packet cannot meet both the cleanup and
-performance gates, stop and report the evidence instead of retaining a second path.
-
-## Scope and authority
-
-### In scope
-
-- One range-product tree plus direct and recursive-offload final-leaf composers, prover first
-  and verifier second.
-- Direct Stage 2 relation/range-image consistency; offloaded Stage 1 joint leaf and Stage 2
-  range-image/setup claim reduction.
-- Flat sumcheck addressing, exact live prefixes, and mixed A/B/D ring dimensions.
-- Elimination of the current Stage 3 proof/type/transcript layer.
-- Prover-side digit production and fold-grind allocation cleanup after the range/sumcheck
-  core has landed.
-- Dedicated microbenchmarks, allocation/RSS measurement, proof/transcript differential
-  tests, malformed-proof tests, and documentation.
-
-### Explicit non-goals
-
-- Do not implement compressed commitments.
-- Do not implement the paper's fused negative-binary range check. This plan reserves the
-  exact support/provider seam in range-image consistency without adding a production term.
-- Do not change the range proof to use different polynomials for inner, outer, and opening
-  digit segments. The current certificate uses one dominating opening basis.
-- Do not implement a direct degree-16 or degree-32 range polynomial for log bases 5 or 6.
-- Do not add unsafe SIMD. [`packed-sumcheck.md`](packed-sumcheck.md) remains an orthogonal,
-  downstream scalar-to-packed optimization.
-- Do not create an `akita-protocol` crate, a general `Source`/`Term`/`Expr` descriptor
-  algebra, or a trait-object protocol engine.
-- Do not fuse Stage 1 and Stage 2 into one proof. In recursive offload, their challenge
-  dependency is what makes setup certification possible: Stage 2 starts only after the
-  Stage 1 relation point exists.
-- Do not redesign the commitment/setup cache system except where mixed-dimension schedule
-  eligibility must be modeled and validated.
-
-### Authority order
-
-When sources disagree, use this order:
-
-1. The active tranche base defined below: #311 for F1 through O4c, then #309's
-   semantic-basis contract from I5 onward.
-2. This handoff for the target implementation and packet order.
-3. The Akita paper as mathematical context.
-4. Every other unmerged branch as prior art only.
-
-The paper was reviewed through the `paper-note` writing entry `akita`, especially the
-basic Akita setting, fold check, implementation details, and verifier-offloading sections.
-The useful facts are:
-
-- balanced bases are `4, 8, 16, 32, 64`;
-- the paper writes `S(W) = W(W + 1)` and
-  `Q_b(S) = product_{k=0}^{b/2-1}(S - k(k + 1))`; this handoff calls the same
-  objects `range_image(W)` and `range_image_polynomial`;
-- bases above 8 use a short product tree of quartic leaves;
-- a future negative-binary layer is still admitted by the common balanced range proof and
-  is later narrowed with the same `W(W + 1)` identity on restricted support;
-- relation row families may use native ring dimensions and their own
-  `(alpha^d + 1)` quotient denominators;
-- under verifier offloading (2026-07-19 revision), the relation is fused into the final
-  level of the range product tree, all earlier product levels keep their compact
-  equality-factored messages, and both witness claims leave Stage 1 at one point;
-- setup-prefix provisioning is per level: each offloaded level opens the least committed
-  slot covering its own footprint and discharges it at the immediately following fold.
-
-The paper's compressed commitment and negative-binary paths must not be smuggled into this
-implementation series. Open PR #295 contains compressed-commitment substrate, but it does
-not expand this project's scope.
-
-### Open-PR audit and branch coordination
-
-This audit was refreshed on 2026-07-19 from public pull refs and each direct PR page; the
-conflict analysis below uses current #311 head `bc959ef3`. The
-open set was #277, #282, #295, #307, #308, #309, #310, and #311. Pull refs alone are not
-state evidence; the direct pages reported #277/#282/#295/#307 as draft and
-#308/#309/#310/#311 as open.
-
-| PR | Relevant change | Overlap decision |
-|---|---|---|
-| [#311](https://github.com/LayerZero-Labs/akita/pull/311) | Quotient-free direct terminal relations; removes terminal Stage 1, relation sumcheck, outgoing binding, and numeric terminal stage structure | **Hard prerequisite.** Build on it. `FoldCheckPlan` governs non-terminal `FoldLevelProof` only. Do not touch its direct terminal checker, terminal transcript, or `TerminalLevelProof` payload. |
-| [#309](https://github.com/LayerZero-Labs/akita/pull/309) | Splits `log_basis`/digit depths into semantic inner, outer, and opening roles | **Deferred prerequisite for C5, not F1.** F1-C3/O4 consume the already-computed checked range basis and never read `LevelParams`; after #309 the same boundary is sourced from `log_basis_open`. Integrate #309 before flat relation/setup providers need all three role bases. Its reviewed head has 41 conflict paths with #311, mostly schedule regeneration and shared level plumbing, so importing it into F1 would destroy the first PR's bounded diff without changing Stage 1 semantics. |
-| [#310](https://github.com/LayerZero-Labs/akita/pull/310) | Distributed multi-chunk recursive setup-offloading schedules and e2e coverage | Land or rebase before Packet 7's distributed rollout. The reviewed heads have only one textual conflict with #311 and one with #309. Preserve its schedules and convert its Stage-3 assertions to semantic Stage-2 claim reduction; do not clone its e2e fixture. |
-| [#308](https://github.com/LayerZero-Labs/akita/pull/308) | Planner-backed K16 preset | No algorithmic overlap. Let it land before schedule regeneration; never hand-copy or overwrite its preset rows. |
-| [#307](https://github.com/LayerZero-Labs/akita/pull/307) | Shared Jolt field implementation | Broad mechanical overlap but little protocol overlap. New kernels use only repository field/sumcheck traits and add no field implementation. If it lands first, rebaseline before Packet 1; otherwise its branch rebases over this work. |
-| [#295](https://github.com/LayerZero-Labs/akita/pull/295) | Compressed-commitment spec and substrate | Intentional non-goal and future integration boundary. Do not edit `layout/compression`, compressed wire, or compression planner modules. Proof-container changes use the canonical post-#311 representation; whichever cutover lands second must adapt directly, with no compatibility wrapper. |
-| [#282](https://github.com/LayerZero-Labs/akita/pull/282) | Per-mode profile CI jobs | Keep benchmark capture out of its workflow/mode files. Use existing profile modes and add the dedicated range microbenchmark only after #282's disposition. |
-| [#277](https://github.com/LayerZero-Labs/akita/pull/277) | Consolidates PCS integration tests into one binary | No protocol overlap, but it changes every integration-test path. Resolve it before adding e2e files; add tests only at the resulting canonical location and never maintain old/new forwarding test modules. |
-
-`git merge-tree --write-tree` on the audited heads found 41 conflict records between
-#311/#309, one between #311/#310, one between #309/#310, 75 between #311/#295, and 70
-between #311/#307. Those counts measure textual integration pressure, not semantic scope:
-#295 and #307 are broad draft cutovers, while #309 changes the basis vocabulary that the
-later relation/setup work must consume. This is why #311 alone is F1's hard base, #309 is
-the explicit I5 gate before C5, #310 is a narrow capability integration, and #295/#307 are
-boundary constraints rather than code to import here.
-
-The key interaction is #311. It makes this project smaller: the terminal fold already
-reveals a segment-typed witness and performs direct ring/trace checks, with no range proof,
-relation sumcheck, Stage 2, or Stage 3. Therefore this handoff neither introduces
-`TerminalRelationProof` nor claims a terminal degree-3-to-degree-2 saving. Its proof-size
-comparison covers non-terminal folds only.
-
-The F1 branch is stacked directly on the audited #311 head and may implement the locked
-surface below without #309. The fixed integration policy is:
-
-1. Keep #311 as the hard base. Its audited head is `bc959ef3`; if it advances, repeat the
-   direct-page, changed-file, and terminal-contract audit before rebasing this specification.
-2. F1 through O4c accept the checked range basis already carried by the ring-switch
-   output. `DigitRangePlan` must not read `LevelParams`, so #309 later changes only the
-   upstream source of that value from the uniform basis to `log_basis_open`.
-3. Before C5, rebase and land #309 at audited head `d4100f3f` (or its refreshed head),
-   resolving terminal conflicts in favor of #311 and recording the resulting I5 base.
-   From C5 onward, relation/setup code consumes semantic `log_basis_inner`,
-   `log_basis_outer`, and `log_basis_open` directly; do not restore a largest-basis rule.
-4. Prefer landing/rebasing #310 and the small #308 preset before Packet 7 schedule
-   regeneration. If #310 is still pending, core Packets 0-6 may proceed, but Packet 7 may
-   not claim distributed recursive coverage or add a duplicate fixture.
-5. Resolve #277 before adding integration-test files and #282 before editing profile-mode
-   CI. These are path/ownership gates, not reasons to block kernel development.
-6. Do not merge or wholesale cherry-pick `origin/quang/relation-weight-kernel-cutover`.
-   The accepted prior-art snapshot is `e87295b7` and its
-   `specs/sumcheck-kernel-cutover.md`. Port only its flat relation polynomial,
-   pair-stream, fused fold-scan, and isolated initial-round batching ideas against the
-   then-current layout; this handoff supersedes that snapshot as an implementation
-   authority.
-7. Do not wait for or merge `origin/refactor/universal-digit-fast-layout`. After the flat
-   range/relation architecture lands, port the relevant verifier arithmetic from
-   `d2bfda96` (initial fast accumulation) and `57fb0025` (prefix-scan/carry-bucket
-   summary), using `8a86908f` as the canonicalized form, in an isolated final slice.
-8. Do not begin Stage 1/2 packed SIMD work until the scalar architecture, mixed dimensions,
-   and all scalar gates in this document pass.
-
-### Intended implementation diff surface
-
-The implementation PR is deliberately a non-terminal fold-check cutover, not a general
-PCS rewrite. The following table is normative. A touched production file outside these
-responsibilities requires an explicit amendment to this section in the same PR; nearby
-cleanup is not sufficient justification.
-
-| Surface | Intended ownership |
-|---|---|
-| `akita-sumcheck` | Only checked pair iteration, default-aware exact-prefix folding, and ordinary fused fold/next-scan mechanics. No Akita roots, relation terms, transcript labels, or stage enums. |
-| `akita-prover::protocol::sumcheck` | Replace current Stage-1 tree, Stage-2 relation/range binding, and Stage-3 setup/carry modules with `digit_range`, `direct_relation`, `claim_reduction`, and `relation_weight`. |
-| `akita-prover::protocol::core::fold` | Non-terminal orchestration only: construct one `FoldCheckPlan`, call the selected concrete composer directly, and emit the post-#311 `NextWitnessBinding`. No terminal-witness construction or terminal transcript changes. |
-| `akita-types::layout` / setup contribution | Canonical `DigitRangePlan`, `WitnessDomain`, typed points, semantic relation events/providers, `SetupCoefficientDomain`, and one `SetupContributionPlan`. |
-| `akita-types::proof` / proof sizing | Change only the non-terminal `FoldLevelProof` fold-check payload, its shape/wire/validation, and its exact byte formula. Preserve #311's `TerminalLevelProof`, `TerminalLevelProofShape`, and terminal wire bytes. |
-| `akita-verifier` | Replay the two non-terminal topologies and mixed providers; preserve #311's `terminal_direct.rs`, `terminal_ntt.rs`, and terminal section of suffix verification unchanged. |
-| planner/config/schedules | Add authenticated non-terminal topology and reduction selection, exact complete-size scoring, eligibility, and regenerated artifacts. Preserve unrelated presets and do not hand-edit generated rows. |
-| tests/benches/docs | Differential range/relation/setup tests, the resulting canonical integration-test location, a dedicated range microbenchmark, and documentation required by the cutover. |
-
-Explicitly outside the diff surface:
-
-- #311 direct-terminal algebra, terminal proof shape, terminal transcript order, terminal
-  schedule topology, and `tail-wire-encoding` semantics;
-- #295 compression planners, compression layouts, compressed proof wire, and compression
-  replay;
-- field arithmetic, packed-field backends, NTT/CRT kernels, and dependency replacement
-  from #307;
-- #282 workflow partitioning and existing profile-mode selection;
-- #308's preset constants except mechanically regenerated derived artifacts;
-- commitment algorithms, setup persistence, and witness chunk topology. Packet 10 may
-  replace internal temporary-to-destination emission while preserving the exact existing
-  layout/wire; recursive claim reduction may add only its required opening-route metadata.
-
-At each packet review, run `git diff --name-only IMPLEMENTATION_BASE...HEAD` and classify
-every path against this table. Generated schedules are reviewed as generated output, not
-as authority. No packet may acquire a second implementation merely to reduce merge
-conflicts with an open PR.
-
-### Single sources of truth and the no-wrapper rule
-
-The repository policy applies literally. This design does not authorize facade layers,
-aliases, or duplicated formulas:
-
-| Concept | Sole production authority | Forbidden duplication |
-|---|---|---|
-| Balanced range map and roots | `akita-types` digit-range arithmetic used directly by plan, prover, and verifier | local `S` functions, verifier copies, or basis-specific root builders |
-| Range topology/degree/child order | one checked `DigitRangePlan` constructor | `_for_level` helpers, verifier reconstruction, per-LB plan types, or copied shape tables |
-| Complete non-terminal topology | one checked `FoldCheckPlan` constructor | independent prover/verifier topology inference, runtime fallback, or serialized variant tag |
-| Relation polynomial | one semantic relation-event emitter and one `RelationWeight` plan | direct/offload emitters, x/y adapters retained as production APIs, or trace copies |
-| Setup polynomial | one `SetupContributionPlan` over one `SetupCoefficientDomain` | high-lane partial claims, separate direct/recursive weight builders, or slot coercion |
-| Proof shape and bytes | `FoldCheckPlan`-derived non-terminal proof shape plus serialization-parity tests | free-standing degree/round formulas in planner, prover, and verifier |
-| Mechanical scan/fold | the small `akita-sumcheck` functions, called directly | `Engine`, `Source`, `Composition`, forwarding traits, or stage-specific wrappers |
-
-The three semantic prover entry points contain real logic:
-`RangeOnlyLeafProver`, `RangeRelationLeafProver`, and
-`DirectRelationRangeImageProver`. Orchestration pattern-matches `FoldCheckTopology` and
-calls the selected entry point directly. Do not add `prove_stage1_for_level`,
-`prove_fused_first_round`, compatibility constructors, pass-through re-exports, or a
-generic `FusedKernel`. A type method may assemble its fields into the canonical call, but
-it may not own another copy of the equation, degree, point order, or shape.
-
-## Reconciliation with the concurrent plan
-
-A concurrent planning pass reached the same high-level priorities and presented them more
-clearly. Its strongest ideas are incorporated here rather than maintained as a second
-implementation authority:
-
-- lead with the three concrete problems and a good-path/bad-path contrast;
-- include a line-counted file inventory so "cleanup" has a measurable ownership closure;
-- treat proof/transcript byte identity as a per-slice gate;
-- encode basis specialization mostly in validated table data, with bespoke code only when
-  a complete benchmark justifies it;
-- make the dependency graph, risk register, and unresolved experiments visible;
-- use `WitnessDomain` as the public name for the generalized address contract.
-
-Several attractive parts of that plan need a narrower or different design. The following
-resolutions are final for this handoff:
-
-| Concurrent proposal | What is strong about it | Resolution here |
-|---|---|---|
-| One generic eq-factored "composed-witness" engine for Stage 1, the product tree, and Stage 2 | Correctly notices extensive duplicated pair iteration, reduction, and folding | Share only direct `scan_adjacent_pairs`, exact-prefix, accumulator, fold, and parallel-reduction functions. Current Stage 1 product layers are eq-factored while current Stage 2 is standard; the target adds a standard joint Stage 1 leaf and either eq-factored or standard Stage 2 reduction. Their equations, degree accounting, drivers, and transcript choreography remain explicit. |
-| `RoundWitnessSource::Value` plus `fold(&mut self, r)` | Tries to hide compact-versus-field state from callers | A Rust associated type cannot change from compact `i16` to field `E` after a challenge. Do not add an enum branch to every corner to rescue the abstraction. Stage-owned, statically typed compact and field phases call the same mechanical scan functions. |
-| `is_zero_pair` and implicit-zero suffix skipping | Essential for avoiding padded witness scans | Sound for the digit witness and every linear relation term that contains it, but not for derived range tables. Most quartic leaves and randomized product batches have nonzero values at padded `range_image = 0`. Use `ExactPrefixTable` with a per-lane default and add the exact omitted `GruenSplitEq` suffix mass. |
-| Build compact per-class leaf tuples | Uses the small `RangeImageClass` alphabet and removes repeated Horner evaluation | Adopt node-by-class rows as the source of post-challenge fixed-lane state and ordered class-pair coefficients as the selected round-zero kernel. The measured streaming node-evaluation loser is deleted. Do not describe the current tree as `b/2` quartic leaf tables: it has `b/8` quartic leaves. Materialize only the current 2/4/8-lane substage state, never the full forest. |
-| Extend two-round prefix tables to LB4/LB5/LB6 | Correctly identifies first-round compactness as an optimization lever | The measured cutover keeps ordinary transcript rounds and specializes the canonical state machine: LB4 uses a 4,096-key challenge-dependent quartet table; LB5/LB6 product substages use factorized folded-pair rescans; their scalar leaves remain one-round. No generic prefix wrapper or full LB5/LB6 four-class table remains. |
-| Model mixed dimensions as ragged `WitnessDomain` axes and choose common-prefix versus segment-concatenated binding later | Removes hard-coded x/y names and recognizes the common low dimension | Do not leave the protocol domain unresolved. Bind the existing flat physical address LSB-first. Compile role-local row-family algebra into a semantic flat `RelationWeight`; use `g = min(d_a,d_b,d_d)` only to factor that polynomial internally as `A_g(y) M(x)` plus checked fringes. |
-| Select a per-segment alpha vector in the relation prover | Recognizes that one global `alpha_evals_y` is invalid for mixed role dimensions | A per-pair segment branch is not the semantic contract and does not solve folding or verifier evaluation. Define row-family events at native dimensions, then give dense and common-base providers the same flat-polynomial semantics in the final Stage 1 subproof. |
-| Reserve `binary_support: Option<RestrictedEqWeights>` in a production composition | Anticipates the paper's later fused negative-binary path | Do not add inactive production state or transcript ambiguity. Reserve only an internal additive-provider seam in Stage 2 range-image consistency reduction. A future restricted term must be the single MLE of the pointwise restricted equality table, not the product of two MLEs. |
-| Schedule-frequency table and one profile capture | Establishes that LB4/LB5/LB6 deserve first-class attention | Keep the conclusion, not the numbers as performance evidence. Counts must define whether they refer to inner, outer, opening, or certified range basis after Packet 0; configuration frequency is not runtime weight. The captured run reached verifier output rather than isolating prover phases, so Packet 1's benchmark work remains mandatory. |
-| Keep the current two-stage placement while cleaning Stage 2 | Preserves the direct prover's efficient single signed-witness scan | Retain that placement for `DirectSetup`, but it cannot reduce recursive-offload proof size. Add the paper-motivated `RecursiveSetupOffload` composer, move relation checking into its final Stage 1 leaf, and delete numeric Stage 3. |
-| Describe mixed dimensions primarily as a layout abstraction | Correctly finds that the core Boolean sumcheck is already one-dimensional | Insufficient for setup offload: setup coefficients form an independently committed flat domain, and role-native algebra must compile to one semantic relation/setup weight. Add `SetupCoefficientDomain`, typed points, full setup-contribution semantics, and exact opening routes. |
-
-The concurrent plan's prose and workstream structure were stronger than the original
-draft, and this handoff adopts that presentation style. Its weakest points were the two
-generic traits, under-specified nonzero derived tails, a per-segment-alpha mixed design,
-and lack of a paper-driven offloading proof-shape cutover. Conversely, the first
-reconciliation draft overcorrected by forcing relation-in-Stage-1 onto direct proofs; the
-prover audit showed that this would add a signed-witness fold and scalar for no benefit.
-
-The final result is intentionally less generic but more precise: one flat witness domain,
-one streaming range-product implementation, two small schedule-bound final-leaf composers,
-one separate setup-coefficient domain, a small shared mechanics layer, and basis-specific
-data feeding fixed-lane kernels.
-
-## Terminology
-
-- `LB`: base-2 logarithm of the balanced digit basis.
-- `b = 2^LB`: digit basis.
-- Current balanced digit range: `[-b/2, b/2 - 1]`.
-- `digit_witness` / `W`: the committed balanced-digit witness polynomial. Use the full
-  `digit_witness` name in code; reserve `W` for equations and short local algebra.
-- `range_image(digit) = digit(digit + 1)`: the degree-halving map. This replaces every vague
-  production identifier named `S`, `s_table`, `norm`, or `squared`.
-- `RangeImageClass`: the collision class of a balanced digit under `range_image`:
-
-  ```text
-  range_image_class(w) = w       when w >= 0
-                       = -w - 1  when w < 0
-
-  range_image(w)
-    = range_image_class(w) * (range_image_class(w) + 1),
-      0 <= range_image_class(w) < b/2.
-  ```
-
-- `range_image_polynomial(p) = product_k (p - k(k + 1))`: the vanishing polynomial
-  over range-image values. The paper calls this `Q_sq`; production code does not.
-- `range_image_eval`: an MLE evaluation of the pointwise Boolean table
-  `range_image(digit_witness[z])`. It is generally **not** equal to
-  `digit_witness_eval * (digit_witness_eval + 1)` away from Boolean points.
-
-- `N`: full Boolean domain length for a sumcheck table.
-- `L`: exact live prefix length, `0 < L <= N`.
-- `g`: common nested role dimension,
-  `g = gcd(d_a, d_b, d_d) = min(d_a, d_b, d_d)` for the supported power-of-two tuples.
-- **Protocol domain**: the sole flat physical coefficient address, LSB-first.
-- **Local view**: a checked internal `(column, coefficient)` or common-base lane view used
-  by a kernel. A local view is never a wire-level coordinate system.
-
-### Challenge and transcript vocabulary
-
-Use semantic names and labels in production; reserve Greek letters for equations:
-
-| Production name | Meaning |
-|---|---|
-| `range_product_batch_challenge` | batches child claims between range-product layers |
-| `direct_range_binding_challenge` | binds the direct range-image claim into the Stage 2 relation proof |
-| `range_relation_batch_challenge` | batches the recursive final range leaf with the linear relation claim |
-| `range_image_binding_challenge` | merges recursive `range_image_eval` and `digit_witness_eval` for consistency |
-| `setup_range_binding_batch_challenge` | batches native setup and range-image consistency claims in recursive `Batched` only |
-
-Do not reuse one label merely because two challenges are both colloquially called
-`gamma`, `theta`, or `batch_challenge` in local algebra.
-Follow [`transcript-hardening.md`](transcript-hardening.md): semantic labels and
-`LoggingTranscript` frames are diagnostic in production builds, while positional order
-plus the absorbed instance/protocol descriptor carries Fiat-Shamir domain separation.
-Therefore Packet 7 must bind the version/topology/shape descriptor explicitly; a pretty
-label string is not a security boundary.
-
-## Current-state audit
-
-The line counts and call paths in this section describe planning base `f5c180a4` so the
-spaghetti/deletion baseline remains reproducible. They are not the implementation base.
-Before Packet 1, refresh the inventory on #311, remove every terminal path already deleted
-by #311 from this project's ownership closure, and ratify new F1 line counts without
-weakening the percentage/absolute deletion gates. Refresh the relation/setup inventory
-again at I5 after #309 lands.
-
-### End-to-end call path
-
-The relevant prover path is:
-
-```text
-batched_prove
-  -> prove
-  -> prove_root
-  -> prepare_fold_inner / finish_prepared_fold
-  -> RingRelationProver::new
-  -> ring_switch_build_w
-  -> commit_w
-  -> ring_switch_finalize
-  -> prove_stage1
-  -> prove_stage2
-  -> optional prove_stage3 / terminal suffix
-```
-
-Primary files:
-
-- `crates/akita-prover/src/protocol/core/{prove,root_fold,fold}.rs`
-- `crates/akita-prover/src/protocol/ring_relation.rs`
-- `crates/akita-prover/src/protocol/fold_grind.rs`
-- `crates/akita-prover/src/protocol/ring_switch/{coeffs,finalize}.rs`
-- `crates/akita-prover/src/protocol/sumcheck/akita_stage1_tree.rs`
-- `crates/akita-prover/src/protocol/sumcheck/akita_stage1/`
-- `crates/akita-prover/src/protocol/sumcheck/akita_stage2/`
-- `crates/akita-verifier/src/stages/{stage1,stage2,stage3}.rs`
-- `crates/akita-verifier/src/protocol/{ring_switch,core/fold}.rs`
-
-The snapshot's production surface is large enough that file moves alone are not a cleanup
-metric. These line counts exclude test modules unless stated otherwise and define the
-initial ownership closure Packet 1 must reproduce mechanically:
-
-| Area | Production lines | Main responsibility today |
-|---|---:|---|
-| `akita_stage1_tree.rs` | 696 | large-basis dispatch, eager tree construction, product and leaf substages |
-| `akita_stage1/` | 2,433 | compact/dense Stage 1 lifecycle plus sparse, prefix, and round-2 kernels |
-| `akita_stage2/` | 2,939 | fused Stage 2 lifecycle plus dense, x/y-prefix, and round-2 kernels |
-| `two_round_prefix/` | 1,836 | shared LUT/reconstruction mechanics and stage-specific wrappers |
-| verifier `stages/stage1.rs` | 354 | product/leaf proof replay |
-| verifier `stages/stage2.rs` | 441 | fused relation replay and final claim |
-| types `proof/stage1.rs` | 200 | topology, coefficients, point reorder, and shape helpers |
-
-Packet 1 must record symbol-level ownership as well as lines. The end-state test is not a
-fixed percentage reduction: it is deletion of duplicate semantic authorities and layout
-branches, with any retained line justified by one invariant-bearing responsibility.
-
-### Stage 1: two implementations and an eager forest
-
-There are two prover types named `AkitaStage1Prover`:
-
-- the exported wrapper/tree implementation in `akita_stage1_tree.rs`;
-- the older compact implementation in `akita_stage1/mod.rs`.
-
-For `b <= 8`, the wrapper delegates to the compact backend. For `b > 8`, it calls
-`padded_s_table`, expands every compact digit into a padded field-valued
-paired-digit-product table (the legacy code calls it `S`), builds
-all quartic leaf tables, builds every product layer, and retains nested
-`Vec<Vec<Vec<E>>>` state while proving the substages.
-
-Current product shapes are:
-
-| LB | Basis | Product stages | Leaf stage |
-|---:|---:|---|---|
-| 2 | 4 | none | degree 2 |
-| 3 | 8 | none | degree 4 |
-| 4 | 16 | one parent, arity 2 | two quartic leaves |
-| 5 | 32 | one parent, arity 4 | four quartic leaves |
-| 6 | 64 | one parent, arity 2; two parents, arity 4 | eight quartic leaves |
-
-Approximate digit-range-owned field-table peaks, excluding split-equality state,
-round-polynomial temporaries, and allocator metadata, are:
-
-| LB | Current peak |
-|---:|---:|
-| 4 | `3N` (paired-digit table plus two leaves) |
-| 5 | `5N` (paired-digit table plus four leaves) |
-| 6 | `11N` (paired-digit table, eight leaves, two intermediate parents) |
-
-The compact backend contains good ideas—compact first rounds, small lookup tables,
-implicit prefixes, fused fold/next-round scans, and unreduced accumulation—but its
-implementation is organized around `ring_bits`, x/y phases, sparse-y, x-prefix, and a
-large shared two-round-prefix module. Extending those branches basis by basis would grow
-the cartesian product rather than fix it.
-
-### Stage 1 handoff and verifier issues
-
-`prove_stage1` currently:
-
-- calls the verifier-reachable `reorder_stage1_coords`, whose shared helper uses
-  `assert_eq!`;
-- passes six raw geometry values;
-- `mem::take`s the compact witness;
-- calls `prove_recover_w` only to restore the same `Arc<[i8]>` for Stage 2.
-
-The verifier reconstructs tree topology separately, clones tau and child-claim vectors,
-and duplicates transcript absorption. Proof-size code separately calls the loose tree
-shape helpers. `validate_stage1_tree_basis` accepts every power-of-two basis at least 4,
-even though current configuration and i8 witness bounds stop at 64.
-
-### Stage 2: correct fusion, layout-driven spaghetti
-
-Stage 2 currently scans the compact digit witness, combines the linear ring relation/trace
-terms with the virtual range-image binding, and moves to field storage only after
-challenges. Its fusion is locally efficient and remains the direct-setup composer. It
-fixes the relation point too late for the paper's setup-offloading placement, so Packet 7
-moves the linear half to Stage 1 only for recursive offload and leaves range-image
-consistency plus setup certification in Stage 2.
-
-Its implementation is nevertheless a cartesian product of:
-
-- compact versus field witness;
-- prefix-y versus prefix-x versus dense scans;
-- relation factor versus trace side table;
-- one-round versus two-round-prefix logic;
-- fused fold/next-round versus separate fold;
-- uniform x/y geometry versus flattened `ring_bits == 0` fallback.
-
-`RingSwitchOutput` exposes an eight-field raw bundle whose relation-weight field has two
-different meanings: a per-column `M(x)` in uniform mode and a full flat vector in mixed
-mode. `prove_stage2` then takes roughly a dozen raw arguments and clones the optional trace
-table.
-
-### Mixed dimensions: partial algebra, incomplete sumcheck consumers
-
-Current main already has `CommitmentRingDims`, role-local relation-weight construction,
-row-family quotient denominators, and `SetupProjectionGeometry`. But:
-
-- `ring_switch_finalize` uses x/y only when all role dimensions are uniform;
-- nonuniform roles set `ring_bits = 0` and eagerly materialize the flat relation weights;
-- Stage 2 verifier logic still splits challenges using one `ring_bits`;
-- trace remapping is tied to a uniform ring dimension and can allocate a remapped table;
-- Stage 3 slices the Stage 2 point using `d_a` bits in places where the common base `g`
-  is required;
-- recursive setup-prefix storage is fixed to `SETUP_OFFLOAD_D_SETUP = 64`;
-- planner-generated levels still use uniform role dimensions.
-
-The existing `mixed_d_per_level` tests vary a homogeneous `D` between levels. They do not
-test different A/B/D dimensions inside one level.
-
-### Upstream digit production
-
-`ring_switch_build_w`, fold-grind, and decomposition still perform avoidable copying:
-
-- nested centered coefficient vectors;
-- temporary digit planes copied into the final witness;
-- recomposition followed by decomposition;
-- per-chunk sparse challenge windows;
-- field conversion before a grind nonce is accepted;
-- large terminal clones retained only for later encoding on the planning-base code.
-
-This is secondary to the Stage 1 allocation problem but is part of the prover digit
-pipeline and receives a later packet below. Packet 1 removes any terminal clone already
-resolved by #311 from this project's ownership rather than re-editing that path.
-
-## Target architecture
-
-### Layer boundaries
-
-```text
-Level/schedule metadata
-  -> FoldCheckPlan
-       -> DigitRangePlan + WitnessDomain + relation/setup plans
-       -> prover: compact digit source + flat pair/fold kernels
-       -> verifier: shared semantic plans + closed-form evaluators
-       -> proof sizing/serialization: shared shapes
-
-Row-family algebra at native d_A/d_B/d_D
-  -> checked flat-address semantic emitter
-       -> dense exact-prefix oracle
-       -> common-base/factorized prover provider
-       -> prepared verifier evaluator
-
-DirectSetup topology
-  -> Stage 1 range-only leaf
-  -> Stage 2 relation + range-image consistency
-  -> direct full setup replay at Stage 2 point
-
-RecursiveSetupOffload topology
-  -> Stage 1 joint leaf fixes RangeRelationPoint
-  -> full setup contribution closes deferred Stage 1 relation
-  -> Stage 2 separate or batched setup/range-image reduction
-       -> NextWitnessPoint + SetupOpeningPoint
-```
-
-`akita-types` owns validated semantic plans and layouts. `akita-sumcheck` owns only
-protocol-independent Boolean sumcheck drivers, split equality, polynomial proof formats,
-and field fold/accumulator mechanics. Akita-specific range and relation algebra stays in
-the Akita prover/verifier crates. No new crate is needed.
-
-### `DigitRangePlan`: one range topology authority
-
-Add a field-independent, validated plan under `akita-types`, with an API equivalent to:
-
-```rust
-pub struct DigitRangePlan {
-    log_basis: u8,
-    stages: FixedRangeStages,
-}
-
-pub enum DigitRangeStage {
-    Product {
-        arity: u8,
-        parent_count: u8,
-        child_range: Range<u8>,
-    },
-    Leaf {
-        degree: u8,
-        leaf_count: u8,
-    },
-}
-```
-
-F1 constructs this plan from the checked concrete basis already carried by the
-ring-switch output (`b in {4,8,16,32,64}`) and derives `log_basis`; it does not accept or
-inspect `LevelParams`. I5/#309 changes the producer of that concrete basis to
-`log_basis_open` without changing the `DigitRangePlan` API.
-
-The exact storage type may use arrays plus counts rather than a new small-vector
-dependency. `basis()` and `half_basis()` are checked derived accessors; do not store
-independently constructible copies of those values. The constructor is private to the
-defining module and no external struct literal may bypass it. The contract is fixed:
-
-- accept exactly `LB in 2..=6`;
-- derive the integer roots `k(k + 1)` and quartic leaf grouping;
-- expose the five explicit production topologies in the table above;
-- derive ordered subproof degree, parent count, child count, and claim order;
-- derive its range-layer shapes for a supplied Boolean round count;
-- validate a proof's subproof/child shape without allocation;
-- provide narrow semantic operations such as batching child claims and leaf coefficients.
-
-The plan does not own field-valued hot lookup tables. Store small leaf polynomial
-coefficients as checked integer arrays and lift them at the prover/verifier field boundary.
-
-After migration, delete or make private and absorb:
-
-- `validate_stage1_tree_basis`;
-- `stage1_tree_product_stage_arities`;
-- `stage1_tree_stage_shapes`;
-- `stage1_stage_count`;
-- generic public `combine_polys`, `linear_combination`, and range-only `eval_poly` exports;
-- unused base-field-only `absorb_interstage_claims`.
-
-Prover, verifier, serialization shape validation, and tests call the same plan for range
-topology. Complete proof sizing calls `FoldCheckPlan`; no call site may reconstruct
-arities from `b.trailing_zeros()`.
-
-### `FoldCheckPlan`: one complete proof-shape authority
-
-Compose range topology with the scheduled relation placement and final-leaf shape:
-
-```rust
-pub struct FoldCheckPlan {
-    digit_range: DigitRangePlan,
-    witness_domain: WitnessDomain,
-    topology: FoldCheckTopology,
-}
-
-pub enum FoldCheckTopology {
-    DirectSetup(DirectRelationRangeImagePlan),
-    RecursiveSetupOffload {
-        relation_leaf: RangeRelationLeafPlan,
-        claim_reduction: RecursiveClaimReductionPlan,
-    },
-}
-
-pub enum RecursiveClaimReductionPlan {
-    Separate(SeparateReductionShape),
-    Batched(SetupWitnessBatchGeometry),
-}
-```
-
-This is the final form only if E8 is admitted. Through C7, the recursive topology owns
-`SeparateReductionShape` directly and there is no one-variant
-`RecursiveClaimReductionPlan`; E8 introduces the enum only when `Batched` becomes a real
-second production shape.
-
-The descriptor authenticates this choice before proof messages. Headerless serialization
-uses the authenticated shape and carries no enum tag. Prover, verifier, level/root proof
-shape, proof-size calculation, transcript schedule, and allocation caps all consume this
-same plan. `DirectSetup` and `RecursiveSetupOffload` are two small semantic composers over
-one range-product implementation and one provider toolkit, not two range engines.
-Nested composer plans are privately constructed checked views. They never store another
-`DigitRangePlan`, `WitnessDomain`, round count, or independently supplied degree; all such
-values are derived from the parent.
-
-### `WitnessDomain`: one flat address contract
-
-Add one checked domain/layout authority, conceptually:
-
-```rust
-pub struct FlatBooleanDomain {
-    live_len: usize,
-    domain_len: NonZeroPowerOfTwo,
-    num_vars: usize,
-    variable_order: LsbFirst,
-}
-
-pub struct WitnessDomain {
-    flat: FlatBooleanDomain,
-    segments: Vec<WitnessSegment>,
-    transcript_point_map: TranscriptPointMap,
-}
-
-pub struct WitnessSegment {
-    flat_range: Range<usize>,
-    local_ring_dim: Option<usize>,
-    row_family: Option<RelationRowFamily>,
-}
-```
-
-Requirements:
-
-- `domain_len = checked_next_power_of_two(live_len)`;
-- the protocol address is the raw physical coefficient index in `0..domain_len`;
-- addresses `live_len..domain_len` are exact public zeroes for the wire witness;
-- segments are sorted, nonoverlapping, within `live_len`, and use checked local embeddings;
-- production bind order is fixed to raw address bits `0, 1, ...` (LSB first);
-- `transcript_point_map` explicitly maps existing challenge draw slots to those physical
-  coordinates and reproduces the current homogeneous order; no caller slices or reorders
-  a point by convention;
-- local ring dimensions belong to segments/row families, not to the protocol domain;
-- a segment carries only the identity of its row family; every piece of row-family
-  algebra (weights, denominators, exponent patterns) stays in the relation plans, so
-  `WitnessDomain` never grows relation semantics through the back door;
-- current uniform layouts are the special case, not a separate public API.
-
-Additive range obligations are a future design constraint, not a production field in this
-series. The current constructor defines every live compact-witness address as common
-balanced range; Stage 1 and Stage 2 therefore refer to the same unmasked pointwise
-`range_image(digit_witness)` table. A future compressed negative-binary segment also has the common
-obligation and may add a restricted-negative-binary obligation. Do not accept a live
-field/unchecked address in this digit-witness domain until a separate feature adds explicit
-obligation metadata and implements the support-masked Stage 1/Stage 2 construction
-described below. This matches the paper and avoids the stale design error of removing
-negative-binary digits from the common range proof.
-
-Stage 1 receives only the compact witness, `DigitRangePlan`, `FlatBooleanDomain`, and
-the ordered equality point. It must not receive `live_x_cols`, `col_bits`, or `ring_bits`.
-
-Migration is atomic at the full Stage 2 boundary. Packets 2-5 add only the
-`FlatBooleanDomain` plus a checked transcript-slot-to-physical-coordinate map local to
-Stage 1. They do not add segmented `WitnessDomain`, replace `RingSwitchOutput`, or
-duplicate the public x/y handoff. Packet 6 introduces the complete `WitnessDomain`,
-replaces that raw handoff, and deletes the public x/y constructors in the same packet. No
-adapter or dual geometry may survive a packet boundary.
-
-### Exact live prefixes and nonzero derived tails
-
-Introduce one internal checked table mechanic, equivalent to:
-
-```rust
-pub struct ExactPrefixTable<T> {
-    domain_len: NonZeroPowerOfTwo,
-    explicit: Vec<T>,
-    default: T,
-}
-```
-
-Its semantics are `explicit[i]` for `i < explicit.len()` and `default` otherwise. Adjacent
-affine fold:
-
-- handles one odd boundary pair against `default`;
-- materializes `ceil(explicit.len() / 2)` outputs;
-- halves `domain_len`;
-- keeps `default` unchanged because folding `(default, default)` is constant;
-- returns errors on invalid sizes instead of panicking.
-
-This is a kernel mechanic, not a vague protocol-wide `TailPolicy`.
-
-For every linear relation or witness-reduction term, the witness default is zero, so the
-omitted all-default suffix contributes zero. For derived range terms:
-
-- `range_image` defaults to zero;
-- a quartic leaf defaults to its polynomial evaluated at paired-digit value zero;
-- only the leaf containing the zero root necessarily defaults to zero;
-- a product node defaults to the product of its child defaults;
-- an interstage-randomized leaf or parent batch generally has a nonzero default.
-
-Therefore a truncated scan must analytically add the fully implicit suffix. Add a checked
-`SplitEqSuffixMass` helper that consumes the actual remaining `GruenSplitEq` tables. If
-the first omitted pair index is `P`, current loops index
-`j = j_high * num_first + j_low`; compute:
-
-```text
-h0 = P / num_first
-l0 = P % num_first
-
-mass_from(P) =
-    e_second[h0] * sum(e_first[l0..])
-  + sum(e_second[h0 + 1..]) * sum(e_first[..])
-```
-
-with the aligned-boundary and end cases checked explicitly. Cache prefix/suffix sums for
-the current round. `SplitEqSuffixMass` operates only on
-`GruenSplitEq::remaining_eq_tables()`; it must not include `current_scalar` or the current
-linear equality factor, which are owned by the eq-factored driver. The remaining tables
-each sum to one by the current `GruenSplitEq` invariant, so `1 - prefix_mass` is
-algebraically valid, but prefer the explicit formula above because its indexing and
-boundary cases are auditable. Multiply the omitted equality mass by the constant local
-round polynomial produced by the derived lane defaults exactly once.
-
-Property-test `ExactPrefixTable` and suffix mass against fully padded materialization for
-every short live length, odd/even boundaries, random nonzero defaults, and every bind.
-
-## Stage 1 prover design
-
-### Canonical compact source
-
-The prover keeps the original `Arc<[i8]>` for the complete Stage 1/Stage 2 lifetime. The
-ring-switch decomposition is the authority for the balanced-digit invariant: it emits
-`i8` digits in `[-b/2, b/2)`. Stage 1 is honest-prover internal code, not a verifier input
-boundary, so it must not rescan the witness merely to validate that semantic invariant a
-second time. `CompactDigitSource` checks only layout/length ownership already required at
-the Stage 1 boundary and documents the producer precondition. Its hot class accessor is
-infallible, with a debug assertion rather than a `Result` branch per load.
-
-Performance validation is mandatory; duplicate semantic digit validation is not. Every
-representation/kernel choice below is provisional until the complete-phase CI benchmarks
-and coarse-grained trace attribution agree on the winner.
-
-At each address, derive `RangeImageClass` using `k = w` for nonnegative `w` and
-`k = -w - 1` otherwise. Treat every wire-padding address as class zero without storing
-it. Implement and measure both direct class conversion from the original `i8` slice and
-one compact preconverted class buffer. If the buffer wins the complete prover for a
-specific basis, build it in the existing source/setup pass; otherwise retain direct
-conversion. Exactly one production representation remains for each statically dispatched
-basis path, with no runtime knob or duplicate owner.
-
-Do not consume and return the `Arc` through a `prove_recover_w` ownership dance. The range
-prover borrows or cheaply clones the shared `Arc`. Direct Stage 1 outputs its range proof
-and `range_image_eval`. Recursive-offload Stage 1 outputs `DigitRangeRelationProof`, one
-`RangeRelationPoint`, `range_image_eval`, and `digit_witness_eval`.
-
-### Per-class nodes and the selected ordered class-pair kernel
-
-For each substage, derive a small field-valued node table from the plan:
-
-```text
-node_value[class][lane]
-```
-
-where a lane is one immediate range-product child of the current substage. The largest
-class count is 32 and the largest product-stage lane count is 8. A class-indexed table may
-produce only range-derived values: `digit` and `-digit-1` share one `RangeImageClass` but
-have different signed witness values. The recursive joint leaf therefore gets
-`range_image` from the class table and loads the signed `digit_witness` lane directly from
-`CompactDigitSource`.
-
-Build only the current substage's table. The table's default lane record is the same
-`node_value[0]`, because padding means `digit_witness = 0`, hence
-`RangeImageClass = 0`. This node-by-class representation is also the canonical source for
-materializing post-challenge field lanes.
-
-After the active interstage weights are known, build
-
-```text
-round0_coefficients[left_class][right_class][coefficient]
-```
-
-with the parent weights already combined. The round-zero address scan then performs only
-class indexing and equality-weighted coefficient accumulation.
-
-This is the selected production kernel for every current LB4/LB5/LB6 product and leaf
-substage. The alternative streaming node-evaluation kernel loaded two node rows and
-constructed the affine child-product coefficients inside every address iteration. It is
-not retained in production, behind a selector, or as a parallel implementation. The node
-table itself is not the loser: it remains the single source of truth used to construct the
-ordered-pair coefficients and post-challenge folded lane values.
-
-The selection evidence was collected on 2026-07-19 between node-evaluation head
-`91d05acaf241f562c3d44fb796f71c68f1d61936` and its ordered-pair child
-`999678ce21af0a758816ccce32c6430e4fe3b999`, using CI-pruned release builds on an Apple
-M4. Ordered pairs won all 18 dedicated `2^18` LB4/LB5/LB6 cells: full and three-quarter
-live prefixes under uniform, zero-heavy, and alternating-endpoint digits. Improvements
-ranged from 19.78% to 36.36%, with a 25.78% median and non-overlapping 95% confidence
-intervals in every cell. Pair-table construction was under 0.1% of the traced range-prover
-total. The verifier and protocol were unchanged. These measurements settle the current
-node-versus-pair choice; reopening it requires new evidence against a materially changed
-representation or machine architecture, not retention of the old kernel.
-
-The second selection round compared ordered-pair baseline
-`999678ce21af0a758816ccce32c6430e4fe3b999` directly with optimized one-round head
-`b9e44a50` on the same Apple M4 and CI-pruned parallel fp128 build. The candidates were
-interleaved per cell with 20 Criterion samples, a one-second warm-up, and at least three
-seconds of measurement. The optimized kernel won all 18 `2^18` LB4/LB5/LB6 cells over
-the same live-prefix and digit-distribution matrix. Point-estimate improvements ranged
-from 17.36% to 38.12%, with a 30.50% median and 30.13% geometric mean; optimized and
-baseline 95% intervals were disjoint in every cell. Binary SHA-256 digests were
-`1cf30630702d233b8217675422514df6e1748b91e36fdca827cb94f2ab5f7d00` for the baseline
-and `72135bd577eba2b2ed4d067299202a0f5c1a31d7d4b996faae313012d7d0341c` for the
-optimized head. The fixed protocol-epoch digest test remained unchanged.
-
-| Basis | Live prefix | Digits | Ordered-pair baseline | Optimized one-round | Delta |
-|---:|---|---|---:|---:|---:|
-| 16 | full | uniform | 9.279 ms | 6.436 ms | -30.63% |
-| 16 | full | zero-heavy | 9.638 ms | 6.579 ms | -31.74% |
-| 16 | full | alternating endpoints | 10.271 ms | 6.554 ms | -36.19% |
-| 16 | three-quarters | uniform | 7.892 ms | 5.471 ms | -30.68% |
-| 16 | three-quarters | zero-heavy | 8.022 ms | 5.633 ms | -29.78% |
-| 16 | three-quarters | alternating endpoints | 8.487 ms | 6.093 ms | -28.20% |
-| 32 | full | uniform | 14.256 ms | 11.781 ms | -17.36% |
-| 32 | full | zero-heavy | 16.432 ms | 10.431 ms | -36.52% |
-| 32 | full | alternating endpoints | 16.217 ms | 10.738 ms | -33.79% |
-| 32 | three-quarters | uniform | 12.931 ms | 9.989 ms | -22.75% |
-| 32 | three-quarters | zero-heavy | 12.777 ms | 9.380 ms | -26.59% |
-| 32 | three-quarters | alternating endpoints | 15.505 ms | 10.237 ms | -33.98% |
-| 64 | full | uniform | 33.476 ms | 23.954 ms | -28.44% |
-| 64 | full | zero-heavy | 30.421 ms | 18.824 ms | -38.12% |
-| 64 | full | alternating endpoints | 27.308 ms | 20.291 ms | -25.70% |
-| 64 | three-quarters | uniform | 22.927 ms | 17.755 ms | -22.56% |
-| 64 | three-quarters | zero-heavy | 23.240 ms | 15.012 ms | -35.40% |
-| 64 | three-quarters | alternating endpoints | 26.411 ms | 18.390 ms | -30.37% |
-
-For fp128, the selected ordered-pair payloads are small:
-
-| Substage | Ordered pairs | Round coefficients | Approximate payload |
-|---|---:|---:|---:|
-| LB4 two-lane root | `8^2` | 3 | 3 KiB |
-| LB5 four-lane root | `16^2` | 5 | 20 KiB |
-| LB6 two-lane root | `32^2` | 3 | 48 KiB |
-| LB6 eight-lane second product | `32^2` | 5 | 80 KiB |
-| LB6 batched quartic leaf | `32^2` | 5 | 80 KiB |
-
-Record extension-field payloads in field elements as well as bytes; do not assume a
-16-byte element outside fp128. Interstage weights are sampled before constructing the
-next substage's candidate table, so combine them once in the ordered-pair coefficients
-rather than multiplying dynamically in the hot scan.
-
-The compact digits themselves never become a full field table. Before the first
-challenge, a digit is an `i8`, its class needs at most five bits, and its range image is at
-most `31 * 32 = 992` for LB6. Post-challenge lanes must be field elements because
-`left + r * (right - left)` is arbitrary in the challenge field. Integer lookup candidates
-are basis-specific experiments only: quartic endpoints reach about 40 bits at LB6, an
-LB6 four-leaf node reaches roughly 158 bits, and round coefficients exceed 300 bits.
-Never force the generic path through `u64`/`u128` or an unproved multi-limb accumulator.
-
-### First implementation: one-round streaming
-
-Every high-basis product substage follows this lifecycle:
-
-1. **Round 0 compact scan.** At source construction, encode each adjacent class pair as
-   one `u16` table index, using class zero at an odd live-prefix boundary. Load one compact
-   index and then the already-batched ordered class-pair coefficients. Accumulate the
-   current eq-factored round in split-equality blocks, applying the outer equality weight
-   once per block rather than once per address.
-2. **Tail accounting.** Add fully implicit pair contributions with
-   `SplitEqSuffixMass`; do not scan or allocate the padded suffix.
-3. **Challenge 0.** After the transcript supplies `r_0`, build the quadratic-size folded
-   pair table and rescan the compact `u16` pair indices. Materialize each folded child-lane
-   record with one lookup.
-4. **Address-major state.** Store
-   `values[folded_address * LANES + lane]`, logically `Vec<[E; LANES]>`, with the
-   lane-default record carried separately by `ExactPrefixTable`.
-5. **Later rounds.** For every round, scan adjacent explicit lane records in split-equality
-   blocks, evaluate the fixed degree-2 or degree-4 affine product with its direct formula,
-   add the fully implicit suffix with the current `SplitEqSuffixMass` and lane defaults,
-   and fold the lane records in place through `HasOptimizedFold`.
-6. **End of substage.** Read the final child claims in canonical plan order, absorb them,
-   derive interstage batching weights, and free the lane buffer before constructing the
-   next substage.
-7. **Next substage.** Rescan the original compact classes at its new equality point. Never
-   retain the previous tree layer as a shortcut.
-
-### Tracing and performance attribution contract
-
-Production tracing is mandatory and is the primary tool for attributing whole-prover
-performance to the range pipeline. Instrument phase owners and round boundaries, never
-the address, pair, lane, coefficient, lookup, or Rayon-item hot loops. A representative
-Perfetto trace must remain navigable at the `2^22` manual-profile domain instead of
-emitting millions of events.
-
-The streaming cutover replaces the eager implementation's profiling vocabulary with one
-canonical span tree:
-
-```text
-digit_range_prove
-  digit_range_prepare_compact_source
-  digit_range_product_substage {stage_index, arity, lane_count}
-    digit_range_build_node_table
-    digit_range_build_pair_coefficients
-    digit_range_initial_round
-    digit_range_materialize_folded_lanes
-    digit_range_later_round {round}
-    digit_range_fold_lanes {round}
-  digit_range_polynomial_leaf
-    digit_range_build_pair_coefficients
-    digit_range_initial_round
-    digit_range_materialize_range_image
-    digit_range_later_round {round}
-    digit_range_fold_range_image {round}
-```
-
-Each substage span records basis, explicit live length, padded domain length, selected
-kernel strategy, serial/parallel mode, and current explicit-row count where applicable.
-Counters for allocated field elements, implicit suffix addresses, compact bytes scanned,
-and materialized rows are emitted once at the owning phase boundary, not updated through
-per-pair tracing calls. The same span names own Criterion phase attribution and Perfetto
-inspection; do not add timing wrappers or aliases around them.
-
-The selected two-round specialization adds only owning phase spans:
-
-```text
-digit_range_build_folded_pair_table
-digit_range_prepare_deferred_second_round
-digit_range_build_second_round_quartet_table  # LB4 only
-digit_range_materialize_after_two_rounds
-```
-
-Do not trace individual table entries, quartets, lanes, coefficients, or rescan items.
-Rename the canonical materialization owner at cutover instead of retaining an alias span.
-
-For every future kernel decision, capture both:
-
-- Criterion/CI evidence for complete table construction, round-zero scan,
-  materialization, complete substage, and whole prover; and
-- a representative Perfetto trace showing construction cost, parallel occupancy,
-  cache-sensitive phase duration, fold tail, and absence of accidental extra scans.
-
-Tracing selects where time is spent and catches serialization/parallelism pathologies;
-the ratified benchmark confidence interval decides the winner. The node-versus-pair
-decision above is the first completed application of this rule. Instrumentation overhead
-must be measured once with tracing enabled/disabled on a representative cell, and traces
-from a build that materially changes the winner ordering are invalid for selection.
-
-Packets 4-5 land the range-only leaf behind its byte-identical oracle. Packet 7 retains it
-for direct setup and adds the recursive-offload **range-and-relation leaf composer**
-without changing the preceding product layers:
-
-1. Combine all quartic leaf coefficient arrays with the interstage weights.
-2. Sample `range_relation_batch_challenge` only after the leaf input claim and
-   `linear_relation_claim` are transcript-bound.
-3. Compute round 0 directly from compact digit pairs. Accumulate the anchored leaf
-   polynomial over the virtual range-image table and the linear relation/trace term over
-   the digit witness in the same pass.
-4. After `r_0`, materialize exactly two folded lanes at `N/2`:
-   `range_image` and `digit_witness`. Fold the `RelationWeight` provider through
-   its own closed representation.
-5. Use one standard round kernel thereafter. The range term has degree
-   `leaf_degree + 1` because of its equality factor; the relation term has degree 2.
-   Account analytically for the nonzero implicit range suffix; the padded linear relation
-   suffix is zero.
-6. Return `range_image_eval` and `digit_witness_eval` at the same
-   `RangeRelationPoint`.
-
-The standard joint leaf cannot blindly reuse the equality-factored suffix rule. For an
-implicit padded pair, `digit_witness = 0`, so the relation contribution is zero, while the
-range contribution is:
-
-```text
-current_eq_scalar
-  * current_eq_linear(t)
-  * remaining_eq_suffix_mass
-  * LeafBatch(range_image(0)).
-```
-
-The joint-leaf caller may reuse the remaining-table calculation from
-`SplitEqSuffixMass`, but it must restore the current equality scalar and current linear
-factor exactly once. Differentially test both points `t=0,1`, odd live prefixes, and
-nonzero randomized `LeafBatch(0)`.
-
-The earlier product layers keep the current topology, `EqFactoredUniPoly` normalization,
-`range_product_batch_challenge` samples, and child-claim order. Only the recursive-offload final leaf
-changes wire format at Packet 7: LB2 uses a degree-3 standard message; LB3 and every
-quartic tree leaf use a
-degree-5 standard message. This one-coefficient-per-round increase is smaller than a
-separate relation sumcheck and preserves the high-basis product tree that the paper's
-direct combined polynomial would discard.
-
-Expected peak current-substage table occupancy is:
-
-| LB | Current | Mandatory one-round target | Later two-round target |
-|---:|---:|---:|---:|
-| 4 | `3N` | `N` (two lanes at `N/2`) | `N/2` |
-| 5 | `5N` | `2N` (four lanes at `N/2`) | `N` |
-| 6 | `11N` | `4N` (eight lanes at `N/2`) | `2N` |
-
-Small lookup tables, split-equality tables, and proof output must be reported separately
-from these digit-range table counts.
-The final joint subproof occupies `N` field elements for its two folded witness lanes.
-Report relation-provider state separately and together: the production joint-leaf peak is
-`N + provider_state`, normally `N + N/g + fringes`. Add a combined peak gate; LB4 is the
-sensitive cell because its range-only target is already `N`.
-
-### Two-round deferral: measured specialization, not a second engine
-
-Organize the one-round lifecycle so a later measured two-round specialization can replace
-the initial kernel of equality-factored product layers and the direct range-only leaf
-without changing their proof API. Do not add a runtime
-`defer_rounds` field, public knob, or dormant two-round implementation in the baseline
-packet. The first implementation materializes after one challenge.
-
-A product-layer two-round kernel preserves the ordinary transcript order and wire messages
-
-```text
-q_0(X) = (1 - tau_1) H(X, 0) + tau_1 H(X, 1)
-q_1(Y) = H(r_0, Y),
-```
-
-but materializes field-valued lanes at `N/4` only after `r_1`. It does not merge transcript
-rounds: the prover must send `q_0`, receive `r_0`, send `q_1`, and receive `r_1` in the
-existing order. The optimization is algebraically independent of x/y storage and remains
-proof-byte-identical. It attacks a larger cost than the ordered-pair kernel alone by
-removing the `N/2` lane table, its next-round field scan, and its `N/2 -> N/4` field fold.
-
-There are two admissible implementation families:
-
-1. **Full bivariate aggregation.** Scan logical quartets and accumulate a global
-   bivariate local polynomial `H(X,Y)`. Derive `q_0` and, after `r_0`, `q_1` from that
-   aggregate, then rescan compact classes after `r_1` to materialize `N/4` lanes. This
-   avoids the second message scan but performs more coefficient work in the first scan.
-2. **Challenge-staged factorized rescan.** Produce `q_0` with the selected ordered-pair
-   coefficient kernel. After `r_0`, construct
-
-   ```text
-   folded_node_pair[r_0][left_class][right_class][lane]
-   ```
-
-   from the canonical node rows. Rescan compact quartets: two lookups provide the two
-   `r_0`-folded lane rows, from which the normal `q_1` product coefficients are computed.
-   After `r_1`, rescan compact quartets once more and interpolate those rows directly into
-   the `N/4` output. This trades cheap compact-source reads for eliminating wide
-   field-valued reads, writes, and folds. The table has `classes^2 * lanes` field elements,
-   not `classes^4 * coefficients`; at fp128 it is 128 elements for the LB4 root, 1,024 for
-   the LB5 root, and 8,192 (about 128 KiB) for LB6's eight-lane product stage.
-
-A completely one-pass implementation is not available under the current transcript
-causality: `r_0` does not exist until after `q_0`, and `r_1` does not exist until after
-`q_1`. Storing per-quartet intermediates merely recreates the field state that deferral is
-intended to remove. Prefer bounded global round data plus compact rescans unless a measured
-alternative proves otherwise.
-
-This derivation does not automatically apply to the recursive standard joint leaf. A
-joint-leaf two-round optimization must separately derive the current equality factors,
-signed witness lane, and relation-provider bivariate contribution, then pass a complete
-joint-leaf benchmark. It is not a Packet 5 specialization by inheritance.
-
-`H` contains only the remaining-variable equality tables and the local batched product.
-It excludes `current_scalar` and the current/next linear equality factors, which remain
-owned by the eq-factored driver. Fully implicit quartets are added analytically with
-equality mass; partial quartets load missing corners from the per-lane default.
-
-| Basis | Classes | Four-class keys |
-|---:|---:|---:|
-| 16 | 8 | 4,096 |
-| 32 | 16 | 65,536 |
-| 64 | 32 | 1,048,576 |
-
-A degree-4 bivariate table needs up to 25 field coefficients per key. Therefore:
-
-- benchmark a generated/static full bivariate table only for LB4; its degree-2 root needs
-  nine coefficients per key, about 576 KiB at fp128;
-- benchmark the challenge-staged factorized rescan for LB5/LB6, beginning with LB6's
-  eight-lane second product stage and then the LB5 root;
-- benchmark on-the-fly full bivariate aggregation only against that factorized design,
-  never as the assumed default;
-- reject full four-class LUTs for LB5/LB6;
-- select per substage rather than imposing one basis-wide deferral policy;
-- delete any two-round experiment that fails its complete-substage and end-to-end gates.
-
-The opportunity is topology-dependent. LB6's eight-lane second product stage eliminates
-the widest `N/2` field state, while a one-lane scalar leaf saves too little field traffic
-to repay two factorized compact rescans. Do not infer one substage's result for another.
-
-#### Selected two-round kernels
-
-The measured production policy is fixed by topology; there is no public selector,
-planner-visible mode, or dormant alternate engine:
-
-| Topology | Selected initial-round kernel | State materialized after `r_1` |
-|---|---|---:|
-| LB4 two-lane product root | challenge-dependent 4,096-key quartet-coefficient table | two lanes at `N/4` (`N/2` elements) |
-| LB4 scalar range leaf | challenge-dependent 4,096-key quartet-coefficient table | one lane at `N/4` |
-| LB5 four-lane product root | factorized folded-pair rescan | four lanes at `N/4` (`N` elements) |
-| LB5 scalar range leaf | optimized one-round ordered-pair kernel | one lane at `N/2` |
-| LB6 two-lane product root | factorized folded-pair rescan | two lanes at `N/4` (`N/2` elements) |
-| LB6 eight-lane second product | factorized folded-pair rescan | eight lanes at `N/4` (`2N` elements) |
-| LB6 scalar range leaf | optimized one-round ordered-pair kernel | one lane at `N/2` |
-
-LB4 does not use the proposed full bivariate table. It sends ordinary `q_0`, receives
-`r_0`, builds a challenge-dependent univariate `q_1` coefficient table indexed by the
-two compact ordered-pair IDs in each quartet, and aggregates `q_1` by lookup. This keeps
-the affordable `8^4 = 4,096` key space while avoiding nine bivariate coefficients per
-product key. After `r_1`, it rescans the same compact quartet IDs and materializes the
-`N/4` field state directly. LB5/LB6 reject this `classes^4` table and compute `q_1` from
-two rows of their `classes^2 * lanes` folded-pair table instead.
-
-For LB5/LB6, the scalar range-leaf deferral was measured separately and lost: keep that
-leaf on the optimized one-round path. Removing it from the all-substage candidate improved
-every measured LB5/LB6 cell by approximately 9%--26%. This is why the production decision
-is per topology rather than one boolean per basis.
-
-Selection evidence was collected on 2026-07-19 between optimized one-round head
-`b9e44a5095160889f2156d592511a027589cb2fd` and two-round head `7b94cb8b` on the same
-Apple M4, with feature-pruned parallel fp128 release binaries, `RAYON_NUM_THREADS=8`, 20
-Criterion samples, a one-second warm-up, and five-second target measurement. The matrix
-uses the same `2^18` full/three-quarter live prefixes and uniform, zero-heavy, and
-alternating-endpoint digit distributions as the one-round selection. Point-estimate
-improvements were 4.07%--27.72% for LB4 (12.2% geometric mean), 16.06%--33.96% for LB5
-(the 33.96% cell had a visibly wide baseline interval; about 18% excluding it), and
-13.74%--26.22% for LB6 (19.9% geometric mean). The fixed proof/transcript epoch remained
-byte-identical.
-
-| Basis | Live prefix | Digits | Optimized one-round | Selected two-round | Delta |
-|---:|---|---|---:|---:|---:|
-| 16 | full | uniform | 6.906 ms | 4.991 ms | -27.72% |
-| 16 | full | zero-heavy | 7.094 ms | 6.271 ms | -11.60% |
-| 16 | full | alternating endpoints | 7.075 ms | 6.337 ms | -10.43% |
-| 16 | three-quarters | uniform | 5.779 ms | 5.420 ms | -6.21% |
-| 16 | three-quarters | zero-heavy | 5.990 ms | 5.312 ms | -11.32% |
-| 16 | three-quarters | alternating endpoints | 5.890 ms | 5.650 ms | -4.07% |
-| 32 | full | uniform | 9.657 ms | 8.106 ms | -16.06% |
-| 32 | full | zero-heavy | 9.706 ms | 7.987 ms | -17.71% |
-| 32 | full | alternating endpoints | 9.915 ms | 7.923 ms | -20.08% |
-| 32 | three-quarters | uniform | 7.842 ms | 6.452 ms | -17.73% |
-| 32 | three-quarters | zero-heavy | 9.746 ms | 6.437 ms | -33.96% |
-| 32 | three-quarters | alternating endpoints | 8.073 ms | 6.568 ms | -18.64% |
-| 64 | full | uniform | 20.183 ms | 14.892 ms | -26.22% |
-| 64 | full | zero-heavy | 19.701 ms | 14.880 ms | -24.47% |
-| 64 | full | alternating endpoints | 19.314 ms | 15.304 ms | -20.76% |
-| 64 | three-quarters | uniform | 14.859 ms | 12.258 ms | -17.50% |
-| 64 | three-quarters | zero-heavy | 14.713 ms | 12.692 ms | -13.74% |
-| 64 | three-quarters | alternating endpoints | 15.304 ms | 12.889 ms | -15.78% |
-
-### Selected composable one-round optimizations
-
-The optimized ordered-pair branch retains the following improvements as one canonical
-one-round implementation. They also compose with a later challenge-staged two-round
-candidate:
-
-1. **Compact ordered pair indices.** Convert each adjacent high-basis digit pair once into
-   a `u16` ordered-class table index. Every substage round-zero scan and first-challenge
-   materialization rescan loads that compact index directly. Retain the original `i8`
-   witness for the later relation path; the pair-index buffer is derived cache state, not
-   a second witness authority.
-2. **Equality-blocked deferred accumulation.** Iterate the split-equality domain in
-   outer-weight blocks. Hold the outer equality weight once, accumulate
-   `inner_weight * round_coefficient` into bounded delayed-product accumulators, reduce
-   once per coefficient at the block boundary, and apply the outer weight once. Use that
-   delayed path only when `DELAYED_PRODUCT_SUM_IS_EXACT`; fp128 and every other field that
-   does not opt in use the same block factorization with canonical inner accumulation.
-   This is one accumulator function with a contract-selected arithmetic branch, not two
-   prover engines.
-3. **Challenge-dependent folded-pair materialization.** After `r_0`, construct the same
-   quadratic-size `folded_node_pair` table described above. In the one-round lifecycle,
-   materialize the `N/2` lane state with one lookup per compact class pair instead of two
-   node-row loads and per-lane interpolation. Use the field's precomputed fold context for
-   table construction and all later in-place folds.
-4. **Fixed-degree affine arithmetic.** Evaluate the only production product arities with
-   direct quadratic and quartic formulas. The quartic path multiplies two explicit
-   quadratics; the final range leaf uses the closed-form degree-four affine composition.
-   Keep the generic recurrence only as a test oracle, never in the production hot loop.
-
-Do not add a fused fold-next-scan. A follow-up experiment tested the strongest plausible
-form for the current layout on LB5/LB6: allocate the required `N/4` output only once with
-uninitialized slots, materialize each post-`r_1` row pair, write those two rows, and compute
-the next product polynomial from the still-register-resident values. The candidate retained
-the selected equality-block decomposition, `DELAYED_PRODUCT_SUM_IS_EXACT` arithmetic
-branch, implicit-suffix mass, parallel block boundaries, and transcript bytes; only the
-next polynomial was cached for the following sum-check call. Thus the experiment did not
-replace the saved read with a padding-prefill pass or forgo an existing accumulator
-optimization.
-
-The faithful candidate did not win. On fresh one-thread complete-prover measurements,
-LB5 full/uniform moved from 22.546 ms to 22.821 ms (+1.22%) and LB6 full/uniform from
-40.333 ms to 40.946 ms (+1.52%). A six-thread paired pass was statistically tied
-(LB5 +1.27%, LB6 -1.91%); eight-thread runs were noisier and produced no repeatable
-candidate win. The likely explanation is that the separately materialized quarter-state
-is still cache-hot: its immediate sequential next-round scan is cheap, while interleaving
-compact-index gathers, row stores, fixed-degree arithmetic, and equality accumulation
-slightly worsens the loop. The production diff therefore retains separate materialization
-and next-round computation and does not add cached-round state, an unsafe initialization
-boundary, or a second accumulator implementation. Reconsider this fusion only after a
-material layout or working-set change makes the quarter-state scan demonstrably
-memory-bound. These arithmetic and lifecycle changes stay inside the canonical product
-stage; they do not create wrapper APIs, duplicate state owners, persistent runtime
-selectors, or basis-named modules.
-
-### Fixed-lane kernel, not basis-specific module families
-
-Use one fixed-lane product kernel instantiated through a small explicit dispatch:
-
-| LB | Substage | Lanes | Degree |
-|---:|---|---:|---:|
-| 4 | root | 2 quartic children | 2 |
-| 5 | root | 4 quartic children | 4 |
-| 6 | root | 2 degree-16 children | 2 |
-| 6 | second product | 8 quartic children, two batched parents | 4 |
-| 4/5/6 | leaf | 1 `range_image` lane | 4 |
-
-The specialization is a match arm, constants, and a fixed array width. Do not create
-`lb4.rs`, `lb5.rs`, `lb6.rs`, a trait per arity, or wrapper constructors.
-
-All high-basis pair tables are field-valued in the first implementation. Exhaustive
-integer analysis of the current topology gives:
-
-| Quantity | b=16 | b=32 | b=64 |
-|---|---:|---:|---:|
-| maximum `range_image` | 56 | 240 | 992 |
-| maximum quartic-leaf endpoint | 23 bits | 32 bits | 40 bits |
-| maximum one-round root coefficient | 44 bits | 123 bits | 303 bits |
-| maximum two-round root coefficient | 46 bits | 127 bits | 305 bits |
-
-In particular, a four-leaf LB6 node reaches roughly 158 bits and LB6 root coefficients
-exceed 300 bits. Consequences:
-
-- never build LB5/LB6 parent or pair LUTs in `i64`/`i128`;
-- never use a giant generic integer parent LUT;
-- only LB4 may later benchmark a narrow unsigned/unreduced table;
-- the randomized final leaf batch is field-valued even though individual leaf
-  coefficients fit small integers.
-
-Deferred reduction must have a documented bound. `HasUnreducedOps` does not expose a
-universal accumulator capacity, so the selected implementation reduces at every
-split-equality inner-block boundary and uses delayed products only for fields whose
-`DELAYED_PRODUCT_SUM_IS_EXACT` contract covers those small inner products. Every other
-field uses canonical accumulation. Never infer safety from the domain size or a release
-build's lack of overflow.
-
-### Per-basis required work
-
-#### LB4 / basis 16
-
-- Eight `RangeImageClass` rows.
-- Root product: two child lanes, degree 2.
-- Use the selected ordered class-pair coefficient round-zero kernel; do not restore
-  streaming node evaluation. Retain the selected compact pair indices, blocked
-  accumulation, folded-pair table, and direct quadratic product formula.
-- Retain the measured two-round 4,096-key challenge-dependent quartet-coefficient table
-  for both the product root and scalar range leaf. Do not add the larger full-bivariate
-  representation or the losing factorized LB4 variant beside it.
-- A later narrow-coefficient/unreduced experiment must beat this selected two-round path,
-  not the superseded one-round baseline, and must replace rather than wrap it.
-- Keep the existing two-stage proof topology. A direct degree-8 proof is a separate
-  protocol experiment and may not replace this path without independent proof-byte and
-  verifier pricing.
-
-#### LB5 / basis 32
-
-- Sixteen `RangeImageClass` rows.
-- Root product: four child lanes, degree 4.
-- Use the selected field-valued ordered class-pair coefficient kernel. The measured
-  streaming node-evaluation loser stays deleted. Retain the selected compact pair indices,
-  blocked accumulation, folded-pair table, and direct quartic product formula.
-- Do not use the technically-fitting but fragile signed-`i128` coefficient path.
-- Retain challenge-staged factorized two-round deferral for the four-lane product root.
-- Keep the scalar range leaf on the optimized one-round path; its measured two-round
-  factorized variant is deleted.
-- Do not retain a two-round four-class LUT.
-
-#### LB6 / basis 64
-
-- Thirty-two `RangeImageClass` rows.
-- Root substage: two child lanes, degree 2; child values are field values.
-- Second product substage: eight leaf lanes grouped into two weighted arity-4 parents.
-- Build challenge-dependent combined round data only after the interstage weights exist.
-- Final leaf substage: one field-valued batched quartic over `range_image`.
-- Use ordered class-pair field coefficients for the root, second product, and final leaf;
-  do not retain the measured node-evaluation alternative.
-- Retain compact pair indices, blocked accumulation, challenge-dependent folded-pair
-  materialization, and direct degree-2/degree-4 formulas for every applicable substage.
-- Retain challenge-staged factorized two-round deferral on both the two-lane root and the
-  eight-lane second product.
-- Keep the scalar range leaf on the optimized one-round path; its measured two-round
-  factorized variant is deleted rather than hidden behind a substage selector.
-- Reject all fixed-width integer parent arithmetic and all full two-round LUTs.
-
-#### LB2/LB3 regression path
-
-Move the good compact backend mechanics into the same architecture. LB2 and LB3 retain
-their direct degree-2/degree-4 proof shapes, compact initial rounds, and any measured
-initial-round batching. They must not remain delegated to a second prover type.
-
-The selected low-basis implementation now keeps the compact witness authoritative through
-three initial challenges whenever the ring dimension has at least three variables. The
-existing bivariate prefix still produces the ordinary first two transcript messages. The
-third message is reconstructed directly from compact octets, and the post-`r_2` state is
-materialized at `N/8`; proof bytes, verifier work, and transcript order do not change.
-
-The basis-specific arithmetic is deliberately small and explicit:
-
-| Basis | Third-round compact kernel | Challenge-dependent cache | Post-`r_2` state |
-|---:|---|---|---:|
-| LB2 (`b = 4`) | 256 octet classes, direct quadratic coefficients | `256 x 3` field elements | one lane at `N/8` |
-| LB3 (`b = 8`) | two 256-class folded quads per octet, direct quartic coefficients | 256 folded values plus `256 x 4` Taylor rows | one lane at `N/8` |
-
-For LB3, each Taylor row is exactly
-`[Q(a), Q'(a), Q''(a)/2, Q'''(a)/6]` for
-`Q(s) = s(s-2)(s-6)(s-12)`. Therefore
-`Q(a + dX)` is assembled from the powers of `d` with only three cached-coefficient
-multiplications; the monic `X^4` coefficient is `d^4`. This table is 16 KiB over fp128,
-is rebuilt from the 256 challenge-folded quad values, and is the only LB3-specific cached
-field state. It is not a second witness representation.
-
-Measured against the prefix-aggregation plus exact-affine checkpoint `c2736370`, the
-measured LB3 candidate `fae8d871`, integrated here as `77e7c870`, reduced one-thread
-complete proving from 4.603 ms to 4.014 ms for full/uniform (-12.8%) and from
-3.983 ms to 3.548 ms for
-three-quarter/uniform (-10.9%). The corresponding stable eight-thread measurements were
-2.017 ms to 1.830 ms (-9.3%) and 1.732 ms to 1.627 ms (-6.1%). The measured LB2
-candidate `0cdcdf40`, integrated here as `b74220cf`, reduced the earlier two-round
-baseline from 4.014 ms to 2.417 ms
-(-39.8%) for full/uniform and from 3.566 ms to 2.467 ms (-30.8%) for
-three-quarter/uniform before the shared exact-quadratic improvement.
-
-Keep the following stop decisions explicit; none remains behind a selector or wrapper:
-
-- Do not cache LB2 octet IDs: both attempted layouts more than doubled complete proving.
-- Do not aggregate LB2 third-round octets globally: the histogram path measured about
-  5.5 ms against the approximately 2.4 ms selected scan.
-- Do not fuse post-third materialization with fourth-round computation. The faithful LB3
-  candidate was about 5% slower at full width and tied at three-quarter width; four-lane
-  batching did not change that result. The analogous LB2 candidate also lost.
-- Do not replace the canonical quartic coefficient formula globally with Taylor arithmetic.
-  It was slightly slower; Taylor form wins only when its left-endpoint rows are reused by
-  the 256-class LB3 cache.
-- Do not add adaptive low-diversity octet aggregation. It improved structured one-thread
-  cases but enlarged the hot function and lost badly under parallel execution.
-- Do not retain packed LB3 quad IDs. They improved one-thread complete proving by about
-  4%, but regressed eight-thread proving by about 2.5% after including cache construction.
-- Do not build the full `65,536 x 5` octet-pair coefficient table: its roughly 5 MiB
-  footprint and 65,536-row challenge-time construction exceed the work saved at the
-  current `2^18` domain. Reconsider only after the domain or reuse count materially grows.
-
-The benchmark suite includes a deterministic high-entropy digit distribution in addition
-to uniform, zero-heavy, and alternating endpoints. It prevents future class-sensitive
-optimizations from being selected only because the original fixtures have unusually low
-range-image class diversity.
-
-### Why the production tree is not binary-only
-
-Binary-only looks simpler at the individual multiplication, but it is not simpler at the
-protocol boundary. Every additional tree level is a transcript-dependent sumcheck
-substage: it adds a complete witness scan/fold lifecycle, child absorption, and a fresh
-interstage challenge. Adjacent levels cannot be fused because the lower anchor and batch
-weights do not exist until the upper proof finishes.
-
-Let `L = log_basis`, `n = WitnessDomain::num_vars()`, `N = 2^n`, and `|E|` be one
-serialized extension-field element. There are `Q = 2^(L-3)` quartic leaves for `L >= 3`.
-If only internal nodes become binary while quartic leaves remain, the exact comparison is:
-
-| LB | Planned substages | Binary/quartic substages | Planned child claims | Binary child claims | Proof delta |
-|---:|---:|---:|---:|---:|---:|
-| 2 | 1 | 1 | 0 | 0 | 0 |
-| 3 | 1 | 1 | 0 | 0 | 0 |
-| 4 | 2 | 2 | 2 | 2 | 0 |
-| 5 | 2 | 3 | 4 | 6 | `2|E|` |
-| 6 | 3 | 4 | 10 | 14 | `4|E|` |
-
-The binary/quartic child-claim count is `2(Q - 1) = 2^(L-2) - 2`. Its round messages do
-not shrink: both topologies serialize `2(L - 1)` range coefficients per witness round,
-namely 2, 4, 6, 8, and 10 for LB2 through LB6. Replacing one arity-4 layer by two binary
-layers changes `4` coefficients into `2 + 2`, while adding a full substage at LB5/LB6.
-Its one-round field-state peaks are still `N`, `2N`, and `4N` for LB4/LB5/LB6, but total
-memory traffic and compact rescans increase.
-
-A fully binary tree with quadratic leaves is strictly worse:
-
-| LB | Substages | Child claims | Delta from plan | One-round peak |
-|---:|---:|---:|---:|---:|
-| 2 | 1 | 0 | 0 | -- |
-| 3 | 2 | 2 | `2|E|` | `N` |
-| 4 | 3 | 6 | `4|E|` | `2N` |
-| 5 | 4 | 14 | `10|E|` | `4N` |
-| 6 | 5 | 30 | `20|E|` | `8N` |
-
-Here the child count is `2^(L-1) - 2`. The lower recursive joint-leaf degree would fall
-from 5 to 3, but the added degree-2 product levels conserve the complete recursive round
-message at `2L - 1` coefficients. Thus it buys no round-size reduction, adds child
-scalars, doubles the planned high-basis field-state peak, and requires another soundness
-ledger.
-
-Ignoring topology-invariant envelope and Stage-2 fields, the exact element counts are:
-
-```text
-direct digit-range elements
-  = 2n(L - 1) + child_claims(topology) + 1
-
-recursive digit-range/relation elements
-  = n(2L - 1) + child_claims(topology) + 2.
-```
-
-The final direct scalar is `range_image_eval`; the two recursive scalars are
-`range_image_eval` and `digit_witness_eval`. #311's sumcheck-free terminal is unaffected.
-
-Keep the planned compressed topology:
-
-```text
-LB2  quadratic leaf
-LB3  quartic leaf
-LB4  binary root -> quartic leaves
-LB5  arity-4 root -> quartic leaves
-LB6  binary root -> arity-4 layer -> quartic leaves.
-```
-
-There is still only one product-layer implementation. It accepts the checked private
-arity `2 | 4` from `DigitRangePlan` and contains small private match arms for coefficient
-accumulation; it is not split into binary/quaternary prover types or wrapper functions.
-A disposable benchmark may test a two-round binary kernel—its four-class bidegree `(2,2)`
-has nine coefficients rather than 25 for arity 4—but no binary topology flag, proof
-variant, or losing implementation may land. In particular, LB5's 65,536 keys can already
-mean 589,824 extension elements and LB6's roughly 9.4 million-element table is rejected.
-
-### Stage 1 module end state
-
-The exact filenames may adjust to the crate's conventions, but the responsibility split
-must look like:
-
-```text
-crates/akita-prover/src/protocol/sumcheck/digit_range/
-  mod.rs                  orchestration and product-to-leaf choreography
-  compact_digit_source.rs shared compact digits and infallible RangeImageClass access
-  range_class_tables.rs   plan-derived node rows and selected ordered-pair coefficients
-  class_indexed_state.rs  lifecycle shared by class-indexed product and leaf substages
-  class_indexed_product.rs one fixed-lane product-subcheck implementation
-  class_indexed_range_leaf.rs equality-factored range-polynomial leaf implementation
-  direct_range_leaf.rs    low-basis range-only prover and coefficient precomputation
-  direct_range_leaf/      low-basis live-prefix, sparse-low-variable, and round kernels
-  relation_leaf.rs        recursive standard range-image-and-relation composer
-  initial_rounds.rs       optional measured round batching
-  tests.rs
-
-crates/akita-prover/src/protocol/sumcheck/direct_relation/
-  mod.rs                  direct Stage 2 relation/range-image composition
-  compact_round.rs        one-pass compact signed-digit scan
-  field_round.rs          field fold and optional fused-next scan
-  tests.rs
-
-crates/akita-prover/src/protocol/sumcheck/claim_reduction/
-  mod.rs                  recursive Stage 2 plan dispatch and transcript choreography
-  witness.rs              equality-factored range-image consistency reduction
-  setup_product.rs        recursive setup product over its native domain
-  batched.rs              independent-domain lift and degree-3 batch
-  tests.rs
-
-crates/akita-prover/src/protocol/sumcheck/relation_weight/
-  mod.rs                  prover-side provider state and scan integration
-  providers.rs            closed dense/common-base/sparse fold forms
-  tests.rs
-
-crates/akita-sumcheck/src/
-  pair_scan.rs            checked flat pair/chunk iteration and reduction mechanics
-  exact_prefix.rs         explicit prefix plus default-aware adjacent fold
-  fold_scan.rs            field fold and optional fused-next-scan mechanics
-```
-
-The three shared files contain no Akita range roots, relation terms, transcript accesses,
-stage phase enum, or provider algebra. They are ordinary functions over typed slices and
-closures, not `RoundWitnessSource`/`RoundComposition` protocols. If a primitive cannot be
-specified without Akita semantics, keep it in `digit_range`, `claim_reduction`, or
-`relation_weight`.
-
-No production module may exceed 500 lines and no hot kernel may exceed 160 lines without a
-line-by-line review exception recorded in the implementation PR. `digit_range/mod.rs` is
-expected to approach the cap because it owns orchestration for five topologies; its
-exception is pre-authorized provided the overage is choreography, not equations or a
-second copy of any kernel. Do not game the cap with forwarding helpers or artificial
-splits. The final names should
-say `digit_range`, not preserve `akita_stage1_tree` as a misleading compatibility shell.
-
-Delete in the same series:
-
-- `padded_s_table`;
-- `build_leaf_tables`;
-- `pointwise_product`;
-- `ProductStageLayer` and `build_product_stage_layers`;
-- `Stage1Witness::{Compact,PaddedS}`;
-- `prove_recover_w`;
-- nested `Vec<Vec<Vec<E>>>` tree storage;
-- per-table fold loops;
-- the duplicate `AkitaStage1Prover` type;
-- Stage 1-specific `x_prefix`, `sparse_y`, and old raw geometry constructors;
-- Stage 1 portions of the monolithic `two_round_prefix/common.rs` after their measured
-  replacement lands.
-
-Do not perform a half-way public proof rename before the protocol cutover. Internal
-modules may adopt semantic names after parity, but Packet 7 creates `DigitRangeProof`,
-`DigitRangeRelationProof`, and `range_image_eval` directly and deletes the numeric-stage
-types. Never introduce `final_s_eval` as another transitional name.
-
-## Stage 1 verifier design
-
-The verifier consumes `DigitRangePlan` and a checked ordered point. It does not reconstruct
-roots, tree arities, or child counts.
-
-Required changes:
-
-- validate supported LB, subproof count, every child count, degree, and round count from
-  the plan before allocating or replaying;
-- borrow tau and proof child-claim slices instead of cloning them;
-- stream extension-field child absorption through one semantic helper shared with the
-  prover transcript choreography;
-- batch child claims and leaf coefficients with fixed small arrays;
-- use the plan's field-lifted leaf polynomials and the standard univariate evaluator;
-- dispatch once from `FoldCheckPlan`: direct setup replays the equality-factored range-only
-  leaf; recursive offload replays a standard final leaf of enforced degree 3 or 5 and
-  reads exactly `range_image_eval` followed by `digit_witness_eval` at one checked point;
-- return a consuming `DeferredRangeRelationCheck` for recursive offload and refuse to
-  accept the level until it is closed with the full setup contribution;
-- remove `reorder_stage1_coords`; point ordering comes from `WitnessDomain` and every
-  length/permutation error returns `AkitaError`;
-- place explicit caps on proof substage count, child claims, rounds, and any temporary
-  allocation before reading attacker-controlled lengths.
-
-The divergent verifier combined-kernel branch is not a substitute for this cleanup: it
-optimizes a structured affine digit evaluator in relation replay. Port its algebraic
-prefix-scan/carry-bucket technique only after this plan's canonical domain lands, using the
-dense evaluator as a differential oracle.
-
-## Two-stage range, relation, and setup design
-
-### Direct setup keeps the prover-optimized placement
-
-When the verifier evaluates setup locally, fixing the relation point in Stage 1 provides
-no offloading benefit. Keep the efficient existing placement, expressed with the cleaned
-plans and providers:
-
-```text
-Stage 1:
-  range_claim
-    = sum_z Eq(range_anchor,z) * RangePolynomial(RangeImage(z))
+Stage 1
+  optimized equality-factored range-product tree
   -> range_image_eval at range_check_point
 
-Stage 2:
-  linear_relation_claim
-    + direct_range_binding_challenge * range_image_eval
-  = sum_z DigitWitness(z) * [
-        RelationWeight(z)
-      + direct_range_binding_challenge
-          * Eq(range_check_point,z) * (DigitWitness(z) + 1)
-    ]
-  -> next_witness_eval at next_witness_point.
+Stage 2
+  one standard relation + range-image-consistency sum-check
+  -> next_witness_eval
 ```
 
-The Stage 2 proof is standard degree 3 and scans the signed digit witness once. Its final
-relation weight includes the locally computed full setup contribution. Preserve the
-current direct round-element/scalar count and use the old prover/transcript as the
-differential oracle through Packet 6. Packet 7 may change semantic framing under an
-authenticated protocol version, but it must not increase intermediate direct serialized size, scan
-count, or allocation count on non-terminal folds. #311 terminal folds are outside this
-composer and remain unchanged.
-
-### Split the current fused Stage 2 by statement, not by layout
-
-The current fused prover contains two semantic terms hidden inside many layout branches:
+Recursive setup offloading uses the paper-motivated placement:
 
 ```text
-LinearRelationTerm
-  = DigitWitness(z) * RelationWeight(z)
+Stage 1
+  same optimized equality-factored range-product prefix
+  final range leaf + complete linear relation in one standard sum-check
+  -> range_image_eval and digit_witness_eval at range_relation_point
 
-RangeImageConsistencyTerm(anchor)
-  = Eq(anchor,z) * DigitWitness(z) * (DigitWitness(z) + 1).
+Stage 2
+  setup contribution + range-image/witness reduction
+  -> setup_prefix_eval and next_witness_eval
 ```
 
-Make those ownership boundaries explicit without adding a general expression engine:
-
-- `DirectRelationRangeImagePlan` owns their one-pass standard degree-3 composition;
-- `RangeRelationLeafPlan` owns `LinearRelationTerm` plus the anchored range leaf in the
-  recursive Stage 1 standard proof;
-- `RangeImageConsistencyProof` owns only the equality-factored consistency term in
-  recursive `Separate`;
-- `BatchedSetupAndRangeImageProof` owns the standard-lifted consistency term in recursive
-  `Batched`;
-- `RelationWeight` is the one canonical public polynomial used by direct and recursive
-  placement; `range_image(digit)` is the one canonical pointwise map.
-
-Share pair traversal, compact signed-digit access, accumulation, and folding. Do not share
-a stage driver or transcript callback trait. This makes the placement switch auditable:
-the linear term moves; the consistency term is not duplicated or omitted; trace remains a
-single additive component of `RelationWeight`.
-
-### Paper placement, tree-preserving refinement
-
-The verifier-offloading section of the paper makes the essential dependency clear: the
-relation point must be fixed in Stage 1 so the setup weight at that point can be certified
-in Stage 2. As of the 2026-07-19 revision the paper specifies exactly the placement this
-handoff implements — the relation fused into the final level of the range product tree,
-every earlier product level keeping its compact equality-factored messages. Apply this
-dependency only to `FoldCheckTopology::RecursiveSetupOffload`.
-
-Do not implement a full-width single range-and-relation sumcheck as production. Treating the independent
-range-image MLE as the input would give standard degrees 9/17/33 for LB4/LB5/LB6 after
-the equality factor; substituting `DigitWitness(DigitWitness+1)` directly would instead
-give 17/33/65. Either discards the exact tree this refactor is optimizing. Preserve every
-product layer and fuse the relation only into the **final range leaf**. This refinement
-has the same two-stage dependency and same-point output required by the paper:
-
-- all earlier product layers remain equality-factored degree 2 or 4;
-- the final leaf is one standard degree-3 message for LB2 or degree-5 message for LB3-LB6;
-- `range_image_eval` and `digit_witness_eval` are evaluations of two independent MLEs at
-  the same fresh `RangeRelationPoint`;
-- Stage 2 alone proves that the Boolean range-image table is the pointwise image of the
-  digit witness.
-
-The independence in the third bullet is soundness-critical. Away from Boolean points,
-`range_image_eval` is generally not
-`digit_witness_eval * (digit_witness_eval + 1)`.
-
-### Stage 1 final range-and-relation equation
-
-Let `leaf_input_claim` and `leaf_anchor` be the claim and point produced by the preceding
-product layer. For LB2/LB3, they are the initial zero range claim and `tau_range`, and
-the joint leaf is the entire recursive Stage 1: there are no preceding product layers.
-Let `LeafBatch` be the plan-derived quadratic or randomized quartic in the virtual
-range-image table. Let `linear_relation_claim` already include trace's claim coefficient,
-and let `RelationWeight` include all matching linear relation and trace providers exactly
-once. After those values are transcript-bound, sample `range_relation_batch_challenge` and prove:
-
-```text
-leaf_input_claim
-  + range_relation_batch_challenge * linear_relation_claim
-= sum_z [
-     Eq(leaf_anchor, z) * LeafBatch(RangeImage(z))
-   + range_relation_batch_challenge * DigitWitness(z) * RelationWeight(z)
-   ].
-```
-
-Here `RangeImage[z] = range_image(DigitWitness[z])` only on Boolean vertices. The prover
-folds `RangeImage` and `DigitWitness` as independent multilinear tables after round 0.
-
-#### Mandatory fused first-round kernel
-
-For `RecursiveSetupOffload`, “one joint leaf” means one sumcheck and one compact-witness
-traversal, not two accumulators driven by two scans. Write the first coordinate as `T`,
-the remaining address as `u`, and `delta value_u = value(1,u) - value(0,u)`. Round zero is:
-
-```text
-joint_round_0(T)
-  = eq(leaf_anchor[0], T)
-      * sum_u Eq(leaf_anchor[1..], u)
-          * LeafBatch(
-              RangeImage(0,u) + T * delta RangeImage_u
-            )
-    + range_relation_batch_challenge
-      * sum_u
-          (DigitWitness(0,u) + T * delta DigitWitness_u)
-          * (RelationWeight(0,u) + T * delta RelationWeight_u).
-```
-
-The compact loop loads each signed digit pair exactly once, derives both range-image
-values, asks the one canonical relation provider for its two endpoint weights, and updates
-the fixed range and relation coefficient accumulators. The resulting degree is exactly 3
-for LB2 and 5 for LB3-LB6: `max(leaf_inner_degree + 1, 2)`.
-
-After sampling the first challenge, one second compact traversal materializes both
-independent folds in the same address loop:
-
-```text
-folded_range_image[u]
-  = RangeImage(0,u) + r_0 * delta RangeImage_u
-
-folded_digit_witness[u]
-  = DigitWitness(0,u) + r_0 * delta DigitWitness_u.
-```
-
-Never compute the first value as
-`folded_digit_witness * (folded_digit_witness + 1)`: the pointwise identity holds before
-multilinear folding, not after it. The two folded tables use `N/2 + N/2 = N` field
-elements. The relation provider folds its own checked representation. Later joint rounds
-may zip the two aligned folded tables in one address loop, but they remain semantically
-independent tables and one combined claim with one challenge sequence.
-
-The implicit padded suffix contributes only the anchored range term:
-
-```text
-current_eq_scalar
-  * eq(leaf_anchor[current_round], T)
-  * remaining_eq_suffix_mass
-  * LeafBatch(range_image(0)).
-```
-
-The relation suffix is zero because the padded digit witness is zero. A “fused first
-round followed by two independent sumchecks” is invalid: once the claims are batched,
-every later round must use the same challenge and prove the same combined claim.
-
-`RangeRelationLeafProver` owns this compact-to-folded state transition and implements the
-standard sumcheck interface directly. Do not add `prove_fused_first_round`, `FusedKernel`,
-or callback/source traits. Its checked plan is a view of `FoldCheckPlan` and stores no
-second domain, range plan, round count, or degree.
-
-For `DirectSetup`, the answer is deliberately different. The final Stage-1 leaf remains
-equality-factored because every batched quadratic/quartic leaf shares the one
-`Eq(leaf_anchor,z)` factor—not merely because there is “one item” in a batch. Its inner
-degree remains 2 for LB2 and 4 for LB3-LB6. It cannot fuse with direct Stage 2 without
-changing the protocol: `RangeCheckPoint`, `range_image_eval`, and
-`direct_range_binding_challenge` do not exist until Stage 1 is complete, and Stage 2 uses
-an independent challenge point. Caching a field witness during Stage 1 only substitutes a
-large write and later field scan for the second compact scan; it is not the baseline.
-
-Required kernel gates are coefficient-by-coefficient equality with a separately
-materialized dense oracle, one logical digit-pair visit in recursive round-zero
-accumulation, one post-challenge visit producing both folds, all LB2-LB6 degree bounds,
-odd live prefixes, nonzero `LeafBatch(range_image(0))`, transcript equality, and peak
-state `N + relation_provider_state`.
-
-At `range_relation_point`, the verifier's deferred final equality is:
-
-```text
-final_stage1_claim
-= Eq(leaf_anchor, range_relation_point)
-     * LeafBatch(range_image_eval)
- + range_relation_batch_challenge
-     * digit_witness_eval
-     * (non_setup_relation_weight_eval + setup_contribution_eval).
-```
-
-`non_setup_relation_weight_eval` includes matrix-consistency rows, structured rows,
-quotient rows, evaluation trace, and every other non-setup term. This equation is for
-recursive offload: Stage 2 supplies
-`setup_contribution_eval` as a transcript-bound claim and proves it against the
-precommitted setup prefix. Do not force
-trace or other nonfactorable terms into the setup/common-base factor.
-
-Use one narrow semantic plan:
-
-```rust
-pub struct RangeRelationLeafPlan {
-    relation_terms: FixedRelationTerms,
-}
-```
-
-This is not a general expression graph. The hot implementation has exactly the anchored
-range-image leaf and the linear digit-witness relation term. It is selected only by the
-recursive-offload topology; direct setup uses `DirectRelationRangeImagePlan`.
-It is a checked child of `FoldCheckPlan`, not an independent public constructor: it borrows
-the parent's `WitnessDomain` and `DigitRangePlan`, consumes runtime `RangeLeafInput`, and
-derives standard degree as `digit_range.leaf_inner_degree() + 1`. Do not store duplicate
-domain, range plan, or degree fields.
-
-Make delayed verifier closure explicit and linear in the type system:
-
-```rust
-pub struct DeferredRangeRelationCheck<E> { /* validated final-leaf state */ }
-
-impl<E> DeferredRangeRelationCheck<E> {
-    pub fn close_with_setup_contribution(
-        self,
-        setup_contribution_eval: E,
-    ) -> Result<RangeRelationOutput<E>, AkitaError>;
-}
-```
-
-`verify_digit_range_relation` returns this value after replaying the recursive final leaf.
-The caller absorbs the full claimed setup contribution and consumes the deferred check
-before any Stage 2 challenge.
-Consuming `self` prevents an omitted or double-applied setup contribution.
-
-### Recursive Stage 2 range-image consistency reduction
-
-After absorbing `range_image_eval`, `digit_witness_eval`, and
-`setup_contribution_eval`, sample `range_image_binding_challenge`. Define:
-
-```text
-range_image_consistency_claim
-  = range_image_binding_challenge * digit_witness_eval + range_image_eval.
-```
-
-Stage 2 proves over the same flat `WitnessDomain`:
-
-```text
-range_image_consistency_claim
-= sum_z Eq(range_relation_point, z) * [
-     range_image_binding_challenge * DigitWitness(z)
-   + DigitWitness(z) * (DigitWitness(z) + 1)
-   ].
-```
-
-This has one common equality factor and an inner degree-2 composition. A separate
-recursive proof uses `EqFactoredSumcheckProof` and ends at `next_witness_eval` at
-`next_witness_point`. Its final sumcheck check is:
-
-```text
-Eq(range_relation_point, next_witness_point) * [
-  range_image_binding_challenge * next_witness_eval
-  + next_witness_eval * (next_witness_eval + 1)
-].
-```
-
-Stage 2 matches the witness representation once at round dispatch and calls statically
-typed compact or field scans; it never branches on representation inside the pair loop.
-The old relation x/y-prefix/dense dispatch tree is deleted, not repurposed as claim
-reduction.
-
-### Recursive mode: schedule-selected setup and range-image consistency reduction
-
-The setup prefix has its own `SetupCoefficientDomain`: raw flat field-coefficient address
-`j`, exact live prefix, next-power-of-two domain, and LSB-first binds. It is not a segment,
-projection, or alternative view of `WitnessDomain`. Overlapping A/B/D setup views add at
-the same physical coefficient.
-
-After Stage 1 fixes `range_relation_point`, construct the public setup weight and prove:
-
-```text
-setup_contribution_eval
-  = sum_j SetupCoefficient(j)
-          * SetupRelationWeight(j; range_relation_point, tau_relation, alpha).
-```
-
-This setup product has standard degree 2. There are two sound Stage 2 realizations. Both
-prove the same two semantic claims and carry the same two final openings; only their
-round-polynomial schedule differs.
-
-`SeparateReductionShape` owns `setup_rounds`, `range_image_rounds`, and the checked
-independent opening route. `SetupWitnessBatchGeometry` owns the corresponding batched
-round counts, lifts, and route. The validated level descriptor selects the enum before
-proving starts. It is proof shape,
-not a prover heuristic: serialize no variant tag, do not switch after transcript sampling,
-and do not allow the verifier to infer a mode from malformed vector lengths.
-
-#### `Separate`
-
-Run two semantic subproofs in a fixed transcript order:
-
-1. `SetupContributionProof`, a standard degree-2 setup-product sumcheck over
-   `SetupCoefficientDomain`, ending at `setup_prefix_eval`; then
-2. `RangeImageConsistencyProof`, the equality-factored inner-degree-2 range-image consistency reduction over
-   `WitnessDomain`, ending at `next_witness_eval`.
-
-For native setup and witness round counts `lambda` and `mu`, this sends
-`2*lambda + 2*mu` round-polynomial field elements. The resulting setup and witness
-opening points are independent. This plan is admissible only when the next-level opening
-router can carry both typed points. Do not coerce one point into a suffix of the other.
-
-#### `Batched`
-
-Batch the setup product with the standard degree-3 form of range-image consistency reduction in one proof.
-This is the right shape when the two native domains have sufficiently similar round
-counts. Both reductions carry the same two openings to the next level — `Batched`'s two
-points are suffix projections of one fresh point while `Separate`'s are independent — so
-the distinction between them is proof bytes, not routing capability; any opening router
-that supports `Batched`'s correlated points supports `Separate`'s independent ones.
-
-The batched prover and verifier are an upgrade of existing machinery, not a fresh build:
-the current `AkitaStage3Prover` already batches the degree-2 setup product with a
-carried-witness term over unequal native round counts through `BatchedStage3Geometry`.
-The target shape raises the witness term from the linear carried claim to the quadratic
-range-image consistency composition, moving the batch degree from 2 to 3. Implement it by
-adapting that geometry (renamed `SetupWitnessBatchGeometry`), and record the semantic
-delta of the witness term in the Packet 7 PR.
-
-Let `n_setup` and `n_witness` be the native round counts and
-`n = max(n_setup, n_witness)`. For term `i`, define
-`delta_i = n - n_i` and lift it over `delta_i` independent leading coordinates with scale
-`lift_scale_i = 2^(-delta_i)`. In an inactive leading round the term emits the constant
-polynomial `current_claim / 2`; in active rounds its native polynomial is scaled by
-`lift_scale_i` exactly once. The Boolean sum of each lift equals its native claim.
-
-After both native claims and domain descriptors are bound, sample
-`setup_range_binding_batch_challenge` and prove:
-
-```text
-setup_contribution_eval
-  + setup_range_binding_batch_challenge * range_image_consistency_claim
-= sum_u [
-     Lift_setup(SetupCoefficient * SetupRelationWeight)(u)
-   + setup_range_binding_batch_challenge * Lift_witness(RangeImageConsistency)(u)
-   ].
-```
-
-The batched degree is 3. `SetupWitnessBatchGeometry` owns the two native round counts,
-inactive-prefix deltas, lift scales, and checked suffix projections from the fresh batched
-point to `setup_opening_point` and `next_witness_point`.
-
-The final verifier equality is:
-
-```text
-final_stage2_claim
-= lift_scale_setup
-     * setup_prefix_eval
-     * setup_relation_weight_eval(setup_opening_point, range_relation_point)
- + setup_range_binding_batch_challenge
-     * lift_scale_witness
-     * Eq(range_relation_point, next_witness_point)
-     * [range_image_binding_challenge * next_witness_eval
-        + next_witness_eval * (next_witness_eval + 1)].
-```
-
-The lifted function algebraically contains `lift_scale_i`, so each active round message is
-`lift_scale_i * native_round_polynomial` and the final value is
-`lift_scale_i * native_mle_eval`. Implement this with one persistent multiplier; do not
-pre-scale the native table or claim and multiply by the geometry scale again. Inactive
-rounds update the current claim with `/2`; they do not mutate the native table.
-
-#### Exact selector and recursive boundary
-
-The round-polynomial field-element counts are:
-
-```text
-separate = 2 * (lambda + mu)
-batched  = 3 * max(lambda, mu)
-```
-
-These formulas are only a round-message prefilter. The planner must compare three complete
-serialized sizes for the exact level:
-
-```text
-legacy_recursive_bytes
-target_separate_bytes
-target_batched_bytes
-```
-
-As a round-only cross-check, let `R_b` be all equality-factored range-tree messages,
-`mu` the witness rounds, `lambda` the setup rounds, and `M=max(lambda,mu)`:
-
-```text
-legacy recursive = R_b + 3*mu + 2*M
-target separate  = R_b + 1*mu + 2*lambda + 2*mu
-                 = R_b + 3*mu + 2*lambda
-target batched   = R_b + 1*mu + 3*M
-```
-
-The `1*mu` term is the standard joint leaf's one-coefficient increase over the range-only
-leaf. This explains the regimes: separate improves round messages only when the setup
-domain is shorter than the padded legacy Stage 3 domain; batched improves when
-`M < 2*mu`. Neither statement accounts for scalars or envelopes.
-
-Include the old/new final leaf, all setup/range-image rounds, every scalar, envelopes,
-opening metadata, extension encoding, and descriptor impact. Among admissible targets,
-choose `Batched` only when its complete size is strictly smaller than `Separate`; equality
-defaults to `Separate`. A target recursive topology is admissible only when its complete
-size is no larger than `legacy_recursive_bytes`; byte parity is admissible because the
-selection objective is verifier work, and `Separate` exactly ties the legacy round count
-whenever `lambda >= mu`. Otherwise the planner keeps
-`FoldCheckTopology::DirectSetup` for that candidate and reports why setup offloading did
-not survive the size gate. The choice is encoded in the schedule, never made at runtime.
-
-The direct-versus-recursive selection is priced on the complete objective, not proof bytes
-alone: (a) the verifier-side saving from replacing the setup scan with the setup-product
-replay, and (b) the next-level cost of carrying the setup-prefix opening, whose
-decomposition is `ceil(log_b(q))` digit planes deep because the prefix holds full-field
-coefficients. Item (b) enters only the direct-versus-recursive comparison — the legacy
-recursive shape carries the same opening, so legacy-versus-target comparisons are
-unaffected. Offload eligibility is independent of the level's folding-challenge structure
-(flat or tensor), but the planner records the challenge structure of offloaded levels:
-the full verifier-cost saving assumes the challenge-dependent scan is also reduced by
-tensor challenges, and a flat-challenge offloaded level saves only the setup-dependent
-term.
-
-If separate-point routing is not implemented, `Separate` is temporarily inadmissible
-rather than silently replaced with a larger proof. Packet 1 must price complete
-serialization before Packet 7 freezes this rule.
-
-The next recursive boundary carries exactly:
-
-- `(next_witness_commitment, next_witness_point, next_witness_eval)`; and
-- `(setup_prefix_commitment, setup_opening_point, setup_prefix_eval)`.
-
-If the next level cannot route both openings, or the exact setup slot/domain does not
-match, recursive offload is inadmissible and the planner must choose direct mode.
-
-Setup-prefix provisioning is deliberately per level. Each offloaded level selects the
-least committed slot covering its own active footprint, and its setup opening is
-discharged at the immediately following fold through the opening router. There is no
-shared largest-prefix commitment and no cross-level accumulation of setup claims: the
-active footprint shrinks with the recursion, so per-level slots keep later offloads
-profitable, whereas one shared largest prefix would force every later discharge to open
-the largest object and break the setup-versus-witness balance at every level but the
-first. At most one outstanding setup opening exists at any recursive boundary. Chained
-offloading is well-defined under this rule: a level that receives a carried setup opening
-discharges it inside its own root relation, and that discharge is orthogonal to whether
-the level itself emits a new setup claim.
-
-### Proof and level-envelope types
-
-Replace numeric stage fields with semantic proof types at the atomic cutover:
-
-```rust
-pub struct RangeProductLayerProof<E> {
-    pub sumcheck: EqFactoredSumcheckProof<E>,
-    pub child_claims: Vec<E>,
-}
-
-pub struct RangeOnlyLeafProof<E> {
-    pub sumcheck: EqFactoredSumcheckProof<E>,
-    pub range_image_eval: E,
-}
-
-pub struct DigitRangeProof<E> {
-    pub product_layers: Vec<RangeProductLayerProof<E>>,
-    pub final_leaf: RangeOnlyLeafProof<E>,
-}
-
-pub struct RangeRelationLeafProof<E> {
-    pub sumcheck: SumcheckProof<E>,
-    pub range_image_eval: E,
-    pub digit_witness_eval: E,
-}
-
-pub struct DigitRangeRelationProof<E> {
-    pub product_layers: Vec<RangeProductLayerProof<E>>,
-    pub final_leaf: RangeRelationLeafProof<E>,
-}
-
-pub struct DirectRelationRangeImageProof<E> {
-    pub sumcheck: SumcheckProof<E>,
-    pub next_witness_eval: E,
-}
-
-pub struct RangeImageConsistencyProof<E> {
-    pub sumcheck: EqFactoredSumcheckProof<E>,
-    pub next_witness_eval: E,
-}
-
-pub struct SetupContributionProof<E> {
-    pub sumcheck: SumcheckProof<E>,
-    pub setup_prefix_eval: E,
-}
-
-pub struct BatchedSetupAndRangeImageProof<E> {
-    pub sumcheck: SumcheckProof<E>,
-    pub setup_prefix_eval: E,
-    pub next_witness_eval: E,
-}
-
-pub enum RecursiveClaimReductionProof<E> {
-    Separate {
-        setup: SetupContributionProof<E>,
-        range_image: RangeImageConsistencyProof<E>,
-    },
-    Batched(BatchedSetupAndRangeImageProof<E>),
-}
-
-pub enum FoldCheckProof<E> {
-    DirectSetup {
-        digit_range: DigitRangeProof<E>,
-        relation_and_range_image: DirectRelationRangeImageProof<E>,
-    },
-    RecursiveSetupOffload {
-        digit_range_relation: DigitRangeRelationProof<E>,
-        setup_contribution_eval: E,
-        claim_reduction: RecursiveClaimReductionProof<E>,
-    },
-}
-
-pub struct FoldLevelProof<F: FieldCore, E: FieldCore> {
-    pub extension_opening_reduction: Option<ExtensionOpeningReductionProof<E>>,
-    pub scaled_fold_witness: RingVec<F>,
-    pub fold_grind_nonce: u32,
-    pub next_witness_binding: NextWitnessBinding<F>,
-    pub fold_check: FoldCheckProof<E>,
-}
-```
-
-The sketches name ownership; use the repository's actual generic and container types.
-They show the final target after optional ledger PR E8. Packet 7b stores
-`SetupContributionProof` and `RangeImageConsistencyProof` directly in the recursive
-variant; it must not add a one-variant `RecursiveClaimReductionProof`, an empty `Batched`
-placeholder, or a forwarding accessor. E8 introduces the two-variant enum and
-`BatchedSetupAndRangeImageProof` only if the batched gate passes, while preserving the
-existing direct and separate encodings.
-`setup_contribution_eval` closes Stage 1 and is absorbed before any Stage 2 challenge, so
-it lives exactly once in the `RecursiveSetupOffload` envelope — matching the wire's
-common prefix below — rather than duplicated across the two reduction variants.
-Modify #311's existing `FoldLevelProof` directly; do not wrap it in an
-`IntermediateFoldCheckProof`. Preserve `NextWitnessBinding::{OuterCommitment,
-TerminalInnerState}` as the one schedule-shaped outgoing-state authority. The outer
-commitment leaves the old Stage-2 payload and becomes the common non-terminal envelope
-field; `TerminalInnerState` still serializes no duplicate commitment. `v` becomes
-`scaled_fold_witness` outside equations, and no proof type or accessor contains `stage3`
-in its name. Delete pass-through and cross-variant accessors; pattern-match the semantic
-proof or return `AkitaError`.
-
-#311's existing `TerminalLevelProof` is not replaced, extended, or wrapped. It remains
-exactly the optional extension-opening reduction, grind nonce, and clear segment-typed
-witness. Its direct ring and trace relations have no fold-check proof object.
-
-Headerless serialization follows transcript-use order exactly; do not rely on Rust enum
-layout or add custom per-type ordering:
-
-```text
-Intermediate envelope prefix:
-  extension-opening reduction when scheduled
-  scaled_fold_witness
-  fold_grind_nonce
-  next_witness_binding
-    OuterCommitment: serialized commitment
-    TerminalInnerState: no payload
-
-DirectSetup fold check:
-  each product layer: sumcheck, then child_claims
-  range-only leaf: sumcheck, then range_image_eval
-  direct relation/range-image sumcheck, then next_witness_eval
-
-RecursiveSetupOffload common prefix:
-  each product layer: sumcheck, then child_claims
-  joint leaf sumcheck, range_image_eval, digit_witness_eval
-  setup_contribution_eval
-
-Separate suffix:
-  setup contribution sumcheck, setup_prefix_eval
-  range-image consistency sumcheck, next_witness_eval
-
-Batched suffix:
-  batched setup/range-image sumcheck, setup_prefix_eval, next_witness_eval
-```
-
-Proof structs, shape descriptors, serializers, deserializers, size formulas, and transcript
-read order all mirror this sequence. Reject extra or missing fields from the
-schedule-selected shape before allocation. The #311 terminal wire order and size remain
-unchanged and are not derived from `FoldCheckPlan`.
-
-### Normative transcript order
-
-The authenticated `FoldCheckPlan` selects the variant; serialize no tag. Bind the protocol
-version, topology, native round counts, coordinate order, lift convention, role
-dimensions, and exact setup slot/commitment identity before proof messages.
-The level envelope must already have absorbed the schedule-selected
-`next_witness_binding`: either the exact outer commitment or #311's already-bound terminal
-inner state. Every later `next_witness_eval` targets that exact state and opening route.
-
-Direct setup keeps its existing algebraic order: finish and absorb the range proof,
-sample the direct range-binding challenge at the existing transcript location, run the
-standard relation/range-image proof, absorb `next_witness_eval`, and check the direct final
-equation with locally evaluated setup. Packet 7 may add semantic framing under a new
-version, but no new challenge or scalar enters this topology.
-
-Recursive-offload common order is:
-
-1. Complete every equality-factored range product layer and absorb child claims.
-2. Bind the final leaf input claim, anchor, relation claim, and provider descriptor; sample
-   `range_relation_batch_challenge` and run the standard joint leaf.
-3. Absorb `range_image_eval`, then `digit_witness_eval`.
-4. Absorb the full `setup_contribution_eval`; consume
-   `DeferredRangeRelationCheck` and close Stage 1.
-
-Then use the selected Stage 2 frame:
-
-- `Separate`: run `SetupContributionProof` under setup-specific labels, absorb
-  `setup_prefix_eval`, and close that frame. Only then sample
-  `range_image_binding_challenge`, run `RangeImageConsistencyProof` under range-image
-  labels, absorb `next_witness_eval`, and close that frame. There is no setup/range batch
-  challenge.
-- `Batched`: sample `range_image_binding_challenge` and derive the native consistency
-  claim. After both native claims and descriptors are fixed, sample
-  `setup_range_binding_batch_challenge`, run the standard combined proof, absorb
-  `setup_prefix_eval`, then `next_witness_eval`, and check the combined final equation.
-
-Use semantic framing labels for every claim, round, point, and final value; do not rely
-only on generic sumcheck labels. Never reuse a range-tree interlayer challenge,
-`range_relation_batch_challenge`, `range_image_binding_challenge`, or
-`setup_range_binding_batch_challenge`.
-
-### Proof-size accounting
-
-For a witness-domain round, the optimized range tree sends the following equality-factored
-range coefficients before any relation/setup work:
-
-| LB | Range-tree elements/round | Interlayer child-claim scalars | Direct total/round (`+3`) | Legacy recursive common-round (`+5`) | Target batched common-round (`+4`) |
-|---:|---:|---:|---:|---:|---:|
-| 2 | 2 | 0 | 5 | 7 | 6 |
-| 3 | 4 | 0 | 7 | 9 | 8 |
-| 4 | 6 | 2 | 9 | 11 | 10 |
-| 5 | 8 | 4 | 11 | 13 | 12 |
-| 6 | 10 | 10 | 13 | 15 | 14 |
-
-The table is a common-round sanity check, not a serializer. Product layers can have
-different native rounds, and the separate/batched setup domain may differ from the witness
-domain.
-
-For the existing common-round recursive shape, the current implementation sends:
-
-```text
-eq-factored final range leaf: leaf_degree
-current fused relation/range binding: 3
-current setup/witness Stage 3: 2
-total: leaf_degree + 5 extension-field elements.
-```
-
-The target batched shape sends:
-
-```text
-standard final range-and-relation leaf: leaf_degree + 1
-combined setup/witness Stage 2: 3
-total: leaf_degree + 4 extension-field elements.
-```
-
-Thus a balanced batched cell is expected to save one extension-field element per common
-round, conditional on Packet 1 confirming the legacy accounting. For
-unequal native domains, use the exact formulas above: `2*(lambda+mu)` for separate and
-`3*max(lambda,mu)` for batched, then add the final-leaf, scalar, and envelope fields and
-compare both complete targets with the complete legacy proof.
-
-Direct setup retains the existing algebraic placement:
-
-```text
-range-only final leaf: leaf_degree
-relation/range-image Stage 2: 3
-total: leaf_degree + 3 per witness-domain round
-```
-
-Scalar accounting is likewise explicit:
-
-| Topology | Legacy witness/setup scalars | Target scalars |
-|---|---:|---:|
-| Direct setup | 2 (`range_image_eval`, `next_witness_eval`) | 2, same meanings |
-| Recursive offload | 5 (legacy range eval, Stage 2 eval, setup claim/prefix eval, carried eval) | 5 (`range_image_eval`, `digit_witness_eval`, `setup_contribution_eval`, `setup_prefix_eval`, `next_witness_eval`) |
-
-The recursive saving comes from round messages and stage placement, not scalar deletion.
-
-The cutover adds no intermediate-direct scalar, round coefficient, or proof field. It may regenerate
-challenge values if the authenticated protocol version and semantic transcript framing
-change, but intermediate direct serialized size must remain exactly equal and the prover
-must retain one signed-witness scan/fold. Recursive mode must be no larger in complete
-serialized bytes and must improve measured verifier time. Packet 1 derives exact formulas for unequal domains, every scalar,
-both #311 `NextWitnessBinding` variants, and extension encoding; Packet 7 checks formulas against actual
-serialization before the cutover lands.
-
-### Degree ledger
-
-`FoldCheckPlan` enforces these degrees; the verifier never infers them from received vector
-lengths:
-
-| Subproof | Format | Enforced degree |
-|---|---|---:|
-| Earlier range-product layer | equality-factored | inner 2 or 4 from `DigitRangePlan` |
-| Direct range-only leaf | equality-factored | inner 2 for LB2; inner 4 for LB3-LB6 |
-| Direct relation/range-image consistency | standard | 3 |
-| Recursive range/relation leaf | standard | 3 for LB2; 5 for LB3-LB6 |
-| Separate range-image consistency | equality-factored | inner 2 |
-| Separate setup contribution | standard | 2 |
-| Batched setup/range-image reduction | standard | 3 |
-
-Rederive every soundness/security budget that prices sumcheck degree from this ledger for
-both topologies and both recursive reduction plans. Do not copy the paper's literal
-direct-polynomial degree or the current Stage 3 budget.
-
-### Terminal folds after #311
-
-#311 has already made the stronger cut: terminal folds expose the segment-typed witness
-and perform reduced A-ring and trace checks directly. They have no digit-range proof,
-relation sumcheck, Stage 2, Stage 3, outgoing commitment, or `next_witness_eval`.
-
-This project treats that terminal contract as immutable. `FoldCheckPlan` cannot be
-constructed for `TerminalLevelProof`; planner sizing calls #311's terminal-size authority
-directly; prover and verifier dispatch to #311's terminal path without an empty fold-check
-placeholder. Recursive setup offloading remains impossible at a terminal because there is
-no next level to carry the setup-prefix opening. Tests assert byte-for-byte terminal proof
-and transcript equality against the post-#311 baseline.
-
-### Future negative-binary seam
-
-A future negative-binary term belongs in the active Stage 2 range-image-consistency
-composer (direct combined or recursive reduction), because that is where the pointwise
-range-image relation is bound. Its weight must be the single MLE of the Boolean table
-`eq(range_image_anchor,z) * I_binary(z)`, not the product of equality and support MLEs off
-the cube. This series adds no field, coefficient, claim slot, transcript challenge, or
-inactive branch for it.
-
-## Mixed ring dimensions and relation-weight providers
-
-### Flat protocol, common-base internal fast path
-
-The only relation address in either topology is the raw physical coefficient index `z`,
-LSB-first. The range proof and both Stage 2 composers use that same `WitnessDomain`;
-recursive setup certification uses the separate `SetupCoefficientDomain`. For a
-validated nested role tuple define:
+The terminal fold remains the quotient-free, sum-check-free path from #311. It has no
+Stage 1 range proof, relation sum-check, Stage 2 reduction, or outgoing witness binding.
+Nothing in this series reintroduces those objects at the terminal.
+
+## Vocabulary and naming contract
+
+Code names must describe the mathematical object or lifecycle phase. Numeric stage names
+may remain only where a public proof epoch still requires them during the second PR; the
+final protocol cutover removes them.
+
+| Mathematical shorthand | Production name | Meaning |
+|---|---|---|
+| `W` | `digit_witness` | balanced signed-digit multilinear table |
+| `W(W+1)` | `range_image` | pointwise image of a Boolean-vertex digit |
+| `Q_b` | `range_image_polynomial` | vanishing polynomial over valid range-image values |
+| `A_g` | `common_alpha_factor` | `[1, alpha, ..., alpha^(g-1)]` over the common coefficient dimension |
+| `M` | `relation_lane_weights` | high-lane relation weights after the common alpha factor is removed |
+| `T` | `trace_weight` | additive trace polynomial, not forced into alpha factorization |
+| `S`, `s_table`, `s_claim` | forbidden | ambiguous legacy names for the range image or setup data |
+
+Use `digit_witness` in fields and APIs. `W` is acceptable only in displayed equations or
+a very short local derivation. Likewise, equations may use `M`, but production fields and
+functions use `relation_lane_weights`, `folded_relation_lane_weights`, or another equally
+descriptive name.
+
+The following target names are normative:
+
+| Responsibility | Name |
+|---|---|
+| checked flat Boolean witness address space | `FlatBooleanDomain` |
+| Stage 1 topology, roots, degrees, and child order | `DigitRangePlan` |
+| compact signed digits and range-image class access | `CompactDigitSource` |
+| direct Stage 1 output point | `RangeCheckPoint` |
+| recursive joint Stage 1 output point | `RangeRelationPoint` |
+| current direct fused proof after the Stage 2 rewrite | `RelationRangeImageProof` |
+| current direct fused prover after the Stage 2 rewrite | `RelationRangeImageProver` |
+| common-dimension relation factorization | `CommonAlphaRelationWeights` |
+| independently additive trace representation | `TraceWeightState` |
+| setup coefficient address space | `SetupCoefficientDomain` |
+| complete setup contribution at one relation point | `setup_contribution_eval` |
+
+Do not add aliases from old names, `_for_level` forwarding helpers, `Engine` facades,
+generic expression graphs, or one-line wrappers around the canonical functions. A module
+boundary is justified only by a distinct invariant, state representation, or substantial
+kernel.
+
+## Global invariants
+
+### One Boolean address order
+
+All witness sum-checks bind the raw physical field-coefficient address LSB first. A
+homogeneous ring can be viewed internally as coefficient bits followed by column bits,
+but x/y is not a public protocol abstraction. Mixed dimensions use the same flat address
+order.
+
+For the role dimensions `d_a`, `d_b`, and `d_d`, all supported tuples are nested powers
+of two. Define
 
 ```text
 g = gcd(d_a, d_b, d_d) = min(d_a, d_b, d_d)
 k = log2(g)
-z = g * x + y,  0 <= y < g.
+z = g * lane + coefficient,  0 <= coefficient < g.
 ```
 
-The `(x, y)` notation in this section is private kernel algebra. Do not serialize `g`, add
-another `ring_bits`, expose a common-base x/y domain, or split the semantic relation claim.
+The first `k` bound variables are therefore the common coefficient coordinates. The
+remaining variables address relation lanes and padded witness capacity. `g` is derived
+from authenticated role dimensions; it is not a separate proof field or a sentinel.
 
-Compile a native row-family coefficient spread to canonical events:
+### Range-image evaluations are independent MLE claims
+
+At Boolean addresses,
 
 ```text
-Event {
-    physical_start: p,
-    length: q * g,
-    alpha_exp_start: e,
-    scalar: c,
-}
+range_image[z] = digit_witness[z] * (digit_witness[z] + 1).
 ```
 
-For a factorized event, the compiler proves that `p = g*p0` and `e = g*e0`. For local
-`t = g*h + y`:
+After folding, in general,
 
 ```text
-c * alpha^(e + t)
-  = alpha^y * [c * (alpha^g)^(e0 + h)].
+range_image_eval != digit_witness_eval * (digit_witness_eval + 1).
 ```
 
-Accumulate the high-lane contribution with `+=`:
+Any prover state that has crossed a challenge must therefore fold the range-image and
+digit-witness tables independently. Recomputing one from the other after a challenge is
+incorrect.
+
+### Honest-prover digit ownership
+
+The ring-switch decomposition is the single authority for the balanced-digit invariant.
+Stage 1 and Stage 2 are honest-prover internals and must not rescan the witness merely to
+validate digits a second time. Checked constructors validate sizes, domains, basis, and
+layout. Hot compact access uses the documented producer invariant and debug assertions.
+
+### Exact prefixes and padding
+
+The wire witness is zero outside its live prefix. Derived tables need not have zero
+defaults. A quartic range leaf, a randomized leaf batch, or an intermediate product can
+be nonzero at `range_image = 0`.
+
+Every truncated derived table therefore carries:
 
 ```text
-M[p0 + h] += c * (alpha^g)^(e0 + h)
-R(g*x + y) = A_g(y) * M(x)
-A_g = [1, alpha, ..., alpha^(g-1)].
+explicit rows + one exact default row + exact omitted equality mass.
 ```
 
-Do not use alpha inverses. `alpha = 0` is a valid challenge and must work.
+No kernel may skip the padded suffix merely because the original digit witness is zero.
+The canonical exact-prefix and equality-suffix functions are shared mechanics; the
+semantic caller supplies the correct default contribution.
 
-This exact factorization covers current E/T/Z/R relation construction:
+### Proof shape is not a kernel selector
 
-- A/E consistency and setup-D contributions occupying one physical span add into the
-  same high-lane accumulator even when their exponent patterns differ;
-- T/B is analogous;
-- Z and quotient R contributions have exponent start zero and row-family denominators are
-  scalar amplitudes;
-- gadget, tau, row, setup-ring, and challenge factors are scalar amplitudes;
-- role exponent resets compile as additive periodic high-lane patterns.
+Basis-specific tables, initial-round deferral depth, cache layout, serial/parallel mode,
+and delayed reduction are local prover decisions. They never appear in schedules, proof
+metadata, serialization, or verifier dispatch. Each supported basis has exactly one
+selected production kernel at a given revision.
 
-Use a closed provider representation equivalent to:
+## PR #312: complete Stage 1 digit-range cutover
 
-```rust
-enum LinearWeightProvider<E> {
-    CommonBase(CommonBaseRelationWeight<E>),
-    DenseExactPrefix(ExactPrefixTable<E>),
-    SparseRuns(SparseWeightRuns<E>),
-}
+### Scope lock
 
-struct CommonBaseRelationWeight<E> {
-    base_dim: usize,
-    low_factor: Vec<E>,       // A_g
-    high_lanes: HighLaneWeights<E>,
-}
+#312 is complete when it contains:
 
-enum HighLaneWeights<E> {
-    Dense(Vec<E>),            // coalesced M, length at most N/g
-    Spans(Vec<FactorizedSpan<E>>),
-    Sparse(SparseWeightRuns<E>),
-}
+- this central specification;
+- one `DigitRangePlan` authority for LB2 through LB6;
+- one `DigitRangeProver` and one verifier path;
+- the selected high-basis streaming product kernels;
+- the selected low-basis three-round deferral kernels;
+- proof/transcript epoch tests, malformed-shape tests, benchmarks, allocation measurement,
+  and tracing spans;
+- deletion of the eager range forest, padded field-valued range-image table, duplicate
+  Stage 1 prover, and layout-named Stage 1 modules.
 
-enum ExponentPattern<E> {
-    Linear { phase: usize },
-    Periodic { period: usize, phase: usize },
-    PrescaledDense(Vec<E>),
-    PrescaledSparse(SparseWeightRuns<E>),
-}
-```
+#312 must not redesign the current Stage 2. The tiny Stage 2 edits already in its diff are
+name/API fallout from the Stage 1 `range_image_evaluation` cutover and protocol-oracle
+maintenance, not a Stage 2 optimization claim.
 
-The exact representation may coalesce all compatible spans into one dense `M` of length
-`N/g`; this is already a major win. `HighLaneWeights` selects one storage form—it must not
-retain both dense `M` and the source spans. Keep sparse spans only when the end-to-end
-benchmark beats coalescing. `FactorizedSpan` must support multiple additive patterns over
-the same physical interval and partial A-width columns; do not model a span as exactly one
-`column_weight * alpha_local` product. Preserve the current semantic emitter's overlap
-invariant or explicitly coalesce overlaps before assigning storage.
+### Range polynomial and tree topology
 
-Factorization is legal only when a checked compiler proves:
-
-1. `g` is a nonzero power of two and divides every native role dimension;
-2. physical start, exponent start, and factorized length are `g`-aligned;
-3. the raw-to-opening address mapping preserves coefficient order;
-4. live raw prefix and padded capacity are `g`-aligned for the factorized portion;
-5. the local address map preserves the low `k` raw address bits;
-6. a partial native interval is masked exactly and no periodic pattern leaks into an
-   inactive subcolumn.
-
-If any precondition fails, split checked aligned spans and fringes or use the same pair
-scan with a dense/sparse flat provider. Never repair misalignment with inverse powers,
-silent padding, or a different challenge domain.
-
-Every physical contribution is owned exactly once. Spans are compiler temporaries and are
-dropped after coalescing into `HighLaneWeights::Dense`, or they remain the sole
-`HighLaneWeights::Spans` storage. Unaligned dense/sparse fringes are separate additive
-providers. The final evaluator computes
-`A_g(r_low) * M(r_high) + fringe(r)` exactly once; it never replays source spans after
-coalescing or folds a fringe into both terms.
-
-### Why the common base, not `d_a`
-
-Factoring at `d_a` is wrong in mixed mode. A D-role setup contribution resets its alpha
-exponent on each D subcolumn, while an A consistency contribution may continue across the
-A-local coefficient width. They do not share one length-`d_a` low factor. At `g`, every
-native exponent has the form `g*h + y`, so all role families share exactly `alpha^y` and
-retain their different high-lane periodic patterns.
-
-Separate challenge domains per role are also wrong: they would produce incompatible
-relation points and downstream witness openings in either topology.
-
-### Fold behavior and expected gain
-
-During the first `k` raw binds, fold `A_g` while scanning contiguous common-base witness
-lanes. After those binds, the provider is the scalar `A_g(r_low)` times the folded lane
-table `M`. Arbitrary trace or future support weights need not share the alpha factor; keep
-them as additive dense/sparse providers in the same scan rather than forcing the combined
-weight into one factorization.
-
-The current mixed fallback stores `N` field weights and spreads a native event across
-`D` coefficients. Common-base compilation stores at most `N/g` lane weights and expands
-the event across `D/g` lanes. For supported `g = 32, 64, 128`, this cuts relation-table
-footprint and coefficient-spread construction by 32-128x. A `128/64/32` tuple still gets
-a 32x reduction while the protocol remains flat. Direct setup folds this provider in its
-one Stage 2 signed-witness scan. Recursive offload folds it in the joint Stage 1 leaf and
-scans `digit_witness` again for Stage 2 consistency. Report provider construction,
-direct-composer, recursive final-leaf, recursive claim-reduction, and combined gains
-separately.
-
-### One semantic relation emitter
-
-Refactor `compute_relation_weight_evals_inner` into a checked semantic emitter over
-row-family events and physical flat addresses. The emitter is the single source for:
-
-- a dense exact-live vector used as the scalar correctness oracle;
-- the `CommonBase`/sparse prover compiler;
-- direct evaluation at a verifier point;
-- setup-contribution attribution tests.
-
-Do not retain `compute_relation_matrix_col_evals` and
-`compute_relation_weight_evals` as two public semantic builders. A compact provider and a
-dense vector are representations of the same emitted polynomial.
-
-The verifier receives the same `WitnessDomain`, role-family metadata, and semantic
-event rules, but evaluates the prepared polynomial without materializing prover tables.
-It must not infer local coordinates from one global compile-time `D`.
-
-Crate placement follows the diff-surface table: the semantic event emitter, the
-common-base compiler, and the prepared verifier evaluator live in `akita-types` and are
-consumed by both prover and verifier. The prover's `relation_weight/` module holds only
-prover-side fold state and scan integration over those shared plans. A second emitter or
-evaluator in `akita-verifier` is exactly the "two public semantic builders" violation
-this section deletes; do not reintroduce it across a crate boundary.
-
-## Relation finalization and recursive Stage 2 opening geometry
-
-### Three points with three different meanings
-
-Use descriptive point types and never slice a raw `Vec<E>` at a call site:
-
-```rust
-pub struct WitnessDomainPoint(/* checked point in WitnessDomain */);
-pub struct RangeCheckPoint(WitnessDomainPoint);
-pub struct RangeRelationPoint(WitnessDomainPoint);
-pub struct SetupOpeningPoint(/* point in SetupCoefficientDomain */);
-pub struct NextWitnessPoint(WitnessDomainPoint);
-
-pub struct CommonBaseWitnessPoint { /* private factorized view of WitnessDomainPoint */ }
-pub struct SetupWitnessBatchGeometry { /* checked Stage 2 lift and suffix maps */ }
-```
-
-`RangeCheckPoint` is sampled by the direct range-only Stage 1 leaf and is the only accepted
-anchor for `DirectRelationRangeImagePlan`. `RangeRelationPoint` is sampled by the recursive
-final Stage 1 leaf. A checked private
-method may view its underlying `WitnessDomainPoint` at common base `g` as the low
-`log2(g)` raw coordinates plus the remaining lane coordinates. Direct mode applies the
-same view to `NextWitnessPoint`. The view is used only to evaluate a factorized
-`RelationWeight`:
+Balanced basis `b = 2^LB` uses digits in `[-b/2, b/2 - 1]`. The class
 
 ```text
-RelationWeight(range_relation_point)
-  = MLE(A_g, coefficient_point) * MLE(M, lane_point)
-    + fringe_eval.
+range_image_class(w) = w       when w >= 0
+                     = -w - 1  when w < 0
 ```
 
-`SetupOpeningPoint` and `NextWitnessPoint` are sampled in recursive Stage 2. Under
-`Separate` they are independent native points. Under `Batched`,
-`SetupWitnessBatchGeometry` projects the fresh padded point to two checked suffixes and
-owns both inactive-coordinate lift scales. None of these Stage 2 points is a slice or
-reinterpretation of `RangeRelationPoint`.
-
-Delete `Stage2PointProjection`, `BatchedStage3Geometry`, `AkitaStage3Prover`, and every
-caller-owned `d_a.trailing_zeros()` slice. The replacement is semantic point ownership,
-not a renamed generic slicer.
-
-### One full setup-contribution scalar
-
-The setup contribution crossing the Stage 1/Stage 2 boundary is exactly:
+satisfies
 
 ```text
-setup_contribution_eval
-  = sum_j SetupCoefficient(j)
-          * SetupRelationWeight(j; range_relation_point, tau_relation, alpha).
+range_image(w)
+  = range_image_class(w) * (range_image_class(w) + 1),
+0 <= range_image_class(w) < b/2.
 ```
 
-It is the complete flat setup contribution expected by `RelationWeight` at the Stage 1
-point. It is not a high-lane partial `C`, and Stage 1 must not multiply it by
-`A_g(r_low)` again. Common-base factorization is an internal way to build or evaluate
-`SetupRelationWeight`; it cannot change the scalar's public meaning.
+The selected topology is:
 
-Both topologies call one canonical setup-weight builder over a checked
-`WitnessDomainPoint`:
+| LB | Basis | Product substages | Final leaf |
+|---:|---:|---|---|
+| 2 | 4 | none | quadratic |
+| 3 | 8 | none | quartic |
+| 4 | 16 | binary root | two quartic leaves |
+| 5 | 32 | arity-4 root | four quartic leaves |
+| 6 | 64 | binary root, then arity-4 layer | eight quartic leaves |
 
-- direct mode calls it at `next_witness_point` and evaluates the setup coefficient table
-  locally as part of the Stage 2 final relation-weight evaluation;
-- recursive mode calls it at `range_relation_point`, accepts the resulting full scalar as
-  a claim, then proves the identical flat dot product against the exact precommitted setup
-  prefix.
+This topology is fixed by `DigitRangePlan`. Prover, verifier, shape validation, child
+ordering, degree enforcement, serialization sizing, and tests call that same authority.
+No consumer reconstructs it from `trailing_zeros`, basis thresholds, or received vector
+lengths.
 
-For the same arbitrary witness-domain point, differential tests compare dense evaluation,
-factorized evaluation, local setup replay, and recursive setup-proof replay of the full
-scalar. Do not compare only a common-base lane fragment.
+Binary-only trees are rejected. They conserve the total per-round coefficient count while
+adding substages, child claims, transcript challenges, scans, and state transitions. They
+are neither simpler at the protocol boundary nor smaller on the wire.
 
-For a qualifying setup-weight span, write the Stage 1 relation point as
-`range_relation_point = (r_low, r_lane)` and a setup address as `j = g*J + y`. A valid
-internal factorization has the form:
+### Canonical Stage 1 lifecycle
+
+Every product substage follows one state machine:
+
+1. Build the small class-indexed node rows required by the current substage.
+2. Build ordered class-pair round coefficients after interstage batching weights are
+   known.
+3. Scan compact pair indices to produce the first ordinary round message.
+4. Keep the witness compact for the selected number of initial challenges.
+5. Materialize only the current substage's folded 1/2/4/8-lane field state.
+6. Prove later rounds with direct fixed-degree arithmetic and in-place folds.
+7. Read child claims in plan order, absorb them, and free the substage state.
+8. Rescan the original compact source for the next product layer or range leaf.
+
+The prover never materializes all range leaves or product-tree levels. Address-major
+fixed-lane state has logical shape
 
 ```text
-SetupRelationWeight(g*J + y; range_relation_point)
-  = A_g(r_low) * A_g(y) * Omega(J; r_lane),
-
-setup_contribution_eval
-  = A_g(r_low)
-      * sum_{J,y} SetupCoefficient(g*J + y) * A_g(y) * Omega(J; r_lane).
+folded_address -> [lane_0, ..., lane_(LANES-1)].
 ```
 
-The recursive setup-product weight includes the fixed witness-side scalar
-`A_g(r_low)`. At a fresh setup opening point `(rho_setup_low, rho_setup_lane)`, its
-final evaluation is:
+Small explicit dispatch chooses lane width and quadratic versus quartic arithmetic. There
+is no module or trait family per log basis.
+
+### Selected high-basis kernels
+
+| Topology | Initial compact strategy | First field state |
+|---|---|---:|
+| LB4 two-lane product | two-round challenge-dependent 4,096-key quartet coefficients | two lanes at `N/4` |
+| LB4 scalar leaf | two-round challenge-dependent 4,096-key quartet coefficients | one lane at `N/4` |
+| LB5 four-lane product | two-round factorized folded-pair rescan | four lanes at `N/4` |
+| LB5 scalar leaf | optimized one-round ordered-pair scan | one lane at `N/2` |
+| LB6 two-lane product | two-round factorized folded-pair rescan | two lanes at `N/4` |
+| LB6 eight-lane product | two-round factorized folded-pair rescan | eight lanes at `N/4` |
+| LB6 scalar leaf | optimized one-round ordered-pair scan | one lane at `N/2` |
+
+The common one-round machinery includes:
+
+- compact `u16` ordered class-pair indices;
+- split-equality block accumulation, applying the outer equality weight once per block;
+- contract-gated delayed product reduction;
+- challenge-dependent folded-pair materialization;
+- direct quadratic and quartic affine-product formulas;
+- exact nonzero suffix accounting.
+
+Two-round deferral preserves the ordinary transcript sequence. It sends round zero,
+receives `r_0`, sends round one, receives `r_1`, and only then materializes `N/4` state.
+It is not a multi-round Fiat-Shamir message.
+
+LB4 uses the affordable `8^4 = 4,096` challenge-dependent quartet key space. LB5 and LB6
+do not use full four-class tables: `16^4 = 65,536` and `32^4 = 1,048,576` are poor cache
+and construction tradeoffs. Their product layers rescan compact pairs through a
+`classes^2 * lanes` folded-pair table instead.
+
+### Selected low-basis kernels
+
+LB2 and LB3 use the same Stage 1 architecture but keep the compact source through three
+ordinary challenges whenever at least three variables remain.
+
+| Basis | Third-round compact representation | Challenge-dependent cache | First field state |
+|---:|---|---|---:|
+| LB2 / 4 | 256 range-image octet classes, direct quadratic coefficients | `256 x 3` field elements | one lane at `N/8` |
+| LB3 / 8 | two 256-class folded quads per octet, direct quartic coefficients | 256 folded values and `256 x 4` Taylor rows | one lane at `N/8` |
+
+The LB3 Taylor row is
 
 ```text
-A_g(r_low) * A_g(rho_setup_low) * MLE(Omega, rho_setup_lane).
+[Q(a), Q'(a), Q''(a)/2, Q'''(a)/6]
+for Q(s) = s(s-2)(s-6)(s-12).
 ```
 
-These are two different factors over two different points; each appears once.
-Nonfactorable trace and fringe terms stay wholly inside `non_setup_relation_weight_eval`.
+This is a challenge-time cache of range-polynomial arithmetic, not a second witness.
 
-### Role-expanded setup addresses
+### Measurements and settled Stage 1 experiments
 
-Current setup equality slices can evaluate one witness-column address and repeat it over
-projected base sublanes. Mixed geometry instead needs one checked physical setup address
-for every native role sublane.
+The selected high-basis path was measured on an Apple M4 with feature-pruned fp128
+release builds at `2^18`, full and three-quarter live prefixes, and uniform, zero-heavy,
+and alternating-endpoint digits.
 
-Add one typed address helper shared by relation-event emission, direct setup replay,
-`SetupContributionPlan`, setup-weight construction, and recursive proof preparation. For
-native role dimension `D` and `u in 0..D/g`:
+- Ordered class pairs beat streaming node evaluation in all 18 LB4-LB6 cells, with a
+  25.78% median improvement.
+- The optimized one-round pipeline then beat the ordered-pair baseline in all 18 cells,
+  with a 30.50% median improvement.
+- The selected two-round policy improved all 18 point estimates over that optimized
+  one-round baseline. The approximate geometric-mean improvements were 12.2% for LB4,
+  18% for LB5 after excluding one noisy cell, and 19.9% for LB6.
+- LB2 three-round deferral improved the measured full/uniform cell by about 39.8% and the
+  three-quarter/uniform cell by about 30.8% before the later shared quadratic cleanup.
+- LB3 three-round deferral improved one-thread full/uniform by 12.8% and
+  three-quarter/uniform by 10.9%; the corresponding stable eight-thread improvements were
+  9.3% and 6.1%.
+
+These results select production owners. The following losing alternatives are deleted,
+not hidden behind selectors:
+
+- streaming node evaluation inside the address scan;
+- full bivariate LB4 tables;
+- full four-class LB5/LB6 lookup tables;
+- two-round high-basis scalar-leaf deferral for LB5/LB6;
+- caching LB2 octet identifiers or globally histogramming LB2 octets;
+- a full `65,536 x 5` LB3 octet-pair coefficient table;
+- adaptive low-diversity LB3 aggregation;
+- packed LB3 quad identifiers, which helped one thread but regressed the production
+  parallel path;
+- fusing post-materialization state writes with the next round computation. The faithful
+  candidate retained existing accumulation optimizations and still measured slightly
+  slower or tied.
+
+### Stage 1 module ownership
+
+The final implementation is organized by invariant:
 
 ```text
-physical_base_lane
-  = witness_col * (d_a/g)
-  + native_role_subcol * (D/g)
-  + u.
+digit_range/
+  mod.rs                         topology choreography
+  compact_digit_source.rs        compact digits and range-image classes
+  range_class_tables.rs          class rows and ordered-pair coefficients
+  class_indexed_state.rs         product/leaf state transition data
+  class_indexed_product.rs       fixed-lane product subchecks
+  class_indexed_range_leaf.rs    high-basis equality-factored leaf
+  exact_prefix.rs                explicit prefix plus exact default
+  round_accumulation.rs          bounded coefficient accumulation
+  direct_range_leaf.rs           low-basis equality-factored leaf
+  direct_range_leaf/
+    initial_round_deferral.rs    selected compact prefix kernels
+    live_prefix.rs               prefix-aware scans
+    rounds.rs                    later field rounds
+    sparse_low_variables.rs      small remaining-variable cases
 ```
 
-The helper receives a typed native setup column already mapped to
-`(witness_col, native_role_subcol)`. It checks divisibility, `u`, role-subcolumn bounds,
-all arithmetic, and final domain membership. Prover and verifier may not reconstruct this
-map independently from matrix-column order. D/B columns carry their A-witness
-role-subcolumn mapping; A uses subcolumn zero; Z sums fold-digit equality separately at
-every A sublane.
+Files are allowed to be substantial when they own a real kernel. Splitting a hot function
+into forwarding helpers merely to satisfy a line target is forbidden. Conversely, no
+file should mix topology, compact conversion, proof choreography, table construction,
+and multiple unrelated kernels as the deleted Stage 1 modules did.
 
-Overlapping A/B/D views contribute with `+=` to the same raw `SetupCoefficient` address.
-The setup domain therefore needs its own validated semantic names:
+### #312 proof and verifier contract
 
-```rust
-pub struct SetupCoefficientDomain(FlatBooleanDomain);
-pub struct SetupCoefficientIndex(usize);
-pub struct SetupRelationWeight<E>(/* prepared public polynomial */);
-```
+#312 is compute-only with respect to Stage 1 protocol semantics:
 
-Do not name the setup matrix, setup prefix, or setup polynomial `S`; that would recreate
-the ambiguity removed from the range path.
+- proof bytes and transcript events match the versioned post-#311 epoch;
+- child claim order and degree are unchanged;
+- `range_image_eval` and its point are unchanged;
+- the verifier consumes `DigitRangePlan` and rejects malformed shape before allocation;
+- no verifier-reachable panic, unchecked indexing, or unbounded received vector remains;
+- terminal #311 bytes and events are unchanged.
 
-### Future independently committed oracle constraint
+The epoch fixtures are versioned. A later protocol-changing PR replaces the affected
+expected digests with an explicit before/after delta; it does not pretend #312's fixtures
+must remain immutable forever.
 
-Do not add a generic production `OracleAddressEmbedding` enum in this series. The Stage 1
-range and relation terms and the Stage 2 range-image consistency reduction use the same physical
-`digit_witness` domain. Setup certification uses only `SetupCoefficientDomain`; the
-recursive opening route uses the named typed points above.
+### #312 intended diff surface
 
-The future compression handoff must nevertheless preserve this soundness rule: equal
-padded round counts do not justify challenge reuse. Its coordinate map must be injective,
-in range, order-explicit, and separate active from inactive coordinates. A fixed-coordinate
-embedding owns the equality selector for the actual fixed bit values. A repeated-table
-lift owns its audited `2^{-inactive}` sum coefficient exactly once. A contiguous interval
-is not a Boolean subcube unless the map proves it. A common-base view is valid only when
-the canonical low `log2(g)` coordinates map identically and the offset is `g`-aligned.
-Until that future feature implements and discharges those obligations, reject any new
-independently committed oracle from either stage.
+The full merge-base diff may touch only these responsibilities:
 
-### Recursive setup-offload eligibility
-
-Production recursive setup-prefix commitments are currently fixed to
-`SETUP_OFFLOAD_D_SETUP = 64`. `SetupCoefficientDomain` stores its flat domain and exact
-slot identity; it does not store an independently constructible base dimension. Its
-`checked_common_base_view(role_dims)` derives `g` from bound role dimensions and validates
-all alignment.
-
-First mixed-role release policy:
-
-- Stage 1 relation evaluation and direct setup replay support every validated nested role
-  tuple.
-- Recursive setup offload is eligible only when an exact slot exists and all current slot
-  ID, `d_setup`, natural-length coverage, padded-domain, commitment-parameter, and setup
-  envelope checks pass. `slot.d_setup == derived_common_base` is necessary, not
-  sufficient.
-- With current production slots, this means `g == 64`, for example `128/64/64`.
-- The planner selects `FoldCheckTopology::DirectSetup` when no recursive slot qualifies and
-  emits a diagnostic. A prover/verifier given either scheduled recursive variant with
-  a missing or mismatched slot returns `InvalidSetup`; it never dynamically downgrades the
-  mode or changes proof shape.
-- C7's direct `SeparateReductionShape` additionally requires a next-level opening route
-  for two independent points. If E8 lands, `RecursiveClaimReductionPlan::Batched`
-  requires validated lift/suffix geometry. Both require the complete setup and witness
-  opening route promised by the level envelope.
-- A `128/64/32` recursive setup path requires a separately generated, committed, and
-  audited D32 setup-prefix slot. Parameterize the APIs now, but do not pretend the D64
-  artifact serves D32.
-
-## Planner and proof-shape integration
-
-### Round counts and descriptors
-
-Replace `sumcheck_rounds(level_d, next_w_len)` with a D-free checked function derived from
-the canonical Boolean domain:
-
-```text
-rounds = ceil_log2(live_len), with the repository's checked nonempty convention.
-```
-
-Remove comments/formulas that define the count as `col_bits + ring_bits`. Packets before
-the atomic two-stage protocol cutover preserve homogeneous descriptor bytes, proof bytes,
-transcript events, challenge draw order, and challenge-to-physical-address mapping. The
-cutover intentionally changes intermediate proof shape as specified above; thereafter the
-new schedule descriptor and semantic transcript are the sole oracle. The flat-domain
-representation work by itself is not permission to change the proof language.
-
-Before accepting a mixed proof, bind its role dimensions, flat domain semantics, segment
-layout, row-family layout, common-base projection, `FoldCheckTopology`, recursive reduction
-shape, and projection version in a single unambiguous schedule/instance descriptor. If
-the current descriptor cannot express that identity without changing homogeneous bytes,
-add a mixed-only version/capability in
-Packet 8 or stop for a separate protocol spec. A verifier must never accept two address or
-projection interpretations under one digest.
-
-### Mixed-dimension schedule gate
-
-The planner may emit `d_a != d_b` or `d_a != d_d` only after:
-
-- native quotient construction and denominators pass row-family tests;
-- direct Stage 2 relation/consistency and recursive Stage 1 relation plus Stage 2 reduction
-  pass uniform and mixed tests;
-- trace weights use the flat domain without eager remap;
-- direct setup replay, recursive setup proof, and witness carry use distinct typed points;
-- recursive setup mode follows the exact eligibility rule above;
-- multi-group and multi-chunk layouts pass;
-- serialized proof-size formulas match actual proofs;
-- prepared setup-cache cost is included in candidate scoring.
-
-First measured production candidate should be fp128 with `d_a = 128` and
-`d_b = d_d = 64`, compared against homogeneous D64. Do not jump to D256 or enable a broad
-tuple catalog until the D128 lift improves the full objective.
-
-The planner preview must compare homogeneous, unrestricted mixed, and cache-capped mixed
-schedules. Count unique prepared cache keys across the schedule and attribute total byte
-delta to nonterminal folds, terminal tail, setup-product proof, and other bytes. Retain the
-existing conservative cap direction:
-
-```text
-mixed_prepared_cache_bytes <= min(
-    baseline_prepared_cache_bytes * 5 / 4,
-    baseline_prepared_cache_bytes + 256 MiB
-).
-```
-
-Stop mixed-D rollout if no candidate survives the cache cap or if the apparent win is
-primarily a terminal-tail artifact rather than recurring fold savings.
-
-Planner CPU cost may price measured basis/domain/role work, but it must not serialize or
-select a CPU kernel implementation. LUT versus direct evaluation is a local build/runtime
-kernel choice whose output is identical.
-
-## Upstream prover digit production
-
-This workstream starts only after the range/sumcheck core is stable, so it does not obscure
-the dominant Stage 1 win.
-
-### Destination-oriented decomposition
-
-Change balanced decomposers to write directly into final validated witness segments:
-
-```rust
-decompose_*_into(source, params, destination_segment)
-```
-
-Requirements:
-
-- z/e/t/r digits write once into canonical digit-innermost storage;
-- use a flat checked centered table rather than `Vec<Vec<Vec<i32>>>`;
-- do not return temporary plane vectors only to copy them;
-- avoid recomposition followed by decomposition when the digit representation is already
-  available;
-- group order uses checked ranges/index maps, not reorder-and-concatenate copies.
-
-Add const-specialized decomposition loops for LB4/LB5/LB6 only after one generic
-destination-oriented kernel is correct:
-
-- hoist mask, half-basis, and shifts;
-- select the ordinary signed-`i128` versus rare overflow path once per row/chunk;
-- benchmark coefficient-major versus final plane/digit-major emission;
-- prefer branchless normalization only when measured;
-- rely on compiler vectorization before considering explicit SIMD.
-
-### Fold-grind workspace
-
-Introduce one reusable `FoldProbeWorkspace` per group:
-
-1. draw challenges into reusable storage;
-2. traverse each source coefficient once;
-3. accumulate the global response and every chunk response together;
-4. keep candidates in centered integer rows;
-5. check digit bounds, infinity norm, and Golomb admissibility before field conversion;
-6. convert only an accepted nonce to the final fold witness;
-7. reuse all scratch allocations on rejected nonces.
-
-Preserve implicit zero planes for one-hot inputs until final physical emission. Dense
-inputs must reuse cached digit planes when available rather than decompose canonical field
-coefficients again for every nonce.
-
-### Ring relation construction
-
-Split the long `RingRelationProver::new` only at real artifact boundaries with distinct
-invariants and ownership:
-
-```text
-prepare_opening_digits
-  -> sample_fold_response
-  -> build_relation_instance
-  -> build_recursive_witness_inputs
-```
-
-These are phases, not forwarding wrappers. If a proposed type does not eliminate a clone,
-centralize validation, or establish an invariant, do not add it.
-
-## Delivery model: central hub, bounded PRs, and atomic cutovers
-
-This document is the central implementation hub. It owns the target architecture, packet
-contracts, dependency order, PR ledger, benchmark gates, and accepted deviations. A child
-PR may refine implementation detail, but it must update the affected ledger row and this
-document in the same diff when it changes a dependency, invariant, cutover boundary, or
-performance gate. Do not create a second branch-local design spec.
-
-The work must not live as one long-running mega-PR. Deliver it as short tranches. Each
-tranche has zero or more additive/behavior-preserving foundation PRs followed by exactly
-one atomic production cutover PR. Merge a completed tranche before opening the next
-production tranche; rebase the next branch on the new `main` instead of carrying the full
-historical stack indefinitely. Investigations and benchmarks may run in parallel, but
-their production branches do not merge out of ledger order.
-
-### What “additive” permits
-
-An additive foundation PR may merge independently only when every added artifact is
-already useful and exercised without creating a second protocol implementation:
-
-- test-only dense oracles, differential fixtures, and fixed benchmark scenarios;
-- checked plan/domain types that immediately replace duplicated validation or sizing
-  authority while preserving current proof bytes and transcript events;
-- arithmetic, pair-scan, fold, and provider primitives called directly by the current
-  production path with byte-identical behavior;
-- private candidate kernels confined to `#[cfg(test)]` or benches until a winner is
-  selected.
-
-“Additive” does **not** permit an unused production prover/verifier, a feature-flagged
-second engine, ignored proof fields, a dormant schedule variant, a compatibility decoder,
-or an adapter whose only job is to keep old and new APIs alive together. If a foundation
-cannot stand on its own under those rules, keep it as a stacked draft and merge it only
-back-to-back with its cutover.
-
-### Atomic cutover rule
-
-The closing PR of each tranche must, in one diff:
-
-1. select the new canonical entry point from every affected production caller;
-2. update the prover, verifier, authenticated plan, proof shape, sizing, serialization,
-   transcript, schedules, and generated artifacts that the feature actually changes;
-3. delete the replaced implementation, names, wrappers, decoders, and runtime selector;
-4. prove old/new parity or the declared protocol delta against the tranche baseline; and
-5. update this ledger with the final PR, head, measurements, and any approved deviation.
-
-No follow-up “cleanup PR” may be required to make a cutover single-source-of-truth. Later
-optimization PRs may improve the new canonical implementation, but they may not finish a
-deletion owed by the cutover that activated it.
-
-### Planned PR stack
-
-Branch names are recommended names, not API. `Base` is the required semantic predecessor;
-once a tranche merges, descendants rebase onto the resulting `main`. Every implementation
-PR fills its `PR / status` and evidence cells before it becomes ready for review.
-
-| ID | Recommended branch | Base | Packets | Kind | Bounded responsibility | PR / status |
-|---|---|---|---:|---|---|---|
-| B0 | #311 | `main` | 0a | prerequisite cutover | Land/use #311 and ratify its terminal contract as F1's exact base | current audited head `bc959ef3` |
-| F1 | `quang/plan-digit-range-pipeline` | B0 | hub, 1-3 | additive foundation + atomic internal cutover | Land this hub, baselines/oracles, canonical range plan/domain, and the single `DigitRangeProver` cutover as one coherent first PR | **implementation active** |
-| C3 | `quang/digit-range-pair-table-candidate` | F1 | 4 | atomic compute cutover | Make the generic streaming prover canonical for LB2-LB6, select ordered class-pair round-zero coefficients, and delete eager forest/padded-table and streaming node-evaluation production paths | selected baseline head `999678ce` |
-| O4 | `quang/digit-range-ordered-pair-optimized` | C3 | 5 | bounded one-round optimization | Install compact pair indices, split-equality accumulation, contract-gated delayed reduction, folded-pair materialization, optimized folds, and direct fixed-degree arithmetic without two-round deferral | **selected head `b9e44a50`; 18/18 cells won** |
-| O5 | `quang/digit-range-two-round-deferral` | O4 | 5 | bounded two-round optimization | Retain the measured LB4 quartet-table product/leaf kernels and LB5/LB6 factorized product kernels; keep high-basis scalar leaves one-round; preserve transcript bytes | **selected head `7b94cb8b`; 18/18 point estimates won** |
-| I5 | refreshed #309 integration branch | O5 + #309 | 0b | prerequisite integration | Rebase/land #309 over the current stack, resolve #311 terminal conflicts, and ratify the three semantic bases before relation/setup work | planned before C5 |
-| C5 | `quang/digit-range-06-flat-relations` | I5 | 6 | atomic compute/API cutover | Move current direct relation/setup evaluation to the flat semantic providers; delete public x/y and sentinel paths with unchanged wire | planned |
-| C6 | `quang/digit-range-07-direct-fold-check` | C5 | 7a | atomic direct cutover | Install the semantic direct fold-check container, keep direct bytes unchanged, unschedule recursive offload, and delete legacy recursive Stage 2/3 | planned |
-| C7 | `quang/digit-range-08-recursive-two-stage` | C6 and #310 integration | 7b | atomic protocol cutover | Add the fused recursive Stage 1 leaf and `Separate` Stage 2 reduction across proof/prover/verifier/wire/sizing/schedules | planned |
-| E8 | `quang/digit-range-09-batched-reduction` | C7 | optional target | atomic capability cutover | Add and emit `Batched` across plan/proof/prover/verifier/wire/sizing only if complete-size and differential gates beat `Separate`; otherwise add no production shape | planned / optional |
-| M9 | `quang/digit-range-10-mixed-dimensions` | C7 or E8 | 8 | atomic compute/capability cutover | Extend canonical providers to mixed role dimensions under the fixed two-stage proof language and remove the mixed-plus-setup rejection | planned |
-| M10 | `quang/digit-range-11-mixed-planner` | M9 | 9 | capability enablement | Price and schedule eligible mixed/offloaded candidates; regenerate only approved rows | planned |
-| O11 | `quang/digit-range-12-prover-cleanup` | M10 | 10 | bounded optimization | Destination-oriented digit emission, nonce/fold workspace reuse, and invariant-bearing constructor split | planned |
-| O12 | `quang/digit-range-13-verifier-kernels` | O11 | 11 | bounded optimization | Port only measured structured verifier kernels onto the canonical providers | planned |
-| D13 | `quang/digit-range-14-docs-packing-handoff` | O12 | 12 | closure | Final audit, book/spec/profile synchronization, scalar packing handoff; no deferred cutover deletion | planned |
-
-The original C3 node-evaluation head `91d05aca` remains measurement history and its branch
-is deleted. C3's ordered-pair child `999678ce` is the direct benchmark baseline for O4;
-the selected one-round implementation base for later work is O4 head `b9e44a50`.
-
-O5 deliberately combines the three basis decisions because they share one two-round state
-transition and were selected together against O4. Disposable candidates were measured
-outside the retained diff. Only the measured winner for each topology
-is rebased into the listed production order. E8 is optional: if `Batched` does not beat
-`Separate`, record the stop result in this hub and skip directly to M9.
-
-### F1: locked first PR contract
-
-This is a settled delivery decision. The current planning PR becomes the first
-implementation PR; do not merge it as a documentation-only waypoint. Its coherent claim
-is:
-
-> establish the canonical range architecture, prove that it preserves the current
-> protocol, and cut every Stage 1 caller over to one production `DigitRangeProver`.
-
-F1 combines the hub with Packets 1-3 because the pieces are mutually justifying: the
-baseline/oracles make the refactor reviewable, `DigitRangePlan` removes duplicate shape
-authority, and the architecture cutover ensures the new plan is exercised rather than
-dormant. Splitting before the F1 cutover would either merge unused substrate or leave the
-repository with two prover owners.
-
-#### Base and branch rule
-
-F1's exact base is the current #311 head recorded as B0. It consumes the checked concrete
-range basis already carried by `RingSwitchOutput` and passes it directly to
-`DigitRangePlan`; neither the plan nor the Stage 1 prover reads `LevelParams`. When I5
-lands #309, the ring-switch producer supplies that same concrete value from
-`log_basis_open`, so no compatibility wrapper or F1 API change is permitted. Record the
-literal B0 and F1 head SHAs in this ledger before implementation review begins.
-
-#### Versioned protocol epochs
-
-The byte and transcript fixtures are versioned protocol epochs, not immutable constants
-for all future Akita revisions. A change that claims to preserve the declared epoch must
-match its fixtures exactly. Conversely, a PR that intentionally changes the protocol must
-update the affected fixtures in the same atomic change, record the old and new epoch base
-SHAs, enumerate the expected proof-byte, transcript-event, challenge, claim, and point
-deltas, and establish the replacement epoch for subsequent wire-preserving work. A
-compute-only refactor must never regenerate a fixture merely to make its tests pass.
-
-F1 declares the literal #311 head
-`bc959ef34572aee143ba0114094b0b4212b4e111` as its protocol epoch. Later stack entries use
-the latest deliberately established epoch rather than assuming that the F1 fixtures are
-permanent. This gives protocol-changing PRs authority to evolve the fixtures while keeping
-the negative-diff contract precise for every wire-preserving tranche.
-
-#### F1 evidence ledger
-
-The architecture cutover snapshot is
-`83a2b98f725e2dbb5000806fd5adb6f1d6c2fd47`; its literal implementation base and oracle
-epoch is the #311 SHA above. Record the eventual ready-for-review F1 head in the stack
-ledger once the bounded F1 slices are complete. Do not rewrite B0 to a merge-base or an
-approximate `main` revision.
-
-`crates/akita-pcs/tests/digit_range_protocol_epoch.rs` is the executable digit-range
-protocol epoch inherited by F1 from #311. It was
-captured by compiling and running the old `AkitaStage1Prover` in a detached worktree at
-the literal B0, then checked against the cut-over `DigitRangeProver`. Its payload encoder
-uses the canonical Stage 1 wire order: each eq-factored sumcheck, then its child claims,
-then `range_image_evaluation`. This Rust vocabulary rename is wire-neutral: positional
-serialization and the transcript label bytes are unchanged. Its transcript encoder records the complete ordered
-`LoggingTranscript` event stream. The test additionally replays the proof through
-`AkitaStage1Verifier`, requires the verifier and prover event streams to be identical,
-and compares the final point and range-image evaluation.
-
-Run the epoch check with:
-
-```text
-cargo test -p akita-pcs --test digit_range_protocol_epoch --features logging-transcript
-```
-
-The captured cells are intentionally small deterministic witnesses; the performance
-matrix below owns representative scale. Digests are field-challenge digests under the
-test-only `akita/protocol-epoch/digest` domain.
-
-| Basis | Stage 1 bytes | Events | Proof digest | Event digest | Output-point digest | Range-image evaluation |
-|---:|---:|---:|---|---|---|---|
-| 4 | 144 | 9 | `abd1266b50d20cfe7b9a3ddf83e9b544` | `4491fc78622c42a3b932e6636f0fc667` | `7d9fafb86c4b931cffd679891031586b` | `a3597f88c2a199b05fe5c285c9366d15` |
-| 8 | 272 | 9 | `9cda2cf6600a1cc46240993b5cf15b92` | `41f764d51da50603e671b3b9c4a57a8e` | `a1a125181986353fb9d84f93764b21d0` | `0092bf8c55d7731e323a60f3f9b603c7` |
-| 16 | 432 | 21 | `3e0cc8bac0d1349a16c8e7d58fb0f3ee` | `250eb155de29e174e4e385bb21533a3a` | `a740f51168e899129c346b13f027e4ea` | `119a3282dc19d6bd68b08929aa82b8f4` |
-| 32 | 592 | 23 | `fd0d48a7b9b1cf9e772df377a0c67849` | `f171889729c52a1829dc8949e1898c20` | `d7178d608a5edb274e90e2b583104b78` | `7335696cb66eb923716ac7c085344918` |
-| 64 | 816 | 39 | `efb26d21239c4bff5d221216ab092e79` | `c4f7688506a87b26db7ce8e547c47e8e` | `97aa7de0a6605ff6eeeea0ec6afbe514` | `b62ebc70f19c7bcd71fa9c466d5c86b9` |
-
-`crates/akita-pcs/tests/fold_protocol_epoch.rs` extends that exhaustive leaf-level epoch
-through the currently generated fold schedules. A capture form of the same fixture and
-canonical encoders was compiled and run at literal B0 before its outputs became
-expectations. It serializes the complete proof,
-the #311 terminal payload, every non-terminal Stage 1 payload in level order, and the
-complete public logging-event stream; verifier replay must reproduce the prover events.
-The direct fixture is a root followed immediately by the terminal, while the recursive
-fixture contains the root plus two recursive non-terminal folds.
-
-| Schedule fixture | Non-terminal range bases | Complete proof bytes / digest | Public events / digest | Terminal bytes / digest |
-|---|---|---|---|---|
-| direct-to-terminal, nv12 | `8` | 57,250 / `3a155ec04047e9942f2eb1685e778e50` | 164 / `57046ae9d1a2a2b0a63e1ecd34bc6dea` | 54,286 / `5a26d324461406760daa77a6e3009858` |
-| recursive-nonterminal, nv20 | `64, 64, 64` | 74,231 / `7caa4641e201f1be5a6437f5fa3e7535` | 677 / `6fa3d54d166f79a4c4fe7054c5d4ed84` | 57,707 / `dd68f68783534944dad6c7a213866d45` |
-
-The per-level Stage 1 payload digests are checked separately inside the fixture, so a
-terminal or surrounding fold change cannot mask a range-proof delta. Together,
-`digit_range_protocol_epoch` covers every supported LB2-LB6 topology, while
-`fold_protocol_epoch` covers the two currently scheduled non-terminal execution shapes.
-Both use the one test-only event
-encoder and field-parameterized epoch digest in `tests/common/mod.rs`; there is no second
-oracle digest implementation.
-
-The proof and event digests transitively cover every round polynomial, challenge,
-substage child claim, and transcript label/order. A failing digest must first be
-classified as either an unintended regression or an intentional protocol change. Only
-the latter may establish a new epoch under the lifecycle above.
-
-The following workboard is the single status index for closing F1. The normative
-requirements remain the locked contract and ready-to-merge gate below; this table records
-evidence state rather than creating a second acceptance policy.
-
-| F1 evidence item | Status | Closure evidence |
-|---|---|---|
-| Canonical plan/domain/point and one `DigitRangeProver` cutover | complete | architecture snapshot above; mandatory deletion scan still belongs to final diff audit |
-| Standalone LB2-LB6 proof, transcript, challenge, claim, and point identity | complete | checked-in `digit_range_protocol_epoch` and digest table above |
-| Post-#311 terminal proof/transcript epoch | complete | literal-B0 complete-fold fixtures and terminal payload digests above; F1 does not edit terminal production code |
-| Direct and recursive scheduled non-terminal fold identity | complete | level-indexed Stage 1 payloads, complete proof bytes, and prover/verifier public event identity in `fold_protocol_epoch` |
-| Exhaustive plan and malformed-shape behavior | complete | all supported topologies; unsupported basis; domain count/width/alignment; every column/ring point permutation; wrong point width; and per-basis missing/extra stage, round, degree coefficient, and child claim tests. Point order is unrepresentable after construction because `DigitRangeEqualityPoint` fields are private and its sole constructor performs the protocol permutation. |
-| Allocation count/byte parity | complete for the fixed uniform primary cells | literal B0/F1 table below; remaining distributions are benchmark cells, not additional allocation baselines unless review requests them |
-| Criterion timing parity | pending | paired serial and parallel B0/F1 intervals for the fixed matrix, including verifier attribution |
-| Stage 2/relation baseline coverage | pending | add the Packet-1 Stage 2 cells and separately report relation construction without changing Stage 2 production code |
-| Exact proof-size and soundness evidence | pending review | reconcile complete actual/formula bytes for direct, legacy recursive, target separate, and target batched shapes—including unequal native rounds—with the proof-size and degree ledgers; finish the claimed-polynomial/challenge/extraction review before Packet 7 |
-| Fresh-process max RSS and exact-artifact text size | pending | commands and artifact-identity rules below |
-| End-to-end primary workload `<= 1.02x` | pending | paired B0/F1 result under the ratified ratio rule |
-| Production ownership and positive-surface classification | pending | finalize the Stage 1/Stage 2 file-and-function manifest, classify final `B0...F1` name/numstat output exactly once, and attach the forbidden-owner/wrapper `rg` report |
-| Repository validation | pending final head | preflight, three release Clippy graphs, focused suites, transcript hardening, and CI-profile nextest |
-| Release bookkeeping | pending final head | record F1 head SHA, commit/push, open the PR, and attach local/CI evidence |
-
-The checked-in Criterion matrix uses bases 4/8/16/32/64, `N = 2^18`, full and
-three-quarter live prefixes, uniform/zero-heavy/alternating-endpoint digits, and both
-prover and verifier measurements. Each case separates `construct`, `prove`,
-`prove-total` (construction plus proof), and `verify`; the whole-stage gate uses
-`prove-total`, while the other phases attribute a regression. It uses sample size 20 and
-constructs witnesses, plans, domains, points, reference proofs, and cloned benchmark
-inputs outside timed closures. Run serial and parallel results as separate named
-baselines; do not average them together. The capture machine for the initial F1 evidence
-is:
-
-| Property | Value |
+| Surface | Allowed #312 work |
 |---|---|
-| OS/ISA | Darwin 25.5.0, `aarch64-apple-darwin` |
-| CPU | Apple M4, 10 physical / 10 logical cores |
-| Memory | 25,769,803,776 bytes |
-| Rust | `rustc 1.95.0 (59807616e 2026-04-14)` |
-| LLVM | 22.1.2 |
+| `akita-prover::protocol::sumcheck` | Stage 1 range cutover and shared mechanics required directly by it |
+| `akita-types::proof::stage1` and sizing | canonical range topology, descriptive fields, shape validation, byte accounting |
+| `akita-verifier::stages::stage1` | replay through `DigitRangePlan`, descriptive outputs, malformed-shape rejection |
+| Stage 2 call boundary | mechanical `range_image_evaluation` naming and Stage 1 output adaptation only |
+| PCS tests/benches/profile report | epoch fixtures, differential tests, allocation measurement, basis benchmarks |
+| transcript labels/book/specs | semantic range-image names and documentation |
 
-Use Criterion saved baselines against the literal B0 and candidate, with identical
-features and environment. Persist the exact command line and raw Criterion estimates in
-the PR evidence; the default parallel capture command is:
+Not allowed in #312: mixed-dimension provider construction, Stage 2 kernel selection,
+relation point remapping, setup-offload proof changes, planner schedule changes, or a new
+proof epoch.
 
-```text
-cargo bench -p akita-pcs --bench digit_range --features parallel -- --save-baseline <epoch>
-```
+## Stacked PR: reimplement the fused relation/range-image prover
 
-The allocation target reuses the same `cases.rs` scenario source and prover entry point,
-but is a separate binary so its global counting allocator cannot perturb Criterion timing.
-Build and run it without default features so the allocator observes exactly one thread:
+### Purpose and protocol boundary
 
-```text
-cargo bench -p akita-pcs --bench digit_range_allocations --no-default-features -- \
-  --measure-case prove-total/b64/full/uniform
-```
+The second PR comprehensively replaces the current Stage 2 implementation while proving
+the same statement, sending the same standard degree-3 messages, sampling the same number
+of challenges, and returning the same `next_witness_eval`.
 
-The case grammar is
-`<construct|prove|prove-total|verify>/b<4|8|16|32|64>/<full|three-quarters>/<uniform|zero-heavy|alternating-endpoints>`.
-The CSV `elapsed_ns` value is a one-shot diagnostic, not timing-gate evidence; Criterion's
-20-sample intervals own timing decisions. `allocation_count` and `allocated_bytes` count
-successful allocations and reallocations begun inside the selected interval. The harness
-does not report a synthetic peak-live value because allocator callbacks cannot reliably
-attribute deallocations of pre-existing allocations to the measured phase.
-
-The following serial release measurements compare the literal B0 production
-`new_owned` path with F1 on the same prebuilt `Arc<[i8]>`, point, `N = 2^18`, and uniform
-digits. F1 moves its typed point into the prover; B0 necessarily clones its point slice
-inside `new_owned`, so that real ownership improvement remains in the count. Full and
-three-quarter high-basis cells have identical allocation results because the retained F1
-algorithm still pads them to the same Boolean domain; removing that behavior belongs to
-C3.
-
-| Basis / live prefix | B0 allocations | F1 allocations | B0 allocated bytes | F1 allocated bytes |
-|---|---:|---:|---:|---:|
-| 4 / full | 171 | 170 | 1,149,107 | 1,148,819 |
-| 8 / full | 215 | 214 | 1,161,629 | 1,161,341 |
-| 16 / full or three-quarters | 323 | 319 | 12,646,816 | 12,646,384 |
-| 32 / full or three-quarters | 361 | 355 | 21,039,360 | 21,038,800 |
-| 64 / full or three-quarters | 552 | 542 | 46,237,568 | 46,236,744 |
-
-Thus F1 does not increase allocation count or allocated bytes in any captured basis; it
-removes one to ten allocations depending on the topology. No allocator-derived peak is
-claimed: callback accounting cannot reliably attribute deallocations of objects created
-outside the measured interval. Fresh-process maximum RSS and explicit live-table formulas
-remain the peak-memory evidence.
-
-The current eager high-basis owner count is exact from the retained vectors, with `N`
-the padded Boolean-domain length: LB4 owns `N` range-image elements plus `2N` leaf-table
-elements (`3N`); LB5 owns `N + 4N` (`5N`); LB6 owns `N + 8N + 2N` (`11N`). The LB6
-`2N` term is the intermediate product-node table retained concurrently with all eight
-leaf child tables. C3 replaces these formula counts with measured peak counters and must
-explain any allocator-capacity or scratch-space delta instead of silently changing the
-model.
-
-Production phase attribution uses one span per owner, with no parallel `Instant` timing
-state. The orchestration spans are `digit_range_prepare_compact_source`,
-`digit_range_prove`, `digit_range_direct_leaf`, `digit_range_product_substage` (including
-stage index and arity), and `digit_range_polynomial_leaf`. Class-indexed kernels use
-`digit_range_build_node_table`, `digit_range_build_pair_coefficients`,
-`digit_range_product_initial_round`, `digit_range_product_materialized_round`,
-`digit_range_leaf_initial_round`, `digit_range_leaf_materialized_round`, the narrowly
-scoped deferred-second-round/materialization spans, and the final lane/range-image fold
-spans. Low-basis kernels use `digit_range_direct_leaf_round` (round and phase) and
-`digit_range_direct_leaf_fold`. These names are the single profiling vocabulary; do not
-instrument hot address, pair, lane, coefficient, or Rayon-item loops, and do not add
-wrappers that measure the same owner again.
-
-For code ownership and deletion accounting, use
-`git diff --numstat B0...HEAD` and `git diff --name-status B0...HEAD`, classify every path
-against the positive change-surface table, and count moved code at its final owner rather
-than claiming deletion from a rename. For max RSS, run each benchmark cell in a fresh
-process. First use `cargo bench -p akita-pcs --bench digit_range_allocations --no-default-features
---no-run` and copy the exact executable path Cargo prints; then run `/usr/bin/time -l
-<exact-executable> --measure-case <case>` and record `maximum resident set size` in bytes.
-Do not compare RSS from different crates or binaries. Never enable the counting allocator
-binary in the parallel Criterion timing run. Text size uses the uninstrumented release
-`digit_range` artifact and the toolchain's `llvm-size` (or the recorded Xcode `size` equivalent when
-`llvm-tools` is absent); record the exact artifact path and features so several
-hash-suffixed binaries cannot be accidentally aggregated.
-
-Recommended final PR title:
+For the direct/non-offloaded path, the claim is
 
 ```text
-refactor(prover): establish one digit-range architecture
+relation_claim
+  + range_binding_challenge * range_image_eval
+  + trace_claim
+
+= sum_z digit_witness(z) * [
+      common_alpha_factor(coefficient(z))
+        * relation_lane_weights(lane(z))
+    + trace_weight(z)
+    + range_binding_challenge
+        * Eq(range_check_point, z)
+        * (digit_witness(z) + 1)
+  ].
 ```
 
-#### Exact positive change surface
-
-The final `git diff B0...F1` may touch only the following ownership regions. A necessary
-path outside this manifest requires a hub amendment explaining the invariant it owns;
-“the compiler needed it” is not sufficient.
-
-| Surface | Allowed paths | Required final responsibility |
-|---|---|---|
-| Central hub and lifecycle | `specs/digit-range-pipeline-refactor.md`, `specs/akita-sumcheck-unification.md`, `specs/packed-sumcheck.md` | Keep this stack authoritative; record F1 base/head, benchmark method, status, and any deviation |
-| Benchmark and counters | `crates/akita-pcs/Cargo.toml`, `benches/digit_range.rs`, `benches/digit_range_allocations.rs`, and shared `benches/digit_range/{cases,measurement}.rs`, plus narrowly scoped Stage 1 tracing sites | Pin LB2-LB6, live-prefix, digit-distribution, serial/parallel, allocation, and whole-Stage-1 baselines without changing production decisions; one shared scenario source feeds an uninstrumented Criterion binary and a separate counting-allocator binary |
-| Range shape/domain authority | `crates/akita-types/src/proof/stage1.rs`, Stage-1-only exports in `crates/akita-types/src/proof/mod.rs` and `crates/akita-types/src/lib.rs`, the Stage-1 regions of `proof/{levels,shapes,wire}.rs` and `proof_size.rs`, and existing Stage-1 shape consumers in `crates/akita-types/src/schedule_tests.rs` and `crates/akita-pcs/src/scheme/tests/mod.rs` | One checked `DigitRangePlan` and one checked Stage-1 view of `WitnessDomain`; prover, verifier, shape validation, sizing, and their existing assertions consume them directly. These two test paths are named explicitly because deleting the old free topology helpers necessarily cuts their existing assertions over to the plan; they gain no production responsibility. |
-| Canonical prover | new `crates/akita-prover/src/protocol/sumcheck/digit_range/`, `protocol/sumcheck/mod.rs`, the public export in `crates/akita-prover/src/lib.rs`, Stage-1-owned pieces of `two_round_prefix/{common,stage1}.rs`, the Stage-1 import seam in `protocol/core.rs`, and the Stage-1 boundary in `protocol/core/fold.rs` | One production `DigitRangeProver` owns construction, transcript choreography, claims, folding, and all LB2-LB6 dispatch |
-| Removed prover surface | `protocol/sumcheck/akita_stage1_tree.rs` and `protocol/sumcheck/akita_stage1/` | Migrate invariant-bearing code into `digit_range/`, then delete both old prover owners and every pass-through export |
-| Verifier parity | `crates/akita-verifier/src/stages/stage1.rs` and only the Stage-1 replay region of `crates/akita-verifier/src/protocol/core/fold.rs` | Consume `DigitRangePlan`/checked points, preserve equations and transcript order, and reject malformed shapes without panic |
-| Differential tests and test-only protocol epochs | `crates/akita-pcs/tests/stage1_roundtrip.rs`, `crates/akita-pcs/tests/{digit_range_protocol_epoch,fold_protocol_epoch}.rs`, the shared test-only epoch encoding primitives in `crates/akita-pcs/tests/common/mod.rs`, narrowly scoped transcript-hardening tests, `digit_range/` unit tests, Stage-1-owned imports/assertions in existing `akita_stage2/tests.rs` and `two_round_prefix/tests.rs`, and test/bench-only dense range or relation helpers | Exhaust plans and malformed inputs; compare proof bytes, events, challenges, claims, points, and round polynomials against the declared protocol epoch inherited from #311. Keep one field-parameterized digest and one event encoder rather than duplicating epoch mechanics. |
-
-The new module should be organized by invariant-bearing state, not by basis or old
-backend. Acceptable internal seams are plan validation, active representation state,
-round production/folding, prefix optimization, and tests. Do not create `lb2.rs`,
-`lb4.rs`, `compact_backend.rs`, `tree_backend.rs`, an `Engine` trait, or a facade that
-forwards to the two old provers.
-
-F1 may temporarily retain both **active representations** required by the current
-protocol — compact digits for LB2/LB3 and padded range-image state for LB4/LB5/LB6 — but
-they must be private states inside one prover and must not own separate plan, transcript,
-proof-shape, or round-loop implementations. Both are exercised production states, not a
-dormant alternate engine. C3 owns replacing the padded high-basis state with streaming;
-F1 must neither optimize nor generalize it.
-
-Within the new Stage 1 code, production identifiers use `digit_witness`, `range_image`,
-and `range_image_evaluation`; do not introduce a new `S`-named table, claim, or helper.
-`AkitaStage1Proof::range_image_evaluation` is the sole Rust field name. The positional
-wire encoding and transcript label bytes remain unchanged, and no compatibility alias exists.
-
-#### Mandatory deletion and single-owner gate
-
-F1 is not ready until all of the following are true:
-
-- exactly one non-test `struct DigitRangeProver` owns Stage 1 range proving;
-- no non-test `struct AkitaStage1Prover` remains;
-- `pub mod akita_stage1`, `pub mod akita_stage1_tree`, and their re-exports are gone;
-- `prove_recover_w`, `take_w_evals_compact`, and the
-  `mem::take -> prove -> restore` witness handoff are gone; the existing `Arc<[i8]>` is
-  shared directly;
-- range topology, arity, degree, child count/order, and round count are derived only from
-  `DigitRangePlan` in prover, verifier, sizing, and shape validation;
-- the old free topology helpers are private implementation details or deleted; no
-  `_for_level`, forwarding constructor, compatibility reader, or runtime engine flag is
-  added;
-- every retained source file over the repository line limit is split only at an
-  invariant-bearing boundary and passes the repository line guardrail without a blanket
-  exception.
-
-#### Explicitly forbidden in F1
-
-F1 must not change:
-
-- any serialized byte, proof field order/count, transcript label/order, challenge, claim,
-  or final point for a fixed input and transcript seed;
-- the high-basis padded-table/forest algorithm beyond moving and descriptively naming its
-  private state; C3 owns the streaming replacement and its memory/speed claims;
-- Stage 2 relation algebra, Stage 3 setup offload, relation placement, setup contribution,
-  `FoldCheckPlan`, or recursive proof topology;
-- public x/y geometry, mixed-role dimensions, setup slots, planner selection, generated
-  schedules, commitment compression, terminal proof/checking, digit emission, fold grind,
-  or verifier performance kernels;
-- `two_round_prefix/stage2.rs` or production Stage 2/Stage 3 modules, except that test-only
-  baseline code may observe their outputs without changing their behavior.
-
-#### F1 ready-to-merge gate
-
-Against the literal B0 SHA, F1 must demonstrate:
-
-- byte-for-byte proof and logging-transcript identity for LB2-LB6 across direct and
-  currently scheduled recursive non-terminal levels;
-- identical Stage 1 round messages, challenges, interstage claims, final point, and legacy
-  range-image claim;
-- exhaustive `DigitRangePlan` shape tests and verifier rejection of malformed LB, count,
-  degree, point width/order, and child shape without panic;
-- each fixed Stage 1 benchmark cell within the ratified parity interval, no allocation or
-  peak-memory increase, and no end-to-end primary workload above `1.02x`;
-- a complete `B0...F1` ownership diff showing only the manifest above and an `rg` deletion
-  report for the forbidden old owners/wrappers;
-- the current repository-wide preflight, all three feature-matrix Clippy commands, focused
-  `akita-types`/`akita-prover`/`akita-verifier` Stage 1 tests,
-  `akita-pcs --test stage1_roundtrip`, transcript-hardening coverage, and the CI-profile
-  nextest suite, each polled to a real exit code.
-
-If preserving the old high-basis implementation inside one owner cannot meet parity or
-requires a wrapper around either legacy prover, F1 stops. Do not pull C3 streaming work
-backward merely to make the first PR pass.
-
-### Per-PR review and merge protocol
-
-Every PR in the stack must state:
-
-- its ledger ID, exact base SHA, head SHA, and immediate predecessor PR;
-- the cumulative tranche baseline used for correctness and performance comparison;
-- the one production authority it adds, replaces, or optimizes;
-- whether proof bytes/transcript are identical or intentionally cut over;
-- deleted symbols and the `rg`/guardrail evidence that no second path remains;
-- tests, benchmark cells, allocation results, and unresolved gates;
-- the next ledger ID, without claiming that later work is already implemented.
-
-Review the immediate `base...head` diff for boundedness and the tranche-base cumulative
-diff for architectural coherence. Merge foundation PRs only when independently valid;
-then merge the cutover promptly after its gates pass. If another Akita PR changes a base,
-provider, schedule, or proof shape, update this hub first, rebase the earliest affected
-unmerged PR, and rebuild all descendants. Never merge around the conflict with a wrapper.
-
-## Execution map and risk register
-
-The packet order is linear even where investigations may run in parallel. The PR ledger
-above is the delivery authority; the packet graph below is the technical dependency map.
-Before each cutover, its foundation packet's deletions, byte-identity gates, and benchmark
-report must be complete. Packet 7 is deliberately split into two bounded cutovers:
+Equivalently, the range term is
 
 ```text
-0a #311 terminal baseline (F1 base)
-  -> 1 baselines and oracles
-  -> 2 canonical range plans and checked points (wire-preserving)
-  -> 3 one range-product architecture
-  -> 4 streaming high-basis reference
-  -> 5 measured per-basis winners
-  -> 0b integrate #309 semantic inner/outer/open bases
-  -> 6 flat relation-provider cleanup under the current wire
-  -> 7a direct semantic cutover and recursive capability removal
-  -> 7b atomic recursive two-stage protocol cutover
-  -> 8 mixed common-base relation and setup providers
-  -> 9 mixed-candidate planner rollout and cost model
-  -> 10 upstream digit-emission cleanup
-  -> 11 verifier performance port
-  -> 12 documentation and packing handoff
+range_binding_challenge
+  * Eq(range_check_point,z)
+  * digit_witness(z)
+  * (digit_witness(z)+1).
 ```
 
-Packet 4 may prototype Packet 5 candidates; Packet 6 may prototype the joint leaf and
-Stage 2 proofs in benchmarks/tests; Packet 8's dense setup oracle may be prepared earlier.
-Later production code must not merge early. This avoids benchmarking a moving semantic
-target or carrying dual protocol shapes across packet boundaries.
-
-| Risk | Failure mode | Required prevention / stop condition |
-|---|---|---|
-| Derived-table padding mistaken for zero | Valid proofs drift because omitted Stage 1 suffixes have nonzero leaf/product values | Differentially test every round against the dense oracle; require per-lane defaults and exact split-equality suffix mass before deleting it |
-| Delayed-reduction overflow | Release-only proof corruption | Establish an accumulator-specific term bound and chunk reduction rule; reject a specialization whose bound cannot be proved |
-| A pre-cutover cleanup changes the wire | Existing schedules drift before the versioned migration | Compare proof bytes, logging-transcript events, round messages, challenges, claims, and final points after every Packet 2-6 semantic move |
-| Two-stage cutover is only partial | Prover, verifier, sizing, or transcript still interprets numeric Stage 3 fields | Packet 7a deletes the legacy recursive protocol while unscheduling the capability; Packet 7b adds the complete new recursive proof, plan, prover, verifier, serializer, transcript, sizing, and schedules atomically |
-| Mixed-role point slicing is wrong | Direct and recursively proved full setup contributions disagree | Use typed points; test dense/factorized provider equality and direct/recursive full-scalar equality for every supported tuple |
-| Generic abstraction hides algebra | Degree or batching coefficients are applied twice or omitted | No semantic engine traits or expression graph; Stage 1 and Stage 2 equations remain in their owning modules and are reviewed independently |
-| Microbenchmark win regresses the prover | LUT construction, cache misses, allocations, or parallel overhead erase a hot-loop gain | Gate on whole-substage and whole-prover ratios as well as the kernel; delete the losing path and its knob |
-| Future-feature scope creep | Inactive compressed/binary fields create ambiguous states | Add no production field or transcript slot; document only the provider seam and degree constraint |
-
-The only deliberately unresolved items are benchmark experiments, not architecture:
-
-| Experiment | Candidate set | Decision rule |
-|---|---|---|
-| LB4 class pair | direct field evaluation, field table, bounded narrow table | retain one complete-substage winner |
-| LB4 initial two rounds | one-round baseline, bounded 4,096-key deferral | retain only if it improves the whole Stage 1 and code-size gates |
-| LB5 product stage | direct fixed four-lane evaluation, field table | no narrow integer or full two-round table |
-| LB6 product/leaf stages | direct versus field table at each 2/8-lane boundary | choose separately per boundary, then retain one static plan |
-| Fused fold-next scan | separate fold/scan versus fused traversal | retain per stage only when end-to-end and allocation results improve |
-
-## Implementation packets
-
-Packets are technical acceptance scopes; the central ledger above maps them to bounded
-PRs and is normative for delivery. A temporary oracle may exist under tests while its
-replacement is differentially validated; it must not become a second production path.
-Packets 0-6 are homogeneous transcript/wire preserving. Packet 7a is a byte-identical
-direct cutover with recursive offloading deliberately unscheduled; Packet 7b is the
-authenticated recursive protocol cutover. Packets 8-12 must be byte-identical to the new
-protocol for a fixed `FoldCheckPlan`.
-
-### Packet 0a/0b: establish tranche-specific external bases
-
-**Goal:** make the implementation base unambiguous.
-
-**Actions:**
-
-- 0a: start F1 from the audited #311 head and record the exact post-cutover terminal
-  proof/transcript oracle;
-- 0a: pass the checked concrete range basis from `RingSwitchOutput` into
-  `DigitRangePlan`, with no `LevelParams` dependency;
-- 0b, after O4c and before C5: rebase and land the current
-  `origin/refactor/multi-group-digit-decompose` series, resolving every terminal conflict
-  in favor of #311's no-sumcheck contract;
-- 0b: confirm `log_basis_open` dominates inner/outer bases, confirm the ring-switch range
-  basis is sourced from `log_basis_open`, regenerate schedule artifacts, and ratify the
-  exact I5 base.
-
-**Stop:** do not implement F1 before #311. Do not begin C5 relation/setup work against a
-legacy single `log_basis`; I5/#309 must land first.
-
-### Packet 1: baselines, spans, and dense oracles (F1 foundation)
-
-**Goal:** make every later optimization measurable and differentially checkable.
-
-**May add:**
-
-- `crates/akita-pcs/benches/digit_range.rs`, its private
-  `benches/digit_range/measurement.rs` measurement-mechanics submodule, and the Cargo
-  bench entry;
-- prover tracing spans/counters for Stage 1 setup, compact-source preparation, node/pair
-  table construction, initial round, materialization, each product substage, leaf
-  substage, later-round scan, fold, and finalization. Spans surround owners and round
-  boundaries only; hot address/pair/lane/coefficient/Rayon-item loops emit no events;
-- test-only dense fully padded range-tree oracle;
-- test-only dense flat relation-weight materializer and evaluator;
-- allocation and peak-field-element counters owned by the range stage.
-
-**Must record:**
-
-- current proof bytes and logging-transcript events;
-- post-#311 terminal proof bytes/events as the inherited protocol epoch: fixed for descendants
-  claiming wire preservation, and atomically replaced—with old/new SHAs and intended
-  deltas recorded—by an authorized protocol-changing PR;
-- current round polynomial, challenge, fold state, child claim, final point, and legacy
-  range-image claim;
-- complete actual/formula byte counts for direct, legacy recursive, target separate, and
-  target batched shapes over equal and unequal native round counts;
-- a reviewed soundness ledger for both topologies: exact claimed polynomials, batching
-  challenge order, degree/round contribution to sumcheck error, independence of the two
-  Stage 1 MLE evaluations, full setup-claim binding, and the extraction/opening handoff;
-- per-basis `3N/5N/11N` table allocation evidence or corrected measured counts;
-- whole-stage, substage, relation construction, verifier, and e2e timing.
-
-The baseline is the post-Packet-0 main commit, with exact commit, Cargo features,
-`rust-toolchain`, target triple/ISA, machine, core/thread policy, and command lines checked
-into the benchmark report. Packet 1 also checks in:
-
-- an exact Stage 1 and Stage 2 production ownership manifest down to files/functions;
-- the `git diff --name-only` implementation-base classifier from `Intended implementation
-  diff surface`, with every currently expected production path assigned once;
-- a documented line-count script/method so moved code remains in the ownership closure;
-- the exact benchmark cells used for geometric means and per-basis gates;
-- a benchmark-only single-threaded counting allocator method for allocated bytes/count;
-- a standalone-process max-RSS method using normalized `getrusage(RUSAGE_SELF).ru_maxrss`
-  (or a checked equivalent on the target OS);
-- an `llvm-size`/documented release artifact target and feature set for text-size tracking.
-
-The soundness ledger is a pre-implementation gate for Packet 7, not documentation to add
-after code. The numeric speed, deletion, and text-size targets below are the starting stop targets.
-Packet 1 ratifies them against evidence before Packet 2 starts, or amends this spec with the
-baseline report and rationale. They may not be silently relaxed in an implementation PR.
-
-Benchmark setup and witness generation stay outside timed closures.
-
-**Exit:** checked-in benchmarks run all primary LB4/LB5/LB6 and Stage 2 cases, ownership and
-measurement methods are reproducible, numeric targets are ratified, and the old
-implementation is captured as a test oracle. No protocol behavior changes.
-
-### Packet 2: canonical range plans and checked points (F1 foundation, wire-preserving)
-
-**Goal:** one range-topology/domain authority with byte-identical behavior.
-
-**Touch:**
-
-- `crates/akita-types/src/proof/stage1.rs` or its replacement;
-- `crates/akita-types/src/{lib.rs,proof/mod.rs,proof/wire.rs}`;
-- `crates/akita-types/src/proof/{levels,shapes}.rs`;
-- `crates/akita-types/src/{proof_size,layout/proof_size}.rs`;
-- `crates/akita-prover/src/protocol/core/fold.rs`;
-- `crates/akita-prover/src/protocol/sumcheck/{mod.rs,two_round_prefix/stage1.rs}`;
-- `crates/akita-prover/src/lib.rs`;
-- `crates/akita-verifier/src/protocol/core/fold.rs`;
-- `crates/akita-pcs/tests/stage1_roundtrip.rs`;
-- Stage 1 prover/verifier construction and shape tests.
-
-The `levels`, `shapes`, `wire`, `core::fold`, and verifier files are touched only in their
-non-terminal regions. Packet 2 must show an empty semantic diff for #311
-`TerminalLevelProof`, `TerminalLevelProofShape`, terminal serialization, and direct
-terminal replay.
-
-**Actions:**
-
-- add `DigitRangePlan` and the checked Stage 1-facing flat domain/point object;
-- restrict LB to 2..=6;
-- route range-layer sizing, prover, verifier, and serialization validation through
-  `DigitRangePlan`; complete `FoldCheckPlan` lands in Packet 7;
-- replace panic-based coordinate reorder with checked point construction;
-- differential-test the new ordered-point constructor against the old uniform mapping:
-  physical x-major/ring-minor storage receives `[ring coordinates, column coordinates]`
-  exactly as before; this packet adds no transcript absorption or point-order wire change;
-- remove duplicate topology helpers and generic leaked range helpers;
-- keep current proof bytes and transcript events identical.
-
-**Exit:** every supported plan shape is exhaustively asserted; malformed basis/shape/point
-returns errors; cleanup benchmark is within 3% and memory does not increase.
-
-### Packet 3: one range-product architecture and module cleanup (F1 atomic cutover)
-
-**Goal:** move compact LB2/LB3 mechanics and tree choreography into one `digit_range`
-module before changing high-basis storage.
-
-**Actions:**
-
-- introduce one `DigitRangeProver` taking compact witness, plan, domain, and point;
-- remove the take/prove-recover/restore ownership pattern;
-- split old two-round-prefix common code by actual Stage 1 versus Stage 2 responsibility;
-- share only flat pair/fold mechanics, not Stage 1/Stage 2 equations;
-- rename/move modules in a mechanical commit;
-- delete the duplicate prover type and pass-through exports.
-
-**Exit:** one range-product prover and one `DigitRangePlan` constructor remain;
-proof/transcript bytes are
-identical; LB2/LB3/LB4/LB5/LB6 each stay within 3% before the high-basis optimization.
-
-### Packet 4: streaming high-basis reference kernel
-
-**Goal:** remove the eager forest while preserving exact wire behavior.
-
-**Actions:**
-
-- add `CompactDigitSource` with infallible `RangeImageClass` access under the existing
-  ring-switch balanced-digit producer invariant; do not add a second semantic validation
-  scan in Stage 1;
-- add field-valued node-by-class lookup construction as the canonical source for
-  post-challenge lanes;
-- construct ordered class-pair coefficients from those rows for the LB4 root, LB5 root,
-  and each LB6 root/second-product/leaf substage; use that measured winner directly in
-  production and do not retain the streaming node-evaluation loser or a selector;
-- implement round-0 compact pair scan;
-- implement `ExactPrefixTable` with per-lane nonzero defaults;
-- implement actual split-equality suffix mass;
-- materialize address-major lane state at `N/2`;
-- add the canonical coarse-grained tracing span tree and Perfetto profile capture described
-  above, with no hot-loop instrumentation;
-- free every substage before rescanning compact classes for the next one;
-- implement the final quartic-from-range-image leaf stage;
-- differentially compare every round/fold/claim against the padded oracle;
-- delete the padded field-valued range-image table, retained leaf forest, retained product
-  layers, and nested table production code.
-
-**Exit:** proof and transcript bytes are identical; table peaks meet LB4 `N`, LB5 `2N`,
-and LB6 `4N`, plus separately reported node/pair/split-eq fixed state; ordered class-pair
-coefficients are the sole production round-zero kernel, with no streaming node-evaluation
-implementation or runtime selector remaining. The selected streaming path is no slower
-than 1.02x on each Packet-1 primary basis cell using the ratified ratio rule. If it cannot
-meet that gate, Packets 4 and 5 become one atomic, non-mergeable packet; do not merge a
-slow reference path while waiting for further specialization. Final improvement gates
-remain owned by Packet 5.
-
-### Packet 5: measured LB4/LB5/LB6 specialization
-
-**Goal:** retain only per-basis optimizations that improve the complete prover.
-
-Packet 4 selected the field-valued ordered class-pair strategy for every high-basis
-substage. O4 then selects the one-round implementation described above: compact pair
-indices, split-equality block accumulation, contract-gated delayed reduction,
-challenge-folded pair materialization, optimized folds, and direct quadratic/quartic
-arithmetic. Do not reopen the deleted node-evaluation kernel or retain the unoptimized
-ordered-pair baseline as a second engine.
-
-O5 completes the initial-round specialization gate:
-
-1. LB4 retains its measured challenge-dependent quartet-coefficient table for the
-   two-lane product and scalar leaf. The full-bivariate and factorized LB4 alternatives
-   are not production paths.
-2. LB5 retains factorized two-round deferral for its four-lane product and the optimized
-   one-round scalar leaf.
-3. LB6 retains factorized two-round deferral for its two-lane and eight-lane products and
-   the optimized one-round scalar leaf.
-4. All candidates preserve the ordinary two-message transcript; the fixed protocol epoch
-   is unchanged.
-5. No benchmark selector, `defer_rounds` option, wrapper, or duplicate state engine lands.
-
-A later LB4 narrow/unreduced experiment or further cache/layout work is a new bounded
-optimization against O5. It must replace the selected owner if it wins and leave no
-parallel implementation if it loses.
-
-Every experiment includes construction time, allocations, cache behavior, serial and
-parallel prove time, verifier time, and e2e effect. Delete the losing implementation; do
-not retain a hidden knob or planner-visible kernel mode.
-
-Do not rename the public proof object in this packet. Packet 7 creates the final semantic
-`DigitRangeProof` and `DigitRangeRelationProof` types atomically with the wire/shape
-cutover; no `final_s_eval` transition is allowed.
-
-**Exit:** final scalar Stage 1 meets all performance gates below. LB2/LB3 do not regress.
-
-### Packet 6: canonical flat relation and setup providers under the current wire
-
-**Goal:** remove layout-shaped relation spaghetti and establish full-flat semantics before
-moving any relation work between stages.
-
-**Touch:** ring-switch relation construction; current Stage 2 prover/verifier; trace
-providers; current setup replay/offload preparation; shared domain types.
-
-**Actions:**
-
-- replace the raw `RingSwitchOutput` geometry bundle with `WitnessDomain`, compact digits,
-  semantic provider plans, ordered points, range plan, and alpha;
-- reproduce the exact homogeneous challenge-to-physical-address map;
-- refactor row-family construction into one flat semantic event emitter;
-- add dense exact-live `RelationWeight` and `SetupRelationWeight` oracles;
-- preserve and re-express the existing homogeneous factorized relation provider behind the
-  new flat semantic API; for qualifying uniform layouts it remains the Packet 7 production
-  provider with at most `N/g` state, while dense exact-live storage is test/oracle fallback
-  only;
-- expose one provider fold/evaluation contract usable by the direct Stage 2 composer and
-  recursive Stage 1 joint leaf without either owning x/y layout vocabulary;
-- add `SetupCoefficientDomain` and define the full `setup_contribution_eval` even though
-  current consumers still use their legacy stage placement;
-- make trace an additive address-mapped provider/view rather than allocating a remapped
-  table, and prove it is included exactly once;
-- share only compact/field pair-scan, bounded accumulation, fold, and parallel reduction;
-- delete public `ring_bits == 0`, global x/y constructors, `x_prefix`, `y_prefix`,
-  `sparse_y`, duplicate dense/prefix folds, and trace clones after parity.
-
-Keep current Stage 1/2/3 proof types and transcript schedule in this packet. Target joint
-leaf and claim-reduction kernels may exist only in tests/benches.
-
-**Exit:** descriptor bytes, proofs, transcript events, challenges, claims, and points are
-byte-identical; dense providers match current round polynomials at every round; public
-constructors contain no raw x/y geometry; qualifying homogeneous production provider
-state remains at most `N/g`; uniform performance is at most 1.02x baseline.
-
-### Packet 7: bounded direct and recursive protocol cutovers
-
-**Goal:** install the clean two-stage protocol through two independently atomic PRs,
-without maintaining old and new recursive engines together.
-
-Packet 7a is the direct semantic cutover. It lands the direct `FoldCheckPlan`, direct proof
-container/composer, serializer, verifier, sizing, and schedules with byte-identical
-`DirectSetup` behavior. In the same PR it disables recursive-offload schedules and deletes
-the legacy recursive Stage 2/Stage 3 path. Recursive joint-leaf and claim-reduction code
-may still exist in tests/benches, but not as an unused production engine. The temporary
-capability gap is explicit and reviewable: after 7a, every non-terminal production level
-is direct and every production proof has one canonical interpretation.
-
-Packet 7b is the recursive protocol cutover. It extends the authenticated plan and proof
-shape with `RecursiveSetupOffload` and lands the joint Stage 1 leaf, Stage 2 reduction,
-prover, verifier, serializer, sizing, setup-route validation, planner selection, and
-regenerated recursive schedules in the same PR. There is no legacy recursive decoder or
-fallback to revive. #310's distributed recursive schedules must already be integrated or
-7b cannot claim distributed coverage.
-
-`Separate` is the complete Packet 7b scope. `Batched` does not land dormant in 7b: optional
-ledger PR E8 adds its plan variant, proof shape, prover, verifier, sizing, validation, and
-schedule emission atomically only after it beats `Separate` on complete-size and
-differential gates. Existing direct and separate encodings remain unchanged because the
-authenticated schedule selects a headerless shape; E8 is a new schedule capability, not
-a compatibility migration. If the gate fails, no production `Batched` variant or code is
-added.
-
-**7a actions:**
-
-- add the direct-only `FoldCheckPlan` and direct semantic proof container;
-- migrate `next_witness_binding` into the common non-terminal envelope, preserving both
-  #311 variants and exact bytes;
-- route direct prover, verifier, serializer, deserializer, proof sizing, and schedules to
-  the new direct authority;
-- remove recursive-offload schedule rows and reject recursive plans at validation;
-- delete the legacy recursive Stage 2/Stage 3 prover, verifier, proof fields, accessors,
-  sizing branches, and decoders;
-- preserve #311 terminal proof shape, transcript, direct checks, and bytes exactly.
-
-**7b actions:**
-
-- extend 7a's `FoldCheckPlan` and authenticate topology, domains, role dimensions,
-  coordinate/lift convention, and exact setup slot before proof messages;
-- retain direct setup's range-only Stage 1 and standard degree-3 Stage 2
-  relation/range-image composer, now over the canonical flat providers;
-- add the recursive standard joint final leaf with degrees 3/5, two independent folded
-  lanes, signed-digit loads outside `RangeImageClass`, and the standard-leaf suffix rule;
-- implement consuming `DeferredRangeRelationCheck` and close it with the full setup
-  contribution before any Stage 2 challenge;
-- implement `RangeImageConsistencyProof` and `SetupContributionProof`, stored directly in
-  the recursive proof; validate opening-route eligibility before transcript mutation;
-- extend proof types, shape descriptors, proof-size formulas, serializer/deserializer,
-  transcript labels/version, prover, verifier, and schedules together without changing
-  7a direct bytes;
-- update the planner schema/emitter with `FoldCheckTopology`, with `Separate` as the only
-  recursive reduction and no one-variant reduction enum; implement the complete-size
-  selector and route/slot eligibility needed by current homogeneous candidates, and
-  regenerate every affected homogeneous schedule artifact in this same packet;
-- when #310 is present, update its one canonical distributed-setup-offload e2e fixture and
-  schedule assertions from numeric Stage 3 to semantic recursive Stage 2; do not add a
-  parallel digit-range-specific copy of that fixture;
-- preserve 7a's common `next_witness_binding` envelope and both #311 payload cases; use
-  `scaled_fold_witness` outside math;
-- leave #311 `TerminalLevelProof`, direct terminal ring/trace checks, transcript order, and
-  wire bytes unchanged; assert that `FoldCheckPlan` rejects terminal construction;
-- assert that 7a already deleted `AkitaStage3Prover`, `SetupSumcheckProof`,
-  `stage3_sumcheck_proof`, `BatchedStage3Geometry`, numeric-stage
-  modules/fields/accessors, panicking cross-variant accessors, and legacy decoders/wrappers;
-- enforce every degree and received count from `FoldCheckPlan` before allocation.
-
-The 7b cutover is accepted only if actual serialization matches all direct/separate
-formulas, non-terminal direct proof size is unchanged, #311 terminal bytes/events are
-unchanged, and every scheduled recursive-offload target is no larger than its legacy
-counterpart in complete bytes with measured verifier time improved.
-Compare complete old `Stage1+Stage2+Stage3` with complete new `Stage1+Stage2` for the same
-non-terminal fold; round-only arithmetic is insufficient.
-
-**7a exit:** direct proof bytes/events are unchanged, recursive schedules are absent, no
-production `stage3` identifier or legacy recursive proof reader remains, and no dormant
-recursive production composer is present.
-
-**7b exit:** direct proving time, witness scan count, allocation count, and bytes do not
-regress beyond the cutover gate; recursive proof bytes do not increase and recursive
-verifier time decreases against the legacy recursive baseline; prover/verifier logging
-transcripts match the new semantic oracle exactly.
-
-### Packet 8: generalize common-base relation and setup providers to mixed dimensions
-
-**Goal:** extend Packet 6's homogeneous factorized provider to mixed role dimensions
-without changing the Packet 7 proof language for a fixed plan.
-
-**Actions:**
-
-- implement the checked semantic-event-to-common-base compiler with additive
-  linear/periodic patterns, exact partial intervals, and dense/sparse fringes;
-- fold the low factor and high-lane table under canonical raw LSB-first binds;
-- implement the shared role-expanded setup coefficient address helper;
-- make dense, factorized direct replay, and recursively proved full setup contributions
-  agree for every validated nested tuple, including `128/64/32`;
-- derive `g` through `SetupCoefficientDomain::checked_common_base_view(role_dims)`; never
-  store it as independently constructible proof metadata;
-- validate exact slot, natural/padded length, commitment parameters, and opening route;
-- test `Separate` independent points and `Batched` suffix/lift geometry on unequal domains;
-- remove mixed-plus-setup rejection only after full-scalar parity passes.
-
-**Exit:** factorized and dense providers produce identical messages, folds, final
-values, proof bytes, and transcript events; qualifying provider state is at most `N/g`
-plus explicit fringes; no sentinel, raw slice, or high-lane public setup claim remains.
-
-### Packet 9: mixed-candidate planner rollout and cost model
-
-**Goal:** extend Packet 7's topology selector to mixed candidates and admit them only when
-the complete system benefits.
-
-**Actions:**
-
-- extend domain-derived round/size formulas and serialization parity to mixed layouts;
-- compare complete direct, target separate, and target batched bytes for mixed candidates,
-  using Packet 1's legacy baseline data for attribution; apply route/slot eligibility
-  before scoring;
-- score direct-versus-recursive on the complete objective from the selector section:
-  measured verifier-time saving of the removed setup scan against the
-  `ceil(log_b(q))`-deep carried-opening cost at the next level, with proof bytes as the
-  no-regression constraint;
-- add cache-aware preview and proof-byte attribution;
-- enable fp128 `128/64/64` first if it survives all gates;
-- emit `DirectSetup` with a diagnostic when recursive offload or mixed geometry is
-  ineligible; never downgrade inside prover/verifier;
-- regenerate mixed-enabled schedule tables only after the selected profile is approved;
-  do not alter Packet 7's homogeneous topology schema.
-
-**Exit:** homogeneous non-terminal direct levels retain their proof size and measured
-behavior, terminal levels retain #311's sumcheck-free direct shape; at
-least one mixed/offloaded schedule is end-to-end proven and verified, or the preview
-records a stop decision and emits none.
-
-### Packet 10: digit emission and fold-grind cleanup
-
-**Goal:** remove upstream copies/allocations and tune LB4/LB5/LB6 decomposition.
-
-**Actions:** implement destination-oriented decomposition, flat centered storage, reusable
-grind workspace, delayed accepted-nonce field conversion, and measured const-specialized
-loops. Split `RingRelationProver::new` only at invariant-bearing artifact boundaries.
-
-**Exit:** exact emitted witness bytes are unchanged; rejected nonce attempts reuse storage;
-each retained specialization beats the generic direct-emission kernel and no allocation
-count grows.
-
-### Packet 11: verifier performance port
-
-**Goal:** optimize structured verifier relation evaluation after canonical semantics land.
-
-**Actions:** rederive/port useful prefix-scan and carry-bucket algebra from the divergent
-combined-kernel branch; adapt it to both relation placements and mixed common-base views;
-keep the dense evaluator as oracle; preserve the consuming deferred-check boundary and
-remove obsolete branch vocabulary.
-
-**Exit:** verifier output is identical for direct/offloaded and uniform/mixed layouts,
-malformed inputs stay panic-free, and every primary verifier benchmark is at most 1.02x
-baseline with a material win on targeted structured cases.
-
-### Packet 12: docs and downstream packing handoff
-
-**Goal:** make code, book, active specs, and profiles agree.
-
-Packet 12 is a closure audit, not a place to finish old-code deletion. If a superseded
-production path from C3, C5, C6, or C7 still exists, reopen that cutover gate instead of
-deferring the cleanup here.
-
-Update at least:
-
-- `book/src/how/proving/sumcheck-stages.md`;
-- `book/src/foundations/eq-factored-sumcheck.md`;
-- `book/src/foundations/multilinear-sumcheck.md` and `book/src/how/security.md` for the
-  reviewed degree/soundness ledger;
-- `book/src/how/architecture.md`;
-- `book/src/how/verification.md` and `docs/verifier-contract.md` if boundaries change;
-- `docs/soundness-audit.md` for the new statement/transcript/opening invariants;
-- profiling documentation and exact commands;
-- spec lifecycle metadata.
-
-This planning branch already marks
-[`akita-sumcheck-unification.md`](akita-sumcheck-unification.md) superseded and blocks
-Stage 1/2 work in [`packed-sumcheck.md`](packed-sumcheck.md). Keep that lifecycle metadata
-correct. Preserve the old spec's diagnosis, separation of proof
-format/batching/compute, Boolean-only invariant, and byte-identical fast-path rule;
-explicitly reject its general descriptor algebra and new crate. Port the smaller
-`e87295b7` kernel-cutover concepts into this architecture rather than importing the stale
-branch spec as a second authority.
-
-After scalar completion, [`packed-sumcheck.md`](packed-sumcheck.md) may use the contiguous
-address-major lane buffers and accumulator bounds. Scalar/NoPacking remains the exact
-oracle.
-
-## Benchmark program
-
-### Range product and final-leaf-composer benchmark
-
-Add `crates/akita-pcs/benches/digit_range.rs`. The path is fixed here so Packet 1's
-ratified measurement method stays stable; moving the bench invalidates the recorded
-baseline commands. Report these phases separately:
-
-- plan and lookup-table setup;
-- node-row construction and ordered class-pair coefficient construction separately;
-- compact class conversion/source scan;
-- initial compact round;
-- every product substage;
-- direct range-only leaf;
-- recursive standard range-and-relation leaf;
-- range-image lane, signed-witness lane, and relation-provider work inside that leaf;
-- materialization;
-- later pair scan;
-- in-place fold; measure a future fused fold-next-scan only if it is allocation-free and
-  preserves one round-polynomial owner;
-- whole direct Stage 1 and recursive Stage 1 prove;
-- verifier replay.
-
-Primary matrix:
-
-| Axis | Values |
+The range, relation, and trace coefficient accumulators share one witness traversal. The
+semantic terms remain explicit; there is no general sum-of-products framework.
+
+### Current problems to delete
+
+The current implementation is organized around storage/layout accidents:
+
+- `y_prefix`, `x_prefix`, and dense variants;
+- compact versus field copies of the same coefficient algebra;
+- full versus Gruen-recovered range coefficients;
+- serial and parallel copies;
+- two-round prefix code shared through stage-specific wrappers;
+- a `ring_bits == 0` sentinel that throws mixed dimensions into a dense full-domain
+  relation table;
+- trace folding interleaved into every layout branch;
+- public constructor arguments `live_x_cols`, `col_bits`, and `ring_bits` that allow
+  inconsistent geometry.
+
+The rewrite deletes those axes. The only meaningful lifecycle split is:
+
+```text
+compact common-coefficient prefix
+  -> challenge boundary
+folded remaining-address suffix.
+```
+
+### Exact common-dimension factorization
+
+For a role dimension `d_role = g * q`, every role-local alpha exponent can be written
+
+```text
+exponent = g * high_exponent + coefficient.
+```
+
+Therefore
+
+```text
+alpha^exponent
+  = alpha^coefficient * (alpha^g)^high_exponent.
+```
+
+All non-trace linear relation contributions compile into
+
+```text
+RelationWeight(g * lane + coefficient)
+  = CommonAlphaFactor(coefficient) * RelationLaneWeights(lane),
+
+CommonAlphaFactor = [1, alpha, ..., alpha^(g-1)].
+```
+
+Role-specific exponent resets, quotient denominators, row challenges, group weights,
+setup amplitudes, and overlaps are absorbed additively into `relation_lane_weights`.
+They do not break the common low factor. In particular, for mixed `128/64/32`, the
+common factor has length 32—not 128, and not a dense full-domain fallback.
+
+The builder must prove:
+
+- all role dimensions are nonzero nested powers of two;
+- `g` divides each role dimension;
+- physical segment starts and live lengths preserve the low `log2(g)` coefficient bits;
+- every role-local exponent resets only at a multiple of `g`;
+- overlapping contributions add to the same lane weight exactly once;
+- no address outside the live witness receives a relation contribution.
+
+Failure is an input/setup error. The production prover does not silently fall back to an
+`N`-element dense relation table. A dense exact evaluator exists only as a test oracle.
+
+### Binding order
+
+The prover always binds the `k = log2(g)` common coefficient dimensions first. This is
+both the canonical LSB-first physical order and the optimal order for the factorization.
+
+During those rounds:
+
+- adjacent witness values belong to one common-dimension lane;
+- `relation_lane_weights[lane]` is constant across the entire low-coordinate block;
+- `common_alpha_factor` folds from length `g` to one scalar;
+- relation work uses compact signed digits;
+- the range-image term uses the same compact digits and Stage 1 point equality;
+- trace is accumulated as a separate additive provider in the same scan.
+
+After the common dimensions are bound:
+
+```text
+common_alpha_eval = MLE(CommonAlphaFactor, common_point)
+```
+
+is one scalar. The remaining relation term is
+
+```text
+common_alpha_eval
+  * folded_digit_witness(lane)
+  * folded_relation_lane_weights(lane).
+```
+
+Only then does the prover bind the remaining address dimensions and fold
+`relation_lane_weights`. There is no need for public x/y handling, x-prefix files,
+y-prefix files, or a dense-mode dispatch.
+
+This order is mandatory. Binding lane dimensions before the alpha dimensions destroys
+the cheap constant-per-lane factor and is not an alternative production schedule.
+
+### State ownership
+
+`RelationRangeImageProver` owns one checked plan and one of two statically typed phases:
+
+```rust
+enum RelationRangeImageState<E> {
+    CompactPrefix(CompactPrefixState<E>),
+    FoldedSuffix(FoldedSuffixState<E>),
+}
+```
+
+The enum is matched once per round outside the hot scan. It is not inspected per pair.
+
+`CompactPrefixState` owns:
+
+- the shared `Arc<[i8]>` digit witness;
+- `CommonAlphaRelationWeights`;
+- the range-check equality state;
+- optional `TraceWeightState`;
+- current claim-recovery data;
+- any selected compact pair/quad/octet cache.
+
+`FoldedSuffixState` owns:
+
+- one folded field-valued digit-witness table;
+- one folded relation-lane table;
+- one folded trace state only when trace has not already collapsed into lane weights;
+- the range-check equality state;
+- current claim-recovery data.
+
+There is exactly one transition. It materializes the folded digit witness at `N/2^r`
+after the selected deferred prefix of `r` challenges, folds the alpha factor to one
+scalar when the common prefix completes, and does not retain compact-derived field tables
+that are no longer used.
+
+### Relation arithmetic inside the low-coordinate scan
+
+For one witness pair `w(T) = w_0 + T * delta_w` and alpha pair
+`a(T) = a_0 + T * delta_a`, the non-trace relation polynomial before the lane weight is
+
+```text
+w(T) * a(T).
+```
+
+Accumulate its three coefficients for all pairs in one lane/block first, then multiply
+the three lane totals by `relation_lane_weights[lane]` once. Do not form
+`a_endpoint * relation_lane_weight` for every witness endpoint as the current code does.
+
+Compact rounds use signed/unreduced accumulators with a proved bound. Field-valued later
+rounds use the canonical delayed-product contract where available and canonical field
+accumulation otherwise. The serial and parallel paths call the same block reducer; they
+do not contain copies of the equation.
+
+### Initial-round deferral is retained and generalized
+
+The current two-round prefix is not discarded. The factorized relation term is especially
+well suited to it because:
+
+- the digit witness is a small balanced integer;
+- the alpha factor is small and contiguous;
+- the relation lane weight is constant over each low-coordinate block;
+- a biquadratic relation prefix can be accumulated before multiplying by the lane weight;
+- field witness materialization can be delayed until after two challenges.
+
+The rewrite must implement and measure every viable strategy below, then keep the best
+complete-Stage-2 implementation per basis. “May choose” is not sufficient: all candidates
+are tried under the same harness; losing code is deleted.
+
+| Basis | Mandatory candidates |
+|---:|---|
+| LB2 / 4 | optimized one-round pair scan; factorized two-round prefix; three-round range-image deferral using 256 range-image octet classes while computing the signed relation term directly |
+| LB3 / 8 | optimized one-round pair scan; factorized two-round prefix; three-round range-image deferral using folded quad/Taylor techniques while computing the signed relation term directly |
+| LB4 / 16 | optimized one-round pair scan; factorized two-round prefix; 4,096-key challenge-dependent range-image quartet table plus direct factorized relation prefix |
+| LB5 / 32 | optimized one-round pair scan; factorized two-round rescan; compact range-image pair aggregation where it avoids field traffic |
+| LB6 / 64 | optimized one-round pair scan; factorized two-round rescan; compact range-image pair aggregation where it avoids field traffic |
+
+The range-image alphabet uses collision classes, while the relation term uses signed
+digits. Never index the relation term by `RangeImageClass`: `w` and `-w-1` share a range
+image but contribute different linear relation values.
+
+For LB2, eight range-image values have only `2^8 = 256` class patterns, even though eight
+signed digits have `4^8` patterns. Therefore the three-round candidate tables only the
+range half. The relation half remains a direct compact symbolic accumulation sharing the
+same octet traversal. The analogous separation is required whenever a range-image cache
+would otherwise incorrectly erase digit sign.
+
+The first-two-round implementation preserves ordinary transcript causality:
+
+```text
+send round_0; receive r_0;
+send round_1; receive r_1;
+materialize state at N/4.
+```
+
+A three-round implementation likewise sends and receives three ordinary messages and
+challenges before materializing at `N/8`. No proof or verifier change is required.
+
+The existing approach of computing eight compressed norm grid values and eight compressed
+relation grid values is a baseline, not an architectural requirement. Compare it with a
+coefficient-form prefix that exploits constant lane weights, split equality, compact
+range classes, and claim recovery. Retain the bivariate prefix if it wins; do not preserve
+its current wrapper/module structure merely because its algebra remains useful.
+
+### Range-image half
+
+The Stage 2 range term has inner quadratic
+
+```text
+digit_witness(T) * (digit_witness(T) + 1)
+```
+
+times the current equality factor, so the standard message degree is three. Use the same
+exact `range_image` arithmetic and class tables as Stage 1 where doing so removes work,
+but call the canonical functions directly. Do not create Stage-2 copies or forwarding
+wrappers.
+
+The Gruen recovery path may omit the recoverable linear inner coefficient. Full and
+recovered forms must share one accumulator layout and one conversion to the standard
+round polynomial. They are not separate scan functions.
+
+The compact fold lookup is built from the known supported digit interval
+`[-b/2, b/2-1]`; it must not find min/max by scanning the full witness. This is not digit
+validation. It is using the already-validated basis contract to construct a bounded
+lookup table directly.
+
+### Trace handling
+
+Trace is the only relation addend that is not required to share the common alpha factor.
+It remains explicit:
+
+```text
+digit_witness(z) * trace_weight(z).
+```
+
+Use one closed state representation:
+
+```rust
+enum TraceWeightState<E> {
+    Absent,
+    SparseBlocks(/* active high lanes with exact low-coordinate rows */),
+    DenseExactPrefix(/* only when the trace is genuinely dense */),
+}
+```
+
+This enum describes real supported trace shapes, not alternate algorithms. Its semantic
+builder is the single source of truth. It must:
+
+- expose pair/quad values without a binary search per witness item;
+- fold the low common coordinates under the same challenges as the witness;
+- share the Stage 2 witness traversal and coefficient reducer;
+- remain a separate additive coefficient accumulator;
+- avoid a remap allocation when source and destination physical order already agree;
+- appear exactly once in the final verifier relation.
+
+Benchmark whether a sparse block is better folded directly or coalesced once. Keep only
+the winning representation for each statically known trace shape; do not store both.
+
+### Live prefixes and suffixes
+
+The digit-witness, relation, and trace terms vanish on the padded suffix because the
+digit witness is zero. The range-image term also vanishes pointwise at zero, but the
+Gruen/equality-factored internal representation still owns current equality state and
+claim recovery. Suffix handling must be derived from the semantic term, not copied from a
+Stage 1 leaf with a nonzero default.
+
+All prefix kernels use one checked pair/block iterator. It handles:
+
+- an odd final live item paired with zero;
+- blocks crossing a split-equality boundary;
+- live high lanes followed by padded high lanes;
+- the transition from compact common-coordinate rounds to field suffix rounds.
+
+There are no separate prefix-x, prefix-y, and dense implementations.
+
+### Later rounds
+
+After the compact prefix, one canonical field round scans adjacent folded witness values.
+It accumulates:
+
+```text
+range equality * witness * (witness + 1)
++ common_alpha_eval * witness * relation_lane_weight
++ witness * trace_weight.
+```
+
+When common-coordinate binding has finished, `common_alpha_eval` is scalar. Fold witness,
+relation-lane weights, range equality, and trace state once per challenge. A fused
+fold-and-next-round scan may be benchmarked only if it preserves the selected accumulation
+strategy and actually removes a read; it is not presumed beneficial after the negative
+Stage 1 result.
+
+### Verifier path
+
+The verifier continues replaying a standard degree-3 sum-check. Its expected final value
+uses the same semantic relation-weight evaluator as the prover builder:
+
+```text
+range_binding_challenge
+  * Eq(range_check_point, next_witness_point)
+  * next_witness_eval * (next_witness_eval + 1)
+
++ next_witness_eval
+  * common_alpha_eval(common_point)
+  * relation_lane_weight_eval(lane_point)
+
++ next_witness_eval * trace_weight_eval(next_witness_point).
+```
+
+The verifier does not materialize either factor. A typed point view checks that the first
+`log2(g)` challenges are the common-coordinate point and the remaining challenges are the
+lane point. No caller slices a raw vector.
+
+Malformed role dimensions, point lengths, layouts, proof degrees, round counts, and
+allocation lengths return `AkitaError`. The rewrite adds no verifier-reachable `assert!`,
+`panic!`, `unwrap`, unchecked indexing, or allocation based on unvalidated proof data.
+
+### Mixed dimensions
+
+The second PR integrates the semantic bases from #309 before building relation weights.
+It consumes `log_basis_inner`, `log_basis_outer`, and `log_basis_open` according to their
+existing ownership; it does not restore a largest-basis or uniform-basis shortcut.
+
+Mixed dimensions are complete only when all of the following agree with a dense oracle:
+
+- relation-weight construction;
+- every Stage 2 round polynomial and fold;
+- trace addressing;
+- final verifier evaluation;
+- local setup contribution evaluation;
+- the current recursive setup-contribution proof boundary, if enabled for that schedule;
+- multi-group and multi-chunk witness layouts.
+
+The first required mixed tuple is `128/64/64`; `128/64/32` is the next correctness case.
+The common alpha factor lengths are 64 and 32 respectively. Equal padded domain lengths
+do not imply equal native coordinate meanings.
+
+### Current setup-contribution stage in the second PR
+
+The second PR does not move proof statements between stages. It may refactor the current
+setup-contribution prover only to:
+
+- consume the same typed mixed-dimension relation point;
+- reuse the one semantic setup-weight builder;
+- remove a `ring_bits == 0`/uniform-only assumption;
+- define the complete `setup_contribution_eval` that the final offload PR will move;
+- preserve current proof bytes, transcript order, and opening behavior.
+
+Do not spend this PR building an elaborate numeric Stage 3 architecture that the next PR
+will delete. Reusable domain, point, setup-weight, and fold mechanics land now; protocol
+movement and proof-container replacement wait for the offload cutover.
+
+### Target module structure for the second PR
+
+The exact split may follow existing crate conventions, but ownership must be semantic:
+
+```text
+sumcheck/relation_range_image/
+  mod.rs                         proof lifecycle and transcript-independent orchestration
+  relation_weights.rs            common-alpha builder and folded lane state
+  compact_prefix.rs              one/two/three-round compact kernels
+  folded_rounds.rs               canonical later-round scan and folds
+  trace_weights.rs               sparse/dense exact trace state
+  tests.rs
+```
+
+Shared Stage 1 arithmetic is called at its canonical definition. The Stage 2 portion of
+`two_round_prefix/`, `akita_stage2/{x_prefix,y_prefix,dense_terms,round2_prefix}`, and
+duplicate serial/parallel branches are deleted. No compatibility module re-exports the
+old paths.
+
+### Intended diff surface for the second PR
+
+| Surface | Responsibility |
 |---|---|
-| Field | fp128 primary; fp64/Ext2 and fp32/Ext4 smoke |
-| LB | 4, 5, 6; LB2/LB3 regression |
-| Domain | `2^18` repeatable; `2^22` manual profile; cross-field `2^16/2^18` |
-| Live ratio | 100%, 75%, exact schedule-derived partial prefix |
-| Digits | uniform balanced, zero-heavy, alternating negative/positive endpoints |
-| Threads | one Rayon thread, production parallel pool |
+| `akita-types` relation/setup geometry | checked role dimensions, common factorization plan, typed points, one semantic evaluator |
+| ring-switch finalization | build `relation_lane_weights` instead of a uniform column table or mixed dense table |
+| `akita-prover::sumcheck` | one `RelationRangeImageProver`, compact prefix kernels, folded suffix, trace state |
+| current setup-contribution prover | only mixed-point/provider adaptation reusable by the next cutover |
+| verifier | semantic factorized final evaluation and current setup-boundary replay |
+| PCS tests/benches/profile | round-by-round dense oracle, mixed tuples, per-basis kernel selection, protocol epoch |
+| book/spec | current Stage 2 implementation and mixed-dimension contract |
 
-Measure:
+Proof containers, planner topology, setup-offload stage placement, and serialized round
+counts remain unchanged.
 
-- median, confidence interval, and ns/live digit;
-- per-substage wall time;
-- candidate strategy, selected strategy, node-table elements/bytes, and ordered-pair-table
-  elements/bytes for every LB4/LB5/LB6 substage;
-- peak range-owned field elements and bytes;
-- total allocated bytes and allocation count;
-- compact-to-field conversion count;
-- full-table scan/fold count;
-- standalone process max RSS;
+### Tracing and measurement contract for the second PR
+
+Trace phase owners, not hot loops:
+
+```text
+relation_range_image_prove
+  build_common_alpha_relation_weights
+  prepare_trace_weight_state
+  compact_prefix {basis, deferred_rounds, strategy}
+  materialize_folded_suffix
+  folded_round {round}
+  fold_round_state {round}
+```
+
+Do not emit events per pair, coefficient, class, lane, or Rayon item. Perfetto must remain
+readable at production-scale domains.
+
+Measure feature-pruned profile-CI builds for every LB2-LB6 basis, full and partial live
+prefixes, trace absent/present, one and production thread counts, and uniform/mixed role
+dimensions. Report separately:
+
+- relation-weight construction;
+- trace-state construction;
+- compact prefix;
+- field materialization;
+- later scans and folds;
+- complete Stage 2;
+- complete prover;
+- allocations and peak field elements;
 - verifier time;
-- proof bytes and `LoggingTranscript` event count.
+- proof bytes and transcript events.
 
-Store one representative Perfetto trace for each selected LB4/LB5/LB6 substage strategy
-in both serial and production-parallel modes, plus traces for any losing candidate whose
-aggregate timing is close enough to require attribution. Trace comparison uses the
-canonical span tree above and confirms table construction, compact rescans,
-materialization, fold tails, and worker occupancy without per-item events.
+The production winner is selected by complete Stage 2 and complete prover results, not a
+microkernel alone. CI benchmark reporting catches later regressions; the implementation
+does not add per-iteration measurement wrappers.
 
-Use a fixed toolchain, machine, ISA, thread count, and thermal/background policy. Use at
-least 20-30 Criterion samples for primary microbenchmarks and store raw artifacts/allocation
-reports. Hard-gate deterministic bytes, events, field-element peaks, and microkernels;
-report noisy e2e timing rather than creating flaky CI thresholds. Run baseline/candidate
-microbenchmarks in interleaved paired batches; a `<=` timing gate uses the upper bound of
-the Packet-1-ratified 95% paired ratio confidence interval, not a favorable single median.
+### Acceptance criteria for the second PR
 
-### Relation placement, Stage 2, and mixed-dimension benchmark
+- One relation/range-image prover and one semantic relation-weight builder remain.
+- The proof, transcript, challenge order, final claim, and direct proof bytes match the
+  incoming protocol epoch.
+- `ring_bits == 0` is gone as a mixed-dimension sentinel.
+- Public/current constructors do not accept independent `live_x_cols`, `col_bits`, and
+  `ring_bits` geometry.
+- Common alpha coordinates bind first and collapse to one scalar before lane binding.
+- Relation lane weights occupy at most `N/g` field elements, excluding separately reported
+  trace state and small prefix tables.
+- The relation multiplier is applied once per lane/block in low-coordinate rounds, not
+  once per witness endpoint.
+- Every mandatory per-basis candidate is measured; one winner remains per basis.
+- The two-round prefix remains when it wins, in the cleaned state machine rather than a
+  wrapper around old Stage 2.
+- LB2/LB3 three-round candidates are tested without confusing range-image classes with
+  signed relation digits.
+- Trace appears exactly once and shares witness scans without being falsely factorized.
+- Dense and factorized oracles agree round by round for uniform and mixed dimensions.
+- No primary Stage 2/prover/verifier cell regresses beyond measurement noise; targeted
+  cells show a material win.
+- Numeric-stage setup code touched by the PR contains only reusable mixed-dimension
+  semantics, not a new throwaway abstraction.
 
-Matrix:
+## Stacked PR: two-stage recursive offloading cutover
 
-- uniform `64/64/64`, `128/128/128`;
-- mixed `128/64/64` and `128/64/32` under every eligible topology;
-- direct relation/range-image proof, recursive `Separate`, and recursive `Batched`;
-- setup/witness native round ratios `lambda:mu` of `1:2`, `1:1`, and `2:1`;
-- trace absent/present;
-- common range present/terminal absent;
-- one and multiple witness groups/chunks;
-- dense oracle, common-base provider, and retained sparse provider;
-- initial round batching on/off for measurement only;
-- exact partial live intervals and unaligned fringe fallback tests.
+### Scope
 
-Report relation construction separately from the direct Stage 2 scan and recursive Stage
-1 joint leaf. Report recursive consistency, setup, and batch work separately. Confirm the
-expected `N/g` provider storage and construction reduction rather than hiding it in
-whole-prover noise. Always include complete old `Stage1+Stage2+Stage3` versus new
-`Stage1+Stage2` timing, allocations, and proof bytes.
+The third PR intentionally changes the recursive-offload proof protocol. It is one atomic
+semantic cutover across plan, prover, verifier, proof types, wire sizing, transcript,
+planner, setup routing, schedules, and tests.
 
-### Decomposition/fold-grind benchmark
+Direct/non-offloaded folds retain the optimized Stage 1 plus fused
+`RelationRangeImageProof` from the second PR. Only recursive setup-offload schedules use
+the new placement.
 
-Vary:
+### Recursive Stage 1 equation
 
-- LB4/LB5/LB6;
-- ring dimensions 32/64/128/256;
-- ordinary and overflow coefficient paths;
-- random canonical, near-modulus, negative centered, and digit-boundary inputs;
-- generic direct destination versus retained specialization;
-- first accepted nonce and multiple rejected nonce attempts;
-- singleton, multi-group, and multi-chunk witnesses.
+All range-product layers before the final leaf remain the #312 equality-factored product
+subchecks. Let `leaf_input_claim` and `leaf_anchor` be the claim and point from that
+prefix, and let `LeafBatch` be the plan-derived quadratic or quartic range-image leaf.
+After binding the linear relation claim, sample `range_relation_batch_challenge` and prove
 
-### E2E profiles
+```text
+leaf_input_claim
+  + range_relation_batch_challenge * linear_relation_claim
 
-At minimum:
+= sum_z [
+    Eq(leaf_anchor,z) * LeafBatch(range_image(z))
+  + range_relation_batch_challenge
+      * digit_witness(z)
+      * (CommonAlphaFactor(coefficient(z))
+           * RelationLaneWeights(lane(z))
+         + TraceWeight(z))
+  ].
+```
 
-- fp128 D64 one-hot nv32 np1 direct and recursive; record the actual bases exercised by the
-  generated schedule and add pinned deterministic synthetic schedules/workloads for each
-  of LB4, LB5, and LB6 rather than relying on generated choices remaining stable;
-- fp128 batched nv30 np4;
-- fp32 and fp64 D128 nv28 representatives;
-- first approved mixed fp128 schedule;
-- multi-group and multi-chunk cases.
+The final leaf is a standard sum-check because the two terms do not share one equality
+factor. Its degree is three for LB2 and five for LB3-LB6.
 
-Record range-product, final-leaf-composer, relation-provider, and recursive reduction shares
-of total time before interpreting an e2e percentage.
+### Mandatory fused first round
 
-## Ratified performance and cleanup gates
+The first recursive final-leaf round walks each compact witness pair once. In that one
+traversal it:
 
-Every ratio is against the Packet 1 post-Packet-0 baseline with identical features,
-toolchain, machine, ISA, inputs, and threads. Packet 1 must ratify the confidence-interval
-procedure and numeric targets before implementation begins.
+- loads the signed digit pair;
+- derives the range-image pair;
+- accumulates the anchored range leaf;
+- accumulates the common-alpha relation term;
+- accumulates trace if present.
 
-### Correctness/cleanup parity gate
+After the first challenge, one compact traversal materializes two independent lanes:
 
-For Packets 0-6, and for compute-only Packets 8-12 relative to Packet 7's new oracle:
+```text
+folded_range_image
+folded_digit_witness.
+```
 
-- serialized proof bytes identical;
-- logging transcript events identical;
-- paired timing ratio remains within the ratified +/-3% parity interval;
-- no peak-memory or allocation-count increase;
-- malformed inputs remain error-returning and panic-free.
+The representations diverge after that transition, but they continue under the same
+challenge sequence and combined claim. Two scans pretending to be a fused round, or one
+fused first round followed by independent sum-checks, is not acceptable.
 
-Packet 7 uses its own intentional-cutover gate below; old/new bytes need not be identical
-there.
+The factorized Stage 2 implementation from the previous PR is reused directly for the
+relation half. Its common-coordinate prefix, compact batching techniques, relation lane
+weights, and trace state are not reimplemented in a `relation_leaf` variant.
 
-### Final scalar range-product gate (Packet 5)
+### Recursive Stage 1 output
 
-All must hold on the fixed primary machine. The geometric mean cell set is every fp128
-`2^18` primary combination of LB4/LB5/LB6, the three live-prefix cases, the three digit
-distributions, and both thread modes declared above. The LB6 primary target is fp128,
-`2^22`, 100% live, uniform balanced digits, production parallel pool.
+Stage 1 returns at one `RangeRelationPoint`:
 
-- geometric mean LB4/LB5/LB6 prove time `<= 0.75x` baseline;
-- every LB4/LB5/LB6 case `<= 0.90x` baseline;
-- LB6 primary target `<= 0.70x` baseline;
-- verifier `<= 1.02x` baseline;
-- no LB2/LB3 case `> 1.02x` baseline;
-- mandatory peak current-substage tables, excluding separately reported fixed LUT/split-eq
-  state: LB4 `<= 1.05N`, LB5 `<= 2.05N`, LB6 `<= 4.05N`;
-- aspirational retained two-round kernels: LB4 `<= 0.55N`, LB5 `<= 1.05N`, LB6
-  `<= 2.05N`;
-- old proof bytes remain identical;
-- no primary e2e workload `> 1.02x`; representative nv32 improves at least 5% when the
-  baseline shows Stage 1 is at least 10% of proving time. These e2e thresholds are manual
-  fixed-machine release gates, not noisy CI pass/fail checks.
-- total range-owned peak bytes, including lookup tables and split-equality state, decrease
-  from baseline; allocation count and total allocated bytes do not grow in any primary
-  LB4/LB5/LB6 cell.
+```text
+range_image_eval
+digit_witness_eval.
+```
 
-### Atomic protocol-cutover gates (Packets 7a and 7b)
+The verifier keeps a consuming deferred check whose final equation requires the complete
+`setup_contribution_eval`. It cannot accept the Stage 1 leaf until Stage 2 binds that setup
+claim. Consuming ownership prevents omission or double application.
 
-Packet 7a must first prove direct byte/transcript identity, preserve #311 terminal
-behavior, remove every legacy recursive Stage 2/3 production path, and emit no recursive
-schedule. Packet 7b then applies all recursive requirements below against Packet 1's
-legacy recursive baseline; it may not rely on a compatibility decoder or fallback path.
+### Recursive Stage 2 statements
 
-All of the following are hard requirements:
+Stage 2 owns two semantic obligations:
 
-- intermediate `DirectSetup` serialized size is exactly unchanged; no scalar, round, or
-  envelope field is added there;
-- #311 `TerminalLevelProof` serialization and transcript events are byte-for-byte
-  unchanged, and no terminal fold-check shape can be constructed;
-- each scheduled recursive target is no larger than its actual legacy proof in complete
-  serialized bytes — a round-only formula is insufficient, and byte parity is admissible
-  only with the verifier-time improvement below;
-- each scheduled recursive target's measured verifier time improves on its legacy
-  recursive baseline;
-- in 7b, formula sizes equal actual serialization for direct and separate shapes; E8 must
-  add the same gate for batched before that shape exists in production;
-- direct complete fold-check prove time is at most `1.02x` its Packet 6 baseline in every
-  primary cell, with identical signed-witness scan/fold count and no allocation growth;
-- recursive complete fold-check prove time is at most `1.02x` baseline in every primary
-  cell and has geometric mean at most `0.95x`; Packet 1 may ratify different numeric values
-  only with checked-in evidence before implementation starts;
-- recursive joint-leaf folded witness state is `N` field elements; total joint-leaf state,
-  including provider, is at most `N + N/g + explicit_fringes + 5%` for qualifying
-  common-base cells;
-- verifier time is at most `1.02x` baseline;
-- semantic transcript events exactly match the new versioned oracle, with setup and
-  range-image frames disjoint;
-- no legacy decoder, Stage 3 wrapper, or runtime topology heuristic remains.
+1. Prove the complete setup contribution against the selected committed setup prefix.
+2. Reduce the independent `range_image_eval` and `digit_witness_eval` to the next witness
+   opening by proving the pointwise range-image identity.
 
-### Code deletion gate
+The witness reduction is
 
-At the end of Packet 5, measured with Packet 1's checked-in Stage 1 ownership manifest and
-line-count script:
+```text
+range_image_binding_challenge * digit_witness_eval + range_image_eval
 
-- non-test Stage 1 production code falls by at least 35% and at least 1,250 lines from the
-  measured `akita_stage1_tree.rs` + `akita_stage1/*.rs` + Stage 1 prefix share baseline;
-- a production module above 500 lines or hot kernel above 160 lines triggers mandatory
-  line-by-line review and written exception; do not game the trigger with forwarding
-  helpers or artificial file splitting;
-- `rg` finds no production `Vec<Vec<Vec<E>>>`, padded field-valued range-image builder,
-  all-level range-tree
-  builder, duplicate shape formula, or second Stage 1 prover;
-- at the flat cutover, `rg` finds no public Stage 1/Stage 2 constructor with
-  `live_x_cols`, `col_bits`, or `ring_bits`;
-- digit-range release/monomorphized text on Packet 1's fixed artifact/features grows at
-  most 10% under the documented `llvm-size`/symbol method;
-- any specialization that fails its basis gate is removed, not left dormant.
+= sum_z Eq(range_relation_point,z) * [
+     range_image_binding_challenge * digit_witness(z)
+   + digit_witness(z) * (digit_witness(z)+1)
+  ].
+```
 
-At the end of Packet 7b, measured with Packet 1's combined Stage 2/Stage 3 ownership closure
-(including moved provider/pair-scan code and stage-owned prefix functions):
+It ends at `next_witness_eval`. The setup product ends at `setup_prefix_eval` over its own
+`SetupCoefficientDomain`. Witness and setup addresses are not two views of one domain.
 
-- non-test relation/range-image/setup-reduction production code falls by at least 30% and
-  at least 900 lines relative to the old Stage 2 plus Stage 3 closure;
-- `x_prefix`, `y_prefix`, `sparse_y`, and the old dual-geometry dispatch modules are gone;
-- public final-leaf-composer/reduction constructors do not exceed the two scheduled
-  topologies and one recursive reduction shape; E8 may raise the latter to two only when
-  its batched gate passes;
-- moving code to a generic/provider module does not remove it from the measured ownership
-  closure;
-- allocation count and total allocated bytes do not grow on any direct uniform primary
-  cell; recursive peaks meet the joint-leaf/provider gate above.
+### Separate and batched realizations
 
-Code deletion, memory, and speed are coequal. A fast dual architecture fails. A clean but
-slower architecture fails.
+The initial cutover may land the simpler `Separate` realization first only if it is the
+complete production shape in that PR:
 
-## Correctness and security test matrix
+```text
+SetupContributionProof
+then RangeImageConsistencyProof.
+```
 
-### Range polynomial and class tests
+A batched realization may land in the same PR if fully implemented and selected, or in a
+small immediately stacked capability PR. It must not land as an unused enum variant. For
+native setup and witness round counts `lambda` and `mu`:
 
-- Exhaust every valid digit for every LB2..LB6.
-- Check symmetry pairs `digit` and `-digit-1` map to the same `RangeImageClass`.
-- Check endpoints `-b/2` and `b/2-1`.
-- Reject just-below and just-above digits at the internal boundary.
-- Compare integer leaf roots/coefficients against an independent slow polynomial builder.
-- Verify every production plan topology and child order.
+```text
+separate round elements = 2 * (lambda + mu)
+batched round elements  = 3 * max(lambda, mu).
+```
 
-### Range product and recursive joint-leaf differential tests
+The planner compares complete serialized proofs, not only these round terms. A batch over
+unequal domains uses explicit checked lifts, one scale factor per native term, and typed
+suffix projections. Equal padded lengths alone never authorize challenge reuse.
 
-For old padded oracle versus streaming implementation, compare after every operation:
+### Proof-size objective
 
-- initial input claim;
-- ordinary round polynomial coefficients/message;
-- sampled challenge;
-- explicit folded lane records;
-- implicit lane defaults;
-- equality suffix contribution;
-- child claims and ordering;
-- interstage batched claim and next point;
-- final `range_image_eval` and point on the direct range-only path;
-- serialized proof;
-- transcript events.
+Moving the relation to the standard final Stage 1 leaf adds one coefficient per witness
+round relative to the equality-factored range-only leaf. It removes the old standard
+degree-3 relation/range Stage 2 from the recursive path and combines setup plus witness
+reduction in the new Stage 2.
 
-Cover all-zero witness values and full, random, odd, and every short positive non-power
-live length; separately verify that `live_len = 0` is rejected. Use poisoned backing
-storage after the live prefix; randomized batches whose leaf/product default is nonzero;
-serial and parallel execution; fp128, fp64/Ext2, fp32/Ext4.
+Every scheduled recursive target must:
 
-For the recursive joint leaf, compare a dense standard-sumcheck oracle after every round:
+- be no larger than its matching pre-cutover recursive proof in complete serialized
+  bytes;
+- reduce measured verifier work by removing local setup scanning;
+- preserve the #311 terminal proof exactly;
+- preserve direct/non-offloaded proof bytes exactly.
 
-- leaf input claim/anchor and relation claim are fixed before
-  `range_relation_batch_challenge`;
-- the class-derived range-image lane and signed digit lane are distinct sources;
-- round polynomial has planned degree 3 for LB2 and 5 for LB3-LB6;
-- standard implicit-tail contribution includes current equality scalar/linear factor once;
-- relation provider is folded once and trace appears exactly once;
-- `range_image_eval` and `digit_witness_eval` are at the same point but are never equated
-  off-cube;
-- dense and streaming messages, challenges, folds, points, and semantic transcript events
-  agree.
+Byte parity is acceptable when verifier work improves. A round-only estimate is not an
+acceptance test; include scalars, envelopes, opening metadata, extension encoding, and the
+outgoing witness binding.
 
-### Direct relation and flat/mixed provider tests
+### Numeric Stage 3 deletion
 
-- Uniform flat adapter versus the current x/y implementation at every round.
-- Dense semantic relation weights versus common-base provider for alpha 0, 1, and random.
-- All validated nested triples, including `128/64/32`.
-- Multi-group, multi-chunk, overlaps, partial active intervals, and partial A-width columns.
-- Factorized fold state and round messages versus dense at every bind.
-- Trace provider absent/present and exact-address mapping without remap allocation.
-- Range support adjacent to unchecked/field support; no obligation bleeding across segments.
-- A pure pair-kernel test sums two caller-supplied range bindings with distinct coefficients
-  and supports; no future transcript slot, proof field, or production feature is created.
-- Initial round windows split at segment/range/live boundaries.
-- Reject or correctly fall back on unaligned spans and local address maps that do not
-  preserve the common low coordinates.
+The cutover deletes `AkitaStage3Prover`, numeric Stage 3 proof fields, accessors, transcript
+frames, shape branches, sizing formulas, verifier modules, and compatibility readers.
+Setup contribution and witness reduction are semantic Stage 2 components. Do not leave a
+`stage3` wrapper forwarding to them.
 
-For intermediate `FoldCheckTopology::DirectSetup`, compare the cleaned standard degree-3
-composer with the legacy proof round by round and assert unchanged scalar count, serialized size,
-signed-witness scans, and direct full setup evaluation.
-Its equality anchor must be a checked `RangeCheckPoint`; wrong-length/raw points and a
-`RangeRelationPoint` from the other topology are rejected by construction or validation.
+### Intended diff surface for the offloading PR
 
-### Recursive Stage 2 consistency, setup, and geometry tests
+| Surface | Responsibility |
+|---|---|
+| fold-check plan/types | direct versus recursive topology and exact proof shape |
+| Stage 1 prover/verifier | recursive joint final leaf only; earlier range tree unchanged |
+| Stage 2 prover/verifier | setup contribution plus witness/range-image reduction |
+| setup prefix routing | exact slot/domain and typed opening point |
+| proof wire and sizing | new recursive epoch; unchanged direct and terminal epochs |
+| planner/schedules | choose only eligible no-larger recursive shapes |
+| tests/docs | new transcript oracle, proof-size parity, malformed proof, setup-slot failures |
 
-- Direct setup replay equals the setup part of the factorized relation evaluator.
-- Direct local replay equals the recursively proved full setup contribution at the same
-  arbitrary witness-domain point.
-- Perturb every expanded role sublane independently to catch repeated column-equality bugs.
-- `RangeImageConsistencyProof` matches a dense equality-factored oracle round by round.
-- `Separate` produces independent `SetupOpeningPoint` and `NextWitnessPoint`; reject it
-  when the opening router cannot carry both.
-- `Batched` matches independent native proofs for equal and unequal domains; inactive
-  leading rounds emit half the current claim; no active message or final evaluation
-  double-applies its lift scale.
-- Setup/range batching challenge is absent in `Separate` and sampled only after both native
-  claims in `Batched`.
-- Setup and range-image transcript frames are disjoint in `Separate`: mutating any absorb
-  inside one frame changes no challenge drawn before the other frame's first absorb, and
-  the frames' semantic labels never interleave.
-- Witness carry uses the full raw witness-domain point and is invariant under setup-only
-  factorization refactors.
-- `128/64/64` recursive mode uses D64 slot when present.
-- For a scheduled direct candidate, `128/64/32` needs no recursive slot; a scheduled
-  recursive proof rejects missing D32 or coerced D64 slots without changing mode.
+No compressed-commitment file, negative-binary proof field, terminal relation path, or
+unrelated commitment algorithm belongs in this diff.
 
-### Verifier no-panic and allocation tests
+### Acceptance criteria for the offloading PR
 
-Reject with `AkitaError` or serialization error:
+- Direct folds still use #312 Stage 1 plus the second PR's optimized fused Stage 2.
+- Recursive folds use one final Stage 1 relation/range sum-check and one Stage 2 claim
+  reduction.
+- The recursive final leaf's first round and first materialization each traverse compact
+  witness data once.
+- `range_image_eval` and `digit_witness_eval` remain independent and share one point.
+- The complete setup contribution closes the deferred Stage 1 verifier equation exactly
+  once.
+- Mixed role dimensions use the common alpha factorization already established by the
+  second PR.
+- Stage 3 is absent from production names, proof shape, serialization, sizing, planner,
+  prover, and verifier.
+- Each scheduled recursive proof is no larger in complete bytes and improves verifier
+  time against its matching old proof.
+- Direct and #311 terminal bytes/events are unchanged.
+- Malformed proof, point, lift, route, and setup-slot data return errors without panic or
+  attacker-controlled unbounded allocation.
 
-- invalid LB and inconsistent basis descriptor;
-- zero/overflow live lengths and non-power domain lengths;
-- malformed segment ranges, overlaps, role dimensions, and local address maps;
-- wrong point length/order/projection version;
-- wrong subproof/child/round counts;
-- oversized coefficient/claim vectors;
-- unsupported provider, projection, or setup modes;
-- missing recursive setup slot or dimension mismatch;
-- extra/missing fields for the authenticated headerless `FoldCheckPlan` shape;
-- received polynomial lengths or degrees that disagree with the plan;
-- terminal proofs containing range/claim-reduction payloads or setup offload.
+## Dependency and conflict policy
 
-Fuzz/proptest malformed proof bytes and validated-then-mutated plans. No verifier-reachable
-`assert!`, `panic!`, `unwrap`, unchecked index, or unbounded allocation is allowed.
-Compile/API tests should make `DeferredRangeRelationCheck` consumable exactly once; a
-runtime mutation of `setup_contribution_eval` must fail the final Stage 1 equality.
+### PR #311
 
-### Planner/proof-size tests
+#311 is the hard base for #312. Its current head is
+`fad006e2280e880fa16f1cd13b5ea2df599364d0`. It removes terminal relation sum-checks, so
+this series does not touch terminal proof payloads or invent empty fold-check placeholders.
 
-- Formula bytes equal actual serialized bytes for homogeneous and mixed levels.
-- Non-terminal direct target bytes equal the non-terminal direct post-#311 baseline;
-  terminal bytes equal the post-#311 direct-terminal baseline; each recursive target is
-  no larger than its matching legacy baseline in complete bytes, and its recorded
-  verifier-time delta is negative, before it is schedulable.
-- Complete-size selection agrees with serialization even when its winner differs from the
-  round-only `2(lambda+mu)` versus `3 max(lambda,mu)` comparison.
-- Round count depends only on the canonical Boolean domain.
-- Homogeneous schedules remain the special case of mixed metadata.
-- Cache keys are counted once per schedule and rejected candidates report attribution.
-- Planner cannot enable mixed roles or recursive offload until the selected Stage 1
-  relation placement, Stage 2 reduction, trace, chunk, route, slot, and descriptor
-  capabilities are all present.
+### PR #309
 
-## Rejected designs
+#309 currently has head `b0c2d4683539b0c2a465b996f48adfc465a20198` and introduces
+the semantic inner, outer, and opening digit-decomposition bases. It is not needed by the
+#312 Stage 1 kernel because `DigitRangePlan` consumes the checked concrete range basis
+already produced upstream.
 
-The implementation must explicitly reject:
+It is required before the mixed-dimension Stage 2 PR because relation and setup builders
+must consume the semantic role bases rather than infer one global basis. The second PR is
+based on merged #312 plus merged/refreshed #309. If both are still open, use an explicit
+integration base; do not copy #309 concepts into #312 or add compatibility adapters.
 
-- preserving dual compact-small/eager-large Stage 1 engines;
-- preserving dual flat and global x/y public Stage 2 APIs;
-- `ring_bits == 0` as a mixed-layout sentinel;
-- common-base `g` as a wire x/y split;
-- `d_a` as the mixed low factor;
-- per-role challenge domains or separate role sumchecks;
-- alpha-inverse offset tricks;
-- assuming all derived Stage 1 tails are zero;
-- materializing a padded field-valued range-image table, all leaves, or all product layers;
-- giant/fixed-width LB5/LB6 integer parent LUTs;
-- full two-round LB5/LB6 four-class LUTs;
-- binary-only product topology as a production option: it preserves round coefficients
-  while adding substages, child claims, scans, and at least equal memory traffic;
-- one module, trait, or helper family per LB;
-- a general protocol expression graph/new crate/mandatory slow Tier-A engine;
-- forcing trace into the common alpha factorization;
-- repeating one witness-column equality value across mixed role sublanes;
-- caller-owned relation/setup/witness point slices;
-- batching independently committed oracles only because padded round counts match;
-- keeping recursive-offload relation checking in Stage 2 and retaining a numeric Stage 3;
-- forcing the recursive Stage 1 relation placement onto direct setup despite its extra
-  signed-witness fold and scalar;
-- implementing the two final-leaf composers as two complete range-product engines;
-- removing future negative-binary digits from the common balanced range proof;
-- direct degree-16/32 LB5/LB6 range polynomials;
-- direct degree-8 LB4 or alternative LB6 tree in the production series without a separate
-  Pareto protocol spec and planner/security repricing;
-- encoding CPU kernel choice in schedules/proofs;
-- cherry-picking stale mixed/relation/verifier branches wholesale;
-- unsafe SIMD before scalar cleanup and packing-ready accumulator bounds;
-- any pass-through alias or `_for_level` wrapper forbidden by the repository's
-  single-source policy.
+### Other open work
 
-## Validation commands
+- Distributed setup-offload schedules must be integrated before the final offloading PR
+  claims distributed coverage. Adapt their one canonical fixture; do not clone it.
+- Compressed commitments remain a future consumer of the typed domain/point boundary.
+  Do not edit their planners, wire, or commitment layout in this series.
+- Packed sum-check work may use the final address-major scalar states after the Stage 2
+  rewrite. It must not preserve the deleted x/y/prefix architecture.
+- Divergent verifier kernels are prior art only. Port algebra after the semantic provider
+  is canonical; never merge an old layout wholesale.
 
-`AGENTS.md` is the single authority for the current repository-wide preflight, feature
-matrix, and CI-fidelity selectors; do not preserve a stale duplicate command list here.
-Every implementation PR runs that current preflight plus focused tests and benchmarks for
-its ownership surface, and polls every live command to a real exit code. F1's additional
-focused requirements are fixed in its ready-to-merge gate above. Before the complete
-series merges, run the current CI-profile nextest suite and every path-specific workflow
-triggered by the cumulative diff.
+Before each stacked PR begins, refresh the exact open-PR heads and compare the full
+merge-base diff. Conflict avoidance is defined by semantic ownership, not by hoping git
+reports few textual conflicts.
 
-Follow the repository dependency-cache policy before the first `lake`/Lean command if a
-future cross-repository validation adds one; no Lean validation is currently required.
+## Test oracles
 
-For a Markdown-only F1 head, `git diff --check` and
-`./scripts/check-doc-guardrails.sh` are sufficient. Once its first Rust implementation
-commit lands, the full F1 gate applies; the prior documentation-only validation is not
-evidence for the implementation head.
+### Protocol epochs
+
+`digit_range_protocol_epoch` and `fold_protocol_epoch` protect #312's declared
+wire-preserving Stage 1 cutover. The second PR adds a complete Stage 2 epoch covering
+proof bytes, round messages, challenge order, final point, final evaluation, and logging
+events for each supported basis and trace shape.
+
+The offloading PR intentionally creates a new recursive epoch and records:
+
+- old and new complete recursive proof bytes;
+- exact field/scalar additions and deletions;
+- transcript-frame and challenge-order changes;
+- direct and terminal digests that must remain unchanged.
+
+### Dense mathematical oracles
+
+Test-only dense implementations are permitted and required. They are not production
+fallbacks. Round-by-round comparisons cover:
+
+- Stage 1 class-indexed versus padded range tables;
+- factorized relation weights versus full flat weights;
+- compact prefix messages versus direct dense summation;
+- trace sparse/dense states versus exact flat trace weights;
+- mixed-dimension setup contribution versus direct flat dot product;
+- recursive joint leaf versus a separately materialized standard sum-check;
+- separate/batched Stage 2 reductions versus independent native proofs.
+
+Compare coefficients, not only evaluations at `0` and `1`. Compare after every challenge
+and fold, not only the final accepted proof.
+
+### Required edge cases
+
+- every valid digit and both out-of-range neighbors for LB2-LB6 arithmetic tests;
+- all-zero, uniform, deterministic high-entropy, zero-heavy, and alternating endpoints;
+- full, three-quarter, odd, and short positive live prefixes; reject zero length;
+- alpha equal to zero, one, and random field values;
+- trace absent, sparse, and dense;
+- uniform `64/64/64`, uniform `128/128/128`, mixed `128/64/64`, and mixed
+  `128/64/32`;
+- singleton, multi-group, and multi-chunk layouts;
+- serial and parallel execution;
+- fp128 primary plus fp64/Ext2 and fp32/Ext4 smoke coverage;
+- malformed proof counts, degrees, points, domains, role dimensions, setup slots, and
+  serialized lengths.
+
+## Performance and tracing policy
+
+Optimization decisions use the repository's profile-CI feature set and dedicated
+benchmarks. Criterion and CI benchmark output decide winners; Perfetto tracing explains
+where time went. Neither replaces correctness or protocol-epoch tests.
+
+Use coarse spans for construction, compact prefix, materialization, later rounds, and
+folding. Never instrument pair, class, coefficient, lane, or Rayon-item loops. Record the
+exact head SHA, base SHA, field, feature set, input shape, thread count, and machine for
+every selection claim.
+
+Candidate branches are disposable. Once a strategy wins:
+
+- put the winner in the canonical state machine;
+- delete the loser branch and production code;
+- record the result here;
+- do not add a runtime selector or schedule knob.
+
+CI benchmark reporting is the ongoing regression detector. Production code must not carry
+ad hoc timing wrappers, benchmark-only branches, or duplicated measured/unmeasured
+kernels.
+
+## Rejected architecture
+
+The following are explicitly rejected:
+
+- dual small-basis and large-basis Stage 1 provers;
+- eager padded range-image tables or retained product forests;
+- a binary-only range tree;
+- one module or trait family per log basis;
+- a second semantic digit-validation scan inside the honest prover;
+- public x/y relation geometry;
+- `ring_bits == 0` as a mixed-dimension mode;
+- using `d_a` rather than `min(d_a,d_b,d_d)` for the common alpha factor;
+- binding relation lanes before the common alpha coordinates;
+- forcing trace into the common alpha factor;
+- full `N`-element mixed relation weights in production;
+- relation lookup tables indexed only by range-image class;
+- a generic expression algebra, descriptor engine, or new protocol crate;
+- wrapper functions that preserve old and new APIs simultaneously;
+- proof/schedule fields selecting CPU kernels;
+- an unused batched reduction variant;
+- moving the relation to Stage 1 for direct non-offloaded folds;
+- preserving numeric Stage 3 after the offload cutover;
+- compressed commitments or negative-binary range checks in this series.
+
+## Validation and merge gates
+
+Each PR runs the current commands in `AGENTS.md`, focused protocol-epoch tests, and the
+benchmarks for its owned surface. Documentation changes also run
+`./scripts/check-doc-guardrails.sh`. A live process is not a completed validation result.
+
+Before merge, inspect the complete diff from the actual PR base and verify:
+
+- every touched production file belongs to the PR's intended surface;
+- no old wrapper, decoder, or alternate engine survives the cutover;
+- proof size formulas match actual serialization;
+- prover and verifier logging transcripts agree;
+- verifier-reachable malformed input is rejected without panic;
+- benchmark claims name their exact source head;
+- the spec header and stack ledger reflect the final merged state.
 
 ## Definition of done
 
-This work is complete only when:
+The full series is done when:
 
-- one `DigitRangePlan` defines every supported range topology and one `FoldCheckPlan`
-  defines every complete wire shape;
-- one compact flat-addressed range prover handles LB2..LB6;
-- LB4/LB5/LB6 meet the scalar speed and memory gates;
-- the eager padded field-valued range-image table and retained product forests are gone;
-- one shared mechanical pair/fold toolkit supports the direct composer and recursive
-  consistency/setup reducers without hiding their equations;
-- common-base factorization meets dense round-by-round parity and `N/g` storage;
-- direct setup retains one signed-witness relation/range-image scan; recursive offload uses
-  the joint Stage 1 leaf with one fused round-zero witness traversal plus selected Stage 2
-  reduction;
-- trace appears exactly once at the scheduled relation placement without sharing false
-  factorization;
-- direct mixed setup replay and recursively proved full setup contribution agree; typed
-  Stage 1 relation and Stage 2 setup/witness points replace caller-owned slices;
-- recursive setup offload fails closed outside available `d_setup` slots;
-- planner enables only measured, cache-aware mixed schedules;
-- verifier malformed-input tests satisfy the no-panic contract;
-- old x/y/prefix/tree wrappers and duplicate shape formulas are deleted;
-- code deletion, proof size, transcript, allocation, microbenchmark, e2e, and documentation
-  gates all pass;
-- numeric Stage 3 code, fields, shapes, accessors, and legacy decoder are gone;
-- #311 terminal proof bytes, transcript, direct ring/trace checks, and no-sumcheck topology
-  are unchanged;
-- compressed commitments and the fused negative-binary feature remain unimplemented but
-  can land as new domains/providers/supports without another coordinate rewrite.
-
-The implementation team should optimize in this order: eliminate the eager range forest,
-consolidate the range prover, establish flat relation/setup semantics under the old wire,
-perform the atomic two-stage cutover, prove the common-base mixed providers, enable only
-winning schedules, then tune upstream digit emission and verifier arithmetic. Do not
-trade this order for another round of local patches inside the current spaghetti.
+- #312 is the complete, single-source Stage 1 range cutover for LB2-LB6;
+- the relation/range-image prover has one compact-prefix/folded-suffix implementation;
+- common alpha coordinates of length `min(d_a,d_b,d_d)` bind first;
+- relation lane weights use at most `N/g` state and mixed dimensions no longer use a
+  dense sentinel path;
+- the best measured one/two/three-round prefix strategy is selected separately for every
+  digit basis;
+- trace shares witness traversal, remains independently additive, and appears once;
+- direct setup retains the efficient Stage 1 range plus fused Stage 2 placement;
+- recursive offload moves relation checking into the final Stage 1 leaf and setup plus
+  witness reduction into Stage 2;
+- numeric Stage 3 and all x/y/prefix wrapper architecture are deleted;
+- direct and terminal epochs remain unchanged across the offload cutover;
+- scheduled recursive proofs are no larger and reduce verifier work;
+- compressed commitments and the fused negative-binary range check remain explicitly
+  future work, with no dormant proof fields or code paths added here.

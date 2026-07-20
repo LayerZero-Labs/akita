@@ -10,11 +10,12 @@
 
 ## Summary
 
-> **Coordination gate.** EOR packing may proceed. Stage 1/Stage 2 packing is blocked until
-> Packets 1-12 and the scalar gates in
-> [`digit-range-pipeline-refactor.md`](digit-range-pipeline-refactor.md) pass. Packing must
+> **Coordination gate.** EOR packing may proceed. Stage 1 packing must target the canonical
+> scalar implementation in PR #312. Stage 2 packing is blocked until the stacked
+> relation/range-image rewrite in
+> [`digit-range-pipeline-refactor.md`](digit-range-pipeline-refactor.md) lands. Packing must
 > target the resulting flat, address-major scalar buffers and may not preserve or extend
-> the current x/y/prefix/tree architecture.
+> the current x/y/prefix architecture.
 
 Akita's sum-check and extension-opening-reduction (EOR) prover hot loops run on
 **scalar extension-field arithmetic** today: `Vec<E>` with `E = RingSubfieldFp4<Fp32>`,

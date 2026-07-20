@@ -81,6 +81,7 @@ impl DigitDistribution {
             "uniform" => Some(Self::Uniform),
             "zero-heavy" => Some(Self::ZeroHeavy),
             "alternating-endpoints" => Some(Self::AlternatingEndpoints),
+            "seeded-high-entropy" => Some(Self::SeededHighEntropy),
             _ => None,
         }
     }
