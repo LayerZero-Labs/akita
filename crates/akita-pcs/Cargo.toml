@@ -134,10 +134,6 @@ name = "digit_range"
 harness = false
 
 [[bench]]
-name = "digit_range_allocations"
-harness = false
-
-[[bench]]
 name = "extension_opening_reduction"
 harness = false
 
