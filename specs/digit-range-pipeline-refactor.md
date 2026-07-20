@@ -4,7 +4,7 @@
 |---|---|
 | Author(s) | Quang Dao (direction); Codex planning synthesis |
 | Created | 2026-07-18 |
-| Revised | 2026-07-20; PR #312 implementation, selected ordered-pair/two-round kernels, rejected post-round-one fusion, and strict merge-readiness cleanup recorded |
+| Revised | 2026-07-20; PR #312 implementation, selected high- and low-basis deferral kernels, rejected follow-up cache/fusion variants, and strict merge-readiness cleanup recorded |
 | Status | F1/C3/O4/O5 implementation and cleanup are in PR #312; later mixed-dimension and stage-placement cuts remain additive stack entries |
 | First PR branch | `quang/plan-digit-range-pipeline` |
 | Stack base | PR #311 branch `quang/terminal-direct-ring-relations`; implementation merge base `bc959ef34572aee143ba0114094b0b4212b4e111` |
@@ -1489,6 +1489,60 @@ build's lack of overflow.
 Move the good compact backend mechanics into the same architecture. LB2 and LB3 retain
 their direct degree-2/degree-4 proof shapes, compact initial rounds, and any measured
 initial-round batching. They must not remain delegated to a second prover type.
+
+The selected low-basis implementation now keeps the compact witness authoritative through
+three initial challenges whenever the ring dimension has at least three variables. The
+existing bivariate prefix still produces the ordinary first two transcript messages. The
+third message is reconstructed directly from compact octets, and the post-`r_2` state is
+materialized at `N/8`; proof bytes, verifier work, and transcript order do not change.
+
+The basis-specific arithmetic is deliberately small and explicit:
+
+| Basis | Third-round compact kernel | Challenge-dependent cache | Post-`r_2` state |
+|---:|---|---|---:|
+| LB2 (`b = 4`) | 256 octet classes, direct quadratic coefficients | `256 x 3` field elements | one lane at `N/8` |
+| LB3 (`b = 8`) | two 256-class folded quads per octet, direct quartic coefficients | 256 folded values plus `256 x 4` Taylor rows | one lane at `N/8` |
+
+For LB3, each Taylor row is exactly
+`[Q(a), Q'(a), Q''(a)/2, Q'''(a)/6]` for
+`Q(s) = s(s-2)(s-6)(s-12)`. Therefore
+`Q(a + dX)` is assembled from the powers of `d` with only three cached-coefficient
+multiplications; the monic `X^4` coefficient is `d^4`. This table is 16 KiB over fp128,
+is rebuilt from the 256 challenge-folded quad values, and is the only LB3-specific cached
+field state. It is not a second witness representation.
+
+Measured against the prefix-aggregation plus exact-affine checkpoint `c2736370`, the
+selected LB3 head `fae8d871` reduced one-thread complete proving from 4.603 ms to
+4.014 ms for full/uniform (-12.8%) and from 3.983 ms to 3.548 ms for
+three-quarter/uniform (-10.9%). The corresponding stable eight-thread measurements were
+2.017 ms to 1.830 ms (-9.3%) and 1.732 ms to 1.627 ms (-6.1%). The selected LB2 head
+`0cdcdf40` reduced the earlier two-round baseline from 4.014 ms to 2.417 ms
+(-39.8%) for full/uniform and from 3.566 ms to 2.467 ms (-30.8%) for
+three-quarter/uniform before the shared exact-quadratic improvement.
+
+Keep the following stop decisions explicit; none remains behind a selector or wrapper:
+
+- Do not cache LB2 octet IDs: both attempted layouts more than doubled complete proving.
+- Do not aggregate LB2 third-round octets globally: the histogram path measured about
+  5.5 ms against the approximately 2.4 ms selected scan.
+- Do not fuse post-third materialization with fourth-round computation. The faithful LB3
+  candidate was about 5% slower at full width and tied at three-quarter width; four-lane
+  batching did not change that result. The analogous LB2 candidate also lost.
+- Do not replace the canonical quartic coefficient formula globally with Taylor arithmetic.
+  It was slightly slower; Taylor form wins only when its left-endpoint rows are reused by
+  the 256-class LB3 cache.
+- Do not add adaptive low-diversity octet aggregation. It improved structured one-thread
+  cases but enlarged the hot function and lost badly under parallel execution.
+- Do not retain packed LB3 quad IDs. They improved one-thread complete proving by about
+  4%, but regressed eight-thread proving by about 2.5% after including cache construction.
+- Do not build the full `65,536 x 5` octet-pair coefficient table: its roughly 5 MiB
+  footprint and 65,536-row challenge-time construction exceed the work saved at the
+  current `2^18` domain. Reconsider only after the domain or reuse count materially grows.
+
+The benchmark suite includes a deterministic high-entropy digit distribution in addition
+to uniform, zero-heavy, and alternating endpoints. It prevents future class-sensitive
+optimizations from being selected only because the original fixtures have unusually low
+range-image class diversity.
 
 ### Why the production tree is not binary-only
 
