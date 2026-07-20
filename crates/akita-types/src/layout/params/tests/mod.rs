@@ -14,7 +14,34 @@ fn sample_params_only() -> LevelParams {
 }
 
 fn sample_layout_lp() -> LevelParams {
-    sample_params_only().with_decomp(16, 64, 2, 2).unwrap()
+    sample_params_only().with_decomp(16, 64, 2, 2, 2).unwrap()
+}
+
+#[test]
+fn distinct_semantic_depths_size_a_b_and_d_independently() {
+    let mut params = sample_params_only();
+    params.log_basis_inner = 2;
+    params.log_basis_outer = 3;
+    params.log_basis_open = 4;
+    let params = params
+        .with_decomp(8, 17, 5, 4, 3)
+        .expect("distinct semantic decomposition");
+    let blocks = 17usize.div_ceil(8);
+    assert_eq!(params.a_key.col_len(), 8 * 5, "A uses inner depth");
+    assert_eq!(
+        params.b_key.col_len(),
+        params.a_key.row_len() * 4 * blocks,
+        "B uses outer depth"
+    );
+    assert_eq!(params.d_key.col_len(), 3 * blocks, "D uses open depth");
+    assert_eq!(
+        (
+            params.log_basis_inner,
+            params.log_basis_outer,
+            params.log_basis_open,
+        ),
+        (2, 3, 4)
+    );
 }
 
 fn laid_out_sample_lp() -> LevelParams {
@@ -23,31 +50,61 @@ fn laid_out_sample_lp() -> LevelParams {
         .unwrap()
 }
 
+fn certify_test_sis_bounds(lp: &mut LevelParams) {
+    const BOUND: u128 = 1;
+    lp.a_key = AjtaiKeyParams::new_unchecked(
+        lp.a_key.security_policy(),
+        lp.a_key.sis_table_key().table_digest,
+        lp.a_key.sis_modulus_profile(),
+        crate::sis::SisMatrixRole::A,
+        lp.a_key.row_len(),
+        lp.a_key.col_len(),
+        BOUND,
+        lp.ring_dimension,
+    );
+    lp.b_key = AjtaiKeyParams::new_unchecked(
+        lp.b_key.security_policy(),
+        lp.b_key.sis_table_key().table_digest,
+        lp.b_key.sis_modulus_profile(),
+        crate::sis::SisMatrixRole::B,
+        lp.b_key.row_len(),
+        lp.b_key.col_len(),
+        BOUND,
+        lp.ring_dimension,
+    );
+}
+
 fn sample_multi_group_root_params() -> (LevelParams, OpeningClaimsLayout) {
     use crate::schedule::PrecommittedGroupParams;
     let lp = sample_params_only()
         .with_layout(&sample_layout_lp(), 128)
         .unwrap();
-    let precommit_lp = sample_params_only()
+    let mut precommit_lp = sample_params_only()
         .with_layout(&sample_layout_lp(), 128)
         .unwrap();
+    certify_test_sis_bounds(&mut precommit_lp);
+    let a_key = precommit_lp.a_key.clone();
+    let b_key = AjtaiKeyParams::new_unchecked(
+        precommit_lp.b_key.security_policy(),
+        precommit_lp.b_key.sis_table_key().table_digest,
+        precommit_lp.b_key.sis_modulus_profile(),
+        precommit_lp.b_key.sis_table_key().role,
+        5,
+        precommit_lp.b_key.col_len(),
+        precommit_lp.b_key.coeff_linf_bound(),
+        precommit_lp.ring_dimension,
+    );
+    let mut layout =
+        PrecommittedGroupParams::from_params(PolynomialGroupLayout::new(4, 1), &precommit_lp);
+    layout.n_b = b_key.row_len();
+    layout.b_coeff_linf_bound = b_key.coeff_linf_bound();
     let precommit = PrecommittedLevelParams {
-        layout: PrecommittedGroupParams::from_params(
-            PolynomialGroupLayout::new(4, 1),
-            &precommit_lp,
-        ),
-        a_key: precommit_lp.a_key.clone(),
-        b_key: AjtaiKeyParams::new_unchecked(
-            precommit_lp.b_key.security_policy(),
-            precommit_lp.b_key.sis_table_key().table_digest,
-            precommit_lp.b_key.sis_modulus_profile(),
-            precommit_lp.b_key.sis_table_key().role,
-            5,
-            precommit_lp.b_key.col_len(),
-            precommit_lp.b_key.coeff_linf_bound(),
-            precommit_lp.ring_dimension,
-        ),
-        num_digits_commit: precommit_lp.num_digits_commit,
+        layout,
+        a_key,
+        b_key,
+        log_basis_open: precommit_lp.log_basis_open,
+        num_digits_inner: precommit_lp.num_digits_inner,
+        num_digits_outer: precommit_lp.num_digits_outer,
         num_digits_open: precommit_lp.num_digits_open,
         num_digits_fold_one: precommit_lp.num_digits_fold_one,
     };
@@ -58,18 +115,18 @@ fn sample_multi_group_root_params() -> (LevelParams, OpeningClaimsLayout) {
 }
 
 #[test]
-fn shared_d_digit_basis_covers_every_group() {
+fn shared_d_digit_basis_uses_root_opening_basis() {
     let (mut grouped, _) = sample_multi_group_root_params();
-    grouped.log_basis = 3;
-    grouped.precommitted_groups[0].layout.log_basis = 6;
+    grouped.log_basis_open = 3;
+    grouped.precommitted_groups[0].layout.log_basis_outer = 6;
 
-    assert_eq!(grouped.shared_d_digit_log_basis(), 6);
+    assert_eq!(grouped.shared_d_digit_log_basis(), 3);
     assert_eq!(shared_d_digit_log_basis(5, &[]), 5);
 }
 
 #[test]
 fn with_decomp_derives_exact_live_block_geometry() {
-    let lp = sample_params_only().with_decomp(8, 17, 2, 2).unwrap();
+    let lp = sample_params_only().with_decomp(8, 17, 2, 2, 2).unwrap();
 
     assert_eq!(lp.num_live_ring_elements_per_claim, 17);
     assert_eq!(lp.num_positions_per_block, 8);
@@ -79,7 +136,7 @@ fn with_decomp_derives_exact_live_block_geometry() {
     assert_eq!(lp.block_index_domain_size().unwrap(), 4);
     assert_eq!(lp.n_ring_elems().unwrap(), 17);
 
-    assert!(sample_params_only().with_decomp(3, 17, 2, 2).is_err());
+    assert!(sample_params_only().with_decomp(3, 17, 2, 2, 2).is_err());
 }
 
 #[test]
@@ -109,7 +166,9 @@ fn with_layout_keeps_self_ranks() {
     let lp = params.with_layout(&layout_lp, 128).unwrap();
 
     assert_eq!(lp.ring_dimension, 64);
-    assert_eq!(lp.log_basis, layout_lp.log_basis);
+    assert_eq!(lp.log_basis_inner, layout_lp.log_basis_inner);
+    assert_eq!(lp.log_basis_outer, layout_lp.log_basis_outer);
+    assert_eq!(lp.log_basis_open, layout_lp.log_basis_open);
     assert_eq!(lp.a_key.row_len(), 2);
     assert_eq!(lp.b_key.row_len(), 4);
     assert_eq!(lp.d_key.row_len(), 3);
@@ -119,7 +178,8 @@ fn with_layout_keeps_self_ranks() {
         layout_lp.num_positions_per_block
     );
     assert_eq!(lp.challenge_l1_mass(), 3);
-    assert_eq!(lp.num_digits_commit, layout_lp.num_digits_commit);
+    assert_eq!(lp.num_digits_inner, layout_lp.num_digits_inner);
+    assert_eq!(lp.num_digits_outer, layout_lp.num_digits_outer);
     assert_eq!(lp.num_digits_open, layout_lp.num_digits_open);
 }
 

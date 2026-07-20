@@ -933,7 +933,7 @@ mod tests {
             1,
             SparseChallengeConfig::pm1_only(1),
         )
-        .with_decomp(1, 32, 1, 1)
+        .with_decomp(1, 32, 1, 1, 1)
         .unwrap()
     }
 

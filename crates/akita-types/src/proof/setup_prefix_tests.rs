@@ -12,7 +12,7 @@ fn sample_level_params() -> LevelParams {
         2,
         SparseChallengeConfig::pm1_only(3),
     )
-    .with_decomp(4, 3, 2, 2)
+    .with_decomp(4, 3, 2, 2, 2)
     .expect("sample level params")
 }
 
@@ -27,7 +27,7 @@ fn prefix_eligible_level_params() -> LevelParams {
         2,
         SparseChallengeConfig::pm1_only(3),
     )
-    .with_decomp(2, 3, full_field_digits, 2)
+    .with_decomp(2, 3, full_field_digits, 2, 2)
     .expect("prefix eligible level params")
 }
 
@@ -35,7 +35,7 @@ fn prefix_eligible_level_params() -> LevelParams {
 fn active_setup_field_len_matches_packed_role_maximum() {
     let lp = sample_level_params();
     let opening_batch = OpeningClaimsLayout::new(5, 3).expect("opening batch");
-    let w_a = lp.num_positions_per_block * lp.num_digits_commit;
+    let w_a = lp.num_positions_per_block * lp.num_digits_inner;
     let w_b = opening_batch.num_total_polynomials()
         * lp.a_key.row_len()
         * lp.num_live_blocks

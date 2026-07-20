@@ -23,20 +23,17 @@ use descriptor::{
 };
 pub use precommitted::{LevelParamsLike, PrecommittedLevelParams};
 
-/// Largest gadget basis used by any opening-digit segment in the shared D product.
+/// Gadget basis used by opening-digit segments in the shared D product.
 ///
-/// A grouped root concatenates the main group's `e_hat` with every frozen
-/// precommitted group's `e_hat`. The D-role SIS bound and the prover's digit
-/// kernel must therefore cover the largest contributing balanced-digit range.
+/// A grouped root concatenates the main group's `e_hat` with every
+/// precommitted group's fresh `e_hat`; all fresh opening digits use the root
+/// opening basis.
 #[must_use]
 pub fn shared_d_digit_log_basis(
     main_log_basis: u32,
-    precommitted_groups: &[PrecommittedLevelParams],
+    _precommitted_groups: &[PrecommittedLevelParams],
 ) -> u32 {
-    precommitted_groups
-        .iter()
-        .map(|group| group.layout.log_basis)
-        .fold(main_log_basis, u32::max)
+    main_log_basis
 }
 
 fn empty_ajtai_key(role: crate::sis::SisMatrixRole) -> AjtaiKeyParams {
@@ -82,8 +79,12 @@ pub enum RelationMatrixRowLayout {
 pub struct LevelParams {
     /// Ring dimension (`d` in the protocol).
     pub ring_dimension: usize,
-    /// Base-2 logarithm of the gadget decomposition base.
-    pub log_basis: u32,
+    /// Base-2 logarithm of the A/source gadget decomposition base.
+    pub log_basis_inner: u32,
+    /// Base-2 logarithm of the B/`t_hat` gadget decomposition base.
+    pub log_basis_outer: u32,
+    /// Base-2 logarithm of the D/`e_hat` gadget decomposition base.
+    pub log_basis_open: u32,
     /// Inner Ajtai matrix (A): `row_len = n_a`, `col_len = inner_width`.
     pub a_key: AjtaiKeyParams,
     /// Outer commitment matrix (B): `row_len = n_b`, `col_len = outer_width`.
@@ -102,9 +103,11 @@ pub struct LevelParams {
     /// Defaults to [`TensorChallengeShape::Flat`]. Tensor presets set selected
     /// levels to [`TensorChallengeShape::Tensor`] during schedule construction.
     pub fold_challenge_shape: TensorChallengeShape,
-    /// Gadget decomposition depth for commitment coefficients (δ_commit).
-    pub num_digits_commit: usize,
-    /// Gadget decomposition depth for opening evaluations (δ_open).
+    /// Gadget decomposition depth for A/source coefficients.
+    pub num_digits_inner: usize,
+    /// Gadget decomposition depth for B/`t_hat` values.
+    pub num_digits_outer: usize,
+    /// Gadget decomposition depth for D/opening evaluations.
     pub num_digits_open: usize,
     /// One-hot chunk size `K` of the committed witness at this level, used to
     /// derive the per-block witness L1 mass `nonzeros = ceil(D/K)` for the
@@ -149,7 +152,7 @@ impl LevelParams {
     /// Largest gadget basis accepted by this level's shared D product.
     #[must_use]
     pub fn shared_d_digit_log_basis(&self) -> u32 {
-        shared_d_digit_log_basis(self.log_basis, &self.precommitted_groups)
+        shared_d_digit_log_basis(self.log_basis_open, &self.precommitted_groups)
     }
 
     /// Per-role ring dimensions at this level.
@@ -198,10 +201,12 @@ impl LevelParams {
     /// other field is left at the zero/empty defaults to make accidental
     /// use surface as obviously-degenerate output. Do not feed this stub
     /// into commitment, audit, or descriptor-binding code paths.
-    pub fn log_basis_stub(log_basis: u32) -> Self {
+    pub fn open_basis_stub(log_basis_open: u32) -> Self {
         Self {
             ring_dimension: 0,
-            log_basis,
+            log_basis_inner: log_basis_open,
+            log_basis_outer: log_basis_open,
+            log_basis_open,
             a_key: empty_ajtai_key(crate::sis::SisMatrixRole::A),
             b_key: empty_ajtai_key(crate::sis::SisMatrixRole::B),
             d_key: empty_ajtai_key(crate::sis::SisMatrixRole::D),
@@ -213,7 +218,8 @@ impl LevelParams {
                 count_pm2: 0,
             },
             fold_challenge_shape: TensorChallengeShape::Flat,
-            num_digits_commit: 0,
+            num_digits_inner: 0,
+            num_digits_outer: 0,
             num_digits_open: 0,
             onehot_chunk_size: 0,
             fold_linf_cap_config: FoldWitnessLinfCapConfig::worst_case_beta_only(),
@@ -245,7 +251,9 @@ impl LevelParams {
     ) -> Self {
         Self {
             ring_dimension,
-            log_basis,
+            log_basis_inner: log_basis,
+            log_basis_outer: log_basis,
+            log_basis_open: log_basis,
             a_key: AjtaiKeyParams::new_unchecked(
                 crate::sis::DEFAULT_SIS_SECURITY_POLICY,
                 crate::sis::SisTableDigest::CURRENT,
@@ -281,7 +289,8 @@ impl LevelParams {
             num_live_blocks: 0,
             fold_challenge_config,
             fold_challenge_shape: TensorChallengeShape::Flat,
-            num_digits_commit: 0,
+            num_digits_inner: 0,
+            num_digits_outer: 0,
             num_digits_open: 0,
             onehot_chunk_size: 0,
             fold_linf_cap_config: FoldWitnessLinfCapConfig::worst_case_beta_only(),
@@ -357,14 +366,14 @@ impl LevelParams {
     pub fn fold_witness_norms(&self) -> crate::sis::FoldWitnessNorms {
         let is_onehot = self.onehot_chunk_size > 0;
         crate::sis::FoldWitnessNorms::new(
-            self.log_basis,
+            self.log_basis_inner,
             self.ring_dimension,
             if is_onehot { self.onehot_chunk_size } else { 1 },
             is_onehot,
         )
     }
 
-    /// Per-row folded-witness norms using group-local gadget geometry.
+    /// Per-row folded-witness norms using group-local source gadget geometry.
     #[inline]
     pub fn fold_witness_norms_for_params(
         &self,
@@ -372,7 +381,7 @@ impl LevelParams {
     ) -> crate::sis::FoldWitnessNorms {
         let is_onehot = self.onehot_chunk_size > 0;
         crate::sis::FoldWitnessNorms::new(
-            params.log_basis(),
+            params.log_basis_inner(),
             self.ring_dimension,
             if is_onehot { self.onehot_chunk_size } else { 1 },
             is_onehot,
@@ -476,7 +485,7 @@ impl LevelParams {
             self.num_live_blocks,
             1,
             field_bits,
-            self.log_basis,
+            self.log_basis_open,
             challenge,
             witness,
             &self.fold_linf_cap_config,
@@ -488,7 +497,7 @@ impl LevelParams {
                 self.num_live_blocks,
                 root_num_claims,
                 field_bits,
-                self.log_basis,
+                self.log_basis_open,
                 challenge,
                 witness,
                 &self.fold_linf_cap_config,
@@ -512,7 +521,7 @@ impl LevelParams {
             self.num_live_blocks,
             num_claims,
             self.field_bits_for_cache(),
-            self.log_basis,
+            self.log_basis_open,
             crate::sis::FoldChallengeNorms::new(
                 &self.fold_challenge_config,
                 self.fold_challenge_shape,
@@ -557,7 +566,7 @@ impl LevelParams {
                 params.num_live_blocks(),
                 num_claims,
                 self.field_bits_for_cache(),
-                params.log_basis(),
+                params.log_basis_open(),
                 challenge,
                 witness_norms,
                 &cap_config,
@@ -577,7 +586,7 @@ impl LevelParams {
         let mut buf = Vec::with_capacity(48);
         buf.extend_from_slice(crate::sis::FOLD_GRIND_PROBE_ORDER_ABSORB);
         buf.extend_from_slice(&(self.ring_dimension as u64).to_le_bytes());
-        buf.extend_from_slice(&self.log_basis.to_le_bytes());
+        buf.extend_from_slice(&self.log_basis_open.to_le_bytes());
         buf.extend_from_slice(&(self.num_live_ring_elements_per_claim as u64).to_le_bytes());
         buf.extend_from_slice(&(self.num_positions_per_block as u64).to_le_bytes());
         buf.extend_from_slice(&(self.num_live_blocks as u64).to_le_bytes());
@@ -637,7 +646,7 @@ impl LevelParams {
             self.num_live_blocks,
             num_claims,
             field_bits,
-            self.log_basis,
+            self.log_basis_open,
             challenge,
             self.fold_witness_norms(),
             &self.fold_linf_cap_config,
@@ -645,7 +654,8 @@ impl LevelParams {
         Ok(decomposed_fold_digits)
     }
 
-    /// Gadget depth for a root group using group-local geometry and root policy.
+    /// Gadget depth for a root group using group-local geometry, fresh-opening
+    /// basis, and root fold policy.
     pub fn num_digits_fold_for_params(
         &self,
         params: &(impl LevelParamsLike + ?Sized),
@@ -664,7 +674,7 @@ impl LevelParams {
             params.num_live_blocks(),
             num_claims,
             field_bits,
-            params.log_basis(),
+            params.log_basis_open(),
             challenge,
             self.fold_witness_norms_for_params(params),
             &cap_config,
@@ -689,7 +699,7 @@ impl LevelParams {
             params.num_live_blocks(),
             num_claims,
             field_bits,
-            params.log_basis(),
+            params.log_basis_open(),
             challenge,
             self.fold_witness_norms_for_params(params),
             &cap_config,
@@ -805,7 +815,9 @@ impl LevelParams {
     /// reviewed with their Fiat-Shamir binding.
     pub(crate) fn append_descriptor_bytes(&self, bytes: &mut Vec<u8>) {
         push_usize(bytes, self.ring_dimension);
-        push_u32(bytes, self.log_basis);
+        push_u32(bytes, self.log_basis_inner);
+        push_u32(bytes, self.log_basis_outer);
+        push_u32(bytes, self.log_basis_open);
         self.a_key.append_descriptor_bytes(bytes);
         self.b_key.append_descriptor_bytes(bytes);
         self.d_key.append_descriptor_bytes(bytes);
@@ -816,7 +828,8 @@ impl LevelParams {
         append_tensor_challenge_shape_descriptor_bytes(bytes, self.fold_challenge_shape);
         append_fold_linf_policy_descriptor_bytes(bytes, self.fold_witness_linf_cap_policy());
         push_u128(bytes, self.challenge_l2_sq_max());
-        push_usize(bytes, self.num_digits_commit);
+        push_usize(bytes, self.num_digits_inner);
+        push_usize(bytes, self.num_digits_outer);
         push_usize(bytes, self.num_digits_open);
         push_usize(bytes, self.onehot_chunk_size);
         // Chunk binding is appended only when the level is chunked, so
@@ -942,6 +955,12 @@ impl LevelParams {
         opening_batch: &OpeningClaimsLayout,
     ) -> Result<usize, AkitaError> {
         opening_batch.check()?;
+        if self.log_basis_open < self.log_basis_inner || self.log_basis_open < self.log_basis_outer
+        {
+            return Err(AkitaError::InvalidSetup(
+                "certified opening basis must dominate level inner/outer bases".to_string(),
+            ));
+        }
         if opening_batch.num_groups() != self.group_count() {
             return Err(AkitaError::InvalidSetup(
                 "opening group count does not match level params".to_string(),
@@ -951,6 +970,7 @@ impl LevelParams {
             let group_params = self
                 .precommitted_group_params(group_index)
                 .ok_or(AkitaError::InvalidProof)?;
+            group_params.validate()?;
             let group_layout = opening_batch.group_layout(group_index)?;
             if *group_layout != group_params.layout.group {
                 return Err(AkitaError::InvalidSetup(
@@ -1134,7 +1154,7 @@ impl LevelParams {
             opening_batch,
             self.witness_chunk.num_chunks,
             relation_rows,
-            crate::r_decomp_levels::<F>(self.log_basis),
+            crate::r_decomp_levels::<F>(self.log_basis_open),
         )?;
         witness_layout
             .total_len()
@@ -1217,7 +1237,8 @@ impl LevelParams {
         &self,
         num_positions_per_block: usize,
         num_live_ring_elements_per_claim: usize,
-        num_digits_commit: usize,
+        num_digits_inner: usize,
+        num_digits_outer: usize,
         num_digits_open: usize,
     ) -> Result<Self, AkitaError> {
         if num_live_ring_elements_per_claim == 0
@@ -1233,12 +1254,12 @@ impl LevelParams {
             AkitaError::InvalidSetup("block-index domain size overflows usize".to_string())
         })?;
         let inner_width = num_positions_per_block
-            .checked_mul(num_digits_commit)
+            .checked_mul(num_digits_inner)
             .ok_or_else(|| AkitaError::InvalidSetup("inner width overflow".to_string()))?;
         let outer_width = self
             .a_key
             .row_len()
-            .checked_mul(num_digits_open)
+            .checked_mul(num_digits_outer)
             .and_then(|x| x.checked_mul(num_live_blocks))
             .ok_or_else(|| AkitaError::InvalidSetup("outer width overflow".to_string()))?;
         let d_matrix_width = num_digits_open
@@ -1247,7 +1268,9 @@ impl LevelParams {
         let d = self.ring_dimension;
         let rebuilt = Self {
             ring_dimension: d,
-            log_basis: self.log_basis,
+            log_basis_inner: self.log_basis_inner,
+            log_basis_outer: self.log_basis_outer,
+            log_basis_open: self.log_basis_open,
             a_key: AjtaiKeyParams::new_unchecked(
                 self.a_key.security_policy(),
                 self.a_key.sis_table_key().table_digest,
@@ -1283,7 +1306,8 @@ impl LevelParams {
             num_live_blocks,
             fold_challenge_config: self.fold_challenge_config,
             fold_challenge_shape: self.fold_challenge_shape,
-            num_digits_commit,
+            num_digits_inner,
+            num_digits_outer,
             num_digits_open,
             onehot_chunk_size: self.onehot_chunk_size,
             fold_linf_cap_config: self.fold_linf_cap_config,
@@ -1320,7 +1344,9 @@ impl LevelParams {
         let d = self.ring_dimension;
         Self {
             ring_dimension: d,
-            log_basis: other.log_basis,
+            log_basis_inner: other.log_basis_inner,
+            log_basis_outer: other.log_basis_outer,
+            log_basis_open: other.log_basis_open,
             a_key: AjtaiKeyParams::new_unchecked(
                 self.a_key.security_policy(),
                 self.a_key.sis_table_key().table_digest,
@@ -1356,7 +1382,8 @@ impl LevelParams {
             num_live_blocks: other.num_live_blocks,
             fold_challenge_config: self.fold_challenge_config,
             fold_challenge_shape: other.fold_challenge_shape,
-            num_digits_commit: other.num_digits_commit,
+            num_digits_inner: other.num_digits_inner,
+            num_digits_outer: other.num_digits_outer,
             num_digits_open: other.num_digits_open,
             onehot_chunk_size: other.onehot_chunk_size,
             fold_linf_cap_config: FoldWitnessLinfCapConfig::worst_case_beta_only(),

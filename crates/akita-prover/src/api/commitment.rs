@@ -138,22 +138,30 @@ where
             "commit params require nonzero num_live_blocks and num_positions_per_block".to_string(),
         ));
     }
-    if params.num_digits_commit == 0 || params.num_digits_open == 0 {
+    if params.num_digits_inner == 0 || params.num_digits_outer == 0 || params.num_digits_open == 0 {
         return Err(AkitaError::InvalidSetup(
             "commit params require nonzero digit depths".to_string(),
         ));
     }
-    validate_i8_setup_log_basis(params.log_basis, "for i8 commitment decomposition")?;
+    validate_i8_setup_log_basis(
+        params.log_basis_inner,
+        "for i8 witness commitment decomposition",
+    )?;
+    validate_i8_setup_log_basis(
+        params.log_basis_outer,
+        "for i8 outer commitment decomposition",
+    )?;
+    validate_i8_setup_log_basis(params.log_basis_open, "for i8 opening decomposition")?;
     let dims = params.role_dims();
     validate_role_dims(dims)?;
     validate_role_dims_for_field::<F>(dims)?;
     let expected_a_width = params
         .num_positions_per_block
-        .checked_mul(params.num_digits_commit)
+        .checked_mul(params.num_digits_inner)
         .ok_or_else(|| AkitaError::InvalidSetup("A commit width overflow".to_string()))?;
     if params.a_key.col_len() != expected_a_width {
         return Err(AkitaError::InvalidSetup(format!(
-            "commit params A width {} does not match num_positions_per_block * num_digits_commit = {expected_a_width}",
+            "commit params A width {} does not match num_positions_per_block * num_digits_inner = {expected_a_width}",
             params.a_key.col_len()
         )));
     }
@@ -372,13 +380,13 @@ where
     let b_input_len_per_poly = commit_inner_flat_digit_count(
         params.num_live_blocks,
         params.a_key.row_len(),
-        params.num_digits_open,
+        params.num_digits_outer,
     )?;
     let total_b_input_len = checked_commit_b_input_len(polys.len(), b_input_len_per_poly)?;
     let num_live_blocks = params.num_live_blocks;
     let n_a = params.a_key.row_len();
-    let num_digits_open = params.num_digits_open;
-    let log_basis = params.log_basis;
+    let num_digits_open = params.num_digits_outer;
+    let log_basis = params.log_basis_outer;
     // A-role operation: per-poly inner commit + digit decomposition. The digit
     // planes leave the arm as one FLAT `Vec<i8>` carrier (the per-matrix seam
     // between the inner A-role and outer B-role commitment halves) plus the
@@ -986,7 +994,7 @@ mod tests {
             1,
             SparseChallengeConfig::pm1_only(1),
         )
-        .with_decomp(2, 4, 2, 2)
+        .with_decomp(2, 4, 2, 2, 2)
         .unwrap();
 
         assert!(matches!(

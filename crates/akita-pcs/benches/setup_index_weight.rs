@@ -64,6 +64,7 @@ fn make_case(num_live_blocks: usize, blocks_per_chunk: usize) -> SetupIndexWeigh
         num_live_blocks * num_positions_per_block,
         depth_commit,
         depth_open,
+        depth_open,
     )
     .unwrap();
     let depth_fold = level_params

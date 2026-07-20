@@ -524,14 +524,14 @@ mod sis_schedule_width_audit {
             .unwrap_or_else(|| {
                 panic!(
                     "missing audited A-row SIS width for D={d}, num_vars={num_vars}, level={level_idx}, lb={}, width={}",
-                    lp.log_basis,
+                    lp.log_basis_inner,
                     lp.inner_width()
                 )
             });
             assert!(
                 a_rank <= lp.a_key.row_len(),
                 "A-row SIS audit failed for D={d}, num_vars={num_vars}, level={level_idx}, lb={}, width={}, required_rank={a_rank}, actual_rank={}",
-                lp.log_basis,
+                lp.log_basis_inner,
                 lp.inner_width(),
                 lp.a_key.row_len(),
             );
@@ -543,14 +543,14 @@ mod sis_schedule_width_audit {
             .unwrap_or_else(|| {
                 panic!(
                     "missing audited B-row SIS width for D={d}, num_vars={num_vars}, level={level_idx}, lb={}, width={}",
-                    lp.log_basis,
+                    lp.log_basis_outer,
                     lp.outer_width()
                 )
             });
             assert!(
                 b_rank <= lp.b_key.row_len(),
                 "B-row SIS audit failed for D={d}, num_vars={num_vars}, level={level_idx}, lb={}, width={}, required_rank={b_rank}, actual_rank={}",
-                lp.log_basis,
+                lp.log_basis_outer,
                 lp.outer_width(),
                 lp.b_key.row_len(),
             );
@@ -562,14 +562,14 @@ mod sis_schedule_width_audit {
             .unwrap_or_else(|| {
                 panic!(
                     "missing audited D-row SIS width for D={d}, num_vars={num_vars}, level={level_idx}, lb={}, width={}",
-                    lp.log_basis,
+                    lp.log_basis_open,
                     lp.d_matrix_width()
                 )
             });
             assert!(
                 d_rank <= lp.d_key.row_len(),
                 "D-row SIS audit failed for D={d}, num_vars={num_vars}, level={level_idx}, lb={}, width={}, required_rank={d_rank}, actual_rank={}",
-                lp.log_basis,
+                lp.log_basis_open,
                 lp.d_matrix_width(),
                 lp.d_key.row_len(),
             );
@@ -700,9 +700,9 @@ mod conservative_precommit_tests {
         >(PolynomialGroupLayout::new(2, 1))
         .expect("precommitted group params");
         assert_eq!(precommitted.group, PolynomialGroupLayout::new(2, 1));
-        assert_ne!(precommitted.log_basis, 0);
+        assert_ne!(precommitted.log_basis_outer, 0);
         assert_ne!(precommitted.n_a, 0);
-        assert_ne!(precommitted.conservative_n_b, 0);
+        assert_ne!(precommitted.n_b, 0);
     }
 
     #[test]

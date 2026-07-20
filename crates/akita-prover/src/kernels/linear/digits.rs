@@ -292,7 +292,7 @@ pub(super) fn mat_vec_mul_raw_i8_strided_with_params<
     ))
 }
 
-/// Fold-major (block) raw signed-i8 ring mat-vec for `num_digits_commit == 1`.
+/// Fold-major (block) raw signed-i8 ring mat-vec for `num_digits_inner == 1`.
 ///
 /// Mirrors [`mat_vec_mul_digits_i8_with_params`] exactly in block/column layout
 /// and output shape, but treats each `[i8; D]` as a raw signed ring-coefficient

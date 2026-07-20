@@ -34,12 +34,12 @@ fn conservative_config_commit_returns_frozen_layout() {
     );
     assert_eq!(frozen_layout.num_live_blocks, layout.num_live_blocks);
     assert_eq!(
-        frozen_layout.log_basis,
+        frozen_layout.log_basis_outer,
         ConservativeOneHotCfg::basis_range().0
     );
     assert_eq!(frozen_layout.n_a, layout.a_key.row_len());
-    assert_eq!(frozen_layout.conservative_n_b, layout.b_key.row_len());
-    assert_eq!(commitment.rows().count(), frozen_layout.conservative_n_b);
+    assert_eq!(frozen_layout.n_b, layout.b_key.row_len());
+    assert_eq!(commitment.rows().count(), frozen_layout.n_b);
 }
 
 fn multi_group_root_params(schedule: &akita_types::Schedule) -> &LevelParams {
@@ -99,14 +99,8 @@ fn conservative_config_allows_independent_precommitted_groups() {
 
         assert_eq!(pre_a_frozen.group, pre_a_key);
         assert_eq!(pre_b_frozen.group, pre_b_key);
-        assert_eq!(
-            pre_a_commitment.rows().count(),
-            pre_a_frozen.conservative_n_b
-        );
-        assert_eq!(
-            pre_b_commitment.rows().count(),
-            pre_b_frozen.conservative_n_b
-        );
+        assert_eq!(pre_a_commitment.rows().count(), pre_a_frozen.n_b);
+        assert_eq!(pre_b_commitment.rows().count(), pre_b_frozen.n_b);
         assert_ne!(pre_a_frozen.group, pre_b_frozen.group);
     });
 }
@@ -224,14 +218,8 @@ fn group_batch_commits_precommitteds_then_double_size_final_group() {
         )
         .expect("final multi-group commitment");
 
-        assert_eq!(
-            pre_a_commitment.rows().count(),
-            pre_a_frozen.conservative_n_b
-        );
-        assert_eq!(
-            pre_b_commitment.rows().count(),
-            pre_b_frozen.conservative_n_b
-        );
+        assert_eq!(pre_a_commitment.rows().count(), pre_a_frozen.n_b);
+        assert_eq!(pre_b_commitment.rows().count(), pre_b_frozen.n_b);
         assert_eq!(final_commitment.rows().count(), main_params.b_key.row_len());
         assert_eq!(final_hint.decomposed_inner_rows.len(), GROUP_SIZE);
         assert_eq!(
@@ -275,10 +263,10 @@ fn commit_group_returns_frozen_conservative_layout() {
         layout.num_positions_per_block
     );
     assert_eq!(frozen_layout.num_live_blocks, layout.num_live_blocks);
-    assert_eq!(frozen_layout.log_basis, layout.log_basis);
+    assert_eq!(frozen_layout.log_basis_outer, layout.log_basis_outer);
     assert_eq!(frozen_layout.n_a, layout.a_key.row_len());
-    assert_eq!(frozen_layout.conservative_n_b, layout.b_key.row_len());
-    assert_eq!(commitment.rows().count(), frozen_layout.conservative_n_b);
+    assert_eq!(frozen_layout.n_b, layout.b_key.row_len());
+    assert_eq!(commitment.rows().count(), frozen_layout.n_b);
 }
 
 /// Produce and verify a folded multi-group-root one-hot same-point proof for the
@@ -387,7 +375,7 @@ fn multi_group_root_round_trip_onehot<TestCfg>(
             &opening_layout,
             root.params.witness_chunk.num_chunks,
             relation_rows,
-            akita_types::r_decomp_levels::<OneHotF>(root.params.log_basis),
+            akita_types::r_decomp_levels::<OneHotF>(root.params.log_basis_open),
         )
         .expect("group-by-chunk witness layout");
         assert_eq!(

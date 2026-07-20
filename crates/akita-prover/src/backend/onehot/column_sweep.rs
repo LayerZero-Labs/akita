@@ -44,7 +44,7 @@ fn column_sweep_core<E, F, const D: usize>(
     blocks: &[&[E]],
     n_a: usize,
     active_a_cols: usize,
-    num_digits_commit: usize,
+    num_digits_inner: usize,
 ) -> Vec<Vec<CyclotomicRing<F, D>>>
 where
     E: OneHotEntry,
@@ -98,7 +98,7 @@ where
                     for local_b in 0..tile_len {
                         let block_entries = blocks[block_start + tile_start + local_b];
                         for entry in block_entries {
-                            let col = entry.commit_col(num_digits_commit);
+                            let col = entry.commit_col(num_digits_inner);
                             debug_assert!(col < active_a_cols);
                             let count = entry.coeffs().len();
                             col_counts[col] += count;
@@ -118,7 +118,7 @@ where
                     for local_b in 0..tile_len {
                         let block_entries = blocks[block_start + tile_start + local_b];
                         for entry in block_entries {
-                            let col = entry.commit_col(num_digits_commit);
+                            let col = entry.commit_col(num_digits_inner);
                             for &coefficient in entry.coeffs() {
                                 let dst = write_offsets[col];
                                 packed_entries[dst] = pack_col_entry(local_b, coefficient);
@@ -181,7 +181,7 @@ pub(crate) fn column_sweep_ajtai_onehot<E, F, const D: usize>(
     blocks: &[&[E]],
     n_a: usize,
     active_a_cols: usize,
-    num_digits_commit: usize,
+    num_digits_inner: usize,
 ) -> Vec<Vec<CyclotomicRing<F, D>>>
 where
     E: OneHotEntry,
@@ -199,7 +199,7 @@ where
         .any(|entries| shift_accumulation_count(entries) > MAX_WIDE_SHIFT_ACCUMULATIONS)
     {
         return cfg_into_iter!(0..num_live_blocks)
-            .map(|i| inner_ajtai_wide_onehot_safe(a_view, blocks[i], num_digits_commit))
+            .map(|i| inner_ajtai_wide_onehot_safe(a_view, blocks[i], num_digits_inner))
             .collect();
     }
 
@@ -211,9 +211,9 @@ where
 
     if blocks_per_thread <= SWEEP_THRESHOLD {
         return cfg_into_iter!(0..num_live_blocks)
-            .map(|i| inner_ajtai_wide_onehot(a_view, blocks[i], num_digits_commit))
+            .map(|i| inner_ajtai_wide_onehot(a_view, blocks[i], num_digits_inner))
             .collect();
     }
 
-    column_sweep_core::<E, F, D>(a_view, blocks, n_a, active_a_cols, num_digits_commit)
+    column_sweep_core::<E, F, D>(a_view, blocks, n_a, active_a_cols, num_digits_inner)
 }

@@ -376,11 +376,11 @@ where
             prepared,
             plan.n_a,
             plan.num_positions_per_block,
-            plan.num_digits_commit,
-            plan.log_basis,
+            plan.num_digits_inner,
+            plan.log_basis_inner,
         )?;
         let decomposed_inner_rows =
-            decompose_commit_blocks_into::<F, D>(&t, plan.num_digits_open, plan.log_basis)?;
+            decompose_commit_blocks_into::<F, D>(&t, plan.num_digits_outer, plan.log_basis_outer)?;
         CommitInnerWitness::from_parts(t, decomposed_inner_rows)
     }
 }

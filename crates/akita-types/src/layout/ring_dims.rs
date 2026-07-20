@@ -277,7 +277,7 @@ mod tests {
         params.num_live_ring_elements_per_claim = num_live_blocks * num_positions_per_block;
         params.num_live_blocks = num_live_blocks;
         params.num_positions_per_block = num_positions_per_block;
-        params.num_digits_commit = 2;
+        params.num_digits_inner = 2;
         params.num_digits_open = 2;
         params.stamp_role_dims_from_keys();
         params
@@ -489,11 +489,11 @@ mod tests {
         use crate::layout::{AjtaiKeyParams, SisModulusProfileId};
         use crate::sis::DEFAULT_SIS_SECURITY_POLICY;
 
-        let mut params = LevelParams::log_basis_stub(3);
+        let mut params = LevelParams::open_basis_stub(3);
         params.ring_dimension = 256;
         params.num_live_blocks = 4;
         params.num_positions_per_block = 8;
-        params.num_digits_commit = 2;
+        params.num_digits_inner = 2;
         params.num_digits_open = 2;
         params.fold_challenge_config = fold_challenge_config_for_ring_dim(params.ring_dimension);
         params.a_key = AjtaiKeyParams::new_unchecked(
@@ -554,11 +554,11 @@ mod tests {
         use crate::layout::{AjtaiKeyParams, SisModulusProfileId};
         use crate::sis::DEFAULT_SIS_SECURITY_POLICY;
 
-        let mut params = LevelParams::log_basis_stub(3);
+        let mut params = LevelParams::open_basis_stub(3);
         params.ring_dimension = 128;
         params.num_live_blocks = 4;
         params.num_positions_per_block = 8;
-        params.num_digits_commit = 2;
+        params.num_digits_inner = 2;
         params.num_digits_open = 2;
         params.fold_challenge_config = fold_challenge_config_for_ring_dim(params.ring_dimension);
         params.a_key = AjtaiKeyParams::new_unchecked(

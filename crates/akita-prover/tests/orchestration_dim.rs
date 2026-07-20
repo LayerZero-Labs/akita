@@ -20,7 +20,7 @@ fn real_schedule<Cfg: CommitmentConfig>(num_vars: usize) -> Schedule {
 }
 
 fn make_fold_step(ring_dimension: usize) -> FoldStep {
-    let mut params = LevelParams::log_basis_stub(3);
+    let mut params = LevelParams::open_basis_stub(3);
     params.ring_dimension = ring_dimension;
     params.role_dims = akita_types::CommitmentRingDims::uniform(ring_dimension);
     params.num_live_blocks = 4;
@@ -65,7 +65,7 @@ fn ring_dim_plan_rejects_level_dim_larger_than_gen_ring_dim() {
 
 #[test]
 fn validate_role_dispatch_rejects_stack_d_mismatch() {
-    let mut params = LevelParams::log_basis_stub(3);
+    let mut params = LevelParams::open_basis_stub(3);
     params.ring_dimension = 128;
     params.role_dims = akita_types::CommitmentRingDims::uniform(128);
     let err = validate_role_dispatch::<64>(params.role_dims, RingRole::Inner)

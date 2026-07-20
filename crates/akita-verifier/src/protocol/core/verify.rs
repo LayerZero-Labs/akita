@@ -86,13 +86,14 @@ fn validate_direct_group_shape<F>(
 where
     F: FieldCore + CanonicalField,
 {
-    validate_log_basis(params.log_basis())?;
+    validate_log_basis(params.log_basis_inner())?;
+    validate_log_basis(params.log_basis_outer())?;
     if params.num_live_blocks() == 0 || params.num_positions_per_block() == 0 {
         return Err(AkitaError::InvalidSetup(
             "direct witness layout requires non-zero block geometry".to_string(),
         ));
     }
-    if params.num_digits_commit() == 0 || params.num_digits_open() == 0 {
+    if params.num_digits_inner() == 0 || params.num_digits_outer() == 0 {
         return Err(AkitaError::InvalidSetup(
             "direct witness layout requires non-zero digit depths".to_string(),
         ));
@@ -113,7 +114,7 @@ where
     let b_row_len = params.b_rows_len();
     let a_required_cols = params
         .num_positions_per_block()
-        .checked_mul(params.num_digits_commit())
+        .checked_mul(params.num_digits_inner())
         .ok_or_else(|| AkitaError::InvalidSetup("direct A width overflow".to_string()))?;
     let a_required = a_row_len
         .checked_mul(a_required_cols)
@@ -121,7 +122,7 @@ where
     let per_witness_outer_cols = params
         .num_live_blocks()
         .checked_mul(a_row_len)
-        .and_then(|cols| cols.checked_mul(params.num_digits_open()))
+        .and_then(|cols| cols.checked_mul(params.num_digits_outer()))
         .ok_or_else(|| AkitaError::InvalidSetup("direct B width overflow".to_string()))?;
     let b_required_cols = witnesses
         .len()
@@ -197,15 +198,42 @@ fn decompose_rows_i8<F, const D: usize>(
     rows: &[CyclotomicRing<F, D>],
     num_digits: usize,
     log_basis: u32,
-) -> Vec<[i8; D]>
+) -> Result<Vec<[i8; D]>, AkitaError>
 where
     F: FieldCore + CanonicalField,
 {
+    if num_digits == 1 && log_basis == 1 {
+        return signed_unit_rows_i8(rows);
+    }
+
     let mut out = vec![[0i8; D]; rows.len() * num_digits];
     for (dst_chunk, row) in out.chunks_mut(num_digits).zip(rows.iter()) {
         row.balanced_decompose_pow2_i8_into(dst_chunk, log_basis);
     }
-    out
+    Ok(out)
+}
+
+fn signed_unit_rows_i8<F, const D: usize>(
+    rows: &[CyclotomicRing<F, D>],
+) -> Result<Vec<[i8; D]>, AkitaError>
+where
+    F: FieldCore + CanonicalField,
+{
+    let q = (-F::one()).to_canonical_u128() + 1;
+    rows.iter()
+        .map(|row| {
+            let mut digits = [0i8; D];
+            for (dst, coeff) in digits.iter_mut().zip(row.coeffs.iter()) {
+                *dst = match coeff.to_canonical_u128() {
+                    0 => 0,
+                    1 => 1,
+                    value if value == q - 1 => -1,
+                    _ => return Err(AkitaError::InvalidProof),
+                };
+            }
+            Ok(digits)
+        })
+        .collect()
 }
 
 fn direct_decomposed_inner_rows<F, const D: usize>(
@@ -225,7 +253,7 @@ where
     let out_capacity = params
         .num_live_blocks()
         .checked_mul(a_row_len)
-        .and_then(|len| len.checked_mul(params.num_digits_open()))
+        .and_then(|len| len.checked_mul(params.num_digits_outer()))
         .ok_or_else(|| {
             AkitaError::InvalidSetup("direct witness row capacity overflow".to_string())
         })?;
@@ -248,13 +276,14 @@ where
         } else {
             &[]
         };
-        let block_digits = decompose_rows_i8(block, params.num_digits_commit(), params.log_basis());
+        let block_digits =
+            decompose_rows_i8(block, params.num_digits_inner(), params.log_basis_inner())?;
         let t_rows = mat_vec_mul_i8_plain::<F, D>(&a_rows, &block_digits);
         out.extend(decompose_rows_i8(
             &t_rows,
-            params.num_digits_open(),
-            params.log_basis(),
-        ));
+            params.num_digits_outer(),
+            params.log_basis_outer(),
+        )?);
     }
 
     Ok(out)
@@ -727,7 +756,7 @@ mod tests {
             1,
             fold_challenge_config(),
         )
-        .with_decomp(2, 2, 2, 1)
+        .with_decomp(2, 2, 2, 1, 1)
         .expect("valid direct layout");
         let setup_seed = setup_seed(3);
         let witnesses = vec![CleartextWitnessProof::FieldElements(RingVec::from_coeffs(
@@ -755,7 +784,7 @@ mod tests {
             1,
             fold_challenge_config(),
         )
-        .with_decomp(2, 2, 2, 1)
+        .with_decomp(2, 2, 2, 1, 1)
         .expect("valid direct layout");
         params.b_key = AjtaiKeyParams::new_unchecked(
             DEFAULT_SIS_SECURITY_POLICY,

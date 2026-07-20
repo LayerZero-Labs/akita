@@ -54,7 +54,7 @@ fn ring_dim_plan_rejects_fold_dim_above_gen_ring_dim() {
         steps: vec![
             Step::Fold({
                 let mut step = FoldStep {
-                    params: LevelParams::log_basis_stub(3),
+                    params: LevelParams::open_basis_stub(3),
                     current_w_len: 256,
                     next_w_len: 128,
                     level_bytes: 0,

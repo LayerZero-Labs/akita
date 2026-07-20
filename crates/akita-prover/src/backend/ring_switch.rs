@@ -58,7 +58,8 @@ where
                 t_hat: source.t_hat,
                 z_segment: source.z_segment,
                 z_folded_centered_inf_norm: source.z_folded_centered_inf_norm,
-                log_basis: plan.log_basis,
+                log_basis_open: plan.log_basis_open,
+                log_basis_outer: plan.log_basis_outer,
             },
         )
     }

@@ -591,7 +591,7 @@ where
         lp,
         next_commitment,
         if is_terminal_fold {
-            Some(scheduled.next_params.log_basis)
+            Some(scheduled.next_params.log_basis_open)
         } else {
             None
         },
@@ -853,7 +853,7 @@ where
                 logical_w,
                 commitment: committed_commitment,
                 hint: committed_hint,
-                log_basis: scheduled.next_params.log_basis,
+                log_basis: scheduled.next_params.log_basis_open,
                 sumcheck_challenges: next_opening_point,
                 opening: next_opening,
                 setup_prefix_opening,

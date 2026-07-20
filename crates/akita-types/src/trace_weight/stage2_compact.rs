@@ -29,7 +29,7 @@ fn layout() -> TraceWeightLayout {
         1,
         akita_challenges::SparseChallengeConfig::pm1_only(1),
     )
-    .with_decomp(1, 2, 1, 2)
+    .with_decomp(1, 2, 1, 2, 2)
     .unwrap();
     let opening_batch = OpeningClaimsLayout::new(0, 1).unwrap();
     let witness_layout = WitnessLayout::new(&lp, &opening_batch, 1, 1, 1).unwrap();
@@ -40,7 +40,7 @@ fn layout() -> TraceWeightLayout {
         num_live_blocks: 2,
         num_digits_open: 2,
         block_index_bits: 1,
-        log_basis: 3,
+        log_basis_open: 3,
         witness_layout,
         opening_source_len,
         group_id,

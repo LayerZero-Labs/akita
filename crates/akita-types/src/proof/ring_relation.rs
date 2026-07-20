@@ -42,13 +42,14 @@ pub fn ring_relation_segment_lengths<F: FieldCore + CanonicalField>(
         ));
     }
     let depth_open = lp.num_digits_open;
-    let depth_commit = lp.num_digits_commit;
+    let depth_inner = lp.num_digits_inner;
+    let depth_outer = lp.num_digits_outer;
     let RingRelationOpeningCounts {
         num_claims,
         num_t_vectors,
     } = opening_counts;
     let depth_fold = lp.num_digits_fold(num_t_vectors, lp.field_bits_for_cache())?;
-    if depth_open == 0 || depth_commit == 0 || depth_fold == 0 {
+    if depth_open == 0 || depth_inner == 0 || depth_outer == 0 || depth_fold == 0 {
         return Err(AkitaError::InvalidSetup(
             "prepared ring-switch layout has zero width".to_string(),
         ));
@@ -63,12 +64,12 @@ pub fn ring_relation_segment_lengths<F: FieldCore + CanonicalField>(
     let e_len = depth_open
         .checked_mul(total_blocks)
         .ok_or_else(|| AkitaError::InvalidSetup("e-hat segment length overflow".to_string()))?;
-    let t_len = depth_open
+    let t_len = depth_outer
         .checked_mul(lp.a_key.row_len())
         .and_then(|len| len.checked_mul(t_total_blocks))
         .ok_or_else(|| AkitaError::InvalidSetup("T segment length overflow".to_string()))?;
     let z_len = depth_fold
-        .checked_mul(depth_commit)
+        .checked_mul(depth_inner)
         .and_then(|len| len.checked_mul(lp.num_positions_per_block))
         .ok_or_else(|| AkitaError::InvalidSetup("Z segment length overflow".to_string()))?;
 
@@ -436,7 +437,7 @@ impl<F: FieldCore + CanonicalField> RingRelationInstance<F> {
         // not materialized in the quotient witness's shared `r` tail.
         let relation_rhs_rows =
             crate::proof::relation::relation_rhs_row_count(&relation_rhs_layout);
-        let r_levels = r_decomp_levels::<F>(lp.log_basis);
+        let r_levels = r_decomp_levels::<F>(lp.log_basis_open);
         let layout = WitnessLayout::new(
             lp,
             &self.opening_batch,
@@ -462,7 +463,7 @@ mod tests {
     use crate::layout::PrecommittedLevelParams;
     use crate::{
         emit_witness_e_planes, emit_witness_r_planes, emit_witness_t_planes, emit_witness_z_planes,
-        PolynomialGroupLayout,
+        AjtaiKeyParams, PolynomialGroupLayout,
     };
     use akita_challenges::{SparseChallenge, SparseChallengeConfig};
     use akita_field::Fp32;
@@ -477,6 +478,30 @@ mod tests {
 
     fn flatten_markers(markers: impl IntoIterator<Item = [i8; 2]>) -> Vec<i8> {
         markers.into_iter().flatten().collect()
+    }
+
+    fn certify_test_sis_bounds(lp: &mut LevelParams) {
+        const BOUND: u128 = 1;
+        lp.a_key = AjtaiKeyParams::new_unchecked(
+            lp.a_key.security_policy(),
+            lp.a_key.sis_table_key().table_digest,
+            lp.a_key.sis_modulus_profile(),
+            crate::sis::SisMatrixRole::A,
+            lp.a_key.row_len(),
+            lp.a_key.col_len(),
+            BOUND,
+            lp.ring_dimension,
+        );
+        lp.b_key = AjtaiKeyParams::new_unchecked(
+            lp.b_key.security_policy(),
+            lp.b_key.sis_table_key().table_digest,
+            lp.b_key.sis_modulus_profile(),
+            crate::sis::SisMatrixRole::B,
+            lp.b_key.row_len(),
+            lp.b_key.col_len(),
+            BOUND,
+            lp.ring_dimension,
+        );
     }
 
     fn fold_challenge_config() -> SparseChallengeConfig {
@@ -500,7 +525,7 @@ mod tests {
             1,
             fold_challenge_config(),
         )
-        .with_decomp(4, 8, 1, 2)
+        .with_decomp(4, 8, 1, 2, 2)
         .expect("test params")
     }
 
@@ -557,7 +582,7 @@ mod tests {
             1,
             fold_challenge_config(),
         )
-        .with_decomp(4, 1usize << (2 + block_index_bits), 1, 2)
+        .with_decomp(4, 1usize << (2 + block_index_bits), 1, 2, 2)
         .expect("test params")
     }
 
@@ -779,9 +804,9 @@ mod tests {
             3,
             fold_challenge_config(),
         )
-        .with_decomp(4, 16, 2, 2)
+        .with_decomp(4, 16, 2, 2, 2)
         .expect("multi-group main params");
-        let precommit_lp = LevelParams::params_only(
+        let mut precommit_lp = LevelParams::params_only(
             crate::SisModulusProfileId::Q128OffsetA7F7,
             D,
             3,
@@ -790,23 +815,26 @@ mod tests {
             3,
             fold_challenge_config(),
         )
-        .with_decomp(4, 16, 2, 2)
+        .with_decomp(4, 16, 2, 2, 2)
         .expect("multi-group precommit params");
+        certify_test_sis_bounds(&mut precommit_lp);
         let precommit = PrecommittedLevelParams {
             layout: PrecommittedGroupParams::from_params(
-                PolynomialGroupLayout::new(4, 3),
+                PolynomialGroupLayout::new(4, 1),
                 &precommit_lp,
             ),
             a_key: precommit_lp.a_key.clone(),
             b_key: precommit_lp.b_key.clone(),
-            num_digits_commit: precommit_lp.num_digits_commit,
+            log_basis_open: precommit_lp.log_basis_open,
+            num_digits_inner: precommit_lp.num_digits_inner,
+            num_digits_outer: precommit_lp.num_digits_outer,
             num_digits_open: precommit_lp.num_digits_open,
             num_digits_fold_one: precommit_lp.num_digits_fold_one,
         };
         let mut multi_group_lp = lp;
         multi_group_lp.precommitted_groups = vec![precommit];
         let batch = OpeningClaimsLayout::from_root_groups(
-            &[PolynomialGroupLayout::new(4, 3)],
+            &[PolynomialGroupLayout::new(4, 1)],
             PolynomialGroupLayout::new(4, 1),
         )
         .expect("multi-group opening batch");
@@ -828,12 +856,15 @@ mod tests {
         let ring_multiplier_final = RingMultiplierOpeningPoint::from_base(&opening_point_final);
         let instance = RingRelationInstance::<F>::new(
             RelationMatrixRowLayout::WithDBlock,
-            vec![test_challenges(&lp, 3), test_challenges(&lp, 1)],
+            vec![test_challenges(&lp, 1), test_challenges(&lp, 1)],
             vec![opening_point_pre, opening_point_final],
             vec![ring_multiplier_pre, ring_multiplier_final],
             opening_batch.clone(),
-            vec![F::one(); 4],
-            RingVec::from_ring_elems::<D>(&vec![CyclotomicRing::one(); 4]),
+            vec![F::one(); opening_batch.num_total_polynomials()],
+            RingVec::from_ring_elems::<D>(&vec![
+                CyclotomicRing::one();
+                opening_batch.num_total_polynomials()
+            ]),
             RingVec::from_ring_elems::<D>(&vec![CyclotomicRing::zero(); relation_rhs_rows]),
             RingVec::from_ring_elems::<D>(&vec![CyclotomicRing::zero(); lp.d_key.row_len()]),
             CommitmentRingDims::uniform(D),
@@ -847,7 +878,7 @@ mod tests {
         // Group-major: one ownership unit per group, each holding a contiguous
         // `[z_g | e_g | t_g]` stride; only the shared `r` tail follows all units.
         assert_eq!(layout.units().len(), num_groups);
-        let r_len_total = relation_rhs_rows * r_decomp_levels::<F>(lp.log_basis);
+        let r_len_total = relation_rhs_rows * r_decomp_levels::<F>(lp.log_basis_open);
 
         let mut base = 0usize;
         for (p, unit) in layout.units().iter().enumerate() {
@@ -888,14 +919,15 @@ mod tests {
         let opening_point_final = opening_point(&lp);
         let ring_multiplier_pre = RingMultiplierOpeningPoint::from_base(&opening_point_pre);
         let ring_multiplier_final = RingMultiplierOpeningPoint::from_base(&opening_point_final);
+        let gamma_len = opening_batch.num_total_polynomials();
         let instance = RingRelationInstance::<F>::new(
             RelationMatrixRowLayout::WithDBlock,
-            vec![test_challenges(&lp, 3), test_challenges(&lp, 1)],
+            vec![test_challenges(&lp, 1), test_challenges(&lp, 1)],
             vec![opening_point_pre, opening_point_final],
             vec![ring_multiplier_pre, ring_multiplier_final],
             opening_batch,
-            vec![F::one(); 4],
-            RingVec::from_ring_elems::<D>(&vec![CyclotomicRing::one(); 4]),
+            vec![F::one(); gamma_len],
+            RingVec::from_ring_elems::<D>(&vec![CyclotomicRing::one(); gamma_len]),
             RingVec::from_ring_elems::<D>(&vec![CyclotomicRing::zero(); relation_rhs_rows]),
             RingVec::from_ring_elems::<D>(&vec![CyclotomicRing::zero(); lp.d_key.row_len()]),
             CommitmentRingDims::uniform(D),
@@ -937,12 +969,14 @@ mod tests {
                 .expect("group layout")
                 .num_polynomials();
             let num_live_blocks = params.num_live_blocks();
+            let depth_witness = params.num_digits_inner();
+            let depth_commit = params.num_digits_outer();
             let depth_open = params.num_digits_open();
             let n_a = params.a_rows_len();
             let e_source = (0..num_claims * num_live_blocks * depth_open)
                 .map(|index| marker(100 * group_index + index))
                 .collect::<Vec<_>>();
-            let t_source = (0..num_claims * num_live_blocks * n_a * depth_open)
+            let t_source = (0..num_claims * num_live_blocks * n_a * depth_commit)
                 .map(|index| marker(300 * group_index + index))
                 .collect::<Vec<_>>();
             emit_witness_e_planes(
@@ -961,7 +995,7 @@ mod tests {
                 group_index,
                 num_claims,
                 n_a,
-                depth_open,
+                depth_commit,
                 &t_source,
                 num_live_blocks,
             )
@@ -971,15 +1005,14 @@ mod tests {
                 .num_digits_fold_for_params(params, num_claims, lp.field_bits_for_cache())
                 .expect("fold depth");
             for unit in layout.units_for_group(group_index).expect("units") {
-                let z_source =
-                    (0..params.num_positions_per_block() * params.num_digits_commit() * depth_fold)
-                        .map(|index| marker(500 * group_index + 100 * unit.chunk_index() + index))
-                        .collect::<Vec<_>>();
+                let z_source = (0..params.num_positions_per_block() * depth_witness * depth_fold)
+                    .map(|index| marker(500 * group_index + 100 * unit.chunk_index() + index))
+                    .collect::<Vec<_>>();
                 emit_witness_z_planes(
                     &mut emitted,
                     unit,
                     params.num_positions_per_block(),
-                    params.num_digits_commit(),
+                    depth_witness,
                     depth_fold,
                     &z_source,
                 )
@@ -1028,7 +1061,7 @@ mod tests {
                 );
             }
         }
-        let quotient_depth = r_decomp_levels::<F>(lp.log_basis);
+        let quotient_depth = r_decomp_levels::<F>(lp.log_basis_open);
         let r_source = (0..layout.r_range().len())
             .map(|index| marker(900 + index))
             .collect::<Vec<_>>();

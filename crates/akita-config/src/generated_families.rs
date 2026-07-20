@@ -217,14 +217,14 @@ fn key_within_setup_capacity(
     key: &AkitaScheduleLookupKey,
     max_num_vars: usize,
     max_num_batched_polys: usize,
-) -> Result<bool, AkitaError> {
+) -> bool {
     if key.precommitteds.is_empty() {
-        return Ok(false);
+        return false;
     }
     if key.final_group.num_vars() > max_num_vars {
-        return Ok(false);
+        return false;
     }
-    Ok(key.num_polynomials()? <= max_num_batched_polys)
+    key.final_group.num_polynomials() <= max_num_batched_polys
 }
 
 /// Selected multi-group recursive keys for setup-prefix capacity work.
@@ -259,7 +259,7 @@ pub fn recursive_group_batch_candidates_for_capacity<Cfg: CommitmentConfig>(
                 final_group: entry.final_group,
                 precommitteds: entry.precommitteds.to_vec(),
             };
-            if key_within_setup_capacity(&candidate, max_num_vars, max_num_batched_polys)? {
+            if key_within_setup_capacity(&candidate, max_num_vars, max_num_batched_polys) {
                 push_unique_schedule_key(&mut keys, candidate);
             }
         }
@@ -271,7 +271,7 @@ pub fn recursive_group_batch_candidates_for_capacity<Cfg: CommitmentConfig>(
         == std::any::TypeId::of::<RecursiveCommitmentConfig<fp128::D64OneHot>>()
     {
         for candidate in recursive_d64_onehot_profile_keys()? {
-            if key_within_setup_capacity(&candidate, max_num_vars, max_num_batched_polys)? {
+            if key_within_setup_capacity(&candidate, max_num_vars, max_num_batched_polys) {
                 push_unique_schedule_key(&mut keys, candidate);
             }
         }
@@ -286,7 +286,7 @@ fn push_unique_schedule_key(
     candidate: AkitaScheduleLookupKey,
 ) {
     // Full-key equality: same group shapes with different frozen precommit
-    // metadata (log_basis / n_a / conservative_n_b) stay distinct.
+    // metadata (semantic bases / n_a / n_b) stay distinct.
     if !keys.contains(&candidate) {
         keys.push(candidate);
     }

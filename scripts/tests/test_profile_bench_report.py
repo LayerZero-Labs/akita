@@ -124,15 +124,18 @@ class ProfileBenchReportTests(unittest.TestCase):
                 "n_b": 3,
                 "n_d": 4,
                 "challenge_l1_mass": 8,
-                "log_basis": 5,
+                "log_basis_inner": 5,
+                "log_basis_outer": 5,
+                "log_basis_open": 5,
                 "position_index_bits": 7,
                 "block_index_bits": 3,
                 "num_positions_per_block": 128,
                 "num_live_blocks": 6,
                 "num_live_ring_elements_per_claim": 768,
                 "block_index_domain_size": 8,
-                "delta_commit": 4,
-                "delta_open": 5,
+                "num_digits_inner": 4,
+                "num_digits_outer": 5,
+                "num_digits_open": 5,
                 "delta_fold": 6,
                 "current_w_len": 1024,
                 "next_w_len": 2048,
@@ -272,6 +275,7 @@ class ProfileBenchReportTests(unittest.TestCase):
         self.assertIn("Prepared NTT cache size", report)
         self.assertIn("4.0 MiB", report)
         self.assertIn("8.0 MiB", report)
+        self.assertIn("4,096 bytes", report)
         self.assertIn("nv32Onehot256", report)
         self.assertIn("D=64", report)
         self.assertNotIn("Proof B", report)
@@ -328,6 +332,8 @@ class ProfileBenchReportTests(unittest.TestCase):
             "setup_contribution_mode": "direct",
             "exit_code": 0,
             "setup_s": 2.0,
+            "setup_vector_bytes": 4 * 1024 * 1024,
+            "setup_ntt_cache_bytes": 8 * 1024 * 1024,
             "commit_s": 3.0,
             "prove_total_s": 4.0,
             "verify_total_s": 0.005,
@@ -363,6 +369,8 @@ class ProfileBenchReportTests(unittest.TestCase):
 
         self.assertIn("Delta versus main", report)
         self.assertIn("unchanged", report)
+        self.assertIn("4.0<br><sub>4,194,304 bytes</sub>", report)
+        self.assertIn("8.0<br><sub>8,388,608 bytes</sub>", report)
         self.assertIn("A ring dimension", report)
         self.assertIn("Proof size by fold level", report)
         self.assertNotIn("Proof framing", report)

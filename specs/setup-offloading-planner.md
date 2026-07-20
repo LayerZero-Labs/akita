@@ -467,7 +467,7 @@ For each group `g`, use the existing `LevelParamsLike` view and let:
 K_g       = group polynomial count
 B_g       = num_live_blocks_g
 L_g       = num_positions_per_block_g
-delta_c_g = num_digits_commit_g
+delta_c_g = num_digits_inner_g
 delta_o_g = num_digits_open_g
 n_a_g     = A rows
 n_b_g     = B rows

@@ -232,6 +232,26 @@ impl SetupContributionGroupInputs {
             .num_positions_per_block())
     }
 
+    pub(crate) fn depth_witness(
+        &self,
+        level_params: &LevelParams,
+        opening_batch: &OpeningClaimsLayout,
+    ) -> Result<usize, AkitaError> {
+        Ok(self
+            .group_params_for(level_params, opening_batch)?
+            .num_digits_inner())
+    }
+
+    pub(crate) fn depth_commit(
+        &self,
+        level_params: &LevelParams,
+        opening_batch: &OpeningClaimsLayout,
+    ) -> Result<usize, AkitaError> {
+        Ok(self
+            .group_params_for(level_params, opening_batch)?
+            .num_digits_outer())
+    }
+
     pub(crate) fn depth_open(
         &self,
         level_params: &LevelParams,
@@ -242,24 +262,14 @@ impl SetupContributionGroupInputs {
             .num_digits_open())
     }
 
-    pub(crate) fn depth_commit(
-        &self,
-        level_params: &LevelParams,
-        opening_batch: &OpeningClaimsLayout,
-    ) -> Result<usize, AkitaError> {
-        Ok(self
-            .group_params_for(level_params, opening_batch)?
-            .num_digits_commit())
-    }
-
-    pub(crate) fn log_basis(
+    pub(crate) fn log_basis_open(
         &self,
         level_params: &LevelParams,
         opening_batch: &OpeningClaimsLayout,
     ) -> Result<u32, AkitaError> {
         Ok(self
             .group_params_for(level_params, opening_batch)?
-            .log_basis())
+            .log_basis_open())
     }
 
     pub(crate) fn n_a(
@@ -288,9 +298,9 @@ impl SetupContributionGroupInputs {
         opening_batch: &OpeningClaimsLayout,
     ) -> Result<usize, AkitaError> {
         let n_a = self.n_a(level_params, opening_batch)?;
-        let depth_open = self.depth_open(level_params, opening_batch)?;
+        let depth_commit = self.depth_commit(level_params, opening_batch)?;
         let num_live_blocks = self.num_live_blocks(level_params, opening_batch)?;
-        n_a.checked_mul(depth_open)
+        n_a.checked_mul(depth_commit)
             .and_then(|n| n.checked_mul(num_live_blocks))
             .ok_or_else(|| AkitaError::InvalidSetup("setup B vector width overflow".into()))
     }
