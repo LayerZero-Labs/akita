@@ -218,7 +218,7 @@ pub struct AkitaStage2Prover<E: FieldCore> {
 
     alpha_compact: Vec<E>,
     relation_matrix_col_evals_compact: Vec<E>,
-    trace_table: Option<TraceTable<E>>,
+    trace_table: TraceTable<E>,
     live_x_cols: usize,
     col_bits: usize,
     num_vars: usize,
@@ -242,7 +242,7 @@ mod x_prefix;
 mod y_prefix;
 
 impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
-    // Fused relation (`alpha * m`) + optional trace-weight addend for one witness
+    // Fused relation (`alpha * m`) + trace-weight addend for one witness
     // corner. `witness_idx0/1` are flat indices into the Boolean `w` table
     // (`col * y_len + ring_slot`). Y-round kernels pass `2*j` and
     // `2*j+1`; x-prefix fusion passes column-relative indices directly.
@@ -260,11 +260,11 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
         p1: E,
     ) {
         accumulate_relation_coeffs(rel, w0, dw, p0, p1);
-        if let Some(trace) = &self.trace_table {
-            let y_len = self.alpha_compact.len();
-            let (t0, t1) = trace.pair_flat(witness_idx0, witness_idx1, y_len);
-            accumulate_relation_coeffs(rel, w0, dw, t0, t1);
-        }
+        let y_len = self.alpha_compact.len();
+        let (t0, t1) = self
+            .trace_table
+            .pair_flat(witness_idx0, witness_idx1, y_len);
+        accumulate_relation_coeffs(rel, w0, dw, t0, t1);
     }
 
     #[inline]
@@ -280,19 +280,18 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
         p1: E,
     ) {
         accumulate_relation_coeffs_signed(rel, w0, dw, p0, p1);
-        if let Some(trace) = &self.trace_table {
-            let y_len = self.alpha_compact.len();
-            let (t0, t1) = trace.pair_flat(witness_idx0, witness_idx1, y_len);
-            accumulate_relation_coeffs_signed(rel, w0, dw, t0, t1);
-        }
+        let y_len = self.alpha_compact.len();
+        let (t0, t1) = self
+            .trace_table
+            .pair_flat(witness_idx0, witness_idx1, y_len);
+        accumulate_relation_coeffs_signed(rel, w0, dw, t0, t1);
     }
 
     #[inline]
     pub(super) fn fold_trace_for_round(&mut self, r: E, folding_x_round: bool) {
-        if let Some(trace) = self.trace_table.as_mut() {
-            let y_len = self.alpha_compact.len();
-            trace.fold_for_w_update(self.live_x_cols, y_len, r, folding_x_round);
-        }
+        let y_len = self.alpha_compact.len();
+        self.trace_table
+            .fold_for_w_update(self.live_x_cols, y_len, r, folding_x_round);
     }
 }
 

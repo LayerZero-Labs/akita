@@ -314,7 +314,7 @@ fn stage2_trace_round2_cached_poly_matches_reference() {
     expected.split_eq.bind(r1);
     expected.w_table = WTable::Full(expected_w_full.clone());
     expected.alpha_compact = expected_alpha_round2.clone();
-    expected.trace_table = Some(TraceTable::ring_dense(expected_trace_round2.clone()));
+    expected.trace_table = TraceTable::ring_dense(expected_trace_round2.clone());
     expected.rounds_completed = 2;
     expected.relation_matrix_col_evals_compact = expected_relation_matrix_col_evals_compact.clone();
     let expected_round2 = expected.compute_current_round_poly_from_state();
@@ -329,8 +329,8 @@ fn stage2_trace_round2_cached_poly_matches_reference() {
     }
     assert_eq!(prover.alpha_compact, expected_alpha_round2);
     assert_eq!(
-        prover.trace_table.as_ref(),
-        Some(&TraceTable::ring_dense(expected_trace_round2)),
+        prover.trace_table,
+        TraceTable::ring_dense(expected_trace_round2),
         "two-round handoff must preserve the folded trace table"
     );
     assert_eq!(

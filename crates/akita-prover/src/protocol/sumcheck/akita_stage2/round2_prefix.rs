@@ -140,17 +140,15 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
 
     #[inline]
     fn add_trace_pair_to_relation_factor(
-        trace_table: Option<&TraceTable<E>>,
+        trace_table: &TraceTable<E>,
         x: usize,
         left: usize,
         y_len: usize,
         p0: &mut E,
         p1: &mut E,
     ) {
-        if let Some(trace_table) = trace_table {
-            *p0 += trace_table.get(x, left, y_len);
-            *p1 += trace_table.get(x, left + 1, y_len);
-        }
+        *p0 += trace_table.get(x, left, y_len);
+        *p1 += trace_table.get(x, left + 1, y_len);
     }
 
     #[tracing::instrument(
@@ -161,7 +159,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
         &self,
         w_compact: &[i8],
         alpha_round2: &[E],
-        trace_round2: Option<&TraceTable<E>>,
+        trace_round2: &TraceTable<E>,
         r0: E,
         r1: E,
     ) -> (Vec<E>, NormRoundTerms<E>, [E; 3]) {

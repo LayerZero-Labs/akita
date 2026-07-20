@@ -137,9 +137,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + HasOptimizedFold> Sumch
                 };
                 let y_len = self.alpha_compact.len();
                 let alpha_round2 = Self::fold_alpha_to_round2(&self.alpha_compact, r0, r);
-                if let Some(trace) = self.trace_table.as_mut() {
-                    trace.fold_y2(self.live_x_cols, y_len, r0, r);
-                }
+                self.trace_table.fold_y2(self.live_x_cols, y_len, r0, r);
                 // fold_y2 is the two-round handoff; not routed through fold_trace_for_round.
                 let mut round2_terms = None;
                 self.w_table = match mem::replace(&mut self.w_table, WTable::Full(Vec::new())) {
@@ -149,7 +147,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + HasOptimizedFold> Sumch
                                 .fuse_compact_to_round2_and_compute_round(
                                     &w_compact,
                                     &alpha_round2,
-                                    self.trace_table.as_ref(),
+                                    &self.trace_table,
                                     r0,
                                     r,
                                 );

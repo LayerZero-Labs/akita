@@ -218,7 +218,7 @@ pub(crate) fn build_stage2_bivariate_skip_proof_from_m_compact<
     w_compact: &[i8],
     alpha_evals_y: &[E],
     relation_matrix_col_evals: &[E],
-    trace_table: Option<&TraceTable<E>>,
+    trace_table: &TraceTable<E>,
     stage1_point: &[E],
     b: usize,
     live_x_cols: usize,
@@ -232,7 +232,7 @@ pub(crate) fn build_stage2_bivariate_skip_proof_from_m_compact<
     let y_len = 1usize << ring_bits;
     assert_eq!(alpha_evals_y.len(), y_len);
     assert_eq!(w_compact.len(), live_x_cols * y_len);
-    if let Some(TraceTable::RingDense(trace)) = trace_table {
+    if let TraceTable::RingDense(trace) = trace_table {
         assert_eq!(trace.len(), live_x_cols * y_len);
     }
     assert_eq!(relation_matrix_col_evals.len(), 1usize << col_bits);
@@ -317,16 +317,14 @@ pub(crate) fn build_stage2_bivariate_skip_proof_from_m_compact<
                     &alpha_point_values_by_quad[y_quad],
                     &rel_table[lookup_idx],
                 );
-                if let Some(trace_table) = trace_table {
-                    let trace_quad = trace_table.quad_at(x_idx, base, y_len);
-                    let trace_point_values = stage2_relation_m_point_values_compressed(trace_quad);
-                    accum_pointwise_signed(
-                        &mut trace_pos,
-                        &mut trace_neg,
-                        &trace_point_values,
-                        &rel_table[lookup_idx],
-                    );
-                }
+                let trace_quad = trace_table.quad_at(x_idx, base, y_len);
+                let trace_point_values = stage2_relation_m_point_values_compressed(trace_quad);
+                accum_pointwise_signed(
+                    &mut trace_pos,
+                    &mut trace_neg,
+                    &trace_point_values,
+                    &rel_table[lookup_idx],
+                );
             }
             for idx in 0..STAGE2_COMPRESSED_POINT_COUNT {
                 let x_rel = reduce_signed_accum::<E>(x_rel_pos[idx], x_rel_neg[idx]);

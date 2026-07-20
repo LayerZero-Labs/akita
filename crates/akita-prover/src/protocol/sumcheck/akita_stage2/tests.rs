@@ -30,7 +30,7 @@ fn direct_relation_range_image_evaluation(
     w_compact: &[i8],
     alpha_evals_y: &[F],
     relation_matrix_col_evals: &[F],
-    evaluation_trace_weights: Option<&[F]>,
+    evaluation_trace_weights: &[F],
     params: &Stage2Params<'_>,
 ) -> DirectRelationRangeImageEvaluation {
     let x_len = 1usize << params.col_bits;
@@ -38,9 +38,7 @@ fn direct_relation_range_image_evaluation(
     assert_eq!(w_compact.len(), params.live_x_cols * y_len);
     assert_eq!(alpha_evals_y.len(), y_len);
     assert_eq!(relation_matrix_col_evals.len(), x_len);
-    if let Some(trace) = evaluation_trace_weights {
-        assert_eq!(trace.len(), w_compact.len());
-    }
+    assert_eq!(evaluation_trace_weights.len(), w_compact.len());
     let padded = if params.live_x_cols == (1usize << params.col_bits) {
         w_compact.to_vec()
     } else {
@@ -64,9 +62,7 @@ fn direct_relation_range_image_evaluation(
         let coefficient = physical_index % y_len;
         relation += digit * alpha_evals_y[coefficient] * relation_matrix_col_evals[column];
         if column < params.live_x_cols {
-            if let Some(trace) = evaluation_trace_weights {
-                evaluation_trace += digit * trace[physical_index];
-            }
+            evaluation_trace += digit * evaluation_trace_weights[physical_index];
         }
     }
     DirectRelationRangeImageEvaluation {
@@ -84,12 +80,13 @@ fn new_stage2_test_prover(
     relation_matrix_col_evals: Vec<F>,
     params: Stage2Params<'_>,
 ) -> AkitaStage2Prover<F> {
+    let zero_trace_weights = vec![F::zero(); w_compact.len()];
     let direct = direct_relation_range_image_evaluation(
         batching_coeff,
         &w_compact,
         &alpha_evals_y,
         &relation_matrix_col_evals,
-        None,
+        &zero_trace_weights,
         &params,
     );
     AkitaStage2Prover::new(
@@ -104,7 +101,7 @@ fn new_stage2_test_prover(
         params.col_bits,
         params.ring_bits,
         direct.relation,
-        None,
+        TraceTable::ring_dense(zero_trace_weights),
         F::zero(),
     )
     .unwrap()
@@ -123,7 +120,7 @@ pub(super) fn new_stage2_test_prover_with_trace(
         &w_compact,
         &alpha_evals_y,
         &relation_matrix_col_evals,
-        Some(&trace_compact),
+        &trace_compact,
         &params,
     );
     AkitaStage2Prover::new(
@@ -138,7 +135,7 @@ pub(super) fn new_stage2_test_prover_with_trace(
         params.col_bits,
         params.ring_bits,
         direct.relation,
-        Some(TraceTable::ring_dense(trace_compact)),
+        TraceTable::ring_dense(trace_compact),
         direct.evaluation_trace,
     )
     .unwrap()
@@ -158,7 +155,7 @@ pub(super) fn new_stage2_test_prover_with_trace_table(
         &w_compact,
         &alpha_evals_y,
         &relation_matrix_col_evals,
-        Some(trace_claim_table),
+        trace_claim_table,
         &params,
     );
     AkitaStage2Prover::new(
@@ -173,7 +170,7 @@ pub(super) fn new_stage2_test_prover_with_trace_table(
         params.col_bits,
         params.ring_bits,
         direct.relation,
-        Some(trace_table),
+        trace_table,
         direct.evaluation_trace,
     )
     .unwrap()
@@ -236,7 +233,7 @@ fn direct_fused_equation_matches_checked_stage2_input_claim() {
             &digit_witness,
             &alpha_evals_y,
             &relation_matrix_col_evals,
-            Some(&evaluation_trace_weights),
+            &evaluation_trace_weights,
             &params,
         );
         let prover = new_stage2_test_prover_with_trace(

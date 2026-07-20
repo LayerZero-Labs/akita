@@ -459,12 +459,13 @@ fn stage2_bivariate_skip_proof_builder_matches_reference() {
         F::from_u64(7),
         F::from_u64(11),
     ];
+    let trace_table = TraceTable::field_sparse(Vec::new(), 5, 2);
     assert_eq!(
         build_stage2_bivariate_skip_proof_from_m_compact(
             &w_compact,
             &alpha_evals_y,
             &relation_matrix_col_evals,
-            None,
+            &trace_table,
             &stage1_point,
             8,
             5,
@@ -514,7 +515,7 @@ fn stage2_bivariate_skip_proof_builder_with_trace_matches_reference() {
                 &w_compact,
                 &alpha_evals_y,
                 &relation_matrix_col_evals,
-                Some(&trace_table),
+                &trace_table,
                 &stage1_point,
                 8,
                 live_x_cols,
@@ -572,7 +573,7 @@ fn stage2_bivariate_skip_proof_builder_with_sparse_trace_matches_dense() {
             &w_compact,
             &alpha_evals_y,
             &relation_matrix_col_evals,
-            Some(&sparse_trace),
+            &sparse_trace,
             &stage1_point,
             8,
             live_x_cols,
@@ -629,12 +630,13 @@ fn stage2_bivariate_skip_proof_builder_matches_reference_large_odd_randomized() 
             )
         })
         .collect();
+    let trace_table = TraceTable::field_sparse(Vec::new(), live_x_cols, y_len);
     assert_eq!(
         build_stage2_bivariate_skip_proof_from_m_compact(
             &w_compact,
             &alpha_evals_y,
             &relation_matrix_col_evals,
-            None,
+            &trace_table,
             &stage1_point,
             8,
             live_x_cols,
