@@ -1512,11 +1512,13 @@ is rebuilt from the 256 challenge-folded quad values, and is the only LB3-specif
 field state. It is not a second witness representation.
 
 Measured against the prefix-aggregation plus exact-affine checkpoint `c2736370`, the
-selected LB3 head `fae8d871` reduced one-thread complete proving from 4.603 ms to
-4.014 ms for full/uniform (-12.8%) and from 3.983 ms to 3.548 ms for
+measured LB3 candidate `fae8d871`, integrated here as `77e7c870`, reduced one-thread
+complete proving from 4.603 ms to 4.014 ms for full/uniform (-12.8%) and from
+3.983 ms to 3.548 ms for
 three-quarter/uniform (-10.9%). The corresponding stable eight-thread measurements were
-2.017 ms to 1.830 ms (-9.3%) and 1.732 ms to 1.627 ms (-6.1%). The selected LB2 head
-`0cdcdf40` reduced the earlier two-round baseline from 4.014 ms to 2.417 ms
+2.017 ms to 1.830 ms (-9.3%) and 1.732 ms to 1.627 ms (-6.1%). The measured LB2
+candidate `0cdcdf40`, integrated here as `b74220cf`, reduced the earlier two-round
+baseline from 4.014 ms to 2.417 ms
 (-39.8%) for full/uniform and from 3.566 ms to 2.467 ms (-30.8%) for
 three-quarter/uniform before the shared exact-quadratic improvement.
 
