@@ -374,9 +374,7 @@ pub(super) fn verify_terminal_trace<F, E>(
     lp: &LevelParams,
     final_witness: &SegmentTypedWitness<F>,
     prepared_points: &[PreparedOpeningPoint<F, E>],
-    row_coefficients: &[E],
-    claim_scales: Option<&[E]>,
-    global_scale: E,
+    claim_coefficients: &[E],
     target: E,
 ) -> Result<(), AkitaError>
 where
@@ -385,8 +383,7 @@ where
 {
     let witness = final_witness;
     if prepared_points.len() != relation.opening_batch().num_groups()
-        || row_coefficients.len() != relation.opening_batch().num_total_polynomials()
-        || claim_scales.is_some_and(|scales| scales.len() != row_coefficients.len())
+        || claim_coefficients.len() != relation.opening_batch().num_total_polynomials()
     {
         return Err(AkitaError::InvalidProof);
     }
@@ -446,14 +443,9 @@ where
                     }
                     let opening =
                         recover_ring_subfield_inner_product::<F, E, D>(&outer_eval, packed_inner)?;
-                    let scale = claim_scales
-                        .and_then(|scales| scales.get(claim_index))
-                        .copied()
-                        .unwrap_or(global_scale);
-                    actual += *row_coefficients
+                    actual += *claim_coefficients
                         .get(claim_index)
                         .ok_or(AkitaError::InvalidProof)?
-                        * scale
                         * opening;
                 }
                 e_offset = end;

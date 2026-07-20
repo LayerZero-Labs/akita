@@ -16,35 +16,16 @@ use akita_types::{
     SegmentTypedWitnessGroupParts, SegmentTypedWitnessShape,
 };
 
-fn trace_layout_for_instance<F: FieldCore + CanonicalField>(
-    lp: &LevelParams,
-    instance: &RingRelationInstance<F>,
-    opening_source_len: usize,
-    col_bits: usize,
-    ring_bits: usize,
-    num_trace_blocks: usize,
-) -> Result<akita_types::TraceWeightLayout, AkitaError> {
-    let witness_layout = instance.segment_layout(lp, None)?;
-    trace_weight_layout_from_segment(
-        lp,
-        &witness_layout,
-        opening_source_len,
-        col_bits,
-        ring_bits,
-        num_trace_blocks,
-    )
-}
-
 pub(in crate::protocol::core) struct PreparedFold<F: FieldCore, E: FieldCore> {
     pub(in crate::protocol::core) commitment: RingVec<F>,
     pub(in crate::protocol::core) instance: RingRelationInstance<F>,
     pub(in crate::protocol::core) witness: RingRelationWitness<F>,
     pub(in crate::protocol::core) extension_opening_reduction:
         Option<ExtensionOpeningReductionProof<E>>,
-    pub(in crate::protocol::core) trace_eval_target: E,
-    pub(in crate::protocol::core) trace_prepared_points: Option<Vec<PreparedOpeningPoint<F, E>>>,
-    pub(in crate::protocol::core) trace_claim_scales: Option<Vec<E>>,
-    pub(in crate::protocol::core) trace_scale: E,
+    pub(in crate::protocol::core) evaluation_trace_claim: E,
+    pub(in crate::protocol::core) evaluation_trace_points: Option<Vec<PreparedOpeningPoint<F, E>>>,
+    pub(in crate::protocol::core) evaluation_trace_claim_coefficients: Vec<E>,
+    pub(in crate::protocol::core) evaluation_trace_basis: BasisMode,
     pub(in crate::protocol::core) row_coefficients: Option<Vec<E>>,
     /// Canonical terminal `t` state already bound by the predecessor.
     pub(in crate::protocol::core) terminal_t_state: Option<RingVec<F>>,
@@ -294,7 +275,7 @@ where
         .opening_claims()
         .layout()
         .map_err(|err| AkitaError::InvalidInput(format!("opening batch layout failed: {err:?}")))?;
-    let (prepared_points, e_folded_by_claim, trace_target, row_coefficients, row_coefficient_rings) =
+    let (prepared_points, e_folded_by_claim, trace_claim, row_coefficients, row_coefficient_rings) =
         dispatch_for_field!(
             ProtocolDispatchSlot::Role(RingRole::Inner),
             F,
@@ -384,7 +365,7 @@ where
                     prepared_points.push(prepared_point);
                 }
 
-                let (trace_target, row_coefficients) = compute_trace_target::<F, E, T, D>(
+                let (trace_claim, row_coefficients) = prepare_evaluation_trace_claim::<F, E, T, D>(
                     &reduction,
                     &folded_rings,
                     &prepared_points,
@@ -396,7 +377,9 @@ where
                     transcript,
                 )
                 .map_err(|err| {
-                    AkitaError::InvalidInput(format!("compute trace target failed: {err:?}"))
+                    AkitaError::InvalidInput(format!(
+                        "prepare evaluation-trace claim failed: {err:?}"
+                    ))
                 })?;
                 let row_coefficient_rings = row_coefficient_rings::<F, E, D>(&row_coefficients)
                     .map_err(|err| {
@@ -405,7 +388,7 @@ where
                 Ok::<_, AkitaError>((
                     prepared_points,
                     e_folded_by_claim,
-                    trace_target,
+                    trace_claim,
                     row_coefficients,
                     RingVec::from_ring_elems(&row_coefficient_rings),
                 ))
@@ -444,42 +427,25 @@ where
         AkitaError::InvalidInput(format!("ring relation preparation failed: {err:?}"))
     })?;
     let extension_opening_reduction = reduction.map(|reduction| reduction.proof);
-    // §6 invariant (#239 HIGH) — suffix `PreparedFold` trace-table layout vs
-    // `pad_base_evals`. `row_coefficients` and `trace_claim_scales` MUST be
-    // cleared together on the `pad_base_evals` (recursive-suffix) path and
-    // written together otherwise; `prove_fold` selects the root vs recursive
-    // `build_*_stage2_trace_table` branch on `row_coefficients.is_some()`, so a
-    // split here would silently scale the trace table incorrectly. Preserve the exact
-    // branch wiring and assert the two stay coupled to `pad_base_evals`.
+    let evaluation_trace_claim_coefficients = trace_claim.claim_coefficients;
+    // Recursive suffixes still omit the public row coefficients from ring-switch
+    // finalization. Evaluation-trace coefficients are normalized independently and
+    // therefore do not inherit that path distinction.
     let clear_recursive_trace = pad_base_evals && !level_params.has_precommitted_groups();
     let row_coefficients = if clear_recursive_trace {
         None
     } else {
         Some(row_coefficients)
     };
-    let trace_claim_scales = if clear_recursive_trace {
-        None
-    } else {
-        trace_target.trace_claim_scales
-    };
-    debug_assert_eq!(
-        clear_recursive_trace,
-        row_coefficients.is_none(),
-        "suffix trace layout: row_coefficients must be cleared iff pad_base_evals"
-    );
-    debug_assert!(
-        !clear_recursive_trace || trace_claim_scales.is_none(),
-        "suffix trace layout: trace_claim_scales must be cleared when pad_base_evals"
-    );
     Ok(PreparedFold {
         commitment,
         instance,
         witness,
         extension_opening_reduction,
-        trace_eval_target: trace_target.trace_eval_target,
-        trace_scale: trace_target.trace_scale,
-        trace_prepared_points: Some(prepared_points),
-        trace_claim_scales,
+        evaluation_trace_claim: trace_claim.claimed_evaluation,
+        evaluation_trace_points: Some(prepared_points),
+        evaluation_trace_claim_coefficients,
+        evaluation_trace_basis: basis,
         row_coefficients,
         terminal_t_state: None,
         terminal_recomposed_inner_rows: None,
@@ -689,101 +655,38 @@ where
     let evaluation_trace_row =
         lp.evaluation_trace_row_index_for_layout(relation_matrix_row_layout, opening_batch)?;
     let evaluation_trace_weight = evaluation_trace_row_weight(evaluation_trace_row, &rs.tau1)?;
-    let trace_opening_claim = evaluation_trace_weight * prepared_fold.trace_eval_target;
+    let trace_opening_claim = evaluation_trace_weight * prepared_fold.evaluation_trace_claim;
     ensure_trace_stage2_supported(E::EXT_DEGREE)?;
-    let trace_witness_layout = relation_range_image_plan.witness_layout();
-    let trace_opening_source_len = trace_witness_layout.total_len();
-    let trace_x_cols = akita_types::opening_domain_len(trace_opening_source_len)?;
-    let trace_col_bits = trace_x_cols.trailing_zeros() as usize;
-    let trace_ring_bits = ring_d.trailing_zeros() as usize;
-    let trace_compact = if let Some(row_coefficients) = prepared_fold.row_coefficients.as_ref() {
-        if lp.has_precommitted_groups() {
-            Some(akita_types::build_multi_group_root_stage2_trace_table::<
-                F,
-                E,
-            >(
-                ring_d,
-                trace_witness_layout,
-                trace_opening_source_len,
-                lp,
-                prepared_fold.instance.opening_batch(),
-                prepared_fold
-                    .trace_prepared_points
-                    .as_ref()
-                    .ok_or(AkitaError::InvalidProof)?,
-                row_coefficients,
-                prepared_fold.trace_claim_scales.as_deref(),
-                evaluation_trace_weight,
-                trace_opening_source_len,
-            )?)
-        } else {
-            let num_trace_blocks = prepared_fold
-                .instance
-                .opening_batch()
-                .num_total_polynomials()
-                .checked_mul(lp.num_live_blocks)
-                .ok_or_else(|| {
-                    AkitaError::InvalidSetup("trace block count overflow".to_string())
-                })?;
-            let layout = trace_layout_for_instance(
-                lp,
-                &prepared_fold.instance,
-                trace_opening_source_len,
-                trace_col_bits,
-                trace_ring_bits,
-                num_trace_blocks,
-            )?;
-            Some(build_root_stage2_trace_table::<F, E>(
-                ring_d,
-                lp.num_live_blocks,
-                &layout,
-                prepared_fold.instance.opening_batch(),
-                prepared_fold
-                    .trace_prepared_points
-                    .as_ref()
-                    .and_then(|points| points.first())
-                    .ok_or(AkitaError::InvalidProof)?,
-                row_coefficients,
-                prepared_fold.trace_claim_scales.as_deref(),
-                evaluation_trace_weight,
-                trace_opening_source_len,
-            )?)
+    let evaluation_trace_points = prepared_fold
+        .evaluation_trace_points
+        .as_deref()
+        .ok_or(AkitaError::InvalidProof)?;
+    let trace_preparation_span = tracing::info_span!(
+        "stage2_evaluation_trace_preparation",
+        claims = opening_batch.num_total_polynomials(),
+        groups = opening_batch.num_groups(),
+        chunks = relation_range_image_plan.witness_layout().units().len(),
+        source_ring_dimension = ring_d,
+        destination_ring_dimension = next_opening_ring_dim,
+    )
+    .entered();
+    let trace_compact = Some(dispatch_for_field!(
+        ProtocolDispatchSlot::Role(RingRole::Inner),
+        F,
+        ring_d,
+        |D| {
+            build_evaluation_trace_weights::<F, E, D>(EvaluationTraceWeightInputs {
+                plan: &relation_range_image_plan,
+                level_params: lp,
+                opening_batch,
+                prepared_points: evaluation_trace_points,
+                claim_coefficients: &prepared_fold.evaluation_trace_claim_coefficients,
+                basis: prepared_fold.evaluation_trace_basis,
+            })?
+            .materialize_prover_table::<F>(next_opening_ring_dim, evaluation_trace_weight)
         }
-    } else if let Some(prepared) = prepared_fold
-        .trace_prepared_points
-        .as_ref()
-        .and_then(|points| points.first())
-    {
-        let layout = trace_layout_for_instance(
-            lp,
-            &prepared_fold.instance,
-            trace_opening_source_len,
-            trace_col_bits,
-            trace_ring_bits,
-            lp.num_live_blocks,
-        )?;
-        Some(build_recursive_stage2_trace_table::<F, E>(
-            ring_d,
-            &layout,
-            prepared,
-            prepared_fold.trace_scale,
-            evaluation_trace_weight,
-            trace_opening_source_len,
-        )?)
-    } else {
-        None
-    }
-    .map(|table| {
-        remap_trace_table(
-            table,
-            trace_opening_source_len,
-            ring_d,
-            next_opening_source_len,
-            next_opening_ring_dim,
-            logical_w.len(),
-        )
-    })
-    .transpose()?;
+    )?);
+    drop(trace_preparation_span);
     let ring_bits = rs.ring_bits;
     let col_bits = rs.col_bits;
     let live_x_cols = rs.live_x_cols;
@@ -990,56 +893,6 @@ where
     Ok((stage1_proof, stage1_point, range_image_evaluation))
 }
 
-fn remap_trace_table<E: FieldCore>(
-    table: TraceTable<E>,
-    source_len: usize,
-    source_ring_dim: usize,
-    destination_len: usize,
-    destination_ring_dim: usize,
-    physical_field_len: usize,
-) -> Result<TraceTable<E>, AkitaError> {
-    let source_capacity = source_len
-        .checked_mul(source_ring_dim)
-        .ok_or_else(|| AkitaError::InvalidSetup("trace source capacity overflow".into()))?;
-    let destination_capacity = destination_len
-        .checked_mul(destination_ring_dim)
-        .ok_or_else(|| AkitaError::InvalidSetup("trace destination capacity overflow".into()))?;
-    if physical_field_len > source_capacity
-        || physical_field_len > destination_capacity
-        || source_ring_dim == 0
-        || destination_ring_dim == 0
-    {
-        return Err(AkitaError::InvalidProof);
-    }
-    // Fast path: when the source and destination expose the same Boolean
-    // source and ring geometry, the remap is the identity over the complete
-    // live prefix, so keep the existing representation without materializing
-    // or allocating anything.
-    if source_ring_dim == destination_ring_dim
-        && source_len == destination_len
-        && physical_field_len == source_capacity
-    {
-        return Ok(table);
-    }
-    // Stage 2 represents the padded Boolean suffix implicitly. Allocate only
-    // the exact destination prefix and read the source in place, so a remap
-    // never holds either source or destination Boolean capacity densely.
-    let mut destination = vec![E::zero(); physical_field_len];
-    for physical in 0..physical_field_len {
-        let source_col =
-            akita_types::checked_opening_source_index(source_len, physical / source_ring_dim)?;
-        let source_coeff = physical % source_ring_dim;
-        let destination_col = akita_types::checked_opening_source_index(
-            destination_len,
-            physical / destination_ring_dim,
-        )?;
-        let destination_index =
-            destination_col * destination_ring_dim + physical % destination_ring_dim;
-        destination[destination_index] = table.get(source_col, source_coeff, source_ring_dim);
-    }
-    Ok(TraceTable::ring_dense(destination))
-}
-
 #[allow(clippy::too_many_arguments)]
 fn prove_stage2<F, E, T>(
     level: usize,
@@ -1186,25 +1039,5 @@ where
             }))
         }
         SetupContributionMode::Direct => Ok(None),
-    }
-}
-
-#[cfg(test)]
-mod trace_remap_tests {
-    use super::*;
-    use akita_field::Fp32;
-
-    type F = Fp32<251>;
-
-    #[test]
-    fn nonidentity_trace_remap_keeps_only_live_prefix() {
-        let source = (0..12).map(F::from_u64).collect::<Vec<_>>();
-        let remapped = remap_trace_table(TraceTable::ring_dense(source.clone()), 3, 4, 6, 2, 12)
-            .expect("valid trace remap")
-            .into_ring_dense()
-            .expect("dense trace");
-
-        assert_eq!(remapped, source);
-        assert_eq!(remapped.len(), 12);
     }
 }

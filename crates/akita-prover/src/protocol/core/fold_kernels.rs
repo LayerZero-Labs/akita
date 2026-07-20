@@ -9,13 +9,11 @@ use super::*;
 use crate::compute::{
     ComputeBackendSetup, OpeningFoldKernel, OpeningFoldOutput, OpeningFoldPlan, RootOpeningSource,
 };
-use akita_types::{dispatch_for_field, TraceWeightLayout};
 
-/// Batched trace-target data derived from folded claim openings.
-pub(in crate::protocol::core) struct TraceTarget<E: FieldCore> {
-    pub(in crate::protocol::core) trace_eval_target: E,
-    pub(in crate::protocol::core) trace_claim_scales: Option<Vec<E>>,
-    pub(in crate::protocol::core) trace_scale: E,
+/// Prepared public evaluation-trace claim and its per-opening coefficients.
+pub(in crate::protocol::core) struct PreparedEvaluationTraceClaim<E: FieldCore> {
+    pub(in crate::protocol::core) claimed_evaluation: E,
+    pub(in crate::protocol::core) claim_coefficients: Vec<E>,
 }
 
 /// Extract the typed fold/position ring-weight slices from a multiplier point.
@@ -93,7 +91,7 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(in crate::protocol::core) fn compute_trace_target<F, E, T, const D: usize>(
+pub(in crate::protocol::core) fn prepare_evaluation_trace_claim<F, E, T, const D: usize>(
     reduction: &Option<ExtensionOpeningReduction<E>>,
     folded_rings: &[CyclotomicRing<F, D>],
     prepared_points: &[PreparedOpeningPoint<F, E>],
@@ -103,7 +101,7 @@ pub(in crate::protocol::core) fn compute_trace_target<F, E, T, const D: usize>(
     opening_batch: &OpeningClaimsLayout,
     row_coefficients: Option<Vec<E>>,
     transcript: &mut T,
-) -> Result<(TraceTarget<E>, Vec<E>), AkitaError>
+) -> Result<(PreparedEvaluationTraceClaim<E>, Vec<E>), AkitaError>
 where
     F: FieldCore + CanonicalField + FromPrimitiveInt,
     E: FpExtEncoding<F> + ExtField<F>,
@@ -180,85 +178,20 @@ where
                 )?;
                 Ok(reduction.final_claim)
             })?;
-    let trace_claim_scales = reduction
+    let claim_reduction_factors = reduction
         .as_ref()
         .map(|reduction| vec![reduction.final_factor; opening_batch.num_total_polynomials()]);
-    let trace_scale = reduction
-        .as_ref()
-        .map_or(E::one(), |reduction| reduction.final_factor);
-
+    let claim_coefficients = scale_evaluation_trace_claim_coefficients(
+        &row_coefficients,
+        claim_reduction_factors.as_deref(),
+    )?;
     Ok((
-        TraceTarget {
-            trace_eval_target,
-            trace_claim_scales,
-            trace_scale,
+        PreparedEvaluationTraceClaim {
+            claimed_evaluation: trace_eval_target,
+            claim_coefficients,
         },
         row_coefficients,
     ))
-}
-
-/// Build the recursive-suffix stage-2 trace table (operation adapter).
-///
-/// `ring_d` is the level's schedule-derived fold ring dimension; `layout` was
-/// derived by the caller from the level geometry.
-pub(in crate::protocol::core) fn build_recursive_stage2_trace_table<F, E>(
-    ring_d: usize,
-    layout: &TraceWeightLayout,
-    prepared: &PreparedOpeningPoint<F, E>,
-    trace_scale: E,
-    output_scale: E,
-    live_x_cols: usize,
-) -> Result<TraceTable<E>, AkitaError>
-where
-    F: FieldCore + CanonicalField + FromPrimitiveInt + Invertible,
-    E: FpExtEncoding<F> + ExtField<F> + FromPrimitiveInt,
-{
-    dispatch_for_field!(
-        ProtocolDispatchSlot::Role(RingRole::Inner),
-        F,
-        ring_d,
-        |D| {
-            let public_weights = trace_public_weights_recursive::<F, E, D>(prepared, trace_scale)?;
-            build_trace_table_scaled(layout, &public_weights, live_x_cols, output_scale)
-        }
-    )
-}
-
-/// Build the root stage-2 trace table (operation adapter).
-///
-/// `ring_d` / `num_live_blocks` are extracted level numbers; `layout` was derived by
-/// the caller from the level geometry.
-#[allow(clippy::too_many_arguments)]
-pub(in crate::protocol::core) fn build_root_stage2_trace_table<F, E>(
-    ring_d: usize,
-    num_live_blocks: usize,
-    layout: &akita_types::TraceWeightLayout,
-    opening_batch: &OpeningClaimsLayout,
-    prepared_point: &PreparedOpeningPoint<F, E>,
-    row_coefficients: &[E],
-    trace_claim_scales: Option<&[E]>,
-    output_scale: E,
-    live_x_cols: usize,
-) -> Result<TraceTable<E>, AkitaError>
-where
-    F: FieldCore + CanonicalField + FromPrimitiveInt + Invertible,
-    E: FpExtEncoding<F> + ExtField<F> + FromPrimitiveInt,
-{
-    dispatch_for_field!(
-        ProtocolDispatchSlot::Role(RingRole::Inner),
-        F,
-        ring_d,
-        |D| {
-            let public_weights = trace_public_weights_root_terms::<F, E, D>(
-                num_live_blocks,
-                opening_batch,
-                prepared_point,
-                row_coefficients,
-                trace_claim_scales,
-            )?;
-            build_trace_table_scaled(layout, &public_weights, live_x_cols, output_scale)
-        }
-    )
 }
 
 pub(in crate::protocol::core) fn scalar_opening_from_folded_ring<F, E, const D: usize>(

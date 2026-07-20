@@ -146,13 +146,9 @@ pub use tail_golomb_rice_low_bits::{
     WIRE_RICE_LOW_BITS_RULE_SECURITY_MINUS_DELTA,
 };
 pub use trace_weight::{
-    build_multi_group_root_stage2_trace_table, build_trace_claim_multi_group_root,
-    build_trace_claim_root, build_trace_table_scaled, ensure_trace_stage2_supported,
-    eval_dense_trace_table, eval_trace_terms_closed, root_trace_block_opening,
-    trace_public_weights_recursive, trace_public_weights_root_terms, trace_terms_recursive,
-    trace_terms_root, trace_weight_layout_from_segment, TraceClaim, TraceFieldBlockOpening,
-    TraceOpeningAtPoint, TracePublicWeights, TraceRingBlockOpening, TraceSparseColumn, TraceTable,
-    TraceTerm, TraceTermBatch, TraceWeightLayout,
+    build_evaluation_trace_weights, ensure_trace_stage2_supported,
+    scale_evaluation_trace_claim_coefficients, EvaluationTraceSegment, EvaluationTraceTerm,
+    EvaluationTraceWeightInputs, EvaluationTraceWeights, TraceSparseColumn, TraceTable,
 };
 pub use transcript::AppendToTranscript;
 pub use witness::{

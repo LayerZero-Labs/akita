@@ -269,18 +269,18 @@ For claim `ell`, source coordinates `(block, digit, nu)` have weight
 
 ```text
 evaluation_trace_weight_ell(block,digit,nu)
-  = claim_coefficient_ell
-      * extension_opening_reduction_scale_ell
+  = normalized_claim_coefficient_ell
       * block_opening_weight_ell(block)
       * opening_digit_gadget_ell(digit)
       * inner_trace_ell(nu).
 ```
 
-The EOR scale is one when no reduction applies. A missing `trace_claim_scales` input means
-identity scales, not absent trace. `inner_trace` is the source ring-coordinate trace from
-the tail opening point; for scalar openings it is the ordinary equality row. For extension
-openings, extension-linearity keeps the block/gadget scalar outside and changes only the
-inner factor.
+The normalized coefficient already includes the public row coefficient and any EOR
+factor. Prover and verifier normalize it once while preparing the claim list; the Stage 2
+builder does not branch on root, recursive, grouped, or EOR mode. The EOR factor is one
+when no reduction applies. `inner_trace` is the source ring-coordinate trace from the tail
+opening point; for scalar openings it is the ordinary equality row. For extension openings,
+extension-linearity keeps the block/gadget scalar outside and changes only the inner factor.
 
 The complete trace is a sum of rank-one claim factors:
 
@@ -292,6 +292,24 @@ evaluation_trace_weight(block,digit,nu)
 The normalized semantic input is a nonempty `EvaluationTraceWeights` containing one
 `EvaluationTraceTerm` per opening claim. There are no `Field`, `Ring`, `Root`,
 `Recursive`, `Absent`, sparse-table, or dense-table semantic variants.
+
+The landed term representation owns exactly:
+
+- one normalized claim coefficient;
+- the block-opening point and basis;
+- the group's exact live-block count and source ring dimension;
+- opening-digit gadget weights and one precomputed inner-trace row; and
+- one `EvaluationTraceSegment` per witness chunk, recording the flat physical coefficient
+  start, group-global block start, and exact live-block count.
+
+The verifier evaluates these segments directly at the final flat point with the existing
+carry-aware affine-interval equality primitive. The current Stage 2 prover temporarily
+materializes this same semantic term list into its pre-existing foldable `TraceTable`
+storage. Scalar same-dimension claims retain sparse columns; extension or mixed-dimension
+claims write one exact-live flat dense table. This is transitional storage, not a second
+semantic representation: no source/destination remap or alternate trace formula remains in
+production. The table disappears with the fused prover cutover in Step 6. The deleted trace
+implementations are compiled only under `cfg(test)` as differential oracles.
 
 The implementation differential-tests the current coordinate algebra against the direct
 E-linear formula. Where the packing map admits the expected adjoint, each inner vector is
@@ -380,10 +398,11 @@ attribution must preserve those distinctions.
 
 ### Evaluation trace over the cross-product
 
-Each `EvaluationTraceTerm` owns its group/claim coefficient, source ring dimension,
-inner trace vector, and a list of physical E segments—one per relevant witness unit. A
-segment records its physical column start, global block start/count, digit depth, and
-claim-local offset. This expresses multigroup and multichunk support without
+Each `EvaluationTraceTerm` owns its normalized group/claim coefficient, source ring
+dimension, digit gadget and inner trace vectors, and a list of physical E segments—one per
+relevant witness unit. A segment records its flat physical coefficient start and global
+block start/count; digit depth is term-owned and claim placement was already resolved into
+the physical start. This expresses multigroup and multichunk support without
 `TraceTermBatch`, `dense_evals`, or a remapped table.
 
 The prover measures three exact strategies:
@@ -593,7 +612,13 @@ stage.
    now share one source. The dense mixed consumer remains only until Step 6 cuts over the
    fused prover.
 4. Land `EvaluationTraceWeights` and its verifier evaluator; replace root/multigroup/EOR
-   variants and dense/sparse tables in one cutover.
+   variants and dense/sparse semantic tables in one cutover. **Landed:** prover and verifier
+   build the same per-claim terms from `RelationRangeImagePlan`; fully scaled coefficients
+   are normalized at preparation; chunk segments retain group-global block indices; the
+   verifier evaluates the flat point directly; mixed source/destination dimensions use flat
+   physical addresses with no remap; and all former production trace variants/builders are
+   test-only differential oracles. The existing prover `TraceTable` remains solely as the
+   temporary fold storage consumed by the old Stage 2 state machine until Step 6.
 5. Implement and measure structured, opening-only, and contraction-first trace
    preparation.
 6. Cut the prover to one compact-prefix/folded-suffix state machine, initially with the
@@ -647,6 +672,12 @@ Round-by-round dense differential tests compare every coefficient after every ch
 - final prover and canonical verifier evaluations; and
 - current setup contribution versus a direct flat dot product.
 
+The landed evaluation-trace differential matrix crosses Lagrange/monomial bases, multiple
+claim terms, split chunk segments, source and destination ring dimensions 2/4/8, nontrivial
+output scaling, scalar sparse storage, mixed dense storage, and direct final-point MLE
+evaluation. End-to-end fixtures additionally cover Ext4/EOR and the existing
+multi-group/multi-chunk proof.
+
 The required layout matrix includes:
 
 - singleton/single-chunk;
@@ -671,8 +702,11 @@ distributed recursive fixture rather than cloning competing setup/prove helpers.
 ## Tracing and performance
 
 Coarse spans cover plan construction, relation compilation, trace factor/contraction
-preparation, compact prefix, witness materialization, folded rounds, and folds. No span or
-event enters pair, class, coefficient, lane, claim-segment, or Rayon-item loops.
+preparation, compact prefix, witness materialization, folded rounds, and folds. The landed
+trace cutover records one `stage2_evaluation_trace_preparation` span on each side, including
+claim/group/chunk and ring-dimension metadata; verifier final evaluation remains under
+`stage2_trace_oracle`. No span or event enters pair, class, coefficient, lane, claim-segment,
+or Rayon-item loops.
 
 Measure feature-pruned profile builds for every basis and layout cell above at one and
 production thread counts. Report relation construction, trace preparation, compact

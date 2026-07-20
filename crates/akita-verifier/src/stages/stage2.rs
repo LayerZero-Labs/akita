@@ -8,8 +8,7 @@ use akita_field::{
 };
 use akita_sumcheck::SumcheckInstanceVerifier;
 use akita_types::{
-    eval_dense_trace_table, eval_trace_terms_closed, AkitaExpandedSetup, FpExtEncoding,
-    RingRelationInstance, TraceClaim,
+    AkitaExpandedSetup, EvaluationTraceWeights, FpExtEncoding, RingRelationInstance,
 };
 use std::marker::PhantomData;
 
@@ -27,7 +26,9 @@ pub(crate) struct AkitaStage2Verifier<'a, F: FieldCore, E: FieldCore, const D: u
     col_bits: usize,
     ring_bits: usize,
     relation_claim: E,
-    trace: Option<TraceClaim<F, E, D>>,
+    evaluation_trace_weights: EvaluationTraceWeights<E>,
+    evaluation_trace_row_weight: E,
+    evaluation_trace_opening_claim: E,
     _marker: PhantomData<([F; D], E)>,
 }
 
@@ -53,7 +54,9 @@ where
         relation_claim: E,
         col_bits: usize,
         ring_bits: usize,
-        trace: Option<TraceClaim<F, E, D>>,
+        evaluation_trace_weights: EvaluationTraceWeights<E>,
+        evaluation_trace_row_weight: E,
+        evaluation_trace_opening_claim: E,
     ) -> Result<Self, AkitaError> {
         let num_rounds = col_bits.checked_add(ring_bits).ok_or_else(|| {
             AkitaError::InvalidSetup("stage-2 variable count overflow".to_string())
@@ -77,7 +80,9 @@ where
             col_bits,
             ring_bits,
             relation_claim,
-            trace,
+            evaluation_trace_weights,
+            evaluation_trace_row_weight,
+            evaluation_trace_opening_claim,
             _marker: PhantomData,
         })
     }
@@ -97,11 +102,9 @@ where
     }
 
     fn input_claim(&self) -> E {
-        let mut claim = self.batching_coeff * self.range_image_evaluation + self.relation_claim;
-        if let Some(trace) = &self.trace {
-            claim += trace.trace_opening_claim;
-        }
-        claim
+        self.batching_coeff * self.range_image_evaluation
+            + self.relation_claim
+            + self.evaluation_trace_opening_claim
     }
 
     #[tracing::instrument(skip_all, name = "stage2_expected_output_claim")]
@@ -111,7 +114,6 @@ where
             self.witness_eval
         };
 
-        let (y_challenges, x_challenges) = challenges.split_at(self.ring_bits);
         let relation_weight = {
             let _span = tracing::info_span!("stage2_relation_weight").entered();
             self.relation_weight_evaluator.eval_flat_at_point::<F, D>(
@@ -123,40 +125,13 @@ where
             )?
         };
         let relation_oracle = w_eval * relation_weight;
-        let trace_oracle = if let Some(trace) = &self.trace {
+        let trace_oracle = {
             let _span = tracing::info_span!("stage2_trace_oracle").entered();
-            // Scalar/recursive folds use one layout; multi-group roots use one
-            // closed-form batch per group because their e-hat segments have
-            // different geometry.
-            let trace_weight = if let Some(dense_evals) = &trace.dense_evals {
-                eval_dense_trace_table::<E>(dense_evals, y_challenges, x_challenges)?
-            } else if !trace.trace_term_batches.is_empty() {
-                let (trace_y, trace_x) = challenges.split_at(trace.layout.ring_bits);
-                trace
-                    .trace_term_batches
-                    .iter()
-                    .try_fold(E::zero(), |acc, batch| {
-                        Ok::<E, AkitaError>(
-                            acc + eval_trace_terms_closed::<F, E, D>(
-                                &batch.layout,
-                                trace_y,
-                                trace_x,
-                                &batch.terms,
-                            )?,
-                        )
-                    })?
-            } else {
-                let (trace_y, trace_x) = challenges.split_at(trace.layout.ring_bits);
-                eval_trace_terms_closed::<F, E, D>(
-                    &trace.layout,
-                    trace_y,
-                    trace_x,
-                    &trace.trace_terms,
-                )?
-            };
-            trace.trace_coeff * w_eval * trace_weight
-        } else {
-            E::zero()
+            self.evaluation_trace_row_weight
+                * w_eval
+                * self
+                    .evaluation_trace_weights
+                    .evaluate_at_point(challenges)?
         };
 
         // A zero batching challenge removes the virtual term. Avoid the

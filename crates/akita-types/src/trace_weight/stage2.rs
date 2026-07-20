@@ -10,10 +10,10 @@ use super::build::{
     build_trace_weight_compact_field_sparse_scaled, build_trace_weight_compact_ring_terms_scaled,
 };
 use super::trace_table::TraceTable;
+use super::{TraceFieldBlockOpening, TraceRingBlockOpening, TraceTerm, TraceWeightLayout};
 use crate::{
     dispatch_for_field, embed_ring_subfield_scalar, BasisMode, FpExtEncoding, LevelParams,
-    OpeningClaimsLayout, PreparedOpeningPoint, TraceFieldBlockOpening, TraceRingBlockOpening,
-    TraceTerm, TraceWeightLayout, WitnessLayout,
+    OpeningClaimsLayout, PreparedOpeningPoint, WitnessLayout,
 };
 
 /// Owned public trace-weight factors used by the fused stage-2 trace term.
@@ -64,31 +64,6 @@ pub struct TraceClaim<F: FieldCore, E: FieldCore, const D: usize> {
     pub dense_evals: Option<Vec<E>>,
     /// Optional closed-form batches with independent layouts.
     pub trace_term_batches: Vec<TraceTermBatch<F, E, D>>,
-}
-
-/// Whether the trace-weight dispatcher has an algebraic implementation for this
-/// claim-field extension degree.
-#[inline]
-fn trace_stage2_supported(extension_degree: usize) -> bool {
-    matches!(extension_degree, 1 | 2 | 4 | 8)
-}
-
-/// Reject extension degrees with no trace-weight implementation.
-///
-/// The fused trace term is mandatory: it is what binds the fold opening to the
-/// committed witness in place of the dropped on-wire `y_ring`. A degree with no
-/// algebraic implementation must therefore be rejected rather than silently
-/// skipped, which would leave the opening unbound (a soundness footgun). This
-/// is verifier-reachable, so it returns an error instead of panicking.
-#[inline]
-pub fn ensure_trace_stage2_supported(extension_degree: usize) -> Result<(), AkitaError> {
-    if trace_stage2_supported(extension_degree) {
-        Ok(())
-    } else {
-        Err(AkitaError::InvalidSetup(format!(
-            "fused stage-2 trace term has no implementation for claim-field extension degree {extension_degree}; cannot bind the fold opening"
-        )))
-    }
 }
 
 /// Derive the trace-weight layout for the `e_hat` digit segment.
@@ -354,7 +329,7 @@ where
 }
 
 /// Slice the fold-axis opening out of a root opening point.
-pub fn root_trace_block_opening<X: FieldCore>(
+pub(super) fn root_trace_block_opening<X: FieldCore>(
     opening_point: &[X],
     num_positions_per_block: usize,
     num_live_blocks: usize,
